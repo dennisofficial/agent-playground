@@ -1,19 +1,3 @@
-/**
- * R0 GATE — WebSurface unit tests.
- *
- * Proves:
- *  1. A web/agent client posts a message that surfaces on `inbound$`.
- *  2. An outbound `post()` (incl. a threaded reply) is captured and emitted on `outbound$`.
- *  3. An approval card (Block Kit blocks) passed to `post()` is converted to a `WebApprovalCard`
- *     payload that the web client can render.
- *  4. A simulated approve/deny click via `receiveApprovalClick` resolves the pending verdict through
- *     the `approval$` Subject (the module bridge calls `DecisionApprovalService.resolve`).
- *  5. The `update()` method mutates the outbox entry and re-emits a patched event.
- *  6. The web-approval-card builder (pure) renders the correct action ids and value.
- *  7. `parseWebApprovalMeta` round-trips the ids from a card's action value.
- *
- * No I/O, no Postgres, no LLM — pure in-process unit tests.
- */
 
 import { agentMessage } from '@shared/prompt-kit/message';
 import { firstValueFrom } from 'rxjs';
@@ -36,7 +20,6 @@ import {
 } from '../web-approval-card';
 import { WebSurface } from '../web-surface';
 
-// ── Fixtures ──────────────────────────────────��──────────────────────────���──────────────────────
 
 const SAMPLE_CARD: DecisionApprovalCard = {
   jobId: 'job-abc',
@@ -47,7 +30,6 @@ const SAMPLE_CARD: DecisionApprovalCard = {
   decisions: [{ decisionClass: 'dependency', title: 'Payment gateway', ruling: 'Stripe' }],
 };
 
-// ── 1 + 2: inbound$ and outbound$ ────────────────────────────────────────────────────────────���─
 
 describe('WebSurface — inbound + outbound', () => {
   let surface: WebSurface;
@@ -143,7 +125,6 @@ describe('WebSurface — inbound + outbound', () => {
   });
 });
 
-// ── 3: Approval card conversion ────────────────────────────────────────────────────────────────
 
 describe('WebSurface — approval card conversion', () => {
   let surface: WebSurface;
@@ -172,14 +153,11 @@ describe('WebSurface — approval card conversion', () => {
     expect(card.threads[0]).toContain('Backend');
     expect(card.threads[1]).toContain('Frontend');
 
-    // Approve and Deny are emitted; there is no request-changes button (operators request
-    // changes by just messaging the brain).
     const actionIds = card.actions.map((a) => a.actionId);
     expect(actionIds).toContain(APPROVE_ACTION_ID);
     expect(actionIds).toContain(DENY_ACTION_ID);
     expect(actionIds).not.toContain(REQUEST_CHANGES_ACTION_ID);
 
-    // The value round-trips through JSON correctly.
     const approveAction = card.actions.find((a) => a.actionId === APPROVE_ACTION_ID)!;
     expect(approveAction.style).toBe('primary');
     const meta = parseWebApprovalMeta(approveAction.value);
@@ -215,7 +193,6 @@ describe('WebSurface — approval card conversion', () => {
     const authored = decisions.find((d) => d.title === 'Webhook route');
     expect(confirmed?.confirmedByOperator).toBe(true);
     expect(authored?.confirmedByOperator).toBe(false);
-    // The ruling capture is unaffected by the leading provenance tag.
     expect(confirmed?.ruling).toBe('Stripe');
     expect(authored?.ruling).toBe('POST /webhooks');
   });
@@ -232,7 +209,6 @@ describe('WebSurface — approval card conversion', () => {
   });
 });
 
-// ── 4: Approval click + approval$ Subject ─────────────────────────────────────────────────────
 
 describe('WebSurface — approval click via approval$', () => {
   it('receiveApprovalClick emits on approval$ with all fields', async () => {
@@ -297,18 +273,15 @@ describe('WebSurface — approval click via approval$', () => {
   });
 });
 
-// ── 5: update() ───────────────────────────────────────────────────────────────────────────────
 
 describe('WebSurface — update()', () => {
   it('mutates the outbox entry and re-emits the updated message', async () => {
     const surface = new WebSurface();
 
-    // Post the original approval card.
     const blocks = decisionApprovalBlocks(SAMPLE_CARD);
     const ts = await surface.post('C-web', `Plan proposal — ${SAMPLE_CARD.title}`, { blocks });
     expect(ts).toBeDefined();
 
-    // Subscribe BEFORE calling update.
     const updated = firstValueFrom(
       surface.outbound$.pipe(
         filter((m) => m.ts === ts),
@@ -316,7 +289,6 @@ describe('WebSurface — update()', () => {
       ),
     );
 
-    // Simulate a verdict: update with a verdict card.
     const verdict = webVerdictCard(
       'job-abc',
       'Payments integration',
@@ -331,11 +303,9 @@ describe('WebSurface — update()', () => {
     const msg = await updated;
     expect(msg.ts).toBe(ts);
     expect(msg.text).toBe('Approved by Dennis');
-    // The card was replaced.
     expect(msg.card).toBeDefined();
     expect((msg.card as any).type).toBe('verdict_card');
 
-    // Outbox also reflects the mutation.
     const outboxEntry = surface.outbox.find((m) => m.ts === ts)!;
     expect(outboxEntry.text).toBe('Approved by Dennis');
   });
@@ -346,7 +316,6 @@ describe('WebSurface — update()', () => {
   });
 });
 
-// ── 6: webApprovalCard builder (pure) ──────────────────────────────────────────────────────────
 
 describe('webApprovalCard (pure builder)', () => {
   it('produces a WebApprovalCard with all domain fields', () => {
@@ -423,7 +392,6 @@ describe('webApprovalCard (pure builder)', () => {
   });
 });
 
-// ── 7: parseWebApprovalMeta ────────────────────────────────────────────────────────────────────
 
 describe('parseWebApprovalMeta', () => {
   it('round-trips jobId + decisionRecordId', () => {
@@ -449,7 +417,6 @@ describe('parseWebApprovalMeta', () => {
   });
 });
 
-// ── channelMessages utility ────────────────────────────────────────────────────────────────────
 
 describe('WebSurface.channelMessages', () => {
   it('returns all messages in a channel when no threadTs filter', async () => {

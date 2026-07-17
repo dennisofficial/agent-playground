@@ -21,14 +21,6 @@ import { JobTitler } from '../../titling';
 import { CLASSIFIER_LLM } from '../decision-gate';
 import { TurnRegistry } from '../turn-registry.service';
 
-/**
- * Int test for the single-winner `finalize()` claim (Thread 1). Proves at the REAL DB that when two
- * attachers race to finish the same `turn_id` (two replicas mid rolling-deploy, or a same-process
- * boot-sweep/watchdog race), Postgres row-locks the concurrent deletes so exactly ONE `finalize` returns
- * `true` (the winner persists) and the other returns `false` (the loser persists nothing).
- *
- * Boots the REAL AppModule against live Postgres, mocking only external boundaries (none are exercised).
- */
 const TEAM_ID = '55555555-5555-4555-8555-555555555555'; // sentinel org uuid (distinct from the sibling guard test)
 
 describe('single-winner finalize claim (live Postgres row-locked delete)', () => {
@@ -77,7 +69,6 @@ describe('single-winner finalize claim (live Postgres row-locked delete)', () =>
     harness = app.get(TurnHarnessFactory);
     dataSource = app.get<DataSource>(getDataSourceToken(DB_CONNECTION));
 
-    // Seed the FK chain: org → repo → job (active_turns.job_id → jobs.id).
     await dataSource.query(
       `INSERT INTO organizations (id, name, slug) VALUES ($1,$2,$3) ON CONFLICT (id) DO NOTHING`,
       [TEAM_ID, 'claim-org', 'claim-org'],
@@ -96,8 +87,6 @@ describe('single-winner finalize claim (live Postgres row-locked delete)', () =>
       [TEAM_ID, repo.id, 'chat'],
     );
     jobA = job.id as string;
-    // messages.thread_id is NOT NULL (FK → threads.id) — seed the job's planning thread group + thread so the
-    // harness blocks below anchor onto a real thread.
     const bootstrap = app.get(JobBootstrapService);
     await bootstrap.ensurePlanningThreadGroup(jobA, TEAM_ID);
     threadA = await bootstrap.planningThreadId(jobA);
@@ -119,7 +108,6 @@ describe('single-winner finalize claim (live Postgres row-locked delete)', () =>
     const turnId = randomUUID();
     await registry.register(reg(turnId, jobA, 'brain'));
 
-    // Two attachers finish the same registered turn at once — Postgres row-locks the deletes.
     const [a, b] = await Promise.all([
       registry.finalize(turnId, 'done'),
       registry.finalize(turnId, 'done'),
@@ -131,9 +119,6 @@ describe('single-winner finalize claim (live Postgres row-locked delete)', () =>
   });
 
   it('a claim LOSER that discards writes NOTHING — the same block is persisted once, not twice', async () => {
-    // Simulate the prod bug at the transcript layer: two attachers process the SAME turn, each with its own
-    // harness streamer, and feed both the SAME chat block. The winner (claimed=true) finishes → persists; the
-    // loser (claimed=false) discards → persists nothing. So `messages` ends with exactly ONE copy of the block.
     const text = `winner-only-${randomUUID()}`;
     const textEvent: EngineEvent = { kind: 'text', text };
 
@@ -154,7 +139,6 @@ describe('single-winner finalize claim (live Postgres row-locked delete)', () =>
     winner.onEvent(textEvent);
     loser.onEvent(textEvent);
 
-    // The caller gates on the claim: winner persists, loser discards (mirrors `AgentSessionManager.lost`).
     await winner.finish();
     await loser.discard();
 
@@ -166,10 +150,6 @@ describe('single-winner finalize claim (live Postgres row-locked delete)', () =>
   });
 
   it('returns false for an UNREGISTERED turn (no row to delete)', async () => {
-    // A turn that never registered has no `active_turns` row, so its DELETE affects nothing ⇒ false at the
-    // registry level. NOTE: `runAttached` maps this case to claimed=true via its `wasRegistered` guard — a
-    // sole-finisher unregistered turn is not a race loser and MUST still persist. This test stays at the
-    // registry level (no runner boot): it asserts only the row-level truth, not the runner's remapping.
     expect(await registry.finalize(randomUUID(), 'done')).toBe(false);
   });
 

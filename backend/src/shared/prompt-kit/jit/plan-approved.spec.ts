@@ -1,6 +1,3 @@
-/**
- * prompt-kit / jit — specs for the `plan-approved` JIT rule (Thread 6: approval-gated dispatch).
- */
 import { describe, expect, it } from 'vitest';
 import { planApprovedRule, renderPlanApprovedSeed } from './plan-approved';
 import { findLifecycleRule } from './rules';

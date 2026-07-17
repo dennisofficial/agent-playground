@@ -2,11 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { Agent } from './system/agent';
 import { renderAgentPrompt } from './system/assemble';
 
-/**
- * The autonomy fragment (`autonomy.group`) — announces AUTONOMOUS MODE to the build brain when the job's
- * `autoApproveMode` setting is not `'off'`, and vanishes (byte-identical prompt) when it is off/unset — the
- * no-misfire invariant. The copy itself is derived from WHICH gate(s) the mode covers.
- */
 const MARKER = 'AUTONOMOUS MODE';
 
 describe('autonomy.group — autonomous-mode announcement', () => {
@@ -26,7 +21,6 @@ describe('autonomy.group — autonomous-mode announcement', () => {
       settings: { autoApproveMode: 'off' },
     });
     expect(out).not.toContain(MARKER);
-    // The no-misfire invariant: mode off ⇒ exactly today's prompt.
     expect(out).toBe(baseline);
   });
 

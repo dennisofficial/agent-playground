@@ -33,7 +33,6 @@ describe('renderDecisionRecordMd', () => {
     expect(md).toContain('> **Q:** Where does the customer pick the subdomain?');
     expect(md).toContain('> **A:** In the new-server wizard');
     expect(md).toContain('## API contract');
-    // A decision without a question renders no Q&A block.
     expect(md).not.toContain('> **Q:** \n');
   });
 

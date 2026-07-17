@@ -5,33 +5,15 @@ import { JobEntity } from './job.entity';
 import { OrganizationEntity } from './organization.entity';
 import { ThreadGroupEntity } from './thread-group.entity';
 
-/**
- * One THREAD of a job — a first-class, typed lane differentiated only by `role` (`planning | builder |
- * master_review | review_agent | review_fix | plan_review | post_build | ci`) and related by
- * `parent_thread_id` (a builder is the parent of its `review_agent`/`review_fix` siblings, now grouped
- * primarily via `thread_group_id` per d2). Builders stack on the job's one feature branch and run sequentially
- * (ORDER BY ordinal) as the thread group's rotating legs (d1); non-build roles are singletons. `status` is the
- * explicit, resumable cursor. Gap-numbered ordinals so a re-plan can splice without renumbering.
- *
- * Which roles the driver actually EXECUTES vs merely renders is owned by the `thread-kind`/role registry
- * (thread 2), not this row — the row is just typed state + tree structure. Every thread belongs to
- * exactly one thread group (`thread_group_id` NOT NULL, d7) — thread groups are the pipeline unit; threads are its rows.
- */
 @Entity({ name: 'threads' })
 @Index(['job_id'])
 @Index(['thread_group_id'])
 @Index(['parent_thread_id'])
-// Hands-off: uq_threads_job_parent_ordinal is UNIQUE(job_id, decision_record_id, parent_thread_id, ordinal)
-// … NULLS NOT DISTINCT, unexpressible in TypeORM metadata. The DDL lives in the migrations; this only
-// tells migration:generate never to DROP it. `decision_record_id` moved to `thread_groups` (d7); this legacy
-// index name is kept as-is (renaming it is cosmetic, not load-bearing) but now only covers
-// (job_id, parent_thread_id, ordinal).
 @Index('uq_threads_job_parent_ordinal', { synchronize: false })
 export class ThreadEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
-  /** The owning job (FK → jobs.id). */
   @Column({ type: 'uuid' })
   job_id!: string;
 
@@ -39,8 +21,6 @@ export class ThreadEntity extends TimestampedEntity {
   @JoinColumn({ name: 'job_id' })
   thread?: JobEntity;
 
-  /** The owning thread group (FK → thread_groups.id) — every thread belongs to exactly one thread group (d2/d7). NOT NULL:
-   *  there is no job-level ungrouped thread. */
   @Column({ type: 'uuid' })
   thread_group_id!: string;
 
@@ -48,25 +28,9 @@ export class ThreadEntity extends TimestampedEntity {
   @JoinColumn({ name: 'thread_group_id' })
   threadGroup?: ThreadGroupEntity;
 
-  /**
-   * The thread ROLE — `planning | builder | master_review | review_agent | review_fix | plan_review |
-   * post_build | ci`. The single differentiator across all thread-like concepts (subsumes
-   * `is_master_review`; renamed from `kind`, d2/d7 — grouping now lives on `threadGroup.kind`). The role
-   * registry (thread 2) binds each role to a prompt-kit `Agent`, an engine, a driver mode, and the
-   * operator-chat toggle (d12). Executable roles (`builder`, `master_review`) are driven as top-level
-   * thread group members; `review_agent`/`review_fix` are driven as thread-group-scoped children; `planning`/
-   * `plan_review`/`post_build`/`ci` reuse the brain's prompting (d14). No column default — every write
-   * site sets it explicitly (persistPlan / the child-thread materializer). Stays `text` (no DB enum); the
-   * union type lives in code (thread 2).
-   */
   @Column({ type: 'text' })
   role!: string;
 
-  /**
-   * Self-FK (→ threads.id) — the parent thread in the tree. A `builder` is the parent of its `review_lens`
-   * and `post_review` children; `main`/`master_review`/`plan_review` are root/job-level (null). Indexed;
-   * FK cascades with the rest so deleting a builder deletes its review children.
-   */
   @Column({ type: 'uuid', nullable: true })
   parent_thread_id!: string | null;
 
@@ -74,24 +38,12 @@ export class ThreadEntity extends TimestampedEntity {
   @JoinColumn({ name: 'parent_thread_id' })
   parent?: ThreadEntity | null;
 
-  /**
-   * Kind-specific params: `review_lens → { lensId }`, `post_review → { minSeverity }`, `master_review →
-   * { diffRange }`. PLAIN-LITERAL default (a `() => '{}'::jsonb` function default makes `migration:generate`
-   * loop forever — see the jsonb-default-loop memory).
-   */
   @Column({ type: 'jsonb', default: {} })
   config!: Record<string, unknown>;
 
-  /**
-   * The FULL `ReviewFinding[]` a `review_lens` thread produced — the complete findings, not just a count.
-   * `post_review` reads this off its sibling lens rows, dedupes + filters by `minSeverity`, and feeds
-   * `buildFixPrompt`. Null until the lens has reviewed (per-lens display count/verdict derive from this).
-   * Nullable, no default (mirrors `terminal_record`).
-   */
   @Column({ type: 'jsonb', nullable: true })
   review_findings!: ReviewFinding[] | null;
 
-  /** The tenant (org id) — denormalized for org-scoped queries (FK → organizations.id). */
   @Column({ type: 'uuid' })
   org_id!: string;
 
@@ -99,155 +51,73 @@ export class ThreadEntity extends TimestampedEntity {
   @JoinColumn({ name: 'org_id' })
   org?: OrganizationEntity;
 
-  /** Execution order within the thread, GAP-NUMBERED (10, 20, 30…) so a re-plan can splice. */
   @Column({ type: 'int' })
   ordinal!: number;
 
-  /** The one-line brief (title) from the upfront thread list. */
   @Column({ type: 'text' })
   brief!: string;
 
-  /**
-   * The scope TYPE of this thread — the deterministic routing key that selects the review agents that
-   * check it. A CLOSED vocabulary (THREAD_TYPES: backend | frontend | docs | testing | infra | data |
-   * general), enforced at write via `coerceThreadType`; 'general' is the total fallback for arg-less
-   * callers (bugfix/direct build) and any unrecognized value. Stays a `text` column (no DB enum) — the
-   * app layer is the validator, so legacy rows with off-vocabulary values are tolerated and coerce to
-   * 'general' at selection time.
-   */
   @Column({ type: 'text', default: 'general' })
   type!: string;
 
-  /** The detailed plan once authored/generated; null while pending. Steps LOCK once planned. */
   @Column({ type: 'text', nullable: true })
   plan!: string | null;
 
-  /**
-   * A compact repo-orientation cheat-sheet from the plan turn (repo layout + the REAL verify commands),
-   * handed to the fresh builder session via the execute task so it need not rediscover the repo. Persisted
-   * so a resume that skips re-planning still has it. Null while pending.
-   */
   @Column({ type: 'text', nullable: true })
   orientation!: string | null;
 
-  /** The prior thread's handoff note threaded into this thread's plan prompt. */
   @Column({ type: 'text', nullable: true })
   handoff_in!: string | null;
 
-  /** This thread's handoff note for the next thread; null until done. */
   @Column({ type: 'text', nullable: true })
   handoff_out!: string | null;
 
-  // 'pending' | 'planning' | 'reviewing' | 'executing' | 'auto_fixing' | 'done' — the PURE LINEAR step (pause/failure/skip live on `condition`)
   @Column({ type: 'text', default: 'pending' })
   status!: string;
 
-  // 'none' | 'paused' | 'incomplete' | 'failed' | 'skipped' — the orthogonal condition overlay (ADR-0004 detail stays in terminal_record)
   @Column({ type: 'text', default: 'none' })
   condition!: string;
 
-  /**
-   * The engine session this thread's live turn resumes (relocated from `steps.session_id`, d5 — the
-   * resume source of truth, read as `priorSessionId` in turn-runner). Null until the thread's first turn
-   * runs.
-   */
   @Column({ type: 'text', nullable: true })
   session_id!: string | null;
 
-  /**
-   * Set on commit, mirroring the old `steps.commit_sha` batch-anchor marker (relocated by d5). Per d13
-   * its role is the REVIEW DIFF head, not a resume/crash guard: build/direct_build thread group reviewers
-   * receive the range `start_sha..commit_sha` (the thread group's cumulative diff). Sentinel `(nothing)` =
-   * "committed, empty diff". Null on non-build roles and before the thread's first commit.
-   */
   @Column({ type: 'text', nullable: true })
   commit_sha!: string | null;
 
-  /**
-   * The RUNNING log of out-of-scope fixes the orchestrator made INLINE while building this thread — each a
-   * small, clearly-correct repair outside the assignment (a dead href, a wrong import) recorded via the
-   * `record_deviation` host tool the moment it's made, NOT deferred to the final report. The durable source
-   * of truth behind the `/context/generated/deviations.md` projection (that file is a pure re-render of this
-   * across the job's threads — `/context/generated` is read-only in the sandbox, so the host owns the write).
-   * Distinct from `terminal_record.deviations` (a one-shot end-of-turn summary). LITERAL default — a
-   * `() => '[]'::jsonb` function default makes `migration:generate` loop forever (jsonb-default-loop memory).
-   */
   @Column({ type: 'jsonb', default: [] })
   deviations!: DeviationEntry[];
 
-  /**
-   * The thread's TYPED done-report — written by the orchestrator's `complete_thread` tool call at the end of
-   * its build turn, then READ by the driver to decide the thread's outcome instead of inferring it from
-   * whether the turn threw. Its mere presence means `done`; a turn that never wrote one is treated as
-   * `incomplete` ("not done — needs the operator"), NOT `done`. `nullable` (no jsonb function-default — a
-   * `() => '...'::jsonb` default makes `migration:generate` loop forever; nullable avoids a default entirely).
-   */
   @Column({ type: 'jsonb', nullable: true })
   terminal_record!: ThreadTerminalRecord | null;
 
-  /**
-   * The thread's START HEAD — the feature-branch sha captured ONCE, the first time the thread begins
-   * executing. The post-build review scopes its diff by `start_sha..HEAD` and commit-recording compares
-   * HEAD against it (thread-driver `:1733`); RE-capturing it on every (re)entry lets a RESUME grab it AFTER
-   * the thread already committed (start === HEAD → an empty range → the review is silently skipped and the
-   * commit mis-recorded as `(nothing)`). Persisted + set-once so a resume reuses the true base. Null until
-   * first execute (or for threads created before this field existed — the range then falls back to a live
-   * capture at run time).
-   */
   @Column({ type: 'text', nullable: true })
   start_sha!: string | null;
 }
 
-/**
- * The transcript anchor for a thread's halted/completed lane — the engine `sessionId` (and, when the thread
- * rotated, which Leg) the wake hands the brain so it can read the builder's raw JSONL via
- * `atlas-tx show <sessionId>`. HOST-populated at halt/notable time from `steps.session_id` / `build_legs`
- * (the host has ground truth) — NEVER builder-self-reported.
- */
 export interface SessionAnchor {
-  /** The halted/completed lane's engine session id (from `steps.session_id` / the active `build_legs` row). */
   sessionId: string;
-  /** Which Leg (1..N) the session belongs to, for "Leg N" framing when the thread rotated. */
   legOrdinal?: number;
 }
 
-/**
- * A thread's DONE-REPORT — the typed terminal assertion (see {@link ThreadEntity.terminal_record}) the
- * orchestrator writes via `complete_thread`. Its mere presence means the thread is DONE (the host runs no
- * verification gate); a turn that never wrote one is `incomplete` ("not done — needs the operator"). The
- * self-reported `verification[]` is surfaced honestly on the ship card, ungraded.
- */
 export interface ThreadTerminalRecord {
   status: 'done';
-  /** One-line summary of what the thread did. */
   summary: string;
-  /** What changed, terse — feeds the next thread's handoff. */
   changes?: string[];
-  /** Verification the orchestrator actually ran, with captured evidence (not prose claims). Self-reported;
-   *  no judge grades it — the ship card surfaces it verbatim. */
   verification?: {
     kind: string;
     command: string;
     exitCode: number;
     outputTail: string;
   }[];
-  /** Off-spec changes the orchestrator flagged. */
   deviations?: string[];
-  /** Honest known gaps / things to know — routed to the brain + next-thread orientation, and any advisory
-   *  host observation (e.g. "committed nothing"). */
   gaps?: string[];
 }
 
-/** One inline out-of-scope fix the orchestrator made while building a thread (see {@link ThreadEntity.deviations}). */
 export interface DeviationEntry {
-  /** One line: what was changed off-spec and why. */
   note: string;
-  /** ISO timestamp the deviation was recorded. */
   ts: string;
 }
 
-/** One post-build review agent as the `/pipeline` read-model surfaces it — DERIVED at read time from a
- *  builder's `review_lens` child rows (each row's status + findings), no longer a persisted column. */
 export interface ReviewAgentState {
   id: string;
   label: string;
@@ -255,17 +125,11 @@ export interface ReviewAgentState {
   findings?: number;
 }
 
-/** One LLM-authored task, written via the `task_create`/`task_update` host-bridge tools directly into a
- *  stage-owned `TaskEntity` row (mirrored here as the read/wire shape). */
 export interface TaskItem {
   id: string;
   subject: string;
   status: 'pending' | 'in_progress' | 'completed' | 'dropped';
-  /** The SDK task's longer description — the navigator shows it under an in_progress task + as tooltip. */
   description?: string;
-  /** Present-continuous label ("Resolving the router chain") shown while in_progress; falls back to subject. */
   activeForm?: string;
-  /** Dependency edges — ids of tasks this one waits on. A PENDING task with an incomplete blocker renders
-   *  BLOCKED; the block clears by derivation when every blocker completes or is deleted. */
   blockedBy?: string[];
 }

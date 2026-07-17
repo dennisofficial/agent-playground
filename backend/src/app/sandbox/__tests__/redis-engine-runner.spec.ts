@@ -33,11 +33,6 @@ function fakeRegistry() {
   };
 }
 
-/**
- * A fake ContainerEngine whose `execDetached` plays the in-container engine: it reads TURN_ID from the
- * exec env and asynchronously appends `frames` to that turn's events stream (exactly what the real
- * entrypoint will do over Redis).
- */
 function fakeContainers(redis: InMemoryRedisStream, frames: unknown[]) {
   return {
     execDetached: vi.fn(
@@ -45,7 +40,6 @@ function fakeContainers(redis: InMemoryRedisStream, frames: unknown[]) {
         const turnId = opts?.env?.TURN_ID;
         if (turnId) {
           const events = turnKeys(turnId).events;
-          // Emit on the next tick so the host is already tailing (mirrors a detached process).
           void (async () => {
             for (const f of frames) await redis.xadd(events, f);
           })();
@@ -493,9 +487,6 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
 
   it('a lost Redis transport mid-tail DETACHES: throws EngineDetachedError, leaves the registry row + streams', async () => {
     const redis = new InMemoryRedisStream();
-    // The "engine" writes one event, then the host's transport dies (xreadGroup starts throwing) while
-    // the engine itself is still alive — the watch-respawn shutdown shape. The events tail now reads via
-    // a consumer group, so the transient failure is injected on `xreadGroup` (not the retired `xread`).
     const frames = [{ t: 'event', e: { kind: 'text', text: 'hello' } }];
     const reg = fakeRegistry();
     const runner = new RedisEngineRunner(
@@ -528,7 +519,6 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
       }),
     ).rejects.toBeInstanceOf(EngineDetachedError);
 
-    // The row + streams are the next boot's re-attach anchor — neither may be touched on a detach.
     expect(reg.finalize).not.toHaveBeenCalled();
     expect(delSpy).not.toHaveBeenCalled();
   });
@@ -578,8 +568,6 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
     const toolCalls: Array<{ name: string; args: unknown }> = [];
     let sawProgress = false;
 
-    // Simulated engine: emit a tool_request on the tools stream, await its reply on the replies stream,
-    // then emit a text event + final on the events stream.
     const containers = {
       execDetached: vi.fn(
         async (_id: string, _argv: string[], opts?: { env?: Record<string, string> }) => {
@@ -708,13 +696,11 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
 
     const env = (containers.execDetached as unknown as { mock: { calls: unknown[][] } }).mock
       .calls[0][2] as { env: Record<string, string> };
-    // The token rides the git extraheader (never argv/.git/config), plus the raw token for API/`gh`.
     expect(env.env.GIT_CONFIG_KEY_0).toBe('http.https://github.com/.extraheader');
     expect(env.env.GIT_CONFIG_VALUE_0).toContain('AUTHORIZATION: basic ');
     expect(env.env.GIT_TERMINAL_PROMPT).toBe('0');
     expect(env.env.GITHUB_TOKEN).toBe('tok-123');
     expect(env.env.GH_TOKEN).toBe('tok-123');
-    // No identity was supplied — the author/committer env vars are absent.
     expect(env.env.GIT_AUTHOR_NAME).toBeUndefined();
     expect(env.env.GIT_AUTHOR_EMAIL).toBeUndefined();
     expect(env.env.GIT_COMMITTER_NAME).toBeUndefined();
@@ -930,8 +916,6 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
 
     await runner.steer('T1', 'S1', 'actually, focus on the API layer');
 
-    // The in-container entrypoint reads this durable stream from '0-0'. The stimulus id rides the frame so
-    // the engine can emit a correlated `input_ack` after pushing the steer into the session.
     const entries = await redis.xread({
       stream: turnKeys('T1').input,
       lastId: '0-0',
@@ -962,7 +946,6 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
   });
 
   describe('idle-tail liveness (a quiet tail is not presumed dead while the container proves itself alive)', () => {
-    /** Drive the fake clock + release any parked xread so the tail loop's next Date.now() check runs. */
     async function tick(redis: InMemoryRedisStream, ms: number): Promise<void> {
       await vi.advanceTimersByTimeAsync(ms);
       redis.releaseBlockingReads();
@@ -997,12 +980,9 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
         const runPromise = runner.run(baseArgs(() => {}));
         await vi.advanceTimersByTimeAsync(0); // let run() reach the point of calling execDetached
 
-        // Cross the idle timeout with nothing on the stream — the container is still 'running', so this
-        // must NOT throw; it should keep waiting.
         await tick(redis, TAIL_IDLE_TIMEOUT_MS + 5_000);
         expect(inspect).toHaveBeenCalled();
 
-        // The "engine" finally catches up and finishes the turn.
         const execCall = (
           containers.execDetached as unknown as {
             mock: {
@@ -1060,8 +1040,6 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
           (err: unknown) => err,
         );
 
-        // Never emit another frame — the container claims 'running' the whole time, so this must extend
-        // patience past the idle timeout, but not forever: it should give up once the ceiling passes.
         const totalMs = TAIL_IDLE_TIMEOUT_MS + TAIL_ALIVE_GRACE_CEILING_MS + 15_000;
         for (let elapsed = 0; elapsed < totalMs; elapsed += 5_000) {
           await tick(redis, 5_000);

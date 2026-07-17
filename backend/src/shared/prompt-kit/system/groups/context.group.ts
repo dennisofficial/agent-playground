@@ -1,16 +1,9 @@
-/**
- * prompt-kit / groups / context — the durable authoring surfaces the normal brain writes into: the
- * `/context` shared folder (specs/generated/artifacts/evidence).
- *
- * TOPIC bucket: context / authored artifacts (normal brain only).
- */
 import { Agent, SHIP_STAGES } from '../agent';
 import { isBuildBrain } from '../conditions';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 
 @FragmentGroup()
 export class ContextGroup {
-  /** The /context shared folder. */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 1150,
@@ -49,9 +42,6 @@ export class ContextGroup {
     ].join('\n');
   }
 
-  /** The /context shared folder — POST_BUILD/CI's leaner variant: they don't author specs, so this is a
-   *  pointer to what's already there (the plan, the build's evidence, any preview HTML) rather than the
-   *  spec-authoring cadence above, which stays PLANNING-only. */
   @Fragment({
     usedBy: SHIP_STAGES,
     order: 1151,
@@ -67,7 +57,6 @@ export class ContextGroup {
     ].join('\n');
   }
 
-  /** normal block 15b — default to an HTML preview for UI work + link /context files. */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 1152,

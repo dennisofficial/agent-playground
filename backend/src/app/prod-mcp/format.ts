@@ -1,7 +1,6 @@
 export type QueryFormat = 'jsonl' | 'csv' | 'tsv';
 export const QUERY_FORMATS: QueryFormat[] = ['jsonl', 'csv', 'tsv'];
 
-/** Column order = union of keys in first-seen order across the (already row-capped) rows. */
 export function columnsOf(rows: Record<string, unknown>[]): string[] {
   const seen = new Set<string>();
   const columns: string[] = [];
@@ -26,7 +25,6 @@ function renderCell(value: unknown): string {
   if (typeof value === 'bigint' || typeof value === 'symbol') {
     return value.toString();
   }
-  // A DB driver never returns a function-typed cell; this only exists to satisfy exhaustiveness.
   return typeof value === 'function' ? value.toString() : JSON.stringify(value);
 }
 
@@ -50,7 +48,6 @@ function renderDelimited(rows: Record<string, unknown>[], delimiter: string): st
   return [header, ...lines].join('\n');
 }
 
-/** Render a row set into one of the line-delimited formats (one row per line). */
 export function renderRows(rows: Record<string, unknown>[], format: QueryFormat): string {
   switch (format) {
     case 'jsonl':

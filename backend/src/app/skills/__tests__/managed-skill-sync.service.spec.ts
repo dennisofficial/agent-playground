@@ -17,7 +17,6 @@ const GIT_ENV = {
   GIT_COMMITTER_EMAIL: 't@t',
 };
 
-/** Real-git local fixture repo, same shape as `skill-updater.service.spec.ts`. */
 function initRepo(work: string): void {
   execFileSync('git', ['init', '-b', 'main', work]);
 }
@@ -30,8 +29,6 @@ function commitAndBare(work: string, bare: string): void {
   execFileSync('git', ['-C', bare, 'symbolic-ref', 'HEAD', 'refs/heads/main']);
 }
 
-// `vi.mock` is hoisted above these imports — stub the registry so this spec controls exactly what's
-// synced, independent of whatever `system-skill-registry.ts` actually ships.
 let gitEntry: { url: string; subpath: string; ref: string } | undefined;
 vi.mock('./system-skill-registry', () => ({
   buildSystemSkills: () =>

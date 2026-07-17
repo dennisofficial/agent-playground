@@ -1,13 +1,3 @@
-/**
- * RETURN-PATH end-to-end (live Postgres): a verified GitHub webhook on a PR/branch an existing job owns
- * is delivered to THAT job's brain (attached as an event on the same job) instead of seeding a fresh
- * event thread — and a webhook that nothing owns still seeds a new thread (external CI).
- *
- * Real: HMAC signature verify (GithubNotificationSource), repo routing (ProjectRoutingService), intake
- * routing (StimulusIntake), and the owning-job SQL finders (StimulusStoreService) against atlas_test.
- * Stubbed: the brain sink (captures deliverEvent — we assert routing, not an LLM turn), the announcer,
- * and the titler. Drives the actual GithubEventsWebhookController front door with a signed raw body.
- */
 
 import { EnvService } from '@core/config/env/env.service';
 import { Test, type TestingModule } from '@nestjs/testing';
@@ -64,7 +54,6 @@ function dbOpts() {
   };
 }
 
-/** A signed raw-body request the way the front door receives it (HMAC over the EXACT bytes). */
 function signedReq(payload: unknown, eventType: string, deliveryId: string): RawBodyRequest {
   const json = JSON.stringify(payload);
   const sig = `sha256=${createHmac('sha256', SECRET).update(Buffer.from(json)).digest('hex')}`;
@@ -199,11 +188,8 @@ describe('GithubEventsWebhookController return-path (live Postgres)', () => {
       signedReq(failedCheckRun(OWNED_BRANCH, 101), 'check_run', 'd-1'),
     );
 
-    // Front door accepted + routed to the existing job — NOT a fresh seed.
     expect(res).toMatchObject({ status: 'accepted', jobId: owner.id });
-    // No new job row was created (still exactly the one we seeded).
     expect(await jobs.countBy({ org_id: ORG_ID })).toBe(1);
-    // The event was attached to the owning job (message + stimulus rows), and delivered to its brain.
     const attachedMsg = await messages.findOne({ where: { job_id: owner.id } });
     expect(attachedMsg?.meta).toMatchObject({
       source: 'system_event',
@@ -222,7 +208,6 @@ describe('GithubEventsWebhookController return-path (live Postgres)', () => {
       signedReq(failedCheckRun('someone-elses-branch', 202), 'check_run', 'd-2'),
     );
 
-    // Route-only: a verified event nothing owns is a deliberate no-op — NOT a new job.
     expect(res).toMatchObject({ status: 'ignored', reason: 'no-owner' });
     expect(await jobs.countBy({ org_id: ORG_ID })).toBe(0); // nothing seeded
     expect(delivered).toHaveLength(0); // nothing delivered to any brain

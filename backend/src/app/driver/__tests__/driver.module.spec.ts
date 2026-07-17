@@ -13,11 +13,6 @@ import type { JobUnblockSweep } from '../job-unblock-sweep.service';
 import type { SessionResumeSweep } from '../session-resume-sweep.service';
 import type { ThreadDriver } from '../thread-driver.service';
 
-/**
- * The promote/demote wiring is the load-bearing pair for the leadership-fenced drive: because a fenced drive
- * YIELDS on demotion (leaving the job `running`), a re-promote MUST re-drive it or it strands. These tests
- * lock that contract at the module seam.
- */
 describe('DriverModule — promote wiring re-drives yielded jobs (leadership fence pairing)', () => {
   function harness(options: { exposure?: ExposureService } = {}) {
     const driver = {
@@ -58,8 +53,6 @@ describe('DriverModule — promote wiring re-drives yielded jobs (leadership fen
     const onboarding = {
       ensureWebhooksForActiveRepos: vi.fn(async () => undefined),
     } as unknown as OnboardingService;
-    // A REAL SchedulerRegistry (a plain Map-backed class, no Nest bootstrap needed) so the leader-gated
-    // interval timers register/deregister for real and still fire under vitest's fake timers.
     const scheduler = new SchedulerRegistry();
     const mod = new DriverModule(
       driver,
@@ -96,9 +89,7 @@ describe('DriverModule — promote wiring re-drives yielded jobs (leadership fen
     await h.promote(); // first promotion (boot)
     await h.promote(); // mid-life re-promote (lost + regained the lock on a blip)
 
-    // The destructive boot reconcile (nulls container_id) is once-per-process…
     expect(h.lifecycle.reconcileOnBoot).toHaveBeenCalledTimes(1);
-    // …but resume() (idempotent re-drive of running jobs) fires on BOTH promotions.
     expect(h.driver.resume).toHaveBeenCalledTimes(2);
 
     h.mod.onApplicationShutdown();
@@ -112,7 +103,6 @@ describe('DriverModule — promote wiring re-drives yielded jobs (leadership fen
 
     expect(h.driver.resume).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(30 * 60 * 1000); // one reap interval (default)
-    // The tick's idempotent resume() ran, re-driving any stranded running job.
     expect((h.driver.resume as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(
       2,
     );
@@ -130,14 +120,11 @@ describe('DriverModule — promote wiring re-drives yielded jobs (leadership fen
     await h.promote(); // first promotion (boot)
     await h.promote(); // mid-life re-promote
 
-    // The boot one-shot sweep (unblocks recovery drives from an exhausted address pool) is once-per-process…
     expect(reapArtifacts).toHaveBeenCalledTimes(1);
-    // …and it runs BEFORE resume() so a resumed drive's ensureNetwork can't hit a still-exhausted pool.
     expect(reapArtifacts.mock.invocationCallOrder[0]).toBeLessThan(
       resume.mock.invocationCallOrder[0],
     );
 
-    // The recurring 30-min reap timer sweeps too.
     await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
     expect(reapArtifacts.mock.calls.length).toBeGreaterThanOrEqual(2);
 
@@ -151,11 +138,9 @@ describe('DriverModule — promote wiring re-drives yielded jobs (leadership fen
     await h.mod.onApplicationBootstrap();
     await h.promote(); // starts the fast idle-reap timer
 
-    // Idle-reap fires every minute — several times inside one slow (30-min) sweep window.
     await vi.advanceTimersByTimeAsync(3 * 60 * 1000);
     expect(reapIdle.mock.calls.length).toBeGreaterThanOrEqual(3);
 
-    // Demotion stops the idle timer — no further idle-reap ticks.
     h.demote();
     const afterDemote = reapIdle.mock.calls.length;
     await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
@@ -174,7 +159,6 @@ describe('DriverModule — promote wiring re-drives yielded jobs (leadership fen
     const afterOne = (h.reconciler.tick as ReturnType<typeof vi.fn>).mock.calls.length;
     expect(afterOne).toBeGreaterThanOrEqual(1);
 
-    // Demotion stops the heartbeat — no further ticks.
     h.demote();
     await vi.advanceTimersByTimeAsync(60 * 1000);
     expect((h.reconciler.tick as ReturnType<typeof vi.fn>).mock.calls.length).toBe(afterOne);
@@ -201,7 +185,6 @@ describe('DriverModule — promote wiring re-drives yielded jobs (leadership fen
   it('a slow tick does not overlap — the heartbeat skips while the prior tick is in flight', async () => {
     vi.useFakeTimers();
     const h = harness();
-    // A tick that never resolves within the test → the in-flight guard must suppress the next heartbeats.
     let resolveTick: (() => void) | undefined;
     (h.reconciler.tick as ReturnType<typeof vi.fn>).mockImplementation(
       () => new Promise<number>((res) => (resolveTick = () => res(0))),

@@ -1,6 +1,3 @@
-/**
- * prompt-kit / jit — unit tests for the memory auto-retrieval turn-prefix helpers (d1/d2).
- */
 import { describe, expect, it } from 'vitest';
 import { isSubstantiveQuery, renderMemoryRecall } from './memory-recall';
 

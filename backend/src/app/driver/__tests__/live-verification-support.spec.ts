@@ -18,7 +18,6 @@ describe('clampEvidenceOutput', () => {
   });
 
   it('preserves BOTH a head token and a tail token when over cap, with an elision marker', () => {
-    // The exact failure class: a decisive token near the END of a long proof must survive.
     const head = 'HEAD_TOKEN_boot_and_login';
     const tail = 'TAIL_TOKEN_effort=high_in_response';
     const s = `${head}${'-'.repeat(5000)}${tail}`;
@@ -26,7 +25,6 @@ describe('clampEvidenceOutput', () => {
     expect(out).toContain(head);
     expect(out).toContain(tail);
     expect(out).toMatch(/…\[\d+ chars elided\]…/);
-    // The clamped output is bounded (cap + a short marker), not the full 5000+ chars.
     expect(out.length).toBeLessThan(3200);
   });
 });
@@ -41,7 +39,6 @@ describe('renderTerminalRecordSummary', () => {
   });
 
   it('surfaces a decisive token that sits past char 300 of an outputTail (the ADR-0005 job bug)', () => {
-    // Reproduces job 76f0ee2a: the `effort=high` proof landed ~char 900, past the old 300-char slice.
     const outputTail =
       'health check + login curl'.padEnd(900, '.') + 'RESPONSE BODY: {"effort":"high"}';
     const summary = renderTerminalRecordSummary({
@@ -52,7 +49,6 @@ describe('renderTerminalRecordSummary', () => {
   });
 
   it('never drops a whole evidence item — the LAST (proof) item survives a diagnostics-first array', () => {
-    // The report_verification schema orders diagnostics/typecheck FIRST, live proof LAST.
     const verification = [
       ev({
         kind: 'diagnostics',

@@ -6,11 +6,6 @@ import { LiveTurnStore } from '../live-turn-store';
 import type { WebOutboundMessage } from '../web-surface';
 import { WebSurfaceController } from '../web-surface.controller';
 
-/**
- * RESUMABLE/DURABLE STREAMING — the core guarantee: a client that connects MID-TURN (refresh,
- * navigate-back, network blip) catches up to the current state and keeps streaming, because the
- * producing turn runs independent of any connection and its cumulative state lives in `LiveTurnStore`.
- */
 
 const REPO = 'repo-1';
 const THREAD = 'thread-1';
@@ -42,7 +37,6 @@ describe('LiveTurnStore — cumulative in-flight turn', () => {
       done: false,
     });
 
-    // tool_result pairs with the open tool_use by id.
     store.push(REPO, THREAD, {
       kind: 'tool_result',
       id: 'tu1',
@@ -56,7 +50,6 @@ describe('LiveTurnStore — cumulative in-flight turn', () => {
       done: true,
     });
 
-    // seq is monotonic; snapshot carries the latest.
     expect(store.snapshot(REPO, THREAD)!.seq).toBeGreaterThan(0);
 
     store.end(REPO, THREAD);
@@ -94,12 +87,9 @@ describe('LiveTurnStore — cumulative in-flight turn', () => {
 
   it('interleaved thinking: authoritative text/thinking finalize their OPEN delta block, not the last one (no double stream)', () => {
     const store = new LiveTurnStore();
-    // Adaptive thinking interleaves a thinking block before the text block, so BOTH stream open at once:
-    // deltas build [thinking(open), text(open)]. The authoritative events then arrive in content order.
     store.push(REPO, THREAD, { kind: 'thinking_delta', text: 'reason' });
     store.push(REPO, THREAD, { kind: 'text_delta', text: 'Hel' });
     store.push(REPO, THREAD, { kind: 'text_delta', text: 'lo' });
-    // Authoritative blocks close each open block by KIND — not by "last" (which pushed dupes before the fix).
     store.push(REPO, THREAD, { kind: 'thinking', text: 'reasoning' });
     store.push(REPO, THREAD, { kind: 'text', text: 'Hello' });
     store.push(REPO, THREAD, {
@@ -110,7 +100,6 @@ describe('LiveTurnStore — cumulative in-flight turn', () => {
     });
 
     const snap = store.snapshot(REPO, THREAD)!;
-    // Exactly one thinking + one text block (pre-fix this was thinking,text,thinking,text — the dup).
     expect(snap.blocks.map((b) => b.kind)).toEqual(['thinking', 'text', 'tool']);
     expect(snap.blocks[0]).toMatchObject({
       kind: 'thinking',
@@ -153,8 +142,6 @@ describe('LiveTurnStore — silent reset (orphaned-turn reattach rebuilds a CLEA
     store.reset(REPO, THREAD);
     sub.unsubscribe();
 
-    // The lane is gone, and — crucially — no turn_end frame was fanned (which would race the client's
-    // async reconcileNow().then(endLiveTurn)). Contrast with `end`, which DOES emit turn_end.
     expect(store.snapshot(REPO, THREAD)).toBeNull();
     expect(frames.some((f) => (f.event as { kind?: string }).kind === 'turn_end')).toBe(false);
   });
@@ -172,9 +159,6 @@ describe('LiveTurnStore — silent reset (orphaned-turn reattach rebuilds a CLEA
   });
 
   it('strand → reset → replay rebuilds ONE open text block + a fresh turn_start (baseline strands two)', () => {
-    // BASELINE (no reset): a prior subscription died with an open text block stranded on the lane; the
-    // reattach replays the turn's history from '0-0' (an adaptive-thinking interleave: thinking then text)
-    // ONTO that strand — so the stranded text and the replayed text both sit open at once (two carets).
     const baseline = new LiveTurnStore();
     baseline.push(REPO, THREAD, { kind: 'text_delta', text: 'stranded' }); // prior life, never finalized
     baseline.push(REPO, THREAD, { kind: 'thinking_delta', text: 'plan' }); // replay from '0-0'
@@ -184,9 +168,6 @@ describe('LiveTurnStore — silent reset (orphaned-turn reattach rebuilds a CLEA
       .blocks.filter((b) => b.kind === 'text' && !b.done);
     expect(strandedOpenText).toHaveLength(2); // the bug: two open text blocks
 
-    // FIXED (reset before replay): the strand is cleared, so the replay rebuilds exactly what its events
-    // describe — one open text block — and, because the lane is now empty, the first push fans a fresh
-    // turn_start (isNew).
     const store = new LiveTurnStore();
     store.push(REPO, THREAD, { kind: 'text_delta', text: 'stranded' }); // prior life
     store.reset(REPO, THREAD);
@@ -202,17 +183,11 @@ describe('LiveTurnStore — silent reset (orphaned-turn reattach rebuilds a CLEA
       .blocks.filter((b) => b.kind === 'text' && !b.done);
     expect(openText).toHaveLength(1);
     expect(openText[0].text).toBe('fresh');
-    // A fresh turn_start fired after the reset (isNew) so a connected client rebuilds cleanly.
     expect(frames.some((f) => (f.event as { kind?: string }).kind === 'turn_start')).toBe(true);
   });
 });
 
 describe('LiveTurnStore — background subagent settlement (bg_task marks the anchor, survives reconnect)', () => {
-  // A backgrounded Task subagent's own `tool_result` is an IMMEDIATE launch ack (done=true), not the real
-  // completion — so `done` alone would show the card "done" while it still streams. The subagent's real
-  // completion arrives later as a `bg_task` settlement carrying the spawning Task id (== the anchor toolId);
-  // the store must stamp `bgSettled` on the anchor and carry it in the cumulative snapshot (raw bg_task
-  // frames are NOT replayed on reconnect).
   it('a bg_task settlement stamps bgSettled on the matching anchor tool block', () => {
     const store = new LiveTurnStore();
     store.push(REPO, THREAD, {
@@ -221,14 +196,12 @@ describe('LiveTurnStore — background subagent settlement (bg_task marks the an
       name: 'Task',
       input: { subagent_type: 'general-purpose', run_in_background: true },
     });
-    // The immediate launch ack: the anchor flips done=true but is NOT finished.
     store.push(REPO, THREAD, {
       kind: 'tool_result',
       id: 'tu-bg',
       result: 'launched',
       isError: false,
     });
-    // The subagent streams its own work under the anchor's id.
     store.push(REPO, THREAD, {
       kind: 'text_delta',
       text: 'working',
@@ -239,7 +212,6 @@ describe('LiveTurnStore — background subagent settlement (bg_task marks the an
     expect(anchor).toMatchObject({ done: true });
     expect(anchor.bgSettled).toBeUndefined(); // still running despite done=true
 
-    // Real completion arrives as a bg_task settlement carrying the spawning Task id.
     store.push(REPO, THREAD, {
       kind: 'bg_task',
       status: 'completed',
@@ -291,18 +263,15 @@ describe('LiveTurnStore — server emittedAt stamps (lets the web time-merge liv
     store.push(REPO, THREAD, { kind: 'text_delta', text: 'bye' });
     sub.unsubscribe();
 
-    // turn_start creates no block and carries no stamp; every block-creating delta frame does.
     const delta = frames.filter((f) => (f.event as { kind: string }).kind !== 'turn_start');
     expect(delta).toHaveLength(3);
     for (const f of delta) {
       expect(typeof f.emittedAt).toBe('number');
-      // The stamp is embedded inside `event` too, so it reaches the web through the verbatim controller fan.
       expect((f.event as { emittedAt?: number }).emittedAt).toBe(f.emittedAt);
     }
     const stamps = delta.map((f) => f.emittedAt as number);
     for (let i = 1; i < stamps.length; i++) expect(stamps[i]).toBeGreaterThan(stamps[i - 1]);
 
-    // The turn_start frame creates no block, so it carries no stamp.
     const start = frames.find((f) => (f.event as { kind: string }).kind === 'turn_start');
     expect(start!.emittedAt).toBeUndefined();
   });
@@ -329,7 +298,6 @@ describe('LiveTurnStore — server emittedAt stamps (lets the web time-merge liv
     const store = new LiveTurnStore();
     store.push(REPO, THREAD, { kind: 'text_delta', text: 'Hel' });
     const startStamp = store.snapshot(REPO, THREAD)!.blocks[0].emittedAt;
-    // A second delta appends to the SAME open block — it must not re-stamp the block.
     store.push(REPO, THREAD, { kind: 'text_delta', text: 'lo' });
 
     const block = store.snapshot(REPO, THREAD)!.blocks[0];
@@ -432,17 +400,14 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
     const store = new LiveTurnStore();
     const controller = makeController(store);
 
-    // A turn is already in flight BEFORE this client connects (producer runs independent of the client).
     store.push(REPO, THREAD, { kind: 'text_delta', text: 'Hel' });
     store.push(REPO, THREAD, { kind: 'text_delta', text: 'lo' });
 
-    // The client connects (reconnect) → subscribe to the repo SSE.
     const frames: Array<Record<string, unknown>> = [];
     const sub = controller
       .events('org-1', REPO)
       .subscribe((m: MessageEvent) => frames.push(m.data as Record<string, unknown>));
 
-    // 1) The FIRST thing it receives is a snapshot reflecting everything streamed so far ("Hello").
     const snapshotFrame = frames.find(
       (f) => f.type === 'stream' && (f.event as { kind?: string }).kind === 'snapshot',
     );
@@ -455,7 +420,6 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
     expect(snapEvent.blocks[0]).toMatchObject({ kind: 'text', text: 'Hello' });
     const snapSeq = snapshotFrame!.seq as number;
 
-    // 2) Subsequent deltas arrive live, with seq AFTER the snapshot (so the client appends, not dupes).
     store.push(REPO, THREAD, { kind: 'text_delta', text: ' world' });
     const deltaFrame = frames.find(
       (f) => f.type === 'stream' && (f.event as { kind?: string }).kind === 'text_delta',
@@ -464,7 +428,6 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
     expect((deltaFrame!.event as { text: string }).text).toBe(' world');
     expect(deltaFrame!.seq as number).toBeGreaterThan(snapSeq);
 
-    // 3) turn_end is forwarded so the client reconciles against the durable log.
     store.end(REPO, THREAD);
     const endFrame = frames.find(
       (f) => f.type === 'stream' && (f.event as { kind?: string }).kind === 'turn_end',
@@ -478,7 +441,6 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
     const store = new LiveTurnStore();
     const controller = makeController(store);
 
-    // A turn is already in flight before this client connects — its cumulative blocks carry emittedAt.
     store.push(REPO, THREAD, { kind: 'text_delta', text: 'Hi' });
 
     const frames: Array<Record<string, unknown>> = [];
@@ -486,14 +448,12 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
       .events('org-1', REPO)
       .subscribe((m: MessageEvent) => frames.push(m.data as Record<string, unknown>));
 
-    // 1) The snapshot the controller fans (blocks: s.blocks) carries emittedAt on each block.
     const snapshotFrame = frames.find(
       (f) => f.type === 'stream' && (f.event as { kind?: string }).kind === 'snapshot',
     );
     const snapBlocks = (snapshotFrame!.event as { blocks: Array<{ emittedAt?: number }> }).blocks;
     expect(typeof snapBlocks[0].emittedAt).toBe('number');
 
-    // 2) A subsequent live delta (event: f.event, forwarded verbatim) carries emittedAt inside event.
     store.push(REPO, THREAD, {
       kind: 'tool_use',
       id: 'tu1',
@@ -505,7 +465,6 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
     );
     const deltaEvent = deltaFrame!.event as { emittedAt?: number };
     expect(typeof deltaEvent.emittedAt).toBe('number');
-    // The live block's stamp is strictly after the earlier snapshot block's (monotonic across the turn).
     expect(deltaEvent.emittedAt!).toBeGreaterThan(snapBlocks[0].emittedAt!);
 
     sub.unsubscribe();
@@ -531,7 +490,6 @@ describe('LiveTurnStore — lanes (a brain turn and a build turn coexist on one 
 
   it('two lanes on the same thread accumulate independently and do not clobber each other', () => {
     const store = new LiveTurnStore();
-    // The brain turn (default `main` lane) and a build turn (a `phase:` lane) interleave on ONE thread.
     store.push(REPO, THREAD, { kind: 'text_delta', text: 'brain ' });
     store.push(REPO, THREAD, { kind: 'text_delta', text: 'reply' }, PHASE); // wrong-author would merge here if no lane
     store.push(REPO, THREAD, { kind: 'text_delta', text: 'thinking' }, PHASE);
@@ -548,7 +506,6 @@ describe('LiveTurnStore — lanes (a brain turn and a build turn coexist on one 
       text: 'replythinking',
     });
 
-    // Ending one lane leaves the other intact.
     store.end(REPO, THREAD, PHASE);
     expect(store.snapshot(REPO, THREAD, PHASE)).toBeNull();
     expect(store.snapshot(REPO, THREAD)).not.toBeNull();
@@ -566,7 +523,6 @@ describe('LiveTurnStore — lanes (a brain turn and a build turn coexist on one 
 
   it('a snapshot preserves parentToolUseId so subagent ownership survives a mid-turn reconnect', () => {
     const store = new LiveTurnStore();
-    // Brain text, then a subagent's forwarded text (different author) — must NOT merge into one block.
     store.push(REPO, THREAD, { kind: 'text_delta', text: 'main' });
     store.push(REPO, THREAD, {
       kind: 'text_delta',

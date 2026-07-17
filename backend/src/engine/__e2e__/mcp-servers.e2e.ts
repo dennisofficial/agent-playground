@@ -1,15 +1,3 @@
-// MCP SERVERS — exercise a real external stdio MCP server, spawned by the SDK live inside a turn, and
-// assert the MCP round-trip actually happened.
-//
-// PATH CHOSEN (and why): the `atlas-lsp-ts` LSP bridge. Per ADR-0004 it is an EXTERNAL stdio MCP server
-// (`atlas-lsp-server.mjs`, baked into the sandbox image) that the Claude SDK spawns as a child process for
-// the turn — driving `typescript-language-server` over LSP. `turn-runner.service.ts` wires it via
-// `buildLspBridgeOptions`, registered ONLY for `mode:'execute'` turns and merged into the same
-// `mcpServers`/`allowedTools` as the host bridge. This is the MOST DIRECT, reliably-triggerable MCP path
-// (no operator-defined server / secrets needed, no host round-trip), and it proves the SDK's MCP-subprocess
-// wiring end to end. We run an execute turn that calls `mcp__atlas-lsp-ts__diagnostics` on a real worktree
-// file and assert BOTH a tool_use for that qualified MCP name AND a returned tool_result — i.e. the MCP
-// subprocess was spawned, spoke MCP to the SDK, and answered (the round-trip), not merely "the turn didn't crash".
 import {
   cleanup,
   events,
@@ -54,14 +42,12 @@ export async function run(sandbox: string): Promise<ScenarioResult> {
       return { pass: false, detail: `error frame: ${String(error.message).slice(0, 200)}` };
 
     const evs = events(frames);
-    // tool_use (rich) or coarse tool event naming the qualified LSP MCP tool.
     const lspUses = evs.filter(
       (e) =>
         (e.kind === 'tool_use' || e.kind === 'tool') &&
         String(e.name ?? '').includes('atlas-lsp-ts'),
     );
     const lspUseIds = new Set(lspUses.map((e) => e.id).filter(Boolean));
-    // A tool_result correlated to one of those calls = the MCP subprocess answered (the round-trip).
     const lspResults = evs.filter((e) => e.kind === 'tool_result' && lspUseIds.has(e.id));
     const anyResult = lspResults.find((e) => e.isError !== true);
     console.log(

@@ -28,8 +28,6 @@ function stimulusStub(fields: Partial<TurnEnvelope>): TurnEnvelope {
   };
 }
 
-/** A manager wired with only `driverStore.threadRole` live — everything else inert. Mirrors the minimal
- *  construction convention in `stamp-input-ack.spec.ts`. */
 function makeManager(threadRole: ReturnType<typeof vi.fn>) {
   const driverStore = { threadRole };
   const inert = {} as never;

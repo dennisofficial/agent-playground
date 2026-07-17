@@ -14,9 +14,6 @@ import { JobDependencyEntity, JobEntity } from '../persistence/entities';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
 import { StimulusStoreService } from '../stimulus/stimulus-store.service';
 
-// A job can be BLOCKED only from a pre-build conversational state; 'blocked' is included so a
-// multi-blocker create_job can add its edges one at a time (the first live blocker parks it; adding
-// the next blocker to an already-blocked job just adds an edge and it stays blocked).
 const BLOCKABLE_STATUSES = new Set([
   'open',
   'planning',
@@ -33,13 +30,10 @@ function assertUuid(value: string): void {
   }
 }
 
-/** How a resolved blocker actually resolved — fed into {@link JobDependencyService.onBlockerResolved}. */
 export type BlockerResolution = 'merged' | 'closed_unmerged' | 'cancelled' | 'deleted' | 'archived';
 
-/** A non-terminal-safe classification of a blocker (excludes the in-flight `merged` case). */
 type NonLandedResolution = Exclude<BlockerResolution, 'merged'>;
 
-/** A blocker row of a job — the compact projection `blockersOf` returns. */
 export type JobBlockerRow = {
   jobId: string;
   title: string | null;
@@ -47,7 +41,6 @@ export type JobBlockerRow = {
   status: string;
 };
 
-/** A dependent (blocked) job row — the compact projection `dependentsOf` returns. */
 export type DependentJobRow = {
   id: string;
   org_id: string;
@@ -55,7 +48,6 @@ export type DependentJobRow = {
   status: string;
 };
 
-/** A repo's job as surfaced by {@link JobDependencyService.listJobs} for peer-dependency discovery. */
 export type JobListRow = {
   id: string;
   title: string | null;
@@ -68,19 +60,6 @@ export type JobListRow = {
   createdAt: Date;
 };
 
-/**
- * JOB DEPENDENCY SERVICE — the single source of truth for job-to-job "blocked by" edges and the wake
- * funnel that fires when a blocker resolves. Two surfaces feed edges here (manual link and `create_job`
- * dependsOn); both share the same guard/park/wake semantics, so the rule lives ONCE.
- *
- * A dependency is a LIVE block only while its blocker hasn't reached a terminal outcome
- * (`isTerminalBlocker`). The block CONTEXT is modeled as ordinary queued `main`-lane seeds recorded when the
- * edge is wired (a born-blocked provenance note + brief, or a mid-flight "blocked" note) and HELD while the
- * job is blocked. Once every blocker on a `blocked` job is terminal, the funnel records a JIT "unblocked by
- * X, Y" note (while still blocked, so the pump guard holds it too), flips the job open, then pumps — so the
- * whole held backlog drains as ONE coalesced turn. See `onBlockerResolved` for the funnel and
- * `addDependency`/`removeDependency` for the two ways an edge's live-block state changes.
- */
 @Injectable()
 export class JobDependencyService {
   private readonly logger = new Logger(JobDependencyService.name);
@@ -98,13 +77,6 @@ export class JobDependencyService {
     private readonly turnRegistry?: TurnRegistry,
   ) {}
 
-  /**
-   * Is this blocker DONE for dependency purposes, decided purely from its PERSISTED state (never from a
-   * transient resolution arg passed by a caller)? True when the blocker is absent/deleted, its PR merged
-   * or closed (a closed-unmerged PR is still terminal — the dependent must not strand waiting for a merge
-   * that will never come), or the job itself was cancelled. A blocker that reached build-`done` but whose
-   * PR is still open/unopened is NOT terminal — it must actually merge (or close) first.
-   */
   isTerminalBlocker(job: JobEntity | null): boolean {
     if (!job) return true;
     return this.isTerminalState(job.pr_state, job.status);
@@ -116,19 +88,6 @@ export class JobDependencyService {
     );
   }
 
-  /**
-   * List this repo's jobs (newest-first) so the brain can discover sibling job ids to wire peer
-   * dependencies. Repo-scoped from the args (the caller passes org/repo from the stimulus closure, never
-   * from tool args). Read-only.
-   *
-   * DEFAULT (no `status`): returns only jobs that are still a LIVE dependency target — it excludes those
-   * that are dead as a blocker, mirroring {@link isTerminalState} above (PR merged/closed OR status
-   * cancelled/deleting). This deliberately INCLUDES a `status='done'` job whose
-   * PR is still open (the canonical "depend on this until its PR merges" blocker — `done` is stamped when
-   * the PR OPENS) and `amending`. The predicate is NULL-safe (`IS DISTINCT FROM`) so a job with no PR yet
-   * (`pr_state` NULL) is kept. Pass `status` for an EXACT-status filter (bypasses the terminal exclusion),
-   * or `'all'` for no filter at all.
-   */
   async listJobs(args: {
     orgId: string;
     repoId: string;
@@ -172,12 +131,6 @@ export class JobDependencyService {
     }));
   }
 
-  /**
-   * Validate a set of prospective `dependsOn` blockers for a NOT-YET-CREATED dependent, so `create_job` can
-   * reject a bad/cross-repo edge BEFORE it persists (and parks) the new job — leaving no orphan behind a
-   * false failure. Mirrors {@link addDependency}'s endpoint check (existence + same org+repo). Self-dep and
-   * cycles are moot for a fresh job (its id isn't knowable to the caller, and nothing depends on it yet).
-   */
   async assertDependenciesValid(args: {
     orgId: string;
     repoId: string;
@@ -192,8 +145,6 @@ export class JobDependencyService {
     }
   }
 
-  /** Add an advisory "blocked by" edge: `jobId` depends on `dependsOnJobId`. Parks `jobId` if the blocker
-   *  is still live. `seed` (born-blocked only) is the first-turn message to replay once unblocked. */
   async addDependency(args: {
     orgId: string;
     repoId: string;
@@ -207,7 +158,6 @@ export class JobDependencyService {
       throw new BadRequestException('a job cannot depend on itself');
     }
 
-    // Both endpoints must exist in this org+repo (cross-repo edges are rejected).
     const [dependent, blocker] = await Promise.all([
       this.jobs.findOne({
         where: { id: jobId, org_id: orgId, repo_id: repoId },
@@ -243,7 +193,6 @@ export class JobDependencyService {
       throw new BadRequestException('that dependency would create a cycle');
     }
 
-    // Idempotent: the unique (job_id, depends_on_job_id) makes a repeat insert a conflict.
     await this.deps
       .createQueryBuilder()
       .insert()
@@ -256,18 +205,11 @@ export class JobDependencyService {
       .orIgnore()
       .execute();
 
-    // The blocker already resolved — the edge is recorded for history, but it adds no LIVE block.
     if (this.isTerminalBlocker(blocker)) {
       return { blocked: dependent.status === 'blocked' };
     }
 
     await this.jobs.update({ id: jobId }, { status: 'blocked' });
-    // Record the block CONTEXT as ordinary queued `main`-lane seeds (held while blocked, drained as one
-    // coalesced turn on wake) instead of a `blocked_seed_message` column. A born-blocked edge (seed present)
-    // queues a provenance note + the opening brief; a manual/link block of an already-running job (no seed)
-    // queues a single "you've been blocked" note only when this edge is the transition into `blocked`.
-    // Adding another live edge to an already-blocked job is not a new mid-flight block event (and for a
-    // born-blocked job would be false context), so it only records the edge.
     if (args.seed != null) {
       await this.stimulusStore.recordBornBlockedSeedsIfAbsent({
         orgId,
@@ -286,8 +228,6 @@ export class JobDependencyService {
     return { blocked: true };
   }
 
-  /** Remove a "blocked by" edge; re-evaluates the dependent and wakes it if every remaining blocker is
-   *  now terminal. Idempotent — removing an absent edge is a no-op, not an error. */
   async removeDependency(args: {
     orgId: string;
     repoId: string;
@@ -295,7 +235,6 @@ export class JobDependencyService {
     dependsOnJobId: string;
   }): Promise<void> {
     const { orgId, repoId, jobId, dependsOnJobId } = args;
-    // Capture the edge the operator is lifting BEFORE the delete, so the wake message can still name it.
     const removed = await this.jobs.findOne({ where: { id: dependsOnJobId } });
     await this.deps.delete({
       org_id: orgId,
@@ -323,13 +262,6 @@ export class JobDependencyService {
     }
   }
 
-  /**
-   * BACKSTOP reconcile for ONE `blocked` job (the {@link JobUnblockSweep} entrypoint): if every remaining
-   * blocker is terminal-or-ABSENT (a deleted blocker row simply doesn't appear in `blockersOf`, so an empty
-   * or all-terminal set unblocks), unpark + wake it. Idempotent — the conditional UPDATE no-ops if the job
-   * already moved off `blocked`. The sweep is a dropped-event backstop with no live resolution to report, so
-   * it classifies the remaining terminal blockers from their persisted state. Returns whether it unblocked.
-   */
   async reconcileBlockedJob(jobId: string): Promise<boolean> {
     const blockers = await this.blockersOf(jobId);
     const allTerminal = blockers.every((b) => this.isTerminalState(b.prState, b.status));
@@ -337,7 +269,6 @@ export class JobDependencyService {
     return this.unblockAndWake(jobId, this.classifiedBlockerInfos(blockers));
   }
 
-  /** The blocker jobs of `jobId` (what it depends on), as a compact row per blocker. */
   async blockersOf(jobId: string): Promise<JobBlockerRow[]> {
     const rows: Array<{
       jobId: string;
@@ -354,7 +285,6 @@ export class JobDependencyService {
     return rows;
   }
 
-  /** Blockers for MANY jobs in one query (avoids N+1 in the list DTOs). Returns dependentJobId → its blockers. */
   async blockersOfManyBlocked(jobIds: string[]): Promise<Map<string, JobBlockerRow[]>> {
     const map = new Map<string, JobBlockerRow[]>();
     if (jobIds.length === 0) return map;
@@ -374,7 +304,6 @@ export class JobDependencyService {
     return map;
   }
 
-  /** The dependent (blocked) jobs of `blockerJobId` — jobs that depend ON it. */
   async dependentsOf(blockerJobId: string): Promise<DependentJobRow[]> {
     const rows: DependentJobRow[] = await this.dataSource.query(
       `SELECT j.id, j.org_id, j.repo_id, j.status
@@ -386,11 +315,6 @@ export class JobDependencyService {
     return rows;
   }
 
-  /**
-   * THE WAKE FUNNEL: called once a blocker job reaches a terminal outcome. Finds every job blocked on it,
-   * and for each still-`blocked` dependent whose OTHER blockers (if any) are also terminal, conditionally
-   * unparks it and wakes its brain. Fail-soft PER dependent — one bad wake must never block the others.
-   */
   async onBlockerResolved(blockerJobId: string, resolution: BlockerResolution): Promise<void> {
     const dependents = await this.dependentsOf(blockerJobId);
     for (const dependent of dependents) {
@@ -409,8 +333,6 @@ export class JobDependencyService {
     resolution: BlockerResolution,
   ): Promise<void> {
     const blockers = await this.blockersOf(dependent.id);
-    // The blocker resolving RIGHT NOW is treated as terminal unconditionally — required for the
-    // `deleted` path, where its row still exists at call time and won't yet look terminal from state.
     const allTerminal = blockers.every(
       (b) => b.jobId === blockerJobId || this.isTerminalState(b.prState, b.status),
     );
@@ -425,26 +347,6 @@ export class JobDependencyService {
     );
   }
 
-  /**
-   * The shared unblock DISPATCH, in the order the wake-race fix requires: record the JIT unblock note FIRST
-   * (while the job is still `blocked`, so the pump guard holds it with the rest of the backlog), THEN attempt
-   * the conditional `blocked→open` flip. A lost flip race means another caller already unblocked + pumped, so
-   * we return without pumping (the winner recorded the note and pumps). The note write and status flip are
-   * protected by a row lock on the dependent job: without that, a losing concurrent wake can read
-   * `status='blocked'`, wait until the winner drains/delivers its note, then append a second stale unblock
-   * note after the job is already open. On a successful flip we prompt the drain; if that pump throws we
-   * re-park so the JobUnblockSweep re-drives — the held seed rows (note included) persist undelivered, so
-   * at-least-once now rides the stimulus `delivered_at`, not a column. Returns whether this call actually
-   * unblocked the job.
-   *
-   * Re-checks the job's CURRENT status immediately before writing anything — every caller
-   * (`wakeDependentIfAllTerminal`'s direct call, and `unblockAndWake` for `removeDependency`/
-   * `reconcileBlockedJob`) may be working off a status snapshot that's gone stale (a manual edge removal
-   * on a job that was never actually parked — e.g. an edge to an already-terminal blocker recorded "for
-   * history" by `addDependency` — or a concurrent wake racing another caller on the same job). Without this,
-   * the note write below is unconditional and lands a bogus/duplicate "unblocked" system note in a job that
-   * was never (or is no longer) blocked.
-   */
   private async recordUnblockNoteThenPump(
     jobId: string,
     orgId: string,
@@ -481,16 +383,12 @@ export class JobDependencyService {
       await this.brainGateway.pumpUnblockedJob(jobId, orgId, repoId);
       return true;
     } catch (err) {
-      // The pump dropped — re-park so the JobUnblockSweep re-drives it (recordUnblockNote dedupes on retry).
-      // Guarded on `open` so we never clobber a status the drain already advanced past.
       this.logger.warn(`pumpUnblockedJob failed for job=${jobId}; re-parking for sweep: ${err}`);
       await this.jobs.update({ id: jobId, status: 'open' }, { status: 'blocked' });
       return false;
     }
   }
 
-  /** How a blocker OTHER than the one resolving right now resolved, from its persisted state. Only called
-   *  for blockers already known terminal, so a non-merged/closed PR state means a terminal job status. */
   private classifyResolvedBlocker(
     prState: string | null,
     status: string,
@@ -502,9 +400,6 @@ export class JobDependencyService {
     return 'cancelled';
   }
 
-  /** The full blocker roster for an event-driven unblock: the blocker resolving RIGHT NOW carries its live
-   *  `resolution`; every other (already-terminal) blocker is classified from its persisted state. Feeds the
-   *  wake message so it can name each job that was holding this one and how it resolved. */
   private resolvedBlockerInfos(
     blockers: JobBlockerRow[],
     blockerJobId: string,
@@ -518,8 +413,6 @@ export class JobDependencyService {
     }));
   }
 
-  /** Classify a set of already-terminal blockers from their persisted state (the manual-unblock/sweep paths,
-   *  which have no live resolution to report). */
   private classifiedBlockerInfos(blockers: JobBlockerRow[]): UnblockBlockerInfo[] {
     return blockers.map((b) => ({
       jobId: b.jobId,
@@ -528,22 +421,12 @@ export class JobDependencyService {
     }));
   }
 
-  /** Conditional unblock + wake used by the manual-unblock (`removeDependency`) and sweep
-   *  (`reconcileBlockedJob`) paths; `blockers` names the jobs that were holding this one so the wake message
-   *  can reorient the brain. */
   private async unblockAndWake(jobId: string, blockers: UnblockBlockerInfo[]): Promise<boolean> {
-    // Resolve org/repo up front — the JIT unblock note must be recorded while the job is still `blocked`
-    // (before the flip), so we need the routing coordinates before touching the status.
     const job = await this.jobs.findOne({ where: { id: jobId } });
     if (!job) return false;
     return this.recordUnblockNoteThenPump(jobId, job.org_id, job.repo_id, blockers);
   }
 
-  /**
-   * Would adding "jobId depends on dependsOnJobId" create a cycle? It does iff dependsOnJobId already
-   * (transitively) depends on jobId — i.e. jobId is reachable from dependsOnJobId by following depends-on
-   * edges. Repo-scoped recursive walk.
-   */
   private async wouldCycle(
     repoId: string,
     jobId: string,

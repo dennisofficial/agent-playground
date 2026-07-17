@@ -23,7 +23,6 @@ describe('buildUserMcpBridgeOptions', () => {
       linear: { type: 'http', url: mcpHubUrl('linear'), alwaysLoad: true },
     });
     expect(out.userMcpToolNames).toEqual(['mcp__linear']);
-    // Remote servers are Claude-only — nothing rendered for Codex.
     expect(out.codexExtraMcpServers).toEqual({});
   });
 

@@ -1,31 +1,3 @@
-/**
- * LIVE HTTP proof of the "per-job auto-approve" feature: boots the REAL `AppModule` over HTTP
- * (supertest, real cookie auth + `OrgMembershipGuard`), seeds `jobs` rows directly against live
- * Postgres, then drives `PATCH /web/orgs/:orgId/repos/:repoId/jobs/:jobId/auto-approve` and asserts
- * the endpoint's full contract for the `{mode}` union (`'off'|'plan'|'ship'|'both'`):
- *
- *   - SET a mode with no gate parked (status='open'): 200 `{ok:true,autoApproveMode:<mode>}`; the row
- *     flips `auto_approve_mode=<mode>` + `auto_approve_by=<caller>`; `GET .../pipeline` round-trips
- *     `autoApproveMode:<mode>` on the `no_job` shape.
- *   - SET 'ship'/'both' while `awaiting_ship_review`: 200, AND — via the exact human-click seam
- *     (`WebSurface.receiveApprovalClick` → the web-surface-module bridge → `ThreadDriver.resolveShipApprovalDurably`)
- *     — the job auto-advances OUT of the ship gate with no separate click; the resulting `GET .../pipeline`
- *     (now off the `no_job` shape) still carries `autoApproveMode`. SET 'plan'/'off' while parked at the
- *     SAME gate must NOT resolve it.
- *   - SET 'plan'/'both' while `awaiting_approval`: 200, AND resolves the plan gate via the SAME click seam
- *     (`APPROVE_ACTION_ID` → the module bridge's durable fallback → `AgentSessionManager.resolveApprovalDurably`),
- *     driving the job to `running`/`base_check`. SET 'ship'/'off' while parked at the plan gate must NOT
- *     resolve it.
- *   - SET 'off': 200 `{ok:true,autoApproveMode:'off'}`; `auto_approve_mode='off'` and `auto_approve_by` is
- *     left untouched (audit) — the update omits the key entirely for 'off'.
- *   - Foreign-org job → 404. Invalid/missing `mode` → 400.
- *
- * Mirrors `web-surface.shipping.int.test.ts` / `web-surface.spin-up-preview.int.test.ts` for HTTP/auth
- * setup and the ship-gate row shape, and `web-surface.approval-dispatch.int.test.ts` for seeding a job
- * parked at the plan-approval gate with its `decision_records` row. `ChatStimulusBridge` is neutralized
- * (mirroring that same test) so a resolved plan gate's `plan-approved` seed is delivered but never
- * consumed into a real brain turn — this test only proves the GATE resolution, not the downstream build.
- */
 
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
@@ -58,7 +30,6 @@ const fakeCreds = {
   engineAuth: async () => ({ secret: 'test-secret' }),
 };
 
-// Fixed ids → distinct from every other int test (which purge by their own ids).
 const ORG = '88888888-8888-4888-8888-888888888801';
 const REPO = '88888888-8888-4888-8888-888888888802';
 const OPEN_JOB = '88888888-8888-4888-8888-888888888803'; // set mode, no gate parked
@@ -135,11 +106,7 @@ async function loadJobRow(jobId: string): Promise<Record<string, unknown> | unde
   return rows[0];
 }
 
-/** Seed a job parked at `awaiting_approval` + its `decision_records` row (mirrors
- *  `web-surface.approval-dispatch.int.test.ts`'s `seedAwaitingApproval`). */
 async function seedAwaitingApproval(jobId: string, drId: string, title: string): Promise<void> {
-  // `jobs.decision_record_id` and `decision_records.job_id` are mutually-referential FKs, so seed the job
-  // WITHOUT the pointer first, insert the record (its `job_id` now resolves), then stamp the pointer.
   await ds.query(
     `INSERT INTO jobs (id, org_id, repo_id, origin, title, kind, status, activity, base_branch)
      VALUES ($1, $2, $3, 'control', $4, 'feature', 'awaiting_approval', 'idle', 'main')`,
@@ -154,9 +121,6 @@ async function seedAwaitingApproval(jobId: string, drId: string, title: string):
   await ds.query(`UPDATE jobs SET decision_record_id = $1 WHERE id = $2`, [drId, jobId]);
 }
 
-/** Poll the DB until `predicate` is true or the timeout elapses — several of these resolutions are
- *  fire-and-forget through the module bridge (`approval$` subscriber), so they land shortly AFTER the
- *  HTTP response, not synchronously with it. */
 async function waitFor(
   predicate: () => Promise<boolean>,
   { timeoutMs = 5000, intervalMs = 100 } = {},
@@ -169,7 +133,6 @@ async function waitFor(
   }
 }
 
-/** Wait a fixed grace period, asserting a gate did NOT resolve (there is no positive event to poll for). */
 async function settle(ms = 400): Promise<void> {
   await new Promise((r) => setTimeout(r, ms));
 }
@@ -191,9 +154,6 @@ beforeAll(async () => {
     .useValue(fakeCreds)
     .overrideProvider(JobTitler)
     .useValue(new FakeThreadTitler())
-    // Neutralize the inbound → ChatStimulus pump (mirrors `web-surface.approval-dispatch.int.test.ts`): a
-    // resolved plan gate fires a `plan-approved` seed, which this test never wants consumed into a real
-    // brain turn — only the GATE resolution (the durable job transition) is under test here.
     .overrideProvider(ChatStimulusBridge)
     .useValue({})
     .compile();
@@ -228,7 +188,6 @@ beforeAll(async () => {
     [REPO, ORG],
   );
 
-  // A SECOND org/repo/job the owner is NOT a member of — proves the endpoint 404s across tenants.
   await ds.query(
     `INSERT INTO organizations (id, name, slug, status) VALUES ($1, 'Foreign Org', 'auto-approve-foreign-org', 'active')`,
     [FOREIGN_ORG],
@@ -244,16 +203,12 @@ beforeAll(async () => {
     [FOREIGN_JOB, FOREIGN_ORG, FOREIGN_REPO],
   );
 
-  // CASE 1 — set a mode, no gate parked: a plain planning job.
   await ds.query(
     `INSERT INTO jobs (id, org_id, repo_id, origin, title, status)
      VALUES ($1, $2, $3, 'control', 'Open planning job', 'open')`,
     [OPEN_JOB, ORG, REPO],
   );
 
-  // CASE 2 — the ship-review gate (mirrors web-surface.spin-up-preview.int.test.ts's seedGateJob: kind='feature',
-  // status='awaiting_ship_review', activity='idle', ship marker still null). Three independent jobs so the
-  // resolve / no-resolve / both cases don't interfere with each other.
   for (const [id, title] of [
     [SHIP_GATE_JOB, 'Ready to ship build'],
     [SHIP_GATE_NO_RESOLVE_JOB, 'Ready to ship build (no-resolve)'],
@@ -266,7 +221,6 @@ beforeAll(async () => {
     );
   }
 
-  // CASE 3 — the plan-approval gate, each with its own durable decision_records row.
   await seedAwaitingApproval(PLAN_GATE_JOB, PLAN_GATE_DR, 'Plan gate resolves');
   await seedAwaitingApproval(
     PLAN_GATE_NO_RESOLVE_JOB,
@@ -275,15 +229,12 @@ beforeAll(async () => {
   );
   await seedAwaitingApproval(PLAN_GATE_BOTH_JOB, PLAN_GATE_BOTH_DR, 'Plan gate resolves (both)');
 
-  // CASE 4 — set then disable: a plain running job (no gate to auto-resolve, keeps the disable
-  // assertion isolated from the gate-resolution cases).
   await ds.query(
     `INSERT INTO jobs (id, org_id, repo_id, origin, title, status)
      VALUES ($1, $2, $3, 'control', 'Disable target job', 'running')`,
     [DISABLE_JOB, ORG, REPO],
   );
 
-  // CASE 5b — bad body target (status irrelevant, just needs to exist in-org).
   await ds.query(
     `INSERT INTO jobs (id, org_id, repo_id, origin, title, status)
      VALUES ($1, $2, $3, 'control', 'Bad body job', 'open')`,
@@ -323,17 +274,14 @@ describe('auto-approve — PATCH .../jobs/:jobId/auto-approve (live Postgres, re
       auto_approve_mode: 'both',
       auto_approve_by: ownerId,
     });
-    // eslint-disable-next-line no-console -- evidence: OBSERVED DB row after set.
     console.log('OBSERVED CASE 1 DB row (open job, mode=both):', JSON.stringify(row));
 
-    // Sub-case: pipeline DTO for a still-`open` job rides the `no_job` shape and must surface autoApproveMode.
     const pipe = await request(server).get(pipelineUrl(OPEN_JOB)).set('Cookie', ownerCookie);
     expect(pipe.status).toBe(200);
     expect(pipe.body).toMatchObject({
       status: 'no_job',
       autoApproveMode: 'both',
     });
-    // eslint-disable-next-line no-console
     console.log('OBSERVED CASE 1 GET pipeline:', JSON.stringify(pipe.body));
   });
 
@@ -352,33 +300,26 @@ describe('auto-approve — PATCH .../jobs/:jobId/auto-approve (live Postgres, re
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true, autoApproveMode: 'ship' });
 
-    // The resolve is fire-and-forget through the `approval$` → web-surface-module bridge →
-    // `ThreadDriver.resolveShipApprovalDurably` → `DriverStoreService.approveShip` (a conditional UPDATE
-    // that flips `awaiting_ship_review → running` + stamps `ship_review_approved_at`), so poll briefly.
     await waitFor(async () => {
       const row = await loadJobRow(SHIP_GATE_JOB);
       return row?.status !== 'awaiting_ship_review';
     });
 
     const after = await loadJobRow(SHIP_GATE_JOB);
-    // THE key "auto-advances with no click" proof: the gate resolved on its own.
     expect(after).toMatchObject({
       status: 'running',
       auto_approve_mode: 'ship',
       auto_approve_by: ownerId,
     });
     expect(after?.ship_review_approved_at).not.toBeNull();
-    // eslint-disable-next-line no-console
     console.log(
       `OBSERVED CASE 2a transition: awaiting_ship_review -> ${String(after?.status)} (ship_review_approved_at=${String(after?.ship_review_approved_at)})`,
     );
 
-    // The job is no longer `open`/`no_job` — the NORMAL pipeline shape must also surface autoApproveMode.
     const pipe = await request(server).get(pipelineUrl(SHIP_GATE_JOB)).set('Cookie', ownerCookie);
     expect(pipe.status).toBe(200);
     expect(pipe.body).not.toMatchObject({ status: 'no_job' });
     expect(pipe.body).toMatchObject({ autoApproveMode: 'ship' });
-    // eslint-disable-next-line no-console
     console.log('OBSERVED CASE 2a GET pipeline (normal shape):', JSON.stringify(pipe.body));
   });
 
@@ -430,8 +371,6 @@ describe('auto-approve — PATCH .../jobs/:jobId/auto-approve (live Postgres, re
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true, autoApproveMode: 'plan' });
 
-    // The resolve is fire-and-forget through the `approval$` → web-surface-module bridge's durable
-    // fallback → `AgentSessionManager.resolveApprovalDurably` (mirrors `web-surface.approval-dispatch.int.test.ts`).
     await waitFor(async () => {
       const row = await loadJobRow(PLAN_GATE_JOB);
       return (
@@ -445,7 +384,6 @@ describe('auto-approve — PATCH .../jobs/:jobId/auto-approve (live Postgres, re
       activity: 'base_check',
       build_path: 'plan',
     });
-    // eslint-disable-next-line no-console
     console.log('OBSERVED CASE 3a DB row after auto-resolve:', JSON.stringify(after));
   });
 
@@ -502,12 +440,10 @@ describe('auto-approve — PATCH .../jobs/:jobId/auto-approve (live Postgres, re
     expect(disableRes.body).toEqual({ ok: true, autoApproveMode: 'off' });
 
     const afterDisable = await loadJobRow(DISABLE_JOB);
-    // `auto_approve_by` is left set — the endpoint omits the key entirely for `mode:'off'`.
     expect(afterDisable).toMatchObject({
       auto_approve_mode: 'off',
       auto_approve_by: ownerId,
     });
-    // eslint-disable-next-line no-console
     console.log(
       'OBSERVED CASE 4 DB row after set(both) then set(off):',
       JSON.stringify(afterDisable),
@@ -515,9 +451,6 @@ describe('auto-approve — PATCH .../jobs/:jobId/auto-approve (live Postgres, re
   });
 
   it('CASE 5a — foreign-org job: 404 (caller IS a member of the URL org, but the jobId belongs to a different org)', async () => {
-    // Use the CALLER's OWN org/repo in the URL (so `OrgMembershipGuard` passes — 403 would mean the
-    // guard rejected before reaching the controller) but target a jobId that actually lives in
-    // FOREIGN_ORG. `requireThread`'s org-scoped lookup (`{ id: jobId, org_id: org.id }`) must 404.
     const res = await request(server)
       .patch(autoApproveUrl(FOREIGN_JOB))
       .set('Cookie', ownerCookie)
@@ -563,7 +496,6 @@ describe('auto-approve — POST .../jobs armed at creation (live Postgres, real 
       auto_approve_mode: 'plan',
       auto_approve_by: ownerId,
     });
-    // eslint-disable-next-line no-console -- evidence: OBSERVED DB row of the newly-created job.
     console.log('OBSERVED CREATE 1 DB row (created with mode=plan):', JSON.stringify(row));
   });
 
@@ -576,7 +508,6 @@ describe('auto-approve — POST .../jobs armed at creation (live Postgres, real 
       auto_approve_mode: 'off',
       auto_approve_by: null,
     });
-    // eslint-disable-next-line no-console
     console.log('OBSERVED CREATE 2 DB row (created with no mode):', JSON.stringify(row));
   });
 

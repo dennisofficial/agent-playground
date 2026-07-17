@@ -3,16 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 import type { CurrentOrgCtx } from '../../org/current-org.decorator';
 import { WebSurfaceController } from '../web-surface.controller';
 
-/**
- * Cross-tenant isolation regression (the hole Codex flagged): `OrgMembershipGuard` only proves the
- * caller is a member of `:orgId`, but thread-keyed ops act on a `jobId`. Without scoping, a member of
- * ANY org with a leaked thread id could read/write/archive another org's thread — reclaiming that
- * tenant's worktree/container. `requireThread(jobId, org.id)` closes it: every thread-keyed op resolves
- * the thread scoped to the caller's org or 404s. (The web DELETE now ARCHIVES rather than hard-deletes.)
- *
- * Pure unit test — the controller is instantiated with mocked repos; `threads.findOne` returns a row only
- * when its `org_id` matches, emulating the scoped query.
- */
 function makeController(threadOrgId: string, thread: Record<string, unknown> = {}) {
   const archiveJobDeep = vi.fn(async () => undefined);
   const claimArchiveJob = vi.fn(async () => true);
@@ -93,7 +83,6 @@ describe('WebSurfaceController — cross-tenant authz', () => {
     await expect(controller.deleteThread(orgB, 'leaked-thread-id')).rejects.toBeInstanceOf(
       NotFoundException,
     );
-    // 404s at requireThread — never claims nor reclaims.
     expect(claimArchiveJob).not.toHaveBeenCalled();
     expect(archiveJobDeep).not.toHaveBeenCalled();
   });
@@ -109,7 +98,6 @@ describe('WebSurfaceController — cross-tenant authz', () => {
   it("deleteThread on the caller's OWN thread proceeds (org-scoped archive)", async () => {
     const { controller, archiveJobDeep, claimArchiveJob } = makeController('orgB'); // thread belongs to org B
     await controller.deleteThread(orgB, 'my-thread-id');
-    // Claims the archive (durable `archived` state), then backgrounds the org-scoped filesystem reclaim.
     expect(claimArchiveJob).toHaveBeenCalledWith('my-thread-id', 'orgB');
     expect(archiveJobDeep).toHaveBeenCalledWith('my-thread-id', 'orgB');
   });

@@ -19,14 +19,12 @@ import { GithubPrStateSync } from '../driver/github-pr-state-sync.service';
 import { IntakeOutcome, StimulusIntake } from '../stimulus/stimulus-intake.service';
 import type { GithubNotificationSource } from './github-notification.source';
 
-/** Express request shape the ingress controllers read (rawBody enabled on the Nest app). */
 export interface RawBodyRequest {
   rawBody?: Buffer;
   body?: unknown;
   headers: Record<string, string | string[] | undefined>;
 }
 
-/** Lower-case + flatten the header map an adapter reads (signature, delivery id, event type). */
 export function normalizeHeaders(
   headers: Record<string, string | string[] | undefined>,
 ): Record<string, string | undefined> {
@@ -37,11 +35,8 @@ export function normalizeHeaders(
   return out;
 }
 
-/** Build the gateway-agnostic `RawNotification` from a raw-body Express request. */
 export function toRawNotification(req: RawBodyRequest): RawNotification {
   return {
-    // The HMAC must cover the EXACT bytes Slack/GitHub sent — never a re-serialized object. `rawBody`
-    // is present because the Atlas HTTP app is created with `rawBody: true`.
     rawBody:
       req.rawBody ??
       Buffer.from(typeof req.body === 'string' ? req.body : JSON.stringify(req.body ?? {})),
@@ -50,23 +45,6 @@ export function toRawNotification(req: RawBodyRequest): RawNotification {
   };
 }
 
-/**
- * Run an adapter on a raw request and feed an accepted event into the intake, mapping the combined
- * `IngressResult` + `IntakeOutcome` to an HTTP response. The controllers are thin: this is the shared
- * verify → intake → status plumbing so every gateway controller behaves identically.
- *
- * Status mapping (a webhook caller reads these):
- *  - accepted + admitted   → 202 { status:'accepted', stimulusId, jobId }
- *  - admitted:false no-owner → 202 { status:'ignored', reason:'no-owner' }  (route-only: nothing owns it)
- *  - admitted:false dup/rate → 202 { status:'deduped', reason }
- *  - ignored               → 202 { status:'ignored', reason }   (verified but no action — a success)
- *  - rejected:bad-signature / unverifiable → 401
- *  - rejected:unroutable   → 404
- *  - rejected:malformed    → 400
- *
- * A `pr-sync` outcome can never reach this path — `adapter.handle()` no longer emits one (see
- * `runPrWebhook`, the silent PR-state front door's counterpart).
- */
 export async function runIngress(
   logger: Logger,
   adapter: NotificationSource,
@@ -77,11 +55,6 @@ export async function runIngress(
   return mapTriageToHttp(logger, adapter, intake, result);
 }
 
-/**
- * Map a triage `IngressResult` (already verified/routed/parsed by an adapter) to the intake → HTTP status
- * plumbing shared by every work-events door. Extracted from `runIngress` so `runWorkEvent` (the door that
- * ALSO schedules the silent CI-status sync) can reuse the identical mapping.
- */
 export async function mapTriageToHttp(
   logger: Logger,
   adapter: NotificationSource,
@@ -97,14 +70,11 @@ export async function mapTriageToHttp(
     return { status: 'ignored', reason: result.reason };
   }
   if (result.outcome !== 'accepted') {
-    // Unreachable via `handle()` (only `handlePrWebhook` emits 'pr-sync') — kept for exhaustiveness.
     return { status: 'ignored', reason: 'unsupported' };
   }
 
   const outcome: IntakeOutcome = await intake.intakeEvent(result.event);
   if (!outcome.admitted) {
-    // 'no-owner' = a verified event nothing owns → a deliberate no-op (route-only, d6), reported as a
-    // success like 'ignored'. 'duplicate'/'rate-limited' = collapsed by the firehose filter → 'deduped'.
     const status = outcome.reason === 'no-owner' ? 'ignored' : 'deduped';
     return { status, reason: outcome.reason, detail: outcome.detail };
   }
@@ -115,13 +85,6 @@ export async function mapTriageToHttp(
   };
 }
 
-/**
- * `/webhooks/github/events` front door — triage same as `runIngress`, PLUS scheduling the silent
- * CI-status sync AND re-arming the reconciler for a mergeability-affecting review, both from the SAME
- * verified/routed payload (`GithubNotificationSource.handleWorkEvent` parses all three in one pass so
- * they can never disagree). The CI schedule is fire-and-forget/debounced; the re-arm is a cheap single
- * `UPDATE` so it's awaited directly. Neither blocks the 202 response or the triage path meaningfully.
- */
 export async function runWorkEvent(
   logger: Logger,
   adapter: GithubNotificationSource,
@@ -141,16 +104,6 @@ export async function runWorkEvent(
   return mapTriageToHttp(logger, adapter, intake, triage);
 }
 
-/**
- * Run the GitHub adapter's PR-state front door (`/webhooks/github/state`): verify + route, then dispatch
- * by outcome — a `pull_request` event's `PrStateDelta` goes straight to the silent `GithubPrStateSync`;
- * a `repo-push` (a push to the repo's default branch) schedules the debounced, BATCHED GraphQL
- * mergeability refresh (`BaseMoveMergeabilitySync.schedule`) instead of a per-PR REST fan-out, so a
- * sequential merge of N PRs coalesces into ONE query per repo; a `pr-rearm` (a mergeability-affecting
- * webhook that touches exactly one PR — head push / draft↔ready) marks that PR's job due-now via
- * `GitStateReconciler.markJobDue` so the fast heartbeat picks it up within one cycle. This path never
- * touches `StimulusIntake`.
- */
 export async function runPrWebhook(
   logger: Logger,
   adapter: GithubNotificationSource,
@@ -199,7 +152,6 @@ function rejectionToHttp(reason: IngressRejectionReason, detail?: string): HttpE
       return new BadRequestException(detail ?? 'malformed payload');
     case 'unsupported':
     default:
-      // An 'unsupported' rejection (rare — adapters prefer 'ignored') maps to 202 no-op semantics.
       return new HttpException(detail ?? 'unsupported', HttpStatus.ACCEPTED);
   }
 }

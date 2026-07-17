@@ -1,19 +1,3 @@
-/**
- * Shared durable reader for the tool-bridge replies stream (`turn:{T}:replies`), used by BOTH the Claude
- * in-process bridge (the engine `TurnTransport`) and the Codex stdio bridge (`mcp-bridge-server.ts`). Redis is
- * injected (each bridge owns its own connection type/lifecycle), so this module has no direct `ioredis`
- * import beyond the structural `RedisLike` type — it bundles into both `.mjs` entrypoints independently
- * (see `bundle-engine.ts`).
- *
- * Two independent guards, per decision d1 (durable delivery via liveness, no wall-clock ceiling):
- *  - LOOP HARDENING + SELF-HEALING: a transient `xread` throw or a malformed frame never kills the loop; a
- *    watchdog stamps `lastTick` each cycle and force-resets a wedged connection, resuming from `lastId` so
- *    nothing queued during the outage is lost.
- *  - HEARTBEAT-GAP LIVENESS: a per-call idle timer armed by the host's first progress frame and refreshed
- *    by every later frame for that id — a genuine host-side hang shows up as a gap, never a stall on a
- *    long but still-beating call. Registration alone does not arm the timer; otherwise a call queued
- *    behind another long-running host tool would get a hidden wall-clock ceiling before it is in flight.
- */
 type RedisLike = {
   xread(...args: unknown[]): Promise<unknown>;
   disconnect(): void;
@@ -50,14 +34,10 @@ export class ToolBridgeReader {
     this.sub = opts.makeSub();
   }
 
-  /** Register a pending call. The heartbeat-gap idle timer is armed by the host's first progress frame,
-   *  not by registration; this avoids turning host queue time into a wall-clock timeout. Once the host
-   *  starts the handler, any frame (heartbeat OR reply) for `id` resets the gap timer. */
   register(id: string): Promise<unknown> {
     return new Promise<unknown>((resolve, reject) => this.pending.set(id, { resolve, reject }));
   }
 
-  /** Drop a registration whose request could not be published. */
   cancel(id: string): void {
     const e = this.pending.get(id);
     if (e?.idle) clearTimeout(e.idle);
@@ -76,7 +56,6 @@ export class ToolBridgeReader {
           try {
             this.sub.disconnect();
           } catch {
-            /* ignore */
           }
           try {
             this.sub = this.opts.makeSub(); // loop's next xread uses the new connection (see loop())

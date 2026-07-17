@@ -12,7 +12,6 @@ const env = (vals: Record<string, unknown> = {}) =>
   ({ get: (k: string) => vals[k] }) as unknown as EnvService;
 const election = {} as unknown as LeaderElectionService;
 
-/** A redis whose per-key OBJECT IDLETIME is scripted (null = key missing = engine left no trace). */
 const redisWithIdle = (idleByKey: Record<string, number | null> = {}) =>
   ({
     objectIdleTime: vi.fn(async (key: string) => idleByKey[key] ?? null),
@@ -64,8 +63,6 @@ describe('TurnWatchdogService.sweep', () => {
       finalize: ReturnType<typeof vi.fn>;
       heartbeat: ReturnType<typeof vi.fn>;
     };
-    // t-live's engine wrote 3s ago (in-container heartbeats keep flowing without any attached host);
-    // t-dead's stream has been idle for 10 minutes (its 5s heartbeat writer is gone → container died).
     const redis = redisWithIdle({
       [turnKeys('t-live').events]: 3,
       [turnKeys('t-dead').events]: 600,
@@ -271,7 +268,6 @@ describe('TurnWatchdogService boot grace', () => {
       onDemote: () => ({ unsubscribe() {} }),
     } as unknown as LeaderElectionService;
 
-    // A REAL SchedulerRegistry so the leader-gated interval registers + fires (start() no-ops without one).
     const svc = new TurnWatchdogService(
       registry,
       promotableElection,
@@ -284,7 +280,6 @@ describe('TurnWatchdogService boot grace', () => {
     await new Promise((r) => setTimeout(r, 20)); // let the touch().finally(sweep) chain settle
     svc.onApplicationShutdown(); // clear the interval
 
-    // The grace touch runs first, so a turn whose heartbeat froze across a restart survives the first sweep.
     expect(order).toEqual(['touch', 'sweep']);
   });
 });

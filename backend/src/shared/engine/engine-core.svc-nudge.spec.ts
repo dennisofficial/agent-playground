@@ -1,16 +1,7 @@
-/**
- * Unit tests for the atlas-svc Bash nudge (see the PostToolUse hook in `EngineCore.run`). The hook's two
- * load-bearing decisions are pure, exported helpers:
- *   - `detectLongRunningCommand` — is this Bash command a long-running SERVICE that should run under the
- *     `atlas-svc` supervisor, vs a one-shot the model should just run directly? Precision matters: nudging
- *     Atlas to wrap `pnpm test` in atlas-svc would be WRONG advice.
- *   - `svcNudgeShouldFire` — the token-delta throttle so back-to-back matching commands don't spam.
- */
 import { describe, expect, it } from 'vitest';
 import { detectLongRunningCommand, svcNudgeShouldFire } from './engine-core';
 
 describe('detectLongRunningCommand', () => {
-  // Long-running service smells → SHOULD nudge.
   it.each([
     'pnpm dev',
     'pnpm --filter backend dev',
@@ -39,7 +30,6 @@ describe('detectLongRunningCommand', () => {
     expect(detectLongRunningCommand(cmd)).not.toBeNull();
   });
 
-  // One-shots and non-service commands → must NOT nudge (wrapping these in atlas-svc is wrong).
   it.each([
     'pnpm test',
     'pnpm build',

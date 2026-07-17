@@ -5,26 +5,17 @@ import type {
   ReasoningEffort,
 } from '../engine.types';
 
-// Claude's Options.effort has no 'minimal'; map it to the nearest ('low'). Others pass through.
 export function toClaudeEffort(
   e?: ReasoningEffort,
 ): 'low' | 'medium' | 'high' | 'xhigh' | 'max' | undefined {
   if (!e) return undefined;
   return e === 'minimal' ? 'low' : e;
 }
-// Codex's effort has no 'max'; clamp to its ceiling ('xhigh'). Others pass through.
 export function toCodexEffort(e?: ReasoningEffort): CodexReasoningEffort | undefined {
   if (!e) return undefined;
   return e === 'max' ? 'xhigh' : e;
 }
 
-/**
- * Fold one result's {@link EngineUsage} into a running accumulator. A background-task hold yields ≥2
- * results per turn (the immediate first result + the post-settlement auto-continuation), so the BILLING
- * token fields are SUMMED across results, including the per-model breakdown. Occupancy-and-label fields
- * (`contextTokens`/`contextModel`/`model`) reflect the LATEST result (the turn-end window), so `next`
- * overwrites when it carries them. `next` undefined (a result with no usage) leaves `acc` unchanged.
- */
 export function addClaudeUsage(acc: EngineUsage, next: EngineUsage | undefined): EngineUsage {
   if (!next) return acc;
   const inputTokens = (acc.inputTokens ?? 0) + (next.inputTokens ?? 0);
@@ -43,7 +34,6 @@ export function addClaudeUsage(acc: EngineUsage, next: EngineUsage | undefined):
     ...(cacheWriteTokens > 0 ? { cacheWriteTokens } : {}),
     ...(reasoningTokens > 0 ? { reasoningTokens } : {}),
     ...(costUsd !== undefined ? { costUsd } : {}),
-    // Occupancy + labels track the LATEST result.
     ...(next.model ? { model: next.model } : {}),
     ...(next.contextTokens !== undefined ? { contextTokens: next.contextTokens } : {}),
     ...(next.contextModel ? { contextModel: next.contextModel } : {}),
@@ -73,7 +63,6 @@ function addClaudeModelUsage(
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-/** Extract token usage from a Claude success result. Convention: inputTokens = total INCLUDING cache. */
 export function extractClaudeUsage(
   message: Record<string, unknown>,
   model: string | undefined,
@@ -88,9 +77,6 @@ export function extractClaudeUsage(
     | undefined;
   if (!u) return undefined;
   const costUsd = message.total_cost_usd as number | undefined;
-  // The SDK's per-model breakdown for the WHOLE turn (orchestrator + subagents), keyed by model id.
-  // Formerly collapsed to `Object.keys(...)[0]` (dropping every model but the first); now carried in
-  // full onto `usage.modelUsage` as the authoritative source for per-model token/cost analytics.
   const rawModelUsage = message.modelUsage as
     | Record<
         string,
@@ -122,11 +108,6 @@ export function extractClaudeUsage(
   const cacheRead = u.cache_read_input_tokens ?? 0;
   const cacheWrite = u.cache_creation_input_tokens ?? 0;
   const inputTokens = (u.input_tokens ?? 0) + cacheRead + cacheWrite;
-  // The turn's PRIMARY (orchestrator) model. Prefer the model we invoked the SDK with — it's the main
-  // agent's model by construction, guaranteed present. NOT `Object.keys(modelUsage)[0]`: modelUsage is the
-  // whole-turn billing rollup (orchestrator + subagents + SDK-internal helper calls) and object-key order
-  // isn't guaranteed, so a subagent/internal model (e.g. a Haiku housekeeping call) could sort first and
-  // mislabel the turn. modelUsage stays the authoritative per-model breakdown below; this is only the label.
   const usedModel = model ?? (modelUsage ? Object.keys(modelUsage)[0] : undefined);
   return {
     inputTokens,

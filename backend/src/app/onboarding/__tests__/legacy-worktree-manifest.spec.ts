@@ -84,8 +84,6 @@ describe('loadLegacyManifestFile', () => {
   });
 
   it('drops reserved (system-managed) mount paths so they cannot collide with a system bind', () => {
-    // `.pnpm-store` is a system-managed cache (now bound under /.atlas, outside the worktree entirely) —
-    // a repo has no legitimate reason to mount a package cache into its own worktree, so it stays reserved.
     writeManifest(
       JSON.stringify({
         mounts: [
@@ -101,8 +99,6 @@ describe('loadLegacyManifestFile', () => {
   });
 
   it('drops ABSOLUTE (external) mount paths — a committed file may not introduce external mounts', () => {
-    // External mounts (absolute container paths) are a privileged capability reserved for Atlas's validated
-    // write_workspace_config calls; a repo-committed legacy file must never gain it.
     writeManifest(
       JSON.stringify({
         mounts: [

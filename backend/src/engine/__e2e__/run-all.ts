@@ -1,16 +1,3 @@
-// ENGINE E2E RUNNER — drives every scenario in sequence against ONE live sandbox + real Redis, prints a
-// final PASS/FAIL table, and exits non-zero if any REQUIRED scenario failed (the adversarial scenario is
-// EXPLORATORY and does not gate the exit code).
-//
-//   npx tsx src/engine/__e2e__/run-all.ts <sandboxContainerId>
-//   # with real creds:
-//   npx dotenvx run -f .env.seed.enc -f .env.local.enc -f .env.personal --ignore=MISSING_ENV_FILE -o -- \
-//     npx tsx src/engine/__e2e__/run-all.ts <sandboxContainerId>
-//
-// OUT OF SCOPE for this directory (noted, not silently dropped): "queuing" — 2+ turns serializing on one
-// sandbox — is enforced by the HOST's `RedisEngineRunner` / `activity.thread(containerId, …)` semaphore,
-// NOT by the engine app itself. It needs the real running backend to validate meaningfully and is exercised
-// separately against the live product (the job pipeline), not via raw `docker exec` here.
 import { run as aborting } from './aborting.e2e';
 import { run as adversarial } from './adversarial.e2e';
 import { run as errorHandling } from './error-handling.e2e';
@@ -24,7 +11,6 @@ import { run as toolBridge } from './tool-bridge.e2e';
 interface Entry {
   name: string;
   run: (s: string) => Promise<ScenarioResult>;
-  /** REQUIRED scenarios gate the exit code; the exploratory adversarial one does not. */
   required: boolean;
 }
 

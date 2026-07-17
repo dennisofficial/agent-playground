@@ -23,12 +23,6 @@ type FakeCredentialRow = {
   secret: string;
 };
 
-/**
- * Minimal in-memory stand-in for `ClaudeCredentialStore`'s full surface these tests need: the
- * per-credential read/write-back path (`list`, `getDecryptedById`, `advanceClaudeCredential`), the
- * selected-account display header (`getSelectedDisplay`), and the bare selected-id getter
- * (`getSelectedCredentialId`) `get()` now uses to gate harvest trust.
- */
 class FakeClaudeStore {
   readonly advanceCalls: Array<{
     orgId: string;
@@ -78,12 +72,6 @@ class FakeClaudeStore {
   }
 }
 
-/**
- * Minimal stand-in for `CredentialRefreshService`: the usage paths now resolve a credential's token through
- * `ensureFresh` (the ONE serialized refresh core) instead of an inline refresh. This fake returns the stored
- * blob straight from the `FakeClaudeStore`, mirroring the healthy/no-op case (`ensureFresh` returns the
- * stored secret when the token isn't near expiry).
- */
 class FakeCredRefresh {
   constructor(private readonly claudeStore: FakeClaudeStore) {}
 
@@ -94,11 +82,6 @@ class FakeCredRefresh {
   }
 }
 
-/**
- * Minimal in-memory stand-in for `TenantCredentialStore`'s (plaintext) usage-snapshot methods, mirroring
- * the real store's merge + skip-if-unchanged semantics so these tests exercise the same write-through
- * contract `applyHarvest`/`get` depend on in production.
- */
 class FakeCredentialStore {
   constructor(private readonly snapshots = new Map<string, ClaudeUsageSnapshot>()) {}
 
@@ -114,7 +97,6 @@ class FakeCredentialStore {
     credentialId?: string,
   ): Promise<boolean> {
     let snapshot = this.snapshots.get(orgId) ?? { windows: {}, fetchedAt: 0 };
-    // Mirrors the real store's single-account invariant: a harvest from a DIFFERENT credential resets.
     if (snapshot.credentialId !== credentialId) {
       snapshot = { windows: {}, fetchedAt: 0, credentialId };
     }
@@ -140,17 +122,14 @@ class FakeCredentialStore {
   }
 }
 
-/** Await a macrotask turn so a fire-and-forget `.then(...)` publish (invalidate/publishHarvested) — which chains several `await`s — lands before assertions. */
 async function flushMicrotasks(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-/** No stored engine auth — `get()`'s HTTP fallback degrades cleanly instead of making a real network call. */
 const NO_ENGINE_AUTH: Pick<CredentialResolver, 'engineAuth'> = {
   engineAuth: () => Promise.resolve(undefined),
 };
 
-/** A `personal` credential's decrypted secret shape: a `{claudeAiOauth:{…}}` JSON blob. */
 function personalSecret(p: {
   accessToken: string;
   refreshToken: string;
@@ -159,7 +138,6 @@ function personalSecret(p: {
   return JSON.stringify({ claudeAiOauth: p });
 }
 
-/** A well-formed `/api/oauth/usage` body with just the five-hour window populated. */
 function usageBody(utilization: number, resetsAt: string): unknown {
   return { five_hour: { utilization, resets_at: resetsAt } };
 }
@@ -172,20 +150,8 @@ function jsonResponse(status: number, body: unknown): Response {
   } as Response;
 }
 
-/**
- * The credential id most tests harvest under — tests that aren't specifically about cross-credential
- * scoping (the whole point of this module) use this as BOTH the harvested snapshot's tag AND the org's
- * selected credential, so `get()`'s harvest-trust gate passes and the pre-existing freshness/publish
- * assertions keep exercising the same behavior they always did.
- */
 const CRED = 'cred-default';
 
-/**
- * applyHarvest writes through to the (fake) durable store; get() serves the harvested snapshot without HTTP
- * when it's fresh. Also returns the service's `UsageEventBus` (and a running list of everything it
- * published) and the `FakeClaudeStore` it was built with, so tests can assert on realtime fan-out and
- * per-credential write-back.
- */
 function makeService(
   opts: {
     store?: FakeCredentialStore;
@@ -256,8 +222,6 @@ describe('OauthUsageService.applyHarvest', () => {
 
   it('normalizes an epoch-SECONDS resetsAt from a harvested frame (not 1970)', async () => {
     const { svc } = makeService();
-    // A FUTURE epoch in SECONDS (10-digit), so it survives the past-reset expiry and this test stays about
-    // the seconds→ms normalization, not window expiry.
     const seconds = Math.floor((Date.now() + 5 * 60 * 60 * 1000) / 1000);
     await svc.applyHarvest('org1', {
       status: 'rejected',
@@ -267,7 +231,6 @@ describe('OauthUsageService.applyHarvest', () => {
     });
     const usage = await svc.get('org1');
     expect(usage.fiveHour?.resetsAt).toBe(new Date(seconds * 1000).toISOString());
-    // The bug this guards is a seconds value mis-read as ms → 1970; assert it landed in the present era.
     expect(new Date(usage.fiveHour!.resetsAt).getUTCFullYear()).toBeGreaterThan(2020);
   });
 
@@ -288,7 +251,6 @@ describe('OauthUsageService.applyHarvest', () => {
 
   it('ignores a non-rejected frame with no utilization (nothing to record)', async () => {
     const { svc } = makeService();
-    // Must not throw and must not create a window from a bare allowed frame.
     await svc.applyHarvest('org1', {
       status: 'allowed',
       rateLimitType: 'five_hour',
@@ -322,8 +284,6 @@ describe('OauthUsageService.applyHarvest', () => {
       resetsAt: new Date(resetsAt).toISOString(),
     });
 
-    // A brand-new service instance backed by the SAME store sees the harvest — proving durability
-    // isn't tied to any in-process state on `svc`.
     const { svc: freshSvc } = makeService({ store });
     const usage = await freshSvc.get('org1');
     expect(usage.sevenDayOpus).toEqual({
@@ -456,7 +416,6 @@ describe('OauthUsageService.get harvested-window expiry', () => {
       Date.now(),
     );
     const usage = await svc.get('org1');
-    // expired harvest ignored; live is degraded here (NO_ENGINE_AUTH) so the window falls through to null
     expect(usage.fiveHour).toBeNull();
   });
 
@@ -533,11 +492,6 @@ describe('OauthUsageService.get freshness (harvest vs live)', () => {
     vi.unstubAllGlobals();
   });
 
-  /**
-   * A `makeService` variant whose `engineAuth` resolves a real `personal` credential (`cred1`), so
-   * `get()`'s live path actually hits the stubbed `fetch` instead of degrading — these tests need a real
-   * competing `live.fetchedAt` to exercise the freshness comparison.
-   */
   function makeServiceWithLiveCredential(): {
     svc: OauthUsageService;
     store: FakeCredentialStore;
@@ -560,8 +514,6 @@ describe('OauthUsageService.get freshness (harvest vs live)', () => {
     );
     const bus = new UsageEventBus();
     const credRefresh = new FakeCredRefresh(claudeStore);
-    // `secret` itself is never read on this path — `fetchLive` resolves the real secret through
-    // `ensureFresh(orgId, refreshBack.credentialId)`, which the fake reads straight off `claudeStore`.
     const engineAuth: Pick<CredentialResolver, 'engineAuth'> = {
       engineAuth: () =>
         Promise.resolve({
@@ -615,7 +567,6 @@ describe('OauthUsageService.get freshness (harvest vs live)', () => {
       vi.fn(() => jsonResponse(200, usageBody(7, liveResetsAt))),
     );
     const harvestResetsAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-    // Strictly >= the live fetch's own `fetchedAt` (also ~now) so the freshness comparison picks harvest.
     const harvestNow = Date.now() + 1000;
     await store.mergeClaudeUsageWindow(
       'org1',
@@ -638,11 +589,6 @@ describe('OauthUsageService.get credential-scoped harvest trust', () => {
     vi.unstubAllGlobals();
   });
 
-  /**
-   * Like `makeServiceWithLiveCredential` above, but the org's SELECTED credential id is configurable
-   * independently of the harvested snapshot's own tag — these tests are specifically about the
-   * cross-credential trust gate (d2), not the harvest-vs-live freshness race.
-   */
   function makeServiceForTrust(selectedCredentialId: string | null): {
     svc: OauthUsageService;
     store: FakeCredentialStore;
@@ -665,7 +611,6 @@ describe('OauthUsageService.get credential-scoped harvest trust', () => {
     );
     const bus = new UsageEventBus();
     const credRefresh = new FakeCredRefresh(claudeStore);
-    // `fetchLive` resolves through the currently-SELECTED credential ('cred-live' in every test below).
     const engineAuth: Pick<CredentialResolver, 'engineAuth'> = {
       engineAuth: () =>
         Promise.resolve({
@@ -749,7 +694,6 @@ describe('OauthUsageService.get credential-scoped harvest trust', () => {
         resetsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
       },
       Date.now(),
-      // no credentialId — legacy/untagged snapshot
     );
     vi.stubGlobal(
       'fetch',
@@ -779,7 +723,6 @@ describe('OauthUsageService.get credential-scoped harvest trust', () => {
 
     const snapshot = await store.readClaudeUsageSnapshot('org1');
     expect(snapshot?.credentialId).toBe('cred-forward');
-    // Only trusted (selected === harvested) because the id was actually forwarded — proves the wiring.
     const usage = await svc.get('org1');
     expect(usage.fiveHour?.utilization).toBe(100);
     expect(usage.source).toBe('harvested');
@@ -874,7 +817,6 @@ describe('OauthUsageService account header', () => {
     const usage = await svc.get('org1');
     expect(usage.accountLabel).toBe('dennis@atlas.dev');
     expect(usage.plan).toBe('Max plan');
-    // the harvested push carries the same header
     expect(published[published.length - 1]?.usage.accountLabel).toBe('dennis@atlas.dev');
     expect(published[published.length - 1]?.usage.plan).toBe('Max plan');
   });
@@ -963,10 +905,6 @@ describe('OauthUsageService.getForCredential', () => {
   });
 
   it('reports a fresh account (all fixed windows null, only a per-model row) as ok — not degraded', async () => {
-    // A brand-new account has used nothing yet: the endpoint responds 200 with every fixed window absent
-    // and (often) only a per-model weekly cap. That is a fresh, not-started account — NOT an outage — so it
-    // must surface as ok:true/source:'usage_api' (which the UI reads as "Waiting for next turn" rather than
-    // the "Usage unavailable" reserved for a real fetch failure).
     const resetsAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
     const freshBody = {
       limits: [
@@ -1005,8 +943,6 @@ describe('OauthUsageService.getForCredential', () => {
   });
 
   it('never routes the per-credential fetch through the org-level harvested snapshot', async () => {
-    // A stale/absent harvest for the org must not short-circuit or otherwise influence the per-credential
-    // path — it always live-fetches THIS credential's own token.
     const store = new FakeCredentialStore();
     await store.mergeClaudeUsageWindow(
       'org1',

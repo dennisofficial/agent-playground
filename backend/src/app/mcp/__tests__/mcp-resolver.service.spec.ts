@@ -8,7 +8,6 @@ import { McpServerStore } from '../mcp-server.store';
 
 const KEY = 'b'.repeat(64);
 
-/** Same minimal in-memory repository as the store spec (only the methods the store calls). */
 class FakeRepo {
   rows: McpServerEntity[] = [];
   create(p: Partial<McpServerEntity>): McpServerEntity {

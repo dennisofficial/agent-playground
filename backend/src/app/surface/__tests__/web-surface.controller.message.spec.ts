@@ -3,15 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { CurrentOrgCtx } from '../../org/current-org.decorator';
 import { WebSurfaceController } from '../web-surface.controller';
 
-/**
- * `POST …/message` — the endpoint applies a batch of staged card answers (question/file/durable-secret)
- * plus an optional operator message. These are pure unit tests: the controller is instantiated with mocked
- * deps, so they exercise the guard/validation/coalescing/dispatch wiring without a DB or brain. See the
- * delivery/stamp integration proofs in `brain/card-gate-delivery-race.int.test.ts` for the one-turn +
- * success-tail behavior.
- */
 
-/** A fresh set of open cards per test — cloned so a per-item `provided_at` stamp doesn't leak across tests. */
 function freshCards(): Record<string, Record<string, unknown>> {
   return {
     'q-1': {
@@ -163,12 +155,9 @@ describe('WebSurfaceController — /message (card batch, no operator text)', () 
       { id: 'f-1', status: 'applied' },
       { id: 's-1', status: 'applied' },
     ]);
-    // Each write happened exactly once. `secrets.write` runs TWICE — once for the file, once for the
-    // durable secret (both land in the worktree secret store).
     expect(store.markQuestionAnswered).toHaveBeenCalledOnce();
     expect(secrets.write).toHaveBeenCalledTimes(2);
     expect(store.markSecretProvidedPerCard).toHaveBeenCalledOnce();
-    // Exactly ONE combined seed, carrying the three id arrays for the success-tail stamp.
     expect(seedCalls).toHaveLength(1);
     expect(seedCalls[0].opts).toMatchObject({
       deliveredQuestionIds: ['q-1'],
@@ -218,20 +207,17 @@ describe('WebSurfaceController — /message (card batch, no operator text)', () 
 
   it('a NON-owner member can submit a question-only batch, but is 403d on a batch containing a file or secret item', async () => {
     const { controller, seedCalls } = makeController();
-    // Question-only — membership suffices, no 403.
     const ok = await controller.postMessage(member, {} as never, 'job-1', {
       messages: [{ type: 'answer_question', questionId: 'q-1', answer: 'Postgres' }],
     });
     expect(ok.ok).toBe(true);
     expect(seedCalls).toHaveLength(1);
 
-    // A secret item requires owner.
     await expect(
       controller.postMessage(member, {} as never, 'job-1', {
         messages: [{ type: 'secret_provided', requestId: 's-1', value: 'x' }],
       }),
     ).rejects.toBeInstanceOf(ForbiddenException);
-    // A file item requires owner.
     await expect(
       controller.postMessage(member, {} as never, 'job-1', {
         messages: [
@@ -253,7 +239,6 @@ describe('WebSurfaceController — /message (card batch, no operator text)', () 
         messages: [{ type: 'secret_provided', requestId: 's-eph', value: '123456' }],
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
-    // Never written, never seeded.
     expect(store.markSecretProvidedPerCard).not.toHaveBeenCalled();
     expect(secrets.write).not.toHaveBeenCalled();
     expect(seedCalls).toHaveLength(0);
@@ -289,7 +274,6 @@ describe('WebSurfaceController — /message (card batch, no operator text)', () 
         ],
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
-    // Rejected before any write.
     expect(secrets.write).not.toHaveBeenCalled();
   });
 });
@@ -325,8 +309,6 @@ describe('WebSurfaceController — /message (mixed: answered cards + an operator
     expect(store.markQuestionAnswered).toHaveBeenCalledOnce();
     expect(secrets.write).toHaveBeenCalledTimes(2);
 
-    // The mixed case bypasses `surface.seedSystemNotification` entirely (no double-wrap) — it goes
-    // through the `StimulusIntake` composed-seed seam instead.
     expect(seedCalls).toHaveLength(0);
     expect(intake.intakeComposedSeed).toHaveBeenCalledOnce();
 
@@ -338,8 +320,6 @@ describe('WebSurfaceController — /message (mixed: answered cards + an operator
       deliveredSecretIds: ['s-1'],
     });
     const body = (input as { body: string }).body;
-    // Answer notices frame as `<system_notice>` chunks; the operator message is the trailing `<user>`
-    // chunk (renderTurn's canonical ordering — user always last).
     expect(body).toContain('Postgres');
     expect(body).toContain('.env.keys');
     expect(body).toContain('API_KEY');

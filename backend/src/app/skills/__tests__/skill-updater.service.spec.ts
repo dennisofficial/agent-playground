@@ -21,12 +21,9 @@ const GIT_ENV = {
   GIT_COMMITTER_EMAIL: 't@t',
 };
 
-/** Same minimal in-memory `workspace_skills` repo as `skill-installer.service.spec.ts`. */
 class FakeRepo {
   rows: WorkspaceSkillEntity[] = [];
   create(p: Partial<WorkspaceSkillEntity>): WorkspaceSkillEntity {
-    // Real TypeORM applies the entity's `@Column({default:false})` for `update_available` — this fake
-    // must mirror that so a freshly-created row behaves like a freshly-migrated one.
     return { update_available: false, ...p } as WorkspaceSkillEntity;
   }
   async save(row: WorkspaceSkillEntity): Promise<WorkspaceSkillEntity> {
@@ -67,8 +64,6 @@ function initRepo(work: string): void {
   execFileSync('git', ['init', '-b', 'main', work]);
 }
 
-/** Commit whatever's in `work` and (re-)materialize a `--bare` clone at a STABLE path — simulates pushing
- *  a new commit to the same remote the skill was installed from. */
 function commitAndBare(tmp: string, work: string, bare: string): void {
   execFileSync('git', ['-C', work, 'add', '-A']);
   execFileSync('git', ['-C', work, 'commit', '-m', 'skills'], { env: GIT_ENV });

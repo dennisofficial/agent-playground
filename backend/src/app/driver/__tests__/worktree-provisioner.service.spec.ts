@@ -3,11 +3,6 @@ import type { PipelineAwarenessStore } from '../pipeline-awareness.store';
 import type { WorktreeHydrator } from '../worktree-hydrator.service';
 import { WorktreeProvisioner } from '../worktree-provisioner.service';
 
-/**
- * `provisionAndAttach` is a thin orchestrator (hydrate → attach); this spec covers only the ONE thing
- * worth protecting in isolation — that `onMilestone` (and the other attach-relevant fields) reach
- * `SandboxProvider.attach()` unchanged. Hydration/notice behavior is covered by `worktree-hydrator.service.spec.ts`.
- */
 describe('WorktreeProvisioner.provisionAndAttach — onMilestone pass-through', () => {
   function makeProvisioner() {
     const hydrator = {
@@ -84,8 +79,6 @@ describe('WorktreeProvisioner.provisionAndAttach — onMilestone pass-through', 
     const { provisioner, kickMcpHubRefresh, resolveForSandbox } = makeProvisioner();
 
     await provisioner.provisionAndAttach({
-      // sandbox.repoId is the SLUG; the repo UUID is carried separately as repoDbId. mcp_servers.scope is
-      // the UUID, so resolving by the slug silently returns [] (the bug this guards against).
       sandbox: {
         repoId: 'cubix-infra',
         branch: 'main',

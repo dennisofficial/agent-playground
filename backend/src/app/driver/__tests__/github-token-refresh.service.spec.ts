@@ -1,8 +1,3 @@
-/**
- * Unit tests for `GithubTokenRefreshService.tick` — the leader-gated sweep that keeps every ACTIVE
- * app-mode sandbox's in-sandbox GitHub token file current. No DB, no Docker — the TypeORM repository and
- * the credential resolver / sandbox provider are fake stubs.
- */
 
 import type { Repository } from 'typeorm';
 import { describe, expect, it, vi } from 'vitest';
@@ -11,7 +6,6 @@ import type { JobSandboxEntity } from '../../persistence/entities';
 import type { SandboxProvider } from '../../sandbox/sandbox-provider.port';
 import { GithubTokenRefreshService } from '../github-token-refresh.service';
 
-/** Build a bare-minimum JobSandboxEntity row for the sweep's enumeration. */
 function makeRow(overrides: Partial<JobSandboxEntity> = {}): JobSandboxEntity {
   return {
     id: 'sandbox-1',

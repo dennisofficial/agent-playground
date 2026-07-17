@@ -16,7 +16,6 @@ import type { GithubPrService, RepoInfo } from '../git';
 import { OnboardingService } from '../onboarding.service';
 import type { CredentialPresence, TenantCredentialStore } from '../tenant-credential.store';
 
-// ── in-memory fake repositories ───────────────────────────────────────────────────────────────────
 
 function makeOrgs() {
   const map = new Map<string, OrganizationEntity>();
@@ -55,7 +54,6 @@ function makeRepos() {
     }) {
       if (where.id !== undefined) {
         for (const v of map.values()) {
-          // Honor the org scope when both are given (so cross-tenant ids resolve to null → 404).
           if (v.id === where.id && (where.org_id === undefined || v.org_id === where.org_id))
             return v;
         }
@@ -109,7 +107,6 @@ function makeRepos() {
         }
       }
     },
-    // `ensureWebhooksForActiveRepos` scans all access_ok repos (no org scope) for the leader-promotion backfill.
     async find({ where }: { where: { org_id?: string; access_ok?: boolean } }) {
       return [...map.values()].filter(
         (v) =>
@@ -121,11 +118,6 @@ function makeRepos() {
   return { repo, map };
 }
 
-/**
- * A minimal in-memory table fake for the child entities `OnboardingService` only counts/deletes
- * (`threads`, `stimuli`, `decision_records`, `thread_sandboxes`). `count` takes `{ where }`; `delete`
- * takes the criteria directly — matching TypeORM's repository surface used in the service.
- */
 function makeTable<T extends Record<string, unknown>>(seed: T[] = []) {
   const rows: T[] = [...seed];
   const matches = (r: T, w: Record<string, unknown>) =>
@@ -203,10 +195,6 @@ function fakeStore(presence: Partial<CredentialPresence> = {}): TenantCredential
   } as unknown as TenantCredentialStore;
 }
 
-/**
- * Fakes the env accessor `OnboardingService` reads for webhook registration. Defaults to a publicly
- * reachable backend + a secret set, so a test opts INTO the skip paths by overriding a single key.
- */
 function fakeEnv(over: Record<string, string | undefined> = {}): EnvService {
   const values: Record<string, string | undefined> = {
     BACKEND_HOST: 'https://api.example.com',
@@ -258,8 +246,6 @@ function assemble(
   const decisionRecords = makeTable<{ repo_id: string; org_id: string }>();
   const sandboxes = makeTable<{ repo_id: string; org_id: string }>();
 
-  // `disconnectRepo` tears jobs down through the injected `JOB_TEARDOWN` port. The fake records each
-  // deep-delete AND removes the thread row (mirroring the real teardown) so the drain loop converges.
   const deepDeleted: Array<{ jobId: string; orgId: string }> = [];
   const jobTeardown = {
     deleteJobDeep: async (jobId: string, orgId: string) => {
@@ -267,7 +253,6 @@ function assemble(
       await threads.repo.delete({ id: jobId, org_id: orgId });
     },
   };
-  // `moduleRef` is retained only for the lazy brain lookups (not exercised in these tests).
   const moduleRef = { get: () => undefined } as unknown as ModuleRef;
   const pr = fakePr(opts.repoInfo ?? null, {
     ensureWebhookOutcome: opts.ensureWebhookOutcome,
@@ -430,7 +415,6 @@ describe('OnboardingService', () => {
         repoInfo: info,
       });
       const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
-      // Simulate access having gone stale, then prove revalidate restores it.
       await repos.repo.update({ id: connected.id }, { access_ok: false, access_checked_at: null });
 
       const res = await svc.revalidateRepo('T1', connected.id);
@@ -498,9 +482,6 @@ describe('OnboardingService', () => {
     });
 
     it('persists repo-level merge default updates (method + delete-branch)', async () => {
-      // The 'squash'/true DB column defaults themselves are real-Postgres behavior (this in-memory fake
-      // doesn't model `@Column({ default: ... })`) — covered by the int test's connect-then-read assertion.
-      // This exercises the write/read-back path the fake CAN model: `updateRepo` persisting new values.
       const { svc, repos } = assemble({
         creds: { github: 'ghp_x' },
         repoInfo: info,
@@ -541,7 +522,6 @@ describe('OnboardingService', () => {
     });
 
     it('rejects when the org cannot run Atlas yet (missing credentials)', async () => {
-      // access_ok repo, but the org has no LLM key / engine auth → not runnable.
       const { svc } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
       const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
       await expect(svc.reonboardRepo('T1', connected.id)).rejects.toThrow(/finish org setup/i);
@@ -580,7 +560,6 @@ describe('OnboardingService', () => {
       const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
       threads.rows.push({ id: 't1', repo_id: connected.id, org_id: 'T1' });
 
-      // Simulate a concurrent create: the first deep-delete inserts one more thread row mid-cascade.
       const original = jobTeardown.deleteJobDeep;
       let injected = false;
       jobTeardown.deleteJobDeep = async (jobId, orgId) => {
@@ -684,8 +663,6 @@ describe('OnboardingService', () => {
   });
 
   describe('ensureWebhooksForActiveRepos / ensureRepoWebhook', () => {
-    // Seeds an access_ok repo directly (bypassing connectRepo, whose own fire-and-forget webhook call
-    // would otherwise race with — and double-count — the assertions below).
     function seedActiveRepo(repos: ReturnType<typeof makeRepos>) {
       const row = {
         id: 'repo-1',

@@ -8,12 +8,6 @@ import {
   renderMasterReviewTask,
 } from '../batch-task';
 
-/**
- * Golden-snapshot baseline for the driver-run turn PROSE strings sent into build/review/gate turns. Every
- * snapshot captures CURRENT output verbatim — a regression pass, not a spec of intent (see the sibling
- * `prompt-kit` snapshot specs). The sibling `driver/prompt-prose-snapshots.spec.ts` covers the engine consts
- * that stayed behind (`SANDBOX_RESET_NOTICE`, `BG_TASK_CAP_NOTICE`, `SVC_NUDGE_TEXT`).
- */
 
 const record: DecisionRecord = {
   overview: 'Build the widget catalog end-to-end.',

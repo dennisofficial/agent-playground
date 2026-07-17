@@ -7,7 +7,6 @@ import { McpServerStore } from '../mcp-server.store';
 
 const KEY = 'c'.repeat(64);
 
-/** Minimal in-memory repository (same shape as the store/resolver specs). */
 class FakeRepo {
   rows: McpServerEntity[] = [];
   create(p: Partial<McpServerEntity>): McpServerEntity {
@@ -54,7 +53,6 @@ function make(): { svc: McpOAuthService; store: McpServerStore } {
   return { svc: new McpOAuthService(store, env), store };
 }
 
-/** Create a persisted oauth server row and set its `oauth_enc` blob, returning the raw entity. */
 async function seedOAuthRow(
   store: McpServerStore,
   svc: McpOAuthService,
@@ -75,7 +73,6 @@ describe('McpOAuthService — signed state', () => {
   it('round-trips a signed state through the real HMAC (verify passes → row lookup is reached)', async () => {
     const { svc, store } = make();
     await seedOAuthRow(store, svc, { nonce: 'n1' });
-    // A validly-signed state whose nonce MISMATCHES the row is rejected as replay (proves verify passed).
     const state = svc.signState({
       orgId: 'org1',
       scope: '*',
@@ -147,7 +144,6 @@ describe('McpOAuthService.currentAccessToken', () => {
       tokens: { access_token: 'at-stale', refresh_token: 'rt' },
       obtainedAt: Date.now() - 60 * 60_000, // an hour old — past the conservative default TTL
     });
-    // Inject a fake SDK auth() that rotates the token instead of hitting the network.
     (svc as unknown as { authSdkPromise: Promise<unknown> }).authSdkPromise = Promise.resolve({
       auth: async (provider: { saveTokens: (t: unknown) => Promise<void> }) => {
         await provider.saveTokens({
@@ -198,7 +194,6 @@ describe('McpOAuthService.beginAuthorization', () => {
       url: 'https://mcp.example.com/sse',
       authKind: 'oauth',
     });
-    // Stale cached client + discovery bound to an OLD auth server — a reconnect must NOT reuse them.
     await store.writeOAuthBlob(
       'org1',
       '*',
@@ -237,9 +232,7 @@ describe('McpOAuthService.beginAuthorization', () => {
     try {
       const { authorizeUrl } = await svc.beginAuthorization('org1', '*', 'jira');
       expect(authorizeUrl).toContain('auth.example.com');
-      // The probed resource_metadata hint reached auth() (so discovery follows it, not the host root).
       expect(seenOpts?.resourceMetadataUrl?.href).toBe(RMU);
-      // Stale client + discovery + tokens were dropped by the clean-blob reset.
       const blob = store.readOAuthBlob((await store.rawRow('org1', '*', 'jira'))!);
       expect(blob.clientInformation).toBeUndefined();
       expect(blob.discoveryState).toBeUndefined();

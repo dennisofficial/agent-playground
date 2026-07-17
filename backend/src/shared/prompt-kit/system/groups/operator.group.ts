@@ -1,10 +1,3 @@
-/**
- * prompt-kit / groups / operator — standing operator/org instructions, appended when present.
- *
- * TOPIC bucket: operator/org customization. This is NEW (no equivalent in the legacy body); it is CONDITIONAL
- * on `ctx.settings.userOrgInstructions`, so when absent the assembled prompt is byte-identical to the legacy
- * composed brain. Ordered `9000` — after everything else, in both the normal and onboarding subsets.
- */
 import { ENGINEERING_STAGES } from '../agent';
 import { hasOrgInstructions } from '../conditions';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
@@ -12,7 +5,6 @@ import type { PromptCtx } from '../prompt-ctx';
 
 @FragmentGroup()
 export class OperatorGroup {
-  /** Standing operator/org instructions for this org (only when set). */
   @Fragment({
     usedBy: ENGINEERING_STAGES,
     order: 9000,

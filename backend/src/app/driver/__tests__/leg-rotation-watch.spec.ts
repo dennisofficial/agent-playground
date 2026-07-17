@@ -67,7 +67,6 @@ describe('LegRotationWatch', () => {
         contextLimit: 1_000_000,
       },
     ]);
-    // A later, higher band fires a reminder tagged with its delta-level.
     watch.observe({ contextTokens: 280_000, contextLimit: 1_000_000 }); // level 5 → reminder 5
     expect(signals[1]).toMatchObject({ phase: 'reminder', reminderIndex: 5 });
   });
@@ -92,7 +91,6 @@ describe('LegRotationWatch', () => {
 
   it('NEVER latches on a SUBAGENT frame (its own separate window — not rotatable), only the main agent', () => {
     const { watch, signals } = watchCapturing();
-    // A subagent whose own window is well past soft must NOT fire — it carries a parentToolUseId.
     watch.observe({
       contextTokens: 220_000,
       contextLimit: 1_000_000,
@@ -100,8 +98,6 @@ describe('LegRotationWatch', () => {
     });
     expect(signals).toHaveLength(0);
     expect(watch.softReached).toBe(false);
-    // The interleaved main-agent frame (untagged) at a LOWER occupancy still fires SOFT, unaffected by
-    // the subagent frame above (which must not have consumed the soft latch).
     watch.observe({ contextTokens: 160_000, contextLimit: 1_000_000 });
     expect(signals).toEqual([
       {

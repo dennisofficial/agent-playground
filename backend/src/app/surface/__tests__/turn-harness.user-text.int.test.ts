@@ -20,14 +20,6 @@ import { DB_CONNECTION } from '../../persistence/database.module';
 import { JobTitler } from '../../titling';
 import { TurnHarnessFactory } from '../turn-harness.service';
 
-/**
- * Int test proving a SendMessage injection into a running sub-agent (a `user_text` EngineEvent, parented
- * on the spawning `Task` tool_use) lands as a durable `kind = 'user'` transcript row tagged with the
- * tracked subagent's real `subagent_id` — the fix for the injection silently vanishing from the sub-agent's
- * transcript panel.
- *
- * Boots the REAL AppModule against live Postgres, mocking only external boundaries (none are exercised).
- */
 const TEAM_ID = '77777777-7777-4777-8777-777777777777'; // sentinel org uuid (distinct from sibling tests)
 
 describe('a SendMessage injection persists as a durable `user` block tagged with the subagent id', () => {
@@ -63,7 +55,6 @@ describe('a SendMessage injection persists as a durable `user` block tagged with
     harness = app.get(TurnHarnessFactory);
     dataSource = app.get<DataSource>(getDataSourceToken(DB_CONNECTION));
 
-    // Seed the FK chain: org → repo → job (messages.job_id → jobs.id).
     await dataSource.query(
       `INSERT INTO organizations (id, name, slug) VALUES ($1,$2,$3) ON CONFLICT (id) DO NOTHING`,
       [TEAM_ID, 'user-text-org', 'user-text-org'],
@@ -82,8 +73,6 @@ describe('a SendMessage injection persists as a durable `user` block tagged with
       [TEAM_ID, repo.id, 'chat'],
     );
     jobA = job.id as string;
-    // messages.thread_id is NOT NULL (FK → threads.id) — seed the job's planning thread group + thread so every
-    // block below has a real thread to anchor onto.
     const bootstrap = app.get(JobBootstrapService);
     await bootstrap.ensurePlanningThreadGroup(jobA, TEAM_ID);
     threadA = await bootstrap.planningThreadId(jobA);
@@ -118,7 +107,6 @@ describe('a SendMessage injection persists as a durable `user` block tagged with
       turnId,
     });
 
-    // Mirror a real subagent spawn so the injection has a tracked subagent to be tagged onto.
     streamer.onEvent({
       kind: 'tool_use',
       id: toolUseId,

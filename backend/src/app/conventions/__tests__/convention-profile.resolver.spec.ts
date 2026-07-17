@@ -3,11 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ConventionProfileEntity, RepoEntity } from '../../persistence/entities';
 import { ConventionProfileResolver } from '../convention-profile.resolver';
 
-/**
- * The resolver's misfire guard is the load-bearing behavior: `resolveForRepo` returns null unless the repo
- * has a pointer AND the pointed-at profile exists with a non-empty body. `attach` validates the slug and
- * forces the repo scope.
- */
 const ORG = 'org-1';
 const REPO = 'repo-1';
 

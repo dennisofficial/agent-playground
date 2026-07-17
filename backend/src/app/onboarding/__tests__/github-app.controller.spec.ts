@@ -295,7 +295,6 @@ describe('GithubAppCallbackController', () => {
       githubAppInstallationId: '999',
       githubAppInstallationAccount: 'acme',
     });
-    // Connecting the App must NEVER auto-flip the in-sandbox auth mode.
     expect(store.write).not.toHaveBeenCalledWith(
       'org-1',
       expect.objectContaining({ githubAuthMode: expect.anything() }),
@@ -450,7 +449,6 @@ describe('GithubAppCallbackController', () => {
 
     await controller.callback('999', 'install', 'nonce-abc', res);
 
-    // Can't verify ownership without a user — fail closed, never consult ownership.
     expect(orgs.ownsAnyOf).not.toHaveBeenCalled();
     expect(store.write).not.toHaveBeenCalled();
     expect(res.redirect).toHaveBeenCalledWith(

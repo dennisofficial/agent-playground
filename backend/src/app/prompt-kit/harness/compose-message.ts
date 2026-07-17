@@ -1,13 +1,3 @@
-/**
- * prompt-kit / harness / compose-message — the ONE renderer for every inbound `Message` variant.
- *
- * `composeMessageBody` is the single exhaustive switch that turns a typed `Message` (every variant EXCEPT
- * `UserMessage`, which keeps its own operator path) into the `AgentMessage` body the brain receives plus the
- * optional `SeedRow` render command that makes the seeded turn legible in the transcript. Each arm calls the
- * existing `seed-catalog` builder and mints its `chunkKey` through the `chunk-keys` registry, so a body and its
- * dedup key stay byte-identical to the construction sites this centralizes. A new `Message` variant with no arm
- * fails the build at `assertNever` — the exhaustiveness guard this refactor exists for.
- */
 import type { Message, UserMessage } from '@shared/domain/message';
 import { assertNever } from '@shared/domain/message';
 import type { SeedRow } from '@shared/domain/seed-row';
@@ -46,10 +36,6 @@ import {
 
 type ComposedBody = { body: AgentMessage; seedRow?: SeedRow };
 
-/**
- * Render the body (and, when the turn shows as a curated transcript pill, the `SeedRow`) for a non-user
- * `Message`. `UserMessage` is excluded — it stays on its own operator intake path, unchanged.
- */
 export function composeMessageBody(m: Exclude<Message, UserMessage>): ComposedBody {
   switch (m.type) {
     case 'answer_question':
@@ -73,9 +59,6 @@ export function composeMessageBody(m: Exclude<Message, UserMessage>): ComposedBo
     case 'secret_provided':
       return composeSecretProvided(m);
     case 'reset_verify':
-      // Plain wake body — this seed writes no curated pill; the verify instruction rides RESET_VERIFY_TEXT,
-      // consumed by whichever turn cold-attaches first. Framed as a `<system_notice>` (matches `frameAnswer`)
-      // so the engine reads it as trusted harness context, not a bare/untagged turn.
       return {
         body: agentMessage(
           renderChunk({
@@ -85,9 +68,6 @@ export function composeMessageBody(m: Exclude<Message, UserMessage>): ComposedBo
         ),
       };
     case 'compaction':
-      // Compaction is not a single rendered notice: it triggers a summarization turn the brain drives with
-      // COMPACTION_SYSTEM/foldCompactionSeed. That brain-side special-casing is wired in a later slice; this
-      // arm exists so the switch stays exhaustive and carries the instruction body.
       return { body: COMPACTION_INSTRUCTION };
     case 'ship_open_pr':
       return {
@@ -234,7 +214,6 @@ export function composeMessageBody(m: Exclude<Message, UserMessage>): ComposedBo
     }
     case 'skill_edit_gone': {
       const body = skillEditGone(m.name);
-      // Shares the skill-edit-approve chunkKey: both are terminal outcomes of the same approve endpoint.
       return {
         body,
         seedRow: {
@@ -250,11 +229,6 @@ export function composeMessageBody(m: Exclude<Message, UserMessage>): ComposedBo
   }
 }
 
-/**
- * The `secret_provided` arm — branches on the server-initiated provide-secret `outcome`/`secretKind` to
- * pick the builder + chunkKey (mirrors `web-surface.controller`'s `provideSecret`/`applySecretProvide`). A
- * plain operator-supplied provide (no `outcome`) renders the generic notice with no curated pill.
- */
 function composeSecretProvided(m: Extract<Message, { type: 'secret_provided' }>): ComposedBody {
   switch (m.outcome) {
     case 'undelivered': {
@@ -312,7 +286,6 @@ function composeSecretProvided(m: Extract<Message, { type: 'secret_provided' }>)
       };
     }
     default:
-      // Plain operator-supplied provide — the generic Job-1 notice, no curated pill.
       return { body: systemNotice(agentMessage('A secret was provided.')) };
   }
 }

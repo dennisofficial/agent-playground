@@ -1,11 +1,3 @@
-/**
- * ProfileAwarenessService (live Postgres) — the host round-trip that dedups a detected install/remove
- * against the per-repo `profile_seen_tooling` ledger and returns the Stage-1 checklist (or null).
- *
- * Integration: real Postgres (atlas_test schema), no fakes — proves the atomic ledger transitions
- * (`WorkspaceConfigStore.applyToolingTransition`) end-to-end, mirroring `pipeline-awareness.int.test.ts`'s
- * harness (seed an org+repo row directly, drive the real service, read the column back with raw SQL).
- */
 import { Test, type TestingModule } from '@nestjs/testing';
 import { TypeOrmModule, getDataSourceToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';

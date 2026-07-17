@@ -1,6 +1,3 @@
-/**
- * prompt-kit / jit — the install-awareness detector + render table (Stage 1, decision d5).
- */
 import { describe, expect, it } from 'vitest';
 import { detectInstallCommand, renderInstallAwareness } from './install-awareness';
 

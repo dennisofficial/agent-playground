@@ -19,14 +19,6 @@ import { JobTitler } from '../../titling';
 import { CLASSIFIER_LLM } from '../decision-gate';
 import { BrainTurnAlreadyRunningError, TurnRegistry } from '../turn-registry.service';
 
-/**
- * Int test for the `ux_active_turns_one_running_brain_per_job` partial unique index (the hard cross-process
- * backstop against two brain turns resuming one engine session — the "parallel co-author" bug). Proves at
- * the REAL DB that a second `running` brain turn for a job is rejected as `BrainTurnAlreadyRunningError`,
- * while a non-brain turn, a different job, and a re-register after the first finalized are all allowed.
- *
- * Boots the REAL AppModule against live Postgres, mocking only external boundaries (none are exercised).
- */
 const TEAM_ID = '44444444-4444-4444-8444-444444444444'; // sentinel org uuid
 
 describe('single running brain turn per job (live Postgres partial unique index)', () => {
@@ -73,7 +65,6 @@ describe('single running brain turn per job (live Postgres partial unique index)
     registry = app.get(TurnRegistry);
     dataSource = app.get<DataSource>(getDataSourceToken(DB_CONNECTION));
 
-    // Seed the FK chain: org → repo → two jobs (active_turns.job_id → jobs.id).
     await dataSource.query(
       `INSERT INTO organizations (id, name, slug) VALUES ($1,$2,$3) ON CONFLICT (id) DO NOTHING`,
       [TEAM_ID, 'guard-org', 'guard-org'],
@@ -110,7 +101,6 @@ describe('single running brain turn per job (live Postgres partial unique index)
     else process.env.SURFACE = prevSurface;
   });
 
-  // `turn_id` is a uuid column, so every turn needs a real uuid; `brain1` is finalized in the last test.
   const brain1 = randomUUID();
 
   it('rejects a SECOND running brain turn for the same job (BrainTurnAlreadyRunningError)', async () => {
@@ -121,7 +111,6 @@ describe('single running brain turn per job (live Postgres partial unique index)
   });
 
   it('ALLOWS a non-brain (step) turn alongside the running brain turn on the same job', async () => {
-    // brain1 from the previous test is still running for jobA.
     await expect(registry.register(reg(randomUUID(), jobA, 'step'))).resolves.toBeUndefined();
   });
 

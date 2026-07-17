@@ -1,12 +1,3 @@
-/**
- * `RedisEngineRunner` + REAL `ProfileAwarenessService` (live Postgres) — the full install-awareness
- * round-trip: a simulated in-container engine XADDs a `tool_request` for the reserved
- * `__profile_awareness` host tool, the runner dispatches it to the real service (backed by the
- * `profile_seen_tooling` ledger), and the reply flows back over the replies stream.
- *
- * Mirrors `profile-awareness.service.int.test.ts`'s DB bootstrap and
- * `redis-engine-runner.spec.ts`'s tool-bridge `fakeContainers`/`execDetached` pattern.
- */
 import type { EnvService } from '@core/config/env/env.service';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { TypeOrmModule, getDataSourceToken } from '@nestjs/typeorm';
@@ -78,11 +69,6 @@ function baseArgs(onEvent: (e: EngineEvent) => void): RunEngineArgs {
   };
 }
 
-/**
- * A fake `ContainerEngine.execDetached` simulating the in-container entrypoint: XADDs a `tool_request`
- * for `__profile_awareness`, polls the replies stream for the correlated reply, then emits the reply's
- * result as a text event before ending the turn.
- */
 function fakeContainersWithProfileAwarenessCall(redis: InMemoryRedisStream, command: string) {
   return {
     execDetached: vi.fn((_id: string, _argv: string[], opts?: { env?: Record<string, string> }) => {
@@ -233,8 +219,6 @@ describe('RedisEngineRunner + ProfileAwarenessService (live Postgres) — instal
     const replyText = events.find((e) => (e as { kind?: string }).kind === 'text') as
       | { kind: 'text'; text: string }
       | undefined;
-    // `service.handle` returns null on dedup; the tool-bridge reply's result is null, so the fake
-    // container's text extraction (only a STRING result becomes text) yields an empty string.
     expect(replyText?.text).toBe('');
     expect(await ledger()).toEqual(before);
   });

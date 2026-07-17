@@ -5,7 +5,6 @@ import { HostStatsSampleRepository } from './host-stats-sample.repository';
 import { HostStatsService } from './host-stats.service';
 import type { HostStatsDto, HostStatsHistoryPoint } from './host-stats.types';
 
-/** Realtime SSE push cadence. */
 const REALTIME_MS = 3_000;
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
@@ -16,9 +15,6 @@ function parseHistoryHours(raw: string | undefined): number {
   return clamp(Number.isFinite(value) ? value : 24, 1, 48);
 }
 
-/**
- * Login-gated (no `@Public()`, no org guard) live host snapshot for the ops dashboard.
- */
 @Controller('web/host-stats')
 export class HostStatsController {
   constructor(
@@ -35,8 +31,6 @@ export class HostStatsController {
   realtime(): Observable<MessageEvent> {
     return interval(REALTIME_MS).pipe(
       startWith(0),
-      // Swallow a transient collect() failure (e.g. statfs() rejecting) so one bad tick
-      // skips instead of erroring the stream and triggering an EventSource reconnect-storm.
       switchMap(() => from(this.stats.collect()).pipe(catchError(() => EMPTY))),
       map((snap) => ({ data: snap })),
     );

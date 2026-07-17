@@ -30,13 +30,6 @@ class DeleteFileDto {
   @IsString() @MinLength(1) path!: string;
 }
 
-/**
- * `/web/orgs/:orgId/workspace-secrets` — manage the org's encrypted per-repo workspace secret FILES that
- * the hydrator renders into a repo's sandbox. GET returns file refs (repo + path + label) only — never
- * values — readable by any member. All mutations (PUT/DELETE `/files`) are an Administer action — owner
- * only (`OrgOwnerGuard`), mirroring {@link OrgCredentialsController}. A file row IS the authority:
- * without one, a repo's committed `.atlas/worktree.json` entry is inert.
- */
 @Controller('web/orgs/:orgId/workspace-secrets')
 @UseGuards(OrgMembershipGuard)
 export class WorkspaceSecretsController {

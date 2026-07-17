@@ -1,10 +1,3 @@
-/**
- * prompt-kit / groups — the topic-bucketed `@FragmentGroup` classes that make up the ATLAS_MAIN (brain)
- * prompt, plus the composed-tail groups (job-kind block + behavioral notes) and the operator group.
- *
- * `FRAGMENT_GROUPS` is registered as plain class providers by `PromptKitModule` so `DiscoveryService` can
- * find them at boot. Adding a new group = add its class here.
- */
 import { AutoMergeGroup } from './auto-merge.group';
 import { AutofixGroup } from './autofix.group';
 import { AutonomyGroup } from './autonomy.group';
@@ -30,7 +23,6 @@ import { WorkerGroup } from './worker.group';
 import { WorkspaceProfileGroup } from './workspace-profile.group';
 
 export const FRAGMENT_GROUPS = [
-  // Brain (ATLAS_MAIN)
   IdentityGroup,
   SandboxGroup,
   HostToolsGroup,
@@ -48,7 +40,6 @@ export const FRAGMENT_GROUPS = [
   BehavioralGroup,
   OperatorGroup,
   ConventionsGroup,
-  // Driver / ship / autofix / meta / subagents
   DriverFramingGroup,
   WorkerGroup,
   ShipGroup,

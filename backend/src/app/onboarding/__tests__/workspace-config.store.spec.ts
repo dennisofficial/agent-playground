@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { OrgWorkspaceMountEntity, RepoEntity } from '../../persistence/entities';
 import { WorkspaceConfigStore } from '../workspace-config.store';
 
-/** A tiny in-memory stand-in for a TypeORM repository (composite-key find/save/update/delete). */
 function memRepo<T extends object>(keys: (keyof T)[]): Repository<T> & { rows: T[] } {
   let rows: T[] = [];
   const match = (where: Partial<T>) => (r: T) =>

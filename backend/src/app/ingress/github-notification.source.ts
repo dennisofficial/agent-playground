@@ -13,27 +13,6 @@ import type {
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { ProjectRoutingService } from '../stimulus/project-routing.service';
 
-/**
- * The GitHub `NotificationSource` adapter — one of the MVP gateways. It owns the GitHub-specific:
- *
- *  - VERIFICATION: `X-Hub-Signature-256` HMAC-SHA256 of the EXACT request bytes against
- *    `GITHUB_WEBHOOK_SECRET` (constant-time compare). No secret configured / no header → the
- *    request is `unverifiable` (we never trust an unsigned GitHub payload).
- *  - PARSING: reads the `X-GitHub-Event` type + the JSON body's `repository.full_name`. MVP handles
- *    the event types that map to actionable work — `workflow_run` (CI failures), `check_run`/
- *    `check_suite` (failed checks). A `ping` is `ignored` (a successful no-op). Other types are
- *    `ignored` too (drop-in later).
- *  - DEDUPE: a stable `dedupeKey` from the gateway's grouping id (the workflow/check run id), NOT the
- *    per-delivery `X-GitHub-Delivery` (redeliveries of the SAME failure must collapse). Falls back to
- *    the delivery id when no run id is present.
- *  - SEVERITY: failed CI / checks → 'critical'; other actionable states → 'warning'.
- *  - ROUTING: `repository.full_name` (owner/repo) → `ProjectRoutingService.routeGithubRepo` →
- *    `repos` → its 1:1 channel. Unknown repo → `unroutable`.
- *
- * Output is ONLY a `ParsedEvent` (→ `EventMessage`, `trust:'untrusted'`); everything downstream
- * (filter, seed, triage) is gateway-agnostic. Zero v1 imports — the HMAC shape is rewritten from v1's
- * Slack guard, not imported.
- */
 @Injectable()
 export class GithubNotificationSource implements NotificationSource {
   readonly source = 'github';
@@ -44,25 +23,12 @@ export class GithubNotificationSource implements NotificationSource {
     private readonly routing: ProjectRoutingService,
   ) {}
 
-  /**
-   * `/webhooks/github/events` front door — WORK-EVENTS intake ONLY. Verifies + routes the request, then
-   * summarizes it into a triage stimulus (routed to the owning job by `StimulusIntake`). `pull_request`
-   * is deliberately not actionable here (`summarizeGithubEvent` returns null for it) — that event drives
-   * the silent PR-state sync via `handlePrWebhook` instead, never this method.
-   */
   async handle(raw: RawNotification): Promise<IngressResult> {
     const g = await this.verifyAndRoute(raw);
     if ('outcome' in g) return g;
     return this.buildTriage(g, raw);
   }
 
-  /**
-   * The same work-events front door as `handle`, but also correlates the payload into a `CiSyncDelta`
-   * for the silent CI-status sync (`ci`, non-null ONLY for the three CI event types) and a re-arm target
-   * for the reconciler (`rearm`, non-null ONLY for a submitted/dismissed `pull_request_review` — a
-   * required-review approval or dismissal can flip a PR's mergeability). All three are computed from the
-   * SAME verified/routed payload so they can never disagree.
-   */
   async handleWorkEvent(raw: RawNotification): Promise<{
     triage: IngressResult;
     ci: CiSyncDelta | null;
@@ -76,7 +42,6 @@ export class GithubNotificationSource implements NotificationSource {
     return { triage, ci, rearm };
   }
 
-  /** Build the work-events triage result from an already verified+routed payload. */
   private buildTriage(
     g: {
       eventType: string;
@@ -87,8 +52,6 @@ export class GithubNotificationSource implements NotificationSource {
   ): IngressResult {
     const summary = summarizeGithubEvent(g.eventType, g.body);
     if (!summary) {
-      // A verified payload we deliberately don't act on (e.g. a successful run, a push event, a
-      // pull_request — that one's routed via `handlePrWebhook` instead).
       return {
         outcome: 'ignored',
         reason: 'unsupported',
@@ -109,11 +72,6 @@ export class GithubNotificationSource implements NotificationSource {
     return { outcome: 'accepted', event };
   }
 
-  /**
-   * `/webhooks/github/state` front door — silent PR-state sync ONLY. Verifies + routes the request same as
-   * `handle`, but only ever parses `pull_request` events into a `PrStateDelta`; every other verified
-   * event type is ignored (this endpoint never feeds `StimulusIntake`).
-   */
   async handlePrWebhook(raw: RawNotification): Promise<IngressResult> {
     const g = await this.verifyAndRoute(raw);
     if ('outcome' in g) return g;
@@ -130,11 +88,6 @@ export class GithubNotificationSource implements NotificationSource {
     return this.parsePullRequest(g.route, g.body);
   }
 
-  /**
-   * Shared verify + route: HMAC-secret check, signature check, `ping` ignore, `repository.full_name`
-   * read, `ProjectRoutingService.routeGithubRepo`. Both front doors call this so verification/routing
-   * behavior can never drift between them.
-   */
   private async verifyAndRoute(raw: RawNotification): Promise<
     | IngressResult
     | {
@@ -188,9 +141,6 @@ export class GithubNotificationSource implements NotificationSource {
       };
     }
 
-    // A GitHub payload carries no Slack team id — the repo IS the tenant key. Route across all
-    // registered projects; the matched project carries its own org_id (multi-tenant-ready, no
-    // per-payload team). Unknown repo → unroutable (Atlas never works a repo it doesn't own).
     const route = await this.routing.routeGithubRepo(repo);
     if (!route) {
       return {
@@ -203,10 +153,6 @@ export class GithubNotificationSource implements NotificationSource {
     return { eventType, body, route };
   }
 
-  /**
-   * Parse a `pull_request` webhook into a `PrStateDelta` (open/reopen/close lifecycle sync), a `pr-rearm`
-   * (a mergeability-affecting action on an already-open PR — head push / draft↔ready), or ignore it.
-   */
   private parsePullRequest(
     route: { orgId: string; repoId: string },
     body: GithubWebhookBody,
@@ -259,13 +205,6 @@ export class GithubNotificationSource implements NotificationSource {
     return { outcome: 'pr-sync', delta };
   }
 
-  /**
-   * Parse a `push` webhook: only a push to the repo's DEFAULT branch is a base-move that can silently
-   * conflict its open PRs (`ref === refs/heads/<default_branch>`). Emit `repo-push` for those (the state
-   * door then marks the repo's open PRs due-now); ignore every other push (feature-branch pushes are the
-   * PR's own head moving — GitHub recomputes + the ~45s cadence already catches those). Deletes
-   * (`ref` gone / no default_branch) are ignored.
-   */
   private parsePush(
     route: { orgId: string; repoId: string },
     body: GithubWebhookBody,
@@ -283,10 +222,8 @@ export class GithubNotificationSource implements NotificationSource {
   }
 }
 
-/** The subset of a GitHub webhook body the adapter reads. */
 interface GithubWebhookBody {
   action?: string;
-  /** The `push` event's fully-qualified ref, e.g. `refs/heads/main` (default-branch pushes matter). */
   ref?: string;
   repository?: { full_name?: string; default_branch?: string };
   workflow_run?: {
@@ -340,7 +277,6 @@ interface GithubWebhookBody {
   sender?: { login?: string; type?: string };
 }
 
-/** A triage summary + the correlation hint that routes it to the owning job (branch/PR). */
 interface EventSummary {
   severity: EventSeverity;
   eventKind: EventKind;
@@ -348,7 +284,6 @@ interface EventSummary {
   correlation?: { branch?: string | null; prNumber?: number | null };
 }
 
-/** Verify GitHub's `sha256=<hex>` HMAC of the raw bytes, constant-time. */
 export function verifyGithubSignature(rawBody: Buffer, signature: string, secret: string): boolean {
   const expected = `sha256=${createHmac('sha256', secret).update(rawBody).digest('hex')}`;
   const a = Buffer.from(expected);
@@ -357,12 +292,6 @@ export function verifyGithubSignature(rawBody: Buffer, signature: string, secret
   return timingSafeEqual(a, b);
 }
 
-/**
- * Map a GitHub event to a triage summary + correlation hint, or null when it's not actionable. Acts on
- * FAILED CI / checks (the autonomous-fix path) AND — so an owning job's brain hears about its own PR —
- * review submissions / comments. The correlation hint (branch + PR number) routes each to the job that
- * owns it; a match that finds no owner falls through to seed-a-new-thread (external CI).
- */
 function summarizeGithubEvent(eventType: string, body: GithubWebhookBody): EventSummary | null {
   const repo = body.repository?.full_name;
   if (eventType === 'workflow_run') {
@@ -414,8 +343,6 @@ function summarizeGithubEvent(eventType: string, body: GithubWebhookBody): Event
     return null;
   }
   if (eventType === 'pull_request_review') {
-    // A submitted review: route CHANGES_REQUESTED (critical) + non-empty COMMENT/APPROVED so Atlas can
-    // read the feedback on its own PR. Skip empty approvals (no body → nothing to act on).
     if (body.action !== 'submitted') return null;
     const review = body.review;
     const state = (review?.state ?? '').toUpperCase();
@@ -452,7 +379,6 @@ function summarizeGithubEvent(eventType: string, body: GithubWebhookBody): Event
     };
   }
   if (eventType === 'issue_comment') {
-    // Only PR comments (issues carry a `pull_request` field when they are PRs); skip plain-issue chatter.
     if (body.action !== 'created' || !body.issue?.pull_request) return null;
     const who = body.comment?.user?.login ?? 'someone';
     return {
@@ -465,7 +391,6 @@ function summarizeGithubEvent(eventType: string, body: GithubWebhookBody): Event
   return null;
 }
 
-/** A PR to mark due-now on `GitStateReconciler` — a webhook that can flip mergeability for ONE PR. */
 export type RearmTarget = {
   orgId: string;
   repoId: string;
@@ -473,11 +398,6 @@ export type RearmTarget = {
   branch: string | null;
 };
 
-/**
- * Re-arm target for a submitted/dismissed `pull_request_review` — a required-review approval or dismissal
- * can flip a PR's `mergeable_state` (`blocked` ↔ `clean`) with no other webhook signalling it. Non-null
- * ONLY for those two review actions, and only when the review's PR number is present.
- */
 function parseRearmDelta(
   eventType: string,
   route: { orgId: string; repoId: string },
@@ -495,11 +415,6 @@ function parseRearmDelta(
   };
 }
 
-/**
- * Correlation delta for the silent CI-status sync — non-null ONLY for the three CI event types. We do
- * NOT gate on conclusion/status: recompute on ANY CI event (queued/in_progress included) so "running" is
- * caught, not only terminal states. Carries only correlation keys (never the webhook's own head_sha).
- */
 function parseCiDelta(
   eventType: string,
   route: { orgId: string; repoId: string },
@@ -524,18 +439,6 @@ function checkRunBranch(check: NonNullable<GithubWebhookBody['check_run']>): str
   return check.check_suite?.head_branch ?? check.pull_requests?.[0]?.head?.ref ?? null;
 }
 
-/**
- * Derive the collapse key so ONE logical failure = one job, not one-per-webhook.
- *
- * CI events fan out: a single failing commit emits `workflow_run` + `check_suite` + N×`check_run`,
- * all sharing a `head_sha`. Keying CI events on `ci:<head_sha>` (NOT the per-event-type run id) folds
- * that whole fan-out — and any re-run/redelivery on the same commit — onto a single seeded/attached
- * job. Without this, each event type dedupes only against itself and seeds its own job.
- *
- * Non-CI events (review/comment) stay keyed on their unique per-item id (one message per review or
- * comment). Fall back to the per-item id (fixing the old `check_suite.conclusion` key, which carried
- * no run identity), then the per-delivery id, when no `head_sha` is present.
- */
 function deriveDedupeKey(
   eventType: string,
   body: GithubWebhookBody,

@@ -2,7 +2,6 @@ import type Redis from 'ioredis';
 import { describe, expect, it } from 'vitest';
 import { ClaudeOAuthPkceStore } from '../claude-oauth-pkce.store';
 
-/** Map-backed fake standing in for the `ioredis` calls the store makes: `set(k,v,'EX',ttl)` / `get` / `del`. */
 class FakeRedis {
   private readonly data = new Map<string, string>();
 

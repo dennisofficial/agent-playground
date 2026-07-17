@@ -1,22 +1,3 @@
-/**
- * Live-infra proof for commit 8ba531d6 ("Harden engine turn loop against 'Stream closed' storms"): when the
- * IN-SANDBOX engine circuit-breaker trips mid-turn, `redis-engine-runner` rewraps it as
- * `in-sandbox engine turn failed: Error: engine stream closed: control channel severed mid-turn
- * (circuit-breaker)` and throws it out of `TurnRunnerService.runTurn`. That throw is NOT an HTTP-visible
- * event — it severs the stdin control channel, so it can only be faithfully reproduced by a FAKE engine
- * seam that throws the exact wrapped message, exactly like `thread-driver.service.spec.ts`'s "SILENTLY
- * RE-DRIVES the lane on the d1 stream-closed circuit-breaker throw" unit test does.
- *
- * This test boots the REAL `ThreadDriver` + the REAL `DriverStoreService` against LIVE Postgres (this
- * project's atlas_test schema — every job/thread/step row below is a genuine TypeORM write/read), with a
- * FAKE `TurnRunnerService` standing in for the engine seam (git/GitHub/sandbox/docker collaborators are
- * canned fakes, mirroring the unit spec's `assemble()` harness — the point under test is the driver's
- * `TRANSIENT_ERROR_RE` classification + `runJobWithTransientRetry` retry loop, driven over REAL DB rows, not
- * docker/git plumbing). It proves the lane SELF-HEALS: the first orchestrator turn throws the wrapped
- * stream-closed error, the driver classifies it transient (never `failed`), silently re-drives on a FRESH
- * turn (read back from Postgres — the retried run resumes the SAME persisted step/thread rows), and the job
- * reaches `done`, all readable from the live `jobs`/`threads`/`steps` tables.
- */
 import type { EnvService } from '@core/config/env/env.service';
 import { ConsoleLogger, Logger } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
@@ -80,13 +61,9 @@ const RESOLVED: ResolvedRepo = {
   token: 'ghtok',
 };
 
-/** The EXACT wrapped shape the engine circuit-breaker produces (commit 8ba531d6's own error text). */
 const STREAM_CLOSED_THROW =
   'in-sandbox engine turn failed: Error: engine stream closed: control channel severed mid-turn (circuit-breaker)';
 
-/** A fake `TurnRunnerService`: throws the wrapped stream-closed error on the FIRST `runTurn` (the "storm"),
- *  then completes the thread cleanly via `complete_thread` on the retried, fresh turn. Mirrors
- *  `thread-driver.service.spec.ts`'s `makeTurn({ transientFailures: 1, transientMessage })`. */
 function makeStreamClosedTurn(): {
   turn: TurnRunnerService;
   calls: Array<{ mode: string; stepId?: string | null }>;
@@ -104,7 +81,6 @@ function makeStreamClosedTurn(): {
         calls.push({ mode: input.mode, stepId: input.stepId });
         if (remainingFailures > 0) {
           remainingFailures -= 1;
-          // The circuit-breaker throw — the "stream closed" storm this test proves the driver self-heals.
           throw new Error(STREAM_CLOSED_THROW);
         }
         if (input.toolBridge?.tools?.['complete_thread']) {
@@ -139,8 +115,6 @@ function makeStreamClosedTurn(): {
   return { turn, calls };
 }
 
-/** Canned collaborators for every OTHER `ThreadDriver` dependency — no docker/git/GitHub touched. Mirrors
- *  `thread-driver.service.spec.ts`'s `assemble()` fakes verbatim; only `store` is REAL (live Postgres). */
 function makeGit(): { git: LocalGitService } {
   const git = {
     createFeatureSandbox: vi.fn(
@@ -202,11 +176,6 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
         },
       ],
     }).compile();
-    // `Test.createTestingModule(...).compile()` globally silences Nest's `Logger` (routes every
-    // instance through `TestingLogger`, which no-ops log/warn/debug — see
-    // `@nestjs/testing/services/testing-logger.service.js`). Restore a real console logger so the
-    // driver's OWN `this.logger.warn(...)` retry line (asserted/captured below) actually prints —
-    // this is a global static override, so it also re-enables it for the driver instantiated below.
     Logger.overrideLogger(new ConsoleLogger());
 
     store = mod.get(DriverStoreService);
@@ -238,7 +207,6 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
       'the wrapped circuit-breaker message on turn 1; the driver classifies it TRANSIENT and re-drives a ' +
       'fresh turn (turn 2) that completes — the job reaches `done` in Postgres, never `failed`',
     async () => {
-      // ── seed a real job + decision record + builder thread ─────────────────────────────────────────
       const job = await jobs.save(
         jobs.create({
           org_id: ORG_ID,
@@ -265,8 +233,6 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
         }),
       ]);
       await jobs.update({ id: job.id }, { decision_record_id: record.id });
-      // Every job carries one planning thread group at job start — the anchor job-level operator notices are
-      // stamped onto (messages.thread_id is NOT NULL). The driver never executes it; it's render-only.
       const planningThreadGroup = await store.createThreadGroup({
         jobId: job.id,
         orgId: ORG_ID,
@@ -297,7 +263,6 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
         brief: 'Backend — stream-closed self-heal',
       });
 
-      // ── assemble the real driver ────────────────────────────────────────────────────────────────────
       const { turn, calls } = makeStreamClosedTurn();
       const { git } = makeGit();
       const { pr } = makePr();
@@ -448,17 +413,11 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
         } as unknown as import('../../job-bootstrap').JobBootstrapService,
       );
 
-      // Spy on the REAL store's setJobHalt so we can assert a `failed` halt was NEVER stamped, while the
-      // real Postgres write still goes through (no mockImplementation override — call-through). Job failure
-      // is signaled via `JobHalt.kind === 'failed'`, not the `JobStatus` phase.
       const setJobHaltSpy = vi.spyOn(store, 'setJobHalt');
 
-      // ── drive it ─────────────────────────────────────────────────────────────────────────────────────
       const domainJob = await store.loadJob(job.id);
       await driver.dispatch(domainJob);
 
-      // Poll the LIVE `jobs` row for the terminal state; auto-click "Ship it" the instant the ship-review
-      // gate parks (mirrors `assemble()`'s `autoShipApprove` default), driven off REAL DB reads throughout.
       const deadline = Date.now() + 60_000;
       let shipApproved = false;
       let finalStatus = '';
@@ -473,13 +432,11 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
         await new Promise((r) => setTimeout(r, 25));
       }
 
-      // ── assertions — the lane SELF-HEALED, read back from live Postgres ────────────────────────────────
       expect(finalStatus).toBe('done');
 
       const execCalls = calls.filter((c) => c.mode === 'execute');
       expect(execCalls.length).toBeGreaterThanOrEqual(2); // turn 1 (stream-closed throw) + turn 2 (fresh, completed)
 
-      // Never stamped a `failed` halt at any point in the drive.
       expect(setJobHaltSpy.mock.calls.some((c) => c[1]?.kind === 'failed')).toBe(false);
 
       const finalRow = await jobs.findOneOrFail({ where: { id: job.id } });

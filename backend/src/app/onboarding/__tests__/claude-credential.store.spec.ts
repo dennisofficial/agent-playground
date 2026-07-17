@@ -15,13 +15,6 @@ function fakeEnv(map: Record<string, string | undefined>): EnvService {
   return { get: (k: string) => map[k] } as unknown as EnvService;
 }
 
-/**
- * In-memory `claude_credentials` + `organizations` rows shared by a fake Repository (used by the
- * non-transactional methods) and a fake DataSource whose `transaction` runs the callback with a fake
- * EntityManager (used by `advanceClaudeCredential` / `upsertLegacySetupToken`). The pessimistic lock is a
- * no-op here — this covers the guard LOGIC; true lock atomicity is a Postgres guarantee exercised in real
- * runs. Mirrors the fake-datasource idiom in `tenant-credential.store.spec.ts`.
- */
 function fakeDb(): {
   repo: Repository<OrgClaudeCredentialEntity>;
   orgRepo: Repository<OrganizationEntity>;
@@ -113,7 +106,6 @@ function makeStore(env: Record<string, string | undefined> = { SECRETS_ENCRYPTIO
   return { store, orgs, repo };
 }
 
-/** A minimal `claudeAiOauth` blob (what `isNewerClaudeCredential` reads via `expiresAt`). */
 function oauthBlob(expiresAt: number, accessToken = 'access', refreshToken = 'refresh'): string {
   return JSON.stringify({
     claudeAiOauth: { accessToken, refreshToken, expiresAt },

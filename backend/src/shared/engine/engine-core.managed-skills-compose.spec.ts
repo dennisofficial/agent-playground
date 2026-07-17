@@ -4,11 +4,6 @@ import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { composeSkillsDir } from './engine-core';
 
-/**
- * `composeSkillsDir`'s handling of `ResolvedSkill.managed` — the P5 system-skills tier. Not a resolver
- * test (see `skill-resolver.managed-tier.spec.ts` for the precedence MERGE); this checks the compose step
- * itself picks the right root per entry and never leaves a dangling symlink.
- */
 const ROOT = join(tmpdir(), `atlas-managed-skills-compose-spec-${process.pid}`);
 const CLAUDE_CONFIG_DIR = join(ROOT, 'claude-config');
 const SKILLS_ROOT = join(ROOT, 'org-skills');

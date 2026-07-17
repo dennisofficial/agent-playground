@@ -11,11 +11,6 @@ import { describe, expect, it } from 'vitest';
 import { postBuildGateSeed } from '../post-build-gate';
 import { shipOpenPrBody } from '../ship-open-pr';
 
-/**
- * Golden-snapshot baseline for the pure `turns/` builders + consts — every snapshot captures CURRENT
- * output verbatim (a regression pass, not a spec of intent; behavioral assertions live in the sibling
- * `ship-open-pr.spec.ts`).
- */
 describe('turns / golden snapshots', () => {
   it('shipOpenPrBody — no decisions block', async () => {
     const out = shipOpenPrBody({

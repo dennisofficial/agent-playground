@@ -20,15 +20,6 @@ import { DB_CONNECTION } from '../../persistence/database.module';
 import { JobTitler } from '../../titling';
 import { AgentSessionManager } from '../agent-session-manager.service';
 
-/**
- * MECHANISM validation for brain-session compaction (see the `atlas-brain-compaction` design). Boots the
- * REAL AppModule (agent surface) against live test Postgres, stubbing only the external boundaries — then
- * calls the REAL `AgentSessionManager.runCompaction` so the whole path runs for real: the summarization
- * engine turn (FakeEngineRunner returns canned review-mode text), the durable reseed (`session_id` nulled +
- * `pending_compaction_seed` stashed on `job_sandboxes`), and the inspectable summary (`appendCompactionSummary`
- * → a `build_event` message carrying `meta.compactionSummary`). The real-LLM end-to-end (dispatch_build →
- * real Opus summary → fresh-session fold) is the deferred billed E2E; this proves the plumbing with $0.
- */
 const TEAM_ID = '55555555-5555-4555-8555-555555555555'; // sentinel org uuid
 const PROJECT_SLUG = 'compaction-it';
 
@@ -43,7 +34,6 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
 
   beforeAll(async () => {
     process.env.SURFACE = 'agent';
-    // Guarantee engine-auth resolves (env fallback) without throwing before the stubbed run.
     process.env.CLAUDE_OAUTH_TOKEN = process.env.CLAUDE_OAUTH_TOKEN ?? 'it-fake-token';
 
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
@@ -134,7 +124,6 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
   it('reseeds the session and stores an inspectable summary', async () => {
     const { jobId, repoId } = await seedJobWithSession('fat-session-abc');
 
-    // Drive the REAL compaction path. FakeEngineRunner answers the mode:'review' summary turn with canned text.
     await (
       mgr as unknown as {
         runCompaction: (
@@ -151,8 +140,6 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
       'fat-session-abc',
     );
 
-    // 1. Reseed: the fat session is abandoned and a lean seed is stashed durably; the abandon marker is
-    //    KEPT (recovery keeps skipping the old session until the fresh one is born).
     const [row]: Array<{
       session_id: string | null;
       pending_compaction_seed: string | null;
@@ -164,11 +151,9 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
     expect(row.session_id).toBeNull();
     expect(row.pending_compaction_seed).toBeTruthy();
     expect(row.compacting_session_id).toBe('fat-session-abc');
-    // The seed carries the continuation preamble + the (stubbed) summary text.
     expect(row.pending_compaction_seed).toContain('<session_compacted>');
     expect(row.pending_compaction_seed).toContain('(e2e fake) review turn');
 
-    // 2. Inspectable summary: a durable build_event message carries the full summary in meta.
     const [msg]: Array<{
       text: string;
       kind: string;
@@ -216,7 +201,6 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
       `SELECT session_id, compacting_session_id FROM job_sandboxes WHERE job_id = $1`,
       [jobId],
     );
-    // Session NOT abandoned; marker cleared → recovery is never suppressed for a still-live session.
     expect(row.session_id).toBe('fat-empty-xyz');
     expect(row.compacting_session_id).toBeNull();
     const [{ n }]: Array<{ n: string }> = await dataSource.query(
@@ -266,7 +250,6 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
         }
       ).shouldSkipCompaction(jobId);
 
-    // Seed a brain turn_meta block (no phaseId) with a given occupancy; build blocks carry phaseId.
     const seedTurnMeta = async (
       jobId: string,
       contextTokens: number | null,
@@ -305,9 +288,7 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
 
     it('ignores BUILD turn_meta (phaseId) — a lean build reading does not gate the brain', async () => {
       const { jobId } = await seedJobWithSession('s-buildonly');
-      // Only a build turn_meta exists (tagged phaseId) reporting a tiny build-session occupancy.
       await seedTurnMeta(jobId, 10_000, { phaseId: 'step-1' });
-      // Brain occupancy is unknown → compact (the build's 10k must NOT be read as the brain's).
       expect(await skip(jobId)).toBe(false);
     });
   });
@@ -331,7 +312,6 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
       undefined,
     );
 
-    // No reseed, no pill — nothing was compacted.
     const [row]: Array<{ pending_compaction_seed: string | null }> = await dataSource.query(
       `SELECT pending_compaction_seed FROM job_sandboxes WHERE job_id = $1`,
       [jobId],

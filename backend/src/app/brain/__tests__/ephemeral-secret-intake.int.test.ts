@@ -24,13 +24,6 @@ import { WebSurfaceController } from '../../surface/web-surface.controller';
 import { JobTitler } from '../../titling';
 import { BrainStoreService } from '../brain-store.service';
 
-/**
- * The EPHEMERAL secret lane's core invariant: a one-time value (an OAuth code) is delivered STRAIGHT into
- * the running sandbox and NEVER persisted — no `org_workspace_secret_files` row, not in the transcript.
- * Drives the real `provide-secret` controller path with a fake SANDBOX_PROVIDER that records the delivered
- * value, against live Postgres. Contrast with `secret-intake.int.test.ts`, which asserts the DURABLE lane
- * DOES write the encrypted store + grant.
- */
 const ORG_ID = '55555555-5555-8555-8555-555555555555';
 const SLUG = 'ephemeral-it';
 const CODE_VALUE = '4/0AVerification-DO-NOT-LEAK-abc123';
@@ -44,7 +37,6 @@ class FakeSandboxProvider {
     this.delivered.push(input);
     return this.nextOk ? { ok: true } : { ok: false, reason: 'the target process is not reading' };
   }
-  // Unused by this test — present so the object is a plausible provider.
   contextDirHost() {
     return '/tmp';
   }
@@ -144,14 +136,12 @@ describe('ephemeral secret lane — delivered, never persisted (live Postgres)',
     const opened = await store.openSecretRequest(jobId, { requestId, card });
     expect(opened.ok).toBe(true);
 
-    // The real controller path (guards bypassed by direct call — they gate identity, not this logic).
     const res = await controller.provideSecret({ id: ORG_ID } as never, jobId, {
       requestId,
       value: CODE_VALUE,
     });
     expect(res.ok).toBe(true);
 
-    // Delivered into the running container over the delivery lane, normalized to a single trailing newline.
     expect(provider.delivered).toHaveLength(1);
     expect(provider.delivered[0]).toMatchObject({
       jobId,
@@ -159,7 +149,6 @@ describe('ephemeral secret lane — delivered, never persisted (live Postgres)',
       value: `${CODE_VALUE}\n`,
     });
 
-    // NOTHING durable: no encrypted secret-file row at the delivery path, none for the repo at all.
     expect(await secrets.read(ORG_ID, repoId, DELIVER_TO)).toBeNull();
     expect(await secrets.list(ORG_ID, repoId)).toHaveLength(0);
     const storeRows = await ds.query(
@@ -168,14 +157,12 @@ describe('ephemeral secret lane — delivered, never persisted (live Postgres)',
     );
     expect(storeRows[0].n).toBe(0);
 
-    // LEAK ASSERTION: the code appears in NO message row (card text, card jsonb, seeded confirmation).
     const rows = await ds.query(
       `SELECT count(*)::int AS n FROM transcript_messages WHERE job_id = $1 AND (text LIKE $2 OR card::text LIKE $2)`,
       [jobId, `%${CODE_VALUE}%`],
     );
     expect(rows[0].n).toBe(0);
 
-    // Card stamped provided; the boot sweep marks it ephemeral (no path) and carries no value.
     const pending = await store.findUndeliveredProvidedSecrets();
     const mine = pending.find((p) => p.requestId === requestId);
     expect(mine).toMatchObject({ jobId, orgId: ORG_ID, ephemeral: true });
@@ -203,7 +190,6 @@ describe('ephemeral secret lane — delivered, never persisted (live Postgres)',
     });
 
     expect(res.ok).toBe(false);
-    // Gate cleared so the brain can re-run the login; nothing persisted.
     expect(await store.awaitingSecretId(jobId)).toBeNull();
     expect(await secrets.read(ORG_ID, repoId, DELIVER_TO)).toBeNull();
     const rows = await ds.query(

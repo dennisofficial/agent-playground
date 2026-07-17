@@ -92,13 +92,10 @@ describe('AgentChatSurface — the in-process programmatic ChatSurface (W6)', ()
     const surface = new AgentChatSurface();
     const inbound = firstValueFrom(surface.inbound$.pipe(take(2), toArray()));
 
-    // 1. Human opens a top-level conversation; its inbound id is the thread root.
     const rootTs = surface.sendFromHuman('C1', 'add export');
 
-    // 2. Atlas replies IN-THREAD off that root (the brain resolves threadTs == rootTs).
     await surface.post('C1', 'a few questions first…', { threadTs: rootTs });
 
-    // 3. Human answers in the SAME thread — passing rootTs continues the conversation.
     surface.sendFromHuman('C1', 'csv, gated by feature flag', {
       threadTs: rootTs,
     });
@@ -107,7 +104,6 @@ describe('AgentChatSurface — the in-process programmatic ChatSurface (W6)', ()
     expect(msgs[0].id).toBe(rootTs);
     expect(msgs[0].threadTs).toBeUndefined();
     expect(msgs[1].threadTs).toBe(rootTs); // the follow-up continues the thread
-    // Atlas's reply was threaded under the same root.
     expect(surface.threadMessages(rootTs)).toHaveLength(1);
     expect(surface.threadMessages(rootTs)[0].text).toContain('questions');
   });

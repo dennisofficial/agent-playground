@@ -2,11 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { ThreadInputService } from '../thread-input.service';
 import { laneFor } from '../thread-registry';
 
-/**
- * The shared send seam — routes `postToThread(lane, …)` to the transport REGISTERED for the lane's thread
- * kind (via the THREAD_REGISTRY), and hard-blocks read-only lanes. It reimplements no transport; these tests
- * assert the routing + the read-only invariant, not delivery mechanics.
- */
 describe('ThreadInputService — the shared send seam', () => {
   const ctx = { jobId: 'J', orgId: 'O', repoId: 'R' };
 
@@ -22,7 +17,6 @@ describe('ThreadInputService — the shared send seam', () => {
 
   it('THROWS on a read-only (input:"none") lane rather than silently dropping the message', async () => {
     const svc = new ThreadInputService();
-    // ship is `input:'none'` — no handler should ever be consulted.
     await expect(svc.postToThread(laneFor('ship', 'J'), ctx, 'x')).rejects.toThrow(/read-only/);
   });
 

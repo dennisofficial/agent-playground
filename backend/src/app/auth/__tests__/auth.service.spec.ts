@@ -5,7 +5,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { UserEntity } from '../../persistence/entities';
 import { AuthService } from '../auth.service';
 
-// Deterministic, fast stand-in for argon2 so the spec doesn't pay real hashing cost.
 vi.mock('@node-rs/argon2', () => ({
   hash: vi.fn(async (plain: string) => `hashed:${plain}`),
   verify: vi.fn(async (hashed: string, plain: string) => hashed === `hashed:${plain}`),
@@ -148,8 +147,6 @@ describe('AuthService', () => {
     });
 
     it('self-heals a poison cookie: a failed verify clears BOTH host-only and parent-domain scopes', async () => {
-      // A sibling preview app under the shared parent set a `.byatlas.io` cookie signed
-      // with a different secret; prod can't verify it and must evict it across scopes so login sticks.
       const req = {
         cookies: { refresh_token: 'poison' },
         hostname: 'api.byatlas.io',
@@ -159,7 +156,6 @@ describe('AuthService', () => {
         UnauthorizedException,
       );
 
-      // Cleared both cookie names under host-only (no domain) AND the parent domain.
       const cleared = res.clearCookie.mock.calls.map((c) => ({
         name: c[0],
         domain: c[1]?.domain,

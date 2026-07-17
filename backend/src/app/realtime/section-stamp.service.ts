@@ -11,14 +11,6 @@ import { LeaderElectionService } from '../cluster/leader-election.service';
 import { pgConnectionString, resolveSsl } from '../persistence/database.module';
 import { SECTION_STAMP_DDL } from './section-stamp.constants';
 
-/**
- * Boot-reconciled installer for the `jobs_stamp_section_entered` trigger (see
- * `section-stamp.constants.ts` + `JobEntity.section_first_entered`). LEADER-ONLY, like
- * `RealtimeService`'s engine: DDL only needs to run once per promotion, not per instance. FAIL-SOFT —
- * this is a data-integrity nicety (self-heals on the next leader promotion / restart, and the
- * `AddJobSectionFirstEntered` migration's backfill already covers historical rows), not a hard boot
- * dependency, so a failure here logs a warning instead of crashing boot.
- */
 @Injectable()
 export class SectionStampService implements OnApplicationBootstrap, OnApplicationShutdown {
   private readonly logger = new Logger(SectionStampService.name);

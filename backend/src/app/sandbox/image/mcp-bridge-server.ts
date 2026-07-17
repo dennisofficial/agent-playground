@@ -1,24 +1,3 @@
-/**
- * The in-sandbox stdio MCP server that gives a CODEX turn a host tool bridge (parity with the Claude
- * in-process bridge in `engine-entrypoint.ts`). Codex spawns THIS as a subprocess (declared in the
- * per-sandbox `config.toml` `[mcp_servers.atlasbridge]` block written by `codex-auth-home.ts`), so unlike
- * the Claude bridge — which runs in the engine process and shares its Redis client — this owns its OWN
- * Redis connections and does the identical `tool_request`/reply round-trip over the turn's streams:
- *
- *   XADD `turn:{T}:tools`  { t:'tool_request', id, name, args }   (engine→host; served by the host's
- *   await reply on `turn:{T}:replies`  { t:'tool_response'|'tool_error', id, … }   `consumeTools` loop)
- *
- * The host side (`redis-engine-runner.ts` `consumeTools` + `tool-bridge-host.ts` `dispatchToolRequest`)
- * is engine-agnostic and reused unchanged — it doesn't care that the frame came from this subprocess
- * rather than the engine. Env is supplied by the config.toml `[mcp_servers.atlasbridge.env]` block:
- * `TURN_ID`, `REDIS_URL`, `BRIDGE_TOOLS` (comma-separated host tool names). A fresh docker exec per Atlas
- * turn → fresh codex → fresh spawn of this server reading the CURRENT turn's `config.toml`, so the turn
- * id is always current (no stale-key risk across a resumed session).
- *
- * NOTE: codex surfaces these tools NAMESPACED to the model (e.g. `atlasbridge__complete_thread`), but the
- * `name` we put in the `tool_request` frame is the BARE tool name, so the host's `dispatchToolRequest`
- * (which matches on the bare name) resolves it exactly like a Claude bridge call.
- */
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -46,10 +25,6 @@ async function main(): Promise<void> {
   });
   await pub.connect();
 
-  // Reply reader: a blocking read on the replies stream (its own connection(s) — a blocking read can't
-  // share `pub`), resolving pending calls by id. Reads from '0-0' — the stream is fresh per turn, so
-  // there are no stale replies to skip. `makeSub` also assigns the outer `sub` so stdin-close cleanup
-  // always disconnects whichever connection is CURRENT (the reader swaps it internally on a stall-reset).
   let sub: Redis | undefined;
   const reader = new ToolBridgeReader({
     repliesKey,
@@ -108,7 +83,6 @@ async function main(): Promise<void> {
   });
 
   await server.connect(new StdioServerTransport());
-  // Keep the process alive; codex terminates it when the turn ends. Clean up on stdin close.
   process.stdin.on('close', () => {
     reader.stopReader();
     pub.disconnect();

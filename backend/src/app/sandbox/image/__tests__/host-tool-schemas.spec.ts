@@ -1,12 +1,3 @@
-/**
- * Guard tests for the canonical host-bridge tool schemas. The Claude SDK wraps each `TOOL_SHAPES[name]`
- * in a STRICT zod object that STRIPS unknown top-level keys and REJECTS wrong types before a handler ever
- * sees the call — so a field a handler reads but this file forgot to declare is silently dropped, and a
- * bad enum/string pin here silently rejects input a handler would otherwise have accepted. These tests
- * drive every shape through the SAME in-memory MCP roundtrip the real bridge uses (`tool()` +
- * `createSdkMcpServer()` + an MCP `Client`), not just direct zod parsing, so they catch exactly what the
- * SDK actually does at the wire.
- */
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -14,7 +5,6 @@ import { WORKSPACE_PROFILE_TOOL_NAMES } from '@shared/bridge-names/workspace-pro
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { TOOL_DESCRIPTIONS, TOOL_SHAPES, toolJsonSchema } from '../host-tool-schemas';
 
-// A single decision, fully populated, reused by every plan-shaped tool.
 const decisionItemPayload = {
   decisionClass: 'data_model',
   title: 'Use Postgres for the ledger',
@@ -25,7 +15,6 @@ const decisionItemPayload = {
   confirmedByOperator: true,
 };
 
-// A single thread (with a step), fully populated, reused by every plan-shaped tool.
 const threadItemPayload = {
   title: 'Backend',
   brief: 'Wire the ledger service.',
@@ -33,19 +22,11 @@ const threadItemPayload = {
   steps: [{ title: 'Add migration', brief: 'Create the ledger table.' }],
 };
 
-// One structured verification record, fully populated — the array branch of `verificationField`.
 const verificationPayload = [
   { kind: 'test', command: 'npm test', exitCode: 0, outputTail: 'PASS' },
 ];
 
-/**
- * One FULL, type-valid payload per `TOOL_SHAPES` entry — every declared field populated, so the
- * roundtrip test proves nothing a handler could read is silently stripped. Every key here must match
- * `TOOL_SHAPES` exactly (see the completeness assertion below) — an unknown key would itself be
- * stripped by the strict wrapper and fail the deep-equal, which is the point.
- */
 const PAYLOADS: Record<string, Record<string, unknown>> = {
-  // ── Driver tools ──────────────────────────────────────────────────────────────────────────────
   complete_thread: {
     summary: 'Done.',
     changes: ['Added the endpoint.'],
@@ -88,7 +69,6 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
     remaining: ['Flaky test'],
   },
 
-  // ── Brain tools ───────────────────────────────────────────────────────────────────────────────
   get_pipeline_state: {},
   get_decision_record: {},
   dispatch_build: {},
@@ -171,7 +151,6 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
     detectHint: 'has a nest.cli.json',
   },
 
-  // ── Workspace-profile tools ───────────────────────────────────────────────────────────────────
   request_secret: {
     name: 'STRIPE_API_KEY',
     path: '.stripe/api.key',
@@ -259,7 +238,6 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
     verified: 'Brought up the API and worker; both healthy.',
   },
 
-  // ── atlas-prod tools ──────────────────────────────────────────────────────────────────────────
   atlas_query: {
     sql: 'SELECT id FROM jobs WHERE id = $1',
     params: ['j1'],
@@ -346,8 +324,6 @@ describe('host-tool-schemas — in-memory MCP roundtrip guard', () => {
     } catch (err) {
       thrown = err;
     }
-    // The SDK either throws before dispatch or returns an error result — accept either, but the
-    // handler must never have been invoked with the bad payload either way.
     expect(thrown != null || res?.isError === true).toBe(true);
     expect(captured['complete_thread']).toBe('(not called)');
   });

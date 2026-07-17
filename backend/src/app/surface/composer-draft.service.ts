@@ -27,12 +27,6 @@ import {
   type UploadedAttachment,
 } from './attachment-upload';
 
-/**
- * The wire (cleartext) counterpart of `DraftStagedAnswer` — the shape returned by GET and accepted by PUT.
- * The `secret` variant carries a cleartext `value`; `ComposerDraftService` is the ONLY place that crosses
- * the encrypt (`putDraft`) / decrypt (`getDraft`) boundary, so a staged secret's plaintext never rides
- * anywhere else — not the entity, not the realtime WAL row (see `DraftRealtimeRow`).
- */
 export type DraftStagedAnswerWire =
   | { kind: 'question'; cardId: string; label: string; answer: string }
   | {
@@ -44,14 +38,12 @@ export type DraftStagedAnswerWire =
     }
   | { kind: 'secret'; cardId: string; label: string; value: string };
 
-/** The draft payload as exposed to / accepted from the owner's own device. */
 export type DraftPayloadWire = {
   text: string;
   stagedAnswers: DraftStagedAnswerWire[];
   comments: ReviewComment[];
 };
 
-/** One draft attachment as exposed to the client — never the `stored_name` (the on-disk name). */
 export type DraftAttachmentDto = {
   id: string;
   name: string;
@@ -63,7 +55,6 @@ function emptyPayload(): DraftPayload {
   return { text: '', stagedAnswers: [], comments: [] };
 }
 
-/** Postgres unique-violation SQLSTATE — the `(job_id, user_id)` index a racing first-write can hit. */
 const PG_UNIQUE_VIOLATION = '23505';
 
 function isUniqueViolation(err: unknown): boolean {
@@ -83,17 +74,6 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-/**
- * Server-side owner of the composer draft — the operator's in-progress message (text, staged
- * question/file/secret answers, queued review comments) and its uploaded-on-add attachments, held
- * per-`(job_id, user_id)` so it survives a tab close or device switch. See `ComposerDraftEntity` +
- * `ComposerDraftAttachmentEntity`.
- *
- * Attachment mutations (`addAttachment`/`deleteAttachment`) touch ONLY `composer_draft_attachments`, but
- * the realtime fan-out (`DRAFTS_MODEL`) watches `composer_drafts` only — so both methods also bump the
- * parent draft row's `updated_at` in the SAME transaction as the attachment write, or the other device
- * would never learn the attachment list changed.
- */
 @Injectable()
 export class ComposerDraftService {
   constructor(
@@ -135,7 +115,6 @@ export class ComposerDraftService {
     return { id: row.id, name: row.filename, kind: row.kind, size: row.size };
   }
 
-  /** The caller's draft, or an empty one when none exists yet — never creates a row on a bare read. */
   async getDraft(
     orgId: string,
     jobId: string,
@@ -166,7 +145,6 @@ export class ComposerDraftService {
     };
   }
 
-  /** Upsert the caller's draft by `(job_id, user_id)`, encrypting each staged `secret` value at rest. */
   async putDraft(
     orgId: string,
     jobId: string,
@@ -186,10 +164,6 @@ export class ComposerDraftService {
       await this.drafts.save(existing);
       return;
     }
-    // No row yet for this (job, user) — but this is the multi-device-sync feature's whole premise, so a
-    // concurrent first write (another device's autosave, or an attachment `touchDraft`) can win the insert
-    // race on the `(job_id, user_id)` unique index between the `findOne` above and this `save`. Retry as an
-    // update on that race instead of surfacing an unhandled 500.
     try {
       await this.drafts.save(
         this.drafts.create({
@@ -209,8 +183,6 @@ export class ComposerDraftService {
     }
   }
 
-  /** Ensure a draft row exists for `(job_id, user_id)` and bump its `updated_at` — fires the realtime
-   *  delta for an attachment-only change (see the class doc comment). Must run on a transaction manager. */
   private async touchDraft(
     manager: EntityManager,
     orgId: string,
@@ -222,16 +194,10 @@ export class ComposerDraftService {
       where: { org_id: orgId, job_id: jobId, user_id: userId },
     });
     if (existing) {
-      // TypeORM diffs the loaded entity against the values being saved and skips issuing the UPDATE
-      // (and the `@UpdateDateColumn` bump) entirely when nothing differs — so re-saving `existing`
-      // unchanged is a silent no-op and never produces the WAL row the other device is waiting on.
-      // Mutating `updated_at` first forces TypeORM to see a real diff and actually emit the UPDATE.
       existing.updated_at = new Date();
       await repo.save(existing);
       return;
     }
-    // Same insert-race as `putDraft` — retry as a touch-only save on a unique-violation instead of
-    // surfacing a 500.
     try {
       await repo.save(
         repo.create({
@@ -251,8 +217,6 @@ export class ComposerDraftService {
     }
   }
 
-  /** Stage an uploaded-on-add draft attachment: validate, write the byte to the (unmounted)
-   *  draft-uploads dir, and record the row — touching the parent draft row in the same transaction. */
   async addAttachment(
     orgId: string,
     jobId: string,
@@ -309,8 +273,6 @@ export class ComposerDraftService {
     return this.toAttachmentDto(saved);
   }
 
-  /** Remove a staged draft attachment (owner-scoped) — best-effort byte cleanup, and the same
-   *  load-bearing touch of the parent draft row. */
   async deleteAttachment(
     orgId: string,
     jobId: string,
@@ -338,11 +300,6 @@ export class ComposerDraftService {
     });
   }
 
-  /**
-   * Send-time counterpart of `WebSurfaceController.ingestAttachments`: move every staged draft attachment
-   * from the (unmounted) draft-uploads dir into the job's `/context/uploads/`, and delete the draft rows.
-   * Returns null when the caller has no staged attachments.
-   */
   async promoteOnSend(
     orgId: string,
     jobId: string,
@@ -370,10 +327,6 @@ export class ComposerDraftService {
           await copyFile(from, to);
           await unlink(from);
         } else if (code === 'ENOENT' && (await pathExists(to))) {
-          // Already moved by an earlier, partially-failed call (e.g. this row's move succeeded but a
-          // LATER row in that loop threw before the row-delete below ran, so a retry re-finds this row
-          // still in the DB) — the destination file is already there, so treat this row as promoted and
-          // fall through to deleting its now-stale record instead of re-throwing on the vanished source.
         } else {
           throw err;
         }
@@ -384,25 +337,11 @@ export class ComposerDraftService {
         kind: row.kind,
         size: row.size,
       });
-      // Delete THIS row right after ITS file lands in `uploadsDir`, not once in bulk after the whole loop:
-      // (1) makes a mid-loop failure on a later row resumable on retry instead of permanently ENOENT-ing on
-      // the already-moved rows, and (2) scopes the delete to exactly the rows this call processed, so a
-      // concurrent `addAttachment` on another device (a new row appearing after the `find` above) is never
-      // swept up by a broader (org,job,user) delete despite its file never having been moved.
       await this.attachments.delete({ id: row.id });
     }
     return { xml: renderUploadedFilesXml(items), items };
   }
 
-  /**
-   * Clear the caller's draft after a send: drop the staged answers that were just applied (by `cardId`,
-   * keeping any that are stale/rejected), and — only for the fields this particular submit actually
-   * carried — blank the text and/or the queued comments. `opts` is caller-driven because `/message` can
-   * fire with no `user` text (a bare card answer) and never carries `comments` at all (those ride
-   * `/review-comments` instead), so blanket-clearing both here would wipe an operator's in-progress,
-   * unrelated draft. Always an UPDATE, never a DELETE (see `ComposerDraftEntity`'s doc comment) — a no-op
-   * when the caller has no draft row.
-   */
   async clearOnSend(
     orgId: string,
     jobId: string,

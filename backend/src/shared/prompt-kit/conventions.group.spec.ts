@@ -2,19 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { Agent } from './system/agent';
 import { renderAgentPrompt } from './system/assemble';
 
-/**
- * The repo house-style envelope (`conventions.group`) — the repo-scoped sibling of the operator group. It
- * must reach EVERY build-facing audience when a profile is attached, and vanish (byte-identical prompt) when
- * it is not — the no-misfire invariant. The engine-assembled subagents (`FAN_OUT`, `REVIEW_AGENT`) render
- * through this same `renderAgentPrompt` seam in-container, so they are covered here too.
- */
 const MARKER = 'REPO HOUSE CONVENTIONS';
 const PROFILE = {
   name: 'NestJS + Next + shared',
   body: 'Use a shared/ contract dir for all DTOs.',
 };
 
-// The full build-facing set the fragment declares in `usedBy`.
 const BUILD_FACING: Agent[] = [
   Agent.PLANNING,
   Agent.WORKER,
@@ -25,7 +18,6 @@ const BUILD_FACING: Agent[] = [
   Agent.AUTOFIX_FIX,
 ];
 
-// Read-only advisory subagents that must NEVER receive the house-style envelope.
 const EXCLUDED: Agent[] = [Agent.EXPLORE, Agent.DOCS, Agent.DEBUG, Agent.TEST, Agent.VALIDATE];
 
 describe('conventions.group — repo house-style envelope', () => {
@@ -53,7 +45,6 @@ describe('conventions.group — repo house-style envelope', () => {
       });
       expect(nullish).not.toContain(MARKER);
       expect(blank).not.toContain(MARKER); // whitespace-only body is treated as absent
-      // The no-misfire invariant: absent conventions ⇒ exactly today's prompt.
       expect(nullish).toBe(baseline);
       expect(blank).toBe(baseline);
     },
@@ -67,8 +58,6 @@ describe('conventions.group — repo house-style envelope', () => {
   });
 
   it('appends the envelope at the tail (operator-layer), not the head', () => {
-    // Use an onboarding ctx so the build-brain-only "notice drift" fragment (order 9110) is absent and the
-    // envelope (9100) is genuinely the last block — the property under test.
     const baseline = renderAgentPrompt(Agent.PLANNING, {
       jobKind: 'onboarding',
     });
@@ -76,7 +65,6 @@ describe('conventions.group — repo house-style envelope', () => {
       jobKind: 'onboarding',
       settings: { repoConventions: PROFILE },
     });
-    // Everything before the envelope is byte-identical to the no-conventions prompt.
     expect(withConv.startsWith(baseline)).toBe(true);
     expect(withConv.trimEnd().endsWith(PROFILE.body)).toBe(true);
   });

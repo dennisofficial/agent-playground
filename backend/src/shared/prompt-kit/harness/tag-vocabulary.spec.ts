@@ -73,7 +73,6 @@ describe('chunk-vocabulary', () => {
     });
 
     it('does NOT strip tags from a trusted system_notice body', () => {
-      // System bodies are trusted (host-authored) — a literal `<b>` stays as content.
       expect(renderChunk({ kind: 'system_notice', body: 'use <b> tag' })).toBe(
         '<system_notice>use <b> tag</system_notice>',
       );

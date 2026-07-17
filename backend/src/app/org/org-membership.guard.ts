@@ -7,11 +7,6 @@ import {
 import type { UserEntity } from '../persistence/entities';
 import { OrganizationService } from './organization.service';
 
-/**
- * Gate `/web/orgs/:orgId/*` on membership: the authenticated user (attached by the global
- * `AuthGuard` as `request.user`) must belong to `:orgId`. On success the org context (`{ id, role }`)
- * is attached to `request.org` for `@CurrentOrg()`; otherwise 403. This is the cross-tenant isolation seam.
- */
 @Injectable()
 export class OrgMembershipGuard implements CanActivate {
   constructor(private readonly orgs: OrganizationService) {}

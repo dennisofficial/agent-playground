@@ -8,13 +8,6 @@ import {
   TurnHarnessFactory,
 } from '../turn-harness.service';
 
-/**
- * The shared transcript spine — converts an engine turn's events into durable blocks (+ optional usage
- * harvest). Live push is a separate, independently-tested concern in `redis-engine-runner`'s realtime
- * consumer group. Lifted verbatim from the brain's former `makeTurnStreamer`; these lock the
- * role-parameterization (lane + metaTag) and the idempotent finalization (finish/abort run once; late
- * events are dropped).
- */
 function setup() {
   const live = new LiveTurnStore();
   const persisted: Array<{
@@ -32,7 +25,6 @@ function setup() {
       return `msg-${persisted.length - 1}`;
     }),
     appendBlockOnce: vi.fn(async (jobId, promptKey, block) => {
-      // Mirror MessageBlockSink: skip if an agent_prompt row already carries this key; else stamp it in.
       if (
         persisted.some(
           (p) =>
@@ -88,7 +80,6 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
 
     await h.finish('hi');
 
-    // Authoritative blocks persisted at turn END, every one tagged with the phase metaTag.
     expect(persisted.map((p) => p.block.kind)).toEqual(['thinking', 'chat', 'tool']);
     expect(
       persisted.every((p) => p.block.meta?.phaseId === 's1' && p.block.meta?.batchOrdinal === 2),
@@ -99,7 +90,6 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
       result: 'ok',
       phaseId: 's1',
     });
-    // Lane ended (the durable rows now take over).
     expect(live.snapshot('R', 'T', 'phase:s1')).toBeNull();
   });
 
@@ -219,13 +209,10 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
     const frames: Array<{ event: { kind?: string } }> = [];
     const sub = live.stream$.subscribe((f) => frames.push(f as never));
 
-    // Empty lane → guarded no-op (the empty boot path): nothing dropped, nothing fanned.
     factory.resetLane('R', 'T');
     expect(live.snapshot('R', 'T', 'main')).toBeNull();
     expect(frames).toHaveLength(0);
 
-    // Open a lane, then resetLane clears it WITHOUT fanning a turn_end (silent — avoids racing the client
-    // reconcile before a reattach's '0-0' replay).
     live.push('R', 'T', { kind: 'text_delta', text: 'Hi' });
     expect(live.snapshot('R', 'T', 'main')).not.toBeNull();
     const before = frames.length;
@@ -267,14 +254,12 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
       channel: 'R',
       lane: 'main',
     });
-    // The orchestrator spawns a subagent (the Task anchor, meta.id === 'task-1').
     h.onEvent({
       kind: 'tool_use',
       id: 'task-1',
       name: 'Task',
       input: { subagent_type: 'explore' },
     });
-    // Two subagent round-trips report their OWN occupancy — the LAST wins on the durable anchor.
     h.onEvent({
       kind: 'usage',
       parentToolUseId: 'task-1',
@@ -289,7 +274,6 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
       contextModel: 'claude-sonnet-5',
       contextLimit: 1_000_000,
     });
-    // A main-agent (untagged) usage frame must NOT stamp any tool block.
     h.onEvent({
       kind: 'usage',
       contextTokens: 42_000,
@@ -316,7 +300,6 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
       metaTag: { codexReviewId: 'T' },
     });
     await h.emitPrompt('review THIS plan', 'codex:T:0', { reviewRound: 0 });
-    // A second emit with the SAME key is a no-op (survives restart/re-kick/re-drive).
     await h.emitPrompt('review THIS plan', 'codex:T:0', { reviewRound: 0 });
 
     const prompts = persisted.filter((p) => p.block.kind === 'agent_prompt');
@@ -352,7 +335,6 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
     expect(persisted.map((p) => p.block.kind)).toEqual(['chat']);
     expect(live.snapshot('R', 'T', 'phase:s1')).toBeNull();
 
-    // A second finalize (e.g. a finally after a catch) is a no-op, and a late event after close is dropped.
     await h.finish('ignored');
     await h.abort();
     h.onEvent({ kind: 'text', text: 'late' });
@@ -371,12 +353,9 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
     h.onEvent({ kind: 'text', text: 'What shipped — truncated par' });
     await h.discard();
 
-    // No durable rows written — the truncated partial never becomes a half-message.
     expect(persisted).toHaveLength(0);
-    // …but the live lane is ended (the in-flight buffer is dropped).
     expect(live.snapshot('R', 'T', 'main')).toBeNull();
 
-    // Idempotent + drops late events, like abort/finish.
     await h.finish('ignored');
     h.onEvent({ kind: 'text', text: 'late' });
     expect(persisted).toHaveLength(0);
@@ -399,7 +378,6 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
       usage: { inputTokens: 1, outputTokens: 1 },
     });
 
-    // Every persisted block (including the turn_meta divider) carries the wake tag → supersede can find them.
     expect(
       persisted.every(
         (p) => p.block.meta?.doneWakeGen === 3 && p.block.meta?.doneWakeThreadId === 'th-mr',
@@ -421,8 +399,6 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
   it('finish turn_meta: appends a turn_meta block LAST carrying usage + context occupancy when usage is given', async () => {
     const { persisted, factory, live } = setup();
     const h = factory.create({ jobId: 'T', threadId: 'th1', channel: 'R' });
-    // The live turn state (its `startedAt` clock) is created by the realtime consumer group in production,
-    // not by the harness's onEvent — simulate that push so `finish` can read the "worked <elapsed>" clock.
     live.push('R', 'T', { kind: 'text', text: 'reply' });
     h.onEvent({ kind: 'text', text: 'reply' });
     await h.finish('reply', {
@@ -448,15 +424,12 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
     });
     expect(meta.contextTokens).toBe(1200);
     expect(meta.contextLimit).toBe(1_000_000);
-    // Per-turn work duration: computed from the still-live turn's `startedAt` (populated by the realtime
-    // consumer group), so the footer can show "worked <elapsed>". A non-negative number in ms.
     expect(typeof meta.workedMs).toBe('number');
     expect(meta.workedMs as number).toBeGreaterThanOrEqual(0);
   });
 
   it('finish turn_meta: carries no workedMs when the turn pushed no events (no live start captured)', async () => {
     const { persisted, factory } = setup();
-    // No `onEvent` at all → no live turn state → `snapshot` is null → duration is simply omitted.
     const h = factory.create({ jobId: 'T', threadId: 'th1', channel: 'R' });
     await h.finish('reply', {
       usage: {
@@ -614,8 +587,6 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
 });
 
 describe('EntityTaskEventSink — #N (ordinal) CRUD on the thread-group-owned tasks rows', () => {
-  /** A minimal in-memory `tasks` table stand-in, keyed by row id. Honors the `thread_group_id` filter on
-   *  find/findOne and ordinal ordering on find, so the sink's queries behave as they would against PG. */
   function fakeTasksRepo(
     seed: Array<{
       id: string;
@@ -681,8 +652,6 @@ describe('EntityTaskEventSink — #N (ordinal) CRUD on the thread-group-owned ta
       createQueryBuilder: () => ({
         select: () => ({
           where: () => ({
-            // Mirror the real `MAX(ordinal)` over CURRENT rows — recomputed each call so a delete of the
-            // highest #N lowers the max (and the next create reuses that number).
             getRawOne: async () => ({
               max: [...rows.values()].reduce((m, r) => Math.max(m, r.ordinal), 0),
             }),
@@ -707,7 +676,6 @@ describe('EntityTaskEventSink — #N (ordinal) CRUD on the thread-group-owned ta
   };
   const scope = { kind: 'thread' as const, id: 'th1' };
 
-  /** Find a stored row by its per-stage ordinal (the #N the tool surface now uses as the id). */
   const byOrdinal = (tasks: ReturnType<typeof fakeTasksRepo>, ordinal: number) =>
     [...tasks.rows.values()].find((r) => r.ordinal === ordinal);
 
@@ -721,7 +689,6 @@ describe('EntityTaskEventSink — #N (ordinal) CRUD on the thread-group-owned ta
     expect(b.id).toBe('2');
     expect([...tasks.rows.values()].map((r) => r.ordinal).sort()).toEqual([1, 2]);
 
-    // The #N returned by createTask IS a valid updateTask key — resolved by (thread_group_id, ordinal).
     const res = await sink.updateTask(scope, {
       taskId: '2',
       status: 'in_progress',
@@ -800,7 +767,6 @@ describe('EntityTaskEventSink — #N (ordinal) CRUD on the thread-group-owned ta
     expect(blocked.id).toBe('2');
     expect(byOrdinal(tasks, 2)?.blocked_by).toEqual(['1']); // '9' dropped — no such row
 
-    // "this new task blocks #1" → #1 now waits on the new task's #N (not a uuid).
     const blocker = await sink.createTask(scope, {
       subject: 'blocker',
       addBlocks: ['1'],

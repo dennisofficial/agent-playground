@@ -7,12 +7,6 @@ import { TurnTransport } from '../turn-transport.service';
 const TURN = 'T1';
 const keys = turnKeys(TURN);
 
-/**
- * A raw-`ioredis`-shaped double for the DEDICATED blocking connections (`openToolBridge`'s replies
- * reader, `readSteerInput`'s input tail). Backed by the SAME {@link InMemoryRedisStream} as the port so a
- * frame XADDed via the port is readable here — reshaping the port's `{id,data}` into ioredis' positional
- * `[[key, [[id, ['data', json]]]]]` reply that the reader/steer loop parse.
- */
 class FakeRawRedis {
   constructor(private readonly store: InMemoryRedisStream) {}
   duplicate(): FakeRawRedis {
@@ -46,7 +40,6 @@ function make(): {
   return { store, transport };
 }
 
-/** Read the whole events stream as decoded frames. */
 async function readEvents(store: InMemoryRedisStream): Promise<unknown[]> {
   const entries = await store.xread({
     stream: keys.events,
@@ -77,7 +70,6 @@ describe('TurnTransport', () => {
   it('emitEvent appends an { t:"event", e } frame to the events stream', async () => {
     const { store, transport } = make();
     transport.emitEvent(TURN, { kind: 'text', text: 'hi' } as never);
-    // fire-and-forget, but the in-memory xadd writes synchronously
     await Promise.resolve();
     expect(await readEvents(store)).toEqual([{ t: 'event', e: { kind: 'text', text: 'hi' } }]);
   });
@@ -139,7 +131,6 @@ describe('TurnTransport', () => {
     const bridge = transport.openToolBridge(TURN);
     const callP = bridge.call('read_file', { path: '/x' });
 
-    // Act as the host: consume the tool_request, reply on the replies stream by id.
     const reqEntries = await store.xread({
       stream: keys.tools,
       lastId: '0',

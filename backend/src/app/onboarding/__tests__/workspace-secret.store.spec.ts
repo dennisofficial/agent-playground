@@ -5,7 +5,6 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { OrgWorkspaceSecretFileEntity } from '../../persistence/entities';
 import { WorkspaceSecretFileStore } from '../workspace-secret.store';
 
-/** A tiny in-memory stand-in for a TypeORM repository (composite-key find/save/delete). */
 function memRepo<T extends object>(keys: (keyof T)[]): Repository<T> {
   let rows: T[] = [];
   const match = (where: Partial<T>) => (r: T) =>
@@ -45,7 +44,6 @@ describe('WorkspaceSecretFileStore', () => {
   it('round-trips an encrypted value keyed by (org, repo, path)', async () => {
     await store.write('o1', 'repo-1', '.env.keys', 'SECRET=1', 'dotenvxPrivateKeys');
     expect(await store.read('o1', 'repo-1', '.env.keys')).toBe('SECRET=1');
-    // Same path in another repo is a distinct row.
     expect(await store.read('o1', 'repo-2', '.env.keys')).toBeNull();
   });
 

@@ -1,22 +1,3 @@
-/**
- * Delivery-priority (d18: now|queue|later) — DB-query proof against LIVE Postgres.
- *
- * Proves the persistence contract StimulusStoreService actually relies on for the priority/wake
- * behavior described in Thread 5:
- *
- *  (a) `recordChatStimulus({ ..., priority: 'later' })` piggybacks `priority` INSIDE the existing
- *      `reply_route` jsonb column (no new column) — the raw row's `reply_route->>'priority'` reads back
- *      'later', and the read path (`rowToChatStimulus`, exercised via `eligiblePendingChat`) round-trips
- *      it onto the returned `ChatStimulus.priority`.
- *  (b) `undeliveredChatThreads` — the sweep worklist that WAKES a thread — excludes a thread whose only
- *      pending chat stimulus is priority 'later', but includes a thread with a 'now' (or
- *      undefined-priority, which defaults to 'now') pending stimulus.
- *  (c) `eligiblePendingChat` (the per-thread ride-along read used once a turn is already running) is
- *      UNCHANGED by priority — it still returns every pending row for a thread, including 'later' ones.
- *
- * Integration: real Postgres (atlas_test schema), no fakes — StimulusStoreService wired against a real
- * DataSource, mirroring driver/driver-store.int.test.ts's bootstrap pattern.
- */
 
 import { Test, type TestingModule } from '@nestjs/testing';
 import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
@@ -112,10 +93,8 @@ describe('delivery priority (now|queue|later) — live Postgres DB-query proof',
       priority: 'later',
     });
 
-    // The in-memory return value already carries it back.
     expect(returned.priority).toBe('later');
 
-    // The RAW row: priority lives INSIDE reply_route jsonb, no dedicated column.
     const raw = await ds.query(
       `SELECT reply_route, reply_route ->> 'priority' AS priority_text FROM inbound_messages WHERE id = $1`,
       [returned.id],
@@ -128,7 +107,6 @@ describe('delivery priority (now|queue|later) — live Postgres DB-query proof',
       priority: 'later',
     });
 
-    // The read path (rowToChatStimulus, exercised via eligiblePendingChat) round-trips priority.
     const pending = await store.eligiblePendingChat(thread.id, 60_000);
     expect(pending).toHaveLength(1);
     expect(pending[0].priority).toBe('later');
@@ -167,7 +145,6 @@ describe('delivery priority (now|queue|later) — live Postgres DB-query proof',
       author: { id: 'operator-1', displayName: 'Dennis' },
       replyRoute: { surfaceId: 'web', jobRef: undefinedThread.id },
       body: 'a plain note with no priority set — defaults to now, must wake this thread',
-      // priority intentionally omitted
     });
 
     const worklist = await store.undeliveredChatThreads();
@@ -213,8 +190,6 @@ describe('delivery priority (now|queue|later) — live Postgres DB-query proof',
     expect(pending.map((p) => p.id)).toEqual([now.id, queued.id, later.id]); // oldest-first, ride-along set unaffected
     expect(pending.map((p) => p.priority)).toEqual(['now', 'queue', 'later']);
 
-    // Sanity: this thread WOULD wake anyway (it has non-'later' pending rows), confirming (b)'s filter
-    // doesn't ALSO leak into eligiblePendingChat's row set.
     const worklist = await store.undeliveredChatThreads();
     expect(worklist.map((w) => w.jobId)).toContain(thread.id);
   });

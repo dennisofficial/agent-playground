@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { formatReviewComments, mapMessageSource } from '../web-surface.controller';
 
-/**
- * `formatReviewComments` is what actually drives Atlas's turn (the `review_comments_card` persisted
- * alongside it is render-only) — a grouping/formatting bug here would silently feed the agent malformed
- * or dropped review input, so it's worth a dedicated pure-function test.
- */
 describe('formatReviewComments', () => {
   it('wraps the batch in <review-comments count> with one <comment> per item', () => {
     const text = formatReviewComments([
@@ -68,7 +63,6 @@ describe('formatReviewComments', () => {
     expect(text).toContain('```diff');
     expect(text).toContain('- const lines = [headers.join(",")];');
     expect(text).toContain('+ const lines = [headers.map(escapeCell).join(",")];');
-    // note is XML-escaped
     expect(text).toContain('<note>use the helper &amp; keep &lt;T&gt; generic</note>');
     expect(text).not.toContain('<quote>');
   });

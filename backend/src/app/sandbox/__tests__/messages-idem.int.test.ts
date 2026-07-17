@@ -24,14 +24,6 @@ import {
 import { JobTitler } from '../../titling';
 import { CLASSIFIER_LLM } from '../decision-gate';
 
-/**
- * Int test for the keyed-upsert dedupe on `messages` (Thread 2). Proves at the REAL DB that a repeat write
- * of the SAME `idem_key` (`${turn_id}:${ordinal}`) — whether via a direct `appendBlock` call or via two
- * independent harness streamers bound to the same turn — lands exactly ONE row, via `ON CONFLICT DO NOTHING`
- * on the partial unique index `ux_messages_idem_key`.
- *
- * Boots the REAL AppModule against live Postgres, mocking only external boundaries (none are exercised).
- */
 const TEAM_ID = '66666666-6666-4666-8666-666666666666'; // sentinel org uuid (distinct from sibling tests)
 
 describe('keyed-upsert dedupe on messages (live Postgres ON CONFLICT DO NOTHING)', () => {
@@ -69,7 +61,6 @@ describe('keyed-upsert dedupe on messages (live Postgres ON CONFLICT DO NOTHING)
     harness = app.get(TurnHarnessFactory);
     dataSource = app.get<DataSource>(getDataSourceToken(DB_CONNECTION));
 
-    // Seed the FK chain: org → repo → job (messages.job_id → jobs.id).
     await dataSource.query(
       `INSERT INTO organizations (id, name, slug) VALUES ($1,$2,$3) ON CONFLICT (id) DO NOTHING`,
       [TEAM_ID, 'idem-org', 'idem-org'],
@@ -88,8 +79,6 @@ describe('keyed-upsert dedupe on messages (live Postgres ON CONFLICT DO NOTHING)
       [TEAM_ID, repo.id, 'chat'],
     );
     jobA = job.id as string;
-    // messages.thread_id is NOT NULL (FK → threads.id) — seed the job's planning thread group + thread so every
-    // block below has a real thread to anchor onto.
     const bootstrap = app.get(JobBootstrapService);
     await bootstrap.ensurePlanningThreadGroup(jobA, TEAM_ID);
     threadA = await bootstrap.planningThreadId(jobA);
@@ -133,7 +122,6 @@ describe('keyed-upsert dedupe on messages (live Postgres ON CONFLICT DO NOTHING)
     );
     expect(rows[0].n).toBe(1);
 
-    // A DIFFERENT key with the SAME text is a distinct message — the key is identity, not content.
     const key2 = `${randomUUID()}:0`;
     await sink.appendBlock(jobA, {
       kind: 'chat',
@@ -179,7 +167,6 @@ describe('keyed-upsert dedupe on messages (live Postgres ON CONFLICT DO NOTHING)
     a.onEvent(ev);
     b.onEvent(ev);
 
-    // No claim gating here (unlike the sibling claim test) — the index alone must dedupe.
     await a.finish();
     await b.finish();
 

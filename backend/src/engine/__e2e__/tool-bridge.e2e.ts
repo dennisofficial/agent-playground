@@ -1,14 +1,3 @@
-// TOOL BRIDGE — the bidirectional host tool-bridge round-trips over Redis end to end (ports
-// `redis-toolbridge-smoke.mjs`): the engine registers proxy tools for `spec.toolBridgeTools`, calls them
-// mid-turn (XADD `tool_request` on `turn:{T}:tools`), this script (mirroring `RedisEngineRunner.consumeTools`)
-// answers on `turn:{T}:replies`, and the engine continues.
-//
-// NOTE (porting divergence): the old smoke used a synthetic `get_info` tool. The NEW engine's
-// `makeProxyTool` (turn-runner.service.ts) requires a `TOOL_SHAPES` entry per bridged tool and THROWS on a
-// missing one ("no TOOL_SHAPES entry for bridged tool 'get_info'"), so `get_info` no longer works — it was
-// a test-only name. This exercises TWO real read-only host tools instead, proving more than one bridge
-// SHAPE: `list_skills` routes through the GENERAL host bridge; `read_setup_script` routes through the
-// dedicated WORKSPACE-PROFILE bridge (partitioned in turn-runner) — two distinct MCP servers, one turn.
 import {
   newTurnId as _uid,
   cleanup,

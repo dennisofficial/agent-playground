@@ -1,13 +1,3 @@
-/**
- * LIVE proof of the `create_job` host-tool `autoMode` bug fix (spec follow-up to `create_job` dependsOn):
- * an agent-spawned follow-up job now resolves its `auto_approve_mode`/`auto_merge` against the org's
- * `default_auto_approve_mode`/`default_auto_merge` instead of hard-defaulting to off/false — an omitted
- * `autoMode` field inherits the org default, a present field overrides it. Boots the REAL `AppModule` (so
- * the new `OrganizationEntity` repository wired into `BrainStoreService`/`BrainModule` resolves at Nest
- * boot with no DI regression) and drives the actual `create_job` HOST TOOL via
- * `AgentSessionManager.buildTools(stimulus)['create_job']`, mirroring the unit test in
- * `agent-session-manager.spec.ts`.
- */
 
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
@@ -40,7 +30,6 @@ const fakeCreds = {
   engineAuth: async () => ({ secret: 'test-secret' }),
 };
 
-// Fixed ids → distinct from every other int test (which purge by their own ids).
 const ORG = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa01';
 const REPO = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa02';
 const PARENT_JOB = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa03';
@@ -120,10 +109,6 @@ beforeAll(async () => {
 
   ds = app.get<DataSource>(getDataSourceToken(DB_CONNECTION));
   manager = app.get(AgentSessionManager);
-  // This test proves the create_job HANDLER's autoMode resolution (the DB row it writes), not the
-  // follow-up job's downstream chat turn — stub the fire-and-forget kickoff (mirrors the same stub in
-  // agent-session-manager.spec.ts's create_job tests) so it never races this test's own purge() with an
-  // unrelated sandbox-provisioning/transcript write against a since-deleted job row.
   vi.spyOn(manager, 'startFollowUpJob').mockResolvedValue(undefined);
 
   await purge();
@@ -142,10 +127,6 @@ beforeAll(async () => {
      VALUES ($1, $2, $3, 'control', 'Parent job', 'open')`,
     [PARENT_JOB, ORG, REPO],
   );
-  // A raw-inserted job row has no planning thread group — unlike a job created through the real
-  // create/HTTP seams, which always bootstrap one. Without it, the app's background chat-delivery sweep
-  // (real, not mocked here) throws trying to anchor a system event on this job and the test flakes on an
-  // unrelated unhandled rejection. Bootstrap it the same way every real job-creation seam does.
   await app.get(JobBootstrapService).ensurePlanningThreadGroup(PARENT_JOB, ORG);
 }, 60_000);
 

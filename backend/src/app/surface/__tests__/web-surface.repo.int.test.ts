@@ -1,19 +1,3 @@
-/**
- * LIVE HTTP proof for the two new repo-worktree read endpoints on `WebSurfaceController`
- * (`GET …/repo/tree`, `GET …/repo/file`) — boots a REAL Nest HTTP application (supertest, real
- * listening `http.Server`) and drives it against a REAL temp git worktree via the REAL
- * `LocalGitService` (`git ls-files` / `--error-unmatch` actually run as subprocesses). It boots a
- * real Nest HTTP app and spawns real git subprocesses (real local services / app boot), so it lives
- * in the `*.int.test.ts` integration tier — NOT the `*.spec.ts` unit tier, which the config reserves
- * for fast, no-app-boot, no-external-service specs. It needs no Postgres of its own (every other
- * collaborator is auto-mocked via `Test.createTestingModule(...).useMocker(...)`), but the integration
- * tier's single-threaded pool + globalSetup are the correct home for this profile.
- *
- * Fixture repo (real `git init` + real commits in a temp dir):
- *   backend/sandbox/Dockerfile   — tracked, committed          → served by both endpoints
- *   backend/.gitignore           — tracked, contains ".env.keys"
- *   backend/.env.keys            — present on disk, UNTRACKED (gitignored secret analog) → 404s
- */
 import type { ExecutionContext } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
@@ -40,7 +24,6 @@ const SECRET_CONTENT = 'ANTHROPIC_API_KEY=sk-live-not-a-real-secret\n';
 let root: string;
 let app: import('@nestjs/common').INestApplication;
 let server: ReturnType<import('@nestjs/common').INestApplication['getHttpServer']>;
-/** Mutable so individual tests can flip the "no sandbox" case via `mockResolvedValueOnce`. */
 let findSandbox: ReturnType<typeof vi.fn>;
 
 function git(args: string[], cwd: string): void {
@@ -48,7 +31,6 @@ function git(args: string[], cwd: string): void {
 }
 
 beforeAll(async () => {
-  // ── Real temp git worktree, built with real git subprocesses ──────────────────────────────
   root = mkdtempSync(join(tmpdir(), 'repo-'));
   git(['init', '-q'], root);
   git(['config', 'user.email', 'x@x'], root);
@@ -60,7 +42,6 @@ beforeAll(async () => {
   git(['add', 'backend/sandbox/Dockerfile'], root);
   git(['commit', '-q', '-m', 'init'], root);
 
-  // A gitignored secret: tracked .gitignore + an untracked secret file sitting inside the worktree.
   writeFileSync(join(root, 'backend', '.gitignore'), '.env.keys\n');
   git(['add', 'backend/.gitignore'], root);
   git(['commit', '-q', '-m', 'gitignore'], root);
@@ -96,9 +77,6 @@ beforeAll(async () => {
   await app.init();
   server = app.getHttpServer();
 
-  // Belt-and-suspenders: run one real request through supertest FIRST (which lazily binds the
-  // httpServer to an ephemeral TCP port on first use) so this log line proves a genuinely bound,
-  // listening socket answered — not an in-memory stub. Logged again per-scenario below.
   const probe = await request(server).get('/web/does-not-exist-probe');
   console.log(
     'REAL SERVER CHECK — app.getHttpServer() constructor:',

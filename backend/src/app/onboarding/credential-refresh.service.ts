@@ -14,7 +14,6 @@ import {
 
 const DEFAULT_REFRESH_SKEW_MS = 30 * 60_000;
 
-/** The selected credential's refresh grant was rejected — the org owner must re-login before turns can run. */
 export class CredentialNeedsReauthError extends Error {
   constructor(readonly credentialId: string) {
     super(`claude credential ${credentialId} needs reauth`);
@@ -22,12 +21,6 @@ export class CredentialNeedsReauthError extends Error {
   }
 }
 
-/**
- * The single host-side auto-refresh core every caller (per-turn resolution, the proactive sweep, the usage
- * probe) funnels through. Refreshes a `personal` credential's Claude OAuth token when it's within `skewMs`
- * of expiry, using a pessimistic row lock as the cross-instance mutex so concurrent callers never issue a
- * duplicate refresh or race the rotating refresh token.
- */
 @Injectable()
 export class CredentialRefreshService {
   private readonly logger = new Logger(CredentialRefreshService.name);
@@ -39,10 +32,6 @@ export class CredentialRefreshService {
     private readonly dataSource: DataSource,
   ) {}
 
-  /**
-   * Return a usable injectable secret for the credential, refreshing first when a `personal` token is within
-   * `skewMs` of expiry. Setup tokens and tokens without a refresh token pass through unchanged.
-   */
   async ensureFresh(
     orgId: string,
     credentialId: string,
@@ -69,8 +58,6 @@ export class CredentialRefreshService {
     credentialId: string,
     skewMs: number,
   ): Promise<string> {
-    // A hard auth failure must NOT be written inside the transaction: throwing to abort the refuted refresh
-    // would roll the `needs_reauth` write back. Record the status here and commit it after the txn unwinds.
     let hardFailStatus: number | undefined;
     try {
       return await this.dataSource.transaction(async (m) => {
@@ -117,7 +104,6 @@ export class CredentialRefreshService {
   }
 }
 
-/** Guarded parse of a `{claudeAiOauth:{…}}` blob; null on malformed input (never throws). */
 function parseOauthBlob(
   secret: string,
 ): { accessToken: string; refreshToken: string; expiresAt?: number } | null {
@@ -149,7 +135,6 @@ function parseOauthBlob(
   }
 }
 
-/** Serialize a refreshed `TokenSet` into the injectable `claudeAiOauth` blob shape. */
 function toClaudeBlob(t: TokenSet): string {
   return JSON.stringify({
     claudeAiOauth: {

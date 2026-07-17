@@ -1,14 +1,3 @@
-/**
- * End-to-end (live Postgres, booted HTTP server) proof that the `ciStatus` field exposed by BOTH REST
- * projections — the header (`DriverStoreService.getPipelineState`) and the sidebar
- * (`WebSurfaceController.allThreads`) — reflects a real webhook → debounced sync → column write.
- *
- * Drives the ACTUAL `GithubEventsWebhookController` front door over a real HTTP listener (not the
- * controller method directly), so the full `runWorkEvent` → `GithubNotificationSource.handleWorkEvent` →
- * `GithubCiStateSync.schedule` → (5s debounce) → `GithubCiStateSync.recompute` → `jobs.ci_status` write
- * loop runs for real against atlas_test, then re-reads both projections to confirm they observe the
- * write.
- */
 
 import { EnvService } from '@core/config/env/env.service';
 import { Test, type TestingModule } from '@nestjs/testing';
@@ -194,12 +183,10 @@ describe('ciStatus projections end-to-end (live Postgres, booted HTTP server)', 
     );
     const jobId = saved.id;
 
-    // ── HEADER PROJECTION (before) ──────────────────────────────────────────────────────────────
     const before = await driverStore.getPipelineState(jobId, ORG_ID);
     console.log('[ci-proj] header before:', (before as { ciStatus?: unknown }).ciStatus);
     expect((before as { ciStatus?: unknown }).ciStatus).toBe('pending');
 
-    // ── SIDEBAR PROJECTION (before) — real WebSurfaceController.allThreads, minimal DI ─────────────
     const inst = Object.create(WebSurfaceController.prototype);
     inst.orgService = {
       listForUser: async () => [{ id: ORG_ID, slug: 'gh-ci-proj-org', name: 'GH CI Proj Org' }],
@@ -214,7 +201,6 @@ describe('ciStatus projections end-to-end (live Postgres, booted HTTP server)', 
     console.log('[ci-proj] sidebar before:', rowBefore?.ciStatus);
     expect(rowBefore?.ciStatus).toBe('pending');
 
-    // ── BOOTED-SERVER 202: signed check_run over real HTTP ─────────────────────────────────────────
     const payload = {
       repository: { full_name: 'acme/ci-status-web' },
       check_run: {
@@ -242,15 +228,12 @@ describe('ciStatus projections end-to-end (live Postgres, booted HTTP server)', 
     console.log('[ci-proj] webhook status:', res.status);
     expect(res.status).toBe(202);
 
-    // Real 5s debounce inside GithubCiStateSync — real timers only (fake timers fight the pg socket).
     await new Promise((r) => setTimeout(r, 6000));
 
-    // ── HEADER PROJECTION (after) ───────────────────────────────────────────────────────────────
     const after = await driverStore.getPipelineState(jobId, ORG_ID);
     console.log('[ci-proj] header after:', (after as { ciStatus?: unknown }).ciStatus);
     expect((after as { ciStatus?: unknown }).ciStatus).toBe('success');
 
-    // ── SIDEBAR PROJECTION (after) ──────────────────────────────────────────────────────────────
     const rowsAfter = (await WebSurfaceController.prototype.allThreads.call(inst, {
       id: 'user-1',
     } as UserEntity)) as Array<{ jobId: string; ciStatus?: unknown }>;

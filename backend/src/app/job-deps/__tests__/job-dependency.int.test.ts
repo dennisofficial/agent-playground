@@ -1,23 +1,3 @@
-/**
- * JobDependencyService + JobUnblockSweep — the "blocked by" edge model and the wake funnel, proven
- * against live Postgres (atlas_test schema; no fakes on the persistence side — the REAL StimulusStoreService
- * records the queued block/unblock seeds). The only stubbed collaborator is BrainGateway — replaced with a
- * capture double so we can assert the funnel ORDER (the JIT unblock note is recorded, with which blocker
- * roster, then the pump is invoked) without booting the brain. Because the wake seam is mocked, the actual
- * coalesced-turn drain is not exercised here — that lives in the live funnel run
- * (web-surface.create-job-depends-on.int.test.ts). (The rendered note text is unit-tested in
- * seed-catalog.spec.ts.)
- *
- * Covers the spec Validation scenarios (02-block-unblock-seeds.md §Validation):
- *  (a) addDependency rejects a cycle and a cross-repo edge;
- *  (b) a born-blocked edge parks the dependent + queues its provenance note + brief (undelivered) and does
- *      NOT wake it; a mid-flight block queues one "blocked" note;
- *  (c) onBlockerResolved('merged') records the unblock note (blocker: merged), flips open, and pumps;
- *  (d) a multi-blocker dependent stays blocked until the LAST blocker resolves;
- *  (e) each non-merge resolution (closed_unmerged / cancelled / deleted) is reported in the blocker roster;
- *  (f) JobUnblockSweep unblocks a job whose blocker row is absent (a dropped-event backstop);
- *  (g) removeDependency manually lifts an edge and reports it as `removed` in the roster.
- */
 
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
@@ -83,10 +63,6 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
   let jobs: Repository<JobEntity>;
   let repoId: string;
   let otherRepoId: string;
-  // The wake seam is mocked, so the coalesced-turn drain is not exercised here (that lives in the live
-  // funnel run — web-surface.create-job-depends-on.int.test.ts). This suite proves the FUNNEL ORDER: the
-  // JIT unblock note is recorded (captured) before the flip, then the pump is invoked; and that
-  // addDependency queues the block/unblock CONTEXT as durable undelivered `main`-lane seed rows.
   let noteCalls: UnblockNoteCall[];
   let pumpCalls: PumpCall[];
   let pauseUnblockNote: Promise<void> | null;
@@ -98,8 +74,6 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
       providers: [
         JobDependencyService,
         JobUnblockSweep,
-        // The REAL stimulus store (+ its bootstrap) so addDependency records genuine born-blocked /
-        // mid-flight seed rows we can assert against.
         StimulusStoreService,
         JobBootstrapService,
         {
@@ -171,8 +145,6 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     signalUnblockNoteEntered = null;
   });
 
-  /** The durable undelivered `main`-lane seed rows a job carries (born-blocked provenance+brief, or the
-   *  mid-flight "blocked" note) — the queue that replaced `jobs.blocked_seed_message`. Oldest-first. */
   async function seedRows(jobId: string): Promise<SeedRow[]> {
     return ds.query(
       `SELECT type, body, delivered_at, lane, reply_route FROM inbound_messages
@@ -196,19 +168,16 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     );
   }
 
-  // ── (a) cycle + cross-repo rejection ──────────────────────────────────────────────────────────
   it('(a) rejects a dependency cycle and a cross-repo edge', async () => {
     const a = await makeJob({ status: 'running' }); // a live (non-terminal) blocker
     const b = await makeJob();
 
-    // b depends on a — fine.
     await service.addDependency({
       orgId: ORG_ID,
       repoId,
       jobId: b.id,
       dependsOnJobId: a.id,
     });
-    // a depends on b — would close a cycle (a → b → a).
     await expect(
       service.addDependency({
         orgId: ORG_ID,
@@ -218,7 +187,6 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
 
-    // Self-edge is rejected too.
     await expect(
       service.addDependency({
         orgId: ORG_ID,
@@ -228,7 +196,6 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
 
-    // Cross-repo: a blocker in a different repo is not found in this repo scope.
     const foreign = await makeJob({ repo_id: otherRepoId });
     await expect(
       service.addDependency({
@@ -240,7 +207,6 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  // ── (b) born-blocked edge parks the dependent + queues the seed rows, does NOT wake it ─────────
   it('(b) addDependency with a seed parks the dependent and queues the born-blocked seeds without waking it', async () => {
     const blocker = await makeJob({ status: 'running' });
     const dependent = await makeJob();
@@ -257,7 +223,6 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     const reloaded = await jobs.findOneByOrFail({ id: dependent.id });
     expect(reloaded.status).toBe('blocked');
 
-    // Two undelivered `main`-lane follow_up_job_seed rows: the provenance note, then the brief.
     const rows = await seedRows(dependent.id);
     expect(rows).toHaveLength(2);
     expect(rows.every((r) => r.delivered_at === null)).toBe(true);
@@ -283,7 +248,6 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
       dependsOnJobId: blocker.id,
       seed: 'build the follow-up',
     });
-    // A second blocker edge on the now-blocked job also carries a seed — must dedupe (one set only).
     await service.addDependency({
       orgId: ORG_ID,
       repoId,
@@ -352,7 +316,6 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  // ── (c) merge → record unblock note (while blocked) + flip open + pump (blocker roster: merged) ─
   it('(c) onBlockerResolved(merged) records the unblock note, flips open, and pumps — note reports merged', async () => {
     const blocker = await makeJob({ status: 'running' });
     const dependent = await makeJob();
@@ -364,23 +327,19 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
       seed: 'build the follow-up',
     });
 
-    // The blocker's PR merges.
     await jobs.update({ id: blocker.id }, { pr_state: 'merged', status: 'done' });
     await service.onBlockerResolved(blocker.id, 'merged');
 
     const reloaded = await jobs.findOneByOrFail({ id: dependent.id });
     expect(reloaded.status).toBe('open');
-    // The JIT unblock note was recorded with the resolved blocker roster, and the pump was invoked.
     expect(noteCalls).toHaveLength(1);
     expect(noteCalls[0].jobId).toBe(dependent.id);
     expect(noteCalls[0].blockers).toEqual([{ jobId: blocker.id, title: 'A job', how: 'merged' }]);
     expect(pumpCalls.map((p) => p.jobId)).toEqual([dependent.id]);
-    // The born-blocked brief still sits in the queue (the pump is mocked here, so nothing drained it).
     const rows = await seedRows(dependent.id);
     expect(rows.map((r) => r.body)).toContain('build the follow-up');
   });
 
-  // ── (d) multi-blocker: stays blocked until the LAST blocker resolves ───────────────────────────
   it('(d) a multi-blocker dependent stays blocked until every blocker is terminal', async () => {
     const a = await makeJob({ status: 'running' });
     const c = await makeJob({ status: 'running' });
@@ -398,13 +357,11 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
       dependsOnJobId: c.id,
     });
 
-    // First blocker merges — dependent still blocked on c.
     await jobs.update({ id: a.id }, { pr_state: 'merged', status: 'done' });
     await service.onBlockerResolved(a.id, 'merged');
     expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe('blocked');
     expect(noteCalls).toHaveLength(0);
 
-    // Last blocker merges — now it unblocks.
     await jobs.update({ id: c.id }, { pr_state: 'merged', status: 'done' });
     await service.onBlockerResolved(c.id, 'merged');
     expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe('open');
@@ -455,7 +412,6 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     expect(pumpCalls.map((p) => p.jobId)).toEqual([dependent.id]);
   });
 
-  // ── (e) non-merge resolutions are reported in the blocker roster ───────────────────────────────
   it('(e) closed-unmerged is reported with how="closed_unmerged"', async () => {
     const blocker = await makeJob({ status: 'running' });
     const dependent = await makeJob({ title: 'downstream' });
@@ -505,8 +461,6 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
       dependsOnJobId: blocker.id,
     });
 
-    // deleteJobDeep calls onBlockerResolved BEFORE the row delete — the blocker still looks non-terminal
-    // from state, so the funnel must treat the resolving blocker as terminal unconditionally.
     await service.onBlockerResolved(blocker.id, 'deleted');
 
     expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe('open');
@@ -548,7 +502,6 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     expect(hows).not.toContain('cancelled');
   });
 
-  // ── (f) JobUnblockSweep unblocks a job whose blocker row is absent ─────────────────────────────
   it('(f) the sweep unblocks a blocked job whose blocker edge has vanished', async () => {
     const blocker = await makeJob({ status: 'running' });
     const dependent = await makeJob();
@@ -560,8 +513,6 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     });
     expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe('blocked');
 
-    // A dropped wake event: the blocker vanishes (hard delete cascades its job_dependencies edge) but
-    // the dependent is still parked. The sweep must reconcile it.
     await jobs.delete({ id: blocker.id });
 
     const unblocked = await sweep.tick();
@@ -571,7 +522,6 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     expect(noteCalls[0].blockers).toEqual([]); // the blocker row vanished, so there is nothing to name
   });
 
-  // ── (g) removeDependency manually lifts an edge, reported as `removed` ─────────────────────────
   it('(g) removeDependency wakes the dependent and reports the lifted edge as "removed"', async () => {
     const blocker = await makeJob({ status: 'running', title: 'the blocker' });
     const dependent = await makeJob();
@@ -597,7 +547,6 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     ]);
   });
 
-  // ── listJobs — repo-scoped discovery + the terminal-blocker default filter ─────────────────────
   describe('listJobs', () => {
     const idsOf = (rows: { id: string }[]) => new Set(rows.map((r) => r.id));
 
@@ -644,11 +593,9 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
 
       const rows = await service.listJobs({ orgId: ORG_ID, repoId });
       const ids = idsOf(rows);
-      // Live blockers are INCLUDED (done-with-open-PR, amending, and a job with no PR yet).
       expect(ids.has(doneOpenPr.id)).toBe(true);
       expect(ids.has(amending.id)).toBe(true);
       expect(ids.has(noPr.id)).toBe(true);
-      // Dead-as-a-blocker jobs are EXCLUDED.
       expect(ids.has(doneMerged.id)).toBe(false);
       expect(ids.has(closed.id)).toBe(false);
       expect(ids.has(cancelled.id)).toBe(false);
@@ -712,10 +659,8 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
         limit: 2,
       });
       expect(limited).toHaveLength(2);
-      // newest-first: the last two created, most-recent first.
       expect(limited.map((r) => r.id)).toEqual([created[4], created[3]]);
 
-      // hard cap: an over-limit request is clamped to 100 (well above our 5 rows, so all 5 return).
       const capped = await service.listJobs({
         orgId: ORG_ID,
         repoId,

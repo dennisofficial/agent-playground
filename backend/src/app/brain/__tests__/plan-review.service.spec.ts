@@ -19,25 +19,15 @@ import {
   summarizeEngineError,
 } from '../plan-review.service';
 
-/** Creds stub: no per-org secret → the engine uses its env fallback (these tests stub the engine). */
 const fakeCreds = {
   engineAuth: async () => undefined,
 } as unknown as CredentialResolver;
 
-/** Leader-election stub: not draining (default). */
 const fakeElection = {
   isDraining: () => false,
 } as unknown as import('../../cluster').LeaderElectionService;
 
-/**
- * The synchronous, Atlas-driven Codex review service:
- *   - parsePlanFindings extracts severity-tagged FINDING lines / recognises NO_FINDINGS.
- *   - serialize/deserialize round-trip findings for the durable row.
- *   - review() runs ONE Codex turn, persists the job's `plan_review` thread, resumes the session.
- *   - reviewForCurrentSpecs is the propose_plan mandatory-run gate (terminal + matching spec_hash).
- */
 
-// ── parser + (de)serialize ─────────────────────────────────────────────────────────────────────
 
 describe('parsePlanFindings', () => {
   it('extracts severity-tagged findings', () => {
@@ -86,10 +76,7 @@ describe('summarizeEngineError', () => {
   });
 });
 
-// ── review() + the gate ──────────────────────────────────────────────────────────────────────
 
-/** The retired `codex_reviews` field names these fixtures still accept, translated onto the new
- *  `plan_review` thread's `config` (see `PlanReviewConfig`) — keeps each test's seed literal unchanged. */
 type PlanReviewThreadSeed = {
   id?: string;
   job_id?: string;
@@ -104,8 +91,6 @@ type PlanReviewThreadSeed = {
   updated_at?: Date;
 };
 
-/** A minimal in-memory fake of `this.threads` (a job's `plan_review`-role thread rows) — the retired
- *  `codex_reviews` repo now folds onto `ThreadEntity.session_id` + `.config`. */
 function fakePlanReviewThreadsRepo(seed: PlanReviewThreadSeed[] = []) {
   const rows = seed.map((r, i) => ({
     id: r.id ?? `thread-${i}`,
@@ -203,8 +188,6 @@ function fakePlanReviewThreadsRepo(seed: PlanReviewThreadSeed[] = []) {
   } as unknown as Repository<ThreadEntity>;
 }
 
-/** A minimal in-memory fake of `this.threadGroups` — auto-vivifies the job's single `plan_review` thread group.
- *  No test asserts on the thread group row itself; it just needs to resolve consistently. */
 function fakeThreadGroupsRepo() {
   const rows: ThreadGroupEntity[] = [];
   return {
@@ -247,9 +230,7 @@ function makeService(opts: {
   ensureContainer?: unknown;
   engineRun?: (args: unknown) => Promise<EngineRunResult>;
   contextDirHost?: string;
-  /** Called when the harness `finish()` runs — lets a test observe reply-persist ordering. */
   onFinish?: () => void;
-  /** Inject a capturing `jobs` repo to assert the `activity` axis writes. */
   jobs?: Repository<JobEntity>;
 }) {
   const engine = {
@@ -270,8 +251,6 @@ function makeService(opts: {
     opts.jobs ??
     ({
       findOne: async () => ({ id: 'job-1', repo_id: 'repo-1' }),
-      // persistRow reflects the review status onto jobs.activity via syncReviewActivity — the fake must
-      // accept the update (the live sync is asserted end-to-end in web-surface.halt.int.test.ts).
       update: vi.fn(async () => ({ affected: 1 })),
     } as unknown as Repository<JobEntity>);
   const threadGroups = fakeThreadGroupsRepo();
@@ -336,8 +315,6 @@ describe('PlanReviewService.review', () => {
   });
 
   it('flips the control row complete BEFORE persisting the reply transcript (no re-drive window)', async () => {
-    // The invariant that stops the doubled review turn: a re-drive needs status='running', so the row
-    // must reach 'complete' before the reply becomes durable. Assert that relative order.
     const order: string[] = [];
     const threads = fakePlanReviewThreadsRepo();
     const origUpdate = (
@@ -359,7 +336,6 @@ describe('PlanReviewService.review', () => {
     });
     await svc.review(baseInput);
     expect(order).toEqual(['row:complete', 'reply:persisted']);
-    // The row is terminal, so the backstop worklist no longer sees it → it can never be re-driven.
     expect((await svc.loadRow('job-1'))?.status).toBe('complete');
     expect(await svc.findRunningReviews()).toEqual([]);
   });
@@ -391,7 +367,6 @@ describe('PlanReviewService.review', () => {
 
 describe('PlanReviewService.review — resume_count is the plan-version/round (D2)', () => {
   it('a same-spec_hash re-drive keeps resume_count; a changed-spec_hash review bumps it', async () => {
-    // A real specs dir so hashSpecs() returns a stable, non-null hash (the plan-version fingerprint).
     const root = await mkdtemp(join(tmpdir(), 'plan-review-d2-'));
     const specsDir = join(root, 'specs');
     await mkdir(specsDir, { recursive: true });
@@ -400,15 +375,12 @@ describe('PlanReviewService.review — resume_count is the plan-version/round (D
       const threads = fakePlanReviewThreadsRepo();
       const svc = makeService({ threads, contextDirHost: root });
 
-      // First review of this plan version: fresh row, round 0.
       await svc.review(baseInput);
       expect((await svc.loadRow('job-1'))?.resume_count).toBe(0);
 
-      // Recovery re-drive of the SAME plan version (specs unchanged) → round stays 0.
       await svc.review(baseInput);
       expect((await svc.loadRow('job-1'))?.resume_count).toBe(0);
 
-      // Atlas revised the plan → the specs (and their hash) change → a genuine new round bumps to 1.
       await writeFile(join(specsDir, 'plan.md'), 'v2 — revised');
       await svc.review(baseInput);
       expect((await svc.loadRow('job-1'))?.resume_count).toBe(1);
@@ -465,9 +437,6 @@ describe('PlanReviewService.reviewForCurrentSpecs (the propose_plan gate)', () =
   });
 
   it('ESCAPE VALVE: accepts a mismatched spec_hash once the re-review ceiling is exhausted', async () => {
-    // Post-ceiling, review() can never re-run, so a later spec edit (mismatched hash) must NOT deadlock
-    // propose_plan forever. A terminal review that hit the ceiling is accepted despite the mismatch; a
-    // below-ceiling mismatch is still refused (the normal revise → re-review loop).
     const threads = fakePlanReviewThreadsRepo([
       {
         id: 'r',
@@ -481,10 +450,8 @@ describe('PlanReviewService.reviewForCurrentSpecs (the propose_plan gate)', () =
     const svc = makeService({ threads });
     const gate = await svc.reviewForCurrentSpecs('job-1', 'org-1');
     expect(gate?.row.id).toBe('r');
-    // currentHash is null (no specs dir) — the escape returns it as-is, not the frozen OLDHASH.
     expect(gate?.specHash).toBeNull();
 
-    // One round below the ceiling, the same mismatch is still refused.
     const belowCeiling = fakePlanReviewThreadsRepo([
       {
         id: 'r2',
@@ -526,7 +493,6 @@ describe('PlanReviewService.findRunningReviews (backstop worklist)', () => {
   });
 });
 
-// A capturing `jobs` repo that records every `activity` value written (in order).
 function capturingJobsRepo() {
   const activities: string[] = [];
   return {
@@ -547,7 +513,6 @@ describe('PlanReviewService.review — reflects onto jobs.activity (§6)', () =>
     const cap = capturingJobsRepo();
     const svc = makeService({ threads, jobs: cap.repo });
     await svc.review(baseInput);
-    // persistRow('running') → plan_review, persistRow('complete') → idle, in that order.
     expect(cap._activities()).toEqual(['plan_review', 'idle']);
   });
 
@@ -560,9 +525,7 @@ describe('PlanReviewService.review — reflects onto jobs.activity (§6)', () =>
   });
 });
 
-// ── BrainStoreService activity writers (§4b + §7 nesting) ────────────────────────────────────────
 
-/** A capturing `jobs` repo shared by the BrainStoreService unit tests. */
 function fakeStoreJobs() {
   const patches: Array<Record<string, unknown>> = [];
   return {
@@ -577,8 +540,6 @@ function fakeStoreJobs() {
   };
 }
 
-/** `endTurnActivity` now checks a `plan_review`-role thread's `config.status` via
- *  `this.threads.createQueryBuilder(...).getExists()` (the retired `codex_reviews.status` read). */
 function fakeThreadsRepoForBrainStore(reviewing: boolean) {
   return {
     createQueryBuilder: () => {
@@ -633,8 +594,6 @@ describe('BrainStoreService activity writers', () => {
   });
 
   it('endTurnActivity → plan_review while a plan_review thread still runs (review outlives the turn)', async () => {
-    // The §7 crux: the turn finalizes first but a `review_plan` review is still `running`, so activity must
-    // stay plan_review (dot suppressed) — never landing idle until the review row itself leaves running.
     const jobs = fakeStoreJobs();
     const store = makeBrainStore({ reviewRunning: true, jobs: jobs.repo });
     await store.endTurnActivity('job-1');

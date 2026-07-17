@@ -1,9 +1,3 @@
-/**
- * Unit tests for `AutoMergeService` — the merge-ready evaluator + the ONE resolution path (`mergeNow`)
- * both the auto path and a manual "Merge PR" click land on. All collaborators (repos, `GithubPrService`,
- * `CredentialResolver`, `JobLifecycleService`, `TurnRegistry`, `StimulusStoreService`,
- * `DriverStoreService`) are plain mocked objects. No DB, no Nest module boot.
- */
 
 import type { Repository } from 'typeorm';
 import { describe, expect, it, vi } from 'vitest';

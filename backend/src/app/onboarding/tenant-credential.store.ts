@@ -13,57 +13,38 @@ import { isNewerCodexAuth } from './codex-auth-freshness';
 import { decodeCodexAccountEmail } from './codex-id-token';
 import { decryptSecret, encryptSecret, loadSecretsKey } from './secret-cipher';
 
-/** Decrypted credentials for a (team, scope) — the in-memory shape consumers read. */
 export interface TenantCredentials {
   anthropicApiKey?: string;
   openaiApiKey?: string;
   githubPat?: string;
-  /** Claude subscription OAuth token for the SDK harness. */
   claudeOauthToken?: string;
-  /** Codex subscription secret (auth.json / token) for the SDK harness. */
   codexAuthSecret?: string;
-  /** The org's Atlas GitHub App installation id — plaintext. null = App not connected. */
   githubAppInstallationId?: string | null;
-  /** The installation's GitHub account login — plaintext, display + audit. */
   githubAppInstallationAccount?: string | null;
-  /** Which GitHub credential the resolver returns: 'pat' (default) or 'app'. */
   githubAuthMode?: 'pat' | 'app';
 }
 
-/** A partial update — only provided fields are (re-)encrypted and written. */
 export interface TenantCredentialPatch {
   anthropicApiKey?: string;
   openaiApiKey?: string;
   githubPat?: string;
   claudeOauthToken?: string;
   codexAuthSecret?: string;
-  /** Plaintext — set/read directly on the row, NOT via `encryptSecret`. Explicit `null` clears; `undefined` leaves unchanged. */
   githubAppInstallationId?: string | null;
   githubAppInstallationAccount?: string | null;
   githubAuthMode?: 'pat' | 'app';
 }
 
-/** Cheap existence flags for the onboarding checklist — NO decryption, NO secret values. */
 export interface CredentialPresence {
   hasAnthropic: boolean;
   hasOpenai: boolean;
   hasGithub: boolean;
-  /** Engine (SDK harness) auth is satisfiable: the org has a SELECTED Claude credential (Codex is optional). */
   engineAuthSet: boolean;
-  /** Optional Codex subscription secret is set (a second, optional coding engine). */
   hasCodex: boolean;
-  /** The org has a connected GitHub App installation. */
   hasGithubApp: boolean;
-  /** Which GitHub credential the resolver returns: 'pat' (default) or 'app'. */
   githubAuthMode: 'pat' | 'app';
 }
 
-/**
- * The ONLY encrypt-on-write / decrypt-on-read path for tenant credentials. Decrypted reads are cached
- * per (team, scope) and invalidated on write (so the hot brain/driver path doesn't hit Postgres every
- * turn). Secret VALUES are never logged. `presence()` answers the checklist without decrypting (and so
- * works even without `SECRETS_ENCRYPTION_KEY`).
- */
 @Injectable()
 export class TenantCredentialStore {
   private readonly logger = new Logger(TenantCredentialStore.name);
@@ -85,7 +66,6 @@ export class TenantCredentialStore {
     return loadSecretsKey(this.env.get('SECRETS_ENCRYPTION_KEY'));
   }
 
-  /** Decrypted credentials for (orgId, scope), or null when no row exists. Cached. */
   async read(orgId: string, scope = '*'): Promise<TenantCredentials | null> {
     const ck = this.cacheKey(orgId, scope);
     const cached = this.cache.get(ck);
@@ -96,7 +76,6 @@ export class TenantCredentialStore {
     return creds;
   }
 
-  /** Existence flags for the checklist — one cheap query, no decryption. */
   async presence(orgId: string, scope = '*'): Promise<CredentialPresence> {
     const [row, org] = await Promise.all([
       this.repo.findOne({ where: { org_id: orgId, scope } }),
@@ -113,12 +92,6 @@ export class TenantCredentialStore {
     };
   }
 
-  /**
-   * Org ids (excluding `exceptOrgId`) whose credentials row currently holds this GitHub App
-   * `installationId`. Drives the common-ownership reuse gate in the App connect callback: an empty result
-   * means the installation is a first claim (no other holder); a non-empty result must be authorized
-   * against the initiating user's ownership before the installation may be linked to another org.
-   */
   async orgsHoldingInstallation(installationId: string, exceptOrgId: string): Promise<string[]> {
     const rows = await this.repo.find({
       where: { github_app_installation_id: installationId },
@@ -127,14 +100,12 @@ export class TenantCredentialStore {
     return [...new Set(rows.map((r) => r.org_id))].filter((id) => id !== exceptOrgId);
   }
 
-  /** Owner-gated display value: the Codex account email decoded on-read from the pasted auth.json (no new column). */
   async codexAccountEmail(orgId: string, scope = '*'): Promise<string | undefined> {
     const row = await this.repo.findOne({ where: { org_id: orgId, scope } });
     if (!row?.codex_auth_secret_enc) return undefined;
     return decodeCodexAccountEmail(decryptSecret(row.codex_auth_secret_enc, this.key()));
   }
 
-  /** Encrypt + persist the provided fields (find-or-create the (team, scope) row). Refuses without a key. */
   async write(orgId: string, patch: TenantCredentialPatch, scope = '*'): Promise<void> {
     const key = this.key(); // throws loudly when SECRETS_ENCRYPTION_KEY is unset
     const row =
@@ -149,7 +120,6 @@ export class TenantCredentialStore {
       row.claude_oauth_token_enc = encryptSecret(patch.claudeOauthToken, key);
     if (patch.codexAuthSecret !== undefined)
       row.codex_auth_secret_enc = encryptSecret(patch.codexAuthSecret, key);
-    // Plaintext columns — NOT encrypted. Explicit `null` clears; `undefined` leaves unchanged.
     if (patch.githubAppInstallationId !== undefined)
       row.github_app_installation_id = patch.githubAppInstallationId;
     if (patch.githubAppInstallationAccount !== undefined)
@@ -160,14 +130,6 @@ export class TenantCredentialStore {
     this.logger.log(`wrote credentials for team=${orgId} scope=${scope} (${describePatch(patch)})`);
   }
 
-  /**
-   * ATOMICALLY advance the stored Codex subscription secret to a REFRESHED `auth.json` — the auth-refresh
-   * write-back. The whole read-compare-write runs in ONE transaction under a `pessimistic_write` row lock
-   * (`SELECT … FOR UPDATE`), so it is safe against concurrent turns AND reads fresh from the DB (bypassing
-   * the decrypt cache). A monotonic `last_refresh` guard means an older/slower turn can never clobber a
-   * newer blob; when timestamps are missing it degrades to write-only-on-real-change. No-ops when no
-   * credentials row exists. Refuses (throws) without an encryption key — callers must swallow.
-   */
   async advanceCodexAuthSecret(orgId: string, newSecret: string, scope = '*'): Promise<void> {
     const key = this.key(); // throws loudly when SECRETS_ENCRYPTION_KEY is unset
     const wrote = await this.dataSource.transaction(async (m) => {
@@ -195,18 +157,11 @@ export class TenantCredentialStore {
     }
   }
 
-  /** Durable Claude usage snapshot for (orgId, scope), or null when no row exists / none harvested yet. Plaintext — no cipher involved. */
   async readClaudeUsageSnapshot(orgId: string, scope = '*'): Promise<ClaudeUsageSnapshot | null> {
     const row = await this.repo.findOne({ where: { org_id: orgId, scope } });
     return row?.claude_usage_snapshot ?? null;
   }
 
-  /**
-   * ATOMICALLY merge one harvested window into the durable snapshot, mirroring
-   * {@link advanceCodexAuthSecret}'s transaction + `pessimistic_write` row-lock pattern. No-ops when no
-   * credentials row exists, or when the stored window already matches (avoids redundant writes on every
-   * turn). Does NOT touch the decrypt `cache` — this column is plaintext and unrelated to it.
-   */
   async mergeClaudeUsageWindow(
     orgId: string,
     key: ClaudeUsageWindowKey,
@@ -225,8 +180,6 @@ export class TenantCredentialStore {
         windows: {},
         fetchedAt: 0,
       };
-      // A harvest from a DIFFERENT credential than the stored snapshot must not merge into it —
-      // the snapshot represents ONE account. Start fresh, tagged to the incoming credential.
       if (snapshot.credentialId !== credentialId) {
         snapshot = { windows: {}, fetchedAt: 0, credentialId };
       }
@@ -247,7 +200,6 @@ export class TenantCredentialStore {
     });
   }
 
-  /** Drop the org's harvested usage snapshot (set the nullable column null) — used on a Claude account switch so the ring re-reads the new account from scratch. */
   async clearClaudeUsageSnapshot(orgId: string, scope = '*'): Promise<void> {
     await this.repo.update({ org_id: orgId, scope }, { claude_usage_snapshot: null });
   }
@@ -268,7 +220,6 @@ export class TenantCredentialStore {
   }
 }
 
-/** Field NAMES only (never values) — safe to log. */
 function describePatch(patch: TenantCredentialPatch): string {
   const set = Object.entries(patch)
     .filter(([, v]) => v !== undefined)

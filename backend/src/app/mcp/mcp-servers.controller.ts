@@ -47,7 +47,6 @@ const TOKEN_AUTH_METHODS = ['none', 'client_secret_post', 'client_secret_basic']
 
 class McpHeaderDto implements McpHeaderInput {
   @IsString() @MinLength(1) name!: string;
-  /** Empty string on a `secret` entry preserves the stored value (re-enter to change). */
   @IsString() value!: string;
   @IsOptional() @IsBoolean() secret?: boolean;
 }
@@ -84,12 +83,6 @@ class SetMcpServerDto {
   oauth?: McpOAuthConfigDto;
 }
 
-/**
- * `/web/orgs/:orgId/mcp-servers` — manage the org's user-defined MCP servers, in two writable tiers
- * (org-wide `scope='org'` + repo-scoped `scope=<repoId>`) plus a read-only SYSTEM tier. GET is readable by
- * any member and returns NO secret values (secret header/env slots show as `null`). All mutations are an
- * Administer action — owner only (`OrgOwnerGuard`), mirroring {@link WorkspaceSecretsController}.
- */
 @Controller('web/orgs/:orgId/mcp-servers')
 @UseGuards(OrgMembershipGuard)
 export class McpServersController {
@@ -148,18 +141,12 @@ export class McpServersController {
     const dbScope = await this.resolveScope(org.id, scope);
     const row = await this.store.rawRow(org.id, dbScope, name);
     if (!row) throw new BadRequestException('unknown mcp server');
-    // OAuth servers can't be validated with static headers — go through the SDK client + stored token.
     const result =
       row.auth_kind === 'oauth' ? await this.oauth.validate(row) : await this.probe.validate(row);
     await this.store.recordValidation(org.id, dbScope, name, result);
     return { ok: !result.error, ...result };
   }
 
-  /**
-   * Begin interactive OAuth consent for an `authKind='oauth'` server — returns the provider authorize URL for the
-   * console to open in a popup. Owner-only (an Administer action, like every other MCP mutation). The provider
-   * redirects back to the `@Public()` {@link McpOAuthCallbackController}, which completes the exchange.
-   */
   @Post(':scope/:name/oauth/start')
   @UseGuards(OrgOwnerGuard)
   async oauthStart(
@@ -171,7 +158,6 @@ export class McpServersController {
     return this.oauth.beginAuthorization(org.id, dbScope, name);
   }
 
-  /** Map `'org'` → the `'*'` sentinel; otherwise require the repo to belong to this org. */
   private async resolveScope(orgId: string, scope: string): Promise<string> {
     if (scope === 'org') return ORG_SCOPE;
     const repo = await this.repos.findOne({
@@ -181,7 +167,6 @@ export class McpServersController {
     return scope;
   }
 
-  /** Transport-shape guard the class-validator DTO can't express (url vs command/args mutual need). */
   private assertShape(body: SetMcpServerDto): void {
     if (body.transport === 'stdio') {
       if (!body.command) throw new BadRequestException('stdio transport requires a command');

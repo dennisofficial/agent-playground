@@ -1,16 +1,3 @@
-/**
- * Silent re-drive seed (`SeedRow: 'skip'`) — DB-query proof against LIVE Postgres.
- *
- * The recovery re-drive nudges (`retryResumeNudge` seeded on a benign stream abort / host-retry backstop)
- * pass `seedRow: 'skip'` so the brain turn is still driven WITHOUT rendering an operator-facing transcript
- * row. This proves that contract end-to-end against a real DB (not a fake): silence and delivery are
- * decoupled — `recordChatStimulus({ systemChunk: 'skip' })` commits the durable `inbound_messages`
- * (stimuli) row that drives the turn, but writes ZERO `transcript_messages` (pill) rows; a descriptor
- * seedRow, by contrast, DOES write exactly one curated pill.
- *
- * Integration: real Postgres (atlas_test), StimulusStoreService wired against a real DataSource, mirroring
- * delivery-priority.int.test.ts's bootstrap pattern.
- */
 
 import { Test, type TestingModule } from '@nestjs/testing';
 import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
@@ -126,10 +113,8 @@ describe('silent re-drive seed (SeedRow: skip) — live Postgres DB-query proof'
       systemChunk: 'skip',
     });
 
-    // DELIVERED: the stimulus row exists → the delivery pump will drive the brain turn.
     expect(await countStimuli(thread.id)).toBe(1);
     expect(returned.message.type).toBe('seed');
-    // SILENT: zero operator-facing transcript rows — no pill, no raw bubble.
     expect(await countPills(thread.id)).toBe(0);
   });
 
@@ -152,7 +137,6 @@ describe('silent re-drive seed (SeedRow: skip) — live Postgres DB-query proof'
       },
     });
 
-    // Same delivery guarantee, but a visible curated pill IS written — proving the branch gates on 'skip'.
     expect(await countStimuli(thread.id)).toBe(1);
     expect(await countPills(thread.id)).toBe(1);
   });

@@ -1,21 +1,7 @@
-/**
- * The SINGLE canonical source of Zod schemas for every Atlas host-bridge tool, shared by both engines:
- * the Claude in-process bridge (`engine/turn-runner.service.ts` `makeProxyTool`) registers `TOOL_SHAPES[name]`
- * directly, and the Codex stdio bridge (`mcp-bridge-server.ts`) advertises `toolJsonSchema(name)`.
- *
- * The Claude SDK wraps each shape in a STRICT object that STRIPS unknown keys and REJECTS wrong types, so
- * EVERY field a host handler reads MUST be declared here or it is silently dropped before the handler sees
- * it. Enums are pinned with `z.enum` ONLY for closed, unconditionally-validated sets; every other enum-ish
- * field stays `z.string()` because the handler coerces/validates it tolerantly and a strict enum would
- * reject input the handler would have accepted.
- *
- * Side-effect-free and Nest-free: importable from the bundled sandbox entrypoints without pulling in the app.
- */
 import { z } from 'zod/v4';
 
 export type ToolShape = z.ZodRawShape;
 
-// Verification evidence a handler accepts as EITHER an array of structured records OR a free-text string.
 const verificationField = z.union([
   z.array(
     z.object({
@@ -28,7 +14,6 @@ const verificationField = z.union([
   z.string(),
 ]);
 
-// A single decision as review_plan / propose_plan / start_direct_build carry it.
 const decisionItem = z.object({
   decisionClass: z.string(),
   title: z.string(),
@@ -39,7 +24,6 @@ const decisionItem = z.object({
   confirmedByOperator: z.boolean().optional(),
 });
 
-// A single proposed thread (with optional steps) as review_plan / propose_plan carry it.
 const threadItem = z.object({
   title: z.string().optional(),
   brief: z.string().optional(),
@@ -50,7 +34,6 @@ const threadItem = z.object({
 });
 
 export const TOOL_SHAPES: Record<string, ToolShape> = {
-  // ── Driver tools (buildTurnBridge) ────────────────────────────────────────────────────────────
   complete_thread: {
     summary: z.string(),
     changes: z.array(z.string()).optional(),
@@ -91,14 +74,12 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
   },
   task_list: {},
   task_get: { taskId: z.string() },
-  // Superset serving BOTH the driver gate and the brain — all fields optional.
   report_verification: {
     passed: z.boolean().optional(),
     verification: verificationField.optional(),
     remaining: z.array(z.string()).optional(),
   },
 
-  // ── Brain tools (buildTools) ──────────────────────────────────────────────────────────────────
   get_pipeline_state: {},
   get_decision_record: {},
   dispatch_build: {},
@@ -176,7 +157,6 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
     overview: z.string(),
     goal: z.string(),
     kind: z.string().optional(),
-    // When true, re-title the job from `goal` via the titler; when omitted/false, keep the current title.
     rename: z.boolean().optional(),
     decisions: z.array(decisionItem).optional(),
     threads: z.array(threadItem),
@@ -215,7 +195,6 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
     detectHint: z.string().optional(),
   },
 
-  // ── Workspace-profile tools (intake + onboarding) ─────────────────────────────────────────────
   request_secret: {
     name: z.string().optional(),
     path: z.string().optional(),
@@ -303,8 +282,6 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
         url: z.string().optional(),
         command: z.string().optional(),
         args: z.array(z.string()).optional(),
-        // `'static'` (default) = header/env credential slots filled via request_secret. `'oauth'` = interactive
-        // OAuth 2.1 the OWNER completes in the console ("Connect"); http/sse only, no secret slots.
         authKind: z.enum(['static', 'oauth']).optional(),
         oauth: z
           .object({
@@ -352,7 +329,6 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
     verified: z.string(),
   },
 
-  // ── atlas-prod tools (relocated prod-diagnostics reads + gated write) ────────────────────────
   atlas_query: {
     sql: z.string(),
     params: z.array(z.unknown()).optional(),
@@ -394,7 +370,6 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
 };
 
 export const TOOL_DESCRIPTIONS: Record<string, string> = {
-  // ── Driver tools ──────────────────────────────────────────────────────────────────────────────
   complete_thread:
     'Assert this thread is DONE. Call exactly once when the work is complete and verified. Provide a ' +
     'one-line summary plus, ideally, the changes you made and the verification you ran.',
@@ -424,7 +399,6 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
     'live-verification judge over this evidence and refuses to ship a runtime change you only typechecked. ' +
     'If you cannot get things clean, pass passed:false with `remaining` listing the specific errors.',
 
-  // ── Brain tools ───────────────────────────────────────────────────────────────────────────────
   get_pipeline_state: 'Read the current pipeline state (threads, decisions, plan) for this job.',
   get_decision_record: 'Read the full decision record for this job.',
   dispatch_build:
@@ -464,7 +438,6 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   propose_convention_profile_change:
     'Propose a change to a convention (house-style) profile, with body and rationale.',
 
-  // ── Workspace-profile tools ───────────────────────────────────────────────────────────────────
   request_secret:
     'Request a secret from the operator (file, env, or MCP header/env slot). NOT for OAuth MCP servers — ' +
     'those are connected by the owner with the MCP proposal-card Connect button or in the console (MCP settings → Connect), never via a pasted secret.',
@@ -510,7 +483,6 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
     'URL loaded + hydrated as a browser via atlas-probe, plus the authed-handshake proof where a surface has ' +
     'auth — not just a local health check.',
 
-  // ── atlas-prod tools ──────────────────────────────────────────────────────────────────────────
   atlas_query:
     "Run ONE read-only SQL query (single SELECT/WITH only) against the production database and get the rows back. Multi-statement/DDL/DML are rejected; results default to a 1000-row cap (raise with `limit`, up to a 50000-row ceiling), run under a 10s statement timeout, and are passed through secret redaction. Call atlas_schema first to discover tables/columns. Optional positional bind params map to $1..$n. `format` selects the rendered text shape — all line-delimited (one row per line): jsonl (default; structured, jq-friendly), csv, or tsv. If a large result gets persisted to a file, DON'T whole-file Read it — extract just what you need with head/grep/jq or `duckdb -c \"SELECT ... FROM '<file>'\"`, or Read a line-range (offset/limit).",
   atlas_schema:
@@ -529,10 +501,6 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
     'approve it before anything executes. Nothing runs unapproved.',
 };
 
-/**
- * The JSON Schema the Codex stdio bridge advertises for a tool. Native in zod 4 via `z.toJSONSchema`.
- * Unknown tools fall back to a permissive object so a call is never rejected before the host sees it.
- */
 export function toolJsonSchema(name: string): Record<string, unknown> {
   const shape = TOOL_SHAPES[name];
   return shape ? z.toJSONSchema(z.object(shape)) : { type: 'object', additionalProperties: true };

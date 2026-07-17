@@ -1,7 +1,3 @@
-// ADVERSARIAL — a genuine "try to break it" pass. Each probe runs independently, records PASS / FAIL /
-// OBSERVATION (never early-exits on the first failure), and a summary table prints at the end. A genuine
-// bug (hang, crash, lost frame, wrong classification) is logged as `[adversarial] FINDING: ...` so it
-// surfaces in the transcript. This scenario is EXPLORATORY: `run-all.ts` does NOT gate its exit on it.
 import {
   cleanup,
   frameKinds,
@@ -31,7 +27,6 @@ function finding(msg: string): void {
   console.log(`[adversarial] FINDING: ${msg}`);
 }
 
-// ── 1. Abort a turn that has ALREADY finished — must be a harmless no-op, not an error/hang. ──────────
 async function probeAbortAfterFinal(sandbox: string): Promise<Probe> {
   const redis = newRedis();
   const turnId = newTurnId();
@@ -46,9 +41,7 @@ async function probeAbortAfterFinal(sandbox: string): Promise<Probe> {
     const first = await tailEvents(redis, turnId, { timeoutMs: 120_000 });
     if (!first.final)
       return { name: 'abort-after-final', verdict: 'FAIL', note: 'turn never reached final' };
-    // Publish abort AFTER the turn already ended (engine process gone / input closed) — expect a no-op.
     await redis.publish(k.abort, JSON.stringify({ t: 'abort' }));
-    // Watch for any NEW terminal/error frame appearing after the abort (there must be none).
     const after = await tailEvents(redis, turnId, { timeoutMs: 5_000, fromId: first.lastId });
     const noop = !after.error && !after.frames.some((f) => f.t === 'error');
     if (!noop)
@@ -66,7 +59,6 @@ async function probeAbortAfterFinal(sandbox: string): Promise<Probe> {
   }
 }
 
-// ── 2. Malformed steer (no text) + oversized steer (200KB) — engine must not crash; turn still terminal. ─
 async function probeMalformedSteer(sandbox: string): Promise<Probe> {
   const redis = newRedis();
   const turnId = newTurnId();
@@ -89,9 +81,7 @@ async function probeMalformedSteer(sandbox: string): Promise<Probe> {
       const kind = (f.e as { kind?: string })?.kind;
       if (!fired && f.t === 'event' && (kind === 'text' || kind === 'text_delta')) {
         fired = true;
-        // Malformed: no `text` field at all — the engine's input reader must skip it (no yield, no ack, no crash).
         void xadd(redis, k.input, { id: newTurnId() });
-        // Oversized: a ~200KB text blob — must inject without crashing.
         void xadd(redis, k.input, { id: newTurnId(), text: 'x'.repeat(200 * 1024) });
         console.log('[adversarial] injected malformed + 200KB steers');
       }
@@ -124,7 +114,6 @@ async function probeMalformedSteer(sandbox: string): Promise<Probe> {
   }
 }
 
-// ── 3. Spec missing required `task` (+ an extra unknown field) — must fail FAST with a frame, not hang. ─
 async function probeMissingTask(sandbox: string): Promise<Probe> {
   const redis = newRedis();
   const turnId = newTurnId();
@@ -150,7 +139,6 @@ async function probeMissingTask(sandbox: string): Promise<Probe> {
         note: `failed fast with error frame: ${String(error.message).slice(0, 80)}`,
       };
     }
-    // A `final` (the model answered an empty prompt) is not a crash/hang either — note it as an observation.
     return {
       name: 'missing-task-field',
       verdict: 'OBSERVATION',
@@ -162,7 +150,6 @@ async function probeMissingTask(sandbox: string): Promise<Probe> {
   }
 }
 
-// ── 4. Kick against a container that doesn't exist — the HOST-side exec must fail fast, not hang. ─────
 async function probeBogusContainer(): Promise<Probe> {
   const turnId = newTurnId();
   const bogus = `atlas-sbx-does-not-exist-${turnId.slice(0, 8)}`;
@@ -182,12 +169,10 @@ async function probeBogusContainer(): Promise<Probe> {
   };
 }
 
-// ── 5. Tool bridge where the host CONSUMES the request but never replies / never heartbeats. ─────────
 async function probeSilentTool(sandbox: string): Promise<Probe> {
   const redis = newRedis();
   const turnId = newTurnId();
   const k = turnKeys(turnId);
-  // Bounded wait: long enough to prove the engine does NOT self-terminate, short enough to bound cost.
   const WAIT_MS = 70_000;
   let responder: ReturnType<typeof startToolResponder> | undefined;
   try {
@@ -201,7 +186,6 @@ async function probeSilentTool(sandbox: string): Promise<Probe> {
           'You are a terse test assistant. Use the tool, then report its output verbatim.',
       }),
     );
-    // Consume the tool_request but send NOTHING back — no heartbeat, no reply (byzantine/silent host).
     responder = startToolResponder(redis, turnId, { heartbeat: false, onRequest: () => null });
     kickEngine(sandbox, turnId, { detached: true, quiet: true });
     const { frames, final, error, timedOut } = await tailEvents(redis, turnId, {
@@ -211,17 +195,12 @@ async function probeSilentTool(sandbox: string): Promise<Probe> {
     responder.stop();
     const calledTool = responder.called.includes('list_skills');
     if (!timedOut) {
-      // The engine DID reach a terminal frame despite the silent host — the desirable outcome.
       return {
         name: 'silent-tool-timeout',
         verdict: 'PASS',
         note: `engine reached ${final ? 'final' : 'error'} despite a silent host (self-bounded)`,
       };
     }
-    // Hung within the window. Per tool-bridge-reader, the in-container idle timer is armed only by the
-    // host's FIRST heartbeat/reply — a host that consumes the request and stays fully silent is NOT
-    // independently timed out by the engine (design decision d1: durable delivery via liveness, no
-    // wall-clock ceiling; the REAL host always sends an immediate tool_progress on pickup).
     finding(
       `a tool-bridge turn HUNG for ${WAIT_MS / 1000}s when the host consumed the tool_request but sent ` +
         `zero heartbeats/replies (toolCalled=${calledTool}). The engine has no independent tool-call ` +
@@ -243,7 +222,6 @@ async function probeSilentTool(sandbox: string): Promise<Probe> {
 
 export async function run(sandbox: string): Promise<ScenarioResult> {
   const probes: Probe[] = [];
-  // Sequential — never overlap two turns on one sandbox.
   for (const p of [
     () => probeAbortAfterFinal(sandbox),
     () => probeMalformedSteer(sandbox),
@@ -269,8 +247,6 @@ export async function run(sandbox: string): Promise<ScenarioResult> {
   console.log('[adversarial] ────────────────────────────────────────────────────────\n');
 
   const hardFail = probes.filter((p) => p.verdict === 'FAIL');
-  // Exploratory: a FINDING/OBSERVATION does not fail the scenario; only a hard FAIL (a probe that broke
-  // against its OWN expectation) does — but run-all does not gate on this scenario regardless.
   return {
     pass: hardFail.length === 0,
     detail:

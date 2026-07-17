@@ -1,32 +1,3 @@
-/**
- * LIVE integration proof for THREAD 6 — approval-gated dispatch (rebase-check → build-start).
- *
- * Boots the REAL `AppModule` over live Postgres (mirroring `web-surface.spin-up-preview.int.test.ts`),
- * seeds a job parked at `awaiting_approval` with its durable `decision_records` row directly against
- * Postgres, then drives the approval through the restart-safe durable path
- * (`AgentSessionManager.resolveApprovalDurably` — the exact method the HTTP `/approve` endpoint falls
- * through to when there is no live in-session handle, e.g. a DB-seeded job).
- *
- * The rewire this thread introduced is that approval NO LONGER dispatches/implements synchronously —
- * instead it fires the `plan-approved` JIT lifecycle rule, which seeds Atlas the base-check instruction
- * and flips the job to `running` + activity `base_check`, leaving the build to start only when Atlas
- * later calls `dispatch_build`/`hold_build`. This proves that host-side deterministic half LIVE:
- *
- *   (a) NO synchronous dispatch on approval — neither the `JOB_DISPATCHER` (full-plan pipeline) nor the
- *       `ENGINE_RUNNER` (direct-build implement turn) is invoked;
- *   (b) exactly ONE `plan-approved` seed is delivered on `surface.inbound$`, authored by the system seed
- *       author, carrying the `seed:plan-approved:<decisionRecordId>` render row and the rebase-check /
- *       `dispatch_build` / `hold_build` instruction text;
- *   (c) the job flips `status='running'`, `activity='base_check'`, and `build_path` is committed
- *       ('plan' for a full-plan record, 'direct' for a direct-build record);
- *   (d) idempotency — re-delivering the approval (now no longer `awaiting_approval`) is a no-op: no second
- *       seed, no dispatch.
- *
- * The full brain-judgment half (auto-resolve conflict → judge validity → call `dispatch_build`/`hold_build`)
- * requires a real LLM turn + engine + sandbox and is covered by the unit specs
- * (`plan-approved.spec.ts`, `jit-host-executor.spec.ts`, `agent-session-manager.spec.ts`,
- * `brain-store.build-not-started.spec.ts`).
- */
 
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
@@ -55,7 +26,6 @@ import type { InboundChatMessage } from '../chat-surface.port';
 import { SYSTEM_SEED_AUTHOR } from '../chat-surface.port';
 import { WebSurface } from '../web-surface';
 
-/** The visible-row form of `SeedRow` (excludes the `'skip'` sentinel). */
 type SeedRowObject = Exclude<SeedRow, 'skip'>;
 
 const fakeCreds = {
@@ -66,7 +36,6 @@ const fakeCreds = {
   engineAuth: async () => ({ secret: 'test-secret' }),
 };
 
-// Fixed ids → distinct from every other int test (which purge by their own ids).
 const ORG = '77777777-7777-4777-8777-777777777a01';
 const REPO = '77777777-7777-4777-8777-777777777a02';
 const PLAN_JOB = '77777777-7777-4777-8777-777777777a03';
@@ -84,7 +53,6 @@ let bootstrap: JobBootstrapService;
 let server: ReturnType<NestExpressApplication['getHttpServer']>;
 let ownerId: string;
 
-/** Spies wired in place of the real dispatch/engine seams so we can assert NO synchronous build start. */
 const dispatchSpy = vi.fn(async () => undefined);
 const fakeEngine = new FakeEngineRunner();
 const engineRunSpy = vi.spyOn(fakeEngine, 'run');
@@ -113,17 +81,11 @@ async function purge(): Promise<void> {
   await ds.query(`DELETE FROM users WHERE email = $1`, [OWNER_EMAIL]).catch(() => undefined);
 }
 
-/**
- * Seed a job parked at `awaiting_approval` + its `decision_records` row. `threadTitles` empty ⇒ direct
- * build (`isDirect`); non-empty ⇒ full-plan build — exactly how `resolveApprovalDurably` derives the path.
- */
 async function seedAwaitingApproval(
   jobId: string,
   drId: string,
   threadTitles: string[],
 ): Promise<void> {
-  // `jobs.decision_record_id` and `decision_records.job_id` are mutually-referential FKs, so seed the job
-  // WITHOUT the pointer first, insert the record (its `job_id` now resolves), then stamp the pointer.
   await ds.query(
     `INSERT INTO jobs (id, org_id, repo_id, origin, title, kind, status, activity, base_branch)
      VALUES ($1, $2, $3, 'control', 'Add rate limiting', 'feature', 'awaiting_approval', 'idle', 'main')`,
@@ -151,7 +113,6 @@ async function jobRow(
   return rows[0];
 }
 
-/** Collect the seed turns the surface emits during `fn` (the seed fires synchronously off `fireLifecycle`). */
 async function captureSeeds(fn: () => Promise<void>): Promise<InboundChatMessage[]> {
   const seeds: InboundChatMessage[] = [];
   const sub = surface.inbound$.subscribe((m) => {
@@ -166,10 +127,6 @@ async function captureSeeds(fn: () => Promise<void>): Promise<InboundChatMessage
 }
 
 beforeAll(async () => {
-  // Run in the default 'web' surface binding so `CHAT_SURFACE` (what the brain + JIT host executor inject
-  // and seed through) resolves to the SAME `WebSurface` instance this test captures on — under 'agent' the
-  // factory (surface.module.ts) binds CHAT_SURFACE to a DIFFERENT `AgentChatSurface`, so a brain-fired seed
-  // would never reach `app.get(WebSurface).inbound$`.
   const prevSurface = process.env.SURFACE;
   process.env.SURFACE = 'web';
 
@@ -192,11 +149,6 @@ beforeAll(async () => {
     .useValue(fakeCreds)
     .overrideProvider(JobTitler)
     .useValue(new FakeThreadTitler())
-    // Neutralize the inbound → ChatStimulus PUMP: the booted brain would otherwise consume the delivered
-    // seed off `inbound$` and run the downstream base_check BRAIN TURN (the LLM-judgment half — auto-resolve
-    // → judge validity → call `dispatch_build`/`hold_build`), which needs a real engine/sandbox and is
-    // covered by the unit specs. This proof isolates the SYNCHRONOUS host effect of approval: the seed is
-    // still delivered on `inbound$` (captured directly here), and no build starts synchronously.
     .overrideProvider(ChatStimulusBridge)
     .useValue({})
     .compile();
@@ -250,13 +202,11 @@ afterAll(async () => {
   await app?.close();
 });
 
-/** Assert the delivered seed IS the plan-approved base-check seed for `drId`. */
 function expectPlanApprovedSeed(seed: InboundChatMessage, drId: string): void {
   expect(seed.authorId).toBe(SYSTEM_SEED_AUTHOR.id);
   const seedRow = seed.seedRow as SeedRowObject;
   expect(seedRow.chunkKey).toBe(`seed:plan-approved:${drId}`);
   expect(seedRow.label).toBe('Plan approved — checking the base branch before starting');
-  // The rebase-check instruction: mechanical rebase → semantic validity → dispatch_build / hold_build.
   expect(seed.text).toContain('rebase');
   expect(seed.text).toContain('dispatch_build');
   expect(seed.text).toContain('hold_build');
@@ -274,15 +224,12 @@ describe('approval-gated dispatch — approval fires the base-check JIT seed, no
 
     expect(acted).toBe(true);
 
-    // (a) NO synchronous build start on either path.
     expect(dispatchSpy).not.toHaveBeenCalled();
     expect(engineRunSpy).not.toHaveBeenCalled();
 
-    // (b) exactly ONE plan-approved seed delivered.
     expect(seeds).toHaveLength(1);
     expectPlanApprovedSeed(seeds[0], PLAN_DR);
 
-    // (c) durable job transition.
     const row = await jobRow(PLAN_JOB);
     expect(row.status).toBe('running');
     expect(row.activity).toBe('base_check');
@@ -305,7 +252,6 @@ describe('approval-gated dispatch — approval fires the base-check JIT seed, no
 
     expect(acted).toBe(true);
 
-    // The direct path formerly auto-invoked runDirectBuild at approval; now it must NOT — no engine turn.
     expect(engineRunSpy).not.toHaveBeenCalled();
     expect(dispatchSpy).not.toHaveBeenCalled();
 
@@ -334,7 +280,6 @@ describe('approval-gated dispatch — approval fires the base-check JIT seed, no
 
     let acted!: boolean;
     const seeds = await captureSeeds(async () => {
-      // Job is now 'running', no longer 'awaiting_approval' → the durable guard rejects the re-delivery.
       acted = await asm.resolveApprovalDurably(PLAN_JOB, 'approve', ownerId, undefined, PLAN_DR);
     });
 
@@ -343,7 +288,6 @@ describe('approval-gated dispatch — approval fires the base-check JIT seed, no
     expect(dispatchSpy).not.toHaveBeenCalled();
     expect(engineRunSpy).not.toHaveBeenCalled();
 
-    // Still running (unchanged) — the second delivery neither re-fired nor regressed the transition.
     const row = await jobRow(PLAN_JOB);
     expect(row.status).toBe('running');
     expect(row.build_path).toBe('plan');

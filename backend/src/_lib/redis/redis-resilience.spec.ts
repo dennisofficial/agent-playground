@@ -1,13 +1,3 @@
-/**
- * Two Phase-5 resilience invariants, unit-tested with NO live Redis:
- *
- *  1. The shared `ioredis` client builds LAZILY — constructing it (via `buildRedisClient`) and even
- *     wiring it into a Nest module does NOT open a socket or throw when Redis is absent, so the harness
- *     and the daemon BOOT with Redis down. (This is what keeps daemon.module.spec passing.)
- *  2. The in-memory fake's `xread` RESUMES strictly after `lastId` — the exact semantics the host
- *     `DaemonClient` event-tail relies on to loop past a transient empty read without losing or
- *     re-delivering events.
- */
 import { describe, expect, it } from 'vitest';
 import { InMemoryRedisStream } from './in-memory-redis-stream';
 import { buildRedisClient } from './redis.tokens';
@@ -15,10 +5,8 @@ import { buildRedisClient } from './redis.tokens';
 describe('RedisModule resilience (lazy/no-crash connect)', () => {
   it('builds a lazy client without opening a socket (no throw, status not connected)', async () => {
     const client = buildRedisClient({ url: 'redis://127.0.0.1:6399' }); // a port nothing listens on
-    // lazyConnect → the client is constructed but idle; no connection attempt has been made yet.
     expect(client.status).not.toBe('ready');
     expect(client.status).not.toBe('connecting');
-    // Tear down without ever connecting — must not throw (and must not leave a dangling reconnect).
     client.disconnect();
   });
 
@@ -43,7 +31,6 @@ describe('InMemoryRedisStream xread resume semantics', () => {
     });
     expect(first.map((e) => e.data)).toEqual([{ n: 1 }, { n: 2 }]);
 
-    // Resume from the last seen id → nothing new yet (timeout → empty).
     const empty = await r.xread({
       stream: 's',
       lastId: id2,
@@ -52,7 +39,6 @@ describe('InMemoryRedisStream xread resume semantics', () => {
     });
     expect(empty).toEqual([]);
 
-    // A new entry arrives; resuming from id2 yields only it (id1 NOT re-delivered).
     await r.xadd('s', { n: 3 });
     const next = await r.xread({
       stream: 's',
@@ -85,7 +71,6 @@ describe('InMemoryRedisStream xread resume semantics', () => {
       blockMs: 0,
     });
     expect(one.map((e) => e.data)).toEqual([{ a: 1 }]);
-    // Already delivered → next group read sees nothing (cursor advanced).
     const none = await r.xreadGroup({
       group: 'daemon',
       consumer: 'c1',
@@ -103,7 +88,6 @@ describe('InMemoryRedisStream pending recovery (XAUTOCLAIM / ack)', () => {
     await r.ensureGroup('tools', 'host');
     await r.xadd('tools', { tool: 'submit_plan', id: 'call-1' });
 
-    // c1 receives it but DIES before ack (simulates a backend crash mid-tool).
     const delivered = await r.xreadGroup({
       group: 'host',
       consumer: 'c1',
@@ -113,8 +97,6 @@ describe('InMemoryRedisStream pending recovery (XAUTOCLAIM / ack)', () => {
     });
     expect(delivered.map((e) => e.data)).toEqual([{ tool: 'submit_plan', id: 'call-1' }]);
 
-    // A '>' read by the new consumer sees nothing new (cursor already advanced) — it would be STRANDED
-    // without pending recovery.
     const fresh = await r.xreadGroup({
       group: 'host',
       consumer: 'c2',
@@ -124,7 +106,6 @@ describe('InMemoryRedisStream pending recovery (XAUTOCLAIM / ack)', () => {
     });
     expect(fresh).toEqual([]);
 
-    // c2 claims the stale pending entry (minIdleMs 0 → claim immediately on re-attach).
     const claimed = await r.claimStale({
       group: 'host',
       consumer: 'c2',

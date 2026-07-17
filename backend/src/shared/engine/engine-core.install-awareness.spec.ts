@@ -1,9 +1,3 @@
-/**
- * Unit tests for the install-awareness PostToolUse hook (see the `installAwarenessEnabled` branch in
- * `EngineCore.runClaude`). Drives the ACTUAL registered callback end-to-end (regex gate -> bridgeCall ->
- * timeout race -> additionalContext), not just the pure `detectInstallCommand` helper (that's covered in
- * `../prompt-kit/jit/install-awareness.spec.ts`).
- */
 import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -23,7 +17,6 @@ const TEST_KEY: EngineHomeKey = {
   type: 'build',
 };
 
-/** A fake Claude SDK whose `query` records the options it was called with and yields a success. */
 function fakeClaudeSdk() {
   const captured: { options?: Record<string, unknown> } = {};
   const sdk = {
@@ -44,12 +37,10 @@ function fakeClaudeSdk() {
   } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
   return { sdk, captured };
 }
-/** A fake Codex SDK — unused by these tests but required by the EngineCore constructor. */
 function fakeCodexSdk() {
   return { sdk: {} as unknown as typeof import('@openai/codex-sdk') };
 }
 
-/** Pulls the Bash PostToolUse callbacks array out of the captured options (empty if none registered). */
 function bashHooks(options: Record<string, unknown>): Array<(input: unknown) => Promise<unknown>> {
   const hooks = options.hooks as
     | {

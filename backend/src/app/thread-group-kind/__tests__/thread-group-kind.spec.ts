@@ -7,10 +7,6 @@ import {
 } from '../registry';
 import type { ThreadGroupKindSpec } from './spec';
 
-/**
- * The twin of `thread-kind.spec.ts`: the real registry must pass boot validation, and the validator must
- * fail loudly on the misconfigurations it guards (duplicate kind, a role naming an unknown ThreadRole).
- */
 describe('thread-group-kind registry', () => {
   it('the real registry passes boot validation (every role resolves to a ThreadKindSpec)', () => {
     expect(() => validateThreadGroupKinds()).not.toThrow();

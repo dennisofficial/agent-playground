@@ -9,17 +9,6 @@ import { LocalGitService } from '../local-git.service';
 
 const execFileAsync = promisify(execFile);
 
-/**
- * Real-git verification of {@link LocalGitService.ensureSubmodules}: a freshly cut LINKED worktree (the
- * production shape) must have its git submodules populated so an in-sandbox build can resolve
- * submodule-provided packages (the cubix-infra `@workspace/*` failure). `git worktree add` does NOT do
- * this, and a linked worktree keeps its own per-worktree submodule gitdir under
- * `<common>/.git/worktrees/<wt>/modules/…`.
- *
- * Local submodule remotes use `file://`, which git blocks by default. Production deliberately leaves
- * that transport disabled (tenant-repo safety); the test opts in via the `GIT_ALLOW_PROTOCOL` env hatch
- * — the prod code never sets it.
- */
 describe('LocalGitService — submodule hydration (real git, linked worktree)', () => {
   let root: string;
   let clone: string;
@@ -31,7 +20,6 @@ describe('LocalGitService — submodule hydration (real git, linked worktree)', 
   const g = (args: string[], cwd: string) => execFileAsync('git', args, { cwd });
 
   beforeEach(async () => {
-    // Opt into file:// submodule transport for THIS process (prod never does).
     prevAllowProtocol = process.env.GIT_ALLOW_PROTOCOL;
     process.env.GIT_ALLOW_PROTOCOL = 'file:https:ssh';
 
@@ -40,7 +28,6 @@ describe('LocalGitService — submodule hydration (real git, linked worktree)', 
       get: () => undefined,
     } as unknown as EnvService);
 
-    // 1. A submodule "remote".
     const subRemote = join(root, 'sub-remote');
     await execFileAsync('mkdir', ['-p', subRemote]);
     await g(['init', '-q', '-b', 'main'], subRemote);
@@ -50,7 +37,6 @@ describe('LocalGitService — submodule hydration (real git, linked worktree)', 
     await g(['add', '-A'], subRemote);
     await g(['commit', '-qm', 'sub'], subRemote);
 
-    // 2. A superproject "remote" that references the submodule via a RELATIVE url (resolves off origin).
     const superRemote = join(root, 'super-remote');
     await execFileAsync('mkdir', ['-p', superRemote]);
     await g(['init', '-q', '-b', 'main'], superRemote);
@@ -72,7 +58,6 @@ describe('LocalGitService — submodule hydration (real git, linked worktree)', 
     await g(['add', '-A'], superRemote);
     await g(['commit', '-qm', 'super'], superRemote);
 
-    // 3. Atlas clones (no submodule init) and cuts a linked worktree off origin/main.
     gitUrl = `file://${superRemote}`;
     clone = join(root, 'clone');
     await g(['clone', '-q', gitUrl, clone], root);
@@ -96,7 +81,6 @@ describe('LocalGitService — submodule hydration (real git, linked worktree)', 
     await git.ensureSubmodules(wt, { gitUrl });
     expect(existsSync(submodulePkg())).toBe(true);
     expect(readFileSync(submodulePkg(), 'utf8')).toContain('@workspace/shared');
-    // The per-worktree submodule gitdir is created under the worktree's private gitdir (not the main clone).
     expect(
       existsSync(join(clone, '.git', 'worktrees', 'feature', 'modules', 'packages', 'shared')),
     ).toBe(true);
@@ -110,8 +94,6 @@ describe('LocalGitService — submodule hydration (real git, linked worktree)', 
 
   it('recovers a dangling per-worktree submodule gitdir (the cleared + re-cut corruption)', async () => {
     await git.ensureSubmodules(wt, { gitUrl });
-    // Reproduce the evidence: the per-worktree submodule modules dir is wiped, but the gitlink remains →
-    // `git status` fatals with "not a git repository … /modules/…" and plain `--init` can't repair it.
     rmSync(join(clone, '.git', 'worktrees', 'feature', 'modules'), {
       recursive: true,
       force: true,
@@ -124,7 +106,6 @@ describe('LocalGitService — submodule hydration (real git, linked worktree)', 
 
     await git.ensureSubmodules(wt, { gitUrl }); // deinit + reclone recovery
     expect(existsSync(submodulePkg())).toBe(true);
-    // Working tree is healthy again (status no longer fatals).
     await expect(g(['status'], wt)).resolves.toBeTruthy();
   });
 
@@ -134,17 +115,6 @@ describe('LocalGitService — submodule hydration (real git, linked worktree)', 
   });
 });
 
-/**
- * Real-git verification of clone-mode provisioning ({@link LocalGitService.createBaseClone} /
- * {@link LocalGitService.hasSubmodules} / {@link LocalGitService.removeSandbox}) — the fix for the
- * EXDEV cross-device link that a LINKED worktree's per-worktree submodule `.git` overlay causes (see
- * the `sandbox-submodule-repos-full-clone` ADR). For a repo WITH submodules, a sandbox must be a
- * standalone full clone: `.git` a real directory, submodule gitdirs under `.git/modules/…`, all on one
- * filesystem mount — not a linked worktree whose submodule gitdir is a separate bind mount.
- *
- * Same real-git fixture shape as the linked-worktree suite above (a `file://` submodule "remote"); the
- * `file://` transport is opted into via `GIT_ALLOW_PROTOCOL` for this process only (prod never sets it).
- */
 describe('clone-mode provisioning (submodule repos)', () => {
   let root: string;
   let superRemote: string;
@@ -157,7 +127,6 @@ describe('clone-mode provisioning (submodule repos)', () => {
   const g = (args: string[], cwd: string) => execFileAsync('git', args, { cwd });
 
   beforeEach(async () => {
-    // Opt into file:// submodule transport for THIS process (prod never does).
     prevAllowProtocol = process.env.GIT_ALLOW_PROTOCOL;
     process.env.GIT_ALLOW_PROTOCOL = 'file:https:ssh';
 
@@ -166,7 +135,6 @@ describe('clone-mode provisioning (submodule repos)', () => {
       get: () => undefined,
     } as unknown as EnvService);
 
-    // 1. A submodule "remote".
     subRemote = join(root, 'sub-remote');
     await execFileAsync('mkdir', ['-p', subRemote]);
     await g(['init', '-q', '-b', 'main'], subRemote);
@@ -176,7 +144,6 @@ describe('clone-mode provisioning (submodule repos)', () => {
     await g(['add', '-A'], subRemote);
     await g(['commit', '-qm', 'sub'], subRemote);
 
-    // 2. A superproject "remote" that references the submodule via a RELATIVE url.
     superRemote = join(root, 'super-remote');
     await execFileAsync('mkdir', ['-p', superRemote]);
     await g(['init', '-q', '-b', 'main'], superRemote);
@@ -198,7 +165,6 @@ describe('clone-mode provisioning (submodule repos)', () => {
     await g(['add', '-A'], superRemote);
     await g(['commit', '-qm', 'super'], superRemote);
 
-    // 3. Atlas's on-disk MAIN clone of the superproject (what `createBaseClone` clones locally from).
     gitUrl = `file://${superRemote}`;
     mainClone = join(root, 'main-clone');
     await g(['clone', '-q', gitUrl, mainClone], root);

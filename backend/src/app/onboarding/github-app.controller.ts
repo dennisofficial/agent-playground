@@ -29,13 +29,6 @@ class SetGithubAuthModeDto {
   @IsIn(['pat', 'app']) mode!: 'pat' | 'app';
 }
 
-/**
- * `/web/orgs/:orgId/github-app` — connect/disconnect the Atlas GitHub App and switch the org's
- * `githubAuthMode` between `pat` and `app`. Membership-gated; every write is owner-only
- * (`OrgOwnerGuard`) — connecting/disconnecting the App is an Administer action, same tier as
- * `OrgCredentialsController`. Connecting the App (the callback below) does NOT change `githubAuthMode` —
- * the owner switches modes explicitly via `PUT mode`.
- */
 @Controller('web/orgs/:orgId/github-app')
 @UseGuards(OrgMembershipGuard)
 export class GithubAppController {
@@ -46,7 +39,6 @@ export class GithubAppController {
     private readonly stateStore: GithubAppStateStore,
   ) {}
 
-  /** Mint the org's install URL: a single-use nonce (see {@link GithubAppStateStore}) + the App's slug. */
   @Post('install-url')
   @UseGuards(OrgOwnerGuard)
   async installUrl(
@@ -63,7 +55,6 @@ export class GithubAppController {
     };
   }
 
-  /** Switch the resolved GitHub credential. `app` requires a connected installation first. */
   @Put('mode')
   @UseGuards(OrgOwnerGuard)
   async setMode(
@@ -83,7 +74,6 @@ export class GithubAppController {
     return { ok: true, mode: body.mode };
   }
 
-  /** Disconnect the App: clear the installation + fall back to `pat` mode. */
   @Delete()
   @UseGuards(OrgOwnerGuard)
   async disconnect(@CurrentOrg() org: CurrentOrgCtx): Promise<{ ok: true }> {
@@ -96,7 +86,6 @@ export class GithubAppController {
     return { ok: true };
   }
 
-  /** Connect state for the settings UI — member-visible (no secret values). */
   @Get('status')
   async status(@CurrentOrg() org: CurrentOrgCtx): Promise<{
     configured: boolean;
@@ -119,18 +108,6 @@ export class GithubAppController {
   }
 }
 
-/**
- * `GET /web/github-app/callback` — the Atlas App's configured Setup URL. GitHub redirects the owner's
- * browser here after install/update with only `installation_id`/`setup_action`/`state` — no session, no
- * org. `@Public()` bypasses the global `AuthGuard` (mirrors `McpOAuthCallbackController`); the security
- * boundary is the single-use `state` nonce (`GithubAppStateStore`, which also carries the initiating
- * user) plus verifying the installation actually mints a usable token before it's persisted. One GitHub
- * App installs once per GitHub account, so an installation may legitimately back several Atlas orgs owned
- * by the same person: reuse is allowed only when the initiating user OWNS another org that already holds
- * the installation (common-ownership gate) — otherwise it's refused as `already_connected`, blocking
- * cross-tenant installation takeover. That reject is a redirect, not a 409 — there is no caller to
- * receive one, only a browser to send back to the console.
- */
 @Public()
 @Controller('web/github-app')
 export class GithubAppCallbackController {
@@ -184,9 +161,6 @@ export class GithubAppCallbackController {
       return;
     }
 
-    // Common-ownership reuse gate: an installation already held by ANOTHER org may be linked here only
-    // when the initiating user also owns one of those holder orgs (spreading their own installation
-    // across their own orgs). Otherwise it's a cross-tenant takeover attempt — refuse.
     const otherHolders = await this.store.orgsHoldingInstallation(installationId, orgId);
     if (otherHolders.length > 0) {
       const mayReuse = userId ? await this.orgs.ownsAnyOf(userId, otherHolders) : false;
@@ -204,7 +178,6 @@ export class GithubAppCallbackController {
       githubAppInstallationAccount: installation.account.login,
     });
 
-    // Best-effort — never fail the redirect over an activation hiccup.
     await this.onboarding.tryActivate(orgId).catch((err) => {
       this.logger.warn(`github app callback: tryActivate failed for org ${orgId}: ${err}`);
     });

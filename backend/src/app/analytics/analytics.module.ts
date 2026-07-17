@@ -4,10 +4,6 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity, TurnModelUsageEntity, TurnStatsEntity } from '../persistence/entities';
 import { TurnUsageProjector } from './turn-usage-projector.service';
 
-/**
- * Analytics seam. `@Global` (like `SurfaceModule`/`OnboardingModule`) so the brain, driver, and autofix
- * completion sites inject `TurnUsageProjector` with no per-module import churn.
- */
 @Global()
 @Module({
   imports: [

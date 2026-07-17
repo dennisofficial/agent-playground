@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { WorkspaceProfileService } from '../workspace-profile.service';
 
-/** Build the service over minimal fakes for each composed store (only the methods `describe` calls). */
 function make(overrides?: {
   mounts?: { path: string; mode: string }[];
   setupScript?: string | null;
@@ -121,13 +120,10 @@ describe('WorkspaceProfileService.render', () => {
     const out = svc.render(await svc.describe('org1', 'repo-1'));
     expect(out).toContain('.env.keys');
     expect(out).toContain('(keys)');
-    // The rendered block lists refs and metadata only — no store ever hands `render` a plaintext value.
   });
 
   it('renders a compact per-dimension block naming the rendered areas', async () => {
     const out = make().render(await make().describe('org1', 'repo-1'));
-    // No 'Skills:' label (dropped) — the SDK's native skill listing now owns that surfacing; see render()'s
-    // comment. `describe()` still aggregates `snap.skills` (covered above), just not re-rendered here.
     for (const label of [
       'Mounts:',
       'Setup script:',
@@ -250,7 +246,6 @@ describe('WorkspaceProfileService.computeGaps / renderGaps', () => {
     expect(rendered).toContain('jira');
     expect(rendered).toContain('Connect');
     expect(rendered).toContain('not yet connected');
-    // Owner-only, brain cannot consent — and never a token/secret value.
     expect(rendered).toContain('cannot consent OAuth');
   });
 

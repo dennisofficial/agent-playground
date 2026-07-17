@@ -1,19 +1,7 @@
-/**
- * Unit tests for the github-fetch guard as consumed by the engine (see the fetch-tool PostToolUse hook in
- * `EngineCore.run`). The hook's decision + payload are pure, exported helpers re-exported from `engine-core`:
- *   - `detectGithubHtmlUrl` — is this fetched URL a github.com/gist HTML page (client-rendered chrome, not
- *     content)? Firing on raw.githubusercontent.com / api.github.com would wrongly nag a good fetch.
- *   - `renderGithubFetchNudge` — the reminder appended to the fetch tool result via `additionalContext`.
- */
 import { describe, expect, it } from 'vitest';
 import { githubFetchGuardRule } from '../prompt-kit/jit';
 import { detectGithubHtmlUrl, renderGithubFetchNudge } from './engine-core';
 
-/**
- * Reproduce the engine-core fetch PostToolUse callback body (buildHooks → fetchPostToolUseHooks) against the
- * REAL wired rule object, so we exercise the exact trigger.match + render + hookSpecificOutput shape the SDK
- * receives — the runtime contract, not just the helpers.
- */
 function simulateFetchPostToolUse(input: { tool_name: string; tool_input: { url?: unknown } }) {
   const trigger = githubFetchGuardRule.trigger;
   if (trigger.kind !== 'url-match') throw new Error('expected url-match trigger');
@@ -65,8 +53,6 @@ describe('fetch PostToolUse callback (runtime contract)', () => {
     });
     expect(out.hookSpecificOutput?.hookEventName).toBe('PostToolUse');
     expect(out.hookSpecificOutput?.additionalContext).toContain('gh api');
-    // Visible runtime proof: print the exact string the SDK would yield to the model after the fetch.
-    // eslint-disable-next-line no-console
     console.log('[runtime] WebFetch github →', out.hookSpecificOutput?.additionalContext);
   });
 
@@ -86,7 +72,6 @@ describe('fetch PostToolUse callback (runtime contract)', () => {
       },
     });
     expect(out).toEqual({});
-    // eslint-disable-next-line no-console
     console.log('[runtime] WebFetch raw.githubusercontent →', JSON.stringify(out));
   });
 });

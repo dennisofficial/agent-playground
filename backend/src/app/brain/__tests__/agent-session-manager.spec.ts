@@ -47,11 +47,6 @@ import type { PlanReviewService } from '../plan-review.service';
 import { SelfSufficiencyToolsService } from '../self-sufficiency-tools.service';
 import type { TurnRecoveryService } from '../turn-recovery.service';
 
-/**
- * Test helper — build a {@link TurnEnvelope} from the flat, legacy-shaped fixture these specs write. Derives
- * the `message.type` discriminant + the collapsed delivered-card id arrays from the old `seed*`/`compact`
- * fields, so a fixture keeps its terse shape while satisfying the brain's `message.type`-driven guards.
- */
 type LegacyStimulus = {
   id: string;
   orgId: string;
@@ -73,7 +68,6 @@ type LegacyStimulus = {
   resumeThreadId?: string;
   chunks?: unknown[];
   priority?: 'now' | 'queue' | 'later';
-  /** Tolerate legacy fixture fields (`kind`/`trust`) + spread envelope props without excess-property errors. */
   [key: string]: unknown;
 };
 function mkEnvelope(s: LegacyStimulus): TurnEnvelope {
@@ -117,7 +111,6 @@ function mkEnvelope(s: LegacyStimulus): TurnEnvelope {
   };
 }
 
-/** A no-op transcript harness for tests that don't exercise streaming. */
 const noopTurnHarness = {
   create: () => ({
     onEvent: vi.fn(),
@@ -128,7 +121,6 @@ const noopTurnHarness = {
   }),
 } as unknown as TurnHarnessFactory;
 
-/** Mirrors the private `TurnDeliveryOpts` shape (not exported) — just enough for the pump tests. */
 interface TurnDeliveryOptsLike {
   onRegistered?: () => void;
 }
@@ -164,22 +156,12 @@ const optionalTail = (
     mockJobBootstrap, // jobBootstrap
   ] as const;
 
-/**
- * R3 GATE TESTS — two assertions:
- *   (a) A chat turn's `submit_plan` tool call persists a detailed decision record + threads
- *       (offline-deterministic, fake bridge — drives `buildTools()` directly, no real engine).
- *   (b) An EVENT is delivered to the SAME thread brain as a harness message (`deliverEvent`) — there is
- *       no second triage brain; the seed turn carries the framed + UNTRUSTED-fenced body, then stamps
- *       `delivered_at` (at-least-once).
- */
 describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fake bridge)', () => {
   let manager: AgentSessionManager;
 
-  /** Full mocked deps — only the methods exercised by submit_plan need an implementation. */
   const mockStore = {
     openJobOnThread: vi.fn(),
     openJob: vi.fn(),
-    // Default: no operator-set kind, so propose_plan/start_direct_build fall back to their requested kind.
     jobKind: vi.fn().mockResolvedValue(null),
     persistPlan: vi.fn(),
     route: vi.fn(),
@@ -194,7 +176,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     loadJob: vi.fn(),
     buildNotStarted: vi.fn(),
     markDirectBuildStarted: vi.fn(),
-    // Working-set decisions (create_decision / submit_plan source these); default to empty.
     pendingDecisions: vi.fn().mockResolvedValue([]),
     createDecision: vi.fn().mockResolvedValue({ decision: { id: 'd1' }, all: [{ id: 'd1' }] }),
     updateDecision: vi.fn().mockResolvedValue(null),
@@ -202,18 +183,14 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     appendCardMessage: vi.fn(),
     updateCardMessage: vi.fn(),
     latestAnsweredQuestionCard: vi.fn().mockResolvedValue(null),
-    // Milestone-compaction gate reads brain occupancy; a lean session ⇒ skip the compaction turn (no-op here).
     latestBrainOccupancy: vi.fn().mockResolvedValue({ contextTokens: 0, contextLimit: 1_000_000 }),
-    // Durable human-input gate (ask_question lifecycle, per-card — stacking is allowed, no single-slot).
     nextQuestionId: vi.fn().mockResolvedValue('q1'),
     openQuestion: vi.fn().mockResolvedValue({ ok: true }),
     getQuestionCard: vi.fn().mockResolvedValue(null),
     markQuestionDelivered: vi.fn().mockResolvedValue(undefined),
     findUndeliveredAnsweredQuestions: vi.fn().mockResolvedValue([]),
-    // Open-question surfacing + withdraw (the "stop re-asking" fixes); default to "none open" / "withdrew ok".
     openQuestionCards: vi.fn().mockResolvedValue([]),
     withdrawQuestion: vi.fn().mockResolvedValue({ withdrawn: true }),
-    // Secure secret-request gate (request_secret lifecycle); default to "no request open".
     openSecretRequest: vi.fn().mockResolvedValue({ ok: true }),
     awaitingSecretId: vi.fn().mockResolvedValue(null),
     getSecretCard: vi.fn().mockResolvedValue(null),
@@ -222,27 +199,21 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     markSecretDelivered: vi.fn().mockResolvedValue(undefined),
     clearAwaitingSecret: vi.fn().mockResolvedValue(undefined),
     findUndeliveredProvidedSecrets: vi.fn().mockResolvedValue([]),
-    // Durable/mcp secret requests are PER-CARD (like file requests) — an open-cards list + withdraw.
     openSecretCards: vi.fn().mockResolvedValue([]),
     withdrawSecretRequest: vi.fn().mockResolvedValue({ withdrawn: true }),
-    // MCP-proposal gate (propose_mcp_servers lifecycle); default to "opened ok".
     openMcpProposal: vi.fn().mockResolvedValue({ ok: true }),
     getMcpProposalCard: vi.fn().mockResolvedValue(null),
     markMcpProposalApproved: vi.fn().mockResolvedValue(undefined),
-    // R4 async plan-review seam.
     appendSystemEvent: vi.fn().mockResolvedValue(undefined),
     markAwaitingApproval: vi.fn().mockResolvedValue(undefined),
     loadDecisionRecord: vi.fn(),
     appendReviewFindingsMessage: vi.fn().mockResolvedValue(true),
-    // ADR-0005 direct-build live-verification verdict (persisted on both pass + refusal paths).
     recordDirectBuildVerification: vi.fn().mockResolvedValue(undefined),
-    // The "needs you" activity axis is best-effort; the manager brackets every chat turn with it.
     setActivity: vi.fn().mockResolvedValue(undefined),
     endTurnActivity: vi.fn().mockResolvedValue(undefined),
     setHalted: vi.fn().mockResolvedValue(undefined),
     resetAllActivity: vi.fn().mockResolvedValue(0),
     clearRetrySessionResume: vi.fn().mockResolvedValue(undefined),
-    // A clean turn clears the benign-abort auto-resume budget (runChatTurnInner, post-turn housekeeping).
     clearBrainRetryCounters: vi.fn().mockResolvedValue(undefined),
   } as unknown as BrainStoreService;
 
@@ -297,39 +268,28 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
 
   const mockGit = {
     hasChanges: vi.fn().mockResolvedValue(false),
-    // The brain turn observes the live branch (detached HEAD → null); default to null so no live-branch
-    // backstop fires in these streaming/tool tests.
     currentBranch: vi.fn().mockResolvedValue(null),
-    // Hard-reset safety guard: a clean, pushed tree is safe to re-cut by default.
     worktreeSafeToRecut: vi.fn().mockResolvedValue(true),
-    // ADR-0005 direct-build gate reads the changed files (vs origin/<default>) to decide runtime-touch.
-    // Default: empty → the pre-filter passes without consulting the judge (keeps all existing ship tests green).
     changedFileNames: vi.fn().mockResolvedValue([]),
   } as unknown as LocalGitService;
 
-  // ADR-0005 live-verification judge — a mutable stub so gate tests set the verdict per case. Default
-  // (undefined) never matters for non-gate tests: their empty changed-file set short-circuits the pre-filter
-  // before the judge is consulted.
   const mockJudge = {
     judge: vi.fn().mockResolvedValue(undefined),
   } as unknown as LiveVerificationJudge & { judge: ReturnType<typeof vi.fn> };
 
   const mockDockerRunner = {} as unknown as EngineRunnerPort;
 
-  // Fast-path deps: classify (default → proceed), ship, repo resolve.
   const mockClassifier = {
     classify: vi.fn().mockResolvedValue({ verdict: 'proceed', reason: '', via: 'rule' }),
   } as unknown as DecisionClassifier;
 
   const mockShip = {
-    // Driver/boot path (brain idle) — seeds the open-PR turn + latches.
     ship: vi.fn().mockResolvedValue({
       opened: true,
       prConfirmed: true,
       url: 'https://gh/pr/1',
       number: 1,
     }),
-    // Mid-turn callers (finalize_build / finish_onboarding) use the host gate; the brain opens the PR inline.
     preShip: vi.fn().mockResolvedValue({ ok: true }),
   } as unknown as BuildShipService;
 
@@ -342,17 +302,11 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     }),
   } as unknown as DriverRepoResolver;
 
-  // Passive pipeline-awareness buffer — append is a no-op; drain conveys nothing in these unit tests.
   const mockAwareness = {
     appendMarker: vi.fn().mockResolvedValue(undefined),
     drainAndAdvance: vi.fn().mockResolvedValue({ markers: [], stateChanged: false }),
   } as unknown as PipelineAwarenessStore;
 
-  /**
-   * The synchronous PlanReviewService. `review` returns a clean outcome by default; `reviewForCurrentSpecs`
-   * is the propose_plan mandatory-run gate — default returns a terminal row (a review has run), so
-   * propose_plan is allowed. `findRunningReviews` backs the work-owed backstop.
-   */
   const mockPlanReview = {
     review: vi.fn().mockResolvedValue({ status: 'complete', findings: [], specHash: null }),
     reviewForCurrentSpecs: vi.fn().mockResolvedValue({
@@ -368,8 +322,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     redriveThread: vi.fn(), // ADR 0004 Phase 3 — the brain's autonomous re-drive (retry_thread → this)
   } as unknown as JobDispatcher;
 
-  // Thread 6 — the host-side JIT executor: approval now fires 'plan-approved' through this instead of
-  // dispatching/implementing directly.
   const mockJit = {
     fireLifecycle: vi.fn(),
     collectOperatorPrepends: vi.fn().mockReturnValue([]),
@@ -411,53 +363,42 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   beforeEach(() => {
     vi.resetAllMocks();
 
-    // Default classifier verdict: proceed (fast path allowed unless a test overrides it).
     (mockClassifier.classify as ReturnType<typeof vi.fn>).mockResolvedValue({
       verdict: 'proceed',
       reason: '',
       via: 'rule',
     });
 
-    // resetAllMocks wiped the file-scope default — re-arm it so notifyThreadHalted's anchor resolve returns a
-    // Promise (not undefined) for the tests that don't stub it themselves.
     (mockDriverStore.resolveSessionAnchor as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (mockDriverStore.threadsForJob as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
-    // Passive-awareness defaults (resetAllMocks wiped the resolved values) — append is a no-op promise.
     (mockAwareness.appendMarker as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (mockAwareness.drainAndAdvance as ReturnType<typeof vi.fn>).mockResolvedValue({
       markers: [],
       stateChanged: false,
     });
 
-    // Secret-store defaults (resetAllMocks wiped the resolved values) — no existing value by default.
     (mockSecretStore.write as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (mockSecretStore.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (mockSecretStore.listForRepo as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (mockSecretStore.read as ReturnType<typeof vi.fn>).mockResolvedValue(null);
 
-    // Config-store + git defaults (resetAllMocks wiped the resolved values).
     (mockConfigStore.listMounts as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (mockConfigStore.upsertMount as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (mockGit.hasChanges as ReturnType<typeof vi.fn>).mockResolvedValue(false);
 
-    // Activity-axis writers are best-effort promises (resetAllMocks wiped the inline resolves); the
-    // review_plan handler re-asserts `turn` after the review, so setActivity must resolve.
     (mockStore.setActivity as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (mockStore.endTurnActivity as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (mockStore.setHalted as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (mockStore.resetAllActivity as ReturnType<typeof vi.fn>).mockResolvedValue(0);
 
-    // By default: no existing open job on the thread → openJob creates a fresh one.
     (mockStore.openJobOnThread as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     (mockStore.openJob as ReturnType<typeof vi.fn>).mockResolvedValue(FAKE_JOB_ID);
-    // Default loadJob: no prior job state (propose_plan's idempotency guard proceeds; other tests override).
     (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     (mockStore.buildNotStarted as ReturnType<typeof vi.fn>).mockResolvedValue(true);
     (mockStore.markDirectBuildStarted as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (mockDriverStore.retractShip as ReturnType<typeof vi.fn>).mockResolvedValue(false);
 
-    // Working-set decisions default to empty; card lookups default to none (reset wiped inline defaults).
     (mockStore.pendingDecisions as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (mockStore.createDecision as ReturnType<typeof vi.fn>).mockResolvedValue({
       decision: { id: 'd1' },
@@ -469,18 +410,15 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       all: [],
     });
     (mockStore.latestAnsweredQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue(null);
-    // Milestone-compaction gate reads brain occupancy; a lean session ⇒ skip the fire-and-forget compaction turn.
     (mockStore.latestBrainOccupancy as ReturnType<typeof vi.fn>).mockResolvedValue({
       contextTokens: 0,
       contextLimit: 1_000_000,
     });
-    // Human-input gate defaults: opening succeeds, no question currently open.
     (mockStore.nextQuestionId as ReturnType<typeof vi.fn>).mockResolvedValue('q1');
     (mockStore.openQuestion as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
     });
     (mockStore.getQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue(null);
-    // Secure secret-request + MCP-proposal gates default to "opened ok" (resetAllMocks wiped the inline defaults).
     (mockStore.openSecretRequest as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true });
     (mockStore.openMcpProposal as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
@@ -491,13 +429,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     );
     (mockLifecycle.markRepoOnboarded as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
-    // Plan-review defaults (resetAllMocks wiped resolved values). appendSystemEvent MUST resolve a promise
-    // — propose_plan chains `.catch` on it. review() defaults clean; the propose_plan gate defaults to "a
-    // review has run for the current specs" (a terminal row) so propose is allowed unless a test overrides.
     (mockStore.appendSystemEvent as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-    // ADR-0005 direct-build gate defaults (resetAllMocks wiped the declared resolves): an empty changed-file
-    // set → pre-filter passes without the judge; persistence is a resolved no-op; the judge returns undefined
-    // unless a gate test overrides it.
     (mockGit.changedFileNames as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (mockStore.recordDirectBuildVerification as ReturnType<typeof vi.fn>).mockResolvedValue(
       undefined,
@@ -514,7 +446,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     });
     (mockPlanReview.findRunningReviews as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
-    // persistPlan returns the canonical shape BrainStoreService returns.
     (mockStore.persistPlan as ReturnType<typeof vi.fn>).mockResolvedValue({
       thread: {
         id: FAKE_JOB_ID,
@@ -532,7 +463,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       decisionRecordId: FAKE_RECORD_ID,
     });
 
-    // route() returns the channel/thread so the approval card can be posted.
     (mockStore.route as ReturnType<typeof vi.fn>).mockResolvedValue({
       channel: 'C-R3GATE',
       threadTs: 'ts-r3gate-001',
@@ -540,7 +470,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     (mockStore.appendAtlasMessage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (mockStore.appendSystemNotice as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
-    // Approval request returns a handle whose verdict never resolves (we don't await approval here).
     const neverResolves = new Promise(() => undefined);
     (mockApprovals.request as ReturnType<typeof vi.fn>).mockResolvedValue({
       jobId: FAKE_JOB_ID,
@@ -583,7 +512,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       {
         engineAuth: async () => undefined,
         openaiKey: async () => undefined,
-        // The direct-build gate consults this only to phrase a "no key" refusal; default → no key configured.
         anthropicKey: async () => undefined,
       } as unknown as CredentialResolver,
       { resolveForTurn: async () => [] } as never, // mcp (McpResolver)
@@ -654,9 +582,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       threads,
     });
 
-    // 1. The mandatory-run gate was checked (a review must have run for the current specs).
     expect(mockPlanReview.reviewForCurrentSpecs).toHaveBeenCalledWith(FAKE_JOB_ID, TEAM_ID);
-    // 2. persistPlan persists straight to `awaiting_approval` (no plan_review), with the threads + title.
     expect(mockStore.persistPlan).toHaveBeenCalledOnce();
     const persistArgs = (mockStore.persistPlan as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(persistArgs.title).toBe(goal);
@@ -664,7 +590,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(persistArgs.status).toBe('awaiting_approval');
     expect(persistArgs.kind).toBe('feature'); // default kind when none passed
     expect(persistArgs.rename).toBe(false); // rename omitted ⇒ keep the current title
-    // 3. The approval card is posted async, and the review disposition lands as a system event.
     expect(result).toMatchObject({
       ok: true,
       jobId: FAKE_JOB_ID,
@@ -752,9 +677,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   });
 
   it('propose_plan: re-proposing over an already-pending plan durably WITHDRAWS it first (no hard no-op, no orphaned handle)', async () => {
-    // The old hard idempotency short-circuit is gone: `prepareRepropose` now durably retracts the
-    // pending proposal (atomic flip + supersede) and drops its live handle BEFORE persisting the fresh
-    // one, so re-proposing always ends with exactly one pending card — never a silent no-op.
     const tools = manager.buildTools(fakeStimulus);
     (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
       id: FAKE_JOB_ID,
@@ -837,7 +759,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       advisory: 1,
     });
     expect((result as { message: string }).message).toContain('BLOCKING');
-    // review_plan NEVER posts the approval card.
     expect(mockApprovals.request).not.toHaveBeenCalled();
   });
 
@@ -866,7 +787,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       specHash: 'h',
     });
 
-    // Normal full-path flow: goal/overview go to propose_plan, not review_plan — so both are absent here.
     await tools['review_plan']({ threads: [{ title: 'S', type: 'backend' }] });
 
     expect(mockStore.openJob).toHaveBeenCalledOnce();
@@ -957,13 +877,11 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     });
 
     expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID });
-    // Minimal record: no threads.
     const persistArgs = (mockStore.persistPlan as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(persistArgs.threadTitles).toEqual([]);
     expect(persistArgs.overview).toContain('off-by-one');
     expect(persistArgs.kind).toBe('bugfix'); // kind flows through the direct-build path too
 
-    // The card is the lightweight 'direct' variant carrying the change outline.
     await new Promise((r) => setTimeout(r, 0));
     const approvalArgs = (mockApprovals.request as ReturnType<typeof vi.fn>).mock.calls[0][1];
     expect(approvalArgs.kind).toBe('direct');
@@ -989,9 +907,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   });
 
   it('(c) finalize_build: an APPROVED (running) direct build ships (Atlas opens the PR in-sandbox)', async () => {
-    // Regression: finalize_build previously resolved the job via openJobOnThread (planning-only), so once
-    // approval flipped the job to 'running' the gate ALWAYS returned "No open job — nothing to finalize"
-    // and the PR was never opened. It must now load the running job by id and ship it.
     const tools = manager.buildTools(fakeStimulus);
     (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
       id: FAKE_JOB_ID,
@@ -1014,20 +929,15 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       defaultBranch: 'main',
       token: 't',
     });
-    // Mid-turn: the host gate passes; finalize_build hands the open-PR instructions back so the brain opens
-    // the PR inline in THIS turn (no separate ship session). The reconciler latches the url + flips done.
     (mockShip.preShip as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
     });
 
-    // ADR 0004 rider 3 — finalize_build refuses to ship until the turn has self-reported a clean verification.
     await tools['report_verification']({ passed: true });
     const result = await tools['finalize_build']({});
 
     expect(mockShip.preShip).toHaveBeenCalledOnce();
-    // The old planning-only lookup must NOT gate this path anymore.
     expect(mockStore.openJobOnThread).not.toHaveBeenCalled();
-    // The tool returns the open-PR instructions for the brain to act on in-turn (host no longer opens it).
     expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID });
     expect((result as { message: string }).message).toContain('gh pr create');
   });
@@ -1084,13 +994,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockShip.preShip).not.toHaveBeenCalled();
   });
 
-  // ADR-0005 live-verification gate on the DIRECT-BUILD ship path — the brain-owned analog of the driver's
-  // `complete_thread` gate (`thread-driver.service.spec.ts`). `finalize_build` runs the SAME judge port over
-  // the changed files + the structured evidence reported via `report_verification`, and REFUSES the tool
-  // (mid-turn, no halt machinery) on a touched-but-inadequate verdict. Always-on, fail-closed, no dial.
   describe('(c) finalize_build — ADR-0005 live-verification gate', () => {
-    // Stand up an APPROVED (running) direct build ready to ship, with a sandbox + resolved repo + a
-    // reported verification pass. Tests vary the changed files + the judge verdict.
     const armReadyToFinalize = () => {
       (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
         id: FAKE_JOB_ID,
@@ -1144,16 +1048,13 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       });
       const result = await tools['finalize_build']({});
 
-      // The judge saw exactly what git reported as changed (the diff-fed regression).
       expect(mockJudge.judge).toHaveBeenCalledOnce();
       expect((mockJudge.judge as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({
         changedFiles: ['src/app/api/health.controller.ts'],
       });
-      // Adequate → falls through to preShip and hands the open-PR instructions back.
       expect(mockShip.preShip).toHaveBeenCalledOnce();
       expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID });
       expect((result as { message: string }).message).toContain('gh pr create');
-      // Verdict persisted on the PASS path too (the observability hook).
       expect(mockStore.recordDirectBuildVerification).toHaveBeenCalledWith(
         FAKE_JOB_ID,
         expect.objectContaining({
@@ -1178,16 +1079,13 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
         missingChecks: 'curl the /health endpoint against a running server',
       });
 
-      // The brain claims passed but never actually exercised the endpoint.
       await tools['report_verification']({ passed: true });
       const result = await tools['finalize_build']({});
 
       expect(result).toMatchObject({ ok: false, jobId: FAKE_JOB_ID });
       expect((result as { reason: string }).reason).toContain('Live validation inadequate');
       expect((result as { reason: string }).reason).toContain('curl the /health endpoint');
-      // Refusal is BEFORE the host ship gate — no preShip, no PR.
       expect(mockShip.preShip).not.toHaveBeenCalled();
-      // Verdict persisted on the REFUSE path (the whole point of the audit hook) + a quiet pill.
       expect(mockStore.recordDirectBuildVerification).toHaveBeenCalledWith(
         FAKE_JOB_ID,
         expect.objectContaining({
@@ -1211,7 +1109,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       expect(mockJudge.judge).not.toHaveBeenCalled();
       expect(mockShip.preShip).toHaveBeenCalledOnce();
       expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID });
-      // Pre-filter verdict is a non-runtime pass.
       expect(mockStore.recordDirectBuildVerification).toHaveBeenCalledWith(
         FAKE_JOB_ID,
         expect.objectContaining({
@@ -1235,14 +1132,12 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       const result = await tools['finalize_build']({});
 
       expect(result).toMatchObject({ ok: false, jobId: FAKE_JOB_ID });
-      // The mocked CredentialResolver reports no anthropic key → the refusal calls that out.
       expect((result as { reason: string }).reason).toContain('no Anthropic API key');
       expect(mockShip.preShip).not.toHaveBeenCalled();
     });
   });
 
   it('write_workspace_config UPSERTS mounts straight to the DB — no sandbox needed, instant for every job on the repo', async () => {
-    // What the ceremony (or an earlier amendment) already recorded, per the config store.
     (mockConfigStore.listMounts as ReturnType<typeof vi.fn>).mockResolvedValue([
       { path: '.gcloud', mode: 'shared-rw' },
       { path: '.cache/turbo', mode: 'per-thread' },
@@ -1250,7 +1145,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     ]);
     const tools = manager.buildTools(fakeStimulus);
 
-    // A build thread discovers it needs ONE new mount — it does NOT resend the existing ones.
     const result = await tools['write_workspace_config']({
       mounts: [{ path: '.stripe', mode: 'shared-rw' }],
     });
@@ -1261,9 +1155,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       '.stripe',
       'shared-rw',
     );
-    // No sandbox lookup — this is a pure DB write now.
     expect(mockLifecycle.findSandbox).not.toHaveBeenCalled();
-    // Reports the total AFTER the write (from the store, which the test seeded to reflect it).
     expect(result).toMatchObject({ ok: true, mounts: 3 });
     expect(mockStore.appendSystemEvent).toHaveBeenCalledOnce();
     const notice = (mockStore.appendSystemEvent as ReturnType<typeof vi.fn>).mock
@@ -1278,8 +1170,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       mounts: [{ path: '.gcloud', mode: 'shared-rw' }], // corrects the mode for an existing path
     });
 
-    // The upsert-by-path semantics live in the store itself (see workspace-config.store.spec.ts); the tool's
-    // job is just to call it once per entry with the normalized path/mode.
     expect(mockConfigStore.upsertMount).toHaveBeenCalledOnce();
     expect(mockConfigStore.upsertMount).toHaveBeenCalledWith(
       TEAM_ID,
@@ -1339,7 +1229,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       ok: false,
       reason: expect.stringContaining('ECONNREFUSED'),
     });
-    // No misleading "success" notice was posted for a write that never landed.
     expect(mockStore.appendSystemEvent).not.toHaveBeenCalled();
   });
 
@@ -1358,7 +1247,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       name: 'STRIPE_WEBHOOK_SECRET',
       overwritten: false,
     });
-    // One write IS the value + the authority: (repo, path) identity, name as the display label.
     expect(mockSecretStore.write).toHaveBeenCalledWith(
       TEAM_ID,
       PROJECT_ID,
@@ -1366,7 +1254,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       'whsec_abc123',
       'STRIPE_WEBHOOK_SECRET',
     );
-    // Visible to the operator (name/path only) — never the value.
     expect(mockStore.appendSystemEvent).toHaveBeenCalledOnce();
     const notice = (mockStore.appendSystemEvent as ReturnType<typeof vi.fn>).mock
       .calls[0][1] as string;
@@ -1453,18 +1340,15 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     getSetupScript.mockResolvedValueOnce(null);
     const tools = manager.buildTools(fakeStimulus);
 
-    // Unset → present:false, script:null.
     const empty = await tools['read_setup_script']({});
     expect(empty).toEqual({ ok: true, present: false, script: null });
     expect(getSetupScript).toHaveBeenCalledWith(TEAM_ID, PROJECT_ID);
 
-    // Set → the raw body is surfaced verbatim (not just its length like the profile snapshot).
     const body = '#!/usr/bin/env bash\nset -euo pipefail\npnpm install --frozen-lockfile';
     getSetupScript.mockResolvedValueOnce(body);
     const present = await tools['read_setup_script']({});
     expect(present).toEqual({ ok: true, present: true, script: body });
 
-    // Pure read — never mutates.
     expect(mockConfigStore.setSetupScript).not.toHaveBeenCalled();
   });
 
@@ -1485,12 +1369,10 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     getPreviewInstructions.mockResolvedValueOnce(null);
     const tools = manager.buildTools(fakeStimulus);
 
-    // Unset → present:false, instructions:null.
     const empty = await tools['read_preview_instructions']({});
     expect(empty).toEqual({ ok: true, present: false, instructions: null });
     expect(getPreviewInstructions).toHaveBeenCalledWith(TEAM_ID, PROJECT_ID);
 
-    // Write a recipe.
     const recipe =
       'docker compose up -d\npnpm migrate\npnpm seed\nOpen https://preview.example/dashboard';
     const written = await tools['write_preview_instructions']({
@@ -1500,19 +1382,16 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(setPreviewInstructions).toHaveBeenCalledWith(TEAM_ID, PROJECT_ID, recipe);
     expect(mockStore.appendSystemEvent).toHaveBeenCalledOnce();
 
-    // Read it back — the raw body is surfaced verbatim.
     getPreviewInstructions.mockResolvedValueOnce(recipe);
     const present = await tools['read_preview_instructions']({});
     expect(present).toEqual({ ok: true, present: true, instructions: recipe });
 
-    // Clear it (blank instructions).
     const cleared = await tools['write_preview_instructions']({
       instructions: '',
     });
     expect(cleared).toEqual({ ok: true, saved: false });
     expect(setPreviewInstructions).toHaveBeenCalledWith(TEAM_ID, PROJECT_ID, null);
 
-    // Read null after clearing.
     getPreviewInstructions.mockResolvedValueOnce(null);
     const afterClear = await tools['read_preview_instructions']({});
     expect(afterClear).toEqual({
@@ -1532,25 +1411,15 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockLifecycle.markRepoOnboarded).not.toHaveBeenCalled();
   });
 
-  // Drift guard: every name the workspace-profile bridge routes MUST be a real, registered tool, or the
-  // entrypoint would advertise a tool that doesn't dispatch. Onboarding is the superset (includes the
-  // convention tools), so it's the right toolset to check membership against.
   it('WORKSPACE_PROFILE_TOOL_NAMES all resolve to registered tools (no bridge/registration drift)', () => {
     const tools = manager.buildTools(fakeStimulus, 'onboarding');
     for (const name of WORKSPACE_PROFILE_TOOL_NAMES) {
       expect(typeof tools[name], `profile tool "${name}" must be registered`).toBe('function');
     }
-    // Conversely, reset_sandbox is a real tool but deliberately NOT on the profile bridge.
     expect(typeof tools['reset_sandbox']).toBe('function');
     expect(WORKSPACE_PROFILE_TOOL_NAMES as readonly string[]).not.toContain('reset_sandbox');
   });
 
-  // Drift guard: every tool the brain actually registers — across every curated kind — MUST have a
-  // TOOL_SHAPES entry, or the SDK bridge would silently strip every argument that tool's handler reads
-  // (a strict zod object drops unknown keys before the handler ever sees them). `__`-prefixed tools
-  // (e.g. `__profile_awareness`) are reserved-internal: they're invoked only via the raw `bridgeCall`
-  // round-trip and are filtered out of `toolBridgeTools` before the container ever builds an SDK proxy
-  // tool for them, so they never pass through TOOL_SHAPES and are exempt from this guard.
   it('every buildTools()-registered tool (all kinds/roles) has a TOOL_SHAPES entry', () => {
     for (const kind of [null, 'review', 'onboarding']) {
       for (const role of [null, 'post_build', 'ci'] as const) {
@@ -1566,31 +1435,23 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     }
   });
 
-  // Drift guard for the shared backend↔web contract (`ATLAS_HOST_BRIDGE_TOOLS` in @workspace/shared).
-  // The host-bridge tool set is `Object.keys(buildTools())` MINUS the workspace-profile server's tools,
-  // unioned across every session kind. This asserts the contract equals what the backend actually
-  // registers — so adding/renaming/removing a host tool fails CI unless the contract (and, being an
-  // exhaustive Record, the web label map) is updated in lockstep.
   it('ATLAS_HOST_BRIDGE_TOOLS matches the host-bridge tools registered across all session kinds', () => {
     const profile = new Set<string>(WORKSPACE_PROFILE_TOOL_NAMES);
     const registered = new Set<string>();
     for (const kind of [undefined, 'onboarding', 'review'] as const) {
       for (const role of [undefined, 'post_build', 'ci'] as const) {
         for (const name of Object.keys(manager.buildTools(fakeStimulus, kind, null, role))) {
-          // `__`-prefixed tools are reserved-internal (never model-facing, never in the web contract).
           if (!profile.has(name) && !name.startsWith('__')) registered.add(name);
         }
       }
     }
     const contract = new Set<string>(ATLAS_HOST_BRIDGE_TOOLS);
-    // Every registered host-bridge tool is in the contract (nothing unlisted)…
     for (const name of registered) {
       expect(
         contract.has(name),
         `registered host tool "${name}" missing from ATLAS_HOST_BRIDGE_TOOLS`,
       ).toBe(true);
     }
-    // …and every contract entry is really registered (no stale name like the old `log_decision`).
     for (const name of contract) {
       expect(
         registered.has(name),
@@ -1638,9 +1499,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     }
   });
 
-  // The job-orchestration tools (list_jobs + create_job + link_job_dependency) are available in EVERY
-  // session kind, not just normal build brains — a review/onboarding session may legitimately spin up or
-  // relate sibling jobs. list_jobs is also present in the base (normal) set.
   it('list_jobs / create_job / link_job_dependency are registered in every session kind', () => {
     for (const kind of [null, 'review', 'onboarding'] as const) {
       const tools = manager.buildTools(fakeStimulus, kind);
@@ -1687,7 +1545,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       defaultBranch: 'main',
       token: 't',
     });
-    // Host gate passes; the brain opens the PR itself in-turn (no separate session). Reconciler latches it.
     (mockShip.preShip as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
     });
@@ -1699,15 +1556,12 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     });
 
     expect(mockLifecycle.markRepoOnboarded).toHaveBeenCalledWith(TEAM_ID, PROJECT_ID);
-    // preShip is called positionally (job, repo, sandbox, notify) — no commit message: the host no longer
-    // commits, so the brain commits its env-setup changes itself in the inline open-PR turn.
     expect(mockShip.preShip).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
       expect.anything(),
       expect.anything(),
     );
-    // prOpened is false at return (the PR opens inline afterward), and the message tells the brain to open it.
     expect(result).toMatchObject({ ok: true, prOpened: false });
     expect((result as { message: string }).message).toContain('gh pr create');
   });
@@ -1734,8 +1588,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   });
 
   it('propose_mcp_servers + list_mcp_servers are available INCREMENTALLY on any thread (Workspace Profile upkeep)', () => {
-    // MCP servers are a Workspace Profile dimension like skills/mounts — maintainable on every job, not just
-    // onboarding (they ride the shared `intake` bundle).
     for (const kind of [undefined, 'onboarding', 'review'] as const) {
       const tools = manager.buildTools(fakeStimulus, kind);
       expect(tools['propose_mcp_servers']).toBeDefined();
@@ -1759,10 +1611,8 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(result).toMatchObject({ ok: true, proposed: ['github'] });
     expect(mockStore.openMcpProposal).toHaveBeenCalledTimes(1);
     const arg = (mockStore.openMcpProposal as ReturnType<typeof vi.fn>).mock.calls[0][1];
-    // The card carries the non-secret definition only — a secret slot is declared by NAME, no value.
     expect(arg.card.servers[0].headers).toEqual([{ name: 'Authorization', secret: true }]);
     expect(arg.card.scope).toBe('repo'); // defaults to repo scope (the owner-approved commit honors it)
-    // The brain is told which slots to fill afterwards.
     expect((result as { message: string }).message).toContain('request_secret');
   });
 
@@ -1887,7 +1737,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   it('withdraw_secret_request retracts an open durable/mcp card by id (and reports a no-op when it could not be withdrawn)', async () => {
     const tools = manager.buildTools(fakeStimulus, 'onboarding');
 
-    // Happy path: a still-open card is withdrawn (the store decrements open_secret_count).
     (mockStore.withdrawSecretRequest as ReturnType<typeof vi.fn>).mockResolvedValue({
       withdrawn: true,
     });
@@ -1902,13 +1751,11 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     );
     expect(ok).toMatchObject({ ok: true, requestId: 's-123' });
 
-    // Missing requestId → refused before touching the store.
     (mockStore.withdrawSecretRequest as ReturnType<typeof vi.fn>).mockClear();
     const bad = await tools['withdraw_secret_request']({});
     expect(bad).toMatchObject({ ok: false });
     expect(mockStore.withdrawSecretRequest).not.toHaveBeenCalled();
 
-    // Already provided/withdrawn → the store reports no winner → the tool surfaces a no-op.
     (mockStore.withdrawSecretRequest as ReturnType<typeof vi.fn>).mockResolvedValue({
       withdrawn: false,
     });
@@ -1930,7 +1777,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     });
 
     expect(result).toMatchObject({ ok: true });
-    // ask_question opens the gate ATOMICALLY (card row + awaiting pointer in one tx), not a bare append.
     expect(mockStore.openQuestion).toHaveBeenCalledOnce();
     const call = (mockStore.openQuestion as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(call[0]).toBe(THREAD_ID);
@@ -1948,7 +1794,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   });
 
   it('(e2) ask_question allows stacking — a second open question is NOT refused', async () => {
-    // openQuestion no longer refuses while one is open; the brain may have several cards open at once.
     (mockStore.openQuestion as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
     });
@@ -1964,7 +1809,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   it('(e3) withdraw_question retracts an open card by id (and reports a no-op when it could not be withdrawn)', async () => {
     const tools = manager.buildTools(fakeStimulus);
 
-    // Happy path: a still-open card is withdrawn (the store decrements the gate).
     (mockStore.withdrawQuestion as ReturnType<typeof vi.fn>).mockResolvedValue({
       withdrawn: true,
     });
@@ -1975,13 +1819,11 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockStore.withdrawQuestion).toHaveBeenCalledWith(THREAD_ID, 'q-123', 'reworded');
     expect(ok).toMatchObject({ ok: true, questionId: 'q-123' });
 
-    // Missing questionId → refused before touching the store.
     (mockStore.withdrawQuestion as ReturnType<typeof vi.fn>).mockClear();
     const bad = await tools['withdraw_question']({});
     expect(bad).toMatchObject({ ok: false });
     expect(mockStore.withdrawQuestion).not.toHaveBeenCalled();
 
-    // The operator answered first → the store reports no winner → the tool surfaces a no-op (don't re-ask).
     (mockStore.withdrawQuestion as ReturnType<typeof vi.fn>).mockResolvedValue({
       withdrawn: false,
     });
@@ -1998,7 +1840,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   it('(e5) withdraw_plan retracts a pending proposal — cancels the live handle + posts the notice; a non-awaiting job is a no-op', async () => {
     const tools = manager.buildTools(fakeStimulus);
 
-    // Happy path: the store won the guarded flip → cancel the live handle + append the durable notice.
     (mockStore.withdrawPlan as ReturnType<typeof vi.fn>).mockResolvedValue({
       withdrawn: true,
     });
@@ -2011,7 +1852,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     );
     expect(mockStore.appendAtlasMessage).toHaveBeenCalledWith(THREAD_ID, expect.any(String));
 
-    // No pending proposal → the store guard reports no winner → {ok:false}, no cancel/appendAtlasMessage.
     (mockStore.withdrawPlan as ReturnType<typeof vi.fn>).mockResolvedValue({
       withdrawn: false,
     });
@@ -2026,8 +1866,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   it('(e6) withdraw_ship PROPOSES amending (posts a card, does NOT retract); already-open and non-parked are no-ops', async () => {
     const tools = manager.buildTools(fakeStimulus);
 
-    // Happy path: a fresh proposal is posted → ok, an Atlas "awaiting the operator" note is appended, and
-    // the gate is NOT retracted (only the operator can release it).
     (mockDriverStore.openAmendProposal as ReturnType<typeof vi.fn>).mockResolvedValue('posted');
     const ok = await tools['withdraw_ship']({ reason: 'more polish' });
     expect(mockDriverStore.openAmendProposal).toHaveBeenCalledWith(THREAD_ID, 'more polish');
@@ -2035,7 +1873,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(ok).toMatchObject({ ok: true });
     expect(mockStore.appendAtlasMessage).toHaveBeenCalledWith(THREAD_ID, expect.any(String));
 
-    // A proposal is already pending → {ok:false}, no duplicate note.
     (mockDriverStore.openAmendProposal as ReturnType<typeof vi.fn>).mockResolvedValue(
       'already-open',
     );
@@ -2044,7 +1881,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(alreadyOpen).toMatchObject({ ok: false });
     expect(mockStore.appendAtlasMessage).not.toHaveBeenCalled();
 
-    // Not parked at the ship gate → {ok:false}, no note.
     (mockDriverStore.openAmendProposal as ReturnType<typeof vi.fn>).mockResolvedValue('not-parked');
     (mockStore.appendAtlasMessage as ReturnType<typeof vi.fn>).mockClear();
     const notParked = await tools['withdraw_ship']({});
@@ -2053,8 +1889,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   });
 
   it('(f) create_decision attaches the most-recently-answered question and returns the resolved decision + id', async () => {
-    // With no explicit questionId / delivery seedQuestionId, create_decision falls back to the newest
-    // answered, not-yet-logged card (ordered by answeredAt) — its `ts` is the card it stamps consumed.
     (mockStore.latestAnsweredQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue({
       ts: 'q-123',
       card: {
@@ -2082,7 +1916,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       ruling: 'Subdomain is editable; rename reconciles DNS.',
     });
 
-    // The return carries the FULLY-RESOLVED decision (id + auto-attached Q&A) so the brain need not read back.
     expect(result).toMatchObject({ ok: true, total: 1, decision: resolved });
     const input = (mockStore.createDecision as ReturnType<typeof vi.fn>).mock.calls[0][1];
     expect(input).toMatchObject({
@@ -2091,7 +1924,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       question: 'Editable or fixed after checkout?',
       answer: 'Editable in the Network tab',
     });
-    // The consumed card is flagged so the same Q&A can't attach to a second decision.
     expect(mockStore.updateCardMessage).toHaveBeenCalledWith(THREAD_ID, 'q-123', {
       loggedDecision: true,
     });
@@ -2130,7 +1962,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     });
     const input = (mockStore.createDecision as ReturnType<typeof vi.fn>).mock.calls[0][1];
     expect(input.confirmedByOperator).toBe(false);
-    // The result echoes the running provenance balance.
     expect(result).toMatchObject({ provenance: { confirmed: 0, authored: 1 } });
   });
 
@@ -2159,7 +1990,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     });
     const tools = manager.buildTools(fakeStimulus);
 
-    // Promote with an answer attached → true.
     (mockStore.latestAnsweredQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue({
       ts: 'q-1',
       card: { type: 'question_card', question: 'A or B?', answer: 'A' },
@@ -2171,7 +2001,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       confirmedByOperator: true,
     });
 
-    // Promote with NO answer → coerced false.
     (mockStore.latestAnsweredQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     await tools['update_decision']({ id: 'd1', confirmedByOperator: true });
     expect(
@@ -2180,7 +2009,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       confirmedByOperator: false,
     });
 
-    // Explicit demotion is always allowed.
     await tools['update_decision']({ id: 'd1', confirmedByOperator: false });
     expect(
       (mockStore.updateDecision as ReturnType<typeof vi.fn>).mock.calls.at(-1)![2],
@@ -2190,7 +2018,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   });
 
   it('(f1e) create_decision attaches the EXPLICIT questionId card, not the newest-answered fallback', async () => {
-    // With several questions answered, an explicit questionId pins exactly which one the decision settles.
     (mockStore.getQuestionCard as ReturnType<typeof vi.fn>).mockImplementation(
       async (_t: string, id: string) =>
         id === 'q-explicit'
@@ -2213,14 +2040,12 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     });
     const input = (mockStore.createDecision as ReturnType<typeof vi.fn>).mock.calls[0][1];
     expect(input).toMatchObject({ question: 'Which DB?', answer: 'Postgres' });
-    // The explicit card (not the fallback) is the one flagged consumed.
     expect(mockStore.updateCardMessage).toHaveBeenCalledWith(THREAD_ID, 'q-explicit', {
       loggedDecision: true,
     });
   });
 
   it('(f1f) create_decision on a DELIVERY turn attaches the seedQuestionId card', async () => {
-    // The answer-delivery turn carries seedQuestionId; create_decision attaches that exact card.
     (mockStore.getQuestionCard as ReturnType<typeof vi.fn>).mockImplementation(
       async (_t: string, id: string) =>
         id === 'q-delivered'
@@ -2259,7 +2084,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   });
 
   it('(g1b) create_decision normalizes a hyphenated/cased decisionClass to the canonical id', async () => {
-    // The model often guesses `api-contract` before self-correcting; asDecisionClass normalizes it.
     const tools = manager.buildTools(fakeStimulus);
     const result = await tools['create_decision']({
       decisionClass: 'API-Contract',
@@ -2287,8 +2111,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   });
 
   it('(g1d) create_decision with no args returns a missing-arguments hint, not a field error', async () => {
-    // When no payload reaches the host, the error must point at the missing arguments broadly, not mislead
-    // with "decisionClass must be one of…".
     const tools = manager.buildTools(fakeStimulus);
     const result = (await tools['create_decision']({})) as {
       ok: boolean;
@@ -2404,7 +2226,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       threads: [],
     });
 
-    // NEITHER dispatcher.dispatch NOR runDirectBuild fires on approval — only the plan-approved JIT rule does.
     expect(mockDispatcher.dispatch as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
     expect(mockJit.fireLifecycle as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
       'plan-approved',
@@ -2631,8 +2452,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockStore.approve).toHaveBeenCalledWith(FAKE_JOB_ID, 'rec-CLICKED', 'U-OP', 'plan');
   });
 
-  // ── Q2 (decision d1): the four approval-resolution acks render as calm System notices, never in
-  //    Atlas's voice. Driven through the durable path, which funnels into the single actOnApprovalVerdict.
   describe('(d8) approval acks emit System notices, not appendAtlasMessage', () => {
     const awaitingJob = {
       id: FAKE_JOB_ID,
@@ -2702,7 +2521,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
 
     it('request_changes (no note) → System notice ack, reopens planning, not Atlas', async () => {
       setup(['Backend']);
-      // A note now goes to the brain via handleChatTurn (see (d5b)); the no-note path keeps the ack.
       await manager.resolveApprovalDurably(FAKE_JOB_ID, 'request_changes', 'U-OP');
       expect(mockStore.reopenPlanning).toHaveBeenCalledWith(FAKE_JOB_ID);
       expect(mockStore.appendSystemNotice).toHaveBeenCalledWith(
@@ -2760,7 +2578,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     const seed = turn.mock.calls[0][0];
     expect(seed.jobId).toBe(FAKE_JOB_ID);
     expect(seed.body).toContain('Use Redis for the counter, not an in-memory map.');
-    // The note case runs an engine turn instead of the canned "what should change?" ack.
     expect(mockSurface.post as ReturnType<typeof vi.fn>).not.toHaveBeenCalledWith(
       expect.anything(),
       expect.stringContaining('drawing board'),
@@ -2804,9 +2621,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     );
   });
 
-  // ── plan-gate auto-resolve (per-job opt-in): a job whose autoApproveMode APPROVES the plan gate
-  //    ('plan' or 'both') drives the SAME resolution an operator's approve click would, the instant the
-  //    card is posted — no human ever clicks it.
   describe('(auto-approve) requestApprovalAndAct — per-job auto-approve resolves the plan gate', () => {
     type ActOnApprovalVerdict = {
       actOnApprovalVerdict(...args: unknown[]): Promise<void>;
@@ -3041,9 +2855,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
 });
 
 describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/persistence', () => {
-  // Clear mock CALL RECORDS between cases (not implementations/return values) so a spy's calls from one test
-  // never bleed into another's call-count assertions — the same event-doubling signature this suite exercises
-  // surfaced once as a cross-test flake here.
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -3075,20 +2886,12 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     sessionId?: string | null;
     resetContainer?: ReturnType<typeof vi.fn>;
     hardResetSandbox?: ReturnType<typeof vi.fn>;
-    /** A live brain turn `runningBrainTurn` returns (drives the steer-into-live path); default none. */
     runningBrainTurn?: { turn_id: string; lane?: string } | null;
-    /** The engine runner's `steer` mock (present → `steerIntoLiveBrainTurn` can fire). */
     steer?: ReturnType<typeof vi.fn>;
-    /** Durable stimulus row resolved by input_ack/success-tail stamping; null models a legacy in-memory seed. */
     stimulusRow?: TurnEnvelope | null;
-    /** `driverStore.threadRole` result — the stage a `resumeThreadId`d turn resolves to (d8 prefix gating). */
     threadRole?: ThreadRole | null;
-    /** The binding usage window's utilization for a TEXT-fallback session-limit hit's corroboration check
-     *  (`OauthUsageService.getUtilization`) — defaults to `undefined` (uncorroborated). */
     usageUtilization?: number;
   }) {
-    // Durable retry-counter fakes (mirrors the real CAS columns on `jobs`), keyed by jobId — a fresh Map
-    // per `makeManager()` call so each test starts from a clean budget.
     const brainRetryCounters = new Map<
       string,
       {
@@ -3139,9 +2942,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       appendSystemEvent: vi.fn().mockResolvedValue(undefined),
       updateCardMessage: vi.fn().mockResolvedValue(undefined),
       loadJob: vi.fn().mockResolvedValue({ kind: null }),
-      // `pendingCard` simulates an open `ask_question` card (the live "currently-open card" reader).
       getQuestionCard: vi.fn().mockResolvedValue(opts.pendingCard ?? null),
-      // The open-question surfacing prefix reads this each turn; default to "none open".
       openQuestionCards: vi.fn().mockResolvedValue([]),
       markQuestionDelivered: vi.fn().mockResolvedValue(undefined),
       awaitingSecretId: vi.fn().mockResolvedValue(null),
@@ -3189,9 +2990,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       pushesLiveRouteEvents: true,
       run: opts.run ?? vi.fn().mockResolvedValue({ result: '', sessionId: 's' }),
       steer,
-      // The Redis runner's atomic in-process attach claim (single-winner turn-finalize fix): `reattachOne`
-      // claims the slot before any await and releases on bail. Default the claim to won so the reattach
-      // tests exercise the real re-attach body; `consumeClaim` feeds the error-path discard gate.
       tryClaimAttach: vi.fn(() => true),
       releaseAttach: vi.fn(),
       consumeClaim: vi.fn(() => undefined),
@@ -3202,8 +3000,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       retry: vi.fn(),
       snapshot: vi.fn(() => null),
     } as unknown as LiveTurnStore;
-    // A REAL harness over the mock liveTurns + a mock durable sink — so the streaming spine is exercised
-    // end-to-end through the brain (push/end + the durable blocks) exactly as in production.
     const blockSink = {
       appendBlock: vi.fn().mockResolvedValue(undefined),
       appendBlockOnce: vi.fn().mockResolvedValue(undefined),
@@ -3211,9 +3007,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     const usage = {
       applyHarvest: vi.fn().mockResolvedValue(undefined),
     } as unknown as OauthUsageService;
-    // The manager's OWN `usage` collaborator (distinct from the turn-harness `usage` above): the
-    // session-limit park site reads `getResetAt`/`getUtilization` and, on a durable park, `applyHarvest`.
-    // `opts.usageUtilization` drives a TEXT-fallback hit's corroboration check per-test.
     const usageService = {
       getResetAt: () => undefined,
       getUtilization: vi.fn(async () => opts.usageUtilization),
@@ -3383,10 +3176,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       sessionId: 'sess-1',
       sessionLimit: { source: 'text' as const, rateLimitType: 'five_hour' },
     }));
-    // usageUtilization left undefined (uncorroborated) — the misfire budget is what decides here. Drive THREE
-    // consecutive turns through the SAME manager/store (no pre-seeding, no mock override) to prove the
-    // counter genuinely ACCUMULATES across separate re-drives: the generic clean-turn counter reset must NOT
-    // fire for a turn whose own result is itself a session-limit hit, or the streak could never exceed 1.
     const { manager, store, surface } = makeManager({ run });
 
     await manager.handleChatTurn(stimulus); // misfire 1/3 — quiet retry
@@ -3402,7 +3191,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     const resumeCalls = (store.setSessionResume as ReturnType<typeof vi.fn>).mock.calls.filter(
       (args) => args[0] === THREAD_ID,
     );
-    // The first 2 resume-clock writes are quiet retries (kind:'retry'); the 3rd is the durable park (no kind).
     expect(
       resumeCalls.slice(0, 2).every((args) => (args[2] as { kind?: string }).kind === 'retry'),
     ).toBe(true);
@@ -3433,8 +3221,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     const run = vi.fn(async (args: RunEngineArgs) => {
       for (const e of events) {
         args.onEvent?.(e);
-        // Stand in for RedisEngineRunner.consumeRealtime: the realtime consumer group mirrors each engine
-        // event into the LiveTurnStore off `liveRoute` in production — the harness's onEvent no longer does.
         if (args.liveRoute) {
           liveRef?.push(args.liveRoute.channel, args.liveRoute.jobId, e, args.liveRoute.lane);
         }
@@ -3446,16 +3232,12 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
 
     await manager.handleChatTurn(stimulus);
 
-    // A fresh turn clears any previous halted flag once it starts.
     expect(store.setHalted as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(THREAD_ID, false);
 
-    // richStream is requested for the brain turn.
     const runArgs = (dockerRunner.run as ReturnType<typeof vi.fn>).mock
       .calls[0][0] as RunEngineArgs;
     expect(runArgs.richStream).toBe(true);
 
-    // Every engine event was pushed LIVE into the resumable store (on the default `main` lane), then the
-    // turn was ended (turn_end).
     const pushed = (liveTurns.push as ReturnType<typeof vi.fn>).mock.calls.map(
       (c) => (c[2] as EngineEvent).kind,
     );
@@ -3475,8 +3257,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     ).toBe(true);
     expect(liveTurns.end as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
 
-    // The authoritative blocks were persisted via the durable sink: thinking, two text (chat) blocks, and
-    // one paired tool call.
     const blocks = (blockSink.appendBlock as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[1]);
     expect(blocks).toContainEqual(
       expect.objectContaining({ kind: 'thinking', text: 'reasoning…' }),
@@ -3490,15 +3270,10 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     });
     expect(toolBlock?.meta?.input).toMatchObject({ path: 'README.md' });
 
-    // Each block is stamped with its strictly-increasing EMISSION time (not the turn-end time) so a
-    // follow-up the operator sends mid-turn orders chronologically instead of jumping above the turn.
     const stamps = blocks.map((b) => (b.createdAt as Date).getTime());
     expect(stamps.every((t) => typeof t === 'number')).toBe(true);
     for (let i = 1; i < stamps.length; i++) expect(stamps[i]).toBeGreaterThan(stamps[i - 1]);
 
-    // The "setting up…" line is HARNESS narration (a quiet appendSystemEvent pill), never a fake Atlas
-    // reply — and the final engine reply is persisted via the durable block sink above, not a separate
-    // say(), so appendAtlasMessage is never called in this flow at all.
     expect((store.appendAtlasMessage as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
     expect((store.appendSystemEvent as ReturnType<typeof vi.fn>).mock.calls[0][1]).toContain(
       'Setting up',
@@ -3512,14 +3287,11 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
         result: 'Reply.',
         sessionId: 'sess-1',
         usage: {
-          // `inputTokens` is the CUMULATIVE billing total (sums every round-trip's cache re-reads).
           inputTokens: 187_795,
           outputTokens: 420,
           cacheReadTokens: 180_932,
           costUsd: 0.21,
           model: 'claude-opus-4-8',
-          // Occupancy = the per-call context size (the brain's real window usage), NOT the cumulative
-          // billing total — read straight from the engine's per-call tracking.
           contextTokens: 23_100,
           contextModel: 'claude-opus-4-8',
         },
@@ -3530,7 +3302,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     await manager.handleChatTurn(stimulus);
 
     const blocks = (blockSink.appendBlock as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[1]);
-    // The turn_meta block is appended LAST in the turn.
     expect(blocks.at(-1)?.kind).toBe('turn_meta');
     const meta = blocks.at(-1)?.meta as Record<string, unknown>;
     expect(meta.usage).toMatchObject({
@@ -3539,21 +3310,16 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       costUsd: 0.21,
       model: 'claude-opus-4-8',
     });
-    // Occupancy reads the per-call `contextTokens`, NOT the cumulative billing `inputTokens` (the bug).
     expect(meta.contextTokens).toBe(23_100);
     expect(meta.contextTokens).not.toBe(187_795);
     expect(meta.contextLimit).toBe(1_000_000); // opus → 1M window
   });
 
   describe('per-stage host-side turn-prefix gating (d8)', () => {
-    // Distinctive substrings from the three gated prefixes — see `buildAwarenessPrefix` /
-    // `buildOpenQuestionsPrefix` / `buildAmendingPrefix` in agent-session-manager.service.ts.
     const AWARENESS_MARK = 'Pipeline updates since your last message';
     const OPEN_QUESTIONS_MARK = 'still awaiting an';
     const AMENDING_MARK = 'This build is AMENDING';
 
-    /** Wires every gated prefix's trigger condition ON (markers pending, an open question, job amending) so
-     *  each test only has to assert which subset of the three actually reached the engine's task. */
     function makeManagerWithAllPrefixesTriggered(opts: {
       resumeThreadId?: string;
       threadRole?: ThreadRole | null;
@@ -3638,7 +3404,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       return {
         result: 'Reply.',
         sessionId: 'sess-1',
-        // Billing usage only — no `contextTokens`/`contextModel` (e.g. an engine without per-call usage).
         usage: {
           inputTokens: 187_795,
           outputTokens: 420,
@@ -3653,7 +3418,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
 
     const blocks = (blockSink.appendBlock as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[1]);
     const meta = blocks.at(-1)?.meta as Record<string, unknown>;
-    // Falls back to null (blank ring) rather than the wrong cumulative ~94%.
     expect(meta.contextTokens).toBeNull();
   });
 
@@ -3667,15 +3431,12 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
 
     await manager.handleChatTurn(stimulus);
 
-    // Persisted via the system→operator seam (own box), NOT as an Atlas message.
     expect(store.appendSystemOperatorMessage as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
-    // The live post carries `meta.source='system_operator'` so the web renders the dedicated box…
     const notice = (surface.post as ReturnType<typeof vi.fn>).mock.calls.find(
       (c) =>
         (c[2] as { meta?: { source?: string } } | undefined)?.meta?.source === 'system_operator',
     );
     expect(notice).toBeTruthy();
-    // …and it does NOT tell the operator to "try again" (retrying is futile).
     expect(String(notice![1])).not.toContain('try again');
     expect(String(notice![1]).toLowerCase()).toContain('new thread');
     expect((store.setHalted as ReturnType<typeof vi.fn>).mock.calls).toEqual([
@@ -3690,7 +3451,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
 
     await manager.handleChatTurn(stimulus);
 
-    // Persisted via the system→operator seam (own box), NOT as an Atlas message.
     expect(store.appendSystemOperatorMessage as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
     expect(store.appendAtlasMessage as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
     const notice = (surface.post as ReturnType<typeof vi.fn>).mock.calls.find(
@@ -3698,11 +3458,9 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
         (c[2] as { meta?: { source?: string } } | undefined)?.meta?.source === 'system_operator',
     );
     expect(notice).toBeTruthy();
-    // No "I ran into an error — please try again" narrative wrapper — just the true error, verbatim.
     expect(String(notice![1])).toContain('boom');
     expect(String(notice![1])).not.toContain('try again');
     expect(String(notice![1])).not.toContain('I ran into an error');
-    // Marked retryable — the web renders a "Resume" button (POST …/retry-turn) on this box.
     expect((notice![2] as { meta?: { retryable?: boolean } }).meta?.retryable).toBe(true);
     expect(
       (store.appendSystemOperatorMessage as ReturnType<typeof vi.fn>).mock.calls[0][2],
@@ -3716,20 +3474,16 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
   it('SUPPRESSES a duplicate system→operator notice — a persistent limit fails every re-driven turn identically', async () => {
     const run = vi.fn().mockRejectedValue(new Error('boom: monthly spend limit'));
     const { manager, store, surface } = makeManager({ run });
-    // An identical notice already landed on this thread moments ago (a prior turn hit the same wall).
     (store.hasRecentSystemOperatorNotice as ReturnType<typeof vi.fn>).mockResolvedValue(true);
 
     await manager.handleChatTurn(stimulus);
 
-    // Neither the durable row nor the live box is re-posted — the operator already has one.
     expect(store.appendSystemOperatorMessage as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
     const notice = (surface.post as ReturnType<typeof vi.fn>).mock.calls.find(
       (c) =>
         (c[2] as { meta?: { source?: string } } | undefined)?.meta?.source === 'system_operator',
     );
     expect(notice).toBeUndefined();
-    // A Resume/new turn clears `halted` at start, so a deduped repeated failure must re-assert it even
-    // though no second box is written.
     expect((store.setHalted as ReturnType<typeof vi.fn>).mock.calls).toEqual([
       [THREAD_ID, false],
       [THREAD_ID, true],
@@ -3754,8 +3508,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     expect((notice![2] as { meta?: { retryable?: boolean } }).meta?.retryable).toBeUndefined();
   });
 
-  // ── benign-abort auto-resume (d3): a mid-turn interrupt (`aborted_streaming`) silently re-drives the
-  // SAME session with a nudge that reframes the cancellation for the brain, not the generic retry nudge ──
   describe('benign-abort auto-resume seeds the interrupt-reframe nudge', () => {
     it('seeds interruptRedriveNudge (not the generic retryResumeNudge) on a benign aborted_streaming', async () => {
       const run = vi.fn().mockRejectedValue(new Error('terminal_reason=aborted_streaming'));
@@ -3773,8 +3525,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     });
   });
 
-  // ── host-retry backstop (d1-B): a retryable transient error (transient auth hiccup / host↔container
-  // blip the SDK itself never saw) auto-retries the SAME session instead of surfacing a scary box ────────
   describe('host auto-retry backstop for a retryable transient error', () => {
     it('a transient EngineAuthError posts a quiet notice, fans turn_retry, and arms the 10s re-drive clock', async () => {
       const run = vi.fn().mockRejectedValue(new EngineAuthError('Not logged in'));
@@ -3794,16 +3544,13 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
           'main',
           expect.objectContaining({ attempt: 1, max: MAX_HOST_RETRIES }),
         );
-        // The durable `kind:'retry'` resume clock is armed FIRST — the restart-only backstop.
         expect(store.setSessionResume).toHaveBeenCalledWith(
           THREAD_ID,
           expect.any(String),
           expect.objectContaining({ lane: 'main', kind: 'retry' }),
         );
-        // No paused/halted banner during the retry window.
         expect(surface.seedSystemNotification).not.toHaveBeenCalled();
 
-        // Advancing past the fixed backoff fires the in-process timer: clears the clock, re-nudges.
         await vi.advanceTimersByTimeAsync(HOST_RETRY_BACKOFF_MS);
 
         expect(store.setSessionResume).toHaveBeenCalledWith(THREAD_ID, null, null);
@@ -3840,7 +3587,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
         await manager.handleChatTurn(stimulus);
       }
 
-      // Exactly MAX_HOST_RETRIES quiet retries — the (MAX_HOST_RETRIES+1)th call exhausts the budget.
       expect(store.appendSystemNotice).toHaveBeenCalledTimes(MAX_HOST_RETRIES);
       expect(liveTurns.retry).toHaveBeenCalledTimes(MAX_HOST_RETRIES);
       const lastNoticeCall = (store.appendSystemNotice as ReturnType<typeof vi.fn>).mock.calls.at(
@@ -3938,7 +3684,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       },
     );
     const { manager, store, lifecycle } = makeManager({ ensureProvisioned });
-    // Capture ensureContainer's own onMilestone the same way, then invoke it manually.
     (lifecycle.ensureContainer as ReturnType<typeof vi.fn>).mockImplementation(
       async (_jobId: string, _orgId: string, onMilestone?: (s: string) => void) => {
         containerMilestone = onMilestone;
@@ -3959,7 +3704,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     );
     expect(events.some((t) => /building the sandbox image/i.test(t))).toBe(true);
     expect(events.some((t) => /preparing this thread.s workspace container/i.test(t))).toBe(true);
-    // Never a fake Atlas chat reply for any of this narration.
     expect(store.appendAtlasMessage as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
   });
 
@@ -3984,7 +3728,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     const p2 = manager.handleChatTurn(stimulus); // turn 2 sent while turn 1 is "thinking"
     await new Promise((r) => setTimeout(r, 10));
 
-    // Turn 2 is queued — the engine has only been entered ONCE.
     expect(dockerRunner.run as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
 
     release();
@@ -4011,7 +3754,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       steer,
       runningBrainTurn: { turn_id: 'T-live', lane: 'main' },
       stimulusRow: answerSeed,
-      // the answered, not-yet-delivered card the seed carries
       pendingCard: {
         type: 'question_card',
         answer: 'napi-rs',
@@ -4021,10 +3763,8 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
 
     await manager.handleChatTurn(answerSeed);
 
-    // Steered into the live turn; NO second engine turn kicked.
     expect(steer).toHaveBeenCalledWith('T-live', 'seed-ans-1', answerSeed.body);
     expect(dockerRunner.run).not.toHaveBeenCalled();
-    // A bare steer is not consumption; the durable row + card are stamped only on the engine input_ack.
     expect(store.markQuestionDelivered).not.toHaveBeenCalled();
     expect(stimulusStore.markChatDelivered).not.toHaveBeenCalled();
 
@@ -4054,7 +3794,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     });
     await manager.handleChatTurn(resetVerify);
 
-    // Reset-verify is exempt from the steer-into-live shortcut (its cold-attach semantics are load-bearing).
     expect(steer).not.toHaveBeenCalled();
   });
 
@@ -4103,9 +3842,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
   });
 
   it('a closed sandbox posts the "thread is closed" notice ONCE and MARKS the message delivered (kills the 2-min spam)', async () => {
-    // ensureProvisioned → null means the sandbox is torn down (lifecycle=closed) and NOT revived (a
-    // non-operator seed, or a genuinely un-provisionable job). The message must be stamped delivered via
-    // onRegistered — else the undelivered-chat sweep re-posts this identical notice every lease cycle.
     const ensureProvisioned = vi.fn().mockResolvedValue(null);
     const { manager, surface } = makeManager({
       findSandbox: { worktreePath: '/wt' },
@@ -4150,7 +3886,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       .calls[0][0] as RunEngineArgs;
     expect(runArgs.task).toContain('informational, no action needed unless asked');
     expect(runArgs.task).toContain('Your plan was approved by the operator.');
-    // The operator's actual message is preserved AFTER the passive prefix.
     expect(runArgs.task).toContain('Explain the build step');
   });
 
@@ -4160,7 +3895,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       drainAndAdvance,
     });
 
-    // runDirectBuild / startFollowUpJob stamp author.id = 'atlas' — these must not consume the buffer.
     const synthetic: TurnEnvelope = mkEnvelope({
       ...stimulus,
       author: { id: 'atlas', displayName: 'Atlas' },
@@ -4191,9 +3925,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
   });
 
   it('a composer message NEVER answers an open question card — even one shown BEFORE the message arrived', async () => {
-    // Answers come only through the question-card component (`/answer-question`). A message typed in the
-    // composer while a card is showing (card `created_at` BEFORE the operator's `receivedAt`) is a normal
-    // operator turn, not the answer — the card stays open for the operator to answer via the component.
     const { manager, store } = makeManager({
       pendingCard: {
         ts: 'q-shown-first',
@@ -4207,8 +3938,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
   });
 
   it('a composer message queued BEFORE the question was asked is not consumed as its answer (the original bug)', async () => {
-    // The reported bug: a chat message queued while a turn ran got stamped as the answer to an
-    // `ask_question` card that same turn went on to open (card `created_at` AFTER `receivedAt`).
     const { manager, store } = makeManager({
       pendingCard: {
         ts: 'q-asked-later',
@@ -4222,8 +3951,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
   });
 
   it('a DELIVERY turn (seedQuestionId set) stamps exactly that card delivered on success', async () => {
-    // The answer-delivery seed carries seedQuestionId; the success tail marks THAT card delivered (so the
-    // boot sweep won't re-deliver it). An answered, not-yet-delivered card is the delivery target.
     const deliveryStimulus: TurnEnvelope = mkEnvelope({
       ...stimulus,
       id: 'seed-deliver-row',
@@ -4260,9 +3987,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
   });
 
   it('boot re-attach of an ONBOARDING turn rebuilds the CURATED onboarding tool map (finish_onboarding dispatchable)', async () => {
-    // The regression: `reattachOne` rebuilt the host dispatch map without the onboarding flag, so after a
-    // mid-turn restart the container (still declaring the onboarding toolset from the original kick) got
-    // "Unknown tool: 'finish_onboarding'" back when the session finally tried to conclude.
     const { manager, store, dockerRunner } = makeManager({});
     (store.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
       kind: 'onboarding',
@@ -4294,8 +4018,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
   });
 
   it('reattachOne resets the live-turn lane (channel, jobId) BEFORE the harness/replay', async () => {
-    // Clearing the stranded lane before the '0-0' replay is what rebuilds a clean buffer (no persistent
-    // multiple-cursor state). It must run before create/reattach so the replay repopulates from empty.
     const { manager, store, dockerRunner, turnHarness } = makeManager({});
     (store.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
       kind: null,
@@ -4318,7 +4040,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     });
 
     expect(resetLane).toHaveBeenCalledWith(PROJECT_ID, THREAD_ID);
-    // Ordering: the reset fires before the '0-0' replay so the replay rebuilds onto an empty lane.
     expect(resetLane.mock.invocationCallOrder[0]).toBeLessThan(
       reattach.mock.invocationCallOrder[0],
     );
@@ -4381,10 +4102,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
   });
 
   it('a NORMAL (non-onboarding) thread has the SAME on-the-fly capabilities as the ceremony — secrets, files, AND config', () => {
-    // The ceremony and an ordinary build thread share identical onboarding capabilities: the ceremony just
-    // does it all up front, a regular thread does it incrementally whenever it hits the same friction.
-    // `finish_onboarding` is the one ceremony-only exception (it stamps onboarded_at + opens the dedicated
-    // config PR — a regular thread's own build already commits atlas.json as part of its own PR).
     const { manager } = makeManager({});
     const tools = manager.buildTools(stimulus);
     expect(tools.request_secret).toBeDefined();
@@ -4394,7 +4111,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     expect(tools.finish_onboarding).toBeUndefined();
   });
 
-  // ── reset_sandbox: recreate the container to prove the environment cold-boots ────────────────────
   describe('reset_sandbox', () => {
     const KEY = `${TEAM_ID}:${THREAD_ID}`;
 
@@ -4407,14 +4123,11 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
         .buildTools(stimulus)
         .reset_sandbox({ reason: 'verify mounts' })) as Record<string, unknown>;
       expect(res).toMatchObject({ ok: true, willReset: true });
-      // The tool only FLAGS the reset (the tail tears down) — nothing was recreated during the call.
       expect(
         (manager as unknown as { resetRequests: Map<string, unknown> }).resetRequests.get(KEY),
       ).toEqual({
         reason: 'verify mounts',
       });
-      // The visible cue is posted HERE (mid-turn) so it lands on THIS turn's /messages reconcile — a
-      // tail-posted pill would miss it (turn_end already fired). See the tool comment.
       expect(
         (store.appendSystemEvent as ReturnType<typeof vi.fn>).mock.calls.some((c) =>
           /reset/i.test(String(c[1])),
@@ -4463,15 +4176,12 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
         THREAD_ID,
         TEAM_ID,
       );
-      // The verify instruction is owed to the first cold-attached turn…
       expect(
         (manager as unknown as { pendingResetVerify: Set<string> }).pendingResetVerify.has(KEY),
       ).toBe(true);
-      // …the request is consumed (never honored twice)…
       expect(
         (manager as unknown as { resetRequests: Map<string, unknown> }).resetRequests.has(KEY),
       ).toBe(false);
-      // …and exactly one synthetic verify continuation is kicked.
       expect(kick).toHaveBeenCalledTimes(1);
       const seed = kick.mock.calls[0][0];
       expect(seed.author.id).toBe('U-SYSTEM');
@@ -4514,7 +4224,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       expect(resetContainer).not.toHaveBeenCalled();
     });
 
-    // ── hard reset ({ hard:true }) — two-call confirm + dirty/unpushed refusal ──────────────────────
     const resetReq = (m: AgentSessionManager) =>
       (
         m as unknown as {
@@ -4537,7 +4246,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
         confirmRequired: true,
       });
       expect(String(res.message)).toMatch(/HARD RESET/);
-      // Armed but NOT queued — nothing for the tail to honor yet.
       expect(pendingHard(manager).has(KEY)).toBe(true);
       expect(resetReq(manager).has(KEY)).toBe(false);
     });
@@ -4623,7 +4331,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
         .calls[0][0] as RunEngineArgs;
       expect(runArgs.task).toContain('cold-boot'); // RESET_VERIFY_TEXT rode the notice
       expect(runArgs.task).toContain('Explain the build step'); // the operator's own message is preserved after it
-      // Consumed — a later synthetic continuation won't re-issue it.
       expect(
         (manager as unknown as { pendingResetVerify: Set<string> }).pendingResetVerify.has(KEY),
       ).toBe(false);
@@ -4632,7 +4339,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     it('the reset-verify continuation is a NO-OP when the notice was already consumed by an earlier turn', async () => {
       const run = vi.fn().mockResolvedValue({ result: 'ok', sessionId: 's' });
       const { manager, dockerRunner } = makeManager({ run });
-      // pendingResetVerify is NOT set → an earlier turn already cold-attached and consumed the notice.
       const seed: TurnEnvelope = mkEnvelope({
         ...stimulus,
         author: { id: 'atlas', displayName: 'Atlas' },
@@ -4819,8 +4525,6 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
       orgId: ORG,
       repoId: REPO,
     });
-    // The engine-facing seed is FRAMED with the spawning job's provenance (title + id) so the child brain
-    // knows another Atlas job created it, and still carries the opening intent verbatim.
     expect(ran.body).toContain('spawned by ANOTHER Atlas job');
     expect(ran.body).toContain('"Parent job" (job th-parent)');
     expect(ran.body).toContain('kick off the follow-up');
@@ -4845,7 +4549,6 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
     replyRoute: { surfaceId: 'web', jobRef: JOB_ID },
   });
 
-  /** The default `running` direct-build job the latch acts on (domain shape → camelCase branch fields). */
   const runningJob = {
     id: JOB_ID,
     orgId: ORG,
@@ -4976,7 +4679,6 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
     return { manager, store, lifecycle, ship, repos };
   }
 
-  /** Access the private pending-flag map + the turn-end latch method the `runChatTurn` finally calls. */
   const pending = (m: AgentSessionManager) =>
     (m as unknown as { directBuildShipPending: Map<string, boolean> }).directBuildShipPending;
   const runLatch = (m: AgentSessionManager, s: TurnEnvelope) =>
@@ -4992,11 +4694,9 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
 
     await runLatch(manager, stimulus);
 
-    // latchPr ran against the LIVE branch (current_branch overrides the host-named feature branch).
     expect(mock(ship.latchPr)).toHaveBeenCalledOnce();
     const [, , sandboxArg] = mock(ship.latchPr).mock.calls[0];
     expect((sandboxArg as { branch: string }).branch).toBe('atlas/live');
-    // The flag is CONSUMED (a second turn-end must not re-latch).
     expect(pending(manager).has(JOB_ID)).toBe(false);
   });
 
@@ -5061,8 +4761,6 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
     severity: 'warning',
   };
 
-  /** A manager wired with only the deps the event pump (`deliverEvent`/`pumpEvent`/`sweepUndeliveredEvents`)
-   *  touches; everything else is an inert stub. Mirrors the chat-pump harness. */
   function makeManager(opts: { events?: EventMessage[] } = {}) {
     const stimulusStore = {
       leaseChatStimuli: vi.fn().mockResolvedValue(undefined),
@@ -5141,18 +4839,15 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
 
     await manager.deliverEvent(eventStimulus);
 
-    // Leased BEFORE steering; steer id is the DURABLE event-row id so the engine `input_ack` can stamp THIS row.
     expect(stimulusStore.leaseChatStimuli).toHaveBeenCalledWith(['stim-evt-001']);
     expect(steer).toHaveBeenCalledOnce();
     const [turnId, steerId, body] = steer.mock.calls[0] as [string, string, string];
     expect(turnId).toBe('turn-live');
     expect(steerId).toBe('stim-evt-001');
-    // Trusted framing OUTSIDE the fence, the untrusted event body INSIDE it.
     expect(body).toMatch(/no human sent it/i);
     expect(body).toContain('<untrusted');
     expect(body).toContain('CI job #42 failed');
     expect(runChatTurnSpy).not.toHaveBeenCalled();
-    // The steer is a bare XADD — delivery is NOT stamped here; only the engine's input_ack marks it delivered.
     expect(stimulusStore.markChatDelivered).not.toHaveBeenCalled();
     expect(stimulusRows.update).not.toHaveBeenCalled();
   });
@@ -5203,9 +4898,6 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
   });
 
   it('SWALLOWED-STEER RACE: a live turn steered but no input_ack → the event stays UNDELIVERED (regression)', async () => {
-    // The reported bug: an event steered into a just-finishing turn is swallowed, yet the old path stamped
-    // delivered anyway. Now a bare steer NEVER stamps — only input_ack does — so the row stays null and the
-    // sweep re-drives it.
     const { manager, stimulusStore, stimulusRows, runningBrainTurn, steer } = makeManager();
     runningBrainTurn.mockResolvedValue({ turn_id: 'turn-ending' });
     steer.mockResolvedValue(undefined); // XADD ok, but the turn ends before consuming it → no input_ack fires
@@ -5250,9 +4942,7 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
     expect(delivery.body).toMatch(/no human sent it/i);
     expect(delivery.body).toContain('<untrusted');
     expect(delivery.body).toContain('CI job #42 failed');
-    // Leased before dispatch so a concurrent sweep can't re-drive a duplicate during a long turn.
     expect(stimulusStore.leaseChatStimuli).toHaveBeenCalledWith(['stim-evt-001']);
-    // Nothing stamped delivered YET — only at the registration hand-off (restart-survivable point).
     expect(stimulusStore.markChatDelivered).not.toHaveBeenCalled();
 
     deliveryOpts.onRegistered!();
@@ -5298,7 +4988,6 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
       await (
         manager as never as { sweepUndeliveredEvents: () => Promise<void> }
       ).sweepUndeliveredEvents();
-      // Flush the fire-and-forget pumpEvent chain (findOne → runningBrainTurn → queue → fresh turn).
       for (let i = 0; i < 10; i++) await Promise.resolve();
 
       expect(stimulusStore.eligiblePendingEvents).toHaveBeenCalled();
@@ -5327,7 +5016,6 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
   const ORG_ID = 'T-PUMP';
   const REPO_ID = 'repo-pump';
 
-  /** A pending chat `TurnEnvelope`, as `stimulusStore.eligiblePendingChat` would resolve it. */
   function pendingRow(id: string, body: string, createdAt: Date): TurnEnvelope {
     return mkEnvelope({
       id,
@@ -5341,13 +5029,10 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
     });
   }
 
-  // Operator messages reach the engine wrapped in a `<user name at>` tag (chunk-vocabulary) reconstructed
-  // from the author + receipt time; the steered payload / fresh-turn task is that wrap, not the raw body.
   function userWrap(body: string, at: string): string {
     return `<user name="Dennis" at="${at}">${body}</user>`;
   }
 
-  /** A manager wired with only the deps `pumpThread`/`sweepUndeliveredChat` touch; everything else inert. */
   function makeManager(
     opts: {
       pending?: TurnEnvelope[];
@@ -5367,10 +5052,6 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
       eligiblePendingChat: vi.fn().mockResolvedValue(opts.pending ?? []),
       undeliveredChatForLane: vi.fn().mockResolvedValue([]),
       leaseChatStimuli: vi.fn().mockResolvedValue(undefined),
-      // Atomic claim: this fake always wins everything it's asked to claim (mirrors the old
-      // always-succeeds `leaseChatStimuli` fake) — these tests aren't exercising the cross-caller race
-      // itself (that's covered by the real-Postgres `card-gate-delivery-race.int.test.ts`), just the
-      // single-caller pump/steer/fresh-turn plumbing.
       claimChatStimuli: vi.fn().mockImplementation(async (ids: string[]) => ids),
       markChatDelivered: vi.fn().mockResolvedValue(undefined),
       undeliveredChatLanes: vi.fn().mockResolvedValue(opts.threads ?? []),
@@ -5452,7 +5133,6 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
 
     await manager.pumpThread(JOB_ID, ORG_ID, REPO_ID);
 
-    // Leased BEFORE steering (so a concurrent sweep can't re-take these rows mid-flight).
     expect(stimulusStore.claimChatStimuli).toHaveBeenCalledWith(['s1', 's2'], expect.any(Number));
     expect(steer).toHaveBeenCalledTimes(2);
     expect(steer).toHaveBeenNthCalledWith(
@@ -5467,7 +5147,6 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
       's2',
       userWrap('second message', '2026-07-02T12:00:00.000Z'),
     );
-    // The steer path never touches the fresh-turn primitive.
     expect(runChatTurnSpy).not.toHaveBeenCalled();
   });
 
@@ -5511,11 +5190,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
 
     expect(runChatTurnSpy).toHaveBeenCalledOnce();
     const [combined, opts] = runChatTurnSpy.mock.calls[0] as [TurnEnvelope, TurnDeliveryOptsLike];
-    // Coalesced: one turn, oldest-first body join — the operator still sees each as its own chat bubble
-    // (persisted separately at intake); the brain reads them together as this turn's task.
     expect(combined.body).toBe('first message\n\nsecond message');
-    // Per-message attribution: one `<user>` chunk each (own name + time), so a batch coalesced from
-    // several senders isn't misattributed to the oldest when `engineBody` renders it.
     expect(combined.chunks).toEqual([
       {
         kind: 'user',
@@ -5531,10 +5206,8 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
     expect(combined.jobId).toBe(JOB_ID);
     expect(typeof opts?.onRegistered).toBe('function');
 
-    // Nothing stamped delivered YET — only at the registration hand-off (restart-survivable point).
     expect(stimulusStore.markChatDelivered).not.toHaveBeenCalled();
 
-    // Simulate the runner's hand-off firing `onTurnRegistered` → onRegistered().
     opts.onRegistered!();
     await Promise.resolve(); // let the fire-and-forget markChatDelivered promises settle one microtask
 
@@ -5552,9 +5225,6 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
   });
 
   it('a turn appears BETWEEN the initial check and the fresh-turn dispatch: steers instead of double-starting', async () => {
-    // Regression guard for the race the code comments call out explicitly: pumpThread sees no live turn,
-    // queues deliverPendingViaFreshTurn, but a boot re-attach resumes a turn before it actually runs — it
-    // must steer that turn, never start a SECOND one resuming the same engine session id.
     const pending = [pendingRow('s1', 'racy message', new Date('2026-07-02T12:00:00Z'))];
     const { manager, runningBrainTurn, steer } = makeManager({ pending });
     runningBrainTurn
@@ -5655,7 +5325,6 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
   });
 
   describe('reconcileWorkOwedReviews (the leader work-owed review re-drive)', () => {
-    /** A stranded running review row — old enough (updated_at past the grace) to count as work-owed. */
     const STALE_RUNNING = {
       id: 'rev-1',
       job_id: JOB_ID,
@@ -5664,7 +5333,6 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
       updated_at: new Date(Date.now() - 5 * 60_000),
     };
 
-    /** A manager wired with the deps the work-owed backstop touches; everything else inert. */
     function makeWorkOwedManager(
       opts: {
         running?: unknown[];
@@ -5728,7 +5396,6 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
         inert, // selfSufficiency (32)
         ...optionalTail(),
       );
-      // The nudge would otherwise run a real engine turn — stub it; we assert on the stimulus it receives.
       const handleChatTurn = vi.spyOn(manager, 'handleChatTurn').mockResolvedValue(undefined);
       const run = () =>
         (
@@ -5842,8 +5509,6 @@ describe('AgentSessionManager.buildMemoryRecallPrefix (memory auto-retrieval tur
     replyRoute: { surfaceId: 'web', jobRef: 'ts-memrecall-001' },
   });
 
-  /** Only `memory` + `env` matter here — every other dep is an unused stub (buildMemoryRecallPrefix
-   *  touches neither store, driver, nor surface). */
   function makeManager(opts: {
     recall?: ReturnType<typeof vi.fn>;
     envGet?: ReturnType<typeof vi.fn>;

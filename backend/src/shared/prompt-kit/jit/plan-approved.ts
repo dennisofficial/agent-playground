@@ -1,18 +1,7 @@
-/**
- * prompt-kit / jit — the plan-approved base-check seed (content for the `plan-approved` JIT rule).
- *
- * Fired when the operator approves a plan (`agent-session-manager.ts`'s approval handler), BEFORE the build
- * starts. Two distinct phases the seed must not conflate: a MECHANICAL rebase-check (always auto-resolve any
- * git conflict inline — routine, not a reason to stop) followed by a SEMANTIC judgment of whether the
- * approved plan still holds against the rebased base. Typed-function templating (d11): `ctx.baseBranch` /
- * `ctx.buildPath` are typed fields, the wording branches in code.
- */
 import { chunkKey } from '../harness/chunk-keys';
 import { agentMessage } from '../message';
 import type { JitFireCtx, JitRule } from './rule';
 
-/** The plan-approved base-check seed body — same instruction for both build paths (`dispatch_build` branches
- *  internally on `job.buildPath`; the seed doesn't need to choose). */
 export function renderPlanApprovedSeed(ctx: JitFireCtx): string {
   const base = ctx.baseBranch ?? 'the base branch';
   return [

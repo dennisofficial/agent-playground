@@ -13,14 +13,7 @@ import type { ThreadEntity } from '../../persistence/entities';
 import type { FeatureSandbox } from '../git';
 import { TurnRunnerService } from '../turn-runner.service';
 
-/**
- * TurnRunnerService — DURABILITY of the resume handle. The point: a coding session must survive a halt
- * by CONTINUING, not respawning. That hinges on the engine `session_id` being persisted onto the THREAD
- * row (a thread's single step IS the thread row, so the driver's `stepId` is the thread's own id) the
- * instant it exists (turn START), so a mid-turn crash/kill/restart still has a resume handle.
- */
 
-/** A fake threads repo capturing the last persisted session_id; `findOne` returns the prior one. */
 function fakeSteps(priorSessionId: string | null = null) {
   const updates: Array<{ id: unknown; patch: { session_id?: string } }> = [];
   let current = priorSessionId;
@@ -64,12 +57,9 @@ const baseInput = {
 describe('TurnRunnerService — session-handle durability', () => {
   it('persists the session id on the early `session` event, BEFORE the turn finishes', async () => {
     const { repo, last } = fakeSteps();
-    // An engine that surfaces the session at turn start, then keeps "working" — assert the handle is
-    // already persisted by the time work begins (we observe right after the session event fires).
     const engine: EngineRunnerPort = {
       run: vi.fn(async (args: RunEngineArgs) => {
         args.onEvent?.({ kind: 'session', sessionId: 'sess-early' });
-        // by now the runner should have persisted it
         expect(last()).toBe('sess-early');
         args.onEvent?.({ kind: 'tool', name: 'Write' });
         return { result: 'done', sessionId: 'sess-early' };
@@ -83,7 +73,6 @@ describe('TurnRunnerService — session-handle durability', () => {
 
   it('keeps the session id even when the turn HALTS mid-flight (continues, not respawns)', async () => {
     const { repo, last, updates } = fakeSteps();
-    // The session is established, then the turn dies (process crash / kill / non-auth error).
     const engine: EngineRunnerPort = {
       run: vi.fn(async (args: RunEngineArgs) => {
         args.onEvent?.({ kind: 'session', sessionId: 'sess-mid' });
@@ -92,7 +81,6 @@ describe('TurnRunnerService — session-handle durability', () => {
     };
     const runner = new TurnRunnerService(engine, repo);
     await expect(runner.runTurn(baseInput)).rejects.toThrow(/died mid-turn/);
-    // The resume handle survived the halt — a re-run will CONTINUE this session, not spawn a fresh one.
     expect(last()).toBe('sess-mid');
     expect(updates.some((u) => u.patch.session_id === 'sess-mid')).toBe(true);
   });
@@ -125,8 +113,6 @@ describe('TurnRunnerService — session-handle durability', () => {
 });
 
 describe('TurnRunnerService — git auth threading', () => {
-  // A row-sourced sandbox: it has a container, but an EMPTY gitUrl / no token (auth is resolved lazily,
-  // per JobLifecycleService.rowToSandbox). So any authenticated git MUST come from `input.gitAuth`.
   const rowSourced: FeatureSandbox = {
     repoId: 'proj',
     branch: 'atlas/feat',
@@ -155,7 +141,6 @@ describe('TurnRunnerService — git auth threading', () => {
       gitUrl: 'https://github.com/o/r.git',
       token: 'tok',
     });
-    // Container identity still comes from the sandbox; only the auth is sourced from the resolved repo.
     expect(received[0].target?.containerId).toBe('ctr-1');
   });
 
@@ -178,8 +163,6 @@ describe('TurnRunnerService — git auth threading', () => {
 });
 
 describe('TurnRunnerService — evidence dir threading', () => {
-  // Same row-sourced sandbox as the git-auth block: a `target` only appears when `sandbox.containerId`
-  // is set, so these need a container-backed sandbox to exercise the evidenceDir spread at all.
   const rowSourced: FeatureSandbox = {
     repoId: 'proj',
     branch: 'atlas/feat',
@@ -332,8 +315,6 @@ describe('TurnRunnerService — provenance threading', () => {
 
   it('refuses a concurrent second reattach of the same turn (double-attach → single delivery)', async () => {
     const { repo } = fakeSteps();
-    // Mirror RedisEngineRunner's real per-process attach Set so `tryClaimAttach` has genuine check-and-add
-    // semantics: the guard must win synchronously, before the second attach can start a duplicate tail loop.
     const attached = new Set<string>();
     const deliveries: string[] = [];
     let releaseFirst!: () => void;
@@ -352,8 +333,6 @@ describe('TurnRunnerService — provenance threading', () => {
           _containerId: string,
           args: { onEvent?: (e: EngineEvent) => void },
         ) => {
-          // Deliver one event, then stay "live" until the test releases us — so the SECOND reattach
-          // genuinely overlaps a still-attached first loop (the exact double-delivery hazard).
           args.onEvent?.({ kind: 'text', text: `evt-${turnId}` });
           deliveries.push(turnId);
           await firstInFlight;
@@ -364,9 +343,7 @@ describe('TurnRunnerService — provenance threading', () => {
     const svc = new TurnRunnerService(engine, repo);
     const input = { turnId: 'turn-1', containerId: 'ctr-1', jobId: 'job-1' };
 
-    // First reattach claims the slot synchronously, then blocks inside the (fake) engine loop.
     const first = svc.reattach(input);
-    // The concurrent second attach must be refused BEFORE engine.reattach runs a second time.
     const secondErr = await svc.reattach(input).then(
       () => null,
       (e: unknown) => e,
@@ -376,10 +353,8 @@ describe('TurnRunnerService — provenance threading', () => {
     releaseFirst();
     await first;
 
-    // Exactly one attach loop ran, and its event was delivered exactly once — no doubling.
     expect(engine.reattach).toHaveBeenCalledTimes(1);
     expect(deliveries).toEqual(['turn-1']);
-    // The winning attacher released its slot on completion, so a later, non-overlapping reattach can proceed.
     expect(attached.has('turn-1')).toBe(false);
   });
 });

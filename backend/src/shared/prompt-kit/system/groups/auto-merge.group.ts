@@ -1,17 +1,9 @@
-/**
- * prompt-kit / groups / auto-merge — announces AUTO-MERGE when per-job auto-merge is ON.
- *
- * CONDITIONAL on `ctx.settings.autoMerge`; absent when off, so the assembled prompt is byte-identical to
- * the normal brain. Ordered 1251 — right after `AutonomyGroup` (1250), in the same approval-context band
- * (1260 is `SandboxGroup.sandboxRuntime` — taken).
- */
 import { Agent } from '../agent';
 import { hasAutoMerge } from '../conditions';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 
 @FragmentGroup()
 export class AutoMergeGroup {
-  /** Tell the brain a green, mergeable PR merges itself with no human at the final gate. */
   @Fragment({
     usedBy: [Agent.PLANNING, Agent.CI],
     order: 1251,

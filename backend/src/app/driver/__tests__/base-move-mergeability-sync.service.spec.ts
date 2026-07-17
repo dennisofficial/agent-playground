@@ -1,8 +1,3 @@
-/**
- * Unit tests for `BaseMoveMergeabilitySync` — the batched GraphQL base-move refresh. All collaborators
- * (`StimulusIntake`, `CredentialResolver`, `GithubPrService`, the `repos`/`jobs` repos) are plain mocked
- * objects. No DB, no Docker. Uses fake timers to exercise the ~5s debounce.
- */
 
 import type { Repository } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -212,7 +207,6 @@ describe('BaseMoveMergeabilitySync.refresh (via schedule)', () => {
       results: [result({ mergeableState: 'unknown', mergeStateStatus: 'UNKNOWN' })],
     });
     sync.schedule('T1', 'repo-1');
-    // Initial refresh + up to MAX_UNKNOWN_RETRIES (3) re-schedules = 4 calls total, then it stops.
     for (let i = 0; i < 6; i++) {
       await vi.advanceTimersByTimeAsync(8_000);
     }

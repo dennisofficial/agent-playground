@@ -24,8 +24,6 @@ import { redactSecrets } from './redact';
 import { TOOL_HANDLERS, type ToolCtx, type ToolRoots } from './tools';
 import { assertSingleWriteStatement } from './write-guard';
 
-/** Postgres error code for `permission denied` — what a SELECT-only role gets back from `EXPLAIN` on a
- *  DML statement in this Postgres (confirmed by spike, d6). Expected/benign; NOT surfaced as an error. */
 const PG_PERMISSION_DENIED = '42501';
 
 function pgErrorCode(err: unknown): string | undefined {
@@ -34,13 +32,6 @@ function pgErrorCode(err: unknown): string | undefined {
   return typeof code === 'string' ? code : undefined;
 }
 
-/**
- * The `atlas-prod` host-bridge MCP's backend: the 7 relocated read tools (thin wrappers over
- * `./tools`'s `TOOL_HANDLERS`, unchanged) plus the gated `propose_prod_write` /
- * `executeApproved` / `denyWrite` write pipeline. Reads run on the SELECT-only `mcp_reader` pool
- * (also used for the pre-approval EXPLAIN preview); approved writes run on the DML-only `mcp_writer`
- * pool — which this service NEVER touches before an operator approval lands (d2/d4/d6).
- */
 @Injectable()
 export class ProdDiagnosticsService {
   constructor(
@@ -57,8 +48,6 @@ export class ProdDiagnosticsService {
     @Inject(CHAT_SURFACE)
     private readonly surface: ChatSurface,
     private readonly env: EnvService,
-    // Resolves the job's planning thread group thread id — the anchor the approval card row is stamped onto
-    // (`messages.thread_id` is NOT NULL). The @Global JobBootstrapModule supplies it live.
     private readonly jobBootstrap: JobBootstrapService,
   ) {}
 
@@ -74,10 +63,6 @@ export class ProdDiagnosticsService {
     return this.reader;
   }
 
-  /** Delegate to the co-located read-tool handlers in `./tools`, unchanged (redaction + path-jail intact).
-   *  Emits one audit line per call (mirroring the former standalone reader) — the handler stamps
-   *  `ctx.audit` (orgId/sql/rowCount) as it runs, so a prod read leaves the same durable audit trail here
-   *  as it did through the original standalone reader, on both success and failure. */
   async runRead(name: string, args: unknown): Promise<unknown> {
     const ds = this.requireReader();
     const handler = TOOL_HANDLERS[name];
@@ -112,13 +97,6 @@ export class ProdDiagnosticsService {
     }
   }
 
-  /**
-   * Preview an already-guard-checked write statement via `EXPLAIN (FORMAT JSON)` on the read-only
-   * `mcp_reader` role — a PLANNER ESTIMATE only, no DML runs (d6). A `42501` (permission denied) EXPLAIN
-   * failure is the EXPECTED outcome for a DML statement on a SELECT-only role in this Postgres (confirmed
-   * by spike) — benign, surfaces as `{}` (estimate unavailable), NOT an error. Any other EXPLAIN failure
-   * is a genuine statement problem (syntax/bad column) and surfaces on the card.
-   */
   private async previewWrite(stmt: string): Promise<ProdMaintenanceWriteDryRun> {
     const reader = this.requireReader();
     try {
@@ -142,11 +120,6 @@ export class ProdDiagnosticsService {
     }
   }
 
-  /**
-   * PROPOSE a single write statement: guard, preview (never touching `mcp_writer`), record a `pending`
-   * ledger row, and post the operator approval card. Returns immediately (fire-and-forget) — execution
-   * happens ONLY via `executeApproved`, triggered solely by the operator's approval click.
-   */
   async proposeWrite(
     stimulus: TurnEnvelope,
     sql: string,
@@ -166,15 +139,12 @@ export class ProdDiagnosticsService {
       }),
     );
     const writeId = saved.id;
-    // A genuine EXPLAIN failure (syntax/bad column) MUST be surfaced to the operator before approval —
-    // otherwise a benign permission-denied preview and a statement that will actually fail look identical.
     const estimateLabel: 'estimate' | 'unavailable' | 'error' = dryRun.error
       ? 'error'
       : dryRun.plan
         ? 'estimate'
         : 'unavailable';
 
-    // 1. DURABLE — persist the card row so it survives a restart / is visible on refresh.
     const threadId = await this.jobBootstrap.planningThreadId(stimulus.jobId);
     await this.messages.save(
       this.messages.create({
@@ -196,7 +166,6 @@ export class ProdDiagnosticsService {
         }) as unknown as Record<string, unknown>,
       }),
     );
-    // 2. LIVE — nudge SSE so a connected client refetches now.
     await this.surface.post(
       stimulus.repoId,
       ':warning: A prod DB write is awaiting your approval.',
@@ -206,15 +175,6 @@ export class ProdDiagnosticsService {
     return { ok: true, writeId, message: 'Proposed — pending your approval' };
   }
 
-  /**
-   * EXECUTE an operator-approved write on the DML-only `mcp_writer` role — the ONLY path that runs the
-   * statement. The `expectedJobId` is the job the approving operator is authorized for (validated up the
-   * stack against the caller's org); the ledger row MUST belong to it, so an enumerated/stale `writeId`
-   * from a different job (or org) can't be executed here — the human approval stays tied to the card the
-   * operator is actually looking at. Concurrency-safe: the row is claimed atomically (a conditional
-   * `pending → approved` update) BEFORE `runOnWriter`, so two near-simultaneous approvals / a double-click
-   * can't both execute the statement.
-   */
   async executeApproved(
     writeId: string,
     approverUserId: string,
@@ -222,11 +182,8 @@ export class ProdDiagnosticsService {
   ): Promise<void> {
     const row = await this.ledger.findOne({ where: { id: writeId } });
     if (!row || row.status !== 'pending') return;
-    // Ownership: the approval must be for THIS operator's job — never a writeId belonging to another job/org.
     if (row.job_id !== expectedJobId) return;
 
-    // Atomic claim: only the invocation that flips the row out of `pending` proceeds. A concurrent
-    // double-approval loses this conditional update (`affected === 0`) and is a no-op — no double-execute.
     const claim = await this.ledger.update(
       { id: writeId, status: 'pending' },
       {
@@ -308,9 +265,6 @@ export class ProdDiagnosticsService {
     }
   }
 
-  /** DENY a pending write — marks it rejected, notifies the job. Idempotent, same as `executeApproved`;
-   *  `expectedJobId` gates the row to the approving operator's job so a foreign/stale `writeId` can't be
-   *  denied here either. */
   async denyWrite(writeId: string, approverUserId: string, expectedJobId: string): Promise<void> {
     const row = await this.ledger.findOne({ where: { id: writeId } });
     if (!row || row.status !== 'pending') return;

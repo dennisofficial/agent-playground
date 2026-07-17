@@ -1,13 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { makeCanUseTool } from './engine-core';
 
-/**
- * `makeCanUseTool`'s read-only-turn and root-confinement checks now delegate to the shared
- * `@workspace/agent-engine` `evaluateWriteGuard` (thread 3's write-guard centralization) instead of
- * duplicating the predicate inline. This spec locks in that the deny messages/behavior stayed
- * byte-identical to the pre-refactor inline checks — the whole point of the refactor was zero behavior
- * change for Claude.
- */
 describe('makeCanUseTool — write-guard delegation to evaluateWriteGuard', () => {
   it('denies Write/Edit with the exact legacy read-only message when readOnly=true', async () => {
     const canUseTool = makeCanUseTool(true, '/tmp/wt', () => {});

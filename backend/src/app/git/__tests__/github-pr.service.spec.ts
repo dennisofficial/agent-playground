@@ -27,11 +27,9 @@ type HeaderResponse = {
   status: number;
   body: unknown;
   headers?: Record<string, string>;
-  /** Simulate a body-less 304: `res.json()` rejects to prove the cached path never calls it. */
   throwOnJson?: boolean;
 };
 
-/** Fake fetch whose responses expose a real `.get`-able `headers` (a Map), for the ETag/rate-limit paths. */
 function fakeFetchWithHeaders(responses: HeaderResponse[]) {
   const calls: Call[] = [];
   let i = 0;
@@ -90,7 +88,6 @@ describe('GithubPrService.openPullRequest', () => {
     expect(headers.Authorization).toBe('Bearer TOK123');
     expect(headers['X-GitHub-Api-Version']).toBe('2022-11-28');
     expect(headers['User-Agent']).toBe('atlas');
-    // The token must NOT appear in the request body.
     expect(String(calls[0].init?.body)).not.toContain('TOK123');
     expect(JSON.parse(String(calls[0].init?.body))).toEqual({
       title: 'Atlas v2 gate',
@@ -403,7 +400,6 @@ describe('GithubPrService.listBranches', () => {
     const svc = new GithubPrService();
     svc.fetchImpl = impl;
     expect(await svc.listBranches('T', 'acme', 'app')).toEqual(['main', 'develop']);
-    // A short first page (< 100) means no second request.
     expect(calls).toHaveLength(1);
     expect(calls[0].url).toContain('/repos/acme/app/branches?per_page=100&page=1');
   });
@@ -599,7 +595,6 @@ describe('GithubPrService conditional GET (ETag + rate-limit)', () => {
     expect(svc.isRateLimited()).toBe(true);
 
     const before = calls.length;
-    // No cache entry exists → a subsequent poll GET throws RateLimitedError without fetching.
     await expect(svc.getPullState('TOK', pd)).rejects.toBeInstanceOf(RateLimitedError);
     expect(calls.length).toBe(before);
   });
@@ -748,7 +743,6 @@ describe('GithubPrService.listOpenPullMergeability', () => {
         headSha: null,
       },
     ]);
-    // Second request carries the endCursor from page one.
     expect(String(calls[1].init?.body)).toContain('CUR');
   });
 

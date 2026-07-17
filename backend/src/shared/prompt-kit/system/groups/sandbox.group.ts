@@ -1,11 +1,3 @@
-/**
- * prompt-kit / groups / sandbox — WHERE and HOW Atlas runs: the cloud sandbox, git ownership, the host's
- * PR-watch relay, the `/playground` scratch pad, and the atlas-svc runtime discipline.
- *
- * TOPIC bucket: sandbox/environment. Holds both the normal-brain framing (long) and the onboarding framing
- * (short), plus the normal-brain runtime blocks. Orders follow the source block sequence (non-contiguous is
- * fine — `order` is a global sort key, the group is just code organization).
- */
 import { Agent, ENGINEERING_STAGES } from '../agent';
 import { isBuildBrain, isOnboarding, notOnboarding } from '../conditions';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
@@ -17,12 +9,6 @@ import {
   SOLE_AUTHOR_NOTE,
 } from '../fragments';
 
-/**
- * The sandbox OS + the toolkit pre-baked into the image, shown to BOTH the normal and onboarding brains so
- * neither reinstalls something that already ships. Kept BROAD (a grouped inventory, not per-tool recipes) and
- * framed as a FLOOR — the point is "check before you install," not an exhaustive man page. MIRRORS
- * `backend/sandbox/Dockerfile`; keep the two in sync when the image's tool set changes.
- */
 const BUILT_IN_TOOLKIT_NOTE = [
   'YOUR SANDBOX + WHAT IS ALREADY INSTALLED: the container is Debian 12 (bookworm) Linux, apt-based. A BROAD',
   'toolkit is pre-baked and on PATH — run `command -v <tool>` before assuming anything is missing. What ships:',
@@ -49,9 +35,6 @@ const BUILT_IN_TOOLKIT_NOTE = [
 
 @FragmentGroup()
 export class SandboxGroup {
-  /** Where you run — the cloud sandbox (long framing): the shared core (CLOUD_SANDBOX_NOTE) plus the
-   *  brain-specific additions (the `/playground` pointer, the phone/no-checkout framing, the concrete
-   *  impossible-request examples, and the request_secret/request_file/ask_question routing). */
   @Fragment({
     usedBy: ENGINEERING_STAGES,
     order: 1010,
@@ -70,7 +53,6 @@ export class SandboxGroup {
     ].join('\n');
   }
 
-  /** The sandbox filesystem map (mount split: what git sees vs infra mounts). */
   @Fragment({
     usedBy: ENGINEERING_STAGES,
     order: 1011,
@@ -80,7 +62,6 @@ export class SandboxGroup {
     return SANDBOX_FILESYSTEM_MAP_NOTE;
   }
 
-  /** The sandbox OS + the pre-baked toolkit (also shown in onboarding, below). */
   @Fragment({
     usedBy: ENGINEERING_STAGES,
     order: 1012,
@@ -90,7 +71,6 @@ export class SandboxGroup {
     return BUILT_IN_TOOLKIT_NOTE;
   }
 
-  /** You are the sole author of the checkout (no phantom outside/concurrent editor). */
   @Fragment({
     usedBy: ENGINEERING_STAGES,
     order: 1015,
@@ -100,7 +80,6 @@ export class SandboxGroup {
     return SOLE_AUTHOR_NOTE;
   }
 
-  /** You own git in the sandbox. */
   @Fragment({
     usedBy: ENGINEERING_STAGES,
     order: 1020,
@@ -119,7 +98,6 @@ export class SandboxGroup {
     ].join('\n');
   }
 
-  /** The host watches your PR and relays CI/conflict/review events. */
   @Fragment({
     usedBy: ENGINEERING_STAGES,
     order: 1030,
@@ -136,8 +114,6 @@ export class SandboxGroup {
     ].join('\n');
   }
 
-  /** The /playground scratch space: the shared core (PLAYGROUND_NOTE) plus the brain-specific additions
-   *  (durable across restarts, shared across the job's build lanes, and the `/.atlas` engine-dir warning). */
   @Fragment({
     usedBy: ENGINEERING_STAGES,
     order: 1160,
@@ -152,7 +128,6 @@ export class SandboxGroup {
     ].join('\n');
   }
 
-  /** The atlas-svc runtime + shared-machine frugality. */
   @Fragment({
     usedBy: ENGINEERING_STAGES,
     order: 1260,
@@ -181,10 +156,6 @@ export class SandboxGroup {
     ].join('\n');
   }
 
-  /** Public exposure (opt-in via `--expose`): how a ported service becomes a public preview URL, and the
-   *  provision→write-env→start ordering the operator must follow (only active when the ATLAS_PREVIEW_* env
-   *  vars are injected). A build-brain concern — a review job never boots its own branch, so it gates
-   *  `isBuildBrain`. */
   @Fragment({
     usedBy: ENGINEERING_STAGES,
     order: 1262,
@@ -194,10 +165,6 @@ export class SandboxGroup {
     return PUBLIC_EXPOSURE_NOTE;
   }
 
-  /** Onboarding's LIVE-SERVICE ACCESSIBILITY step: reuse the exposure ordering (PUBLIC_EXPOSURE_NOTE), then
-   *  teach the browser-probe → env-first-remediate → persist procedure that makes a connected repo's stack
-   *  reachable + hydrated through the preview proxy on the FIRST live test. Onboarding-only (isOnboarding);
-   *  ordered right after the bring-up Loop (2020) + dev-logins (2040) so it reads as the next step. */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 2045,
@@ -257,7 +224,6 @@ export class SandboxGroup {
     ].join('\n');
   }
 
-  /** Reading build/brain lane transcripts via atlas-tx (the wake-orientation "means"). */
   @Fragment({
     usedBy: ENGINEERING_STAGES,
     order: 1265,
@@ -282,7 +248,6 @@ export class SandboxGroup {
     ].join('\n');
   }
 
-  /** Where you run — the cloud sandbox (short framing). */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 2010,
@@ -300,7 +265,6 @@ export class SandboxGroup {
     ].join('\n');
   }
 
-  /** Same OS + pre-baked toolkit note, so onboarding does not reinstall built-ins. */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 2012,

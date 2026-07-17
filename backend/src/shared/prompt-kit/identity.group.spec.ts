@@ -2,13 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { Agent } from './system/agent';
 import { renderAgentPrompt } from './system/assemble';
 
-/**
- * The CURRENT JOB orientation block (`identity.group.currentJob`) — injects the per-job repo/branch
- * facts into the build brain when the call site supplies `ctx.job`, and vanishes (byte-identical prompt)
- * when it does not: the no-misfire invariant that keeps subagents + the boot smoke-test probes untouched.
- * The working directory is deliberately NOT rendered here (the worktree host path doesn't exist inside
- * the container; the FILESYSTEM MAP fragment owns where the `/workspace` checkout lives).
- */
 const HEADER = 'CURRENT JOB';
 
 describe('identity.group — CURRENT JOB orientation block', () => {
@@ -65,7 +58,6 @@ describe('identity.group — CURRENT JOB orientation block', () => {
       jobKind: 'feature',
     });
     expect(baseline).not.toContain(HEADER);
-    // The no-misfire invariant: absent `job` ⇒ exactly today's prompt.
     const out = renderAgentPrompt(Agent.PLANNING, {
       jobKind: 'feature',
       job: null,

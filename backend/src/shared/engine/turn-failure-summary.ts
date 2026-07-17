@@ -22,16 +22,8 @@ export type TurnFailureSummary = {
   summary: string;
 };
 
-/**
- * Classify ANY thrown turn-failure error into a small operator-facing category + a short plain-language
- * summary line. Purely additive: the RAW error text stays the message body/detail everywhere this is used;
- * this only adds a friendly label so the UI can show a calm summary with the raw text tucked behind a
- * "Details" disclosure. Reuses the SAME predicates the classification chokepoints already use — no new regex.
- */
 export function summarizeTurnFailure(err: unknown): TurnFailureSummary {
   const raw = err instanceof Error ? err.message : String(err); // ORIGINAL case — do not lowercase this
-  // Session limit can arrive typed (EngineSessionLimitError) OR as a thrown string that only the shared text
-  // detector recognizes (the exact shape #231 fixed) — check BOTH, or a thrown limit falls through to unknown.
   if (isSessionLimitError(err) || detectSessionLimitText(raw)) {
     return {
       category: 'session_limit',
@@ -44,7 +36,6 @@ export function summarizeTurnFailure(err: unknown): TurnFailureSummary {
       summary: 'Your Claude login needs attention — reconnect it in Settings, then resume.',
     };
   }
-  // isUnresumableSessionMessage matches a CASE-SENSITIVE marker — pass the ORIGINAL string, never lowercased.
   if (isUnresumableSessionMessage(raw)) {
     return {
       category: 'unresumable',

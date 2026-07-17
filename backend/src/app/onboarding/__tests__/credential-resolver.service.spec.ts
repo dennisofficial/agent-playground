@@ -5,14 +5,12 @@ import type { ClaudeCredentialStore } from '../claude-credential.store';
 import { CredentialResolver } from '../credential-resolver.service';
 import type { TenantCredentials, TenantCredentialStore } from '../tenant-credential.store';
 
-/** A store stubbed to return one org's creds (or null for any other / no row). */
 function fakeStore(rows: Record<string, TenantCredentials | null>): TenantCredentialStore {
   return {
     read: (orgId: string) => Promise.resolve(rows[orgId] ?? null),
   } as unknown as TenantCredentialStore;
 }
 
-/** A claude store stubbed to return one org's SELECTED decrypted credential (or null). */
 function fakeClaudeStore(
   rows: Record<string, { id: string; kind: 'setup_token' | 'personal'; secret: string } | null>,
 ): ClaudeCredentialStore {
@@ -21,7 +19,6 @@ function fakeClaudeStore(
   } as unknown as ClaudeCredentialStore;
 }
 
-/** A GitHub App token service stubbed to mint a fixed token / bot identity, or override to throw. */
 function fakeAppTokens(
   overrides: {
     getInstallationToken?: (installationId: string) => Promise<string>;
@@ -35,7 +32,6 @@ function fakeAppTokens(
   } as unknown as GitHubAppTokenService;
 }
 
-/** A `GitIdentityService` stubbed to resolve a fixed human identity for any token — or undefined (invalid PAT) when overridden. */
 function fakeIdentities(
   resolve?: (token: string) => Promise<{ name: string; email: string } | undefined>,
 ): GitIdentityService {

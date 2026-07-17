@@ -6,18 +6,10 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { CurrentOrgCtx } from '../../org/current-org.decorator';
 import { WebSurfaceController } from '../web-surface.controller';
 
-/**
- * `GET …/context/file` reads ONE file from the thread's `/context` dir. The security-critical part is the
- * path guard: a caller-supplied `?path=` must resolve INSIDE the thread's own specs/generated/artifacts/
- * evidence buckets, so `..` traversal and out-of-bucket reads are rejected — and the read stays org-scoped
- * (a leaked thread id from another org 404s before any disk access). Uses a real temp `/context` dir so the
- * fs reads run.
- */
 const ORG: CurrentOrgCtx = { id: 'orgB', role: 'owner' };
 
 let root: string;
 
-/** Drain a StreamableFile's read stream to a utf-8 string (also closes the fd so the temp dir can be removed). */
 async function streamToString(res: { getStream(): NodeJS.ReadableStream }): Promise<string> {
   const chunks: Buffer[] = [];
   for await (const chunk of res.getStream()) chunks.push(Buffer.from(chunk));
@@ -32,8 +24,6 @@ function makeController(threadOrgId: string) {
         : null,
     ),
   };
-  // The repo endpoints treat `root` as the job worktree. Only `specs/plan.md` is "tracked" — `secret.txt`
-  // sits inside the worktree but is untracked (the gitignored-secret analog), so the content gate must 404 it.
   const trackedFiles = ['specs/plan.md'];
   const threadLifecycle = {
     contextDirHost: vi.fn(() => root),
@@ -163,12 +153,6 @@ describe('WebSurfaceController.contextFile', () => {
   });
 });
 
-/**
- * `GET …/context/raw/<path>` streams a bucket file as raw bytes with the right `Content-Type` for direct
- * browser rendering (the HTML `<iframe>` preview + its relative sub-resources). The `*path` wildcard
- * arrives from Express 5 as an array of decoded segments; the same bucket/traversal guard as `contextFile`
- * applies. StreamableFile carries the mime, so we assert on its `options.type`.
- */
 describe('WebSurfaceController.contextRaw', () => {
   beforeAll(() => {
     root = mkdtempSync(join(tmpdir(), 'ctxraw-'));
@@ -239,13 +223,6 @@ describe('WebSurfaceController.contextRaw', () => {
   });
 });
 
-/**
- * `GET …/repo/tree` + `…/repo/file` read the LIVE job worktree (via `findSandbox().worktreePath`).
- * `makeController` points `findSandbox` at the temp `root` and mocks the tracked-file set, so these exercise
- * the real path-traversal guard (`resolveSafeTarget`) plus the tracked-file security gate against a file that
- * physically sits inside the worktree but is untracked (the gitignored-secret analog). Own fixture, since the
- * earlier describes tear `root` down in their `afterAll`.
- */
 describe('WebSurfaceController repo endpoints', () => {
   beforeAll(() => {
     root = mkdtempSync(join(tmpdir(), 'repo-'));
@@ -311,11 +288,6 @@ describe('WebSurfaceController repo endpoints', () => {
   });
 });
 
-/**
- * `GET …/context` lists all four buckets — specs, generated, artifacts, evidence — as flat, name-sorted
- * `ContextFile[]`. Own fixture (module-level `root`, torn down in its own `afterAll`) since the earlier
- * describes reset `root` for their own use.
- */
 describe('WebSurfaceController.context', () => {
   beforeAll(() => {
     root = mkdtempSync(join(tmpdir(), 'ctxlist-'));

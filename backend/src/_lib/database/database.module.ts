@@ -4,7 +4,6 @@ import { TypeOrmModule, TypeOrmModuleOptions } from '@nestjs/typeorm';
 import { ENTITIES } from '@workspace/shared/schemas';
 import { CustomNamingStrategy } from './custom-naming.strategy';
 
-/** SSL: off in dev (`disable`), verify-full in prod by default; overridable via POSTGRES_SSL_MODE. */
 function resolveSsl(env: EnvService): false | { rejectUnauthorized: boolean } {
   const mode =
     env.get('POSTGRES_SSL_MODE') ??
@@ -13,10 +12,6 @@ function resolveSsl(env: EnvService): false | { rejectUnauthorized: boolean } {
   return { rejectUnauthorized: mode === 'verify-full' };
 }
 
-/**
- * Global TypeORM connection. Schema is managed exclusively through the CLI migrations
- * (`pnpm db:migrate`); `synchronize` stays false. Entities come from `@workspace/shared/schemas`.
- */
 @Global()
 @Module({
   imports: [

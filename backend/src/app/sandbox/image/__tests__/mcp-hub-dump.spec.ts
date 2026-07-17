@@ -208,7 +208,6 @@ describe('maybeDumpLargeResult', () => {
         dumpedTo: string;
         format: string;
       };
-      // hostile format is not a trusted extension → falls to the generic JSON branch.
       expect(body.format).toBe('json');
       const dumpDir = join(playgroundDir, DUMP_SUBDIR);
       expect(body.dumpedTo.startsWith(dumpDir + sep)).toBe(true);

@@ -1,19 +1,3 @@
-/**
- * LIVE HTTP proof of the delete-with-open-PR wire: boots the REAL `AppModule` over HTTP (supertest, real
- * cookie auth + `OrgMembershipGuard`), seeds `jobs` rows with an OPEN PR directly against live Postgres,
- * then drives `DELETE /web/orgs/:orgId/repos/:repoId/jobs/:jobId?prAction=…` through the real controller +
- * `JobLifecycleService` and asserts the locked contract:
- *
- *   - `?prAction=close`, GitHub close SUCCEEDS → 200, `GithubPrService.closePullRequest` invoked with the
- *     repo's parsed {owner,repo,number}, and the job is claimed for deletion (status → 'deleting' / gone).
- *   - `?prAction=close`, GitHub close FAILS → 502 (BadGateway), and the job row is UNTOUCHED — its status
- *     is unchanged and it was never claimed (decision d3: abort the delete, never silently orphan a PR).
- *   - `?prAction=leave` on the SAME open-PR shape → 200, GitHub is NEVER called, delete proceeds.
- *
- * The GitHub network client is the only stub (its real PATCH state=closed behavior is validated live
- * against api.github.com separately); everything else — guard, controller, lifecycle service, Postgres —
- * is the real wire. Mirrors `web-surface.halt.int.test.ts` for HTTP/auth setup.
- */
 
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
@@ -44,7 +28,6 @@ const fakeCreds = {
   engineAuth: async () => ({ secret: 'test-secret' }),
 };
 
-/** Controllable stand-in for the GitHub network client — records close calls and can simulate a refusal. */
 type CloseCall = { token: string; owner: string; repo: string; number: number };
 const gh = {
   calls: [] as CloseCall[],
@@ -60,7 +43,6 @@ const gh = {
   },
 };
 
-// Fixed ids → distinct from every other int test (which purge by their own ids).
 const ORG = '88888888-8888-4888-8888-888888888801';
 const REPO = '88888888-8888-4888-8888-888888888802';
 const JOB_CLOSE_OK = '88888888-8888-4888-8888-888888888803';
@@ -180,14 +162,10 @@ describe('DELETE /web/orgs/:orgId/repos/:repoId/jobs/:jobId?prAction=… (live P
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true });
-    // The GitHub PR was closed with the repo's parsed owner/repo and the job's PR number.
     expect(gh.calls).toEqual([{ token: 'fake-token', owner: 'acme', repo: 'app', number: 101 }]);
-    // The delete proceeded past the close gate: the row is either already gone (background teardown) or
-    // durably claimed as 'deleting' (committed before the response).
     const row = await jobRow(JOB_CLOSE_OK);
     expect(row === undefined || row.status === 'deleting').toBe(true);
 
-    // eslint-disable-next-line no-console -- evidence: dump the OBSERVED close call + resulting row.
     console.log(
       'OBSERVED close-ok:',
       JSON.stringify({ status: res.status, body: res.body, ghCalls: gh.calls, row }, null, 2),
@@ -203,14 +181,11 @@ describe('DELETE /web/orgs/:orgId/repos/:repoId/jobs/:jobId?prAction=… (live P
       .set('Cookie', ownerCookie);
 
     expect(res.status).toBe(502);
-    // A close was attempted…
     expect(gh.calls).toEqual([{ token: 'fake-token', owner: 'acme', repo: 'app', number: 102 }]);
-    // …but the delete was ABORTED: the row is intact and was never claimed (status unchanged).
     const row = await jobRow(JOB_CLOSE_FAIL);
     expect(row).toBeDefined();
     expect(row?.status).toBe('running');
 
-    // eslint-disable-next-line no-console -- evidence: dump the OBSERVED 502 + intact row.
     console.log(
       'OBSERVED close-fail:',
       JSON.stringify({ status: res.status, body: res.body, ghCalls: gh.calls, row }, null, 2),
@@ -227,12 +202,10 @@ describe('DELETE /web/orgs/:orgId/repos/:repoId/jobs/:jobId?prAction=… (live P
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true });
-    // 'leave' is the local-only teardown: GitHub is never touched.
     expect(gh.calls).toEqual([]);
     const row = await jobRow(JOB_LEAVE);
     expect(row === undefined || row.status === 'deleting').toBe(true);
 
-    // eslint-disable-next-line no-console -- evidence: dump the OBSERVED leave result.
     console.log(
       'OBSERVED leave:',
       JSON.stringify({ status: res.status, body: res.body, ghCalls: gh.calls, row }, null, 2),

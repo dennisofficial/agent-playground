@@ -1,21 +1,3 @@
-/**
- * deleteOrg cascade GATE — deleting an org must leave ZERO org-scoped rows behind.
- *
- * The schema now carries real FK constraints (the `RestoreReferentialIntegrity` migration): deleting the
- * `organizations` row cascades `ON DELETE CASCADE` down repos/jobs/messages/threads/thread_groups/
- * decision_records/stimuli/job_sandboxes plus the org-direct org_credentials/org_invites/
- * organization_members/memory. `deleteOrg` runs the physical per-thread teardown (container + worktree)
- * then deletes the org row; this proves the combination removes every one of those rows — and ONLY this
- * org's (a sibling org and the shared `users` rows survive; only the membership join cascades).
- *
- * It also guards against a future FK regression: if the cascade chain is ever broken (or a new child
- * table is added without an FK), the orphan assertions below fail.
- *
- * Integration: real Postgres (the dedicated `*_test` DB), an in-memory fake git (no actual clone) and a
- * fake docker-ish sandbox provider (no Docker). The real `JobLifecycleService` runs `deleteJobDeep`
- * per thread; `OrganizationService` reaches it through the injected `JOB_TEARDOWN` port (bound here to
- * `JobLifecycleService` via `useExisting`, mirroring the @Global `DriverModule`) exactly as in production.
- */
 
 import { EnvService } from '@core/config/env/env.service';
 import { Test, type TestingModule } from '@nestjs/testing';
@@ -73,7 +55,6 @@ function dbOpts() {
   };
 }
 
-// ── Fakes (mirror job-lifecycle.int.test.ts — no filesystem, no Docker) ──────────────────────────
 
 class FakeGitService {
   async ensureRepo(input: {
@@ -106,7 +87,6 @@ class FakeGitService {
   ): Promise<FeatureSandbox> {
     return { ...sandbox, branch: featureBranch };
   }
-  // Provision-path no-ops (no real git/cache/submodules/index in the fake).
   async createBaseClone(repo: ProjectRepo, jobId: string): Promise<FeatureSandbox> {
     return this.createBaseWorktree(repo, jobId);
   }
@@ -142,7 +122,6 @@ class FakeSandboxProvider {
   }
 }
 
-// ── Sentinel ids — kept distinct from every other int test's tenant so the assertions are isolated. ──
 
 const ORG_ID = '22222222-2222-4222-8222-222222222222'; // the org under deletion
 const OTHER_ORG_ID = '33333333-3333-4333-8333-333333333333'; // a sibling that must SURVIVE
@@ -157,7 +136,6 @@ let ds: DataSource;
 let repoId: string;
 let otherRepoId: string;
 
-/** Delete every row both sentinel orgs own (idempotent — survives a prior failed run). */
 async function purge(): Promise<void> {
   for (const org of [ORG_ID, OTHER_ORG_ID]) {
     const threadIds: Array<{ id: string }> = await ds.query(
@@ -188,7 +166,6 @@ async function purge(): Promise<void> {
   await ds.query(`DELETE FROM users WHERE id = $1`, [SHARED_USER_ID]);
 }
 
-/** Seed one org + one connected repo; return the repo's surrogate uuid id. */
 async function seedOrgWithRepo(orgId: string, slug: string): Promise<string> {
   await ds.query(
     `INSERT INTO organizations (id, name, slug, status) VALUES ($1, $2, $3, 'active')`,
@@ -201,7 +178,6 @@ async function seedOrgWithRepo(orgId: string, slug: string): Promise<string> {
   return rows[0].id;
 }
 
-/** Seed one row in every child/org-scoped table for `jobId` under (`orgId`, `repoId`). */
 async function seedThreadChildren(orgId: string, repoIdArg: string, jobId: string): Promise<void> {
   const [threadGroup] = await ds.query(
     `INSERT INTO thread_groups (job_id, org_id, ordinal, kind) VALUES ($1, $2, 10, 'build') RETURNING id`,
@@ -225,7 +201,6 @@ async function seedThreadChildren(orgId: string, repoIdArg: string, jobId: strin
   );
 }
 
-/** Seed the org-DIRECT rows (no thread): credentials, an invite, a membership, memory, a parked event. */
 async function seedOrgDirect(
   orgId: string,
   repoIdArg: string,
@@ -245,7 +220,6 @@ async function seedOrgDirect(
     `INSERT INTO memory (fact, embedding, org_id, scope) VALUES ('f', $1::vector, $2, $3)`,
     [EMBEDDING, orgId, `team:${orgId}`],
   );
-  // A stimulus parked on the org/repo BEFORE any thread existed (job_id NULL) — orphaned unless swept.
   await ds.query(
     `INSERT INTO inbound_messages (org_id, repo_id, kind, type, trust, body, source, dedupe_key) VALUES ($1, $2, 'event', 'event', 'untrusted', 'b', 'github', $3)`,
     [orgId, repoIdArg, dedupeKey],
@@ -336,8 +310,6 @@ beforeEach(async () => {
         provide: SkillUpdaterService,
         useValue: { reconcileOrgAsync: () => undefined },
       },
-      // JobLifecycleService construct-depends on the neutral driver→brain BrainGateway; deleteOrg's
-      // teardown path never fires a brain wake, so an inert stub satisfies DI without being called.
       {
         provide: BrainGateway,
         useValue: {
@@ -348,8 +320,6 @@ beforeEach(async () => {
         } as unknown as BrainGateway,
       },
       JobLifecycleService,
-      // OrganizationService injects @Inject(JOB_TEARDOWN); the @Global DriverModule binds the token to
-      // JobLifecycleService via useExisting — mirror that here so DI resolves in this standalone module.
       { provide: JOB_TEARDOWN, useExisting: JobLifecycleService },
       OrganizationService,
     ],
@@ -374,7 +344,6 @@ afterEach(async () => {
 
 describe('deleteOrg cascade (live Postgres + fakes)', () => {
   it('removes every org-scoped row across all tables, leaving zero orphans', async () => {
-    // Two real jobs (each provisions a job_sandboxes row + fake worktree).
     const t1 = await threadLifecycle.createJob({
       orgId: ORG_ID,
       repoId,
@@ -391,14 +360,12 @@ describe('deleteOrg cascade (live Postgres + fakes)', () => {
     await seedThreadChildren(ORG_ID, repoId, t2.jobId);
     await seedOrgDirect(ORG_ID, repoId, 'tok-del', 'evt-del');
 
-    // Sanity: the rows really exist before the delete.
     expect(await countWhere('jobs', 'org_id', ORG_ID)).toBe(2);
     expect(await countWhere('job_sandboxes', 'org_id', ORG_ID)).toBe(2);
     expect(await countWhere('inbound_messages', 'org_id', ORG_ID)).toBe(3); // 2 thread-tied + 1 parked event
 
     await orgService.deleteOrg(ORG_ID);
 
-    // Every org-scoped table is empty for this org — no orphans.
     expect(await countWhere('organizations', 'id', ORG_ID)).toBe(0);
     expect(await countWhere('organization_members', 'org_id', ORG_ID)).toBe(0);
     expect(await countWhere('org_invites', 'org_id', ORG_ID)).toBe(0);
@@ -411,14 +378,12 @@ describe('deleteOrg cascade (live Postgres + fakes)', () => {
     expect(await countWhere('inbound_messages', 'org_id', ORG_ID)).toBe(0);
     expect(await countWhere('job_sandboxes', 'org_id', ORG_ID)).toBe(0);
     expect(await countWhere('memory', 'org_id', ORG_ID)).toBe(0);
-    // messages carry no org_id — assert by the (now-deleted) jobs' ids.
     const msgs = await ds.query(
       `SELECT COUNT(*)::int AS c FROM transcript_messages WHERE job_id = ANY($1)`,
       [[t1.jobId, t2.jobId]],
     );
     expect(Number(msgs[0].c)).toBe(0);
 
-    // The shared user row SURVIVES — orgs share users; only the membership join is removed.
     expect(await countWhere('users', 'id', SHARED_USER_ID)).toBe(1);
   });
 
@@ -432,10 +397,8 @@ describe('deleteOrg cascade (live Postgres + fakes)', () => {
     await seedThreadChildren(OTHER_ORG_ID, otherRepoId, survivor.jobId);
     await seedOrgDirect(OTHER_ORG_ID, otherRepoId, 'tok-keep', 'evt-keep');
 
-    // Delete a DIFFERENT org (which has no rows of its own here).
     await orgService.deleteOrg(ORG_ID);
 
-    // The sibling org is fully intact.
     expect(await countWhere('organizations', 'id', OTHER_ORG_ID)).toBe(1);
     expect(await countWhere('repos', 'org_id', OTHER_ORG_ID)).toBe(1);
     expect(await countWhere('jobs', 'org_id', OTHER_ORG_ID)).toBe(1);

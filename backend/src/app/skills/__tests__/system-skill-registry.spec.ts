@@ -33,11 +33,8 @@ describe('buildSystemSkills', () => {
   it('design-patterns is registered unscoped (all surfaces) with a description matching its SKILL.md', () => {
     const designPatterns = buildSystemSkills().find((s) => s.name === 'design-patterns');
     expect(designPatterns).toBeDefined();
-    // Unscoped = every agent surface; SkillResolver filters by exact surface, so all three must be listed.
     expect([...designPatterns!.surfaces].sort()).toEqual(['brain', 'build', 'review']);
-    // Static (in-repo) skill — no git source.
     expect(designPatterns!.git).toBeUndefined();
-    // The SDK matches on the registry description, so it MUST equal the committed SKILL.md frontmatter.
     const skillMd = readFileSync(
       join(managedSkillsRootHost(), managedSkillRelativeDir('design-patterns'), 'SKILL.md'),
       'utf8',

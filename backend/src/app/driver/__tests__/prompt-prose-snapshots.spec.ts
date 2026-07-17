@@ -2,13 +2,6 @@ import { SVC_NUDGE_TEXT } from '@shared/engine/engine-core';
 import { BG_TASK_CAP_NOTICE, SANDBOX_RESET_NOTICE } from '@shared/engine/engine.types';
 import { describe, expect, it } from 'vitest';
 
-/**
- * Golden-snapshot baseline for the driver/engine PROSE strings NOT relocated to `prompt-kit`. Every
- * snapshot captures CURRENT output verbatim — a regression pass, not a spec of intent (see the sibling
- * `prompt-kit` snapshot specs, including `prompt-kit/messages/prose-snapshots.spec.ts` for the driver-run
- * turn bodies). `CONTINUATION_PREAMBLE` is colocated in `../brain` instead (see
- * `continuation-preamble-snapshot.spec.ts`) to keep this file's import graph light.
- */
 
 describe('driver/engine prose golden snapshots', () => {
   it('SANDBOX_RESET_NOTICE', async () => {

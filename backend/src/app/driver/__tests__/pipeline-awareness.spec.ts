@@ -6,11 +6,6 @@ import {
   type PipelineMarker,
 } from '../pipeline-awareness';
 
-/**
- * Unit tests for the PURE half of passive pipeline-milestone awareness — the signature/summary/prefix
- * functions the brain's flush seam composes. No I/O. The store's durable drain/dedup is covered by the
- * int test; here we lock the rendering + the "only re-state on a real change" signature contract.
- */
 
 const RUNNING_STATE = {
   jobId: 't1',

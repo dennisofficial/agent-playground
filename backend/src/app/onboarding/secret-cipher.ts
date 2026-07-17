@@ -1,24 +1,10 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 
-/**
- * The ONE secret-at-rest primitive for Atlas v2's onboarding layer — AES-256-GCM, reused by every
- * encrypted store (tenant credentials + Slack installations). Clean-room (v1's encrypted-token helper
- * was dropped with the rest of v1); same posture the env doc promised: a key MUST be present to encrypt
- * or decrypt, otherwise we refuse loudly. The key is read lazily by callers (never at module
- * construction) so a key-less single-tenant dev box still boots — it just has no encrypted rows to read.
- *
- * Blob format: `base64(iv).base64(authTag).base64(ciphertext)` — a single, self-describing decrypt path.
- */
 
 const ALGO = 'aes-256-gcm';
 const IV_LEN = 12; // 96-bit nonce, the GCM standard
 const TAG_LEN = 16;
 
-/**
- * Decode `SECRETS_ENCRYPTION_KEY` (64 hex chars OR base64) into a 32-byte key. Throws actionably when
- * unset or the wrong length — onboarding secret WRITES must fail loudly without a key (reads of a
- * key-less, row-less dev box never reach here).
- */
 export function loadSecretsKey(raw: string | undefined): Buffer {
   if (!raw) {
     throw new Error(
@@ -34,7 +20,6 @@ export function loadSecretsKey(raw: string | undefined): Buffer {
   return key;
 }
 
-/** Encrypt a UTF-8 secret → `iv.tag.ct` (all base64). A fresh random IV per call. */
 export function encryptSecret(plain: string, key: Buffer): string {
   const iv = randomBytes(IV_LEN);
   const cipher = createCipheriv(ALGO, key, iv);
@@ -43,7 +28,6 @@ export function encryptSecret(plain: string, key: Buffer): string {
   return `${iv.toString('base64')}.${tag.toString('base64')}.${ct.toString('base64')}`;
 }
 
-/** Decrypt an `iv.tag.ct` blob produced by {@link encryptSecret}. Throws on tamper / malformed input. */
 export function decryptSecret(blob: string, key: Buffer): string {
   const parts = blob.split('.');
   if (parts.length !== 3) {

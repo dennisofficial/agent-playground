@@ -5,10 +5,8 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import { HostStatsSampleEntity } from '../persistence/entities';
 import type { HostStatsDto, HostStatsHistoryPoint } from './host-stats.types';
 
-/** Number of downsample buckets the 24h-history chart targets, regardless of the requested window. */
 const HISTORY_BUCKETS = 288;
 
-/** Round to one decimal place. */
 function round1(n: number): number {
   return Math.round(n * 10) / 10;
 }
@@ -22,10 +20,6 @@ type HistoryRow = {
   total: string;
 };
 
-/**
- * Persistence for `host_stats_sample` — the append-only time-series `HostStatsRecorderService` writes
- * to and `HostStatsController#history` reads back downsampled.
- */
 @Injectable()
 export class HostStatsSampleRepository {
   constructor(

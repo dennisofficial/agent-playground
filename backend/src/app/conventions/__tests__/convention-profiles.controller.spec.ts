@@ -3,11 +3,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConventionProfileResolver } from '../convention-profile.resolver';
 import { ConventionProfilesController } from '../convention-profiles.controller';
 
-/**
- * The console API surface: list/upsert/delete profiles + attach one to a repo. Guards (membership/owner)
- * are enforced by decorators (covered by the guards' own specs); here we verify the controller's own logic —
- * slug validation, org-scoping via `@CurrentOrg`, and the clear-with-null attach path.
- */
 const ORG = { id: 'org-1' } as never;
 
 function make() {

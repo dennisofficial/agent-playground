@@ -19,17 +19,13 @@ class ConnectRepoDto {
 class UpdateRepoDto {
   @IsOptional() @IsString() name?: string;
   @IsOptional() @IsString() defaultBranch?: string;
-  /** Per-repo feature-branch prefix. Empty string clears it back to the neutral built-in default. */
   @IsOptional() @IsString() branchPrefix?: string;
-  /** Default GitHub merge method for this repo's jobs (auto-merge / manual Merge PR button). */
   @IsOptional()
   @IsIn(AUTO_MERGE_METHODS)
   defaultAutoMergeMethod?: AutoMergeMethod;
-  /** Whether to delete the head branch after a merge, for this repo's jobs. */
   @IsOptional() @IsBoolean() defaultAutoMergeDeleteBranch?: boolean;
 }
 
-/** A repo as the web app lists it. */
 interface RepoView {
   id: string;
   slug: string;
@@ -37,29 +33,16 @@ interface RepoView {
   gitUrl: string;
   defaultBranch: string;
   accessOk: boolean;
-  /** When access was last validated (ISO), or null if never checked. */
   accessCheckedAt: string | null;
-  /** How many threads live on this repo — gates whether it can be disconnected. */
   threadCount: number;
-  /** The id of the repo's current onboarding thread (`kind='onboarding'`), or null if never started. */
   onboardingThreadId: string | null;
-  /** When onboarding completed (workspace config live), ISO; null until then — drives "Set up" vs "Re-run". */
   onboardedAt: string | null;
-  /** Non-fatal webhook-registration warning (e.g. the PAT lacks admin:repo_hook), or null when clear. */
   webhookWarning: string | null;
-  /** Per-repo feature-branch prefix override; null → the neutral built-in default (`feature/`). */
   branchPrefix: string | null;
-  /** Default GitHub merge method for this repo's jobs (auto-merge / manual Merge PR button). */
   defaultAutoMergeMethod: AutoMergeMethod;
-  /** Whether to delete the head branch after a merge, for this repo's jobs. */
   defaultAutoMergeDeleteBranch: boolean;
 }
 
-/**
- * `/web/orgs/:orgId/repos` — connect + list the org's GitHub repos. POST validates reachability with the
- * org's token (persisting `access_ok`) and tries to activate the org. Membership-gated; connecting (POST)
- * is an Administer action — owner only (`OrgOwnerGuard`) since it consumes the org's GitHub token.
- */
 @Controller('web/orgs/:orgId/repos')
 @UseGuards(OrgMembershipGuard)
 export class RepoController {
@@ -93,7 +76,6 @@ export class RepoController {
       where: { org_id: org.id },
       order: { created_at: 'ASC' },
     });
-    // One grouped count for the whole org's repos (drives the disconnect gate + UI badge).
     const counts = await this.jobs
       .createQueryBuilder('t')
       .select('t.repo_id', 'repoId')
@@ -120,10 +102,6 @@ export class RepoController {
     }));
   }
 
-  /**
-   * `GET …/repos/:repoId/branches` — the repo's branches (default first) for the create-job
-   * base-branch picker. Any member can read (creating threads is a member action).
-   */
   @Get(':repoId/branches')
   async branches(
     @CurrentOrg() org: CurrentOrgCtx,
@@ -132,7 +110,6 @@ export class RepoController {
     return this.onboarding.listRepoBranches(org.id, repoId);
   }
 
-  /** `POST …/repos/:repoId/revalidate` — re-probe GitHub access with the org's token. Owner only. */
   @Post(':repoId/revalidate')
   @UseGuards(OrgOwnerGuard)
   async revalidate(
@@ -142,11 +119,6 @@ export class RepoController {
     return this.onboarding.revalidateRepo(org.id, repoId);
   }
 
-  /**
-   * `POST …/repos/:repoId/onboard` — (re-)run the Atlas onboarding thread for this repo (the operator-
-   * initiated counterpart to the automatic spawn on connect). Spawns a fresh onboarding thread even if the
-   * repo was onboarded before. Owner only. Returns the new thread id so the UI can deep-link into it.
-   */
   @Post(':repoId/onboard')
   @UseGuards(OrgOwnerGuard)
   async onboard(
@@ -156,7 +128,6 @@ export class RepoController {
     return this.onboarding.reonboardRepo(org.id, repoId);
   }
 
-  /** `PATCH …/repos/:repoId` — update display name / base branch (metadata only). Owner only. */
   @Patch(':repoId')
   @UseGuards(OrgOwnerGuard)
   async update(
@@ -177,11 +148,6 @@ export class RepoController {
     });
   }
 
-  /**
-   * `DELETE …/repos/:repoId` — disconnect the repo, CASCADE-deleting its threads (container/worktree
-   * teardown + full child-row sweep). The web UI warns before calling. Owner only. Returns the count of
-   * threads torn down.
-   */
   @Delete(':repoId')
   @UseGuards(OrgOwnerGuard)
   async disconnect(

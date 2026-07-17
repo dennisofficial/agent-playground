@@ -5,12 +5,8 @@ import type { WorkspaceSkillEntity } from '../../persistence/entities';
 import { SkillResolver } from '../skill-resolver.service';
 import { WorkspaceSkillStore } from '../workspace-skill.store';
 
-/** Minimal `EnvService` stub — none of these tests exercise `resolveReviewSkillsForThread`'s disk reads. */
 const fakeEnv = { get: () => undefined } as unknown as EnvService;
 
-// Stubs the system-tier registry so this file can assert the MERGE/precedence behavior without depending
-// on whatever's actually shipped in `system-skill-registry.ts` (which ships empty by design — see its
-// spec). vi.mock is hoisted above these imports by vitest, so `SkillResolver` sees the stub.
 vi.mock('./system-skill-registry', () => ({
   buildSystemSkills: () => [
     {
@@ -36,8 +32,6 @@ vi.mock('./system-skill-registry', () => ({
   ],
 }));
 
-/** Minimal in-memory repository (only the methods the store calls) — same fixture as
- *  `skill-resolver.service.spec.ts`, duplicated here so this file's `vi.mock` stays self-contained. */
 class FakeRepo {
   rows: WorkspaceSkillEntity[] = [];
   create(p: Partial<WorkspaceSkillEntity>): WorkspaceSkillEntity {

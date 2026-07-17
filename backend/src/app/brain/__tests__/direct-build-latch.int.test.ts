@@ -20,18 +20,6 @@ import { DB_CONNECTION } from '../../persistence/database.module';
 import { JobTitler } from '../../titling';
 import { AgentSessionManager } from '../agent-session-manager.service';
 
-/**
- * LIVE int test for the direct-build turn-end latch (decision d3). Boots the REAL AppModule against live
- * Postgres, faking only the external boundaries this thread does NOT own: the GitHub PR HTTP client
- * (`FakeGithubPrService` returns a PR for the head branch), the LLM engine, git, and the repo resolver
- * (supplies a token so `discoverOpenPr` proceeds). Everything the thread DOES own runs for real:
- * `AgentSessionManager.latchDirectBuildAtTurnEnd` → the real `BuildShipService.latchPr` →
- * `discoverOpenPr` → the real `setPrReady` UPDATE against live Postgres.
- *
- * Proves the "direct build stuck RUNNING" symptom is fixed at runtime: after the finalize turn ends, the
- * `jobs` row flips `status: running → done` with `pr_url`/`pr_number` recorded and `pr_state: 'open'` —
- * all without the 30-min reconciler.
- */
 const TEAM_ID = '44444444-4444-4444-8444-444444444444'; // sentinel org uuid
 const PROJECT_SLUG = 'direct-latch-it';
 const FEATURE_BRANCH = 'atlas/feature-latch';
@@ -59,8 +47,6 @@ describe('Direct-build turn-end latch (live Postgres)', () => {
       .useValue(fakePr)
       .overrideProvider(JobTitler)
       .useValue(new FakeThreadTitler())
-      // The repo resolver is the credentials/git boundary — supply owner/repo + a token so the real
-      // `discoverOpenPr` proceeds to the (faked) GitHub PR lookup.
       .overrideProvider(DRIVER_REPO)
       .useValue({
         resolve: async () => ({
@@ -91,8 +77,6 @@ describe('Direct-build turn-end latch (live Postgres)', () => {
   });
 
   it('flips a running direct build to done + records the PR (pr_state=open) on the LIVE branch at turn-end', async () => {
-    // Seed org + repo + a RUNNING job with a feature branch and a diverged live (current) branch, plus a
-    // sandbox row so the real `findSandbox` resolves.
     await dataSource.query(
       `INSERT INTO organizations (id, name, slug, status)
          VALUES ($1, 'Direct Latch Org', 'direct-latch-org', 'active')
@@ -138,13 +122,10 @@ describe('Direct-build turn-end latch (live Postgres)', () => {
       replyRoute: { surfaceId: 'agent', jobRef: jobId },
     };
 
-    // Arm the flag exactly as `finalize_build` does at its ship success return, then run the turn-end latch
-    // (what `runChatTurn`'s finally calls once the finalize turn completes).
     (
       manager as unknown as { directBuildShipPending: Map<string, boolean> }
     ).directBuildShipPending.set(jobId, true);
 
-    // Pre-condition: still running, no PR recorded.
     const before = await readJob(dataSource, jobId);
     expect(before.status).toBe('running');
     expect(before.pr_url).toBeNull();
@@ -155,14 +136,12 @@ describe('Direct-build turn-end latch (live Postgres)', () => {
       }
     ).latchDirectBuildAtTurnEnd(stimulus);
 
-    // The REAL setPrReady UPDATE landed in live Postgres.
     const after = await readJob(dataSource, jobId);
     expect(after.status).toBe('done');
     expect(after.pr_state).toBe('open');
     expect(after.pr_url).toMatch(/github\.com\/acme\/direct-latch\/pull\/\d+/);
     expect(after.pr_number).not.toBeNull();
 
-    // The PR was discovered by the LIVE (current) branch, not the host-named feature branch.
     expect(fakePr.opened.some((o) => (o.args as { head?: string }).head === LIVE_BRANCH)).toBe(
       true,
     );
@@ -170,8 +149,6 @@ describe('Direct-build turn-end latch (live Postgres)', () => {
       false,
     );
 
-    // The latch only records the PR + flips status. The flag was consumed — a subsequent turn-end must
-    // not re-latch.
     expect(
       (
         manager as unknown as { directBuildShipPending: Map<string, boolean> }

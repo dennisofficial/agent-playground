@@ -1,9 +1,3 @@
-/**
- * prompt-kit / groups / task-list — the live task-list discipline. Both variants reuse the shared
- * `TASK_LIST_NOTE` catalog block and add their own seeding rule (what the first tasks come from).
- *
- * TOPIC bucket: the live task list.
- */
 import { Agent, ENGINEERING_STAGES } from '../agent';
 import { isOnboarding, notOnboarding } from '../conditions';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
@@ -11,7 +5,6 @@ import { TASK_LIST_NOTE } from '../fragments';
 
 @FragmentGroup()
 export class TaskListGroup {
-  /** Task list + Main-row seeding rule. */
   @Fragment({
     usedBy: ENGINEERING_STAGES,
     order: 1270,
@@ -27,7 +20,6 @@ export class TaskListGroup {
     ].join('\n');
   }
 
-  /** Task list + fleet-inventory seeding rule. */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 2030,

@@ -15,22 +15,10 @@ import { DockerodeContainerEngine } from '../dockerode-container-engine';
 import { SandboxImageBuilder } from '../sandbox-image.builder';
 import { SandboxManager } from '../sandbox-manager.service';
 
-/**
- * Integration test: Docker restart-recovery + durable session.
- *
- * Proves end-to-end that:
- *   (a) A brand-new SandboxManager instance (simulating a process restart) re-adopts the SAME
- *       running container by deriving the same name from team·project·branch.
- *   (b) TurnRunnerService jobs the persisted session_id back as `args.sessionId` on the
- *       post-restart turn, and directs the exec at the same containerId / execUser.
- *
- * No real LLM — the engine port is a vi.fn() fake. Docker must be reachable.
- */
 
 const env = (v: Record<string, string | undefined> = {}) =>
   ({ get: (k: string) => v[k] }) as unknown as EnvService;
 
-/** Map-backed threads repository that survives across TurnRunnerService instances (models Postgres). */
 function makeDurablePhaseRepo(initial: { id: string; session_id: string | null }) {
   const row: { id: string; session_id: string | null } = { ...initial };
   const repo = {
@@ -63,7 +51,6 @@ describe('Docker restart recovery + durable session (integration, needs Docker)'
   let sandbox: FeatureSandbox;
   let manager1: SandboxManager;
 
-  // Thread the container id so afterAll can force-remove it if the test fails mid-flight.
   let attachedContainerId: string | undefined;
 
   beforeAll(() => {
@@ -80,7 +67,6 @@ describe('Docker restart recovery + durable session (integration, needs Docker)'
     git(['add', '-A'], repoRoot);
     git(['commit', '-qm', 'init'], repoRoot);
 
-    // Linked worktree — the real Atlas shape (.git is a file, external gitdir).
     worktree = join(repoRoot, '.worktrees', 'restart-feat');
     git(['worktree', 'add', '-q', worktree, '-b', 'atlas/restart-feat'], repoRoot);
 
@@ -95,7 +81,6 @@ describe('Docker restart recovery + durable session (integration, needs Docker)'
   });
 
   afterAll(async () => {
-    // Best-effort: tear down any container that survived a test failure.
     if (attachedContainerId) {
       await engine1.remove(attachedContainerId, { force: true }).catch(() => undefined);
     }
@@ -106,33 +91,27 @@ describe('Docker restart recovery + durable session (integration, needs Docker)'
 
   it('re-adopts the same container and resumes the persisted session after a simulated restart', async () => {
     if (!dockerUp) {
-      // eslint-disable-next-line no-console
       console.warn('Docker not reachable — skipping restart-recovery integration test');
       return;
     }
 
-    // Ensure the sandbox image is present before any manager attaches.
     await builder1.ensureImage();
 
-    // ── Durable thread row (survives the "restart") ───────────────────────────────────────
     const { repo: fakePhases, row: phaseRow } = makeDurablePhaseRepo({
       id: 'ph1',
       session_id: null,
     });
 
-    // ── Pre-restart: Instance 1 ───────────────────────────────────────────────────────────
     const s1 = await manager1.attach({ sandbox, orgId: 'team-restart' });
     attachedContainerId = s1.containerId;
 
     expect(s1.containerId).toBeTruthy();
     expect(s1.execUser).toMatch(/^\d+:\d+$/);
 
-    // Fake engine 1: emits a session event early, then returns.
     const fakeEngine1ReceivedArgs: RunEngineArgs[] = [];
     const fakeEngine1: EngineRunnerPort = {
       run: vi.fn(async (args: RunEngineArgs) => {
         fakeEngine1ReceivedArgs.push(args);
-        // Emit the session handle early (mirrors real Claude SDK behaviour).
         args.onEvent?.({ kind: 'session', sessionId: 'SESSION-1' });
         return { result: 'ok', sessionId: 'SESSION-1' };
       }),
@@ -149,27 +128,22 @@ describe('Docker restart recovery + durable session (integration, needs Docker)'
       systemPrompt: agentMessage('persona'),
     });
 
-    // Session id must be persisted onto the (durable) step row.
     expect(phaseRow.session_id).toBe('SESSION-1');
 
-    // Engine received the docker target.
     expect(fakeEngine1ReceivedArgs).toHaveLength(1);
     const arg1 = fakeEngine1ReceivedArgs[0]!;
     expect(arg1.target?.containerId).toBe(s1.containerId);
     expect(arg1.target?.user).toBe(s1.execUser);
 
-    // ── Simulate process restart: brand-new SandboxManager (new objects) ─────────────────
     const engine2 = new DockerodeContainerEngine(env());
     const builder2 = new SandboxImageBuilder(env(), engine2);
     const manager2 = new SandboxManager(engine2, builder2, env({ AGENT_HOME_ROOT: homeRoot }));
 
     const s2 = await manager2.attach({ sandbox, orgId: 'team-restart' });
 
-    // Must re-adopt the EXACT same container — same id, same exec user.
     expect(s2.containerId).toBe(s1.containerId);
     expect(s2.execUser).toBe(s1.execUser);
 
-    // ── Post-restart: Instance 2 ──────────────────────────────────────────────────────────
     const fakeEngine2ReceivedArgs: RunEngineArgs[] = [];
     const fakeEngine2: EngineRunnerPort = {
       run: vi.fn(async (args: RunEngineArgs) => {
@@ -192,14 +166,10 @@ describe('Docker restart recovery + durable session (integration, needs Docker)'
     expect(fakeEngine2ReceivedArgs).toHaveLength(1);
     const arg2 = fakeEngine2ReceivedArgs[0]!;
 
-    // Must thread the persisted session id back (RESUME, not respawn).
     expect(arg2.sessionId).toBe('SESSION-1');
-    // Must target the SAME container.
     expect(arg2.target?.containerId).toBe(s1.containerId);
-    // Must exec as the host uid.
     expect(arg2.target?.user).toBe(s1.execUser);
 
-    // ── Teardown ──────────────────────────────────────────────────────────────────────────
     await manager2.teardown(s2);
     expect(await engine2.inspect(s2.containerId!)).toBeNull();
     attachedContainerId = undefined; // container gone — afterAll guard no longer needed

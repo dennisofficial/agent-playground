@@ -3,10 +3,6 @@ import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
 import { OrgMembershipGuard } from '../org/org-membership.guard';
 import { OnboardingService } from './onboarding.service';
 
-/**
- * `GET /web/orgs/:orgId/onboarding` — the derived onboarding checklist (repo + credentials) the web
- * wizard renders. Membership-gated.
- */
 @Controller('web/orgs/:orgId/onboarding')
 @UseGuards(OrgMembershipGuard)
 export class OnboardingController {

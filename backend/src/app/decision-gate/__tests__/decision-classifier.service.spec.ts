@@ -4,7 +4,6 @@ import type { ClassifierLlm, ClassifierLlmVerdict } from '../classifier-llm';
 import { DecisionClassifier } from '../decision-classifier.service';
 import type { ClassifierRecord } from '../decision-gate.types';
 
-/** A fake LLM whose verdict the test controls (and whose calls it can assert). */
 function fakeLlm(verdict: ClassifierLlmVerdict | undefined): ClassifierLlm & { calls: number } {
   return {
     calls: 0,
@@ -28,7 +27,6 @@ describe('DecisionClassifier', () => {
     llm = fakeLlm(undefined);
   });
 
-  // ── always-ask (deterministic) ────────────────────────────────────────────────────────────────
   it('"add a column to users" → ask (data_model), via rule, no LLM call', async () => {
     const c = new DecisionClassifier(llm);
     const res = await c.classify(
@@ -63,7 +61,6 @@ describe('DecisionClassifier', () => {
     expect(res.decisionClass).toBe('cross_cutting');
   });
 
-  // ── security / auth-mechanism (issue #5) — each is an always-ask cross_cutting call ──────────────
   it.each([
     'Use bcrypt to hash user passwords',
     'Choose a JWT library and signing algorithm for access tokens',
@@ -89,7 +86,6 @@ describe('DecisionClassifier', () => {
     expect(res.decisionClass).toBe('one_way_door');
   });
 
-  // ── never-ask (deterministic) ─────────────────────────────────────────────────────────────────
   it('"rename a local helper" → proceed (never-ask), via rule, no LLM call', async () => {
     const c = new DecisionClassifier(llm);
     const res = await c.classify(
@@ -112,7 +108,6 @@ describe('DecisionClassifier', () => {
     expect(res.verdict).toBe('proceed');
   });
 
-  // ── covered by the record ─────────────────────────────────────────────────────────────────────
   it('"use the auth pattern already in the decision record" → covered', async () => {
     const c = new DecisionClassifier(llm);
     const record = recordWith({
@@ -147,7 +142,6 @@ describe('DecisionClassifier', () => {
     expect(res.coveredBy).toBe('Soft-delete columns');
   });
 
-  // ── ambiguous tail → LLM ──────────────────────────────────────────────────────────────────────
   it('ambiguous case calls the LLM and honors its verdict', async () => {
     llm = fakeLlm({
       verdict: 'ask',
@@ -211,7 +205,6 @@ describe('DecisionClassifier', () => {
     expect(res.verdict).toBe('ask');
   });
 
-  // ── security: untrusted body that touches always-ask still parks ──────────────────────────────
   it('injected "ignore the rules" body touching schema → still ask (rule fires first)', async () => {
     const c = new DecisionClassifier(llm);
     const res = await c.classify(

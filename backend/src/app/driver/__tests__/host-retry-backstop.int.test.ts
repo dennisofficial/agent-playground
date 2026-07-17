@@ -1,19 +1,3 @@
-/**
- * Live-infra proof for the build-lane HOST BACKSTOP (`runJobWithTransientRetry`, `thread-driver.service.ts`
- * ~885-919): when a build turn throws a transient host-transport/infra error (matching
- * `HOST_TRANSPORT_TRANSIENT_RE`), the driver retries the SAME job on a FRESH turn up to `MAX_HOST_RETRIES`
- * (10) at a fixed `HOST_RETRY_BACKOFF_MS` (10s) backoff, and on EACH attempt (a) posts a durable quiet
- * `system_notice` block via `relayRetrying` and (b) fans a best-effort live `turn_retry` indicator via
- * `LiveTurnStore.retry(...)`.
- *
- * This test boots the REAL `ThreadDriver` + the REAL `DriverStoreService` against LIVE Postgres (every
- * job/thread/message row below is a genuine TypeORM write/read), with a FAKE `TurnRunnerService` standing in
- * for the engine seam (throws a transient transport error 3 times, then completes) — mirroring
- * `stream-closed-recovery.int.test.ts`'s structure. Unlike that sibling test, THIS one also wires the REAL
- * `MessageBlockSink` (over the live `messages` table) and the REAL `LiveTurnStore` in place of fakes, so it
- * proves the retry notice actually lands in Postgres and the retry indicator actually fans on the real RxJS
- * subject — not just that fake spies were called.
- */
 import type { EnvService } from '@core/config/env/env.service';
 import { ConsoleLogger, Logger } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
@@ -60,9 +44,6 @@ function dbOpts() {
     entities: ENTITIES,
     namingStrategy: new CustomNamingStrategy(),
     synchronize: false,
-    // Deliberately NOT 10_000: this test clamps every `setTimeout(..., HOST_RETRY_BACKOFF_MS)` (10_000) call
-    // to 0ms for speed (see `clampHostRetryBackoff`) — a colliding connectTimeoutMS would get clamped too and
-    // make pg's own connection-timeout timer fire instantly.
     connectTimeoutMS: 20_000,
     ssl: false as const,
   };
@@ -83,12 +64,8 @@ const RESOLVED: ResolvedRepo = {
   token: 'ghtok',
 };
 
-/** A transient host-transport error — matches `HOST_TRANSPORT_TRANSIENT_RE` ("connection reset", "exec
- *  failed") — the exact shape a sandbox exec hiccup produces. */
 const TRANSIENT_THROW = 'sandbox exec failed: connection reset by peer';
 
-/** A fake `TurnRunnerService`: throws the transient transport error on the first `remainingFailures` calls,
- *  then completes the thread cleanly via `complete_thread` on the next (fresh) turn. */
 function makeTransientTurn(remainingFailuresAtStart: number): {
   turn: TurnRunnerService;
   calls: Array<{ mode: string; stepId?: string | null }>;
@@ -140,9 +117,6 @@ function makeTransientTurn(remainingFailuresAtStart: number): {
   return { turn, calls };
 }
 
-/** Canned collaborators for every OTHER `ThreadDriver` dependency — no docker/git/GitHub touched. Mirrors
- *  `stream-closed-recovery.int.test.ts`'s fakes; only `store`, the block sink, and the live-turn store are
- *  REAL (live Postgres + the real in-memory RxJS subject). */
 function makeGit(): { git: LocalGitService } {
   const git = {
     createFeatureSandbox: vi.fn(
@@ -180,9 +154,6 @@ function makePr(): { pr: GithubPrService } {
   return { pr };
 }
 
-/** Run `fn` with ONLY the fixed `HOST_RETRY_BACKOFF_MS` host-retry backoff collapsed to 0ms, on REAL timers
- *  — everything else keeps its true duration. Modeled on `thread-driver.service.spec.ts`'s
- *  `withInstantHostRetryBackoff`; a 3-retry drive at the real 10s backoff would otherwise burn ~30s. */
 function clampHostRetryBackoff(): { restore: () => void } {
   const realSetTimeout = globalThis.setTimeout;
   const spy = vi
@@ -220,8 +191,6 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
         },
       ],
     }).compile();
-    // See `stream-closed-recovery.int.test.ts` — `.compile()` silences Nest's `Logger`; restore a real one so
-    // the driver's own `this.logger.warn(...)` retry line prints in the run log.
     Logger.overrideLogger(new ConsoleLogger());
 
     store = mod.get(DriverStoreService);
@@ -253,7 +222,6 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
       'LIVE Postgres; the fake engine throws a transient transport error 3 times, then completes on the 4th ' +
       'turn — the job reaches `done`, and Postgres + the live store both carry 3 auto-retry notices/frames',
     async () => {
-      // ── seed a real job + decision record + builder thread ─────────────────────────────────────────
       const job = await jobs.save(
         jobs.create({
           org_id: ORG_ID,
@@ -281,8 +249,6 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
         }),
       ]);
       await jobs.update({ id: job.id }, { decision_record_id: record.id });
-      // Every job carries one planning thread group at job start — the anchor job-level operator notices are
-      // stamped onto (messages.thread_id is NOT NULL). The driver never executes it; it's render-only.
       const planningThreadGroup = await store.createThreadGroup({
         jobId: job.id,
         orgId: ORG_ID,
@@ -313,14 +279,12 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
         brief: 'Backend — host retry backstop',
       });
 
-      // ── assemble the real driver ────────────────────────────────────────────────────────────────────
       const { turn, calls } = makeTransientTurn(3);
       const { git } = makeGit();
       const { pr } = makePr();
       const env = {
         get: (k: string) => (k === 'DRIVER_TRANSIENT_RETRY_MS' ? '1' : undefined),
       } as unknown as EnvService;
-      // REAL live-turn store — the actual RxJS subject the retry loop fans `turn_retry` frames onto.
       const liveTurns = new LiveTurnStore();
       const retryFrames: Array<{
         lane: string;
@@ -339,8 +303,6 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
           retryFrames.push({ lane: f.lane, ...event });
         }
       });
-      // REAL block sink — the actual `TranscriptMessageEntity` repository, so the durable retry notice lands in
-      // live Postgres `messages`.
       const version = { sha: 'dev' } as unknown as AppVersionService;
       const blockSink = new MessageBlockSink(
         mod.get(getRepositoryToken(TranscriptMessageEntity, DB_CONNECTION)),
@@ -479,19 +441,14 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
         } as unknown as import('../../job-bootstrap').JobBootstrapService,
       );
 
-      // Spy on the REAL store's setJobHalt (call-through, real Postgres write still goes through) so we can
-      // assert a `failed` halt was NEVER stamped during the drive.
       const setJobHaltSpy = vi.spyOn(store, 'setJobHalt');
 
-      // ── drive it, with ONLY the fixed host-retry backoff collapsed to 0ms ───────────────────────────────
       const domainJob = await store.loadJob(job.id);
       const clamp = clampHostRetryBackoff();
       let finalStatus = '';
       try {
         await driver.dispatch(domainJob);
 
-        // Poll the LIVE `jobs` row for the terminal state; auto-click "Ship it" the instant the ship-review
-        // gate parks, driven off REAL DB reads throughout.
         const deadline = Date.now() + 60_000;
         let shipApproved = false;
         while (Date.now() < deadline) {
@@ -509,7 +466,6 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
       }
       liveTurnsSub.unsubscribe();
 
-      // ── assertions — the lane SELF-HEALED, read back from live Postgres + the live store ───────────────
       expect(finalStatus).toBe('done');
 
       const execCalls = calls.filter((c) => c.mode === 'execute');
@@ -527,7 +483,6 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
       });
       expect(threadRow.status).toBe('done');
 
-      // The durable quiet `system_notice` rows — the real backstop deliverable, read back from Postgres.
       const noticeRows: Array<{ text: string }> = await ds.query(
         `SELECT text FROM transcript_messages WHERE job_id = $1 AND meta->>'source' = 'system_notice' ORDER BY created_at`,
         [job.id],
@@ -538,7 +493,6 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
       expect(noticeTexts.some((t) => t.includes(`auto-retry 2/${MAX_HOST_RETRIES}`))).toBe(true);
       expect(noticeTexts.some((t) => t.includes(`auto-retry 3/${MAX_HOST_RETRIES}`))).toBe(true);
 
-      // The best-effort live `turn_retry` indicator — fanned on the REAL `LiveTurnStore` subject.
       expect(retryFrames.length).toBeGreaterThanOrEqual(3);
       expect(retryFrames.slice(0, 3).map((f) => f.attempt)).toEqual([1, 2, 3]);
       expect(retryFrames.every((f) => f.max === MAX_HOST_RETRIES)).toBe(true);

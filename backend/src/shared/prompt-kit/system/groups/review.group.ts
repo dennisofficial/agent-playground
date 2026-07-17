@@ -1,19 +1,9 @@
-/**
- * prompt-kit / groups / review — the PR-review MISSION for a `kind: 'review'` job.
- *
- * A review job reviews an EXISTING external pull request (see `reviewIdentity`); it never builds. These
- * fragments (gated `isReview`) give it the methodology the normal brain's planning/ship fragments would —
- * how to scope the PR, hunt for real defects, verify them, and present findings. Adapted from Claude Code's
- * own `/review` + `/code-review` system prompts. Ordered ~108x so it sits with orientation (INVESTIGATE
- * FIRST, which a review job KEEPS), after the shared identity/harness-tag preamble.
- */
 import { Agent } from '../agent';
 import { isReview } from '../conditions';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 
 @FragmentGroup()
 export class ReviewGroup {
-  /** Scope the PR — the target + how to fetch it. */
   @Fragment({ usedBy: [Agent.PLANNING], order: 1082, condition: isReview })
   scope(): string {
     return [
@@ -29,7 +19,6 @@ export class ReviewGroup {
     ].join('\n');
   }
 
-  /** The finder angles — what a real defect looks like. */
   @Fragment({ usedBy: [Agent.PLANNING], order: 1084, condition: isReview })
   finderAngles(): string {
     return [
@@ -45,7 +34,6 @@ export class ReviewGroup {
     ].join('\n');
   }
 
-  /** Verify before you report. */
   @Fragment({ usedBy: [Agent.PLANNING], order: 1086, condition: isReview })
   verify(): string {
     return [
@@ -59,7 +47,6 @@ export class ReviewGroup {
     ].join('\n');
   }
 
-  /** Present the review + offer next steps. */
   @Fragment({ usedBy: [Agent.PLANNING], order: 1088, condition: isReview })
   present(): string {
     return [

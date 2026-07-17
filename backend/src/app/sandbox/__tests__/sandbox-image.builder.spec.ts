@@ -6,7 +6,6 @@ import { SandboxImageBuilder } from '../sandbox-image.builder';
 const env = (v: Record<string, string | undefined> = {}) =>
   ({ get: (k: string) => v[k] }) as unknown as EnvService;
 
-/** A fake engine that returns scripted image labels and records `buildImage` calls (args included). */
 function engineWith(labels: Record<string, string> | null) {
   const buildImage = vi.fn(async (_spec: BuildImageSpec) => {});
   const imageLabels = vi.fn(async () => labels);
@@ -14,7 +13,6 @@ function engineWith(labels: Record<string, string> | null) {
   return { engine, buildImage, imageLabels };
 }
 
-/** The context hash the builder computes for the real image dir — captured via one no-label build. */
 async function currentHash(): Promise<string> {
   const { engine, buildImage } = engineWith(null);
   await new SandboxImageBuilder(env(), engine).ensureImage();
@@ -121,8 +119,6 @@ describe('SandboxImageBuilder.onApplicationBootstrap', () => {
     } as unknown as ContainerEngine;
     const builder = new SandboxImageBuilder(env(), engine);
 
-    // If the hook AWAITED ensureImage(), this would hang past Vitest's default test timeout, since
-    // buildImage's promise never resolves — it doesn't hang: this line completes on its own.
     await builder.onApplicationBootstrap();
 
     resolveBuild!(); // let the background build finish so it doesn't leak into later tests
@@ -148,7 +144,6 @@ describe('SandboxImageBuilder.onApplicationBootstrap', () => {
     const builder = new SandboxImageBuilder(env(), engine);
 
     await expect(builder.onApplicationBootstrap()).resolves.toBeUndefined();
-    // The background failure is caught internally (logged, not thrown) — confirm the path actually ran.
     await vi.waitFor(() => expect(buildImage).toHaveBeenCalled());
   });
 });

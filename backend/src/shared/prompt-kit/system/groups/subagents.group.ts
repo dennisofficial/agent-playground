@@ -1,12 +1,3 @@
-/**
- * prompt-kit / groups / subagents — the ENGINE subagent prompts (spawned via Task inside an engine turn):
- * the read-only advisory set (explore/docs/review/debug/test) and the file-writing fan-out writer.
- *
- * These assemble INSIDE the sandbox container (the engine bundles this via the pure `renderAgentPrompt`), so
- * this group — like all of prompt-kit's assembly path — carries no NestJS dependency. Shared text
- * (REPORT_ONLY_NOTE / REVIEW_SCOPE_NOTE / MONOREPO_VERIFY_HINT / DEVIATION_NOTE) comes from the `fragments.ts`
- * catalog so it can't drift from the worker/ship personas that share it.
- */
 import { Agent, ENGINE_SUBAGENTS } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import {
@@ -32,14 +23,11 @@ import type { PromptCtx } from '../prompt-ctx';
 
 @FragmentGroup()
 export class SubagentsGroup {
-  /** The single-turn / no-conversation framing every engine subagent gets, rendered BEFORE its persona
-   *  body (order 90 < the personas' 100). */
   @Fragment({ usedBy: ENGINE_SUBAGENTS, order: 90 })
   subagentKernel(): string {
     return SUBAGENT_KERNEL_NOTE;
   }
 
-  /** `explore` — read-only code/docs investigation subagent. */
   @Fragment({ usedBy: [Agent.EXPLORE], order: 100 })
   explore(): string {
     return [
@@ -61,7 +49,6 @@ export class SubagentsGroup {
     ].join(' ');
   }
 
-  /** `docs` — external library/framework/API documentation research subagent. */
   @Fragment({ usedBy: [Agent.DOCS], order: 100 })
   docs(): string {
     return [
@@ -78,7 +65,6 @@ export class SubagentsGroup {
     ].join(' ');
   }
 
-  /** `review` — read-only code-review subagent. */
   @Fragment({ usedBy: [Agent.REVIEW_AGENT], order: 100 })
   review(): string {
     return [
@@ -93,7 +79,6 @@ export class SubagentsGroup {
     ].join(' ');
   }
 
-  /** `debug` — read-only root-cause tracing subagent. */
   @Fragment({ usedBy: [Agent.DEBUG], order: 100 })
   debug(): string {
     return [
@@ -108,7 +93,6 @@ export class SubagentsGroup {
     ].join(' ');
   }
 
-  /** `test` — verification (typecheck/build/lint/test) runner subagent; the one exception with Bash. */
   @Fragment({ usedBy: [Agent.TEST], order: 100 })
   test(): string {
     return [
@@ -125,10 +109,6 @@ export class SubagentsGroup {
     ].join(' ');
   }
 
-  /** `validate` — build-time LIVE end-to-end validation + evidence-capture subagent. Distinct from `test`
-   *  (which runs typecheck/build/unit and returns a diagnosis, no artifacts): this one BOOTS the thing and
-   *  exercises it as a caller would, then leaves the proof under `$ATLAS_EVIDENCE_DIR`. Write-capable (for
-   *  the evidence bundle only) — see EVIDENCE_ARTIFACTS_NOTE; keeping to evidence is prompt discipline. */
   @Fragment({ usedBy: [Agent.VALIDATE], order: 100 })
   validate(): string {
     return [
@@ -153,8 +133,6 @@ export class SubagentsGroup {
     ].join(' ');
   }
 
-  /** The repo's saved preview recipe, injected READ-ONLY into `validate` so it can follow/adapt it instead of
-   *  re-discovering the preview setup. Only when a recipe exists. */
   @Fragment({
     usedBy: [Agent.VALIDATE],
     order: 110,
@@ -164,8 +142,6 @@ export class SubagentsGroup {
     return renderBuildLanePreviewRecipe(ctx.previewInstructions ?? null);
   }
 
-  /** `prototype` — design-fidelity mockup author. Writes ONE static HTML preview into /context/artifacts,
-   *  grounded in the target app's REAL design system. A lightweight in-house analogue of claude.ai/design. */
   @Fragment({ usedBy: [Agent.PROTOTYPE], order: 100 })
   prototype(): string {
     return [
@@ -214,7 +190,6 @@ export class SubagentsGroup {
     ].join(' ');
   }
 
-  /** WRITER subagents (`implement` / `implement-deep`) — the only subagents that can change files. */
   @Fragment({ usedBy: [Agent.FAN_OUT], order: 100 })
   writer(): string {
     return [

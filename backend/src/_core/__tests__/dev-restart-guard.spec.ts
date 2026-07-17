@@ -80,7 +80,6 @@ describe('checkRestartLoop', () => {
       threshold: 5,
       now: () => 2_000,
     });
-    // Jump far past the window — only this boot itself should count as "recent".
     const result = checkRestartLoop({
       filePath,
       windowMs: 30_000,
@@ -95,7 +94,6 @@ describe('checkRestartLoop', () => {
     for (let i = 0; i < 30; i++) {
       checkRestartLoop({ filePath, keep: 5, now: () => i * 100_000 }); // spaced out — never a storm
     }
-    // The 31st call still only sees the last 5 kept, none within its own window → recentCount is just itself.
     const result = checkRestartLoop({
       filePath,
       keep: 5,

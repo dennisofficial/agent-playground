@@ -50,7 +50,6 @@ describe('renderSectionPlan', () => {
     expect(text).toContain('Reuses the chosen auth guard.');
     expect(text).toContain('per "Auth via JWT guard"');
     expect(text).toContain('Renamed a local helper.');
-    // The ask-class decision is NOT surfaced here (it goes through park-and-ask).
     expect(text).not.toContain('New column — parked.');
   });
 

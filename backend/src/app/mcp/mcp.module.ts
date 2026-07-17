@@ -10,12 +10,6 @@ import { McpServerStore } from './mcp-server.store';
 import { McpServersController } from './mcp-servers.controller';
 import { SystemMcpResolver } from './system-mcp-resolver.service';
 
-/**
- * The MCP layer — user-defined MCP servers (System/Org/Repo tiers) + the `McpResolver` seam the brain and
- * driver turn-assembly paths read through to thread `RunEngineArgs.userMcpServers`. `SystemMcpResolver`
- * resolves the read-only System tier (built-ins) with live availability for the console. `@Global` (like
- * `OnboardingModule`) so those factories inject `McpResolver` with zero per-module import churn.
- */
 @Global()
 @Module({
   imports: [TypeOrmModule.forFeature([McpServerEntity, RepoEntity], DB_CONNECTION)],

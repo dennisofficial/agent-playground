@@ -4,23 +4,12 @@ import { Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { RepoEntity } from '../persistence/entities';
 
-/** A resolved route: the org + repo a notification belongs to (where its seeded thread lives). */
 export interface ProjectRoute {
   orgId: string;
   repoId: string;
   repo: RepoEntity;
 }
 
-/**
- * Notification REPO ROUTING — the shared step every `NotificationSource` adapter funnels through after
- * it has extracted a gateway-native identifier (a GitHub `owner/repo`, a generic webhook's repo id).
- * Maps that identifier → an `repos` row. A repo that maps to no connected repo is `unroutable`
- * (the controller answers 404) — Atlas never works a repo it doesn't own.
- *
- * GitHub repos are matched by their `git_url` (normalized to `owner/repo`, host/scheme/.git-suffix
- * insensitive) so a repo connected as `https://github.com/acme/web.git` routes a webhook for
- * `git@github.com:acme/web`.
- */
 @Injectable()
 export class ProjectRoutingService {
   private readonly logger = new Logger(ProjectRoutingService.name);
@@ -30,11 +19,6 @@ export class ProjectRoutingService {
     private readonly repos: Repository<RepoEntity>,
   ) {}
 
-  /**
-   * Resolve a GitHub `owner/repo` (case-insensitive) to a repo route. A GitHub webhook carries NO org
-   * id, so the repo IS the routing key: match across ALL connected repos by normalized `git_url`. Null
-   * when nothing matches (→ `unroutable`).
-   */
   async routeGithubRepo(ownerRepo: string): Promise<ProjectRoute | null> {
     const target = normalizeRepoSlug(ownerRepo);
     if (!target) return null;
@@ -47,7 +31,6 @@ export class ProjectRoutingService {
     return { orgId: match.org_id, repoId: match.id, repo: match };
   }
 
-  /** Resolve a caller-supplied `(orgId, repoId-uuid)` to a repo route. Null when not connected. */
   async routeProjectId(orgId: string, repoId: string): Promise<ProjectRoute | null> {
     const match = await this.repos.findOne({
       where: { id: repoId, org_id: orgId },
@@ -60,13 +43,6 @@ export class ProjectRoutingService {
   }
 }
 
-/**
- * Normalize any GitHub repo reference to a bare lower-cased `owner/repo`:
- *   https://github.com/Acme/Web.git → acme/web
- *   git@github.com:Acme/Web.git     → acme/web
- *   Acme/Web                        → acme/web
- * Returns null when no `owner/repo` pair can be extracted.
- */
 export function normalizeRepoSlug(ref: string | null | undefined): string | null {
   if (!ref) return null;
   let s = ref.trim();

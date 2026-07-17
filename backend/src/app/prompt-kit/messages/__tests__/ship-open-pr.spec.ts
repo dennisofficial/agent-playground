@@ -15,10 +15,8 @@ describe('turns / ship-open-pr', () => {
       expect(task).toContain('## Verification');
       expect(task).toContain('/context/evidence/');
       expect(task).toContain('gh pr create');
-      // the branch + base flow through
       expect(task).toContain('atlas/feat');
       expect(task).toContain('origin/main');
-      // the <70-char title discipline is instructed to the brain (host passes the title verbatim)
       expect(task).toContain('under 70 characters');
     });
 

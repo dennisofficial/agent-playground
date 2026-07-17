@@ -4,14 +4,6 @@ import type { JobDependencyService } from '../../job-deps';
 import type { JobEntity, ThreadEntity } from '../../persistence/entities';
 import { BrainStoreService } from '../brain-store.service';
 
-/**
- * `BrainStoreService.buildNotStarted` — the durable "the approved build has NOT started yet" gate for
- * `hold_build` (§ hold_build host tool, gated on this predicate rather than transient `activity`, since the
- * base-check seed runs on the normal turn path which already stamps `activity='turn'`).
- *
- * Mirrors the mocking pattern in plan-review.service.spec.ts's `makeBrainStore` (a bare-bones jobs/threads
- * repo stub, everything else a `never`-cast stub since buildNotStarted only reads `this.jobs` + `this.threads`).
- */
 
 function fakeJobsRepo(row: Partial<JobEntity> | null) {
   return {
@@ -61,8 +53,6 @@ describe('BrainStoreService.buildNotStarted', () => {
       id: 'job-1',
       build_path: 'direct',
       direct_build_started_at: new Date(),
-      // Still null — verification is only written at the finalize_build gate, at the END of the turn. The
-      // gate must NOT depend on it: the build has already started once the marker is stamped.
       direct_build_verification: null,
     });
     const threads = fakeThreadsRepo([]);
@@ -73,7 +63,6 @@ describe('BrainStoreService.buildNotStarted', () => {
   it('plan build path, every root-executable thread still pending → true', async () => {
     const jobs = fakeJobsRepo({ id: 'job-1', build_path: 'plan' });
     const threads = fakeThreadsRepo([
-      // Root-executable (builder, top-level, no parent) — still pending.
       {
         id: 't-1',
         job_id: 'job-1',
@@ -81,7 +70,6 @@ describe('BrainStoreService.buildNotStarted', () => {
         parent_thread_id: null,
         status: 'pending',
       },
-      // A second root-executable lane, also pending.
       {
         id: 't-2',
         job_id: 'job-1',
@@ -89,7 +77,6 @@ describe('BrainStoreService.buildNotStarted', () => {
         parent_thread_id: null,
         status: 'pending',
       },
-      // Non-executable kind (main, the conversational root) — excluded from the filter regardless of status.
       {
         id: 't-3',
         job_id: 'job-1',
@@ -97,7 +84,6 @@ describe('BrainStoreService.buildNotStarted', () => {
         parent_thread_id: null,
         status: 'running',
       },
-      // A builder's child review_lens — excluded because it has a parent (not root).
       {
         id: 't-4',
         job_id: 'job-1',

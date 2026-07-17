@@ -3,12 +3,6 @@ import { DecisionApprovalService } from '../../brain/decision-approval.service';
 import type { DecisionApprovalCard } from '../../surface';
 import { AgentChatSurface } from '../agent-chat-surface';
 
-/**
- * The approval seam W9 scripts: Atlas posts the decision-record card through the AGENT surface; the
- * driver READS the card off the surface (parsing its jobId), then resolves the gate via the real
- * `DecisionApprovalService.resolve(...)` — and the brain's awaited verdict promise resolves. This
- * proves `AgentChatSurface` + `DecisionApprovalService` compose into a fully programmatic approve flow.
- */
 describe('agent-facing approval simulation (AgentChatSurface + DecisionApprovalService)', () => {
   const card: DecisionApprovalCard = {
     jobId: 'job-1',
@@ -22,17 +16,14 @@ describe('agent-facing approval simulation (AgentChatSurface + DecisionApprovalS
     const surface = new AgentChatSurface();
     const approvals = new DecisionApprovalService(surface);
 
-    // The brain posts the card into the job's thread and awaits the verdict.
     const handle = await approvals.request({ channel: 'C1', threadTs: 'root.1' }, card);
     expect(handle.resolved).toBe(false);
 
-    // The driver script reads the posted card off the surface (no Slack), grabs its jobId.
     const captured = surface.latestApprovalCard();
     expect(captured).toBeDefined();
     expect(captured!.jobId).toBe('job-1');
     expect(captured!.message.threadTs).toBe('root.1');
 
-    // …and simulates the approve button by resolving the gate.
     const did = approvals.resolve(captured!.jobId, 'approve', 'U-DENNIS');
     expect(did).toBe(true);
 

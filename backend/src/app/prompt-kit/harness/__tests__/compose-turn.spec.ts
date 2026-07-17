@@ -41,7 +41,6 @@ describe('composeTurn', () => {
         '<user name="Ada" at="2026-07-04T00:00:03.000Z">third</user>',
       ].join('\n'),
     );
-    // Chronological order among the coalesced <user> chunks is preserved (stable within kind).
     const order = ['first', 'second', 'third'].map((t) => turn.indexOf(t));
     expect(order).toEqual([...order].sort((a, b) => a - b));
   });

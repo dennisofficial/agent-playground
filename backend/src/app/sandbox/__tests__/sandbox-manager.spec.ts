@@ -24,10 +24,6 @@ import type { SandboxAttachInput } from '../sandbox-provider.port';
 const env = (v: Record<string, string | undefined> = {}) =>
   ({ get: (k: string) => v[k] }) as unknown as EnvService;
 
-/**
- * A fake ContainerEngine whose `list`/`listNetworks`/`listVolumes` return scripted state and whose
- * `removeNetwork`/`removeVolume` record (or reject) so we can assert the orphan-reaper's name-matching.
- */
 function fakeEngine(state: {
   containers: string[];
   networks: string[];
@@ -82,7 +78,6 @@ const manager = (engine: ContainerEngine) =>
 
 describe('dedupeBindsByTarget', () => {
   it('drops a colliding target keeping the LAST occurrence (system bind wins)', () => {
-    // Cache mount (empty per-thread dir) pushed first, then the system shared store at the same target.
     const { binds, dropped } = dedupeBindsByTarget([
       '/caches/thread/pnpm-store:/.atlas/pnpm-store',
       '/agent-home/pnpm-store:/.atlas/pnpm-store',
@@ -196,7 +191,6 @@ describe('rebaseDotGit', () => {
 describe('SandboxManager.reapOrphanedArtifacts', () => {
   it('removes only atlas-sbx artifacts whose owning container is gone', async () => {
     const { engine, removedNetworks, removedVolumes } = fakeEngine({
-      // `...-b` is a live sandbox; `...-a` was torn down but leaked its net/vol.
       containers: ['atlas-sbx-team-proj-b', 'unrelated-container'],
       networks: ['atlas-sbx-team-proj-a-net', 'atlas-sbx-team-proj-b-net', 'bridge', 'host'],
       volumes: ['atlas-sbx-team-proj-a-dind', 'atlas-sbx-team-proj-b-dind', 'pnpm-store'],
@@ -205,7 +199,6 @@ describe('SandboxManager.reapOrphanedArtifacts', () => {
     const result = await manager(engine).reapOrphanedArtifacts();
 
     expect(result).toEqual({ networks: 1, volumes: 1 });
-    // the orphan (no `...-a` container) is reclaimed; the live one + non-atlas artifacts are untouched.
     expect(removedNetworks).toEqual(['atlas-sbx-team-proj-a-net']);
     expect(removedVolumes).toEqual(['atlas-sbx-team-proj-a-dind']);
   });
@@ -240,8 +233,6 @@ describe('SandboxManager.reapOrphanedArtifacts', () => {
   });
 
   it('protects an in-flight create: a `-net`/`-dind` whose container does not exist YET is not reaped', async () => {
-    // Simulates `attach` mid-create: the network/volume exist (ensureNetwork ran) but the container has not
-    // been created, so there is no live container name matching the stem. The create-stamp must protect it.
     const { engine, removedNetworks, removedVolumes } = fakeEngine({
       containers: [],
       networks: ['atlas-sbx-inflight-net'],
@@ -262,8 +253,6 @@ describe('SandboxManager.reapOrphanedArtifacts', () => {
   });
 
   it('reaps once the create-stamp ages past the grace window, and prunes the stale stamp', async () => {
-    // A create that started but never produced a container (crash) leaves a stamp; after the grace window it
-    // must no longer protect the leaked artifacts, and the stale map entry is pruned.
     const { engine, removedNetworks, removedVolumes } = fakeEngine({
       containers: [],
       networks: ['atlas-sbx-dead-net'],
@@ -284,9 +273,6 @@ describe('SandboxManager.reapOrphanedArtifacts', () => {
 });
 
 describe('SandboxManager.teardownByIdentity', () => {
-  // The deterministic name `attach` derives for a thread-keyed sandbox (keyed by jobId alone — the
-  // globally-unique PK): `atlas-sbx-thread-<id>`. Terminal cleanup must resolve this WITHOUT a container_id,
-  // because a boot reconcile nulls the persisted id while the real container keeps running.
   const NAME = 'atlas-sbx-thread-abc';
   const sandbox = (): FeatureSandbox => ({
     repoId: 'proj',
@@ -295,7 +281,6 @@ describe('SandboxManager.teardownByIdentity', () => {
     gitUrl: '',
   });
 
-  /** A fake engine that knows ONE container by name, recording every container/net/volume removal. */
   function fake(opts: { containerExists: boolean }) {
     const removedContainers: string[] = [];
     const removedNetworks: string[] = [];
@@ -330,7 +315,6 @@ describe('SandboxManager.teardownByIdentity', () => {
         removedVolumes.push(name);
       }),
       list: vi.fn(async (): Promise<ContainerInfo[]> => []),
-      // Resolve ONLY by the deterministic name (a running orphan has no id we still hold).
       inspect: vi.fn(
         async (idOrName: string): Promise<ContainerInfo | null> =>
           opts.containerExists && idOrName === NAME ? container : null,
@@ -375,8 +359,6 @@ describe('SandboxManager.teardownByIdentity', () => {
 });
 
 describe('SandboxManager.attach — onMilestone', () => {
-  // CONFIG_REV is a private module constant (currently 16); mirrored here to construct a matching
-  // fingerprint label for the warm-reuse case. `atlas.cfg` mirrors the private L_CFG label key.
   const CONFIG_REV = 16;
   const IMAGE_ID = 'img-1';
   const FINGERPRINT = `${IMAGE_ID}|cfg${CONFIG_REV}|mnone|snone`; // no mounts + no setup script in these tests
@@ -387,8 +369,6 @@ describe('SandboxManager.attach — onMilestone', () => {
   });
   afterEach(() => rmSync(agentHomeRoot, { recursive: true, force: true }));
 
-  /** A fake engine that lets `attach()` run to completion: image ready, create succeeds, waitReady
-   *  resolves on its first poll (no real 1s waits). */
   function fullFakeEngine(existing: ContainerInfo | null) {
     const createContainer = vi.fn(async () => 'new-container-id');
     const engine: ContainerEngine = {
@@ -415,8 +395,6 @@ describe('SandboxManager.attach — onMilestone', () => {
     return { engine, createContainer };
   }
 
-  /** A fake `SandboxImageBuilder` whose `ensureImage` mirrors the real "fires onBuildStart only on a
-   *  real rebuild" contract, controlled directly per test (bypasses real context-hashing entirely). */
   function fakeBuilder(rebuilds: boolean) {
     const ensureImage = vi.fn(async (onBuildStart?: () => void) => {
       if (rebuilds) onBuildStart?.();
@@ -425,8 +403,6 @@ describe('SandboxManager.attach — onMilestone', () => {
     return { ensureImage } as unknown as SandboxImageBuilder;
   }
 
-  // worktreePath is NOT a real git repo — attach()'s `gitCommonDir` shells out to `git rev-parse` and
-  // safely returns undefined on failure (no linked-worktree .git bind), which is fine for these tests.
   const sandbox = (): FeatureSandbox => ({
     repoId: 'proj',
     branch: 'main',
@@ -481,12 +457,9 @@ describe('SandboxManager.attach — onMilestone', () => {
       ]
     )[0];
     expect(spec.init).toBe(true);
-    // CPU is UNCAPPED by default — a hard NanoCpus ceiling starves the co-resident engine. Fairness is soft
-    // (SANDBOX_CPU_SHARES) + the in-container nice gap instead.
     expect(spec.nanoCpus).toBeUndefined();
     expect(spec.memoryBytes).toBe(24 * 1024 ** 3);
     expect(spec.pidsLimit).toBe(8192);
-    // No SANDBOX_AGENT_NICE override ⇒ the image's baked Dockerfile default is used, so no create-env entry.
     expect(spec.env?.ATLAS_AGENT_NICE).toBeUndefined();
   });
 
@@ -534,7 +507,6 @@ describe('SandboxManager.attach — onMilestone', () => {
     const spec = (createContainer.mock.calls[0] as unknown as [{ binds: string[] }])[0];
     const playgroundBind = spec.binds.find((b) => b.endsWith(':/playground'));
     expect(playgroundBind).toBeDefined();
-    // Host side resolves to the jobId-keyed dir (the int test proves it lives outside the worktree).
     const hostDir = playgroundBind!.slice(0, -':/playground'.length);
     expect(hostDir).toBe(mgr.playgroundDirHost('org1', 'job1'));
   });
@@ -556,8 +528,6 @@ describe('SandboxManager.attach — onMilestone', () => {
     const spec = (createContainer.mock.calls[0] as unknown as [{ binds: string[] }])[0];
     const homeBind = spec.binds.find((b) => b.endsWith(':/home/atlas'));
     expect(homeBind).toBeDefined();
-    // Host side is per-repo (caches/<org>/<slug>/_home) — install-once/login-once is shared across a repo's
-    // jobs, but one repo can never populate another repo's HOME/bin.
     expect(homeBind!.slice(0, -':/home/atlas'.length)).toContain(
       join('caches', 'org1', 'proj', '_home'),
     );
@@ -583,15 +553,12 @@ describe('SandboxManager.attach — onMilestone', () => {
     } as SandboxAttachInput);
 
     const spec = (createContainer.mock.calls[0] as unknown as [{ binds: string[] }])[0];
-    // External mount lands at the exact absolute container path (NOT under /workspace); host dir under _ext.
     const ext = spec.binds.find((b) => b.endsWith(':/root/.config/gcloud'));
     expect(ext).toBeDefined();
     expect(ext!.slice(0, -':/root/.config/gcloud'.length)).toContain(
       join('_shared-rw', '_ext', 'root/.config/gcloud'),
     );
-    // Reserved external target is dropped — no bind for it at all.
     expect(spec.binds.some((b) => b.endsWith(':/etc/foo'))).toBe(false);
-    // Worktree-relative mount still lands under /workspace.
     expect(spec.binds.some((b) => b.endsWith(':/workspace/.cache'))).toBe(true);
   });
 
@@ -658,7 +625,6 @@ describe('SandboxManager.attach — onMilestone', () => {
     ).resolves.toBeDefined();
   });
 
-  // ── cold-boot setup script ──────────────────────────────────────────────────────────────────────
   const SCRIPT = 'pnpm install';
   const scriptFp = (s: string) => createHash('sha256').update(s).digest('hex').slice(0, 12);
 
@@ -723,7 +689,6 @@ describe('SandboxManager.attach — onMilestone', () => {
 
   it('reports a non-zero exit as ok:false WITHOUT throwing', async () => {
     const { engine } = fullFakeEngine(null);
-    // Fail only the setup-script exec; keep waitReady's `docker info` succeeding.
     engine.exec = vi.fn(async (_id: string, argv: string[]) =>
       argv[0] === 'bash'
         ? { exitCode: 2, stdout: 'boom', stderr: 'nope' }
@@ -847,7 +812,6 @@ describe('SandboxManager.probeLiveness', () => {
       containerStartedAt: '2026-07-02T11:00:00Z',
       alive: [100, 300],
     });
-    // Resolved the container by its deterministic name → id 'c1', and execed a kill -0 loop over the pgids.
     expect(exec).toHaveBeenCalledWith(
       'c1',
       ['sh', '-c', expect.stringContaining('kill -0')],

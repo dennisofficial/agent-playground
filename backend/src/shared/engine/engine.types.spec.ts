@@ -29,7 +29,6 @@ describe('cleanAuthHaltReason', () => {
     expect(cleanAuthHaltReason(noCred, 'codex')).toBe(
       'No Codex account is connected for this org — connect one in Settings, then resume.',
     );
-    // A raw mid-turn 401 (no engine hint in the text) still renders Codex copy from the passed engine.
     expect(cleanAuthHaltReason('401 Unauthorized', 'codex')).toBe(
       'Your Codex login needs to be reconnected — reconnect the account in Settings, then resume.',
     );

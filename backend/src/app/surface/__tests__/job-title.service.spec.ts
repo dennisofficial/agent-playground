@@ -3,12 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { sanitizeTitle, type JobTitleChainFactory } from '../../titling/job-title.chain';
 import { JobTitleService } from '../job-title.service';
 
-/**
- * Unit tests for the job-title service. The LLM is faked behind the `JOB_TITLE_CHAIN` factory (a
- * `RunnableLambda`), so no network — we pin the compare-and-set persist + the live-frame emission rules.
- */
 
-/** A factory that returns a chain yielding `title` (or throwing). `null` factory result = no key. */
 function fakeFactory(title: string | null, opts: { throws?: boolean } = {}): JobTitleChainFactory {
   return async () => {
     if (title === null && !opts.throws) return undefined;
@@ -99,7 +94,6 @@ describe('sanitizeTitle', () => {
     expect(sanitizeTitle("Sorry, I can't help with that")).toBeUndefined();
     expect(sanitizeTitle("Sure, here's a title: Repo Overview")).toBeUndefined();
     expect(sanitizeTitle('The title is Repo Overview')).toBeUndefined();
-    // A real noun-phrase title still passes.
     expect(sanitizeTitle('Repo Overview')).toBe('Repo Overview');
     expect(sanitizeTitle('Image Upload Pipeline')).toBe('Image Upload Pipeline');
   });

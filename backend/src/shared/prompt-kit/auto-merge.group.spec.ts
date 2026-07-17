@@ -3,11 +3,6 @@ import { Agent } from './system/agent';
 import { renderAgentPrompt } from './system/assemble';
 import { hasAutoMerge } from './system/conditions';
 
-/**
- * The auto-merge fragment (`auto-merge.group`) — announces AUTO-MERGE MODE to the build brain when the
- * job's `autoMerge` setting is on, and vanishes (byte-identical prompt) when it is off/unset — the
- * no-misfire invariant.
- */
 const MARKER = 'AUTO-MERGE MODE';
 
 describe('hasAutoMerge', () => {
@@ -33,7 +28,6 @@ describe('auto-merge.group — auto-merge-mode announcement', () => {
       settings: { autoMerge: false },
     });
     expect(out).not.toContain(MARKER);
-    // The no-misfire invariant: autoMerge off ⇒ exactly today's prompt.
     expect(out).toBe(baseline);
   });
 

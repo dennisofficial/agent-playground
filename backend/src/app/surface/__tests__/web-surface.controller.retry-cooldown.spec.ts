@@ -3,11 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 import type { CurrentOrgCtx } from '../../org/current-org.decorator';
 import { WebSurfaceController } from '../web-surface.controller';
 
-/**
- * Mirrors the `createQueryBuilder` mock pattern in `brain-store.service.spec.ts` — a fluent stub where every
- * chained builder method returns itself, and `execute` is a per-test-controlled `vi.fn()` standing in for the
- * `claimManualRetry` CAS update.
- */
 function fakeJobsRepo(row: {
   id: string;
   org_id: string;
@@ -195,7 +190,6 @@ describe('WebSurfaceController — manual retry cooldown', () => {
       const result = await controller.retryTurn(ORG, 'job-1');
 
       expect(jobs.execute).toHaveBeenCalledTimes(1);
-      // The resume nudge now seeds through the `StimulusIntake` seam as a typed `retry_resume_nudge`.
       expect(intakeChat).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'retry_resume_nudge',

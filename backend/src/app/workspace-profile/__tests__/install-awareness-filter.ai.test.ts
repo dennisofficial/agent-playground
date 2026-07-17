@@ -1,17 +1,3 @@
-/**
- * LIVE, model-backed proof of the Stage-2 install-awareness filter (real Anthropic Haiku call — runs only
- * under `pnpm test:ai` with `ANTHROPIC_API_KEY` in the env; mirrors `autofix/autofix.stage.ai.test.ts`'s
- * `describeLive` skip-gate so the default/CI run stays free and deterministic). Drives the REAL
- * `AnthropicInstallAwarenessFilter` (no fake/mock LLM) against three representative installs and asserts
- * the filter actually discriminates:
- *   1. a genuinely new, profile-relevant install on a bare profile → kept, with a concrete suggestion;
- *   2. a transient one-off / sub-dependency run → suppressed;
- *   3. an install already covered by an installed skill in the profile → suppressed.
- *
- * Verdicts are captured to `$ATLAS_EVIDENCE_DIR/install-awareness-filter/RESULTS.md` (falls back to
- * `/context/evidence` when the env var is unset, e.g. a local `pnpm test:ai` run outside Atlas) as the
- * required live proof that Stage 2 filters/enriches against a real model, not a mock.
- */
 import type { InstallMatch } from '@shared/prompt-kit/jit/install-awareness';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -116,7 +102,6 @@ describeLive('AnthropicInstallAwarenessFilter — LIVE Haiku filter/enricher', (
     expect(verdict).toBeDefined();
     expect(verdict?.suppress).toBe(expectSuppress);
     if (!expectSuppress) {
-      // A kept verdict must justify itself — a non-empty suggestion or reason, not a silent no-op.
       expect((verdict?.suggestion || verdict?.reason || '').length).toBeGreaterThan(0);
     }
   });

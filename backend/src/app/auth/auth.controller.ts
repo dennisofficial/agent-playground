@@ -6,14 +6,6 @@ import type { UserEntity } from '../persistence/entities';
 import { AuthService } from './auth.service';
 import { LoginDto, RegisterDto, type AuthSession } from './dto/auth.dto';
 
-/**
- * `/auth/*` — email/password auth for the web console, mounted on the Atlas HTTP app and reached
- * same-origin via the web app's `/auth/*` proxy rewrite. Cookie-mode (the `@workspace/auth` web
- * client): login/register return `{ user: <session> }`; `/auth/session` returns the BARE session.
- *
- * Validation runs through the global `APP_PIPE` (registered in `AppModule`); the DTOs below are
- * class-validator-decorated.
- */
 @Controller('auth')
 export class AuthController {
   constructor(
@@ -43,8 +35,6 @@ export class AuthController {
     return { user };
   }
 
-  /** Guarded — 401 when no/invalid cookie, which the web client reads as "signed out". Carries the
-   *  caller's orgs so the web app can route (no org → onboarding). */
   @Get('session')
   async session(@CurrentUser() user: UserEntity): Promise<AuthSession & { orgs: OrgSummary[] }> {
     const orgs = await this.orgs.listForUser(user.id);

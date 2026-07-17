@@ -5,12 +5,6 @@ import type { CurrentOrgCtx } from '../../org/current-org.decorator';
 import { OrgOwnerGuard } from '../../org/org-owner.guard';
 import { WebSurfaceController } from '../web-surface.controller';
 
-/**
- * The onboarding-brain MCP path on the web surface: the owner-gated `mcp-proposals/:id/approve` endpoint
- * (the ONLY place a brain-authored MCP write lands) and the `provide-secret` MCP-target lane. Pure unit —
- * the controller is built with mocked collaborators; guards are asserted via route metadata (they are the
- * enforcement boundary, applied by Nest, not exercised in a direct method call).
- */
 type Mocks = {
   seedSystemNotification: ReturnType<typeof vi.fn>;
   intakeChat: ReturnType<typeof vi.fn>;
@@ -142,16 +136,13 @@ describe('WebSurfaceController — MCP proposal approve (owner-gated commit)', (
     const res = await controller.approveMcpProposal(OWNER, 'job-1', 'mcp-1');
 
     expect(res).toMatchObject({ ok: true, committed: ['github', 'deepwiki'] });
-    // No scope on the card ⇒ defaults to the thread's repo for every write.
     expect(m.write).toHaveBeenCalledTimes(2);
     for (const call of m.write.mock.calls) {
       expect(call[0]).toBe('orgA'); // orgId
       expect(call[1]).toBe('repo-1'); // dbScope = thread.repo_id
     }
-    // github's Authorization is committed as an EMPTY secret placeholder (value collected later).
     const githubInput = m.write.mock.calls.find((c) => c[2] === 'github')![3];
     expect(githubInput.headers).toEqual([{ name: 'Authorization', value: '', secret: true }]);
-    // deepwiki has no secret slot → probed now so its tool list populates; github (secret) is NOT probed.
     expect(m.validate).toHaveBeenCalledTimes(1);
     expect(m.markMcpProposalApproved).toHaveBeenCalledWith('job-1', 'mcp-1', [
       'github',
@@ -211,13 +202,9 @@ describe('WebSurfaceController — MCP proposal approve (owner-gated commit)', (
     const res = await controller.approveMcpProposal(OWNER, 'job-1', 'mcp-1');
 
     expect(res).toMatchObject({ ok: true, committed: ['jira'] });
-    // mcpProposalToInput carries authKind → the store writes an oauth row.
     const jiraInput = m.write.mock.calls.find((c) => c[2] === 'jira')![3];
     expect(jiraInput.authKind).toBe('oauth');
-    // An UNCONNECTED oauth server must NOT be static-probed (its endpoint 401s until the owner connects).
     expect(m.validate).not.toHaveBeenCalled();
-    // The approve seeds a typed `mcp_approved` confirmation: the oauth server rides `needConnect` (→ the
-    // "Connect" copy) and contributes no `readyStatic` (→ the "No secrets needed" copy stays silent).
     expect(m.intakeChat).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'mcp_approved',
@@ -279,7 +266,6 @@ describe('WebSurfaceController — provide-secret MCP-target lane', () => {
     });
 
     expect(res).toMatchObject({ ok: true });
-    // 'header' maps to the store's 'headers' slot; scope is the thread repo.
     expect(m.setSecret).toHaveBeenCalledWith(
       'orgA',
       'repo-1',
@@ -288,14 +274,9 @@ describe('WebSurfaceController — provide-secret MCP-target lane', () => {
       'Authorization',
       'Bearer ghp_x',
     );
-    // MCP secrets are resolved per-turn → no worktree rehydration.
     expect(m.rehydrateThread).not.toHaveBeenCalled();
-    // Best-effort re-probe after the key lands.
     expect(m.validate).toHaveBeenCalledTimes(1);
-    // Per-card lane: stamps provided_at + decrements open_secret_count in one transaction (no pointer to clear).
     expect(m.markSecretProvidedPerCard).toHaveBeenCalledWith('job-1', 's-1');
-    // The masked confirmation is a typed `secret_provided` seed naming the server/slot — the value is never
-    // carried in the message (compose-message.ts derives the masked body).
     expect(m.intakeChat).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'secret_provided',
@@ -318,7 +299,6 @@ describe('WebSurfaceController — provide-secret MCP-target lane', () => {
       mcp: { server: 'jira', slot: 'header', key: 'Authorization' },
     };
     const { controller, m } = makeController({ secretCard });
-    // The target row is an oauth server — the authoritative guard must refuse before setSecret.
     m.rawRow.mockResolvedValueOnce({
       auth_kind: 'oauth',
       transport: 'sse',
@@ -332,10 +312,7 @@ describe('WebSurfaceController — provide-secret MCP-target lane', () => {
     expect(res.ok).toBe(false);
     expect(m.setSecret).not.toHaveBeenCalled();
     expect(m.validate).not.toHaveBeenCalled();
-    // Per-card lane: no single-slot pointer to clear — stamp the card terminal (withdrawn) instead.
     expect(m.withdrawSecretRequest).toHaveBeenCalledWith('job-1', 's-1', expect.any(String));
-    // The failure confirmation is a typed `secret_provided` seed with the oauth-refused outcome; the pasted
-    // value never rides the message.
     expect(m.intakeChat).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'secret_provided',

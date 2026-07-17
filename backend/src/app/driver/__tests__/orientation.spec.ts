@@ -85,7 +85,6 @@ describe('renderBatchTask orientation injection', () => {
     );
     expect(task).toContain('Repo orientation');
     expect(task).toContain('Monorepo — verify: pnpm -C backend test:unit');
-    // Advisory framing: the code + specs remain authoritative over a possibly-stale cheat-sheet.
     expect(task).toContain('remain authoritative');
   });
 

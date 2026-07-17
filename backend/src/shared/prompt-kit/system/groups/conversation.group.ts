@@ -1,10 +1,3 @@
-/**
- * prompt-kit / groups / conversation — the GRILLING + DECISION machinery (normal brain only): why the plan
- * is a handoff, how to calibrate the interview, the grilling protocol, grilling against the domain, the
- * recommend≠decide rule, and asking/locking decisions via the tools.
- *
- * TOPIC bucket: the planning conversation. Interpolates `DECISION_CLASS_IDS` exactly as the source did.
- */
 import { DECISION_CLASS_IDS } from '../../../domain';
 import { Agent, ENGINEERING_STAGES } from '../agent';
 import { isBuildBrain, isOnboarding, notOnboarding } from '../conditions';
@@ -12,8 +5,6 @@ import { Fragment, FragmentGroup } from '../fragment.decorator';
 
 @FragmentGroup()
 export class ConversationGroup {
-  /** How to read harness-injected XML tags — emitted right AFTER the identity in BOTH modes (normal
-   *  identity is order 1000, onboarding identity 2000), so the prompt still opens with "You are Atlas". */
   @Fragment({
     usedBy: ENGINEERING_STAGES,
     order: 1005,
@@ -48,7 +39,6 @@ export class ConversationGroup {
     ].join('\n');
   }
 
-  /** Why you grill — the plan is a handoff. */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 1090,
@@ -66,7 +56,6 @@ export class ConversationGroup {
     ].join('\n');
   }
 
-  /** Calibrate the interview to the work. */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 1100,
@@ -83,7 +72,6 @@ export class ConversationGroup {
     ].join('\n');
   }
 
-  /** The grilling protocol (always-ask classes). */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 1110,
@@ -98,7 +86,6 @@ export class ConversationGroup {
     ].join('\n');
   }
 
-  /** Grill against the domain (the four moves). */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 1120,
@@ -132,7 +119,6 @@ export class ConversationGroup {
     ].join('\n');
   }
 
-  /** Recommend ≠ decide + one decision per call. */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 1130,
@@ -154,7 +140,6 @@ export class ConversationGroup {
     ].join('\n');
   }
 
-  /** Ask via the tool + lock each decision (interpolates DECISION_CLASS_IDS). */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 1140,

@@ -2,7 +2,6 @@ import type Redis from 'ioredis';
 import { describe, expect, it } from 'vitest';
 import { GithubAppStateStore } from '../github-app-state.store';
 
-/** Map-backed fake standing in for the `ioredis` calls the store makes: `set(k,v,'EX',ttl)` / atomic eval consume. */
 class FakeRedis {
   private readonly data = new Map<string, string>();
 
@@ -47,7 +46,6 @@ describe('GithubAppStateStore', () => {
 
   it('a legacy nonce holding a bare orgId string degrades to userId: null', async () => {
     const { store, redis } = makeStore();
-    // Simulate a nonce stashed by the pre-userId code path: the raw Redis value is just the orgId.
     await redis.set('github_app_state:legacy-nonce', 'org1');
     await expect(store.consume('legacy-nonce')).resolves.toEqual({
       orgId: 'org1',

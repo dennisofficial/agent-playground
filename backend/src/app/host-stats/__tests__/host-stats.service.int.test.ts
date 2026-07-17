@@ -3,11 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ContainerEngine } from '../../sandbox/container-engine.port';
 import { HostStatsService } from '../host-stats.service';
 
-/**
- * Integration test (D-crux): proves `collect()` reports real, plausible numbers for the actual host
- * this test runs on, not just that the plumbing type-checks. Binds a fake `CONTAINER_ENGINE` since the
- * container counts/df aren't the point here.
- */
 function fakeEngine(overrides: Partial<ContainerEngine> = {}): ContainerEngine {
   return {
     ensureNetwork: vi.fn(),

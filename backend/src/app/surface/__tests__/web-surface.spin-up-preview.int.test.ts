@@ -1,24 +1,3 @@
-/**
- * LIVE HTTP proof for the "Spin up preview" server-side seeder: boots the REAL `AppModule` over HTTP
- * (supertest, real cookie auth + `OrgMembershipGuard`), seeds a job parked at the ship gate with its
- * durable ship card directly against live Postgres, then POSTs
- * `.../jobs/:jobId/spin-up-preview` and asserts the endpoint's full contract:
- *
- *   - at the gate, FIRST click → 201 `{ ok:true, ts:'' }`, stamps the ship card `previewRequestedAt`, and
- *     durably seeds the preview-prep body onto the job's `post_build` session (d14) — the pump runs that
- *     turn to completion (fake engine) before the POST resolves, and writes ONE `seed:preview:<jobId>`
- *     pill row (label + full body in `meta.fullBody`), asserted directly off `messages`. There is no
- *     rendered timestamp to echo (the durable pump owns delivery, not a live `surface.inbound$` emission).
- *   - a SECOND click → 201 `{ ok:true, ts:'' }`, no second seed row (idempotent double-click);
- *   - a job NOT at `awaiting_ship_review` → 201 `{ ok:false, ts:'' }`, no stamp, no seed.
- *
- * (The whole web-surface controller returns Nest's default 201 for POSTs — no `@HttpCode` anywhere; the
- * JSON body is the contract, mirroring `answerQuestion`/`provideSecret`.)
- *
- * Mirrors `web-surface.shipping.int.test.ts` for HTTP/auth setup. The `SANDBOX_PROVIDER` override mirrors
- * `streaming-resume.int.test.ts` — the seed now runs a real (fake-engine) turn on a fresh `post_build`
- * session, which lazily provisions the job's sandbox on its first turn.
- */
 
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
@@ -54,7 +33,6 @@ const fakeCreds = {
   engineAuth: async () => ({ secret: 'test-secret' }),
 };
 
-// Fixed ids → distinct from every other int test (which purge by their own ids).
 const ORG = '77777777-7777-4777-8777-777777777901';
 const REPO = '77777777-7777-4777-8777-777777777902';
 const GATE_JOB = '77777777-7777-4777-8777-777777777903';
@@ -118,11 +96,6 @@ function previewUrl(jobId: string): string {
   return `/web/orgs/${ORG}/repos/${REPO}/jobs/${jobId}/spin-up-preview`;
 }
 
-/**
- * The durable `seed:preview:<jobId>` pill row (if any) — the seed now lands as a `transcript_messages` row
- * on the job's `post_build` session, not a live `surface.inbound$` emission (d14). `text` carries the
- * curated label; `meta.fullBody` carries the full preview-prep body handed to the engine.
- */
 async function previewSeedRows(
   jobId: string,
 ): Promise<Array<{ text: string; meta: Record<string, unknown> }>> {
@@ -149,9 +122,6 @@ beforeAll(async () => {
     .useValue(fakeCreds)
     .overrideProvider(JobTitler)
     .useValue(new FakeThreadTitler())
-    // The preview seed now runs a real (fake-engine) turn on the job's `post_build` session, which
-    // lazily provisions the sandbox on its first turn — fake the provider so that provisioning resolves
-    // in-process instead of reaching for real Docker (mirrors `streaming-resume.int.test.ts`).
     .overrideProvider(SANDBOX_PROVIDER)
     .useValue({
       attach: async ({ sandbox }: { sandbox: unknown }) => sandbox,
@@ -195,12 +165,10 @@ beforeAll(async () => {
 }, 60_000);
 
 beforeEach(async () => {
-  // Fresh cards/jobs per test — each `it` seeds the exact status it needs.
   await ds.query(`DELETE FROM transcript_messages WHERE job_id = ANY($1)`, [
     [GATE_JOB, RUNNING_JOB],
   ]);
   await ds.query(`DELETE FROM jobs WHERE id = ANY($1)`, [[GATE_JOB, RUNNING_JOB]]);
-  // No stored preview recipe by default — each `it` that needs one sets it explicitly.
   await configStore.setPreviewInstructions(ORG, REPO, null);
 });
 
@@ -225,17 +193,12 @@ describe('spin-up-preview — POST .../jobs/:jobId/spin-up-preview (live Postgre
 
     const res = await request(server).post(previewUrl(GATE_JOB)).set('Cookie', ownerCookie);
 
-    // The whole web-surface controller returns 201 for POSTs (no `@HttpCode`); the body is the contract.
-    // The durable pump enqueues the seed without a rendered message row, so there is no timestamp to echo.
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({ ok: true, ts: '' });
 
-    // (b) the ship card is stamped.
     const card = await shipCard(GATE_JOB);
     expect(typeof card?.previewRequestedAt).toBe('string');
 
-    // (c) exactly one durable pill carrying the label + the full procedure (post-turn, so the fake-engine
-    // turn on the `post_build` session already ran to completion by the time the POST resolves).
     const rows = await previewSeedRows(GATE_JOB);
     expect(rows).toHaveLength(1);
     expect(rows[0].text).toBe('Spin up preview requested');

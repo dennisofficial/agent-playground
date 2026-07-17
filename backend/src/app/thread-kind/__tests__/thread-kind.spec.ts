@@ -10,10 +10,6 @@ import {
 } from '../registry';
 import type { ThreadKindSpec } from './spec';
 
-/**
- * The twin of prompt-kit's `validateFragments` test: the real registry must pass boot validation, and the
- * validator must fail loudly on the misconfigurations it guards (unknown Agent / laneKind / child kind).
- */
 describe('thread-kind registry', () => {
   it('the real registry passes boot validation (every kind binds a valid Agent + laneKind; children resolve)', () => {
     expect(() => validateThreadKinds()).not.toThrow();
@@ -122,8 +118,6 @@ describe('thread-kind registry', () => {
   });
 
   it('validateThreadKinds rejects a duplicate kind', () => {
-    // Strip children so the child-kind check (which would fire first on this 2-element array) doesn't mask
-    // the duplicate check we're asserting.
     const leaf: ThreadKindSpec = {
       ...threadKindSpec('builder'),
       children: undefined,

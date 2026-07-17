@@ -7,8 +7,6 @@ import { backfillThreadFromTurns } from '../turn-backfill';
 const line = (o: Record<string, unknown>): string => JSON.stringify(o);
 type Row = Partial<TranscriptMessageEntity>;
 
-/** A turn: prompt → text → a PAIRED tool → an UNPAIRED (interrupted) tool. `T*` timestamps let us assert
- *  created_at ordering. No end_turn — back-fill doesn't gate on it (the caller decides which turns to pass). */
 const TURN = [
   line({
     type: 'user',
@@ -61,8 +59,6 @@ const TURN = [
 
 const turnsOf = (jsonl = TURN) => parseSessionTranscriptTurns(jsonl).turns;
 
-/** A messages-repo mock: `save` accumulates; `getCount` answers the final-reply-present query; `getRawMany`
- *  answers persistedSdkUuids (alias `u`) or persistedToolIds (alias `id`, kind='tool') by the select alias. */
 function makeMessages(seed: Row[] = []) {
   const saved: Row[] = [...seed];
   const repo = {
@@ -141,8 +137,6 @@ describe('backfillThreadFromTurns', () => {
   });
 
   it('dedupes an individual block already present by sdkUuid (turn not skipped wholesale)', async () => {
-    // Final reply 'done reading' is NOT seeded, so the turn is processed; the Read (sdkUuid 'b-read') is
-    // already present, so only the text block lands.
     const jsonl = [
       line({
         type: 'user',
@@ -195,8 +189,6 @@ describe('backfillThreadFromTurns', () => {
   });
 
   it('dedupes a tool block already persisted by SDK tool_use id (meta.id)', async () => {
-    // Final reply differs from any seed so the turn is NOT skipped wholesale; the paired Read (id 'tr') is
-    // already persisted, so only the text block is inserted.
     const jsonl = [
       line({
         type: 'user',

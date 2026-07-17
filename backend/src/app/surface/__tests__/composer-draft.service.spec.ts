@@ -8,13 +8,7 @@ import type {
 } from '../../persistence/entities';
 import { ComposerDraftService } from '../composer-draft.service';
 
-/**
- * Pure unit tests: the encrypt/decrypt round-trip and the applied-cardId pruning are exercised against
- * in-memory repo stand-ins (no DB, no host filesystem) — attachment upload/promote paths are validated
- * live per `sections/02-backend.md`'s Validation section.
- */
 
-/** A tiny in-memory stand-in for a TypeORM repository (composite-key find/save/count/delete). */
 function memRepo<T extends object>(keys: (keyof T)[]): Repository<T> {
   let rows: T[] = [];
   const match = (where: Partial<T>) => (r: T) =>

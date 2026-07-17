@@ -3,8 +3,6 @@ import type { DataSource } from 'typeorm';
 const STATEMENT_TIMEOUT = '10s';
 const DEFAULT_ROWS = 1000;
 const HARD_ROW_CEILING = 50_000;
-/** Byte guard on the serialized (post row-cap) rows, independent of row count — a handful of huge rows
- *  (e.g. wide text/jsonb columns) can blow up a response even under the row cap. */
 export const MAX_RESULT_BYTES = 25 * 1024 * 1024; // 25 MB
 
 function effectiveLimit(limit: number | undefined): number {
@@ -14,15 +12,6 @@ function effectiveLimit(limit: number | undefined): number {
   return Math.min(Math.max(Math.floor(limit ?? DEFAULT_ROWS), 1), HARD_ROW_CEILING);
 }
 
-/**
- * App-layer guard: accept only a single read-only SELECT/WITH statement. Layered on top of the
- * structural SELECT-only mcp_reader DB role. Trims, strips ONE trailing semicolon, requires the statement
- * to start with SELECT or WITH, and rejects any remaining embedded ';'.
- *
- * Accepted tradeoff (trusted users): a ';' inside a string literal (e.g. SELECT ';') is rejected. The
- * subquery wrap in runReadOnlyQuery is the real structural block on a smuggled second statement, and the
- * DB role blocks writes regardless.
- */
 export function assertReadOnlySelect(raw: string): string {
   const trimmed = raw.trim().replace(/;\s*$/, '');
   if (trimmed === '') throw new Error('sql is required');
@@ -50,11 +39,6 @@ export async function runReadOnlyQuery(
       const rows: unknown[] = await qr.query(wrapped, params);
       let truncated = rows.length > effective;
       let kept = truncated ? rows.slice(0, effective) : rows;
-      // Byte guard: even under the row cap, a handful of huge rows can produce an oversized payload.
-      // Serialize each row ONCE and keep the longest prefix whose combined size fits, instead of
-      // re-serializing the whole array per dropped tail row (that is O(n²) and can block the
-      // single-threaded reader for seconds on a large result). Byte accounting mirrors
-      // JSON.stringify(array): `[` + `]` brackets plus a `,` between rows.
       if (kept.length > 0) {
         let total = 2; // '[' + ']'
         let fit = 0;
@@ -76,12 +60,7 @@ export async function runReadOnlyQuery(
         truncated,
       };
     } finally {
-      // ALWAYS end the transaction — on a query error or statement_timeout the txn is left aborted, and
-      // releasing without rolling back returns a poisoned connection to the pool. .catch swallows
-      // "no transaction in progress".
       await qr.query('ROLLBACK').catch(() => undefined);
-      // A read-only SELECT can still invoke session-level functions (for example advisory locks). Reset
-      // the pooled connection before returning it so one diagnostic query cannot affect the next call.
       await qr.query('DISCARD ALL').catch(() => undefined);
     }
   } finally {

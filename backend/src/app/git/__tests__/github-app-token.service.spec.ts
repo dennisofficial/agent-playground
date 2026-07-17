@@ -21,7 +21,6 @@ function fakeEnv(overrides: Record<string, string | undefined> = {}): EnvService
 
 type Call = { url: string; init?: RequestInit };
 
-/** URL-routing fetch stub: matches requests by a substring against a list of {match, responses} routes. */
 function routedFetch(
   routes: Array<{
     match: string | RegExp;

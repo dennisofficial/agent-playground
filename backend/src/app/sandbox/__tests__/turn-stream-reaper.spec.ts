@@ -10,7 +10,6 @@ const env = (vals: Record<string, unknown> = {}) =>
   ({ get: (k: string) => vals[k] }) as unknown as EnvService;
 const election = {} as unknown as LeaderElectionService;
 
-/** Seed a turn's spec+events streams into the fake and return its key list. */
 const seedTurn = (redis: InMemoryRedisStream, turnId: string): string[] => {
   const k = turnKeys(turnId);
   void redis.xadd(k.spec, { turnId });

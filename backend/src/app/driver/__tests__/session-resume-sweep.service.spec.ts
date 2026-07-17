@@ -7,12 +7,6 @@ import type { DriverStoreService } from '../driver-store.service';
 import { SessionResumeSweep } from '../session-resume-sweep.service';
 import type { ThreadDriver } from '../thread-driver.service';
 
-/**
- * The sweep un-parks a due `session_resume_at` clock. Two park KINDS now share the clock: the existing
- * `session_limit` park and the new host-backstop `retry` park. They diverge on lane:
- *   build → `retry` re-drives with NO halt (`resumeRetry`), `session_limit` uses `resumePaused`.
- *   main  → `retry` seeds the "Reconnecting…" nudge, `session_limit` seeds the reset nudge.
- */
 describe('SessionResumeSweep — retry vs session-limit park routing', () => {
   let driver: {
     resumePaused: ReturnType<typeof vi.fn>;
@@ -102,9 +96,7 @@ describe('SessionResumeSweep — retry vs session-limit park routing', () => {
     expect(repoId).toBe('repo-1');
     expect(jobId).toBe('job-1');
     expect(nudge).toEqual(retryResumeNudge('Add retries'));
-    // The retry re-drive renders NO operator-facing pill — it still drives the turn, silently.
     expect(opts.seedRow).toBe('skip');
-    // Main lane has no halt — the clock is the park marker, so the sweep clears it.
     expect(driverStore.setSessionResume).toHaveBeenCalledWith('job-1', null, null);
   });
 

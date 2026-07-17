@@ -1,24 +1,3 @@
-/**
- * RepoController HTTP-boundary integration test — the gap the unit/service specs structurally can't reach.
- *
- * `onboarding.service.spec.ts` already covers the repo CRUD BEHAVIOR (connect/revalidate/update/disconnect
- * cascade + cross-tenant 404s) by calling the service directly. But the controller's protection lives
- * entirely in route decorators — `@UseGuards(OrgMembershipGuard)` (membership) + `@UseGuards(OrgOwnerGuard)`
- * (owner-only writes) — and a direct method call NEVER runs guards. So nothing today proves the writes are
- * actually owner-gated: delete `@UseGuards(OrgOwnerGuard)` and every existing test still passes.
- *
- * This boots the REAL `AppModule` over HTTP (supertest) against live Postgres, mocking ONLY external
- * boundaries (LLM/engine/git/PR + a credential resolver that yields a GitHub token so the access probe
- * runs). It drives the real auth cookie + guard pipeline end-to-end:
- *   - unauthenticated → 401
- *   - owner → full C/R/U/D lifecycle (+ accessOk true/false)
- *   - owner of TWO orgs manages each independently (the multi-org capability)
- *   - member → can READ but every write 403s (OrgOwnerGuard)
- *   - non-member → every route 403s (OrgMembershipGuard)
- *
- * Disconnect is exercised on an EMPTY repo (asserts `threadsDeleted: 0`); the cascade-WITH-jobs path is
- * covered by `onboarding.service.spec.ts` (avoids coupling this HTTP test to sandbox/worktree teardown).
- */
 
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
@@ -35,9 +14,7 @@ import { CredentialResolver } from '../credential-resolver.service';
 import { CLASSIFIER_LLM } from '../decision-gate';
 import { GithubPrService, LocalGitService } from '../git';
 
-// ── External boundary stubs ─────────────────────────────────────────────────────────────────────────
 
-/** GitHub PR service stub: a repo is reachable unless its name contains "ghost" (drives accessOk=false). */
 class StubGithubPrService {
   async getRepo(_token: string, owner: string, repo: string): Promise<unknown> {
     return repo.includes('ghost') ? null : { fullName: `${owner}/${repo}`, defaultBranch: 'main' };
@@ -54,7 +31,6 @@ class StubGithubPrService {
   }
 }
 
-/** Credential resolver stub: yields a GitHub token so `validateRepo` reaches the (stubbed) access probe. */
 const fakeCreds = {
   anthropicKey: async () => undefined,
   openaiKey: async () => undefined,
@@ -63,7 +39,6 @@ const fakeCreds = {
   engineAuth: async () => ({ secret: 'test-secret' }),
 };
 
-// ── Sentinel tenant (fixed ids → kept distinct from every other int test) ────────────────────────────
 
 const ORG1 = '55555555-5555-4555-8555-555555555551';
 const ORG2 = '55555555-5555-4555-8555-555555555552';
@@ -79,7 +54,6 @@ let server: ReturnType<NestExpressApplication['getHttpServer']>;
 let ownerCookie: string;
 let memberCookie: string;
 
-/** Register a user over HTTP; return its auth cookie jar + id. Registration is open + immediately usable. */
 async function register(email: string): Promise<{ cookie: string; id: string }> {
   const res = await request(server)
     .post('/auth/register')
@@ -90,7 +64,6 @@ async function register(email: string): Promise<{ cookie: string; id: string }> 
   return { cookie, id: res.body.user.id as string };
 }
 
-/** Remove this test's orgs + users (idempotent — survives a prior failed run; fixed ids would PK-collide). */
 async function purge(): Promise<void> {
   for (const org of [ORG1, ORG2]) {
     await ds.query(`DELETE FROM jobs WHERE org_id = $1`, [org]).catch(() => undefined);
@@ -144,7 +117,6 @@ beforeAll(async () => {
   ownerCookie = owner.cookie;
   memberCookie = member.cookie;
 
-  // Two orgs the OWNER owns (the multi-org case); the member belongs to ORG1 only.
   for (const [id, slug] of [
     [ORG1, 'repo-it-one'],
     [ORG2, 'repo-it-two'],
@@ -172,7 +144,6 @@ afterAll(async () => {
   await app?.close();
 });
 
-/** Wipe just the repos/jobs between tests so each starts from a clean repo list (orgs/users persist). */
 beforeEach(async () => {
   for (const org of [ORG1, ORG2]) {
     await ds.query(`DELETE FROM jobs WHERE org_id = $1`, [org]);
@@ -187,7 +158,6 @@ describe('RepoController HTTP (auth + owner/membership guards, live Postgres)', 
   });
 
   it('owner: full connect → list → update → revalidate → disconnect lifecycle', async () => {
-    // CREATE
     let res = await request(server)
       .post(reposPath(ORG1))
       .set('Cookie', ownerCookie)
@@ -198,7 +168,6 @@ describe('RepoController HTTP (auth + owner/membership guards, live Postgres)', 
       name: 'repo-one',
       accessOk: true,
     });
-    // Repo-level merge defaults — a freshly-connected repo gets the built-in default ('squash' + delete branch).
     expect(res.body).toMatchObject({
       defaultAutoMergeMethod: 'squash',
       defaultAutoMergeDeleteBranch: true,
@@ -206,14 +175,12 @@ describe('RepoController HTTP (auth + owner/membership guards, live Postgres)', 
     const repoId = res.body.id as string;
     expect(repoId).toBeTruthy();
 
-    // READ — enriched list carries the derived fields
     res = await request(server).get(reposPath(ORG1)).set('Cookie', ownerCookie);
     expect(res.status).toBe(200);
     const row = (res.body as Array<Record<string, unknown>>).find((r) => r.id === repoId);
     expect(row).toMatchObject({ slug: 'repo-one', threadCount: 0 });
     expect(row?.accessCheckedAt).toBeTruthy();
 
-    // UPDATE — metadata + repo-level merge defaults
     res = await request(server)
       .patch(`${reposPath(ORG1)}/${repoId}`)
       .set('Cookie', ownerCookie)
@@ -231,7 +198,6 @@ describe('RepoController HTTP (auth + owner/membership guards, live Postgres)', 
       defaultAutoMergeDeleteBranch: false,
     });
 
-    // UPDATE persisted
     res = await request(server).get(reposPath(ORG1)).set('Cookie', ownerCookie);
     const updatedRow = (res.body as Array<Record<string, unknown>>).find((r) => r.id === repoId);
     expect(updatedRow?.name).toBe('Renamed by IT');
@@ -240,21 +206,18 @@ describe('RepoController HTTP (auth + owner/membership guards, live Postgres)', 
       defaultAutoMergeDeleteBranch: false,
     });
 
-    // REVALIDATE
     res = await request(server)
       .post(`${reposPath(ORG1)}/${repoId}/revalidate`)
       .set('Cookie', ownerCookie);
     expect(res.status).toBe(201);
     expect(res.body.accessOk).toBe(true);
 
-    // DELETE (empty repo → cascade count is zero)
     res = await request(server)
       .delete(`${reposPath(ORG1)}/${repoId}`)
       .set('Cookie', ownerCookie);
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ ok: true, threadsDeleted: 0 });
 
-    // DELETE confirmed
     res = await request(server).get(reposPath(ORG1)).set('Cookie', ownerCookie);
     expect((res.body as Array<Record<string, unknown>>).some((r) => r.id === repoId)).toBe(false);
   });
@@ -280,7 +243,6 @@ describe('RepoController HTTP (auth + owner/membership guards, live Postgres)', 
     expect(r1.status).toBe(201);
     expect(r2.status).toBe(201);
 
-    // Each org lists ONLY its own repo (no cross-tenant bleed).
     const l1 = await request(server).get(reposPath(ORG1)).set('Cookie', ownerCookie);
     const l2 = await request(server).get(reposPath(ORG2)).set('Cookie', ownerCookie);
     expect((l1.body as Array<{ slug: string }>).map((r) => r.slug)).toEqual(['alpha']);
@@ -288,19 +250,16 @@ describe('RepoController HTTP (auth + owner/membership guards, live Postgres)', 
   });
 
   it('a member can read repos but every write is owner-gated (403)', async () => {
-    // Owner seeds a repo first.
     const created = await request(server)
       .post(reposPath(ORG1))
       .set('Cookie', ownerCookie)
       .send({ repoUrl: 'https://github.com/atlas-it/shared.git' });
     const repoId = created.body.id as string;
 
-    // Member CAN read.
     const list = await request(server).get(reposPath(ORG1)).set('Cookie', memberCookie);
     expect(list.status).toBe(200);
     expect((list.body as Array<{ id: string }>).some((r) => r.id === repoId)).toBe(true);
 
-    // Member CANNOT write — connect / update / revalidate / disconnect all 403.
     expect(
       (
         await request(server)
@@ -332,13 +291,11 @@ describe('RepoController HTTP (auth + owner/membership guards, live Postgres)', 
       ).status,
     ).toBe(403);
 
-    // The repo is untouched (the member's blocked delete did nothing).
     const after = await request(server).get(reposPath(ORG1)).set('Cookie', ownerCookie);
     expect((after.body as Array<{ id: string }>).some((r) => r.id === repoId)).toBe(true);
   });
 
   it('a non-member is denied every route on an org they do not belong to (403)', async () => {
-    // The member user belongs to ORG1 only — ORG2 must be fully closed to them.
     expect((await request(server).get(reposPath(ORG2)).set('Cookie', memberCookie)).status).toBe(
       403,
     );

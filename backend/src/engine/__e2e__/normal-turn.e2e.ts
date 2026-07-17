@@ -1,6 +1,3 @@
-// NORMAL TURN — a one-shot review turn round-trips over Redis end to end (ports
-// `scripts/redis-transport-smoke.mjs`). Asserts an ordered event sequence ending in `final`, and that the
-// result content is the expected single word.
 import {
   cleanup,
   finalResult,

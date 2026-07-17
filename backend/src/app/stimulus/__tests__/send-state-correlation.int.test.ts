@@ -1,17 +1,3 @@
-/**
- * Send-state correlation — DB-query proof against LIVE Postgres.
- *
- * A CASE-3 composed send (an operator note riding WITH answered cards) must land the note as its OWN durable
- * operator bubble — NOT a "…+ a message" summary pill — correlated to its delivery-ledger row so send/delivery
- * state can be stamped on both. This proves that contract end-to-end against a real DB:
- *  - `recordChatStimulus({ operatorBubbleText })` writes exactly ONE operator bubble (text = the note),
- *    correlated via `stimulus_id`, `delivered_at` still NULL (sending), and NO pill row;
- *  - `markChatDelivered` stamps BOTH the `inbound_messages` row and the correlated `transcript_messages`
- *    row, is idempotent, and emits the realtime nudge exactly once per real state change.
- *
- * Integration: real Postgres (atlas_test), StimulusStoreService wired against a real DataSource with a spy
- * MESSAGE_CHANGE_NOTIFIER, mirroring silent-seed.int.test.ts's bootstrap pattern.
- */
 
 import { Test, type TestingModule } from '@nestjs/testing';
 import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
@@ -142,23 +128,19 @@ describe('send-state correlation — live Postgres DB-query proof', () => {
       type: 'user',
     });
 
-    // The delivery-ledger row carries the FULL composed turn — that is what the brain reads.
     const inbound = await ds.query(`SELECT body FROM inbound_messages WHERE id = $1`, [
       recorded.id,
     ]);
     expect(inbound[0].body).toBe(COMPOSED_BODY);
 
-    // Exactly ONE transcript row: the operator bubble rendering ONLY the note (no "…+ a message" pill).
     const rows = await transcriptRows(thread.id);
     expect(rows).toHaveLength(1);
     const bubble = rows[0];
     expect(bubble.text).toBe(NOTE);
     expect(bubble.author_bot_id).toBeNull();
-    // Correlated to its ledger row, and still "sending" (delivered_at NULL) at write time.
     expect(bubble.stimulus_id).toBe(recorded.id);
     expect(bubble.delivered_at).toBeNull();
 
-    // Send-persist emitted the realtime nudge exactly once.
     expect(notifier.emitMessagesChanged).toHaveBeenCalledTimes(1);
     expect(notifier.emitMessagesChanged).toHaveBeenCalledWith(repoId, thread.id);
   });
@@ -181,17 +163,14 @@ describe('send-state correlation — live Postgres DB-query proof', () => {
 
     await store.markChatDelivered(recorded.id);
 
-    // BOTH rows stamped delivered.
     expect(await inboundDeliveredAt(recorded.id)).not.toBeNull();
     const afterDeliver = (await transcriptRows(thread.id))[0];
     expect(afterDeliver.delivered_at).not.toBeNull();
     expect(afterDeliver.stimulus_id).toBe(recorded.id);
 
-    // Delivery-stamp emitted exactly once.
     expect(notifier.emitMessagesChanged).toHaveBeenCalledTimes(1);
     expect(notifier.emitMessagesChanged).toHaveBeenCalledWith(repoId, thread.id);
 
-    // Idempotent: a second call neither throws nor re-emits (already-delivered → no-op).
     await expect(store.markChatDelivered(recorded.id)).resolves.toBeUndefined();
     expect(notifier.emitMessagesChanged).toHaveBeenCalledTimes(1);
   });

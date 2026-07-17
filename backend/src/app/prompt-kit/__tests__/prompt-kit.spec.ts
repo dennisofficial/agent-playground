@@ -56,11 +56,9 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
       const out = renderAgentPrompt(agent, { jobKind: 'feature' });
       expect(out.split(CLARITY_OVER_COMMENTS_NOTE).length - 1, String(agent)).toBe(1);
     }
-    // onboarding brain authors code too (script fixes) — it rides the un-gated behavioral tail.
     expect(renderAgentPrompt(Agent.PLANNING, { jobKind: 'onboarding' })).toContain(
       CLARITY_OVER_COMMENTS_NOTE,
     );
-    // deliberately excluded: reviewers and the minimal-diff autofix apply persona.
     for (const agent of [Agent.REVIEW_AGENT, Agent.MASTER_REVIEW, Agent.AUTOFIX_FIX]) {
       expect(renderAgentPrompt(agent), String(agent)).not.toContain(CLARITY_OVER_COMMENTS_NOTE);
     }
@@ -77,9 +75,7 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
       const out = renderAgentPrompt(agent, { jobKind: 'feature' });
       expect(out.split(TS_STYLE_NOTE).length - 1, String(agent)).toBe(1);
     }
-    // onboarding brain authors code too (script fixes) — it rides the un-gated behavioral tail.
     expect(renderAgentPrompt(Agent.PLANNING, { jobKind: 'onboarding' })).toContain(TS_STYLE_NOTE);
-    // read-only advisories never write code.
     for (const agent of [Agent.EXPLORE, Agent.DOCS, Agent.REVIEW_AGENT, Agent.DEBUG, Agent.TEST]) {
       expect(renderAgentPrompt(agent), String(agent)).not.toContain(TS_STYLE_NOTE);
     }
@@ -92,11 +88,9 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
       expect(out, String(agent)).toContain('DESIGN DISCIPLINE');
       expect(out, String(agent)).toContain('`design-patterns` skill');
     }
-    // onboarding brain authors code too (script fixes) — it rides the un-gated behavioral tail.
     expect(renderAgentPrompt(Agent.PLANNING, { jobKind: 'onboarding' })).toContain(
       DESIGN_DISCIPLINE_NOTE,
     );
-    // the external-PR review brain and read-only advisories never author code — no recognition trigger.
     for (const agent of [Agent.EXPLORE, Agent.DOCS, Agent.REVIEW_AGENT, Agent.DEBUG, Agent.TEST]) {
       expect(renderAgentPrompt(agent), String(agent)).not.toContain(DESIGN_DISCIPLINE_NOTE);
     }
@@ -113,7 +107,6 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
     expect(renderAgentPrompt(Agent.PLANNING, { jobKind: 'onboarding' })).toContain(
       DOC_VERSION_VERIFY_NOTE,
     );
-    // the reviewer carries its OWN inline mandate; the fix lanes + advisories do not get this fragment.
     for (const agent of [Agent.MASTER_REVIEW, Agent.AUTOFIX_FIX, Agent.EXPLORE, Agent.DOCS]) {
       expect(renderAgentPrompt(agent), String(agent)).not.toContain(DOC_VERSION_VERIFY_NOTE);
     }
@@ -127,16 +120,13 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
 
   it('the brain UI-preview instruction routes the mockup to the `prototype` subagent, not `implement`', () => {
     const brain = renderAgentPrompt(Agent.PLANNING, { jobKind: 'feature' });
-    // The brain is told to delegate the mockup build to the dedicated `prototype` subagent...
     expect(brain).toContain('DELEGATE the prototype build to the dedicated `prototype` subagent');
-    // ...and no longer to hand the UI preview to the generic `implement` writer.
     expect(brain).not.toContain('DELEGATE the prototype build to the `implement` writer subagent');
   });
 
   it('CANDOR_NOTE reaches the brain (feature + onboarding) but no worker/subagent persona', () => {
     expect(renderAgentPrompt(Agent.PLANNING, { jobKind: 'feature' })).toContain(CANDOR_NOTE);
     expect(renderAgentPrompt(Agent.PLANNING, { jobKind: 'onboarding' })).toContain(CANDOR_NOTE);
-    // brain-only conversational stance: not the build/review/writer personas.
     for (const agent of [Agent.WORKER, Agent.FAN_OUT, Agent.REVIEW_AGENT, Agent.MASTER_REVIEW]) {
       expect(renderAgentPrompt(agent, { jobKind: 'feature' }), String(agent)).not.toContain(
         CANDOR_NOTE,
@@ -155,8 +145,6 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
   });
 
   it('the sole-author invariant reaches every file-touching / operator-facing agent, exactly once', () => {
-    // brain (feature + onboarding), worker orchestrator, the fan-out writer, and the ship master review
-    // (it edits + commits the merged diff, so it owns the checkout too).
     for (const agent of [Agent.WORKER, Agent.FAN_OUT, Agent.MASTER_REVIEW]) {
       const out = renderAgentPrompt(agent, { jobKind: 'feature' });
       expect(out.split(SOLE_AUTHOR_NOTE).length - 1, String(agent)).toBe(1);
@@ -171,7 +159,6 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
     expect(renderAgentPrompt(Agent.PLANNING, { jobKind: 'feature' })).toContain(
       SANDBOX_FILESYSTEM_MAP_NOTE,
     );
-    // brain-only orientation: the build/writer personas do not get it.
     for (const agent of [Agent.WORKER, Agent.FAN_OUT]) {
       expect(renderAgentPrompt(agent, { jobKind: 'feature' }), String(agent)).not.toContain(
         SANDBOX_FILESYSTEM_MAP_NOTE,
@@ -180,7 +167,6 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
   });
 
   it('the cloud-sandbox note is ONE shared fragment on the composed driver persona (dedup)', () => {
-    // the worker gets the note from the shared DriverFramingGroup fragment, exactly once.
     for (const agent of [Agent.WORKER]) {
       const out = renderAgentPrompt(agent, { jobKind: 'feature' });
       expect(out.split(CLOUD_SANDBOX_NOTE).length - 1, String(agent)).toBe(1);
@@ -199,10 +185,8 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
     ]) {
       const out = renderAgentPrompt(agent);
       expect(out.split(SUBAGENT_KERNEL_NOTE).length - 1, String(agent)).toBe(1);
-      // it renders FIRST — before the persona body.
       expect(out.startsWith(SUBAGENT_KERNEL_NOTE), String(agent)).toBe(true);
     }
-    // NOT the full-session agents (brain, worker orchestrator, master review) — they converse / span turns.
     for (const agent of [Agent.PLANNING, Agent.WORKER, Agent.MASTER_REVIEW]) {
       expect(renderAgentPrompt(agent, { jobKind: 'feature' }), String(agent)).not.toContain(
         SUBAGENT_KERNEL_NOTE,
@@ -211,7 +195,6 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
   });
 
   it('SUBAGENT_NUDGE_NOTE reaches the two fan-out orchestrators (brain + worker), never the subagents', () => {
-    // the personas that can spawn subagents get the nudge-before-respawn recovery guidance, once each.
     for (const agent of [Agent.WORKER]) {
       const out = renderAgentPrompt(agent, { jobKind: 'feature' });
       expect(out.split(SUBAGENT_NUDGE_NOTE).length - 1, String(agent)).toBe(1);
@@ -219,7 +202,6 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
     expect(renderAgentPrompt(Agent.PLANNING, { jobKind: 'feature' })).toContain(
       SUBAGENT_NUDGE_NOTE,
     );
-    // the subagents themselves don't recurse — they never get it.
     for (const agent of [
       Agent.EXPLORE,
       Agent.DOCS,
@@ -241,7 +223,6 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
       expect(out, String(agent)).toContain('$ATLAS_EVIDENCE_DIR');
       expect(out, String(agent)).toContain('/context/evidence');
     }
-    // NOT the writer (it implements a slice and reports up) nor the planning brain.
     for (const agent of [Agent.FAN_OUT, Agent.PLANNING]) {
       expect(renderAgentPrompt(agent, { jobKind: 'feature' }), String(agent)).not.toContain(
         EVIDENCE_ARTIFACTS_NOTE,
@@ -250,14 +231,11 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
   });
 
   it('the evidence owners must INSPECT captured artifacts, not just capture them (PR #106 regression)', () => {
-    // The incident: a subagent captured a "can't reach the server" screenshot and cited it as proof
-    // without ever looking at it. The capture agents must be told to inspect what they captured.
     for (const agent of [Agent.WORKER, Agent.VALIDATE]) {
       const out = renderAgentPrompt(agent, { jobKind: 'feature' });
       expect(out, String(agent)).toContain('INSPECT WHAT YOU CAPTURED');
       expect(out, String(agent)).toContain('capturing an artifact is NOT the same as validating');
     }
-    // The brain that finalizes must be told "SAW it run" means it LOOKED at the artifact.
     const brain = renderAgentPrompt(Agent.PLANNING, { jobKind: 'feature' });
     expect(brain).toContain('never finalize on an artifact you did not inspect');
   });
@@ -271,8 +249,6 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
   });
 
   it('RUNNABLE_WORKSPACE_NOTE reaches the build-touching lanes (brain, worker, master review) once, not the advisories', () => {
-    // the stance that a not-yet-runnable env is fixed-or-escalated (never skipped) rides the lanes that build
-    // and verify: the planning brain, the thread orchestrator, and the ship-time master review.
     for (const agent of [Agent.WORKER, Agent.MASTER_REVIEW]) {
       const out = renderAgentPrompt(agent, { jobKind: 'feature' });
       expect(out.split(RUNNABLE_WORKSPACE_NOTE).length - 1, String(agent)).toBe(1);
@@ -283,7 +259,6 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
     expect(renderAgentPrompt(Agent.PLANNING, { jobKind: 'onboarding' })).toContain(
       RUNNABLE_WORKSPACE_NOTE,
     );
-    // read-only advisories don't own verification — they never get it.
     for (const agent of [
       Agent.EXPLORE,
       Agent.DOCS,
@@ -315,7 +290,6 @@ describe('public preview exposure prompt (opt-in --expose sequence)', () => {
       expect(out, jobKind).toContain('--port <n>');
       expect(out, jobKind).toContain('$ATLAS_PREVIEW_ID');
       expect(out, jobKind).toContain('$ATLAS_PREVIEW_DOMAIN');
-      // the load-bearing ordering + the 0.0.0.0 binding gotcha must survive assembly
       expect(out, jobKind).toContain('BIND TO 0.0.0.0');
       expect(out, jobKind).toContain('--expose');
     }
@@ -323,9 +297,7 @@ describe('public preview exposure prompt (opt-in --expose sequence)', () => {
 
   it('onboarding reuses the exposure ordering inside LIVE-SERVICE ACCESSIBILITY', () => {
     const out = renderAgentPrompt(Agent.PLANNING, { jobKind: 'onboarding' });
-    // onboarding composes its own accessibility fragment (not the build-brain publicExposure block)...
     expect(out).toContain('LIVE-SERVICE ACCESSIBILITY');
-    // ...which reuses PUBLIC_EXPOSURE_NOTE, so the load-bearing exposure essentials survive assembly.
     expect(out).toContain('BIND TO 0.0.0.0');
     expect(out).toContain('$ATLAS_PREVIEW_ID');
   });
@@ -382,8 +354,6 @@ describe('brain vs worker behavioral tails do not leak into each other', () => {
     const brain = renderAgentPrompt(Agent.PLANNING, { jobKind: 'feature' });
     expect(brain).toContain(BASELINE_FIRST_NOTE);
     expect(brain).toContain(SPIKE_FIRST_NOTE);
-    // The brain gets the AUTHORING twin (author validation as a live run, never optional), NOT the worker's
-    // run-it note — distinct consts so the split stays assertable.
     expect(brain).toContain(AUTHOR_LIVE_VALIDATION_NOTE);
     expect(brain).not.toContain(VALIDATE_BY_RUNNING_NOTE); // validate-by-running is a WORKER note, not brain
   });
@@ -408,9 +378,6 @@ describe('brain vs worker behavioral tails do not leak into each other', () => {
 });
 
 describe('POST_BUILD / CI lean prompts (the exploded-brain stages)', () => {
-  // Both new stages share the engineering base with PLANNING (git ownership, live-validation, host tools)
-  // but must NOT carry the planning-phase apparatus — grilling, decision-record discipline, or the
-  // plan/ship-gate host tools — since a re-homed turn never uses any of it.
   const PLANNING_ONLY_MARKERS = [
     'GRILLING PROTOCOL',
     'WHY YOU GRILL',
@@ -427,11 +394,6 @@ describe('POST_BUILD / CI lean prompts (the exploded-brain stages)', () => {
     for (const marker of PLANNING_ONLY_MARKERS) {
       expect(out, marker).not.toContain(marker);
     }
-    // Task 2's curated host-tool subset: post_build owns verification + the amend loop, but none of the
-    // grill/convention-profile apparatus. Checked as the fully-qualified `mcp__..__name` tool-listing form,
-    // since the bare word "ask_question" also appears in unrelated shared prose (e.g. sandbox.group.ts's
-    // impossible-request routing note, which every ENGINEERING_STAGES agent carries regardless of its
-    // actual toolset).
     expect(out).toContain('report_verification');
     expect(out).toContain('withdraw_ship');
     expect(out).not.toContain('__ask_question');
@@ -446,8 +408,6 @@ describe('POST_BUILD / CI lean prompts (the exploded-brain stages)', () => {
     for (const marker of PLANNING_ONLY_MARKERS) {
       expect(out, marker).not.toContain(marker);
     }
-    // Task 2's curated host-tool subset: ci owns verification but NOT the amend loop (that's post_build's)
-    // or the grill/convention-profile apparatus. See the note above on `__ask_question`.
     expect(out).toContain('report_verification');
     expect(out).not.toContain('withdraw_ship');
     expect(out).not.toContain('__ask_question');

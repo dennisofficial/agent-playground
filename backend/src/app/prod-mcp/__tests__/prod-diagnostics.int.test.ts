@@ -1,20 +1,3 @@
-/**
- * ProdDiagnosticsService — the gated prod-recovery WRITE pipeline, against live Postgres + the REAL
- * least-privilege roles (`mcp_reader` SELECT-only, `mcp_writer` DML-only), provisioned on `atlas_test`
- * by `vitest.global-setup.ts` with the same GRANTs `infra/mcp-{reader,writer}-role.sql` apply in prod.
- *
- * Proves the structural invariants that make this path safe (section 02 §Validation):
- *   1. propose → a `pending` ledger row + a durable approval card, and the target row is UNCHANGED
- *      (the `mcp_writer` role is never touched pre-approval, d2/d4/d6).
- *   2. executeApproved → the statement runs on `mcp_writer`, the row CHANGES, the ledger flips to
- *      `executed` with the ACTUAL affected-row count, and the job is notified.
- *   3. a DDL statement reaching executeApproved is REJECTED by the role itself (`mcp_writer` has no
- *      DDL) → ledger `failed`, prod intact — the role is a backstop even past the write-guard.
- *   4. `mcp_writer` cannot tamper with its OWN audit ledger (REVOKEd on `prod_maintenance_write`).
- *
- * Integration: real Postgres, no fakes for the DB layer. Only the ChatSurface is a spy (its delivery is
- * out of scope here; the DB effects are what matter).
- */
 
 import { EnvService } from '@core/config/env/env.service';
 import { Test, type TestingModule } from '@nestjs/testing';
@@ -113,8 +96,6 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
         ProdDiagnosticsService,
         { provide: CHAT_SURFACE, useValue: surface },
         { provide: EnvService, useValue: { get: () => undefined } },
-        // The durable approval card anchors on the job's planning thread (messages.thread_id is NOT NULL);
-        // every test seeds exactly one thread per job, so return it to satisfy the FK.
         {
           provide: JobBootstrapService,
           useValue: {
@@ -220,7 +201,6 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
     expect(res.ok).toBe(true);
     expect(res.writeId).toBeTruthy();
 
-    // Ledger: a durable `pending` row carrying the EXACT approved statement + the dry-run preview.
     const row = await ledger.findOne({ where: { id: res.writeId } });
     expect(row).toBeTruthy();
     expect(row?.status).toBe('pending');
@@ -228,13 +208,9 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
     expect(row?.org_id).toBe(ORG_ID);
     expect(row?.job_id).toBe(jobId);
     expect(row?.result).toBeNull();
-    // The preview is a planner ESTIMATE on the SELECT-only role; on this Postgres an UPDATE EXPLAIN is
-    // permission-denied for `mcp_reader` (d6 spike) → dry_run captured as `{}` (estimate unavailable),
-    // never an error.
     expect(row?.dry_run).toBeDefined();
     expect(row?.dry_run.error).toBeUndefined();
 
-    // A durable approval card row was persisted for the operator, keyed to this write.
     const card = await messages.findOne({
       where: {
         job_id: jobId,
@@ -245,7 +221,6 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
     expect(card).toBeTruthy();
     expect((card?.card as Record<string, unknown> | undefined)?.kind).toBe('db_write');
 
-    // A live SSE nudge was posted — but NO write ran: the target row is untouched.
     expect(surface.post).toHaveBeenCalledTimes(1);
     const after = await threads.findOne({ where: { id: threadId } });
     expect(after?.ordinal).toBe(3);
@@ -266,15 +241,11 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
     expect(row?.approved_at).toBeInstanceOf(Date);
     expect(row?.executed_at).toBeInstanceOf(Date);
 
-    // The real mutation landed via the DML-only role.
     const after = await threads.findOne({ where: { id: threadId } });
     expect(after?.ordinal).toBe(0);
 
-    // The job was notified of the outcome.
     expect(surface.seedSystemNotification).toHaveBeenCalledTimes(1);
 
-    // The durable operator card was neutralized/replaced with a verdict, so the transcript no longer shows
-    // an actionable "Execute write" button after execution.
     const card = await messages.findOne({
       where: {
         job_id: jobId,
@@ -285,7 +256,6 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
     expect((card?.card as Record<string, unknown> | undefined)?.type).toBe('verdict_card');
     expect((card?.card as Record<string, unknown> | undefined)?.verdict).toBe('approve');
 
-    // Idempotent: a duplicate approval click is a no-op (row is no longer `pending`).
     surface.seedSystemNotification.mockClear();
     await svc.executeApproved(writeId, APPROVER_ID, jobId);
     expect(surface.seedSystemNotification).not.toHaveBeenCalled();
@@ -313,7 +283,6 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
     expect((card?.card as Record<string, unknown> | undefined)?.type).toBe('verdict_card');
     expect((card?.card as Record<string, unknown> | undefined)?.verdict).toBe('deny');
 
-    // Idempotent: a duplicate deny click is a no-op (row is no longer `pending`).
     surface.seedSystemNotification.mockClear();
     await svc.denyWrite(writeId, APPROVER_ID, jobId);
     expect(surface.seedSystemNotification).not.toHaveBeenCalled();
@@ -321,8 +290,6 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
 
   it('executeApproved rejects DDL at the ROLE level (mcp_writer has no DDL) → failed, table intact', async () => {
     const { jobId } = await seedDeadlockedThread();
-    // The write-guard blocks DDL at propose; here we insert a pending ledger row DIRECTLY to prove the
-    // DB role is a backstop even if a DDL statement somehow reached executeApproved.
     const saved = await ledger.save(
       ledger.create({
         org_id: ORG_ID,
@@ -341,7 +308,6 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
     expect(row?.status).toBe('failed');
     expect(row?.result?.error).toBeTruthy();
 
-    // The table still exists (the DDL never ran).
     const [{ count }] = await ds.query(
       `SELECT count(*)::int AS count FROM information_schema.tables WHERE table_name = 'threads'`,
     );

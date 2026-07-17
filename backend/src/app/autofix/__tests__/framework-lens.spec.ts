@@ -12,10 +12,6 @@ import type { WorkspaceSkillStore } from '../../skills/workspace-skill.store';
 import { lensById, reviewAgentsForThread } from '../autofix-lenses';
 import type { AutoFixContext } from '../autofix.types';
 
-// Isolates these tests from whatever `system-skill-registry.ts` actually ships (it ships a real
-// `react-review-checklist` entry — see its own spec) — same convention as
-// `skill-resolver.service.spec.ts` / `skill-resolver.managed-tier.spec.ts`. `vi.mock` is hoisted above
-// these imports by vitest.
 vi.mock('../skills/system-skill-registry', () => ({
   buildSystemSkills: () => [],
 }));
@@ -31,7 +27,6 @@ const baseCtx: AutoFixContext = {
   intent: 'add a y constant',
 };
 
-// ── (a) skill-frontmatter: list-valued reviewForTypes/reviewForGlobs + stripSkillFrontmatter ────────
 
 describe('parseSkillFrontmatter — reviewForTypes/reviewForGlobs', () => {
   it('parses the documented snake_case list keys into the camelCase DTO fields', () => {
@@ -86,7 +81,6 @@ describe('stripSkillFrontmatter', () => {
   });
 });
 
-// ── (b) reviewAgentsForThread — the frameworkSkillNames axis ─────────────────────────────────────────
 
 describe('reviewAgentsForThread — framework axis', () => {
   it('empty (default) frameworkSkillNames -> no framework lens', () => {
@@ -110,7 +104,6 @@ describe('reviewAgentsForThread — framework axis', () => {
     expect(ids).toEqual(['correctness', 'holistic', 'data_safety', 'framework']);
   });
 
-  // Existing (non-framework) routing must still hold, unaffected by this new axis.
   it('docs still omits correctness with no framework names', () => {
     const ids = reviewAgentsForThread('docs').map((l) => l.id);
     expect(ids).not.toContain('correctness');
@@ -121,7 +114,6 @@ describe('reviewAgentsForThread — framework axis', () => {
   });
 });
 
-// ── (c) buildReviewPrompt — the FRAMEWORK_LENS injection branch ──────────────────────────────────────
 
 describe('buildReviewPrompt — framework lens body injection', () => {
   const frameworkLens = lensById('framework');
@@ -156,7 +148,6 @@ describe('buildReviewPrompt — framework lens body injection', () => {
   });
 });
 
-// ── (d) SkillResolver.resolveReviewSkillsForThread — matching + body read from disk ──────────────────
 
 describe('SkillResolver.resolveReviewSkillsForThread', () => {
   const orgId = 'org1';

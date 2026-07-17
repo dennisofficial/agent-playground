@@ -1,15 +1,3 @@
-/**
- * BrainStoreService retry-counter durability — the brain's two redrive lanes
- * (`benign_abort_redrives` / `transient_retry_redrives`) now live on `jobs` columns instead of an
- * in-memory Map, so a restart/crash-loop can't silently re-grant a fresh budget. Proves the CAS claim
- * methods + the lane-scoped clear against real Postgres (mocking the SQL would defeat the point — the
- * whole risk is atomicity).
- *
- * Lightweight harness (mirrors driver-store.int.test.ts's `TypeOrmModule.forRoot` + `forFeature` pattern):
- * NOT the full-AppModule `brain-store.int.test.ts`, which boots far more than these job-scoped counter
- * methods need. `JobTitler` / `JobDependencyService` are stubbed — `claimBenignAbortRedrive`,
- * `claimTransientRetryRedrive`, and `clearBrainRetryCounters` only touch `this.jobs`.
- */
 
 import { Test, type TestingModule } from '@nestjs/testing';
 import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
@@ -113,7 +101,6 @@ describe('BrainStoreService retry-counter durability (live Postgres)', () => {
       ok: true,
       used: 2,
     });
-    // At the cap → refused, budget unchanged.
     expect(await store.claimBenignAbortRedrive(jobId, 2)).toEqual({
       ok: false,
       used: 2,
@@ -130,7 +117,6 @@ describe('BrainStoreService retry-counter durability (live Postgres)', () => {
       ok: true,
       used: 2,
     });
-    // At the cap → refused, budget unchanged.
     expect(await store.claimTransientRetryRedrive(jobId, 2)).toEqual({
       ok: false,
       used: 2,
@@ -151,7 +137,6 @@ describe('BrainStoreService retry-counter durability (live Postgres)', () => {
       ok: true,
       used: 3,
     });
-    // At the cap → refused, budget unchanged.
     expect(await store.claimSessionLimitTextMisfire(jobId, 3)).toEqual({
       ok: false,
       used: 3,
@@ -161,7 +146,6 @@ describe('BrainStoreService retry-counter durability (live Postgres)', () => {
   it('two concurrent claimSessionLimitTextMisfire calls at the cap boundary — exactly one succeeds (row-level CAS)', async () => {
     const { jobId } = await seedBareJob();
     await store.claimSessionLimitTextMisfire(jobId, 2); // used → 1
-    // Two racing claims with cap 2: only one may take the last slot (used 1 → 2).
     const [a, b] = await Promise.all([
       store.claimSessionLimitTextMisfire(jobId, 2),
       store.claimSessionLimitTextMisfire(jobId, 2),
@@ -194,7 +178,6 @@ describe('BrainStoreService retry-counter durability (live Postgres)', () => {
   it('two concurrent claimBenignAbortRedrive calls at the cap boundary — exactly one succeeds (row-level CAS)', async () => {
     const { jobId } = await seedBareJob();
     await store.claimBenignAbortRedrive(jobId, 2); // used → 1
-    // Two racing claims with cap 2: only one may take the last slot (used 1 → 2).
     const [a, b] = await Promise.all([
       store.claimBenignAbortRedrive(jobId, 2),
       store.claimBenignAbortRedrive(jobId, 2),
@@ -209,8 +192,6 @@ describe('BrainStoreService retry-counter durability (live Postgres)', () => {
     await store.claimBenignAbortRedrive(jobId, 5);
     await store.claimTransientRetryRedrive(jobId, 5);
     await store.claimSessionLimitTextMisfire(jobId, 5);
-    // Bump the driver's own lane columns directly (no DriverStoreService in scope here) to prove
-    // clearBrainRetryCounters doesn't reach across lanes.
     await jobs.update({ id: jobId }, { auth_retry_attempts: 3, driver_transient_retries: 4 });
     const before = await jobs.findOne({ where: { id: jobId } });
     const stampBefore = before!.retry_last_attempt_at;
@@ -222,7 +203,6 @@ describe('BrainStoreService retry-counter durability (live Postgres)', () => {
     expect(after?.benign_abort_redrives).toBe(0);
     expect(after?.transient_retry_redrives).toBe(0);
     expect(after?.session_limit_text_misfires).toBe(0);
-    // Untouched by the brain-lane clear.
     expect(after?.retry_last_attempt_at).toEqual(stampBefore);
     expect(after?.auth_retry_attempts).toBe(3);
     expect(after?.driver_transient_retries).toBe(4);

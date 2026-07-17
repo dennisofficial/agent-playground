@@ -37,7 +37,6 @@ describe('SkillFileWriter — forkSkillDir (fork-to-custom)', () => {
     expect(forkedMd).toContain('description: Use when deploying CDK stacks');
     expect(forkedMd).toContain('Body text.');
 
-    // The original is untouched — still named `aws-cdk`, still in place (stays clean + updatable).
     const originalMd = readFileSync(join(src, 'SKILL.md'), 'utf8');
     expect(originalMd).toContain('name: aws-cdk');
     expect(existsSync(join(src, 'references', 'x.md'))).toBe(true);
@@ -81,7 +80,6 @@ describe('SkillFileWriter — draft freeze / vendor / preview (file-based author
     rmSync(draftRoot, { recursive: true, force: true });
   });
 
-  /** Author a multi-file draft under a /context-like scratch dir. */
   function authorDraft(name: string, body: string): string {
     const dir = join(draftRoot, 'skill-drafts', name);
     mkdirSync(join(dir, 'references'), { recursive: true });
@@ -97,25 +95,21 @@ describe('SkillFileWriter — draft freeze / vendor / preview (file-based author
     const draft = authorDraft('house-migrations', 'Version A.');
     const staging = writer.freezeDraft(draft, 'org1', 'req-1');
 
-    // Preview reflects what was frozen.
     const preview = writer.previewDir(staging);
     expect(preview?.skillMd).toContain('Version A.');
     expect(preview?.files.sort()).toEqual(['SKILL.md', 'references/r.md']);
 
-    // The brain keeps editing the LIVE draft after proposing — must not change what installs.
     writeFileSync(
       join(draft, 'SKILL.md'),
       '---\nname: house-migrations\ndescription: Use when X\n---\n\nVersion B (mutated).\n',
     );
 
-    // Approval vendors the frozen staging copy, NOT the mutated live draft.
     writer.vendorDir(staging, 'org1', '*', 'house-migrations');
     const dest = skillDirHost(storeRoot, 'org1', '*', 'house-migrations');
     expect(readFileSync(join(dest, 'SKILL.md'), 'utf8')).toContain('Version A.');
     expect(readFileSync(join(dest, 'SKILL.md'), 'utf8')).not.toContain('Version B');
     expect(existsSync(join(dest, 'references', 'r.md'))).toBe(true); // full multi-file fidelity
 
-    // removeStaging cleans up the frozen copy.
     writer.removeStaging('org1', 'req-1');
     expect(writer.previewDir(staging)).toBeNull();
   });

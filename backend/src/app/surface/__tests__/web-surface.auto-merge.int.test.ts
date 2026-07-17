@@ -1,20 +1,3 @@
-/**
- * LIVE HTTP proof of the "Auto Merge" feature: boots the REAL `AppModule` over HTTP (supertest, real
- * cookie auth + `OrgMembershipGuard`), seeds `jobs` rows directly against live Postgres with a
- * GitHub-mergeable PR (`pr_state='open'`, `pr_mergeable='clean'`, `ci_status='success'`) and an idle
- * brain, then drives `PATCH /web/orgs/:orgId/repos/:repoId/jobs/:jobId/auto-merge` and asserts the ONE
- * merge-resolution path (`AutoMergeService.mergeNow`, reached via `maybeAutoMerge`) end to end:
- *
- *   - Enabling auto-merge on an already-green PR merges it: `mergePullRequest` is called with the
- *     configured method + the validated head sha, and `pr_state` flips to `merged`.
- *   - A green PR with auto-merge OFF still surfaces `mergeReady`/`mergeValue` on the pipeline DTO (the
- *     manual "Merge PR" card gate) but is never merged.
- *   - A GitHub rejection (`not_mergeable`) leaves the PR `open` and — the race-avoidance guarantee —
- *     never seeds a stimulus for the job (relies on the EXISTING reconciler routing instead).
- *
- * `GithubPrService` is overridden with a fake exposing `getPullDetail`/`mergePullRequest`/`deleteBranch`
- * so no real GitHub call is made. Mirrors `web-surface.auto-approve.int.test.ts` for HTTP/auth setup.
- */
 
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
@@ -70,7 +53,6 @@ const mergePullRequest = vi.fn(async (_token: string, args: { number: number }) 
 const deleteBranch = vi.fn(async () => undefined);
 const fakePr = { getPullDetail, mergePullRequest, deleteBranch };
 
-// Fixed ids → distinct from every other int test.
 const ORG = '99999999-9999-4999-9999-999999999901';
 const REPO = '99999999-9999-4999-9999-999999999902';
 const MERGE_JOB = '99999999-9999-4999-9999-999999999903'; // enable auto-merge on a green PR → merges
@@ -138,9 +120,6 @@ async function countStimuli(jobId: string): Promise<number> {
   return rows[0]?.n ?? 0;
 }
 
-/** Seed a job with a GitHub-mergeable PR (`prMergeReady` true) and an idle brain (defaults already
- *  satisfy `brainSettled`: activity='idle', halted=false, halt=null, open_question_count=0,
- *  awaiting_secret_id=null). `prNumber` must be unique per job (distinguishes fake-PR calls). */
 async function seedGreenJob(jobId: string, prNumber: number, title: string): Promise<void> {
   await ds.query(
     `INSERT INTO jobs
@@ -188,8 +167,6 @@ beforeAll(async () => {
     .useValue(fakeCreds)
     .overrideProvider(JobTitler)
     .useValue(new FakeThreadTitler())
-    // Neutralize the inbound → ChatStimulus pump: auto-merge never seeds the brain (Decision d1), and
-    // nothing here should reach a real brain turn either way.
     .overrideProvider(ChatStimulusBridge)
     .useValue({})
     .compile();
@@ -218,8 +195,6 @@ beforeAll(async () => {
     `INSERT INTO organization_members (org_id, user_id, role) VALUES ($1, $2, 'owner')`,
     [ORG, owner.id],
   );
-  // Explicit repo-level merge defaults: `mergeNow` reads THESE (the per-job method/delete-branch columns
-  // are gone), so the fixture is explicit about what CASE 1 / the manual-merge proof assert against.
   await ds.query(
     `INSERT INTO repos
        (id, org_id, slug, name, git_url, default_branch, access_ok,
@@ -263,7 +238,6 @@ describe('auto-merge — PATCH .../jobs/:jobId/auto-merge (live Postgres, real H
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true, autoMerge: true });
 
-    // The merge is fire-and-forget (`maybeAutoMerge`, triggered by the PATCH) — poll for the terminal state.
     await waitFor(async () => {
       const row = await loadJobRow(MERGE_JOB);
       return row?.pr_state === 'merged';
@@ -279,7 +253,6 @@ describe('auto-merge — PATCH .../jobs/:jobId/auto-merge (live Postgres, real H
       'fake-token',
       expect.objectContaining({ number: 701, method: 'squash', sha: 'HEAD' }),
     );
-    // eslint-disable-next-line no-console -- evidence: OBSERVED DB row after the auto-merge.
     console.log('OBSERVED CASE 1 DB row after auto-merge:', JSON.stringify(after));
   });
 
@@ -289,8 +262,6 @@ describe('auto-merge — PATCH .../jobs/:jobId/auto-merge (live Postgres, real H
     expect(pipe.body).toMatchObject({ mergeReady: true });
     expect(pipe.body.mergeValue).toContain(CARD_JOB);
 
-    // Drive the merge-ready evaluator directly (a legitimate trigger — the reconciler/CI-sync webhook
-    // call the exact same seam) so the durable "Merge PR" card materializes without enabling auto-merge.
     const autoMerge = app.get(AutoMergeService);
     await autoMerge.maybeAutoMerge(CARD_JOB);
 
@@ -319,7 +290,6 @@ describe('auto-merge — PATCH .../jobs/:jobId/auto-merge (live Postgres, real H
 
     expect(res.status).toBe(200);
 
-    // Let the fire-and-forget merge attempt run its course, then assert nothing changed.
     await waitFor(async () =>
       mergePullRequest.mock.calls.some(([, args]) => (args as { number?: number }).number === 703),
     );
@@ -328,7 +298,6 @@ describe('auto-merge — PATCH .../jobs/:jobId/auto-merge (live Postgres, real H
 
     const stimuliAfter = await countStimuli(NOT_MERGEABLE_JOB);
     expect(stimuliAfter).toBe(stimuliBefore);
-    // eslint-disable-next-line no-console
     console.log(
       `OBSERVED CASE 3: pr_state stayed "${String(after?.pr_state)}", stimuli count unchanged (${stimuliAfter})`,
     );
@@ -364,7 +333,6 @@ describe('auto-merge — POST .../jobs armed at creation (live Postgres, real HT
       auto_merge: true,
       auto_merge_by: ownerId,
     });
-    // eslint-disable-next-line no-console -- evidence: OBSERVED DB row of the newly-created job.
     console.log('OBSERVED CREATE 1 DB row (created with autoMerge armed):', JSON.stringify(row));
   });
 
@@ -393,8 +361,6 @@ describe('manual Merge PR — POST .../jobs/:jobId/approve is SYNCHRONOUS (live 
         value: JSON.stringify({ jobId: APPROVE_MERGE_JOB }),
       });
 
-    // 2xx ONLY once the merge finished — the endpoint awaits `mergeNow`, so no polling is needed: the
-    // terminal state is observable the moment the awaited response resolves.
     expect(res.status).toBeGreaterThanOrEqual(200);
     expect(res.status).toBeLessThan(300);
     expect(res.body).toEqual({ ok: true, jobId: APPROVE_MERGE_JOB });
@@ -405,7 +371,6 @@ describe('manual Merge PR — POST .../jobs/:jobId/approve is SYNCHRONOUS (live 
       'fake-token',
       expect.objectContaining({ number: 704, method: 'squash', sha: 'HEAD' }),
     );
-    // eslint-disable-next-line no-console -- evidence: OBSERVED synchronous merge (status + terminal row).
     console.log(
       `OBSERVED MERGE APPROVE 1: status ${res.status}, pr_state "${String(after?.pr_state)}" immediately after the awaited response`,
     );
@@ -424,7 +389,6 @@ describe('manual Merge PR — POST .../jobs/:jobId/approve is SYNCHRONOUS (live 
 
     const after = await loadJobRow(APPROVE_MERGE_FAIL_JOB);
     expect(after).toMatchObject({ pr_state: 'open' });
-    // eslint-disable-next-line no-console -- evidence: OBSERVED failed merge (non-2xx + PR still open).
     console.log(
       `OBSERVED MERGE APPROVE 2: status ${res.status}, pr_state stayed "${String(after?.pr_state)}"`,
     );

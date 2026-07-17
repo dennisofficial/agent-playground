@@ -38,7 +38,6 @@ describe('EventFilterService (mechanical dedup + rate-limit, no LLM)', () => {
   it('admits the same key again AFTER the dedup window passes', () => {
     const f = makeFilter();
     expect(f.admit(KEY, 0).pass).toBe(true);
-    // 301s later: past the 300s dedup window AND the 60s rate window (so the rate counter reset too).
     expect(f.admit(KEY, 301_000).pass).toBe(true);
   });
 
@@ -55,7 +54,6 @@ describe('EventFilterService (mechanical dedup + rate-limit, no LLM)', () => {
   });
 
   it('rate-limits a key whose dedupeKey keeps mutating within the rate window', () => {
-    // Short dedup window so dedup doesn't mask the rate-limit; 3 admissions / 60s.
     const f = makeFilter({
       EVENT_DEDUP_WINDOW_S: 1,
       EVENT_RATE_LIMIT: 3,
@@ -65,14 +63,10 @@ describe('EventFilterService (mechanical dedup + rate-limit, no LLM)', () => {
     expect(f.admit({ ...base, dedupeKey: 'a' }, 0).pass).toBe(true);
     expect(f.admit({ ...base, dedupeKey: 'b' }, 2_000).pass).toBe(true);
     expect(f.admit({ ...base, dedupeKey: 'c' }, 4_000).pass).toBe(true);
-    // 4th within the window — different keys, but the rate window collapses across dedupeKeys? No:
-    // the filter keys on the FULL tuple incl. dedupeKey, so each distinct key has its own counter.
-    // This asserts distinct keys are NOT rate-limited against each other.
     expect(f.admit({ ...base, dedupeKey: 'd' }, 5_000).pass).toBe(true);
   });
 
   it('rate-limits repeated DISTINCT-but-same-tuple bursts past the limit', () => {
-    // To trip the rate-limit on ONE key, space hits past the dedup window but within the rate window.
     const f = makeFilter({
       EVENT_DEDUP_WINDOW_S: 5,
       EVENT_RATE_LIMIT: 3,

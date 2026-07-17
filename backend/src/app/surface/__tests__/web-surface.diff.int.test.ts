@@ -1,16 +1,3 @@
-/**
- * LIVE HTTP proof for `GET …/jobs/:jobId/diff` — boots a REAL Nest HTTP application (supertest, real
- * listening `http.Server`) and drives it against a REAL temp git worktree via the REAL `LocalGitService`
- * (real `git diff`/`git diff --numstat` subprocesses), same pattern as `web-surface.repo.int.test.ts`.
- * Lives in the `*.int.test.ts` integration tier (real app boot + real subprocesses), not `*.spec.ts`.
- *
- * Fixture repo (real `git init` + real commits in a temp dir):
- *   src/foo.ts — committed at base, then a COMMITTED edit ("across threads"), then an additional
- *                UNCOMMITTED edit on disk (never `git add`ed) — proving the diff reflects both.
- *   src/bar.ts — a brand-new committed file (status 'added').
- * `refs/remotes/origin/main` is pinned to the base commit sha so `git diff --merge-base origin/main`
- * (what the endpoint runs) resolves against it, mirroring a real clone's `origin/<default>`.
- */
 import type { ExecutionContext } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
@@ -34,7 +21,6 @@ const JOB_ID = 'job-1';
 let root: string;
 let app: import('@nestjs/common').INestApplication;
 let server: ReturnType<import('@nestjs/common').INestApplication['getHttpServer']>;
-/** Mutable so the "no sandbox" case can flip it via `mockResolvedValueOnce`. */
 let findSandbox: ReturnType<typeof vi.fn>;
 
 function git(args: string[], cwd: string): string {
@@ -52,22 +38,17 @@ beforeAll(async () => {
   git(['add', 'foo.ts'], root);
   git(['commit', '-q', '-m', 'base'], root);
 
-  // Pin origin/main to the base commit (as a real clone would carry it) so `--merge-base origin/main`
-  // resolves without a real remote.
   const baseSha = git(['rev-parse', 'HEAD'], root);
   git(['update-ref', 'refs/remotes/origin/main', baseSha], root);
 
-  // A COMMITTED change on top of base (a prior turn's commit).
   writeFileSync(join(root, 'foo.ts'), 'line1\nline2-changed\nline3\n');
   git(['add', 'foo.ts'], root);
   git(['commit', '-q', '-m', 'edit foo'], root);
 
-  // A brand-new COMMITTED file (status 'added').
   writeFileSync(join(root, 'bar.ts'), 'new content\n');
   git(['add', 'bar.ts'], root);
   git(['commit', '-q', '-m', 'add bar'], root);
 
-  // An additional UNCOMMITTED edit on top — never `git add`ed — proving the diff also carries live work.
   writeFileSync(join(root, 'foo.ts'), 'line1\nline2-changed\nline3\nline4-uncommitted\n');
 
   const realGit = new LocalGitService({ get: () => undefined } as never);

@@ -1,27 +1,3 @@
-/**
- * LIVE HTTP proof of "born-blocked create" (spec: sections/01-backend.md): `POST
- * /web/orgs/:orgId/repos/:repoId/jobs` accepts an additive `dependsOn` job-id list and, when at least
- * one requested blocker is still LIVE, creates the job BORN BLOCKED — mirroring the `create_job`
- * host-tool path — instead of injecting its first message. Boots the REAL `AppModule` over HTTP
- * (supertest, real cookie auth + `OrgMembershipGuard`), against live Postgres.
- *
- * `WebSurface.inbound$` is observed directly (not mocked) to prove `receiveFromClient` fired or didn't
- * — the cleanest, real signal that the immediate-start path did/didn't run. `BrainGateway` is replaced
- * with a capture double (mirrors `job-deps/job-dependency.int.test.ts`) so the wake funnel
- * (`onBlockerResolved` → `recordUnblockNote` → `pumpUnblockedJob`) can be driven directly against a job
- * born-blocked via this HTTP endpoint, without booting a real sandbox/git remote (out of scope for this
- * thread). Because the wake seam is mocked, this proves the FUNNEL ORDER (the unblock note is recorded with
- * the right blocker roster) and that the born-blocked seed rows land undelivered — NOT the end-to-end
- * coalesced turn, which is exercised in a live test-bridge run (see spec §Validation).
- *
- * Covers the born-blocked Validation scenarios:
- *  - invalid / cross-repo `dependsOn` id → reject before any row is created;
- *  - a live blocker → job created `status='blocked'`, TWO undelivered `main`-lane `follow_up_job_seed`
- *    rows queued (provenance note + brief), no sandbox/branch, NO `receiveFromClient` (no `inbound$`);
- *  - an already-terminal blocker (or no `dependsOn`) → unchanged immediate-start behavior;
- *  - multiple blockers → stays blocked until every one resolves;
- *  - resolving the last blocker records the unblock note (with the resolved roster) via the wake funnel.
- */
 
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
@@ -57,7 +33,6 @@ const fakeCreds = {
   engineAuth: async () => ({ secret: 'test-secret' }),
 };
 
-// Fixed ids → distinct from every other int test (which purge by their own ids).
 const ORG = '99999999-9999-4999-8999-999999999901';
 const REPO = '99999999-9999-4999-8999-999999999902';
 const FOREIGN_ORG = '99999999-9999-4999-8999-999999999903';
@@ -133,8 +108,6 @@ type SeedRow = {
   reply_route: Record<string, unknown> | null;
 };
 
-/** The queued `main`-lane born-blocked seed rows (provenance note + brief) that replaced the
- *  `jobs.blocked_seed_message` column, oldest-first. */
 async function seedRows(jobId: string): Promise<SeedRow[]> {
   return ds.query(
     `SELECT type, body, delivered_at, lane, author_id, reply_route FROM inbound_messages
@@ -159,8 +132,6 @@ async function countJobs(): Promise<number> {
   return rows[0].n;
 }
 
-/** Collect every `inbound$` emission during `fn`, keyed by threadTs — proves whether `receiveFromClient`
- *  fired for a given job without mocking the surface (so the real code path runs end-to-end). */
 async function captureInbound<T>(
   fn: () => Promise<T>,
 ): Promise<{ result: T; emitted: InboundChatMessage[] }> {
@@ -188,8 +159,6 @@ beforeAll(async () => {
     .useValue(fakeCreds)
     .overrideProvider(JobTitler)
     .useValue(new FakeThreadTitler())
-    // Capture double (mirrors job-dependency.int.test.ts) so we can drive the already-proven wake
-    // funnel directly against a seed created via THIS endpoint, without a real sandbox/git remote.
     .overrideProvider(BrainGateway)
     .useValue({
       bind: () => undefined,
@@ -241,7 +210,6 @@ beforeAll(async () => {
     [REPO, ORG],
   );
 
-  // A foreign org/repo/job the owner is NOT a member of — proves cross-repo dependsOn ids 404.
   await ds.query(
     `INSERT INTO organizations (id, name, slug, status) VALUES ($1, 'Foreign Org', 'depends-on-foreign-org', 'active')`,
     [FOREIGN_ORG],
@@ -315,7 +283,6 @@ describe('POST .../jobs — dependsOn (born-blocked create)', () => {
     expect(emitted.some((m) => m.threadTs === jobId)).toBe(true); // receiveFromClient fired
     const row = await loadJobRow(jobId);
     expect(row?.status).toBe('open');
-    // Started immediately — no born-blocked seed was queued.
     const rows = await seedRows(jobId);
     expect(rows.some((r) => r.reply_route?.bornBlockedSeed)).toBe(false);
   });
@@ -327,7 +294,6 @@ describe('POST .../jobs — dependsOn (born-blocked create)', () => {
       .send({ firstMessage: 'the blocker job' });
     expect(blockerRes.status).toBe(201);
     const blockerId = blockerRes.body.jobId as string;
-    // Confirm the blocker itself is live (default fresh row: status 'open', pr_state null).
     expect((await loadJobRow(blockerId))?.status).toBe('open');
 
     const { result: res, emitted } = await captureInbound(() =>
@@ -345,8 +311,6 @@ describe('POST .../jobs — dependsOn (born-blocked create)', () => {
     expect(row?.feature_branch).toBeNull(); // no sandbox/branch provisioned while blocked
     expect(await blockersOf(jobId)).toEqual([blockerId]);
 
-    // Two undelivered `main`-lane follow_up_job_seed rows authored by System: the provenance note, then the
-    // brief (the full assembled bodyText). This replaced the `blocked_seed_message` column.
     const rows = await seedRows(jobId);
     expect(rows).toHaveLength(2);
     expect(rows.every((r) => r.delivered_at === null)).toBe(true);
@@ -383,7 +347,6 @@ describe('POST .../jobs — dependsOn (born-blocked create)', () => {
     expect(emitted.some((m) => m.threadTs === jobId)).toBe(true); // started — the "blocker" is already dead
     const row = await loadJobRow(jobId);
     expect(row?.status).toBe('open');
-    // Started immediately — no born-blocked seed was queued.
     const rows = await seedRows(jobId);
     expect(rows.some((r) => r.reply_route?.bornBlockedSeed)).toBe(false);
   });
@@ -412,18 +375,14 @@ describe('POST .../jobs — dependsOn (born-blocked create)', () => {
     expect((await loadJobRow(dependent))?.status).toBe('blocked');
     expect(await blockersOf(dependent)).toEqual(expect.arrayContaining([a, b]));
 
-    // Resolve the first blocker — still parked on the second.
     await ds.query(`UPDATE jobs SET pr_state = 'merged', status = 'done' WHERE id = $1`, [a]);
     await jobDeps.onBlockerResolved(a, 'merged');
     expect((await loadJobRow(dependent))?.status).toBe('blocked');
     expect(noteCalls).toHaveLength(0);
 
-    // The born-blocked brief is still queued undelivered while parked (nothing has drained it).
     const parkedRows = await seedRows(dependent);
     expect(parkedRows.map((r) => r.body)).toContain('multi-blocked follow-up');
 
-    // Resolve the last blocker — the wake funnel records the JIT unblock note (with the resolved roster)
-    // then flips the job open and pumps.
     await ds.query(`UPDATE jobs SET pr_state = 'merged', status = 'done' WHERE id = $1`, [b]);
     await jobDeps.onBlockerResolved(b, 'merged');
 

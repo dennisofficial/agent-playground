@@ -1,10 +1,3 @@
-/**
- * Unit tests for the Stage-2 wiring inside `ProfileAwarenessService.handle` (decision d2) — a FAKE
- * `InstallAwarenessFilter` bound directly (no Nest DI container; `ProfileAwarenessService`'s Stage-2
- * deps are plain constructor args), so these run instantly with no real LLM/DB. The Stage-1 ledger +
- * detector paths are covered by `profile-awareness.service.int.test.ts` (live Postgres) and
- * `prompt-kit/jit/install-awareness.spec.ts`; this file is scoped to the filter seam only.
- */
 import { describe, expect, it, vi } from 'vitest';
 import type { WorkspaceConfigStore } from '../../onboarding/workspace-config.store';
 import type { InstallAwarenessFilter, InstallFilterVerdict } from '../install-awareness-filter';
@@ -24,14 +17,12 @@ const EMPTY_SNAPSHOT: WorkspaceProfileSnapshot = {
   houseStyle: null,
 };
 
-/** A fake `WorkspaceConfigStore` whose ledger transition the test controls. */
 function fakeConfigStore(transition: 'add' | 'remove' | null): WorkspaceConfigStore {
   return {
     applyToolingTransition: vi.fn().mockResolvedValue(transition),
   } as unknown as WorkspaceConfigStore;
 }
 
-/** A fake `WorkspaceProfileService` — always returns the supplied snapshot and a trivial render. */
 function fakeProfile(snapshot: WorkspaceProfileSnapshot = EMPTY_SNAPSHOT): WorkspaceProfileService {
   return {
     describe: vi.fn().mockResolvedValue(snapshot),
@@ -39,7 +30,6 @@ function fakeProfile(snapshot: WorkspaceProfileSnapshot = EMPTY_SNAPSHOT): Works
   } as unknown as WorkspaceProfileService;
 }
 
-/** A fake `InstallAwarenessFilter` returning a fixed verdict, or throwing when `throws` is set. */
 function fakeFilter(opts: {
   verdict?: InstallFilterVerdict;
   throws?: boolean;
@@ -71,8 +61,6 @@ describe('ProfileAwarenessService — Stage-2 filter wiring', () => {
     const text = await svc.handle(HANDLE_INPUT);
 
     expect(text).toBeNull();
-    // The ledger transition itself already committed BEFORE the filter ran — Stage 2 only gates what's
-    // shown, never whether the tool was recorded as seen.
     expect(configStore.applyToolingTransition).toHaveBeenCalledTimes(1);
     expect(filter.filter).toHaveBeenCalledTimes(1);
   });
@@ -170,7 +158,6 @@ describe('ProfileAwarenessService — Stage-2 filter wiring', () => {
 
     const text = await svc.handle(HANDLE_INPUT);
 
-    // Filter never called — no profile snapshot to hand it — so the suppress verdict never applies.
     expect(filter.filter).not.toHaveBeenCalled();
     expect(text).toContain('[profile-awareness]');
   });

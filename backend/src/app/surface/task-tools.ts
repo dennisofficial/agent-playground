@@ -3,16 +3,6 @@ import type { TaskItem } from '../persistence/entities';
 import type { TaskScope } from './thread-registry';
 import type { TaskEventSink } from './turn-harness.service';
 
-/**
- * The shared `task_create`/`task_update`/`task_list`/`task_get` host-bridge handlers — one factory used
- * IDENTICALLY by Claude and Codex sessions (registered into the bridge `tools` map, which auto-exposes
- * them to both engines). They do direct CRUD on the stage-owned `tasks` rows via {@link TaskEventSink}.
- *
- * SINGLE DURABLE ID SPACE: the id `task_create` returns is the row's short per-stage `#N` (its dense
- * `ordinal`, 1/2/3…), and the ids `task_list`/`task_get` report are those SAME `#N` — so an id from any of
- * them is always a valid `task_update` key. The `TaskEntity` uuid PK stays the internal row identity; reads
- * hit the durable rows fresh, so a builder-leg rotation (a new session) never loses the carried checklist.
- */
 export function makeTaskTools(sink: TaskEventSink, scope: TaskScope): Record<string, ToolImpl> {
   return {
     task_create: async (args) => {
@@ -23,7 +13,6 @@ export function makeTaskTools(sink: TaskEventSink, scope: TaskScope): Record<str
           error: 'subject is required (a one-line task title)',
         };
       const { id } = await sink.createTask(scope, args);
-      // Keep this exact wording — the web live overlay's `createdTaskId` regex parses the `#N` out of it.
       return `Task #${id} created: ${subject}`;
     },
     task_update: async (args) => {
@@ -45,7 +34,6 @@ export function makeTaskTools(sink: TaskEventSink, scope: TaskScope): Record<str
   };
 }
 
-/** One task per line: `#<id> [<status>] <subject>` (+ ` (blocked by …)`); empty → `"No tasks found."`. */
 export function renderTaskList(tasks: TaskItem[]): string {
   if (tasks.length === 0) return 'No tasks found.';
   return tasks
@@ -56,7 +44,6 @@ export function renderTaskList(tasks: TaskItem[]): string {
     .join('\n');
 }
 
-/** A short multi-line detail block for one task — only the fields that are present are shown. */
 export function renderTaskDetail(t: TaskItem): string {
   const lines = [`#${t.id} [${t.status}] ${t.subject}`];
   if (t.description) lines.push(`  description: ${t.description}`);

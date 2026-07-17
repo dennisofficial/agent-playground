@@ -3,12 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 import type { CurrentOrgCtx } from '../../org/current-org.decorator';
 import { WebSurfaceController } from '../web-surface.controller';
 
-/**
- * Focused unit coverage for the org-default-fallback / explicit-wins / reject-invalid contract in
- * `createJob` (see the `autoApproveMode` / `autoMerge` resolution block). The rest of `createJob` (repo
- * resolution, attachment ingest, review-PR seeding, title generation) is exercised elsewhere / at the
- * integration layer — this file only pins the automation-defaults resolution.
- */
 
 type OrgDefaults = {
   default_auto_approve_mode: string;

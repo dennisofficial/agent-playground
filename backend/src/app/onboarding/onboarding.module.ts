@@ -37,15 +37,6 @@ import { WorkspaceProfileController } from './workspace-profile.controller';
 import { WorkspaceSecretFileStore } from './workspace-secret.store';
 import { WorkspaceSecretsController } from './workspace-secrets.controller';
 
-/**
- * The ONBOARDING layer — the per-tenant credential store + the `CredentialResolver` seam every other
- * module reads through. `@Global` (like `SurfaceModule`/`DriverModule`) so the brain/driver/memory LLM
- * factories inject `CredentialResolver` with zero per-module import churn. Imported EARLY in the app
- * composition root so the global provider exists when those factories instantiate.
- *
- * Step 1 adds `OnboardingService` (channel binding + checklist) here; Step 2/3 add the Slack
- * installation store + the onboarding surfaces.
- */
 @Global()
 @Module({
   imports: [

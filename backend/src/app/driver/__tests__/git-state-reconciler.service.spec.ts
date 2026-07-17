@@ -12,7 +12,6 @@ import {
   summarizeChecks,
 } from '../git-state-reconciler.service';
 
-// Fixed clock so the adaptive-cadence `next_poll_at` writes are deterministic (new Date(now + ms)).
 const NOW = 1_700_000_000_000;
 
 function make(over: {
@@ -60,8 +59,6 @@ function make(over: {
     hostGithubToken: vi.fn(async () => 'tok'),
   } as unknown as CredentialResolver;
   const intake = { intakeEvent } as unknown as StimulusIntake;
-  // Fire-and-forget re-evaluation on every reconcile — never asserted here, just must not throw (which
-  // would otherwise be swallowed by `tick()`'s catch-all and silently default the cadence tier to `active`).
   const autoMerge = {
     maybeAutoMerge: vi.fn().mockResolvedValue(undefined),
   } as unknown as import('../auto-merge.service').AutoMergeService;
@@ -81,7 +78,6 @@ function detail(over: Partial<PullDetail> = {}): PullDetail {
   };
 }
 
-/** The single `next_poll_at` re-stamp write `tick()` issues per job after reconcileOne. */
 function nextPollWrite(update: ReturnType<typeof vi.fn>): unknown {
   const call = update.mock.calls.find(
     (c) => c[1] && typeof c[1] === 'object' && 'next_poll_at' in (c[1] as object),
@@ -112,7 +108,6 @@ describe('GitStateReconciler.tick', () => {
       { id: 'job-1' },
       { ci_status: null, ci_counts: null, pr_mergeable: 'dirty' },
     );
-    // dirty is a settled (non-null) state → active cadence, not the fast computing tier.
     expect(nextPollWrite(update)).toEqual({
       next_poll_at: new Date(NOW + CADENCE_MS.active),
     });
@@ -152,7 +147,6 @@ describe('GitStateReconciler.tick', () => {
     });
     await svc.tick();
     expect(intakeEvent).not.toHaveBeenCalled();
-    // The base-move-conflict window: poll every ~8s until GitHub resolves mergeability.
     expect(nextPollWrite(update)).toEqual({
       next_poll_at: new Date(NOW + CADENCE_MS.computing),
     });
@@ -177,7 +171,6 @@ describe('GitStateReconciler.tick', () => {
     expect(intakeEvent).not.toHaveBeenCalled();
     expect(update).toHaveBeenCalledWith({ id: 'job-1' }, { pr_state: 'merged' });
     expect(pr.listCheckRuns).not.toHaveBeenCalled();
-    // terminal → next_poll_at null so the job drops out of the DUE set (teardown owns it now).
     expect(nextPollWrite(update)).toEqual({ next_poll_at: null });
   });
 
@@ -206,7 +199,6 @@ describe('GitStateReconciler.tick', () => {
       { id: 'job-1' },
       { pr_url: 'http://pr/9', pr_number: 9, status: 'done', pr_state: 'open' },
     );
-    // A freshly discovered, settled PR polls at the active cadence (not the slow discovering tier).
     expect(nextPollWrite(update)).toEqual({
       next_poll_at: new Date(NOW + CADENCE_MS.active),
     });
@@ -220,7 +212,6 @@ describe('GitStateReconciler.tick', () => {
     });
     await svc.tick();
     expect(intakeEvent).not.toHaveBeenCalled();
-    // The ONLY write is the poll-clock re-stamp (no PR to observe yet) at the slow tier.
     expect(update.mock.calls).toHaveLength(1);
     expect(nextPollWrite(update)).toEqual({
       next_poll_at: new Date(NOW + CADENCE_MS.discovering),
@@ -265,7 +256,6 @@ describe('GitStateReconciler.tick', () => {
       runs: [], // transient no-checks-yet window for this head SHA
     });
     await svc.tick();
-    // Nothing changed (mergeableState unchanged, ci columns kept) — only the poll-clock re-stamp write.
     expect(update.mock.calls).toHaveLength(1);
     expect(nextPollWrite(update)).toEqual({
       next_poll_at: new Date(NOW + CADENCE_MS.active),
@@ -284,7 +274,6 @@ describe('GitStateReconciler.tick', () => {
 
   it('misconfig (no GitHub token) → backs off to the slow discovering cadence', async () => {
     const { svc, update } = make({ detail: detail() });
-    // svc built with a token; override creds to none for this job.
     (svc as unknown as { creds: CredentialResolver }).creds = {
       githubToken: vi.fn(async () => null),
       hostGithubToken: vi.fn(async () => null),

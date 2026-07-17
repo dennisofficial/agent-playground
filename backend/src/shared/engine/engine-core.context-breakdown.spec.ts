@@ -1,12 +1,3 @@
-/**
- * Regression coverage for the LIVE + end-of-turn `context_breakdown` capture in `engine-core.ts`: a fake
- * Claude SDK whose `query()` handle carries a `getContextUsage()` control method (mirroring the real SDK's
- * `Query` interface) drives the turn through a normal main-agent round-trip + success result, and asserts
- * (a) a LIVE `context_breakdown` event fires mid-turn, (b) the AWAITED end-of-turn fetch lands on
- * `result.usage.contextBreakdown`, and (c) the whole mechanism degrades gracefully — no event, no
- * `usage.contextBreakdown`, and no thrown error into the turn — when `getContextUsage` is absent (an older
- * CLI / Codex-adjacent) or rejects (a transient control-channel error).
- */
 import type { SDKControlGetContextUsageResponse } from '@anthropic-ai/claude-agent-sdk';
 import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -29,7 +20,6 @@ afterAll(() => rmSync(HOME_ROOT, { recursive: true, force: true }));
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const tick = (): Promise<void> => sleep(5);
 
-// ── Scripted SDK frames (only the fields the engine reads; shapes mirror @anthropic-ai/claude-agent-sdk). ──
 const initMsg = (): Record<string, unknown> => ({
   type: 'system',
   subtype: 'init',
@@ -94,11 +84,6 @@ const EXPECTED_BREAKDOWN: ContextBreakdown = {
 
 type ContextUsageBehavior = 'resolve' | 'reject' | 'absent';
 
-/**
- * A minimal fake SDK whose `query()` returns a plain async-generator object (a non-streaming, single-message
- * turn — no steer channel needed for this coverage) with an optional `getContextUsage` control method
- * attached, mirroring how the real `Query` handle carries it alongside the async-iterable frames.
- */
 function makeContextBreakdownFake(
   frames: () => AsyncGenerator<Record<string, unknown>>,
   behavior: ContextUsageBehavior,
@@ -123,7 +108,6 @@ function makeContextBreakdownFake(
           throw new Error('getContextUsage failed');
         };
       }
-      // 'absent': no getContextUsage property at all — mirrors an older CLI / Codex-adjacent handle.
       return gen;
     },
   } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');

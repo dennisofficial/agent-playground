@@ -1,12 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { renderPlanForReview, renderReReview, type PlanReviewInput } from '../plan-review';
 
-/**
- * Golden-snapshot baseline for the plan-review task PROSE strings — every snapshot captures CURRENT
- * output verbatim (a regression pass, not a spec of intent; see the sibling `prompt-kit` snapshot specs).
- * Locked BEFORE the `renderReviewIntent` extraction (dedupe with `brain/plan-review.eval.ts`'s hand-synced
- * copy) so that refactor is provably byte-identical.
- */
 
 const fullInput: PlanReviewInput = {
   jobId: 'job-1',

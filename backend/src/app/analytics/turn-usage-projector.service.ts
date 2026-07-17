@@ -6,33 +6,17 @@ import { AppVersionService } from '../cluster/app-version.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity, TurnModelUsageEntity, TurnStatsEntity } from '../persistence/entities';
 
-/** Everything the projector needs to attribute a completed turn. `orgId` is optional — resolved from
- *  `jobId` when the caller (e.g. autofix) doesn't have it in scope. */
 export interface TurnUsageIdentity {
   jobId: string;
   orgId?: string;
-  /** 'main' | 'thread:<threadId>' | 'phase:<stepId>' | 'codex-review:<jobId>'. */
   lane: string;
-  /** The turn's role / phase: 'brain' | 'step' | 'review' | 'gate' | 'autofix' | 'compaction'. */
   kind: string;
-  /** 'claude' | 'codex'. */
   engine: string;
-  /** The engine turn id when the caller has it; most completion sites don't (minted in the runner). */
   turnId?: string | null;
-  /** The claude_credentials.id that authed this turn (Claude only); null/absent for Codex + non-agentic (d3). */
   credentialId?: string | null;
-  /** Per-turn attribution tags (phaseId → step_id; the rest → `tags`): batchOrdinal/autofixId/lensId/… */
   metaTag?: Record<string, unknown> | null;
 }
 
-/**
- * Projects a completed turn's usage into the durable analytics tables (`turn_stats` +
- * per-model `turn_model_usage`). Called at each turn-completion site with the engine's `result.usage`.
- *
- * This exists because `EngineUsage.modelUsage` (the SDK's per-model breakdown, incl. writer subagents)
- * is otherwise only a transient `turn_meta` message and was historically collapsed to one model. Writes
- * are BEST-EFFORT: a failure here logs and returns — it must never fail a turn.
- */
 @Injectable()
 export class TurnUsageProjector {
   private readonly logger = new Logger(TurnUsageProjector.name);
@@ -59,7 +43,6 @@ export class TurnUsageProjector {
       const tag = identity.metaTag ?? {};
       const stepId = pickUuid(tag.phaseId) ?? laneSuffix(identity.lane, 'phase:');
       const threadId = laneSuffix(identity.lane, 'thread:');
-      // Everything in metaTag except the phaseId we lifted to step_id.
       const { phaseId: _phaseId, ...restTags } = tag as Record<string, unknown>;
       const tags = Object.keys(restTags).length ? restTags : null;
 
@@ -122,12 +105,10 @@ export class TurnUsageProjector {
   }
 }
 
-/** `lane` = `<prefix><suffix>` → the suffix, else null. */
 function laneSuffix(lane: string, prefix: string): string | null {
   return lane.startsWith(prefix) ? lane.slice(prefix.length) : null;
 }
 
-/** A metaTag value that is a plain uuid string, else null. */
 function pickUuid(v: unknown): string | null {
   return typeof v === 'string' && v.length > 0 ? v : null;
 }

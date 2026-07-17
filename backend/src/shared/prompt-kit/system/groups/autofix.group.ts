@@ -1,8 +1,3 @@
-/**
- * prompt-kit / groups / autofix — the auto-fix stage's two terse personas: a read-only review pass and the
- * fix-apply turn. Both raw (no composer framing). The per-lens detail lives in `autofix/autofix-lenses.ts`
- * (the turn's task), not here.
- */
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { TS_STYLE_NOTE } from '../fragments';

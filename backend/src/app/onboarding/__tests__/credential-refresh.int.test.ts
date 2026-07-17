@@ -1,17 +1,3 @@
-/**
- * `CredentialRefreshService.ensureFresh` — the single serialized host-side Claude OAuth refresh core every
- * caller (turns, the keep-alive sweep, Settings usage) funnels through — end-to-end against live Postgres
- * and a local stub token server. Unit specs can fake the DB/HTTP boundary; what only THIS boots can prove:
- *   - a Postgres pessimistic row lock is really the cross-instance mutex (two concurrent refreshers issue
- *     exactly ONE token-endpoint request, never a duplicate/racing one)
- *   - a hard auth failure (400/401/403) really lands `status='needs_reauth'` in a SEPARATE write after the
- *     refresh transaction rolls back (not lost along with it)
- *   - the keep-alive sweep and the Settings usage path really route through the SAME core, not a copy
- *
- * Boots the real `AppModule` (mirrors `repo.controller.int.test.ts`), overriding only external-boundary
- * providers so it compiles cleanly, and retargets `CLAUDE_OAUTH_TOKEN_URL` at an in-process stub HTTP server
- * so no real Anthropic OAuth traffic is ever sent.
- */
 
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
@@ -40,7 +26,6 @@ import { CLASSIFIER_LLM } from '../decision-gate';
 import { GithubPrService, LocalGitService } from '../git';
 import { OauthUsageService } from '../oauth-usage.service';
 
-// ── Credential resolver stub — AppModule needs SOME provider here; nothing in this file reads it. ─────────
 const fakeCreds = {
   anthropicKey: () => Promise.resolve(undefined),
   openaiKey: () => Promise.resolve(undefined),
@@ -49,7 +34,6 @@ const fakeCreds = {
   engineAuth: () => Promise.resolve(undefined),
 };
 
-// ── Stub Claude OAuth token endpoint ────────────────────────────────────────────────────────────────────
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -60,7 +44,6 @@ type StubHandler = (res: http.ServerResponse) => void | Promise<void>;
 let requestCount = 0;
 let refreshSeq = 0;
 
-/** Each call mints a DIFFERENT access/refresh token pair — proves the rotation actually happened. */
 function successHandler(delayMs = 0): StubHandler {
   return async (res) => {
     if (delayMs > 0) await sleep(delayMs); // holds the row lock long enough for a concurrent caller to block on it
@@ -91,7 +74,6 @@ const tokenServer = http.createServer((req, res) => {
   req.on('end', () => void handler(res));
 });
 
-// ── Sentinel tenant (fixed id → kept distinct from every other int test) ───────────────────────────────
 const ORG = 'c0ffee00-c0ff-4eee-8eee-c0ffee000001';
 
 let app: NestExpressApplication;
@@ -102,7 +84,6 @@ let keepalive: CredentialKeepAliveService;
 let usage: OauthUsageService;
 let prevTokenUrl: string | undefined;
 
-/** Seed a `personal` credential expiring in `expiresInMs`, select it as the org's active credential. */
 async function seedCred(expiresInMs: number, label: string): Promise<string> {
   const credId = await seedCredUnselected(expiresInMs, label);
   await ds.query(`UPDATE organizations SET selected_claude_credential_id = $1 WHERE id = $2`, [
@@ -112,8 +93,6 @@ async function seedCred(expiresInMs: number, label: string): Promise<string> {
   return credId;
 }
 
-/** Seed a `personal` credential expiring in `expiresInMs` WITHOUT selecting it — proves the sweep covers
- *  every connected account, not just each org's selected one. */
 async function seedCredUnselected(expiresInMs: number, label: string): Promise<string> {
   return store.upsertPersonal(ORG, {
     label,
@@ -142,10 +121,6 @@ beforeAll(async () => {
   const prevSurface = process.env.SURFACE;
   prevTokenUrl = process.env.CLAUDE_OAUTH_TOKEN_URL;
   process.env.SURFACE = 'agent';
-  // Left set for the WHOLE file (restored in afterAll, not here): `EnvService.get` (Nest's ConfigService with
-  // `cache: true`) resolves + caches each key lazily on its FIRST read, not eagerly at compile — and the
-  // refresh core only reads this key from inside a real refresh call, which happens well after this block
-  // returns. Restoring it immediately would poison the cache with `undefined` before that first real read.
   process.env.CLAUDE_OAUTH_TOKEN_URL = `http://127.0.0.1:${port}`;
 
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
@@ -189,7 +164,6 @@ afterAll(async () => {
   else process.env.CLAUDE_OAUTH_TOKEN_URL = prevTokenUrl;
 });
 
-/** Each test starts with NO credential rows for this org (deleting cascades the FK's SET NULL selection). */
 beforeEach(async () => {
   await ds.query(`DELETE FROM claude_credentials WHERE org_id = $1`, [ORG]);
   requestCount = 0;
@@ -254,11 +228,6 @@ describe('CredentialRefreshService.ensureFresh (live Postgres + stub OAuth token
     expect(requestCount).toBe(0);
   });
 
-  // The refresh transaction rolls back on ANY token-endpoint failure, so a transient 5xx propagates as a
-  // plain rejection (not `CredentialNeedsReauthError` — that's reserved for a HARD 400/401/403) and leaves
-  // the row untouched. Falling back to the stored secret on a transient failure is a CALLER decision (see
-  // `RedisEngineRunner.run`), not something `ensureFresh` itself does — the core's only job is to classify
-  // hard-vs-transient and persist the former.
   it('a transient 503 leaves the credential active and untouched (no needs_reauth, no stored change)', async () => {
     const credId = await seedCred(5 * 60_000, 'transient-503');
     const before = await getRow(credId);

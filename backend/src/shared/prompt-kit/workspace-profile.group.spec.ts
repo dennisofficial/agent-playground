@@ -2,12 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { Agent } from './system/agent';
 import { renderAgentPrompt } from './system/assemble';
 
-/**
- * The unified WORKSPACE PROFILE group — the one named area (secrets, mounts, caches, setup, MCP, skills,
- * house style) Atlas keeps current. The overview must appear for the brain in BOTH framings (onboarding =
- * bulk pass, normal = incremental upkeep), name every dimension, and print the live snapshot from
- * `ctx.settings.workspaceProfile`.
- */
 const NAME_MARKER = 'THE WORKSPACE PROFILE';
 const SNAPSHOT = '- Mounts: .cache (shared-rw)\n- Skills: migrations [repo]';
 
@@ -17,7 +11,6 @@ describe('workspace-profile.group — the named provisioning umbrella', () => {
     (jobKind) => {
       const out = renderAgentPrompt(Agent.PLANNING, { jobKind });
       expect(out).toContain(NAME_MARKER);
-      // Each dimension's upkeep tool is named so the brain knows how to maintain it.
       for (const tool of [
         'request_secret',
         'write_workspace_config',
@@ -64,7 +57,6 @@ describe('workspace-profile.group — the named provisioning umbrella', () => {
     );
     expect(normal).toContain('propose_mcp_servers each take scope:"repo"');
     expect(normal).toContain('scope:"org"');
-    // The anti-pattern the fix targets: a normal job must not be steered to decline org-wide requests.
     expect(normal).toContain('never decline an org-wide request');
   });
 });

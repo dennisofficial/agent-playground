@@ -9,7 +9,6 @@ import type { SandboxProvider } from '../../sandbox/sandbox-provider.port';
 import type { CaddyAdminClient } from '../caddy-admin.client';
 import { ExposureService } from '../exposure.service';
 
-/** A chainable query-builder stub that records every `.where`/`.andWhere` call + the `.set` payload. */
 function fakeQueryBuilder() {
   const calls = {
     set: undefined as unknown,

@@ -25,25 +25,20 @@ import {
 import { CredentialResolver } from './credential-resolver.service';
 import { TenantCredentialStore } from './tenant-credential.store';
 
-/** An org's lifecycle, stored on `organizations.status`. */
 export type OrgLifecycle = 'onboarding' | 'active' | 'suspended';
 
-/** The ordered onboarding checklist steps (first-unmet is the next thing to do). */
 export type OnboardingStep = 'repo' | 'llm_key' | 'openai_key' | 'engine_auth' | 'github_pat';
 
-/** The derived onboarding state for an org — computed from rows, never a separate source of truth. */
 export interface OnboardingStatus {
   orgId: string;
   lifecycle: OrgLifecycle;
   steps: {
     repoConnected: boolean;
     llmKey: boolean;
-    /** The OpenAI key — powers pgvector memory embeddings. Required. */
     openaiKey: boolean;
     engineAuth: boolean;
     githubPat: boolean;
   };
-  /** Unmet steps in order — `missing[0]` is the next thing to do; empty → ready to activate. */
   missing: OnboardingStep[];
 }
 
@@ -52,35 +47,26 @@ export interface ValidationResult {
   reason?: string;
 }
 
-/** Connect a GitHub repo to an org (the thing that makes a repo available for threads). */
 export interface ConnectRepoArgs {
   orgId: string;
-  /** HTTPS GitHub URL for the repo. */
   repoUrl: string;
   baseBranch?: string;
-  /** Display name; defaults to the GitHub repo name. */
   displayName?: string;
 }
 
 export interface ConnectedRepo {
-  /** The repo's uuid id (the API + child rows reference this). */
   id: string;
-  /** The URL-safe slug (the clone/worktree/UX identity). */
   slug: string;
   name: string;
   gitUrl: string;
   defaultBranch: string;
-  /** Per-repo feature-branch prefix override; null uses the built-in default. */
   branchPrefix: string | null;
-  /** Default GitHub merge method for this repo's jobs (auto-merge / manual Merge PR button). */
   defaultAutoMergeMethod: AutoMergeMethod;
-  /** Whether to delete the head branch after a merge, for this repo's jobs. */
   defaultAutoMergeDeleteBranch: boolean;
   accessOk: boolean;
   reason?: string;
 }
 
-/** Slugify a repo name into a URL-safe, org-unique handle. */
 export function slugifyRepo(name: string): string {
   return (
     name
@@ -91,11 +77,6 @@ export function slugifyRepo(name: string): string {
   );
 }
 
-/**
- * The public backend origin GitHub can deliver webhooks to, or null when the backend isn't publicly
- * reachable (BACKEND_HOST unset, non-https, or a localhost/private host — e.g. Atlas running locally).
- * A null result means webhook registration is skipped and the 30-min poll is the sole sync path.
- */
 export function publicBackendBase(env: EnvService): string | null {
   const raw = env.get('BACKEND_HOST');
   if (!raw) return null;
@@ -115,12 +96,6 @@ export function publicBackendBase(env: EnvService): string | null {
   return u.origin;
 }
 
-/**
- * The onboarding state machine + repo connection — the layer that gets an org from created → fully
- * configured → active, and connects a GitHub repo so threads can be opened against it. Checklist state
- * is DERIVED from the existing rows (credentials presence + connected/validated repo + the org's
- * `organizations.status` lifecycle), never a new table.
- */
 @Injectable()
 export class OnboardingService {
   private readonly logger = new Logger(OnboardingService.name);
@@ -143,22 +118,11 @@ export class OnboardingService {
     private readonly creds: CredentialResolver,
     private readonly store: TenantCredentialStore,
     private readonly pr: GithubPrService,
-    // Physical job teardown (container + git worktree) lives in the driver's `JobLifecycleService`, which a
-    // STATIC import from `onboarding/` cannot reach without closing an ES module cycle. It is exposed as the
-    // @Global `JOB_TEARDOWN` leaf port (see `driver/job-teardown.port.ts`) — injected here as an explicit,
-    // typed constructor param, exactly as `OrganizationService.deleteOrg` does it.
     @Inject(JOB_TEARDOWN) private readonly jobTeardown: JobTeardownPort,
-    // The brain services (`BrainStoreService`/`AgentSessionManager`) are still resolved LAZILY via this ref
-    // + a dynamic `import()` (see the notes on those call sites) to dodge the same kind of ES module cycle.
     private readonly moduleRef: ModuleRef,
     private readonly env: EnvService,
   ) {}
 
-  /**
-   * Idempotently connect a GitHub repo to an org: derive the slug, upsert the `repos` row, then
-   * probe access with the org's GitHub token and persist the validated state (`access_ok`). A repo is
-   * only counted toward onboarding once `access_ok` is true.
-   */
   async connectRepo(args: ConnectRepoArgs): Promise<ConnectedRepo> {
     const { orgId, repoUrl } = args;
     const parsed = parseGithubRepoUrl(repoUrl);
@@ -180,7 +144,6 @@ export class OnboardingService {
     const name = args.displayName ?? parsed.repo;
     const baseBranch = args.baseBranch ?? 'main';
 
-    // Upsert by the org-unique slug; the surrogate uuid `id` is DB-generated (or kept on conflict).
     await this.repos.upsert(
       {
         org_id: orgId,
@@ -205,9 +168,6 @@ export class OnboardingService {
       `connected repo ${slug} (${repo.id}) → org ${orgId} (access_ok=${validation.ok})`,
     );
 
-    // Once a repo is reachable AND the org can actually run Atlas, kick a one-off repo-onboarding thread
-    // (idempotent — won't re-spawn). Fire-and-forget so connect returns immediately. Covers re-connecting a
-    // new repo to an already-active org; the first repo on a not-yet-runnable org is covered by tryActivate.
     if (validation.ok) {
       void this.maybeStartRepoOnboarding(orgId, repo.id).catch((err) =>
         this.logger.warn(`repo onboarding spawn failed for ${repo.id}: ${err}`),
@@ -231,15 +191,6 @@ export class OnboardingService {
     };
   }
 
-  /**
-   * Spawn the one-off repo-ONBOARDING thread (Atlas-run `claude init`) for a connected repo — but only when
-   * (a) the org is RUNNABLE (keys + engine auth + GitHub PAT present, so the brain can actually run), (b)
-   * the repo's access is validated, and (c) it hasn't been onboarded already. Idempotency + the
-   * re-spawn guard are the `repos.onboarding_job_id` marker, set under a conditional UPDATE so two
-   * concurrent triggers (connectRepo + tryActivate) can't double-spawn. Best-effort + fire-and-forget by
-   * the callers. The brain/store + session manager are resolved LAZILY (the same module-cycle avoidance
-   * `disconnectRepo` uses — onboarding → brain would otherwise close an ES module cycle).
-   */
   async maybeStartRepoOnboarding(orgId: string, repoId: string): Promise<void> {
     const repo = await this.repos.findOne({
       where: { id: repoId, org_id: orgId },
@@ -270,8 +221,6 @@ export class OnboardingService {
       kind: 'onboarding',
     });
 
-    // Claim the spawn: only the trigger that flips `onboarding_job_id` from NULL wins; a loser deletes
-    // its orphan thread row and bails (no double onboarding).
     const claim = await this.repos.update(
       { id: repoId, org_id: orgId, onboarding_job_id: IsNull() },
       { onboarding_job_id: jobId },
@@ -285,15 +234,6 @@ export class OnboardingService {
     await sessions.startOnboardingThread(jobId, orgId, repoId);
   }
 
-  /**
-   * Operator-initiated (RE-)ONBOARD of an already-connected repo — the explicit counterpart to the
-   * automatic {@link maybeStartRepoOnboarding}. Unlike the auto path it does NOT bail on the
-   * `onboarding_job_id` re-spawn guard: it spawns a FRESH onboarding thread and overwrites the marker,
-   * so it works for repos connected before onboarding existed, repos already onboarded (re-derive config
-   * after the repo changed), or repos whose prior onboarding thread is gone. Requires the org to be
-   * runnable (keys + engine auth + GitHub PAT) and the repo's access validated. Returns the new thread id
-   * so the UI can deep-link straight into it. Org-scoped (404 on a cross-tenant id).
-   */
   async reonboardRepo(orgId: string, repoId: string): Promise<{ jobId: string }> {
     const repo = await this.repos.findOne({
       where: { id: repoId, org_id: orgId },
@@ -330,23 +270,14 @@ export class OnboardingService {
       baseBranch: repo.default_branch ?? 'main',
       kind: 'onboarding',
     });
-    // Explicit operator action — overwrite the marker (no first-time guard); the prior onboarding thread,
-    // if any, stays as history.
     await this.repos.update({ id: repoId, org_id: orgId }, { onboarding_job_id: jobId });
     this.logger.log(`re-onboarding thread ${jobId} for ${orgId}/${repo.slug} (operator-initiated)`);
-    // Fire-and-forget: the first turn provisions the sandbox and runs a full brain turn (minutes) — the
-    // HTTP caller only needs the job id to deep-link into the thread and watch it live.
     void sessions
       .startOnboardingThread(jobId, orgId, repoId)
       .catch((err) => this.logger.warn(`onboarding first turn failed for job ${jobId}: ${err}`));
     return { jobId };
   }
 
-  /**
-   * Re-probe a connected repo's GitHub access with the org's current token and persist the result
-   * (`access_ok` + `access_checked_at`). Surfaces a rotated/expired PAT without a full reconnect; tries
-   * to activate the org in case access just came good. Scoped to the org (404 on a cross-tenant id).
-   */
   async revalidateRepo(orgId: string, repoId: string): Promise<ConnectedRepo> {
     const repo = await this.repos.findOne({
       where: { id: repoId, org_id: orgId },
@@ -380,10 +311,6 @@ export class OnboardingService {
     };
   }
 
-  /**
-   * Update a connected repo's metadata — display name and/or base branch. Pure metadata, no GitHub call
-   * (use `revalidateRepo` to re-check access). Scoped to the org (404 on a cross-tenant id).
-   */
   async updateRepo(
     orgId: string,
     repoId: string,
@@ -404,7 +331,6 @@ export class OnboardingService {
     if (patch.defaultBranch !== undefined && patch.defaultBranch.trim()) {
       next.default_branch = patch.defaultBranch.trim();
     }
-    // Empty string clears the override back to the neutral built-in default.
     if (patch.branchPrefix !== undefined) {
       next.branch_prefix = patch.branchPrefix.trim() || null;
     }
@@ -429,11 +355,6 @@ export class OnboardingService {
     };
   }
 
-  /**
-   * List a connected repo's branches with the org's GitHub token — the create-job base-branch picker.
-   * The repo's configured default branch is surfaced first, then the rest in GitHub's order (de-duped).
-   * Scoped to the org (404 on a cross-tenant id).
-   */
   async listRepoBranches(
     orgId: string,
     repoId: string,
@@ -454,17 +375,6 @@ export class OnboardingService {
     };
   }
 
-  /**
-   * Disconnect a repo from the org, CASCADE-deleting everything under it — mirroring
-   * `OrganizationService.deleteOrg` (and consistent with single-thread `deleteJobDeep`). The operator
-   * is warned in the UI before this runs; here we just tear it all down. Scoped to the org.
-   *
-   * The repo's threads are deep-deleted in a DRAIN loop (re-query until none remain) rather than a single
-   * snapshot: threads can be created from several paths, and the live schema has NO foreign keys, so a
-   * thread inserted mid-cascade would otherwise orphan. Each create path inserts one row between awaits,
-   * so the loop converges immediately. The repo row stays present through the drain so each
-   * `deleteJobDeep` can still resolve repo metadata for worktree/container teardown.
-   */
   async disconnectRepo(
     orgId: string,
     repoId: string,
@@ -487,8 +397,6 @@ export class OnboardingService {
       }
     }
 
-    // Sweep repo-scoped rows not tied to a thread (parked event stimuli / decision records), any leftover
-    // sandboxes, then the repo row itself.
     await this.stimuli.delete({ repo_id: repoId, org_id: orgId });
     await this.decisionRecords.delete({ repo_id: repoId, org_id: orgId });
     await this.sandboxes.delete({ repo_id: repoId, org_id: orgId });
@@ -499,7 +407,6 @@ export class OnboardingService {
     return { ok: true, threadsDeleted };
   }
 
-  /** The derived onboarding checklist for an org. */
   async status(orgId: string): Promise<OnboardingStatus> {
     const org = await this.orgs.findOne({ where: { id: orgId } });
     const lifecycle = (org?.status as OrgLifecycle | undefined) ?? 'onboarding';
@@ -514,14 +421,9 @@ export class OnboardingService {
     });
     const steps = {
       repoConnected,
-      // The Anthropic key must be PRESENT and validated (1-token probe) to count.
       llmKey: presence.hasAnthropic && !!credRow?.llm_validated_at,
-      // The OpenAI key is REQUIRED — it powers pgvector memory embeddings (cloud embeddings). Presence
-      // is enough (no separate validation gate today).
       openaiKey: presence.hasOpenai,
       engineAuth: presence.engineAuthSet,
-      // The key `githubPat` stays as-is (low-churn), but it now means "the ACTIVE GitHub auth mode has a
-      // usable credential": PAT mode requires a PAT; App mode requires a connected installation.
       githubPat: presence.githubAuthMode === 'app' ? presence.hasGithubApp : presence.hasGithub,
     };
     const missing: OnboardingStep[] = [];
@@ -533,13 +435,11 @@ export class OnboardingService {
     return { orgId, lifecycle, steps, missing };
   }
 
-  /** The first unmet step (what the onboarding UX should ask for next), or null when complete. */
   async nextStep(orgId: string): Promise<OnboardingStep | null> {
     const { missing } = await this.status(orgId);
     return missing[0] ?? null;
   }
 
-  /** Probe that the repo is reachable with the org's token (fails fast on a bad PAT/url). */
   async validateRepo(orgId: string, slug: string): Promise<ValidationResult> {
     const repo = await this.repos.findOne({ where: { org_id: orgId, slug } });
     if (!repo?.git_url) return { ok: false, reason: 'no repo configured' };
@@ -558,10 +458,6 @@ export class OnboardingService {
     return { ok: true };
   }
 
-  /**
-   * Probe the org's Anthropic key with a 1-token call so a bad key surfaces at onboarding, not mid-build.
-   * On success, stamps `llm_validated_at` so the checklist counts the key as validated.
-   */
   async validateLlmKey(orgId: string): Promise<ValidationResult> {
     const key = await this.creds.anthropicKey(orgId);
     if (!key) return { ok: false, reason: 'no Anthropic API key set' };
@@ -583,15 +479,11 @@ export class OnboardingService {
     }
   }
 
-  /** Flip the org to `active` once every checklist step is met (no-op otherwise). Returns the status. */
   async tryActivate(orgId: string): Promise<OnboardingStatus> {
     const status = await this.status(orgId);
     if (status.missing.length === 0 && status.lifecycle !== 'active') {
       await this.orgs.update({ id: orgId }, { status: 'active' });
       this.logger.log(`org ${orgId} fully configured → active`);
-      // The org just became runnable — kick onboarding for any connected-but-not-yet-onboarded repo (this
-      // is the path that covers the FIRST repo, connected before the credentials were in place). Idempotent
-      // + fire-and-forget; never blocks activation.
       void this.spawnOnboardingForPendingRepos(orgId).catch((err) =>
         this.logger.warn(`post-activation onboarding spawn failed for org ${orgId}: ${err}`),
       );
@@ -600,7 +492,6 @@ export class OnboardingService {
     return status;
   }
 
-  /** Trigger `maybeStartRepoOnboarding` for every access_ok repo of an org that hasn't been onboarded yet. */
   private async spawnOnboardingForPendingRepos(orgId: string): Promise<void> {
     const repos = await this.repos.find({
       where: { org_id: orgId, access_ok: true, onboarding_job_id: IsNull() },
@@ -613,16 +504,6 @@ export class OnboardingService {
     }
   }
 
-  /**
-   * Best-effort per-repo webhook registration: ensure the two GitHub hooks (WORK-EVENTS intake at
-   * /webhooks/github/events, silent PR-state sync at /webhooks/github/state) exist with the backend's
-   * secret + full event set, and PRUNE any stale Atlas hooks at retired URLs (e.g. the old /ingress/github
-   * + /webhooks/github doors from before the rename). Skipped (debug-log, no warning) when the backend
-   * isn't publicly reachable — local runs rely on the 30-min poll. NEVER throws (fire-and-forget by every
-   * caller). When the token lacks webhook permission (classic: repo/admin:repo_hook · fine-grained:
-   * Webhooks: Read and write), records a non-fatal `webhook_warning` on the repo row so the operator can
-   * grant it.
-   */
   private async ensureRepoWebhook(orgId: string, repo: RepoEntity): Promise<void> {
     const base = publicBackendBase(this.env);
     if (!base) {
@@ -677,8 +558,6 @@ export class OnboardingService {
       if (outcome !== 'created' && outcome !== 'updated') allOk = false;
     }
 
-    // Prune stale Atlas hooks at retired URLs (e.g. the pre-rename /ingress/github + /webhooks/github),
-    // scoped to our backend base so third-party hooks are untouched. Idempotent — a no-op once converged.
     const pruned = await this.pr
       .pruneWebhooksExcept(token, {
         owner: parsed.owner,
@@ -692,8 +571,6 @@ export class OnboardingService {
       });
     if (pruned > 0) this.logger.log(`pruned ${pruned} stale Atlas webhook(s) for ${repo.slug}`);
 
-    // Persist/clear the operator-facing warning. On a transient 'error' (neither no-scope nor all-ok) we
-    // leave the column untouched so a real prior no-scope warning isn't wiped by a flaky call.
     if (anyNoScope) {
       await this.repos.update(
         { id: repo.id },
@@ -709,10 +586,6 @@ export class OnboardingService {
     }
   }
 
-  /**
-   * One-time backfill: ensure webhooks on every already-connected (access_ok) repo, so existing repos get
-   * their hooks without a re-connect. Invoked fire-and-forget on leader promotion. Best-effort per repo.
-   */
   async ensureWebhooksForActiveRepos(): Promise<void> {
     const repos = await this.repos.find({ where: { access_ok: true } });
     for (const repo of repos) {

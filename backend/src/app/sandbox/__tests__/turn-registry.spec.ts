@@ -3,14 +3,12 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ActiveTurnEntity } from '../../persistence/entities';
 import { BrainTurnAlreadyRunningError, TurnRegistry } from '../turn-registry.service';
 
-/** A Postgres unique-violation error as TypeORM surfaces it (SQLSTATE 23505 on `.code`). */
 function uniqueViolation(): QueryFailedError {
   const err = new QueryFailedError('insert', [], new Error('duplicate key'));
   (err as QueryFailedError & { code?: string }).code = '23505';
   return err;
 }
 
-/** A vi-mock repo capturing the calls TurnRegistry makes (no real Postgres). */
 function makeRepo(rows: Partial<ActiveTurnEntity>[] = []) {
   const repo = {
     create: vi.fn((d: Partial<ActiveTurnEntity>) => d as ActiveTurnEntity),
@@ -168,7 +166,6 @@ describe('TurnRegistry', () => {
       reply: { t: 'tool_response', id: 'call-1', result: { ok: true } },
     });
 
-    // getToolReply returns the row's reply when present, else null.
     execs.findOne.mockResolvedValueOnce({
       reply: { t: 'tool_response', id: 'call-1', result: 42 },
     } as never);
@@ -201,7 +198,6 @@ describe('TurnRegistry', () => {
 
   it('findStale merges stale-heartbeat + never-beat rows, de-duped by turn_id', async () => {
     const repo = makeRepo();
-    // First find() = stale-heartbeat rows; second = never-beat rows (one overlaps t1).
     repo.find
       .mockResolvedValueOnce([{ turn_id: 't1' }, { turn_id: 't2' }] as ActiveTurnEntity[])
       .mockResolvedValueOnce([{ turn_id: 't1' }, { turn_id: 't3' }] as ActiveTurnEntity[]);

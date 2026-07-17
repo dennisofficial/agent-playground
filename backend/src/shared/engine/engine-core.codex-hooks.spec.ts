@@ -7,12 +7,6 @@ import { agentMessage } from '../prompt-kit/message';
 import { EngineCore } from './engine-core';
 import type { EngineHomeKey } from './engine-home';
 
-/**
- * Exercises `EngineCore.buildCodexHooks` — the EngineLocalHooks assembled for the `codex app-server` path
- * from the JIT rule catalog (svc-nudge + leg-rotation) plus the structural write-guard, then filtered through
- * `guardHooksAgainstCapabilities`. Like `engine-core.codex-appserver-selector.spec.ts`, `CodexAppServerAdapter`
- * is replaced with a capturing fake — a unit test must never spawn the real `codex app-server` subprocess.
- */
 
 const HOME_ROOT = join(tmpdir(), `atlas-engine-core-codex-hooks-spec-${process.pid}`);
 afterAll(() => rmSync(HOME_ROOT, { recursive: true, force: true }));
@@ -30,8 +24,6 @@ const VALID_CODEX_AUTH = JSON.stringify({
   last_refresh: '2026-07-01T00:00:00.000Z',
 });
 
-// Controlled per-test so the capability-degradation case can drop `writeGuard`/`midTurnSteer` without a
-// second `vi.mock` factory (factories are hoisted and evaluated once per file).
 let fakeCapabilities: ReadonlySet<EngineCapability> = new Set([
   'writeGuard',
   'postToolUseContext',

@@ -2,12 +2,6 @@ import { EnvService } from '@core/config/env/env.service';
 import { Injectable } from '@nestjs/common';
 import { createSign } from 'node:crypto';
 
-/**
- * Zero-dep, hand-rolled GitHub App client: signs the App-level RS256 JWT (`node:crypto`, no
- * `jsonwebtoken`), mints/caches per-installation access tokens, and resolves the App's own bot commit
- * identity. `fetchImpl` is the spec seam, mirroring `GithubPrService`. The JWT and every minted
- * installation token stay host-side — errors carry GitHub's status + message but NEVER the JWT or token.
- */
 
 const API = 'https://api.github.com';
 
@@ -21,7 +15,6 @@ export class GitHubAppTokenService {
 
   constructor(private readonly env: EnvService) {}
 
-  /** App auth is configured: a private key AND an issuer (client id or numeric app id) are present. */
   isConfigured(): boolean {
     return (
       !!this.env.get('GITHUB_APP_PRIVATE_KEY') &&
@@ -68,10 +61,6 @@ export class GitHubAppTokenService {
     };
   }
 
-  /**
-   * A live installation access token, cached until it has under 5 minutes left. Retries a transient
-   * (network throw / 5xx) mint failure up to 3 attempts with a short backoff before giving up.
-   */
   async getInstallationToken(installationId: string): Promise<string> {
     const cached = this.cache.get(installationId);
     if (cached && cached.expiresAtMs - Date.now() > 5 * 60_000) return cached.token;
@@ -115,11 +104,9 @@ export class GitHubAppTokenService {
         `installation-token mint failed: ${res.status} ${errBody.message ?? 'no detail'}`,
       );
     }
-    // Unreachable — the loop above always returns or throws.
     throw new Error(`installation-token mint failed: ${lastError?.message ?? 'unknown error'}`);
   }
 
-  /** The installation id for an org (or a specific repo). null on 404 (App not installed there). */
   async findInstallationId(owner: string, repo?: string): Promise<string | null> {
     const url = repo
       ? `${API}/repos/${owner}/${repo}/installation`
@@ -140,7 +127,6 @@ export class GitHubAppTokenService {
     return String(body.id);
   }
 
-  /** Installation detail (account login/id/type) — used for the connect callback's account verification. null on 404. */
   async getInstallation(installationId: string): Promise<{
     id: string;
     account: { login: string; id: number; type: string };
@@ -171,7 +157,6 @@ export class GitHubAppTokenService {
     };
   }
 
-  /** The Atlas App's URL slug (from `GET /app`) — used to build the org's install URL. Memoized (static per app). */
   async appSlug(): Promise<string> {
     if (this.slug) return this.slug;
     const appRes = await this.fetchImpl(`${API}/app`, {
@@ -188,7 +173,6 @@ export class GitHubAppTokenService {
     return slug;
   }
 
-  /** The App's own bot commit identity (name/email) — an installation token isn't a user, so App-mode commits attribute to the bot. Memoized (static per app). */
   async appBotIdentity(): Promise<{ name: string; email: string }> {
     if (this.botIdentity) return this.botIdentity;
     const slug = await this.appSlug();

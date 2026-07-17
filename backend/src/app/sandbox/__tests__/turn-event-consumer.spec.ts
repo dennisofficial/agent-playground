@@ -4,7 +4,6 @@ import { drainTurnEventConsumer } from '../turn-event-consumer';
 
 const STREAM = 'turn:T:events';
 
-/** Append a batch of `{ n }` frames to the events stream, returning their ids. */
 async function seed(redis: InMemoryRedisStream, values: number[]): Promise<string[]> {
   const ids: string[] = [];
   for (const n of values) ids.push(await redis.xadd(STREAM, { n }));
@@ -33,7 +32,6 @@ describe('drainTurnEventConsumer', () => {
     });
 
     expect(seen).toEqual([1, 2, 3]);
-    // Everything acked ⇒ nothing left to reclaim on a fresh claimStale.
     const stranded = await redis.claimStale({
       group: 'g1',
       consumer: 'c2',
@@ -48,7 +46,6 @@ describe('drainTurnEventConsumer', () => {
     const redis = new InMemoryRedisStream();
     await seed(redis, [1, 2]);
 
-    // Simulate a dead consumer: it read the two entries via the group but never acked them.
     await redis.ensureGroup(STREAM, 'g1');
     const delivered = await redis.xreadGroup({
       group: 'g1',
@@ -59,7 +56,6 @@ describe('drainTurnEventConsumer', () => {
     });
     expect(delivered.map((e) => (e.data as { n: number }).n)).toEqual([1, 2]);
 
-    // A fresh consumer in the SAME group must reclaim those un-acked entries at start.
     const seen: number[] = [];
     await drainTurnEventConsumer({
       redis,
@@ -125,8 +121,6 @@ describe('drainTurnEventConsumer', () => {
       return seen;
     };
 
-    // Group A fully drains FIRST. Because a consumer group tracks its OWN server-side cursor + PEL, and
-    // draining/acking never removes entries from the shared stream, group B must still observe every entry.
     const a = await runLoop('groupA');
     const b = await runLoop('groupB');
 

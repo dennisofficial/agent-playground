@@ -10,13 +10,6 @@ function fakeEnv(map: Record<string, string | undefined>): EnvService {
   return { get: (k: string) => map[k] } as unknown as EnvService;
 }
 
-/**
- * One in-memory `rows` store shared by BOTH a fake Repository (used by `read`/`write`/`presence`) and a
- * fake DataSource whose `transaction` runs the callback with a fake EntityManager (used by
- * `advanceCodexAuthSecret`). The pessimistic lock is a no-op here — this covers the guard LOGIC; true
- * lock atomicity is a Postgres guarantee exercised in real runs. `orgs` backs `dataSource.getRepository
- * (OrganizationEntity)`, which `presence()` reads for the selected-claude-credential pointer.
- */
 function fakeDb(): {
   repo: Repository<OrgCredentialsEntity>;
   dataSource: DataSource;
@@ -79,7 +72,6 @@ function makeStore(
   return new TenantCredentialStore(repo, dataSource, fakeEnv(env));
 }
 
-/** A minimal Codex `auth.json` carrying a top-level `last_refresh` (what the monotonic guard reads). */
 function codexBlob(lastRefresh: string, tag = 'x'): string {
   return JSON.stringify({
     last_refresh: lastRefresh,
@@ -133,7 +125,6 @@ describe('TenantCredentialStore', () => {
   it('presence() reports flags without decrypting (works without a key)', async () => {
     const store = makeStore();
     await store.write('T1', { anthropicApiKey: 'a1' });
-    // A fresh store over the SAME data but WITHOUT a key still answers presence.
     const presence = await store.presence('T1');
     expect(presence).toEqual({
       hasAnthropic: true,
@@ -152,7 +143,6 @@ describe('TenantCredentialStore', () => {
       anthropicApiKey: 'a1',
       claudeOauthToken: 'oauth',
     });
-    // The legacy column is set but no `claude_credentials` row is selected — still unsatisfied.
     expect((await store.presence('T1')).engineAuthSet).toBe(false);
 
     const selected = makeStore(undefined, { T1: 'cred-1' });
@@ -222,10 +212,8 @@ describe('TenantCredentialStore', () => {
       const store = makeStore();
       const current = JSON.stringify({ tokens: { access_token: 'a' } }); // no last_refresh
       await store.write('T1', { codexAuthSecret: current });
-      // identical → no-op
       await store.advanceCodexAuthSecret('T1', current);
       expect((await store.read('T1'))?.codexAuthSecret).toBe(current);
-      // changed → written
       const changed = JSON.stringify({ tokens: { access_token: 'b' } });
       await store.advanceCodexAuthSecret('T1', changed);
       expect((await store.read('T1'))?.codexAuthSecret).toBe(changed);
@@ -272,7 +260,6 @@ describe('TenantCredentialStore', () => {
       expect(snapshot?.windows.fiveHour).toBeDefined();
       expect(snapshot?.windows.sevenDay).toBeDefined();
 
-      // A harvest from a DIFFERENT credential resets the snapshot — the account-A windows are gone.
       await store.mergeClaudeUsageWindow(
         'T1',
         'fiveHour',

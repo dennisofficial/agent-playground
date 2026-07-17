@@ -100,8 +100,6 @@ function makeSvc(
   const users = {} as unknown as Repository<UserEntity>;
   const env = { get: () => 'http://host' } as never;
 
-  // Records the per-thread deep deletes so the deleteOrg test can assert on them. `deleteOrg` reaches the
-  // driver's physical teardown through the injected `JOB_TEARDOWN` port; the fake implements that port.
   const deepDeleted: Array<{ jobId: string; orgId: string }> = [];
   const jobTeardown: JobTeardownPort = {
     deleteJobDeep: async (jobId: string, orgId: string) => {
@@ -310,23 +308,17 @@ describe('OrganizationService rename', () => {
 });
 
 describe('OrganizationService deleteOrg', () => {
-  // The schema now carries FK ON DELETE CASCADE, so deleteOrg does the physical per-thread teardown then
-  // deletes the org ROW — the database cascades every remaining org-scoped row. There is no explicit
-  // per-table app-side sweep anymore.
   it('tears down every thread, then deletes the org row (FK cascade sweeps the rest)', async () => {
     const { svc, deepDeleted, deletes, orgDeletes } = makeSvc({
       threadIds: ['T1', 'T2'],
     });
     await svc.deleteOrg('O1');
 
-    // Each thread is deep-deleted (container + worktree teardown; its rows cascade) before the org row.
     expect(deepDeleted).toEqual([
       { jobId: 'T1', orgId: 'O1' },
       { jobId: 'T2', orgId: 'O1' },
     ]);
 
-    // The org row is deleted exactly once; FK cascade removes the rest. No explicit per-table sweep runs,
-    // and `users` is never touched (no FK from users → org).
     expect(orgDeletes).toEqual([{ id: 'O1' }]);
     expect(deletes).toHaveLength(0);
   });

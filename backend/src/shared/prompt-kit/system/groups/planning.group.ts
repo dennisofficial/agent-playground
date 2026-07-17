@@ -1,10 +1,3 @@
-/**
- * prompt-kit / groups / planning — the two build paths and everything under them (normal brain only):
- * FULL PATH (review_plan/propose_plan), plan depth, plan.md structure, diagrams, the review loop, and FAST
- * PATH (start_direct_build).
- *
- * TOPIC bucket: planning & the build paths.
- */
 import { Agent } from '../agent';
 import { isBuildBrain } from '../conditions';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
@@ -12,7 +5,6 @@ import { LIVE_VALIDATION_NOT_OPTIONAL_NOTE } from '../fragments';
 
 @FragmentGroup()
 export class PlanningGroup {
-  /** Two paths header. */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 1180,
@@ -22,7 +14,6 @@ export class PlanningGroup {
     return 'TWO PATHS — choose based on size/risk:';
   }
 
-  /** FULL PATH (review_plan → propose_plan). */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 1190,
@@ -39,7 +30,6 @@ export class PlanningGroup {
     ].join('\n');
   }
 
-  /** PLAN DEPTH. */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 1200,
@@ -66,7 +56,6 @@ export class PlanningGroup {
     ].join('\n');
   }
 
-  /** PLAN.MD STRUCTURE. */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 1210,
@@ -111,7 +100,6 @@ export class PlanningGroup {
     ].join('\n');
   }
 
-  /** DIAGRAMS. */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 1220,
@@ -135,7 +123,6 @@ export class PlanningGroup {
     ].join('\n');
   }
 
-  /** The review_plan → propose_plan flow. */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 1230,
@@ -207,7 +194,6 @@ export class PlanningGroup {
     ].join('\n');
   }
 
-  /** FAST PATH (start_direct_build). */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 1240,

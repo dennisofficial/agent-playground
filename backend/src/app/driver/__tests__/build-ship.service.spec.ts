@@ -6,12 +6,6 @@ import { BuildShipService } from '../build-ship.service';
 import type { DriverStoreService } from '../driver-store.service';
 import type { ResolvedRepo } from '../repo-resolver';
 
-/**
- * ATLAS OWNS PR-OPEN. `ship` no longer runs a separate `engine.run` session to push/open the PR — it seeds
- * the JOB-BRAIN session (`openPrAtShip`) to reconcile + push + open the PR with its own auth, and the HOST
- * only gates (commit + leak-scan) and latches by branch discovery. These guard that (a) the host never opens
- * the PR itself, (b) the brain open-PR turn is seeded, and (c) latching stays branch-discovery based.
- */
 describe('BuildShipService — brain opens the PR; host gates + latches', () => {
   const sandbox: FeatureSandbox = {
     repoId: 'proj',
@@ -41,7 +35,6 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
     currentBranch: null,
   } as unknown as Job;
 
-  /** A stub `BrainGateway` that records the open-PR seed. */
   function makeBrain() {
     const openPrAtShip = vi.fn(async () => undefined);
     const brainGateway = { openPrAtShip } as unknown as BrainGateway;
@@ -49,7 +42,6 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
   }
 
   function baseGit(over: Partial<Record<string, unknown>> = {}): LocalGitService {
-    // No `commitAll` — the host has no commit primitive anymore (Atlas owns every commit).
     return {
       scanBranchForForbidden: vi.fn(async () => []),
       currentBranch: vi.fn(async () => null),
@@ -63,13 +55,10 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
       setPrReady: vi.fn(async () => undefined),
       setJobStatus: vi.fn(async () => undefined),
       setCurrentBranch: vi.fn(async () => undefined),
-      // The gate spawns `post_build` (not `ship()`); kept mocked for any incidental callers.
       ensurePostBuildThread: vi.fn(async () => ({
         threadGroupId: 'tg1',
         threadId: 'pb1',
       })),
-      // The ship path now ensures the `ci` thread-group thread BEFORE the open-PR seed and enqueues the turn
-      // onto its session; latchPr re-ensures it once the PR is recorded (post-ship seam, d14).
       ensureCiThread: vi.fn(async () => ({
         threadGroupId: 'tg2',
         threadId: 'ci1',
@@ -106,7 +95,6 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
       sandbox,
     });
 
-    // The brain was seeded with the open-PR turn (branch/base/title) on the CI thread, host opened nothing.
     expect(openPrAtShip).toHaveBeenCalledWith(
       expect.objectContaining({
         jobId: 'j1',
@@ -117,7 +105,6 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
       }),
     );
     expect(openPullRequest).not.toHaveBeenCalled();
-    // Branch lookup missed → UNCONFIRMED: do NOT blind-flip `done` with a null pr_url. Left running.
     expect(store.setPrReady).not.toHaveBeenCalled();
     expect(store.setJobStatus).not.toHaveBeenCalled();
     expect(result).toEqual({ opened: true, prConfirmed: false });
@@ -198,7 +185,6 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
   });
 
   it('follows the live branch: ships/discovers against the branch HEAD is actually on', async () => {
-    // The agent switched branches mid-build; `current_branch` on the job reflects it.
     const liveJob = {
       ...job,
       currentBranch: 'atlas/renamed',
@@ -249,7 +235,6 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
       sandbox,
     });
 
-    // Gated before any open-PR turn — the brain was never seeded.
     expect(openPrAtShip).not.toHaveBeenCalled();
     expect(store.setPrReady).not.toHaveBeenCalled();
     expect(result).toEqual({ opened: false, reason: 'no-token' });
@@ -269,7 +254,6 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
     const result = await svc.ship({ job, record: null, repo, sandbox });
 
     expect(scanBranchForForbidden).toHaveBeenCalledWith('/wt/feat', 'origin/main');
-    // Blocked before the open-PR turn — the brain was never seeded, nothing latched.
     expect(openPrAtShip).not.toHaveBeenCalled();
     expect(store.setPrReady).not.toHaveBeenCalled();
     expect(result).toEqual({
@@ -308,7 +292,6 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
 
     const svc = new BuildShipService(git, pr, store, brainGateway);
     const ok = await svc.preShip(job, repo, sandbox);
-    // The host NEVER commits — `preShip` only leak-scans the branch (over commits AND the working tree).
     expect(scanBranchForForbidden).toHaveBeenCalledWith('/wt/feat', 'origin/main');
     expect(ok).toEqual({ ok: true });
   });

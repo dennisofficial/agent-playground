@@ -1,15 +1,6 @@
-/**
- * thread-group-kind / registry — the ONE list of `ThreadGroupKindSpec`s + the boot validation over it.
- * Mirrors `thread-kind/registry.ts`: a plain, explicit list (no runtime discovery), boot-validated LOUD so
- * a misconfigured kind (a role with no `ThreadKindSpec`, a duplicate kind) fails at startup, not mid-build.
- */
 import { THREAD_KIND_SPECS } from '../thread-kind/registry';
 import type { ThreadGroupKind, ThreadGroupKindSpec } from './__tests__/spec';
 
-/**
- * THE thread-group-kind registry. One spec per kind; thread 3's orchestration reads everything about a
- * thread group's shape from here instead of branching on `threadGroup.kind` inline (d8).
- */
 export const THREAD_GROUP_KIND_SPECS: readonly ThreadGroupKindSpec[] = [
   {
     kind: 'planning',
@@ -38,7 +29,6 @@ export const THREAD_GROUP_KIND_SPECS: readonly ThreadGroupKindSpec[] = [
   },
   {
     kind: 'direct_build',
-    // The no-review fast path (d9): a single builder, no review_agent/review_fix, no master_review group.
     roles: [{ role: 'builder', min: 1, max: 1 }],
     hasReview: false,
     titleRequired: false,
@@ -71,8 +61,6 @@ const BY_THREAD_GROUP_KIND = new Map<string, ThreadGroupKindSpec>(
   THREAD_GROUP_KIND_SPECS.map((s) => [s.kind, s]),
 );
 
-/** Resolve a thread-group kind's spec, or throw (an unknown kind is a bug — every row's kind is
- *  registry-backed). */
 export function threadGroupKindSpec(kind: string): ThreadGroupKindSpec {
   const spec = BY_THREAD_GROUP_KIND.get(kind);
   if (!spec) throw new Error(`thread-group-kind: unknown kind "${kind}" (no ThreadGroupKindSpec).`);
@@ -81,9 +69,6 @@ export function threadGroupKindSpec(kind: string): ThreadGroupKindSpec {
 
 const THREAD_GROUP_KIND_SET = new Set<string>(THREAD_GROUP_KIND_SPECS.map((s) => s.kind));
 
-/** Coerce any raw value to a valid ThreadGroupKind, or throw — mirrors `coerceThreadType`'s shape but
- *  stays strict (unlike the open `general` fallback, an unrecognized thread-group kind is always a bug,
- *  never data). */
 export function coerceThreadGroupKind(raw: unknown): ThreadGroupKind {
   const value = String(raw ?? '').trim();
   if (!THREAD_GROUP_KIND_SET.has(value)) {
@@ -92,11 +77,6 @@ export function coerceThreadGroupKind(raw: unknown): ThreadGroupKind {
   return value as ThreadGroupKind;
 }
 
-/**
- * Fail LOUDLY on a misconfigured thread-group-kind set (twin of `validateThreadKinds`): a duplicate kind,
- * and a role reference that names a kind with no `ThreadKindSpec` (so every declared role always
- * resolves).
- */
 export function validateThreadGroupKinds(
   specs: readonly ThreadGroupKindSpec[] = THREAD_GROUP_KIND_SPECS,
 ): void {

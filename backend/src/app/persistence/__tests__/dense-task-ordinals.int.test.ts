@@ -1,13 +1,3 @@
-/**
- * DenseTaskOrdinals migration (1784138169645) — the #261 → per-stage-#N backfill.
- *
- * Proves (against live Postgres) that the data-only migration renumbers existing `tasks.ordinal` to a
- * DENSE per-stage sequence (1,2,3 — independently per stage, so both stages restart at 1) and remaps the
- * `blocked_by` arrays #261 stored in uuid space onto the target rows' new #N, dropping dangling uuids.
- *
- * Integration: real Postgres (atlas_test schema). Seeds org/repo/job + two stages + gap-ordinal tasks with
- * uuid `blocked_by`, runs the migration's `up()`, and asserts the renumbered ordinals + remapped edges.
- */
 
 import { Test, type TestingModule } from '@nestjs/testing';
 import { TypeOrmModule, getDataSourceToken } from '@nestjs/typeorm';
@@ -120,7 +110,6 @@ describe('DenseTaskOrdinals migration (live Postgres)', () => {
     const groupA = await seedThreadGroup(10);
     const groupB = await seedThreadGroup(20);
 
-    // Group A: gap-numbered 10/20/30 with uuid blocked_by edges + one dangling uuid.
     const aX = await seedTask({
       threadGroupId: groupA,
       ordinal: 10,
@@ -139,7 +128,6 @@ describe('DenseTaskOrdinals migration (live Postgres)', () => {
       blockedBy: [aY, randomUUID()], // second uuid is dangling — should be dropped
     });
 
-    // Group B: independent thread group — its #N must restart at 1 (proves per-group partitioning).
     const bP = await seedTask({
       threadGroupId: groupB,
       ordinal: 10,
@@ -152,7 +140,6 @@ describe('DenseTaskOrdinals migration (live Postgres)', () => {
       blockedBy: [bP],
     });
 
-    // Run the migration's exact backfill statements (the same array its `up()` executes).
     for (const sql of DENSE_TASK_ORDINALS_UP) await ds.query(sql);
 
     expect(await readTasks(groupA)).toEqual([

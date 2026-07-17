@@ -25,7 +25,6 @@ describe('workspace-profile-bridge-options', () => {
       'propose_mcp_servers',
     ];
     const { host, profile } = partitionWorkspaceProfileTools(all);
-    // reset_sandbox is generic sandbox control — stays on the host bridge, NOT the profile bridge.
     expect(host).toEqual(['ask_question', 'propose_plan', 'reset_sandbox']);
     expect(profile).toEqual(['request_secret', 'write_workspace_config', 'propose_mcp_servers']);
   });

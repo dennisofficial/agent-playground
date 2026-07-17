@@ -27,16 +27,12 @@ import {
 import { OauthUsageService } from './oauth-usage.service';
 import { OnboardingService } from './onboarding.service';
 
-/** A `claude setup-token`'s literal prefix — the only shape accepted for the setup-token creation path. */
 const SETUP_TOKEN_PREFIX = 'sk-ant-oat';
 
 class CreateCredentialDto {
-  /** Present for the `personal` (OAuth login) path, alongside `state`. */
   @IsOptional() @IsString() code?: string;
   @IsOptional() @IsString() state?: string;
-  /** Present for the `setup_token` path. */
   @IsOptional() @IsString() setupToken?: string;
-  /** Required for `setup_token`; ignored for `personal` (the display name is derived from the account email). */
   @IsOptional() @IsString() label?: string;
 }
 
@@ -44,13 +40,6 @@ class SelectCredentialDto {
   @IsString() @IsNotEmpty() credentialId!: string;
 }
 
-/**
- * `/web/orgs/:orgId/claude-credentials` — manage the org's LIST of Claude credentials (multi-credential
- * successor to the legacy singleton `claudeOauthToken`). Every route is owner-only (`OrgOwnerGuard`),
- * including `list`: rows carry account emails, which is Administer-tier info, not member-visible. Secret
- * VALUES never appear in a request/response body or a log line — only `ClaudeCredentialSummary` rows leave
- * this controller.
- */
 @Controller('web/orgs/:orgId/claude-credentials')
 @UseGuards(OrgMembershipGuard)
 export class ClaudeCredentialsController {
@@ -66,7 +55,6 @@ export class ClaudeCredentialsController {
     return buildClaudeOAuthConfig(this.env);
   }
 
-  /** Kick off consent: mint + stash a fresh PKCE verifier, return the URL the owner opens. */
   @Post('authorize-url')
   @UseGuards(OrgOwnerGuard)
   async authorizeUrl(@CurrentOrg() org: CurrentOrgCtx): Promise<{ url: string; state: string }> {
@@ -76,7 +64,6 @@ export class ClaudeCredentialsController {
     return { url: buildAuthorizeUrl(config, { challenge, state }), state };
   }
 
-  /** Create a credential — either a `personal` OAuth login (`code`+`state`) or a `setup_token` (`setupToken`). */
   @Post()
   @UseGuards(OrgOwnerGuard)
   async create(

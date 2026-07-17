@@ -9,14 +9,6 @@ import { AuthController } from './auth.controller';
 import { AuthGuard } from './auth.guard';
 import { AuthService } from './auth.service';
 
-/**
- * `/auth/*` for the Atlas web console. Registers the JWT signer (globally), the user repository on the
- * Atlas connection, the auth service/controller, and the GLOBAL `AuthGuard` (APP_GUARD).
- *
- * Because the guard is unconditional, the Atlas app now REQUIRES JWT secrets to boot — the factory
- * fails fast if they're missing rather than signing with `undefined`. Existing non-auth routes opt out
- * with `@Public()`; `/web/*` is gated (see web-surface controller).
- */
 @Module({
   imports: [
     JwtModule.forRootAsync({

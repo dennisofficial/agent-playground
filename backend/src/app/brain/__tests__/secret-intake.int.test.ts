@@ -21,13 +21,6 @@ import { webSecretInputCard } from '../../surface';
 import { JobTitler } from '../../titling';
 import { BrainStoreService } from '../brain-store.service';
 
-/**
- * THE security invariant of repo onboarding: a `request_secret` value reaches the ENCRYPTED store + a
- * grant, and NEVER the transcript. This drives the real round-trip — `openSecretRequest` (the brain tool)
- * → the `provide-secret` write+grant+stamp (what the controller does) → delivery — against live Postgres,
- * and asserts the plaintext value appears in NO `messages` row while it IS recoverable (encrypted) from
- * the store. Boots the REAL AppModule with only external boundaries faked.
- */
 const ORG_ID = '44444444-4444-4444-8444-444444444444';
 const SLUG = 'secret-it';
 const SECRET_VALUE = 'postgres://user:sup3rs3cr3t-DO-NOT-LEAK@db:5432/app';
@@ -47,7 +40,6 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
 
   beforeAll(async () => {
     process.env.SURFACE = 'agent';
-    // A real 32-byte key so the store actually encrypts/decrypts (read back the stored value below).
     process.env.SECRETS_ENCRYPTION_KEY ??= randomBytes(32).toString('hex');
 
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
@@ -100,8 +92,6 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
 
   it('routes the value to the encrypted store + grant, never the transcript', async () => {
     const requestId = 's-leak-test-1';
-    // (1) The brain's request_secret tool opens a value-FREE card + bumps the per-card open counter (this
-    // request is DURABLE, not ephemeral — no single-slot `awaiting_secret_id` pointer is touched).
     const card = webSecretInputCard({
       jobId,
       requestId,
@@ -114,20 +104,16 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
     expect(await store.awaitingSecretId(jobId)).toBeNull();
     expect((await store.getSecretCard(jobId, requestId))?.provided_at).toBeUndefined();
 
-    // (2) The `provide-secret` endpoint's work: value → encrypted secret file at (repo, path) + stamp
-    // provided_at (per-card — also decrements `open_secret_count`). The name rides along as the display label.
     await secrets.write(ORG_ID, repoId, SECRET_PATH, SECRET_VALUE, SECRET_NAME);
     await store.markSecretProvidedPerCard(jobId, requestId);
     expect((await store.getSecretCard(jobId, requestId))?.provided_at).toBeDefined();
 
-    // (3) THE LEAK ASSERTION — the plaintext value is in NO message row (card text, card jsonb, anything).
     const rows = await ds.query(
       `SELECT count(*)::int AS n FROM transcript_messages WHERE job_id = $1 AND (text LIKE $2 OR card::text LIKE $2)`,
       [jobId, `%${SECRET_VALUE}%`],
     );
     expect(rows[0].n).toBe(0);
 
-    // …but the value IS recoverable (encrypted) from the store, and the file ref exists.
     expect(await secrets.read(ORG_ID, repoId, SECRET_PATH)).toBe(SECRET_VALUE);
     const files = await secrets.list(ORG_ID, repoId);
     expect(files).toContainEqual({
@@ -136,14 +122,12 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
       label: SECRET_NAME,
     });
 
-    // The encrypted column never contains the plaintext either.
     const enc = await ds.query(
       `SELECT value_enc FROM org_workspace_secret_files WHERE org_id = $1 AND repo_id = $2 AND path = $3`,
       [ORG_ID, repoId, SECRET_PATH],
     );
     expect(enc[0].value_enc).not.toContain(SECRET_VALUE);
 
-    // (4) Crash-safe lifecycle: provided-but-undelivered surfaces for boot re-delivery (name/path only).
     const pending = await store.findUndeliveredProvidedSecrets();
     const mine = pending.find((p) => p.requestId === requestId);
     expect(mine).toMatchObject({
@@ -155,7 +139,6 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
     });
     expect(JSON.stringify(mine)).not.toContain(SECRET_VALUE);
 
-    // (5) Delivery success-tail: stamp delivered + clear gate → no longer pending.
     await store.markSecretDelivered(jobId, requestId);
     await store.clearAwaitingSecret(jobId, requestId);
     expect(await store.awaitingSecretId(jobId)).toBeNull();
@@ -164,7 +147,6 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
     ).toBe(false);
   });
 
-  /** A fresh thread on the same org/repo — isolates the per-card lifecycle tests below from each other. */
   async function makeThread(): Promise<string> {
     const [thread] = await ds.query(
       `INSERT INTO jobs (org_id, repo_id, origin, kind) VALUES ($1, $2, 'control', 'onboarding') RETURNING id`,
@@ -174,7 +156,6 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
     return thread.id;
   }
 
-  /** The live `jobs.open_secret_count` counter for a thread. */
   async function openSecretCount(id: string): Promise<number> {
     const rows = await ds.query(`SELECT open_secret_count FROM jobs WHERE id = $1`, [id]);
     return rows[0].open_secret_count;
@@ -218,7 +199,6 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
   });
 
   it('(b) an ephemeral open and a durable open on the same thread never block each other, either order', async () => {
-    // Durable first, then ephemeral.
     const threadA = await makeThread();
     const durableCard = webSecretInputCard({
       jobId: threadA,
@@ -248,7 +228,6 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
     expect(openedEphemeral).toEqual({ ok: true });
     expect(await store.awaitingSecretId(threadA)).toBe('s-order-ephemeral');
 
-    // Ephemeral first, then durable — the durable open must NOT be blocked by the ephemeral pointer.
     const threadB = await makeThread();
     const ephemeralFirst = webSecretInputCard({
       jobId: threadB,
@@ -278,7 +257,6 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
     });
     expect(openedDurableSecond).toEqual({ ok: true });
     expect(openedDurableSecond.alreadyOpen).toBeUndefined();
-    // The ephemeral pointer is untouched by the durable open.
     expect(await store.awaitingSecretId(threadB)).toBe('s-order-ephemeral-2');
   });
 
@@ -302,12 +280,9 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
     expect(afterWithdraw?.withdrawnAt).toBeDefined();
     expect(afterWithdraw?.withdrawnReason).toBe('no longer needed');
 
-    // A subsequent provide attempt against the withdrawn card is refused: markSecretProvidedPerCard's
-    // conditional update only fires on an open card, so it's a no-op here and provided_at stays unset.
     await store.markSecretProvidedPerCard(thread, requestId);
     expect((await store.getSecretCard(thread, requestId))?.provided_at).toBeUndefined();
 
-    // Double-withdraw is idempotent — the second call is not the winner and does not double-decrement.
     const secondWithdraw = await store.withdrawSecretRequest(thread, requestId, 'again');
     expect(secondWithdraw).toEqual({ withdrawn: false });
     expect(await openSecretCount(thread)).toBe(0);
@@ -338,8 +313,6 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
       card: cardTwo,
     });
 
-    // Simulate the crash window: the operator provided both values (stamped provided_at) but the host died
-    // before either delivery turn ran (delivered_at stays null).
     await store.markSecretProvidedPerCard(thread, 's-stuck-1');
     await store.markSecretProvidedPerCard(thread, 's-stuck-2');
 
@@ -383,7 +356,6 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
     await store.withdrawSecretRequest(thread, 's-lifecycle-withdrawn');
     expect(await openSecretCount(thread)).toBe(0);
 
-    // An EPHEMERAL open never touches the counter (it uses the single-slot pointer instead).
     const ephemeralCard = webSecretInputCard({
       jobId: thread,
       requestId: 's-lifecycle-ephemeral',
@@ -398,7 +370,6 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
     });
     expect(await openSecretCount(thread)).toBe(0);
 
-    // Boot heal: one genuinely-open durable card, but the counter is corrupted — reconcile must restore it.
     const openCard = webSecretInputCard({
       jobId: thread,
       requestId: 's-lifecycle-open',
@@ -417,8 +388,5 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
     await store.reconcileOpenSecretCounts();
     expect(await openSecretCount(thread)).toBe(1);
 
-    // `open_secret_count > 0` is exactly the signal `AutoMergeService.brainSettled` gates on (see
-    // `auto-merge.service.spec.ts` — "is false when open_secret_count > 0"); not re-asserted here to avoid
-    // duplicating that unit coverage.
   });
 });

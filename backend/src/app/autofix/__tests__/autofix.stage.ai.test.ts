@@ -11,19 +11,6 @@ import { lensById } from '../autofix-lenses';
 import { AutoFixStage } from '../autofix.stage';
 import type { AutoFixContext } from '../autofix.types';
 
-/**
- * LIVE, model-backed proof of the framework-conformance lens (real LLM provider call — runs only under
- * `pnpm test:ai` with a subscription token in the env). It drives the REAL AutoFixStage review runner
- * against the REAL {@link EngineCore} (the SDK wrapper the in-process/in-container engines both use):
- *   1. force-inject a `review`-surface skill body (a React checklist forbidding array-index list keys)
- *      into the framework lens via `ctx.frameworkBodies`,
- *   2. hand the lens a diff that VIOLATES that rule (a `.tsx` list rendered with `key={index}`),
- *   3. run the turn end-to-end and assert the MODEL returned a `lens:'framework'` finding that names
- *      the injected rule — proving the injected body reaches the model and shapes its findings, not
- *      just the prompt builder (which `autofix.stage.spec.ts` already covers with a fake engine).
- *
- * The raw model report + parsed findings are captured to `/context/artifacts/framework-lens/live-run/`.
- */
 const OAUTH_TOKEN = process.env.CLAUDE_OAUTH_TOKEN ?? process.env.CLAUDE_CODE_OAUTH_TOKEN;
 const describeLive = OAUTH_TOKEN ? describe : describe.skip;
 
@@ -40,7 +27,6 @@ const INJECTED_SKILL_BODY = [
   '- Prefer derived/memoized values over recomputing in render.',
 ].join('\n');
 
-/** A .tsx change that clearly BREAKS the injected rule (renders a list with `key={index}`). */
 const VIOLATING_FILE_PATH = 'src/UserList.tsx';
 const VIOLATING_FILE = `import React from 'react';
 
@@ -57,8 +43,6 @@ export function UserList({ users }: { users: User[] }) {
 }
 `;
 
-/** Constructor stubs — the review path never touches git, and no harness is created (ctx carries no
- *  streaming identity), so these are inert placeholders that satisfy the DI signature. */
 const gitStub = {
   headSha: async () => 'base',
   hasChanges: async () => false,
@@ -73,20 +57,14 @@ describeLive('AutoFixStage framework lens — LIVE model-backed review turn', ()
   const artifactDir = '/context/artifacts/framework-lens/live-run';
   let stage: AutoFixStage;
   let worktree: string;
-  // The reviewer now pulls the diff itself via `git diff <range>` (it is no longer inlined), so the
-  // worktree is a real git repo and the violating file lands as its OWN commit against a base — the
-  // range the lens diffs. Reproduces the production per-thread `sectionStartSha..HEAD` scoping.
   let gitRange: string;
   const rawReports: string[] = [];
 
   beforeAll(async () => {
-    // The real Claude Agent SDK (dynamic import — it is ESM). Codex SDK is unused on a Claude turn.
     const claudeSdk = await import('@anthropic-ai/claude-agent-sdk');
     const homeRoot = mkdtempSync(join(tmpdir(), 'atlas-fw-home-'));
     const core = new EngineCore(claudeSdk, {} as never, { homeRoot });
 
-    // A capturing adapter so we keep the exact raw model text (the stage itself only returns parsed
-    // findings) for the evidence bundle, while the stage does the real selection + injection + parse.
     const engine = {
       run: async (args: Parameters<EngineCore['run']>[0]) => {
         const res = await core.run(args);
@@ -97,9 +75,6 @@ describeLive('AutoFixStage framework lens — LIVE model-backed review turn', ()
 
     stage = new AutoFixStage(engine, gitStub, harnessStub);
 
-    // A real on-disk GIT repo so the reviewer can pull the change set with `git diff <range>` (and Read
-    // the file for context). Base commit = a repo without UserList; the violating file is a second commit,
-    // and `gitRange` (base..HEAD) is exactly what the lens diffs — the production per-thread scoping.
     worktree = mkdtempSync(join(tmpdir(), 'atlas-fw-wt-'));
     const git = (...args: string[]): void => {
       execFileSync('git', args, { cwd: worktree });
@@ -159,10 +134,8 @@ describeLive('AutoFixStage framework lens — LIVE model-backed review turn', ()
       'utf8',
     );
 
-    // The model returned at least one finding, tagged with the framework lens…
     expect(findings.length).toBeGreaterThan(0);
     expect(findings.every((f) => f.lens === 'framework')).toBe(true);
-    // …and it is about the injected list-key rule (mentions the key/index concept the rule forbids).
     const haystack = findings
       .map((f) => `${f.title} ${f.detail}`)
       .join(' ')

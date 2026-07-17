@@ -1,18 +1,3 @@
-/**
- * `RedisEngineRunner` + REAL `ProfileAwarenessService` WITH the REAL Stage-2 Haiku filter wired in (live
- * Postgres + a real Anthropic model call) — proves Stage 2's suppress/enrich behavior is observable
- * through the ACTUAL round-trip transport (the same `tool_request`/`tool_response` Redis streams the
- * in-container `PostToolUse` hook's `bridgeCall` uses), not just via a direct `filter.filter()` call.
- *
- * Mirrors `redis-engine-runner.profile-awareness.int.test.ts`'s harness exactly (DB bootstrap, fake
- * `ContainerEngine.execDetached` that XADDs a `tool_request` for the reserved `__profile_awareness` tool
- * and polls the replies stream) — that file proves the round-trip with Stage 1 only; this file is the
- * Stage-2 counterpart, with a REAL `AnthropicInstallAwarenessFilter` (no fake) bound behind
- * `INSTALL_AWARENESS_FILTER` instead of leaving it unbound.
- *
- * Real LLM call — runs only under `pnpm test:ai` with `ANTHROPIC_API_KEY` in the env (`describe.skip`
- * otherwise, same gate as `install-awareness-filter.ai.test.ts` / `autofix.stage.ai.test.ts`).
- */
 import type { EnvService } from '@core/config/env/env.service';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { TypeOrmModule, getDataSourceToken } from '@nestjs/typeorm';
@@ -95,7 +80,6 @@ function baseArgs(onEvent: (e: EngineEvent) => void): RunEngineArgs {
   };
 }
 
-/** A BARE profile — no skills/MCP/setup — so a new lint tool has nothing already covering it. */
 const BARE_SNAPSHOT: WorkspaceProfileSnapshot = {
   mounts: [],
   setupScript: { present: false, length: 0 },
@@ -106,7 +90,6 @@ const BARE_SNAPSHOT: WorkspaceProfileSnapshot = {
   houseStyle: null,
 };
 
-/** Mirrors `fakeContainersWithProfileAwarenessCall` from the Stage-1 round-trip test verbatim. */
 function fakeContainersWithProfileAwarenessCall(redis: InMemoryRedisStream, command: string) {
   return {
     execDetached: vi.fn(
@@ -261,12 +244,9 @@ describeLive(
     it('a new lint tool on a bare profile: the REAL Stage-2 filter enriches the reply over the real transport', async () => {
       const text = await roundTrip('pnpm add stage2-live-eslint');
 
-      // eslint-disable-next-line no-console
       console.log('[stage2-roundtrip] enrich case reply text:', JSON.stringify(text));
       expect(text).toContain('[profile-awareness]');
       expect(text).toContain('pnpm:stage2-live-eslint');
-      // The real model must not merely echo Stage 1 — Stage 2 attaches a concrete suggestion when it
-      // decides to keep a genuinely-new, uncovered tool (system prompt's "canonical KEEP" case).
       expect(text).toContain('Suggestion:');
 
       expect((await ledger()).map((t) => t.key)).toContain('pnpm:stage2-live-eslint');
@@ -275,15 +255,9 @@ describeLive(
     it('a transient npx ad-hoc run: the REAL Stage-2 filter suppresses the reply over the real transport (ledger still records it)', async () => {
       const text = await roundTrip('npx stage2-live-create-foo');
 
-      // eslint-disable-next-line no-console
       console.log('[stage2-roundtrip] suppress case reply text:', JSON.stringify(text));
-      // Suppressed → `service.handle` returns null → the tool-bridge result is null → the fake
-      // container's text extraction (only a STRING result becomes text) yields an empty string, exactly
-      // like the Stage-1 dedup case in `redis-engine-runner.profile-awareness.int.test.ts`.
       expect(text).toBe('');
 
-      // The ledger transition still committed (record-then-filter, decision d2) even though the text
-      // shown to the agent was suppressed.
       expect((await ledger()).map((t) => t.key)).toContain('npx:stage2-live-create-foo');
     });
   },

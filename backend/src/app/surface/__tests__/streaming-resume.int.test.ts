@@ -16,20 +16,6 @@ import { RedisEngineRunner } from '../../sandbox/redis-engine-runner';
 import { LiveTurnStore } from '../live-turn-store';
 import { WebSurfaceController } from '../web-surface.controller';
 
-/**
- * FULL-APP E2E for RESUMABLE/DURABLE streaming. Boots the REAL `AppModule` (SURFACE=agent) with the
- * external boundaries faked, drives a real human message through the WHOLE pipeline
- * (intake → router → AgentSessionManager → lazy provisioning → engine turn), and proves:
- *
- *   1. The brain provisions on the first turn and streams engine events into `LiveTurnStore`.
- *   2. MID-TURN, a (re)connecting client resumes: `LiveTurnStore.snapshot` + the SSE controller's
- *      snapshot-on-connect reflect the partial in-flight response — so a long answer keeps streaming
- *      across a refresh/reconnect instead of going dark.
- *   3. On completion the durable transcript (`messages`) holds the assembled blocks and the live buffer
- *      is cleared.
- *
- * The fake engine PAUSES mid-turn (a deferred the test releases) so we can observe the in-flight state.
- */
 
 const ORG_ID = '33333333-3333-4333-8333-333333333333';
 const REPO_SLUG = 'streaming-resume-it';
@@ -40,7 +26,6 @@ function deferred<T = void>() {
   return { promise, resolve };
 }
 
-/** A fake in-sandbox engine that streams a few tokens, PAUSES, then finishes — so we can peek mid-turn. */
 class FakeStreamingRunner {
   readonly reachedMid = deferred();
   readonly release = deferred();
@@ -73,9 +58,6 @@ describe('Streaming resume (full AppModule, live Postgres, faked boundaries)', (
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(CLASSIFIER_LLM)
       .useValue(new FakeClassifierLlm())
-      // The brain injects ENGINE_RUNNER (= `useExisting: RedisEngineRunner`), so the streaming fake must be
-      // bound to ENGINE_RUNNER directly — overriding RedisEngineRunner alone is bypassed by any ENGINE_RUNNER
-      // override and the brain would otherwise get the wrong runner.
       .overrideProvider(ENGINE_RUNNER)
       .useValue(runner)
       .overrideProvider(RedisEngineRunner)
@@ -137,7 +119,6 @@ describe('Streaming resume (full AppModule, live Postgres, faked boundaries)', (
   });
 
   it('resumes an in-flight turn on (re)connect, then persists the durable transcript on completion', async () => {
-    // Drive a real human message — fire-and-forget; the brain turn runs async (producer ≠ connection).
     surface.sendFromHuman(repoId, 'Say hello', {
       orgId: ORG_ID,
       threadTs: jobId,
@@ -145,11 +126,9 @@ describe('Streaming resume (full AppModule, live Postgres, faked boundaries)', (
       authorName: 'Op',
     });
 
-    // Wait until the turn has streamed a couple of tokens and is paused mid-flight.
     await runner.reachedMid.promise;
     await new Promise((r) => setTimeout(r, 20)); // let the push microtasks settle
 
-    // (1) RESUMABLE — the in-flight cumulative state is in the store (what a reconnecting client gets).
     const snap = liveTurns.snapshot(repoId, jobId);
     expect(snap).not.toBeNull();
     expect(snap!.active).toBe(true);
@@ -158,16 +137,12 @@ describe('Streaming resume (full AppModule, live Postgres, faked boundaries)', (
       done: false,
     });
 
-    // (1b) NO double-render: the in-flight content is NOT yet in the durable log (it's persisted only at
-    // turn end). If it were persisted mid-turn, a reconnecting client would see it twice — once from
-    // `/messages` and once from the live snapshot.
     const midRows = await ds.query(
       `SELECT count(*)::int AS n FROM transcript_messages WHERE job_id = $1 AND text LIKE '%Hello world%'`,
       [jobId],
     );
     expect(midRows[0].n).toBe(0);
 
-    // (2) A client that connects NOW (e.g. after a refresh) replays that snapshot the instant it subscribes.
     const frames: Array<Record<string, unknown>> = [];
     const sub = controller
       .events(ORG_ID, repoId)
@@ -180,10 +155,8 @@ describe('Streaming resume (full AppModule, live Postgres, faked boundaries)', (
       'Hello',
     );
 
-    // Release the turn → it finishes and persists.
     runner.release.resolve();
 
-    // (3) DURABLE — the assembled transcript lands in `messages`; the live buffer clears.
     await waitFor(async () => {
       const rows = await ds.query(
         `SELECT text, kind FROM transcript_messages WHERE job_id = $1 AND author_bot_id IS NOT NULL`,
@@ -195,7 +168,6 @@ describe('Streaming resume (full AppModule, live Postgres, faked boundaries)', (
     });
     expect(liveTurns.snapshot(repoId, jobId)).toBeNull();
 
-    // The late subscriber also saw the turn_end marker (its cue to reconcile against /messages).
     expect(
       frames.some((f) => f.type === 'stream' && (f.event as { kind?: string }).kind === 'turn_end'),
     ).toBe(true);
@@ -203,7 +175,6 @@ describe('Streaming resume (full AppModule, live Postgres, faked boundaries)', (
   }, 30_000);
 });
 
-/** Poll a predicate until true or timeout. */
 async function waitFor(pred: () => Promise<boolean>, timeoutMs = 10_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {

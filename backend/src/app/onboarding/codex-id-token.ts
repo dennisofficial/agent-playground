@@ -1,4 +1,3 @@
-/** Decode the account email from a Codex auth.json blob (display-only, NO signature check). */
 export function decodeCodexAccountEmail(authJson: string): string | undefined {
   try {
     const idToken = (JSON.parse(authJson)?.tokens ?? {}).id_token;

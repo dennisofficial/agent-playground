@@ -1,16 +1,3 @@
-/**
- * PipelineAwarenessStore — the DURABLE half of passive pipeline-milestone awareness, against live Postgres.
- *
- * Proves the buffer's three load-bearing properties:
- *  - idempotent append (a thread group fires the same `id` repeatedly → one marker), and durability across a
- *    "process restart" (a fresh store instance reads the persisted buffer);
- *  - atomic drain + watermark advance (markers cleared once, state summary conveyed once per change);
- *  - the drain/append RACE doesn't drop a marker — the driver appends fire-and-forget while a human turn
- *    drains, and the `SELECT … FOR UPDATE` transaction serializes them so nothing is lost.
- *
- * Integration: real Postgres (atlas_test schema), no fakes (the store only touches the DataSource). Seeds
- * an org/repo/thread directly, then drives the store.
- */
 
 import { Test, type TestingModule } from '@nestjs/testing';
 import { TypeOrmModule, getDataSourceToken } from '@nestjs/typeorm';
@@ -102,7 +89,6 @@ describe('PipelineAwarenessStore (live Postgres)', () => {
     await store.appendMarker(jobId, marker('approved:dr-1', 'Plan approved.')); // dup id
     await store.appendMarker(jobId, marker('dispatched:dr-1', 'Build started.'));
 
-    // A FRESH store instance (a new process) reads the durable buffer — proves it's persisted, not in-mem.
     const fresh = new PipelineAwarenessStore(ds);
     const { markers } = await fresh.drainAndAdvance(jobId, null);
     expect(markers.map((m) => m.id)).toEqual(['approved:dr-1', 'dispatched:dr-1']);
@@ -135,7 +121,6 @@ describe('PipelineAwarenessStore (live Postgres)', () => {
 
   it('the drain/append RACE drops no marker (FOR UPDATE serializes the human turn vs the driver)', async () => {
     const jobId = await newThread();
-    // 20 concurrent appends (the driver) racing one drain (a human turn arriving mid-build).
     const ids = Array.from({ length: 20 }, (_, i) => `step:${i}:done`);
     const appends = ids.map((id) => store.appendMarker(jobId, marker(id)));
     const drain = store.drainAndAdvance(jobId, null);
@@ -144,8 +129,6 @@ describe('PipelineAwarenessStore (live Postgres)', () => {
       ...appends.map((p) => p.then(() => undefined)),
     ]);
 
-    // Whatever the interleaving, every marker is accounted for EXACTLY once: some were drained, the rest
-    // remain queued — none vanished (a lost-update would lose appends that landed during a read-clear).
     const remaining = (await store.drainAndAdvance(jobId, null)).markers;
     const seen = [...drained, ...remaining].map((m) => m.id).sort();
     expect(seen).toEqual([...ids].sort());

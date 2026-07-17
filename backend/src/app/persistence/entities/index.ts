@@ -1,9 +1,3 @@
-/**
- * Atlas v2's OWN entity set — namespaced `app`, loaded ONLY by the Atlas datasource
- * (`OrmConnectionModule` + `cli/data-source.ts`), never added to the shared global `ENTITIES`.
- * They reuse the foundational `TimestampedEntity` base (a shared package, allowed) but import nothing
- * from v1 orchestration.
- */
 export * from './active-turn.entity';
 export * from './composer-draft-attachment.entity';
 export * from './composer-draft.entity';
@@ -68,7 +62,6 @@ import { TurnStatsEntity } from './turn-stats.entity';
 import { UserEntity } from './user.entity';
 import { WorkspaceSkillEntity } from './workspace-skill.entity';
 
-/** Every Atlas v2 entity — passed to the Atlas datasource's `entities` (NOT the shared `ENTITIES`). */
 export const ENTITIES = [
   OrganizationEntity,
   OrganizationMemberEntity,

@@ -1,18 +1,3 @@
-/**
- * Live-Postgres proof of the sidebar build-stage progress aggregate (`build_stages_done` /
- * `build_stages_total`): `DriverStoreService.recomputeBuildStageProgress` derives `done`/`total` from
- * live `threads.status`, writes it change-gated onto the `jobs` row, and the value round-trips through
- * the real `GET /web/jobs` HTTP surface (mirrors `web-surface.shipping.int.test.ts` for HTTP/auth setup).
- *
- * Seeds a job with 4 build/direct_build thread groups — A (all builders done), B (last builder
- * auto_fixing, rest done — the anti-regression case), C (a builder still executing), D (zero builder
- * threads yet) — plus one non-build (master_review) thread group that must be ignored entirely, and
- * asserts:
- *   - `recomputeBuildStageProgress` derives done=2, total=4 on the `jobs` row;
- *   - `GET /web/jobs` projects `buildStagesDone`/`buildStagesTotal` for that row;
- *   - change-gating: flipping B's `auto_fixing` builder to `done` (the same overall "done" set) leaves
- *     the count unchanged at 2/4 and the write is a genuine no-op (`updated_at` untouched).
- */
 
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
@@ -45,7 +30,6 @@ const fakeCreds = {
   engineAuth: async () => ({ secret: 'test-secret' }),
 };
 
-// Fixed ids → distinct from every other int test (which purge by their own ids).
 const ORG = '77777777-7777-4777-8777-777777777901';
 const REPO = '77777777-7777-4777-8777-777777777902';
 const OWNER_EMAIL = 'build-stage-progress-it-owner@example.test';
@@ -152,9 +136,6 @@ describe('DriverStoreService.recomputeBuildStageProgress (live Postgres + GET /w
 
     const buildGroup = (kind: 'build' | 'direct_build', title: string) =>
       store.createThreadGroup({ jobId: job.id, orgId: ORG, kind, title });
-    // Root threads share a JOB-GLOBAL ordinal uniqueness constraint (`uq_threads_job_parent_ordinal`),
-    // so each builder across every thread group needs its own explicit, non-colliding ordinal — the
-    // per-thread-group auto-ordinal default would collide across sibling thread groups.
     let nextOrdinal = 10;
     const builder = (threadGroupId: string, brief: string) =>
       store.createThreadInThreadGroup({
@@ -166,28 +147,22 @@ describe('DriverStoreService.recomputeBuildStageProgress (live Postgres + GET /w
         ordinal: (nextOrdinal += 10),
       });
 
-    // Group A — all builders done → counts as done.
     const groupA = await buildGroup('build', 'A');
     const a1 = await builder(groupA.id, 'A leg 1');
     await store.setThreadStatus(a1.id, 'done');
 
-    // Group B — last builder auto_fixing (mid-review), rest done → STILL counts as done (the
-    // anti-regression case: builder work is finished, review just hasn't wrapped up yet).
     const groupB = await buildGroup('direct_build', 'B');
     const b1 = await builder(groupB.id, 'B leg 1');
     const b2 = await builder(groupB.id, 'B leg 2');
     await store.setThreadStatus(b1.id, 'done');
     await store.setThreadStatus(b2.id, 'auto_fixing');
 
-    // Group C — a builder still executing → NOT done.
     const groupC = await buildGroup('build', 'C');
     const c1 = await builder(groupC.id, 'C leg 1');
     await store.setThreadStatus(c1.id, 'executing');
 
-    // Group D — zero builder threads yet → NOT done (pre-creation guard).
     await buildGroup('build', 'D');
 
-    // A non-build thread group must be ignored entirely (not counted in total).
     await store.createThreadGroup({
       jobId: job.id,
       orgId: ORG,
@@ -205,8 +180,6 @@ describe('DriverStoreService.recomputeBuildStageProgress (live Postgres + GET /w
     const wireRow = (res.body as Array<Record<string, unknown>>).find((r) => r.jobId === job.id);
     expect(wireRow).toMatchObject({ buildStagesDone: 2, buildStagesTotal: 4 });
 
-    // Change-gating: flip B's auto_fixing builder to `done` — the DERIVED done/total are unchanged
-    // (still 2/4), so the IS DISTINCT FROM guard must skip the write entirely (updated_at untouched).
     await store.setThreadStatus(b2.id, 'done');
     const before = await jobs.findOneOrFail({ where: { id: job.id } });
     await store.recomputeBuildStageProgress(job.id);
@@ -215,7 +188,6 @@ describe('DriverStoreService.recomputeBuildStageProgress (live Postgres + GET /w
     expect(after.build_stages_total).toBe(4);
     expect(after.updated_at).toEqual(before.updated_at);
 
-    // A second identical call is also a no-op.
     await store.recomputeBuildStageProgress(job.id);
     const again = await jobs.findOneOrFail({ where: { id: job.id } });
     expect(again.updated_at).toEqual(before.updated_at);

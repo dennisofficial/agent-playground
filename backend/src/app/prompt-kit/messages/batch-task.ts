@@ -5,16 +5,7 @@ import type { DriverThread } from '../../driver/driver-store.service';
 import type { ResolvedRepo } from '../../driver/repo-resolver';
 import type { TaskItem } from '../../persistence/entities';
 
-/**
- * prompt-kit / messages / batch-task — the driver-run turn bodies: the orchestrator's batch task, the
- * ship-time master-review task, the verification-gate task, and the carried-task-list blocks (rotation seed
- * + done-gate retry) folded into those turns.
- */
 
-/** Render the still-OPEN task-list items into a `<carried_tasks>` block for the fresh Leg's seed (B5). The
- *  durable stage-owned `tasks` table outlives the abandoned session's in-memory to-do, so the fresh Leg
- *  keeps its checklist. Returns '' when nothing is open (all done / no list) — the caller then omits the
- *  block. */
 export function renderOpenLegTasks(tasks: TaskItem[]): AgentMessage {
   const open = tasks.filter((t) => t.status === 'pending' || t.status === 'in_progress');
   if (!open.length) return agentMessage('');
@@ -30,10 +21,6 @@ export function renderOpenLegTasks(tasks: TaskItem[]): AgentMessage {
   );
 }
 
-/** The ADVISORY payload for the done-gate task double-check. The checklist is advisory at completion — it
- *  NEVER blocks `complete_thread`; the done assertion latches and the host force-closes any leftover open
- *  items to `dropped` (`dropOpenThreadTasks`). This note just informs the model which items it left open so
- *  it can reconcile them next time. The caller only builds it when `open` is non-empty. */
 export function renderOpenTasksAdvisory(open: TaskItem[]): AgentMessage {
   const lines = open.map((t) => `- [${t.status === 'in_progress' ? '~' : ' '}] ${t.subject}`);
   return agentMessage(
@@ -48,8 +35,6 @@ export function renderOpenTasksAdvisory(open: TaskItem[]): AgentMessage {
   );
 }
 
-/** Render the ORCHESTRATOR turn's task — ONE turn owns the whole thread. The single step's brief is the
- *  thread brief; the orchestrator reads the real plan in `/context/specs` and decomposes the work live. */
 export function renderBatchTask(
   record: DecisionRecord | null,
   thread: DriverThread,
@@ -59,9 +44,6 @@ export function renderBatchTask(
   const decisions = record?.decisions.length
     ? record.decisions.map((d) => `- [${d.decisionClass}] ${d.title}: ${d.ruling}`).join('\n')
     : '(none)';
-  // JIT skill-relevance nudge (empty by default — keeps existing callers byte-identical). Directs the model
-  // to load a directly-relevant skill with the `Skill` tool before implementing, rather than working from
-  // memory when a matching skill exists. Selection is chosen upstream (host-side Haiku selector).
   const skillBlock = skillNudge.length
     ? [
         '\n<available_skills>',
@@ -85,8 +67,6 @@ export function renderBatchTask(
         ` (this thread's evidence folder — leave your live-run proof there: logs, screenshots, a \`RESULTS.md\`` +
         ` index, surfaced in the operator's EVIDENCE panel) and \`/context/artifacts/\` (human-facing DELIVERABLES` +
         ` only — HTML mockups, reports). Live-run evidence goes to \`$ATLAS_EVIDENCE_DIR\`, NOT \`artifacts/\`.`,
-      // Advisory orientation cheat-sheet, when a prior pass captured one (may be absent — the fresh session
-      // then orients off the repo docs itself). Kept subordinate to the code + specs (authoritative).
       ...(thread.orientation
         ? [
             `\nRepo orientation (a cheat-sheet from an earlier pass — the CODE and \`/context/specs/\` remain` +
@@ -107,19 +87,8 @@ export function renderBatchTask(
   );
 }
 
-/**
- * The batch writer's commit instruction — the shared `COMMIT_AND_PUSH_NOTE`, prefixed with the leading
- * newline the surrounding task body splices on. YOU (the writer session) own the commit: the host reads what
- * you leave and does NOT commit for you, so leave a CLEAN tree before you call `complete_thread`.
- */
 export const COMMIT_AND_PUSH_INSTRUCTION: AgentMessage = agentMessage('\n' + COMMIT_AND_PUSH_NOTE);
 
-/**
- * The task for the MASTER-REVIEW thread — a Codex `execute` turn that reviews the whole merged feature diff
- * and applies fixes IN-CONTAINER (where the repo toolchain lives), then verifies with the repo's own build.
- * Execute-voice counterpart to the old read-only `run_master_review` tool prompt. No writer-subagent mention
- * (Codex has none). Does NOT push — the host commits the edits and ships.
- */
 export function renderMasterReviewTask(
   record: DecisionRecord | null,
   repo: ResolvedRepo,

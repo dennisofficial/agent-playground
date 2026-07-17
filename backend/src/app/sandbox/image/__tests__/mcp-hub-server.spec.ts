@@ -41,7 +41,6 @@ describe('buildStdioSpawn', () => {
       '@fs/mcp',
     ]);
     expect(out.cwd).toBe('/workspace');
-    // base env + HOME + the server's own env (server wins).
     expect(out.env).toEqual({
       PATH: '/usr/bin',
       HOME: '/home/atlas',

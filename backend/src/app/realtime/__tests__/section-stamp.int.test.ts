@@ -1,11 +1,3 @@
-/**
- * Live-Postgres proof of the `jobs_stamp_section_entered` trigger's first-entry-only semantics
- * (see `section-stamp.constants.ts` + `JobEntity.section_first_entered`): the anchor timestamp for a
- * status is stamped once, on first entry, and a later re-entry into the SAME status is a no-op — the
- * anchor never moves. Runs the exported `SECTION_STAMP_DDL` constant directly against the test DB
- * (rather than booting `SectionStampService`, which is leader-gated) so the test can't drift from the
- * real DDL.
- */
 
 import { Test, type TestingModule } from '@nestjs/testing';
 import { TypeOrmModule, getDataSourceToken } from '@nestjs/typeorm';
@@ -79,7 +71,6 @@ describe('jobs_stamp_section_entered trigger (live Postgres)', () => {
       open: expect.any(String),
     });
 
-    // Enter 'planning' for the first time — a new anchor key is stamped.
     await ds.query(`UPDATE jobs SET status = 'planning' WHERE id = $1`, [jobId]);
     const afterPlanning = await ds.query(`SELECT section_first_entered FROM jobs WHERE id = $1`, [
       jobId,
@@ -87,7 +78,6 @@ describe('jobs_stamp_section_entered trigger (live Postgres)', () => {
     const firstPlanningAnchor = afterPlanning[0].section_first_entered.planning as string;
     expect(firstPlanningAnchor).toEqual(expect.any(String));
 
-    // Move on to 'running', then kick back to 'planning' — a RE-entry into a status already anchored.
     await ds.query(`UPDATE jobs SET status = 'running' WHERE id = $1`, [jobId]);
     await new Promise((resolve) => setTimeout(resolve, 10));
     await ds.query(`UPDATE jobs SET status = 'planning' WHERE id = $1`, [jobId]);
@@ -96,9 +86,7 @@ describe('jobs_stamp_section_entered trigger (live Postgres)', () => {
       jobId,
     ]);
     const map = afterReentry[0].section_first_entered as Record<string, string>;
-    // The re-entry anchor must be UNCHANGED — first-entry-only, never overwritten.
     expect(map.planning).toBe(firstPlanningAnchor);
-    // Every status the job passed through accumulates — the map only ever grows.
     expect(Object.keys(map).sort()).toEqual(['open', 'planning', 'running']);
   });
 });

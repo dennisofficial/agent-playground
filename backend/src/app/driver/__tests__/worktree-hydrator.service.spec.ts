@@ -11,7 +11,6 @@ import { WorktreeHydrator } from '../worktree-hydrator.service';
 const ORG = 'org-1';
 const REPO = 'repo-uuid-1';
 
-/** A git fake whose `isIgnored` consults a set of gitignored worktree-relative paths. */
 function fakeGit(ignored: Set<string>): LocalGitService {
   return {
     isIgnored: async (_wt: string, p: string) => ignored.has(p),
@@ -19,7 +18,6 @@ function fakeGit(ignored: Set<string>): LocalGitService {
 }
 
 interface SecretWorld {
-  /** Per-repo secret files (repoId defaults to REPO). `value` absent → row exists but read returns null. */
   files?: Array<{
     path: string;
     value?: string;
@@ -52,14 +50,12 @@ function fakeSecrets(world: SecretWorld): WorkspaceSecretFileStore {
 interface ConfigWorld {
   mounts?: MountSpec[];
 }
-/** The org+repo-scoped mounts config, DB-backed in prod — faked in-memory here. */
 function fakeConfig(world: ConfigWorld): WorkspaceConfigStore {
   return {
     listMounts: async () => world.mounts ?? [],
   } as unknown as WorkspaceConfigStore;
 }
 
-/** A config store that always rejects — simulates a Postgres hiccup on the worktree-config read path. */
 function failingConfig(message = 'connect ECONNREFUSED'): WorkspaceConfigStore {
   return {
     listMounts: async () => {
@@ -86,7 +82,6 @@ describe('WorktreeHydrator', () => {
   });
 
   it('renders a gitignored secret FILE (NO config needed) atomically at 0600 + sidecar', async () => {
-    // A secret-file row alone drives rendering — no mounts config entry needed.
     const h = new WorktreeHydrator(
       fakeGit(new Set(['.env.keys'])),
       fakeSecrets({ files: [{ path: '.env.keys', value: 'SECRET=1' }] }),
@@ -102,7 +97,6 @@ describe('WorktreeHydrator', () => {
     expect(forbidden).toEqual(['.env.keys']);
     expect(readFileSync(join(wt, '.env.keys'), 'utf8')).toBe('SECRET=1');
     expect(statSync(join(wt, '.env.keys')).mode & 0o777).toBe(0o600);
-    // The sidecar (outside the worktree) lists the forbidden path for commitAll's leak-scan.
     expect(readForbiddenPaths(wt)).toEqual(['.env.keys']);
   });
 
@@ -122,8 +116,6 @@ describe('WorktreeHydrator', () => {
   });
 
   it('renders secret files for EVERY thread (no more secret-free onboarding)', async () => {
-    // skipSecrets is gone: onboarding threads now hydrate real secrets too (see the invariant comment
-    // in worktree-hydrator.service.ts — intentional, so onboarding can actually boot the app).
     const h = new WorktreeHydrator(
       fakeGit(new Set(['.env.keys'])),
       fakeSecrets({ files: [{ path: '.env.keys', value: 'v' }] }),
@@ -156,7 +148,6 @@ describe('WorktreeHydrator', () => {
   it('skips a file that vanished before it could be read (concurrent delete) with a notice', async () => {
     const h = new WorktreeHydrator(
       fakeGit(new Set(['.env.keys'])),
-      // Row is listed but has no value → read returns null (simulates a delete between list and read).
       fakeSecrets({ files: [{ path: '.env.keys' }] }),
       fakeConfig({}),
     );
@@ -281,7 +272,6 @@ describe('WorktreeHydrator', () => {
         orgId: ORG,
         repoDbId: REPO,
       });
-      // Secrets are independent of workspace config — a config-store outage doesn't block secret rendering.
       expect(forbiddenPaths).toEqual(['.env.keys']);
       expect(notices.some((n) => n.includes('ECONNREFUSED'))).toBe(true);
     });

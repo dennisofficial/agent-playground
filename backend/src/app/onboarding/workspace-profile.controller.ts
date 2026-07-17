@@ -40,15 +40,6 @@ class SetPreviewRecipeDto {
   @IsOptional() @IsString() instructions?: string | null;
 }
 
-/**
- * `/web/orgs/:orgId/repos/:repoId/workspace-profile` — the Atlas-managed per-repo provisioning
- * surface (mounts, setup script, preview recipe, acknowledged manifests, secret-file refs) that the
- * console reads/edits directly, reusing the same `WorkspaceConfigStore`/`WorkspaceSecretFileStore`
- * the agent tools already write through — so a console edit and a brain `write_workspace_config`
- * call converge on the same DB rows. GET is member-readable; every write is owner-only
- * (`OrgOwnerGuard`), mirroring {@link WorkspaceSecretsController}. Secret file VALUES are never
- * re-exposed here — that store stays write-only; this controller only surfaces refs.
- */
 @Controller('web/orgs/:orgId/repos/:repoId/workspace-profile')
 @UseGuards(OrgMembershipGuard)
 export class WorkspaceProfileController {
@@ -59,7 +50,6 @@ export class WorkspaceProfileController {
     private readonly repos: Repository<RepoEntity>,
   ) {}
 
-  /** Guards against a member poking another org's repo id — the repo must belong to THIS org. */
   private async assertRepo(orgId: string, repoId: string): Promise<void> {
     const row = await this.repos.findOne({
       where: { id: repoId, org_id: orgId },
@@ -136,9 +126,6 @@ export class WorkspaceProfileController {
   ): Promise<{ ok: true }> {
     await this.assertRepo(org.id, repoId);
     await this.workspaceConfig.setSetupScript(org.id, repoId, body.script ?? null);
-    // `seenManifests` is intentionally left untouched here: the brain tool refreshes it because it has
-    // the live worktree to re-detect manifests against; this HTTP context has no sandbox/checkout to
-    // detect anything from, so the acknowledged set stays whatever onboarding last recorded.
     return { ok: true };
   }
 

@@ -1,16 +1,5 @@
-/**
- * prompt-kit / turns / post-build-gate — the SHIP-REVIEW-GATE initial-message seed, delivered as a
- * harness-turn body onto the fresh post_build session when the driver parks the job for ship review
- * (after master review). Task-ONLY: the post_build turn always runs under the `POST_BUILD` system prompt
- * (grilling/plan-authoring apparatus stripped), so this body carries no `system` string — it only tells the
- * fresh session how to reconstruct what shipped and what to say about it.
- */
 import { agentMessage, type AgentMessage } from '@shared/prompt-kit/message';
 
-/**
- * Build the post_build gate seed: reconstruct what shipped from durable artifacts (no live planning
- * transcript to lean on), post one short operator-facing summary, and offer a preview — take no git action.
- */
 export function postBuildGateSeed(): AgentMessage {
   return agentMessage(
     `This build is complete and reviewed, and is now parked at the ship-review gate. You are on a fresh ` +

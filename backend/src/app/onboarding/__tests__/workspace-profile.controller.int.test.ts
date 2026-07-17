@@ -1,13 +1,3 @@
-/**
- * WorkspaceProfileController HTTP-boundary integration test — boots the real `AppModule` over HTTP
- * (supertest) against live Postgres, mirroring `repo.controller.int.test.ts`'s harness exactly (same
- * external-boundary stubs, same cookie-based auth, same fixed-UUID sentinel tenant pattern — kept
- * distinct from every other int test's ids so they never collide when run together).
- *
- * Proves the composed GET shape, the extracted `normalizeMounts` guard rejecting a bad mount over
- * HTTP (400), owner-only writes (`OrgOwnerGuard` → 403 for a member), and the repo-in-org 404 guard
- * (`assertRepo`) — none of which the pure stores/helpers can prove on their own.
- */
 
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
@@ -24,7 +14,6 @@ import { CredentialResolver } from '../credential-resolver.service';
 import { CLASSIFIER_LLM } from '../decision-gate';
 import { GithubPrService, LocalGitService } from '../git';
 
-// ── External boundary stubs (mirrors repo.controller.int.test.ts) ──────────────────────────────────
 
 class StubGithubPrService {
   async getRepo(_token: string, owner: string, repo: string): Promise<unknown> {
@@ -50,7 +39,6 @@ const fakeCreds = {
   engineAuth: async () => ({ secret: 'test-secret' }),
 };
 
-// ── Sentinel tenant (fixed ids → kept distinct from every other int test) ────────────────────────────
 
 const ORG = '66666666-6666-4666-8666-666666666661';
 const OTHER_ORG = '66666666-6666-4666-8666-666666666662';
@@ -173,7 +161,6 @@ afterAll(async () => {
   await app?.close();
 });
 
-/** Wipe jobs/repos between tests, then reconnect a fresh repo for the test to operate on. */
 beforeEach(async () => {
   await ds.query(`DELETE FROM jobs WHERE org_id = $1`, [ORG]);
   await ds.query(`DELETE FROM repos WHERE org_id = $1`, [ORG]);
@@ -187,7 +174,6 @@ beforeEach(async () => {
 
 describe('WorkspaceProfileController HTTP (auth + owner/membership guards, live Postgres)', () => {
   it('member: GET returns the composed shape, and secretFiles never leaks a value', async () => {
-    // Seed a secret file via the existing WorkspaceSecretsController route.
     const setFile = await request(server)
       .put(`/web/orgs/${ORG}/workspace-secrets/files`)
       .set('Cookie', ownerCookie)

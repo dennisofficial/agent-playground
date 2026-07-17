@@ -4,12 +4,6 @@ import type { JobDependencyService } from '../../job-deps';
 import type { JobEntity, ThreadEntity } from '../../persistence/entities';
 import { BrainStoreService } from '../brain-store.service';
 
-/**
- * `BrainStoreService.endTurnActivity` — the turn-tail activity settle. Mirrors the mocking pattern in
- * `brain-store.build-not-started.spec.ts`'s `makeStore` (bare-bones `jobs`/`threads` repo stubs, everything
- * else a `never`-cast stub since `endTurnActivity` only reads `this.threads` (a `plan_review` thread's
- * `config.status`, folded off the retired `codex_reviews` row per d7) + `this.jobs`).
- */
 
 function fakeJobsRepo() {
   return {
@@ -73,7 +67,6 @@ describe('BrainStoreService.endTurnActivity', () => {
     await store.endTurnActivity('job-1');
 
     expect(jobs.update).toHaveBeenCalledWith({ id: 'job-1' }, { activity: 'plan_review' });
-    // A running review short-circuits the retry-park read entirely (reviewing ? null : jobs.findOne(...)).
     expect(jobs.findOne).not.toHaveBeenCalled();
   });
 
@@ -118,12 +111,6 @@ describe('BrainStoreService.endTurnActivity', () => {
   });
 });
 
-/** `BrainStoreService.createFollowUpJob` — the `create_job` host-tool `autoMode` resolution rule: an
- *  explicit field wins, an omitted field falls back to the org's `default_auto_approve_mode`/
- *  `default_auto_merge`, and no `autoMode` key at all (onboarding's call sites) leaves the auto_* columns
- *  untouched. Only `jobs` (create/save) + `organizations` (findOne) are exercised — `title` is always null
- *  here so the titler round-trip never fires, and `jobBootstrap` stays unwired (optional, trailing) so
- *  `ensurePlanningThreadGroup` no-ops. */
 function fakeCreateJobsRepo() {
   return {
     create: vi.fn((row: Record<string, unknown>) => row),

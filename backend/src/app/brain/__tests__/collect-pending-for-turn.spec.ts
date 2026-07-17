@@ -7,7 +7,6 @@ import type { TurnRegistry } from '../../sandbox/turn-registry.service';
 import { SYSTEM_SEED_AUTHOR } from '../../surface';
 import { AgentSessionManager } from '../agent-session-manager.service';
 
-/** Shape of `collectPendingForTurn`'s return — mirrors the private method under test. */
 interface CollectedLike {
   pending: TurnEnvelope[];
   userChunks: unknown[];
@@ -30,7 +29,6 @@ function msg(id: string, type: Message['type']): Message {
   } as unknown as Message;
 }
 
-/** A pending chat `TurnEnvelope`, as `stimulusStore.eligiblePendingChat` would resolve it. */
 function pendingRow(
   id: string,
   priority: TurnEnvelope['priority'],
@@ -50,7 +48,6 @@ function pendingRow(
   };
 }
 
-/** A system-seed chat `TurnEnvelope` (harness-authored), as a delivery seed would resolve it. */
 function seedRow(id: string, receivedAt: Date): TurnEnvelope {
   return {
     message: msg(id, 'answer_question'),
@@ -66,12 +63,10 @@ function seedRow(id: string, receivedAt: Date): TurnEnvelope {
   };
 }
 
-/** An operator-authored chat `TurnEnvelope` (a real human message). */
 function operatorRow(id: string, receivedAt: Date): TurnEnvelope {
   return pendingRow(id, undefined as unknown as TurnEnvelope['priority'], receivedAt);
 }
 
-/** A manager wired with only the deps `collectPendingForTurn` touches; everything else inert. */
 function makeManager(pending: TurnEnvelope[]) {
   const stimulusStore = {
     eligiblePendingChat: vi.fn().mockResolvedValue(pending),
@@ -139,10 +134,8 @@ describe('AgentSessionManager.collectPendingForTurn (owned coalescing selection,
     ).collectPendingForTurn(JOB_ID);
 
     expect(collected).not.toBeNull();
-    // The ride-along `later` message IS included in the coalesced compose set, in chronological order.
     expect(collected!.userChunks).toHaveLength(3);
     expect(collected!.ids).toEqual(['a', 'b', 'c']);
-    // `a` (now) and `c` (queue) are wake-eligible.
     expect(collected!.wake).toBe(true);
   });
 
@@ -223,12 +216,9 @@ describe('AgentSessionManager.collectPendingForTurn (message-agnostic coalescing
 
     const body = m.engineBody(combined);
 
-    // The seed's already-framed body passes through VERBATIM — no `<passthrough>` wrapper tag (it's untagged).
     expect(body).toContain(seed.body);
     expect(body).not.toContain('<passthrough');
-    // The operator row is framed as a real `<user>` chunk.
     expect(body).toContain('<user name="Dennis"');
-    // Canonical kind order: passthrough (3) precedes user (4).
     expect(body.indexOf(seed.body)).toBeLessThan(body.indexOf('<user name="Dennis"'));
   });
 

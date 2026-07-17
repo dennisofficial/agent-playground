@@ -44,10 +44,6 @@ describe('summarizeTurnFailure', () => {
   });
 
   it('classifies a lost sandbox container as sandbox_lost', () => {
-    // NOTE: "no such container" itself is already inside HOST_TRANSPORT_TRANSIENT_RE (a host-retryable
-    // transport blip), so it classifies as 'transient', not 'sandbox_lost' — checked separately below.
-    // The sandbox_lost fallback regex only fires for its OTHER two signatures ('presumed dead'/'no events'),
-    // which HOST_TRANSPORT_TRANSIENT_RE does not match.
     const result = summarizeTurnFailure(new Error('sandbox presumed dead — no events for 10m'));
     expect(result.category).toBe('sandbox_lost');
     expect(result.summary).toBeTruthy();

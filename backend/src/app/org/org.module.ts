@@ -13,11 +13,6 @@ import { OrgOwnerGuard } from './org-owner.guard';
 import { OrgController } from './org.controller';
 import { OrganizationService } from './organization.service';
 
-/**
- * Organizations + membership. `@Global` so any module hosting an org-scoped controller can `@UseGuards`
- * the `OrgMembershipGuard` and inject `OrganizationService` without re-importing. Onboarding/repo/thread
- * controllers live in their own modules but gate on this guard.
- */
 @Global()
 @Module({
   imports: [

@@ -1,22 +1,3 @@
-/**
- * Card/gate delivery lost-wakeup race — INTEGRATION proof against a REAL Postgres DB.
- *
- * The regression under test is prod race bfe355ae: an operator answer / provided-secret / uploaded-file that
- * lands while the brain is MID-TURN was being falsely marked delivered on the steer XADD and then never
- * re-driven — the card `deliveredAt` (+ the `stimuli.delivered_at` row) got stamped before the engine ever
- * consumed it, so a turn that died before acking left the answer stranded forever.
- *
- * The fix routes every card/gate delivery through the durable chat stimulus pump. The card + its `stimuli` row
- * are stamped ONLY on real consumption — the engine `input_ack` on the steer path, or the fresh-turn / reattach
- * SUCCESS tail — and the periodic `sweepUndeliveredChat` re-drives anything left undelivered. These specs drive
- * the REAL pump (`pumpThread` → steer / fresh-turn / reattach) against a REAL `StimulusStoreService` bound to
- * Postgres; only the leaf engine/sandbox are faked. The card store (`BrainStoreService`) is faked, so a card's
- * delivered state is "was `markQuestionDelivered` called", while `stimuli.delivered_at` is a real DB column.
- *
- * Harness copied from `delivery-pipeline.int.test.ts` (same DB bootstrap + 44-arg manager wiring), extended with
- * a mutable live-turn holder (`setLive`), a swappable engine `run` (`setRunImpl`), a leader toggle, and the
- * reattach fakes (`tryClaimAttach`/`reattach`/`turnHarness.resetLane`).
- */
 
 import { Test, type TestingModule } from '@nestjs/testing';
 import { getDataSourceToken, getRepositoryToken, TypeOrmModule } from '@nestjs/typeorm';
@@ -66,7 +47,6 @@ const SEED_AUTHOR = {
   displayName: SYSTEM_SEED_AUTHOR.name,
 };
 
-/** Reach the manager's private pump/sweep/reattach entry points, exactly as the existing specs do. */
 type ManagerInternals = {
   pumpThread: (jobId: string, orgId: string, repoId: string) => Promise<void>;
   sweepUndeliveredChat: () => Promise<void>;
@@ -127,10 +107,6 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
     await ds.query('DELETE FROM jobs WHERE org_id = $1', [ORG_ID]);
   }
 
-  // Several pump paths end their turn by firing a fire-and-forget re-pump that re-queries the REAL pending
-  // table. Give any stray in-flight query a beat to land before the next test TRUNCATEs the table out from
-  // under it — a hygiene guard, not a correctness gate (every assertion below reads state synchronously right
-  // after its own `await`). A touch longer than the template's 150ms because these cases fan out more re-pumps.
   afterEach(async () => {
     await new Promise((resolve) => setTimeout(resolve, 200));
   });
@@ -147,7 +123,6 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
     );
   }
 
-  /** Record a durable SYSTEM-SEED chat stimulus (auto-`seed:true`) carrying a card-delivery target. */
   async function recordSeed(
     jobId: string,
     body: string,
@@ -168,8 +143,6 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
       author: SEED_AUTHOR,
       replyRoute: { surfaceId: 'web', jobRef: jobId },
       body,
-      // 'skip' writes NEITHER an operator bubble nor a curated pill — the stimulus row is written regardless,
-      // which is all the durable pump needs. Keeps the transcript-side assertions out of scope.
       systemChunk: 'skip',
       ...(target.priority ? { priority: target.priority } : {}),
       ...(target.seedQuestionId ? { seedQuestionId: target.seedQuestionId } : {}),
@@ -181,7 +154,6 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
     });
   }
 
-  /** Real `stimuli` row state for one stimulus id (the durable at-least-once ledger). */
   async function rowState(
     id: string,
   ): Promise<{ delivered_at: Date | null; attempted_at: Date | null }> {
@@ -192,17 +164,10 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
     return rows[0];
   }
 
-  /** Clear the delivery lease so a subsequent sweep/pump can re-collect a row a dead steer left owed. */
   async function expireLease(jobId: string): Promise<void> {
     await ds.query('UPDATE inbound_messages SET attempted_at = NULL WHERE job_id = $1', [jobId]);
   }
 
-  /**
-   * Build a fresh `AgentSessionManager` wired to the REAL `stimulusStore` (arg 13). Verbatim from
-   * `delivery-pipeline.int.test.ts`'s `makeManager`, extended with: a mutable live-turn holder (`setLive`), a
-   * swappable engine `run` (`setRunImpl`) so a case can inject a register-then-die run, a `leader` toggle
-   * (the sweep early-returns unless leader), and the reattach fakes (`tryClaimAttach`/`reattach`/`resetLane`).
-   */
   function makeManager(opts: { live?: boolean; leader?: boolean } = {}) {
     let liveTurn: string | null = opts.live ? 'turn-live-1' : null;
     const runningBrainTurn = vi.fn(async () =>
@@ -222,8 +187,6 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
       } satisfies EngineEvent);
       return Promise.resolve({ result: 'ok' });
     });
-    // The steer XADDs but emits NO `input_ack` — the very race: the turn dies before acking, so nothing must
-    // be stamped. Kept as a handle to assert it fired.
     const steer = vi.fn().mockResolvedValue(undefined);
     const reattach = vi.fn().mockResolvedValue({ result: 'ok' });
     const tryClaimAttach = vi.fn().mockReturnValue(true);
@@ -263,8 +226,6 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
       markSecretDelivered: vi.fn().mockResolvedValue(undefined),
       clearAwaitingSecret: vi.fn().mockResolvedValue(undefined),
       markFileDelivered: vi.fn().mockResolvedValue(undefined),
-      // Error-path fakes (only a register-then-die turn reaches these) so the failure tail doesn't throw on a
-      // missing method — leaving the assertions to prove nothing was stamped.
       hasRecentSystemOperatorNotice: vi.fn().mockResolvedValue(false),
       appendSystemOperatorMessage: vi.fn().mockResolvedValue(undefined),
       appendAtlasMessage: vi.fn().mockResolvedValue(undefined),
@@ -292,7 +253,6 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
         abort: vi.fn().mockResolvedValue(undefined),
         discard: vi.fn().mockResolvedValue(undefined),
       }),
-      // Reattach drops any stranded live-turn state before replaying the stream.
       resetLane: vi.fn(),
     };
     const election = {
@@ -394,13 +354,10 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
       priority: 'now',
     });
 
-    // MID-TURN: the pump steers the live turn; the steer XADDs but the turn dies before any `input_ack`.
     await manager.pumpThread(thread.id, ORG_ID, repoId);
 
     expect(steer).toHaveBeenCalledOnce();
     expect(run).not.toHaveBeenCalled();
-    // THE RACE FIX: nothing is stamped on the XADD — not the card, not the durable row. The lease IS taken
-    // (attempted_at set), so the answer stays owed for the sweep rather than being lost.
     expect(store.markQuestionDelivered).not.toHaveBeenCalled();
     const after = await rowState(seed.id);
     expect(after.delivered_at).toBeNull();
@@ -421,25 +378,19 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
       priority: 'now',
     });
 
-    // 1) MID-TURN steer — no ack, nothing stamped.
     await manager.pumpThread(thread.id, ORG_ID, repoId);
     expect(steer).toHaveBeenCalledOnce();
     expect(run).not.toHaveBeenCalled();
     expect(store.markQuestionDelivered).not.toHaveBeenCalled();
     expect((await rowState(seed.id)).delivered_at).toBeNull();
 
-    // 2) Turn goes idle + the dead steer's lease expires → the answer is now sweep-eligible.
     h.setLive(null);
     await expireLease(thread.id);
 
-    // The real sweep worklist finds the stranded thread (leader-gated query over undelivered chat rows).
     const worklist = await stimulusStore.undeliveredChatThreads();
     expect(worklist.some((t) => t.jobId === thread.id)).toBe(true);
-    // Prove the private sweep doesn't throw (its fan-out is fire-and-forget — we don't depend on it below).
     await expect(priv(manager).sweepUndeliveredChat()).resolves.toBeUndefined();
 
-    // 3) Deterministically complete the re-drive ourselves: a FRESH turn now runs, and the SUCCESS TAIL (the
-    //    real production stamp mechanism) stamps the card + the durable row together.
     await manager.pumpThread(thread.id, ORG_ID, repoId);
     expect(run).toHaveBeenCalledOnce();
     expect(store.markQuestionDelivered).toHaveBeenCalledOnce();
@@ -458,11 +409,7 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
     });
 
     const framed = '<system_notice>your question was answered</system_notice>';
-    // Seed is the OLDER (head) row, `now`-priority (default) — it alone is enough to WAKE the lane.
     const seed = await recordSeed(thread.id, framed, { seedQuestionId: 'q-1' });
-    // A `later` operator reply never wakes a turn on its own, but once the seed wakes the lane the drain
-    // takes the WHOLE eligible batch — `later` only gates STARTING a turn, not whether a row rides along
-    // once one starts. So this row coalesces into the SAME turn as the seed.
     const operator = await stimulusStore.recordChatStimulus({
       orgId: ORG_ID,
       repoId,
@@ -475,9 +422,6 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
 
     await manager.pumpThread(thread.id, ORG_ID, repoId);
 
-    // ONE coalesced turn: the seed's already-framed body passes through verbatim (never re-wrapped as a
-    // `<user>`), and the operator reply is framed as a `<user>` chunk in the SAME task, ordered after it
-    // (canonical kind order: passthrough before user).
     expect(run).toHaveBeenCalledOnce();
     const task = getCapturedTask();
     expect(task).toBeDefined();
@@ -487,8 +431,6 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
     expect(task).toContain('<user name="Dennis"');
     expect(task!.indexOf(framed)).toBeLessThan(task!.indexOf('a normal operator reply'));
 
-    // Both durable rows land delivered together — the plain operator row on registration, the card-bearing
-    // seed row on the success tail — so the coalescing extends to the delivery ledger too.
     expect((await rowState(seed.id)).delivered_at).not.toBeNull();
     expect((await rowState(operator.id)).delivered_at).not.toBeNull();
     const stillPending = await stimulusStore.eligiblePendingChat(thread.id, 60_000);
@@ -500,7 +442,6 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
     const h = makeManager({ live: true, leader: true });
     const { manager, run, steer, store } = h;
     store.awaitingSecretId.mockResolvedValue('sec-1');
-    // EPHEMERAL: only this lane still uses the single-slot `awaiting_secret_id` pointer/clear this test exercises.
     store.getSecretCard.mockResolvedValue({
       provided_at: new Date(),
       delivered_at: null,
@@ -512,7 +453,6 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
       priority: 'now',
     });
 
-    // 1) MID-TURN steer — no ack. The gate must stay SET and the card undelivered (never wedged half-open).
     await manager.pumpThread(thread.id, ORG_ID, repoId);
     expect(steer).toHaveBeenCalledOnce();
     expect(run).not.toHaveBeenCalled();
@@ -520,7 +460,6 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
     expect(store.clearAwaitingSecret).not.toHaveBeenCalled();
     expect((await rowState(seed.id)).delivered_at).toBeNull();
 
-    // 2) Turn idle + lease expired → fresh re-drive stamps the card, clears the gate, and marks the row.
     h.setLive(null);
     await expireLease(thread.id);
     await manager.pumpThread(thread.id, ORG_ID, repoId);
@@ -545,7 +484,6 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
       priority: 'now',
     });
 
-    // Register (so the turn is restart-survivable) then die BEFORE the success tail runs.
     h.setRunImpl((args) => {
       args.onTurnRegistered?.('turn-fresh-1');
       return Promise.reject(new Error('engine died before success tail'));
@@ -553,12 +491,9 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
 
     await manager.pumpThread(thread.id, ORG_ID, repoId).catch(() => {});
 
-    // A seed defers its row stamp to the success tail (which never ran) — so NOTHING is stamped, and the
-    // sweep still owns the answer (at-least-once atomicity: card and row move together or not at all).
     expect(store.markQuestionDelivered).not.toHaveBeenCalled();
     expect((await rowState(seed.id)).delivered_at).toBeNull();
 
-    // Recovery: a healthy run + an expired lease → the next re-drive stamps BOTH.
     h.setRunImpl(null);
     await expireLease(thread.id);
     await manager.pumpThread(thread.id, ORG_ID, repoId);
@@ -594,7 +529,6 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
         name: 'secret',
         target: { seedSecretId: 'sec-1' },
         arm: (store) =>
-          // EPHEMERAL: only this lane still uses the single-slot `awaiting_secret_id` pointer/clear.
           store.getSecretCard.mockResolvedValue({
             provided_at: new Date(),
             delivered_at: null,
@@ -629,8 +563,6 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
           priority: 'now',
         });
 
-        // An `active_turns`-shaped row whose ctx carries the durable stimulus id, so the reattach success tail
-        // stamps the RIGHT row (the reconstructed ChatStimulus.id is the engine turn id, not the stimuli id).
         const row = {
           turn_id: `turn-reattach-${v.name}`,
           job_id: thread.id,
@@ -651,11 +583,9 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
 
         await priv(manager).reattachOne(row);
 
-        // The reattach success tail stamped BOTH the card and the durable row (exactly-once consumption).
         v.assertCard(store, thread.id);
         expect((await rowState(seed.id)).delivered_at).not.toBeNull();
 
-        // A consumed seed is no longer in the sweep worklist — it can never be re-delivered.
         const worklist = await stimulusStore.undeliveredChatThreads();
         expect(worklist.some((t) => t.jobId === thread.id)).toBe(false);
       });
@@ -673,13 +603,11 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
       provided_at: new Date(),
       delivered_at: null,
     });
-    // DURABLE secret (ephemeral omitted) — per-card, like the file lane.
     store.getSecretCard.mockResolvedValue({
       provided_at: new Date(),
       delivered_at: null,
     });
 
-    // ONE combined seed carrying arrays of ids (never the singular `seed*Id`).
     const seed = await recordSeed(thread.id, '<system_notice>batch of 3</system_notice>', {
       seedQuestionIds: ['q-1'],
       seedFileIds: ['file-1'],
@@ -689,27 +617,21 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
 
     await manager.pumpThread(thread.id, ORG_ID, repoId);
 
-    // The lone combined seed delivered SOLO → exactly ONE fresh turn (not three).
     expect(run).toHaveBeenCalledOnce();
-    // The success tail looped all three id arrays and stamped every card.
     expect(store.markQuestionDelivered).toHaveBeenCalledWith(thread.id, 'q-1');
     expect(store.markFileDelivered).toHaveBeenCalledWith(thread.id, 'file-1');
     expect(store.markSecretDelivered).toHaveBeenCalledWith(thread.id, 'sec-1');
-    // The durable row is stamped delivered together with the cards (at-least-once, keyed on stimuli.id).
     expect((await rowState(seed.id)).delivered_at).not.toBeNull();
   });
 
   it('crash-recovery guard: hasChatStimulusForSeedTarget recognizes every card an undelivered COMBINED batch seed carries, so the boot per-card backfill enqueues no duplicate', async () => {
     const thread = await makeThread('batch crash-recovery thread');
-    // A LIVE (undelivered) combined batch seed — its ids live in the plural `seed*Ids` arrays only.
     await recordSeed(thread.id, '<system_notice>batch of 3</system_notice>', {
       seedQuestionIds: ['q-1'],
       seedFileIds: ['file-1'],
       seedSecretIds: ['sec-1'],
     });
 
-    // Each per-card backfill (findUndeliveredAnsweredQuestions/…ProvidedFiles/…ProvidedSecrets → this guard)
-    // must see the combined seed as already covering its card — so it skips re-enqueuing a duplicate per-card seed.
     expect(
       await stimulusStore.hasChatStimulusForSeedTarget(thread.id, {
         seedQuestionId: 'q-1',
@@ -725,7 +647,6 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
         seedSecretId: 'sec-1',
       }),
     ).toBe(true);
-    // A card NOT in the batch is still uncovered — the backfill would (correctly) enqueue it.
     expect(
       await stimulusStore.hasChatStimulusForSeedTarget(thread.id, {
         seedQuestionId: 'q-2',
@@ -803,7 +724,6 @@ describe('atomic stimulus claim (d2): kills the delivery self-race', () => {
     );
   }
 
-  /** Real `stimuli` row state for one stimulus id (the durable at-least-once ledger). */
   async function rowState(
     id: string,
   ): Promise<{ delivered_at: Date | null; attempted_at: Date | null }> {
@@ -814,16 +734,10 @@ describe('atomic stimulus claim (d2): kills the delivery self-race', () => {
     return rows[0];
   }
 
-  /** Clear the delivery lease so a subsequent sweep/pump can re-collect a row a dead steer left owed. */
   async function expireLease(jobId: string): Promise<void> {
     await ds.query('UPDATE inbound_messages SET attempted_at = NULL WHERE job_id = $1', [jobId]);
   }
 
-  /**
-   * The `onRegistered` stamp (`drainFreshTurn`) is deliberately fire-and-forget — `void markChatDelivered(id)`
-   * — so a turn's registration never blocks on the durable stamp landing. Poll briefly instead of asserting
-   * the instant `pumpThread` resolves.
-   */
   async function waitForDelivered(id: string): Promise<void> {
     const deadline = Date.now() + 2000;
     for (;;) {
@@ -844,11 +758,6 @@ describe('atomic stimulus claim (d2): kills the delivery self-race', () => {
     });
   }
 
-  /**
-   * Build a fresh `AgentSessionManager` wired to the REAL `stimulusStore`. Copied verbatim from the outer
-   * describe block's `makeManager` — this block needs its OWN instance since it's a separate top-level
-   * `describe` (no access to the outer block's closures).
-   */
   function makeManager(opts: { live?: boolean; leader?: boolean } = {}) {
     let liveTurn: string | null = opts.live ? 'turn-live-1' : null;
     const runningBrainTurn = vi.fn(async () =>
@@ -1031,12 +940,10 @@ describe('atomic stimulus claim (d2): kills the delivery self-race', () => {
     expect(winners).toHaveLength(1);
     expect(winners[0]).toEqual([stimulus.id]);
 
-    // The winner's claim stamped the lease; the row is still undelivered (claiming ≠ delivering).
     const claimed = await rowState(stimulus.id);
     expect(claimed.attempted_at).not.toBeNull();
     expect(claimed.delivered_at).toBeNull();
 
-    // Sweep-recovery of an expired lease is preserved: once the lease clears, a fresh claim wins again.
     await expireLease(thread.id);
     const reclaimed = await stimulusStore.claimChatStimuli([stimulus.id], 60_000);
     expect(reclaimed).toEqual([stimulus.id]);
@@ -1054,8 +961,6 @@ describe('atomic stimulus claim (d2): kills the delivery self-race', () => {
       h2.manager.pumpThread(thread.id, ORG_ID, repoId),
     ]);
 
-    // Exactly one caller's engine ran a turn for this message; the other's `drainFreshTurn` bailed at
-    // zero-won and never reached `runChatTurn`/`run` at all.
     const h1Ran = h1.run.mock.calls.length > 0;
     const h2Ran = h2.run.mock.calls.length > 0;
     expect(h1Ran).not.toBe(h2Ran);
@@ -1067,9 +972,6 @@ describe('atomic stimulus claim (d2): kills the delivery self-race', () => {
       expect(h1.run).not.toHaveBeenCalled();
     }
 
-    // THE KEY REGRESSION: before the fix, the loser's `runner.run` would throw `BrainTurnAlreadyRunningError`
-    // and fall into `steerIntoLiveBrainTurn` — a self-steer into the very turn racing it. After the fix, the
-    // loser never even calls `run`, so neither caller ever steers.
     expect(h1.steer).not.toHaveBeenCalled();
     expect(h2.steer).not.toHaveBeenCalled();
 
@@ -1085,23 +987,16 @@ describe('atomic stimulus claim (d2): kills the delivery self-race', () => {
     const s1 = await recordOperator(thread.id, 'message one');
     const s2 = await recordOperator(thread.id, 'message two');
 
-    // Simulate an unrelated live turn winning REGISTRATION after this caller already atomically claimed both
-    // stimuli: `run` flips the live-turn holder (so `steerIntoLiveBrainTurn`'s lookup finds it) then throws
-    // `BrainTurnAlreadyRunningError`, exactly like a concurrent reattach/turn winning the registration race.
     h.setRunImpl(() => {
       h.setLive('turn-live-1');
       return Promise.reject(new BrainTurnAlreadyRunningError(thread.id));
     });
-    // For THIS test only, simulate a real ack on steer (the shared `makeManager` default steer mock does
-    // nothing, which other tests in this file rely on).
     steer.mockImplementation(async (_turnId: string, id: string) => {
       await stimulusStore.markChatDelivered(id);
     });
 
     await manager.pumpThread(thread.id, ORG_ID, repoId);
 
-    // Two members coalesced into one turn → two individual steers (one per stimulus id), not one steer under
-    // the combined turn's head id.
     expect(steer).toHaveBeenCalledTimes(2);
     expect((await rowState(s1.id)).delivered_at).not.toBeNull();
     expect((await rowState(s2.id)).delivered_at).not.toBeNull();

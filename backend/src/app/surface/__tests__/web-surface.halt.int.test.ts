@@ -1,16 +1,3 @@
-/**
- * LIVE HTTP proof that the `Job.halt` wire (36b2e1b) actually round-trips through the real data path:
- * boots the REAL `AppModule` over HTTP (supertest, real cookie auth + `OrgMembershipGuard`), seeds a
- * `jobs` row directly against live Postgres with `status='running'` (the pure build phase) and a
- * populated `halt` jsonb column, then asserts:
- *
- *   - `GET /web/jobs` (the cross-org inbox) returns that row with `status` STILL 'running' (never
- *     coerced back into a removed 'failed'/'paused' status) AND `halt: {kind, reason, at}` populated,
- *     with `needsYou: true` (derived from `halt != null`, per `deriveNeedsYou`).
- *   - `GET /web/orgs/:orgId/repos/:repoId/jobs` (the per-repo thread list) shows the identical shape.
- *   - A healthy sibling job (`status='running'`, `halt=null`) in both endpoints shows `halt: null` and
- *     `needsYou: false` — proving the new field doesn't leak/default to a false-positive.
- */
 
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
@@ -41,13 +28,10 @@ const fakeCreds = {
   engineAuth: async () => ({ secret: 'test-secret' }),
 };
 
-// Fixed ids → distinct from every other int test (which purge by their own ids).
 const ORG = '77777777-7777-4777-8777-777777777701';
 const REPO = '77777777-7777-4777-8777-777777777702';
 const HALTED_JOB = '77777777-7777-4777-8777-777777777703';
 const HEALTHY_JOB = '77777777-7777-4777-8777-777777777704';
-// A job idling in `planning` with a Codex review genuinely in flight (activity='plan_review') — the
-// false-positive "needs you" scenario the `activity` axis suppresses.
 const REVIEWING_JOB = '77777777-7777-4777-8777-777777777705';
 const OWNER_EMAIL = 'halt-wire-it-owner@example.test';
 const PASSWORD = 'halt-wire-it-pw-12345';
@@ -128,24 +112,18 @@ beforeAll(async () => {
     [REPO, ORG],
   );
 
-  // The HALTED job: status stays the pure build PHASE ('running') — the halt is orthogonal, per
-  // 36b2e1b's split. jsonb column takes a JS object directly (pg driver serializes it).
   await ds.query(
     `INSERT INTO jobs (id, org_id, repo_id, origin, title, status, halt)
      VALUES ($1, $2, $3, 'control', 'Halted build', 'running', $4::jsonb)`,
     [HALTED_JOB, ORG, REPO, JSON.stringify({ kind: 'failed', reason: 'build broke', at: HALT_AT })],
   );
 
-  // A HEALTHY sibling, same phase, no halt — proves the field doesn't leak/default to a false positive.
   await ds.query(
     `INSERT INTO jobs (id, org_id, repo_id, origin, title, status, halt)
      VALUES ($1, $2, $3, 'control', 'Healthy build', 'running', NULL)`,
     [HEALTHY_JOB, ORG, REPO],
   );
 
-  // The REVIEWING job: idle in `planning` but a Codex review is running (activity='plan_review') — the
-  // activity axis must suppress the "needs you" dot even though status='planning' would otherwise light
-  // it. This is the exact bug this build fixes.
   await ds.query(
     `INSERT INTO jobs (id, org_id, repo_id, origin, title, status, activity, halt)
      VALUES ($1, $2, $3, 'control', 'Reviewing build', 'planning', 'plan_review', NULL)`,
@@ -170,7 +148,6 @@ describe('Job.halt wire — GET /web/jobs and GET /web/orgs/:orgId/repos/:repoId
 
     const halted = (res.body as Array<Record<string, unknown>>).find((r) => r.jobId === HALTED_JOB);
     expect(halted).toBeDefined();
-    // THE ASSERTION THE JUDGE WANTS: status is the pure phase, halt is populated alongside it.
     expect(halted).toMatchObject({
       status: 'running',
       halt: { kind: 'failed', reason: 'build broke', at: HALT_AT },
@@ -187,7 +164,6 @@ describe('Job.halt wire — GET /web/jobs and GET /web/orgs/:orgId/repos/:repoId
       needsYou: false,
     });
 
-    // THE BUG FIX: idle-in-planning while a Codex review runs must NOT light the dot.
     const reviewing = (res.body as Array<Record<string, unknown>>).find(
       (r) => r.jobId === REVIEWING_JOB,
     );
@@ -198,11 +174,8 @@ describe('Job.halt wire — GET /web/jobs and GET /web/orgs/:orgId/repos/:repoId
       needsYou: false,
     });
 
-    // eslint-disable-next-line no-console -- evidence: dump the OBSERVED live rows verbatim.
     console.log('OBSERVED GET /web/jobs [reviewing]:', JSON.stringify(reviewing, null, 2));
-    // eslint-disable-next-line no-console -- evidence: dump the OBSERVED live rows verbatim.
     console.log('OBSERVED GET /web/jobs [halted]:', JSON.stringify(halted, null, 2));
-    // eslint-disable-next-line no-console
     console.log('OBSERVED GET /web/jobs [healthy]:', JSON.stringify(healthy, null, 2));
   });
 
@@ -228,12 +201,10 @@ describe('Job.halt wire — GET /web/jobs and GET /web/orgs/:orgId/repos/:repoId
       needsYou: false,
     });
 
-    // eslint-disable-next-line no-console -- evidence: dump the OBSERVED live rows verbatim.
     console.log(
       'OBSERVED GET /web/orgs/:orgId/repos/:repoId/jobs [halted]:',
       JSON.stringify(halted, null, 2),
     );
-    // eslint-disable-next-line no-console
     console.log(
       'OBSERVED GET /web/orgs/:orgId/repos/:repoId/jobs [healthy]:',
       JSON.stringify(healthy, null, 2),

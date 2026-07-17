@@ -1,26 +1,3 @@
-/**
- * Build-lane host-seed delivery (Thread 2) — DB-query proof against LIVE Postgres.
- *
- * A build lane (`thread:<threadId>`) rides the SAME lane-generic `DeliveryPump` the brain uses. These tests
- * prove the HOST-SEED delivery contract end-to-end over real rows (the operator-input transport that now also
- * rides this lane is a separately-registered handler — see (d)):
- *
- *  (a) `recordHostSeed` writes ONLY the durable `stimuli` row (no operator `messages` bubble), on the build
- *      lane, System-authored, with `priority` piggybacked into `reply_route` — the delivery ledger works while
- *      never rendering an operator bubble.
- *  (b) FAST PATH: a `now` seed with a LIVE steerable Leg (`active_turns` kind:'step', lane:'thread:<id>',
- *      running, steerable) is STEERED into the live turn (the pump takes the live path); the row is leased but
- *      NOT yet delivered — the engine `input_ack` (simulated via `markChatDelivered`) stamps `delivered_at`.
- *  (c) SLOW PATH: a `queue` seed with NO live turn stays PENDING (no steer, `delivered_at` null) and remains
- *      eligible for the next-Leg drain; stamping it delivered (the register hand-off) removes it from the queue.
- *  (d) A build lane accepts operator input once a handler registers — `canPost('thread:<id>')` is true — while
- *      a genuinely read-only kind (`input:'none'`, e.g. autofix-lens) stays `canPost === false`.
- *
- * Integration: real Postgres (atlas_test schema), StimulusStoreService + DeliveryPump + TurnRegistry wired
- * against a real DataSource, mirroring driver/driver-store.int.test.ts's bootstrap. The TurnRunner + the two
- * DriverStore methods BuildLaneDeliveryService touches are faked (the runner steer transport / visible-row
- * writer are proven elsewhere).
- */
 
 import type { ModuleRef } from '@nestjs/core';
 import { Test, type TestingModule } from '@nestjs/testing';
@@ -76,19 +53,13 @@ describe('build-lane host-seed delivery — live Postgres proof', () => {
       steerCalls.push({ turnId, id, body });
     },
   } as unknown as TurnRunnerService;
-  // The two DriverStore methods BuildLaneDeliveryService touches — empty steps ⇒ the display-only visible-row
-  // write is skipped, so this int test isolates the DELIVERY ledger (the visible-row writer is proven elsewhere).
   const fakeDriverStore = {
     stepsForThread: async () => [],
     recordBuildSystemChunk: async () => undefined,
   } as unknown as DriverStoreService;
-  // Delivery-mechanics tests exercise seedLane/pump only — the operator-input transport (which is the sole
-  // consumer of these two) is not registered here, so bare stubs suffice.
   const fakeThreadInput = {
     register: () => undefined,
   } as unknown as ThreadInputService;
-  // redriveThread (the halted-thread path) is not exercised by these delivery-mechanics tests — a
-  // ModuleRef stub that's never actually asked to resolve ThreadDriver suffices.
   const fakeModuleRef = { get: () => ({}) } as unknown as ModuleRef;
 
   let seeder: BuildLaneDeliveryService;
@@ -190,7 +161,6 @@ describe('build-lane host-seed delivery — live Postgres proof', () => {
     expect(rows[0].kind).toBe('chat');
     expect(rows[0].reply_route.priority).toBe('queue');
 
-    // NO operator bubble — the whole point of a no-bubble recorder (build lanes are read-only).
     const msgCount = await ds.query(
       `SELECT COUNT(*)::int AS n FROM transcript_messages WHERE job_id = $1`,
       [job.id],
@@ -217,17 +187,14 @@ describe('build-lane host-seed delivery — live Postgres proof', () => {
       'now',
     );
 
-    // The pump took the LIVE path: exactly one steer into the running turn, carrying the seed body verbatim.
     expect(steerCalls).toHaveLength(1);
     expect(steerCalls[0].turnId).toBe('5bbbbbbb-2222-4222-8222-222222222222');
     expect(steerCalls[0].body).toBe('steer me now');
 
-    // Leased but NOT yet delivered — steer only leases; the engine input_ack owns the delivered stamp.
     const before = await rawSeed(job.id);
     expect(before.delivered_at).toBeNull();
     expect(before.attempted_at).not.toBeNull();
 
-    // Simulate the engine `input_ack` the driver's onEvent handler stamps.
     await store.markChatDelivered(before.id);
     const after = await rawSeed(job.id);
     expect(after.delivered_at).not.toBeNull();
@@ -242,16 +209,13 @@ describe('build-lane host-seed delivery — live Postgres proof', () => {
       'queue',
     );
 
-    // No live turn ⇒ no steer, and the row stays pending (the drain-path descriptor is a no-op).
     expect(steerCalls).toHaveLength(0);
     const row = await rawSeed(job.id);
     expect(row.delivered_at).toBeNull();
 
-    // Still eligible — this is exactly what the next `kickBatchTurn` folds into the Leg task.
     const pending = await store.eligiblePendingChat(job.id, 2 * 60 * 1000, lane);
     expect(pending.map((p) => p.body)).toContain('queued work');
 
-    // The register hand-off stamps it delivered → it drops out of the queue.
     await store.markChatDelivered(row.id);
     const afterPending = await store.eligiblePendingChat(job.id, 2 * 60 * 1000, lane);
     expect(afterPending).toHaveLength(0);
@@ -292,20 +256,15 @@ describe('build-lane host-seed delivery — live Postgres proof', () => {
 
   it('(d) a build lane accepts operator input once a handler is registered; a genuinely read-only kind never does', () => {
     const input = new ThreadInputService();
-    // Before any handler registers, even an input-enabled lane can't be posted to (boot-order gate).
     expect(input.canPost(lane)).toBe(false);
     input.register('builder', { post: async () => undefined });
     expect(input.canPost(lane)).toBe(true);
 
-    // A kind that stays `input:'none'` (autofix-lens) is never postable — the read-only gate still holds even
-    // with no handler in the way.
     expect(input.canPost(laneFor('autofix-lens', 'af-1', 'lens-1'))).toBe(false);
   });
 
   it('(e) pump() re-drives a pending `now` seed into a live steerable Leg — the build-lane sweep backstop', async () => {
     const job = await makeJob();
-    // Seed with NO live turn yet — a `now` seed whose original steer was swallowed stays pending, exactly
-    // the shape the sweep must recover.
     await seeder.seedLane(
       { jobId: job.id, orgId: ORG_ID, repoId, threadId: THREAD_ID },
       'swallowed steer',
@@ -313,7 +272,6 @@ describe('build-lane host-seed delivery — live Postgres proof', () => {
     );
     expect(steerCalls).toHaveLength(0);
 
-    // A Leg goes live AFTER the seed — the sweep tick's re-drive, not the original seedLane call, must steer it.
     await registry.register({
       turnId: '5cccccc1-2222-4222-8222-222222222222',
       jobId: job.id,

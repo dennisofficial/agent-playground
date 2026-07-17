@@ -4,7 +4,6 @@ import { describe, expect, it } from 'vitest';
 import type { ChatSurface, InboundChatMessage } from '../../surface/chat-surface.port';
 import { JitHostExecutor } from '../jit-host-executor';
 
-/** Captures the exact args a `seedSystemNotification` call receives — the parity proof. */
 class FakeSurface implements ChatSurface {
   readonly name = 'fake';
   readonly inbound$ = new Subject<InboundChatMessage>();

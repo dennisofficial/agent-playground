@@ -1,58 +1,20 @@
 import type { McpSurface } from '../persistence/entities';
 
-/**
- * Where a GIT-SOURCED managed skill (see {@link SystemSkill.git}) is vendored from — a single skill dir,
- * NOT a marketplace manifest (`ManagedSkillSyncService` always takes the installer's single-skill path,
- * never `installMarketplace`). Mirrors `SkillInstallInput`'s git fields, minus the org/scope this global
- * tier has no use for.
- */
 export interface SystemSkillGitSource {
-  /** HTTPS git remote. Always cloned ANONYMOUSLY — this tier is global/org-agnostic, so there is no org
-   *  whose PAT could apply; only public repos belong here. */
   url: string;
-  /** Subpath within the repo to vendor — the skill dir itself (containing `SKILL.md`). */
   subpath: string;
-  /** Branch/tag `ManagedSkillSyncService` tracks and re-syncs on. */
   ref: string;
 }
 
-/**
- * A built-in skill Atlas ships, code-defined like `system-mcp-registry.ts`'s `SystemMcpServer` — the BASE
- * layer composed into every turn's `<CLAUDE_CONFIG_DIR>/skills/`, under an org/repo skill of the same
- * `name` (see `SkillResolver.resolveForTurn`'s precedence merge). Two flavors, same registry:
- *   - STATIC (no `git`): its real `SKILL.md` (+ any support files) is committed at
- *     `<managedSkillsRootHost()>/<name>/` — see `system-skill-store-paths.ts`.
- *   - GIT-SOURCED (`git` present): `ManagedSkillSyncService` clones+vendors it from `git.url` into the
- *     global `_managed` store (`managedGitSkillsRootHost()`, see `skill-store-paths.ts`) and keeps it
- *     current on a leader-gated cadence — nothing is committed to this repo for it.
- */
 export interface SystemSkill {
   name: string;
   description: string;
-  /** Which turn surfaces this skill is active on — same shape as `WorkspaceSkillEntity.surfaces`. */
   surfaces: McpSurface[];
-  /** Present → git-sourced (see above); absent → static/in-repo. */
   git?: SystemSkillGitSource;
-  /** Applicability for the framework-conformance review lens — only meaningful for a skill whose
-   *  `surfaces` includes `'review'`. Same shape as `WorkspaceSkillEntity.review_for_types`. */
   reviewForTypes?: string[];
-  /** Applicability for the framework-conformance review lens — only meaningful for a skill whose
-   *  `surfaces` includes `'review'`. Same shape as `WorkspaceSkillEntity.review_for_globs`. */
   reviewForGlobs?: string[];
 }
 
-/**
- * The system-tier (Atlas-managed) skills. A PURE function (unit-testable with no DI, like
- * `buildSystemMcpServers`) — resolved per turn by `SkillResolver.resolveForTurn` and, for display, by
- * `SystemSkillResolver`. Being pure, a `git` entry lists REGARDLESS of whether `ManagedSkillSyncService`
- * has actually vendored it yet — the compose step (`engine-core.ts`) already skips a skill whose dir isn't
- * on disk, and `SystemSkillResolver` marks an unsynced git entry `synced: false` for the console.
- *
- * To add a STATIC one: create `backend/skills-managed/<name>/SKILL.md` (+ any `references/`/`scripts/` it
- * needs), then add `{ name, description, surfaces }` below (`description` should match the frontmatter).
- * To add a GIT-SOURCED one: add `{ name, description, surfaces, git: { url, subpath, ref } }` — no repo
- * file needed, `ManagedSkillSyncService` vendors it on boot + its reconcile cadence.
- */
 export function buildSystemSkills(): SystemSkill[] {
   return [
     {

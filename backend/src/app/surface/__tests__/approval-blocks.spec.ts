@@ -30,7 +30,6 @@ describe('decisionApprovalBlocks', () => {
     const ids = actions.elements.map((e) => e.action_id);
     expect(ids).toContain(APPROVE_ACTION_ID);
     expect(ids).toContain(DENY_ACTION_ID);
-    // The button value carries the stateless ids.
     expect(JSON.parse(actions.elements[0].value)).toEqual({
       jobId: 'job-1',
       decisionRecordId: 'dr-1',
@@ -58,7 +57,6 @@ describe('decisionApprovalBlocks', () => {
     expect(json).toContain('JWT library');
     expect(json).toContain('use jose');
     expect(json).toContain('argon2id');
-    // No decisions → no Decisions block at all.
     expect(JSON.stringify(decisionApprovalBlocks(card))).not.toContain('*Decisions*');
   });
 

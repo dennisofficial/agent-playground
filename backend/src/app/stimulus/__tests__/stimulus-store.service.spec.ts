@@ -11,18 +11,14 @@ import { SYSTEM_SEED_AUTHOR } from '../../surface/chat-surface.port';
 import type { JobBootstrapService } from '../job-bootstrap';
 import { DuplicateStimulusError, StimulusStoreService } from '../stimulus-store.service';
 
-/** A JobBootstrapService stub — every message row a store method writes anchors on this planning thread
- *  (`messages.thread_id` is NOT NULL). */
 function makeBootstrap() {
   return {
     planningThreadId: vi.fn(async () => 'thread-planning'),
     ensurePlanningThreadGroup: vi.fn(async () => undefined),
-    // No `ci` thread group thread by default — attachEventToJob falls back to planning (§CI-routing).
     ciThreadId: vi.fn(async () => null),
   } as unknown as JobBootstrapService;
 }
 
-/** A minimal repo fake that mints ids on save + threads create/save/delete. */
 function fakeRepo<T extends { id?: string }>(prefix: string) {
   const rows: T[] = [];
   let seq = 0;
@@ -43,12 +39,6 @@ function fakeRepo<T extends { id?: string }>(prefix: string) {
   return { repo, rows, deleted };
 }
 
-/**
- * A fake `DataSource.transaction` with real ROLLBACK-on-throw semantics: writes are BUFFERED and only
- * flushed to the backing fake repos when the callback resolves. A throw inside the callback flushes
- * nothing — mirroring a Postgres transaction that never commits. `rowsFor` maps an entity class to the
- * fake repo's `rows` array so committed rows land where the behavioral assertions look for them.
- */
 function fakeDataSource(
   rowsFor: (Entity: unknown) => { id?: string }[],
   opts: { failOn?: unknown; failWith?: unknown } = {},
@@ -63,8 +53,6 @@ function fakeDataSource(
       }),
       save: async (e: Record<string, unknown>) => {
         const { __entity, ...rest } = e as { __entity: unknown };
-        // Inject a write failure INSIDE the callback (like a real failed INSERT) so the callback throws
-        // and the flush below never runs → nothing commits.
         if (opts.failOn !== undefined && __entity === opts.failOn)
           throw opts.failWith ?? new Error('stimulus write failed');
         const saved = {
@@ -75,8 +63,6 @@ function fakeDataSource(
         staged.push({ Entity: __entity, saved });
         return saved;
       },
-      // Correlation write (transcript row ← its delivery-ledger row): patch the staged row in place so a
-      // committed row reflects the update, mirroring a real transaction's UPDATE-then-commit.
       update: async (Entity: unknown, id: string, patch: Record<string, unknown>) => {
         const target = staged.find((s) => s.Entity === Entity && s.saved.id === id);
         if (target) Object.assign(target.saved, patch);
@@ -119,7 +105,6 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
 
     expect(threads.repo.save).not.toHaveBeenCalled(); // attach reuses the job — no new thread
     expect(ds.transaction as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1); // both writes in ONE tx
-    // The operator-visible card carries system_event provenance.
     expect(messages.rows[0]).toMatchObject({
       job_id: 'job-7',
       text: 'CI failed',
@@ -176,7 +161,6 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
       body: 'CI failed again',
     });
 
-    // The event card + the delivery-driving stimulus both target the ci thread, not planning.
     expect(messages.rows[0]).toMatchObject({
       job_id: 'job-7',
       thread_id: 'thread-ci-1',
@@ -186,8 +170,6 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
   });
 
   it('attachEventToJob is ATOMIC — a failed stimulus write leaves NO orphan event card', async () => {
-    // The invariant: a visible EVENT card must never outlive a missing stimulus row (which the at-least-once
-    // sweep, keyed on stimuli.delivered_at, could never recover — the card would render with no brain reaction).
     const threads = fakeRepo<JobEntity>('thread');
     const messages = fakeRepo<TranscriptMessageEntity>('msg');
     const stimuli = fakeRepo<InboundMessageEntity>('stim');
@@ -216,7 +198,6 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
       }),
     ).rejects.toThrow('stimulus write failed');
 
-    // Neither row committed — the card was rolled back with the stimulus.
     expect(messages.rows).toHaveLength(0);
     expect(stimuli.rows).toHaveLength(0);
   });
@@ -225,7 +206,6 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
     const threads = fakeRepo<JobEntity>('thread');
     const messages = fakeRepo<TranscriptMessageEntity>('msg');
     const stimuli = fakeRepo<InboundMessageEntity>('stim');
-    // The stimulus INSERT (second write in the tx) hits the (org, repo, source, dedupe_key) unique index.
     const uniqueErr = new QueryFailedError('insert', [], new Error('dup')) as QueryFailedError & {
       code?: string;
     };
@@ -255,7 +235,6 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
       }),
     ).rejects.toBeInstanceOf(DuplicateStimulusError);
 
-    // The transaction rolled back both rows — no manual message cleanup needed.
     expect(messages.rows).toHaveLength(0);
     expect(stimuli.rows).toHaveLength(0);
     expect(messages.deleted).toHaveLength(0);
@@ -306,12 +285,9 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
   });
 
   it('recordChatStimulus is ATOMIC — a failed stimulus write leaves NO orphan message bubble', async () => {
-    // The exact torn-write bug: a crash/failure between the message save and the stimulus save must not
-    // leave a transcript bubble with no stimulus behind it (which renders but never drives a brain turn).
     const threads = fakeRepo<JobEntity>('thread');
     const messages = fakeRepo<TranscriptMessageEntity>('msg');
     const stimuli = fakeRepo<InboundMessageEntity>('stim');
-    // The stimulus save (the SECOND write in the transaction) fails.
     const ds = fakeDataSource(
       (Entity) => (Entity === TranscriptMessageEntity ? messages.rows : stimuli.rows),
       { failOn: InboundMessageEntity },
@@ -335,19 +311,12 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
       }),
     ).rejects.toThrow('stimulus write failed');
 
-    // Neither row committed — the message was rolled back with the stimulus.
     expect(messages.rows).toHaveLength(0);
     expect(stimuli.rows).toHaveLength(0);
   });
 });
 
 describe('StimulusStoreService — seed-aware recordChatStimulus (durable chat/gate pump)', () => {
-  /**
-   * A `TranscriptMessageEntity` repo fake faithful enough to drive `writeSystemChunk`'s real dedup-by-`chunkKey`
-   * query (`createQueryBuilder('m').where('m.job_id = :jobId', …).andWhere("m.meta @> :key::jsonb", …)
-   * .getCount()`) against an in-memory `rows` array — so calling `recordChatStimulus` twice with the SAME
-   * `systemChunk.chunkKey` proves the pill is written only once, using the SAME writer production uses.
-   */
   function fakeMessageRepoWithQueryBuilder(rows: TranscriptMessageEntity[]) {
     return {
       create: (data: Partial<TranscriptMessageEntity>) => ({ ...data }) as TranscriptMessageEntity,
@@ -386,8 +355,6 @@ describe('StimulusStoreService — seed-aware recordChatStimulus (durable chat/g
     } as unknown as Repository<TranscriptMessageEntity>;
   }
 
-  /** A `DataSource.transaction` fake whose manager exposes `getRepository(TranscriptMessageEntity)` (for
-   *  `writeSystemChunk`) alongside the plain `create`/`save` the direct InboundMessageEntity write uses. */
   function fakeDataSourceWithMessageRepo(messageRepo: Repository<TranscriptMessageEntity>) {
     let seq = 0;
     const transaction = vi.fn(async (cb: (m: unknown) => Promise<unknown>) => {
@@ -444,7 +411,6 @@ describe('StimulusStoreService — seed-aware recordChatStimulus (durable chat/g
       seedQuestionId: 'q1',
     });
 
-    // ONE message row total — the curated pill — never a SECOND raw operator bubble carrying the raw body.
     expect(messageRows).toHaveLength(1);
     expect(messageRows[0]).toMatchObject({
       job_id: 'job-9',
@@ -452,14 +418,9 @@ describe('StimulusStoreService — seed-aware recordChatStimulus (durable chat/g
       author_id: 'U-SYSTEM',
       meta: expect.objectContaining({ source: 'system_notice', chunkKey }),
     });
-    // The curated pill carries the short curated label, not the raw engine body — the plain-bubble write
-    // path (skipped here) would have set `text` to the raw body and no `meta`/`kind` at all.
     expect(messageRows[0].text).toBe(seedRow.label);
     expect(messageRows[0].card).toBeUndefined();
 
-    // The durable stimuli row still commits (atomically, same transaction) and returns the seed metadata as
-    // the envelope's collapsed delivered-id array. No explicit `type` was passed, so a host-seed author
-    // falls through to the persistence-only `'seed'` discriminant (unchanged behavior).
     expect(chat).toMatchObject({
       jobId: 'job-9',
       deliveredQuestionIds: ['q1'],
@@ -491,13 +452,10 @@ describe('StimulusStoreService — seed-aware recordChatStimulus (durable chat/g
       },
       replyRoute: { surfaceId: 'web', jobRef: 'job-9' },
       body: '<system_notice>Please continue with the current task: "X".</system_notice>',
-      // What the recovery re-drive nudges (retryResumeNudge) now pass: silence and delivery are decoupled.
       systemChunk: 'skip',
     });
 
-    // SILENT: neither a curated pill nor a raw operator bubble — zero operator-facing transcript rows.
     expect(messageRows).toHaveLength(0);
-    // STILL DELIVERED: the durable stimulus envelope is returned, so the brain turn is still driven.
     expect(chat.message.type).toBe('seed');
     expect(chat).toMatchObject({ jobId: 'job-9' });
   });
@@ -533,11 +491,9 @@ describe('StimulusStoreService — seed-aware recordChatStimulus (durable chat/g
     };
 
     const first = await store.recordChatStimulus(input);
-    // A redundant re-seed (e.g. a boot backfill retry) mints a SECOND durable stimuli row…
     const second = await store.recordChatStimulus(input);
 
     expect(first.id).not.toBe(second.id);
-    // …but the pill dedups: still exactly ONE visible message row.
     expect(messageRows).toHaveLength(1);
   });
 
@@ -617,7 +573,6 @@ describe('StimulusStoreService — seed-aware recordChatStimulus (durable chat/g
     expect(chat?.deliveredQuestionIds).toBeUndefined();
     expect(chat?.deliveredSecretIds).toBeUndefined();
     expect(chat?.deliveredFileIds).toBeUndefined();
-    // A plain operator row round-trips as a `'user'` envelope (author != host-seed scope).
     expect(chat?.message.type).toBe('user');
   });
 });

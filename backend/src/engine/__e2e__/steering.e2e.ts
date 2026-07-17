@@ -1,8 +1,3 @@
-// STEERING — a mid-turn operator steer is injected into a RUNNING steerable turn and consumed. Starts a
-// longer counting turn (multiple round-trips), and once the model is streaming, XADDs a steer frame to
-// `turn:{T}:input` ({id,text} — the exact shape `RedisEngineRunner.steer()` writes). Asserts the engine
-// emits a correlated `input_ack` event for that id (the durable proof it was TAKEN — see
-// `SteerInputChannel`), and that the run still completes with a `final`.
 import { randomUUID } from 'node:crypto';
 import {
   cleanup,
@@ -40,8 +35,6 @@ export async function run(sandbox: string): Promise<ScenarioResult> {
     await xadd(redis, k.spec, spec);
     kickEngine(sandbox, turnId, { detached: true, quiet: true });
 
-    // Fire the steer once the model is genuinely streaming (first assistant text) — steering before the
-    // first assistant message is HELD by the engine (pre-stream buffer), so an `event:text` is the safe cue.
     let steered = false;
     const onFrame = (f: Frame): void => {
       const kind = (f.e as { kind?: string })?.kind;
@@ -72,8 +65,6 @@ export async function run(sandbox: string): Promise<ScenarioResult> {
     console.log(
       `[steering] input_ack for steer=${acked}; final=${!!final}; result="${result.slice(0, 80)}" behaviorChanged=${behaviorChanged}`,
     );
-    // The `input_ack` (correlated to our steer id) is the load-bearing proof the steer was consumed;
-    // the BANANA behavior change is a strong secondary signal but timing-dependent, so it is logged, not required.
     return {
       pass: acked && !!final,
       detail: acked

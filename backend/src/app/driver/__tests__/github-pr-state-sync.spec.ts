@@ -1,8 +1,3 @@
-/**
- * Unit tests for `GithubPrStateSync` — the silent GitHub `pull_request` webhook fast path. All
- * collaborators (`JobLifecycleService`, `DriverStoreService`, `StimulusStoreService`, the `jobs`
- * repo) are plain mocked objects. No DB, no Docker.
- */
 
 import type { PrStateDelta } from '@shared/domain';
 import type { Repository } from 'typeorm';
@@ -19,7 +14,6 @@ function makeSync() {
   } as unknown as JobLifecycleService;
   const driverStore = {
     setPrReady: vi.fn(),
-    // The post-ship seam (d14): onPrOpened ensures the `ci` thread group thread exists once the PR is recorded.
     ensureCiThread: vi.fn(async () => ({
       threadGroupId: 'tg-ci',
       threadId: 'ci-1',

@@ -29,11 +29,9 @@ describe('gitAuthEnv (token never in argv / config)', () => {
 
   it('with NO token on https github, blanks the credential helper (no host ambient-credential fallback)', () => {
     const env = gitAuthEnv('https://github.com/acme/app', undefined);
-    // Not {} — an empty credential.helper resets the helper list so git can't reach host creds.
     expect(env.GIT_CONFIG_COUNT).toBe('1');
     expect(env.GIT_CONFIG_KEY_0).toBe('credential.helper');
     expect(env.GIT_CONFIG_VALUE_0).toBe('');
-    // And it carries no auth header / token.
     expect(Object.values(env).join('\n')).not.toContain('extraheader');
   });
 

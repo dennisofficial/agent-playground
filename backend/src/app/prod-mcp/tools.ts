@@ -18,10 +18,7 @@ import {
   resolveSessionFile,
 } from './session-jsonl';
 
-/** A file this reader will not slurp into a tool response whole (keeps a runaway `atlas_worktree_file` /
- *  `atlas_context_read` call from blowing up the MCP response). */
 const MAX_FILE_BYTES = 2_000_000;
-/** Tree-listing caps — a worktree or context dir can be huge; these bound one `tree` response. */
 const MAX_TREE_ENTRIES = 2_000;
 const MAX_TREE_DEPTH = 10;
 
@@ -30,9 +27,6 @@ export interface ToolRoots {
   repos: string;
 }
 
-/** Per-call context threaded into every handler. `audit` is a mutable out-param the handler stamps
- *  `orgId` onto the moment it resolves the job, so the caller (main.ts) can audit the org even when the
- *  call later fails deeper in the handler. */
 export interface ToolCtx {
   ds: DataSource;
   roots: ToolRoots;
@@ -83,7 +77,6 @@ function deriveFailureSummary(tr: ThreadTerminalRecord | null): string | null {
   return tr.summary ?? null;
 }
 
-// ── atlas_query / atlas_schema ────────────────────────────────────────────────────────────────────────
 
 async function atlasQuery(
   ctx: ToolCtx,
@@ -95,19 +88,12 @@ async function atlasQuery(
   },
 ): Promise<unknown> {
   const sql = requireNonEmptyString(args.sql, 'sql');
-  // Stamp the SQL BEFORE running so a guard rejection / timeout / permission error still lands the SQL in
-  // main.ts's failed-query audit line.
   ctx.audit.sql = sql;
   const format = parseQueryFormat(args.format);
   const limit = parseQueryLimit(args.limit);
   const params = Array.isArray(args.params) ? args.params : [];
   const { rows, rowCount, truncated } = await runReadOnlyQuery(ctx.ds, sql, params, limit);
   ctx.audit.rowCount = rowCount;
-  // Redact the row OBJECTS before flattening to text. redact.ts's key-name masking (SECRET_KEY_PATTERN)
-  // blanks opaque values in secret-named columns (e.g. `access_token`, `password`), but that key context
-  // is lost once rows are rendered to csv/tsv — the header and value land on separate lines, so the
-  // string-pattern scan main.ts runs on the flattened text can't recover it. Redacting here preserves the
-  // key-name masking for all rendered formats.
   const redactedRows = redactSecrets(rows as Record<string, unknown>[]) as Record<
     string,
     unknown
@@ -124,7 +110,6 @@ async function atlasSchema(ctx: ToolCtx): Promise<unknown> {
   return introspectSchema(ctx.ds);
 }
 
-// ── atlas_job_overview ────────────────────────────────────────────────────────────────────────────────
 
 async function jobOverview(ctx: ToolCtx, args: { jobId: string }): Promise<unknown> {
   const job = await loadJob(ctx, args.jobId);
@@ -166,7 +151,6 @@ async function jobOverview(ctx: ToolCtx, args: { jobId: string }): Promise<unkno
   };
 }
 
-// ── atlas_session_raw ─────────────────────────────────────────────────────────────────────────────────
 
 interface SessionRawArgs {
   jobId: string;
@@ -237,16 +221,12 @@ function requireSessionFile(
   return { sessionId, path };
 }
 
-// ── filesystem tree helper (shared by atlas_context_read / atlas_worktree_tree) ─────────────────────────
 
 interface TreeEntry {
   path: string;
   type: 'file' | 'dir';
 }
 
-/** Recursively list `absRoot`, capped at {@link MAX_TREE_ENTRIES} entries / {@link MAX_TREE_DEPTH} deep so
- *  a huge worktree/context dir can't blow up a tool response. Silently stops descending past the caps
- *  rather than failing the whole listing. */
 function listTree(absRoot: string, skipDirs: ReadonlySet<string> = new Set()): TreeEntry[] {
   const out: TreeEntry[] = [];
   const walk = (dir: string, rel: string, depth: number): void => {
@@ -268,8 +248,6 @@ function listTree(absRoot: string, skipDirs: ReadonlySet<string> = new Set()): T
       } catch {
         continue;
       }
-      // Don't follow symlinks: a symlink planted inside the jail could point outside it, so
-      // enumerating its target would leak names outside the jail. Skip them entirely.
       if (st.isSymbolicLink()) continue;
       if (st.isDirectory()) {
         out.push({ path: relPath, type: 'dir' });
@@ -291,7 +269,6 @@ function readFileCapped(path: string): string {
   return readFileSync(path, 'utf8');
 }
 
-// ── atlas_context_read ────────────────────────────────────────────────────────────────────────────────
 
 const CONTEXT_SUBDIRS = ['specs', 'generated', 'artifacts', 'evidence'];
 
@@ -323,7 +300,6 @@ async function contextRead(ctx: ToolCtx, args: { jobId: string; path?: string })
   return { root, path: args.path, content: readFileCapped(resolved) };
 }
 
-// ── atlas_worktree_tree / atlas_worktree_file ────────────────────────────────────────────────────────
 
 const WORKTREE_SKIP_DIRS = new Set(['.git', 'node_modules']);
 
@@ -357,7 +333,6 @@ async function worktreeFile(ctx: ToolCtx, args: { jobId: string; path: string })
   };
 }
 
-// ── registry ──────────────────────────────────────────────────────────────────────────────────────────
 
 export const TOOL_DEFS: Tool[] = [
   {

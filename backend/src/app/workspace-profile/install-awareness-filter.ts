@@ -7,16 +7,6 @@ import type { InstallMatch } from '@shared/prompt-kit/jit/install-awareness';
 import { z } from 'zod';
 import { fence, fenceOrNone } from '../prompt-fence';
 
-/**
- * Stage 2 (decision d2) — the READ-ONLY install-awareness filter/enricher. Given a Stage-1-detected
- * install/remove transition plus the current workspace profile, a cheap structured Haiku call decides
- * whether to SUPPRESS the nudge (the noisy majority) or ENRICH it with one specific suggestion. Mirrors
- * `decision-gate/classifier-llm.ts` almost verbatim: same declarative `prompt → withStructuredOutput`
- * shape, same lazy per-key chain cache, same "no key / any error → undefined" fail-open contract — the
- * caller (`ProfileAwarenessService`) treats `undefined` exactly like a disabled Stage 2 and falls through
- * to the plain Stage-1 checklist. This filter NEVER mutates profile state or fires a proposal — it only
- * ever returns a verdict for the caller to act on.
- */
 
 export const INSTALL_FILTER_MODEL = 'claude-haiku-4-5-20251001';
 
@@ -32,10 +22,6 @@ export const InstallFilterSchema = z.object({
 export type InstallFilterVerdict = z.infer<typeof InstallFilterSchema>;
 
 export type InstallAwarenessFilter = {
-  /**
-   * Read-only: returns a verdict, or `undefined` when the filter is unavailable (no key / error /
-   * timeout) — the caller then keeps the plain Stage-1 text. Never throws.
-   */
   filter(input: {
     orgId: string;
     match: InstallMatch;
@@ -46,7 +32,6 @@ export type InstallAwarenessFilter = {
 
 export const INSTALL_AWARENESS_FILTER = Symbol('INSTALL_AWARENESS_FILTER');
 
-/** The filter's system prompt — bias-to-suppress rules + the harness-bug/guardrail carryover from Stage 1. */
 const SYSTEM = [
   'You are a read-only FILTER deciding whether an install/remove warrants nudging an autonomous',
   'software-engineering agent (Atlas) to evolve its durable WORKSPACE PROFILE (skills, MCP servers,',
@@ -81,17 +66,9 @@ const SYSTEM = [
   'is a noise filter, not a safety gate).',
 ].join('\n');
 
-/** Render an `InstallMatch` as compact untrusted-fenced text for the prompt. */
 const renderMatch = (m: InstallMatch): string =>
   [`action: ${m.action}`, `kind: ${m.kind}`, `key: ${m.key}`, `label: ${m.label}`].join('\n');
 
-/**
- * Declarative chain: `RunnableLambda` assembles the fenced sections into one template variable (so
- * embedded braces/injection text in the untrusted blocks can't break templating), `ChatPromptTemplate`
- * carries the system prompt, `withStructuredOutput` pins the response to `InstallFilterSchema` (all
- * scalar fields — no array-typed schema field, avoiding the `withStructuredOutput` array-schema gotcha
- * noted in `driver/static-verification-judge.ts`).
- */
 type FilterInstallInput = {
   install: string;
   profileBlock: string;
@@ -123,15 +100,9 @@ const buildFilterInstallChain = (
     }),
   ]).withConfig({ runName: 'Filter Install Awareness' });
 
-/**
- * The real adapter. Lazy by construction — no chain until the first `filter` call; a missing key returns
- * `undefined` (caller falls back to Stage 1) rather than throwing. Cheap structured Haiku call; chains
- * cached per resolved key string, exactly like `AnthropicClassifierLlm`.
- */
 export class AnthropicInstallAwarenessFilter implements InstallAwarenessFilter {
   private readonly chains = new Map<string, Runnable<FilterInstallInput, InstallFilterVerdict>>();
 
-  /** @param resolveKey resolves the active Anthropic key for a tenant (e.g. CredentialResolver.anthropicKey). */
   constructor(private readonly resolveKey: (orgId?: string) => Promise<string | undefined>) {}
 
   private async chain(
@@ -174,7 +145,6 @@ export class AnthropicInstallAwarenessFilter implements InstallAwarenessFilter {
         reason: out.reason || '(no reason given)',
       };
     } catch {
-      // Malformed/blocked structured output, timeout, or any transport error → fail OPEN to Stage 1.
       return undefined;
     }
   }

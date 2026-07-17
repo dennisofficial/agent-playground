@@ -4,10 +4,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { McpServerEntity } from '../../persistence/entities';
 import { McpServerStore } from '../mcp-server.store';
 
-// A 32-byte key as 64 hex chars — the only shape `loadSecretsKey` accepts.
 const KEY = 'a'.repeat(64);
 
-/** Minimal in-memory stand-in for the TypeORM repository (only the methods the store calls). */
 class FakeRepo {
   rows: McpServerEntity[] = [];
   create(p: Partial<McpServerEntity>): McpServerEntity {
@@ -72,11 +70,9 @@ describe('McpServerStore', () => {
       headers: [{ name: 'Authorization', value: 'Bearer secret', secret: true }],
     });
     const row = repo.rows[0];
-    // The secret value is NEVER in config — only a null placeholder.
     expect(row.config.headers).toEqual({ Authorization: null });
     expect(row.secrets_enc).toBeTruthy();
     expect(row.secrets_enc).not.toContain('secret');
-    // But the store can decrypt it back.
     expect(store.decryptSecrets(row)).toEqual({
       headers: { Authorization: 'Bearer secret' },
     });
@@ -113,7 +109,6 @@ describe('McpServerStore', () => {
       url: 'https://svc',
       headers: [{ name: 'Authorization', value: 'tok-1', secret: true }],
     });
-    // Edit: keep the header secret but submit an empty value (the console "re-enter to change" UX).
     await store.write('org1', '*', 'svc', {
       transport: 'http',
       url: 'https://svc/v2',
@@ -170,8 +165,6 @@ describe('McpServerStore', () => {
 
   describe('setSecret — single-slot read-modify-write (the provide-secret MCP lane)', () => {
     it('fills one empty placeholder slot without clobbering siblings, adds the config null placeholder', async () => {
-      // A server registered by the approve endpoint: a secret header declared as an empty placeholder plus a
-      // non-secret header inline.
       await store.write('org1', 'repo-1', 'github', {
         transport: 'http',
         url: 'https://api.githubcopilot.com/mcp/',
@@ -190,12 +183,10 @@ describe('McpServerStore', () => {
       );
       expect(ok).toBe(true);
       const row = repo.rows[0];
-      // The non-secret sibling is untouched; the secret slot stays a null placeholder in config.
       expect(row.config.headers).toEqual({
         Authorization: null,
         'X-Env': 'prod',
       });
-      // The value round-trips out of the encrypted blob, and never appears in config/plaintext.
       expect(store.decryptSecrets(row)).toEqual({
         headers: { Authorization: 'Bearer ghp_x' },
       });
@@ -297,7 +288,6 @@ describe('McpServerStore', () => {
         url: 'https://mcp.atlassian.com',
         authKind: 'oauth',
       });
-      // McpOAuthService.markNeedsReauth writes this marker into validation_error on a dead refresh.
       await store.recordValidation('org1', '*', 'jira', {
         error: 'needs re-auth',
       });
@@ -338,7 +328,6 @@ describe('McpServerStore', () => {
   });
 
   describe('oauthConnected / needsOAuthConnect — the token-presence boundary', () => {
-    /** Register an OAuth server row (no blob yet — the state right after Approve). */
     async function registerOAuth(name: string, dbScope = '*'): Promise<void> {
       await store.write('org1', dbScope, name, {
         transport: 'http',
@@ -358,7 +347,6 @@ describe('McpServerStore', () => {
 
     it('a started-but-cancelled consent (blob = {nonce}, no token) reads as NOT connected and needs connect', async () => {
       await registerOAuth('jira');
-      // beginAuthorization writes a blob before consent completes — nonce/PKCE state, but no tokens.
       await store.writeOAuthBlob('org1', '*', 'jira', { nonce: 'abc123' });
       const [server] = await store.list('org1');
       expect(server.oauthConnected).toBe(false);
@@ -376,7 +364,6 @@ describe('McpServerStore', () => {
       const [server] = await store.list('org1');
       expect(server.oauthConnected).toBe(true);
       expect(await store.needsOAuthConnect('org1', 'repo-1')).toEqual([]);
-      // The token itself never leaks through the redacted view.
       expect(JSON.stringify(server)).not.toContain('at-live');
     });
 

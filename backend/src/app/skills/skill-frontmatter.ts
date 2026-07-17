@@ -1,22 +1,10 @@
-/**
- * Minimal `SKILL.md` frontmatter reader — just the two fields the installer/updater need to derive a
- * skill's identity from its files (`name`, `description`). Deliberately NOT a general YAML parser (no lib
- * dependency, matches `SkillFileWriter`'s equally minimal frontmatter handling); a skill with richer
- * frontmatter (`allowed-tools`, etc.) is untouched — those fields aren't registry columns.
- */
 export interface SkillFrontmatter {
   name?: string;
   description?: string;
-  /** Which `ThreadType`s (see `thread-kind/thread-types.ts`) this skill's review lens applies to. Kept as
-   *  plain `string[]` here — the frontmatter/DB boundary never imports the `ThreadType` union. */
   reviewForTypes?: string[];
-  /** File globs matched against a thread's changed files — the path-based review-applicability axis. */
   reviewForGlobs?: string[];
 }
 
-/** Parse a single-line list value: `[a, b]` or bare `a, b` -> trimmed, unquoted, non-empty items.
- *  Commas inside `{...}` are NOT separators, so picomatch brace patterns like `foo.{ts,tsx}`
- *  survive intact instead of being split into invalid globs. */
 function parseListValue(raw: string): string[] {
   const stripped = raw.replace(/^\[\s*/, '').replace(/\s*\]$/, '');
   const items: string[] = [];
@@ -38,7 +26,6 @@ function parseListValue(raw: string): string[] {
     .filter((item) => item.length > 0);
 }
 
-/** Parse the `---\n…\n---` block at the top of a `SKILL.md`, if any. Single-line `key: value` pairs only. */
 export function parseSkillFrontmatter(md: string): SkillFrontmatter {
   const block = /^---\r?\n([\s\S]*?)\r?\n---/.exec(md);
   if (!block) return {};
@@ -70,8 +57,6 @@ export function parseSkillFrontmatter(md: string): SkillFrontmatter {
   return out;
 }
 
-/** Strip a leading `---\n…\n---` frontmatter block (if any) and return the trimmed body — used to read a
- *  skill's SKILL.md content for injection without leaking its frontmatter into the model's context. */
 export function stripSkillFrontmatter(md: string): string {
   const block = /^---\r?\n([\s\S]*?)\r?\n---/.exec(md);
   if (!block) return md.trim();

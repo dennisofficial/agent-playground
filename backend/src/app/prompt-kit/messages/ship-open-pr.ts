@@ -1,14 +1,3 @@
-/**
- * prompt-kit / turns / ship-open-pr — the SHIP-TIME open-PR turn, delivered as a BRAIN harness-turn body.
- * The host seeds `shipOpenPrBody(...)` into the job-brain session, which
- * reconciles the branch against its base, pushes, AUTHORS a Claude-Code-style PR body from the real diff +
- * its `/context/evidence/` bundle(s), and opens the PR with its own authenticated git + `gh`.
- *
- * Task-ONLY: the brain turn always runs under the `CI` system prompt, so this turn carries no
- * `system` string — the reconcile / PR-body / git-safety guidance is folded into the body below. The host
- * learns the PR by BRANCH DISCOVERY after the turn (`findOpenPullByHead` → `setPrReady`, backstopped by the
- * git-state reconciler), so there is NO `report_pr_opened` tool to call — the brain just opens the PR.
- */
 import { agentMessage, type AgentMessage } from '@shared/prompt-kit/message';
 import { GIT_SAFETY_NOTE } from '@shared/prompt-kit/system/fragments';
 
@@ -17,18 +6,11 @@ function shellQuote(value: string): string {
 }
 
 export interface ShipOpenPrArgs {
-  /** The feature branch that carries the build. */
   branch: string;
-  /** The base branch the PR targets. */
   defaultBranch: string;
-  /** The job title → the PR title (the brain trims it under 70 chars). */
   title: string;
 }
 
-/**
- * Build the open-PR turn BODY (task-only) seeded into the brain: reconcile → push → author-body →
- * `gh pr create`. No `report_pr_opened` step — the host records the PR by branch discovery after the turn.
- */
 export function shipOpenPrBody(args: ShipOpenPrArgs): AgentMessage {
   const { branch, defaultBranch, title } = args;
   const quotedBranch = shellQuote(branch);

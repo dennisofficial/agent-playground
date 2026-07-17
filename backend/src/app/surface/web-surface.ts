@@ -10,48 +10,30 @@ import type { MessageChangeNotifier } from './message-change-notifier.port';
 import type { WebApprovalCard } from './web-approval-card';
 import { webApprovalCard } from './web-approval-card';
 
-/** A message Atlas POSTED — what SSE subscribers receive. */
 export interface WebOutboundMessage {
-  /** Synthetic ts (monotonic, seconds.fraction-shaped). */
   ts: string;
   channel: string;
   text: string;
   threadTs?: string;
-  /** Web approval card payload (rendered when the post carries an approval card). */
   card?: WebApprovalCard;
-  /**
-   * Optional opaque metadata (from `PostOptions.meta`). The driver uses this to attach build-step
-   * event context (e.g. `{ kind: 'build_event', stepId, sectionOrdinal, eventKind }`) so a web UI
-   * can distinguish build-step engine events from conversational chat messages.
-   */
   meta?: Record<string, unknown>;
   postedAt: Date;
 }
 
-/** Options for injecting a human message (programmatic / REST ingress). */
 export interface WebInboundOptions {
   threadTs?: string;
   authorId?: string;
   authorName?: string;
   orgId?: string;
-  /** System seed — deliver to the brain but don't persist as a chat bubble (see `InboundChatMessage.seed`). */
   seed?: boolean;
-  /** Delivery seed — the `ask_question` card id whose answer this seed delivers (see `InboundChatMessage.seedQuestionId`). */
   seedQuestionId?: string;
-  /** Delivery seed — the `request_file` card id whose uploaded file this seed confirms (see `InboundChatMessage.seedFileId`). */
   seedFileId?: string;
-  /** Delivery seed — the `request_secret` card id whose provided value this seed confirms (see `InboundChatMessage.seedSecretId`). */
   seedSecretId?: string;
-  /** Batch delivery seed — the arrays of card ids a single combined `answer-batch` seed delivers (see
-   *  `InboundChatMessage.seedQuestionIds`). */
   seedQuestionIds?: string[];
   seedFileIds?: string[];
   seedSecretIds?: string[];
-  /** Seed render command — how this seed shows in the transcript (see `TurnEnvelope.seedRow`). */
   seedRow?: SeedRow;
-  /** Delivery priority for the durable queue. Absent preserves the default `now` behavior. */
   priority?: 'now' | 'queue' | 'later';
-  /** Optional structured card payload to persist alongside this message (see `InboundChatMessage.card`). */
   card?: Record<string, unknown>;
 }
 
@@ -59,32 +41,6 @@ const DEFAULT_TEAM_ID = 'a0a0a0a0-0000-4000-8000-000000000001'; // sentinel org 
 const DEFAULT_AUTHOR_ID = 'U-OPERATOR';
 const DEFAULT_AUTHOR_NAME = 'Operator';
 
-/**
- * R0 — the WEB `ChatSurface`. A server-sent events (SSE) + REST adapter that lets a web client have
- * a real conversation with Atlas with no Slack:
- *
- *  - INBOUND (toward Atlas): the web surface controller calls `receiveFromClient(channel, text, opts)`
- *    when it gets a `POST /web/say` request — this injects a human message onto `inbound$` exactly as
- *    if the operator typed it in the web app.
- *  - OUTBOUND (from Atlas): `post()` records the message, emits it on `outbound$` (the SSE feed), and
- *    returns a synthetic ts (the thread handle). The SSE controller subscribes and fans events to all
- *    connected clients in the channel.
- *  - APPROVAL CLICKS: the web surface controller calls `receiveApprovalClick(actionId, value, ruledBy)`
- *    which emits on `approval$` — the web surface module wires that to `DecisionApprovalService.resolve`
- *    via a dedicated control endpoint, keeping the surface decoupled from the brain.
- *
- * Transport: SSE for server→client (zero new deps; the controller writes chunked text/event-stream).
- * REST POST for client→server inbound messages and for approval clicks. The SSE endpoint is
- * `GET /web/events?channel=<channel>` (per-channel subscription); history is `GET /web/thread?channel=`.
- *
- * Threading is honored: `threadTs` in `receiveFromClient` is forwarded exactly as the Slack adapter
- * does it, so the chat bridge's `resolveThread` path is unchanged.
- *
- * The default orgId is `T-WEB` — enough to route messages through the chat bridge. Each REST call can
- * override it via `orgId` in the body when multi-tenant scenarios are needed.
- *
- * Zero v1 imports.
- */
 @Injectable()
 export class WebSurface implements ChatSurface, MessageChangeNotifier {
   readonly name = 'web';
@@ -92,48 +48,36 @@ export class WebSurface implements ChatSurface, MessageChangeNotifier {
 
   private readonly inboundSubject = new Subject<InboundChatMessage>();
   private readonly outboundSubject = new Subject<WebOutboundMessage>();
-  /** Control channel: approval-card button clicks arrive here (decoupled from the brain). */
   private readonly approvalSubject = new Subject<{
     actionId: string;
     value: string;
     ruledBy: string;
     note?: string;
   }>();
-  /** Control channel: operator resume requests (POST /web/resume) — the driver subscribes via the port. */
   private readonly resumeSubject = new Subject<{ jobId: string }>();
-  /** Thread metadata updates (e.g. an auto-generated title) — the SSE controller fans these to clients. */
   private readonly threadMetaSubject = new Subject<{
     channel: string;
     jobId: string;
     title: string;
   }>();
-  /** A job's durable message log changed (a send persisted, or a delivery landed) — the SSE controller
-   *  fans a `messages_changed` frame so connected clients refetch `/messages`. */
   private readonly messagesChangedSubject = new Subject<{
     channel: string;
     jobId: string;
   }>();
 
-  /** Every message Atlas posted, in order — in-memory for the REST history endpoint. */
   readonly outbox: WebOutboundMessage[] = [];
 
   private seq = 0;
   private readonly defaultTeamId = DEFAULT_TEAM_ID;
 
-  /** Inbound human messages — the chat bridge subscribes to this. */
   get inbound$(): Observable<InboundChatMessage> {
     return this.inboundSubject.asObservable();
   }
 
-  /** Outbound Atlas messages — SSE controller fans these to connected clients. */
   get outbound$(): Observable<WebOutboundMessage> {
     return this.outboundSubject.asObservable();
   }
 
-  /**
-   * Approval-card button clicks — the web surface module subscribes and resolves the gate via
-   * `DecisionApprovalService.resolve`. Decoupled: the surface never imports the brain.
-   */
   get approval$(): Observable<{
     actionId: string;
     value: string;
@@ -143,12 +87,10 @@ export class WebSurface implements ChatSurface, MessageChangeNotifier {
     return this.approvalSubject.asObservable();
   }
 
-  /** Operator resume requests — the driver (which injects this port) subscribes and re-drives the job. */
   get resumeRequests$(): Observable<{ jobId: string }> {
     return this.resumeSubject.asObservable();
   }
 
-  /** Thread metadata updates (title) — the SSE controller maps these to `{ type: 'thread_meta' }` frames. */
   get threadMeta$(): Observable<{
     channel: string;
     jobId: string;
@@ -157,34 +99,24 @@ export class WebSurface implements ChatSurface, MessageChangeNotifier {
     return this.threadMetaSubject.asObservable();
   }
 
-  /** Broadcast a thread metadata change (the channel is the repo id the SSE stream is keyed by). */
   emitThreadMeta(channel: string, jobId: string, title: string): void {
     this.threadMetaSubject.next({ channel, jobId, title });
   }
 
-  /** A job's durable message log changed — the SSE controller maps these to `{ type: 'messages_changed' }`
-   *  frames the client reacts to by refetching. */
   get messagesChanged$(): Observable<{ channel: string; jobId: string }> {
     return this.messagesChangedSubject.asObservable();
   }
 
-  /** Broadcast a durable message-log change (the channel is the repo id the SSE stream is keyed by). */
   emitMessagesChanged(repoId: string, jobId: string): void {
     this.messagesChangedSubject.next({ channel: repoId, jobId });
   }
 
-  /** Emit a resume request (called by the controller on `POST /web/resume`). */
   requestResume(jobId: string): void {
     this.logger.debug(`requestResume job=${jobId}`);
     this.resumeSubject.next({ jobId });
   }
 
-  // ── INBOUND ─────────────────────────────────────────────────────────────────────────────────────
 
-  /**
-   * Inject a human message onto `inbound$` from the web surface (called by the REST controller on
-   * `POST /web/say`). Returns the synthetic ts of the injected message.
-   */
   receiveFromClient(channel: string, text: string, opts: WebInboundOptions = {}): string {
     const ts = this.mintTs();
     const message: InboundChatMessage = {
@@ -214,11 +146,6 @@ export class WebSurface implements ChatSurface, MessageChangeNotifier {
     return ts;
   }
 
-  /**
-   * Seed the thread's brain with a SYSTEM NOTIFICATION (see `ChatSurface.seedSystemNotification`). Wraps
-   * `body` in `<system_notification>…</system_notification>` and injects it as a NON-persisted, System-
-   * authored seed turn — the brain reacts to it, but it never renders as an operator chat bubble.
-   */
   seedSystemNotification(
     channel: string,
     jobId: string,
@@ -228,20 +155,13 @@ export class WebSurface implements ChatSurface, MessageChangeNotifier {
       deliveredQuestionId?: string;
       deliveredFileId?: string;
       deliveredSecretId?: string;
-      /** BATCH: arrays of card ids a single combined `answer-batch` seed delivers. Mapped to the plural
-       *  internal `seedQuestionIds`/`seedFileIds`/`seedSecretIds` fields on `receiveFromClient`. */
       deliveredQuestionIds?: string[];
       deliveredFileIds?: string[];
       deliveredSecretIds?: string[];
-      /** How this seed renders as a visible transcript row (see `TurnEnvelope.seedRow`). */
       seedRow?: SeedRow;
-      /** Routing coordinate; `'main'` (or absent) is the brain — the only lane this surface seeds. A build
-       *  lane is dispatched by the caller (`JitHostExecutor`), never here (see the port doc). */
       lane?: string;
     } = {},
   ): string {
-    // FAIL LOUD on a misrouted build-lane seed: this surface only ever seeds `main` — a build lane must
-    // route through `JitHostExecutor`'s `LANE_SEEDER` (`BuildLaneDeliveryService.seedLane`), never here.
     if (opts.lane && opts.lane !== 'main') {
       throw new Error(
         `WebSurface.seedSystemNotification: build-lane seeds must route via the LaneSeeder, not the surface (lane=${opts.lane})`,
@@ -263,11 +183,6 @@ export class WebSurface implements ChatSurface, MessageChangeNotifier {
     });
   }
 
-  /**
-   * Receive an approval-card button click from the web client (called by the REST controller on
-   * `POST /web/approve`). Emits on `approval$` so the module bridge can resolve the gate without
-   * the surface importing `DecisionApprovalService` (no circular dep).
-   */
   receiveApprovalClick(actionId: string, value: string, ruledBy: string, note?: string): void {
     this.logger.debug(`receiveApprovalClick action=${actionId} ruledBy=${ruledBy}`);
     this.approvalSubject.next({
@@ -278,15 +193,7 @@ export class WebSurface implements ChatSurface, MessageChangeNotifier {
     });
   }
 
-  // ── OUTBOUND (ChatSurface contract) ─────────────────────────────────────────────────────────────
 
-  /**
-   * Record and broadcast an Atlas post. Returns the synthetic ts.
-   *
-   * When `opts.blocks` contains a Block Kit approval card (detected by the APPROVE_ACTION_ID button),
-   * the blocks are converted to a `WebApprovalCard` payload so the web client can render the card
-   * with its action buttons — no Slack-specific shapes leak to the web layer.
-   */
   async post(channel: string, text: string, opts: PostOptions = {}): Promise<string | undefined> {
     const ts = this.mintTs();
 
@@ -309,11 +216,6 @@ export class WebSurface implements ChatSurface, MessageChangeNotifier {
     return ts;
   }
 
-  /**
-   * Update a posted message in-place (edit the web card after a verdict). Mutates the outbox entry so
-   * a history fetch reflects the verdict, and emits an outbound event with the same ts so live SSE
-   * subscribers repaint.
-   */
   update(channel: string, ts: string, args: { text?: string; card?: WebApprovalCard }): void {
     const entry = this.outbox.find((m) => m.channel === channel && m.ts === ts);
     if (entry) {
@@ -323,16 +225,13 @@ export class WebSurface implements ChatSurface, MessageChangeNotifier {
     }
   }
 
-  // ── Utilities ──────────────────────────────────────────────────────────────────────────────────
 
-  /** Messages in a channel (all if no threadTs filter), ordered oldest-first. */
   channelMessages(channel: string, threadTs?: string): WebOutboundMessage[] {
     return this.outbox.filter(
       (m) => m.channel === channel && (threadTs === undefined || m.threadTs === threadTs),
     );
   }
 
-  /** Clear (between test scenarios). */
   reset(): void {
     this.outbox.length = 0;
   }
@@ -343,18 +242,11 @@ export class WebSurface implements ChatSurface, MessageChangeNotifier {
   }
 }
 
-// ── Private helpers ────────────────────────────────────────────────────────────────────────────────
 
-/**
- * Detect whether a Block Kit `blocks` array is an approval card (contains an APPROVE_ACTION_ID
- * button) and if so extract the domain values and call `webApprovalCard()`. Returns undefined for any
- * other block array (plain text posts, non-approval cards).
- */
 function detectAndConvertApprovalCard(
   blocks: Array<Record<string, unknown>>,
   text: string,
 ): WebApprovalCard | undefined {
-  // Parse the meta from the approve button (same logic as `parseApprovalMeta`).
   let meta: { jobId: string; decisionRecordId?: string } | undefined;
   for (const block of blocks) {
     if (block.type !== 'actions') continue;
@@ -375,19 +267,15 @@ function detectAndConvertApprovalCard(
           };
         }
       } catch {
-        // not our card
       }
     }
   }
   if (!meta) return undefined;
 
-  // Extract summary (first thread block text) and threads (numbered list in a later thread block).
   let summary = '';
   const threads: string[] = [];
   let decisions: ApprovalDecision[] = [];
   let planUrl: string | undefined;
-  // The headline is either "*Plan proposal — <title>*" (full ceremony) or "*Direct build — <title>*"
-  // (fast path); the list block is labelled "*Threads*" or "*Changes*" to match.
   let kind: 'plan' | 'direct' = 'plan';
   let title = text.replace(/^(?:Plan proposal|Direct build)\s*[—-]\s*/, '').trim() || text;
 
@@ -397,21 +285,17 @@ function detectAndConvertApprovalCard(
       const raw = typeof t?.text === 'string' ? (t.text as string) : '';
       if (raw.startsWith('*Plan proposal') || raw.startsWith('*Direct build')) {
         kind = raw.startsWith('*Direct build') ? 'direct' : 'plan';
-        // Extract title from the headline block.
         const match = /(?:Plan proposal|Direct build)\s*[—-]\s*(.+)\*$/.exec(raw);
         if (match) title = match[1].trim();
       } else if (!summary) {
         summary = raw;
       } else if (raw.startsWith('*Threads*') || raw.startsWith('*Changes*')) {
-        // Parse the numbered thread / change-outline list.
         const lines = raw.split('\n').slice(1); // drop the "*Threads*"/"*Changes*" header line
         for (const line of lines) {
           const m = /^\d+\.\s+(.+)$/.exec(line.trim());
           if (m) threads.push(m[1]);
         }
       } else if (raw.startsWith('*Decisions*')) {
-        // Parse decisions — bullet format: `• [confirmed|authored] *title* _(class)_ — ruling`. The
-        // provenance tag is an optional leading group so the greedy ruling capture is unaffected.
         const lines = raw.split('\n').slice(1);
         for (const line of lines) {
           const m =

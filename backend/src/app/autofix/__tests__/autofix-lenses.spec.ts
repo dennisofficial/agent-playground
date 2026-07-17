@@ -189,7 +189,6 @@ describe('prompt builders', () => {
     expect(p).toContain('src/x.ts');
     expect(p).toContain('READ-ONLY');
     expect(p).toContain('"findings"');
-    // The reviewer pulls the diff itself, scoped to gitRange — no inline diff fence.
     expect(p).toContain('git diff abc123..HEAD');
     expect(p).toContain('git diff --stat abc123..HEAD');
     expect(p).not.toContain('```diff');
@@ -205,10 +204,8 @@ describe('prompt builders', () => {
   it('a diff-scoped lens gets the strict diff-only contract + the ship-blocker/severity bar', () => {
     const diffLens = DEFAULT_LENSES.find((l) => l.id === 'correctness')!;
     const p = buildReviewPrompt(diffLens, ctx);
-    // strict diff-only scoping (not the holistic exemption)
     expect(p).toContain('ONLY report issues introduced by (or directly within) the change set');
     expect(p).not.toContain('MAY read beyond the diff');
-    // shared ship-blocker bar + honest severity rubric render for every scope
     expect(p).toContain('BLOCKS approval');
     expect(p).toContain('Assign severity honestly');
     expect(p).toContain('never pad it to look thorough');
@@ -219,9 +216,7 @@ describe('prompt builders', () => {
     const p = buildReviewPrompt(holistic, ctx);
     expect(p).toContain('MAY read beyond the diff');
     expect(p).toContain('only FLAG problems THIS change introduced or left incomplete');
-    // the strict diff-only clause must NOT be the scope for the holistic lens
     expect(p).not.toContain('ONLY report issues introduced by (or directly within) the change set');
-    // but the shared ship-blocker bar still applies
     expect(p).toContain('BLOCKS approval');
   });
 
@@ -239,7 +234,6 @@ describe('prompt builders', () => {
     expect(p).toContain('guard y');
     expect(p).toContain('add a null check');
     expect(p).toContain('SMALLEST');
-    // Writers own their commits now — the fix agent commits + pushes its own work (no host commit).
     expect(p).toContain('COMMIT YOUR WORK');
     expect(p).toContain('git push');
   });

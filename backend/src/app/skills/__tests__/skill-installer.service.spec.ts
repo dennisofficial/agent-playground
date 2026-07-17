@@ -19,11 +19,6 @@ const GIT_ENV = {
   GIT_COMMITTER_EMAIL: 't@t',
 };
 
-/** Minimal in-memory `workspace_skills` repository — mirrors `skill-resolver.service.spec.ts`'s FakeRepo.
- *  `delayMs` (default 0) simulates a real Postgres round trip: with it set, a marketplace install races the
- *  scratch-clone cleanup against `installMarketplace`'s expansion loop exactly like the live bug did (see
- *  `skill-installer.service.ts`'s `install()` — a missing `await` let `finally`'s `rm(tmpDir)` run
- *  concurrently with the loop still reading skill dirs out of it). */
 class FakeRepo {
   rows: WorkspaceSkillEntity[] = [];
   constructor(private readonly delayMs = 0) {}
@@ -57,7 +52,6 @@ class FakeRepo {
   }
 }
 
-/** Commit whatever's in `work` on `main` and return a `--bare` clone's path — the `sourceUrl` to install from. */
 function commitAndBare(tmp: string, work: string, bareName: string): string {
   const bare = join(tmp, bareName);
   execFileSync('git', ['-C', work, 'add', '-A']);
@@ -72,7 +66,6 @@ function initRepo(work: string): void {
   execFileSync('git', ['init', '-b', 'main', work]);
 }
 
-/** A single-skill repo: `SKILL.md` (+frontmatter) and a supporting `references/x.md` at the repo root. */
 function makeSingleSkillRepo(tmp: string): string {
   const work = join(tmp, 'single-work');
   initRepo(work);
@@ -85,8 +78,6 @@ function makeSingleSkillRepo(tmp: string): string {
   return commitAndBare(tmp, work, 'single.git');
 }
 
-/** A `.claude-plugin/marketplace.json` repo expanding into two skills, one carrying a binary asset — proves
- *  full-fidelity vendoring (not just markdown) and the manifest's real `plugins[].source`+`skills[]` shape. */
 function makeMarketplaceRepo(tmp: string): string {
   const work = join(tmp, 'marketplace-work');
   initRepo(work);
@@ -114,7 +105,6 @@ function makeMarketplaceRepo(tmp: string): string {
     join(work, 'skills', 'beta', 'SKILL.md'),
     '---\nname: beta\ndescription: Beta skill\n---\nBody.\n',
   );
-  // A binary asset (non-UTF8 bytes) — `cpSync` must carry it through byte-identical.
   writeFileSync(
     join(work, 'skills', 'beta', 'asset.bin'),
     Buffer.from([0, 1, 2, 255, 254, 253, 0, 10]),
@@ -122,10 +112,6 @@ function makeMarketplaceRepo(tmp: string): string {
   return commitAndBare(tmp, work, 'marketplace.git');
 }
 
-/** The real `anthropics/skills` shape at scale: multiple plugins, each with several `skills[]` entries —
- *  the fixture that would have caught the missing-`await` scratch-dir race (a 2-skill/1-plugin manifest
- *  finishes too fast to expose it; this one has enough entries + a slow store to reliably lose the race
- *  if the bug regresses). */
 function makeMultiPluginMarketplaceRepo(tmp: string): string {
   const work = join(tmp, 'multi-work');
   initRepo(work);
@@ -159,9 +145,6 @@ function makeMultiPluginMarketplaceRepo(tmp: string): string {
   return commitAndBare(tmp, work, 'multi.git');
 }
 
-/** A marketplace repo whose plugin omits `skills` entirely — the plugin-spec convention `context-
- *  engineering-collection`-style repos also use: every dir under the plugin's `skills/` with a `SKILL.md`
- *  IS a skill, discovered by scanning rather than an explicit manifest list. */
 function makeDirScanMarketplaceRepo(tmp: string): string {
   const work = join(tmp, 'dirscan-work');
   initRepo(work);
@@ -232,7 +215,6 @@ describe('SkillInstallerService (real git, local fixture repos)', () => {
     expect(readFileSync(join(dest, 'SKILL.md'), 'utf8')).toContain('Use when doing the thing');
     expect(existsSync(join(dest, 'references', 'x.md'))).toBe(true);
 
-    // The row is queryable back through the store, same as any other skill.
     expect(await store.get('org1', '*', 'my-skill')).toEqual(skill);
   });
 
@@ -337,7 +319,6 @@ describe('SkillInstallerService (real git, local fixture repos)', () => {
           overwrites: false,
         },
       ]);
-      // Read-only: nothing landed in the store or the registry.
       expect(existsSync(skillDirHost(storeRoot, 'org1', '*', 'my-skill'))).toBe(false);
       expect(await store.get('org1', '*', 'my-skill')).toBeNull();
 

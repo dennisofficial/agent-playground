@@ -1,13 +1,3 @@
-/**
- * Unit tests for `JobLifecycleService.rowToSandbox` (accessed via a cast to bypass `private`).
- *
- * Verifies: `execUser` is recomputed from the host process uid:gid when the persisted row has a
- * `container_id` (docker mode) and absent otherwise; and that the branch is sourced from the THREAD
- * (feature_branch → base_branch) while the on-disk repo identity is the repo's SLUG — the sandbox row
- * itself no longer carries the branch (single owner = the thread).
- *
- * No DB, no Docker — all TypeORM repositories are mocked stubs.
- */
 
 import type { EnvService } from '@core/config/env/env.service';
 import type { ModuleRef } from '@nestjs/core';
@@ -29,9 +19,7 @@ import { JobLifecycleService } from '../job-lifecycle.service';
 import type { DriverRepoResolver } from '../repo-resolver';
 import type { WorktreeProvisioner } from '../worktree-provisioner.service';
 
-// ── helpers ─────────────────────────────────────────────────────────────────────────────────────
 
-/** Build a bare-minimum JobSandboxEntity row (infra-only — no branch/PR; those live on the thread). */
 function makeRow(overrides: Partial<JobSandboxEntity> = {}): JobSandboxEntity {
   return {
     id: 'sandbox-1',
@@ -49,10 +37,6 @@ function makeRow(overrides: Partial<JobSandboxEntity> = {}): JobSandboxEntity {
   } as JobSandboxEntity;
 }
 
-/**
- * Construct a JobLifecycleService whose `threads`/`projects` repos return the given thread + repo, so
- * `rowToSandbox` can resolve the branch (from the thread) and the on-disk slug (from the repo).
- */
 function makeService(
   thread: Partial<JobEntity> = {},
   repo: Partial<RepoEntity> = {},
@@ -115,7 +99,6 @@ function makeService(
   );
 }
 
-/** Build a service whose sandbox repo + provisioner are controllable, for rehydrateThread tests. */
 function makeServiceWithMocks(
   row: JobSandboxEntity | null,
   hydrationSig = 'new',
@@ -183,10 +166,6 @@ function makeServiceWithMocks(
   return { svc, sandboxes, provisionAndAttach };
 }
 
-/**
- * Build a service whose sandbox repo + teardown provider + activity registry are controllable, for
- * `resetContainer` tests (which tear the container down but keep the worktree/session).
- */
 function makeServiceForReset(
   row: JobSandboxEntity | null,
   jobActivity: JobEntity['activity'] = 'idle',
@@ -246,7 +225,6 @@ function makeServiceForReset(
   return { svc, sandboxes, teardown, activity, failRunningForJob };
 }
 
-// Cast to access the private (now-async) rowToSandbox method from tests.
 function rowToSandbox(svc: JobLifecycleService, row: JobSandboxEntity) {
   return (
     svc as unknown as {
@@ -255,7 +233,6 @@ function rowToSandbox(svc: JobLifecycleService, row: JobSandboxEntity) {
   ).rowToSandbox(row);
 }
 
-// ── tests ────────────────────────────────────────────────────────────────────────────────────────
 
 describe('JobLifecycleService.rowToSandbox', () => {
   it('populates execUser with the host uid:gid for a row WITH a container_id (docker mode)', async () => {
@@ -264,17 +241,14 @@ describe('JobLifecycleService.rowToSandbox', () => {
 
     const sandbox = await rowToSandbox(svc, row);
 
-    // containerId must be propagated.
     expect(sandbox).toMatchObject({ containerId: 'abc123def456' });
 
-    // execUser must be recomputed — on Linux/macOS process.getuid/getgid are available.
     const uid = typeof process.getuid === 'function' ? process.getuid() : undefined;
     const gid = typeof process.getgid === 'function' ? process.getgid() : undefined;
 
     if (uid !== undefined && gid !== undefined) {
       expect(sandbox.execUser).toBe(`${uid}:${gid}`);
     } else {
-      // On platforms without uid/gid (e.g. Windows CI), the field must be absent.
       expect(sandbox.execUser).toBeUndefined();
     }
   });
@@ -377,8 +351,6 @@ describe('JobLifecycleService.resetContainer', () => {
 
     await svc.resetContainer('thread-1', 'T1');
 
-    // The engine is about to die → its `active_turns` row must be finalized so the steer path can't treat
-    // it as a live turn and XADD the operator's next message into an unread input stream (silent loss).
     expect(failRunningForJob).toHaveBeenCalledWith('thread-1');
   });
 
@@ -495,11 +467,6 @@ describe('JobLifecycleService — cold-boot setup_error stamping (ensureContaine
 });
 
 describe('JobLifecycleService.applyGithubPrState', () => {
-  /**
-   * Build a service whose `jobs.update` and `detachJobContainer` (spied on the instance) both push a label
-   * into a shared `order` array, so tests can assert both invocation AND sequence. Merge now DETACHES (frees
-   * RAM, keeps worktree + session) rather than closing — so a follow-up can resume with full context.
-   */
   function makeServiceForApply() {
     const order: string[] = [];
     const jobs = {
@@ -564,7 +531,6 @@ describe('JobLifecycleService.applyGithubPrState', () => {
     const result = await svc.applyGithubPrState(job, 'merged');
     expect(result).toBe('noop');
     expect(jobs.update).toHaveBeenCalledWith({ id: 'job-1' }, { pr_state: 'merged' });
-    // Only the pr_state write — merge no longer detaches (that happens at archive now).
     expect(order).toEqual(['update:merged']);
     expect(svc.detachJobContainer).not.toHaveBeenCalled();
     expect(neutralizeMergeCard).toHaveBeenCalledWith('job-1', 'merged');
@@ -591,7 +557,6 @@ describe('JobLifecycleService.applyGithubPrState', () => {
 });
 
 describe('JobLifecycleService.closeJobPullRequest', () => {
-  /** Build a service whose `projects`/`creds`/`pr` are controllable, for closeJobPullRequest tests. */
   function makeServiceForClose(repo: Partial<RepoEntity> | null) {
     const projects = {
       findOne: vi.fn().mockResolvedValue(repo),
@@ -712,8 +677,6 @@ describe('JobLifecycleService.closeJobPullRequest', () => {
 });
 
 describe('JobLifecycleService — merge detaches (keeps context) + stale-sandbox disk GC', () => {
-  // detachJobContainer: the RAM-free twin of closeJob — reclaim the container by identity, KEEP the worktree
-  // + session, mark 'detached'. Exposes the teardown + worktree spies so we can assert what it does/doesn't do.
   function makeServiceForDetach(row: JobSandboxEntity | null) {
     const teardownByIdentity = vi.fn().mockResolvedValue(undefined);
     const removeSandbox = vi.fn().mockResolvedValue(undefined);
@@ -786,7 +749,6 @@ describe('JobLifecycleService — merge detaches (keeps context) + stale-sandbox
 
     expect(teardownByIdentity).toHaveBeenCalledTimes(1); // container reclaimed by deterministic name
     expect(removeSandbox).not.toHaveBeenCalled(); // worktree KEPT (the whole point — resume needs it)
-    // Scoped update, container freed, lifecycle detached; session_id untouched (not in the patch).
     expect(update).toHaveBeenCalledWith(
       { id: row.id },
       { container_id: null, lifecycle: 'detached' },
@@ -876,7 +838,6 @@ describe('JobLifecycleService — merge detaches (keeps context) + stale-sandbox
     expect(out).toBe(row); // resumable — contrast the 'closed' → null gate
   });
 
-  // ── pollPrClosures no longer re-polls already-terminal (detached merged) jobs ──────────────────────
   function makeServiceForPoll(
     job: Partial<JobEntity>,
     sandbox: JobSandboxEntity | null,
@@ -956,12 +917,6 @@ describe('JobLifecycleService — merge detaches (keeps context) + stale-sandbox
 });
 
 describe('JobLifecycleService — archive lifecycle', () => {
-  /**
-   * Build a service wired for the archive paths: a `jobs` repo whose conditional `update` returns a queued
-   * `affected` (for the single-flight claim), a query builder whose `getMany` returns the eligible set (for
-   * the sweep) and records its predicate calls, plus the sandbox/git/provider/deps mocks the reclaim +
-   * archiveJobDeep touch. `row` is the sandbox `findOne` returns.
-   */
   function makeArchiveService(
     opts: {
       updateAffected?: number[];
@@ -1074,7 +1029,6 @@ describe('JobLifecycleService — archive lifecycle', () => {
     const { svc, update } = makeArchiveService({ updateAffected: [1, 0] });
     expect(await svc.claimArchiveJob('job-1', 'T1')).toBe(true);
     expect(await svc.claimArchiveJob('job-1', 'T1')).toBe(false);
-    // Guarded on `status <> 'archived'`, stamping both status + archived_at.
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'job-1', org_id: 'T1' }),
       expect.objectContaining({ status: 'archived' }),
@@ -1138,7 +1092,6 @@ describe('JobLifecycleService — archive lifecycle', () => {
       const { svc, sandboxUpdate } = makeArchiveService({
         row: makeRow({ lifecycle: 'detached', worktree_path: wt }),
       });
-      // removeSandbox is a no-op mock (mirrors LocalGitService swallowing failures), so the dir still exists.
       expect(await svc.reclaimJobArtifacts('job-1', 'T1')).toBe(false);
       expect(sandboxUpdate).not.toHaveBeenCalled(); // lifecycle stays non-closed → reconciler retries
     } finally {
@@ -1173,10 +1126,6 @@ describe('JobLifecycleService — archive lifecycle', () => {
     expect(claim).toHaveBeenCalledWith('a', 'T1');
     expect(deep).toHaveBeenCalledWith('a', 'T1');
     expect(claim).toHaveBeenCalledWith('b', 'T2');
-    // Eligibility: exclude already-archived / hard-deleting rows, require a terminal PR state, and anchor
-    // idleness on MAX(transcript_messages.created_at) < cutoff — NOT jobs.updated_at. A NULL MAX (no
-    // transcript rows) fails the `<` predicate, so such a job is never auto-archived (enforced in SQL — see
-    // the int test).
     const sql = predicates.join(' ');
     expect(sql).toContain('status NOT IN');
     expect(sql).toContain('pr_state IN');

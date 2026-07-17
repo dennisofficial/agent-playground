@@ -7,14 +7,6 @@ import { agentMessage } from '../prompt-kit/message';
 import { EngineCore } from './engine-core';
 import type { EngineHomeKey } from './engine-home';
 
-/**
- * Exercises ONLY the `CODEX_APPSERVER_ENABLED` adapter-selector wiring in `EngineCore.run`/`runWithExtras`
- * (`codexAppServerEnabled`/`runCodexAppServer`) — NOT `CodexAppServerAdapter`'s own protocol behavior
- * (that's `@workspace/agent-engine`'s own specs) and NOT legacy `runCodex`'s behavior (covered by the
- * "EngineCore — Codex mode/home/credential wiring" describe block in `engine-core.spec.ts`). The real
- * `CodexAppServerAdapter` spawns a `codex app-server` subprocess via `@workspace/codex-sdk`'s `CodexClient`,
- * so it is replaced with a capturing fake here — a unit test must never shell out.
- */
 
 const HOME_ROOT = join(tmpdir(), `atlas-engine-core-appserver-selector-spec-${process.pid}`);
 afterAll(() => rmSync(HOME_ROOT, { recursive: true, force: true }));
@@ -58,8 +50,6 @@ vi.mock('@workspace/agent-engine', async (importOriginal) => {
   };
 });
 
-/** The legacy `@openai/codex-sdk`-shaped fake `runCodex` still consumes — asserts the flag-OFF /
- *  bridge-extras fallback path reaches it (and not the mocked `CodexAppServerAdapter`). */
 function fakeLegacyCodexSdk() {
   const threadCalls: Array<Record<string, unknown>> = [];
   class FakeCodex {

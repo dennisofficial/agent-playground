@@ -18,7 +18,6 @@ function fakeEnv(overrides: Record<string, unknown> = {}): EnvService {
 const ROUTE: ProjectRoute = {
   orgId: 'T1',
   repoId: 'web',
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   repo: {
     org_id: 'T1',
     repo_id: 'web',
@@ -202,7 +201,6 @@ describe('GithubNotificationSource.handle', () => {
       );
       expect(res.outcome).toBe('accepted');
       if (res.outcome !== 'accepted') throw new Error('expected accepted');
-      // All three collapse to the SAME key so the intake seeds/attaches ONE job, not one per event type.
       expect(res.event.dedupeKey).toBe(`ci:${SHA}`);
     }
   });

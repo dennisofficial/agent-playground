@@ -1,21 +1,3 @@
-/**
- * R2 GATE — Thread lifecycle + per-thread sandbox/worktree API (durable worktree + disposable
- * container model).
- *
- * Proves (against live Postgres, fake git + a fake docker-ish sandbox provider):
- *  1. `createJob` persists the `jobs` row + an `attached` `job_sandboxes` row with
- *     the thread's FEATURE branch cut at create (branch-at-create) + a container attached.
- *  2. `ensureContainer` reuses the live container, bumps `last_active_at`, and reports `wasReset` from
- *     the provider's `warm` flag (cold re-attach ⇒ reset).
- *  3. `reapIdle` detaches the CONTAINER of an idle thread (worktree survives) → `detached`; a subsequent
- *     `ensureContainer` re-attaches it.
- *  4. `closeJob` tears down the container + removes the worktree → `closed` (idempotent).
- *  5. `reconcileOnBoot` marks non-closed rows `detached` (next turn re-attaches).
- *  6. `findSandbox` returns the persisted sandbox / null.
- *
- * Integration: real Postgres (atlas_test schema), in-memory fake git (no actual clone), fake sandbox
- * provider (no Docker). Truncates the relevant tables before each test case to keep isolation.
- */
 
 import { EnvService } from '@core/config/env/env.service';
 import { Test, type TestingModule } from '@nestjs/testing';
@@ -71,14 +53,12 @@ function dbOpts() {
   };
 }
 
-// ── Fake collaborators ────────────────────────────────────────────────────────────────────────────
 
 const FAKE_PROJECT_SLUG = 'r2-gate-proj';
 const FAKE_TEAM_ID = '11111111-1111-4111-8111-111111111111'; // sentinel org uuid
 const FAKE_REPO_URL = 'https://github.com/atlas-r2-gate/sample.git';
 const FAKE_BASE_BRANCH = 'main';
 
-/** A fake `LocalGitService` that records calls without touching the filesystem. */
 class FakeGitService {
   readonly worktreesByThreadId = new Map<string, string>();
   readonly branches: string[] = [];
@@ -123,8 +103,6 @@ class FakeGitService {
     return branch === FAKE_BASE_BRANCH || this.branches.includes(branch);
   }
 
-  // Provision-path no-ops (no real git/cache/submodules/index in the fake). The fake repo never carries
-  // a `.gitmodules`, so it always takes the plain-worktree path (never the full-clone submodule path).
   async hasSubmodules(): Promise<boolean> {
     return false;
   }
@@ -152,7 +130,6 @@ class FakeGitService {
   }
 }
 
-/** A fake docker-ish SANDBOX_PROVIDER: attaches a stable container id + a configurable `warm` flag. */
 class FakeSandboxProvider {
   warm = true;
   attachCount = 0;
@@ -175,11 +152,6 @@ class FakeSandboxProvider {
   async teardown(sandbox: FeatureSandbox): Promise<void> {
     if (sandbox.containerId) this.tornDown.push(sandbox.containerId);
   }
-  /**
-   * Reclaim by deterministic identity — models the docker manager resolving the container by NAME even
-   * when no `container_id` is known (post-restart). Records the stable id `attach` would have used, so
-   * teardown is observable regardless of whether the row still carries a `container_id`.
-   */
   async teardownByIdentity({
     sandbox,
     jobId,
@@ -190,7 +162,6 @@ class FakeSandboxProvider {
   }): Promise<void> {
     this.tornDown.push(`fake-c-${jobId ?? sandbox.branch}`);
   }
-  /** Real temp root so the deep-delete host-dir cleanup is observable (created per test run). */
   readonly stateRoot = mkdtempSync(join(tmpdir(), 'atlas-jl-state-'));
   contextDirHost(orgId: string, jobId: string): string {
     return join(this.stateRoot, 'contexts', orgId, jobId);
@@ -201,13 +172,11 @@ class FakeSandboxProvider {
   draftUploadsDirHost(orgId: string, jobId: string, userId: string): string {
     return join(this.stateRoot, 'draft-uploads', orgId, jobId, userId);
   }
-  /** Keyed only by jobId, mirroring the real port's `brainTranscriptProjectsDir` signature. */
   brainTranscriptProjectsDir(jobId: string): string | null {
     return join(this.stateRoot, 'transcripts', jobId);
   }
 }
 
-// ── Module bootstrap ──────────────────────────────────────────────────────────────────────────────
 
 let mod: TestingModule;
 let threadLifecycle: JobLifecycleService;
@@ -216,7 +185,6 @@ let jobs: Repository<JobEntity>;
 let ds: DataSource;
 let fakeGit: FakeGitService;
 let provider: FakeSandboxProvider;
-/** The seeded repo's uuid id (the API + child rows reference this, not the slug). */
 let repoId: string;
 
 beforeEach(async () => {
@@ -296,8 +264,6 @@ beforeEach(async () => {
         },
       },
       {
-        // The provisioner delegates to the fake SANDBOX_PROVIDER so attach/warm behavior is unchanged;
-        // hydration is a no-op here (no `.atlas/worktree.json` in the fake worktrees).
         provide: WorktreeProvisioner,
         useValue: {
           provisionAndAttach: async ({
@@ -348,7 +314,6 @@ beforeEach(async () => {
     [FAKE_TEAM_ID, 'R2 Gate Org', `r2-gate-org`],
   );
 
-  // Surrogate uuid id is DB-generated; capture it for the (org_id, slug)-unique repo.
   const repoRows = await ds.query(
     `
     INSERT INTO repos (org_id, slug, name, git_url, default_branch, token_name, access_ok)
@@ -371,7 +336,6 @@ async function create(displayName = 'Gate thread') {
   });
 }
 
-/** Insert a BARE thread row (no sandbox) — the live web/event create paths' shape, before first turn. */
 async function createBareThread(): Promise<string> {
   const row = await jobs.save(
     jobs.create({
@@ -386,9 +350,6 @@ async function createBareThread(): Promise<string> {
   return row.id;
 }
 
-/** Insert one `transcript_messages` row (with its owning `thread_groups`/`threads` parents) at an
- *  explicit `created_at`, so `archiveInactiveJobs`'s `MAX(transcript_messages.created_at)` eligibility
- *  query has real activity to anchor on. */
 async function seedTranscriptMessageAt(jobId: string, createdAt: Date): Promise<void> {
   const [threadGroup] = await ds.query(
     `INSERT INTO thread_groups (job_id, org_id, ordinal, kind) VALUES ($1, $2, 10, 'build') RETURNING id`,
@@ -404,7 +365,6 @@ async function seedTranscriptMessageAt(jobId: string, createdAt: Date): Promise<
   );
 }
 
-// ── GATE tests ───────────────────────────────────────────────────────────────────────────────────
 
 describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
   it('createJob persists an attached sandbox with the feature branch cut at create', async () => {
@@ -419,7 +379,6 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     expect(row.lifecycle).toBe('attached');
     expect(row.container_id).toBe(`fake-c-${result.jobId}`);
     expect(row.last_active_at).not.toBeNull();
-    // The branch lives on the THREAD now (single owner — sandbox is pure infra).
     const thread = await jobs.findOneOrFail({ where: { id: result.jobId } });
     expect(thread.base_branch).toBe(FAKE_BASE_BRANCH);
     expect(thread.feature_branch).toBe(`feature/${result.jobId.slice(0, 8)}`);
@@ -445,7 +404,6 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
 
   it('reapIdle detaches an idle container (worktree survives); ensureContainer re-attaches it', async () => {
     const { jobId } = await create();
-    // Age the row well past the default idle TTL.
     await sandboxes.update({ job_id: jobId }, { last_active_at: new Date(0) });
 
     const reaped = await threadLifecycle.reapIdle();
@@ -458,7 +416,6 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     expect(detached.container_id).toBeNull();
     expect(provider.tornDown.length).toBeGreaterThanOrEqual(1);
 
-    // The next turn re-attaches against the surviving worktree.
     const reattached = await threadLifecycle.ensureContainer(jobId, FAKE_TEAM_ID);
     expect(reattached).not.toBeNull();
     const row = await sandboxes.findOneOrFail({ where: { job_id: jobId } });
@@ -476,7 +433,6 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     expect(provider.tornDown.length).toBeGreaterThanOrEqual(1);
     expect(fakeGit.removedWorktrees).toContain(worktreePath);
 
-    // Idempotent: a second close is a no-op and ensureContainer returns null for a closed thread.
     await threadLifecycle.closeJob(jobId, FAKE_TEAM_ID);
     expect(await threadLifecycle.ensureContainer(jobId, FAKE_TEAM_ID)).toBeNull();
   });
@@ -484,8 +440,6 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
   it('closeJob reclaims the container by NAME even after a boot reconcile nulled container_id (leak fix)', async () => {
     const { jobId } = await create();
 
-    // Simulate a process restart: reconcileOnBoot nulls container_id while the real container keeps
-    // running. Pre-fix, closeJob's `if (row.container_id)` guard then skipped teardown → permanent leak.
     await threadLifecycle.reconcileOnBoot();
     const detached = await sandboxes.findOneOrFail({
       where: { job_id: jobId },
@@ -493,12 +447,10 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     expect(detached.lifecycle).toBe('detached');
     expect(detached.container_id).toBeNull();
 
-    // reconcileOnBoot is a pure DB update (no provider call), so nothing has been torn down yet.
     expect(provider.tornDown).toHaveLength(0);
 
     await threadLifecycle.closeJob(jobId, FAKE_TEAM_ID);
 
-    // The container is reclaimed by its deterministic identity DESPITE the null container_id — no orphan.
     expect(provider.tornDown).toContain(`fake-c-${jobId}`);
     const row = await sandboxes.findOneOrFail({ where: { job_id: jobId } });
     expect(row.lifecycle).toBe('closed');
@@ -507,8 +459,6 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
   it('deleteJobDeep tears down the sandbox AND sweeps every child row (no orphans)', async () => {
     const { jobId } = await create();
 
-    // Seed one child row in every table that references the thread; deleting the thread must remove all
-    // of them via the FK ON DELETE CASCADE (RestoreReferentialIntegrity migration) — zero orphans.
     const [threadGroup] = await ds.query(
       `INSERT INTO thread_groups (job_id, org_id, ordinal, kind) VALUES ($1, $2, 10, 'build') RETURNING id`,
       [jobId, FAKE_TEAM_ID],
@@ -549,7 +499,6 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
   it('deleteJobDeep removes durable host-side scratch dirs (/playground, /context, draft uploads) and redundant session JSONL', async () => {
     const { jobId } = await create();
 
-    // Simulate the durable, out-of-worktree scratch dirs a live job would accumulate.
     const playground = provider.playgroundDirHost(FAKE_TEAM_ID, jobId);
     const context = provider.contextDirHost(FAKE_TEAM_ID, jobId);
     const draftUpload = provider.draftUploadsDirHost(FAKE_TEAM_ID, jobId, randomUUID());
@@ -578,10 +527,7 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     expect(first).toBe(true);
     expect((await jobs.findOneOrFail({ where: { id: jobId } })).status).toBe('deleting');
 
-    // A second concurrent claim matches 0 rows (status is already `deleting`) — the guard that stops two
-    // DELETE requests from interleaving into the cascade-then-resurrect FK crash.
     expect(await threadLifecycle.claimDeleteJob(jobId, FAKE_TEAM_ID)).toBe(false);
-    // A claim on a job that never existed also returns false (no row to flip).
     expect(await threadLifecycle.claimDeleteJob(randomUUID(), FAKE_TEAM_ID)).toBe(false);
   });
 
@@ -591,14 +537,11 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     await threadLifecycle.deleteJobDeep(jobId, FAKE_TEAM_ID);
     expect(await jobs.findOne({ where: { id: jobId } })).toBeNull();
 
-    // Pre-fix, closeJob's `sandboxes.save(row)` would INSERT the cascade-deleted sandbox back and violate
-    // fk_job_sandboxes_job_id_jobs. It must now be a clean no-op.
     await expect(threadLifecycle.deleteJobDeep(jobId, FAKE_TEAM_ID)).resolves.toBeUndefined();
   });
 
   it('reconcileDeletingJobs finishes a job stranded in `deleting`', async () => {
     const { jobId } = await create();
-    // Simulate a crash after the claim committed but before teardown ran.
     await jobs.update({ id: jobId }, { status: 'deleting' });
 
     const swept = await threadLifecycle.reconcileDeletingJobs();
@@ -607,7 +550,6 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     expect(await sandboxes.findOne({ where: { job_id: jobId } })).toBeNull();
   });
 
-  // ── archive (in-place terminal lifecycle: reclaim filesystem, KEEP row + transcript + /context) ────
 
   it('claimArchiveJob is single-flight: flips status→archived + stamps archived_at once, then returns false', async () => {
     const { jobId } = await create();
@@ -618,8 +560,6 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     expect(row.status).toBe('archived');
     expect(row.archived_at).not.toBeNull();
 
-    // A second concurrent claim matches 0 rows (status is already `archived`) — single-flight, same shape
-    // as `claimDeleteJob`.
     expect(await threadLifecycle.claimArchiveJob(jobId, FAKE_TEAM_ID)).toBe(false);
     expect(await threadLifecycle.claimArchiveJob(randomUUID(), FAKE_TEAM_ID)).toBe(false);
   });
@@ -648,8 +588,6 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     await threadLifecycle.claimArchiveJob(jobId, FAKE_TEAM_ID);
     await threadLifecycle.archiveJobDeep(jobId, FAKE_TEAM_ID);
 
-    // Physical reclaim: container torn down, worktree removed, /playground + staged draft uploads + the
-    // redundant on-disk session JSONL dropped.
     expect(provider.tornDown.length).toBeGreaterThanOrEqual(1);
     expect(fakeGit.removedWorktrees).toContain(worktreePath);
     expect(existsSync(playground)).toBe(false);
@@ -660,7 +598,6 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     });
     expect(sandboxRow.lifecycle).toBe('closed');
 
-    // Kept: the jobs row, /context (decision d2), and the transcript row.
     expect(existsSync(context)).toBe(true);
     const jobRow = await jobs.findOneOrFail({ where: { id: jobId } });
     expect(jobRow.status).toBe('archived');
@@ -676,37 +613,27 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
   });
 
   it('archiveInactiveJobs archives a merged/closed job idle past the TTL, anchored on last transcript activity (not jobs.updated_at)', async () => {
-    // A generous TTL + fixed, widely-separated timestamp offsets (rather than a tight TTL raced against a
-    // short sleep) keep this deterministic regardless of how long the sequential setup below actually takes.
     process.env.ARCHIVE_INACTIVITY_TTL_MS = '5000';
     try {
-      // Eligible: merged, last message well before the cutoff.
       const eligible = await create('Idle merged job');
       await seedTranscriptMessageAt(eligible.jobId, new Date(Date.now() - 10_000));
       await jobs.update({ id: eligible.jobId }, { pr_state: 'merged' });
 
-      // Ineligible: merged but ACTIVE (last message recent, well inside the 5s TTL).
       const active = await create('Active merged job');
       await seedTranscriptMessageAt(active.jobId, new Date());
       await jobs.update({ id: active.jobId }, { pr_state: 'merged' });
 
-      // Ineligible: idle transcript but PR still open (not merged/closed).
       const open = await create('Idle open-PR job');
       await seedTranscriptMessageAt(open.jobId, new Date(Date.now() - 10_000));
       await jobs.update({ id: open.jobId }, { pr_state: 'open' });
 
-      // Ineligible: merged/closed but ZERO transcript rows — MAX() is NULL, which fails `<` (safe default).
       const noTranscript = await create('No-transcript merged job');
       await jobs.update({ id: noTranscript.jobId }, { pr_state: 'closed' });
 
-      // Ineligible: already claimed for hard delete. The archive sweep must not convert a hard-delete drain
-      // into a retained archived row, even if the PR is terminal and the transcript is idle.
       const deleting = await create('Deleting merged job');
       await seedTranscriptMessageAt(deleting.jobId, new Date(Date.now() - 10_000));
       await jobs.update({ id: deleting.jobId }, { status: 'deleting', pr_state: 'merged' });
 
-      // Not an exact count: this file never truncates between cases/runs, so earlier eligible rows may
-      // still be sitting around. Assert the count includes ours and check each job's own outcome below.
       const archivedCount = await threadLifecycle.archiveInactiveJobs();
       expect(archivedCount).toBeGreaterThanOrEqual(1);
 
@@ -724,8 +651,6 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
 
   it('reconcileArchivedSandboxes retries the reclaim for an archived job whose sandbox is not yet closed', async () => {
     const { jobId, worktreePath } = await create();
-    // Simulate a crash between claimArchiveJob committing and archiveJobDeep's reclaim completing: status
-    // is `archived` but the sandbox row is still `attached`.
     await threadLifecycle.claimArchiveJob(jobId, FAKE_TEAM_ID);
 
     const retried = await threadLifecycle.reconcileArchivedSandboxes();
@@ -737,7 +662,6 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     });
     expect(sandboxRow.lifecycle).toBe('closed');
 
-    // Already-closed archived jobs are left alone (nothing left to retry).
     expect(await threadLifecycle.reconcileArchivedSandboxes()).toBe(0);
   });
 
@@ -765,7 +689,6 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     await expect(threadLifecycle.findSandbox(jobId, FAKE_TEAM_ID)).resolves.toBeNull();
   });
 
-  // ── ensureProvisioned — lazy first-turn provisioning (the conversation prerequisite) ───────────────
 
   it('ensureProvisioned provisions a complete sandbox for a BARE thread row', async () => {
     const jobId = await createBareThread();
@@ -800,7 +723,6 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
 
   it('ensureProvisioned RECOVERS an incomplete row (failed provision: empty worktree / no branch)', async () => {
     const jobId = await createBareThread();
-    // Simulate a failed provision: a detached row with empty worktree + no feature branch on the thread.
     await sandboxes.save(
       sandboxes.create({
         org_id: FAKE_TEAM_ID,
@@ -816,7 +738,6 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     expect(row!.worktree_path).toBeTruthy();
     const thread = await jobs.findOneOrFail({ where: { id: jobId } });
     expect(thread.feature_branch).toBeTruthy();
-    // The stale row was replaced — exactly one sandbox row remains.
     expect(await sandboxes.find({ where: { job_id: jobId } })).toHaveLength(1);
   });
 
@@ -844,15 +765,6 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
   });
 });
 
-// ── Durable-delivery hygiene gate: detachContainer really finalizes `active_turns` ──────────────────
-//
-// Root cause of the "operator message never goes through while the sandbox comes back online" bug: a
-// container torn down out-of-band (idle-reap / reset / LRU) left its thread's `running` `active_turns`
-// row behind for up to ~90-120s, so the durable-delivery pump's liveness check (`runningBrainTurn`) saw
-// a "live" turn that had no engine behind it and steered a message into a dead stream. The fix wires
-// `detachContainer` to `TurnRegistry.failRunningForJob`. The rest of this file stubs `TurnRegistry`
-// entirely (its own module-scope tests don't touch it), so this gate uses the REAL service against real
-// Postgres — the stub can't prove the wiring or the DELETE query's scoping are actually correct.
 describe('R2 gate — detachContainer finalizes active_turns (real TurnRegistry, live Postgres)', () => {
   let hygieneMod: TestingModule;
   let hygieneLifecycle: JobLifecycleService;
@@ -1011,7 +923,6 @@ describe('R2 gate — detachContainer finalizes active_turns (real TurnRegistry,
     await hygieneMod.close();
   });
 
-  /** A minimal, real `active_turns` row — the shape `TurnRegistry.register` itself would insert. */
   async function seedRunningTurn(jobId: string, turnId: string): Promise<void> {
     await activeTurns.save(
       activeTurns.create({
@@ -1035,8 +946,6 @@ describe('R2 gate — detachContainer finalizes active_turns (real TurnRegistry,
       baseBranch: FAKE_BASE_BRANCH,
       displayName: 'Hygiene gate thread',
     });
-    // Simulate: a brain turn was live when this container died out-of-band (the exact scenario that
-    // let a steered operator message vanish — see the module doc comment above).
     const turnId = randomUUID();
     await seedRunningTurn(jobId, turnId);
     await hygieneSandboxes.update({ job_id: jobId }, { last_active_at: new Date(0) }); // past idle TTL
@@ -1065,7 +974,6 @@ describe('R2 gate — detachContainer finalizes active_turns (real TurnRegistry,
     const turnB = randomUUID();
     await seedRunningTurn(jobA, turnA);
     await seedRunningTurn(jobB, turnB);
-    // Only job A goes idle.
     await hygieneSandboxes.update({ job_id: jobA }, { last_active_at: new Date(0) });
     await hygieneSandboxes.update({ job_id: jobB }, { last_active_at: new Date() });
 

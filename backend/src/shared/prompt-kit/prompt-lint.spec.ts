@@ -31,12 +31,6 @@ import {
 import { AGENT_PROMPTS } from './system/preview';
 import type { PromptCtx } from './system/prompt-ctx';
 
-/**
- * prompt-lint — STRUCTURAL invariants over the assembled prompt matrix (a lint, not a golden snapshot). Each
- * assertion is a machine-checkable rule the DRY/SOLID pass established; a regression trips the specific rule
- * rather than showing up only as an eyeballed snapshot diff. Complements `prompt-kit.spec.ts` (which asserts
- * WHERE named fragments land) and `prompt-snapshots.spec.ts` (the verbatim regression net).
- */
 describe('prompt-lint / every fragment order is an integer', () => {
   it('no fractional or non-finite orders survive', () => {
     for (const f of primeFragments()) {
@@ -46,9 +40,6 @@ describe('prompt-lint / every fragment order is an integer', () => {
 });
 
 describe('prompt-lint / no sentence-run double space in any assembled prompt', () => {
-  // Scoped to sentence punctuation + a run of spaces: that is the authoring bug the DRY pass fixed
-  // (`...explicitly.  WHEN...`). A bare `\S  \S` would false-positive on the INTENTIONAL description
-  // alignment inside indented list blocks (`  - tool  — what it does`), which is deliberate formatting.
   const SENTENCE_DOUBLE_SPACE = /[.!?] {2,}\S/;
   for (const entry of AGENT_PROMPTS) {
     it(`"${entry.id}" (${entry.agent})`, () => {
@@ -61,9 +52,6 @@ describe('prompt-lint / no sentence-run double space in any assembled prompt', (
 });
 
 describe('prompt-lint / every persona declares a role (+ review personas a report contract)', () => {
-  // A persona's assembled prompt must open with an explicit role ("You are ..." or a `<role>` block). Review
-  // personas additionally carry an output/report contract (the review dimensions, the JSON schema, or the
-  // plan-review `<output_contract>`), so a reader always knows WHAT to produce.
   const ROLE_MARKER = /\bYou are\b|<role>/;
   const PERSONAS: Array<{ agent: Agent; ctx: PromptCtx; contract?: string }> = [
     { agent: Agent.PLANNING, ctx: { jobKind: 'feature' } },
@@ -105,11 +93,6 @@ describe('prompt-lint / every persona declares a role (+ review personas a repor
 });
 
 describe('prompt-lint / no shared fragment is included twice for one agent', () => {
-  // Generalizes the per-fragment exactly-once checks in prompt-kit.spec.ts: for EVERY agent×ctx in the
-  // matrix, each canonical shared note appears at most once (0 = the agent does not get it; 2+ = a
-  // consolidation slipped and the same prose is duplicated). Building-block sub-fragments that are
-  // deliberately spliced into more than one parent note (e.g. the monorepo/verify hint) are excluded — they
-  // legitimately recur — leaving the top-level persona notes that must be unique.
   const SHARED_NOTES: Array<[string, string]> = [
     ['CLOUD_SANDBOX_NOTE', CLOUD_SANDBOX_NOTE],
     ['SOLE_AUTHOR_NOTE', SOLE_AUTHOR_NOTE],

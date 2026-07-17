@@ -9,7 +9,6 @@ import { TurnRecoveryService } from '../turn-recovery.service';
 
 const line = (o: Record<string, unknown>): string => JSON.stringify(o);
 
-/** A completed turn: operator prompt → thinking → text → tool_use → tool_result → end_turn text. */
 const TRANSCRIPT = [
   line({
     type: 'user',
@@ -103,8 +102,6 @@ function seedTranscript(content = TRANSCRIPT): string {
 
 type Row = Partial<TranscriptMessageEntity>;
 
-/** A stateful messages-repo mock: `save` accumulates rows; `getCount` answers the final-reply-present
- *  query (does any Atlas message contain the needle?); `getRawMany` answers persistedSdkUuids. */
 function makeMessages(seed: Row[]) {
   const saved: Row[] = [...seed];
   const repo = {
@@ -142,8 +139,6 @@ function makeMessages(seed: Row[]) {
   return { repo, saved };
 }
 
-/** sandboxRows mock: `candidateThreadIds` returns the given thread ids; `findOne` answers the compaction
- *  recovery-skip check in `recoverThread` (a job's `compacting_session_id`, default null = not compacting). */
 function makeSandboxRows(threadIds: string[], compactingById: Record<string, string | null> = {}) {
   return {
     createQueryBuilder: () => {
@@ -164,8 +159,6 @@ function makeProvider(projectsDir: string | null): SandboxProvider {
   } as unknown as SandboxProvider;
 }
 
-/** TurnRegistry mock: `hasRunningForThread` gates whether a thread is a recovery candidate (a thread with a
- *  live Redis turn is skipped — re-attach owns it). Defaults to "no live turn". */
 function makeRegistry(running: (jobId: string) => boolean = () => false) {
   return {
     hasRunningForThread: vi.fn(async (jobId: string) => running(jobId)),
@@ -179,8 +172,6 @@ function makeBootstrap() {
   } as unknown as import('../../job-bootstrap').JobBootstrapService;
 }
 
-/** Messages a FIRST/cold interrupted turn leaves behind: the operator prompt + the provisioning notice
- *  (Atlas-authored, persisted AFTER the prompt) — and crucially NO transcript reply. */
 const INTERRUPTED_FIRST_TURN: Row[] = [
   { author_id: 'U-OP', text: 'Do a deep dive review.', kind: 'chat' },
   { author_id: 'atlas', text: PROVISIONING_NOTICE, kind: 'chat' },
@@ -219,7 +210,6 @@ describe('TurnRecoveryService', () => {
   it('SKIPS a thread whose transcript is the session compaction is abandoning (no summary leak)', async () => {
     const projects = seedTranscript(); // transcript sessionId = 's1'
     const { repo, saved } = makeMessages(INTERRUPTED_FIRST_TURN);
-    // compacting_session_id === 's1' → the tail is the internal compaction summary; recovery must not surface it.
     const svc = new TurnRecoveryService(
       repo,
       makeSandboxRows([THREAD_ID], { [THREAD_ID]: 's1' }),
@@ -333,8 +323,6 @@ describe('TurnRecoveryService', () => {
   });
 
   it('REGRESSION: recovers a turn STRANDED mid-session when a later turn is already persisted', async () => {
-    // Turn 1 (investigation) was interrupted right after a dangling ask_question (no result, no end_turn);
-    // turn 2 ("Hello?") superseded it and completed + persisted. The tail-only recovery missed turn 1.
     const stranded = [
       line({
         type: 'user',
@@ -400,7 +388,6 @@ describe('TurnRecoveryService', () => {
           content: [{ type: 'text', text: 'Here is what the investigation found.' }],
         },
       }),
-      // dangling ask_question: no tool_result, no end_turn — the interruption point (re-issued next turn).
       line({
         type: 'assistant',
         uuid: 'i-ask',
@@ -439,7 +426,6 @@ describe('TurnRecoveryService', () => {
       }),
     ].join('\n');
     const projects = seedTranscript(stranded);
-    // The superseding "Hello?" turn already rendered/persisted; the investigation did not.
     const { repo, saved } = makeMessages([
       { author_id: 'U-OP', text: 'Hello?', kind: 'chat' },
       {
@@ -459,8 +445,6 @@ describe('TurnRecoveryService', () => {
     expect(await svc.recoverInterruptedTurns()).toBe(1);
 
     const inserted = saved.slice(2);
-    // The investigation's text + paired tool are restored; the dangling ask_question is dropped; the already-
-    // persisted "Hello?" reply is NOT re-inserted.
     expect(inserted.map((r) => (r.meta as { sdkUuid: string }).sdkUuid)).toEqual([
       'i-text',
       'i-read',
@@ -486,7 +470,6 @@ describe('TurnRecoveryService', () => {
   });
 
   it('finishAndRecover WATCHES an in-flight (orphaned) turn and recovers it once it reaches end_turn', async () => {
-    // Start with a transcript that is still generating (no end_turn) — the immediate pass would skip it.
     const root = mkdtempSync(join(tmpdir(), 'turn-recovery-'));
     const slugDir = join(root, 'brain_x', 'claude', 'projects', '-workspace');
     mkdirSync(slugDir, { recursive: true });
@@ -503,7 +486,6 @@ describe('TurnRecoveryService', () => {
       makeBootstrap(),
     );
 
-    // The orphaned engine "finishes" shortly after the watch starts.
     setTimeout(() => writeFileSync(file, TRANSCRIPT), 15);
     await svc.finishAndRecover([THREAD_ID], {
       intervalMs: 10,

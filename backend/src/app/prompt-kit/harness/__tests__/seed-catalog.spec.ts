@@ -18,18 +18,13 @@ describe('unblock wake message content', () => {
   describe('wakeUnblockedRunningJobBody (blocked MID-WORK, resumes)', () => {
     it('names the blocker + how it resolved, frames the block as soft, and steers rebase/re-scope/resume', () => {
       const body = wakeUnblockedRunningJobBody([merged]);
-      // Names the blocker (title + id + resolution).
       expect(body).toContain('Refactor auth module');
       expect(body).toContain('job job-aaa');
       expect(body).toContain('(merged)');
-      // Soft-reason framing.
       expect(body).toContain('NOT necessarily a hard dependency');
-      // Reorientation guidance.
       expect(body).toContain('Rebase onto the latest base branch');
       expect(body).toContain('change the scope of your work');
-      // Resume language IS present for a mid-work job.
       expect(body).toContain('resume the work you had planned');
-      // All blockers merged → no "did not merge" caveat.
       expect(body).not.toContain('did NOT merge');
     });
 
@@ -62,7 +57,6 @@ describe('unblock wake message content', () => {
       expect(prefix).toContain('have NOT started any work yet');
       expect(prefix).toContain('Start from the latest base branch');
       expect(prefix).toContain('Factor those jobs into your plan');
-      // A born-blocked job has no prior plan to resume.
       expect(prefix).not.toContain('resume the work you had planned');
       expect(prefix).not.toContain("plan's assumptions");
     });

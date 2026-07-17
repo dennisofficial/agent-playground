@@ -98,7 +98,6 @@ describe('BackgroundHoldTimer', () => {
     timer.trackTaskStarted('t1', false);
     timer.trackTaskStarted('t2', false);
 
-    // One settles — a bare bg task remains, so the hold re-arms and still caps.
     timer.trackTaskSettled('t1');
     expect(timer.hasLiveBgTasks).toBe(true);
     vi.advanceTimersByTime(HOLD_MS);

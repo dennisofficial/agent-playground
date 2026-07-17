@@ -1,18 +1,8 @@
-/**
- * prompt-kit / groups / workspace-profile — THE WORKSPACE PROFILE: the one named area Atlas provisions
- * once at onboarding (the bulk pass) and keeps current on every job after (incremental upkeep). It unifies
- * the seven provisioning dimensions — secret files, mounts, cache folders, setup script, MCP servers,
- * skills, house style — under one name, prints the CURRENT snapshot (from `ctx.settings.workspaceProfile`),
- * and points each dimension at its upkeep tool.
- *
- * TOPIC bucket: the workspace profile (environment & provisioning). Was `environment.group.ts`.
- */
 import { Agent, ENGINEERING_STAGES } from '../agent';
 import { isOnboarding, notOnboarding } from '../conditions';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import type { PromptCtx } from '../prompt-ctx';
 
-/** The named area + its seven dimensions and the upkeep tool for each. Shared by both framings. */
 const WORKSPACE_PROFILE_DIMENSIONS = [
   'THE WORKSPACE PROFILE — the durable provisioning for this repo, or for the org when scope:"org" is requested,',
   'that turns a bare checkout into a runnable, correctly-configured workspace. It is ONE area with SEVEN dimensions, each with its own upkeep tool:',
@@ -25,7 +15,6 @@ const WORKSPACE_PROFILE_DIMENSIONS = [
   '  7. House style    — propose_convention_profile (owner-approved)',
 ].join('\n');
 
-/** The live snapshot of what is ALREADY provisioned for this repo (or a note when nothing is yet). */
 function workspaceProfileSnapshot(ctx: PromptCtx): string {
   const snap = ctx.settings?.workspaceProfile?.trim();
   return snap
@@ -35,11 +24,6 @@ function workspaceProfileSnapshot(ctx: PromptCtx): string {
 
 @FragmentGroup()
 export class WorkspaceProfileGroup {
-  /**
-   * The WORKSPACE PROFILE overview for a real build (incremental upkeep framing). Names the area, prints
-   * the current snapshot, and tells the brain that keeping it current is ongoing work, not a one-time
-   * ceremony. Absorbs the old `environmentGaps` nudge (the persistence-by-kind recipe below).
-   */
   @Fragment({
     usedBy: ENGINEERING_STAGES,
     order: 1280,
@@ -82,11 +66,6 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
-  /**
-   * The WORKSPACE PROFILE overview for the bring-up (bulk-pass framing). Sits right after the onboarding
-   * identity/sandbox fragments; the deep per-dimension how-to fragments (SECRETS, CONFIG, SETUP SCRIPT,
-   * MCP SERVERS, SKILLS, HOUSE STYLE, RESET) follow below.
-   */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 2015,
@@ -105,7 +84,6 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
-  /** SECRETS. */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 2060,
@@ -132,7 +110,6 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
-  /** DERIVED values. */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 2070,
@@ -149,7 +126,6 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
-  /** AUTH / CAPABILITY ACCESS (the interactive-login recipe). */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 2080,
@@ -181,7 +157,6 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
-  /** INSTALLING A CLI. */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 2090,
@@ -199,7 +174,6 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
-  /** CONFIG (write_workspace_config mounts). */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 2100,
@@ -220,7 +194,6 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
-  /** SETUP SCRIPT (write_setup_script; runs on every cold bring-up). */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 2105,
@@ -248,7 +221,6 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
-  /** PREVIEW RECIPE (write_preview_instructions; injected into the Spin-up-preview seed). */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 2106,
@@ -268,7 +240,6 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
-  /** MCP SERVERS (propose_mcp_servers; owner-approved, stack-matched). */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 2108,
@@ -319,7 +290,6 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
-  /** SKILLS — reuse a maintained skill, else author a repo-idiom one; owner-approved. */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 2112,
@@ -358,7 +328,6 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
-  /** HOUSE STYLE (propose_convention_profile; owner-approved, stack-matched). */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 2114,
@@ -379,7 +348,6 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
-  /** RESET / PROVE-IT-COLD-BOOTS. */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 2116,

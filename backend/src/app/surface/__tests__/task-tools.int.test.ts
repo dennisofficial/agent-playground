@@ -1,18 +1,3 @@
-/**
- * LIVE proof for the unified `task_*` host-bridge tools — the EXACT path the deployed bridge runs when an
- * engine (Claude/Codex) calls a task tool: `makeTaskTools` handlers → the real {@link EntityTaskEventSink}
- * → the thread-group-owned `tasks` rows.
- *
- * Proves two things at once against real Postgres:
- *   - the model/UI-facing id is the short per-stage `#N` (the row's dense `ordinal`, `1`/`2`/…), NOT the
- *     row uuid #261 surfaced — so `task_create` returns `Task #1 created`, not `Task #<uuid> created`;
- *   - durability across a builder-leg rotation: a FRESH sink instance (a new session/leg — no in-memory
- *     cache carries over) still lists both rows and can `task_update` one BY THE #N `task_list` reported.
- *     That is the precise case the pre-#261 dual-id fold failed.
- *
- * Integration: real Postgres (atlas_test schema); seeds org/repo/job + a build thread group/thread via the
- * store's own CRUD (mirrors `driver-store.int.test.ts`), then drives the tools end-to-end.
- */
 
 import { Test, type TestingModule } from '@nestjs/testing';
 import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
@@ -54,10 +39,7 @@ function dbOpts() {
   };
 }
 
-/** Parse the short `#N` out of the `Task #<id> created: <subject>` string task_create returns (the same
- *  regex the web live overlay uses). */
 function createdId(result: unknown): string {
-  // eslint-disable-next-line no-console -- surfaced in the captured live-verification log.
   console.log(`[task-tools.int] task_create -> ${String(result)}`);
   const m = /Task #([\w-]+) created/.exec(String(result));
   if (!m) throw new Error(`no id in task_create result: ${String(result)}`);
@@ -74,7 +56,6 @@ describe('task_* host-bridge tools — per-stage #N CRUD (live Postgres)', () =>
   let tasks: Repository<TaskEntity>;
   let repoId: string;
 
-  /** Build a NEW sink (fresh session — no in-memory state carries over) over the live repos. */
   const freshSink = () => new EntityTaskEventSink(threads, threadGroups, tasks);
 
   beforeAll(async () => {
@@ -159,7 +140,6 @@ describe('task_* host-bridge tools — per-stage #N CRUD (live Postgres)', () =>
   it('creates → lists (fresh session) → updates by the listed #N → gets → deletes, all in the per-stage #N id space', async () => {
     const { threadGroupId, scope } = await seedThreadScope();
 
-    // (a) Two creates through one tool instance — the ids are the short per-stage #N, NOT a uuid.
     const tools = makeTaskTools(freshSink(), scope);
     const idA = createdId(await tools.task_create({ subject: 'A' }));
     const idB = createdId(await tools.task_create({ subject: 'B' }));
@@ -171,14 +151,10 @@ describe('task_* host-bridge tools — per-stage #N CRUD (live Postgres)', () =>
     });
     expect(rows).toHaveLength(2);
     expect(rows.map((r) => r.title).sort()).toEqual(['A', 'B']);
-    // The surfaced #N is the row's ordinal; the uuid PK stays the internal identity.
     expect(rows.map((r) => r.ordinal).sort()).toEqual([1, 2]);
 
-    // (b) A FRESH tool set on a FRESH sink — simulates a new session/leg after rotation. The read hits the
-    //     durable rows, and the #N task_list reports is the SAME #N task_update keys on.
     const rotated = makeTaskTools(freshSink(), scope);
     const listed = String(await rotated.task_list({}));
-    // eslint-disable-next-line no-console -- surfaced in the captured live-verification log.
     console.log(`[task-tools.int] task_list ->\n${listed}`);
     expect(listed).toBe('#1 [pending] A\n#2 [pending] B');
 
@@ -191,12 +167,9 @@ describe('task_* host-bridge tools — per-stage #N CRUD (live Postgres)', () =>
     const afterUpdate = String(await makeTaskTools(freshSink(), scope).task_list({}));
     expect(afterUpdate).toBe('#1 [pending] A\n#2 [completed] B');
 
-    // (c) task_get returns A's detail by its #N.
     const detail = String(await rotated.task_get({ taskId: idA }));
     expect(detail).toContain(`#${idA} [pending] A`);
 
-    // (d) A delete removes the row — asserted directly against the table (by the row's ordinal, since #N is
-    //     the ordinal, not the uuid PK), not just the tool's return.
     expect(await rotated.task_update({ taskId: idA, status: 'deleted' })).toEqual({
       ok: true,
     });
@@ -216,7 +189,6 @@ describe('task_* host-bridge tools — per-stage #N CRUD (live Postgres)', () =>
     const idB = createdId(await tools.task_create({ subject: 'B', addBlockedBy: ['1'] }));
     expect(idB).toBe('2');
 
-    // Stored as the #N string, not a uuid.
     const rowB = await tasks.findOne({
       where: { thread_group_id: threadGroupId, ordinal: 2 },
     });

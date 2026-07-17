@@ -1,21 +1,3 @@
-/**
- * Atlas message-delivery pipeline — END-TO-END integration proof against a REAL Postgres DB.
- *
- * Drives the REAL pump code (`AgentSessionManager.pumpThread` → `collectPendingForTurn` →
- * `deliverPendingViaFreshTurn`/`steerPending` → `runChatTurn` → `runChatTurnInner` → `composeTurn`) with a
- * REAL `StimulusStoreService` bound to a real Postgres connection (the durable operator-message inbox: lease/
- * mark-delivered/eligible-pending queries all hit the actual database). Only the leaf SDK/container boundary is
- * faked — `engineRunner` (no real Claude/Codex process) and `lifecycle` (no real Docker sandbox) — everything
- * ELSE that decides WHAT gets delivered, WHEN, and HOW it's framed is the real production code path. This is
- * what a unit test (which fakes `stimulusStore` itself) cannot prove: that coalescing, now|queue|later
- * priority steering, the `composeTurn` hub framing, and the JIT turn-prefix "memory" rail all actually execute
- * live through the real delivery pipeline, not just through hand-fed fixtures.
- *
- * DB bootstrap pattern copied from `stimulus/delivery-priority.int.test.ts` (real TypeOrmModule against
- * localhost:5433 / atlas_test). Manager construction mirrors the `pumpThread` describe block in
- * `agent-session-manager.spec.ts` and `collect-pending-for-turn.spec.ts` — same positional-arg wiring, with
- * `stimulusStore` (arg 13) swapped for the REAL service instead of a fake.
- */
 
 import { Test, type TestingModule } from '@nestjs/testing';
 import { getDataSourceToken, getRepositoryToken, TypeOrmModule } from '@nestjs/typeorm';
@@ -100,12 +82,6 @@ describe('Atlas message-delivery pipeline (integration): real pump + real Stimul
     await ds.query('TRUNCATE inbound_messages, transcript_messages, jobs RESTART IDENTITY CASCADE');
   });
 
-  // Several pump paths end their turn by firing a fire-and-forget re-pump (`runChatTurn`'s `finally`) that
-  // re-queries the REAL `eligiblePendingChat` table. Give any such stray in-flight query a beat to land
-  // before the next test TRUNCATEs the table out from under it — a hygiene guard, not a correctness gate
-  // (the assertions below all read state synchronously right after their own `await pumpThread(...)`, which
-  // is safe: the recursive query cannot possibly resolve — a real network round trip — inside that same
-  // microtask flush).
   afterEach(async () => {
     await new Promise((resolve) => setTimeout(resolve, 150));
   });
@@ -122,13 +98,6 @@ describe('Atlas message-delivery pipeline (integration): real pump + real Stimul
     );
   }
 
-  /**
-   * Build a fresh `AgentSessionManager`, wired to the REAL `stimulusStore` (arg 13) and otherwise the
-   * minimal set of fakes `pumpThread`/`runChatTurnInner` actually touch (traced end-to-end from the
-   * source) — mirroring `agent-session-manager.spec.ts`'s `pumpThread` `makeManager()` and
-   * `collect-pending-for-turn.spec.ts`'s constructor wiring, but deep enough to run a full
-   * `runChatTurnInner` turn against the fake leaf engine/sandbox.
-   */
   function makeManager(
     opts: {
       live?: boolean;
@@ -334,7 +303,6 @@ describe('Atlas message-delivery pipeline (integration): real pump + real Stimul
 
     const task = getCapturedTask();
     expect(task).toBeDefined();
-    // 3 chronological `<user>` chunks — one per coalesced message, oldest first (send order).
     expect((task!.match(/<user /g) ?? []).length).toBe(3);
     const idx1 = task!.indexOf('first message');
     const idx2 = task!.indexOf('second message');
@@ -343,7 +311,6 @@ describe('Atlas message-delivery pipeline (integration): real pump + real Stimul
     expect(idx2).toBeGreaterThan(idx1);
     expect(idx3).toBeGreaterThan(idx2);
 
-    // Restart-survivable hand-off: all 3 rows are stamped delivered once the turn registers.
     const pendingAfter = await stimulusStore.eligiblePendingChat(thread.id, 60_000);
     expect(pendingAfter).toHaveLength(0);
   });
@@ -391,7 +358,6 @@ describe('Atlas message-delivery pipeline (integration): real pump + real Stimul
     expect(steer).not.toHaveBeenCalled();
     expect(run).not.toHaveBeenCalled();
 
-    // Still pending — a `queue` message is never dropped, only deferred.
     const pending = await stimulusStore.eligiblePendingChat(thread.id, 60_000);
     expect(pending).toHaveLength(1);
     expect(pending[0].priority).toBe('queue');
@@ -411,12 +377,10 @@ describe('Atlas message-delivery pipeline (integration): real pump + real Stimul
       priority: 'later',
     });
 
-    // A `later`-only thread: no wake at all.
     await manager.pumpThread(thread.id, ORG_ID, repoId);
     expect(run).not.toHaveBeenCalled();
     expect(steer).not.toHaveBeenCalled();
 
-    // A `now` message arrives for the same thread — wakes a fresh turn that composes BOTH messages.
     await stimulusStore.recordChatStimulus({
       orgId: ORG_ID,
       repoId,
@@ -445,7 +409,6 @@ describe('Atlas message-delivery pipeline (integration): real pump + real Stimul
       body: 'the later ride-along body',
       priority: 'later',
     });
-    // No wake yet.
     await manager.pumpThread(thread.id, ORG_ID, repoId);
     expect(run).not.toHaveBeenCalled();
 
@@ -465,7 +428,6 @@ describe('Atlas message-delivery pipeline (integration): real pump + real Stimul
     expect(task).toBeDefined();
     expect(task).toContain('the later ride-along body');
     expect(task).toContain('the now wake body');
-    // Chronological: the `later` row was created first, so it renders first.
     expect(task!.indexOf('the later ride-along body')).toBeLessThan(
       task!.indexOf('the now wake body'),
     );

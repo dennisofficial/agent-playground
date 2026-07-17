@@ -1,30 +1,7 @@
-/**
- * prompt-kit / fragments — the single HOME for reusable system-prompt fragment TEXT.
- *
- * A "fragment" here is an exported prose const that more than one `@Fragment` method wants to share, or
- * that we want to be able to change in ONE place and have reach every consumer at once. The consts do NOT
- * dictate their own position — each `groups/*.ts` `@Fragment` method splices the const where it wants
- * (head / tail / embedded).
- *
- * Buckets (by the audience a fragment is FOR):
- *   - GLOBAL   — cross-cutting truths every in-sandbox agent needs (where it runs, the scratch pad).
- *   - WORKER   — the build/execute + ship agents that actually change code and run things.
- *   - PLANNING — the planning-side (the brain's intent + plan surfaces).
- *
- * The three BEHAVIORAL fragments (validate-by-running / spike-first / baseline-first) live here too; see
- * the banner below.
- */
 
 import { renderHarnessTag } from '../harness/tag-vocabulary';
 
-// ── GLOBAL ──────────────────────────────────────────────────────────────────────────────────────────
 
-/**
- * Environment framing shared by every driver-side engine prompt (the thread-driver's plan/execute/
- * orchestrate prompts + build-ship's PR-review/master-review). These sessions stream to the operator's
- * web console, so they must never hand the operator "run this locally" homework — there is no
- * operator-side machine.
- */
 export const CLOUD_SANDBOX_NOTE =
   "You run in a CLOUD SANDBOX — your own container with the checkout at /workspace — not on the operator's " +
   'machine. The operator follows along through a web console and shares NO filesystem, shell, or running ' +
@@ -32,13 +9,6 @@ export const CLOUD_SANDBOX_NOTE =
   'start servers, or verify anything "on their machine" — whatever the work needs, YOU run here; your work ' +
   'reaches them only through the commits/PR and what you report.';
 
-/**
- * The SOLE-AUTHOR invariant. Corrects a real failure: the brain told the operator it would "leave CONTEXT.md
- * alone — it's being actively edited on your end," which is impossible — the operator shares no filesystem and
- * cannot touch the checkout. This states the invariant positively so no in-sandbox agent defers to, waits for,
- * or reasons about a phantom outside/concurrent editor. Shared by every file-touching or operator-facing
- * persona (brain, worker, ship-review, fan-out writer).
- */
 export const SOLE_AUTHOR_NOTE =
   'YOU ARE THE ONLY ONE EDITING THIS CHECKOUT: nothing and nobody else changes files in your sandbox. The ' +
   'operator shares no filesystem with you and CANNOT edit the repo — a file is NEVER "being edited on their ' +
@@ -51,13 +21,6 @@ export const SOLE_AUTHOR_NOTE =
   'editing in parallel. Upshot: if a file needs changing — CONTEXT.md, a doc, config, anything — YOU own it ' +
   'and YOU change it; never leave it for, or hand it back to, someone who is not there.';
 
-/**
- * The sandbox filesystem map for the brain (ATLAS_MAIN). Names the four mounts and — the load-bearing point —
- * which ONE is under git. Fixes a real failure mode: the brain treated `/.atlas` supervisor state (atlas-svc
- * markers/logs) as a worktree leak and "flagged a deviation" adding `.atlas/` to `.gitignore`. `/.atlas`,
- * `/context`, `/playground` are separate binds OUTSIDE `/workspace` (see `sandbox/container-paths.ts`), so git
- * never sees them and they need no ignore rule.
- */
 export const SANDBOX_FILESYSTEM_MAP_NOTE = [
   'SANDBOX FILESYSTEM MAP — WHAT IS UNDER GIT AND WHAT IS NOT: your sandbox has four areas, and only ONE is a',
   'git checkout. Know which is which before you ever reason about the diff or reach for `.gitignore`.',
@@ -74,14 +37,6 @@ export const SANDBOX_FILESYSTEM_MAP_NOTE = [
   'warranted ONLY for genuine junk a build tool writes INTO `/workspace` itself.',
 ].join('\n');
 
-/**
- * Task-list discipline shared by every Atlas session that rides a task-tracked lane (the job brain on
- * `main`, a build thread's orchestrator on `thread:<id>`, the master-review thread). Both engines expose
- * the SAME snake_case `task_create`/`task_update`/`task_list`/`task_get` tools; they write the durable,
- * stage-owned checklist that renders live in the operator's navigator, so the list IS the operator's
- * progress view. Persona prompts splice this in and add their own seeding rule (what the first tasks come
- * from); the master-review body prepends its own lead-in.
- */
 export const TASK_LIST_NOTE =
   'LIVE TASK LIST — your `task_create`/`task_update`/`task_list`/`task_get` tools render DIRECTLY in the ' +
   "operator's UI as this session's checklist; they are how the operator follows your work at a glance. " +
@@ -93,36 +48,17 @@ export const TASK_LIST_NOTE =
   'shows one task in full. Keep the list TRUTHFUL as the work reshapes: add tasks you discover mid-flight, ' +
   "and drop ones that become moot (`task_update` with `status:'deleted'`). A stale checklist is worse than none.";
 
-/**
- * The canonical "what a code review covers" list — the single home so every review surface (the ship-time
- * master review + the `review` subagent) hunts the SAME dimensions and the final gate can't be narrower
- * than the per-step one. A noun-phrase list meant to slot into "find …". The autofix lenses
- * (`autofix-lenses.ts`) split these same concerns across their per-lens prompts.
- */
 export const REVIEW_SCOPE_NOTE =
   'correctness bugs, behavior the change silently removed or broke, security issues, missing edge cases ' +
   'or error handling, violations of the conventions this repo already follows, and seams where ' +
   'separately-built pieces integrate badly with each other';
 
-// ── WORKER / EXECUTE POLICY BLOCKS (reused across the worker orchestrator + the verify/writer subagents) ─
 
-/**
- * MONOREPO discovery hint for the verify step — shared by the worker orchestrator's inline verify clause and
- * the verification subagents (subagents.group). A single root `package.json` with no aggregate test script
- * does NOT mean "no tests": in a workspace the real commands live per-package or in the workspace tooling.
- * Kept as its own const so the verify surfaces can't drift.
- */
 export const MONOREPO_VERIFY_HINT =
   "In a monorepo/workspace the real typecheck/build/test commands often live in a sub-package's " +
   'package.json or the workspace config (turbo/nx/pnpm/lerna workspaces), NOT a single root script — check ' +
   "the sub-packages; do not conclude 'no tests' from the root package.json alone.";
 
-/**
- * COMMIT + PUSH — the writer session owns its commit; the host reads what you leave and does NOT commit for
- * you, so leave a CLEAN tree before asserting completion. The single home for this instruction: the driver's
- * task builders re-export it as `COMMIT_AND_PUSH_INSTRUCTION` (with a leading newline for their inline splice)
- * and any prompt-kit persona can splice it directly.
- */
 export const COMMIT_AND_PUSH_NOTE =
   'COMMIT YOUR WORK (required — the host does NOT commit for you): once the work is done and verified, run ' +
   "`git add -A` (your `.gitignore` governs what's tracked; if build or cache junk appears in `git status`, " +
@@ -130,23 +66,12 @@ export const COMMIT_AND_PUSH_NOTE =
   'branch. Leave the working tree CLEAN. THEN call `complete_thread`. If you finish without committing, your ' +
   'work is treated as unfinished.';
 
-/** One live `atlas-svc` service, reduced to the primitives a prompt line needs — deliberately NOT the
- *  driver/exposure `ServiceMarker` type, so this fragment stays a Nest-free leaf (the driver maps its
- *  domain markers down to this shape). */
 export type RunningServiceInfo = {
   name: string;
-  /** The advertised listen port, or null for a non-HTTP worker. */
   port: number | null;
-  /** The public preview URL when the service is exposed + previews are on; otherwise null. */
   url: string | null;
 };
 
-/**
- * RUNNING SERVICES — the "what's already online" block folded FRESH into each builder turn-kick (and every
- * rotated Leg), so a session reuses services an earlier session/Leg left running under `atlas-svc` instead
- * of restarting them. The driver probes the live supervisor state and maps it to {@link RunningServiceInfo};
- * this renders the prose. Returns '' for an empty list so the caller can omit the block entirely.
- */
 export function renderRunningServicesNote(services: RunningServiceInfo[]): string {
   if (services.length === 0) return '';
   const lines = services.map((s) => {
@@ -163,21 +88,10 @@ export function renderRunningServicesNote(services: RunningServiceInfo[]): strin
   return renderHarnessTag({ tag: 'running_services', body });
 }
 
-/**
- * GIT SAFETY — the destructive-command prohibition every git-running persona/turn shares. The single home so
- * the in-sandbox open-PR turn (`turns/ship-open-pr.ts`) and the ship-time master-review persona (`ship.group`)
- * carry the SAME guardrail. Ends at "git config."; a consumer that also resolves conflicts (the open-PR turn)
- * appends its own "make no code changes beyond a clean conflict resolution" clause after this.
- */
 export const GIT_SAFETY_NOTE =
   'GIT SAFETY: NEVER run destructive or irreversible git commands (`push --force`, `reset --hard`, history ' +
   'rewrites, etc.) unless explicitly instructed. Never skip hooks (`--no-verify`) and never touch git config.';
 
-/**
- * DOCS BEFORE GREP — orient off the repo's own docs before spelunking. Shared by the brain (orientation.group)
- * and the worker orchestrator (worker.group): a fresh worktree session must orient itself off the docs instead
- * of rediscovering the layout/conventions with a grep-storm.
- */
 export const DOCS_BEFORE_GREP =
   'DOCS BEFORE GREP: CLAUDE.md memory loads automatically (root at session start; a nested CLAUDE.md loads ' +
   'the moment you read a file in its subtree), so you already have that context — no need to re-read it. For ' +
@@ -186,15 +100,6 @@ export const DOCS_BEFORE_GREP =
   'confirm the exact files you will touch. Docs may be stale — the CODE is authoritative; where they ' +
   'disagree, trust the code.';
 
-/**
- * VERIFY CURRENCY — the anti-"it's modern" trigger. A claim about whether a dependency/tool/framework is
- * current, outdated, deprecated, "the latest", or the reputable/standard choice is a claim about the OUTSIDE
- * WORLD, not something the lockfile answers — so it must be checked on the web, not asserted from memory or
- * from the fact that a recognizable package appears in package.json. Shared by the brain (orientation.group)
- * and the `explore`/`docs` subagents (subagents.group). Motivated by a real miss: an explorer read
- * `electron-vite` out of package.json, called the stack "modern", and the brain repeated it — while the
- * installed Electron was three majors behind the current release, which nobody checked.
- */
 export const VERIFY_CURRENCY =
   'VERIFY CURRENCY — do not assert it from memory or the lockfile: any claim that a dependency, framework, ' +
   'tool, or API is current, modern, up-to-date, outdated, deprecated, "the latest", or the ' +
@@ -205,15 +110,6 @@ export const VERIFY_CURRENCY =
   "behind latest you are. When you do report a version's status, name BOTH the installed and the current " +
   'version (e.g. "Electron 35 — three majors behind the current 44"), never a bare adjective like "modern".';
 
-/**
- * DOCUMENTATION + VERSION VERIFICATION — the implementation-correctness twin of {@link VERIFY_CURRENCY}.
- * VERIFY_CURRENCY governs a CLAIM about whether something is current; this governs the CODE you write against
- * a dependency: before building on any library/SDK/framework/platform-API/CLI/service, confirm the current
- * official docs AND that the approach matches the version actually installed (not a pattern remembered from an
- * older generation). Shared by every persona that AUTHORS code (the brain, the worker orchestrator, the
- * fan-out writers). The Codex plan reviewer carries its OWN inline version of this mandate (`meta.group.ts`)
- * because its prompt is self-contained.
- */
 export const DOC_VERSION_VERIFY_NOTE =
   'VERIFY DOCS + INSTALLED VERSION BEFORE YOU BUILD ON A DEPENDENCY — before you implement, refactor, or ' +
   'recommend anything against a library, SDK, framework, platform API, CLI, or third-party service, confirm ' +
@@ -227,13 +123,6 @@ export const DOC_VERSION_VERIFY_NOTE =
   'path — rather than guessing. (VERIFY CURRENCY governs claiming something IS current; this governs writing ' +
   'code that actually matches the version in your hands.)';
 
-/**
- * LSP TOOLS (full) — for the personas that can actually rename (the orchestrator + the `implement`/
- * `implement-deep` writer subagents; see WRITER_TOOLS in engine-core.ts). `rename_symbol` APPLIES its
- * own edits and returns only a changed-files summary — reading the files back afterward wastes the
- * tokens the tool exists to save. Shared by worker.group.ts (Agent.WORKER) and subagents.group.ts
- * (Agent.FAN_OUT).
- */
 export const LSP_TOOLS_NOTE =
   'LSP TOOLS (position-based): to rename a symbol, find its usages, or jump to its definition, prefer ' +
   'the `atlas-lsp-ts` tools (`rename_symbol`/`references`/`definition`/`hover`/`diagnostics`) over ' +
@@ -246,21 +135,12 @@ export const LSP_TOOLS_NOTE =
   'never touches string/comment occurrences — after a cross-package rename, spot-check with `references` ' +
   'or a Grep, and use a codemod (`ast-grep`) when strings must change too.';
 
-/**
- * LSP TOOLS (navigation-only) — for the read-only investigators (`explore`/`review`/`debug`; see
- * LSP_NAV_TOOLS in engine-core.ts). They get navigation, not `rename_symbol` — they report, they don't
- * edit.
- */
 export const LSP_NAV_NOTE =
   'To find every usage of a symbol or jump to its definition, prefer the `atlas-lsp-ts` tools ' +
   '(`references`/`definition`/`hover`) over grep-and-read. They are POSITION-based: pass the `filePath` ' +
   'and the 1-indexed `line`/`column` where you saw the symbol (from a Read/grep). Type-accurate — the ' +
   "real symbol, not every text match of its name (scoped to that file's package).";
 
-/**
- * DEVIATION flagging — off-spec work is never silent. Shared by the worker execute prompts + the `implement`
- * writer subagent.
- */
 export const DEVIATION_NOTE =
   'If you make ANY change not explicitly called for by your assignment, or you depart from a locked decision ' +
   '(e.g. a small out-of-scope fix — a dead link, a wrong import — or adding a file/dependency/config nobody ' +
@@ -271,16 +151,6 @@ export const DEVIATION_NOTE =
   "own line starting 'DEVIATION:' in your summary back to the orchestrator, who records it. Reserve this for " +
   'fixes you actually MADE.';
 
-/**
- * CLARITY OVER COMMENTS — the house coding style for every persona that AUTHORS code (the brain's direct
- * builds, the worker orchestrator, the fan-out writers). Not a "comment discipline" negative rule but a
- * POSITIVE technique: a comment is a second thing to maintain that rots into a lie the moment the code
- * changes under it, so the move is to refactor until the code explains itself (name the sub-expression,
- * name the magic number, extract the block into a well-named function) rather than annotate. Deliberately
- * NOT wired to AUTOFIX_FIX — that persona's contract is minimal-diff / never-expand-scope, which the
- * "extract a function" guidance would actively fight. Carries its own TIEBREAKER so it doesn't collide with
- * the repo-matching rule (match an established comment-heavy repo's style; self-document greenfield code).
- */
 export const CLARITY_OVER_COMMENTS_NOTE =
   'CLARITY OVER COMMENTS — make the code say it, do not annotate it. A comment is a second thing to ' +
   'maintain: when the code changes and the comment does not, it becomes a lie. So when you are tempted to ' +
@@ -295,13 +165,6 @@ export const CLARITY_OVER_COMMENTS_NOTE =
   'this is the default for new code you author; where the repo you are editing already follows a ' +
   'different, established comment style, match the repo.';
 
-/**
- * TYPESCRIPT TYPE STYLE — the house rule for `type` vs `interface`, shared by every persona that AUTHORS or
- * fixes TypeScript (the brain's direct builds, the worker orchestrator, the fan-out writers, and the two fix
- * lanes — Codex master review + autofix-fix). Language-gated in its own wording so it is a silent no-op on a
- * non-TS repo. Carries the same repo-match TIEBREAKER as {@link CLARITY_OVER_COMMENTS_NOTE} so it never fights
- * a codebase that already commits to interfaces.
- */
 export const TS_STYLE_NOTE =
   'TYPESCRIPT TYPE STYLE — when you author TypeScript, default to `type` for object shapes, unions, and ' +
   'aliases; reach for `interface` ONLY when you actually need what it uniquely gives: declaration merging, ' +
@@ -310,24 +173,11 @@ export const TS_STYLE_NOTE =
   'where the file/package you are editing already commits to an established convention (interfaces throughout, ' +
   'or a linter that enforces one), match it rather than mixing styles.';
 
-/**
- * DELETION safety — prove code is genuinely dead before removing it. Shared by the worker execute prompts.
- */
 export const DELETION_SAFETY_NOTE =
   'If your change REMOVES code, first prove it is genuinely unreferenced (grep for every importer AND ' +
   'intra-file caller, plus dynamic/string references) and that the build still passes after removal; if you ' +
   'cannot prove it is unused, do NOT delete it — report the uncertainty instead.';
 
-/**
- * MINIMAL CODE — the "lazy senior engineer" ladder: the best code is the code you never wrote. Shared by every
- * persona that AUTHORS code (the brain's plans + direct builds, the worker orchestrator, the fan-out writers).
- * A POSITIVE decision procedure run AFTER you understand the problem, not a licence to cut corners — it climbs
- * from "does this need to exist" to "minimum viable code", stopping at the lowest rung that works. Deliberately
- * carries its own SAFETY carve-out so it can never be read as skipping validation/error-handling/security, and
- * stays OUT of the review/verify lanes (VALIDATE_BY_RUNNING_NOTE owns that) and the comment lane
- * (CLARITY_OVER_COMMENTS_NOTE) — this is only about how much to build. The "prefer an already-installed
- * dependency over a new one" rung reinforces the always-ask gate (a NEW dependency is still an ask).
- */
 export const MINIMAL_CODE_NOTE =
   'WRITE THE LEAST CODE THAT SOLVES THE PROBLEM — the best code is the code you never wrote. AFTER you ' +
   'understand the task and have traced the real code it touches (this ladder runs after comprehension, never ' +
@@ -344,13 +194,6 @@ export const MINIMAL_CODE_NOTE =
   'prevents data loss, security, accessibility, and anything the task explicitly asked for — leanness is ' +
   'about scope and cleverness, never about dropping a guardrail.';
 
-/**
- * DESIGN DISCIPLINE — the always-on recognition trigger for the `design-patterns` skill. Rides on top of
- * {@link MINIMAL_CODE_NOTE}: it does NOT teach the 22 patterns (the skill does) — it just makes the agent
- * NOTICE the smell and reach for the skill, which is the step that was missing ("knows patterns, never
- * applies them"). Shared by every code-authoring persona (brain direct-builds + plans, worker orchestrator,
- * fan-out writers). Restraint-first by construction so it can never fight the YAGNI ladder above it.
- */
 export const DESIGN_DISCIPLINE_NOTE =
   'DESIGN DISCIPLINE — diagnose structure from smells, not pattern names. When non-trivial code is hard to ' +
   'extend (many-site edits, bloated functions/classes, tangled conditionals, data/behavior mismatch), try ' +
@@ -359,15 +202,7 @@ export const DESIGN_DISCIPLINE_NOTE =
   'one-implementation ceremony. Match incidental repo conventions, but if the current shape fights the ' +
   'requirement, migrate the pattern deliberately and completely.';
 
-// ── SUBAGENT POLICY BLOCKS ──────────────────────────────────────────────────────────────────────────
 
-/**
- * SUBAGENT KERNEL — the tiny framing preamble every engine subagent gets (audience `ENGINE_SUBAGENTS`:
- * explore/docs/review/debug/test/validate + the writers). It just tells them WHAT they are: a single-turn,
- * no-conversation helper whose final message IS its whole output. Renders BEFORE the persona body (lower
- * order) so each subagent reads "here's your shape" then "here's your job". Deliberately says nothing about
- * tools or scope — the personas own that.
- */
 export const SUBAGENT_KERNEL_NOTE =
   'You are a SUBAGENT — a parent agent spawned you (via Task) to do ONE scoped job in a SINGLE turn. There ' +
   'is no conversation here: no operator to ask, no follow-up message coming, no next turn. Finish the whole ' +
@@ -376,13 +211,6 @@ export const SUBAGENT_KERNEL_NOTE =
   'expecting to continue later, and do not ask questions; if a detail is ambiguous, make the most reasonable ' +
   'assumption, proceed, and note it in what you return.';
 
-/**
- * NUDGE-BEFORE-RESPAWN — the PARENT/orchestrator side of subagent recovery. A spawned subagent holds
- * everything it has learned in its OWN context; respawning a fresh Task throws all of that away. Shared by
- * every persona that can fan out to subagents (the brain's investigate note + the build orchestrator's
- * subagent note) so the recovery guidance can't drift between them. Pairs with the SUBAGENT_MGMT_TOOLS
- * allowlist in engine-core.ts — the tools this note tells the model to reach for.
- */
 export const SUBAGENT_NUDGE_NOTE =
   'RECOVER A STALLED SUBAGENT BY NUDGING, NOT RESPAWNING: a spawned subagent keeps everything it has learned ' +
   'in its OWN context, so throwing that away and starting a fresh `Task` from zero is the LAST resort, not the ' +
@@ -394,22 +222,9 @@ export const SUBAGENT_NUDGE_NOTE =
   'that is truly wedged before you fall back to a fresh spawn. Reserve a new `Task` for genuinely new work or ' +
   'an agent that cannot be revived.';
 
-/**
- * REPORT-ONLY discipline — the shared kernel across the advisory subagents (explore/docs/review) and the
- * `test` subagent. Deliberately NARROW: it says only "don't edit files / change git — report only". It says
- * NOTHING about running commands (`test` legitimately runs Bash while `debug` must not — those clauses stay
- * inline), and NOTHING about conciseness (each subagent's "be concise" flavor differs — answer+sources for
- * `docs`, verdict+failures for `test` — so each keeps its own concise line right after this block). `debug`
- * keeps its whole read-only/no-commands/diagnose line inline (its output shape is distinct).
- */
 export const REPORT_ONLY_NOTE =
   'Do NOT edit files or change git state — report your findings only.';
 
-/**
- * Tool-name qualification — the host tools are MCP tools that must be called by their fully-qualified name.
- * A function because the server name is a runtime constant (`BRIDGE_SERVER_NAME`). Shared by the brain +
- * onboarding personas.
- */
 export const TOOL_QUALIFICATION_NOTE = (server: string): string =>
   `Every host tool MUST be called by its FULLY-QUALIFIED "mcp__<server>__<tool>" name exactly as listed ` +
   `below — that is the ONLY name that works; the bare name (e.g. \`submit_plan\`) is not a registered tool ` +
@@ -417,22 +232,11 @@ export const TOOL_QUALIFICATION_NOTE = (server: string): string =>
   `tools (secrets, mounts, setup script, MCP/skill/house-style proposals) are on a separate ` +
   `"workspace-profile" server — call them with the "mcp__workspace-profile__" prefix shown below.`;
 
-/**
- * SCRATCH SPACE — where throwaway work goes so it never pollutes the diff/PR. Shared by the worker execute
- * prompts. `/playground` is durable across container restarts; `/workspace` is the diff, `/tmp` is wiped.
- * (Promoted here from a worker.body-local const so it's a first-class catalog block.)
- */
 export const PLAYGROUND_NOTE =
   'SCRATCH SPACE: for any THROWAWAY work — probe/spike scripts, one-off verification harnesses, ad-hoc ' +
   'installs — write to the durable `/playground` dir OUTSIDE the worktree, never into /workspace (which ' +
   'pollutes the diff/PR) or /tmp (wiped on restart). Nothing in /playground is ever committed.';
 
-/**
- * PUBLIC PREVIEW URLS — how a ported service becomes a public preview URL and the deterministic-URL /
- * write-env-first / bind-0.0.0.0 ordering that must precede a live test. The single source of truth for the
- * exposure procedure: the build brain shows it directly (`SandboxGroup.publicExposure`), and onboarding
- * reuses it verbatim as the head of its LIVE-SERVICE ACCESSIBILITY guidance so both teach the SAME ordering.
- */
 export const PUBLIC_EXPOSURE_NOTE = [
   'PUBLIC PREVIEW URLS: a supervised service started with a port is INTERNAL (sandbox-only) by default. To',
   'expose it on the public internet so the operator can test your branch live, add `--expose`: start it as',
@@ -462,13 +266,6 @@ export const PUBLIC_EXPOSURE_NOTE = [
   'start/end alphanumeric, max 52 chars (`web`, `api`, `admin-ui`).',
 ].join('\n');
 
-/**
- * PREVIEW PREP SEED — the on-demand body injected as a `SYSTEM_SEED_AUTHOR` seed turn when the operator taps
- * "Spin up preview" at the ship gate (see `WebSurfaceController.spinUpPreview`). This is the full demo-ready
- * preview procedure, RELOCATED out of the always-loaded build-brain system prompt (it used to standing-bloat
- * every turn as `SandboxGroup.livePreviewAtShipGate`) so it is delivered only when actually requested. It
- * leans on {@link PUBLIC_EXPOSURE_NOTE} (still in the system prompt) for the exact exposure ordering.
- */
 export const PREVIEW_PREP_SEED_BODY = [
   'The operator tapped "Spin up preview" at the ship gate. Stand up the JUST-BUILT change and expose it',
   'publicly so they can test it live — demo-ready — then hand over the URL. Assume previews are enabled (if',
@@ -499,13 +296,10 @@ export const PREVIEW_PREP_SEED_BODY = [
 
 const PREVIEW_RECIPE_NONE = '(no preview recipe saved yet)';
 
-/** The fenced-markdown rendering of a recipe body, shared by the operator seed and the build-lane view. */
 export function fencedRecipe(recipeBody: string): string {
   return '```md\n' + recipeBody + (recipeBody.endsWith('\n') ? '' : '\n') + '```';
 }
 
-/** The one rule that keeps the recipe reusable: it is REPO-scoped, job-agnostic memory, not a log of this
- *  run. Spliced into both footer branches of {@link composePreviewPrepSeed}. */
 const PREVIEW_RECIPE_JOB_AGNOSTIC_NOTE =
   'The recipe is REPO-scoped, JOB-AGNOSTIC memory that ANY future job on this repo reuses — NOT a log of ' +
   'this run: capture only the repeatable stand-up procedure, and STRIP everything specific to the change ' +
@@ -513,9 +307,6 @@ const PREVIEW_RECIPE_JOB_AGNOSTIC_NOTE =
   '"verified for <feature>" note). For the deep-link, record HOW to build one into the area under test, ' +
   'not the literal URL for this feature.';
 
-/** Compose the Spin-up-preview seed: the standing procedure, then the Atlas-managed recipe as a
- *  fenced block, then an Atlas-facing footer that (empty) nudges saving one or (present) nudges updating a
- *  stale one — the "stop re-discovering" memory loop (d4). */
 export function composePreviewPrepSeed(instructions: string | null): string {
   const recipe = instructions?.trim() ? instructions : null;
   const recipeBody = recipe ?? PREVIEW_RECIPE_NONE;
@@ -538,8 +329,6 @@ export function composePreviewPrepSeed(instructions: string | null): string {
   return [PREVIEW_PREP_SEED_BODY, '', block, '', footer].join('\n');
 }
 
-/** Build-lane READ-ONLY view of the saved recipe (the brain owns writes). '' when none, so a gating
- *  fragment drops entirely. Same fenced formatting as the operator seed. */
 export function renderBuildLanePreviewRecipe(instructions: string | null): string {
   const recipe = instructions?.trim() ? instructions : null;
   if (!recipe) return '';
@@ -553,14 +342,7 @@ export function renderBuildLanePreviewRecipe(instructions: string | null): strin
   ].join('\n');
 }
 
-// ── BEHAVIORAL (the three asks) ─────────────────────────────────────────────────────────────────────
-// Spliced in by the brain's `behavioral.group` tail and by the worker group.
 
-/**
- * VALIDATE BY RUNNING — for workers/ship. Typecheck/build/test is the floor, not the finish line; when a
- * change affects runtime behavior, actually run the thing and exercise it before claiming done. Reuses
- * the real in-sandbox `atlas-svc` supervisor (durable, survives the turn) + the `/playground` scratch pad.
- */
 export const VALIDATE_BY_RUNNING_NOTE =
   'VALIDATE BY RUNNING — your typecheck/build/test VERIFY step is the FLOOR, not the finish line. WHEN ' +
   'your change affects runtime behavior (an endpoint, a UI, a CLI, a job, a script), do not stop at a ' +
@@ -571,16 +353,6 @@ export const VALIDATE_BY_RUNNING_NOTE =
   'is internal plumbing whose effect is never echoed in an HTTP/UI/CLI surface (e.g. an option/value handed ' +
   'to an SDK), instead capture a log line from the booted process proving the changed value was passed at runtime.';
 
-/**
- * RUNNABLE WORKSPACE IS THE HAPPY PATH — for every build-touching lane (worker orchestrator, brain, master
- * review). The environment-side twin of VALIDATE_BY_RUNNING: that note says "actually run it," this one
- * says "a not-yet-runnable environment is a problem you FIX or ASK about, never a licence to skip." Encodes
- * decision d1 (operator-confirmed): treat a set-up, runnable repo as the EXPECTED default; verification is a
- * hard requirement. Lane-agnostic on purpose — the brain provisions via the workspace-profile tools, a build
- * thread self-serves a genuinely-missing secret/file via `request_secret`/`request_file` (and simply ends its
- * turn without `complete_thread` if something only Atlas can provision is truly missing); the STANCE is
- * shared. The named failure ("secret-gated" server whose key was present) is the real reported incident.
- */
 export const RUNNABLE_WORKSPACE_NOTE =
   'A RUNNABLE WORKSPACE IS THE HAPPY PATH — a correctly-set-up, runnable repo is the EXPECTED default, not a ' +
   'hope, and VERIFYING your work is a hard requirement, not a courtesy. So when you cannot run or verify ' +
@@ -601,17 +373,6 @@ export const RUNNABLE_WORKSPACE_NOTE =
   'GENUINELY impossible in this Linux sandbox (device hardware, a Windows-only GUI) — and then SAY SO ' +
   'explicitly; never silently report done on work you did not actually run.';
 
-/**
- * EVIDENCE ARTIFACTS — the human-facing PROOF that live-validation actually happened. Shared by the build
- * agents that own capture (EVIDENCE_OWNERS = the WORKER orchestrator + the `validate` subagent). Complements
- * {@link VALIDATE_BY_RUNNING_NOTE} (which says "actually run it"): this says "and leave the proof on disk."
- * Live-run evidence goes under `$ATLAS_EVIDENCE_DIR` (surfaced in the web's EVIDENCE panel); `/context/artifacts/`
- * is reserved for human-facing DELIVERABLES (mockups, reports), and `specs/` + `generated/` stay read-only
- * grounding. The panel lists the evidence folder and renders logs/markdown as text and screenshots (PNG/JPG)
- * inline — so what you write here is exactly what the operator sees as evidence the app runs.
- * NOTE: this is prompt-level discipline, not a mount guarantee — write live-run evidence ONLY under
- * `$ATLAS_EVIDENCE_DIR`.
- */
 export const EVIDENCE_ARTIFACTS_NOTE =
   'CAPTURE EVIDENCE ARTIFACTS — once you have live-validated (see VALIDATE BY RUNNING), leave the PROOF on ' +
   "disk under `$ATLAS_EVIDENCE_DIR` (this turn's own evidence folder; falls back to `/context/evidence` if " +
@@ -643,13 +404,6 @@ export const EVIDENCE_ARTIFACTS_NOTE =
   'is prompt-level discipline, not a mount guarantee — route live-run evidence under `$ATLAS_EVIDENCE_DIR`, and ' +
   'keep `/context/artifacts/` for human deliverables.';
 
-/**
- * SPIKE FIRST — for planning + workers. Prove a risky/unverified assumption (especially an SDK or library
- * capability) with a tiny throwaway spike BEFORE committing to a plan that rests on it. Covers BOTH
- * directions of a capability claim: building ON one you assume works, AND ruling OUT a path because you
- * assume it "can't be done" — the negative claim is the more dangerous one, since it silently steers the
- * design toward a workaround and never trips the "before you build on it" guardrails.
- */
 export const SPIKE_FIRST_NOTE =
   'SPIKE BEFORE YOU COMMIT to an approach that rests on an UNVERIFIED assumption — above all a claim about ' +
   'what an SDK, library, API, or tool can actually do ("does X support Y?", "can this be called ' +
@@ -664,10 +418,6 @@ export const SPIKE_FIRST_NOTE =
   'to prove the assumption first. A five-minute spike beats a derailed plan. Keep spikes in throwaway ' +
   'scratch space; never commit them.';
 
-/**
- * BASELINE FIRST — for planning. Reproduce and observe the CURRENT behavior of the thing you're about to
- * change, so "before" is known and "after" is provable (the way an engineer reproduces an issue first).
- */
 export const BASELINE_FIRST_NOTE =
   'BASELINE THE CURRENT BEHAVIOR before you change it. WHEN the work modifies something that already ' +
   'exists, first reproduce and OBSERVE how it behaves today — this is READ-ONLY observation of existing ' +
@@ -679,21 +429,9 @@ export const BASELINE_FIRST_NOTE =
   'misunderstanding early instead of building against an imagined baseline. If the thing does not exist ' +
   'yet (or you cannot reproduce the reported bug), say so plainly rather than guessing.';
 
-/**
- * The canonical prohibition list — the labels a live-validation step must NEVER be tagged with. Shared so the
- * near-verbatim list lives ONCE: the brain-authoring note ({@link AUTHOR_LIVE_VALIDATION_NOTE}) and the plan.md
- * structure fragment (`planning.group` `planMdStructure`) both splice it after their own verb ("mark it …" /
- * "be marked …"). A bare noun-phrase so it slots into either grammar unchanged.
- */
 export const LIVE_VALIDATION_NOT_OPTIONAL_NOTE =
   '"optional", "nice to have", "smoke (optional)", or "if time permits"';
 
-/**
- * AUTHOR LIVE VALIDATION — for the BRAIN. The brain-authoring twin of {@link VALIDATE_BY_RUNNING_NOTE}
- * (which tells the WORKER to run it): this tells the brain, when it AUTHORS a plan's `## Validation` and
- * when it builds directly (FAST PATH), that live-running is the proof and is never optional. Kept a DISTINCT
- * const from VALIDATE_BY_RUNNING_NOTE so the brain-vs-worker fragment split stays assertable.
- */
 export const AUTHOR_LIVE_VALIDATION_NOTE =
   'PROVE IT BY RUNNING IT — Atlas knows work is done because it SAW it run, not because the build was green. ' +
   'When a change has ANY runtime surface (an endpoint, a UI, a CLI, a job, a script), the proof is actually ' +
@@ -711,13 +449,6 @@ export const AUTHOR_LIVE_VALIDATION_NOTE =
   '; and on a DIRECT build you run yourself, live-validate before you finalize. The only work that validates by ' +
   'tests alone is work with genuinely no runtime surface — and then say that is why.';
 
-/**
- * CANDOR — the calibrated-adviser stance for the brain's conversation with the operator. Complements the
- * VERIFY-side candor already spread across the prompts (VERIFY_CURRENCY = verify even the operator's factual
- * claims; grillDomain's CROSS-REFERENCE WITH CODE = surface contradictions) by adding the missing DIRECTION
- * candor: disagree with the operator's chosen course when you judge it wrong, don't just verify their facts.
- * Distinct from RECOMMEND ≠ DECIDE (conversation.group), which governs not-deciding-FOR the operator.
- */
 export const CANDOR_NOTE =
   "BE A CALIBRATED ADVISER, NOT A SYCOPHANT: you serve the operator's best OUTCOME, not their momentary " +
   'agreement. When you judge their direction, premise, or a decision to be wrong, risky, or weaker than an ' +
@@ -728,14 +459,6 @@ export const CANDOR_NOTE =
   'Candor is not contrarianism — agree when the operator is right, keep it respectful and specific, and ' +
   'once you have aired the disagreement and the operator makes the call, execute their decision.';
 
-/**
- * DIAGRAMS ARE MERMAID, NEVER ASCII ART — the universal MEDIUM rule for any diagram a brain emits. The
- * operator console renders ```mermaid fences as real, theme-matched diagrams live in the CONVERSATION
- * (web/src/features/job-workspace/markdown.tsx) as well as in the specs + approval card, so an ASCII
- * box-drawing is never the right call. Complements planning.group's DIAGRAMS (which teaches which diagram
- * TYPE to use, and to lean on them, when AUTHORING a plan) — this note governs the FORMAT everywhere,
- * including an ordinary conversational reply, which the plan-scoped DIAGRAMS fragment never covers.
- */
 export const DIAGRAM_FORMAT_NOTE =
   'DIAGRAMS ARE MERMAID, NEVER ASCII ART: whenever you present a diagram — a box-and-arrow topology, a ' +
   'flow, a sequence, a state machine, an entity sketch — put it in a ```mermaid fenced block, in a plain ' +

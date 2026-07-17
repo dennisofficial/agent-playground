@@ -1,10 +1,6 @@
 import { Table, View } from 'typeorm';
 import { SnakeNamingStrategy } from 'typeorm-naming-strategies';
 
-/**
- * Snake-case naming + meaningful constraint/index names (pk_*, fk_*, uq_*, idx_*, …) for easier
- * schema debugging. House standard, copied from rs-crm-app/cubix-infra/mls-studio.
- */
 export class CustomNamingStrategy extends SnakeNamingStrategy {
   getTableName(tableOrName: Table | View | string): string {
     return typeof tableOrName === 'string' ? tableOrName : tableOrName.name;

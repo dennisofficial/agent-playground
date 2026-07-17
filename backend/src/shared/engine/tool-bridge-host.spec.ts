@@ -93,7 +93,6 @@ describe('dispatchToolRequest — a thrown error is NEVER serialised as an empty
   it("is total against a bare thrown string (`throw ''`) → still non-empty", async () => {
     const bridge: ToolBridgeOptions = {
       jobId: 'j1',
-      // eslint-disable-next-line @typescript-eslint/only-throw-error
       tools: {
         get_pipeline_state: async () => {
           throw '';

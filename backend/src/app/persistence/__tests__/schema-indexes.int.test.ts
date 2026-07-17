@@ -1,16 +1,3 @@
-/**
- * Schema-index regression net (live Postgres). Of the four indexes 1783597139527-HaltOutcome dropped as
- * pure generator drift, two — the integrity index `uq_threads_job_parent_ordinal` and the pgvector HNSW
- * perf index `idx_memory_embedding_hnsw` — must exist after the full migration chain (the
- * RestoreDroppedIndexes heal migration recreates them). Fails loudly in CI if a future migration drops
- * one again. Also asserts uq_threads_job_parent_ordinal actually rejects a duplicate
- * `(job_id, parent_thread_id, ordinal)` — the NULLS NOT DISTINCT partial the generator can't express, so
- * only a functional check proves it is really there.
- *
- * The other two — `uq_threads_ticket_id` and `idx_tickets_embedding_hnsw` — belonged to the native ticket
- * system; the DropTickets migration removes them (and the `tickets` table) for good, so this net now
- * asserts their ABSENCE instead.
- */
 
 import { Test, type TestingModule } from '@nestjs/testing';
 import { TypeOrmModule, getDataSourceToken } from '@nestjs/typeorm';
@@ -129,7 +116,6 @@ describe('restored schema indexes (live Postgres)', () => {
       );
 
     await insertThread();
-    // NULLS NOT DISTINCT: a second (job_id, NULL parent, ordinal) row must collide.
     await expect(insertThread()).rejects.toThrow();
   });
 
@@ -151,7 +137,6 @@ describe('restored schema indexes (live Postgres)', () => {
       [ORG_ID, repoId],
     );
     const jobId = jobRows[0].id as string;
-    // Two plan revisions (decision records) for the same job.
     const recRows = await ds.query(
       `INSERT INTO decision_records (org_id, repo_id, job_id, overview)
        VALUES ($1, $2, $3, 'rev one'), ($1, $2, $3, 'rev two') RETURNING id`,
@@ -175,7 +160,6 @@ describe('restored schema indexes (live Postgres)', () => {
          VALUES ($1, $2, $3, 'builder', 10, 'lane', NULL)`,
         [jobId, ORG_ID, threadGroupId],
       );
-    // `decision_record_id` now lives on thread_groups, not threads, so root thread ordinals are job-global.
     await insertAt10(threadGroupA);
     await expect(insertAt10(threadGroupB)).rejects.toThrow();
   });

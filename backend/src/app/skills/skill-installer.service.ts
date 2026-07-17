@@ -11,43 +11,26 @@ import { parseSkillFrontmatter } from './skill-frontmatter';
 import { skillDirHost } from './skill-store-paths';
 import { type SkillView, WorkspaceSkillStore } from './workspace-skill.store';
 
-/** One `.claude-plugin/marketplace.json` — see `anthropics/skills` and the operator's
- *  `context-engineering-collection` for real examples. `skills` is usually an explicit list, but the plugin
- *  spec also allows omitting it entirely and letting consumers scan the plugin's `skills/` subdir (see
- *  `pluginSkillRels`). Only the fields the installer reads; the rest (owner/metadata/strict…) are ignored. */
 interface MarketplaceManifest {
   plugins?: Array<{ source?: string; skills?: string[] }>;
 }
 
 export interface SkillInstallInput {
   orgId: string;
-  /** DB scope — `'*'` (org-wide) or a repo id. Already resolved/validated by the caller (the controller). */
   scope: string;
   sourceUrl: string;
-  /** Branch/tag to install. Omitted → the remote's default branch. */
   ref?: string;
-  /** Subpath within the repo — a single skill dir, OR a dir containing `.claude-plugin/marketplace.json`. */
   subpath?: string;
   updatePolicy?: SkillUpdatePolicy;
   surfaces?: McpSurface[];
 }
 
-/** One row of a {@link SkillInstallerService.preview} dry-run — the REAL name/description that would be
- *  vendored (resolved from the source SKILL.md frontmatter, not a caller guess) + whether it would
- *  overwrite an existing skill of the same name in the target scope. */
 export interface SkillPreviewRow {
   name: string;
   description: string;
   overwrites: boolean;
 }
 
-/**
- * Installs skills from a git repo into the central host skills store (§3 of the skills-redesign plan).
- * Shallow-clones `sourceUrl@ref` to a scratch temp dir, vendors (copies — never a submodule) either ONE
- * skill dir or, for a marketplace repo, every skill dir its manifest lists, and upserts a `workspace_skills`
- * registry row per skill with `provenance:'git'` + the source/sha it landed on. Reused unchanged by
- * `SkillUpdaterService` for re-vendoring on update.
- */
 @Injectable()
 export class SkillInstallerService {
   private readonly logger = new Logger(SkillInstallerService.name);
@@ -63,7 +46,6 @@ export class SkillInstallerService {
     return this.env.get('SKILLS_ROOT');
   }
 
-  /** Install (or re-install, on update) `input.sourceUrl` — returns every vendored skill's registry row. */
   async install(input: SkillInstallInput): Promise<SkillView[]> {
     const token = await this.resolveToken(input.sourceUrl, input.orgId);
     const { ref, sha } = await this.git.resolveRemoteRef(input.sourceUrl, input.ref, token);
@@ -80,12 +62,6 @@ export class SkillInstallerService {
 
       const manifestPath = join(root, '.claude-plugin', 'marketplace.json');
       if (existsSync(manifestPath)) {
-        // MUST be `await`ed here — a bare `return this.installMarketplace(...)` inside this try/finally
-        // returns the pending promise WITHOUT waiting on it, so the `finally` below starts deleting
-        // `tmpDir` while the expansion loop below is still reading skill dirs out of it. With a slow
-        // enough per-skill DB round trip (real Postgres, not a test's in-memory fake) the cleanup wins
-        // the race and every skill after the first reports "no SKILL.md" — exactly what happened
-        // installing the real `anthropics/skills` marketplace (17 skills in the manifest, 1 vendored).
         return await this.installMarketplace(input, tmpDir, root, manifestPath, ref, sha);
       }
       if (!existsSync(join(root, 'SKILL.md'))) {
@@ -103,13 +79,6 @@ export class SkillInstallerService {
     }
   }
 
-  /**
-   * Read-only dry-run of a SINGLE-skill install — clones, reads the source `SKILL.md` frontmatter for the
-   * REAL name + description that `install` would vendor, and checks whether that name already exists in the
-   * target scope (would be overwritten). Rejects a marketplace-root subpath: the brain's
-   * `propose_skill_install` is single-skill only, so the owner's approve card is exactly 1:1 with what
-   * lands. Whole-marketplace installs stay on the owner-console `POST /skills/install` path. Writes nothing.
-   */
   async preview(input: SkillInstallInput): Promise<SkillPreviewRow[]> {
     const token = await this.resolveToken(input.sourceUrl, input.orgId);
     const { ref } = await this.git.resolveRemoteRef(input.sourceUrl, input.ref, token);
@@ -147,7 +116,6 @@ export class SkillInstallerService {
     }
   }
 
-  /** Expand a marketplace repo's `plugins[].skills[]` into one vendored skill dir + row per entry. */
   private async installMarketplace(
     input: SkillInstallInput,
     cloneRoot: string,
@@ -166,8 +134,6 @@ export class SkillInstallerService {
           this.logger.warn(`marketplace ${input.sourceUrl}: skipping '${skillRel}' — no SKILL.md`);
           continue;
         }
-        // Store the subpath relative to the CLONE ROOT (not the marketplace root) so a re-install with the
-        // same `input.subpath` finds the manifest again, and the updater's re-expand walks the same tree.
         const subpath = relative(cloneRoot, skillDir);
         results.push(await this.vendorSkill(input, skillDir, ref, sha, subpath));
       }
@@ -180,7 +146,6 @@ export class SkillInstallerService {
     return results;
   }
 
-  /** Copy one skill dir into the central store + upsert its registry row. Overwrites any prior copy. */
   private async vendorSkill(
     input: SkillInstallInput,
     srcDir: string,
@@ -221,15 +186,12 @@ export class SkillInstallerService {
     return view;
   }
 
-  /** Anonymous for public repos / non-GitHub remotes; the org's PAT for private GitHub repos. */
   private async resolveToken(sourceUrl: string, orgId: string): Promise<string | undefined> {
     if (!sourceUrl.startsWith('https://github.com/')) return undefined;
     return this.creds.hostGithubToken(orgId);
   }
 }
 
-/** Never let a derived name (frontmatter or dir-basename, both untrusted repo content) escape the store's
- *  path segment or collide with the registry's PK shape. */
 function sanitizeName(name: string): string {
   return (
     name
@@ -239,13 +201,6 @@ function sanitizeName(name: string): string {
   );
 }
 
-/**
- * A plugin's skill paths (relative to `pluginDir`), covering both real-world marketplace shapes: an
- * explicit `skills: ["./skills/foo", …]` list (`anthropics/skills`, `context-engineering-collection`), or
- * — when a plugin omits `skills` entirely — the plugin-spec convention of a `skills/` subdir where every
- * child directory containing a `SKILL.md` IS a skill (github.com/anthropics/claude-code plugin marketplace
- * spec). A present-but-empty `skills: []` is treated as "none" (explicit opt-out), not a signal to scan.
- */
 function pluginSkillRels(plugin: { skills?: string[] }, pluginDir: string): string[] {
   if (plugin.skills && plugin.skills.length > 0) return plugin.skills;
   const skillsDir = join(pluginDir, 'skills');

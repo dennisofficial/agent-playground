@@ -1,13 +1,3 @@
-/**
- * LIVE HTTP proof that `GET …/jobs/:jobId/messages` surfaces a spawned subagent's AUTHORITATIVE status on
- * its anchor (Task launching) message — the field the web keys the durable subagent card's running/done off
- * (instead of the launch-ack `meta.result`, which reads "done" while a backgrounded subagent still works).
- *
- * Boots a REAL Nest HTTP app (supertest, real listening socket) with every collaborator auto-mocked; the
- * `messages` + `subagents` repos are stubbed to return a fixed anchor+child transcript and a subagent row, so
- * the assertion is purely on the controller's JOIN + payload mapping. Integration tier (`*.int.test.ts`)
- * because it boots a real app; needs no Postgres of its own.
- */
 import type { ExecutionContext } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
@@ -26,7 +16,6 @@ const ENDED_AT = new Date('2026-07-16T12:00:00.000Z');
 
 let app: import('@nestjs/common').INestApplication;
 let server: ReturnType<import('@nestjs/common').INestApplication['getHttpServer']>;
-/** Mutable so each test seeds the subagent row it wants (status/ended_at). */
 let subagentRows: Array<{
   parent_message_id: string;
   thread_id: string;
@@ -34,7 +23,6 @@ let subagentRows: Array<{
   ended_at: Date | null;
 }> = [];
 
-// A minimal transcript: the Task-anchor tool message (its `meta.result` is the launch ack) + one child block.
 const anchorRow = {
   id: ANCHOR_ID,
   thread_id: JOB_ID,
@@ -123,7 +111,6 @@ describe('GET .../messages — authoritative subagent status on the anchor (LIVE
     console.log('anchor payload:', JSON.stringify(anchor));
     expect(anchor.subagentStatus).toBe('running');
     expect(anchor.subagentEndedAt).toBeNull();
-    // The child (non-anchor) message must NOT carry the field.
     const child = (res.body as Array<Record<string, unknown>>).find((m) => m.id === 'msg-child')!;
     expect('subagentStatus' in child).toBe(false);
   });

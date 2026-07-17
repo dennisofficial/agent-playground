@@ -3,26 +3,16 @@ import { join } from 'node:path';
 import type { MountMode, MountSpec } from '../sandbox/container-paths';
 import { isExternalMountPath, isReservedMountPath } from '../sandbox/container-paths';
 
-/**
- * The shape of a legacy committed `atlas.json` (repo root) or its predecessor `.atlas/worktree.json`.
- * Workspace config (mounts) now lives in the DB (see `WorkspaceConfigStore`) — this parser exists ONLY to
- * import an already-onboarded repo's committed file, once, into the DB (see
- * `WorkspaceConfigStore.importLegacyIfEmpty`). It is NOT part of the live hydration path. A legacy file's
- * `seed` array (a removed feature) is ignored.
- */
 export interface WorktreeManifest {
   mounts: MountSpec[];
 }
 
 export interface LoadedManifest {
   manifest: WorktreeManifest;
-  /** Non-fatal problems (bad/over-limit entries dropped) — surfaced by the caller as warnings. */
   warnings: string[];
 }
 
-/** Legacy manifest location (repo root). */
 const MANIFEST_REL = 'atlas.json';
-/** Older legacy location — read as a fallback for repos onboarded before the atlas.json rename. */
 const LEGACY_MANIFEST_REL = join('.atlas', 'worktree.json');
 const MAX_BYTES = 64 * 1024;
 const MAX_ENTRIES = 100; // per array
@@ -30,14 +20,6 @@ const MAX_PATH_LEN = 512;
 
 const EMPTY: WorktreeManifest = { mounts: [] };
 
-/**
- * Load + validate a repo's committed legacy manifest file (`atlas.json`, falling back to the older
- * `.atlas/worktree.json`) from a worktree. The file is attacker-controllable (any org member can commit
- * it), so this enforces size + count + field-length limits and drops malformed entries (never throws on
- * bad content — a broken file must not break the one-time import; it just imports nothing). Path SAFETY
- * (traversal/symlink) is enforced separately by `worktree-path-guard` at use time; this only does
- * shape/limit validation.
- */
 export function loadLegacyManifestFile(worktreePath: string): LoadedManifest {
   const current = join(worktreePath, MANIFEST_REL);
   const file = existsSync(current) ? current : join(worktreePath, LEGACY_MANIFEST_REL);
@@ -100,18 +82,12 @@ function parseMounts(v: unknown, warnings: string[]): MountSpec[] {
       warnings.push('legacy worktree manifest: dropped invalid mounts[] entry');
       continue;
     }
-    // A legacy manifest is a REPO-COMMITTED (attacker-influenceable) file — it must NOT gain the power to
-    // mount an absolute/EXTERNAL container path (that power is reserved for Atlas's validated
-    // `write_workspace_config` calls). Drop any absolute mount here; legacy import stays worktree-relative.
     if (isExternalMountPath(o.path)) {
       warnings.push(
         `legacy worktree manifest: mounts[] entry "${o.path}" is an absolute (external) path — not allowed from a committed file, ignored`,
       );
       continue;
     }
-    // Reserved paths (e.g. `.pnpm-store`) are bound by the system itself under /workspace; importing a
-    // manifest mount at the same target would collide → Docker "Duplicate mount point". Drop it here so
-    // a bad legacy manifest can't hard-fail the import.
     if (isReservedMountPath(o.path)) {
       warnings.push(
         `legacy worktree manifest: mounts[] entry "${o.path}" is auto-managed by the system — ignored`,

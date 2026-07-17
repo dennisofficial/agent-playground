@@ -2,7 +2,6 @@ import { ForbiddenException, type ExecutionContext } from '@nestjs/common';
 import { describe, expect, it } from 'vitest';
 import { OrgOwnerGuard } from '../org-owner.guard';
 
-/** A minimal ExecutionContext whose HTTP request carries the given `org` context. */
 function ctxWithOrg(org: { id: string; role: string } | undefined): ExecutionContext {
   return {
     switchToHttp: () => ({ getRequest: () => ({ org }) }),

@@ -9,8 +9,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DUMP_SUBDIR, DUMP_THRESHOLD_BYTES } from '../mcp-hub-dump';
 import { Hub } from '../mcp-hub-server';
 
-/** Grab a free loopback port by briefly binding to port 0, then releasing it — `Hub.listen()` takes a
- *  fixed port rather than returning the one it bound, so tests need to pick one up front. */
 function findFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const probe = createServer();

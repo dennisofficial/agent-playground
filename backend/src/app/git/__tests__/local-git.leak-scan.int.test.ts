@@ -10,14 +10,6 @@ import { LocalGitService } from '../local-git.service';
 
 const execFileAsync = promisify(execFile);
 
-/**
- * Real-git verification of the worktree-secret guards in {@link LocalGitService}: `isIgnored` against a real
- * `.gitignore`, and the PRE-SHIP {@link LocalGitService.scanBranchForForbidden} branch scan that hard-blocks
- * a ship when a hydrated secret was committed ANYWHERE on the branch — even if it was added then deleted
- * before HEAD (the reason it scans every commit, not the net `base..HEAD` diff). The leak-scan used to live
- * inside `commitAll`; with writers owning their own commits it moved to this host-side pre-ship gate. Uses a
- * throwaway local repo (no network, no Postgres, no Docker).
- */
 describe('LocalGitService — gitignore + pre-ship leak-scan (real git)', () => {
   let repo: string;
   let stateDir: string;
@@ -61,7 +53,6 @@ describe('LocalGitService — gitignore + pre-ship leak-scan (real git)', () => 
 
   it('scanBranchForForbidden flags a forbidden file force-committed on the branch', async () => {
     await writeForbiddenPaths(repo, ['.env.keys']);
-    // A writer force-commits the ignored secret onto the feature branch.
     writeFileSync(join(repo, '.env.keys'), 'SECRET=1');
     await g(['add', '-f', '.env.keys']);
     await g(['commit', '-qm', 'sneak in a secret']);
@@ -71,8 +62,6 @@ describe('LocalGitService — gitignore + pre-ship leak-scan (real git)', () => 
 
   it('catches a secret ADDED then DELETED in a later commit (per-commit, not the net diff)', async () => {
     await writeForbiddenPaths(repo, ['.env.keys']);
-    // Commit 1: add the secret. Commit 2: delete it. The NET base..HEAD diff shows nothing — but the
-    // per-commit scan must still catch that it existed on the branch history.
     writeFileSync(join(repo, '.env.keys'), 'SECRET=1');
     await g(['add', '-f', '.env.keys']);
     await g(['commit', '-qm', 'add secret']);
@@ -80,7 +69,6 @@ describe('LocalGitService — gitignore + pre-ship leak-scan (real git)', () => 
     await g(['rm', '-q', '--cached', '.env.keys']);
     await g(['commit', '-qm', 'remove secret again']);
 
-    // Sanity: the net diff really does NOT list the file (proving the per-commit scan is load-bearing).
     const netDiff = await g(['diff', '--name-only', `${baseSha}..HEAD`]);
     expect(netDiff.stdout).not.toContain('.env.keys');
 
@@ -96,14 +84,12 @@ describe('LocalGitService — gitignore + pre-ship leak-scan (real git)', () => 
     await g(['commit', '-qm', 'add app']);
 
     expect(await git.scanBranchForForbidden(repo, baseSha)).toEqual([]);
-    // The secret must NOT be tracked.
     const tracked = await g(['ls-files']);
     expect(tracked.stdout).not.toContain('.env.keys');
     expect(tracked.stdout).toContain('src/app.ts');
   });
 
   it('returns [] when there is no hydration sidecar (nothing forbidden to scan for)', async () => {
-    // No writeForbiddenPaths → an empty forbidden set short-circuits to clean.
     writeFileSync(join(repo, '.env.keys'), 'SECRET=1');
     await g(['add', '-f', '.env.keys']);
     await g(['commit', '-qm', 'commit a would-be secret with no sidecar']);

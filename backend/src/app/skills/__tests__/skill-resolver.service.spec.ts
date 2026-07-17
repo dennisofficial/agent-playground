@@ -5,16 +5,10 @@ import type { WorkspaceSkillEntity } from '../../persistence/entities';
 import { SkillResolver } from '../skill-resolver.service';
 import { WorkspaceSkillStore } from '../workspace-skill.store';
 
-/** Minimal `EnvService` stub — none of these tests exercise `resolveReviewSkillsForThread`'s disk reads. */
 const fakeEnv = { get: () => undefined } as unknown as EnvService;
 
-// This file tests the ORG/REPO tier in isolation from whatever `system-skill-registry.ts` actually ships
-// (real content since P5+#14) — an empty system tier here, exactly like `skill-resolver.managed-tier.spec.ts`
-// stubs it for the OPPOSITE reason (to test the system tier's own precedence behavior). `vi.mock` is
-// hoisted above these imports by vitest.
 vi.mock('./system-skill-registry', () => ({ buildSystemSkills: () => [] }));
 
-/** Minimal in-memory repository (only the methods the store calls). */
 class FakeRepo {
   rows: WorkspaceSkillEntity[] = [];
   create(p: Partial<WorkspaceSkillEntity>): WorkspaceSkillEntity {
@@ -74,7 +68,6 @@ describe('SkillResolver.resolveForTurn', () => {
     const out = await resolver.resolveForTurn('org1', 'repo-1', 'build');
     expect(out).toHaveLength(1);
     expect(out[0].description).toBe('repo');
-    // repo-scoped → dirPath nests under repos/<repoId>/<name>, not the org-scoped `<name>` shape.
     expect(out[0].dirPath).toBe('repos/repo-1/migrations');
   });
 

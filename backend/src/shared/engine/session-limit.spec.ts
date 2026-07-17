@@ -25,8 +25,6 @@ describe('limitFromRateEvent', () => {
   });
 
   it('interprets the SDK epoch-SECONDS resetsAt as 2026, not 1970', () => {
-    // Real `rate_limit_event` frames carry `resetsAt` in epoch SECONDS (10-digit, e.g. 1783650000). A naive
-    // `new Date(seconds)` treats it as ms and lands in Jan 1970 — the bug this guards against.
     const seconds = 1783650000;
     const hit = limitFromRateEvent({
       status: 'rejected',

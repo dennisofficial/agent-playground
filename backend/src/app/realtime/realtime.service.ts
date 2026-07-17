@@ -20,25 +20,12 @@ import { THREADS_MODEL, type RealtimePrincipal } from './job-realtime.model';
 
 const PUBLICATION_NAME = 'pg_realtime_pub';
 
-/**
- * The in-process realtime engine (WAL → SSE). A logical replication slot is SINGLE-CONSUMER, so the
- * engine is a LEADER-ONLY duty: it starts on promotion and stops on demotion/drain, gated by
- * `LeaderElectionService`. The slot name is made UNIQUE PER INSTANCE (`<prefix>_<instanceId>`) so a
- * freshly-promoted leader never contends with a predecessor's slot during the brief deploy overlap; on
- * start it also sweeps inactive `<prefix>_*` slots left by a SIGKILLed predecessor to reclaim WAL.
- *
- * Realtime is core, not opt-in. The only exception is automated test runs (the `*_test` DB), where every
- * int-test would boot an engine and fight over a slot. FAIL-SOFT: if the engine can't start (e.g.
- * `wal_level` isn't `logical`), boot continues and the REST list endpoints still serve `needsYou`.
- */
 @Injectable()
 export class RealtimeService implements OnApplicationBootstrap, OnApplicationShutdown {
   private readonly logger = new Logger(RealtimeService.name);
   private engine: RealtimeEngine | null = null;
   private promoteSub?: Subscription;
   private demoteSub?: Subscription;
-  // Serializes start/stop so a rapid demote→promote (e.g. a TCP blip) can't run two engines against
-  // the same per-instance slot concurrently.
   private engineOp: Promise<void> = Promise.resolve();
 
   constructor(
@@ -61,18 +48,15 @@ export class RealtimeService implements OnApplicationBootstrap, OnApplicationShu
     await this.stopEngine();
   }
 
-  /** Whether live updates are available (engine started). */
   get available(): boolean {
     return this.engine !== null;
   }
 
-  /** Open a per-operator subscription over ALL their orgs' threads (the cross-org sidebar stream). */
   async openThreadSubscription(principal: RealtimePrincipal): Promise<SubscriptionImpl> {
     if (!this.engine) throw new ServiceUnavailableException('realtime unavailable');
     return this.engine.openSubscription({ model: 'jobs', user: principal });
   }
 
-  /** Open a per-operator subscription over their own composer drafts (cross-device draft sync). */
   async openDraftSubscription(principal: RealtimePrincipal): Promise<SubscriptionImpl> {
     if (!this.engine) throw new ServiceUnavailableException('realtime unavailable');
     return this.engine.openSubscription({
@@ -81,9 +65,7 @@ export class RealtimeService implements OnApplicationBootstrap, OnApplicationShu
     });
   }
 
-  // ── leader-gated lifecycle ──────────────────────────────────────────────────────────────────────
 
-  /** Serialized entry points — chained on `engineOp` so start/stop never overlap. */
   private startEngine(): Promise<void> {
     return (this.engineOp = this.engineOp.catch(() => undefined).then(() => this.doStartEngine()));
   }
@@ -120,18 +102,15 @@ export class RealtimeService implements OnApplicationBootstrap, OnApplicationShu
     const engine = this.engine;
     this.engine = null;
     if (engine) await engine.stop().catch(() => undefined);
-    // Best-effort: drop our own (now-inactive) slot so it doesn't pin WAL after demotion.
     await this.dropSlot(this.slotName()).catch(() => undefined);
   }
 
-  /** Per-instance replication slot, so leaders never share one during a deploy overlap. */
   private slotName(): string {
     const prefix = 'pg_realtime_slot';
     const suffix = this.election.instanceId.replace(/-/g, '').slice(0, 16);
     return `${prefix}_${suffix}`;
   }
 
-  /** Drop any INACTIVE `<prefix>_*` slots (orphans from a crashed predecessor) to reclaim WAL. */
   private async dropInactiveSlots(): Promise<void> {
     const prefix = 'pg_realtime_slot';
     await this.withClient(async (client) => {
@@ -172,7 +151,6 @@ export class RealtimeService implements OnApplicationBootstrap, OnApplicationShu
     }
   }
 
-  /** Bridge the engine's tiny logger interface to the Nest logger (kept quiet at debug). */
   private engineLogger(): RealtimeLogger {
     return {
       debug: (m) => this.logger.debug(m),

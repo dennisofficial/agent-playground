@@ -1,14 +1,3 @@
-/**
- * Cross-tenant isolation for `MemoryStore` (live Postgres). The shared/global memory tier
- * (`org_id IS NULL`, "recalled everywhere") was removed: recall filters strictly on `org_id = :team`
- * with no NULL fall-through, and `memory.org_id` is NOT NULL at the DB. This proves the tenant
- * boundary functionally — the SAME fact stored under two orgs in the SAME scope is only ever recalled
- * by its owning org, never leaked across the tenant boundary.
- *
- * Embeddings are faked deterministically (identical text → identical unit vector), so the test is
- * hermetic — no OpenAI key, no network. The old "global tier" is proven gone structurally by the
- * NOT NULL migration + the removal of `OR org_id IS NULL`; this covers the runtime filter.
- */
 
 import { Test, type TestingModule } from '@nestjs/testing';
 import { TypeOrmModule, getDataSourceToken } from '@nestjs/typeorm';
@@ -28,7 +17,6 @@ const SHARED_SCOPE = 'team:cross-tenant-isolation';
 const MUTATION_SCOPE = 'team:forget-update-tests';
 const FACT = 'The deploy pipeline runs on GitHub Actions with a manual approval gate.';
 
-/** Deterministic embedder: identical text → identical unit vector (cosine 1 to itself). */
 class FakeEmbedder implements EmbeddingProvider {
   readonly model = EMBED_MODEL;
   async embed(text: string): Promise<number[]> {
@@ -105,7 +93,6 @@ describe('MemoryStore cross-tenant isolation (live Postgres)', () => {
   });
 
   it('recall returns only the querying tenant’s fact, never the other org’s identical fact', async () => {
-    // Same fact text, same scope, two different tenants.
     const a = await store.remember({
       fact: FACT,
       scope: SHARED_SCOPE,
@@ -118,7 +105,6 @@ describe('MemoryStore cross-tenant isolation (live Postgres)', () => {
     });
     expect(a.action).toBe('inserted');
     expect(b.action).toBe('inserted');
-    // Cross-org: no dedup merge — the two orgs hold distinct rows.
     expect(a.id).not.toBe(b.id);
 
     const hits = await store.recall(FACT, {
@@ -126,7 +112,6 @@ describe('MemoryStore cross-tenant isolation (live Postgres)', () => {
       orgId: ORG_A,
     });
 
-    // Exactly org A's row — org B's identical fact never fell through.
     expect(hits).toHaveLength(1);
     expect(hits[0].id).toBe(a.id);
     expect(hits.every((h) => h.org_id === ORG_A)).toBe(true);

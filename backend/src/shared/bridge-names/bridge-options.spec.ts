@@ -20,9 +20,6 @@ describe('bridge-options', () => {
       'get_pipeline_state',
     ]);
 
-    // Regression guard: the server must live under `mcpServers` keyed by the server name — NOT be
-    // spread as a top-level `extraClaudeOptions[BRIDGE_SERVER_NAME]` (the original bug), which the
-    // SDK would ignore so no orchestration tools ever register.
     expect(Object.keys(extraClaudeOptions)).toEqual(['mcpServers']);
     expect(extraClaudeOptions.mcpServers[BRIDGE_SERVER_NAME]).toBe(server);
     expect(extraClaudeOptions).not.toHaveProperty(BRIDGE_SERVER_NAME);

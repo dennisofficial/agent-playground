@@ -5,15 +5,12 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { LocalGitService, type ProjectRepo } from '../local-git.service';
 
-/** A stub EnvService returning the temp repos root. */
 function envStub(reposRoot: string) {
   return {
     get: (key: string) => (key === 'REPOS_ROOT' ? reposRoot : undefined),
   } as never;
 }
 
-/** Commit the worktree via raw git (the HOST no longer has a commit primitive — Atlas owns commits — so
- *  tests that need branch history make it directly). Returns the new HEAD sha. */
 function commit(worktree: string, msg: string): string {
   const env = {
     ...process.env,
@@ -29,7 +26,6 @@ function commit(worktree: string, msg: string): string {
   }).trim();
 }
 
-/** Make a bare "origin" repo with one commit on `main` — the clone source for the tests. */
 function makeOriginRepo(dir: string): string {
   const work = join(dir, 'origin-work');
   const bare = join(dir, 'origin.git');
@@ -45,7 +41,6 @@ function makeOriginRepo(dir: string): string {
   execFileSync('git', ['-C', work, 'add', '-A']);
   execFileSync('git', ['-C', work, 'commit', '-m', 'init'], { env });
   execFileSync('git', ['clone', '--bare', work, bare]);
-  // Point origin/HEAD at main so detectDefaultBranch resolves it.
   execFileSync('git', ['-C', bare, 'symbolic-ref', 'HEAD', 'refs/heads/main']);
   return bare;
 }
@@ -78,7 +73,6 @@ describe('LocalGitService (host git, daemon-free)', () => {
     const r1 = await repo();
     expect(existsSync(join(r1.repoPath, '.git'))).toBe(true);
     expect(r1.defaultBranch).toBe('main');
-    // Second ensureRepo must not re-clone (same path).
     const r2 = await repo();
     expect(r2.repoPath).toBe(r1.repoPath);
   });
@@ -88,7 +82,6 @@ describe('LocalGitService (host git, daemon-free)', () => {
     const sandbox = await svc.createFeatureSandbox(r, 'atlas/feature-x');
     expect(existsSync(sandbox.worktreePath)).toBe(true);
     expect(sandbox.branch).toBe('atlas/feature-x');
-    // The checked-out branch is the feature branch.
     const head = execFileSync(
       'git',
       ['-C', sandbox.worktreePath, 'rev-parse', '--abbrev-ref', 'HEAD'],
@@ -103,12 +96,10 @@ describe('LocalGitService (host git, daemon-free)', () => {
     const r = await repo();
     const sandbox = await svc.createFeatureSandbox(r, 'atlas/feature-x');
     expect(await svc.currentBranch(sandbox.worktreePath)).toBe('atlas/feature-x');
-    // A rename (what the in-sandbox agent might do) is observed as the new branch.
     execFileSync('git', ['-C', sandbox.worktreePath, 'checkout', '-b', 'feat/renamed'], {
       encoding: 'utf8',
     });
     expect(await svc.currentBranch(sandbox.worktreePath)).toBe('feat/renamed');
-    // Detached HEAD → `git branch --show-current` prints empty → null (don't clobber last-known).
     execFileSync('git', ['-C', sandbox.worktreePath, 'checkout', '--detach', 'HEAD'], {
       encoding: 'utf8',
     });
@@ -138,7 +129,6 @@ describe('LocalGitService (host git, daemon-free)', () => {
     writeFileSync(join(sandbox.worktreePath, 'GATE.md'), 'gate\n');
     commit(sandbox.worktreePath, 'feat: gate');
     await svc.push(sandbox);
-    // The bare origin now has the feature branch.
     const branches = execFileSync('git', ['-C', originUrl, 'branch', '--list', 'atlas/feature-x'], {
       encoding: 'utf8',
     }).trim();
@@ -149,8 +139,6 @@ describe('LocalGitService (host git, daemon-free)', () => {
     expect(svc.reposRoot()).toContain('repos');
   });
 
-  // ── worktreeSafeToRecut — the hard-reset guard: is it safe to delete + re-cut this worktree without
-  // losing committed work? Linked worktree = always (shared common dir); full clone = only if pushed. ───
   describe('worktreeSafeToRecut', () => {
     it('a LINKED worktree is always safe — its objects survive in the shared common dir', async () => {
       const r = await repo();
@@ -178,9 +166,6 @@ describe('LocalGitService (host git, daemon-free)', () => {
     });
   });
 
-  // Regression: a stray/concurrent external git process (e.g. the sandbox's own engine turn) can hold the
-  // worktree's OS-level index.lock. The in-process mutex can't see it — `git()` must retry past it instead
-  // of failing the whole build (this is the "index.lock: File exists" error surfaced to the operator).
   it('retries past a transient index.lock held by another process', async () => {
     const r = await repo();
     const sandbox = await svc.createFeatureSandbox(r, 'atlas/feature-x');
@@ -193,14 +178,10 @@ describe('LocalGitService (host git, daemon-free)', () => {
     writeFileSync(lockPath, ''); // simulate another process mid-write
     setTimeout(() => rmSync(lockPath, { force: true }), 400); // released before retries exhaust
 
-    // `switchBranch` runs `git checkout -b …` through `svc.git()`, which takes the index.lock and must retry
-    // past the held lock instead of failing (the "index.lock: File exists" resilience the retry exists for).
     const switched = await svc.switchBranch(sandbox, r, 'atlas/feature-y');
     expect(switched.branch).toBe('atlas/feature-y');
   });
 
-  // ── changedFileNames (ADR 0005 §2c) — the per-thread diff signal `complete_thread` reads BEFORE commit:
-  // tracked changes since a base sha (two-dot, not `...HEAD`) PLUS untracked files. ─────────────────────
   describe('changedFileNames', () => {
     it('reports tracked changes since a base sha', async () => {
       const r = await repo();
@@ -216,7 +197,6 @@ describe('LocalGitService (host git, daemon-free)', () => {
       const r = await repo();
       const sandbox = await svc.createFeatureSandbox(r, 'atlas/feature-x');
       const base = await svc.headSha(sandbox.worktreePath);
-      // Never staged, never committed — exactly the shape `complete_thread` sees mid-turn, before commit.
       writeFileSync(join(sandbox.worktreePath, 'NEW_ROUTE.ts'), 'export const x = 1;\n');
 
       expect(await svc.changedFileNames(sandbox.worktreePath, base)).toEqual(['NEW_ROUTE.ts']);

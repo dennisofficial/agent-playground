@@ -7,12 +7,6 @@ import type { CurrentOrgCtx } from '../../org/current-org.decorator';
 import { OrgOwnerGuard } from '../../org/org-owner.guard';
 import { WebSurfaceController } from '../web-surface.controller';
 
-/**
- * The owner-gated `skill-proposals/:id/approve` endpoint — the ONLY place a brain skill write lands. Covers
- * the three modes: `install` (routes to the git installer), `create` (vendors the FROZEN staging copy, not
- * the live draft, and clears the draft), and `remove`. Pure unit — mocked collaborators; the owner guard is
- * asserted via route metadata (Nest applies it, not exercised in a direct call).
- */
 const OWNER = { id: 'org-1', role: 'owner' } as unknown as CurrentOrgCtx;
 const ALL_SURFACES = ['brain', 'build', 'review'];
 
@@ -148,7 +142,6 @@ describe('WebSurfaceController — skill proposal approve (owner-gated)', () => 
       const { controller, m } = makeController(card, ctxRoot);
       await controller.approveSkillProposal(OWNER, 'job-1', 'skill-2');
 
-      // Vendors from the frozen staging dir, org scope ('*').
       expect(m.vendorDir).toHaveBeenCalledWith(staging, 'org-1', '*', 'house-x');
       expect(m.write).toHaveBeenCalledWith('org-1', '*', 'house-x', {
         description: 'Use when X',
@@ -156,7 +149,6 @@ describe('WebSurfaceController — skill proposal approve (owner-gated)', () => 
         surfaces: ALL_SURFACES,
       });
       expect(m.removeStaging).toHaveBeenCalledWith('org-1', 'skill-2');
-      // The now-stale /context draft is removed so later edits go to the durable store.
       expect(existsSync(draftDir)).toBe(false);
     },
   );

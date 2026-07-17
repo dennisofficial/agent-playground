@@ -49,7 +49,6 @@ describe('buildClaudeOptions', () => {
     const o = build('execute', { sessionId: 'sess', model: 'claude-x' });
     expect(o.tools).toBe(WORKER_TOOLS);
     expect(o.permissionMode).toBe('default');
-    // The writer subagents are only spawnable on an execute turn.
     for (const name of Object.keys(WRITER_SUBAGENTS)) expect(o.agents).toHaveProperty(name);
     expect(o.betas).toContain('context-1m-2025-08-07');
     expect((o as { resume?: string }).resume).toBe('sess');
@@ -87,7 +86,6 @@ describe('buildClaudeOptions', () => {
   });
 });
 
-/** Pulls a PostToolUse matcher group's callbacks out of the built `Options` (empty if none registered). */
 function postToolUseHooks(
   o: ReturnType<typeof buildClaudeOptions>,
   matcher: string,

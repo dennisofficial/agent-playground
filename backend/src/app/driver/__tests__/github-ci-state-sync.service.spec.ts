@@ -1,8 +1,3 @@
-/**
- * Unit tests for `GithubCiStateSync` — the silent GitHub CI-status webhook fast path. All collaborators
- * (`StimulusStoreService`, `CredentialResolver`, `GithubPrService`, the `repos`/`jobs` repos) are plain
- * mocked objects. No DB, no Docker. Uses fake timers to exercise the ~5s debounce.
- */
 
 import type { CiSyncDelta } from '@shared/domain';
 import type { Repository } from 'typeorm';
@@ -78,7 +73,6 @@ function make(over: {
     findOne: vi.fn(async () => ({ git_url: 'https://github.com/o/r.git' })),
   } as unknown as Repository<RepoEntity>;
 
-  // Fire-and-forget re-evaluation on every recompute — never asserted here, just must not throw.
   const autoMerge = {
     maybeAutoMerge: vi.fn().mockResolvedValue(undefined),
   } as unknown as import('../auto-merge.service').AutoMergeService;

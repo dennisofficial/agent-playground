@@ -5,8 +5,6 @@ import { AgentSessionManager } from '../agent-session-manager.service';
 
 const JOB_ID = 'th-ack-001';
 
-/** Minimal `findChatStimulusById` resolution — only the fields `markCardDeliveredForStimulus` reads. Maps
- *  the terse legacy `seed*Id` fixture keys onto the envelope's collapsed `delivered*Ids` arrays. */
 function stimulusStub(fields: {
   seedQuestionId?: string;
   seedSecretId?: string;
@@ -42,7 +40,6 @@ function stimulusStub(fields: {
   };
 }
 
-/** A manager wired with only the deps `stampInputAck`/`markCardDeliveredForStimulus` touch; everything else inert. */
 function makeManager(opts: {
   findChatStimulusById: ReturnType<typeof vi.fn>;
   getQuestionCard?: ReturnType<typeof vi.fn>;
@@ -105,7 +102,6 @@ function makeManager(opts: {
   return { manager, store, stimulusStore };
 }
 
-/** Flush the floating async IIFE `stampInputAck` fires. */
 async function flush() {
   await new Promise((r) => setImmediate(r));
   await new Promise((r) => setImmediate(r));

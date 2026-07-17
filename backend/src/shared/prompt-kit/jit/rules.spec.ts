@@ -1,8 +1,3 @@
-/**
- * prompt-kit / jit — parity tests for the JIT-context rule catalog (Pillar 4, d1/d4/d5). Each rule's trigger,
- * throttle, and payload must reproduce the ENGINE'S pre-migration behavior byte-for-byte at defaults — these
- * specs are the guardrail for that parity, alongside the driver/engine specs that consume the same catalog.
- */
 import { describe, expect, it } from 'vitest';
 import { ROTATION_REMINDER_NUDGE, ROTATION_SOFT_NUDGE } from '../messages/build-handoff';
 import { BG_TASK_CAP_NOTICE } from './bg-task-cap';

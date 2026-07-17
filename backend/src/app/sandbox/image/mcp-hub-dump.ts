@@ -1,10 +1,3 @@
-/**
- * Hub-side middleware: when a proxied `tools/call` result is large, write the full (already-redacted)
- * payload to a file under `/playground/atlas-mcp/` and return a compact `{dumpedTo, format, rowCount,
- * bytes, preview, hint}` envelope instead. Small results and errors pass through unchanged. Pure/injectable
- * so it is unit-testable without touching the real filesystem; wired into the CallTool handler in
- * `mcp-hub-server.ts`.
- */
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -16,16 +9,11 @@ export const DUMP_SUBDIR = 'atlas-mcp';
 const PREVIEW_LINES = 20;
 const PREVIEW_MAX_BYTES = 2_000;
 
-// SECURITY (d5): result content is attacker-controlled generic MCP output, and the hub writes as ROOT.
-// The file extension is the ONLY place a payload field feeds the write path — clamp it to a fixed
-// allowlist so nothing derived from a tool result can traverse out of the dump dir.
 const ALLOWED_EXT = new Set(['json', 'jsonl', 'csv', 'tsv', 'txt']);
 const clampExt = (ext: string): string => (ALLOWED_EXT.has(ext) ? ext : 'txt');
 
-/** Strip a tool name to a safe filename component — no `/` or `..` can survive. */
 const safe = (toolName: string): string => toolName.replace(/[^a-zA-Z0-9_-]/g, '');
 
-/** Compact, hub-controlled (UTC) timestamp for the dump filename, e.g. `20260712-031500`. */
 function tsCompact(date: Date): string {
   const pad = (n: number): string => String(n).padStart(2, '0');
   const y = date.getUTCFullYear();
@@ -53,9 +41,6 @@ const defaultDeps: DumpDeps = {
   rand: () => randomBytes(2).toString('hex'),
 };
 
-/** Dump-scope gate (d5: ALL user MCP servers). Kept as a named predicate — not inlined — so it stays the
- *  single, obvious place to narrow scope later. Only affects servers routed through this hub; reserved
- *  control-plane tools use a different bridge and never reach this handler. */
 export function isDumpEnabled(_serverName: string): boolean {
   return true;
 }
@@ -70,8 +55,6 @@ type Extracted = {
 
 const firstLines = (text: string, n: number): string => text.split('\n').slice(0, n).join('\n');
 
-/** Parse the reader's `atlas_query` envelope (or fall back to generic JSON/text) into the payload that
- *  actually gets written to disk, so the file holds the clean rows/text rather than the JSON wrapper. */
 function extract(text: string): Extracted {
   let parsed: unknown;
   try {
@@ -112,8 +95,6 @@ function extract(text: string): Extracted {
           previewSource: firstLines(obj.text, PREVIEW_LINES),
         };
       }
-      // Unrecognized envelope (including a hostile `format` value) — fall through to the generic branch;
-      // `format` never gets to name the extension unless it's a trusted value handled above.
     }
   }
   return {
@@ -150,9 +131,6 @@ export function maybeDumpLargeResult(
     resolvedDeps.mkdir(dir);
     const stamp = tsCompact(resolvedDeps.now());
     const file = join(dir, `${safe(toolName)}-${stamp}-${resolvedDeps.rand()}.${clamped}`);
-    // Containment assertion (belt-and-suspenders): every filename component is already sanitized
-    // (safe() strips to [A-Za-z0-9_-] so no '.'/'/'; ext is allowlisted), but assert the resolved path
-    // is still inside `dir` and bail to inline if not — the hub runs as root, so never write outside.
     if (!resolve(file).startsWith(resolve(dir) + sep)) return result;
     resolvedDeps.writeFile(file, payload);
     return {
