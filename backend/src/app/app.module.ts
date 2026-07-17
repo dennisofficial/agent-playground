@@ -7,6 +7,7 @@ import { CreateModule, EnvModule, LoggerModule } from '@workspace/nestjs-core';
 import { DatabaseModule } from '../_lib/database/database.module';
 import { RedisModule } from '../_lib/redis/redis.module';
 import { AuthModule } from './auth/auth.module';
+import { CredentialsModule } from './credentials/credentials.module';
 import { OrgModule } from './org/org.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { RepoModule } from './repo/repo.module';
@@ -28,6 +29,7 @@ import { RepoModule } from './repo/repo.module';
     OrgModule,
     AuthModule,
     RepoModule,
+    CredentialsModule,
   ],
   providers: [
     {

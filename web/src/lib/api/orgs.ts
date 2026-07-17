@@ -7,7 +7,17 @@ import {
   useUpdateOrgMutation,
 } from "@/redux/query/api/org.api";
 import { env } from "@/lib/env";
-import { type AutoMergeMethod, type UpdateOrgDto } from "@workspace/shared";
+import {
+  type AutoMergeMethod,
+  type CredentialPresence,
+  type SaveCredentialsDto as SaveCredentialsBody,
+  type SaveCredentialsResult,
+  type UpdateOrgDto,
+} from "@workspace/shared";
+
+// Credential contracts now live in @workspace/shared; re-exported here so existing consumers
+// (settings credentials-section) keep importing them from this module.
+export type { CredentialPresence, SaveCredentialsBody, SaveCredentialsResult };
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { adaptMutation, adaptQuery, stubMutation, type MutationResultLike } from "./_stub";
 import {
@@ -25,11 +35,11 @@ import { readUsageCache, removeUsageCache, usePersistUsage } from "./usage-cache
 
 /**
  * Org-scoped reads + the credentials write for the settings page. All hit the Atlas app directly with the
- * session cookie; `/web/orgs/:orgId/*` is membership-gated server-side (403 for non-members), writes
+ * session cookie; `/orgs/:orgId/*` is membership-gated server-side (403 for non-members), writes
  * (credentials PUT) are owner-only. Secrets are never returned — credentials GET is presence flags only.
  */
 
-const BASE = `${env.NEXT_PUBLIC_BACKEND_URL}/web`;
+const BASE = env.NEXT_PUBLIC_BACKEND_URL;
 
 const usageCacheKey = (key: readonly string[]) => key.join(":");
 
@@ -71,22 +81,7 @@ export function useOrgMembers(orgId: string) {
   return adaptQuery(useGetOrgMembersQuery(orgId, { skip: !orgId }));
 }
 
-// ── Credentials (presence only — never the secret values) ────────────────────────────────────────
-export interface CredentialPresence {
-  hasAnthropic: boolean;
-  hasOpenai: boolean;
-  hasGithub: boolean;
-  /** A Claude coding-engine subscription token is set (the primary, required coding engine). */
-  engineAuthSet: boolean;
-  /** An optional Codex coding-engine subscription is set. */
-  hasCodex: boolean;
-  /** The org has connected the Atlas GitHub App (a non-null installation id). */
-  hasGithubApp: boolean;
-  /** Which GitHub credential resolves for this org: `pat` (default) or `app`. */
-  githubAuthMode: "pat" | "app";
-  llmValidated: boolean;
-}
-
+// ── Credentials (presence only — never the secret values; shape in @workspace/shared) ──────────────
 export function useOrgCredentials(orgId: string) {
   return useQuery({
     queryKey: qk.orgCredentials(orgId),
@@ -385,32 +380,6 @@ export function useCredentialUsage(orgId: string, credentialId: string, enabled 
   });
   usePersistUsage(cacheKey, query.data, query.dataUpdatedAt);
   return query;
-}
-
-/**
- * Body for `PUT /web/orgs/:orgId/credentials` — every field optional; only sent ones are written.
- * Two distinct purposes: the `*ApiKey` keys power LangChain prompts + embeddings; the subscription
- * secrets (`claudeOauthToken`, `codexAuthSecret`) authenticate the coding-engine SDK harness.
- */
-export interface SaveCredentialsBody {
-  anthropicApiKey?: string;
-  openaiApiKey?: string;
-  githubPat?: string;
-  /** Claude subscription OAuth token for the coding engine (`sk-ant-oat…`). */
-  claudeOauthToken?: string;
-  /** Codex subscription secret for the (optional) Codex coding engine. */
-  codexAuthSecret?: string;
-}
-
-/** The server's per-key validation result (Anthropic key is probed on write). */
-export interface ValidationResult {
-  ok: boolean;
-  reason?: string;
-}
-
-export interface SaveCredentialsResult {
-  ok: boolean;
-  validation: { llmKey?: ValidationResult };
 }
 
 /** Owner-only credential write. Invalidates the presence query so the saved-key pills refresh. */
@@ -878,9 +847,9 @@ export function useConnectRepo(orgId: string): MutationResultLike<ConnectedRepo,
 }
 
 /** Re-probe a repo's GitHub access with the org's current token (owner only). */
-export function useRevalidateRepo(orgId: string): MutationResultLike<ConnectedRepo, string> {
+export function useRevalidateRepo(_orgId: string): MutationResultLike<ConnectedRepo, string> {
   const [trigger, state] = useRevalidateRepoMutation();
-  return adaptMutation<ConnectedRepo, string>([(repoId) => trigger({ orgId, repoId }), state]);
+  return adaptMutation<ConnectedRepo, string>([(repoId) => trigger({ repoId }), state]);
 }
 
 /**
@@ -905,11 +874,11 @@ export interface UpdateRepoBody {
 
 /** Update a repo's display name / base branch (owner only). Realtime reflects the change as a delta. */
 export function useUpdateRepo(
-  orgId: string,
+  _orgId: string,
 ): MutationResultLike<ConnectedRepo, { repoId: string; body: UpdateRepoBody }> {
   const [trigger, state] = useUpdateRepoMutation();
   return adaptMutation<ConnectedRepo, { repoId: string; body: UpdateRepoBody }>([
-    ({ repoId, body }) => trigger({ orgId, repoId, body }),
+    ({ repoId, body }) => trigger({ repoId, body }),
     state,
   ]);
 }
@@ -920,11 +889,11 @@ export function useUpdateRepo(
  * delta); this only invalidates `SESSION` (disconnect can flip the org `active`↔`onboarding`).
  */
 export function useDisconnectRepo(
-  orgId: string,
+  _orgId: string,
 ): MutationResultLike<{ ok: boolean; threadsDeleted: number }, string> {
   const [trigger, state] = useDisconnectRepoMutation();
   return adaptMutation<{ ok: boolean; threadsDeleted: number }, string>([
-    (repoId) => trigger({ orgId, repoId }),
+    (repoId) => trigger({ repoId }),
     state,
   ]);
 }
