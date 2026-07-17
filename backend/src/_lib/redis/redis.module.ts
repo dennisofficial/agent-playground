@@ -1,24 +1,41 @@
 import { EnvService } from '@core/config/env/env.service';
-import { Global, Inject, Module, type OnApplicationShutdown } from '@nestjs/common';
-import type { Redis } from 'ioredis';
-import { IoredisStreamAdapter } from './ioredis-stream.adapter';
-import { REDIS_STREAM_PORT } from './redis.port';
-import { REDIS_CLIENT, buildRedisClient } from './redis.tokens';
+import { Global, Inject, Logger, type OnApplicationShutdown } from '@nestjs/common';
+import { CreateModule } from '@workspace/nestjs-core';
+import Redis from 'ioredis';
+import { REDIS_CLIENT } from './redis.tokens';
 
 @Global()
-@Module({
+@CreateModule({
   providers: [
     {
       provide: REDIS_CLIENT,
-      useFactory: (env: EnvService): Redis => buildRedisClient({ url: env.get('REDIS_URL') }),
+      useFactory: (env: EnvService): Redis => {
+        const logger = new Logger('RedisClient');
+        const url = env.get('REDIS_URL');
+
+        const client = new Redis(url, {
+          lazyConnect: true,
+          maxRetriesPerRequest: null, // don't fail a queued command after N reconnects — Streams are durable
+          enableOfflineQueue: true, // buffer commands issued before/while disconnected, flush on reconnect
+          retryStrategy: (times: number): number => {
+            const delay = Math.min(times * 200, 5000);
+            if (times === 1 || times % 10 === 0) {
+              logger.warn(`Redis unreachable (attempt ${times}) — retrying in ${delay}ms (${url})`);
+            }
+            return delay;
+          },
+        });
+
+        client.on('error', (err: Error) => {
+          logger.debug(`Redis client error (resilient, will retry): ${err.message}`);
+        });
+        client.on('ready', () => logger.log(`Redis connected (${url})`));
+
+        return client;
+      },
       inject: [EnvService],
     },
-    {
-      provide: REDIS_STREAM_PORT,
-      useClass: IoredisStreamAdapter,
-    },
   ],
-  exports: [REDIS_CLIENT, REDIS_STREAM_PORT],
 })
 export class RedisModule implements OnApplicationShutdown {
   constructor(@Inject(REDIS_CLIENT) private readonly client: Redis) {}
