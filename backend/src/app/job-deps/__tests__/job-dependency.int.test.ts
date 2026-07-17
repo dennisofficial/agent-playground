@@ -11,7 +11,7 @@ import { JobBootstrapService } from '../../job-bootstrap/job-bootstrap.service';
 import { DB_CONNECTION } from '../../persistence/database.module';
 import { ENTITIES, JobEntity } from '../../persistence/entities';
 import { StimulusStoreService } from '../../stimulus/stimulus-store.service';
-import { BrainGateway } from '../brain-gateway';
+import { BrainGateway } from '../../brain-gateway/brain-gateway.service';
 import { JobDependencyService } from '../job-dependency.service';
 
 const ORG_ID = '2c111111-1111-4111-8111-111111111111';

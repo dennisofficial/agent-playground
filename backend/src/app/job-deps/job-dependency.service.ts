@@ -347,37 +347,30 @@ export class JobDependencyService {
     );
   }
 
+  // The blocked→open flip is an ATOMIC compare-and-set — the SOLE serializer: exactly one concurrent
+  // caller flips (affected=1) and goes on to record the note + pump; every other observes affected=0 and
+  // returns, so no duplicate or post-open stale note can land. Do NOT reintroduce a `SELECT … FOR UPDATE`
+  // guard here: holding a row lock on the job across `recordUnblockNote` — which inserts a
+  // `transcript_messages` row whose `job_id` FK needs a conflicting `FOR KEY SHARE` on that same row, on a
+  // SEPARATE pooled connection — makes the outer txn await the note write while the note write waits on the
+  // outer's lock, an unbreakable cross-connection lock-wait that strands every unblock.
   private async recordUnblockNoteThenPump(
     jobId: string,
     orgId: string,
     repoId: string,
     blockers: UnblockBlockerInfo[],
   ): Promise<boolean> {
-    const unblocked = await this.dataSource.transaction(async (m) => {
-      const current = await m
-        .getRepository(JobEntity)
-        .createQueryBuilder('j')
-        .setLock('pessimistic_write')
-        .where('j.id = :id', { id: jobId })
-        .getOne();
-      if (current?.status !== 'blocked') return false; // not (or no longer) parked — nothing to wake.
+    const flip = await this.jobs
+      .createQueryBuilder()
+      .update(JobEntity)
+      .set({ status: 'open' })
+      .where('id = :id AND status = :blocked', { id: jobId, blocked: 'blocked' })
+      .execute();
+    if ((flip.affected ?? 0) === 0) return false; // not (or no longer) parked, or lost the race.
 
-      await this.brainGateway.recordUnblockNote(jobId, orgId, repoId, {
-        blockers,
-      });
-
-      const upd = await m
-        .createQueryBuilder()
-        .update(JobEntity)
-        .set({ status: 'open' })
-        .where('id = :id AND status = :blocked', {
-          id: jobId,
-          blocked: 'blocked',
-        })
-        .execute();
-      return (upd.affected ?? 0) > 0;
-    });
-    if (!unblocked) return false; // lost the race — the winner recorded the note and pumps.
+    // Record the JIT unblock note AFTER the winning flip but BEFORE the pump, so the drain still coalesces
+    // it into the same timestamped turn as the held born-blocked/mid-flight backlog. No row lock is held.
+    await this.brainGateway.recordUnblockNote(jobId, orgId, repoId, { blockers });
 
     try {
       await this.brainGateway.pumpUnblockedJob(jobId, orgId, repoId);
