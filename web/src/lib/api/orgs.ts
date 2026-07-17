@@ -8,16 +8,36 @@ import {
 } from "@/redux/query/api/org.api";
 import { env } from "@/lib/env";
 import {
+  ECredentialKey,
   type AutoMergeMethod,
   type CredentialPresence,
-  type SaveCredentialsDto as SaveCredentialsBody,
   type SaveCredentialsResult,
   type UpdateOrgDto,
 } from "@workspace/shared";
 
-// Credential contracts now live in @workspace/shared; re-exported here so existing consumers
-// (settings credentials-section) keep importing them from this module.
-export type { CredentialPresence, SaveCredentialsBody, SaveCredentialsResult };
+export type { SaveCredentialsResult };
+
+// The vault wire (@workspace/shared) is key-agnostic — it only speaks ECredentialKey. The settings UI
+// works in domain terms, so we keep a frontend-local domain VIEW + body here and adapt to/from the
+// agnostic wire in the hooks below. Domain naming (hasGithub, anthropicApiKey…) lives here, never in
+// the backend.
+export interface CredentialPresenceView {
+  hasAnthropic: boolean;
+  hasOpenai: boolean;
+  hasGithub: boolean;
+  hasCodex: boolean;
+  /** Anthropic key server-probe verdict — not available until the engine module; mirrors presence for now. */
+  llmValidated: boolean;
+  /** GitHub credential mode; the real value comes from github-app status. Defaults to 'pat'. */
+  githubAuthMode: "pat" | "app";
+}
+
+export interface SaveCredentialsBody {
+  anthropicApiKey?: string;
+  openaiApiKey?: string;
+  githubPat?: string;
+  codexAuthSecret?: string;
+}
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { adaptMutation, adaptQuery, stubMutation, type MutationResultLike } from "./_stub";
 import {
@@ -81,11 +101,22 @@ export function useOrgMembers(orgId: string) {
   return adaptQuery(useGetOrgMembersQuery(orgId, { skip: !orgId }));
 }
 
-// ── Credentials (presence only — never the secret values; shape in @workspace/shared) ──────────────
+// ── Credentials (presence only — never the secret values; agnostic wire in @workspace/shared) ───────
+// The backend returns key-agnostic presence; we derive the settings UI's domain view from it here.
 export function useOrgCredentials(orgId: string) {
   return useQuery({
     queryKey: qk.orgCredentials(orgId),
-    queryFn: () => webJson<CredentialPresence>(`/orgs/${orgId}/credentials`),
+    queryFn: async (): Promise<CredentialPresenceView> => {
+      const { present } = await webJson<CredentialPresence>(`/orgs/${orgId}/credentials`);
+      return {
+        hasAnthropic: Boolean(present[ECredentialKey.ANTHROPIC_API_KEY]),
+        hasOpenai: Boolean(present[ECredentialKey.OPENAI_API_KEY]),
+        hasGithub: Boolean(present[ECredentialKey.GITHUB_PAT]),
+        hasCodex: Boolean(present[ECredentialKey.CODEX_AUTH]),
+        llmValidated: Boolean(present[ECredentialKey.ANTHROPIC_API_KEY]),
+        githubAuthMode: "pat",
+      };
+    },
     enabled: Boolean(orgId),
     staleTime: 15_000,
   });
@@ -386,11 +417,21 @@ export function useCredentialUsage(orgId: string, credentialId: string, enabled 
 export function useSaveCredentials(orgId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: SaveCredentialsBody) =>
-      webJson<SaveCredentialsResult>(`/orgs/${orgId}/credentials`, {
+    mutationFn: (body: SaveCredentialsBody) => {
+      const byKey: [ECredentialKey, string | undefined][] = [
+        [ECredentialKey.ANTHROPIC_API_KEY, body.anthropicApiKey],
+        [ECredentialKey.OPENAI_API_KEY, body.openaiApiKey],
+        [ECredentialKey.GITHUB_PAT, body.githubPat],
+        [ECredentialKey.CODEX_AUTH, body.codexAuthSecret],
+      ];
+      const entries = byKey
+        .filter(([, v]) => v != null && v !== "")
+        .map(([key, value]) => ({ key, value: value as string }));
+      return webJson<SaveCredentialsResult>(`/orgs/${orgId}/credentials`, {
         method: "PUT",
-        body: JSON.stringify(body),
-      }),
+        body: JSON.stringify({ entries }),
+      });
+    },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
       // A new Codex paste changes the decoded account email — refresh the owner-only Codex query too.

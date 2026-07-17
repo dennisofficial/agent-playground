@@ -20,7 +20,10 @@ export class CredentialsService {
   /** Store (or replace) a secret for an org. */
   async set(orgId: string, key: ECredentialKey, plaintext: string): Promise<void> {
     const ciphertext = this.cipher.encrypt(plaintext);
-    await this.secrets.upsert({ orgId, key, ciphertext } satisfies Partial<OrgSecret>, ['orgId', 'key']);
+    await this.secrets.upsert({ orgId, key, ciphertext } satisfies Partial<OrgSecret>, [
+      'orgId',
+      'key',
+    ]);
   }
 
   /** Decrypt and return a secret, or `null` when the org has no value for this key. */
@@ -40,7 +43,10 @@ export class CredentialsService {
       ? await this.secrets.find({ where: { orgId, key: In(keys) }, select: { key: true } })
       : [];
     const present = new Set(rows.map((r) => r.key));
-    return Object.fromEntries(keys.map((k) => [k, present.has(k)])) as Record<ECredentialKey, boolean>;
+    return Object.fromEntries(keys.map((k) => [k, present.has(k)])) as Record<
+      ECredentialKey,
+      boolean
+    >;
   }
 
   /** Remove a secret. No-op when absent. */

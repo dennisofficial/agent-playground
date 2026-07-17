@@ -1,69 +1,44 @@
 /**
- * Credentials API contract (frontend ⇄ backend). The backend stores each value in the generic org
- * secret vault under a typed `ECredentialKey`; this DTO is just the human-facing field mapping the
- * settings UI edits. Request = class-validator class; response shapes = interfaces.
+ * Credentials API contract (frontend ⇄ backend). The wire is KEY-AGNOSTIC: it speaks only
+ * {@link ECredentialKey}, never domain names like "anthropic" or "github". The generic org secret
+ * vault stores/reports secrets by key and attaches no meaning to them; any domain interpretation
+ * (which key gates which UI, GitHub App mode, LLM-key validation) lives in the consumer.
  */
-import { IsOptional, IsString, MaxLength } from 'class-validator';
+import { Type } from 'class-transformer';
+import { ArrayMaxSize, IsArray, IsEnum, IsString, MaxLength, ValidateNested } from 'class-validator';
+import { ECredentialKey } from '../enums';
 
 // ── Request ──
 
-/** Save one or more org credentials. Every field is optional; only present values are written. */
+/** One secret to write: its key and plaintext value. */
+export class CredentialEntry {
+  @IsEnum(ECredentialKey)
+  key!: ECredentialKey;
+
+  @IsString()
+  @MaxLength(20_000)
+  value!: string;
+}
+
+/** Save a batch of secrets. Only the included keys are written; the rest are left untouched. */
 export class SaveCredentialsDto {
-  @IsOptional()
-  @IsString()
-  @MaxLength(20_000)
-  anthropicApiKey?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(20_000)
-  openaiApiKey?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(20_000)
-  githubPat?: string;
-
-  /** Codex subscription secret (auth.json blob) for the optional Codex coding engine. */
-  @IsOptional()
-  @IsString()
-  @MaxLength(20_000)
-  codexAuthSecret?: string;
+  @IsArray()
+  @ArrayMaxSize(32)
+  @ValidateNested({ each: true })
+  @Type(() => CredentialEntry)
+  entries!: CredentialEntry[];
 }
 
 // ── Responses ──
 
-export interface ValidationResult {
-  ok: boolean;
-  reason?: string;
-}
-
-/** Result of `PUT /orgs/:orgId/credentials`. `validation.llmKey` is set when an LLM key was saved. */
 export interface SaveCredentialsResult {
   ok: boolean;
-  validation: { llmKey?: ValidationResult };
 }
 
 /**
- * Which credentials an org has, for the settings UI. Presence booleans never expose the secret.
- *
- * `hasAnthropic`/`hasOpenai`/`hasCodex`/`hasGithub` are served for real by the vault. `llmValidated`
- * (server-probed LLM-key verdict), `githubAuthMode`/`hasGithubApp` (GitHub App state) and
- * `engineAuthSet` (Claude coding-engine subscription) are owned by modules that don't exist yet and
- * are stubbed until they land — see the credentials controller.
+ * Which secrets the org has, keyed by {@link ECredentialKey}. Presence booleans never expose a value.
+ * The consumer maps keys to its own domain view (e.g. `present[GITHUB_PAT]` → "GitHub connected").
  */
 export interface CredentialPresence {
-  hasAnthropic: boolean;
-  hasOpenai: boolean;
-  hasGithub: boolean;
-  /** A Claude coding-engine subscription token is set (owned by the future engine module). */
-  engineAuthSet: boolean;
-  /** An optional Codex coding-engine subscription is set. */
-  hasCodex: boolean;
-  /** The org has connected the Atlas GitHub App (owned by the future GitHub module). */
-  hasGithubApp: boolean;
-  /** Which GitHub credential resolves for this org: `pat` (default) or `app`. */
-  githubAuthMode: 'pat' | 'app';
-  /** The stored LLM key passed a server-side probe (owned by the future engine module). */
-  llmValidated: boolean;
+  present: Partial<Record<ECredentialKey, boolean>>;
 }

@@ -1347,13 +1347,9 @@ function CredentialCard({
     setStatus("testing");
     setReason("");
     try {
-      const res = await onSave(mode.buildBody(v));
-      const llm = res?.validation?.llmKey;
-      if (mode.serverValidated && llm && !llm.ok) {
-        setStatus("invalid");
-        setReason(llm.reason ?? "Rejected by Anthropic.");
-        return;
-      }
+      // The vault stores the secret but does not probe it (LLM-key validation is the future engine
+      // module's job) — a successful save is success. Client-side format checks ran above.
+      await onSave(mode.buildBody(v));
       setEditing(false);
       reset();
     } catch (e) {

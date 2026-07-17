@@ -15,6 +15,9 @@ import { CredentialsService } from './credentials.service';
  * UUID — a secret is keyed by `(orgId, key)`), so the org stays in the path, exactly like the repo
  * module's {@link OrgRepoController} keeps `orgs/:orgId/repos` for its collection ops. Reads require
  * membership, writes require ownership; secrets are never returned.
+ *
+ * KEY-AGNOSTIC: this surface only ever speaks {@link ECredentialKey} — it has no idea what "anthropic"
+ * or "github" mean. Consumers map keys to their own domain view.
  */
 @Controller('orgs/:orgId/credentials')
 export class CredentialsController {
@@ -23,33 +26,18 @@ export class CredentialsController {
     private readonly orgs: OrgService,
   ) {}
 
-  /** Which credentials the org has. Members can read; secrets are never returned. */
+  /** Presence of every credential key for the org. Members can read; values are never returned. */
   @Get()
   async presence(
     @CurrentUser() user: User,
     @Param('orgId', ParseUUIDPipe) orgId: string,
   ): Promise<CredentialPresence> {
     await this.orgs.assertMember(user.id, orgId);
-    const has = await this.credentials.hasMany(orgId, [
-      ECredentialKey.ANTHROPIC_API_KEY,
-      ECredentialKey.OPENAI_API_KEY,
-      ECredentialKey.GITHUB_PAT,
-      ECredentialKey.CODEX_AUTH,
-    ]);
-    return {
-      hasAnthropic: has[ECredentialKey.ANTHROPIC_API_KEY],
-      hasOpenai: has[ECredentialKey.OPENAI_API_KEY],
-      hasGithub: has[ECredentialKey.GITHUB_PAT],
-      hasCodex: has[ECredentialKey.CODEX_AUTH],
-      // Stubbed until the engine / GitHub modules land — see CredentialPresence docs.
-      llmValidated: has[ECredentialKey.ANTHROPIC_API_KEY],
-      engineAuthSet: false,
-      hasGithubApp: false,
-      githubAuthMode: 'pat',
-    };
+    const present = await this.credentials.hasMany(orgId, Object.values(ECredentialKey));
+    return { present };
   }
 
-  /** Save any subset of credentials. Owner-only. Only non-empty fields are written. */
+  /** Save a batch of secrets. Owner-only. Empty values are skipped. */
   @Put()
   async save(
     @CurrentUser() user: User,
@@ -57,23 +45,10 @@ export class CredentialsController {
     @Body() body: SaveCredentialsDto,
   ): Promise<SaveCredentialsResult> {
     await this.orgs.assertOwner(user.id, orgId);
-
-    const writes: [ECredentialKey, string | undefined][] = [
-      [ECredentialKey.ANTHROPIC_API_KEY, body.anthropicApiKey],
-      [ECredentialKey.OPENAI_API_KEY, body.openaiApiKey],
-      [ECredentialKey.GITHUB_PAT, body.githubPat],
-      [ECredentialKey.CODEX_AUTH, body.codexAuthSecret],
-    ];
-    for (const [key, value] of writes) {
-      const trimmed = value?.trim();
+    for (const { key, value } of body.entries) {
+      const trimmed = value.trim();
       if (trimmed) await this.credentials.set(orgId, key, trimmed);
     }
-
-    // The vault does not probe LLM keys — that's the future engine module's job. Report ok
-    // optimistically so the Anthropic card, which reads validation.llmKey, doesn't break.
-    return {
-      ok: true,
-      validation: body.anthropicApiKey ? { llmKey: { ok: true } } : {},
-    };
+    return { ok: true };
   }
 }
