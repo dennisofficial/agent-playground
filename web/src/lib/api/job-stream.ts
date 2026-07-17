@@ -56,6 +56,16 @@ export type LiveBlock =
       emittedAt: number;
     }
   | {
+      /** A parent→sub-agent SendMessage injection (`user_text` event) — always a completed discrete turn
+       *  (`done: true`), never coalesced with adjacent blocks. Sub-agent-only (`parentToolUseId` set). */
+      kind: "user";
+      key: string;
+      text: string;
+      done: boolean;
+      parentToolUseId?: string;
+      emittedAt: number;
+    }
+  | {
       kind: "thinking";
       key: string;
       text: string;
@@ -354,6 +364,19 @@ class ThreadStreamStore {
             parentToolUseId: pid,
             emittedAt: ev.emittedAt ?? Date.now(),
           });
+        break;
+      case "user_text":
+        // Always a standalone completed turn — never merged/coalesced with adjacent narration (unlike
+        // "text", which may finalize an open delta block).
+        if (!pid || !text.trim()) break;
+        blocks.push({
+          kind: "user",
+          key: `c${blockSeq++}`,
+          text,
+          done: true,
+          parentToolUseId: pid,
+          emittedAt: ev.emittedAt ?? Date.now(),
+        });
         break;
       case "thinking_delta":
         if (last && last.kind === "thinking" && !last.done && sameAuthor(last))

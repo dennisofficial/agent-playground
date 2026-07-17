@@ -135,6 +135,22 @@ describe('LiveTurnStore — cumulative in-flight turn', () => {
       done: true,
     });
   });
+
+  it('ignores malformed user_text frames without a subagent parent or visible text', () => {
+    const store = new LiveTurnStore();
+
+    store.push(REPO, THREAD, {
+      kind: 'user_text',
+      text: 'main-thread steer echo must not render here',
+    });
+    store.push(REPO, THREAD, {
+      kind: 'user_text',
+      text: '   ',
+      parentToolUseId: 'tu-sub-ignored',
+    });
+
+    expect(store.snapshot(REPO, THREAD)!.blocks).toHaveLength(0);
+  });
 });
 
 describe('LiveTurnStore — silent reset (orphaned-turn reattach rebuilds a CLEAN lane)', () => {

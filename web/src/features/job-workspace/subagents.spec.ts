@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { LiveBlock } from "@/lib/api/job-stream";
 import type { JobMessage } from "@/lib/api/job-api";
-import { indexDurableSubagents, indexLiveSubagents } from "./subagents";
+import {
+  durableSubBlocks,
+  indexDurableSubagents,
+  indexLiveSubagents,
+  liveSubBlocksForParent,
+} from "./subagents";
 
 /**
  * The subagent card's live "running vs done" state.
@@ -164,5 +169,56 @@ describe("indexDurableSubagents — authoritative status over launch-ack", () =>
       durableChild(),
     ]).summaryById.get("tu-bg")!;
     expect(finished.running).toBe(false);
+  });
+});
+
+/**
+ * A parent→sub-agent SendMessage injection is captured as a durable `kind: 'user'` transcript row
+ * (Thread 1) / a live `kind: 'user'` block (job-stream `user_text` case) and must render as a `UserBubble`
+ * interleaved in the sub-agent's own transcript — so both mapping functions must surface it as
+ * `SubBlock{ kind: 'user' }` rather than dropping it into the generic `text` fallthrough.
+ */
+describe("durableSubBlocks — injected 'user' message", () => {
+  it("maps a durable kind:'user' message to a SubBlock of kind 'user' (not 'text')", () => {
+    const injected: JobMessage = {
+      ts: "c2",
+      threadId: "t1",
+      subagentId: "s1",
+      author: "atlas",
+      authorId: "atlas",
+      authorName: "Atlas",
+      text: "keep going on the auth module",
+      kind: "user",
+      source: "atlas",
+      postedAt: "2026-07-16T00:00:02.000Z",
+      meta: { parentToolUseId: "tu-bg" },
+    };
+    const [block] = durableSubBlocks([injected]);
+    expect(block).toMatchObject({
+      kind: "user",
+      text: "keep going on the auth module",
+      postedAt: "2026-07-16T00:00:02.000Z",
+    });
+  });
+});
+
+describe("liveSubBlocksForParent — injected 'user' live block", () => {
+  it("passes a live kind:'user' block through as SubBlock{ kind: 'user' }", () => {
+    const blocks: LiveBlock[] = [
+      {
+        kind: "user",
+        key: "c1",
+        text: "keep going on the auth module",
+        done: true,
+        parentToolUseId: "tu-bg",
+        emittedAt: 1,
+      },
+    ];
+    const [block] = liveSubBlocksForParent(blocks, "tu-bg");
+    expect(block).toMatchObject({
+      kind: "user",
+      key: "c1",
+      text: "keep going on the auth module",
+    });
   });
 });
