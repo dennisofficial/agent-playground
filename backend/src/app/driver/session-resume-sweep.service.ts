@@ -5,12 +5,12 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity } from '../persistence/entities';
 // Direct port path (NOT the '../surface' barrel) to stay clear of a SurfaceModule ↔ DriverModule cycle.
 import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
-import {
-  sessionLimitResetNudge,
-  retryResumeNudge,
-} from '../prompt-kit/harness';
 import { DriverStoreService } from './driver-store.service';
 import { ThreadDriver } from './thread-driver.service';
+import {
+  retryResumeNudge,
+  sessionLimitResetNudge,
+} from '../prompt-kit/harness/seed-catalog';
 
 /**
  * The SESSION-RESUME SWEEP — the auto-resume half of "park a lane on a Claude session limit, then un-park it

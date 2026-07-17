@@ -1,6 +1,5 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { JobBootstrapModule } from '../job-bootstrap';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   TranscriptMessageEntity,
@@ -15,6 +14,7 @@ import { ProjectRoutingService } from './project-routing.service';
 import { StimulusIntake } from './stimulus-intake.service';
 import { StimulusStoreService } from './stimulus-store.service';
 import { SurfaceOrchestration } from './surface-orchestration.service';
+import { JobBootstrapModule } from '../job-bootstrap/job-bootstrap.module';
 
 /**
  * The STIMULUS seam — the intake pipeline both edges (chat + events) flow through:

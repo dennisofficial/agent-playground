@@ -1,10 +1,10 @@
 import { Module } from '@nestjs/common';
-import { StimulusModule } from '../stimulus';
 import {
   GithubEventsWebhookController,
   GithubStateWebhookController,
 } from './github-webhook.controller';
 import { GithubNotificationSource } from './github-notification.source';
+import { StimulusModule } from '../stimulus/stimulus.module';
 
 /**
  * The Atlas v2 GITHUB WEBHOOK edge — the HTTP ingress for GitHub's two webhooks on each connected repo:

@@ -1,6 +1,6 @@
 import { Global, Module } from '@nestjs/common';
 import { EnvService } from '@core/config/env/env.service';
-import { CredentialResolver } from '../onboarding';
+import { CredentialResolver } from '../onboarding/credential-resolver.service';
 import { WorkspaceProfileService } from './workspace-profile.service';
 import { ProfileAwarenessService } from './profile-awareness.service';
 import {

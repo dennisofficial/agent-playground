@@ -15,7 +15,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { Subscription } from 'rxjs';
 import { modeApprovesPlan } from '@workspace/shared';
-import { LeaderElectionService } from '../cluster';
+import { LeaderElectionService } from '../cluster/leader-election.service';
 import type {
   EventMessage,
   Job,
@@ -27,42 +27,6 @@ import type {
   TurnEnvelope,
   UnblockBlockerInfo,
 } from '@shared/domain';
-import { MemoryStore } from '../memory';
-import {
-  StimulusStoreService,
-  renderTurn,
-  type TurnChunk,
-  type CollectedPending,
-  type DeliveryLane,
-  CHAT_DELIVERY_LEASE_MS as DELIVERY_LEASE_MS,
-  steerPending,
-  trySteerLive,
-  isNowPriority,
-  isWakeEligible,
-  userChunkFor,
-} from '../stimulus';
-import {
-  CHAT_SURFACE,
-  type ChatSurface,
-  type DecisionApprovalCard,
-  TurnHarnessFactory,
-  TASK_EVENT_SINK,
-  type TaskEventSink,
-  makeTaskTools,
-  ThreadInputService,
-  laneFor,
-  SYSTEM_SEED_AUTHOR,
-  type McpProposalServer,
-  type WebQuestionCard,
-  webConventionProposalCard,
-  webConventionEditProposalCard,
-  webMcpProposalCard,
-  webQuestionCard,
-  webShipReviewCard,
-  webSkillEditAccessCard,
-  webSkillProposalCard,
-  wrapSystemNotification,
-} from '../surface';
 import {
   MESSAGE_CHANGE_NOTIFIER,
   type MessageChangeNotifier,
@@ -94,40 +58,9 @@ import { DriverStoreService } from '../driver/driver-store.service';
 import { JobBootstrapService } from '../job-bootstrap/job-bootstrap.service';
 import { BuildShipService } from '../driver/build-ship.service';
 import { AutoMergeService } from '../driver/auto-merge.service';
-import { BrainGateway } from '../brain-gateway';
-import { Agent, PromptService } from '../prompt-kit';
-import {
-  shipOpenPrBody,
-  composePreviewPrepSeed,
-  postBuildGateSeed,
-} from '../prompt-kit';
 import type { AgentMessage } from '@shared/prompt-kit/message';
 import { fromExternal } from '@shared/prompt-kit/message';
 import { isSubstantiveQuery, renderMemoryRecall } from '@shared/prompt-kit/jit';
-import {
-  chunkKey,
-  composeMessageBody,
-  RESET_VERIFY_TEXT,
-  COMPACTION_SYSTEM,
-  COMPACTION_INSTRUCTION,
-  CONTINUATION_PREAMBLE,
-  foldCompactionSeed,
-  renderEventDelivery,
-  renderFollowUpJobSeed,
-  renderUnblockedNote,
-  frameAnswer,
-  composeTurn,
-  composeSeedTurn,
-  maskedSecretNotice,
-  maskedFileNotice,
-  wakeForAmendApprovedBody,
-  retryResumeNudge,
-  interruptRedriveNudge,
-} from '../prompt-kit/harness';
-// Re-exported so `brain/index.ts` (`export *`) and specs that import these straight from this file
-// (colocated golden-snapshot/doctrine specs — see continuation-preamble-snapshot.spec / halt-triage-guidance.spec /
-// agent-session-manager.spec) keep resolving after the content catalog moved into the prompt-kit hub.
-export { CONTINUATION_PREAMBLE } from '../prompt-kit/harness';
 import { PipelineAwarenessStore } from '../driver/pipeline-awareness.store';
 import {
   pipelineStateSignature,
@@ -136,7 +69,10 @@ import {
 } from '../driver/pipeline-awareness';
 import { DRIVER_REPO, type DriverRepoResolver } from '../driver/repo-resolver';
 import type { PlannedStep } from '../prompt-kit/messages/render-plan';
-import { coerceThreadType, type ThreadType } from '@shared/thread-kind/thread-types';
+import {
+  coerceThreadType,
+  type ThreadType,
+} from '@shared/thread-kind/thread-types';
 import {
   LIVE_VERIFICATION_JUDGE,
   type LiveVerificationJudge,
@@ -149,41 +85,20 @@ import {
   renderTerminalRecordSummary,
   type VerificationEvidence,
 } from '../driver/live-verification-support';
-import { DecisionClassifier } from '../decision-gate';
-import {
-  CredentialResolver,
-  WorkspaceConfigStore,
-  WorkspaceSecretFileStore,
-} from '../onboarding';
 import { OauthUsageService } from '../onboarding/oauth-usage.service';
 import {
   defaultResumeAt,
   isCorroboratedSessionLimit,
   SESSION_LIMIT_TEXT_MISFIRE_MAX,
 } from '@shared/engine/session-limit';
-import { McpResolver, McpServerStore } from '../mcp';
-import { ConventionProfileResolver } from '../conventions';
-import {
-  SkillFileWriter,
-  SkillInstallerService,
-  SkillResolver,
-  WorkspaceSkillStore,
-} from '../skills';
-import {
-  WorkspaceProfileService,
-  detectRepoManifests,
-  ProfileAwarenessService,
-} from '../workspace-profile';
 import { CONTAINER_CONTEXT, normalizeMounts } from '../sandbox/container-paths';
-import { LocalGitService } from '../git';
+import { LocalGitService } from '../git/local-git.service';
 import type { SandboxMilestoneStage } from '../sandbox/sandbox-provider.port';
-import { JobDependencyService } from '../job-deps';
 import type { Decision } from '@shared/domain';
 import { nextDecisionId, DECISION_CLASS_IDS } from '@shared/domain';
 import type { DecisionClass } from '@shared/domain/decision-record';
 import { renderDecisionRecordMd } from './decision-record-md';
-import { BRIDGE_SERVER_NAME } from '@shared/bridge-names/bridge-options';
-import { isReservedMcpName } from '../sandbox/image/reserved-mcp-names';
+import { isReservedMcpName } from '@shared/mcp/reserved-mcp-names';
 import {
   BrainTurnAlreadyRunningError,
   TurnRegistry,
@@ -214,9 +129,10 @@ import type {
 import { summarizeTurnFailure } from '@shared/engine/turn-failure-summary';
 import type { TurnFailureCategory } from '@shared/engine/turn-failure-summary';
 import type { EngineHomeKey } from '@shared/engine/engine-home';
-import { threadKindSpec } from '../thread-kind';
-import type { ThreadRole } from '../thread-kind';
-import { BrainStoreService, type CreateJobAutoMode } from './brain-store.service';
+import {
+  BrainStoreService,
+  type CreateJobAutoMode,
+} from './brain-store.service';
 import { DecisionApprovalService } from './decision-approval.service';
 import type {
   ApprovalResolution,
@@ -231,6 +147,91 @@ import {
 import { TurnRecoveryService } from './turn-recovery.service';
 import { JitHostExecutor } from './jit-host-executor';
 import { SelfSufficiencyToolsService } from './self-sufficiency-tools.service';
+import { ThreadInputService } from '../surface/thread-input.service';
+import {
+  CHAT_SURFACE,
+  type ChatSurface,
+  SYSTEM_SEED_AUTHOR,
+  wrapSystemNotification,
+} from '../surface/chat-surface.port';
+import {
+  TASK_EVENT_SINK,
+  type TaskEventSink,
+  TurnHarnessFactory,
+} from '../surface/turn-harness.service';
+import { laneFor } from '../surface/thread-registry';
+import { DecisionClassifier } from '../decision-gate/decision-classifier.service';
+import { makeTaskTools } from '../surface/task-tools';
+import { webShipReviewCard } from '../surface/web-approval-card';
+import { WebQuestionCard, webQuestionCard } from '../surface/web-question-card';
+import {
+  McpProposalServer,
+  webMcpProposalCard,
+} from '../surface/web-mcp-proposal-card';
+import { webConventionProposalCard } from '../surface/web-convention-proposal-card';
+import { webConventionEditProposalCard } from '../surface/web-convention-edit-proposal-card';
+import { webSkillProposalCard } from '../surface/web-skill-proposal-card';
+import { webSkillEditAccessCard } from '../surface/web-skill-edit-access-card';
+import { DecisionApprovalCard } from '../surface/approval-blocks';
+import { ConventionProfileResolver } from '../conventions/convention-profile.resolver';
+import { BrainGateway } from '../brain-gateway/brain-gateway.service';
+import { PromptService } from '../prompt-kit/prompt.service';
+import {
+  COMPACTION_INSTRUCTION,
+  COMPACTION_SYSTEM,
+  CONTINUATION_PREAMBLE,
+  foldCompactionSeed,
+  frameAnswer,
+  interruptRedriveNudge,
+  maskedFileNotice,
+  maskedSecretNotice,
+  renderEventDelivery,
+  renderFollowUpJobSeed,
+  renderUnblockedNote,
+  RESET_VERIFY_TEXT,
+  retryResumeNudge,
+  wakeForAmendApprovedBody,
+} from '../prompt-kit/harness/seed-catalog';
+import { chunkKey } from '@shared/prompt-kit/harness/chunk-keys';
+import { shipOpenPrBody } from '../prompt-kit/messages/ship-open-pr';
+import { Agent, composePreviewPrepSeed } from '@shared/prompt-kit/system';
+import { postBuildGateSeed } from '../prompt-kit/messages/post-build-gate';
+import {
+  composeSeedTurn,
+  composeTurn,
+} from '../prompt-kit/harness/compose-turn';
+import { composeMessageBody } from '../prompt-kit/harness/compose-message';
+import {
+  CHAT_DELIVERY_LEASE_MS,
+  CollectedPending,
+  DeliveryLane,
+  isNowPriority,
+  isWakeEligible,
+  steerPending,
+  trySteerLive,
+  userChunkFor,
+} from '../stimulus/delivery-pump.service';
+import { StimulusStoreService } from '../stimulus/stimulus-store.service';
+import { JobDependencyService } from '../job-deps/job-dependency.service';
+import {
+  renderTurn,
+  TurnChunk,
+} from '@shared/prompt-kit/harness/tag-vocabulary';
+import { CredentialResolver } from '../onboarding/credential-resolver.service';
+import { MemoryStore } from '../memory/memory.store';
+import { McpResolver } from '../mcp/mcp-resolver.service';
+import { WorkspaceSecretFileStore } from '../onboarding/workspace-secret.store';
+import { WorkspaceConfigStore } from '../onboarding/workspace-config.store';
+import { WorkspaceProfileService } from '../workspace-profile/workspace-profile.service';
+import { SkillResolver } from '../skills/skill-resolver.service';
+import { WorkspaceSkillStore } from '../skills/workspace-skill.store';
+import { SkillFileWriter } from '../skills/skill-file-writer.service';
+import { SkillInstallerService } from '../skills/skill-installer.service';
+import { McpServerStore } from '../mcp/mcp-server.store';
+import { ProfileAwarenessService } from '../workspace-profile/profile-awareness.service';
+import { ThreadRole } from '../thread-kind/__tests__/spec';
+import { threadKindSpec } from '../thread-kind/registry';
+import { detectRepoManifests } from '../workspace-profile/manifest-detect';
 
 type InjectedMemoryDedupState = {
   sessionId: string | null;
@@ -287,7 +288,7 @@ export class AgentSessionManager
    * it can't be re-selected for this long. Longer than a cold-container provision so a live delivery isn't
    * raced by the sweep; the per-thread turn queue is the real serializer, so this is a cross-pass guard.
    */
-  private static readonly CHAT_DELIVERY_LEASE_MS = DELIVERY_LEASE_MS;
+  private static readonly _CHAT_DELIVERY_LEASE_MS = CHAT_DELIVERY_LEASE_MS;
 
   /**
    * The thread brain's model — the conversational/planning session that grills, locks decisions, and
@@ -838,7 +839,7 @@ export class AgentSessionManager
     try {
       await this.stimulusStore.resetEventLeases();
       const events = await this.stimulusStore.eligiblePendingEvents(
-        AgentSessionManager.CHAT_DELIVERY_LEASE_MS,
+        AgentSessionManager._CHAT_DELIVERY_LEASE_MS,
       );
       if (events.length > 0) {
         this.logger.log(
@@ -1486,8 +1487,12 @@ export class AgentSessionManager
     // the whole idempotent sequence — never leaving the row delivered while its card stays stranded.
     const stimulus = await this.stimulusStore.findChatStimulusById(id);
     if (!stimulus) return false;
-    const { jobId, deliveredQuestionIds, deliveredSecretIds, deliveredFileIds } =
-      stimulus;
+    const {
+      jobId,
+      deliveredQuestionIds,
+      deliveredSecretIds,
+      deliveredFileIds,
+    } = stimulus;
 
     // Loop the delivered-id arrays (one id for a solo card delivery, many for a combined `answer-batch`).
     // NO `.catch` here (unlike `stampLegacySeedCard`): this function's invariant is that a transient error
@@ -1704,7 +1709,7 @@ export class AgentSessionManager
       await trySteerLive(
         this.stimulusStore,
         deliveryLane,
-        AgentSessionManager.CHAT_DELIVERY_LEASE_MS,
+        AgentSessionManager._CHAT_DELIVERY_LEASE_MS,
         this.logger,
       )
     ) {
@@ -1760,7 +1765,7 @@ export class AgentSessionManager
         const won = new Set(
           await this.stimulusStore.claimChatStimuli(
             collected.ids,
-            AgentSessionManager.CHAT_DELIVERY_LEASE_MS,
+            AgentSessionManager._CHAT_DELIVERY_LEASE_MS,
           ),
         );
         if (won.size === 0) return; // another caller claimed this batch — it will deliver them
@@ -1812,7 +1817,7 @@ export class AgentSessionManager
     const pending = await this.stimulusStore
       .eligiblePendingChat(
         jobId,
-        AgentSessionManager.CHAT_DELIVERY_LEASE_MS,
+        AgentSessionManager._CHAT_DELIVERY_LEASE_MS,
         lane,
       )
       .catch((err) => {
@@ -1967,7 +1972,7 @@ export class AgentSessionManager
     const pendingChat = await this.stimulusStore
       .eligiblePendingChat(
         review.job_id,
-        AgentSessionManager.CHAT_DELIVERY_LEASE_MS,
+        AgentSessionManager._CHAT_DELIVERY_LEASE_MS,
       )
       .catch(() => [] as TurnEnvelope[]);
     if (pendingChat.some(isWakeEligible)) return; // the chat sweep will re-drive this job (later-only never wakes on its own)
@@ -2291,7 +2296,11 @@ export class AgentSessionManager
             ...(ctx.credentialId ? { credentialId: ctx.credentialId } : {}),
             // Realtime live push via the runner's independent `realtime` consumer group — same 'main' lane
             // the reattach replay streams the brain conversation on (mirrors this `onEvent`→streamer wiring).
-            liveRoute: { channel: row.channel, jobId: row.job_id, lane: 'main' },
+            liveRoute: {
+              channel: row.channel,
+              jobId: row.job_id,
+              lane: 'main',
+            },
           },
         );
         if (result.sessionId && stimulus.resumeThreadId) {
@@ -2519,9 +2528,7 @@ export class AgentSessionManager
           stimulus.jobId,
           'Setting up an isolated workspace for this thread — one moment…',
         )
-        .catch((err) =>
-          this.logger.debug(`appendSystemEvent failed: ${err}`),
-        );
+        .catch((err) => this.logger.debug(`appendSystemEvent failed: ${err}`));
     }
     const onMilestone = this.sandboxMilestoneNotifier(stimulus);
     try {
@@ -2797,12 +2804,18 @@ export class AgentSessionManager
     if (stimulus.chunks?.length) {
       task = composeTurn({ prefixChunks, userChunks: stimulus.chunks });
     } else if (turnHasOperatorInput(stimulus)) {
-      task = composeTurn({ prefixChunks, userChunks: [userChunkFor(stimulus)] });
+      task = composeTurn({
+        prefixChunks,
+        userChunks: [userChunkFor(stimulus)],
+      });
     } else {
       // Non-operator seed body is RAW/already-framed passthrough (`engineBody` returns it verbatim) — it can't
       // be a `<user>` chunk, so frame it through the hub's seed-turn factory; `fromExternal` marks the non-hub
       // body at the seam rather than minting it locally.
-      task = composeSeedTurn(prefixChunks, fromExternal(this.engineBody(stimulus)));
+      task = composeSeedTurn(
+        prefixChunks,
+        fromExternal(this.engineBody(stimulus)),
+      );
     }
 
     // COMPACTION seed fold: a prior compaction nulled the session + stashed a lean handoff summary here.
@@ -6916,7 +6929,10 @@ export class AgentSessionManager
       jobId: job.id,
       orgId: job.orgId,
       repoId: job.repoId,
-      author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
+      author: {
+        id: SYSTEM_SEED_AUTHOR.id,
+        displayName: SYSTEM_SEED_AUTHOR.name,
+      },
       // Empty body — a pure mechanism to drive `actOnApprovalVerdict`; the verdict itself is visible.
       type: 'user',
       body: '',
@@ -7544,7 +7560,7 @@ export class AgentSessionManager
     let events: EventMessage[];
     try {
       events = await this.stimulusStore.eligiblePendingEvents(
-        AgentSessionManager.CHAT_DELIVERY_LEASE_MS,
+        AgentSessionManager._CHAT_DELIVERY_LEASE_MS,
       );
     } catch (err) {
       this.logger.debug(
@@ -8132,7 +8148,10 @@ function isSeedCardDelivery(s: TurnEnvelope): boolean {
  *  empty); a solo turn (that field undefined) falls back to `[stimulus.id]` when the turn itself is
  *  card-bearing, unchanged single-message behavior. */
 function cardBearingIdsOf(stimulus: TurnEnvelope): string[] {
-  return stimulus.cardBearingIds ?? (isSeedCardDelivery(stimulus) ? [stimulus.id] : []);
+  return (
+    stimulus.cardBearingIds ??
+    (isSeedCardDelivery(stimulus) ? [stimulus.id] : [])
+  );
 }
 
 /** Max consecutive UNATTENDED `reset_sandbox` calls before the tool refuses (cleared by any operator turn). */
@@ -8238,7 +8257,9 @@ function seedEnvelope(
     body,
     ...(seedRow ? { seedRow } : {}),
     ...(opts?.resumeThreadId ? { resumeThreadId: opts.resumeThreadId } : {}),
-    ...(opts?.deliveredFileIds ? { deliveredFileIds: opts.deliveredFileIds } : {}),
+    ...(opts?.deliveredFileIds
+      ? { deliveredFileIds: opts.deliveredFileIds }
+      : {}),
   };
 }
 

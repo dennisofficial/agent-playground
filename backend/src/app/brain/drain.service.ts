@@ -3,7 +3,7 @@ import {
   Logger,
   type BeforeApplicationShutdown,
 } from '@nestjs/common';
-import { LeaderElectionService } from '../cluster';
+import { LeaderElectionService } from '../cluster/leader-election.service';
 import { AgentSessionManager } from './agent-session-manager.service';
 
 /**

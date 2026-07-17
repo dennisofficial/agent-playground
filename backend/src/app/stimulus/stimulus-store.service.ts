@@ -10,7 +10,6 @@ import type {
   SeedRow,
   TurnEnvelope,
 } from '@shared/domain';
-import { JobBootstrapService } from '../job-bootstrap';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   TranscriptMessageEntity,
@@ -24,12 +23,13 @@ import {
 } from '../surface/message-change-notifier.port';
 import { fromExternal } from '@shared/prompt-kit/message';
 import { writeSystemChunk } from '../persistence/system-chunk-writer';
+import type { JobProvenance } from '@shared/domain/job';
+import { JobBootstrapService } from '../job-bootstrap/job-bootstrap.service';
 import {
-  chunkKey,
   renderBornBlockedProvenanceNote,
   renderMidFlightBlockedNote,
-} from '../prompt-kit/harness';
-import type { JobProvenance } from '@shared/domain/job';
+} from '../prompt-kit/harness/seed-catalog';
+import { chunkKey } from '@shared/prompt-kit/harness/chunk-keys';
 
 /**
  * `reply_route` jsonb widened LOCALLY with the seed-stamp piggyback keys (mirroring how `priority`
@@ -345,7 +345,9 @@ export class StimulusStoreService {
         ? { seedSecretIds: input.seedSecretIds }
         : {}),
       ...(input.seedFileIds?.length ? { seedFileIds: input.seedFileIds } : {}),
-      ...(input.bornBlockedSeed ? { bornBlockedSeed: input.bornBlockedSeed } : {}),
+      ...(input.bornBlockedSeed
+        ? { bornBlockedSeed: input.bornBlockedSeed }
+        : {}),
       ...(input.blockNote ? { blockNote: input.blockNote } : {}),
       ...(input.unblockNote ? { unblockNote: input.unblockNote } : {}),
     };

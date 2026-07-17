@@ -8,11 +8,11 @@ import {
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import type { UnblockBlockerInfo } from '@shared/domain/message';
-import { BrainGateway } from '../brain-gateway';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobDependencyEntity, JobEntity } from '../persistence/entities';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
 import { StimulusStoreService } from '../stimulus/stimulus-store.service';
+import { BrainGateway } from '../brain-gateway/brain-gateway.service';
 
 // A job can be BLOCKED only from a pre-build conversational state; 'blocked' is included so a
 // multi-blocker create_job can add its edges one at a time (the first live blocker parks it; adding
@@ -321,7 +321,13 @@ export class JobDependencyService {
     if (allTerminal) {
       const infos: UnblockBlockerInfo[] = [
         ...(removed
-          ? [{ jobId: removed.id, title: removed.title, how: 'removed' as const }]
+          ? [
+              {
+                jobId: removed.id,
+                title: removed.title,
+                how: 'removed' as const,
+              },
+            ]
           : []),
         ...this.classifiedBlockerInfos(blockers),
       ];

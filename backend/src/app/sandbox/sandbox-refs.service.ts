@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { gitAuthEnv } from '../git';
+import { gitAuthEnv } from '../git/git-auth';
 
 const execFileAsync = promisify(execFile);
 

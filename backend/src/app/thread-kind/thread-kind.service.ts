@@ -1,6 +1,6 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { threadKindSpec, validateThreadKinds } from './registry';
-import type { ThreadKindSpec } from './spec';
+import type { ThreadKindSpec } from './__tests__/spec';
 
 /**
  * thread-kind / ThreadKindRegistry — the DI facade over the pure registry, boot-validated LOUD (the twin

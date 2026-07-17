@@ -1,9 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { WorkspaceConfigStore } from '../onboarding/workspace-config.store';
 import { WorkspaceSecretFileStore } from '../onboarding/workspace-secret.store';
-import { McpServerStore } from '../mcp';
-import { WorkspaceSkillStore } from '../skills';
-import { ConventionProfileResolver } from '../conventions';
+import { McpServerStore } from '../mcp/mcp-server.store';
+import { WorkspaceSkillStore } from '../skills/workspace-skill.store';
+import { ConventionProfileResolver } from '../conventions/convention-profile.resolver';
 
 /**
  * The current state of a repo's WORKSPACE PROFILE — the one named area (secrets, mounts, caches, setup,

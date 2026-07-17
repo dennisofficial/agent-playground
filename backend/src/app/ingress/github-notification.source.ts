@@ -11,7 +11,7 @@ import type {
   PrStateDelta,
   RawNotification,
 } from '@shared/domain';
-import { ProjectRoutingService } from '../stimulus';
+import { ProjectRoutingService } from '../stimulus/project-routing.service';
 
 /**
  * The GitHub `NotificationSource` adapter — one of the MVP gateways. It owns the GitHub-specific:

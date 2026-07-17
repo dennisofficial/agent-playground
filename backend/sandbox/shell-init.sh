@@ -7,6 +7,21 @@
 # a pinned version is downloaded ONCE globally and reused. Errors are swallowed: a repo with no version
 # file simply runs the image's base Node 22; a download hiccup falls back to it too.
 
+# ENGINE-PROTECTION NICE GAP. The engine turn (node, nice 0) and the agent's build/test shells share ONE
+# container. The engine is latency-sensitive but light — it mostly sleeps waiting on the model and just needs
+# to be scheduled PROMPTLY when a Redis event or heartbeat is due. A heavy agent build (tsc/vitest/webpack
+# workers) can otherwise pin every core and starve the engine's event loop long enough to miss its 5s
+# heartbeat (see redis-engine-runner.ts TAIL_ALIVE_GRACE_CEILING_MS). Renice THIS shell (and thus every
+# command it spawns — nice is inherited across fork) to a positive value, so under contention CFS lets the
+# nice-0 engine preempt the agent's batch load on wakeup. A non-root user can only RAISE its own nice (lower
+# priority), which is exactly what we want and needs no privilege/cgroup. Guarded + exported so nested agent
+# shells (already nice-inherited) skip the redundant call; swallow errors so a missing renice never breaks a
+# shell. ATLAS_AGENT_NICE is baked in the image (Dockerfile ENV, default 10) and overridable per-sandbox.
+if [ -z "${ATLAS_NICE_APPLIED:-}" ]; then
+  export ATLAS_NICE_APPLIED=1
+  renice "${ATLAS_AGENT_NICE:-10}" -p "$$" >/dev/null 2>&1 || true
+fi
+
 # Put fnm on PATH + install the cd hook, then resolve + (download-and-cache if missing) the repo's pinned
 # version in CWD. The SDK Bash tool starts shells in the worktree, so this resolves at shell startup.
 eval "$(fnm env --use-on-cd --shell bash)" 2>/dev/null || true

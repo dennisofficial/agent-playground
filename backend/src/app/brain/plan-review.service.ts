@@ -7,24 +7,14 @@ import { type ObjectLiteral, Repository } from 'typeorm';
 import { ENGINE_RUNNER, type EngineRunnerPort } from '@shared/engine';
 import type { EngineAuth, EngineHomeKey } from '@shared/engine';
 import { JobLifecycleService } from '../driver/job-lifecycle.service';
-import { LeaderElectionService } from '../cluster';
-import { CredentialResolver } from '../onboarding';
+import { LeaderElectionService } from '../cluster/leader-election.service';
+import { CredentialResolver } from '../onboarding/credential-resolver.service';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { JobEntity, ThreadGroupEntity, ThreadEntity } from '../persistence/entities';
 import {
-  TurnHarnessFactory,
-  laneFor,
-  BLOCK_SINK,
-  type BlockSink,
-} from '../surface';
-import {
-  Agent,
-  renderAgentPrompt,
-  renderPlanForReview,
-  renderReReview,
-  type PlanReviewInput,
-} from '../prompt-kit';
-import { ConventionProfileResolver } from '../conventions';
+  JobEntity,
+  ThreadGroupEntity,
+  ThreadEntity,
+} from '../persistence/entities';
 import { threadKindSpec } from '../thread-kind/registry';
 import {
   type ReviewFinding,
@@ -32,9 +22,19 @@ import {
   serializeFindings,
   deserializeFindings,
 } from './plan-review-findings';
-
-export type { PlanReviewInput } from '../prompt-kit/messages/plan-review';
-
+import { laneFor } from '../surface/thread-registry';
+import {
+  BLOCK_SINK,
+  type BlockSink,
+  TurnHarnessFactory,
+} from '../surface/turn-harness.service';
+import { ConventionProfileResolver } from '../conventions/convention-profile.resolver';
+import {
+  PlanReviewInput,
+  renderPlanForReview,
+  renderReReview,
+} from '../prompt-kit/messages/plan-review';
+import { Agent, renderAgentPrompt } from '@shared/prompt-kit/system';
 /** The transcript lane a job's Codex review streams on (rendered as an inline run card by the web).
  *  Thin re-export of the THREAD_REGISTRY — byte-identical string. */
 export function codexReviewLane(jobId: string): string {
@@ -516,7 +516,8 @@ export class PlanReviewService {
       order: { ordinal: 'ASC' },
     });
     if (!threadGroup) {
-      const ordinal = (await this.maxOrdinal(this.threadGroups, jobId)) + ORDINAL_GAP;
+      const ordinal =
+        (await this.maxOrdinal(this.threadGroups, jobId)) + ORDINAL_GAP;
       threadGroup = await this.threadGroups.save(
         this.threadGroups.create({
           job_id: jobId,

@@ -5,21 +5,10 @@ import { Test } from '@nestjs/testing';
 import { createHmac, randomUUID } from 'node:crypto';
 import { DataSource, Repository } from 'typeorm';
 import { getDataSourceToken } from '@nestjs/typeorm';
-import { AgentChatSurface, type CapturedApprovalCard } from '../agent-surface';
 import { AppModule } from '../app.module';
-import { AgentSessionManager, DecisionApprovalService } from '../brain';
-import { CLASSIFIER_LLM } from '../decision-gate';
 import { ENGINE_RUNNER } from '@shared/engine';
 import { ThreadDriver } from '../driver/thread-driver.service';
-import { JobBootstrapService } from '../job-bootstrap';
-import {
-  GithubPrService,
-  GitIdentityService,
-  LocalGitService,
-  parseGithubRepoUrl,
-} from '../git';
-import { CredentialResolver } from '../onboarding';
-import { SANDBOX_PROVIDER } from '../sandbox';
+import { CredentialResolver } from '../onboarding/credential-resolver.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   TranscriptMessageEntity,
@@ -37,7 +26,19 @@ import {
   FakeLocalGitService,
   FakeThreadTitler,
 } from './e2e-stubs';
-import { JobTitler } from '../titling';
+import { JobBootstrapService } from '../job-bootstrap/job-bootstrap.service';
+import {
+  AgentChatSurface,
+  CapturedApprovalCard,
+} from '../agent-surface/agent-chat-surface';
+import { DecisionApprovalService } from '../brain/decision-approval.service';
+import { AgentSessionManager } from '../brain/agent-session-manager.service';
+import { CLASSIFIER_LLM } from '../decision-gate/classifier-llm';
+import { SANDBOX_PROVIDER } from '../sandbox/sandbox-provider.port';
+import { GitIdentityService } from '../git/git-identity.service';
+import { LocalGitService } from '../git/local-git.service';
+import { GithubPrService, parseGithubRepoUrl } from '../git/github-pr.service';
+import { JobTitler } from '../titling/job-titler.service';
 
 /** A single reported verification step. */
 export interface E2eStep {

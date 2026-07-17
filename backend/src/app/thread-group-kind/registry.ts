@@ -4,7 +4,7 @@
  * a misconfigured kind (a role with no `ThreadKindSpec`, a duplicate kind) fails at startup, not mid-build.
  */
 import { THREAD_KIND_SPECS } from '../thread-kind/registry';
-import type { ThreadGroupKindSpec, ThreadGroupKind } from './spec';
+import type { ThreadGroupKindSpec, ThreadGroupKind } from './__tests__/spec';
 
 /**
  * THE thread-group-kind registry. One spec per kind; thread 3's orchestration reads everything about a
@@ -117,9 +117,7 @@ export function validateThreadGroupKinds(
     }
     seen.add(s.kind);
     if (s.roles.length === 0) {
-      throw new Error(
-        `thread-group-kind: kind "${s.kind}" declares no roles.`,
-      );
+      throw new Error(`thread-group-kind: kind "${s.kind}" declares no roles.`);
     }
     for (const r of s.roles) {
       if (!validRoles.has(r.role)) {

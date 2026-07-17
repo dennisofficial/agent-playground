@@ -6,13 +6,11 @@ import {
   runWorkEvent,
   type RawBodyRequest,
 } from './ingress-http';
-import { StimulusIntake } from '../stimulus';
-import {
-  BaseMoveMergeabilitySync,
-  GithubCiStateSync,
-  GithubPrStateSync,
-  GitStateReconciler,
-} from '../driver';
+import { StimulusIntake } from '../stimulus/stimulus-intake.service';
+import { GithubCiStateSync } from '../driver/github-ci-state-sync.service';
+import { GitStateReconciler } from '../driver/git-state-reconciler.service';
+import { GithubPrStateSync } from '../driver/github-pr-state-sync.service';
+import { BaseMoveMergeabilitySync } from '../driver/base-move-mergeability-sync.service';
 
 /**
  * `POST /webhooks/github/events` — the GitHub WORK-EVENTS webhook (CI results, reviews, PR/issue

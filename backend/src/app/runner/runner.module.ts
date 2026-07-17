@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { EngineModule } from '../engine/engine.module';
-import { GitModule } from '../git';
+import { GitModule } from '../git/git.module';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { ThreadEntity } from '../persistence/entities';
 import { TurnRunnerService } from './turn-runner.service';

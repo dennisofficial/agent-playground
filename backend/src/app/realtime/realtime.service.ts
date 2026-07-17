@@ -13,7 +13,7 @@ import {
 } from '@workspace/pg-realtime';
 import pg from 'pg';
 import type { Subscription } from 'rxjs';
-import { LeaderElectionService } from '../cluster';
+import { LeaderElectionService } from '../cluster/leader-election.service';
 import { pgConnectionString, resolveSsl } from '../persistence/database.module';
 import { THREADS_MODEL, type RealtimePrincipal } from './job-realtime.model';
 import { DRAFTS_MODEL } from './draft-realtime.model';

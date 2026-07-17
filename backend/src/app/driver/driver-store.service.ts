@@ -15,7 +15,6 @@ import type {
   JobStatus,
   JobHalt,
 } from '@shared/domain';
-import { JobDependencyService } from '../job-deps';
 import { StimulusStoreService } from '../stimulus/stimulus-store.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { writeSystemChunk } from '../persistence/system-chunk-writer';
@@ -33,14 +32,7 @@ import type {
   TaskItem,
   ThreadTerminalRecord,
 } from '../persistence/entities';
-import type { ReviewFinding } from '../autofix';
-import {
-  coerceThreadRole,
-  coerceThreadType,
-  laneDefaultFooter,
-  threadKindSpec,
-} from '../thread-kind';
-import type { ThreadRole } from '../thread-kind';
+import type { ReviewFinding } from '../autofix/autofix.types';
 import { laneFor } from '../surface/thread-registry';
 import type { WebQuestionCard } from '../surface/web-question-card';
 import {
@@ -51,6 +43,14 @@ import {
 import { prMergeReady } from './auto-merge.service';
 import type { PlannedStep } from '../prompt-kit/messages/render-plan';
 import type { AgentMessage } from '@shared/prompt-kit/message';
+import { JobDependencyService } from '../job-deps/job-dependency.service';
+import {
+  coerceThreadRole,
+  laneDefaultFooter,
+  threadKindSpec,
+} from '../thread-kind/registry';
+import { coerceThreadType } from '@shared/thread-kind/thread-types';
+import { ThreadRole } from '../thread-kind/__tests__/spec';
 
 /** Phases are gap-numbered (10, 20, 30…) so a re-plan can splice without renumbering. */
 const ORDINAL_GAP = 10;
@@ -308,7 +308,10 @@ export class DriverStoreService {
         where: { thread_group_id: g.id, role: 'builder' },
         select: { id: true, status: true },
       });
-      if (builders.length > 0 && builders.every((t) => builderFinished(t.status)))
+      if (
+        builders.length > 0 &&
+        builders.every((t) => builderFinished(t.status))
+      )
         done += 1;
     }
     await this.jobs
@@ -1016,7 +1019,9 @@ export class DriverStoreService {
       .createQueryBuilder()
       .update(TaskEntity)
       .set({ status: 'dropped' })
-      .where('thread_group_id = :threadGroupId', { threadGroupId: thread.thread_group_id })
+      .where('thread_group_id = :threadGroupId', {
+        threadGroupId: thread.thread_group_id,
+      })
       .andWhere("status IN ('pending', 'in_progress')")
       .execute();
     return res.affected ?? 0;
@@ -1199,16 +1204,23 @@ export class DriverStoreService {
 
   /** CAS-claim one consecutive UNCORROBORATED text-fallback session-limit misfire for the job; refuses at
    *  `cap`. */
-  async claimSessionLimitTextMisfire(jobId: string, cap: number): Promise<{ ok: boolean; used: number }> {
+  async claimSessionLimitTextMisfire(
+    jobId: string,
+    cap: number,
+  ): Promise<{ ok: boolean; used: number }> {
     const res = await this.jobs
       .createQueryBuilder()
       .update(JobEntity)
-      .set({ session_limit_text_misfires: () => 'session_limit_text_misfires + 1' })
+      .set({
+        session_limit_text_misfires: () => 'session_limit_text_misfires + 1',
+      })
       .where('id = :jobId', { jobId })
       .andWhere('session_limit_text_misfires < :cap', { cap })
       .returning('session_limit_text_misfires')
       .execute();
-    const used = res.raw?.[0]?.session_limit_text_misfires as number | undefined;
+    const used = res.raw?.[0]?.session_limit_text_misfires as
+      | number
+      | undefined;
     return used != null ? { ok: true, used } : { ok: false, used: cap };
   }
 
@@ -1244,7 +1256,6 @@ export class DriverStoreService {
       lastAttemptAt: row?.retry_last_attempt_at ?? null,
     };
   }
-
 
   // ── review children (post-build review fan-out as real child threads) ──────────────────────────
   // A builder's post-build review is N `review_lens` rows + 1 `post_review` row, each a first-class
@@ -1447,7 +1458,9 @@ export class DriverStoreService {
         order: { ordinal: 'ASC' },
       });
       const mainTasks = planningThreadGroup
-        ? (await this.tasksForThreadGroup(planningThreadGroup.id)).map(toTaskItem)
+        ? (await this.tasksForThreadGroup(planningThreadGroup.id)).map(
+            toTaskItem,
+          )
         : [];
       return {
         status: 'no_job',
@@ -1522,7 +1535,9 @@ export class DriverStoreService {
 
     const mapThreadGroup = (s: ThreadGroupEntity) => {
       const threadGroupThreads = threadsByThreadGroup.get(s.id) ?? [];
-      const roots = threadGroupThreads.filter((t) => t.parent_thread_id == null);
+      const roots = threadGroupThreads.filter(
+        (t) => t.parent_thread_id == null,
+      );
       return {
         id: s.id,
         kind: s.kind,
@@ -1547,7 +1562,9 @@ export class DriverStoreService {
     );
     // The PLAN REVIEW as a first-class navigator row (the Codex review dialogue Main communicates with) —
     // derived from the plan_review thread group's single thread's status. Null when no plan_review thread group exists.
-    const planReviewThreadGroup = threadGroups.find((s) => s.kind === 'plan_review');
+    const planReviewThreadGroup = threadGroups.find(
+      (s) => s.kind === 'plan_review',
+    );
     const planReviewThread = planReviewThreadGroup
       ? (threadsByThreadGroup.get(planReviewThreadGroup.id) ?? [])[0]
       : undefined;
@@ -1658,7 +1675,9 @@ export class DriverStoreService {
   /** Every thread of a thread group as the driver's {@link DriverThread} domain shape, in execution order — the
    *  thread-group-driven drive loop reads this LIVE between builder iterations (a leg rotation appends a fresh
    *  builder row mid-drive, so a start-of-thread-group snapshot goes stale). */
-  async driverThreadsForThreadGroup(threadGroupId: string): Promise<DriverThread[]> {
+  async driverThreadsForThreadGroup(
+    threadGroupId: string,
+  ): Promise<DriverThread[]> {
     const rows = await this.threads.find({
       where: { thread_group_id: threadGroupId },
       order: { ordinal: 'ASC' },
@@ -1703,7 +1722,8 @@ export class DriverStoreService {
     decisionRecordId?: string | null;
     config?: Record<string, unknown>;
   }): Promise<ThreadGroupEntity> {
-    const ordinal = (await this.maxThreadGroupOrdinal(input.jobId)) + ORDINAL_GAP;
+    const ordinal =
+      (await this.maxThreadGroupOrdinal(input.jobId)) + ORDINAL_GAP;
     return this.threadGroups.save(
       this.threadGroups.create({
         job_id: input.jobId,

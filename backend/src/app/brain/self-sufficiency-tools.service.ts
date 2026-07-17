@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { Injectable, Logger, Optional } from '@nestjs/common';
-import { McpServerStore } from '../mcp';
-import { MemoryStore } from '../memory';
-import { webFileRequestCard, webSecretInputCard } from '../surface';
 import type { ToolImpl } from '@shared/engine/engine.types';
 import { BrainStoreService } from './brain-store.service';
+import { McpServerStore } from '../mcp/mcp-server.store';
+import { MemoryStore } from '../memory/memory.store';
+import { webSecretInputCard } from '../surface/web-secret-input-card';
+import { webFileRequestCard } from '../surface/web-file-request-card';
 
 /** The tenant + authoring context a build/brain thread supplies when asking for this toolset. */
 type SelfSufficiencyContext = {

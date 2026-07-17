@@ -5,12 +5,6 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { existsSync, rmSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 import { In, IsNull, Not, Repository } from 'typeorm';
-import type { FeatureSandbox, ProjectRepo } from '../git';
-import { GithubPrService, LocalGitService, parseGithubRepoUrl } from '../git';
-import { CredentialResolver, OnboardingService } from '../onboarding';
-import { BrainGateway } from '../brain-gateway';
-import { JobBootstrapService } from '../job-bootstrap';
-import { JobDependencyService } from '../job-deps';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   RepoEntity,
@@ -18,19 +12,30 @@ import {
   JobSandboxEntity,
 } from '../persistence/entities';
 import { SkillUpdaterService } from '../skills/skill-updater.service';
-import {
-  hostExecUser,
-  SANDBOX_PROVIDER,
-  SandboxActivityRegistry,
-  type SandboxMilestoneStage,
-  type SandboxProvider,
-  type ServiceLivenessProbe,
-} from '../sandbox';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
 import { computeFeatureBranchName } from './branch-naming';
 import { DriverStoreService } from './driver-store.service';
 import { DRIVER_REPO, type DriverRepoResolver } from './repo-resolver';
 import { WorktreeProvisioner } from './worktree-provisioner.service';
+import {
+  FeatureSandbox,
+  LocalGitService,
+  ProjectRepo,
+} from '../git/local-git.service';
+import { GithubPrService, parseGithubRepoUrl } from '../git/github-pr.service';
+import { CredentialResolver } from '../onboarding/credential-resolver.service';
+import { SandboxActivityRegistry } from '../sandbox/sandbox-activity.registry';
+import {
+  SANDBOX_PROVIDER,
+  SandboxMilestoneStage,
+  type SandboxProvider,
+  ServiceLivenessProbe,
+} from '../sandbox/sandbox-provider.port';
+import { JobDependencyService } from '../job-deps/job-dependency.service';
+import { BrainGateway } from '../brain-gateway/brain-gateway.service';
+import { JobBootstrapService } from '../job-bootstrap/job-bootstrap.service';
+import { OnboardingService } from '../onboarding/onboarding.service';
+import { hostExecUser } from '../sandbox/host-exec-user';
 
 /**
  * Idle window before an attached-but-quiet container is reaped to `detached` (30 min). Reaping

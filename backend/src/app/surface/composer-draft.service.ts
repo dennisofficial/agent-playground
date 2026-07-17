@@ -37,7 +37,6 @@ import {
   loadSecretsKey,
 } from '../onboarding/secret-cipher';
 import { JobLifecycleService } from '../driver/job-lifecycle.service';
-import { renderUploadedFilesXml, type AttachmentCardItem } from '../prompt-kit';
 import {
   ATTACHMENT_EXTS,
   MAX_ATTACHMENT_BYTES,
@@ -46,6 +45,10 @@ import {
   safeUploadName,
   type UploadedAttachment,
 } from './attachment-upload';
+import {
+  AttachmentCardItem,
+  renderUploadedFilesXml,
+} from '../prompt-kit/messages/first-turn-seeds';
 
 /**
  * The wire (cleartext) counterpart of `DraftStagedAnswer` — the shape returned by GET and accepted by PUT.

@@ -19,7 +19,6 @@ import type {
   ToolRequestFrame,
   TurnSpec,
 } from '@shared/engine/engine.types';
-import { gitAuthEnv, gitCredHelperEnv } from '../git';
 import {
   REDIS_STREAM_PORT,
   type RedisStreamPort,
@@ -62,6 +61,7 @@ import {
 } from './redis-turn-keys';
 import { drainTurnEventConsumer } from './turn-event-consumer';
 import { LiveTurnStore } from '../surface/live-turn-store';
+import { gitAuthEnv, gitCredHelperEnv } from '../git/git-auth';
 
 /** A frame the in-container engine appends to `turn:{T}:events` (mirrors the pipe runner's NDJSON frames). */
 type EventFrame =

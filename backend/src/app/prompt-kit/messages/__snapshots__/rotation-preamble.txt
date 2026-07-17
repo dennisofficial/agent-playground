@@ -1,8 +1,0 @@
-<session_rotated>
-Your previous build session filled its context window and was rotated to keep you sharp. Its handoff is below
-(also saved verbatim at `/context/generated/handoffs/` if you want to re-read it). Treat it as your OWN
-recovered memory. Your work-in-progress from that session is ALREADY ON DISK in this worktree — do NOT restart
-the batch, do NOT redo work that is already committed or staged, and do NOT re-ask or re-derive anything the
-handoff already settles. Re-read the durable artifacts it points to as needed (`/context/specs`,
-`get_pipeline_state`), then continue from its "Next safe action".
-</session_rotated>

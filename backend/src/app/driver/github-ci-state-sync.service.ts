@@ -2,13 +2,13 @@ import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { Repository } from 'typeorm';
 import type { CiSyncDelta } from '@shared/domain';
-import { GithubPrService, parseGithubRepoUrl } from '../git';
-import { CredentialResolver } from '../onboarding';
+import { CredentialResolver } from '../onboarding/credential-resolver.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity, RepoEntity } from '../persistence/entities';
-import { StimulusStoreService } from '../stimulus';
 import { sameCounts, summarizeChecks } from './git-state-reconciler.service';
 import { AutoMergeService } from './auto-merge.service';
+import { StimulusStoreService } from '../stimulus/stimulus-store.service';
+import { GithubPrService, parseGithubRepoUrl } from '../git/github-pr.service';
 
 /**
  * The SILENT GitHub CI-status webhook sync — the FAST path that mirrors `GitStateReconciler.reconcileOne`'s

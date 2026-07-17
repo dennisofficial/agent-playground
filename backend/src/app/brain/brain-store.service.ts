@@ -9,31 +9,26 @@ import {
   type ObjectLiteral,
   Repository,
 } from 'typeorm';
-import type { Decision, Job, JobActivity, JobKind, JobStatus } from '@shared/domain';
+import type {
+  Decision,
+  Job,
+  JobActivity,
+  JobKind,
+  JobStatus,
+} from '@shared/domain';
 import { nextDecisionId } from '@shared/domain';
 import type { AutoApproveMode } from '@workspace/shared';
-import type {
-  WebConventionEditProposalCard,
-  WebConventionProposalCard,
+import { nextQuestionId, WebQuestionCard } from '../surface/web-question-card';
+import {
+  nextFileRequestId,
   WebFileRequestCard,
-  WebMcpProposalCard,
-  WebQuestionCard,
-  WebSecretInputCard,
-  WebSkillEditAccessCard,
-  WebSkillProposalCard,
-} from '../surface';
-// Direct leaf import (not the '../surface' barrel): brain-store otherwise only TYPE-imports from surface,
-// and a runtime value import of the whole barrel would add a surface→brain→brain-store→surface cycle.
-import { JobDependencyService } from '../job-deps';
-import { nextQuestionId } from '../surface/web-question-card';
-import { nextFileRequestId } from '../surface/web-file-request-card';
+} from '../surface/web-file-request-card';
 import { renderPlan } from '../prompt-kit/messages/render-plan';
 import type { PlannedStep } from '../prompt-kit/messages/render-plan';
 import type { AgentMessage } from '@shared/prompt-kit/message';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { writeSystemChunk } from '../persistence/system-chunk-writer';
-import { coerceThreadType, isDriverExecutableKind } from '../thread-kind';
-import { JobBootstrapService } from '../job-bootstrap';
+import { JobBootstrapService } from '../job-bootstrap/job-bootstrap.service';
 import {
   DecisionRecordEntity,
   TranscriptMessageEntity,
@@ -43,8 +38,17 @@ import {
   JobEntity,
   OrganizationEntity,
 } from '../persistence/entities';
-import { JobTitler } from '../titling';
 import type { TranscriptLine } from './brain.types';
+import { WebSecretInputCard } from '../surface/web-secret-input-card';
+import { WebMcpProposalCard } from '../surface/web-mcp-proposal-card';
+import { WebConventionProposalCard } from '../surface/web-convention-proposal-card';
+import { WebConventionEditProposalCard } from '../surface/web-convention-edit-proposal-card';
+import { WebSkillProposalCard } from '../surface/web-skill-proposal-card';
+import { WebSkillEditAccessCard } from '../surface/web-skill-edit-access-card';
+import { JobTitler } from '../titling/job-titler.service';
+import { JobDependencyService } from '../job-deps/job-dependency.service';
+import { coerceThreadType } from '@shared/thread-kind/thread-types';
+import { isDriverExecutableKind } from '../thread-kind/registry';
 
 export type CreateJobAutoMode = {
   approveMode?: Exclude<AutoApproveMode, 'both'>;
@@ -500,7 +504,9 @@ export class BrainStoreService {
   }
 
   /** Load this thread's card rows, newest-first — small helper for the question-card lookups below. */
-  private async questionCards(jobId: string): Promise<TranscriptMessageEntity[]> {
+  private async questionCards(
+    jobId: string,
+  ): Promise<TranscriptMessageEntity[]> {
     const rows = await this.messages.find({
       where: { job_id: jobId, kind: 'card' },
       order: { created_at: 'DESC' },
@@ -1114,7 +1120,9 @@ export class BrainStoreService {
   // transcript). No migration: all state lives on the card in the `messages` jsonb.
 
   /** Load this job's file-request card rows, newest-first — ALL of them (open, provided, or withdrawn). */
-  private async fileRequestCards(jobId: string): Promise<TranscriptMessageEntity[]> {
+  private async fileRequestCards(
+    jobId: string,
+  ): Promise<TranscriptMessageEntity[]> {
     const rows = await this.messages.find({
       where: { job_id: jobId, kind: 'card' },
       order: { created_at: 'DESC' },
@@ -1691,11 +1699,17 @@ export class BrainStoreService {
   /** CAS-claim one benign-abort auto-resume attempt: atomically increment `benign_abort_redrives` iff still
    *  below `cap`, stamping `retry_last_attempt_at`. Returns `{ok:true, used}` on success, else `{ok:false,
    *  used:cap}` (budget exhausted). Durable so a restart/crash-loop can't re-grant a fresh budget. */
-  async claimBenignAbortRedrive(jobId: string, cap: number): Promise<{ ok: boolean; used: number }> {
+  async claimBenignAbortRedrive(
+    jobId: string,
+    cap: number,
+  ): Promise<{ ok: boolean; used: number }> {
     const res = await this.jobs
       .createQueryBuilder()
       .update(JobEntity)
-      .set({ benign_abort_redrives: () => 'benign_abort_redrives + 1', retry_last_attempt_at: () => 'now()' })
+      .set({
+        benign_abort_redrives: () => 'benign_abort_redrives + 1',
+        retry_last_attempt_at: () => 'now()',
+      })
       .where('id = :jobId', { jobId })
       .andWhere('benign_abort_redrives < :cap', { cap })
       .returning('benign_abort_redrives')
@@ -1706,11 +1720,17 @@ export class BrainStoreService {
 
   /** CAS-claim one host-transport transient-error auto-retry attempt (brain lane). Same shape as
    *  {@link claimBenignAbortRedrive} against `transient_retry_redrives`. */
-  async claimTransientRetryRedrive(jobId: string, cap: number): Promise<{ ok: boolean; used: number }> {
+  async claimTransientRetryRedrive(
+    jobId: string,
+    cap: number,
+  ): Promise<{ ok: boolean; used: number }> {
     const res = await this.jobs
       .createQueryBuilder()
       .update(JobEntity)
-      .set({ transient_retry_redrives: () => 'transient_retry_redrives + 1', retry_last_attempt_at: () => 'now()' })
+      .set({
+        transient_retry_redrives: () => 'transient_retry_redrives + 1',
+        retry_last_attempt_at: () => 'now()',
+      })
       .where('id = :jobId', { jobId })
       .andWhere('transient_retry_redrives < :cap', { cap })
       .returning('transient_retry_redrives')
@@ -1721,16 +1741,23 @@ export class BrainStoreService {
 
   /** CAS-claim one consecutive UNCORROBORATED text-fallback session-limit misfire for the job; refuses at
    *  `cap`. Same shape as {@link claimTransientRetryRedrive}. */
-  async claimSessionLimitTextMisfire(jobId: string, cap: number): Promise<{ ok: boolean; used: number }> {
+  async claimSessionLimitTextMisfire(
+    jobId: string,
+    cap: number,
+  ): Promise<{ ok: boolean; used: number }> {
     const res = await this.jobs
       .createQueryBuilder()
       .update(JobEntity)
-      .set({ session_limit_text_misfires: () => 'session_limit_text_misfires + 1' })
+      .set({
+        session_limit_text_misfires: () => 'session_limit_text_misfires + 1',
+      })
       .where('id = :jobId', { jobId })
       .andWhere('session_limit_text_misfires < :cap', { cap })
       .returning('session_limit_text_misfires')
       .execute();
-    const used = res.raw?.[0]?.session_limit_text_misfires as number | undefined;
+    const used = res.raw?.[0]?.session_limit_text_misfires as
+      | number
+      | undefined;
     return used != null ? { ok: true, used } : { ok: false, used: cap };
   }
 

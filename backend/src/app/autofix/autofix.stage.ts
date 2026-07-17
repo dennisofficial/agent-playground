@@ -1,22 +1,18 @@
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ENGINE_RUNNER, type EngineRunnerPort } from '@shared/engine';
-import type { EngineEvent, ExecutionTarget, RunEngineArgs } from '@shared/engine';
+import type {
+  EngineEvent,
+  ExecutionTarget,
+  RunEngineArgs,
+} from '@shared/engine';
 import { TurnUsageProjector } from '../analytics/turn-usage-projector.service';
-import { LocalGitService } from '../git';
+import { LocalGitService } from '../git/local-git.service';
 import { CONTAINER_CONTEXT } from '../sandbox/container-paths';
 import {
   TurnHarnessFactory,
   type TurnHarness,
 } from '../surface/turn-harness.service';
 import { laneFor } from '../surface/thread-registry';
-import {
-  Agent,
-  buildFixPrompt,
-  buildReviewPrompt,
-  renderAgentPrompt,
-} from '../prompt-kit';
-import { ConventionProfileResolver } from '../conventions';
-import { threadKindSpec } from '../thread-kind';
 import {
   DEFAULT_LENSES,
   dedupeFindings,
@@ -33,6 +29,13 @@ import type {
   ReviewFinding,
   ReviewLens,
 } from './autofix.types';
+import { ConventionProfileResolver } from '../conventions/convention-profile.resolver';
+import {
+  buildFixPrompt,
+  buildReviewPrompt,
+} from '../prompt-kit/messages/autofix-lenses';
+import { Agent, renderAgentPrompt } from '@shared/prompt-kit/system';
+import { threadKindSpec } from '../thread-kind/registry';
 
 /** Conservative defaults — the driver can call the stage with no opts and get safe behavior. */
 const DEFAULT_FIX_MIN_SEVERITY: FindingSeverity = 'medium';
@@ -153,7 +156,10 @@ export class AutoFixStage {
     ctx: AutoFixContext,
     sub: { lensId: string } | { fix: true },
   ):
-    | { harness: TurnHarness; route: { channel: string; jobId: string; lane: string } }
+    | {
+        harness: TurnHarness;
+        route: { channel: string; jobId: string; lane: string };
+      }
     | undefined {
     if (!ctx.jobId || !ctx.channel || !ctx.autofixId) return undefined;
     const isFix = 'fix' in sub;

@@ -1,14 +1,14 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { type FeatureSandbox } from '../git';
-import { McpResolver } from '../mcp';
-import { WorkspaceConfigStore } from '../onboarding';
-import {
-  SANDBOX_PROVIDER,
-  type SandboxMilestoneStage,
-  type SandboxProvider,
-} from '../sandbox';
 import { PipelineAwarenessStore } from './pipeline-awareness.store';
 import { WorktreeHydrator } from './worktree-hydrator.service';
+import { FeatureSandbox } from '../git/local-git.service';
+import {
+  SANDBOX_PROVIDER,
+  SandboxMilestoneStage,
+  type SandboxProvider,
+} from '../sandbox/sandbox-provider.port';
+import { WorkspaceConfigStore } from '../onboarding/workspace-config.store';
+import { McpResolver } from '../mcp/mcp-resolver.service';
 
 export interface ProvisionAndAttachInput {
   /** The cut worktree (base+feature already in place). */

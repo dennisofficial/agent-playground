@@ -12,14 +12,15 @@ import type {
   NotificationSource,
   RawNotification,
 } from '@shared/domain';
-import type { IntakeOutcome, StimulusIntake } from '../stimulus';
-import type {
-  BaseMoveMergeabilitySync,
-  GithubCiStateSync,
-  GithubPrStateSync,
-  GitStateReconciler,
-} from '../driver';
 import type { GithubNotificationSource } from './github-notification.source';
+import {
+  IntakeOutcome,
+  StimulusIntake,
+} from '../stimulus/stimulus-intake.service';
+import { GithubCiStateSync } from '../driver/github-ci-state-sync.service';
+import { GitStateReconciler } from '../driver/git-state-reconciler.service';
+import { GithubPrStateSync } from '../driver/github-pr-state-sync.service';
+import { BaseMoveMergeabilitySync } from '../driver/base-move-mergeability-sync.service';
 
 /** Express request shape the ingress controllers read (rawBody enabled on the Nest app). */
 export interface RawBodyRequest {

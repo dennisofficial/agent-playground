@@ -1,6 +1,6 @@
 import { ChatAnthropic } from '@langchain/anthropic';
 import { Global, Module } from '@nestjs/common';
-import { CredentialResolver } from '../onboarding';
+import { CredentialResolver } from '../onboarding/credential-resolver.service';
 import {
   JOB_TITLE_CHAIN,
   JobTitleChain,

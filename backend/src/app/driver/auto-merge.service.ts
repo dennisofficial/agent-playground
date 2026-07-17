@@ -8,15 +8,19 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { AutoMergeMethod } from '@workspace/shared';
-import { JobBootstrapService } from '../job-bootstrap';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { JobEntity, TranscriptMessageEntity, RepoEntity } from '../persistence/entities';
+import {
+  JobEntity,
+  TranscriptMessageEntity,
+  RepoEntity,
+} from '../persistence/entities';
 import { GithubPrService, parseGithubRepoUrl } from '../git/github-pr.service';
-import { CredentialResolver } from '../onboarding';
+import { CredentialResolver } from '../onboarding/credential-resolver.service';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
 import { StimulusStoreService } from '../stimulus/stimulus-store.service';
 import { JobLifecycleService } from './job-lifecycle.service';
 import { DriverStoreService } from './driver-store.service';
+import { JobBootstrapService } from '../job-bootstrap/job-bootstrap.service';
 
 /**
  * GitHub-state readiness — the part shared by manual + auto (the manual "Merge PR" card/button uses THIS

@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { SchedulerRegistry } from '@nestjs/schedule';
 import type { Subscription } from 'rxjs';
-import { LeaderElectionService } from '../cluster';
+import { LeaderElectionService } from '../cluster/leader-election.service';
 import { HostStatsSampleRepository } from './host-stats-sample.repository';
 import { HostStatsService } from './host-stats.service';
 

@@ -8,9 +8,11 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { Repository } from 'typeorm';
-import { JobBootstrapService } from '../job-bootstrap';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { TranscriptMessageEntity, JobSandboxEntity } from '../persistence/entities';
+import {
+  TranscriptMessageEntity,
+  JobSandboxEntity,
+} from '../persistence/entities';
 import {
   SANDBOX_PROVIDER,
   type SandboxProvider,
@@ -21,6 +23,7 @@ import {
   type SessionTranscript,
 } from './session-transcript';
 import { backfillThreadFromTurns } from './turn-backfill';
+import { JobBootstrapService } from '../job-bootstrap/job-bootstrap.service';
 
 /** Defaults for the mid-flight watcher: poll every 8s, give up after 20 min (longer than any brain turn). */
 const WATCH_INTERVAL_MS = 8_000;

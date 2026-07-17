@@ -1,11 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { Repository } from 'typeorm';
-import { GithubPrService, parseGithubRepoUrl } from '../git';
-import { CredentialResolver } from '../onboarding';
+import { CredentialResolver } from '../onboarding/credential-resolver.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity, RepoEntity } from '../persistence/entities';
-import { StimulusIntake } from '../stimulus';
+import { StimulusIntake } from '../stimulus/stimulus-intake.service';
+import { GithubPrService, parseGithubRepoUrl } from '../git/github-pr.service';
 
 /**
  * The BATCHED base-move mergeability refresh — the GraphQL counterpart to `GitStateReconciler`'s per-PR

@@ -6,7 +6,7 @@ import type {
 } from '@nestjs/common';
 import { SchedulerRegistry } from '@nestjs/schedule';
 import type { Subscription } from 'rxjs';
-import { LeaderElectionService } from '../cluster';
+import { LeaderElectionService } from '../cluster/leader-election.service';
 import {
   REDIS_STREAM_PORT,
   type RedisStreamPort,

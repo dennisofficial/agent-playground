@@ -2,22 +2,9 @@ import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { Sema } from 'async-sema';
 import { modeApprovesShip } from '@workspace/shared';
-import { exec } from 'node:child_process';
-import { promisify } from 'node:util';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { threadDirName } from '../prompt-kit/harness/thread-dir-name';
-import { PlanVisibilityService } from '../decision-gate';
-import { BrainGateway } from '../brain-gateway';
-import {
-  AutoFixStage,
-  dedupeFindings,
-  meetsSeverity,
-  lensById,
-  reviewAgentsForThread,
-  type AutoFixContext,
-  type FindingSeverity,
-} from '../autofix';
 import type {
   DecisionRecord,
   Step,
@@ -46,44 +33,18 @@ import {
   isTransientAuthError,
   INTERNAL_PROFILE_AWARENESS_TOOL,
 } from '@shared/engine/engine.types';
-import { ProfileAwarenessService } from '../workspace-profile';
 import { summarizeTurnFailure } from '@shared/engine/turn-failure-summary';
 import {
   defaultResumeAt,
   isCorroboratedSessionLimit,
   SESSION_LIMIT_TEXT_MISFIRE_MAX,
 } from '@shared/engine/session-limit';
-import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
-import {
-  CHAT_SURFACE,
-  type ChatSurface,
-  BLOCK_SINK,
-  type BlockSink,
-  TurnHarnessFactory,
-  TASK_EVENT_SINK,
-  type TaskEventSink,
-  makeTaskTools,
-  laneFor,
-  webShipReviewCard,
-  type ShipThreadVerification,
-} from '../surface';
 import { LiveTurnStore, MAIN_LANE } from '../surface/live-turn-store';
-import { CredentialResolver } from '../onboarding';
+import { CredentialResolver } from '../onboarding/credential-resolver.service';
 import { ClaudeCredentialStore } from '../onboarding/claude-credential.store';
 import { OauthUsageService } from '../onboarding/oauth-usage.service';
 import { WorkspaceConfigStore } from '../onboarding/workspace-config.store';
-import { McpResolver, McpOAuthService } from '../mcp';
-import {
-  ConventionProfileResolver,
-  type ResolvedConventions,
-} from '../conventions';
-import {
-  SkillResolver,
-  SKILL_NUDGE_SELECTOR,
-  type SkillNudgeSelector,
-} from '../skills';
-import { LeaderElectionService } from '../cluster';
-import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox';
+import { LeaderElectionService } from '../cluster/leader-election.service';
 import { CONTAINER_CONTEXT } from '../sandbox/container-paths';
 // Direct path (not the '../sandbox' barrel, which doesn't re-export it) — mirrors the brain's import.
 import { TurnRegistry } from '../sandbox/turn-registry.service';
@@ -95,43 +56,11 @@ import type {
   TaskItem,
   ThreadTerminalRecord,
 } from '../persistence/entities';
-import type { JobDispatcher } from '../brain';
-import { TurnRunnerService } from '../runner';
-import {
-  COMMIT_AND_PUSH_NOTE,
-  renderAgentPrompt,
-  renderBatchTask,
-  renderMasterReviewTask,
-  renderOpenLegTasks,
-  renderOpenTasksAdvisory,
-  renderRunningServicesNote,
-  composeLegSeed,
-  foldLegTurn,
-  stripContextPressureTag,
-  ROTATION_SOFT_NUDGE,
-  ROTATION_REMINDER_NUDGE,
-  RECORD_LEG_HANDOFF_STOP,
-  renderCommitTurnTask,
-} from '../prompt-kit';
-import { chunkKey, composeTurn } from '../prompt-kit/harness';
 import { fromExternal, type AgentMessage } from '@shared/prompt-kit/message';
-import {
-  StimulusStoreService,
-  userChunkFor,
-  CHAT_DELIVERY_LEASE_MS,
-} from '../stimulus';
 import { JitHostExecutor } from '../brain/jit-host-executor';
 import { SelfSufficiencyToolsService } from '../brain/self-sufficiency-tools.service';
 import { ExposureService } from '../exposure/exposure.service';
 import { readServiceMarkers, serviceStatus } from '../exposure/service-markers';
-import {
-  isDriverExecutableKind,
-  threadKindSpec,
-  coerceThreadType,
-  type ThreadRole,
-  type ThreadType,
-} from '../thread-kind';
-import { threadGroupKindSpec } from '../thread-group-kind';
 import { BuildShipService } from './build-ship.service';
 import { PipelineAwarenessStore } from './pipeline-awareness.store';
 import { clampEvidenceOutput } from './live-verification-support';
@@ -141,7 +70,6 @@ import {
   type JobRoute,
   type ReviewChildThread,
 } from './driver-store.service';
-import { JobBootstrapService } from '../job-bootstrap';
 import {
   renderPlan,
   type PlannedStep,
@@ -161,6 +89,83 @@ import {
 } from './repo-resolver';
 import { JobLifecycleService } from './job-lifecycle.service';
 import { AutoMergeService } from './auto-merge.service';
+import { TurnRunnerService } from '../runner/turn-runner.service';
+import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
+import { JobDispatcher } from '../brain/job-dispatcher';
+import { PlanVisibilityService } from '../decision-gate/plan-visibility.service';
+import { FeatureSandbox, LocalGitService } from '../git/local-git.service';
+import {
+  composeLegSeed,
+  foldLegTurn,
+  RECORD_LEG_HANDOFF_STOP,
+  ROTATION_REMINDER_NUDGE,
+  ROTATION_SOFT_NUDGE,
+  stripContextPressureTag,
+} from '@shared/prompt-kit/messages/build-handoff';
+import { GithubPrService } from '../git/github-pr.service';
+import { AutoFixStage } from '../autofix/autofix.stage';
+import {
+  SANDBOX_PROVIDER,
+  type SandboxProvider,
+} from '../sandbox/sandbox-provider.port';
+import { McpResolver } from '../mcp/mcp-resolver.service';
+import { McpOAuthService } from '../mcp/mcp-oauth.service';
+import { SkillResolver } from '../skills/skill-resolver.service';
+import {
+  SKILL_NUDGE_SELECTOR,
+  type SkillNudgeSelector,
+} from '../skills/skill-nudge-llm';
+import {
+  BLOCK_SINK,
+  type BlockSink,
+  TASK_EVENT_SINK,
+  type TaskEventSink,
+  TurnHarnessFactory,
+} from '../surface/turn-harness.service';
+import { BrainGateway } from '../brain-gateway/brain-gateway.service';
+import {
+  ConventionProfileResolver,
+  ResolvedConventions,
+} from '../conventions/convention-profile.resolver';
+import { StimulusStoreService } from '../stimulus/stimulus-store.service';
+import { JobBootstrapService } from '../job-bootstrap/job-bootstrap.service';
+import { ProfileAwarenessService } from '../workspace-profile/profile-awareness.service';
+import {
+  isDriverExecutableKind,
+  threadKindSpec,
+} from '../thread-kind/registry';
+import { laneFor } from '../surface/thread-registry';
+import { threadGroupKindSpec } from '../thread-group-kind/registry';
+import { coerceThreadType, ThreadType } from '@shared/thread-kind/thread-types';
+import {
+  ShipThreadVerification,
+  webShipReviewCard,
+} from '../surface/web-approval-card';
+import { AutoFixContext, FindingSeverity } from '../autofix/autofix.types';
+import {
+  dedupeFindings,
+  lensById,
+  meetsSeverity,
+  reviewAgentsForThread,
+} from '../autofix/autofix-lenses';
+import {
+  renderBatchTask,
+  renderMasterReviewTask,
+  renderOpenLegTasks,
+  renderOpenTasksAdvisory,
+} from '../prompt-kit/messages/batch-task';
+import { makeTaskTools } from '../surface/task-tools';
+import { renderCommitTurnTask } from '../prompt-kit/messages/commit-turn';
+import {
+  renderAgentPrompt,
+  renderRunningServicesNote,
+} from '@shared/prompt-kit/system';
+import {
+  CHAT_DELIVERY_LEASE_MS,
+  userChunkFor,
+} from '../stimulus/delivery-pump.service';
+import { composeTurn } from '../prompt-kit/harness/compose-turn';
+import { chunkKey } from '@shared/prompt-kit/harness/chunk-keys';
 
 /**
  * W4 — the THREAD DRIVER. The legible, deterministic, resumable replacement for v1's implicit
@@ -1516,7 +1521,9 @@ export class ThreadDriver implements JobDispatcher {
     // planning/plan_review are render-only (their runtime lives in the brain), and post_build/ci don't
     // exist yet. Route off the registry, never a hardcoded kind list.
     const executableThreadGroups = currentThreadGroups.filter((s) =>
-      threadGroupKindSpec(s.kind).roles.some((r) => isDriverExecutableKind(r.role)),
+      threadGroupKindSpec(s.kind).roles.some((r) =>
+        isDriverExecutableKind(r.role),
+      ),
     );
     // DIRECT-BUILD / NON-DRIVER GUARD (unchanged intent): a job with NO executable thread groups is
     // brain-owned — a pure planning/chat job or the old brain-inline direct build (only render-only thread
@@ -1589,7 +1596,10 @@ export class ThreadDriver implements JobDispatcher {
         (r) => r.role === 'master_review',
       );
       await this.store
-        .setActivity(job.id, isMasterReviewThreadGroup ? 'master_review' : 'build')
+        .setActivity(
+          job.id,
+          isMasterReviewThreadGroup ? 'master_review' : 'build',
+        )
         .catch(() => undefined);
       const res: ThreadGroupDriveResult = isMasterReviewThreadGroup
         ? await this.driveMasterReviewThreadGroup(
@@ -1784,7 +1794,9 @@ export class ThreadDriver implements JobDispatcher {
     threadGroup: ThreadGroupEntity,
     incomingHandoff: string | null,
   ): Promise<ThreadGroupDriveResult> {
-    const threads = await this.store.driverThreadsForThreadGroup(threadGroup.id);
+    const threads = await this.store.driverThreadsForThreadGroup(
+      threadGroup.id,
+    );
     const mr = threads.find((t) => t.kind === 'master_review');
     if (!mr) return { kind: 'advanced', handoff: incomingHandoff };
     if (mr.status === 'done') {
@@ -2317,7 +2329,6 @@ export class ThreadDriver implements JobDispatcher {
     return { outcome: 'done', handoff: handoffOut };
   }
 
-
   /**
    * Drive a builder's post-build review as CHILD threads (everything is a typed thread). Materialize the
    * builder's `review_lens` × N + `post_review` child rows (idempotent across resume / a concurrent drive),
@@ -2789,7 +2800,9 @@ export class ThreadDriver implements JobDispatcher {
         // leftovers via `dropOpenThreadTasks` (see runThread). The native task-fold id reconciliation is
         // unreliable and being retired for durable task_* tools, so completion must not hinge on it.
         const openTasks = (
-          await this.store.getThreadTasks(thread.id).catch(() => [] as TaskItem[])
+          await this.store
+            .getThreadTasks(thread.id)
+            .catch(() => [] as TaskItem[])
         ).filter((t) => t.status === 'pending' || t.status === 'in_progress');
         const taskAdvisory = openTasks.length
           ? renderOpenTasksAdvisory(openTasks)
@@ -2846,7 +2859,9 @@ export class ThreadDriver implements JobDispatcher {
         // (`dropOpenThreadTasks`); surface the advisory note about them, but never let it block the latch.
         terminated = 'done';
         await this.store.recordThreadTermination(thread.id, candidate);
-        return taskAdvisory ? { ok: true, warning: taskAdvisory } : { ok: true };
+        return taskAdvisory
+          ? { ok: true, warning: taskAdvisory }
+          : { ok: true };
       },
       request_operator_input: async (args) => {
         const question = String(args['question'] ?? '').trim();
@@ -4267,7 +4282,10 @@ export class ThreadDriver implements JobDispatcher {
 
       const picked = await this.skillNudge.select({
         context,
-        skills: resolved.map(({ name, description }) => ({ name, description })),
+        skills: resolved.map(({ name, description }) => ({
+          name,
+          description,
+        })),
         orgId: job.orgId,
       });
       await this.store.persistGroupSkillNudge(groupId, {

@@ -2,8 +2,6 @@ import { Injectable, Logger } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { LocalGitService, writeForbiddenPaths } from '../git';
-import { WorkspaceConfigStore, WorkspaceSecretFileStore } from '../onboarding';
 import {
   isExternalMountPath,
   type MountSpec,
@@ -12,6 +10,10 @@ import {
   resolveExternalMountTarget,
   resolveSafeTarget,
 } from './worktree-path-guard';
+import { LocalGitService } from '../git/local-git.service';
+import { WorkspaceSecretFileStore } from '../onboarding/workspace-secret.store';
+import { WorkspaceConfigStore } from '../onboarding/workspace-config.store';
+import { writeForbiddenPaths } from '../git/hydration-sidecar';
 
 export interface HydrateInput {
   worktreePath: string;

@@ -1,18 +1,18 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Not, Raw, Repository } from 'typeorm';
-import { CredentialResolver } from '../onboarding';
+import { CredentialResolver } from '../onboarding/credential-resolver.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity, RepoEntity } from '../persistence/entities';
+import { AutoMergeService } from './auto-merge.service';
 import {
+  CheckRun,
+  CiCounts,
+  CiSummary,
   GithubPrService,
   parseGithubRepoUrl,
-  type CheckRun,
-  type CiCounts,
-  type CiSummary,
-} from '../git';
-import { StimulusIntake } from '../stimulus';
-import { AutoMergeService } from './auto-merge.service';
+} from '../git/github-pr.service';
+import { StimulusIntake } from '../stimulus/stimulus-intake.service';
 
 /**
  * The GIT-STATE RECONCILER — the poll half of "host observes GitHub, Atlas acts". Runs on the driver's

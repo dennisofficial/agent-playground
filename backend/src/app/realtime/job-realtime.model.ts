@@ -10,7 +10,7 @@ import {
   type JobActivity,
   type JobProvenance,
 } from '@shared/domain/job';
-import type { CiCounts } from '../git';
+import { CiCounts } from '../git/github-pr.service';
 
 /**
  * The authenticated principal handed to the realtime guard — resolved by the SSE endpoint from the
@@ -152,8 +152,9 @@ function mapRow(raw: Row): ThreadRealtimeRow {
     halt: (raw.halt as JobHalt | null) ?? null,
     createdBy: (raw.created_by as JobProvenance | null) ?? null,
     sectionFirstEntered:
-      (raw.section_first_entered as Partial<Record<JobStatus, string>> | null) ??
-      null,
+      (raw.section_first_entered as Partial<
+        Record<JobStatus, string>
+      > | null) ?? null,
   };
 }
 

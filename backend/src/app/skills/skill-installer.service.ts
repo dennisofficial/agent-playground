@@ -12,7 +12,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative } from 'node:path';
 import { LocalGitService } from '../git/local-git.service';
-import { CredentialResolver } from '../onboarding';
+import { CredentialResolver } from '../onboarding/credential-resolver.service';
 import type { McpSurface, SkillUpdatePolicy } from '../persistence/entities';
 import { parseSkillFrontmatter } from './skill-frontmatter';
 import { skillDirHost } from './skill-store-paths';

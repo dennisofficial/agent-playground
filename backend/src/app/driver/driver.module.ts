@@ -11,11 +11,7 @@ import {
 import { SchedulerRegistry } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import type { Subscription } from 'rxjs';
-import { AutoFixModule } from '../autofix';
-import { JOB_DISPATCHER } from '../brain';
-import { LeaderElectionService } from '../cluster';
-import { DecisionGateModule } from '../decision-gate';
-import { JobBootstrapModule } from '../job-bootstrap';
+import { LeaderElectionService } from '../cluster/leader-election.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
@@ -28,9 +24,7 @@ import {
   JobEntity,
   JobSandboxEntity,
 } from '../persistence/entities';
-import { RunnerModule } from '../runner';
 import { TurnReattachRegistry } from '../sandbox/turn-reattach.registry';
-import { StimulusModule, StimulusStoreService } from '../stimulus';
 // Direct port path (NOT the '../surface' barrel) to stay clear of a SurfaceModule ↔ DriverModule cycle.
 import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
 import { descriptorForLane } from '../surface/thread-registry';
@@ -53,11 +47,18 @@ import { GithubPrStateSync } from './github-pr-state-sync.service';
 import { GithubCiStateSync } from './github-ci-state-sync.service';
 import { GithubTokenRefreshService } from './github-token-refresh.service';
 import { BaseMoveMergeabilitySync } from './base-move-mergeability-sync.service';
-import { OnboardingService } from '../onboarding';
 import { WorktreeHydrator } from './worktree-hydrator.service';
 import { WorktreeProvisioner } from './worktree-provisioner.service';
-import { ExposureService } from '../exposure';
-import { DriverApprovalGateway } from '../driver-approval-gateway';
+import { DecisionGateModule } from '../decision-gate/decision-gate.module';
+import { RunnerModule } from '../runner/runner.module';
+import { AutoFixModule } from '../autofix/autofix.module';
+import { JobBootstrapModule } from '../job-bootstrap/job-bootstrap.module';
+import { StimulusModule } from '../stimulus/stimulus.module';
+import { JOB_DISPATCHER } from '../brain/job-dispatcher';
+import { OnboardingService } from '../onboarding/onboarding.service';
+import { ExposureService } from '../exposure/exposure.service';
+import { StimulusStoreService } from '../stimulus/stimulus-store.service';
+import { DriverApprovalGateway } from '../driver-approval-gateway/driver-approval-gateway.service';
 
 // SchedulerRegistry interval names (process-unique) for the leader-gated driver timers. Registered on
 // promote, deleted on demote — the leader-only lifecycle is unchanged; only the timer plumbing moved off
@@ -280,7 +281,9 @@ export class DriverModule
         await this.lifecycle.reconcileDeletingJobs().catch(() => undefined);
         // Self-heal any archived job whose filesystem reclaim was interrupted (status flipped, but the
         // worktree/container teardown never finished) — the archive analog of the `deleting` reconcile.
-        await this.lifecycle.reconcileArchivedSandboxes().catch(() => undefined);
+        await this.lifecycle
+          .reconcileArchivedSandboxes()
+          .catch(() => undefined);
         // Reclaim leaked `-net`/`-dind` artifacts BEFORE resuming jobs — a resumed drive calls `ensureContainer`
         // → `ensureNetwork`, which fails ("all predefined address pools have been fully subnetted") if the pool
         // is still exhausted by networks orphaned across prior restarts. `reconcileOnBoot` above nulled DB

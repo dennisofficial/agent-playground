@@ -4,9 +4,9 @@ import type { Repository } from 'typeorm';
 import type { PrStateDelta } from '@shared/domain';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity } from '../persistence/entities';
-import { StimulusStoreService } from '../stimulus';
 import { DriverStoreService } from './driver-store.service';
 import { JobLifecycleService } from './job-lifecycle.service';
+import { StimulusStoreService } from '../stimulus/stimulus-store.service';
 
 /**
  * The SILENT GitHub `pull_request` webhook sync — the fast path that mirrors `pollPrClosures`'

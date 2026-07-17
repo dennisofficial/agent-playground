@@ -7,7 +7,7 @@ import {
   type OnApplicationShutdown,
 } from '@nestjs/common';
 import { SchedulerRegistry } from '@nestjs/schedule';
-import { LeaderElectionService } from '../cluster';
+import { LeaderElectionService } from '../cluster/leader-election.service';
 import { ClaudeCredentialStore } from './claude-credential.store';
 import { CredentialRefreshService } from './credential-refresh.service';
 

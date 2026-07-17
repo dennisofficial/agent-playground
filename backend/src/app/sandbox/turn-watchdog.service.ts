@@ -14,7 +14,7 @@ import {
   type RedisStreamPort,
 } from '../../_lib/redis/redis.port';
 import type { ActiveTurnEntity } from '../persistence/entities';
-import { LeaderElectionService } from '../cluster';
+import { LeaderElectionService } from '../cluster/leader-election.service';
 import { turnKeys } from './redis-turn-keys';
 import { TurnRegistry } from './turn-registry.service';
 import { TurnReattachRegistry } from './turn-reattach.registry';

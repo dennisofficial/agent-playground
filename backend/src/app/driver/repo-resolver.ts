@@ -3,15 +3,12 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { Job } from '@shared/domain';
 import type { SandboxGitIdentity } from '@shared/engine/engine.types';
-import {
-  GitIdentityService,
-  LocalGitService,
-  parseGithubRepoUrl,
-  type ProjectRepo,
-} from '../git';
-import { CredentialResolver } from '../onboarding';
+import { CredentialResolver } from '../onboarding/credential-resolver.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { RepoEntity } from '../persistence/entities';
+import { LocalGitService, ProjectRepo } from '../git/local-git.service';
+import { GitIdentityService } from '../git/git-identity.service';
+import { parseGithubRepoUrl } from '../git/github-pr.service';
 
 /** The DI token for the repo resolver — a seam so the driver test can bind a fake (no real git/clone). */
 export const DRIVER_REPO = Symbol('DRIVER_REPO');

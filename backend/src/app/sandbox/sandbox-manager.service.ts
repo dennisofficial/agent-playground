@@ -24,7 +24,6 @@ import {
 } from 'node:path';
 import { promisify } from 'node:util';
 import { atlasAgentHomeBase } from '@shared/engine/engine-home';
-import type { FeatureSandbox } from '../git';
 import {
   managedGitSkillsRootHost,
   orgSkillsRootHost,
@@ -72,6 +71,7 @@ import type {
 // ExposureService — which itself imports the sandbox port — avoiding an import cycle.
 import { CaddyAdminClient } from '../exposure/caddy-admin.client';
 import { previewId, routePrefix } from '../exposure/exposure-naming';
+import { FeatureSandbox } from '../git/local-git.service';
 
 const execFileAsync = promisify(execFile);
 
@@ -546,6 +546,19 @@ export class SandboxManager implements SandboxProvider {
     this.logger.log(
       `creating sandbox ${name} (image ${image}, net ${network})`,
     );
+    // Container-create env (baked for the container's lifetime, visible to every exec'd turn + the agent
+    // shells it spawns). ATLAS_AGENT_NICE: override the image's baked default (Dockerfile ENV) that
+    // shell-init.sh renices agent build shells to — the engine-protection nice gap. Preview identity: only
+    // when exposure is on AND this is a thread sandbox.
+    const containerEnv: Record<string, string> = {};
+    const agentNice = this.env.get('SANDBOX_AGENT_NICE');
+    if (agentNice !== undefined)
+      containerEnv.ATLAS_AGENT_NICE = String(agentNice);
+    if (this.previewEnabled() && jobId) {
+      containerEnv.ATLAS_PREVIEW_ID = previewId(jobId, this.previewSecret());
+      containerEnv.ATLAS_PREVIEW_DOMAIN = this.env.get('PREVIEW_BASE_DOMAIN')!;
+    }
+
     const id = await this.engine.createContainer({
       name,
       image,
@@ -556,27 +569,27 @@ export class SandboxManager implements SandboxProvider {
       init: true,
       // Best-effort CPU: a low relative weight so agent compute bursts (builds/tests) yield to the host
       // control plane under contention, while still using the whole box when it's idle. Undefined when
-      // SANDBOX_CPU_SHARES is unset ⇒ Docker default (no de-prioritization).
+      // SANDBOX_CPU_SHARES is unset ⇒ Docker default (no de-prioritization). This — plus the in-container
+      // engine-protection nice gap (ATLAS_AGENT_NICE) — is how CPU is shared now: the SOFT way, biting only
+      // under contention, instead of a hard ceiling.
       cpuShares: this.env.get('SANDBOX_CPU_SHARES'),
-      // Hard per-sandbox ceilings so one job can't monopolize the shared box (a single build was seen
-      // taking 8 cores + 18.9 GB). Env-tunable on the box without a redeploy; defaults 6 cores / 24 GB /
-      // 8192 pids. NanoCpus is a real throughput cap (unlike cpuShares).
-      nanoCpus: Math.round((this.env.get('SANDBOX_MAX_CPUS') ?? 6) * 1e9),
+      // NO hard CPU ceiling by default. A NanoCpus cap made the co-resident engine's starvation WORSE — the
+      // agent's build saturates the capped budget and the engine, sharing that same budget in the same
+      // container, has no slack to wake on (uncapped, the build spreads onto spare host cores and the engine
+      // always finds a slot; this ran markedly better in practice). Cross-job fairness comes from
+      // SANDBOX_CPU_SHARES (soft, contention-only) and engine-vs-its-own-agent from the nice gap above. Set
+      // SANDBOX_MAX_CPUS to REINSTATE a hard core cap on a busy shared host that needs one.
+      ...(this.env.get('SANDBOX_MAX_CPUS') !== undefined
+        ? { nanoCpus: Math.round(this.env.get('SANDBOX_MAX_CPUS')! * 1e9) }
+        : {}),
+      // Hard MEMORY + PID backstops stay — these guard against OOM / fork-bombs (a single build was seen at
+      // 18.9 GB), not scheduling starvation, so they don't have the CPU cap's self-defeating dynamic.
+      // Env-tunable without a redeploy; defaults 24 GB / 8192 pids.
       memoryBytes: (this.env.get('SANDBOX_MAX_MEMORY_GB') ?? 24) * 1024 ** 3,
       pidsLimit: this.env.get('SANDBOX_MAX_PIDS') ?? 8192,
       binds: this.dedupeBindsByTarget(binds),
       volumes: [{ name: `${name}-dind`, path: '/var/lib/docker' }],
-      // Bake the preview identity so `atlas-svc` can advertise a service's public URL from inside the
-      // box. Non-secret (a public host token + domain), so baking at create is fine. Only when exposure
-      // is enabled AND this is a thread sandbox.
-      ...(this.previewEnabled() && jobId
-        ? {
-            env: {
-              ATLAS_PREVIEW_ID: previewId(jobId, this.previewSecret()),
-              ATLAS_PREVIEW_DOMAIN: this.env.get('PREVIEW_BASE_DOMAIN')!,
-            },
-          }
-        : {}),
+      ...(Object.keys(containerEnv).length ? { env: containerEnv } : {}),
       labels: {
         [L_MANAGED]: '1',
         [L_TEAM]: orgId,

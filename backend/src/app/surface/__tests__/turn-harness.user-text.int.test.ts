@@ -1,0 +1,149 @@
+import { getDataSourceToken } from '@nestjs/typeorm';
+import { Test } from '@nestjs/testing';
+import { NestExpressApplication } from '@nestjs/platform-express';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { DataSource } from 'typeorm';
+import { CLASSIFIER_LLM } from '../../decision-gate';
+import { ENGINE_RUNNER } from '@shared/engine';
+import { GithubPrService, LocalGitService } from '../../git';
+import { TurnHarnessFactory } from '../turn-harness.service';
+import { JobBootstrapService } from '../../job-bootstrap';
+import { AppModule } from '../../app.module';
+import { DB_CONNECTION } from '../../persistence/database.module';
+import {
+  FakeClassifierLlm,
+  FakeEngineRunner,
+  FakeGithubPrService,
+  FakeLocalGitService,
+  FakeThreadTitler,
+} from '../../e2e/e2e-stubs';
+import { JobTitler } from '../../titling';
+
+/**
+ * Int test proving a SendMessage injection into a running sub-agent (a `user_text` EngineEvent, parented
+ * on the spawning `Task` tool_use) lands as a durable `kind = 'user'` transcript row tagged with the
+ * tracked subagent's real `subagent_id` — the fix for the injection silently vanishing from the sub-agent's
+ * transcript panel.
+ *
+ * Boots the REAL AppModule against live Postgres, mocking only external boundaries (none are exercised).
+ */
+const TEAM_ID = '77777777-7777-4777-8777-777777777777'; // sentinel org uuid (distinct from sibling tests)
+
+describe('a SendMessage injection persists as a durable `user` block tagged with the subagent id', () => {
+  let app: NestExpressApplication;
+  let harness: TurnHarnessFactory;
+  let dataSource: DataSource;
+  let jobA = '';
+  let threadA = '';
+
+  const prevSurface = process.env.SURFACE;
+
+  beforeAll(async () => {
+    process.env.SURFACE = 'agent';
+    const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(CLASSIFIER_LLM)
+      .useValue(new FakeClassifierLlm())
+      .overrideProvider(ENGINE_RUNNER)
+      .useValue(new FakeEngineRunner())
+      .overrideProvider(LocalGitService)
+      .useValue(new FakeLocalGitService())
+      .overrideProvider(GithubPrService)
+      .useValue(new FakeGithubPrService())
+      .overrideProvider(JobTitler)
+      .useValue(new FakeThreadTitler())
+      .compile();
+
+    app = moduleRef.createNestApplication<NestExpressApplication>({
+      rawBody: true,
+    });
+    app.enableShutdownHooks();
+    await app.init();
+
+    harness = app.get(TurnHarnessFactory);
+    dataSource = app.get<DataSource>(getDataSourceToken(DB_CONNECTION));
+
+    // Seed the FK chain: org → repo → job (messages.job_id → jobs.id).
+    await dataSource.query(
+      `INSERT INTO organizations (id, name, slug) VALUES ($1,$2,$3) ON CONFLICT (id) DO NOTHING`,
+      [TEAM_ID, 'user-text-org', 'user-text-org'],
+    );
+    const [repo] = await dataSource.query(
+      `INSERT INTO repos (org_id, slug, name, git_url) VALUES ($1,$2,$3,$4) RETURNING id`,
+      [
+        TEAM_ID,
+        `user-text-repo-${randomUUID().slice(0, 8)}`,
+        'user-text-repo',
+        'https://example.invalid/r.git',
+      ],
+    );
+    const [job] = await dataSource.query(
+      `INSERT INTO jobs (org_id, repo_id, origin) VALUES ($1,$2,$3) RETURNING id`,
+      [TEAM_ID, repo.id, 'chat'],
+    );
+    jobA = job.id as string;
+    // messages.thread_id is NOT NULL (FK → threads.id) — seed the job's planning thread group + thread so every
+    // block below has a real thread to anchor onto.
+    const bootstrap = app.get(JobBootstrapService);
+    await bootstrap.ensurePlanningThreadGroup(jobA, TEAM_ID);
+    threadA = await bootstrap.planningThreadId(jobA);
+  }, 60_000);
+
+  afterAll(async () => {
+    if (dataSource) {
+      await dataSource.query(
+        `DELETE FROM transcript_messages WHERE job_id IN (SELECT id FROM jobs WHERE org_id = $1)`,
+        [TEAM_ID],
+      );
+      await dataSource.query(`DELETE FROM jobs WHERE org_id = $1`, [TEAM_ID]);
+      await dataSource.query(`DELETE FROM repos WHERE org_id = $1`, [TEAM_ID]);
+      await dataSource.query(`DELETE FROM organizations WHERE id = $1`, [
+        TEAM_ID,
+      ]);
+    }
+    await app?.close();
+    if (prevSurface === undefined) delete process.env.SURFACE;
+    else process.env.SURFACE = prevSurface;
+  });
+
+  it("persists the injected text as kind=user, tagged with the spawning Task tool_use's tracked subagent id", async () => {
+    const turnId = randomUUID();
+    const toolUseId = 'tu-sub-1';
+    const injectedText = 'injected!';
+
+    const streamer = harness.create({
+      jobId: jobA,
+      orgId: TEAM_ID,
+      threadId: threadA,
+      channel: 'repo-guard',
+      lane: 'main',
+      turnId,
+    });
+
+    // Mirror a real subagent spawn so the injection has a tracked subagent to be tagged onto.
+    streamer.onEvent({
+      kind: 'tool_use',
+      id: toolUseId,
+      name: 'Task',
+      input: { subagent_type: 'test' },
+    });
+    streamer.onEvent({
+      kind: 'user_text',
+      text: injectedText,
+      parentToolUseId: toolUseId,
+    });
+
+    await streamer.finish();
+
+    const rows = await dataSource.query(
+      `SELECT kind, subagent_id FROM transcript_messages WHERE job_id = $1 AND text = $2`,
+      [jobA, injectedText],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].kind).toBe('user');
+    expect(rows[0].subagent_id).toBeTruthy();
+    expect(rows[0].subagent_id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
+  });
+});

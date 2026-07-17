@@ -103,12 +103,19 @@ export interface IEnvConfig {
   // contention. Low value ⇒ sandboxes lose CPU only when the backend/DB/web compete; idle box ⇒ agents
   // still use 100% (no cap). UNSET ⇒ Docker default (no de-prioritization). See infra/README.md.
   SANDBOX_CPU_SHARES?: number;
-  // Hard per-sandbox resource ceilings (Docker HostConfig NanoCpus / Memory / PidsLimit) so one job can't
-  // monopolize the shared host. SANDBOX_MAX_CPUS: cores (float ok; ×1e9 → NanoCpus). SANDBOX_MAX_MEMORY_GB:
-  // GiB. SANDBOX_MAX_PIDS: process/thread cap. UNSET ⇒ built-in defaults 6 / 24 / 8192 (see SandboxManager).
+  // Per-sandbox resource controls. SANDBOX_MAX_CPUS: OPTIONAL hard core cap (float ok; ×1e9 → NanoCpus) —
+  // UNSET ⇒ UNCAPPED (a job may use every idle core; a hard cap starves the co-resident engine, so cross-job
+  // fairness is done the soft way via SANDBOX_CPU_SHARES and engine-protection via SANDBOX_AGENT_NICE). Set
+  // it only to reinstate a hard ceiling on a busy shared host. SANDBOX_MAX_MEMORY_GB (GiB) / SANDBOX_MAX_PIDS
+  // (process/thread cap): hard OOM / fork-bomb backstops, UNSET ⇒ defaults 24 / 8192 (see SandboxManager).
   SANDBOX_MAX_CPUS?: number;
   SANDBOX_MAX_MEMORY_GB?: number;
   SANDBOX_MAX_PIDS?: number;
+  // Nice value shell-init.sh renices each agent build/test shell to (children inherit), so the latency-
+  // sensitive engine (nice 0, same container) is never starved by the agent's own compute under load —
+  // under contention CFS lets the engine preempt the agent's batch build on wakeup. Non-root can only raise
+  // nice (lower priority), so range 0–19. UNSET ⇒ the image's baked default 10 (Dockerfile ATLAS_AGENT_NICE).
+  SANDBOX_AGENT_NICE?: number;
   // SANDBOX_REDIS_URL: the Redis URL the IN-CONTAINER engine uses (falls back to REDIS_URL).
   // SANDBOX_BUS_NETWORK: the internal Docker network each sandbox joins (`atlas-bus` in prod; unset in dev).
   // ATLAS_REPO_SLUG: repos.slug of the Atlas repo itself; gates the MCP-network attach (fail-closed).
@@ -257,6 +264,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   SANDBOX_MAX_CPUS: Joi.number().positive().optional(),
   SANDBOX_MAX_MEMORY_GB: Joi.number().positive().optional(),
   SANDBOX_MAX_PIDS: Joi.number().integer().positive().optional(),
+  SANDBOX_AGENT_NICE: Joi.number().integer().min(0).max(19).optional(),
   SANDBOX_REDIS_URL: Joi.string().uri().optional(),
   SANDBOX_BUS_NETWORK: Joi.string().optional(),
   ATLAS_REPO_SLUG: Joi.string().optional(),

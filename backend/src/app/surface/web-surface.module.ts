@@ -8,10 +8,8 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Subscription } from 'rxjs';
 import { AgentSessionManager } from '../brain/agent-session-manager.service';
 import { DecisionApprovalService } from '../brain/decision-approval.service';
-import { DriverApprovalGateway } from '../driver-approval-gateway';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { GitModule } from '../git/git.module';
-import { JobBootstrapModule } from '../job-bootstrap';
 import { StimulusModule } from '../stimulus/stimulus.module';
 import {
   TranscriptMessageEntity,
@@ -38,6 +36,8 @@ import { parseWebApprovalMeta } from './web-approval-card';
 import { WebSurfaceController } from './web-surface.controller';
 import { JobTitleService } from './job-title.service';
 import type { ApprovalVerdict } from '../brain/decision-approval.service';
+import { JobBootstrapModule } from '../job-bootstrap/job-bootstrap.module';
+import { DriverApprovalGateway } from '../driver-approval-gateway/driver-approval-gateway.service';
 
 /**
  * R0 — WEB SURFACE MODULE. Provides `WebSurface` + the `WebSurfaceController` HTTP/SSE edge,

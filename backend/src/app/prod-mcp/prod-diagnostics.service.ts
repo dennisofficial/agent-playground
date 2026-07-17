@@ -4,7 +4,6 @@ import { DataSource, Repository } from 'typeorm';
 import { EnvService } from '@core/config/env/env.service';
 import { atlasAgentHomeBase } from '@shared/engine/engine-home';
 import type { TurnEnvelope } from '@shared/domain';
-import { JobBootstrapService } from '../job-bootstrap';
 import {
   DB_CONNECTION,
   MCP_READER_CONNECTION,
@@ -26,6 +25,7 @@ import { TOOL_HANDLERS, type ToolCtx, type ToolRoots } from './tools';
 import { redactSecrets } from './redact';
 import { audit } from './audit';
 import { assertSingleWriteStatement } from './write-guard';
+import { JobBootstrapService } from '../job-bootstrap/job-bootstrap.service';
 
 /** Postgres error code for `permission denied` — what a SELECT-only role gets back from `EXPLAIN` on a
  *  DML statement in this Postgres (confirmed by spike, d6). Expected/benign; NOT surfaced as an error. */

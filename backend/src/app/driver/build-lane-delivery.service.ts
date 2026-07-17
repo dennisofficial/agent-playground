@@ -4,14 +4,19 @@ import {
   type OnApplicationBootstrap,
 } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
-import type { CollectedPending, DeliveryLane } from '../stimulus';
-import { DeliveryPump, StimulusStoreService } from '../stimulus';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
-import { TurnRunnerService } from '../runner';
-import { laneFor, ThreadInputService } from '../surface';
 import { fromExternal } from '@shared/prompt-kit/message';
 import { DriverStoreService } from './driver-store.service';
 import type { ThreadDriver } from './thread-driver.service';
+import {
+  CollectedPending,
+  DeliveryLane,
+  DeliveryPump,
+} from '../stimulus/delivery-pump.service';
+import { StimulusStoreService } from '../stimulus/stimulus-store.service';
+import { TurnRunnerService } from '../runner/turn-runner.service';
+import { ThreadInputService } from '../surface/thread-input.service';
+import { laneFor } from '../surface/thread-registry';
 
 /** DI token a host-seed dispatcher (`JitHostExecutor`) binds to reach the build-lane seed path without a
  *  SurfaceModule↔DriverModule cycle. Bound to {@link BuildLaneDeliveryService}. */

@@ -15,12 +15,12 @@ import type {
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import type { Decision } from '@shared/domain/decision-record';
 import type { JobProvenance } from '@shared/domain/job';
-import type { CiCounts } from '../../git';
 import type { LiveVerificationVerdict } from '../../driver/live-verification-judge';
 import { DecisionRecordEntity } from './decision-record.entity';
 import { OrganizationEntity } from './organization.entity';
 import { RepoEntity } from './repo.entity';
 import { UserEntity } from './user.entity';
+import { CiCounts } from '../../git/github-pr.service';
 
 /**
  * One buffered, not-yet-conveyed pipeline milestone (the transient-moment record). `id` is an

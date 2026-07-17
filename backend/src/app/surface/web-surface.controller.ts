@@ -73,7 +73,7 @@ import {
   RETRACT_SHIP_ACTION_ID,
   SHIP_ACTION_ID,
 } from './approval-blocks';
-import { LeaderElectionService } from '../cluster';
+import { LeaderElectionService } from '../cluster/leader-election.service';
 import { StimulusIntake } from '../stimulus/stimulus-intake.service';
 import { StimulusStoreService } from '../stimulus/stimulus-store.service';
 import { renderTurn, type TurnChunk } from '@shared/stimulus/chunk-vocabulary';
@@ -87,14 +87,13 @@ import {
 import { JOB_DISPATCHER, type JobDispatcher } from '../brain/job-dispatcher';
 import { BrainStoreService } from '../brain/brain-store.service';
 import { AgentSessionManager } from '../brain/agent-session-manager.service';
-import { BrainGateway } from '../brain-gateway';
+import { BrainGateway } from '../brain-gateway/brain-gateway.service';
 import { JitHostExecutor } from '../brain/jit-host-executor';
 import { WebSurface } from './web-surface';
 import { LiveTurnStore } from './live-turn-store';
 import { ThreadInputService } from './thread-input.service';
 import { JobTitleService } from './job-title.service';
 import { parseWebApprovalMeta } from './web-approval-card';
-import { DriverApprovalGateway } from '../driver-approval-gateway';
 import type { WebQuestionCard } from './web-question-card';
 import type { WebSecretInputCard } from './web-secret-input-card';
 import type { WebFileRequestCard } from './web-file-request-card';
@@ -111,24 +110,16 @@ import {
   type JobDiff,
   type JobDiffSummary,
 } from './job-diff';
-import { JobBootstrapService } from '../job-bootstrap';
-import { JobDependencyService } from '../job-deps';
-import type { ServiceLivenessProbe } from '../sandbox';
+import { JobDependencyService } from '../job-deps/job-dependency.service';
 import { ExposureService } from '../exposure/exposure.service';
 import { readServiceMarkers, serviceStatus } from '../exposure/service-markers';
 import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
 import { OrgMembershipGuard } from '../org/org-membership.guard';
 import { OrgOwnerGuard } from '../org/org-owner.guard';
 import { OrganizationService } from '../org/organization.service';
-import { WorkspaceSecretFileStore } from '../onboarding';
 import { McpServerStore } from '../mcp/mcp-server.store';
-import { isReservedMcpName } from '../sandbox/image/reserved-mcp-names';
-import { ConventionProfileResolver } from '../conventions';
-import {
-  SkillFileWriter,
-  SkillInstallerService,
-  WorkspaceSkillStore,
-} from '../skills';
+import { isReservedMcpName } from '@shared/mcp/reserved-mcp-names';
+import { ConventionProfileResolver } from '../conventions/convention-profile.resolver';
 import { parseSkillFrontmatter } from '../skills/skill-frontmatter';
 import { McpProbeService } from '../mcp/mcp-probe.service';
 import type { McpHeaderInput, McpServerInput } from '../mcp/mcp-server.store';
@@ -143,25 +134,7 @@ import {
 import { deriveNeedsYou } from '@shared/domain/job';
 import type { JobKind } from '@shared/domain/job';
 import type { McpSurface } from '../persistence/entities';
-import {
-  RealtimeService,
-  realtimeDisabledStream,
-  subscriptionToObservable,
-} from '../realtime';
-import {
-  renderReviewSeedXml,
-  renderUploadedFilesXml,
-  type AttachmentCardItem,
-} from '../prompt-kit';
 import type { AgentMessage } from '@shared/prompt-kit/message';
-import {
-  answeredQuestionBody,
-  batchAnswerBody,
-  chunkKey,
-  fileUploaded,
-  mcpSecretStored,
-  secretStored,
-} from '../prompt-kit/harness';
 import { UsageEventBus } from '../onboarding/usage-event-bus';
 import { WorkspaceConfigStore } from '../onboarding/workspace-config.store';
 import {
@@ -179,6 +152,31 @@ import type {
   DraftStagedAnswerWire,
 } from './composer-draft.service';
 import type { ReviewComment } from '@shared/domain/composer-draft';
+import {
+  answeredQuestionBody,
+  batchAnswerBody,
+  fileUploaded,
+  mcpSecretStored,
+  secretStored,
+} from '../prompt-kit/harness/seed-catalog';
+import { JobBootstrapService } from '../job-bootstrap/job-bootstrap.service';
+import {
+  AttachmentCardItem,
+  renderReviewSeedXml,
+  renderUploadedFilesXml,
+} from '../prompt-kit/messages/first-turn-seeds';
+import { chunkKey } from '@shared/prompt-kit/harness/chunk-keys';
+import { ServiceLivenessProbe } from '../sandbox/sandbox-provider.port';
+import { RealtimeService } from '../realtime/realtime.service';
+import { WorkspaceSecretFileStore } from '../onboarding/workspace-secret.store';
+import { WorkspaceSkillStore } from '../skills/workspace-skill.store';
+import { SkillFileWriter } from '../skills/skill-file-writer.service';
+import { SkillInstallerService } from '../skills/skill-installer.service';
+import { DriverApprovalGateway } from '../driver-approval-gateway/driver-approval-gateway.service';
+import {
+  realtimeDisabledStream,
+  subscriptionToObservable,
+} from '../realtime/sse-observable';
 
 const VALID_ACTION_IDS = new Set([
   APPROVE_ACTION_ID,
@@ -2012,7 +2010,10 @@ export class WebSurfaceController {
     // The MERGE click resolves SYNCHRONOUSLY: await the merge so the response only returns 2xx once the PR
     // actually merged, and a failed/no-op merge surfaces as a 409 instead of a false success.
     if (actionId === MERGE_ACTION_ID) {
-      const merged = await this.driverApproval.resolveMerge(meta.jobId, user.id);
+      const merged = await this.driverApproval.resolveMerge(
+        meta.jobId,
+        user.id,
+      );
       if (!merged)
         throw new HttpException('Merge did not complete', HttpStatus.CONFLICT);
       return { ok: true, jobId: meta.jobId };

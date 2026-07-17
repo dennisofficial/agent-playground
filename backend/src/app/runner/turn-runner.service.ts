@@ -25,13 +25,13 @@ import type {
   ToolBridgeOptions,
   TurnMeta,
 } from '@shared/engine';
-import type { FeatureSandbox } from '../git';
 import { type AgentMessage } from '@shared/prompt-kit/message';
-import { prependNotice } from '../prompt-kit/harness';
 import { TurnUsageProjector } from '../analytics/turn-usage-projector.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { ThreadEntity } from '../persistence/entities';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
+import { FeatureSandbox } from '../git/local-git.service';
+import { prependNotice } from '../prompt-kit/harness/compose-turn';
 
 /** What one turn needs to run. The sandbox supplies the worktree (the engine cwd) + branch. */
 export interface RunTurnInput {

@@ -2,12 +2,11 @@ import { Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { ClassifierLlm } from '../decision-gate/classifier-llm';
 import type { EngineRunResult, RunEngineArgs } from '@shared/engine';
-import type {
-  FeatureSandbox,
+import { FeatureSandbox, ProjectRepo } from '../git/local-git.service';
+import {
   OpenPullRequestArgs,
-  ProjectRepo,
   PullRequestResult,
-} from '../git';
+} from '../git/github-pr.service';
 
 /**
  * OFFLINE STUBS for the `e2e` harness default (deterministic, no-LLM, no-outward-action) mode.

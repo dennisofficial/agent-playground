@@ -7,11 +7,11 @@
  * `driverExecutableKinds` (kinds with `execution: 'top-level'`), and step 3 materializes children via
  * `spec.children`.
  */
-import { Agent, renderAgentPrompt } from '../prompt-kit';
 import { THREAD_REGISTRY } from '../surface/thread-registry';
 import type { SessionEngine } from '@shared/domain';
 import type { ReasoningEffort } from '@shared/engine';
-import type { ThreadKindSpec, ThreadRole } from './spec';
+import type { ThreadKindSpec, ThreadRole } from './__tests__/spec';
+import { Agent, renderAgentPrompt } from '@shared/prompt-kit/system';
 
 /**
  * The composer-footer Claude model defaults, split by lane because the brain and the workers no longer

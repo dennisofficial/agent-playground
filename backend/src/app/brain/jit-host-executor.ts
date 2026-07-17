@@ -4,7 +4,6 @@ import {
   operatorMessageRules,
   type JitFireCtx,
 } from '@shared/prompt-kit/jit';
-import type { TurnChunk } from '../prompt-kit/harness';
 import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
 import { descriptorForLane } from '../surface/thread-registry';
 // Direct file path (NOT the '../driver' barrel, which pulls the whole driver → a brain↔driver ES cycle) — only
@@ -13,6 +12,7 @@ import {
   LANE_SEEDER,
   type LaneSeeder,
 } from '../driver/build-lane-delivery.service';
+import { TurnChunk } from '@shared/prompt-kit/harness/tag-vocabulary';
 
 /** The lifecycle events this executor knows how to fire (mirrors `JitTrigger`'s `'lifecycle'` variant).
  *  `preview-requested` was retired in Thread 4 — post_build's preview now seeds directly via

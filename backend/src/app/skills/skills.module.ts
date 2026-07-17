@@ -1,7 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { GitModule } from '../git';
-import { CredentialResolver } from '../onboarding';
+import { GitModule } from '../git/git.module';
+import { CredentialResolver } from '../onboarding/credential-resolver.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { RepoEntity, WorkspaceSkillEntity } from '../persistence/entities';
 import { ManagedSkillSyncService } from './managed-skill-sync.service';

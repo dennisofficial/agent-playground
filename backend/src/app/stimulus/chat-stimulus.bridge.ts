@@ -10,7 +10,6 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Subscription } from 'rxjs';
 import { Repository } from 'typeorm';
 import type { UserMessage } from '@shared/domain';
-import { JobBootstrapService } from '../job-bootstrap';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity } from '../persistence/entities';
 import {
@@ -19,6 +18,7 @@ import {
   type InboundChatMessage,
 } from '../surface/chat-surface.port';
 import { StimulusIntake } from './stimulus-intake.service';
+import { JobBootstrapService } from '../job-bootstrap/job-bootstrap.service';
 
 /**
  * The CHAT EDGE → `UserMessage` mapper. Subscribes to the bound `ChatSurface.inbound$` and turns each

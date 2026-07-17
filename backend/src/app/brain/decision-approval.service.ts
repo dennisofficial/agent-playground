@@ -4,13 +4,11 @@ import {
   Logger,
   type OnModuleDestroy,
 } from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
+import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
 import {
-  CHAT_SURFACE,
   decisionApprovalBlocks,
-  type ChatSurface,
-  type DecisionApprovalCard,
-} from '../surface';
+  DecisionApprovalCard,
+} from '../surface/approval-blocks';
 
 /** The verdict a human (Dennis) rules on the proposed plan. */
 export type ApprovalVerdict = 'approve' | 'request_changes' | 'deny';

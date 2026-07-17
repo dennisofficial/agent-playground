@@ -1,5 +1,5 @@
 import { Global, Module } from '@nestjs/common';
-import { CredentialResolver } from '../onboarding';
+import { CredentialResolver } from '../onboarding/credential-resolver.service';
 import {
   AnthropicLiveVerificationJudge,
   LIVE_VERIFICATION_JUDGE,

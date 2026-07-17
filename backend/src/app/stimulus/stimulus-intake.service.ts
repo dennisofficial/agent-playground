@@ -7,13 +7,13 @@ import type {
   SeedRow,
 } from '@shared/domain';
 import { assertNever } from '@shared/domain';
-import { composeMessageBody } from '../prompt-kit/harness';
 import { EventFilterService } from './event-filter.service';
 import { BRAIN_SINK, type BrainSink } from './stimulus-consumer';
 import {
   DuplicateStimulusError,
   StimulusStoreService,
 } from './stimulus-store.service';
+import { composeMessageBody } from '../prompt-kit/harness/compose-message';
 
 /** Outcome of pushing an event through intake — for the controller to map to a status / log. */
 export type IntakeOutcome =

@@ -18,7 +18,7 @@ import {
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { LeaderElectionService } from '../cluster';
+import { LeaderElectionService } from '../cluster/leader-election.service';
 import { LocalGitService } from '../git/local-git.service';
 import {
   managedGitSkillDirHost,

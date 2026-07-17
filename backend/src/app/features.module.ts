@@ -1,35 +1,37 @@
 import { Module } from '@nestjs/common';
 import { RedisModule } from '../_lib/redis/redis.module';
 import { AnalyticsModule } from './analytics/analytics.module';
-import { AuthModule } from './auth';
-import { ClusterModule } from './cluster';
-import { AutoFixModule } from './autofix';
-import { BrainModule } from './brain';
-import { BrainGatewayModule } from './brain-gateway';
-import { DriverApprovalGatewayModule } from './driver-approval-gateway';
-import { DecisionGateModule } from './decision-gate';
-import { DriverModule, LiveVerificationModule } from './driver';
-import { HostStatsModule } from './host-stats';
-import { IngressModule } from './ingress';
-import { RunnerModule } from './runner';
-import { SandboxModule } from './sandbox';
-import { CaddyModule, ExposureModule } from './exposure';
-import { StimulusModule } from './stimulus';
-import { LiveTurnModule, SurfaceModule } from './surface';
-import { MemoryModule } from './memory';
-import { McpModule } from './mcp';
-import { ConventionsModule } from './conventions';
-import { SkillsModule } from './skills';
-import { WorkspaceProfileModule } from './workspace-profile';
-import { OnboardingModule } from './onboarding';
-import { OrgModule } from './org';
-import { RealtimeModule } from './realtime';
-import { JobDependencyModule } from './job-deps';
-import { TitlingModule } from './titling';
-import { TestBridgeModule } from './test-bridge';
-import { PromptKitModule } from './prompt-kit';
-import { ThreadKindModule } from './thread-kind';
-import { ThreadGroupKindModule } from './thread-group-kind';
+import { ClusterModule } from './cluster/cluster.module';
+import { PromptKitModule } from './prompt-kit/prompt-kit.module';
+import { ThreadKindModule } from './thread-kind/thread-kind.module';
+import { ThreadGroupKindModule } from './thread-group-kind/thread-group-kind.module';
+import { AuthModule } from './auth/auth.module';
+import { OnboardingModule } from './onboarding/onboarding.module';
+import { McpModule } from './mcp/mcp.module';
+import { ConventionsModule } from './conventions/conventions.module';
+import { SkillsModule } from './skills/skills.module';
+import { WorkspaceProfileModule } from './workspace-profile/workspace-profile.module';
+import { OrgModule } from './org/org.module';
+import { TitlingModule } from './titling/titling.module';
+import { JobDependencyModule } from './job-deps/job-dependency.module';
+import { SandboxModule } from './sandbox/sandbox.module';
+import { HostStatsModule } from './host-stats/host-stats.module';
+import { CaddyModule } from './exposure/caddy.module';
+import { ExposureModule } from './exposure/exposure.module';
+import { RealtimeModule } from './realtime/realtime.module';
+import { LiveTurnModule } from './surface/live-turn.module';
+import { SurfaceModule } from './surface/surface.module';
+import { RunnerModule } from './runner/runner.module';
+import { MemoryModule } from './memory/memory.module';
+import { StimulusModule } from './stimulus/stimulus.module';
+import { IngressModule } from './ingress/ingress.module';
+import { DecisionGateModule } from './decision-gate/decision-gate.module';
+import { AutoFixModule } from './autofix/autofix.module';
+import { BrainGatewayModule } from './brain-gateway/brain-gateway.module';
+import { DriverApprovalGatewayModule } from './driver-approval-gateway/driver-approval-gateway.module';
+import { BrainModule } from './brain/brain.module';
+import { DriverModule } from './driver/driver.module';
+import { LiveVerificationModule } from './driver/live-verification.module';
 
 /**
  * Atlas v2 APP layer — the composition seam for the edge and the local execution substrate:
@@ -90,7 +92,6 @@ import { ThreadGroupKindModule } from './thread-group-kind';
     BrainModule,
     DriverModule,
     LiveVerificationModule,
-    TestBridgeModule,
   ],
 })
 export class FeaturesModule {}

@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobSandboxEntity } from '../persistence/entities';
-import { CredentialResolver } from '../onboarding';
+import { CredentialResolver } from '../onboarding/credential-resolver.service';
 import {
   SANDBOX_PROVIDER,
   type SandboxProvider,

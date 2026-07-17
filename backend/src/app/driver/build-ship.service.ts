@@ -1,9 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { DecisionRecord, Job } from '@shared/domain';
-import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
-import { BrainGateway } from '../brain-gateway';
 import { DriverStoreService } from './driver-store.service';
 import type { ResolvedRepo } from './repo-resolver';
+import { FeatureSandbox, LocalGitService } from '../git/local-git.service';
+import { GithubPrService } from '../git/github-pr.service';
+import { BrainGateway } from '../brain-gateway/brain-gateway.service';
 
 /**
  * The outcome of the terminal ship sequence. The job brain opens the PR ITSELF as a seeded harness turn in

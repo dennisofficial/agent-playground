@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { CHAT_SURFACE, type ChatSurface } from '../surface';
 import type { DecisionClassification } from './decision-gate.types';
+import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
 
 /** A thread's plan to surface for human visibility. */
 export interface SectionPlanPost {

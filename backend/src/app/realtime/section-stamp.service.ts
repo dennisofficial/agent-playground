@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import pg from 'pg';
 import type { Subscription } from 'rxjs';
-import { LeaderElectionService } from '../cluster';
+import { LeaderElectionService } from '../cluster/leader-election.service';
 import { pgConnectionString, resolveSsl } from '../persistence/database.module';
 import { SECTION_STAMP_DDL } from './section-stamp.constants';
 

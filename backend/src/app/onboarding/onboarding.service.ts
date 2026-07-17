@@ -12,12 +12,9 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
 import type { AutoMergeMethod } from '@workspace/shared';
 import {
-  GithubPrService,
-  parseGithubRepoUrl,
-  WORK_EVENTS,
-  STATE_EVENTS,
-} from '../git';
-import { JOB_TEARDOWN, type JobTeardownPort } from '../driver/job-teardown.port';
+  JOB_TEARDOWN,
+  type JobTeardownPort,
+} from '../driver/job-teardown.port';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
@@ -30,6 +27,12 @@ import {
 } from '../persistence/entities';
 import { CredentialResolver } from './credential-resolver.service';
 import { TenantCredentialStore } from './tenant-credential.store';
+import {
+  GithubPrService,
+  parseGithubRepoUrl,
+  STATE_EVENTS,
+  WORK_EVENTS,
+} from '../git/github-pr.service';
 
 /** An org's lifecycle, stored on `organizations.status`. */
 export type OrgLifecycle = 'onboarding' | 'active' | 'suspended';
