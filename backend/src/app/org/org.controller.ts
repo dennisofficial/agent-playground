@@ -72,7 +72,7 @@ export class OrgController {
       ],
       () => this.orgs.listForUser(user.id),
       (o) => o.id,
-    ) as Observable<MessageEvent>;
+    );
   }
 
   /** Realtime single-org document (`streamDocument`) — live name/status/automation settings. */
@@ -83,7 +83,7 @@ export class OrgController {
   ): Observable<MessageEvent> {
     return sseObservable(() =>
       this.realtime.openSubscription({ model: 'organizations', user, pk: JSON.stringify([orgId]) }),
-    ) as Observable<MessageEvent>;
+    );
   }
 
   /** Realtime member list (`streamList`) — joined snapshot, re-emitted on any membership change. */
@@ -103,6 +103,6 @@ export class OrgController {
       ],
       () => this.orgs.membersOf(user.id, orgId),
       (m) => m.userId,
-    ) as Observable<MessageEvent>;
+    );
   }
 }

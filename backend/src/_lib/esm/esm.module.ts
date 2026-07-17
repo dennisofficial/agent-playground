@@ -1,7 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 
-export const ANTHROPIC_AGENT_SDK = 'ANTHROPIC_AGENT_SDK';
-export const OPENAI_CODEX_SDK = 'OPENAI_CODEX_SDK';
+export const ANTHROPIC_AGENT_SDK = Symbol('ANTHROPIC_AGENT_SDK');
+export const OPENAI_CODEX_SDK = Symbol('OPENAI_CODEX_SDK');
 
 @Global()
 @Module({

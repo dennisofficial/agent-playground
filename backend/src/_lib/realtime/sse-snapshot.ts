@@ -1,5 +1,5 @@
-import type { SseMessageEvent } from '@workspace/pg-realtime/nest';
 import type { Subscription } from '@workspace/pg-realtime';
+import type { SseMessageEvent } from '@workspace/pg-realtime/nest';
 import { Observable } from 'rxjs';
 
 /**
