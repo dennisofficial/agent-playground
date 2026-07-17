@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ECredentialKey } from '@workspace/shared';
 import { In } from 'typeorm';
-import { OrgSecret, OrgSecretRepo } from './entities/org-secret.entity';
+import { OrgSecretRepo } from './entities/org-secret.entity';
 import { SecretCipherService } from './secret-cipher.service';
 
 /**
@@ -20,10 +20,18 @@ export class CredentialsService {
   /** Store (or replace) a secret for an org. */
   async set(orgId: string, key: ECredentialKey, plaintext: string): Promise<void> {
     const ciphertext = this.cipher.encrypt(plaintext);
-    await this.secrets.upsert({ orgId, key, ciphertext } satisfies Partial<OrgSecret>, [
-      'orgId',
-      'key',
-    ]);
+    await this.secrets.upsert({ orgId, key, ciphertext }, ['orgId', 'key']);
+  }
+
+  /** Store (or replace) several secrets for an org in a single upsert. No-op when empty. */
+  async setMany(orgId: string, entries: { key: ECredentialKey; plaintext: string }[]): Promise<void> {
+    if (entries.length === 0) return;
+    const rows = entries.map((e) => ({
+      orgId,
+      key: e.key,
+      ciphertext: this.cipher.encrypt(e.plaintext),
+    }));
+    await this.secrets.upsert(rows, ['orgId', 'key']);
   }
 
   /** Decrypt and return a secret, or `null` when the org has no value for this key. */

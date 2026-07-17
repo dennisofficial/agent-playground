@@ -45,10 +45,10 @@ export class CredentialsController {
     @Body() body: SaveCredentialsDto,
   ): Promise<SaveCredentialsResult> {
     await this.orgs.assertOwner(user.id, orgId);
-    for (const { key, value } of body.entries) {
-      const trimmed = value.trim();
-      if (trimmed) await this.credentials.set(orgId, key, trimmed);
-    }
+    const writes = body.entries
+      .map((e) => ({ key: e.key, plaintext: e.value.trim() }))
+      .filter((e) => e.plaintext);
+    await this.credentials.setMany(orgId, writes);
     return { ok: true };
   }
 }
