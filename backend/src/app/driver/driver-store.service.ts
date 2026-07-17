@@ -2000,14 +2000,16 @@ export class DriverStoreService {
   /**
    * The job's planning thread group thread id — the anchor for JOB-LEVEL card messages (question/ship/amend/merge
    * cards) that have no build-lane thread of their own. Mirrors d3's backfill fallback ("orphans default to
-   * the job's planning thread") now that `messages.thread_id` is NOT NULL. Every job gets exactly one
-   * planning thread group with one thread at job start (d7), so this should always resolve for a job already past
-   * `open`; throws loudly rather than inserting a message with a null/bogus thread_id if it somehow doesn't.
+   * the job's planning thread") now that `messages.thread_id` is NOT NULL. A job starts with exactly one planning
+   * thread group (d7), but a heavy amend can append a LATER one — ordered `DESC` (newest first) so this always
+   * anchors on the CURRENT planning group, mirroring `JobBootstrapService.planningThreadId`/`ciThreadId`'s
+   * "newest first" rationale. Throws loudly rather than inserting a message with a null/bogus thread_id if it
+   * somehow doesn't resolve.
    */
   private async planningThreadId(jobId: string): Promise<string> {
     const threadGroup = await this.threadGroups.findOne({
       where: { job_id: jobId, kind: 'planning' },
-      order: { ordinal: 'ASC' },
+      order: { ordinal: 'DESC' },
     });
     const thread = threadGroup
       ? await this.threads.findOne({

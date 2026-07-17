@@ -64,14 +64,15 @@ export class JobBootstrapService {
 
   /**
    * The job's planning thread group thread id — the anchor for job-level messages that have no build-lane thread
-   * of their own. Every job gets exactly one planning thread group with one thread at job start (ensurePlanningThreadGroup
-   * above), so this should always resolve; throws loudly rather than letting a caller insert a message with
-   * a bogus thread_id if it somehow doesn't.
+   * of their own. A job starts with exactly one planning thread group (ensurePlanningThreadGroup above), but a
+   * heavy amend (d-amend) can append a LATER one — ordered `DESC` (newest first) so routing always follows the
+   * CURRENT planning group, mirroring `ciThreadId`'s "newest first" rationale below. Throws loudly rather than
+   * letting a caller insert a message with a bogus thread_id if none resolves.
    */
   async planningThreadId(jobId: string): Promise<string> {
     const threadGroup = await this.threadGroups.findOne({
       where: { job_id: jobId, kind: 'planning' },
-      order: { ordinal: 'ASC' },
+      order: { ordinal: 'DESC' },
     });
     const thread = threadGroup
       ? await this.threads.findOne({

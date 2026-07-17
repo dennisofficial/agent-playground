@@ -332,7 +332,8 @@ export class EntityTaskEventSink implements TaskEventSink {
   }
 
   /** Resolve the thread group that owns this scope's shared checklist: a `thread` scope's own `thread_group_id`, or a
-   *  `main` scope's job's `planning` thread group (mirrors `DriverStoreService.planningThreadId`'s lookup). */
+   *  `main` scope's job's CURRENT `planning` thread group (mirrors `DriverStoreService.planningThreadId`'s lookup —
+   *  `DESC` so a heavy amend's later planning group, not the original, owns the checklist once one exists). */
   private async resolveThreadGroupId(
     scope: TaskScope,
   ): Promise<{ threadGroupId: string; orgId: string } | null> {
@@ -343,10 +344,10 @@ export class EntityTaskEventSink implements TaskEventSink {
       });
       return thread ? { threadGroupId: thread.thread_group_id, orgId: thread.org_id } : null;
     }
-    // scope.kind === 'main' — the job's planning thread group owns the brain's own checklist.
+    // scope.kind === 'main' — the job's CURRENT planning thread group owns the brain's own checklist.
     const threadGroup = await this.threadGroups.findOne({
       where: { job_id: scope.id, kind: 'planning' },
-      order: { ordinal: 'ASC' },
+      order: { ordinal: 'DESC' },
       select: { id: true, org_id: true },
     });
     return threadGroup ? { threadGroupId: threadGroup.id, orgId: threadGroup.org_id } : null;
