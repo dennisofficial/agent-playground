@@ -20,6 +20,9 @@
       <excludeFolder url="file://$MODULE_DIR$/.docker" />
       <excludeFolder url="file://$MODULE_DIR$/backend/.playwright-cli" />
       <excludeFolder url="file://$MODULE_DIR$/submodules/nestjs-ai-essentials/ai-testing/dist" />
+      <excludeFolder url="file://$MODULE_DIR$/backend/src/app/brain/__tests__/__snapshots__" />
+      <excludeFolder url="file://$MODULE_DIR$/backend/src/app/driver/__tests__/__snapshots__" />
+      <excludeFolder url="file://$MODULE_DIR$/backend/src/app/prompt-kit/messages/__tests__/__snapshots__" />
     </content>
     <orderEntry type="inheritedJdk" />
     <orderEntry type="sourceFolder" forTests="false" />

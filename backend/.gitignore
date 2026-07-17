@@ -33,3 +33,4 @@ gh-app-private-key.pem
 
 # OS / IDE
 .DS_Store
+__snapshots__
