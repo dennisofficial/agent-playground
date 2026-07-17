@@ -22,7 +22,7 @@ import {
 } from "@/lib/api/composer-store";
 import type { AttachmentsApi } from "./use-attachments";
 import { AttachmentTray } from "./attachment-tray";
-import { MAIN_LANE, useLiveTurn } from "@/lib/api/job-stream";
+import { MAIN_LANE, useLiveTurn, type ContextBreakdown } from "@/lib/api/job-stream";
 import { useAllJobs } from "@/lib/api/inbox";
 import { ContextMeter } from "./bubbles";
 import { UsageRing } from "./usage-ring";
@@ -53,7 +53,12 @@ export interface ComposerFooter {
   model?: string;
   effort?: string;
   engine?: string;
-  context?: { tokens: number; limit: number; model?: string } | null;
+  context?: {
+    tokens: number;
+    limit: number;
+    model?: string;
+    contextBreakdown?: ContextBreakdown | null;
+  } | null;
 }
 
 /**
@@ -88,6 +93,7 @@ export function Composer({
   footer,
   readOnly = false,
   blocked = false,
+  archived = false,
   variant = "composer",
 }: {
   jobRef: JobRef;
@@ -114,6 +120,10 @@ export function Composer({
    *  placeholder — the operator unblocks from the conversation-pane overlay above. Same inert treatment as
    *  `readOnly`, different copy. */
   blocked?: boolean;
+  /** The job is `archived`: fully disable the composer (a send would just 409) and swap the placeholder —
+   *  archiving is terminal, so there's no way out from here (unlike `blocked`). Same inert treatment as
+   *  `readOnly`/`blocked`, different copy. */
+  archived?: boolean;
   /**
    * `"composer"` (default) — the full interactive/read-only composer (input row + footer). `"subagent"` —
    * a FOOTER-ONLY bar for a subagent's read-only detail pane: no input, no Send/attach; the left shows a
@@ -123,9 +133,10 @@ export function Composer({
 }) {
   // Footer-only mode for a subagent's read-only detail pane (no input/attach/send).
   const isSubagent = variant === "subagent";
-  // A blocked job's composer is inert for the same reasons a read-only lane's is: no input, no Send, no
-  // attach/paste — the only difference is the placeholder copy (and that the operator unblocks above).
-  const inert = readOnly || blocked;
+  // A blocked/archived job's composer is inert for the same reasons a read-only lane's is: no input, no
+  // Send, no attach/paste — the only difference is the placeholder copy (and that the operator unblocks
+  // above for a blocked job; an archived job has no way out).
+  const inert = readOnly || blocked || archived;
   const message = useMessage(jobRef);
   const stop = useStop(jobRef);
   const sendReviewComments = useSendReviewComments(jobRef);
@@ -472,13 +483,15 @@ export function Composer({
                 rows={1}
                 disabled={inert}
                 placeholder={
-                  blocked
-                    ? "This job is blocked — unblock it above to continue"
-                    : readOnly
-                      ? "Read-only — steer Atlas from the Conversation"
-                      : comments.length > 0
-                        ? "Add a message with your comments (optional)…"
-                        : placeholder
+                  archived
+                    ? "This job is archived — read-only."
+                    : blocked
+                      ? "This job is blocked — unblock it above to continue"
+                      : readOnly
+                        ? "Read-only — steer Atlas from the Conversation"
+                        : comments.length > 0
+                          ? "Add a message with your comments (optional)…"
+                          : placeholder
                 }
                 className="max-h-44 min-h-[24px] flex-1 resize-none overflow-y-auto bg-transparent pt-0.5 text-[13.5px] leading-relaxed text-text outline-none placeholder:text-faint disabled:cursor-default"
               />
@@ -511,11 +524,13 @@ export function Composer({
                   className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px] bg-accent text-white transition hover:brightness-105 disabled:opacity-45"
                   aria-label="Send"
                   title={
-                    blocked
-                      ? "This job is blocked"
-                      : readOnly
-                        ? "Read-only lane"
-                        : undefined
+                    archived
+                      ? "This job is archived"
+                      : blocked
+                        ? "This job is blocked"
+                        : readOnly
+                          ? "Read-only lane"
+                          : undefined
                   }
                 >
                   <ArrowUp size={15} strokeWidth={2.4} />
@@ -586,6 +601,7 @@ export function Composer({
                   tokens={footer.context.tokens}
                   limit={footer.context.limit}
                   model={footer.context.model}
+                  breakdown={footer.context.contextBreakdown}
                 />
               </>
             ) : null}

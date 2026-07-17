@@ -733,6 +733,28 @@ export class StimulusStoreService {
     await this.stimuli.update({ id: In(ids) }, { attempted_at: new Date() });
   }
 
+  /**
+   * Atomically CLAIM pending chat stimuli for delivery: stamp the lease (`attempted_at=now`) only on rows still
+   * eligible (undelivered + lease-free), and RETURN the ids actually won. Cross-process safe — two concurrent
+   * claimers of the same row: Postgres serializes the UPDATE, so exactly one sees `attempted_at IS NULL/expired`
+   * and wins; the other's WHERE no longer matches and it wins nothing. Replaces the SELECT-then-`leaseChatStimuli`
+   * two-step that let two callers both drive one message (the self-steer race).
+   */
+  async claimChatStimuli(ids: string[], leaseMs: number): Promise<string[]> {
+    if (ids.length === 0) return [];
+    const cutoff = new Date(Date.now() - leaseMs);
+    const res = await this.stimuli
+      .createQueryBuilder()
+      .update()
+      .set({ attempted_at: () => 'now()' })
+      .where('id IN (:...ids)', { ids })
+      .andWhere('delivered_at IS NULL')
+      .andWhere('(attempted_at IS NULL OR attempted_at < :cutoff)', { cutoff })
+      .returning('id')
+      .execute();
+    return (res.raw as Array<{ id: string }>).map((r) => r.id);
+  }
+
   /** Mark a chat stimulus delivered (idempotent — only stamps a still-null row). Folds in the correlated
    *  operator bubble's `delivered_at` and a best-effort realtime nudge, so the transcript reflects "landed"
    *  the moment the SDK accepts the turn. A no-op (no second stamp, no emit) when already delivered/missing. */

@@ -112,12 +112,19 @@ export async function steerPending(
   pending: TurnEnvelope[],
   logger?: Pick<Logger, 'warn' | 'debug'>,
 ): Promise<void> {
-  await store
-    .leaseChatStimuli(pending.map((p) => p.id))
-    .catch((err) =>
-      logger?.debug(`pump: leaseChat failed (continuing): ${err}`),
-    );
+  const won = new Set(
+    await store
+      .claimChatStimuli(
+        pending.map((p) => p.id),
+        CHAT_DELIVERY_LEASE_MS,
+      )
+      .catch((err) => {
+        logger?.debug(`pump: claim failed (continuing): ${err}`);
+        return [] as string[];
+      }),
+  );
   for (const p of pending) {
+    if (!won.has(p.id)) continue; // another caller owns it — never double-deliver
     await lane
       .steer(turnId, p.id, lane.renderBody(p))
       .catch((err) =>

@@ -238,6 +238,16 @@ export function Badge({
       </span>
     );
   }
+  if (badge.kind === "superseded") {
+    return (
+      <span
+        className="shrink-0 rounded-[4px] px-[6px] py-[0.5px] font-mono text-[9.5px] font-semibold"
+        style={{ color: "var(--dim)", background: "var(--surface-3)", border: "1px solid var(--border)" }}
+      >
+        superseded
+      </span>
+    );
+  }
   if (badge.kind === "lines") {
     // Neutral gray pill — e.g. the line count read off a Read row.
     return (
@@ -374,17 +384,23 @@ export function StructuredPanel({
   input,
   result,
   isError,
+  superseded,
 }: {
   input?: string;
   result: string;
   isError?: boolean;
+  superseded?: boolean;
 }) {
   const body = result || (isError ? "(error)" : "(no output)");
+  const red = isError && !superseded;
   return (
     <div
       className="my-[3px] space-y-1.5 rounded-[7px] border border-border px-[11px] py-[9px] font-mono text-[11px] leading-relaxed text-dim"
       style={{ background: "var(--panel)" }}
     >
+      {superseded ? (
+        <div className="text-faint text-[10.5px]">Cancelled to deliver your newer message</div>
+      ) : null}
       {input ? (
         <div>
           <span className="text-faint">input</span>
@@ -394,10 +410,10 @@ export function StructuredPanel({
         </div>
       ) : null}
       <div>
-        <span className="text-faint">{isError ? "error" : "result"}</span>
+        <span className="text-faint">{red ? "error" : "result"}</span>
         <pre
           className="mt-0.5 overflow-x-auto whitespace-pre-wrap break-words"
-          style={isError ? { color: "var(--red)" } : undefined}
+          style={red ? { color: "var(--red)" } : undefined}
         >
           {body}
         </pre>

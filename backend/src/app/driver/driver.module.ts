@@ -57,6 +57,7 @@ import { OnboardingService } from '../onboarding';
 import { WorktreeHydrator } from './worktree-hydrator.service';
 import { WorktreeProvisioner } from './worktree-provisioner.service';
 import { ExposureService } from '../exposure';
+import { DriverApprovalGateway } from '../driver-approval-gateway';
 
 // SchedulerRegistry interval names (process-unique) for the leader-gated driver timers. Registered on
 // promote, deleted on demote — the leader-only lifecycle is unchanged; only the timer plumbing moved off
@@ -206,6 +207,14 @@ export class DriverModule
     // direct-construction unit test compiles without a trailing argument.
     @Optional() private readonly buildLaneDelivery?: BuildLaneDeliveryService,
     @Optional() private readonly stimulusStore?: StimulusStoreService,
+    // The neutral surface→driver approval seam (from @Global DriverApprovalGatewayModule). The driver binds
+    // its ship/merge/amend resolution methods into it on bootstrap so the web surface reaches them as a
+    // typed injected collaborator instead of via a ModuleRef service-locator. @Optional + trailing so the
+    // module's direct-construction unit test compiles without passing every new dependency.
+    @Optional() private readonly driverApproval?: DriverApprovalGateway,
+    // `DriverStoreService.neutralizeAmendProposal` is the one gateway method not owned by ThreadDriver, so
+    // the store is injected here to back the bound adapter. @Optional + trailing for the same reason.
+    @Optional() private readonly driverStore?: DriverStoreService,
   ) {}
 
   /**
@@ -215,6 +224,28 @@ export class DriverModule
    * predecessor has fully drained) it reconciles, resumes, and starts the reaper.
    */
   async onApplicationBootstrap(): Promise<void> {
+    // Register the concrete driver adapter behind the neutral surface→driver approval gateway, so the web
+    // surface's ship/merge/amend approval-click bridge forwards here — without the surface importing the
+    // driver (which would close a module cycle, DriverModule already depends on the surface for CHAT_SURFACE).
+    // Mirrors how AgentSessionManager binds itself into BrainGateway, and how reattachRegistry.register below
+    // registers a driver-backed callback into a neutral @Global registry. Unconditional + leadership-agnostic
+    // (approval clicks are leader-routed by Caddy anyway); the driveAfter/merge idempotence is unchanged.
+    if (this.driverApproval && this.driverStore) {
+      const driver = this.driver;
+      const store = this.driverStore;
+      this.driverApproval.bind({
+        resolveShip: async (jobId, ruledBy) => {
+          await driver.resolveShipApprovalDurably(jobId, ruledBy);
+        },
+        retractShip: (jobId, ruledBy) =>
+          driver.retractShipDurably(jobId, ruledBy),
+        resolveMerge: (jobId, ruledBy) =>
+          driver.resolveMergeApprovalDurably(jobId, ruledBy),
+        neutralizeAmendProposal: (jobId, verdictLine) =>
+          store.neutralizeAmendProposal(jobId, verdictLine),
+      });
+    }
+
     // Claim the build kind the drive loop provably re-attaches (`runJob`→`findReattachableTurn` re-tails a
     // live `step` turn at its anchor) on the reattach routing table, so the leader watchdog can re-drive
     // an orphaned-but-alive build turn (see ThreadDriver.reattachTurnRow). `review`/`autofix` are intentionally
@@ -247,6 +278,9 @@ export class DriverModule
         await this.lifecycle.reconcileOnBoot();
         // Finish any job stranded in `deleting` (crash between the delete claim and teardown completing).
         await this.lifecycle.reconcileDeletingJobs().catch(() => undefined);
+        // Self-heal any archived job whose filesystem reclaim was interrupted (status flipped, but the
+        // worktree/container teardown never finished) — the archive analog of the `deleting` reconcile.
+        await this.lifecycle.reconcileArchivedSandboxes().catch(() => undefined);
         // Reclaim leaked `-net`/`-dind` artifacts BEFORE resuming jobs — a resumed drive calls `ensureContainer`
         // → `ensureNetwork`, which fails ("all predefined address pools have been fully subnetted") if the pool
         // is still exhausted by networks orphaned across prior restarts. `reconcileOnBoot` above nulled DB
@@ -297,8 +331,8 @@ export class DriverModule
   }
 
   /**
-   * The slow housekeeping sweep: close threads whose PR has merged/closed (reclaims container + worktree),
-   * re-drive stranded jobs, GC merged-job disk, and reclaim orphaned Docker artifacts. unref so it never
+   * The slow housekeeping sweep: record terminal PR states, re-drive stranded jobs, auto-archive idle
+   * merged/closed jobs (+ self-heal interrupted reclaims), and reclaim orphaned Docker artifacts. unref so it never
    * keeps the process alive. Idle-reap is NOT here — it rides its own fast `startReapIdleTimer` (1 min) so a
    * quiet container is reclaimed promptly; the GitHub PR-state observation rides the fast `startPollTimer`
    * heartbeat. This timer keeps only the `pollPrClosures` merge/close-teardown backstop (teardown is already
@@ -317,9 +351,13 @@ export class DriverModule
       void this.driver.resume().catch(() => undefined);
       void this.lifecycle.pollPrClosures().catch(() => undefined);
       void this.lifecycle.reconcileDeletingJobs().catch(() => undefined);
-      // Disk GC: reclaim the worktree + scratch dirs of merged/closed jobs whose sandbox has sat detached
-      // past the TTL (RAM was freed at merge; this bounds the worktree growth detach leaves behind).
-      void this.lifecycle.reapMergedSandboxes().catch(() => undefined);
+      // Auto-archive: reclaim the worktree + container + /playground of merged/closed jobs idle past the TTL
+      // (last transcript activity, default 3d) — the row + transcript + /context survive. Replaces the old
+      // 7-day merged-sandbox disk GC and drains the detached-worktree backlog over its first sweeps.
+      void this.lifecycle.archiveInactiveJobs().catch(() => undefined);
+      // Self-heal an interrupted archive reclaim: re-run the (idempotent) physical teardown for any archived
+      // job whose sandbox never reached `closed` (a crash between the status flip and the reclaim finishing).
+      void this.lifecycle.reconcileArchivedSandboxes().catch(() => undefined);
       // Reclaim leaked per-sandbox `-net`/`-dind` artifacts so Docker's address pool can't be exhausted by
       // networks orphaned across restarts/crashes.
       void this.lifecycle.reapOrphanedSandboxArtifacts().catch(() => undefined);

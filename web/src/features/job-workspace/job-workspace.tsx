@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import {
   Group,
   Panel,
@@ -26,7 +25,6 @@ import { useJobEvents } from "@/lib/api/job-events";
 import { MAIN_LANE } from "@/lib/api/job-stream";
 import { toJobKind, toJobStatus } from "@/lib/api/status";
 import { orgSwatch } from "@/lib/org-display";
-import { ROUTES } from "@/lib/routes";
 import { pipelineJob, type JobRef } from "@/lib/api/job-api";
 import {
   APPROVE_ACTION_ID,
@@ -52,7 +50,6 @@ import { DeleteJobPrDialog } from "./delete-job-pr-dialog";
  * the server-owned thread-list fields (no longer fed from here); this just renders the open thread.
  */
 export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
-  const router = useRouter();
   const ref = useMemo<JobRef>(
     () => ({ orgId, repoId, jobId }),
     [orgId, repoId, jobId],
@@ -256,12 +253,11 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   const onSelectNode = selectNode;
   const onOpenPlan = () => selectNode("plan");
   const onRename = (title: string) => rename.mutate(title);
+  // Archiving is terminal but the job stays put — the operator remains on this (now read-only) page rather
+  // than being navigated away, so there's no `router.push` here.
   const runDelete = (prAction: "close" | "leave") =>
     del.mutate(prAction, {
-      onSuccess: () => {
-        setPrDialogOpen(false);
-        router.push(ROUTES.workspace());
-      },
+      onSuccess: () => setPrDialogOpen(false),
     });
 
   const onDelete = () => {
@@ -322,6 +318,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
         isLoading={messagesLoading}
         live={status === "running" || status === "plan_review"}
         blocked={status === "blocked"}
+        archived={status === "archived"}
         blockedBy={meta.blockedBy}
         blockedSeedMessage={meta.blockedSeedMessage}
         mainThreadId={mainThreadId}

@@ -156,6 +156,7 @@ const BLOCKER_HOW_LABEL: Record<UnblockBlockerInfo['how'], string> = {
   closed_unmerged: 'PR closed without merging',
   cancelled: 'job cancelled',
   deleted: 'job deleted',
+  archived: 'job archived',
   removed: 'block lifted by the operator',
 };
 
@@ -173,7 +174,11 @@ function renderBlockerContext(blockers: UnblockBlockerInfo[]): string {
     .map((b) => `  • "${b.title ?? b.jobId}" (${BLOCKER_HOW_LABEL[b.how]}) — job ${b.jobId}`)
     .join('\n');
   const notLanded = blockers.filter(
-    (b) => b.how === 'closed_unmerged' || b.how === 'cancelled' || b.how === 'deleted',
+    (b) =>
+      b.how === 'closed_unmerged' ||
+      b.how === 'cancelled' ||
+      b.how === 'deleted' ||
+      b.how === 'archived',
   );
   const caveat =
     notLanded.length > 0
@@ -436,6 +441,24 @@ export function retryResumeNudge(title?: string): AgentMessage {
     title
       ? `Please continue with the current task: "${title}".`
       : 'Please continue.',
+  );
+}
+
+/**
+ * Auto-resume nudge after a benign `aborted_streaming` — a mid-turn interrupt that cancelled in-flight tool
+ * calls. Names the task AND reframes the cancellation so the resumed brain does not misread the SDK's
+ * "user doesn't want to take this action" tool-results as an operator rejection.
+ */
+export function interruptRedriveNudge(title?: string): AgentMessage {
+  return agentMessage(
+    [
+      'Your previous turn was interrupted mid-flight: new input arrived while one or more tool calls were',
+      'still running, so they were cancelled. In the transcript above those calls show an "AbortError:',
+      'interrupt" or "The user doesn\'t want to take this action right now. STOP…" result — that is the',
+      'mechanical side-effect of delivering input mid-turn, NOT the operator rejecting or stopping your',
+      'action. Re-read any new message that follows, re-evaluate whether the cancelled step is still the',
+      'right next move, and continue' + (title ? ` with the current task: "${title}".` : '.'),
+    ].join(' '),
   );
 }
 

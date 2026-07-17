@@ -2,6 +2,7 @@ import {
   BadGatewayException,
   BadRequestException,
   Body,
+  ConflictException,
   Controller,
   Delete,
   ForbiddenException,
@@ -26,7 +27,6 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { ModuleRef } from '@nestjs/core';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import {
   createReadStream,
@@ -59,7 +59,7 @@ import {
   modeApprovesShip,
 } from '@workspace/shared';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { In, Not, Repository } from 'typeorm';
 import {
   AMEND_APPROVE_ACTION_ID,
   AMEND_DISMISS_ACTION_ID,
@@ -93,7 +93,7 @@ import { LiveTurnStore } from './live-turn-store';
 import { ThreadInputService } from './thread-input.service';
 import { JobTitleService } from './job-title.service';
 import { parseWebApprovalMeta } from './web-approval-card';
-import { resolveMergeApproval } from './resolve-merge-approval';
+import { DriverApprovalGateway } from '../driver-approval-gateway';
 import type { WebQuestionCard } from './web-question-card';
 import type { WebSecretInputCard } from './web-secret-input-card';
 import type { WebFileRequestCard } from './web-file-request-card';
@@ -726,10 +726,11 @@ export class WebSurfaceController {
     private readonly git: LocalGitService,
     // Job-to-job "blocked by" edges — the manual block/unblock endpoints call addDependency/removeDependency.
     private readonly jobDeps: JobDependencyService,
-    // Resolves `ThreadDriver` lazily for the SYNCHRONOUS manual-merge path (the "Merge PR" approve click
-    // awaits `resolveMergeApproval` → `mergeNow`). Placed after the last required dep so the controller's
-    // positional-arg unit tests keep their alignment.
-    private readonly moduleRef: ModuleRef,
+    // The typed surface→driver approval seam (from @Global DriverApprovalGatewayModule). The SYNCHRONOUS
+    // manual-merge path (the "Merge PR" approve click) awaits `driverApproval.resolveMerge` → the driver's
+    // `resolveMergeApprovalDurably` → `mergeNow`, with no ModuleRef service-locator or surface→driver cycle.
+    // Occupies the former `moduleRef` slot so the controller's positional-arg unit tests keep their alignment.
+    private readonly driverApproval: DriverApprovalGateway,
     // The `Message`-typed intake seam — the composed-turn path of `/message` (answered cards + an operator
     // message in one submit) delivers through `intakeChat`. Provided by the (non-@Global) StimulusModule,
     // imported into WebSurfaceModule for this injection to resolve.
@@ -786,14 +787,43 @@ export class WebSurfaceController {
   async allThreads(@CurrentUser() user: UserEntity): Promise<unknown[]> {
     const orgs = await this.orgService.listForUser(user.id);
     if (orgs.length === 0) return [];
-    const orgIds = orgs.map((o) => o.id);
-    const [threads, repos] = await Promise.all([
-      this.jobs.find({
-        where: { org_id: In(orgIds) },
-        order: { created_at: 'DESC' },
-      }),
-      this.repos.find({ where: { org_id: In(orgIds) } }),
-    ]);
+    // The default inbox EXCLUDES archived jobs — they live in the collapsed "Archived" group, lazy-loaded
+    // via `GET /web/jobs/archived`.
+    const threads = await this.jobs.find({
+      where: { org_id: In(orgs.map((o) => o.id)), status: Not('archived') },
+      order: { created_at: 'DESC' },
+    });
+    return this.toInboxRows(threads, orgs);
+  }
+
+  /**
+   * `GET /web/jobs/archived` — the caller's ARCHIVED jobs across all their orgs, most-recently-archived
+   * first. Powers the collapsed "Archived" sidebar group (lazy-loaded on expand). Same flat row shape as the
+   * active inbox (`GET /web/jobs`) so the client renders it with the same card, just read-only.
+   */
+  @Get('jobs/archived')
+  async archivedThreads(@CurrentUser() user: UserEntity): Promise<unknown[]> {
+    const orgs = await this.orgService.listForUser(user.id);
+    if (orgs.length === 0) return [];
+    const threads = await this.jobs.find({
+      where: { org_id: In(orgs.map((o) => o.id)), status: 'archived' },
+      order: { archived_at: 'DESC' },
+    });
+    return this.toInboxRows(threads, orgs);
+  }
+
+  /**
+   * Shared cross-org inbox row mapper — the flat thread projection the sidebar renders (org + repo labels +
+   * blocker roster + PR/CI/port badges), reused by the active {@link allThreads} and archived
+   * {@link archivedThreads} responses so the two shapes can't drift.
+   */
+  private async toInboxRows(
+    threads: JobEntity[],
+    orgs: Awaited<ReturnType<OrganizationService['listForUser']>>,
+  ): Promise<unknown[]> {
+    const repos = await this.repos.find({
+      where: { org_id: In(orgs.map((o) => o.id)) },
+    });
     const blockedIds = threads
       .filter((t) => t.status === 'blocked')
       .map((t) => t.id);
@@ -811,6 +841,7 @@ export class WebSurfaceController {
         origin: t.origin,
         kind: t.kind, // job kind ('feature'/'bugfix'/'onboarding'/'event'/'review'/null) — drives the web badge
         status: t.status,
+        archivedAt: t.archived_at, // null unless archived — orders the collapsed "Archived" group
         halt: t.halt ?? null,
         activity: t.activity,
         halted: t.halted,
@@ -895,7 +926,7 @@ export class WebSurfaceController {
     @Param('repoId') repoId: string,
   ): Promise<unknown[]> {
     const rows = await this.jobs.find({
-      where: { org_id: org.id, repo_id: repoId },
+      where: { org_id: org.id, repo_id: repoId, status: Not('archived') },
       order: { created_at: 'DESC' },
     });
     const blockedIds = rows
@@ -1247,6 +1278,7 @@ export class WebSurfaceController {
       );
     }
     const thread = await this.requireThread(jobId, org.id);
+    this.assertJobMutable(thread);
     if (thread.status === 'blocked') {
       throw new BadRequestException(
         'This job is blocked on another job; unblock it (or wait for its blocker to merge) before interacting.',
@@ -1749,6 +1781,7 @@ export class WebSurfaceController {
       );
     }
     const thread = await this.requireThread(jobId, org.id);
+    this.assertJobMutable(thread);
     const text = formatReviewComments(body.items, body.message);
     const card = {
       type: 'review_comments_card',
@@ -1818,6 +1851,10 @@ export class WebSurfaceController {
               active: s.active,
               startedAt: s.startedAt,
               retrying: s.retrying,
+              contextBreakdown: s.contextBreakdown,
+              contextTokens: s.contextTokens,
+              contextModel: s.contextModel,
+              contextLimit: s.contextLimit,
             },
           },
         }),
@@ -1897,6 +1934,7 @@ export class WebSurfaceController {
     }
     // The verdict's target thread (meta.jobId is the thread id) must belong to the caller's org.
     const thread = await this.requireThread(meta.jobId, org.id);
+    this.assertJobMutable(thread);
     if (
       actionId !== SHIP_ACTION_ID &&
       actionId !== RETRACT_SHIP_ACTION_ID &&
@@ -1928,11 +1966,7 @@ export class WebSurfaceController {
     // The MERGE click resolves SYNCHRONOUSLY: await the merge so the response only returns 2xx once the PR
     // actually merged, and a failed/no-op merge surfaces as a 409 instead of a false success.
     if (actionId === MERGE_ACTION_ID) {
-      const merged = await resolveMergeApproval(
-        this.moduleRef,
-        meta.jobId,
-        user.id,
-      );
+      const merged = await this.driverApproval.resolveMerge(meta.jobId, user.id);
       if (!merged)
         throw new HttpException('Merge did not complete', HttpStatus.CONFLICT);
       return { ok: true, jobId: meta.jobId };
@@ -1998,6 +2032,7 @@ export class WebSurfaceController {
     @Query('force') force?: string,
   ): Promise<{ ok: boolean; status: string }> {
     const thread = await this.requireThread(jobId, org.id);
+    this.assertJobMutable(thread);
     if (!thread.halt) {
       // Idempotent / not-applicable: nothing to retry (already running, done, or pre-build).
       return { ok: false, status: thread.status };
@@ -2029,7 +2064,7 @@ export class WebSurfaceController {
     @CurrentOrg() org: CurrentOrgCtx,
     @Param('jobId') jobId: string,
   ): Promise<{ ok: boolean; reason?: string }> {
-    await this.requireThread(jobId, org.id);
+    this.assertJobMutable(await this.requireThread(jobId, org.id));
     return this.dispatcher.operatorShipWithoutReview(jobId);
   }
 
@@ -2047,7 +2082,7 @@ export class WebSurfaceController {
     @Param('jobId') jobId: string,
     @Param('threadId') threadId: string,
   ): Promise<{ ok: boolean; reason?: string }> {
-    await this.requireThread(jobId, org.id);
+    this.assertJobMutable(await this.requireThread(jobId, org.id));
     return this.dispatcher.operatorRetryStuckThread(jobId, threadId);
   }
 
@@ -2063,7 +2098,7 @@ export class WebSurfaceController {
     @Param('jobId') jobId: string,
     @Param('threadId') threadId: string,
   ): Promise<{ ok: boolean; reason?: string }> {
-    await this.requireThread(jobId, org.id);
+    this.assertJobMutable(await this.requireThread(jobId, org.id));
     return this.dispatcher.operatorAcceptStuckThread(jobId, threadId);
   }
 
@@ -2087,6 +2122,7 @@ export class WebSurfaceController {
     @Query('force') force?: string,
   ): Promise<{ ok: boolean }> {
     const thread = await this.requireThread(jobId, org.id);
+    this.assertJobMutable(thread);
     if (force !== 'true') {
       const claimed = await this.claimManualRetry(jobId);
       if (!claimed) {
@@ -2139,7 +2175,7 @@ export class WebSurfaceController {
     @CurrentOrg() org: CurrentOrgCtx,
     @Param('jobId') jobId: string,
   ): Promise<{ stopped: boolean }> {
-    await this.requireThread(jobId, org.id);
+    this.assertJobMutable(await this.requireThread(jobId, org.id));
     const stopped = await this.brain.stopTurn(jobId);
     return { stopped };
   }
@@ -2205,6 +2241,7 @@ export class WebSurfaceController {
       );
     }
     const thread = await this.requireThread(jobId, org.id);
+    this.assertJobMutable(thread);
     if (thread.status !== 'awaiting_ship_review') return { ok: false, ts: '' };
     const firstRequest = await this.driverStore.markPreviewRequested(jobId);
     if (!firstRequest) return { ok: true, ts: '' }; // idempotent double-click — already seeded.
@@ -2359,6 +2396,7 @@ export class WebSurfaceController {
       );
     }
     const thread = await this.requireThread(jobId, org.id);
+    this.assertJobMutable(thread);
     const card = await this.messages.findOne({
       where: { job_id: jobId, ts: body.requestId, kind: 'card' },
     });
@@ -2543,6 +2581,7 @@ export class WebSurfaceController {
     @Param('requestId') requestId: string,
   ): Promise<{ ok: boolean; committed: string[]; ts?: string }> {
     const thread = await this.requireThread(jobId, org.id);
+    this.assertJobMutable(thread);
     const card = await this.store.getMcpProposalCard(jobId, requestId);
     if (!card)
       throw new BadRequestException('no such MCP proposal on this thread');
@@ -2676,6 +2715,7 @@ export class WebSurfaceController {
     @Param('requestId') requestId: string,
   ): Promise<{ ok: boolean; slug: string; ts?: string }> {
     const thread = await this.requireThread(jobId, org.id);
+    this.assertJobMutable(thread);
     const card = await this.store.getConventionProposalCard(jobId, requestId);
     if (!card)
       throw new BadRequestException(
@@ -2728,6 +2768,7 @@ export class WebSurfaceController {
     @Param('requestId') requestId: string,
   ): Promise<{ ok: boolean; slug: string; ts?: string }> {
     const thread = await this.requireThread(jobId, org.id);
+    this.assertJobMutable(thread);
     const card = await this.store.getConventionEditProposalCard(
       jobId,
       requestId,
@@ -2785,6 +2826,7 @@ export class WebSurfaceController {
     @Param('requestId') requestId: string,
   ): Promise<{ ok: boolean; name: string; ts?: string }> {
     const thread = await this.requireThread(jobId, org.id);
+    this.assertJobMutable(thread);
     const card = await this.store.getSkillProposalCard(jobId, requestId);
     if (!card)
       throw new BadRequestException('no such skill proposal on this thread');
@@ -2888,6 +2930,7 @@ export class WebSurfaceController {
     @Param('requestId') requestId: string,
   ): Promise<{ ok: boolean; name: string; grantedAs?: string; ts?: string }> {
     const thread = await this.requireThread(jobId, org.id);
+    this.assertJobMutable(thread);
     const card = await this.store.getSkillEditAccessCard(jobId, requestId);
     if (!card)
       throw new BadRequestException(
@@ -3585,6 +3628,7 @@ export class WebSurfaceController {
   ): Promise<{ ok: boolean; title: string }> {
     const title = body?.title?.trim().slice(0, 200);
     if (!title) throw new BadRequestException('title is required');
+    this.assertJobMutable(await this.requireThread(jobId, org.id));
     // Scope the update to the caller's org (defense in depth beyond the membership guard).
     const result = await this.jobs.update(
       { id: jobId, org_id: org.id },
@@ -3611,6 +3655,7 @@ export class WebSurfaceController {
     // Resolve scoped to the org first (defense in depth beyond the guard) — capture the pre-update status so we
     // know whether a gate is already parked.
     const job = await this.requireThread(jobId, org.id);
+    this.assertJobMutable(job);
     const result = await this.jobs.update(
       { id: jobId, org_id: org.id },
       {
@@ -3658,7 +3703,7 @@ export class WebSurfaceController {
     @Body() body: SetAutoMergeDto,
   ): Promise<{ ok: boolean; autoMerge: boolean }> {
     // Resolve scoped to the org first (defense in depth beyond the guard) — 404s a missing/foreign job.
-    await this.requireThread(jobId, org.id);
+    this.assertJobMutable(await this.requireThread(jobId, org.id));
     const enable = coerceBoolean(body.autoMerge) === true;
     const result = await this.jobs.update(
       { id: jobId, org_id: org.id },
@@ -3681,7 +3726,13 @@ export class WebSurfaceController {
     };
   }
 
-  /** `DELETE …/threads/:jobId` — tear down the sandbox + remove the thread and its messages. */
+  /**
+   * `DELETE …/threads/:jobId` — ARCHIVE the job (jobs never hard-delete from the web anymore): flip it to
+   * `archived`, then reclaim the expensive filesystem (worktree + container + /playground + redundant on-disk
+   * session JSONL) in the background, KEEPING the row + transcript + analytics + /context. The optional
+   * `prAction=close` still closes the job's open PR first (aborting the archive if it can't). Org/repo delete
+   * + the `deleting` reconciler keep true hard delete (decision d7) — only THIS per-job endpoint archives.
+   */
   @Delete('orgs/:orgId/repos/:repoId/jobs/:jobId')
   @UseGuards(OrgMembershipGuard)
   async deleteThread(
@@ -3689,8 +3740,9 @@ export class WebSurfaceController {
     @Param('jobId') jobId: string,
     @Query('prAction') prAction?: string,
   ): Promise<{ ok: boolean }> {
-    // Resolve scoped to the org first — a leaked thread id from another org must NOT be deletable.
+    // Resolve scoped to the org first — a leaked thread id from another org must NOT be archivable.
     const job = await this.requireThread(jobId, org.id);
+    this.assertJobMutable(job);
     if (prAction != null && prAction !== 'close' && prAction !== 'leave') {
       throw new BadRequestException("prAction must be 'close' or 'leave'");
     }
@@ -3698,7 +3750,7 @@ export class WebSurfaceController {
       try {
         await this.threadLifecycle.closeJobPullRequest(job);
       } catch (err) {
-        // Abort the delete (decision d3: never silently orphan). The job stays in its normal status.
+        // Abort the archive (decision d3: never silently orphan). The job stays in its normal status.
         throw new BadGatewayException(
           err instanceof Error
             ? err.message
@@ -3706,24 +3758,26 @@ export class WebSurfaceController {
         );
       }
     }
-    // Atomically flip the job to `deleting` and COMMIT it before responding, so the durable state is
-    // visible to the next thread-list/realtime frame (the sidebar shows "Deleting…" instead of freezing).
-    // The claim also serializes concurrent deletes — a second click matches 0 rows and is a no-op.
-    const claimed = await this.threadLifecycle.claimDeleteJob(jobId, org.id);
+    // Atomically flip the job to `archived` + stamp `archived_at`, and COMMIT it before responding, so the
+    // durable state is visible to the next thread-list/realtime frame (the row leaves the active sidebar and
+    // the detail view flips read-only) BEFORE the slow reclaim runs. The claim also serializes concurrent
+    // archives — a second click matches 0 rows and is a no-op.
+    const claimed = await this.threadLifecycle.claimArchiveJob(jobId, org.id);
     if (claimed) {
-      // Background the slow physical teardown (container + worktree) so the request returns immediately.
-      // The row is removed when teardown finishes; a boot/reap reconciler finishes any delete stranded by
-      // a crash. Best-effort — never throw out of the fire-and-forget.
+      // Background the slow physical reclaim (container + worktree + /playground + JSONL) so the request
+      // returns immediately. The row + transcript + /context SURVIVE; a boot/reap reconciler
+      // (`reconcileArchivedSandboxes`) finishes any reclaim stranded by a crash. Best-effort — never throw
+      // out of the fire-and-forget.
       void this.threadLifecycle
-        .deleteJobDeep(jobId, org.id)
+        .archiveJobDeep(jobId, org.id)
         .catch((err) =>
           this.logger.warn(
-            `web delete: background teardown failed for job ${jobId}: ${err}`,
+            `web archive: background reclaim failed for job ${jobId}: ${err}`,
           ),
         );
     }
     this.logger.log(
-      `web deleting thread ${jobId} (org ${org.id}); claimed=${claimed}`,
+      `web archiving thread ${jobId} (org ${org.id}); claimed=${claimed}`,
     );
     return { ok: true };
   }
@@ -3737,7 +3791,7 @@ export class WebSurfaceController {
     @Param('jobId') jobId: string,
     @Body() body: { dependsOnJobId?: string },
   ): Promise<{ ok: boolean; blocked: boolean; blockers: unknown[] }> {
-    await this.requireThread(jobId, org.id);
+    this.assertJobMutable(await this.requireThread(jobId, org.id));
     const dependsOnJobId = String(body?.dependsOnJobId ?? '').trim();
     if (!dependsOnJobId)
       throw new BadRequestException('dependsOnJobId is required');
@@ -3763,7 +3817,7 @@ export class WebSurfaceController {
     @Param('jobId') jobId: string,
     @Param('dependsOnJobId') dependsOnJobId: string,
   ): Promise<{ ok: boolean; blockers: unknown[] }> {
-    await this.requireThread(jobId, org.id);
+    this.assertJobMutable(await this.requireThread(jobId, org.id));
     await this.jobDeps.removeDependency({
       orgId: org.id,
       repoId,
@@ -3852,6 +3906,20 @@ export class WebSurfaceController {
     });
     if (!thread) throw new NotFoundException('thread not found');
     return thread;
+  }
+
+  /**
+   * Enforce the ARCHIVED read-only invariant SERVER-SIDE (decision d6) — throw `409 Conflict` when the job is
+   * archived. Its worktree/container are reclaimed and its brain session is gone, so any mutating op (chat,
+   * approve, steer, seed, metadata, sandbox action) would fail or wastefully rehydrate a job we just archived.
+   * Call at the top of every MUTATING thread-keyed handler AFTER `requireThread`; READ handlers (pipeline,
+   * messages, events SSE, diff, context, services) stay open so the archived history remains viewable. This
+   * is the authoritative half of "visible ⟺ chattable" — the disabled composer is only the UI convenience.
+   */
+  private assertJobMutable(job: JobEntity): void {
+    if (job.status === 'archived') {
+      throw new ConflictException('job is archived (read-only)');
+    }
   }
 
   /** Resolve a repo (by uuid id) scoped to the org, or 404 — so creation never crosses tenants. */

@@ -5,8 +5,8 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * `ComposerDraftEntity`/`ComposerDraftAttachmentEntity`). One draft row per (job, user); many attachment
  * rows per draft.
  */
-export class AddComposerDrafts1784244353221 implements MigrationInterface {
-  name = 'AddComposerDrafts1784244353221';
+export class AddComposerDrafts1784247434054 implements MigrationInterface {
+  name = 'AddComposerDrafts1784247434054';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(

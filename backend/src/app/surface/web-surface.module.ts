@@ -8,6 +8,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Subscription } from 'rxjs';
 import { AgentSessionManager } from '../brain/agent-session-manager.service';
 import { DecisionApprovalService } from '../brain/decision-approval.service';
+import { DriverApprovalGateway } from '../driver-approval-gateway';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { GitModule } from '../git/git.module';
 import { JobBootstrapModule } from '../job-bootstrap';
@@ -97,6 +98,11 @@ export class WebSurfaceModule
     private readonly surface: WebSurface,
     private readonly approvals: DecisionApprovalService,
     private readonly asm: AgentSessionManager,
+    // The typed surface→driver approval seam (from @Global DriverApprovalGatewayModule) — resolves the
+    // ship/merge/amend approval clicks without a ModuleRef service-locator or a surface→driver module cycle.
+    private readonly driverApproval: DriverApprovalGateway,
+    // `moduleRef` is still needed by the atlas-prod DB-write path (`resolveDbWrite`), which resolves
+    // `ProdDiagnosticsService` lazily — that lookup is out of scope for the driver-approval gateway.
     private readonly moduleRef: ModuleRef,
   ) {}
 
@@ -107,23 +113,23 @@ export class WebSurfaceModule
         if (!meta) return;
 
         // SHIP-REVIEW gate: not a plan verdict — resume the driver so it re-reaches `finalizeBuild` and ships.
-        // Resolved lazily via ModuleRef (the surface must not import the driver — that would form a cycle,
-        // DriverModule already depends on the surface for CHAT_SURFACE). Idempotent: `resolveShipApprovalDurably`
-        // only acts while the job is `awaiting_ship_review`, so a stale/double click is a no-op.
+        // Forwarded through the neutral DriverApprovalGateway (the surface must not import the driver — that
+        // would form a cycle, DriverModule already depends on the surface for CHAT_SURFACE). Idempotent:
+        // `resolveShipApprovalDurably` only acts while the job is `awaiting_ship_review`, so a stale/double
+        // click is a no-op.
         if (actionId === SHIP_ACTION_ID) {
-          void resolveShipApproval(this.moduleRef, meta.jobId, ruledBy).catch(
-            () => undefined,
-          );
+          void this.driverApproval
+            .resolveShip(meta.jobId, ruledBy)
+            .catch(() => undefined);
           return;
         }
 
-        // RETRACT the ship-review gate: the "Back to building" click. Same lazy-driver resolution as the
-        // approve branch above; `retractShipDurably` is idempotent (acts only while parked), so a stale click
-        // is a safe no-op.
+        // RETRACT the ship-review gate: the "Back to building" click. `retractShipDurably` is idempotent
+        // (acts only while parked), so a stale click is a safe no-op.
         if (actionId === RETRACT_SHIP_ACTION_ID) {
-          void retractShip(this.moduleRef, meta.jobId, ruledBy).catch(
-            () => undefined,
-          );
+          void this.driverApproval
+            .retractShip(meta.jobId, ruledBy)
+            .catch(() => undefined);
           return;
         }
 
@@ -132,7 +138,7 @@ export class WebSurfaceModule
         // retract actually fired — wake the brain to do the follow-up work. Idempotent throughout.
         if (actionId === AMEND_APPROVE_ACTION_ID) {
           void amendApprove(
-            this.moduleRef,
+            this.driverApproval,
             this.asm,
             meta.jobId,
             ruledBy,
@@ -142,11 +148,12 @@ export class WebSurfaceModule
 
         // DISMISS the brain's amend proposal: just neutralize the card. The gate stays parked at ship-review.
         if (actionId === AMEND_DISMISS_ACTION_ID) {
-          void neutralizeAmendProposal(
-            this.moduleRef,
-            meta.jobId,
-            'Dismissed — staying at ship review.',
-          ).catch(() => undefined);
+          void this.driverApproval
+            .neutralizeAmendProposal(
+              meta.jobId,
+              'Dismissed — staying at ship review.',
+            )
+            .catch(() => undefined);
           return;
         }
 
@@ -209,70 +216,23 @@ export class WebSurfaceModule
 }
 
 /**
- * Resume a ship-review gate approval. Lazily imports {@link ThreadDriver} (a dynamic import keeps the
- * surface⇄driver dependency out of module load — mirrors how the driver resolves the brain) and resolves
- * it from the app-wide DI graph. `resolveShipApprovalDurably` is itself idempotent (acts only while the
- * job is `awaiting_ship_review`), so a stale/double click is a safe no-op.
- */
-async function resolveShipApproval(
-  moduleRef: ModuleRef,
-  jobId: string,
-  ruledBy: string,
-): Promise<void> {
-  const { ThreadDriver } = await import('../driver/thread-driver.service.js');
-  const driver = moduleRef.get(ThreadDriver, { strict: false });
-  await driver.resolveShipApprovalDurably(jobId, ruledBy);
-}
-
-/**
- * Retract a ship-review gate back to planning. Mirrors {@link resolveShipApproval}'s lazy `ThreadDriver`
- * resolution; `retractShipDurably` is itself idempotent (acts only while `awaiting_ship_review`).
- */
-async function retractShip(
-  moduleRef: ModuleRef,
-  jobId: string,
-  ruledBy: string,
-): Promise<void> {
-  const { ThreadDriver } = await import('../driver/thread-driver.service.js');
-  const driver = moduleRef.get(ThreadDriver, { strict: false });
-  await driver.retractShipDurably(jobId, ruledBy);
-}
-
-/**
- * APPROVE the brain's "Amend build?" proposal. Runs the operator retract path (attributed to `ruledBy`),
- * neutralizes the durable proposal card either way, and wakes the brain ONLY if the retract actually fired
- * (a stale click — the operator already shipped/retracted — returns false, so no spurious wake). Lazy
- * `ThreadDriver`/`DriverStoreService` resolution mirrors {@link retractShip}.
+ * APPROVE the brain's "Amend build?" proposal. Runs the operator retract path (attributed to `ruledBy`)
+ * through the {@link DriverApprovalGateway}, neutralizes the durable proposal card either way, and wakes the
+ * brain ONLY if the retract actually fired (a stale click — the operator already shipped/retracted — returns
+ * false, so no spurious wake).
  */
 async function amendApprove(
-  moduleRef: ModuleRef,
+  driverApproval: DriverApprovalGateway,
   asm: AgentSessionManager,
   jobId: string,
   ruledBy: string,
 ): Promise<void> {
-  const { ThreadDriver } = await import('../driver/thread-driver.service.js');
-  const { DriverStoreService } =
-    await import('../driver/driver-store.service.js');
-  const driver = moduleRef.get(ThreadDriver, { strict: false });
-  const store = moduleRef.get(DriverStoreService, { strict: false });
-  const acted = await driver.retractShipDurably(jobId, ruledBy);
-  await store.neutralizeAmendProposal(jobId, 'Approved — amending the build.');
+  const acted = await driverApproval.retractShip(jobId, ruledBy);
+  await driverApproval.neutralizeAmendProposal(
+    jobId,
+    'Approved — amending the build.',
+  );
   if (acted) await asm.wakeForAmendApproved(jobId);
-}
-
-/**
- * Neutralize the brain's amend proposal card without touching the gate — the Dismiss path. Lazy
- * `DriverStoreService` resolution mirrors {@link retractShip}.
- */
-async function neutralizeAmendProposal(
-  moduleRef: ModuleRef,
-  jobId: string,
-  verdictLine: string,
-): Promise<void> {
-  const { DriverStoreService } =
-    await import('../driver/driver-store.service.js');
-  const store = moduleRef.get(DriverStoreService, { strict: false });
-  await store.neutralizeAmendProposal(jobId, verdictLine);
 }
 
 /**

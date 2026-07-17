@@ -185,6 +185,7 @@ export type BlockerResolutionKind =
   | 'closed_unmerged'
   | 'cancelled'
   | 'deleted'
+  | 'archived'
   | 'removed';
 
 /** One blocker named in an unblock wake message: which job it was and how it resolved. */
