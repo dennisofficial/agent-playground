@@ -14,16 +14,19 @@ import type { OauthUsageService } from '../onboarding/oauth-usage.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { ENTITIES, JobEntity, ThreadEntity } from '../persistence/entities';
 import { StimulusStoreService } from '../stimulus/stimulus-store.service';
-import type { AutoFixStage } from './autofix';
-import type { BrainGateway } from './brain-gateway';
-import type { LeaderElectionService } from './cluster';
-import type { PlanVisibilityService } from './decision-gate';
-import type { FeatureSandbox, GithubPrService, LocalGitService, ProjectRepo } from './git';
-import { JobDependencyService } from './job-deps';
-import type { CredentialResolver } from './onboarding';
-import type { TurnRunnerService } from './runner';
-import type { BlockSink, ChatSurface, LiveTurnStore, TaskEventSink } from './surface';
-import { TurnHarnessFactory } from './surface';
+import type { AutoFixStage } from '../autofix/autofix.stage';
+import type { BrainGateway } from '../brain-gateway/brain-gateway.service';
+import type { LeaderElectionService } from '../cluster/leader-election.service';
+import type { PlanVisibilityService } from '../decision-gate/plan-visibility.service';
+import type { GithubPrService } from '../git/github-pr.service';
+import type { FeatureSandbox, LocalGitService, ProjectRepo } from '../git/local-git.service';
+import { JobDependencyService } from '../job-deps/job-dependency.service';
+import type { CredentialResolver } from '../onboarding/credential-resolver.service';
+import type { TurnRunnerService } from '../runner/turn-runner.service';
+import type { ChatSurface } from '../surface/chat-surface.port';
+import type { LiveTurnStore } from '../surface/live-turn-store';
+import type { BlockSink, TaskEventSink } from '../surface/turn-harness.service';
+import { TurnHarnessFactory } from '../surface/turn-harness.service';
 
 function dbOpts() {
   return {
@@ -359,7 +362,7 @@ describe('pipeline (live Postgres) — thread-group-driven drive over a stubbed 
               where: { job_id: jid, role: 'planning' },
             })
           ).id,
-      } as unknown as import('./job-bootstrap').JobBootstrapService,
+      } as unknown as import('../job-bootstrap/job-bootstrap.service').JobBootstrapService,
     );
   }
 

@@ -1,6 +1,6 @@
 import type { EngineHomeKey, EngineRunnerPort } from '@shared/engine';
 import { describe, expect, it, vi } from 'vitest';
-import type { LocalGitService } from '../../git';
+import type { LocalGitService } from '../../git/local-git.service';
 import type { TurnHarnessFactory } from '../../surface/turn-harness.service';
 import { lensById } from '../autofix-lenses';
 import { AutoFixStage } from '../autofix.stage';

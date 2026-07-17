@@ -5,7 +5,8 @@ import { TypeOrmModule, getDataSourceToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CustomNamingStrategy } from '../../../_lib/database/custom-naming.strategy';
-import { CredentialResolver, TenantCredentialStore } from '../../onboarding';
+import { CredentialResolver } from '../../onboarding/credential-resolver.service';
+import { TenantCredentialStore } from '../../onboarding/tenant-credential.store';
 import { DB_CONNECTION } from '../../persistence/database.module';
 import {
   DecisionRecordEntity,
@@ -23,20 +24,18 @@ import {
 } from '../../persistence/entities';
 import { TurnRegistry } from '../../sandbox/turn-registry.service';
 import { SkillUpdaterService } from '../../skills/skill-updater.service';
-import { BrainGateway } from '../brain-gateway';
-import {
-  DRIVER_REPO,
-  JOB_TEARDOWN,
-  JobLifecycleService,
-  WorktreeProvisioner,
-  type DriverRepoResolver,
-  type ResolvedRepo,
-} from '../driver';
-import type { FeatureSandbox, ProjectRepo } from '../git';
-import { GithubPrService, LocalGitService } from '../git';
-import { JobDependencyService } from '../job-deps';
+import { BrainGateway } from '../../brain-gateway/brain-gateway.service';
+import { JobLifecycleService } from '../../driver/job-lifecycle.service';
+import { JOB_TEARDOWN } from '../../driver/job-teardown.port';
+import { DRIVER_REPO, type DriverRepoResolver, type ResolvedRepo } from '../../driver/repo-resolver';
+import { WorktreeProvisioner } from '../../driver/worktree-provisioner.service';
+import type { FeatureSandbox, ProjectRepo } from '../../git/local-git.service';
+import { GithubPrService } from '../../git/github-pr.service';
+import { LocalGitService } from '../../git/local-git.service';
+import { JobDependencyService } from '../../job-deps/job-dependency.service';
 import { OrganizationService } from '../organization.service';
-import { SANDBOX_PROVIDER, SandboxActivityRegistry } from '../sandbox';
+import { SandboxActivityRegistry } from '../../sandbox/sandbox-activity.registry';
+import { SANDBOX_PROVIDER } from '../../sandbox/sandbox-provider.port';
 
 function dbOpts() {
   return {

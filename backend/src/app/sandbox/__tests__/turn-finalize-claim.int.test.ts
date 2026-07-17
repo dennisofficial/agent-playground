@@ -13,12 +13,13 @@ import {
   FakeLocalGitService,
   FakeThreadTitler,
 } from '../../e2e/e2e-stubs';
-import { GithubPrService, LocalGitService } from '../../git';
-import { JobBootstrapService } from '../../job-bootstrap';
+import { GithubPrService } from '../../git/github-pr.service';
+import { LocalGitService } from '../../git/local-git.service';
+import { JobBootstrapService } from '../../job-bootstrap/job-bootstrap.service';
 import { DB_CONNECTION } from '../../persistence/database.module';
 import { TurnHarnessFactory } from '../../surface/turn-harness.service';
-import { JobTitler } from '../../titling';
-import { CLASSIFIER_LLM } from '../decision-gate';
+import { JobTitler } from '../../titling/job-titler.service';
+import { CLASSIFIER_LLM } from '../../decision-gate/classifier-llm';
 import { TurnRegistry } from '../turn-registry.service';
 
 const TEAM_ID = '55555555-5555-4555-8555-555555555555'; // sentinel org uuid (distinct from the sibling guard test)

@@ -1,6 +1,6 @@
 import type { DecisionRecord, Step } from '@shared/domain';
 import { describe, expect, it } from 'vitest';
-import { renderBatchTask } from '../../prompt-kit';
+import { renderBatchTask } from '../../prompt-kit/messages/batch-task';
 import type { DriverThread } from '../driver-store.service';
 import { extractOrientation } from '../thread-driver.service';
 

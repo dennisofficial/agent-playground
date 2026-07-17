@@ -6,30 +6,26 @@ import { createHmac } from 'node:crypto';
 import { DataSource, Repository } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { CustomNamingStrategy } from '../../../_lib/database/custom-naming.strategy';
-import { JobDependencyService } from '../../job-deps';
-import { CredentialResolver } from '../../onboarding';
+import { JobDependencyService } from '../../job-deps/job-dependency.service';
+import { CredentialResolver } from '../../onboarding/credential-resolver.service';
 import { DB_CONNECTION } from '../../persistence/database.module';
 import { ENTITIES, JobEntity, RepoEntity, UserEntity } from '../../persistence/entities';
 import { BRAIN_SINK } from '../../stimulus/stimulus-consumer';
 import { WebSurfaceController } from '../../surface/web-surface.controller';
-import { JobTitler } from '../../titling';
-import {
-  DriverStoreService,
-  GithubCiStateSync,
-  GithubPrStateSync,
-  GitStateReconciler,
-} from '../driver';
-import { GithubPrService } from '../git';
+import { JobTitler } from '../../titling/job-titler.service';
+import { DriverStoreService } from '../../driver/driver-store.service';
+import { GitStateReconciler } from '../../driver/git-state-reconciler.service';
+import { GithubCiStateSync } from '../../driver/github-ci-state-sync.service';
+import { GithubPrStateSync } from '../../driver/github-pr-state-sync.service';
+import { GithubPrService } from '../../git/github-pr.service';
 import { GithubNotificationSource } from '../github-notification.source';
 import { GithubEventsWebhookController } from '../github-webhook.controller';
-import { JobBootstrapService } from '../job-bootstrap';
-import {
-  EventFilterService,
-  ProjectRoutingService,
-  StimulusIntake,
-  StimulusStoreService,
-  SurfaceOrchestration,
-} from '../stimulus';
+import { JobBootstrapService } from '../../job-bootstrap/job-bootstrap.service';
+import { EventFilterService } from '../../stimulus/event-filter.service';
+import { ProjectRoutingService } from '../../stimulus/project-routing.service';
+import { StimulusIntake } from '../../stimulus/stimulus-intake.service';
+import { StimulusStoreService } from '../../stimulus/stimulus-store.service';
+import { SurfaceOrchestration } from '../../stimulus/surface-orchestration.service';
 
 const ORG_ID = '41111111-1111-4111-8111-111111111111';
 const SECRET = 'gh-int-secret';

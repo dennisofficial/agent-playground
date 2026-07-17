@@ -14,12 +14,13 @@ import {
   FakeLocalGitService,
   FakeThreadTitler,
 } from '../../e2e/e2e-stubs';
-import { GithubPrService, LocalGitService } from '../../git';
+import { GithubPrService } from '../../git/github-pr.service';
+import { LocalGitService } from '../../git/local-git.service';
 import { CredentialResolver } from '../../onboarding/credential-resolver.service';
 import { DB_CONNECTION } from '../../persistence/database.module';
 import { JobEntity } from '../../persistence/entities';
-import { JobTitler } from '../../titling';
-import { CLASSIFIER_LLM } from '../decision-gate';
+import { JobTitler } from '../../titling/job-titler.service';
+import { CLASSIFIER_LLM } from '../../decision-gate/classifier-llm';
 import { DriverStoreService } from '../driver-store.service';
 
 const fakeCreds = {

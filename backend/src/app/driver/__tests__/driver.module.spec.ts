@@ -2,10 +2,10 @@ import { SchedulerRegistry } from '@nestjs/schedule';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { EnvService } from '@core/config/env/env.service';
-import type { ExposureService } from '../../exposure';
-import type { OnboardingService } from '../../onboarding';
-import type { ChatSurface } from '../../surface';
-import type { LeaderElectionService } from '../cluster/leader-election.service';
+import type { ExposureService } from '../../exposure/exposure.service';
+import type { OnboardingService } from '../../onboarding/onboarding.service';
+import type { ChatSurface } from '../../surface/chat-surface.port';
+import type { LeaderElectionService } from '../../cluster/leader-election.service';
 import { DriverModule } from '../driver.module';
 import type { GitStateReconciler } from '../git-state-reconciler.service';
 import type { JobLifecycleService } from '../job-lifecycle.service';

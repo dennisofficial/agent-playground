@@ -10,8 +10,8 @@ import type {
 import { DataSource, Repository } from 'typeorm';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CustomNamingStrategy } from '../../../_lib/database/custom-naming.strategy';
-import type { LeaderElectionService } from '../../cluster';
-import { JobBootstrapService } from '../../job-bootstrap';
+import type { LeaderElectionService } from '../../cluster/leader-election.service';
+import { JobBootstrapService } from '../../job-bootstrap/job-bootstrap.service';
 import { DB_CONNECTION } from '../../persistence/database.module';
 import { ENTITIES, JobEntity } from '../../persistence/entities';
 import {

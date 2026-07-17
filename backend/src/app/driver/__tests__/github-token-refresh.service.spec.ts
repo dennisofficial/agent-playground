@@ -1,7 +1,7 @@
 
 import type { Repository } from 'typeorm';
 import { describe, expect, it, vi } from 'vitest';
-import type { CredentialResolver } from '../../onboarding';
+import type { CredentialResolver } from '../../onboarding/credential-resolver.service';
 import type { JobSandboxEntity } from '../../persistence/entities';
 import type { SandboxProvider } from '../../sandbox/sandbox-provider.port';
 import { GithubTokenRefreshService } from '../github-token-refresh.service';

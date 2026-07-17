@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { buildFixPrompt, buildReviewPrompt } from '../../prompt-kit';
+import {
+  buildFixPrompt,
+  buildReviewPrompt,
+} from '../../prompt-kit/messages/autofix-lenses';
 import {
   DEFAULT_LENSES,
   dedupeFindings,

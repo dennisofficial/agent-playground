@@ -1,10 +1,10 @@
 import type { Repository } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CheckRun, GithubPrService, PullDetail } from '../../git';
-import { RateLimitedError } from '../../git';
-import type { CredentialResolver } from '../../onboarding';
+import type { CheckRun, GithubPrService, PullDetail } from '../../git/github-pr.service';
+import { RateLimitedError } from '../../git/github-pr.service';
+import type { CredentialResolver } from '../../onboarding/credential-resolver.service';
 import type { JobEntity, RepoEntity } from '../../persistence/entities';
-import type { StimulusIntake } from '../../stimulus';
+import type { StimulusIntake } from '../../stimulus/stimulus-intake.service';
 import {
   CADENCE_MS,
   GitStateReconciler,

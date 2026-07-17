@@ -3,7 +3,7 @@ import type { PrStateDelta } from '@shared/domain';
 import type { Repository } from 'typeorm';
 import { describe, expect, it, vi } from 'vitest';
 import type { JobEntity } from '../../persistence/entities';
-import type { StimulusStoreService } from '../../stimulus';
+import type { StimulusStoreService } from '../../stimulus/stimulus-store.service';
 import type { DriverStoreService } from '../driver-store.service';
 import { GithubPrStateSync } from '../github-pr-state-sync.service';
 import type { JobLifecycleService } from '../job-lifecycle.service';

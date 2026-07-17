@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DecisionApprovalService } from '../../brain/decision-approval.service';
-import type { DecisionApprovalCard } from '../../surface';
+import type { DecisionApprovalCard } from '../../surface/approval-blocks';
 import { AgentChatSurface } from '../agent-chat-surface';
 
 describe('agent-facing approval simulation (AgentChatSurface + DecisionApprovalService)', () => {

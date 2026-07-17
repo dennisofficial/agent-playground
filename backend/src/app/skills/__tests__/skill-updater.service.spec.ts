@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { LeaderElectionService } from '../../cluster/leader-election.service';
 import { LocalGitService } from '../../git/local-git.service';
 import type { WorkspaceSkillEntity } from '../../persistence/entities';
-import type { CredentialResolver } from '../onboarding';
+import type { CredentialResolver } from '../../onboarding/credential-resolver.service';
 import { SkillInstallerService } from '../skill-installer.service';
 import { SkillUpdaterService } from '../skill-updater.service';
 import { WorkspaceSkillStore } from '../workspace-skill.store';

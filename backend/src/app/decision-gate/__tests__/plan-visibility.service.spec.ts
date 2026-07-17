@@ -1,6 +1,6 @@
 import { Subject } from 'rxjs';
 import { describe, expect, it } from 'vitest';
-import type { ChatSurface, InboundChatMessage, PostOptions } from '../../surface';
+import type { ChatSurface, InboundChatMessage, PostOptions } from '../../surface/chat-surface.port';
 import type { DecisionClassification } from '../decision-gate.types';
 import { PlanVisibilityService, renderSectionPlan } from '../plan-visibility.service';
 

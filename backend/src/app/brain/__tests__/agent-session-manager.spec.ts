@@ -11,8 +11,8 @@ import {
 import { ATLAS_HOST_BRIDGE_TOOLS } from '@workspace/shared';
 import type { Repository } from 'typeorm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { LeaderElectionService } from '../../cluster';
-import type { DecisionClassifier } from '../../decision-gate';
+import type { LeaderElectionService } from '../../cluster/leader-election.service';
+import type { DecisionClassifier } from '../../decision-gate/decision-classifier.service';
 import type { AutoMergeService } from '../../driver/auto-merge.service';
 import type { BuildShipService } from '../../driver/build-ship.service';
 import type { DriverStoreService } from '../../driver/driver-store.service';
@@ -21,23 +21,23 @@ import { ProvisioningNotReadyError } from '../../driver/job-lifecycle.service';
 import type { LiveVerificationJudge } from '../../driver/live-verification-judge';
 import type { PipelineAwarenessStore } from '../../driver/pipeline-awareness.store';
 import type { DriverRepoResolver } from '../../driver/repo-resolver';
-import type { LocalGitService } from '../../git';
+import type { LocalGitService } from '../../git/local-git.service';
 import type { JobBootstrapService } from '../../job-bootstrap/job-bootstrap.service';
-import type { JobDependencyService } from '../../job-deps';
-import type { MemoryStore } from '../../memory';
-import type {
-  CredentialResolver,
-  WorkspaceConfigStore,
-  WorkspaceSecretFileStore,
-} from '../../onboarding';
+import type { JobDependencyService } from '../../job-deps/job-dependency.service';
+import type { MemoryStore } from '../../memory/memory.store';
+import type { CredentialResolver } from '../../onboarding/credential-resolver.service';
+import type { WorkspaceConfigStore } from '../../onboarding/workspace-config.store';
+import type { WorkspaceSecretFileStore } from '../../onboarding/workspace-secret.store';
 import type { OauthUsageService } from '../../onboarding/oauth-usage.service';
 import type { JobSandboxEntity } from '../../persistence/entities';
-import { interruptRedriveNudge, retryResumeNudge } from '../../prompt-kit/harness';
+import { interruptRedriveNudge, retryResumeNudge } from '../../prompt-kit/harness/seed-catalog';
 import { TOOL_SHAPES } from '../../sandbox/image/host-tool-schemas';
 import type { TurnRegistry } from '../../sandbox/turn-registry.service';
-import type { BlockSink, ChatSurface, LiveTurnStore } from '../../surface';
-import { TurnHarnessFactory } from '../../surface';
-import type { ThreadRole } from '../../thread-kind';
+import type { ChatSurface } from '../../surface/chat-surface.port';
+import type { LiveTurnStore } from '../../surface/live-turn-store';
+import type { BlockSink } from '../../surface/turn-harness.service';
+import { TurnHarnessFactory } from '../../surface/turn-harness.service';
+import type { ThreadRole } from '../../thread-kind/__tests__/spec';
 import { AgentSessionManager } from '../agent-session-manager.service';
 import type { BrainStoreService } from '../brain-store.service';
 import type { DecisionApprovalService } from '../decision-approval.service';

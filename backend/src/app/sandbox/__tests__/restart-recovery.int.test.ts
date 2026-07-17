@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Repository } from 'typeorm';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import type { FeatureSandbox } from '../../git';
+import type { FeatureSandbox } from '../../git/local-git.service';
 import type { ThreadEntity } from '../../persistence/entities';
 import { TurnRunnerService } from '../../runner/turn-runner.service';
 import { DockerodeContainerEngine } from '../dockerode-container-engine';

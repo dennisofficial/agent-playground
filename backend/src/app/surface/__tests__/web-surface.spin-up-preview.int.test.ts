@@ -8,21 +8,22 @@ import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { AppModule } from '../../app.module';
-import { CLASSIFIER_LLM } from '../../decision-gate';
+import { CLASSIFIER_LLM } from '../../decision-gate/classifier-llm';
 import {
   FakeClassifierLlm,
   FakeEngineRunner,
   FakeLocalGitService,
   FakeThreadTitler,
 } from '../../e2e/e2e-stubs';
-import { GithubPrService, LocalGitService } from '../../git';
-import { JobBootstrapService } from '../../job-bootstrap';
+import { GithubPrService } from '../../git/github-pr.service';
+import { LocalGitService } from '../../git/local-git.service';
+import { JobBootstrapService } from '../../job-bootstrap/job-bootstrap.service';
 import { CredentialResolver } from '../../onboarding/credential-resolver.service';
 import { WorkspaceConfigStore } from '../../onboarding/workspace-config.store';
 import { DB_CONNECTION } from '../../persistence/database.module';
-import { PREVIEW_PREP_SEED_BODY } from '../../prompt-kit';
-import { SANDBOX_PROVIDER } from '../../sandbox';
-import { JobTitler } from '../../titling';
+import { PREVIEW_PREP_SEED_BODY } from '@shared/prompt-kit/system';
+import { SANDBOX_PROVIDER } from '../../sandbox/sandbox-provider.port';
+import { JobTitler } from '../../titling/job-titler.service';
 import { webShipReviewCard } from '../web-approval-card';
 
 const fakeCreds = {

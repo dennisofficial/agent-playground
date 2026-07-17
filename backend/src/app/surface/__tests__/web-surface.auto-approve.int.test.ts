@@ -8,19 +8,20 @@ import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AppModule } from '../../app.module';
-import { CLASSIFIER_LLM } from '../../decision-gate';
+import { CLASSIFIER_LLM } from '../../decision-gate/classifier-llm';
 import {
   FakeClassifierLlm,
   FakeEngineRunner,
   FakeLocalGitService,
   FakeThreadTitler,
 } from '../../e2e/e2e-stubs';
-import { GithubPrService, LocalGitService } from '../../git';
-import { JobBootstrapService } from '../../job-bootstrap';
+import { GithubPrService } from '../../git/github-pr.service';
+import { LocalGitService } from '../../git/local-git.service';
+import { JobBootstrapService } from '../../job-bootstrap/job-bootstrap.service';
 import { CredentialResolver } from '../../onboarding/credential-resolver.service';
 import { DB_CONNECTION } from '../../persistence/database.module';
 import { ChatStimulusBridge } from '../../stimulus/chat-stimulus.bridge';
-import { JobTitler } from '../../titling';
+import { JobTitler } from '../../titling/job-titler.service';
 
 const fakeCreds = {
   anthropicKey: async () => undefined,

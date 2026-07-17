@@ -1,9 +1,9 @@
 
 import type { Repository } from 'typeorm';
 import { describe, expect, it, vi } from 'vitest';
-import type { GithubPrService, PullDetail } from '../../git';
-import type { JobBootstrapService } from '../../job-bootstrap';
-import type { CredentialResolver } from '../../onboarding';
+import type { GithubPrService, PullDetail } from '../../git/github-pr.service';
+import type { JobBootstrapService } from '../../job-bootstrap/job-bootstrap.service';
+import type { CredentialResolver } from '../../onboarding/credential-resolver.service';
 import type { JobEntity, RepoEntity, TranscriptMessageEntity } from '../../persistence/entities';
 import type { TurnRegistry } from '../../sandbox/turn-registry.service';
 import type { StimulusStoreService } from '../../stimulus/stimulus-store.service';

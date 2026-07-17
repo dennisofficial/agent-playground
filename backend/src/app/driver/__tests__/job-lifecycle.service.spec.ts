@@ -6,14 +6,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Repository } from 'typeorm';
 import { describe, expect, it, vi } from 'vitest';
-import type { GithubPrService, LocalGitService } from '../../git';
-import type { JobDependencyService } from '../../job-deps';
-import type { CredentialResolver } from '../../onboarding';
+import type { GithubPrService } from '../../git/github-pr.service';
+import type { LocalGitService } from '../../git/local-git.service';
+import type { JobDependencyService } from '../../job-deps/job-dependency.service';
+import type { CredentialResolver } from '../../onboarding/credential-resolver.service';
 import type { JobEntity, JobSandboxEntity, RepoEntity } from '../../persistence/entities';
-import { SandboxActivityRegistry, type SandboxProvider } from '../../sandbox';
+import { SandboxActivityRegistry } from '../../sandbox/sandbox-activity.registry';
+import { type SandboxProvider } from '../../sandbox/sandbox-provider.port';
 import { TurnRegistry } from '../../sandbox/turn-registry.service';
 import type { SkillUpdaterService } from '../../skills/skill-updater.service';
-import type { BrainGateway } from '../brain-gateway';
+import type { BrainGateway } from '../../brain-gateway/brain-gateway.service';
 import type { DriverStoreService } from '../driver-store.service';
 import { JobLifecycleService } from '../job-lifecycle.service';
 import type { DriverRepoResolver } from '../repo-resolver';
@@ -102,7 +104,7 @@ function makeService(
 function makeServiceWithMocks(
   row: JobSandboxEntity | null,
   hydrationSig = 'new',
-  sandboxExtra: Partial<import('../../git').FeatureSandbox> = {},
+  sandboxExtra: Partial<import('../../git/local-git.service').FeatureSandbox> = {},
 ) {
   const sandboxes = {
     findOne: vi.fn().mockResolvedValue(row),
@@ -228,7 +230,7 @@ function makeServiceForReset(
 function rowToSandbox(svc: JobLifecycleService, row: JobSandboxEntity) {
   return (
     svc as unknown as {
-      rowToSandbox(r: JobSandboxEntity): Promise<import('../../git').FeatureSandbox>;
+      rowToSandbox(r: JobSandboxEntity): Promise<import('../../git/local-git.service').FeatureSandbox>;
     }
   ).rowToSandbox(row);
 }

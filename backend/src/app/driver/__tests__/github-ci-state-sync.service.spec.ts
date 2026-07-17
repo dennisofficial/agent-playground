@@ -2,10 +2,10 @@
 import type { CiSyncDelta } from '@shared/domain';
 import type { Repository } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { GithubPrService, PullDetail } from '../../git';
-import type { CredentialResolver } from '../../onboarding';
+import type { GithubPrService, PullDetail } from '../../git/github-pr.service';
+import type { CredentialResolver } from '../../onboarding/credential-resolver.service';
 import type { JobEntity, RepoEntity } from '../../persistence/entities';
-import type { StimulusStoreService } from '../../stimulus';
+import type { StimulusStoreService } from '../../stimulus/stimulus-store.service';
 import { GithubCiStateSync } from '../github-ci-state-sync.service';
 
 function detail(over: Partial<PullDetail> = {}): PullDetail {

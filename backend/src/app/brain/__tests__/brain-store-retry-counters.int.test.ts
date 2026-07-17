@@ -4,10 +4,10 @@ import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/t
 import { DataSource, Repository } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { CustomNamingStrategy } from '../../../_lib/database/custom-naming.strategy';
-import { JobDependencyService } from '../../job-deps';
+import { JobDependencyService } from '../../job-deps/job-dependency.service';
 import { DB_CONNECTION } from '../../persistence/database.module';
 import { ENTITIES, JobEntity } from '../../persistence/entities';
-import { JobTitler } from '../../titling';
+import { JobTitler } from '../../titling/job-titler.service';
 import { BrainStoreService } from '../brain-store.service';
 
 const ORG_ID = '22222222-2222-4222-8222-222222222222';

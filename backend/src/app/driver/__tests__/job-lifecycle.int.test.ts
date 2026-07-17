@@ -9,10 +9,12 @@ import { join } from 'node:path';
 import { DataSource, Repository } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CustomNamingStrategy } from '../../../_lib/database/custom-naming.strategy';
-import type { FeatureSandbox, ProjectRepo } from '../../git';
-import { GithubPrService, LocalGitService } from '../../git';
-import { JobDependencyService } from '../../job-deps';
-import { CredentialResolver, TenantCredentialStore } from '../../onboarding';
+import type { FeatureSandbox, ProjectRepo } from '../../git/local-git.service';
+import { GithubPrService } from '../../git/github-pr.service';
+import { LocalGitService } from '../../git/local-git.service';
+import { JobDependencyService } from '../../job-deps/job-dependency.service';
+import { CredentialResolver } from '../../onboarding/credential-resolver.service';
+import { TenantCredentialStore } from '../../onboarding/tenant-credential.store';
 import { DB_CONNECTION } from '../../persistence/database.module';
 import {
   ActiveTurnEntity,
@@ -27,11 +29,14 @@ import {
   ToolExecutionEntity,
   TranscriptMessageEntity,
 } from '../../persistence/entities';
-import { SANDBOX_PROVIDER, SandboxActivityRegistry } from '../../sandbox';
+import { SandboxActivityRegistry } from '../../sandbox/sandbox-activity.registry';
+import { SANDBOX_PROVIDER } from '../../sandbox/sandbox-provider.port';
 import { TurnRegistry } from '../../sandbox/turn-registry.service';
 import { SkillUpdaterService } from '../../skills/skill-updater.service';
-import { BrainGateway } from '../brain-gateway';
-import { DRIVER_REPO, JobLifecycleService, WorktreeProvisioner, type ResolvedRepo } from '../index';
+import { BrainGateway } from '../../brain-gateway/brain-gateway.service';
+import { DRIVER_REPO, type ResolvedRepo } from '../repo-resolver';
+import { JobLifecycleService } from '../job-lifecycle.service';
+import { WorktreeProvisioner } from '../worktree-provisioner.service';
 import { ProvisioningNotReadyError } from '../job-lifecycle.service';
 
 import { ENTITIES } from '../../persistence/entities';

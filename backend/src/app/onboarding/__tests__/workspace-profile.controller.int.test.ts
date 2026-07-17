@@ -11,8 +11,9 @@ import { AppModule } from '../../app.module';
 import { FakeClassifierLlm, FakeEngineRunner, FakeLocalGitService } from '../../e2e/e2e-stubs';
 import { DB_CONNECTION } from '../../persistence/database.module';
 import { CredentialResolver } from '../credential-resolver.service';
-import { CLASSIFIER_LLM } from '../decision-gate';
-import { GithubPrService, LocalGitService } from '../git';
+import { CLASSIFIER_LLM } from '../../decision-gate/classifier-llm';
+import { GithubPrService } from '../../git/github-pr.service';
+import { LocalGitService } from '../../git/local-git.service';
 
 
 class StubGithubPrService {

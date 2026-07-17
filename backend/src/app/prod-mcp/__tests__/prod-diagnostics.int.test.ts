@@ -19,7 +19,7 @@ import {
   TranscriptMessageEntity,
 } from '../../persistence/entities';
 import { CHAT_SURFACE } from '../../surface/chat-surface.port';
-import { JobBootstrapService } from '../job-bootstrap';
+import { JobBootstrapService } from '../../job-bootstrap/job-bootstrap.service';
 import { ProdDiagnosticsService } from '../prod-diagnostics.service';
 
 const ORG_ID = '31111111-1111-4111-8111-111111111111';

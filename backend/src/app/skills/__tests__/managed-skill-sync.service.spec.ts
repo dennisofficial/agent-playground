@@ -30,7 +30,7 @@ function commitAndBare(work: string, bare: string): void {
 }
 
 let gitEntry: { url: string; subpath: string; ref: string } | undefined;
-vi.mock('./system-skill-registry', () => ({
+vi.mock('../system-skill-registry', () => ({
   buildSystemSkills: () =>
     gitEntry
       ? [

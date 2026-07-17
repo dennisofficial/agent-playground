@@ -51,7 +51,7 @@ function realDockerExecContainers(
         }
         const turnId = env.TURN_ID;
         if (turnId) {
-          const { turnKeys } = await import('../redis-turn-keys');
+          const { turnKeys } = await import('../redis-turn-keys.js');
           const events = turnKeys(turnId).events;
           void redis.xadd(events, { t: 'final', r: { result: 'DONE' } });
         }

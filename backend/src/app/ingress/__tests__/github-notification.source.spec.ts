@@ -3,7 +3,7 @@ import type { CiSyncDelta, RawNotification } from '@shared/domain';
 import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { GithubNotificationSource, verifyGithubSignature } from '../github-notification.source';
-import type { ProjectRoute, ProjectRoutingService } from '../stimulus';
+import type { ProjectRoute, ProjectRoutingService } from '../../stimulus/project-routing.service';
 
 const SECRET = 'gh-webhook-secret';
 
