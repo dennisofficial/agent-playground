@@ -3,6 +3,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { type QueryDeepPartialEntity, Repository } from 'typeorm';
 import {
+  type ContextBreakdown,
   type EngineEvent,
   type EngineUsage,
   type JitInjection,
@@ -524,6 +525,9 @@ export interface TurnEndMeta {
   contextTokens?: number | null;
   /** The model's context-window size, for the occupancy ring. */
   contextLimit?: number;
+  /** Full per-category context breakdown for the occupancy ring's popover — Claude-only; absent when the
+   *  SDK's `getContextUsage()` was unavailable/errored for this turn. */
+  contextBreakdown?: ContextBreakdown | null;
   /** The claude_credentials.id that authed this turn (Claude only); folded into turn_meta.meta for
    *  transcript visibility. */
   credentialId?: string | null;
@@ -1005,6 +1009,7 @@ export class TurnHarnessFactory {
             (ctxTokens != null
               ? resolveContextLimit(u?.contextModel ?? u?.model, u?.engine)
               : null);
+          const ctxBreakdown = turnMeta?.contextBreakdown ?? u?.contextBreakdown;
           // How long the turn actually worked: `now − startedAt`, read from the still-live turn state (the
           // SAME clock that drove the "Atlas is working… 19m 24s" indicator, so the footer matches the last
           // reading). `snapshot` is valid here — `persistAll()` ends the live lane only afterwards; a turn
@@ -1031,6 +1036,7 @@ export class TurnHarnessFactory {
                   ? { contextTokens: ctxTokens }
                   : {}),
               ...(ctxLimit != null ? { contextLimit: ctxLimit } : {}),
+              ...(ctxBreakdown ? { contextBreakdown: ctxBreakdown } : {}),
               ...(terminalReason !== undefined ? { terminalReason } : {}),
               ...(stopReason !== undefined ? { stopReason } : {}),
               ...(streamClosedCount !== undefined ? { streamClosedCount } : {}),
