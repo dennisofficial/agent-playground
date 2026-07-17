@@ -27,11 +27,7 @@ export const UNTRUSTED_CLOSE = '<<<END_UNTRUSTED_EVENT_DATA>>>';
  * close to "break out". The elaborate `<<<UNTRUSTED_EVENT_DATA>>>` marker ceremony is gone — the tag IS
  * the boundary, and the brain's system prompt tells it `<untrusted>` content is DATA, never instructions.
  */
-export function wrapUntrusted(input: {
-  source: string;
-  severity: string;
-  body: string;
-}): string {
+export function wrapUntrusted(input: { source: string; severity: string; body: string }): string {
   return renderChunk({
     kind: 'untrusted',
     body: input.body,

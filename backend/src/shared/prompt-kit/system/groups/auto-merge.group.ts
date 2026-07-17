@@ -5,9 +5,9 @@
  * the normal brain. Ordered 1251 — right after `AutonomyGroup` (1250), in the same approval-context band
  * (1260 is `SandboxGroup.sandboxRuntime` — taken).
  */
-import { Fragment, FragmentGroup } from '../fragment.decorator';
-import { hasAutoMerge } from '../conditions';
 import { Agent } from '../agent';
+import { hasAutoMerge } from '../conditions';
+import { Fragment, FragmentGroup } from '../fragment.decorator';
 
 @FragmentGroup()
 export class AutoMergeGroup {

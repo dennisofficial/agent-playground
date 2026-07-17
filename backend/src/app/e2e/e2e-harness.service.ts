@@ -1,35 +1,31 @@
 import { INestApplication, Logger } from '@nestjs/common';
-import type { NestExpressApplication } from '@nestjs/platform-express';
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
+import { getDataSourceToken } from '@nestjs/typeorm';
+import type { Message, TurnEnvelope } from '@shared/domain';
+import { ENGINE_RUNNER } from '@shared/engine';
 import { createHmac, randomUUID } from 'node:crypto';
 import { DataSource, Repository } from 'typeorm';
-import { getDataSourceToken } from '@nestjs/typeorm';
 import { AgentChatSurface, type CapturedApprovalCard } from '../agent-surface';
 import { AppModule } from '../app.module';
 import { AgentSessionManager, DecisionApprovalService } from '../brain';
 import { CLASSIFIER_LLM } from '../decision-gate';
-import { ENGINE_RUNNER } from '@shared/engine';
 import { ThreadDriver } from '../driver/thread-driver.service';
+import { GithubPrService, GitIdentityService, LocalGitService, parseGithubRepoUrl } from '../git';
 import { JobBootstrapService } from '../job-bootstrap';
-import {
-  GithubPrService,
-  GitIdentityService,
-  LocalGitService,
-  parseGithubRepoUrl,
-} from '../git';
 import { CredentialResolver } from '../onboarding';
-import { SANDBOX_PROVIDER } from '../sandbox';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
-  TranscriptMessageEntity,
-  RepoEntity,
   JobEntity,
   OrganizationEntity,
-  UserEntity,
   OrganizationMemberEntity,
+  RepoEntity,
+  TranscriptMessageEntity,
+  UserEntity,
 } from '../persistence/entities';
-import type { Message, TurnEnvelope } from '@shared/domain';
+import { SANDBOX_PROVIDER } from '../sandbox';
+import { JobTitler } from '../titling';
 import {
   FakeClassifierLlm,
   FakeEngineRunner,
@@ -37,7 +33,6 @@ import {
   FakeLocalGitService,
   FakeThreadTitler,
 } from './e2e-stubs';
-import { JobTitler } from '../titling';
 
 /** A single reported verification step. */
 export interface E2eStep {
@@ -122,8 +117,7 @@ export class E2eHarness {
       // Offline: give the driver a (fake) token so `finalizeBuild` takes the PR branch, and pin a repo
       // url for the seeded project. No real network/LLM is reached — every external seam is overridden.
       process.env.GITHUB_TOKEN = process.env.GITHUB_TOKEN ?? 'e2e-fake-token';
-      process.env.GITHUB_WEBHOOK_SECRET =
-        process.env.GITHUB_WEBHOOK_SECRET ?? 'e2e-webhook-secret';
+      process.env.GITHUB_WEBHOOK_SECRET = process.env.GITHUB_WEBHOOK_SECRET ?? 'e2e-webhook-secret';
     }
 
     if (this.config.live) {
@@ -185,9 +179,7 @@ export class E2eHarness {
       });
     }
 
-    this.dataSource = this.app.get<DataSource>(
-      getDataSourceToken(DB_CONNECTION),
-    );
+    this.dataSource = this.app.get<DataSource>(getDataSourceToken(DB_CONNECTION));
     // The harness uses fixed ids so reruns are deterministic. Purge before `app.init()`: Nest lifecycle
     // hooks acquire leadership and run recovery sweeps during init, and stale e2e rows can otherwise wake
     // the brain before `seedTenant()` has rebuilt the required planning anchor.
@@ -298,14 +290,9 @@ export class E2eHarness {
         base_branch: baseBranch,
       }),
     );
-    await this.jobBootstrap.ensurePlanningThreadGroup(
-      FEATURE_THREAD_ID,
-      TEAM_ID,
-    );
+    await this.jobBootstrap.ensurePlanningThreadGroup(FEATURE_THREAD_ID, TEAM_ID);
 
-    this.logger.log(
-      `Seeded ${TEAM_ID}/${PROJECT_ID} → ${gitUrl} (thread ${FEATURE_THREAD_ID})`,
-    );
+    this.logger.log(`Seeded ${TEAM_ID}/${PROJECT_ID} → ${gitUrl} (thread ${FEATURE_THREAD_ID})`);
   }
 
   /**
@@ -314,53 +301,26 @@ export class E2eHarness {
    * the e2e team id — never touches real data.
    */
   private async purgePriorRun(): Promise<void> {
-    const q = (sql: string, params: unknown[]) =>
-      this.dataSource.query(sql, params);
+    const q = (sql: string, params: unknown[]) => this.dataSource.query(sql, params);
     // Threads/messages/stimuli/jobs/threads/steps/decision-records hang off team/project.
-    await q(`DELETE FROM active_turns WHERE org_id = $1`, [TEAM_ID]).catch(
-      () => undefined,
-    );
-    await q(`DELETE FROM steps WHERE org_id = $1`, [TEAM_ID]).catch(
-      () => undefined,
-    );
-    await q(`DELETE FROM tasks WHERE org_id = $1`, [TEAM_ID]).catch(
-      () => undefined,
-    );
-    await q(`DELETE FROM threads WHERE org_id = $1`, [TEAM_ID]).catch(
-      () => undefined,
-    );
-    await q(`DELETE FROM thread_groups WHERE org_id = $1`, [TEAM_ID]).catch(
-      () => undefined,
-    );
-    await q(`DELETE FROM decision_records WHERE org_id = $1`, [TEAM_ID]).catch(
-      () => undefined,
-    );
+    await q(`DELETE FROM active_turns WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
+    await q(`DELETE FROM steps WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
+    await q(`DELETE FROM tasks WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
+    await q(`DELETE FROM threads WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
+    await q(`DELETE FROM thread_groups WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
+    await q(`DELETE FROM decision_records WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
     await q(
       `DELETE FROM transcript_messages WHERE job_id IN (
          SELECT id FROM jobs WHERE org_id = $1)`,
       [TEAM_ID],
     ).catch(() => undefined);
-    await q(`DELETE FROM inbound_messages WHERE org_id = $1`, [TEAM_ID]).catch(
-      () => undefined,
-    );
-    await q(`DELETE FROM job_sandboxes WHERE org_id = $1`, [TEAM_ID]).catch(
-      () => undefined,
-    );
-    await q(`DELETE FROM jobs WHERE org_id = $1`, [TEAM_ID]).catch(
-      () => undefined,
-    );
-    await q(`DELETE FROM repos WHERE org_id = $1`, [TEAM_ID]).catch(
-      () => undefined,
-    );
-    await q(`DELETE FROM organization_members WHERE org_id = $1`, [
-      TEAM_ID,
-    ]).catch(() => undefined);
-    await q(`DELETE FROM organizations WHERE id = $1`, [TEAM_ID]).catch(
-      () => undefined,
-    );
-    await q(`DELETE FROM users WHERE id = $1`, [DEFAULT_HUMAN_ID]).catch(
-      () => undefined,
-    );
+    await q(`DELETE FROM inbound_messages WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
+    await q(`DELETE FROM job_sandboxes WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
+    await q(`DELETE FROM jobs WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
+    await q(`DELETE FROM repos WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
+    await q(`DELETE FROM organization_members WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
+    await q(`DELETE FROM organizations WHERE id = $1`, [TEAM_ID]).catch(() => undefined);
+    await q(`DELETE FROM users WHERE id = $1`, [DEFAULT_HUMAN_ID]).catch(() => undefined);
   }
 
   // ── scenario 1: feature (chat-initiated) ───────────────────────────────────────────────────────
@@ -386,8 +346,7 @@ export class E2eHarness {
 
       if (this.config.live) {
         // LIVE: drive via real chat → grill → plan → card.
-        const featureText =
-          'Please add a short note to the README about the project.';
+        const featureText = 'Please add a short note to the README about the project.';
         let threadTs: string | undefined;
         let waitReply = this.agent.waitForReply(() => true, 60_000);
         threadTs = this.agent.sendFromHuman(CHANNEL_REF, featureText);
@@ -397,16 +356,11 @@ export class E2eHarness {
           card = this.agent.latestApprovalCard();
           if (card) break;
           waitReply = this.agent.waitForReply(() => true, 60_000);
-          this.agent.sendFromHuman(
-            CHANNEL_REF,
-            'Use your best judgment — keep it minimal.',
-            { threadTs },
-          );
+          this.agent.sendFromHuman(CHANNEL_REF, 'Use your best judgment — keep it minimal.', {
+            threadTs,
+          });
         }
-        if (!card)
-          card = await this.agent
-            .waitForApprovalCard(60_000)
-            .catch(() => undefined);
+        if (!card) card = await this.agent.waitForApprovalCard(60_000).catch(() => undefined);
       } else {
         // OFFLINE: bypass the in-sandbox session — call `submit_plan` tool impl directly. This
         // exercises persistPlan → plan-review skip (no sandbox) → requestApprovalAndAct → card post.
@@ -421,17 +375,11 @@ export class E2eHarness {
       if (!card) return { name: 'feature', ok: false, steps };
 
       // Approve the decision record (the human gate) — the seam the Slack button would hit.
-      const resolved = this.approvals.resolve(
-        card.jobId,
-        'approve',
-        DEFAULT_HUMAN_ID,
-      );
+      const resolved = this.approvals.resolve(card.jobId, 'approve', DEFAULT_HUMAN_ID);
       record(
         'approve',
         resolved,
-        resolved
-          ? `resolved job ${card.jobId}`
-          : 'no pending approval to resolve',
+        resolved ? `resolved job ${card.jobId}` : 'no pending approval to resolve',
       );
       if (!resolved) return { name: 'feature', ok: false, steps };
 
@@ -445,8 +393,7 @@ export class E2eHarness {
             : 'job did not reach running/approved state',
         );
         if (!approved) return { name: 'feature', ok: false, steps };
-        const [dispatchOk, dispatchDetail] =
-          await this.dispatchApprovedBuildDirect();
+        const [dispatchOk, dispatchDetail] = await this.dispatchApprovedBuildDirect();
         record('dispatch-build', dispatchOk, dispatchDetail);
         if (!dispatchOk) return { name: 'feature', ok: false, steps };
       }
@@ -464,15 +411,8 @@ export class E2eHarness {
       );
       if (!gateOk) return { name: 'feature', ok: false, steps };
       if (gate && this.isShipGate(gate)) {
-        const acted = await this.driver.resolveShipApprovalDurably(
-          card.jobId,
-          DEFAULT_HUMAN_ID,
-        );
-        record(
-          'ship-approved',
-          acted,
-          acted ? 'clicked Ship it' : 'ship gate was not actionable',
-        );
+        const acted = await this.driver.resolveShipApprovalDurably(card.jobId, DEFAULT_HUMAN_ID);
+        record('ship-approved', acted, acted ? 'clicked Ship it' : 'ship gate was not actionable');
         if (!acted) return { name: 'feature', ok: false, steps };
       }
 
@@ -523,14 +463,12 @@ export class E2eHarness {
         {
           decisionClass: 'cross_cutting',
           title: 'README format',
-          ruling:
-            'Append a "## About" thread to the existing README.md; keep it to ≤5 lines.',
+          ruling: 'Append a "## About" thread to the existing README.md; keep it to ≤5 lines.',
         },
       ],
       threads: [
         {
-          title:
-            'Update README.md with a short "About" thread and a one-line run instruction.',
+          title: 'Update README.md with a short "About" thread and a one-line run instruction.',
           steps: [
             {
               title: 'Append the About thread',
@@ -556,18 +494,13 @@ export class E2eHarness {
     return cardWait.catch(() => undefined);
   }
 
-  private async dispatchApprovedBuildDirect(): Promise<
-    readonly [boolean, string]
-  > {
+  private async dispatchApprovedBuildDirect(): Promise<readonly [boolean, string]> {
     const stimulus = this.featureTurnEnvelope();
     const tools = this.sessionManager.buildTools(stimulus);
     const result = await tools.dispatch_build({});
     const detail = JSON.stringify(result);
     this.logger.debug(`dispatch_build direct result: ${detail}`);
-    const obj =
-      result && typeof result === 'object'
-        ? (result as Record<string, unknown>)
-        : {};
+    const obj = result && typeof result === 'object' ? (result as Record<string, unknown>) : {};
     return [obj.ok === true, detail] as const;
   }
 
@@ -608,10 +541,7 @@ export class E2eHarness {
       const repoFullName = this.repoFullName();
       const runId = Date.now();
       const ownedBranch = `atlas/e2e-ci-${runId}`;
-      const owner = await this.seedOwnedEventJob(
-        ownedBranch,
-        'e2e event owner',
-      );
+      const owner = await this.seedOwnedEventJob(ownedBranch, 'e2e event owner');
       const jobsBefore = await this.repo(JobEntity).count({
         where: { org_id: TEAM_ID },
       });
@@ -630,8 +560,7 @@ export class E2eHarness {
 
       // POST a correctly-signed GitHub webhook to the REAL HTTP edge.
       const first = await this.postGithub(payload, runId);
-      const admitted =
-        first.status === 202 && first.json?.status === 'accepted';
+      const admitted = first.status === 202 && first.json?.status === 'accepted';
       const routedToOwner = admitted && first.json?.jobId === owner.id;
       record(
         'github-webhook-accepted',
@@ -643,11 +572,7 @@ export class E2eHarness {
       // A DUPLICATE delivery of the SAME run must collapse (the mechanical dedup filter — no 2nd thread).
       const dup = await this.postGithub(payload, runId);
       const deduped = dup.json?.status === 'deduped';
-      record(
-        'duplicate-collapsed',
-        deduped,
-        `HTTP ${dup.status} ${JSON.stringify(dup.json)}`,
-      );
+      record('duplicate-collapsed', deduped, `HTTP ${dup.status} ${JSON.stringify(dup.json)}`);
 
       // The event attached the owning job's operator-visible artifact: a `system_event` provenance message
       // (the EVENT bubble). This is what the operator + Atlas both see — the harness-message model.
@@ -658,15 +583,11 @@ export class E2eHarness {
           })
         : null;
       const hasEventMsg =
-        !!eventMsg &&
-        (eventMsg.meta as { source?: unknown } | null)?.source ===
-          'system_event';
+        !!eventMsg && (eventMsg.meta as { source?: unknown } | null)?.source === 'system_event';
       record(
         'system-event-message',
         hasEventMsg,
-        eventMsg
-          ? `meta=${JSON.stringify(eventMsg.meta)}`
-          : 'no seeded message',
+        eventMsg ? `meta=${JSON.stringify(eventMsg.meta)}` : 'no seeded message',
       );
 
       // Route-only: the event must not seed a fresh job. It attaches to the owner above, and the duplicate
@@ -749,15 +670,12 @@ export class E2eHarness {
         : null;
       const storedAsData =
         !!eventMsg &&
-        (eventMsg.meta as { source?: unknown } | null)?.source ===
-          'system_event' &&
+        (eventMsg.meta as { source?: unknown } | null)?.source === 'system_event' &&
         eventMsg.text.includes('delete the production database');
       record(
         'injection-stored-as-data',
         storedAsData,
-        eventMsg
-          ? `meta=${JSON.stringify(eventMsg.meta)}`
-          : 'no seeded message',
+        eventMsg ? `meta=${JSON.stringify(eventMsg.meta)}` : 'no seeded message',
       );
 
       // The security control is the owning session + approval gate: no new event-origin job may be seeded
@@ -779,10 +697,7 @@ export class E2eHarness {
     }
   }
 
-  private async seedOwnedEventJob(
-    branch: string,
-    title: string,
-  ): Promise<JobEntity> {
+  private async seedOwnedEventJob(branch: string, title: string): Promise<JobEntity> {
     return this.repo(JobEntity).save(
       this.repo(JobEntity).create({
         org_id: TEAM_ID,
@@ -807,22 +722,17 @@ export class E2eHarness {
     const raw = Buffer.from(JSON.stringify(payload));
     const secret = process.env.GITHUB_WEBHOOK_SECRET as string;
     const signature = `sha256=${createHmac('sha256', secret).update(raw).digest('hex')}`;
-    const res = await fetch(
-      `http://127.0.0.1:${this.serverPort}/webhooks/github/events`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Hub-Signature-256': signature,
-          'X-GitHub-Event': 'workflow_run',
-          'X-GitHub-Delivery': `e2e-${runId}-${randomUUID().slice(0, 8)}`,
-        },
-        body: raw,
+    const res = await fetch(`http://127.0.0.1:${this.serverPort}/webhooks/github/events`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Hub-Signature-256': signature,
+        'X-GitHub-Event': 'workflow_run',
+        'X-GitHub-Delivery': `e2e-${runId}-${randomUUID().slice(0, 8)}`,
       },
-    );
-    const json = (await res.json().catch(() => undefined)) as
-      | Record<string, unknown>
-      | undefined;
+      body: raw,
+    });
+    const json = (await res.json().catch(() => undefined)) as Record<string, unknown> | undefined;
     return { status: res.status, json };
   }
 
@@ -858,43 +768,28 @@ export class E2eHarness {
       }
       await delay(250);
     }
-    return (
-      (await this.repo(JobEntity).findOne({ where: { id: jobId } })) ??
-      undefined
-    );
+    return (await this.repo(JobEntity).findOne({ where: { id: jobId } })) ?? undefined;
   }
 
   /** Poll a specific job until it reaches a terminal state (PR-ready / failed / cancelled) or times out. */
-  private async waitForPrReady(
-    jobId: string,
-    timeoutMs: number,
-  ): Promise<JobEntity | undefined> {
+  private async waitForPrReady(jobId: string, timeoutMs: number): Promise<JobEntity | undefined> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const row = await this.repo(JobEntity).findOne({ where: { id: jobId } });
       if (this.isTerminal(row)) return row ?? undefined;
       await delay(250);
     }
-    return (
-      (await this.repo(JobEntity).findOne({ where: { id: jobId } })) ??
-      undefined
-    );
+    return (await this.repo(JobEntity).findOne({ where: { id: jobId } })) ?? undefined;
   }
 
-  private async waitForApproved(
-    jobId: string,
-    timeoutMs: number,
-  ): Promise<JobEntity | undefined> {
+  private async waitForApproved(jobId: string, timeoutMs: number): Promise<JobEntity | undefined> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const row = await this.repo(JobEntity).findOne({ where: { id: jobId } });
       if (row?.status === 'building' && row.build_path) return row;
       await delay(100);
     }
-    return (
-      (await this.repo(JobEntity).findOne({ where: { id: jobId } })) ??
-      undefined
-    );
+    return (await this.repo(JobEntity).findOne({ where: { id: jobId } })) ?? undefined;
   }
 
   /** Poll for the job on a thread (the autonomous path opens it itself) reaching a terminal state. */
@@ -909,28 +804,21 @@ export class E2eHarness {
       if (this.isTerminal(row)) return row ?? undefined;
       await delay(250);
     }
-    return (
-      (await this.repo(JobEntity).findOne({ where: { id: jobId } })) ??
-      undefined
-    );
+    return (await this.repo(JobEntity).findOne({ where: { id: jobId } })) ?? undefined;
   }
 
   // ── repo identity ──────────────────────────────────────────────────────────────────────────────
 
   private repoUrl(): string {
     if (this.config.live && !this.config.gitUrl) {
-      throw new Error(
-        '--live requires --repo https://github.com/<owner>/<repo>',
-      );
+      throw new Error('--live requires --repo https://github.com/<owner>/<repo>');
     }
     return this.config.live ? (this.config.gitUrl as string) : OFFLINE_REPO_URL;
   }
 
   /** `owner/repo` derived from the configured git url — the GitHub webhook routing key. */
   private repoFullName(): string {
-    const parsed = parseGithubRepoUrl(
-      this.config.live ? this.repoUrl() : OFFLINE_REPO_URL,
-    );
+    const parsed = parseGithubRepoUrl(this.config.live ? this.repoUrl() : OFFLINE_REPO_URL);
     if (!parsed) throw new Error(`Not an HTTPS GitHub URL: ${this.repoUrl()}`);
     return `${parsed.owner}/${parsed.repo}`;
   }

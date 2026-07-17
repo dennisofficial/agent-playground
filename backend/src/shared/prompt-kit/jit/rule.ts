@@ -122,9 +122,7 @@ export function validateJitRules(rules: readonly JitRule[]): void {
   const seen = new Set<string>();
   const positive = (label: string, n: number): void => {
     if (!Number.isFinite(n) || n <= 0)
-      throw new Error(
-        `JIT rule ${label} must be a finite positive number, got ${n}`,
-      );
+      throw new Error(`JIT rule ${label} must be a finite positive number, got ${n}`);
   };
   for (const rule of rules) {
     if (!rule.id) throw new Error('JIT rule has an empty id');
@@ -141,12 +139,9 @@ export function validateJitRules(rules: readonly JitRule[]): void {
         `JIT rule ${rule.id} uses a url-match trigger but declares an empty toolMatcher`,
       );
     }
-    if (rule.throttle)
-      positive(`${rule.id}.throttle.deltaTokens`, rule.throttle.deltaTokens);
+    if (rule.throttle) positive(`${rule.id}.throttle.deltaTokens`, rule.throttle.deltaTokens);
     if (rule.delivery === 'host-seed-notice' && !rule.seed) {
-      throw new Error(
-        `JIT rule ${rule.id} uses host-seed-notice delivery but declares no seed`,
-      );
+      throw new Error(`JIT rule ${rule.id} uses host-seed-notice delivery but declares no seed`);
     }
   }
 }

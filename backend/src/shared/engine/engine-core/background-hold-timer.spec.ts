@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { BackgroundHoldTimer } from './background-hold-timer';
 import { bgTaskCapRule } from '../../prompt-kit/jit';
+import { BackgroundHoldTimer } from './background-hold-timer';
 
 const HOLD_MS = 1_000;
 
@@ -9,7 +9,12 @@ function makeTimer(over: Partial<Parameters<typeof buildParams>[0]> = {}) {
   const cancelEnd = vi.fn();
   const steerPush = vi.fn();
   const params = buildParams({ onEvent, cancelEnd, steerPush, ...over });
-  return { timer: new BackgroundHoldTimer(params), onEvent, cancelEnd, steerPush };
+  return {
+    timer: new BackgroundHoldTimer(params),
+    onEvent,
+    cancelEnd,
+    steerPush,
+  };
 }
 
 function buildParams(o: {

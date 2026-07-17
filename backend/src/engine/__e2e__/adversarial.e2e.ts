@@ -4,12 +4,10 @@
 // surfaces in the transcript. This scenario is EXPLORATORY: `run-all.ts` does NOT gate its exit on it.
 import {
   cleanup,
-  events,
-  finalResult,
   frameKinds,
-  killEngineIn,
   kickAwaitExit,
   kickEngine,
+  killEngineIn,
   makeSpec,
   newRedis,
   newTurnId,
@@ -39,20 +37,38 @@ async function probeAbortAfterFinal(sandbox: string): Promise<Probe> {
   const turnId = newTurnId();
   const k = turnKeys(turnId);
   try {
-    await xadd(redis, k.spec, makeSpec(turnId, { steerable: true, task: 'Reply with exactly one word: done.' }));
+    await xadd(
+      redis,
+      k.spec,
+      makeSpec(turnId, {
+        steerable: true,
+        task: 'Reply with exactly one word: done.',
+      }),
+    );
     kickEngine(sandbox, turnId, { detached: true, quiet: true });
     const first = await tailEvents(redis, turnId, { timeoutMs: 120_000 });
-    if (!first.final) return { name: 'abort-after-final', verdict: 'FAIL', note: 'turn never reached final' };
+    if (!first.final)
+      return {
+        name: 'abort-after-final',
+        verdict: 'FAIL',
+        note: 'turn never reached final',
+      };
     // Publish abort AFTER the turn already ended (engine process gone / input closed) — expect a no-op.
     await redis.publish(k.abort, JSON.stringify({ t: 'abort' }));
     // Watch for any NEW terminal/error frame appearing after the abort (there must be none).
-    const after = await tailEvents(redis, turnId, { timeoutMs: 5_000, fromId: first.lastId });
+    const after = await tailEvents(redis, turnId, {
+      timeoutMs: 5_000,
+      fromId: first.lastId,
+    });
     const noop = !after.error && !after.frames.some((f) => f.t === 'error');
-    if (!noop) finding('abort published after final produced a NEW error frame (should be a no-op)');
+    if (!noop)
+      finding('abort published after final produced a NEW error frame (should be a no-op)');
     return {
       name: 'abort-after-final',
       verdict: noop ? 'PASS' : 'FAIL',
-      note: noop ? 'post-final abort was a harmless no-op' : 'post-final abort produced a new error frame',
+      note: noop
+        ? 'post-final abort was a harmless no-op'
+        : 'post-final abort produced a new error frame',
     };
   } finally {
     await cleanup(redis, turnId);
@@ -86,16 +102,26 @@ async function probeMalformedSteer(sandbox: string): Promise<Probe> {
         // Malformed: no `text` field at all — the engine's input reader must skip it (no yield, no ack, no crash).
         void xadd(redis, k.input, { id: newTurnId() });
         // Oversized: a ~200KB text blob — must inject without crashing.
-        void xadd(redis, k.input, { id: newTurnId(), text: 'x'.repeat(200 * 1024) });
+        void xadd(redis, k.input, {
+          id: newTurnId(),
+          text: 'x'.repeat(200 * 1024),
+        });
         console.log('[adversarial] injected malformed + 200KB steers');
       }
     };
-    const { frames, final, error, timedOut } = await tailEvents(redis, turnId, { timeoutMs: 150_000, onFrame });
+    const { frames, final, error, timedOut } = await tailEvents(redis, turnId, {
+      timeoutMs: 150_000,
+      onFrame,
+    });
     console.log(`[adversarial] malformed-steer frames: ${frameKinds(frames)}`);
     if (timedOut) {
       finding('turn HUNG after a malformed + oversized steer (no terminal frame in 150s)');
       killEngineIn(sandbox);
-      return { name: 'malformed+oversized-steer', verdict: 'FAIL', note: 'HANG: no terminal frame' };
+      return {
+        name: 'malformed+oversized-steer',
+        verdict: 'FAIL',
+        note: 'HANG: no terminal frame',
+      };
     }
     const terminal = !!final || !!error;
     return {
@@ -121,15 +147,25 @@ async function probeMissingTask(sandbox: string): Promise<Probe> {
     delete (spec as Record<string, unknown>).task; // remove the required field
     await xadd(redis, k.spec, spec);
     kickEngine(sandbox, turnId, { detached: true, quiet: true });
-    const { frames, final, error, timedOut } = await tailEvents(redis, turnId, { timeoutMs: 60_000 });
+    const { frames, final, error, timedOut } = await tailEvents(redis, turnId, {
+      timeoutMs: 60_000,
+    });
     console.log(`[adversarial] missing-task frames: ${frameKinds(frames)}`);
     if (timedOut) {
       finding('a spec with no `task` HUNG (no terminal frame in 60s) instead of failing fast');
       killEngineIn(sandbox);
-      return { name: 'missing-task-field', verdict: 'FAIL', note: 'HANG: no terminal frame' };
+      return {
+        name: 'missing-task-field',
+        verdict: 'FAIL',
+        note: 'HANG: no terminal frame',
+      };
     }
     if (error) {
-      return { name: 'missing-task-field', verdict: 'PASS', note: `failed fast with error frame: ${String(error.message).slice(0, 80)}` };
+      return {
+        name: 'missing-task-field',
+        verdict: 'PASS',
+        note: `failed fast with error frame: ${String(error.message).slice(0, 80)}`,
+      };
     }
     // A `final` (the model answered an empty prompt) is not a crash/hang either — note it as an observation.
     return {
@@ -152,7 +188,8 @@ async function probeBogusContainer(): Promise<Probe> {
   const ms = Date.now() - t0;
   const failedFast = (code !== 0 || spawnError) && ms < 15_000;
   if (code === 0) finding('docker exec on a bogus container exited 0 (should be a failure)');
-  if (code === null && !spawnError) finding(`docker exec on a bogus container did not exit within 20s (hang)`);
+  if (code === null && !spawnError)
+    finding(`docker exec on a bogus container did not exit within 20s (hang)`);
   return {
     name: 'bogus-container',
     verdict: failedFast ? 'PASS' : code === null && !spawnError ? 'FAIL' : 'OBSERVATION',
@@ -176,15 +213,20 @@ async function probeSilentTool(sandbox: string): Promise<Probe> {
       k.spec,
       makeSpec(turnId, {
         toolBridgeTools: ['list_skills'],
-        task:
-          'Call the list_skills tool with empty arguments, then reply with exactly what it returned.',
-        systemPrompt: 'You are a terse test assistant. Use the tool, then report its output verbatim.',
+        task: 'Call the list_skills tool with empty arguments, then reply with exactly what it returned.',
+        systemPrompt:
+          'You are a terse test assistant. Use the tool, then report its output verbatim.',
       }),
     );
     // Consume the tool_request but send NOTHING back — no heartbeat, no reply (byzantine/silent host).
-    responder = startToolResponder(redis, turnId, { heartbeat: false, onRequest: () => null });
+    responder = startToolResponder(redis, turnId, {
+      heartbeat: false,
+      onRequest: () => null,
+    });
     kickEngine(sandbox, turnId, { detached: true, quiet: true });
-    const { frames, final, error, timedOut } = await tailEvents(redis, turnId, { timeoutMs: WAIT_MS });
+    const { frames, final, error, timedOut } = await tailEvents(redis, turnId, {
+      timeoutMs: WAIT_MS,
+    });
     console.log(`[adversarial] silent-tool frames: ${frameKinds(frames)}`);
     responder.stop();
     const calledTool = responder.called.includes('list_skills');
@@ -232,7 +274,11 @@ export async function run(sandbox: string): Promise<ScenarioResult> {
     try {
       probes.push(await p());
     } catch (e) {
-      probes.push({ name: 'unknown', verdict: 'FAIL', note: `probe threw: ${String(e).slice(0, 120)}` });
+      probes.push({
+        name: 'unknown',
+        verdict: 'FAIL',
+        note: `probe threw: ${String(e).slice(0, 120)}`,
+      });
     }
   }
 

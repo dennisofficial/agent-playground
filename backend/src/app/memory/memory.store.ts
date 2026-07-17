@@ -80,9 +80,7 @@ export class MemoryStore {
    * Store a fact at its scope, or merge into a near-duplicate (cosine ≥ DEDUP_THRESHOLD) in that
    * same scope/team. Strict team equality — a fact only ever merges within its own tenant.
    */
-  async remember(
-    input: RememberInput,
-  ): Promise<{ action: 'inserted' | 'updated'; id: string }> {
+  async remember(input: RememberInput): Promise<{ action: 'inserted' | 'updated'; id: string }> {
     const qv = vecSql(await this.embedder.embed(input.fact, input.orgId));
 
     const qb = this.facts
@@ -174,11 +172,7 @@ export class MemoryStore {
   }
 
   /** Rewrite a fact by id (re-embeds), scoped to its owning org; a forgotten/foreign row is a no-op. */
-  async updateFact(
-    id: string,
-    fact: string,
-    orgId: string,
-  ): Promise<{ updated: boolean }> {
+  async updateFact(id: string, fact: string, orgId: string): Promise<{ updated: boolean }> {
     const existing = await this.facts
       .createQueryBuilder('f')
       .select('f.id', 'id')

@@ -54,16 +54,10 @@ describe('buildAuthorizeUrl', () => {
     );
     expect(url.host).toBe('claude.com');
     expect(url.pathname).toBe('/cai/oauth/authorize');
-    expect(url.searchParams.get('client_id')).toBe(
-      DEFAULT_CLAUDE_OAUTH_CONFIG.clientId,
-    );
+    expect(url.searchParams.get('client_id')).toBe(DEFAULT_CLAUDE_OAUTH_CONFIG.clientId);
     expect(url.searchParams.get('response_type')).toBe('code');
-    expect(url.searchParams.get('redirect_uri')).toBe(
-      DEFAULT_CLAUDE_OAUTH_CONFIG.redirectUri,
-    );
-    expect(url.searchParams.get('scope')).toBe(
-      DEFAULT_CLAUDE_OAUTH_CONFIG.scopes,
-    );
+    expect(url.searchParams.get('redirect_uri')).toBe(DEFAULT_CLAUDE_OAUTH_CONFIG.redirectUri);
+    expect(url.searchParams.get('scope')).toBe(DEFAULT_CLAUDE_OAUTH_CONFIG.scopes);
     expect(url.searchParams.get('code_challenge')).toBe('chal123');
     expect(url.searchParams.get('code_challenge_method')).toBe('S256');
     expect(url.searchParams.get('state')).toBe('state456');
@@ -111,9 +105,7 @@ describe('exchangeCode', () => {
     expect(tokens.accessToken).toBe('at-1');
     expect(tokens.refreshToken).toBe('rt-1');
     expect(tokens.expiresAt).toBeGreaterThanOrEqual(before + 3600 * 1000);
-    expect(tokens.expiresAt).toBeLessThanOrEqual(
-      Date.now() + 3600 * 1000 + 1000,
-    );
+    expect(tokens.expiresAt).toBeLessThanOrEqual(Date.now() + 3600 * 1000 + 1000);
     expect(tokens.scopes).toBe('user:profile user:inference');
     expect(tokens.subscriptionType).toBe('pro');
     expect(tokens.accountEmail).toBe('dev@example.com');

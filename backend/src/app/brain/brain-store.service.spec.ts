@@ -1,8 +1,8 @@
-import { describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
-import { BrainStoreService } from './brain-store.service';
-import type { JobEntity, ThreadEntity } from '../persistence/entities';
+import { describe, expect, it, vi } from 'vitest';
 import type { JobDependencyService } from '../job-deps';
+import type { JobEntity, ThreadEntity } from '../persistence/entities';
+import { BrainStoreService } from './brain-store.service';
 
 /**
  * `BrainStoreService.endTurnActivity` — retained as a compatibility no-op after the job activity/halt

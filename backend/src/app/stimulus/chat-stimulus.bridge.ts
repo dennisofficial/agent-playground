@@ -7,9 +7,9 @@ import {
   Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import type { UserMessage } from '@shared/domain';
 import { Subscription } from 'rxjs';
 import { Repository } from 'typeorm';
-import type { UserMessage } from '@shared/domain';
 import { JobBootstrapService } from '../job-bootstrap';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity } from '../persistence/entities';
@@ -37,9 +37,7 @@ import { StimulusIntake } from './stimulus-intake.service';
  * `../ARCHITECTURE.md` §7.
  */
 @Injectable()
-export class ChatStimulusBridge
-  implements OnApplicationBootstrap, OnApplicationShutdown
-{
+export class ChatStimulusBridge implements OnApplicationBootstrap, OnApplicationShutdown {
   private readonly logger = new Logger(ChatStimulusBridge.name);
   private sub?: Subscription;
 
@@ -71,9 +69,7 @@ export class ChatStimulusBridge
       try {
         await connectable.connect();
       } catch (err) {
-        this.logger.warn(
-          `surface connect failed (inbound may be inert): ${err}`,
-        );
+        this.logger.warn(`surface connect failed (inbound may be inert): ${err}`);
       }
     }
   }
@@ -153,9 +149,7 @@ export class ChatStimulusBridge
    * caller addresses an existing thread (the web operator path always does). Otherwise open a fresh
    * chat-origin thread on the repo (`msg.channel` = repo_id).
    */
-  private async resolveThread(
-    msg: InboundChatMessage,
-  ): Promise<JobEntity | null> {
+  private async resolveThread(msg: InboundChatMessage): Promise<JobEntity | null> {
     if (msg.threadTs) {
       const existing = await this.jobs.findOne({ where: { id: msg.threadTs } });
       if (existing) return existing;

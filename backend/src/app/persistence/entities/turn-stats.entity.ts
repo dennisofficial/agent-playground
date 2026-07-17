@@ -1,12 +1,5 @@
-import {
-  Column,
-  Entity,
-  Index,
-  JoinColumn,
-  ManyToOne,
-  PrimaryGeneratedColumn,
-} from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
+import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { JobEntity } from './job.entity';
 import { numberColumn } from './numeric.transformer';
 

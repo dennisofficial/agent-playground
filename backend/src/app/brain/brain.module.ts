@@ -1,27 +1,27 @@
 import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { DecisionGateModule } from '../decision-gate';
+import { ThreadSessionRunnerService } from '../engine/thread-session-runner.service';
 import { GitModule } from '../git';
 import { JobBootstrapModule } from '../job-bootstrap';
 import { MemoryModule } from '../memory';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
-  TranscriptMessageEntity,
-  ThreadGroupEntity,
-  RepoEntity,
-  ThreadEntity,
   InboundMessageEntity,
   JobEntity,
   JobSandboxEntity,
+  RepoEntity,
+  ThreadEntity,
+  ThreadGroupEntity,
+  TranscriptMessageEntity,
 } from '../persistence/entities';
 import { BRAIN_SINK, StimulusModule, type BrainSink } from '../stimulus';
-import { ThreadSessionRunnerService } from '../engine/thread-session-runner.service';
 import { AgentSessionManager } from './agent-session-manager.service';
-import { ChatToolProvider } from './chat-tool-provider.service';
-import { DrainService } from './drain.service';
 import { BrainStoreService } from './brain-store.service';
+import { ChatToolProvider } from './chat-tool-provider.service';
 import { DecisionApprovalService } from './decision-approval.service';
+import { DrainService } from './drain.service';
 import { JitHostExecutor } from './jit-host-executor';
 import { PlanReviewService } from './plan-review.service';
 import { SelfSufficiencyToolsService } from './self-sufficiency-tools.service';

@@ -19,9 +19,7 @@ export class AddWorktreeSecretStore1782590940885 implements MigrationInterface {
     await queryRunner.query(
       `CREATE INDEX "idx_org_worktree_secret_grants_org_id" ON "org_worktree_secret_grants" ("org_id") `,
     );
-    await queryRunner.query(
-      `ALTER TABLE "thread_sandboxes" ADD "hydration_sig" text`,
-    );
+    await queryRunner.query(`ALTER TABLE "thread_sandboxes" ADD "hydration_sig" text`);
     await queryRunner.query(
       `ALTER TABLE "org_worktree_secrets" ADD CONSTRAINT "fk_org_worktree_secrets_org_id_organizations" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE NO ACTION`,
     );
@@ -43,19 +41,11 @@ export class AddWorktreeSecretStore1782590940885 implements MigrationInterface {
     await queryRunner.query(
       `ALTER TABLE "org_worktree_secrets" DROP CONSTRAINT "fk_org_worktree_secrets_org_id_organizations"`,
     );
-    await queryRunner.query(
-      `ALTER TABLE "thread_sandboxes" DROP COLUMN "hydration_sig"`,
-    );
-    await queryRunner.query(
-      `DROP INDEX "public"."idx_org_worktree_secret_grants_org_id"`,
-    );
-    await queryRunner.query(
-      `DROP INDEX "public"."idx_org_worktree_secret_grants_org_id_repo_id"`,
-    );
+    await queryRunner.query(`ALTER TABLE "thread_sandboxes" DROP COLUMN "hydration_sig"`);
+    await queryRunner.query(`DROP INDEX "public"."idx_org_worktree_secret_grants_org_id"`);
+    await queryRunner.query(`DROP INDEX "public"."idx_org_worktree_secret_grants_org_id_repo_id"`);
     await queryRunner.query(`DROP TABLE "org_worktree_secret_grants"`);
-    await queryRunner.query(
-      `DROP INDEX "public"."idx_org_worktree_secrets_org_id"`,
-    );
+    await queryRunner.query(`DROP INDEX "public"."idx_org_worktree_secrets_org_id"`);
     await queryRunner.query(`DROP TABLE "org_worktree_secrets"`);
   }
 }

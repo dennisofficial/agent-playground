@@ -8,8 +8,8 @@
  * FIRST, which a review job KEEPS), after the shared identity/harness-tag preamble.
  */
 import { Agent } from '../agent';
-import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isReview } from '../conditions';
+import { Fragment, FragmentGroup } from '../fragment.decorator';
 
 @FragmentGroup()
 export class ReviewGroup {

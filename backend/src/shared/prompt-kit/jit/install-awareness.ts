@@ -55,9 +55,7 @@ function firstPackageToken(rest: string, eco: string): string | null {
       skipValue = false;
       continue;
     }
-    const flag = cleaned.includes('=')
-      ? cleaned.slice(0, cleaned.indexOf('='))
-      : cleaned;
+    const flag = cleaned.includes('=') ? cleaned.slice(0, cleaned.indexOf('=')) : cleaned;
     if (flagsWithValue.has(flag)) {
       skipValue = !cleaned.includes('=');
       continue;
@@ -263,9 +261,7 @@ export function detectInstallCommand(command: string): InstallMatch | null {
     if (!m) continue;
     const eco = rule.eco(m);
     const rest = cmd.slice(m.index + m[0].length);
-    const pkg = rule.pkg
-      ? rule.pkg(rest, cmd, eco)
-      : firstPackageToken(rest, eco);
+    const pkg = rule.pkg ? rule.pkg(rest, cmd, eco) : firstPackageToken(rest, eco);
     if (!pkg) return null; // verb matched but no package arg — a bare restore/list/no-op, not a new install
     return {
       action: rule.action,

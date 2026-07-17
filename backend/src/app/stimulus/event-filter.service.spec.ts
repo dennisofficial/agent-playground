@@ -1,10 +1,8 @@
-import { describe, expect, it } from 'vitest';
 import type { EnvService } from '@core/config/env/env.service';
+import { describe, expect, it } from 'vitest';
 import { EventFilterService } from './event-filter.service';
 
-function makeFilter(
-  overrides: Record<string, unknown> = {},
-): EventFilterService {
+function makeFilter(overrides: Record<string, unknown> = {}): EventFilterService {
   const map: Record<string, unknown> = {
     EVENT_DEDUP_WINDOW_S: 300,
     EVENT_RATE_LIMIT: 5,

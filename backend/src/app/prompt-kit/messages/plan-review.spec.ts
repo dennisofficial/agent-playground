@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  renderPlanForReview,
-  renderReReview,
-  type PlanReviewInput,
-} from './plan-review';
+import { renderPlanForReview, renderReReview, type PlanReviewInput } from './plan-review';
 
 /**
  * Golden-snapshot baseline for the plan-review task PROSE strings — every snapshot captures CURRENT
@@ -16,8 +12,7 @@ const fullInput: PlanReviewInput = {
   jobId: 'job-1',
   orgId: 'org-1',
   goal: "Show each user's last login time on their profile.",
-  overview:
-    'Stamp last_login_at on successful login and expose it on GET /users/:id.',
+  overview: 'Stamp last_login_at on successful login and expose it on GET /users/:id.',
   decisions: [
     {
       decisionClass: 'data_model',

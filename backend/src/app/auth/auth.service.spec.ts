@@ -2,15 +2,13 @@ import { ConflictException, UnauthorizedException } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { Repository } from 'typeorm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { AuthService } from './auth.service';
 import type { UserEntity } from '../persistence/entities';
+import { AuthService } from './auth.service';
 
 // Deterministic, fast stand-in for argon2 so the spec doesn't pay real hashing cost.
 vi.mock('@node-rs/argon2', () => ({
   hash: vi.fn(async (plain: string) => `hashed:${plain}`),
-  verify: vi.fn(
-    async (hashed: string, plain: string) => hashed === `hashed:${plain}`,
-  ),
+  verify: vi.fn(async (hashed: string, plain: string) => hashed === `hashed:${plain}`),
 }));
 
 function makeUser(over: Partial<UserEntity> = {}): UserEntity {
@@ -68,12 +66,7 @@ describe('AuthService', () => {
     it('rejects a duplicate email with 409', async () => {
       users.findOne.mockResolvedValue(makeUser());
       await expect(
-        service.register(
-          'a@b.com',
-          'password1',
-          'A',
-          res as unknown as Response,
-        ),
+        service.register('a@b.com', 'password1', 'A', res as unknown as Response),
       ).rejects.toBeInstanceOf(ConflictException);
       expect(users.save).not.toHaveBeenCalled();
     });
@@ -108,9 +101,7 @@ describe('AuthService', () => {
     });
 
     it('rejects a wrong password with 401', async () => {
-      users.findOne.mockResolvedValue(
-        makeUser({ password_hash: 'hashed:correct' }),
-      );
+      users.findOne.mockResolvedValue(makeUser({ password_hash: 'hashed:correct' }));
       await expect(
         service.login('a@b.com', 'wrong', res as unknown as Response),
       ).rejects.toBeInstanceOf(UnauthorizedException);
@@ -119,11 +110,7 @@ describe('AuthService', () => {
 
     it('sets both cookies and returns the session for valid creds', async () => {
       users.findOne.mockResolvedValue(makeUser());
-      const session = await service.login(
-        'a@b.com',
-        'correct',
-        res as unknown as Response,
-      );
+      const session = await service.login('a@b.com', 'correct', res as unknown as Response);
       expect(session).toEqual({ id: 'u1', email: 'a@b.com', name: 'A' });
       const names = res.cookie.mock.calls.map((c) => c[0]);
       expect(names).toEqual(['access_token', 'refresh_token']);
@@ -138,9 +125,9 @@ describe('AuthService', () => {
   describe('refresh', () => {
     it('rejects when there is no refresh cookie', async () => {
       const req = { cookies: {} } as unknown as Request;
-      await expect(
-        service.refresh(req, res as unknown as Response),
-      ).rejects.toBeInstanceOf(UnauthorizedException);
+      await expect(service.refresh(req, res as unknown as Response)).rejects.toBeInstanceOf(
+        UnauthorizedException,
+      );
     });
 
     it('reissues cookies for a valid refresh token', async () => {
@@ -155,9 +142,9 @@ describe('AuthService', () => {
       const req = { cookies: { refresh_token: 'rt' } } as unknown as Request;
       jwt.verifyRefreshToken.mockResolvedValue({ sub: 'u1' });
       users.findOne.mockResolvedValue(null);
-      await expect(
-        service.refresh(req, res as unknown as Response),
-      ).rejects.toBeInstanceOf(UnauthorizedException);
+      await expect(service.refresh(req, res as unknown as Response)).rejects.toBeInstanceOf(
+        UnauthorizedException,
+      );
     });
 
     it('self-heals a poison cookie: a failed verify clears BOTH host-only and parent-domain scopes', async () => {
@@ -167,12 +154,10 @@ describe('AuthService', () => {
         cookies: { refresh_token: 'poison' },
         hostname: 'api.byatlas.io',
       } as unknown as Request;
-      jwt.verifyRefreshToken.mockRejectedValue(
-        new Error('signature verification failed'),
+      jwt.verifyRefreshToken.mockRejectedValue(new Error('signature verification failed'));
+      await expect(service.refresh(req, res as unknown as Response)).rejects.toBeInstanceOf(
+        UnauthorizedException,
       );
-      await expect(
-        service.refresh(req, res as unknown as Response),
-      ).rejects.toBeInstanceOf(UnauthorizedException);
 
       // Cleared both cookie names under host-only (no domain) AND the parent domain.
       const cleared = res.clearCookie.mock.calls.map((c) => ({
@@ -195,9 +180,9 @@ describe('AuthService', () => {
         hostname: 'localhost',
       } as unknown as Request;
       jwt.verifyRefreshToken.mockRejectedValue(new Error('bad'));
-      await expect(
-        service.refresh(req, res as unknown as Response),
-      ).rejects.toBeInstanceOf(UnauthorizedException);
+      await expect(service.refresh(req, res as unknown as Response)).rejects.toBeInstanceOf(
+        UnauthorizedException,
+      );
       const domains = res.clearCookie.mock.calls.map((c) => c[1]?.domain);
       expect(domains.every((d) => d === undefined)).toBe(true);
     });

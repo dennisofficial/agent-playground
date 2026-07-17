@@ -4,14 +4,8 @@ import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { LocalGitService, writeForbiddenPaths } from '../git';
 import { WorkspaceConfigStore, WorkspaceSecretFileStore } from '../onboarding';
-import {
-  isExternalMountPath,
-  type MountSpec,
-} from '../sandbox/container-paths';
-import {
-  resolveExternalMountTarget,
-  resolveSafeTarget,
-} from './worktree-path-guard';
+import { isExternalMountPath, type MountSpec } from '../sandbox/container-paths';
+import { resolveExternalMountTarget, resolveSafeTarget } from './worktree-path-guard';
 
 export interface HydrateInput {
   worktreePath: string;
@@ -51,10 +45,7 @@ export class WorktreeHydrator {
    * must never fail a sandbox attach) — logs a warning and returns empty so the caller proceeds as if the
    * repo simply has no config THIS pass; the next attach re-reads and self-heals once the store recovers.
    */
-  private async safeListMounts(
-    orgId: string,
-    repoId: string,
-  ): Promise<MountSpec[]> {
+  private async safeListMounts(orgId: string, repoId: string): Promise<MountSpec[]> {
     try {
       return await this.config.listMounts(orgId, repoId);
     } catch (err) {
@@ -66,11 +57,7 @@ export class WorktreeHydrator {
   }
 
   /** Validated cache-mount specs from the repo's DB config (cheap; no secrets). Bad paths are dropped + warned. */
-  async resolveMounts(
-    orgId: string,
-    repoId: string,
-    worktreePath: string,
-  ): Promise<MountSpec[]> {
+  async resolveMounts(orgId: string, repoId: string, worktreePath: string): Promise<MountSpec[]> {
     const mounts = await this.safeListMounts(orgId, repoId);
     const out: MountSpec[] = [];
     for (const m of mounts) {
@@ -81,9 +68,7 @@ export class WorktreeHydrator {
         else resolveSafeTarget(worktreePath, m.path);
         out.push(m);
       } catch (err) {
-        this.logger.warn(
-          `worktree mount "${m.path}" rejected: ${(err as Error).message}`,
-        );
+        this.logger.warn(`worktree mount "${m.path}" rejected: ${(err as Error).message}`);
       }
     }
     return out;
@@ -96,15 +81,9 @@ export class WorktreeHydrator {
    * adds/removes a file or rotates a value (a rotated value bumps `updated_at` → the sig changes → the
    * next attach re-renders it; a no-op upsert leaves `updated_at` untouched → no spurious bump).
    */
-  async computeSig(
-    worktreePath: string,
-    orgId: string,
-    repoDbId?: string,
-  ): Promise<string> {
+  async computeSig(worktreePath: string, orgId: string, repoDbId?: string): Promise<string> {
     const mounts = repoDbId ? await this.safeListMounts(orgId, repoDbId) : [];
-    const secretFiles = repoDbId
-      ? await this.secrets.listForRepo(orgId, repoDbId)
-      : [];
+    const secretFiles = repoDbId ? await this.secrets.listForRepo(orgId, repoDbId) : [];
     const files = secretFiles.map((f) => `${f.path}:${f.updatedAt}`).sort();
     const mountSig = mounts.map((m) => `${m.path}:${m.mode}`).sort();
     return createHash('sha256')
@@ -156,9 +135,7 @@ export class WorktreeHydrator {
         try {
           target = resolveSafeTarget(worktreePath, f.path);
         } catch (err) {
-          note(
-            `workspace secret "${f.path}" rejected (unsafe path): ${(err as Error).message}`,
-          );
+          note(`workspace secret "${f.path}" rejected (unsafe path): ${(err as Error).message}`);
           continue;
         }
         const value = await this.secrets.read(orgId, repoDbId, f.path);
@@ -189,27 +166,19 @@ export class WorktreeHydrator {
         if (isExternalMountPath(m.path)) resolveExternalMountTarget(m.path);
         else resolveSafeTarget(worktreePath, m.path);
       } catch (err) {
-        note(
-          `worktree mount "${m.path}" rejected (unsafe path): ${(err as Error).message}`,
-        );
+        note(`worktree mount "${m.path}" rejected (unsafe path): ${(err as Error).message}`);
       }
     }
 
     // Persist the forbidden set OUTSIDE the worktree for the pre-ship branch leak-scan.
     await writeForbiddenPaths(worktreePath, forbidden);
     if (forbidden.length) {
-      this.logger.log(
-        `hydrated ${forbidden.length} file(s) into ${worktreePath}`,
-      );
+      this.logger.log(`hydrated ${forbidden.length} file(s) into ${worktreePath}`);
     }
     return { forbiddenPaths: forbidden, notices };
   }
 
-  private async writeAtomic(
-    target: string,
-    content: string,
-    mode: number,
-  ): Promise<void> {
+  private async writeAtomic(target: string, content: string, mode: number): Promise<void> {
     await mkdir(dirname(target), { recursive: true });
     const tmp = `${target}.atlas-tmp-${process.pid}-${this.tmpCounter++}`;
     await writeFile(tmp, content, { mode });

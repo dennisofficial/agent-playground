@@ -88,8 +88,7 @@ export function buildSystemSkills(): SystemSkill[] {
     },
     {
       name: 'playwright-cli',
-      description:
-        'Automate browser interactions, test web pages and work with Playwright tests.',
+      description: 'Automate browser interactions, test web pages and work with Playwright tests.',
       surfaces: ['build'],
       git: {
         url: 'https://github.com/microsoft/playwright-cli',

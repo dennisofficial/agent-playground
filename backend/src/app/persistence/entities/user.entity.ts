@@ -1,5 +1,5 @@
-import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
+import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 
 /**
  * An operator-console account (the web app's `/auth/*` users). Email/password + display name.

@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   composePreviewPrepSeed,
   fencedRecipe,
-  renderBuildLanePreviewRecipe,
   PREVIEW_PREP_SEED_BODY,
+  renderBuildLanePreviewRecipe,
 } from './fragments';
 
 /**

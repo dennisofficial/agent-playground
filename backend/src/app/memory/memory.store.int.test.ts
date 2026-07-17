@@ -26,8 +26,7 @@ const ORG_C = '2b333333-3333-4333-8333-333333333333';
 const ORG_D = '2b444444-4444-4444-8444-444444444444';
 const SHARED_SCOPE = 'team:cross-tenant-isolation';
 const MUTATION_SCOPE = 'team:forget-update-tests';
-const FACT =
-  'The deploy pipeline runs on GitHub Actions with a manual approval gate.';
+const FACT = 'The deploy pipeline runs on GitHub Actions with a manual approval gate.';
 
 /** Deterministic embedder: identical text → identical unit vector (cosine 1 to itself). */
 class FakeEmbedder implements EmbeddingProvider {
@@ -35,8 +34,7 @@ class FakeEmbedder implements EmbeddingProvider {
   async embed(text: string): Promise<number[]> {
     const v = new Array<number>(EMBED_DIM).fill(0);
     let h = 0;
-    for (let i = 0; i < text.length; i++)
-      h = (h * 31 + text.charCodeAt(i)) >>> 0;
+    for (let i = 0; i < text.length; i++) h = (h * 31 + text.charCodeAt(i)) >>> 0;
     v[h % EMBED_DIM] = 1;
     return v;
   }
@@ -66,11 +64,7 @@ function dbOpts() {
   };
 }
 
-async function seedOrg(
-  ds: DataSource,
-  id: string,
-  slug: string,
-): Promise<void> {
+async function seedOrg(ds: DataSource, id: string, slug: string): Promise<void> {
   await ds.query(
     `INSERT INTO organizations (id, name, slug, status) VALUES ($1, $2, $3, 'active')
      ON CONFLICT (id) DO NOTHING`,
@@ -177,10 +171,8 @@ describe('MemoryStore cross-tenant isolation (live Postgres)', () => {
   });
 
   it('updateFact rewrites the stored text so recall matches the new text, not the old', async () => {
-    const oldText =
-      'The billing service retries failed webhooks up to 3 times.';
-    const newText =
-      'The billing service retries failed webhooks up to 7 times with backoff.';
+    const oldText = 'The billing service retries failed webhooks up to 3 times.';
+    const newText = 'The billing service retries failed webhooks up to 7 times with backoff.';
     const { id } = await store.remember({
       fact: oldText,
       scope: MUTATION_SCOPE,
@@ -204,45 +196,31 @@ describe('MemoryStore cross-tenant isolation (live Postgres)', () => {
   });
 
   it('updateFact is a no-op under a foreign org or on an already-forgotten id', async () => {
-    const original =
-      'The support queue SLA is 4 business hours for P1 tickets.';
+    const original = 'The support queue SLA is 4 business hours for P1 tickets.';
     const { id } = await store.remember({
       fact: original,
       scope: MUTATION_SCOPE,
       orgId: ORG_C,
     });
 
-    const foreignAttempt = await store.updateFact(
-      id,
-      'This should never land.',
-      ORG_D,
-    );
+    const foreignAttempt = await store.updateFact(id, 'This should never land.', ORG_D);
     expect(foreignAttempt).toEqual({ updated: false });
 
     const stillOriginal = await store.recall(original, {
       scopes: [MUTATION_SCOPE],
       orgId: ORG_C,
     });
-    expect(stillOriginal.some((h) => h.id === id && h.fact === original)).toBe(
-      true,
-    );
+    expect(stillOriginal.some((h) => h.id === id && h.fact === original)).toBe(true);
 
     const { deleted } = await store.forget(id, ORG_C);
     expect(deleted).toBe(true);
 
-    const forgottenAttempt = await store.updateFact(
-      id,
-      'This should never land either.',
-      ORG_C,
-    );
+    const forgottenAttempt = await store.updateFact(id, 'This should never land either.', ORG_C);
     expect(forgottenAttempt).toEqual({ updated: false });
   });
 
   it('updateFact does not embed when the id is unknown, foreign, or already forgotten', async () => {
-    const guarded = new MemoryStore(
-      ds.getRepository(MemoryEntity),
-      new ThrowingEmbedder(),
-    );
+    const guarded = new MemoryStore(ds.getRepository(MemoryEntity), new ThrowingEmbedder());
     const { id } = await store.remember({
       fact: 'The incident channel is #ops-incidents.',
       scope: MUTATION_SCOPE,
@@ -250,20 +228,16 @@ describe('MemoryStore cross-tenant isolation (live Postgres)', () => {
     });
 
     await expect(
-      guarded.updateFact(
-        '2b999999-9999-4999-8999-999999999999',
-        'This should never embed.',
-        ORG_C,
-      ),
+      guarded.updateFact('2b999999-9999-4999-8999-999999999999', 'This should never embed.', ORG_C),
     ).resolves.toEqual({ updated: false });
 
-    await expect(
-      guarded.updateFact(id, 'This should never embed.', ORG_D),
-    ).resolves.toEqual({ updated: false });
+    await expect(guarded.updateFact(id, 'This should never embed.', ORG_D)).resolves.toEqual({
+      updated: false,
+    });
 
     await store.forget(id, ORG_C);
-    await expect(
-      guarded.updateFact(id, 'This should never embed.', ORG_C),
-    ).resolves.toEqual({ updated: false });
+    await expect(guarded.updateFact(id, 'This should never embed.', ORG_C)).resolves.toEqual({
+      updated: false,
+    });
   });
 });

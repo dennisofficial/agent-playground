@@ -18,41 +18,21 @@ export class RenameThreadToJobTrackToThread1782900000000 implements MigrationInt
 
   public async up(q: QueryRunner): Promise<void> {
     // ═══ COLUMNS ═══ (steps: container thread_id→job_id BEFORE lane track_id→thread_id)
-    await q.query(
-      `ALTER TABLE "active_turns" RENAME COLUMN "thread_id" TO "job_id"`,
-    );
-    await q.query(
-      `ALTER TABLE "decision_records" RENAME COLUMN "thread_id" TO "job_id"`,
-    );
-    await q.query(
-      `ALTER TABLE "messages" RENAME COLUMN "thread_id" TO "job_id"`,
-    );
-    await q.query(
-      `ALTER TABLE "plan_reviews" RENAME COLUMN "thread_id" TO "job_id"`,
-    );
-    await q.query(
-      `ALTER TABLE "stimuli" RENAME COLUMN "thread_id" TO "job_id"`,
-    );
+    await q.query(`ALTER TABLE "active_turns" RENAME COLUMN "thread_id" TO "job_id"`);
+    await q.query(`ALTER TABLE "decision_records" RENAME COLUMN "thread_id" TO "job_id"`);
+    await q.query(`ALTER TABLE "messages" RENAME COLUMN "thread_id" TO "job_id"`);
+    await q.query(`ALTER TABLE "plan_reviews" RENAME COLUMN "thread_id" TO "job_id"`);
+    await q.query(`ALTER TABLE "stimuli" RENAME COLUMN "thread_id" TO "job_id"`);
     await q.query(`ALTER TABLE "steps" RENAME COLUMN "thread_id" TO "job_id"`);
-    await q.query(
-      `ALTER TABLE "steps" RENAME COLUMN "track_id" TO "thread_id"`,
-    );
+    await q.query(`ALTER TABLE "steps" RENAME COLUMN "track_id" TO "thread_id"`);
     await q.query(`ALTER TABLE "tracks" RENAME COLUMN "thread_id" TO "job_id"`);
-    await q.query(
-      `ALTER TABLE "thread_sandboxes" RENAME COLUMN "thread_id" TO "job_id"`,
-    );
-    await q.query(
-      `ALTER TABLE "tickets" RENAME COLUMN "origin_thread_id" TO "origin_job_id"`,
-    );
+    await q.query(`ALTER TABLE "thread_sandboxes" RENAME COLUMN "thread_id" TO "job_id"`);
+    await q.query(`ALTER TABLE "tickets" RENAME COLUMN "origin_thread_id" TO "origin_job_id"`);
     await q.query(
       `ALTER TABLE "repos" RENAME COLUMN "onboarding_thread_id" TO "onboarding_job_id"`,
     );
-    await q.query(
-      `ALTER TABLE "decision_records" RENAME COLUMN "track_titles" TO "thread_titles"`,
-    );
-    await q.query(
-      `ALTER TABLE "repo_decisions" RENAME COLUMN "source_thread" TO "source_job"`,
-    );
+    await q.query(`ALTER TABLE "decision_records" RENAME COLUMN "track_titles" TO "thread_titles"`);
+    await q.query(`ALTER TABLE "repo_decisions" RENAME COLUMN "source_thread" TO "source_job"`);
 
     // ═══ TABLES ═══ (threads→jobs frees "threads" for tracks→threads)
     await q.query(`ALTER TABLE "threads" RENAME TO "jobs"`);
@@ -60,9 +40,7 @@ export class RenameThreadToJobTrackToThread1782900000000 implements MigrationInt
     await q.query(`ALTER TABLE "tracks" RENAME TO "threads"`);
 
     // ═══ CONSTRAINTS — container (jobs, was threads) ═══
-    await q.query(
-      `ALTER TABLE "jobs" RENAME CONSTRAINT "pk_threads" TO "pk_jobs"`,
-    );
+    await q.query(`ALTER TABLE "jobs" RENAME CONSTRAINT "pk_threads" TO "pk_jobs"`);
     await q.query(
       `ALTER TABLE "jobs" RENAME CONSTRAINT "fk_threads_org_id_organizations" TO "fk_jobs_org_id_organizations"`,
     );
@@ -112,9 +90,7 @@ export class RenameThreadToJobTrackToThread1782900000000 implements MigrationInt
     );
 
     // ═══ CONSTRAINTS — lane (threads, was tracks) ═══
-    await q.query(
-      `ALTER TABLE "threads" RENAME CONSTRAINT "pk_tracks" TO "pk_threads"`,
-    );
+    await q.query(`ALTER TABLE "threads" RENAME CONSTRAINT "pk_tracks" TO "pk_threads"`);
     await q.query(
       `ALTER TABLE "threads" RENAME CONSTRAINT "fk_tracks_thread_id_threads" TO "fk_threads_job_id_jobs"`,
     );
@@ -132,12 +108,8 @@ export class RenameThreadToJobTrackToThread1782900000000 implements MigrationInt
     );
 
     // ═══ INDEXES — container ═══
-    await q.query(
-      `ALTER INDEX "idx_threads_org_id_repo_id" RENAME TO "idx_jobs_org_id_repo_id"`,
-    );
-    await q.query(
-      `ALTER INDEX "idx_active_turns_thread_id" RENAME TO "idx_active_turns_job_id"`,
-    );
+    await q.query(`ALTER INDEX "idx_threads_org_id_repo_id" RENAME TO "idx_jobs_org_id_repo_id"`);
+    await q.query(`ALTER INDEX "idx_active_turns_thread_id" RENAME TO "idx_active_turns_job_id"`);
     await q.query(
       `ALTER INDEX "idx_decision_records_thread_id" RENAME TO "idx_decision_records_job_id"`,
     );
@@ -147,36 +119,24 @@ export class RenameThreadToJobTrackToThread1782900000000 implements MigrationInt
     await q.query(
       `ALTER INDEX "idx_plan_reviews_thread_id_round" RENAME TO "idx_plan_reviews_job_id_round"`,
     );
-    await q.query(
-      `ALTER INDEX "idx_steps_thread_id" RENAME TO "idx_steps_job_id"`,
-    );
+    await q.query(`ALTER INDEX "idx_steps_thread_id" RENAME TO "idx_steps_job_id"`);
     await q.query(
       `ALTER INDEX "idx_thread_sandboxes_thread_id" RENAME TO "idx_job_sandboxes_job_id"`,
     );
     // ═══ INDEXES — lane (idx_steps_track_id AFTER idx_steps_thread_id freed above) ═══
-    await q.query(
-      `ALTER INDEX "idx_tracks_thread_id" RENAME TO "idx_threads_job_id"`,
-    );
-    await q.query(
-      `ALTER INDEX "idx_steps_track_id" RENAME TO "idx_steps_thread_id"`,
-    );
+    await q.query(`ALTER INDEX "idx_tracks_thread_id" RENAME TO "idx_threads_job_id"`);
+    await q.query(`ALTER INDEX "idx_steps_track_id" RENAME TO "idx_steps_thread_id"`);
   }
 
   public async down(q: QueryRunner): Promise<void> {
     // ═══ INDEXES — lane (reverse: idx_steps_thread_id→track_id BEFORE idx_steps_job_id→thread_id) ═══
-    await q.query(
-      `ALTER INDEX "idx_steps_thread_id" RENAME TO "idx_steps_track_id"`,
-    );
-    await q.query(
-      `ALTER INDEX "idx_threads_job_id" RENAME TO "idx_tracks_thread_id"`,
-    );
+    await q.query(`ALTER INDEX "idx_steps_thread_id" RENAME TO "idx_steps_track_id"`);
+    await q.query(`ALTER INDEX "idx_threads_job_id" RENAME TO "idx_tracks_thread_id"`);
     // ═══ INDEXES — container ═══
     await q.query(
       `ALTER INDEX "idx_job_sandboxes_job_id" RENAME TO "idx_thread_sandboxes_thread_id"`,
     );
-    await q.query(
-      `ALTER INDEX "idx_steps_job_id" RENAME TO "idx_steps_thread_id"`,
-    );
+    await q.query(`ALTER INDEX "idx_steps_job_id" RENAME TO "idx_steps_thread_id"`);
     await q.query(
       `ALTER INDEX "idx_plan_reviews_job_id_round" RENAME TO "idx_plan_reviews_thread_id_round"`,
     );
@@ -186,12 +146,8 @@ export class RenameThreadToJobTrackToThread1782900000000 implements MigrationInt
     await q.query(
       `ALTER INDEX "idx_decision_records_job_id" RENAME TO "idx_decision_records_thread_id"`,
     );
-    await q.query(
-      `ALTER INDEX "idx_active_turns_job_id" RENAME TO "idx_active_turns_thread_id"`,
-    );
-    await q.query(
-      `ALTER INDEX "idx_jobs_org_id_repo_id" RENAME TO "idx_threads_org_id_repo_id"`,
-    );
+    await q.query(`ALTER INDEX "idx_active_turns_job_id" RENAME TO "idx_active_turns_thread_id"`);
+    await q.query(`ALTER INDEX "idx_jobs_org_id_repo_id" RENAME TO "idx_threads_org_id_repo_id"`);
 
     // ═══ CONSTRAINTS — lane ═══
     await q.query(
@@ -209,9 +165,7 @@ export class RenameThreadToJobTrackToThread1782900000000 implements MigrationInt
     await q.query(
       `ALTER TABLE "threads" RENAME CONSTRAINT "fk_threads_job_id_jobs" TO "fk_tracks_thread_id_threads"`,
     );
-    await q.query(
-      `ALTER TABLE "threads" RENAME CONSTRAINT "pk_threads" TO "pk_tracks"`,
-    );
+    await q.query(`ALTER TABLE "threads" RENAME CONSTRAINT "pk_threads" TO "pk_tracks"`);
     // ═══ CONSTRAINTS — container ═══
     await q.query(
       `ALTER TABLE "job_sandboxes" RENAME CONSTRAINT "fk_job_sandboxes_org_id_organizations" TO "fk_thread_sandboxes_org_id_organizations"`,
@@ -258,9 +212,7 @@ export class RenameThreadToJobTrackToThread1782900000000 implements MigrationInt
     await q.query(
       `ALTER TABLE "jobs" RENAME CONSTRAINT "fk_jobs_org_id_organizations" TO "fk_threads_org_id_organizations"`,
     );
-    await q.query(
-      `ALTER TABLE "jobs" RENAME CONSTRAINT "pk_jobs" TO "pk_threads"`,
-    );
+    await q.query(`ALTER TABLE "jobs" RENAME CONSTRAINT "pk_jobs" TO "pk_threads"`);
 
     // ═══ TABLES (reverse: threads→tracks BEFORE jobs→threads) ═══
     await q.query(`ALTER TABLE "threads" RENAME TO "tracks"`);
@@ -268,40 +220,20 @@ export class RenameThreadToJobTrackToThread1782900000000 implements MigrationInt
     await q.query(`ALTER TABLE "jobs" RENAME TO "threads"`);
 
     // ═══ COLUMNS ═══
-    await q.query(
-      `ALTER TABLE "repo_decisions" RENAME COLUMN "source_job" TO "source_thread"`,
-    );
-    await q.query(
-      `ALTER TABLE "decision_records" RENAME COLUMN "thread_titles" TO "track_titles"`,
-    );
+    await q.query(`ALTER TABLE "repo_decisions" RENAME COLUMN "source_job" TO "source_thread"`);
+    await q.query(`ALTER TABLE "decision_records" RENAME COLUMN "thread_titles" TO "track_titles"`);
     await q.query(
       `ALTER TABLE "repos" RENAME COLUMN "onboarding_job_id" TO "onboarding_thread_id"`,
     );
-    await q.query(
-      `ALTER TABLE "tickets" RENAME COLUMN "origin_job_id" TO "origin_thread_id"`,
-    );
-    await q.query(
-      `ALTER TABLE "thread_sandboxes" RENAME COLUMN "job_id" TO "thread_id"`,
-    );
+    await q.query(`ALTER TABLE "tickets" RENAME COLUMN "origin_job_id" TO "origin_thread_id"`);
+    await q.query(`ALTER TABLE "thread_sandboxes" RENAME COLUMN "job_id" TO "thread_id"`);
     await q.query(`ALTER TABLE "tracks" RENAME COLUMN "job_id" TO "thread_id"`);
-    await q.query(
-      `ALTER TABLE "steps" RENAME COLUMN "thread_id" TO "track_id"`,
-    );
+    await q.query(`ALTER TABLE "steps" RENAME COLUMN "thread_id" TO "track_id"`);
     await q.query(`ALTER TABLE "steps" RENAME COLUMN "job_id" TO "thread_id"`);
-    await q.query(
-      `ALTER TABLE "stimuli" RENAME COLUMN "job_id" TO "thread_id"`,
-    );
-    await q.query(
-      `ALTER TABLE "plan_reviews" RENAME COLUMN "job_id" TO "thread_id"`,
-    );
-    await q.query(
-      `ALTER TABLE "messages" RENAME COLUMN "job_id" TO "thread_id"`,
-    );
-    await q.query(
-      `ALTER TABLE "decision_records" RENAME COLUMN "job_id" TO "thread_id"`,
-    );
-    await q.query(
-      `ALTER TABLE "active_turns" RENAME COLUMN "job_id" TO "thread_id"`,
-    );
+    await q.query(`ALTER TABLE "stimuli" RENAME COLUMN "job_id" TO "thread_id"`);
+    await q.query(`ALTER TABLE "plan_reviews" RENAME COLUMN "job_id" TO "thread_id"`);
+    await q.query(`ALTER TABLE "messages" RENAME COLUMN "job_id" TO "thread_id"`);
+    await q.query(`ALTER TABLE "decision_records" RENAME COLUMN "job_id" TO "thread_id"`);
+    await q.query(`ALTER TABLE "active_turns" RENAME COLUMN "job_id" TO "thread_id"`);
   }
 }

@@ -1,14 +1,11 @@
-import { createHash } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { EventMessage, Message, ParsedEvent, SeedRow } from '@shared/domain';
 import { assertNever } from '@shared/domain';
+import { createHash } from 'node:crypto';
 import { composeMessageBody } from '../prompt-kit/harness';
 import { EventFilterService } from './event-filter.service';
 import { BRAIN_SINK, type BrainSink } from './stimulus-consumer';
-import {
-  DuplicateStimulusError,
-  StimulusStoreService,
-} from './stimulus-store.service';
+import { DuplicateStimulusError, StimulusStoreService } from './stimulus-store.service';
 
 /** Outcome of pushing an event through intake — for the controller to map to a status / log. */
 export type IntakeOutcome =
@@ -102,9 +99,7 @@ export class StimulusIntake {
       // owns the untrusted fence (so it + the boot sweep fence identically).
       void this.sink
         .deliverEvent(stimulus)
-        .catch((err) =>
-          this.logger.error(`event delivery failed for ${stimulus.id}: ${err}`),
-        );
+        .catch((err) => this.logger.error(`event delivery failed for ${stimulus.id}: ${err}`));
       this.logger.log(
         `event admitted: ${stimulus.id} routed to owning job ${owner.id} ` +
           `(project ${event.repoId}, severity ${event.severity})`,
@@ -143,11 +138,7 @@ export class StimulusIntake {
       if (byPr) return byPr;
     }
     if (corr.branch) {
-      return this.store.findOwningJobByBranch(
-        event.orgId,
-        event.repoId,
-        corr.branch,
-      );
+      return this.store.findOwningJobByBranch(event.orgId, event.repoId, corr.branch);
     }
     return null;
   }
@@ -197,8 +188,7 @@ export class StimulusIntake {
           ...base,
           body,
           seedQuestionId: message.questionId,
-          systemChunk:
-            seedRow ?? genericSeedRow({ jobId: message.jobId, body }),
+          systemChunk: seedRow ?? genericSeedRow({ jobId: message.jobId, body }),
           type: 'answer_question',
         };
         break;
@@ -209,8 +199,7 @@ export class StimulusIntake {
           ...base,
           body,
           seedFileId: message.requestId,
-          systemChunk:
-            seedRow ?? genericSeedRow({ jobId: message.jobId, body }),
+          systemChunk: seedRow ?? genericSeedRow({ jobId: message.jobId, body }),
           type: 'file_answered',
         };
         break;
@@ -221,8 +210,7 @@ export class StimulusIntake {
           ...base,
           body,
           seedSecretId: message.requestId,
-          systemChunk:
-            seedRow ?? genericSeedRow({ jobId: message.jobId, body }),
+          systemChunk: seedRow ?? genericSeedRow({ jobId: message.jobId, body }),
           type: 'secret_provided',
         };
         break;
@@ -248,8 +236,7 @@ export class StimulusIntake {
         input = {
           ...base,
           body,
-          systemChunk:
-            seedRow ?? genericSeedRow({ jobId: message.jobId, body }),
+          systemChunk: seedRow ?? genericSeedRow({ jobId: message.jobId, body }),
           type: message.type,
         };
         break;
@@ -338,9 +325,7 @@ export class StimulusIntake {
       author: transport.author,
       replyRoute: transport.replyRoute,
       body: input.body,
-      systemChunk:
-        input.seedRow ??
-        genericSeedRow({ jobId: input.jobId, body: input.body }),
+      systemChunk: input.seedRow ?? genericSeedRow({ jobId: input.jobId, body: input.body }),
       seedQuestionId: input.seedQuestionId,
       seedFileId: input.seedFileId,
       seedSecretId: input.seedSecretId,
@@ -354,14 +339,9 @@ export class StimulusIntake {
   }
 }
 
-type RecordChatInput = Parameters<
-  StimulusStoreService['recordChatStimulus']
->[0];
+type RecordChatInput = Parameters<StimulusStoreService['recordChatStimulus']>[0];
 
-function genericSeedRow(fields: {
-  jobId: string;
-  body: string;
-}): Exclude<SeedRow, 'skip'> {
+function genericSeedRow(fields: { jobId: string; body: string }): Exclude<SeedRow, 'skip'> {
   return {
     label: 'A harness system notification was delivered to Atlas.',
     chunkKey: `seed:generic:${fields.jobId}:${createHash('sha1')

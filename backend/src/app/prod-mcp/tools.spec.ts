@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
 import type { DataSource } from 'typeorm';
+import { describe, expect, it, vi } from 'vitest';
 import { TOOL_HANDLERS, type ToolCtx } from './tools';
 
 describe('mcp-reader tool argument validation', () => {
@@ -11,9 +11,7 @@ describe('mcp-reader tool argument validation', () => {
       audit: {},
     };
 
-    await expect(TOOL_HANDLERS.atlas_job_overview(ctx, {})).rejects.toThrow(
-      'jobId is required',
-    );
+    await expect(TOOL_HANDLERS.atlas_job_overview(ctx, {})).rejects.toThrow('jobId is required');
     expect(getRepository).not.toHaveBeenCalled();
   });
 

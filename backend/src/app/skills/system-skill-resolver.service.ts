@@ -32,9 +32,7 @@ export class SystemSkillResolver {
       s.git
         ? {
             ...s,
-            synced: existsSync(
-              join(managedGitSkillDirHost(root, s.name), 'SKILL.md'),
-            ),
+            synced: existsSync(join(managedGitSkillDirHost(root, s.name), 'SKILL.md')),
           }
         : s,
     );

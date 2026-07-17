@@ -1,6 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { Injectable, Logger } from '@nestjs/common';
+import { resetEpochToIso } from '@shared/engine/session-limit';
 import type {
   ClaudeUsageWindowKey,
   ModelUsageWindow,
@@ -8,7 +7,8 @@ import type {
   StoredUsageWindow,
   UsageWindow,
 } from '@workspace/shared';
-import { resetEpochToIso } from '@shared/engine/session-limit';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { ClaudeCredentialStore } from './claude-credential.store';
 import { CredentialRefreshService } from './credential-refresh.service';
 import { CredentialResolver } from './credential-resolver.service';
@@ -46,8 +46,7 @@ const FETCH_TIMEOUT_MS = 10_000;
 
 const FALLBACK_CLAUDE_CODE_VERSION = '2.1.204';
 
-const errorText = (err: unknown): string =>
-  err instanceof Error ? err.message : String(err);
+const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
 type LiveCacheEntry = {
   usage: OrgUsage;
@@ -106,12 +105,9 @@ export class OauthUsageService {
       // when the frame omits `utilization`, and default an unlabeled rejection to the session window (the
       // binding day-to-day one). Non-rejected frames still require a real `utilization` to record.
       const rejected = info.status === 'rejected';
-      const utilization = rejected
-        ? 100
-        : toPercentUtilization(info.utilization);
+      const utilization = rejected ? 100 : toPercentUtilization(info.utilization);
       if (utilization == null) return;
-      const rateLimitType =
-        info.rateLimitType ?? (rejected ? 'five_hour' : undefined);
+      const rateLimitType = info.rateLimitType ?? (rejected ? 'five_hour' : undefined);
       if (!rateLimitType) return;
       const key = RATE_LIMIT_TYPE_TO_WINDOW[rateLimitType];
       if (!key) return;
@@ -148,14 +144,9 @@ export class OauthUsageService {
       let secret = auth.secret;
       if (auth.kind === 'personal' && auth.refreshBack?.credentialId) {
         try {
-          secret = await this.credRefresh.ensureFresh(
-            orgId,
-            auth.refreshBack.credentialId,
-          );
+          secret = await this.credRefresh.ensureFresh(orgId, auth.refreshBack.credentialId);
         } catch (err) {
-          this.logger.warn(
-            `usage refresh failed org=${orgId}: ${errorText(err)}`,
-          );
+          this.logger.warn(`usage refresh failed org=${orgId}: ${errorText(err)}`);
           return degradedUsage();
         }
       }
@@ -198,13 +189,8 @@ export class OauthUsageService {
    * through THAT credential's own token (never the org-level harvested snapshot, which is keyed to whichever
    * credential was selected when turns ran). Setup tokens and unknown ids degrade to `ok:false` (d1/d3).
    */
-  async getForCredential(
-    orgId: string,
-    credentialId: string,
-  ): Promise<OrgUsage> {
-    const row = (await this.claudeStore.list(orgId)).find(
-      (r) => r.id === credentialId,
-    );
+  async getForCredential(orgId: string, credentialId: string): Promise<OrgUsage> {
+    const row = (await this.claudeStore.list(orgId)).find((r) => r.id === credentialId);
     if (!row || row.kind !== 'personal') return degradedUsage();
     return this.liveCredentialSnapshot(orgId, credentialId);
   }
@@ -223,15 +209,12 @@ export class OauthUsageService {
     // Trust the harvested snapshot ONLY when it was produced by the currently-selected credential.
     // A snapshot tagged to a now-deselected account (or an untagged legacy/reattach snapshot) must
     // not shadow the live per-account read — that is the account-switch staleness bug.
-    const harvestTrusted =
-      !!snapshot?.credentialId && snapshot.credentialId === selectedId;
+    const harvestTrusted = !!snapshot?.credentialId && snapshot.credentialId === selectedId;
     // Drop any harvested window whose reset instant has already passed: the window has rolled over, so its
     // stored utilization (e.g. a latched 100% from a session-limit hit) is stale and must NOT keep shadowing
     // the live snapshot's fresh post-reset value — otherwise a maxed window never visibly "resets to 0".
     const now = Date.now();
-    const harvestWindows: Partial<
-      Record<ClaudeUsageWindowKey, StoredUsageWindow>
-    > = {};
+    const harvestWindows: Partial<Record<ClaudeUsageWindowKey, StoredUsageWindow>> = {};
     if (harvestTrusted) {
       for (const [key, w] of Object.entries(snapshot?.windows ?? {})) {
         if (w && new Date(w.resetsAt).getTime() > now)
@@ -256,8 +239,7 @@ export class OauthUsageService {
     const hasLive = live.ok;
     const harvestAtMs = snapshot?.fetchedAt;
     const liveAtMs = new Date(live.fetchedAt).getTime();
-    const harvestWins =
-      hasHarvest && (!hasLive || (harvestAtMs ?? 0) >= liveAtMs);
+    const harvestWins = hasHarvest && (!hasLive || (harvestAtMs ?? 0) >= liveAtMs);
     const liveWins = !harvestWins && hasLive;
 
     // Whichever source won leads per-window; the other backfills the windows the winner doesn't carry.
@@ -306,14 +288,10 @@ export class OauthUsageService {
    * The binding window's `resetsAt` for the park logic — prefers `rateLimitType`'s window, else
    * `fiveHour`. Pure snapshot read (no HTTP): the park path needs an answer NOW, not after a 10s probe.
    */
-  async getResetAt(
-    orgId: string,
-    rateLimitType?: string,
-  ): Promise<string | undefined> {
+  async getResetAt(orgId: string, rateLimitType?: string): Promise<string | undefined> {
     const snapshot = await this.store.readClaudeUsageSnapshot(orgId);
     if (!snapshot) return undefined;
-    const key =
-      (rateLimitType && RATE_LIMIT_TYPE_TO_WINDOW[rateLimitType]) || 'fiveHour';
+    const key = (rateLimitType && RATE_LIMIT_TYPE_TO_WINDOW[rateLimitType]) || 'fiveHour';
     return snapshot.windows[key]?.resetsAt;
   }
 
@@ -322,26 +300,20 @@ export class OauthUsageService {
    * `rateLimitType`'s window, else `fiveHour`. Pure snapshot read; undefined when unknown or rolled over
    * (a rolled-over window's latched value must not falsely corroborate).
    */
-  async getUtilization(
-    orgId: string,
-    rateLimitType?: string,
-  ): Promise<number | undefined> {
+  async getUtilization(orgId: string, rateLimitType?: string): Promise<number | undefined> {
     const snapshot = await this.store.readClaudeUsageSnapshot(orgId);
     if (!snapshot) return undefined;
-    const key =
-      (rateLimitType && RATE_LIMIT_TYPE_TO_WINDOW[rateLimitType]) || 'fiveHour';
+    const key = (rateLimitType && RATE_LIMIT_TYPE_TO_WINDOW[rateLimitType]) || 'fiveHour';
     const w = snapshot.windows[key];
     const resetAtMs = w ? new Date(w.resetsAt).getTime() : NaN;
-    if (!w || !Number.isFinite(resetAtMs) || resetAtMs <= Date.now())
-      return undefined;
+    if (!w || !Number.isFinite(resetAtMs) || resetAtMs <= Date.now()) return undefined;
     return w.utilization;
   }
 
   /** `fetchLive`, cached for {@link LIVE_FLOOR_MS} so repeated `get()` calls don't hammer the endpoint. */
   private async liveSnapshot(orgId: string): Promise<OrgUsage> {
     const cached = this.liveCache.get(orgId);
-    if (cached && Date.now() - cached.fetchedAtMs < LIVE_FLOOR_MS)
-      return cached.usage;
+    if (cached && Date.now() - cached.fetchedAtMs < LIVE_FLOOR_MS) return cached.usage;
     const usage = await this.fetchLive(orgId);
     this.liveCache.set(orgId, { usage, fetchedAtMs: Date.now() });
     return usage;
@@ -358,9 +330,7 @@ export class OauthUsageService {
     try {
       this.bus.publish({ orgId, usage: await this.get(orgId) });
     } catch (err) {
-      this.logger.warn(
-        `publishHarvested failed org=${orgId}: ${errorText(err)}`,
-      );
+      this.logger.warn(`publishHarvested failed org=${orgId}: ${errorText(err)}`);
     }
   }
 
@@ -387,13 +357,9 @@ export class OauthUsageService {
   }
 
   /** `fetchLiveForCredential`, cached per credential id for {@link LIVE_FLOOR_MS} so repeat settings visits don't re-hit the endpoint. */
-  private async liveCredentialSnapshot(
-    orgId: string,
-    credentialId: string,
-  ): Promise<OrgUsage> {
+  private async liveCredentialSnapshot(orgId: string, credentialId: string): Promise<OrgUsage> {
     const cached = this.credentialLiveCache.get(credentialId);
-    if (cached && Date.now() - cached.fetchedAtMs < LIVE_FLOOR_MS)
-      return cached.usage;
+    if (cached && Date.now() - cached.fetchedAtMs < LIVE_FLOOR_MS) return cached.usage;
     const usage = await this.fetchLiveForCredential(orgId, credentialId);
     this.credentialLiveCache.set(credentialId, {
       usage,
@@ -409,17 +375,12 @@ export class OauthUsageService {
    * rotating refresh token or silently swallow a dead-token failure. Best-effort: any failure (including
    * `CredentialNeedsReauthError`, after the row is already marked) degrades to `ok:false`.
    */
-  private async fetchLiveForCredential(
-    orgId: string,
-    credentialId: string,
-  ): Promise<OrgUsage> {
+  private async fetchLiveForCredential(orgId: string, credentialId: string): Promise<OrgUsage> {
     let secret: string;
     try {
       secret = await this.credRefresh.ensureFresh(orgId, credentialId);
     } catch (err) {
-      this.logger.warn(
-        `cred usage refresh failed ${credentialId}: ${errorText(err)}`,
-      );
+      this.logger.warn(`cred usage refresh failed ${credentialId}: ${errorText(err)}`);
       return degradedUsage();
     }
     try {
@@ -427,9 +388,7 @@ export class OauthUsageService {
       if (!accessToken) return degradedUsage();
       return await this.fetchUsageWithToken(accessToken);
     } catch (err) {
-      this.logger.warn(
-        `cred usage fetch failed ${credentialId}: ${errorText(err)}`,
-      );
+      this.logger.warn(`cred usage fetch failed ${credentialId}: ${errorText(err)}`);
       return degradedUsage();
     }
   }
@@ -440,9 +399,7 @@ export class OauthUsageService {
  * Undefined for a null/blank type (setup-tokens carry none → no badge). A value that already reads like a
  * plan is titlecased as-is rather than gaining a second "plan".
  */
-function planLabel(
-  subscriptionType: string | null | undefined,
-): string | undefined {
+function planLabel(subscriptionType: string | null | undefined): string | undefined {
   const t = subscriptionType?.trim();
   if (!t) return undefined;
   const titled = t.charAt(0).toUpperCase() + t.slice(1);
@@ -457,9 +414,7 @@ function planLabel(
  * fraction to a percent; a value already `> 1` is treated as an already-percent scale (defensive against
  * CLI/SDK drift) and passes through. Clamped + rounded to 0–100 to match `parseWindow`. Undefined in → undefined out.
  */
-export function toPercentUtilization(
-  utilization: number | undefined,
-): number | undefined {
+export function toPercentUtilization(utilization: number | undefined): number | undefined {
   if (utilization == null) return undefined;
   const percent = utilization <= 1 ? utilization * 100 : utilization;
   return Math.round(Math.min(100, Math.max(0, percent)));
@@ -481,9 +436,7 @@ function degradedUsage(): OrgUsage {
  * top-level `seven_day_*` keys don't carry these. `percent` is already a 0–100 value here (NOT the SDK
  * fraction). Anything malformed is skipped. Returns [] when there's no usable array.
  */
-export function parseModelWindows(
-  root: Record<string, unknown>,
-): ModelUsageWindow[] {
+export function parseModelWindows(root: Record<string, unknown>): ModelUsageWindow[] {
   const limits = root.limits;
   if (!Array.isArray(limits)) return [];
   const out: ModelUsageWindow[] = [];
@@ -496,9 +449,8 @@ export function parseModelWindows(
       scope?: unknown;
     };
     if (l.kind !== 'weekly_scoped') continue;
-    const label = (
-      l.scope as { model?: { display_name?: unknown } } | undefined
-    )?.model?.display_name;
+    const label = (l.scope as { model?: { display_name?: unknown } } | undefined)?.model
+      ?.display_name;
     if (typeof label !== 'string' || label.length === 0) continue;
     if (typeof l.percent !== 'number') continue;
     out.push({
@@ -521,9 +473,8 @@ function bearerTokenFromSecret(
 ): string | null {
   if (kind !== 'personal') return secret;
   try {
-    const t = (
-      JSON.parse(secret) as { claudeAiOauth?: { accessToken?: unknown } }
-    ).claudeAiOauth?.accessToken;
+    const t = (JSON.parse(secret) as { claudeAiOauth?: { accessToken?: unknown } }).claudeAiOauth
+      ?.accessToken;
     return typeof t === 'string' && t.length > 0 ? t : null;
   } catch {
     return null;

@@ -44,20 +44,12 @@ describe('SandboxManager.writeToJobContainerPath (ephemeral delivery)', () => {
     let seenArgv: string[] = [];
     let seenOpts: ExecOptions = {};
     const engine = makeEngine({
-      inspect: vi.fn(async (name: string) =>
-        name === EXPECTED_NAME ? fakeInfo('running') : null,
-      ),
-      exec: vi.fn(
-        async (
-          _id: string,
-          argv: string[],
-          opts?: ExecOptions,
-        ): Promise<ExecResult> => {
-          seenArgv = argv;
-          seenOpts = opts ?? {};
-          return { exitCode: 0, stdout: '', stderr: '' };
-        },
-      ),
+      inspect: vi.fn(async (name: string) => (name === EXPECTED_NAME ? fakeInfo('running') : null)),
+      exec: vi.fn(async (_id: string, argv: string[], opts?: ExecOptions): Promise<ExecResult> => {
+        seenArgv = argv;
+        seenOpts = opts ?? {};
+        return { exitCode: 0, stdout: '', stderr: '' };
+      }),
     });
     const mgr = makeManager(engine);
 
@@ -69,25 +61,15 @@ describe('SandboxManager.writeToJobContainerPath (ephemeral delivery)', () => {
 
     expect(res.ok).toBe(true);
     // `cat > "$1"` with the path as the sole positional — value goes to STDIN, not the command line.
-    expect(seenArgv).toEqual([
-      'sh',
-      '-c',
-      'cat > "$1"',
-      'sh',
-      '/tmp/atlas-login-in',
-    ]);
+    expect(seenArgv).toEqual(['sh', '-c', 'cat > "$1"', 'sh', '/tmp/atlas-login-in']);
     expect(seenOpts.stdin).toBe('4/0AVerificationCode\n');
     expect(seenArgv.join(' ')).not.toContain('4/0AVerificationCode');
-    expect(JSON.stringify(seenOpts.env ?? {})).not.toContain(
-      '4/0AVerificationCode',
-    );
+    expect(JSON.stringify(seenOpts.env ?? {})).not.toContain('4/0AVerificationCode');
   });
 
   it('fails cleanly when the container is not running (no exec attempted)', async () => {
     const exec = vi.fn();
-    const mgr = makeManager(
-      makeEngine({ inspect: async () => fakeInfo('exited'), exec }),
-    );
+    const mgr = makeManager(makeEngine({ inspect: async () => fakeInfo('exited'), exec }));
 
     const res = await mgr.writeToJobContainerPath({
       jobId: JOB_ID,
@@ -113,17 +95,11 @@ describe('SandboxManager.writeToJobContainerPath (ephemeral delivery)', () => {
   it('aborts on timeout when the target has no live reader (FIFO write hangs)', async () => {
     // Model a dead FIFO reader: `cat > fifo` blocks forever on open → exec never resolves until aborted.
     const engine = makeEngine({
-      exec: async (
-        _id: string,
-        _argv: string[],
-        opts?: ExecOptions,
-      ): Promise<ExecResult> => {
+      exec: async (_id: string, _argv: string[], opts?: ExecOptions): Promise<ExecResult> => {
         return new Promise<ExecResult>((_resolve, reject) => {
-          opts?.signal?.addEventListener(
-            'abort',
-            () => reject(new Error('aborted')),
-            { once: true },
-          );
+          opts?.signal?.addEventListener('abort', () => reject(new Error('aborted')), {
+            once: true,
+          });
         });
       },
     });
@@ -160,9 +136,7 @@ describe('SandboxManager.stopAllServices (per-thread service teardown)', () => {
   it('runs `atlas-svc stop-all` in the running container and reports ok', async () => {
     let seenArgv: string[] = [];
     const engine = makeEngine({
-      inspect: vi.fn(async (name: string) =>
-        name === EXPECTED_NAME ? fakeInfo('running') : null,
-      ),
+      inspect: vi.fn(async (name: string) => (name === EXPECTED_NAME ? fakeInfo('running') : null)),
       exec: vi.fn(async (_id: string, argv: string[]): Promise<ExecResult> => {
         seenArgv = argv;
         return { exitCode: 0, stdout: '', stderr: '' };
@@ -179,9 +153,7 @@ describe('SandboxManager.stopAllServices (per-thread service teardown)', () => {
 
   it('fails cleanly when the container is not running (no exec attempted)', async () => {
     const exec = vi.fn();
-    const mgr = makeManager(
-      makeEngine({ inspect: async () => fakeInfo('exited'), exec }),
-    );
+    const mgr = makeManager(makeEngine({ inspect: async () => fakeInfo('exited'), exec }));
 
     const res = await mgr.stopAllServices(JOB_ID);
 

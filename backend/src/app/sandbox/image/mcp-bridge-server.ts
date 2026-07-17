@@ -21,14 +21,11 @@
  */
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import {
-  ListToolsRequestSchema,
-  CallToolRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js';
+import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import Redis from 'ioredis';
 import { randomUUID } from 'node:crypto';
+import { TOOL_DESCRIPTIONS, toolJsonSchema } from './host-tool-schemas';
 import { ToolBridgeReader } from './tool-bridge-reader';
-import { toolJsonSchema, TOOL_DESCRIPTIONS } from './host-tool-schemas';
 
 async function main(): Promise<void> {
   const turnId = process.env.TURN_ID;
@@ -38,8 +35,7 @@ async function main(): Promise<void> {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
-  if (toolNames.length === 0)
-    throw new Error('mcp-bridge-server: BRIDGE_TOOLS is empty');
+  if (toolNames.length === 0) throw new Error('mcp-bridge-server: BRIDGE_TOOLS is empty');
 
   const toolsKey = `turn:${turnId}:tools`;
   const repliesKey = `turn:${turnId}:replies`;
@@ -68,19 +64,11 @@ async function main(): Promise<void> {
   });
   reader.start();
 
-  const callHostTool = async (
-    name: string,
-    args: Record<string, unknown>,
-  ): Promise<unknown> => {
+  const callHostTool = async (name: string, args: Record<string, unknown>): Promise<unknown> => {
     const id = randomUUID();
     const p = reader.register(id);
     try {
-      await pub.xadd(
-        toolsKey,
-        '*',
-        'data',
-        JSON.stringify({ t: 'tool_request', id, name, args }),
-      );
+      await pub.xadd(toolsKey, '*', 'data', JSON.stringify({ t: 'tool_request', id, name, args }));
     } catch (err) {
       reader.cancel(id);
       throw err;
@@ -97,8 +85,7 @@ async function main(): Promise<void> {
     tools: toolNames.map((name) => ({
       name,
       description:
-        TOOL_DESCRIPTIONS[name] ??
-        `Host-side tool '${name}' proxied via the Atlas bridge.`,
+        TOOL_DESCRIPTIONS[name] ?? `Host-side tool '${name}' proxied via the Atlas bridge.`,
       inputSchema: toolJsonSchema(name),
     })),
   }));
@@ -112,8 +99,7 @@ async function main(): Promise<void> {
       return { content: [{ type: 'text', text }] };
     } catch (err) {
       const message =
-        (err instanceof Error ? err.message : String(err)) ||
-        'host tool error (no message)';
+        (err instanceof Error ? err.message : String(err)) || 'host tool error (no message)';
       return {
         content: [{ type: 'text', text: `Error: ${message}` }],
         isError: true,

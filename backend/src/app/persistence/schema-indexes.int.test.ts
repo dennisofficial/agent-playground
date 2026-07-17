@@ -21,14 +21,8 @@ import { DB_CONNECTION } from './database.module';
 import { ENTITIES } from './entities';
 
 const ORG_ID = '2a111111-1111-4111-8111-111111111111';
-const RESTORED_INDEXES = [
-  'uq_threads_job_parent_ordinal',
-  'idx_memory_embedding_hnsw',
-] as const;
-const DROPPED_TICKET_INDEXES = [
-  'uq_threads_ticket_id',
-  'idx_tickets_embedding_hnsw',
-] as const;
+const RESTORED_INDEXES = ['uq_threads_job_parent_ordinal', 'idx_memory_embedding_hnsw'] as const;
+const DROPPED_TICKET_INDEXES = ['uq_threads_ticket_id', 'idx_tickets_embedding_hnsw'] as const;
 
 function dbOpts() {
   return {
@@ -86,30 +80,16 @@ describe('restored schema indexes (live Postgres)', () => {
     await mod?.close();
   });
 
-  it.each(RESTORED_INDEXES)(
-    'index %s exists after the migration chain',
-    async (idx) => {
-      const rows = await ds.query(
-        `SELECT 1 FROM pg_indexes WHERE indexname = $1`,
-        [idx],
-      );
-      expect(rows.length, `${idx} must exist after the migration chain`).toBe(
-        1,
-      );
-    },
-  );
+  it.each(RESTORED_INDEXES)('index %s exists after the migration chain', async (idx) => {
+    const rows = await ds.query(`SELECT 1 FROM pg_indexes WHERE indexname = $1`, [idx]);
+    expect(rows.length, `${idx} must exist after the migration chain`).toBe(1);
+  });
 
   it.each(DROPPED_TICKET_INDEXES)(
     'index %s no longer exists after the DropTickets migration',
     async (idx) => {
-      const rows = await ds.query(
-        `SELECT 1 FROM pg_indexes WHERE indexname = $1`,
-        [idx],
-      );
-      expect(
-        rows.length,
-        `${idx} must not exist after the DropTickets migration`,
-      ).toBe(0);
+      const rows = await ds.query(`SELECT 1 FROM pg_indexes WHERE indexname = $1`, [idx]);
+      expect(rows.length, `${idx} must not exist after the DropTickets migration`).toBe(0);
     },
   );
 
@@ -117,10 +97,7 @@ describe('restored schema indexes (live Postgres)', () => {
     const rows = await ds.query(
       `SELECT 1 FROM information_schema.tables WHERE table_name = 'tickets'`,
     );
-    expect(
-      rows.length,
-      'tickets table must not exist after the DropTickets migration',
-    ).toBe(0);
+    expect(rows.length, 'tickets table must not exist after the DropTickets migration').toBe(0);
   });
 
   it('uq_threads_job_parent_ordinal rejects a duplicate (job_id, parent_thread_id, ordinal)', async () => {

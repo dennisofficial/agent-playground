@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { CredentialResolver } from '../onboarding';
-import { CLASSIFIER_LLM, AnthropicClassifierLlm } from './classifier-llm';
+import { AnthropicClassifierLlm, CLASSIFIER_LLM } from './classifier-llm';
 import { DecisionClassifier } from './decision-classifier.service';
 import { PlanVisibilityService } from './plan-visibility.service';
 

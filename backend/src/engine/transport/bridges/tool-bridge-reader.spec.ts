@@ -12,8 +12,7 @@ class FakeBlockingRedis {
   private waiter?: Waiter;
 
   xread(): Promise<unknown> {
-    if (this.entries.length > 0)
-      return Promise.resolve([['replies', this.entries.splice(0)]]);
+    if (this.entries.length > 0) return Promise.resolve([['replies', this.entries.splice(0)]]);
     return new Promise((resolve, reject) => {
       this.waiter = { resolve, reject };
     });
@@ -129,9 +128,7 @@ describe('ToolBridgeReader', () => {
     redis.pushFrame({ t: 'tool_response', id: 'call-1', result: 'ok' });
 
     await expect(p).resolves.toBe('ok');
-    expect(
-      logs.some((line) => line.includes('tool-bridge reader xread failed')),
-    ).toBe(true);
+    expect(logs.some((line) => line.includes('tool-bridge reader xread failed'))).toBe(true);
     reader.stopReader();
   });
 });

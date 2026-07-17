@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
 import type { Row } from '@workspace/pg-realtime';
+import { describe, expect, it } from 'vitest';
 import { THREADS_MODEL } from './job-realtime.model';
 
 /**
@@ -45,9 +45,7 @@ describe('THREADS_MODEL.mapRow', () => {
   });
 
   it('lights needsYou when an ephemeral secret request is open', () => {
-    const row = mapRow(
-      baseRow({ status: 'building', awaiting_secret_id: 'sec-1' }),
-    );
+    const row = mapRow(baseRow({ status: 'building', awaiting_secret_id: 'sec-1' }));
     expect(row.needsYou).toBe(true);
   });
 

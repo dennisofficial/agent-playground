@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { LiveTurnStore } from './live-turn-store';
 import type { OauthUsageService } from '../onboarding/oauth-usage.service';
+import { LiveTurnStore } from './live-turn-store';
 import {
   type BlockSink,
   EntityTaskEventSink,
@@ -37,8 +37,7 @@ function setup() {
         persisted.some(
           (p) =>
             p.block.kind === 'agent_prompt' &&
-            (p.block.meta as { promptKey?: string } | null)?.promptKey ===
-              promptKey,
+            (p.block.meta as { promptKey?: string } | null)?.promptKey === promptKey,
         )
       ) {
         return;
@@ -90,16 +89,9 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
     await h.finish('hi');
 
     // Authoritative blocks persisted at turn END, every one tagged with the phase metaTag.
-    expect(persisted.map((p) => p.block.kind)).toEqual([
-      'thinking',
-      'chat',
-      'tool',
-    ]);
+    expect(persisted.map((p) => p.block.kind)).toEqual(['thinking', 'chat', 'tool']);
     expect(
-      persisted.every(
-        (p) =>
-          p.block.meta?.phaseId === 's1' && p.block.meta?.batchOrdinal === 2,
-      ),
+      persisted.every((p) => p.block.meta?.phaseId === 's1' && p.block.meta?.batchOrdinal === 2),
     ).toBe(true);
     const tool = persisted.find((p) => p.block.kind === 'tool')!;
     expect(tool.block.meta).toMatchObject({
@@ -195,9 +187,7 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
     });
     await h.finish('done');
 
-    const anchor = persisted.find(
-      (p) => p.block.kind === 'tool' && p.block.meta?.id === 'task-1',
-    )!;
+    const anchor = persisted.find((p) => p.block.kind === 'tool' && p.block.meta?.id === 'task-1')!;
     expect(anchor.block.meta).toMatchObject({
       subContextTokens: 9_000,
       subContextLimit: 1_000_000,
@@ -301,9 +291,7 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
     // Every persisted block (including the turn_meta divider) carries the wake tag → supersede can find them.
     expect(
       persisted.every(
-        (p) =>
-          p.block.meta?.doneWakeGen === 3 &&
-          p.block.meta?.doneWakeThreadId === 'th-mr',
+        (p) => p.block.meta?.doneWakeGen === 3 && p.block.meta?.doneWakeThreadId === 'th-mr',
       ),
     ).toBe(true);
   });
@@ -367,8 +355,7 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
         model: 'claude-opus-4-8',
       },
     });
-    const meta = persisted.find((p) => p.block.kind === 'turn_meta')!.block
-      .meta!;
+    const meta = persisted.find((p) => p.block.kind === 'turn_meta')!.block.meta!;
     expect(meta.workedMs).toBeUndefined();
   });
 
@@ -555,15 +542,12 @@ describe('EntityTaskEventSink — #N (ordinal) CRUD on the thread-group-owned ta
     let nextId = 100;
     const matches = (row: Row, where: Partial<Row> = {}) =>
       (where.id === undefined || row.id === where.id) &&
-      (where.thread_group_id === undefined ||
-        row.thread_group_id === where.thread_group_id) &&
+      (where.thread_group_id === undefined || row.thread_group_id === where.thread_group_id) &&
       (where.ordinal === undefined || row.ordinal === where.ordinal);
     return {
       rows,
       find: vi.fn(async ({ where }: { where?: Partial<Row> } = {}) =>
-        [...rows.values()]
-          .filter((r) => matches(r, where))
-          .sort((a, b) => a.ordinal - b.ordinal),
+        [...rows.values()].filter((r) => matches(r, where)).sort((a, b) => a.ordinal - b.ordinal),
       ),
       findOne: vi.fn(async ({ where }: { where?: Partial<Row> } = {}) => {
         const hit = [...rows.values()].find((r) => matches(r, where));
@@ -576,12 +560,10 @@ describe('EntityTaskEventSink — #N (ordinal) CRUD on the thread-group-owned ta
         rows.set(id, row);
         return row;
       }),
-      update: vi.fn(
-        async (where: { id: string }, patch: Record<string, unknown>) => {
-          const row = rows.get(where.id);
-          if (row) rows.set(where.id, { ...row, ...patch });
-        },
-      ),
+      update: vi.fn(async (where: { id: string }, patch: Record<string, unknown>) => {
+        const row = rows.get(where.id);
+        if (row) rows.set(where.id, { ...row, ...patch });
+      }),
       delete: vi.fn(async (where: { id: string }) => {
         rows.delete(where.id);
       }),
@@ -591,10 +573,7 @@ describe('EntityTaskEventSink — #N (ordinal) CRUD on the thread-group-owned ta
             // Mirror the real `MAX(ordinal)` over CURRENT rows — recomputed each call so a delete of the
             // highest #N lowers the max (and the next create reuses that number).
             getRawOne: async () => ({
-              max: [...rows.values()].reduce(
-                (m, r) => Math.max(m, r.ordinal),
-                0,
-              ),
+              max: [...rows.values()].reduce((m, r) => Math.max(m, r.ordinal), 0),
             }),
           }),
         }),
@@ -603,23 +582,23 @@ describe('EntityTaskEventSink — #N (ordinal) CRUD on the thread-group-owned ta
   }
 
   const threadSink = (tasks: ReturnType<typeof fakeTasksRepo>) => {
-    const threadGroups = { findOne: vi.fn(async () => ({ id: 'S', org_id: 'O' })) };
-    const threads = {
-      findOne: vi.fn(async () => ({ id: 'th1', thread_group_id: 'S', org_id: 'O' })),
+    const threadGroups = {
+      findOne: vi.fn(async () => ({ id: 'S', org_id: 'O' })),
     };
-    return new EntityTaskEventSink(
-      threads as never,
-      threadGroups as never,
-      tasks as never,
-    );
+    const threads = {
+      findOne: vi.fn(async () => ({
+        id: 'th1',
+        thread_group_id: 'S',
+        org_id: 'O',
+      })),
+    };
+    return new EntityTaskEventSink(threads as never, threadGroups as never, tasks as never);
   };
   const scope = { kind: 'thread' as const, id: 'th1' };
 
   /** Find a stored row by its per-stage ordinal (the #N the tool surface now uses as the id). */
-  const byOrdinal = (
-    tasks: ReturnType<typeof fakeTasksRepo>,
-    ordinal: number,
-  ) => [...tasks.rows.values()].find((r) => r.ordinal === ordinal);
+  const byOrdinal = (tasks: ReturnType<typeof fakeTasksRepo>, ordinal: number) =>
+    [...tasks.rows.values()].find((r) => r.ordinal === ordinal);
 
   it('createTask returns the short per-stage #N (dense) and updateTask by that #N hits the SAME row', async () => {
     const tasks = fakeTasksRepo([]);
@@ -629,9 +608,7 @@ describe('EntityTaskEventSink — #N (ordinal) CRUD on the thread-group-owned ta
     const b = await sink.createTask(scope, { subject: 'B' });
     expect(a.id).toBe('1');
     expect(b.id).toBe('2');
-    expect([...tasks.rows.values()].map((r) => r.ordinal).sort()).toEqual([
-      1, 2,
-    ]);
+    expect([...tasks.rows.values()].map((r) => r.ordinal).sort()).toEqual([1, 2]);
 
     // The #N returned by createTask IS a valid updateTask key — resolved by (thread_group_id, ordinal).
     const res = await sink.updateTask(scope, {
@@ -643,22 +620,20 @@ describe('EntityTaskEventSink — #N (ordinal) CRUD on the thread-group-owned ta
   });
 
   it('updateTask status:deleted removes the row; an unknown #N and a non-numeric taskId both error', async () => {
-    const tasks = fakeTasksRepo([
-      { id: 'u1', title: 'a', status: 'pending', ordinal: 1 },
-    ]);
+    const tasks = fakeTasksRepo([{ id: 'u1', title: 'a', status: 'pending', ordinal: 1 }]);
     const sink = threadSink(tasks);
 
-    expect(
-      await sink.updateTask(scope, { taskId: '1', status: 'deleted' }),
-    ).toEqual({ ok: true });
+    expect(await sink.updateTask(scope, { taskId: '1', status: 'deleted' })).toEqual({ ok: true });
     expect([...tasks.rows.keys()]).toEqual([]);
 
-    expect(
-      await sink.updateTask(scope, { taskId: '9', status: 'completed' }),
-    ).toEqual({ ok: false, error: 'task 9 not found' });
-    expect(
-      await sink.updateTask(scope, { taskId: 'nope', status: 'completed' }),
-    ).toEqual({ ok: false, error: 'invalid taskId nope' });
+    expect(await sink.updateTask(scope, { taskId: '9', status: 'completed' })).toEqual({
+      ok: false,
+      error: 'task 9 not found',
+    });
+    expect(await sink.updateTask(scope, { taskId: 'nope', status: 'completed' })).toEqual({
+      ok: false,
+      error: 'invalid taskId nope',
+    });
   });
 
   it('readTasks surfaces the ordinal as #N, ordinal-ordered, mapped to TaskItem', async () => {
@@ -704,9 +679,7 @@ describe('EntityTaskEventSink — #N (ordinal) CRUD on the thread-group-owned ta
   });
 
   it('createTask stores blockedBy as #N (dropping unknown #N); addBlocks writes the source #N onto the target', async () => {
-    const tasks = fakeTasksRepo([
-      { id: 'u1', title: 'a', status: 'pending', ordinal: 1 },
-    ]);
+    const tasks = fakeTasksRepo([{ id: 'u1', title: 'a', status: 'pending', ordinal: 1 }]);
     const sink = threadSink(tasks);
 
     const blocked = await sink.createTask(scope, {
@@ -752,9 +725,7 @@ describe('EntityTaskEventSink — #N (ordinal) CRUD on the thread-group-owned ta
     ]);
     const sink = threadSink(tasks);
 
-    expect(
-      await sink.updateTask(scope, { taskId: '1', status: 'deleted' }),
-    ).toEqual({ ok: true });
+    expect(await sink.updateTask(scope, { taskId: '1', status: 'deleted' })).toEqual({ ok: true });
     expect(byOrdinal(tasks, 2)?.blocked_by).toEqual([]);
   });
 });

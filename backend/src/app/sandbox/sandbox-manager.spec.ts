@@ -1,24 +1,17 @@
 import type { EnvService } from '@core/config/env/env.service';
 import { createHash } from 'node:crypto';
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CONTAINER_GIT_COMMON } from './container-paths';
+import type { FeatureSandbox } from '../git';
 import type {
   ContainerEngine,
   ContainerInfo,
   NetworkInfo,
   VolumeInfo,
 } from './container-engine.port';
-import type { FeatureSandbox } from '../git';
-import type { SandboxAttachInput } from './sandbox-provider.port';
+import { CONTAINER_GIT_COMMON } from './container-paths';
 import { SandboxImageBuilder } from './sandbox-image.builder';
 import {
   SandboxManager,
@@ -26,6 +19,7 @@ import {
   rebaseDotGit,
   submoduleGitlinks,
 } from './sandbox-manager.service';
+import type { SandboxAttachInput } from './sandbox-provider.port';
 
 const env = (v: Record<string, string | undefined> = {}) =>
   ({ get: (k: string) => v[k] }) as unknown as EnvService;
@@ -57,8 +51,7 @@ function fakeEngine(state: {
     stop: vi.fn(),
     remove: vi.fn(),
     removeNetwork: vi.fn(async (name: string) => {
-      if (state.failRemove?.has(name))
-        throw new Error(`network ${name} has active endpoints`);
+      if (state.failRemove?.has(name)) throw new Error(`network ${name} has active endpoints`);
       removedNetworks.push(name);
     }),
     removeVolume: vi.fn(async (name: string) => {
@@ -77,13 +70,9 @@ function fakeEngine(state: {
     ),
     inspect: vi.fn(),
     listNetworks: vi.fn(
-      async (): Promise<NetworkInfo[]> =>
-        state.networks.map((name) => ({ id: name, name })),
+      async (): Promise<NetworkInfo[]> => state.networks.map((name) => ({ id: name, name })),
     ),
-    listVolumes: vi.fn(
-      async (): Promise<VolumeInfo[]> =>
-        state.volumes.map((name) => ({ name })),
-    ),
+    listVolumes: vi.fn(async (): Promise<VolumeInfo[]> => state.volumes.map((name) => ({ name }))),
   };
   return { engine, removedNetworks, removedVolumes };
 }
@@ -137,22 +126,13 @@ describe('submoduleGitlinks', () => {
         '  url = https://github.com/x/ai-testing',
       ].join('\n'),
     );
-    expect(submoduleGitlinks(dir).sort()).toEqual([
-      'packages/ai-testing',
-      'packages/jwt-auth',
-    ]);
+    expect(submoduleGitlinks(dir).sort()).toEqual(['packages/ai-testing', 'packages/jwt-auth']);
   });
 
   it('recurses into a nested submodule .gitmodules (path is relative to the superproject root)', () => {
-    writeFileSync(
-      join(dir, '.gitmodules'),
-      '[submodule "a"]\n\tpath = a\n\turl = u',
-    );
+    writeFileSync(join(dir, '.gitmodules'), '[submodule "a"]\n\tpath = a\n\turl = u');
     mkdirSync(join(dir, 'a'));
-    writeFileSync(
-      join(dir, 'a', '.gitmodules'),
-      '[submodule "b"]\n\tpath = b\n\turl = u',
-    );
+    writeFileSync(join(dir, 'a', '.gitmodules'), '[submodule "b"]\n\tpath = b\n\turl = u');
     expect(submoduleGitlinks(dir).sort()).toEqual(['a', 'a/b']);
   });
 });
@@ -166,10 +146,9 @@ describe('rebaseDotGit', () => {
 
   it('rebases an ABSOLUTE submodule gitdir under the common dir onto CONTAINER_GIT_COMMON', () => {
     const common = join(dir, 'clone', '.git');
-    mkdirSync(
-      join(common, 'worktrees', 'wt', 'modules', 'packages', 'jwt-auth'),
-      { recursive: true },
-    );
+    mkdirSync(join(common, 'worktrees', 'wt', 'modules', 'packages', 'jwt-auth'), {
+      recursive: true,
+    });
     const ptrDir = join(dir, 'wt', 'packages', 'jwt-auth');
     mkdirSync(ptrDir, { recursive: true });
     const ptr = join(ptrDir, '.git');
@@ -195,9 +174,7 @@ describe('rebaseDotGit', () => {
 
     const out = join(dir, 'out.git');
     expect(rebaseDotGit(ptr, common, out)).toBe(out);
-    expect(readFileSync(out, 'utf8')).toBe(
-      `gitdir: ${CONTAINER_GIT_COMMON}/modules/sub\n`,
-    );
+    expect(readFileSync(out, 'utf8')).toBe(`gitdir: ${CONTAINER_GIT_COMMON}/modules/sub\n`);
   });
 
   it('bails (undefined, no file written) when the gitdir is not under the common dir', () => {
@@ -209,9 +186,7 @@ describe('rebaseDotGit', () => {
   });
 
   it('returns undefined for a missing / unparseable pointer', () => {
-    expect(
-      rebaseDotGit(join(dir, 'nope', '.git'), dir, join(dir, 'out.git')),
-    ).toBeUndefined();
+    expect(rebaseDotGit(join(dir, 'nope', '.git'), dir, join(dir, 'out.git'))).toBeUndefined();
     const bad = join(dir, 'bad');
     writeFileSync(bad, 'not a gitdir line\n');
     expect(rebaseDotGit(bad, dir, join(dir, 'out.git'))).toBeUndefined();
@@ -223,17 +198,8 @@ describe('SandboxManager.reapOrphanedArtifacts', () => {
     const { engine, removedNetworks, removedVolumes } = fakeEngine({
       // `...-b` is a live sandbox; `...-a` was torn down but leaked its net/vol.
       containers: ['atlas-sbx-team-proj-b', 'unrelated-container'],
-      networks: [
-        'atlas-sbx-team-proj-a-net',
-        'atlas-sbx-team-proj-b-net',
-        'bridge',
-        'host',
-      ],
-      volumes: [
-        'atlas-sbx-team-proj-a-dind',
-        'atlas-sbx-team-proj-b-dind',
-        'pnpm-store',
-      ],
+      networks: ['atlas-sbx-team-proj-a-net', 'atlas-sbx-team-proj-b-net', 'bridge', 'host'],
+      volumes: ['atlas-sbx-team-proj-a-dind', 'atlas-sbx-team-proj-b-dind', 'pnpm-store'],
     });
 
     const result = await manager(engine).reapOrphanedArtifacts();
@@ -304,8 +270,7 @@ describe('SandboxManager.reapOrphanedArtifacts', () => {
       volumes: ['atlas-sbx-dead-dind'],
     });
     const mgr = manager(engine);
-    const creating = (mgr as unknown as { creating: Map<string, number> })
-      .creating;
+    const creating = (mgr as unknown as { creating: Map<string, number> }).creating;
     creating.set('atlas-sbx-dead', Date.now() - 10 * 60 * 1000); // 10m ago — well past the 5m grace
 
     expect(await mgr.reapOrphanedArtifacts()).toEqual({
@@ -377,9 +342,9 @@ describe('SandboxManager.teardownByIdentity', () => {
   }
 
   it('resolves a running orphan by its deterministic name and removes it + its net/vol (no container_id)', async () => {
-    const { engine, removedContainers, removedNetworks, removedVolumes } = fake(
-      { containerExists: true },
-    );
+    const { engine, removedContainers, removedNetworks, removedVolumes } = fake({
+      containerExists: true,
+    });
 
     await manager(engine).teardownByIdentity({
       sandbox: sandbox(),
@@ -393,9 +358,9 @@ describe('SandboxManager.teardownByIdentity', () => {
   });
 
   it('still reclaims leaked net/vol by name when the container is already gone', async () => {
-    const { engine, removedContainers, removedNetworks, removedVolumes } = fake(
-      { containerExists: false },
-    );
+    const { engine, removedContainers, removedNetworks, removedVolumes } = fake({
+      containerExists: false,
+    });
 
     await manager(engine).teardownByIdentity({
       sandbox: sandbox(),
@@ -504,9 +469,7 @@ describe('SandboxManager.attach — onMilestone', () => {
       jobId: 'job1',
     } as SandboxAttachInput);
 
-    const spec = (
-      createContainer.mock.calls[0] as unknown as [{ binds: string[] }]
-    )[0];
+    const spec = (createContainer.mock.calls[0] as unknown as [{ binds: string[] }])[0];
     const playgroundBind = spec.binds.find((b) => b.endsWith(':/playground'));
     expect(playgroundBind).toBeDefined();
     // Host side resolves to the jobId-keyed dir (the int test proves it lives outside the worktree).
@@ -528,9 +491,7 @@ describe('SandboxManager.attach — onMilestone', () => {
       jobId: 'job1',
     } as SandboxAttachInput);
 
-    const spec = (
-      createContainer.mock.calls[0] as unknown as [{ binds: string[] }]
-    )[0];
+    const spec = (createContainer.mock.calls[0] as unknown as [{ binds: string[] }])[0];
     const homeBind = spec.binds.find((b) => b.endsWith(':/home/atlas'));
     expect(homeBind).toBeDefined();
     // Host side is per-repo (caches/<org>/<slug>/_home) — install-once/login-once is shared across a repo's
@@ -559,9 +520,7 @@ describe('SandboxManager.attach — onMilestone', () => {
       ],
     } as SandboxAttachInput);
 
-    const spec = (
-      createContainer.mock.calls[0] as unknown as [{ binds: string[] }]
-    )[0];
+    const spec = (createContainer.mock.calls[0] as unknown as [{ binds: string[] }])[0];
     // External mount lands at the exact absolute container path (NOT under /workspace); host dir under _ext.
     const ext = spec.binds.find((b) => b.endsWith(':/root/.config/gcloud'));
     expect(ext).toBeDefined();
@@ -639,8 +598,7 @@ describe('SandboxManager.attach — onMilestone', () => {
 
   // ── cold-boot setup script ──────────────────────────────────────────────────────────────────────
   const SCRIPT = 'pnpm install';
-  const scriptFp = (s: string) =>
-    createHash('sha256').update(s).digest('hex').slice(0, 12);
+  const scriptFp = (s: string) => createHash('sha256').update(s).digest('hex').slice(0, 12);
 
   it('runs the setup script on a COLD create (bash -c, in /workspace) and returns ok', async () => {
     const { engine } = fullFakeEngine(null);
@@ -751,14 +709,10 @@ describe('SandboxManager.attach — onMilestone', () => {
     } as SandboxAttachInput);
 
     const cfgA = (
-      a.createContainer.mock.calls[0] as unknown as [
-        { labels: Record<string, string> },
-      ]
+      a.createContainer.mock.calls[0] as unknown as [{ labels: Record<string, string> }]
     )[0].labels['atlas.cfg'];
     const cfgB = (
-      b.createContainer.mock.calls[0] as unknown as [
-        { labels: Record<string, string> },
-      ]
+      b.createContainer.mock.calls[0] as unknown as [{ labels: Record<string, string> }]
     )[0].labels['atlas.cfg'];
     expect(cfgA).not.toBe(cfgB);
   });
@@ -788,11 +742,7 @@ describe('SandboxManager.attach — onMilestone', () => {
 
 describe('SandboxManager.probeLiveness', () => {
   const mkMgr = (engine: Partial<ContainerEngine>) =>
-    new SandboxManager(
-      engine as ContainerEngine,
-      {} as SandboxImageBuilder,
-      env(),
-    );
+    new SandboxManager(engine as ContainerEngine, {} as SandboxImageBuilder, env());
 
   const runningContainer = (startedAt: string): ContainerInfo => ({
     id: 'c1',

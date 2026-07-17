@@ -1,3 +1,4 @@
+import type { MessageEvent } from '@nestjs/common';
 import {
   BadGatewayException,
   BadRequestException,
@@ -27,6 +28,19 @@ import {
 } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { FilesInterceptor } from '@nestjs/platform-express';
+import { InjectRepository } from '@nestjs/typeorm';
+import type { JobKind } from '@shared/domain/job';
+import { deriveNeedsYou } from '@shared/domain/job';
+import type { AgentMessage } from '@shared/prompt-kit/message';
+import { renderTurn, type TurnChunk } from '@shared/stimulus/chunk-vocabulary';
+import { CurrentUser, Public } from '@workspace/auth/server';
+import {
+  isAutoApproveMode,
+  modeApprovesPlan,
+  modeApprovesShip,
+  type AutoApproveMode,
+} from '@workspace/shared';
+import { randomBytes, randomUUID } from 'node:crypto';
 import {
   createReadStream,
   existsSync,
@@ -37,28 +51,63 @@ import {
   statSync,
 } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { randomBytes, randomUUID } from 'node:crypto';
 import { basename, extname, join, relative, resolve, sep } from 'node:path';
-import {
-  Observable,
-  catchError,
-  defer,
-  filter,
-  from,
-  map,
-  merge,
-  switchMap,
-} from 'rxjs';
-import type { MessageEvent } from '@nestjs/common';
-import { CurrentUser, Public } from '@workspace/auth/server';
-import {
-  type AutoApproveMode,
-  isAutoApproveMode,
-  modeApprovesPlan,
-  modeApprovesShip,
-} from '@workspace/shared';
-import { InjectRepository } from '@nestjs/typeorm';
+import { Observable, catchError, defer, filter, from, map, merge, switchMap } from 'rxjs';
 import { In, Repository } from 'typeorm';
+import { BrainGateway } from '../brain-gateway';
+import { AgentSessionManager } from '../brain/agent-session-manager.service';
+import { BrainStoreService } from '../brain/brain-store.service';
+import { JitHostExecutor } from '../brain/jit-host-executor';
+import { JOB_DISPATCHER, type JobDispatcher } from '../brain/job-dispatcher';
+import { LeaderElectionService } from '../cluster';
+import { ConventionProfileResolver } from '../conventions';
+import { AutoMergeService } from '../driver/auto-merge.service';
+import { DriverStoreService } from '../driver/driver-store.service';
+import { JobLifecycleService } from '../driver/job-lifecycle.service';
+import { resolveSafeTarget } from '../driver/worktree-path-guard';
+import { ExposureService } from '../exposure/exposure.service';
+import { readServiceMarkers, serviceStatus } from '../exposure/service-markers';
+import { LocalGitService } from '../git/local-git.service';
+import { JobBootstrapService } from '../job-bootstrap';
+import { JobDependencyService } from '../job-deps';
+import { McpProbeService } from '../mcp/mcp-probe.service';
+import type { McpHeaderInput, McpServerInput } from '../mcp/mcp-server.store';
+import { McpServerStore } from '../mcp/mcp-server.store';
+import { WorkspaceSecretFileStore } from '../onboarding';
+import { UsageEventBus } from '../onboarding/usage-event-bus';
+import { WorkspaceConfigStore } from '../onboarding/workspace-config.store';
+import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
+import { OrgMembershipGuard } from '../org/org-membership.guard';
+import { OrgOwnerGuard } from '../org/org-owner.guard';
+import { OrganizationService } from '../org/organization.service';
+import { DB_CONNECTION } from '../persistence/database.module';
+import type { McpSurface } from '../persistence/entities';
+import {
+  JobEntity,
+  RepoEntity,
+  SubagentEntity,
+  TranscriptMessageEntity,
+  UserEntity,
+} from '../persistence/entities';
+import {
+  renderReviewSeedXml,
+  renderUploadedFilesXml,
+  type AttachmentCardItem,
+} from '../prompt-kit';
+import {
+  answeredQuestionBody,
+  batchAnswerBody,
+  chunkKey,
+  fileUploaded,
+  mcpSecretStored,
+  secretStored,
+} from '../prompt-kit/harness';
+import { RealtimeService, realtimeDisabledStream, subscriptionToObservable } from '../realtime';
+import type { ServiceLivenessProbe } from '../sandbox';
+import { isReservedMcpName } from '../sandbox/image/reserved-mcp-names';
+import { SkillFileWriter, SkillInstallerService, WorkspaceSkillStore } from '../skills';
+import { parseSkillFrontmatter } from '../skills/skill-frontmatter';
+import { StimulusIntake } from '../stimulus/stimulus-intake.service';
 import {
   AMEND_APPROVE_ACTION_ID,
   AMEND_DISMISS_ACTION_ID,
@@ -73,96 +122,20 @@ import {
   RETRACT_SHIP_ACTION_ID,
   SHIP_ACTION_ID,
 } from './approval-blocks';
-import { LeaderElectionService } from '../cluster';
-import { StimulusIntake } from '../stimulus/stimulus-intake.service';
-import { renderTurn, type TurnChunk } from '@shared/stimulus/chunk-vocabulary';
 import { SYSTEM_SEED_AUTHOR } from './chat-surface.port';
-import {
-  closeTailFd,
-  nextTailFrame,
-  openTailFd,
-  readServiceLogTail,
-} from './service-log-tail';
-import { JOB_DISPATCHER, type JobDispatcher } from '../brain/job-dispatcher';
-import { BrainStoreService } from '../brain/brain-store.service';
-import { AgentSessionManager } from '../brain/agent-session-manager.service';
-import { BrainGateway } from '../brain-gateway';
-import { JitHostExecutor } from '../brain/jit-host-executor';
-import { WebSurface } from './web-surface';
-import { LiveTurnStore } from './live-turn-store';
-import { ThreadInputService } from './thread-input.service';
+import { buildDiffSummary, parseGitDiff, type JobDiff, type JobDiffSummary } from './job-diff';
 import { JobTitleService } from './job-title.service';
-import { parseWebApprovalMeta } from './web-approval-card';
+import { LiveTurnStore } from './live-turn-store';
 import { resolveMergeApproval } from './resolve-merge-approval';
-import type { WebQuestionCard } from './web-question-card';
-import type { WebSecretInputCard } from './web-secret-input-card';
+import { closeTailFd, nextTailFrame, openTailFd, readServiceLogTail } from './service-log-tail';
+import { ThreadInputService } from './thread-input.service';
+import { parseWebApprovalMeta } from './web-approval-card';
 import type { WebFileRequestCard } from './web-file-request-card';
 import type { McpProposalServer } from './web-mcp-proposal-card';
+import type { WebQuestionCard } from './web-question-card';
+import type { WebSecretInputCard } from './web-secret-input-card';
 import type { WebOutboundMessage } from './web-surface';
-import { DriverStoreService } from '../driver/driver-store.service';
-import { JobLifecycleService } from '../driver/job-lifecycle.service';
-import { AutoMergeService } from '../driver/auto-merge.service';
-import { resolveSafeTarget } from '../driver/worktree-path-guard';
-import { LocalGitService } from '../git/local-git.service';
-import {
-  parseGitDiff,
-  buildDiffSummary,
-  type JobDiff,
-  type JobDiffSummary,
-} from './job-diff';
-import { JobBootstrapService } from '../job-bootstrap';
-import { JobDependencyService } from '../job-deps';
-import type { ServiceLivenessProbe } from '../sandbox';
-import { ExposureService } from '../exposure/exposure.service';
-import { readServiceMarkers, serviceStatus } from '../exposure/service-markers';
-import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
-import { OrgMembershipGuard } from '../org/org-membership.guard';
-import { OrgOwnerGuard } from '../org/org-owner.guard';
-import { OrganizationService } from '../org/organization.service';
-import { WorkspaceSecretFileStore } from '../onboarding';
-import { McpServerStore } from '../mcp/mcp-server.store';
-import { isReservedMcpName } from '../sandbox/image/reserved-mcp-names';
-import { ConventionProfileResolver } from '../conventions';
-import {
-  SkillFileWriter,
-  SkillInstallerService,
-  WorkspaceSkillStore,
-} from '../skills';
-import { parseSkillFrontmatter } from '../skills/skill-frontmatter';
-import { McpProbeService } from '../mcp/mcp-probe.service';
-import type { McpHeaderInput, McpServerInput } from '../mcp/mcp-server.store';
-import { DB_CONNECTION } from '../persistence/database.module';
-import {
-  TranscriptMessageEntity,
-  RepoEntity,
-  JobEntity,
-  UserEntity,
-  SubagentEntity,
-} from '../persistence/entities';
-import { deriveNeedsYou } from '@shared/domain/job';
-import type { JobKind } from '@shared/domain/job';
-import type { McpSurface } from '../persistence/entities';
-import {
-  RealtimeService,
-  realtimeDisabledStream,
-  subscriptionToObservable,
-} from '../realtime';
-import {
-  renderReviewSeedXml,
-  renderUploadedFilesXml,
-  type AttachmentCardItem,
-} from '../prompt-kit';
-import type { AgentMessage } from '@shared/prompt-kit/message';
-import {
-  answeredQuestionBody,
-  batchAnswerBody,
-  chunkKey,
-  fileUploaded,
-  mcpSecretStored,
-  secretStored,
-} from '../prompt-kit/harness';
-import { UsageEventBus } from '../onboarding/usage-event-bus';
-import { WorkspaceConfigStore } from '../onboarding/workspace-config.store';
+import { WebSurface } from './web-surface';
 
 const VALID_ACTION_IDS = new Set([
   APPROVE_ACTION_ID,
@@ -384,11 +357,7 @@ interface CreateThreadDto {
  * intake / repo onboarding), never operator-set, so they are deliberately excluded — an unknown or
  * excluded value is ignored (kind stays null and the brain scopes it as before).
  */
-const OPERATOR_JOB_KINDS: ReadonlySet<JobKind> = new Set<JobKind>([
-  'feature',
-  'bugfix',
-  'review',
-]);
+const OPERATOR_JOB_KINDS: ReadonlySet<JobKind> = new Set<JobKind>(['feature', 'bugfix', 'review']);
 
 function coerceOperatorKind(raw: string | undefined): JobKind | null {
   if (raw && OPERATOR_JOB_KINDS.has(raw as JobKind)) return raw as JobKind;
@@ -580,9 +549,7 @@ function normalizeMessageInput(item: unknown): MessageInput {
     return {
       type: 'user',
       text: String(raw.text ?? ''),
-      ...(raw.lane != null && raw.lane !== ''
-        ? { lane: String(raw.lane) }
-        : {}),
+      ...(raw.lane != null && raw.lane !== '' ? { lane: String(raw.lane) } : {}),
     };
   }
   if (raw.type === 'answer_question') {
@@ -648,10 +615,7 @@ export type WebMessageSource =
 
 /** Map a row's stored `meta.source` to the web renderer's audience-explicit source. Only the `system_*`
  *  kinds are stamped on the row; ordinary operator/atlas messages carry no `source` and derive from isAtlas. */
-export function mapMessageSource(
-  stored: unknown,
-  isAtlas: boolean,
-): WebMessageSource {
+export function mapMessageSource(stored: unknown, isAtlas: boolean): WebMessageSource {
   if (stored === 'system_operator') return 'system_operator';
   if (stored === 'system_shared') return 'system_shared';
   if (stored === 'system_event') return 'system_event';
@@ -684,10 +648,7 @@ function xmlEscape(s: string): string {
  * A free-text (markdown/plan/decision) comment carries the quoted selection instead. The operator's typed
  * message rides in a trailing <message>. Companion to the render-only `review_comments_card`.
  */
-export function formatReviewComments(
-  items: ReviewCommentItemDto[],
-  message?: string,
-): string {
+export function formatReviewComments(items: ReviewCommentItemDto[], message?: string): string {
   const out: string[] = [`<review-comments count="${items.length}">`];
   const span = (s?: number, e?: number): string | null =>
     s == null ? null : e != null && e !== s ? `${s}-${e}` : `${s}`;
@@ -700,22 +661,18 @@ export function formatReviewComments(
       if (newSpan) attrs.push(`new-lines="${newSpan}"`);
       out.push(`  <comment ${attrs.join(' ')}>`);
       out.push('    ```diff');
-      for (const line of item.lines.fragment.split('\n'))
-        out.push(`    ${line}`);
+      for (const line of item.lines.fragment.split('\n')) out.push(`    ${line}`);
       out.push('    ```');
-      if (item.note?.trim())
-        out.push(`    <note>${xmlEscape(item.note.trim())}</note>`);
+      if (item.note?.trim()) out.push(`    <note>${xmlEscape(item.note.trim())}</note>`);
       out.push('  </comment>');
       continue;
     }
     out.push(`  <comment file="${xmlEscape(item.file)}">`);
     out.push(`    <quote>${xmlEscape(item.quote)}</quote>`);
-    if (item.note?.trim())
-      out.push(`    <note>${xmlEscape(item.note.trim())}</note>`);
+    if (item.note?.trim()) out.push(`    <note>${xmlEscape(item.note.trim())}</note>`);
     out.push('  </comment>');
   }
-  if (message?.trim())
-    out.push(`  <message>${xmlEscape(message.trim())}</message>`);
+  if (message?.trim()) out.push(`  <message>${xmlEscape(message.trim())}</message>`);
   out.push('</review-comments>');
   return out.join('\n');
 }
@@ -849,9 +806,7 @@ export class WebSurfaceController {
       }),
       this.repos.find({ where: { org_id: In(orgIds) } }),
     ]);
-    const blockedIds = threads
-      .filter((t) => t.status === 'blocked')
-      .map((t) => t.id);
+    const blockedIds = threads.filter((t) => t.status === 'blocked').map((t) => t.id);
     const blockersByJob = await this.jobDeps.blockersOfManyBlocked(blockedIds);
     const orgById = new Map(orgs.map((o) => [o.id, o]));
     const repoName = new Map(repos.map((r) => [`${r.org_id}:${r.id}`, r.name]));
@@ -868,13 +823,11 @@ export class WebSurfaceController {
         shipping: t.status === 'shipping',
         createdBy: t.created_by ?? null,
         blockedBy: blockersByJob.get(t.id) ?? [],
-        blockedSeedMessage:
-          t.status === 'blocked' ? (t.blocked_seed_message ?? null) : null,
+        blockedSeedMessage: t.status === 'blocked' ? (t.blocked_seed_message ?? null) : null,
         needsYou: deriveNeedsYou({
           status: t.status,
           openQuestion: t.open_question_count > 0,
-          awaitingSecret:
-            t.awaiting_secret_id != null || t.open_secret_count > 0,
+          awaitingSecret: t.awaiting_secret_id != null || t.open_secret_count > 0,
         }),
         createdAt: t.created_at,
         // The observed PR (null until one exists) — drives the sidebar's PR-status glyph. `mergeable`
@@ -944,9 +897,7 @@ export class WebSurfaceController {
       where: { org_id: org.id, repo_id: repoId },
       order: { created_at: 'DESC' },
     });
-    const blockedIds = rows
-      .filter((t) => t.status === 'blocked')
-      .map((t) => t.id);
+    const blockedIds = rows.filter((t) => t.status === 'blocked').map((t) => t.id);
     const blockersByJob = await this.jobDeps.blockersOfManyBlocked(blockedIds);
     return rows.map((t) => ({
       id: t.id,
@@ -955,8 +906,7 @@ export class WebSurfaceController {
       status: t.status,
       createdBy: t.created_by ?? null,
       blockedBy: blockersByJob.get(t.id) ?? [],
-      blockedSeedMessage:
-        t.status === 'blocked' ? (t.blocked_seed_message ?? null) : null,
+      blockedSeedMessage: t.status === 'blocked' ? (t.blocked_seed_message ?? null) : null,
       needsYou: deriveNeedsYou({
         status: t.status,
         openQuestion: t.open_question_count > 0,
@@ -1004,9 +954,7 @@ export class WebSurfaceController {
     const placeholder = body.title ?? null;
     // Operator-chosen kind is stamped at creation (an unknown/excluded value stays null → brain scopes it,
     // as before). The brain's system prompt reads `kind` fresh each turn, so a review job orients on turn 1.
-    const kind = coerceOperatorKind(
-      typeof body.kind === 'string' ? body.kind.trim() : undefined,
-    );
+    const kind = coerceOperatorKind(typeof body.kind === 'string' ? body.kind.trim() : undefined);
     const orgRow = await this.orgService.get(org.id);
     // Operator-chosen auto-approve mode, armed at creation. Same write shape as PATCH /auto-approve: a
     // non-'off' mode also records who armed it. Absent falls back to the org's default_auto_approve_mode
@@ -1059,9 +1007,7 @@ export class WebSurfaceController {
     const operatorText = text ?? '';
     // Write any attachments to the job's /context/uploads (visible in-sandbox) and PREPEND an
     // <uploaded-files> block to the body so the brain reads them; persist a card for the web transcript.
-    const attach = files?.length
-      ? await this.ingestAttachments(org.id, thread.id, files)
-      : null;
+    const attach = files?.length ? await this.ingestAttachments(org.id, thread.id, files) : null;
     // For a review job with a PR number, PREPEND a <review> block so the brain knows on turn 1 exactly
     // which PR to fetch and review — no reverse-engineering from the title.
     const prNumber = kind === 'review' ? Number(body.prNumber) : NaN;
@@ -1069,9 +1015,7 @@ export class WebSurfaceController {
       kind === 'review' && Number.isInteger(prNumber) && prNumber > 0
         ? renderReviewSeedXml(prNumber, repo.slug)
         : null;
-    const bodyText = [prXml, attach?.xml, operatorText]
-      .filter(Boolean)
-      .join('\n\n');
+    const bodyText = [prXml, attach?.xml, operatorText].filter(Boolean).join('\n\n');
     // Wire each requested blocker edge, tracking whether any of them is still LIVE (born-blocks the job).
     // seed=bodyText so a woken job replays the exact first-turn body (review/attachment XML included).
     let anyBlocked = false;
@@ -1091,15 +1035,11 @@ export class WebSurfaceController {
       // check above) — mirrors the create_job host-tool, which returns `{ ok: false, jobId, reason }`
       // on the same failure rather than swallowing the id. Surface jobId here too so the caller/operator
       // isn't left with an invisible zombie thread with no first message ever injected.
-      this.logger.warn(
-        `web createJob: dependency wiring failed for ${thread.id}: ${err}`,
-      );
+      this.logger.warn(`web createJob: dependency wiring failed for ${thread.id}: ${err}`);
       throw new HttpException(
         {
           message:
-            err instanceof Error
-              ? err.message
-              : 'failed to wire one or more dependsOn blockers',
+            err instanceof Error ? err.message : 'failed to wire one or more dependsOn blockers',
           jobId: thread.id,
         },
         HttpStatus.CONFLICT,
@@ -1129,16 +1069,8 @@ export class WebSurfaceController {
 
     // Fire-and-forget: generate a concise title from the first message and push it live (see service).
     void this.threadTitle
-      .generateAndApply(
-        thread.id,
-        org.id,
-        repo.id,
-        operatorText || 'Attached files',
-        placeholder,
-      )
-      .catch((err) =>
-        this.logger.warn(`title gen dispatch failed for ${thread.id}: ${err}`),
-      );
+      .generateAndApply(thread.id, org.id, repo.id, operatorText || 'Attached files', placeholder)
+      .catch((err) => this.logger.warn(`title gen dispatch failed for ${thread.id}: ${err}`));
     this.logger.log(`web created thread ${thread.id} on ${org.id}/${repo.id}`);
     return { jobId: thread.id };
   }
@@ -1196,8 +1128,7 @@ export class WebSurfaceController {
       ...(subByParentMsg.has(m.id)
         ? {
             subagentStatus: subByParentMsg.get(m.id)!.status,
-            subagentEndedAt:
-              subByParentMsg.get(m.id)!.ended_at?.toISOString() ?? null,
+            subagentEndedAt: subByParentMsg.get(m.id)!.ended_at?.toISOString() ?? null,
           }
         : {}),
       postedAt: m.created_at,
@@ -1250,9 +1181,7 @@ export class WebSurfaceController {
       throw new BadRequestException('messages must be a non-empty array');
     }
     if (rawMessages.length > MAX_BATCH_ITEMS) {
-      throw new BadRequestException(
-        `message batch may contain at most ${MAX_BATCH_ITEMS} items`,
-      );
+      throw new BadRequestException(`message batch may contain at most ${MAX_BATCH_ITEMS} items`);
     }
     const inputs = rawMessages.map((m) => normalizeMessageInput(m));
     const totalBytes = inputs.reduce(
@@ -1275,9 +1204,7 @@ export class WebSurfaceController {
     // standby), so reject with 503 — the client retries and lands on the freshly-promoted leader. Enforced
     // once here for EVERY case (the legacy single endpoints were inconsistent about this).
     if (!this.election.isLeader()) {
-      throw new ServiceUnavailableException(
-        'Atlas is handing off — retry momentarily.',
-      );
+      throw new ServiceUnavailableException('Atlas is handing off — retry momentarily.');
     }
     const thread = await this.requireThread(jobId, org.id);
     if (thread.status === 'blocked') {
@@ -1301,9 +1228,7 @@ export class WebSurfaceController {
       (m) => m.type === 'file_answered' || m.type === 'secret_provided',
     );
     if (needsOwner && org.role !== 'owner') {
-      throw new ForbiddenException(
-        'providing files/secrets requires an org owner',
-      );
+      throw new ForbiddenException('providing files/secrets requires an org owner');
     }
 
     // Apply each answered card through its shared gate (same helpers the legacy endpoints used). `applied`
@@ -1322,8 +1247,7 @@ export class WebSurfaceController {
           : item.type === 'file_answered'
             ? 'file'
             : 'secret';
-      const id =
-        item.type === 'answer_question' ? item.questionId : item.requestId;
+      const id = item.type === 'answer_question' ? item.questionId : item.requestId;
       const r =
         item.type === 'answer_question'
           ? await this.applyQuestionAnswer(
@@ -1357,15 +1281,11 @@ export class WebSurfaceController {
     }
     // One rehydrate for the whole batch if anything landed in the worktree secret store. Best-effort.
     if (wroteToStore) {
-      await this.threadLifecycle
-        .rehydrateThread(jobId, org.id)
-        .catch(() => undefined);
+      await this.threadLifecycle.rehydrateThread(jobId, org.id).catch(() => undefined);
     }
 
     const attach =
-      userItem && files?.length
-        ? await this.ingestAttachments(org.id, jobId, files)
-        : null;
+      userItem && files?.length ? await this.ingestAttachments(org.id, jobId, files) : null;
 
     // CASE 1 — a `user` message with no delivered cards: the plain operator-chat path (byte-identical to the
     // old `say`). A lane-targeted message routes through the send seam; otherwise it hits the planning brain.
@@ -1374,9 +1294,7 @@ export class WebSurfaceController {
       if (!operatorText && !attach) {
         throw new BadRequestException('text or an attachment is required');
       }
-      const bodyText = attach
-        ? `${attach.xml}\n\n${operatorText}`
-        : operatorText;
+      const bodyText = attach ? `${attach.xml}\n\n${operatorText}` : operatorText;
       const targetLane = userItem.lane;
       if (targetLane && targetLane !== 'main') {
         if (!this.threadInput) {
@@ -1424,30 +1342,19 @@ export class WebSurfaceController {
     // tail stamps every card delivered (at-least-once recovery on boot).
     if (applied.length > 0 && !userItem) {
       const seedBody = batchAnswerBody(applied.map((a) => a.notice));
-      const ts = this.surface.seedSystemNotification(
-        thread.repo_id,
-        jobId,
-        seedBody,
-        {
-          orgId: org.id,
-          deliveredQuestionIds: applied
-            .filter((a) => a.kind === 'question')
-            .map((a) => a.id),
-          deliveredFileIds: applied
-            .filter((a) => a.kind === 'file')
-            .map((a) => a.id),
-          deliveredSecretIds: applied
-            .filter((a) => a.kind === 'secret')
-            .map((a) => a.id),
-          seedRow: {
-            label: `The operator sent ${applied.length} answer(s)`,
-            chunkKey: chunkKey.batch(
-              jobId,
-              applied.map((a) => a.id),
-            ),
-          },
+      const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, seedBody, {
+        orgId: org.id,
+        deliveredQuestionIds: applied.filter((a) => a.kind === 'question').map((a) => a.id),
+        deliveredFileIds: applied.filter((a) => a.kind === 'file').map((a) => a.id),
+        deliveredSecretIds: applied.filter((a) => a.kind === 'secret').map((a) => a.id),
+        seedRow: {
+          label: `The operator sent ${applied.length} answer(s)`,
+          chunkKey: chunkKey.batch(
+            jobId,
+            applied.map((a) => a.id),
+          ),
         },
-      );
+      });
       return { ok: true, ts, results };
     }
 
@@ -1456,9 +1363,7 @@ export class WebSurfaceController {
     // then deliver it through the `Message`-typed intake seam as a single system seed.
     if (applied.length > 0 && userItem) {
       const operatorText = userItem.text ?? '';
-      const userBody = attach
-        ? `${attach.xml}\n\n${operatorText}`
-        : operatorText;
+      const userBody = attach ? `${attach.xml}\n\n${operatorText}` : operatorText;
       const author = operatorAuthor(user);
       const chunks: TurnChunk[] = [
         ...applied.map((a) => ({
@@ -1484,15 +1389,9 @@ export class WebSurfaceController {
               applied.map((a) => a.id),
             ),
           },
-          deliveredQuestionIds: applied
-            .filter((a) => a.kind === 'question')
-            .map((a) => a.id),
-          deliveredFileIds: applied
-            .filter((a) => a.kind === 'file')
-            .map((a) => a.id),
-          deliveredSecretIds: applied
-            .filter((a) => a.kind === 'secret')
-            .map((a) => a.id),
+          deliveredQuestionIds: applied.filter((a) => a.kind === 'question').map((a) => a.id),
+          deliveredFileIds: applied.filter((a) => a.kind === 'file').map((a) => a.id),
+          deliveredSecretIds: applied.filter((a) => a.kind === 'secret').map((a) => a.id),
         },
         {
           author: {
@@ -1524,18 +1423,13 @@ export class WebSurfaceController {
     if (files.length > MAX_ATTACHMENTS) {
       throw new BadRequestException(`at most ${MAX_ATTACHMENTS} attachments`);
     }
-    const uploadsDir = join(
-      this.threadLifecycle.contextDirHost(jobId, orgId),
-      'uploads',
-    );
+    const uploadsDir = join(this.threadLifecycle.contextDirHost(jobId, orgId), 'uploads');
     await mkdir(uploadsDir, { recursive: true });
     const items: AttachmentCardItem[] = [];
     for (const file of files) {
       const ext = extname(file.originalname).toLowerCase();
       if (!ATTACHMENT_EXTS.has(ext)) {
-        throw new BadRequestException(
-          `unsupported attachment type: ${ext || file.originalname}`,
-        );
+        throw new BadRequestException(`unsupported attachment type: ${ext || file.originalname}`);
       }
       if (file.size > MAX_ATTACHMENT_BYTES) {
         throw new PayloadTooLargeException(
@@ -1576,9 +1470,7 @@ export class WebSurfaceController {
     }
     // Only the leader processes turns — same rationale as `say`.
     if (!this.election.isLeader()) {
-      throw new ServiceUnavailableException(
-        'Atlas is handing off — retry momentarily.',
-      );
+      throw new ServiceUnavailableException('Atlas is handing off — retry momentarily.');
     }
     const thread = await this.requireThread(jobId, org.id);
     const text = formatReviewComments(body.items, body.message);
@@ -1614,19 +1506,14 @@ export class WebSurfaceController {
    */
   @Sse('orgs/:orgId/repos/:repoId/events')
   @UseGuards(OrgMembershipGuard)
-  events(
-    @Param('orgId') orgId: string,
-    @Param('repoId') repoId: string,
-  ): Observable<MessageEvent> {
+  events(@Param('orgId') orgId: string, @Param('repoId') repoId: string): Observable<MessageEvent> {
     const messages$ = this.surface.outbound$.pipe(
       filter((msg: WebOutboundMessage) => msg.channel === repoId),
       map((msg): MessageEvent => ({ data: { type: 'message', ...msg } })),
     );
     // Replayed once per connection (deferred → read at subscribe time): the current state of every
     // in-flight turn, so a (re)connecting client resumes mid-stream.
-    const snapshot$ = defer(() =>
-      from(this.liveTurns.snapshotsForRepo(repoId)),
-    ).pipe(
+    const snapshot$ = defer(() => from(this.liveTurns.snapshotsForRepo(repoId))).pipe(
       map(
         (s): MessageEvent => ({
           data: {
@@ -1698,14 +1585,9 @@ export class WebSurfaceController {
       throw new BadRequestException(`Unknown actionId: ${actionId}`);
     }
     const meta = parseWebApprovalMeta(value);
-    if (!meta)
-      throw new BadRequestException(
-        'value is not a valid ApprovalActionMeta JSON',
-      );
+    if (!meta) throw new BadRequestException('value is not a valid ApprovalActionMeta JSON');
     if (meta.jobId !== jobId) {
-      throw new BadRequestException(
-        'approval value does not match the route job',
-      );
+      throw new BadRequestException('approval value does not match the route job');
     }
     // The verdict's target thread (meta.jobId is the thread id) must belong to the caller's org.
     const thread = await this.requireThread(meta.jobId, org.id);
@@ -1727,12 +1609,7 @@ export class WebSurfaceController {
       if (mismatch) {
         const message =
           'This plan changed or was withdrawn before the approval landed. Refresh and approve the current plan.';
-        await this.postSystemOperatorNotice(
-          thread.repo_id,
-          thread.id,
-          org.id,
-          message,
-        );
+        await this.postSystemOperatorNotice(thread.repo_id, thread.id, org.id, message);
         return { ok: false, jobId: meta.jobId, message };
       }
     }
@@ -1742,13 +1619,8 @@ export class WebSurfaceController {
     // The MERGE click resolves SYNCHRONOUSLY: await the merge so the response only returns 2xx once the PR
     // actually merged, and a failed/no-op merge surfaces as a 409 instead of a false success.
     if (actionId === MERGE_ACTION_ID) {
-      const merged = await resolveMergeApproval(
-        this.moduleRef,
-        meta.jobId,
-        user.id,
-      );
-      if (!merged)
-        throw new HttpException('Merge did not complete', HttpStatus.CONFLICT);
+      const merged = await resolveMergeApproval(this.moduleRef, meta.jobId, user.id);
+      if (!merged) throw new HttpException('Merge did not complete', HttpStatus.CONFLICT);
       return { ok: true, jobId: meta.jobId };
     }
     this.surface.receiveApprovalClick(actionId, value, user.id, note);
@@ -1762,11 +1634,9 @@ export class WebSurfaceController {
     text: string,
   ): Promise<void> {
     const meta = { source: 'system_operator' };
-    await this.surface
-      .post(repoId, text, { threadTs: jobId, orgId, meta })
-      .catch((err) => {
-        this.logger.warn(`failed to post approval notice: ${err}`);
-      });
+    await this.surface.post(repoId, text, { threadTs: jobId, orgId, meta }).catch((err) => {
+      this.logger.warn(`failed to post approval notice: ${err}`);
+    });
     await this.store.appendSystemOperatorMessage(jobId, text, meta);
   }
 
@@ -1853,9 +1723,7 @@ export class WebSurfaceController {
    * verification-judge outage (`judge_unavailable`). Re-arms the judge-cap re-drive budget and re-drives.
    * Scoped to the caller's org via the membership guard + `requireThread` (job ownership).
    */
-  @Post(
-    'orgs/:orgId/repos/:repoId/jobs/:jobId/threads/:threadId/retry-verification',
-  )
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/threads/:threadId/retry-verification')
   @UseGuards(OrgMembershipGuard)
   async retryVerification(
     @CurrentOrg() org: CurrentOrgCtx,
@@ -1977,18 +1845,13 @@ export class WebSurfaceController {
       where: { job_id: jobId, ts: questionId, kind: 'card' },
     });
     const payload = card?.card as WebQuestionCard | undefined;
-    if (!card || payload?.type !== 'question_card')
-      return { status: 'notfound' };
+    if (!card || payload?.type !== 'question_card') return { status: 'notfound' };
     if (payload.deliveredAt) return { status: 'stale' };
     if (payload.withdrawnAt) return { status: 'withdrawn' };
     if (payload.answer != null) return { status: 'noop' };
     // Atomic first-answer: only the txn that flips the still-unanswered card "wins" (decrements the
     // open-question counter); a concurrent loser is an idempotent no-op with no second delivery turn.
-    const { firstAnswer } = await this.store.markQuestionAnswered(
-      jobId,
-      questionId,
-      answer,
-    );
+    const { firstAnswer } = await this.store.markQuestionAnswered(jobId, questionId, answer);
     if (!firstAnswer) return { status: 'noop' };
     if (payload.origin === 'build') return { status: 'noop' };
     const question = (payload.question ?? '').trim();
@@ -2015,9 +1878,7 @@ export class WebSurfaceController {
     @Param('jobId') jobId: string,
   ): Promise<{ ok: boolean; ts: string }> {
     if (!this.election.isLeader()) {
-      throw new ServiceUnavailableException(
-        'Atlas is handing off — retry momentarily.',
-      );
+      throw new ServiceUnavailableException('Atlas is handing off — retry momentarily.');
     }
     const thread = await this.requireThread(jobId, org.id);
     if (thread.status !== 'ready') return { ok: false, ts: '' };
@@ -2027,10 +1888,7 @@ export class WebSurfaceController {
     // already stamped the card irreversibly, so degrade to 'no recipe' rather than throwing post-stamp.
     let previewInstructions: string | null | undefined;
     try {
-      previewInstructions = await this.configStore?.getPreviewInstructions(
-        org.id,
-        thread.repo_id,
-      );
+      previewInstructions = await this.configStore?.getPreviewInstructions(org.id, thread.repo_id);
     } catch {
       previewInstructions = null;
     }
@@ -2072,8 +1930,7 @@ export class WebSurfaceController {
       where: { job_id: jobId, ts: requestId, kind: 'card' },
     });
     const payload = card?.card as WebSecretInputCard | undefined;
-    if (!card || payload?.type !== 'secret_input_card')
-      return { status: 'notfound' };
+    if (!card || payload?.type !== 'secret_input_card') return { status: 'notfound' };
     if (payload.ephemeral) return { status: 'noop' };
     if (payload.withdrawnAt) return { status: 'withdrawn' };
     if (payload.delivered_at) return { status: 'stale' };
@@ -2090,9 +1947,7 @@ export class WebSurfaceController {
       // pasted secret. Refuse a secret write to an `auth_kind='oauth'` row (no setSecret, no probe) even if a
       // stale card slipped past the brain-side check — the row is the source of truth. Terminal (withdrawn)
       // with a failure notice the SINGLE endpoint seeds; the batch simply excludes a withdrawn card.
-      const target = await this.mcpStore
-        .rawRow(orgId, repoId, server)
-        .catch(() => null);
+      const target = await this.mcpStore.rawRow(orgId, repoId, server).catch(() => null);
       if (target?.auth_kind === 'oauth') {
         await this.store.withdrawSecretRequest(
           jobId,
@@ -2111,23 +1966,15 @@ export class WebSurfaceController {
       );
       if (!wrote) {
         // The server row is gone (deleted between propose/approve and provide) — terminal (withdrawn).
-        await this.store.withdrawSecretRequest(
-          jobId,
-          requestId,
-          'MCP server row is gone',
-        );
+        await this.store.withdrawSecretRequest(jobId, requestId, 'MCP server row is gone');
         return { status: 'withdrawn', withdrawnReason: 'store_failed' };
       }
       // Best-effort validation so the confirmation says whether it connected (remote only; stdio spawns
       // in-sandbox). Never throws — a failure is persisted as the server's validation state.
-      const row = await this.mcpStore
-        .rawRow(orgId, repoId, server)
-        .catch(() => null);
+      const row = await this.mcpStore.rawRow(orgId, repoId, server).catch(() => null);
       if (row) {
         const result = await this.mcpProbe.validate(row);
-        await this.mcpStore
-          .recordValidation(orgId, repoId, server, result)
-          .catch(() => undefined);
+        await this.mcpStore.recordValidation(orgId, repoId, server, result).catch(() => undefined);
       }
       // Per-card lane: stamp provided_at AND decrement the open-secret counter in one transaction. No
       // rehydrate — mcp secrets don't render into the worktree.
@@ -2141,9 +1988,7 @@ export class WebSurfaceController {
     }
 
     if (!payload.path) {
-      throw new BadRequestException(
-        'secret request is missing its destination path',
-      );
+      throw new BadRequestException('secret request is missing its destination path');
     }
     // Write the value to the ENCRYPTED store as this repo's secret file at (repo, path); the row IS the
     // authority. `payload.name` rides along as the display label. This is the value's only resting place.
@@ -2169,9 +2014,7 @@ export class WebSurfaceController {
   ): Promise<{ ok: boolean; ts: string }> {
     const value = body?.value;
     if (!body?.requestId || value == null || value === '') {
-      throw new BadRequestException(
-        'requestId and a non-empty value are required',
-      );
+      throw new BadRequestException('requestId and a non-empty value are required');
     }
     const thread = await this.requireThread(jobId, org.id);
     const card = await this.messages.findOne({
@@ -2182,7 +2025,10 @@ export class WebSurfaceController {
       throw new BadRequestException('no such secret request on this thread');
     }
     const seedTransport = {
-      author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
+      author: {
+        id: SYSTEM_SEED_AUTHOR.id,
+        displayName: SYSTEM_SEED_AUTHOR.name,
+      },
       replyRoute: { surfaceId: this.surface.name, jobRef: jobId },
     };
 
@@ -2192,10 +2038,7 @@ export class WebSurfaceController {
     // target process isn't reading (dead reader → the write times out), clear the gate and tell the brain to
     // restart the login rather than wedge.
     if (payload.ephemeral) {
-      if (
-        thread.awaiting_secret_id !== body.requestId ||
-        payload.delivered_at
-      ) {
+      if (thread.awaiting_secret_id !== body.requestId || payload.delivered_at) {
         return { ok: false, ts: '' };
       }
       if (payload.provided_at != null) {
@@ -2203,9 +2046,7 @@ export class WebSurfaceController {
       }
       const deliverTo = payload.deliver_to ?? '';
       if (!deliverTo) {
-        throw new BadRequestException(
-          'ephemeral request has no delivery target',
-        );
+        throw new BadRequestException('ephemeral request has no delivery target');
       }
       const delivered = await this.threadLifecycle.deliverEphemeralSecret({
         jobId,
@@ -2263,20 +2104,12 @@ export class WebSurfaceController {
     }
 
     // DURABLE + MCP lanes — shared with the batch path via the apply helper.
-    const r = await this.applySecretProvide(
-      jobId,
-      org.id,
-      thread.repo_id,
-      body.requestId,
-      value,
-    );
+    const r = await this.applySecretProvide(jobId, org.id, thread.repo_id, body.requestId, value);
     if (r.status === 'applied') {
       if (r.rehydrate) {
         // Render the newly-written value into the RUNNING sandbox now, so it is on disk before the brain's
         // confirmation turn runs. Best-effort — the next turn's ensureContainer hydrates it otherwise.
-        await this.threadLifecycle
-          .rehydrateThread(jobId, org.id)
-          .catch(() => undefined);
+        await this.threadLifecycle.rehydrateThread(jobId, org.id).catch(() => undefined);
       }
       await this.intake.intakeChat(
         payload.mcp
@@ -2345,9 +2178,7 @@ export class WebSurfaceController {
    * `request_secret` (mcp target). A remote server needing no secret is probed so its tool list populates
    * immediately. Idempotent (a re-approve of an already-committed card is a no-op).
    */
-  @Post(
-    'orgs/:orgId/repos/:repoId/jobs/:jobId/mcp-proposals/:requestId/approve',
-  )
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/mcp-proposals/:requestId/approve')
   @UseGuards(OrgMembershipGuard, OrgOwnerGuard)
   async approveMcpProposal(
     @CurrentOrg() org: CurrentOrgCtx,
@@ -2356,8 +2187,7 @@ export class WebSurfaceController {
   ): Promise<{ ok: boolean; committed: string[]; ts?: string }> {
     const thread = await this.requireThread(jobId, org.id);
     const card = await this.store.getMcpProposalCard(jobId, requestId);
-    if (!card)
-      throw new BadRequestException('no such MCP proposal on this thread');
+    if (!card) throw new BadRequestException('no such MCP proposal on this thread');
     if (card.approved_at) {
       return { ok: true, committed: card.committed ?? [] };
     }
@@ -2406,12 +2236,7 @@ export class WebSurfaceController {
     let readyStatic = 0;
     for (const s of card.servers) {
       if (!s.name || isReservedMcpName(s.name)) continue;
-      await this.mcpStore.write(
-        org.id,
-        dbScope,
-        s.name,
-        this.mcpProposalToInput(s),
-      );
+      await this.mcpStore.write(org.id, dbScope, s.name, this.mcpProposalToInput(s));
       committed.push(s.name);
       // OAuth server: lands UNCONNECTED (no token yet). It has no secret slot to fill and MUST NOT be static-
       // probed here — an unconnected OAuth endpoint 401s, which would falsely mark it broken. The owner completes
@@ -2421,19 +2246,13 @@ export class WebSurfaceController {
         continue;
       }
       const secretSlots = [
-        ...(s.headers ?? [])
-          .filter((h) => h.secret)
-          .map((h) => `${s.name} header:${h.name}`),
-        ...(s.env ?? [])
-          .filter((e) => e.secret)
-          .map((e) => `${s.name} env:${e.name}`),
+        ...(s.headers ?? []).filter((h) => h.secret).map((h) => `${s.name} header:${h.name}`),
+        ...(s.env ?? []).filter((e) => e.secret).map((e) => `${s.name} env:${e.name}`),
       ];
       needSecrets.push(...secretSlots);
       // A remote server that needs no secret can be validated now so its tool list is populated.
       if (s.transport !== 'stdio' && secretSlots.length === 0) {
-        const row = await this.mcpStore
-          .rawRow(org.id, dbScope, s.name)
-          .catch(() => null);
+        const row = await this.mcpStore.rawRow(org.id, dbScope, s.name).catch(() => null);
         if (row) {
           const result = await this.mcpProbe.validate(row);
           await this.mcpStore
@@ -2478,9 +2297,7 @@ export class WebSurfaceController {
    * the console), and the scope is FORCED to `thread.repo_id` — never trusted from the card. Idempotent (a
    * re-approve of an already-attached card is a no-op).
    */
-  @Post(
-    'orgs/:orgId/repos/:repoId/jobs/:jobId/convention-proposals/:requestId/approve',
-  )
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/convention-proposals/:requestId/approve')
   @UseGuards(OrgMembershipGuard, OrgOwnerGuard)
   async approveConventionProposal(
     @CurrentOrg() org: CurrentOrgCtx,
@@ -2489,10 +2306,7 @@ export class WebSurfaceController {
   ): Promise<{ ok: boolean; slug: string; ts?: string }> {
     const thread = await this.requireThread(jobId, org.id);
     const card = await this.store.getConventionProposalCard(jobId, requestId);
-    if (!card)
-      throw new BadRequestException(
-        'no such convention proposal on this thread',
-      );
+    if (!card) throw new BadRequestException('no such convention proposal on this thread');
     if (card.approved_at) {
       return { ok: true, slug: card.slug };
     }
@@ -2530,9 +2344,7 @@ export class WebSurfaceController {
    * profile is org-level — the write is keyed on `(org, slug)` from the card, not the repo. Idempotent (a
    * re-approve of an already-applied card is a no-op).
    */
-  @Post(
-    'orgs/:orgId/repos/:repoId/jobs/:jobId/convention-edit-proposals/:requestId/approve',
-  )
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/convention-edit-proposals/:requestId/approve')
   @UseGuards(OrgMembershipGuard, OrgOwnerGuard)
   async approveConventionEditProposal(
     @CurrentOrg() org: CurrentOrgCtx,
@@ -2540,14 +2352,8 @@ export class WebSurfaceController {
     @Param('requestId') requestId: string,
   ): Promise<{ ok: boolean; slug: string; ts?: string }> {
     const thread = await this.requireThread(jobId, org.id);
-    const card = await this.store.getConventionEditProposalCard(
-      jobId,
-      requestId,
-    );
-    if (!card)
-      throw new BadRequestException(
-        'no such convention-edit proposal on this thread',
-      );
+    const card = await this.store.getConventionEditProposalCard(jobId, requestId);
+    if (!card) throw new BadRequestException('no such convention-edit proposal on this thread');
     if (card.approved_at) {
       return { ok: true, slug: card.slug };
     }
@@ -2587,9 +2393,7 @@ export class WebSurfaceController {
    * a matching repo/org behaves, so it's owner-only. The write scope is the card's `scope`: `'org'` → the
    * `'*'` sentinel (every repo), `'repo'` → this repo id. Idempotent (a re-approve is a no-op).
    */
-  @Post(
-    'orgs/:orgId/repos/:repoId/jobs/:jobId/skill-proposals/:requestId/approve',
-  )
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/skill-proposals/:requestId/approve')
   @UseGuards(OrgMembershipGuard, OrgOwnerGuard)
   async approveSkillProposal(
     @CurrentOrg() org: CurrentOrgCtx,
@@ -2598,8 +2402,7 @@ export class WebSurfaceController {
   ): Promise<{ ok: boolean; name: string; ts?: string }> {
     const thread = await this.requireThread(jobId, org.id);
     const card = await this.store.getSkillProposalCard(jobId, requestId);
-    if (!card)
-      throw new BadRequestException('no such skill proposal on this thread');
+    if (!card) throw new BadRequestException('no such skill proposal on this thread');
     if (card.approved_at) {
       return { ok: true, name: card.name };
     }
@@ -2630,9 +2433,7 @@ export class WebSurfaceController {
           'the authored skill draft is missing — ask the brain to propose it again',
         );
       }
-      const fm = parseSkillFrontmatter(
-        readFileSync(join(srcDir, 'SKILL.md'), 'utf8'),
-      );
+      const fm = parseSkillFrontmatter(readFileSync(join(srcDir, 'SKILL.md'), 'utf8'));
       this.skillFiles.vendorDir(srcDir, org.id, dbScope, card.name);
       await this.skillStore.write(org.id, dbScope, card.name, {
         description: card.description,
@@ -2643,17 +2444,10 @@ export class WebSurfaceController {
       });
       this.skillFiles.removeStaging(org.id, requestId);
       // Drop the now-stale /context draft so the brain edits the durable store copy (via edit-access) instead.
-      rmSync(
-        join(
-          this.threadLifecycle.contextDirHost(jobId, org.id),
-          'skill-drafts',
-          card.name,
-        ),
-        {
-          recursive: true,
-          force: true,
-        },
-      );
+      rmSync(join(this.threadLifecycle.contextDirHost(jobId, org.id), 'skill-drafts', card.name), {
+        recursive: true,
+        force: true,
+      });
     }
     await this.store.markSkillProposalApproved(jobId, requestId);
     await this.intake.intakeChat(
@@ -2690,9 +2484,7 @@ export class WebSurfaceController {
    * already-approved card is a no-op). Owner-only — unlocking a skill for live edits is as consequential as
    * creating one.
    */
-  @Post(
-    'orgs/:orgId/repos/:repoId/jobs/:jobId/skill-edit-access/:requestId/approve',
-  )
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/skill-edit-access/:requestId/approve')
   @UseGuards(OrgMembershipGuard, OrgOwnerGuard)
   async approveSkillEditAccess(
     @CurrentOrg() org: CurrentOrgCtx,
@@ -2701,10 +2493,7 @@ export class WebSurfaceController {
   ): Promise<{ ok: boolean; name: string; grantedAs?: string; ts?: string }> {
     const thread = await this.requireThread(jobId, org.id);
     const card = await this.store.getSkillEditAccessCard(jobId, requestId);
-    if (!card)
-      throw new BadRequestException(
-        'no such skill edit-access request on this thread',
-      );
+    if (!card) throw new BadRequestException('no such skill edit-access request on this thread');
     if (card.approved_at) {
       return {
         ok: true,
@@ -2781,11 +2570,7 @@ export class WebSurfaceController {
    *  `<name>-custom-2`/`-3`/… on a name collision (a prior fork, or an unrelated skill of that name). Copies
    *  the dir (full fidelity) then writes the new registry row (`forked_from` the original's name). Returns
    *  the fork's name. */
-  private async forkSkillToCustom(
-    orgId: string,
-    dbScope: string,
-    name: string,
-  ): Promise<string> {
+  private async forkSkillToCustom(orgId: string, dbScope: string, name: string): Promise<string> {
     let forkName = `${name}-custom`;
     for (let n = 2; await this.skillStore.get(orgId, dbScope, forkName); n++) {
       forkName = `${name}-custom-${n}`;
@@ -2797,12 +2582,8 @@ export class WebSurfaceController {
       provenance: 'custom',
       forked_from: name,
       surfaces: source?.surfaces,
-      ...(source?.reviewForTypes
-        ? { reviewForTypes: source.reviewForTypes }
-        : {}),
-      ...(source?.reviewForGlobs
-        ? { reviewForGlobs: source.reviewForGlobs }
-        : {}),
+      ...(source?.reviewForTypes ? { reviewForTypes: source.reviewForTypes } : {}),
+      ...(source?.reviewForGlobs ? { reviewForGlobs: source.reviewForGlobs } : {}),
       enabled: true,
     });
     return forkName;
@@ -2861,8 +2642,7 @@ export class WebSurfaceController {
       where: { job_id: jobId, ts: requestId, kind: 'card' },
     });
     const payload = card?.card as WebFileRequestCard | undefined;
-    if (!card || payload?.type !== 'file_request_card')
-      return { status: 'notfound' };
+    if (!card || payload?.type !== 'file_request_card') return { status: 'notfound' };
     // Per-card gate (same shape as answer-question): a delivered card is stale; an already-provided card is
     // an idempotent no-op (double submit); a withdrawn card was retracted by the brain, so refuse the upload
     // rather than write a secret to a path it abandoned.
@@ -2917,8 +2697,7 @@ export class WebSurfaceController {
     const threadId = body?.threadId;
     if (!threadId) throw new BadRequestException('threadId required');
     const thread = await this.driverStore.getThread(threadId);
-    if (!thread || thread.jobId !== jobId)
-      throw new NotFoundException('thread not found');
+    if (!thread || thread.jobId !== jobId) throw new NotFoundException('thread not found');
     await this.driverStore.setFocusedThread(jobId, threadId);
     return { status: 'ok' };
   }
@@ -3064,9 +2843,7 @@ export class WebSurfaceController {
     const buf = readFileSync(abs);
     return {
       name: basename(abs),
-      path: relative(realpathSync(sandbox.worktreePath), abs)
-        .split(sep)
-        .join('/'),
+      path: relative(realpathSync(sandbox.worktreePath), abs).split(sep).join('/'),
       size: st.size,
       mtime: st.mtime.toISOString(),
       encoding: binary ? 'base64' : 'text',
@@ -3083,10 +2860,7 @@ export class WebSurfaceController {
    */
   @Get('orgs/:orgId/repos/:repoId/jobs/:jobId/diff')
   @UseGuards(OrgMembershipGuard)
-  async jobDiff(
-    @CurrentOrg() org: CurrentOrgCtx,
-    @Param('jobId') jobId: string,
-  ): Promise<JobDiff> {
+  async jobDiff(@CurrentOrg() org: CurrentOrgCtx, @Param('jobId') jobId: string): Promise<JobDiff> {
     await this.requireThread(jobId, org.id);
     const sandbox = await this.threadLifecycle.findSandbox(jobId, org.id);
     if (!sandbox) return { files: [], truncated: false };
@@ -3147,8 +2921,7 @@ export class WebSurfaceController {
     if (!st.isFile()) throw new NotFoundException('not a file');
     const ext = extname(abs).toLowerCase();
     const mime =
-      MIME_BY_EXT[ext]?.mime ??
-      (ext === '.pdf' ? 'application/pdf' : 'application/octet-stream');
+      MIME_BY_EXT[ext]?.mime ?? (ext === '.pdf' ? 'application/pdf' : 'application/octet-stream');
     return new StreamableFile(createReadStream(abs), {
       type: mime,
       length: st.size,
@@ -3192,8 +2965,7 @@ export class WebSurfaceController {
     if (!st.isFile()) throw new NotFoundException('not a file');
     const ext = extname(abs).toLowerCase();
     const mime =
-      MIME_BY_EXT[ext]?.mime ??
-      (ext === '.pdf' ? 'application/pdf' : 'application/octet-stream');
+      MIME_BY_EXT[ext]?.mime ?? (ext === '.pdf' ? 'application/pdf' : 'application/octet-stream');
     return new StreamableFile(createReadStream(abs), {
       type: mime,
       length: st.size,
@@ -3238,9 +3010,7 @@ export class WebSurfaceController {
     // Join the durable markers with a LIVE liveness probe (exec `kill -0` into the container), gated on
     // the container generation so a recreated container reusing a pgid can't fake `running`. Memoized so
     // overlapping polls / multiple open clients collapse into one docker exec.
-    const pgids = services
-      .map((s) => s.pgid)
-      .filter((p): p is number => p != null);
+    const pgids = services.map((s) => s.pgid).filter((p): p is number => p != null);
     const probe = await this.probeLivenessMemoized(jobId, pgids);
     const exposure = this.exposure;
     for (const s of services) {
@@ -3272,10 +3042,7 @@ export class WebSurfaceController {
    * one in-flight/resolved probe, so the ~5s status poll (× however many open clients) collapses to a
    * single `docker exec`. Keyed by the pgid SET so a service starting/stopping mid-window isn't masked.
    */
-  private probeLivenessMemoized(
-    jobId: string,
-    pgids: number[],
-  ): Promise<ServiceLivenessProbe> {
+  private probeLivenessMemoized(jobId: string, pgids: number[]): Promise<ServiceLivenessProbe> {
     const key = `${jobId}|${[...pgids].sort((a, b) => a - b).join(',')}`;
     const now = Date.now();
     const hit = this.livenessMemo.get(key);
@@ -3306,10 +3073,7 @@ export class WebSurfaceController {
       throw new BadRequestException('invalid service id');
     }
     const dir = this.threadLifecycle.supervisorDirHost(jobId);
-    const wantLines = Math.min(
-      Math.max(parseInt(n ?? '200', 10) || 200, 1),
-      2000,
-    );
+    const wantLines = Math.min(Math.max(parseInt(n ?? '200', 10) || 200, 1), 2000);
     const { content, truncated } = readServiceLogTail(
       dir,
       id,
@@ -3336,16 +3100,10 @@ export class WebSurfaceController {
   ): Observable<MessageEvent> {
     return defer(() => from(this.requireThread(jobId, org.id))).pipe(
       switchMap(() => {
-        if (!SERVICE_ID_RE.test(id))
-          throw new BadRequestException('invalid service id');
+        if (!SERVICE_ID_RE.test(id)) throw new BadRequestException('invalid service id');
         const dir = this.threadLifecycle.supervisorDirHost(jobId);
         return new Observable<MessageEvent>((subscriber) => {
-          const snapshot = readServiceLogTail(
-            dir,
-            id,
-            200,
-            MAX_SERVICE_LOG_TAIL_BYTES,
-          );
+          const snapshot = readServiceLogTail(dir, id, 200, MAX_SERVICE_LOG_TAIL_BYTES);
           subscriber.next({
             data: {
               type: 'snapshot',
@@ -3377,12 +3135,7 @@ export class WebSurfaceController {
             if (result.kind === 'unchanged') return;
             if (result.kind === 'reset') {
               closeTailFd(fd);
-              const fresh = readServiceLogTail(
-                dir,
-                id,
-                200,
-                MAX_SERVICE_LOG_TAIL_BYTES,
-              );
+              const fresh = readServiceLogTail(dir, id, 200, MAX_SERVICE_LOG_TAIL_BYTES);
               subscriber.next({
                 data: {
                   type: 'snapshot',
@@ -3421,10 +3174,7 @@ export class WebSurfaceController {
     const title = body?.title?.trim().slice(0, 200);
     if (!title) throw new BadRequestException('title is required');
     // Scope the update to the caller's org (defense in depth beyond the membership guard).
-    const result = await this.jobs.update(
-      { id: jobId, org_id: org.id },
-      { title },
-    );
+    const result = await this.jobs.update({ id: jobId, org_id: org.id }, { title });
     if (!result.affected) throw new NotFoundException('thread not found');
     this.logger.log(`web renamed thread ${jobId} (org ${org.id})`);
     return { ok: true, title };
@@ -3454,29 +3204,18 @@ export class WebSurfaceController {
       },
     );
     if (!result.affected) throw new NotFoundException('thread not found');
-    this.logger.log(
-      `web set auto-approve mode=${body.mode} on thread ${jobId} (org ${org.id})`,
-    );
+    this.logger.log(`web set auto-approve mode=${body.mode} on thread ${jobId} (org ${org.id})`);
     // d2 — enabling a gate the job is ALREADY parked on immediately approves it, through the exact seam a real
     // button click uses (receiveApprovalClick → the module bridge → resolve / resolveShipApprovalDurably, with
     // the durable-restart fallback). Disabling a gate only affects future gates and never un-approves anything.
     if (job.status === 'awaiting_approval' && modeApprovesPlan(body.mode)) {
       const value = JSON.stringify({
         jobId,
-        ...(job.decision_record_id
-          ? { decisionRecordId: job.decision_record_id }
-          : {}),
+        ...(job.decision_record_id ? { decisionRecordId: job.decision_record_id } : {}),
       });
       this.surface.receiveApprovalClick(APPROVE_ACTION_ID, value, user.id);
-    } else if (
-      job.status === 'ready' &&
-      modeApprovesShip(body.mode)
-    ) {
-      this.surface.receiveApprovalClick(
-        SHIP_ACTION_ID,
-        JSON.stringify({ jobId }),
-        user.id,
-      );
+    } else if (job.status === 'ready' && modeApprovesShip(body.mode)) {
+      this.surface.receiveApprovalClick(SHIP_ACTION_ID, JSON.stringify({ jobId }), user.id);
     }
     return { ok: true, autoApproveMode: body.mode };
   }
@@ -3530,11 +3269,8 @@ export class WebSurfaceController {
       },
     );
     if (!result.affected) throw new NotFoundException('thread not found');
-    this.logger.log(
-      `web set auto-merge=${enable} on thread ${jobId} (org ${org.id})`,
-    );
-    if (enable)
-      void this.autoMerge.maybeAutoMerge(jobId).catch(() => undefined);
+    this.logger.log(`web set auto-merge=${enable} on thread ${jobId} (org ${org.id})`);
+    if (enable) void this.autoMerge.maybeAutoMerge(jobId).catch(() => undefined);
     const fresh = await this.jobs.findOneBy({ id: jobId });
     return {
       ok: true,
@@ -3561,9 +3297,7 @@ export class WebSurfaceController {
       } catch (err) {
         // Abort the delete (decision d3: never silently orphan). The job stays in its normal status.
         throw new BadGatewayException(
-          err instanceof Error
-            ? err.message
-            : 'Could not close the pull request',
+          err instanceof Error ? err.message : 'Could not close the pull request',
         );
       }
     }
@@ -3578,14 +3312,10 @@ export class WebSurfaceController {
       void this.threadLifecycle
         .deleteJobDeep(jobId, org.id)
         .catch((err) =>
-          this.logger.warn(
-            `web delete: background teardown failed for job ${jobId}: ${err}`,
-          ),
+          this.logger.warn(`web delete: background teardown failed for job ${jobId}: ${err}`),
         );
     }
-    this.logger.log(
-      `web deleting thread ${jobId} (org ${org.id}); claimed=${claimed}`,
-    );
+    this.logger.log(`web deleting thread ${jobId} (org ${org.id}); claimed=${claimed}`);
     return { ok: true };
   }
 
@@ -3600,8 +3330,7 @@ export class WebSurfaceController {
   ): Promise<{ ok: boolean; blocked: boolean; blockers: unknown[] }> {
     await this.requireThread(jobId, org.id);
     const dependsOnJobId = String(body?.dependsOnJobId ?? '').trim();
-    if (!dependsOnJobId)
-      throw new BadRequestException('dependsOnJobId is required');
+    if (!dependsOnJobId) throw new BadRequestException('dependsOnJobId is required');
     const { blocked } = await this.jobDeps.addDependency({
       orgId: org.id,
       repoId,
@@ -3609,9 +3338,7 @@ export class WebSurfaceController {
       dependsOnJobId,
     });
     const blockers = await this.jobDeps.blockersOf(jobId);
-    this.logger.log(
-      `web blocked job ${jobId} on ${dependsOnJobId} (org ${org.id})`,
-    );
+    this.logger.log(`web blocked job ${jobId} on ${dependsOnJobId} (org ${org.id})`);
     return { ok: true, blocked, blockers };
   }
 
@@ -3632,9 +3359,7 @@ export class WebSurfaceController {
       dependsOnJobId,
     });
     const blockers = await this.jobDeps.blockersOf(jobId);
-    this.logger.log(
-      `web unblocked job ${jobId} from ${dependsOnJobId} (org ${org.id})`,
-    );
+    this.logger.log(`web unblocked job ${jobId} from ${dependsOnJobId} (org ${org.id})`);
     return { ok: true, blockers };
   }
 
@@ -3700,10 +3425,7 @@ export class WebSurfaceController {
   // ── scoping helpers (cross-tenant isolation: resolve scoped-to-org or 404) ──────────────────────
 
   /** Resolve a thread scoped to the org, or 404 — the guard for every thread-keyed op. */
-  private async requireThread(
-    jobId: string,
-    orgId: string,
-  ): Promise<JobEntity> {
+  private async requireThread(jobId: string, orgId: string): Promise<JobEntity> {
     const thread = await this.jobs.findOne({
       where: { id: jobId, org_id: orgId },
     });
@@ -3712,10 +3434,7 @@ export class WebSurfaceController {
   }
 
   /** Resolve a repo (by uuid id) scoped to the org, or 404 — so creation never crosses tenants. */
-  private async requireRepo(
-    repoId: string,
-    orgId: string,
-  ): Promise<RepoEntity> {
+  private async requireRepo(repoId: string, orgId: string): Promise<RepoEntity> {
     const repo = await this.repos.findOne({
       where: { id: repoId, org_id: orgId },
     });

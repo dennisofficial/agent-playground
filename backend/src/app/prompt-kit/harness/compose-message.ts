@@ -11,10 +11,10 @@
 import type { Message, UserMessage } from '@shared/domain/message';
 import { assertNever } from '@shared/domain/message';
 import type { SeedRow } from '@shared/domain/seed-row';
-import { agentMessage, type AgentMessage } from '@shared/prompt-kit/message';
-import { shipOpenPrBody } from '../messages/ship-open-pr';
 import { chunkKey } from '@shared/prompt-kit/harness/chunk-keys';
 import { renderChunk } from '@shared/prompt-kit/harness/tag-vocabulary';
+import { agentMessage, type AgentMessage } from '@shared/prompt-kit/message';
+import { shipOpenPrBody } from '../messages/ship-open-pr';
 import {
   COMPACTION_INSTRUCTION,
   answeredQuestionBody,
@@ -50,9 +50,7 @@ type ComposedBody = { body: AgentMessage; seedRow?: SeedRow };
  * Render the body (and, when the turn shows as a curated transcript pill, the `SeedRow`) for a non-user
  * `Message`. `UserMessage` is excluded — it stays on its own operator intake path, unchanged.
  */
-export function composeMessageBody(
-  m: Exclude<Message, UserMessage>,
-): ComposedBody {
+export function composeMessageBody(m: Exclude<Message, UserMessage>): ComposedBody {
   switch (m.type) {
     case 'answer_question':
       return {
@@ -106,9 +104,7 @@ export function composeMessageBody(
       };
     case 'work_owed_nudge':
       return {
-        body: agentMessage(
-          renderChunk({ kind: 'system_notice', body: renderWorkOwedNudge() }),
-        ),
+        body: agentMessage(renderChunk({ kind: 'system_notice', body: renderWorkOwedNudge() })),
         seedRow: {
           label: agentMessage('Resuming an interrupted plan review.'),
           chunkKey: chunkKey.workOwed(m.reviewId),
@@ -159,9 +155,7 @@ export function composeMessageBody(
       return {
         body: retryResumeNudge(m.title),
         seedRow: {
-          label: agentMessage(
-            'Resuming the turn after a transient engine error.',
-          ),
+          label: agentMessage('Resuming the turn after a transient engine error.'),
           chunkKey: chunkKey.retry(m.jobId, Date.now()),
         },
       };
@@ -262,9 +256,7 @@ export function composeMessageBody(
  * pick the builder + chunkKey (mirrors `web-surface.controller`'s `provideSecret`/`applySecretProvide`). A
  * plain operator-supplied provide (no `outcome`) renders the generic notice with no curated pill.
  */
-function composeSecretProvided(
-  m: Extract<Message, { type: 'secret_provided' }>,
-): ComposedBody {
+function composeSecretProvided(m: Extract<Message, { type: 'secret_provided' }>): ComposedBody {
   switch (m.outcome) {
     case 'undelivered': {
       const label = secretEphemeralUndelivered(m.name!, m.reason!);
@@ -306,12 +298,7 @@ function composeSecretProvided(
         body: systemNotice(label),
         seedRow: {
           label,
-          chunkKey: chunkKey.mcpSecret(
-            m.jobId,
-            m.mcp!.server,
-            m.mcp!.key,
-            'oauth',
-          ),
+          chunkKey: chunkKey.mcpSecret(m.jobId, m.mcp!.server, m.mcp!.key, 'oauth'),
         },
       };
     }
@@ -321,12 +308,7 @@ function composeSecretProvided(
         body: systemNotice(label),
         seedRow: {
           label,
-          chunkKey: chunkKey.mcpSecret(
-            m.jobId,
-            m.mcp!.server,
-            m.mcp!.key,
-            'fail',
-          ),
+          chunkKey: chunkKey.mcpSecret(m.jobId, m.mcp!.server, m.mcp!.key, 'fail'),
         },
       };
     }

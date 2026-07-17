@@ -5,8 +5,8 @@
  * SAME `ATLAS_MAIN` agent, gated by `ctx.jobKind`.
  */
 import { Agent, ENGINEERING_STAGES } from '../agent';
-import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isBuildBrain, isOnboarding, isReview } from '../conditions';
+import { Fragment, FragmentGroup } from '../fragment.decorator';
 import type { PromptCtx } from '../prompt-ctx';
 
 @FragmentGroup()

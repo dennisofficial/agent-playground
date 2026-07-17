@@ -1,6 +1,3 @@
-import { describe, expect, it } from 'vitest';
-import { shipOpenPrBody } from './ship-open-pr';
-import { postBuildGateSeed } from './post-build-gate';
 import {
   HANDOFF_SCHEMA,
   RECORD_LEG_HANDOFF_DESCRIPTION,
@@ -10,6 +7,9 @@ import {
   ROTATION_RESUME_TAIL,
   ROTATION_SOFT_NUDGE,
 } from '@shared/prompt-kit/messages/build-handoff';
+import { describe, expect, it } from 'vitest';
+import { postBuildGateSeed } from './post-build-gate';
+import { shipOpenPrBody } from './ship-open-pr';
 
 /**
  * Golden-snapshot baseline for the pure `turns/` builders + consts — every snapshot captures CURRENT
@@ -23,9 +23,7 @@ describe('turns / golden snapshots', () => {
       defaultBranch: 'main',
       title: 'Add the widget',
     });
-    await expect(out).toMatchFileSnapshot(
-      './__snapshots__/ship-open-pr-body.txt',
-    );
+    await expect(out).toMatchFileSnapshot('./__snapshots__/ship-open-pr-body.txt');
   });
 
   it('postBuildGateSeed', async () => {
@@ -35,9 +33,7 @@ describe('turns / golden snapshots', () => {
   });
 
   it('ROTATION_PREAMBLE', async () => {
-    await expect(ROTATION_PREAMBLE).toMatchFileSnapshot(
-      './__snapshots__/rotation-preamble.txt',
-    );
+    await expect(ROTATION_PREAMBLE).toMatchFileSnapshot('./__snapshots__/rotation-preamble.txt');
   });
 
   it('ROTATION_RESUME_TAIL', async () => {

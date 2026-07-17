@@ -10,8 +10,6 @@ export class AddSingleRunningBrainTurnGuard1783110081117 implements MigrationInt
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `DROP INDEX "public"."ux_active_turns_one_running_brain_per_job"`,
-    );
+    await queryRunner.query(`DROP INDEX "public"."ux_active_turns_one_running_brain_per_job"`);
   }
 }

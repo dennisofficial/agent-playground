@@ -47,9 +47,7 @@ describe('DockerodeContainerEngine (integration, needs Docker)', () => {
   it('builds image, runs a privileged DinD sandbox, execs, and lists by label', async () => {
     if (!dockerUp) {
       // eslint-disable-next-line no-console
-      console.warn(
-        'Docker not reachable — skipping substrate integration test',
-      );
+      console.warn('Docker not reachable — skipping substrate integration test');
       return;
     }
 
@@ -77,12 +75,7 @@ describe('DockerodeContainerEngine (integration, needs Docker)', () => {
     // inner dockerd readiness (DinD) — poll up to ~40s
     let innerReady = false;
     for (let i = 0; i < 40; i++) {
-      const info = await engine.exec(id, [
-        'docker',
-        'info',
-        '--format',
-        '{{.ServerVersion}}',
-      ]);
+      const info = await engine.exec(id, ['docker', 'info', '--format', '{{.ServerVersion}}']);
       if (info.exitCode === 0 && info.stdout.trim()) {
         innerReady = true;
         break;

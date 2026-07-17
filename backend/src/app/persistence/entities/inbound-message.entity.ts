@@ -1,15 +1,8 @@
-import {
-  Column,
-  Entity,
-  Index,
-  JoinColumn,
-  ManyToOne,
-  PrimaryGeneratedColumn,
-} from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
+import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import { JobEntity } from './job.entity';
 import { OrganizationEntity } from './organization.entity';
 import { RepoEntity } from './repo.entity';
-import { JobEntity } from './job.entity';
 
 /**
  * The durable record of an inbound `Message` — the delivery QUEUE (see `../../domain/message.ts`),

@@ -1,14 +1,14 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import type { Repository } from 'typeorm';
 import type { CiSyncDelta } from '@shared/domain';
+import type { Repository } from 'typeorm';
 import { GithubPrService, parseGithubRepoUrl } from '../git';
 import { CredentialResolver } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity, RepoEntity } from '../persistence/entities';
 import { StimulusStoreService } from '../stimulus';
-import { sameCounts, summarizeChecks } from './git-state-reconciler.service';
 import { AutoMergeService } from './auto-merge.service';
+import { sameCounts, summarizeChecks } from './git-state-reconciler.service';
 
 /**
  * The SILENT GitHub CI-status webhook sync — the FAST path that mirrors `GitStateReconciler.reconcileOne`'s
@@ -46,9 +46,7 @@ export class GithubCiStateSync {
     if (existing) clearTimeout(existing);
     const timer = setTimeout(() => {
       this.timers.delete(key);
-      void this.recompute(delta).catch((e) =>
-        this.logger.warn(`ci-sync ${key}: ${e}`),
-      );
+      void this.recompute(delta).catch((e) => this.logger.warn(`ci-sync ${key}: ${e}`));
     }, GithubCiStateSync.DEBOUNCE_MS);
     timer.unref?.();
     this.timers.set(key, timer);
@@ -63,18 +61,10 @@ export class GithubCiStateSync {
     // no-op and leave ci_status stale until the poll — the branch fallback catches that.
     const job =
       (delta.prNumber != null
-        ? await this.stimStore.findOwningJobByPrNumber(
-            delta.orgId,
-            delta.repoId,
-            delta.prNumber,
-          )
+        ? await this.stimStore.findOwningJobByPrNumber(delta.orgId, delta.repoId, delta.prNumber)
         : null) ??
       (delta.branch
-        ? await this.stimStore.findOwningJobByBranch(
-            delta.orgId,
-            delta.repoId,
-            delta.branch,
-          )
+        ? await this.stimStore.findOwningJobByBranch(delta.orgId, delta.repoId, delta.branch)
         : null);
     if (!job) return; // route-only: unowned CI is a no-op
     const repo = await this.repos.findOne({ where: { id: job.repo_id } });
@@ -131,8 +121,6 @@ export class GithubCiStateSync {
     // for brain-not-idle (fire-and-forget — never blocks/throws this recompute).
     void this.autoMerge
       ?.maybeAutoMerge(job.id)
-      .catch((err) =>
-        this.logger.warn(`maybeAutoMerge failed for job ${job.id}: ${err}`),
-      );
+      .catch((err) => this.logger.warn(`maybeAutoMerge failed for job ${job.id}: ${err}`));
   }
 }

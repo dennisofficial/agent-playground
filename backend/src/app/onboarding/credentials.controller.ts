@@ -1,12 +1,4 @@
-import {
-  Body,
-  Controller,
-  Get,
-  Put,
-  UseGuards,
-  UsePipes,
-  ValidationPipe,
-} from '@nestjs/common';
+import { Body, Controller, Get, Put, UseGuards, UsePipes, ValidationPipe } from '@nestjs/common';
 import { IsOptional, IsString } from 'class-validator';
 import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
 import { OrgMembershipGuard } from '../org/org-membership.guard';
@@ -14,10 +6,7 @@ import { OrgOwnerGuard } from '../org/org-owner.guard';
 import { ClaudeCredentialStore } from './claude-credential.store';
 import { OauthUsageService } from './oauth-usage.service';
 import { OnboardingService, type ValidationResult } from './onboarding.service';
-import {
-  TenantCredentialStore,
-  type TenantCredentialPatch,
-} from './tenant-credential.store';
+import { TenantCredentialStore, type TenantCredentialPatch } from './tenant-credential.store';
 
 class SetCredentialsDto {
   @IsOptional() @IsString() anthropicApiKey?: string;
@@ -58,10 +47,7 @@ export class OrgCredentialsController {
     const patch: TenantCredentialPatch = { ...rest };
     await this.store.write(org.id, patch);
     if (claudeOauthToken !== undefined) {
-      const changed = await this.claudeStore.upsertLegacySetupToken(
-        org.id,
-        claudeOauthToken,
-      );
+      const changed = await this.claudeStore.upsertLegacySetupToken(org.id, claudeOauthToken);
       if (changed) await this.usage.invalidate(org.id);
     }
 

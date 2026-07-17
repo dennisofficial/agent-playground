@@ -1,18 +1,11 @@
 import { ChatAnthropic } from '@langchain/anthropic';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { SystemMessage } from '@langchain/core/messages';
-import {
-  ChatPromptTemplate,
-  HumanMessagePromptTemplate,
-} from '@langchain/core/prompts';
-import {
-  RunnableLambda,
-  RunnableSequence,
-  type Runnable,
-} from '@langchain/core/runnables';
+import { ChatPromptTemplate, HumanMessagePromptTemplate } from '@langchain/core/prompts';
+import { RunnableLambda, RunnableSequence, type Runnable } from '@langchain/core/runnables';
+import type { InstallMatch } from '@shared/prompt-kit/jit/install-awareness';
 import { z } from 'zod';
 import { fence, fenceOrNone } from '../prompt-fence';
-import type { InstallMatch } from '@shared/prompt-kit/jit/install-awareness';
 
 /**
  * Stage 2 (decision d2) — the READ-ONLY install-awareness filter/enricher. Given a Stage-1-detected
@@ -30,14 +23,10 @@ export const INSTALL_FILTER_MODEL = 'claude-haiku-4-5-20251001';
 export const InstallFilterSchema = z.object({
   suppress: z
     .boolean()
-    .describe(
-      'true = this install is noise / already covered; do NOT interrupt the agent',
-    ),
+    .describe('true = this install is noise / already covered; do NOT interrupt the agent'),
   suggestion: z
     .string()
-    .describe(
-      'A specific, actionable suggestion (name the skill/MCP), or "" if none',
-    ),
+    .describe('A specific, actionable suggestion (name the skill/MCP), or "" if none'),
   reason: z.string().describe('One short line.'),
 });
 export type InstallFilterVerdict = z.infer<typeof InstallFilterSchema>;
@@ -94,12 +83,7 @@ const SYSTEM = [
 
 /** Render an `InstallMatch` as compact untrusted-fenced text for the prompt. */
 const renderMatch = (m: InstallMatch): string =>
-  [
-    `action: ${m.action}`,
-    `kind: ${m.kind}`,
-    `key: ${m.key}`,
-    `label: ${m.label}`,
-  ].join('\n');
+  [`action: ${m.action}`, `kind: ${m.kind}`, `key: ${m.key}`, `label: ${m.label}`].join('\n');
 
 /**
  * Declarative chain: `RunnableLambda` assembles the fenced sections into one template variable (so
@@ -145,17 +129,10 @@ const buildFilterInstallChain = (
  * cached per resolved key string, exactly like `AnthropicClassifierLlm`.
  */
 export class AnthropicInstallAwarenessFilter implements InstallAwarenessFilter {
-  private readonly chains = new Map<
-    string,
-    Runnable<FilterInstallInput, InstallFilterVerdict>
-  >();
+  private readonly chains = new Map<string, Runnable<FilterInstallInput, InstallFilterVerdict>>();
 
   /** @param resolveKey resolves the active Anthropic key for a tenant (e.g. CredentialResolver.anthropicKey). */
-  constructor(
-    private readonly resolveKey: (
-      orgId?: string,
-    ) => Promise<string | undefined>,
-  ) {}
+  constructor(private readonly resolveKey: (orgId?: string) => Promise<string | undefined>) {}
 
   private async chain(
     orgId?: string,

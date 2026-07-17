@@ -1,46 +1,47 @@
 import type { Codex, FileChangeItem, ThreadOptions } from '@openai/codex-sdk';
+import type { AdapterRunArgs, EngineCapability, EngineLocalHooks } from '@workspace/agent-engine';
+import {
+  buildEngineLocalHooks,
+  CodexAppServerAdapter,
+  guardHooksAgainstCapabilities,
+} from '@workspace/agent-engine';
+import { structuredPatch as diffStructuredPatch } from 'diff';
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join, resolve as resolvePath } from 'node:path';
-import { structuredPatch as diffStructuredPatch } from 'diff';
 import {
-  detectSessionLimitText,
-  limitFromRateEvent,
-  textSessionLimitHit,
-  type SessionLimitHit,
-} from './session-limit';
-import {
-  atlasEngineHomeDir,
-  engineHomeKeyString,
-  type EngineHomeKey,
-} from './engine-home';
-import {
-  type CodexExtraMcpServers,
-  type CodexMcpBridge,
-  ensureCodexAuthHome,
-} from './codex-auth-home';
-import { getEngineAuthAdapter } from './engine-auth-adapter';
-
-/** In-container path of the bundled Codex MCP tool-bridge server (baked by the Dockerfile, bind-mounted
- *  live — see `sandbox/image/mcp-bridge-server.ts`). codex spawns it via the config.toml `command`. */
-const CONTAINER_MCP_BRIDGE_PATH = '/usr/local/lib/atlas/mcp-bridge-server.mjs';
-import {
-  bgTaskCapRule,
   BG_TASK_HOLD_CAP_MS,
+  bgTaskCapRule,
+  detectGithubHtmlUrl,
+  detectLongRunningCommand,
   legRotationRule,
+  renderGithubFetchNudge,
   ROTATION_REMINDER_DELTA_TOKENS,
   ROTATION_SOFT_TOKENS,
+  SVC_NUDGE_TEXT,
   svcNudgeRule,
   svcNudgeShouldFire,
-  detectLongRunningCommand,
-  SVC_NUDGE_TEXT,
-  detectGithubHtmlUrl,
-  renderGithubFetchNudge,
 } from '../prompt-kit/jit';
+import { ClaudeAdapter } from './claude-adapter';
+import {
+  ensureCodexAuthHome,
+  type CodexExtraMcpServers,
+  type CodexMcpBridge,
+} from './codex-auth-home';
+import { BackendCodexHomeProvisioner } from './codex-home-provisioner';
+import { getEngineAuthAdapter } from './engine-auth-adapter';
+import { EngineAuthResolver } from './engine-core/auth-resolver';
+import { BackgroundHoldTimer } from './engine-core/background-hold-timer';
+import { buildClaudeOptions } from './engine-core/claude-options-builder';
+import { composeSkillsDir } from './engine-core/skills-composer';
+import { SteerInputChannel } from './engine-core/steer-input-channel';
+import { addClaudeUsage, extractClaudeUsage, toCodexEffort } from './engine-core/usage';
+import { atlasEngineHomeDir, engineHomeKeyString, type EngineHomeKey } from './engine-home';
 import {
   EngineAuthError,
   isAuthErrorMessage,
+  resolveContextLimit,
   UNRESUMABLE_SESSION_MARKER,
   type CodexReasoningEffort,
   type EngineAuth,
@@ -48,30 +49,17 @@ import {
   type EngineUsage,
   type RunEngineArgs,
   type StructuredPatchHunk,
-  resolveContextLimit,
 } from './engine.types';
-import type {
-  AdapterRunArgs,
-  EngineCapability,
-  EngineLocalHooks,
-} from '@workspace/agent-engine';
 import {
-  buildEngineLocalHooks,
-  CodexAppServerAdapter,
-  guardHooksAgainstCapabilities,
-} from '@workspace/agent-engine';
-import { ClaudeAdapter } from './claude-adapter';
-import { BackendCodexHomeProvisioner } from './codex-home-provisioner';
-import { EngineAuthResolver } from './engine-core/auth-resolver';
-import { BackgroundHoldTimer } from './engine-core/background-hold-timer';
-import { buildClaudeOptions } from './engine-core/claude-options-builder';
-import { composeSkillsDir } from './engine-core/skills-composer';
-import { SteerInputChannel } from './engine-core/steer-input-channel';
-import {
-  addClaudeUsage,
-  extractClaudeUsage,
-  toCodexEffort,
-} from './engine-core/usage';
+  detectSessionLimitText,
+  limitFromRateEvent,
+  textSessionLimitHit,
+  type SessionLimitHit,
+} from './session-limit';
+
+/** In-container path of the bundled Codex MCP tool-bridge server (baked by the Dockerfile, bind-mounted
+ *  live — see `sandbox/image/mcp-bridge-server.ts`). codex spawns it via the config.toml `command`. */
+const CONTAINER_MCP_BRIDGE_PATH = '/usr/local/lib/atlas/mcp-bridge-server.mjs';
 
 const requireFromHere = createRequire(__filename);
 
@@ -79,9 +67,7 @@ const requireFromHere = createRequire(__filename);
  * Pull a well-formed `structuredPatch` (real file offsets) off an Edit/MultiEdit `tool_use_result`.
  * Returns undefined for any other tool, or when the shape doesn't match — so the caller simply omits it.
  */
-function extractStructuredPatch(
-  toolUseResult: unknown,
-): StructuredPatchHunk[] | undefined {
+function extractStructuredPatch(toolUseResult: unknown): StructuredPatchHunk[] | undefined {
   if (!toolUseResult || typeof toolUseResult !== 'object') return undefined;
   const raw = (toolUseResult as { structuredPatch?: unknown }).structuredPatch;
   if (!Array.isArray(raw)) return undefined;
@@ -90,8 +76,7 @@ function extractStructuredPatch(
     if (!h || typeof h !== 'object') continue;
     const r = h as Record<string, unknown>;
     if (!Array.isArray(r.lines)) continue;
-    const num = (v: unknown, fallback: number): number =>
-      typeof v === 'number' ? v : fallback;
+    const num = (v: unknown, fallback: number): number => (typeof v === 'number' ? v : fallback);
     hunks.push({
       oldStart: num(r.oldStart, 1),
       oldLines: num(r.oldLines, 0),
@@ -104,15 +89,11 @@ function extractStructuredPatch(
 }
 
 function containsStreamClosed(content: unknown): boolean {
-  if (typeof content === 'string')
-    return content.toLowerCase().includes('stream closed');
-  if (Array.isArray(content))
-    return content.some((item) => containsStreamClosed(item));
+  if (typeof content === 'string') return content.toLowerCase().includes('stream closed');
+  if (Array.isArray(content)) return content.some((item) => containsStreamClosed(item));
   if (!content || typeof content !== 'object') return false;
   const block = content as { text?: unknown; content?: unknown };
-  return (
-    containsStreamClosed(block.text) || containsStreamClosed(block.content)
-  );
+  return containsStreamClosed(block.text) || containsStreamClosed(block.content);
 }
 
 /**
@@ -148,15 +129,9 @@ function computeCodexStructuredPatch(
     }
   }
   if (!oldContent && !newContent) return undefined;
-  const patch = diffStructuredPatch(
-    path,
-    path,
-    oldContent,
-    newContent,
-    undefined,
-    undefined,
-    { context: 3 },
-  );
+  const patch = diffStructuredPatch(path, path, oldContent, newContent, undefined, undefined, {
+    context: 3,
+  });
   return patch.hunks.length ? patch.hunks : undefined;
 }
 
@@ -165,7 +140,7 @@ function computeCodexStructuredPatch(
  * JIT rule (`prompt-kit/jit`, imported above) — the catalog owns the content now. Re-exported here so this
  * module's own callers/specs keep working unchanged.
  */
-export { detectLongRunningCommand, svcNudgeShouldFire, SVC_NUDGE_TEXT };
+export { detectLongRunningCommand, SVC_NUDGE_TEXT, svcNudgeShouldFire };
 // `detectGithubHtmlUrl`/`renderGithubFetchNudge` back the `github-fetch-guard` JIT rule (its PostToolUse hook is
 // wired below). Re-exported here so this module's own spec exercises the same helpers, mirroring svc-nudge.
 export { detectGithubHtmlUrl, renderGithubFetchNudge };
@@ -250,10 +225,7 @@ const DEFAULT_WORKER_MODEL = 'claude-sonnet-5';
  * the slug. Passing `resume` for a session whose transcript ISN'T here makes the SDK end the turn with a
  * generic `error_during_execution` — so we check first and raise a specific error instead.
  */
-export function claudeSessionExists(
-  configDir: string,
-  sessionId: string,
-): boolean {
+export function claudeSessionExists(configDir: string, sessionId: string): boolean {
   const projects = join(configDir, 'projects');
   let dirs: string[];
   try {
@@ -272,8 +244,8 @@ export { applyPerRunCtxToAgents } from './engine-core/agents-registry';
 
 export { composeSkillsDir } from './engine-core/skills-composer';
 
-export type { SkillGuardCtx } from './engine-core/tool-permission';
 export { makeCanUseTool } from './engine-core/tool-permission';
+export type { SkillGuardCtx } from './engine-core/tool-permission';
 
 export class EngineCore {
   // One Codex client per (auth, sandbox) — each funds its own runs from its own home.
@@ -304,10 +276,7 @@ export class EngineCore {
   }
 
   /** Resolve the run's subscription secret — see {@link EngineAuthResolver}. */
-  private resolveAuth(
-    engine: 'claude' | 'codex',
-    explicit: EngineAuth | undefined,
-  ): EngineAuth {
+  private resolveAuth(engine: 'claude' | 'codex', explicit: EngineAuth | undefined): EngineAuth {
     return this.authResolver.resolve(engine, explicit);
   }
 
@@ -318,9 +287,7 @@ export class EngineCore {
         ? appserver
           ? this.runCodexAppServer(args)
           : this.runCodex(args)
-        : new ClaudeAdapter(this.runClaude.bind(this), args).run(
-            this.toAdapterArgs(args),
-          )),
+        : new ClaudeAdapter(this.runClaude.bind(this), args).run(this.toAdapterArgs(args))),
       args,
       appserver,
     );
@@ -349,15 +316,9 @@ export class EngineCore {
       mode: args.mode,
       sandboxKey: args.sandboxKey,
       ...(args.sessionId ? { sessionId: args.sessionId } : {}),
-      ...(authOverride
-        ? { auth: authOverride }
-        : args.auth
-          ? { auth: args.auth }
-          : {}),
+      ...(authOverride ? { auth: authOverride } : args.auth ? { auth: args.auth } : {}),
       ...(args.model ? { model: args.model } : {}),
-      ...(args.modelReasoningEffort
-        ? { modelReasoningEffort: args.modelReasoningEffort }
-        : {}),
+      ...(args.modelReasoningEffort ? { modelReasoningEffort: args.modelReasoningEffort } : {}),
       ...(args.writableRoots ? { writableRoots: args.writableRoots } : {}),
       ...(args.richStream !== undefined ? { richStream: args.richStream } : {}),
       ...(args.persistAuthRefresh !== undefined
@@ -416,8 +377,7 @@ export class EngineCore {
    */
   private codexAppServerEnabled(): boolean {
     return (
-      process.env.CODEX_APPSERVER_ENABLED === 'true' ||
-      process.env.CODEX_APPSERVER_ENABLED === '1'
+      process.env.CODEX_APPSERVER_ENABLED === 'true' || process.env.CODEX_APPSERVER_ENABLED === '1'
     );
   }
 
@@ -447,20 +407,14 @@ export class EngineCore {
    * {@link CodexAppServerAdapter}. A fresh {@link BackendCodexHomeProvisioner} per call mirrors how
    * `ClaudeAdapter` is constructed fresh per turn — no cross-turn state.
    */
-  private async runCodexAppServer(
-    args: RunEngineArgs,
-  ): Promise<EngineRunResult> {
+  private async runCodexAppServer(args: RunEngineArgs): Promise<EngineRunResult> {
     const auth = this.resolveAuth('codex', args.auth);
     const adapter = new CodexAppServerAdapter(
       new BackendCodexHomeProvisioner(this.homeRoot()),
       this.codexAppServerSpawnOptions(),
     );
     return adapter.run(
-      this.toAdapterArgs(
-        args,
-        auth,
-        this.buildCodexHooks(args, adapter.capabilities),
-      ),
+      this.toAdapterArgs(args, auth, this.buildCodexHooks(args, adapter.capabilities)),
     );
   }
 
@@ -480,8 +434,7 @@ export class EngineCore {
   ): EngineRunResult {
     if (res.usage) {
       res.usage.engine ??= args.engine;
-      if (args.modelReasoningEffort)
-        res.usage.reasoningEffort ??= args.modelReasoningEffort;
+      if (args.modelReasoningEffort) res.usage.reasoningEffort ??= args.modelReasoningEffort;
       if (args.engine === 'codex') res.usage.appserver ??= !!appserver;
     }
     return res;
@@ -511,12 +464,9 @@ export class EngineCore {
     codexExtraMcpServers?: CodexExtraMcpServers,
   ): Promise<EngineRunResult> {
     const hasCodexBridgeExtras =
-      (codexBridgeTools?.length ?? 0) > 0 ||
-      Object.keys(codexExtraMcpServers ?? {}).length > 0;
+      (codexBridgeTools?.length ?? 0) > 0 || Object.keys(codexExtraMcpServers ?? {}).length > 0;
     const appserver =
-      args.engine === 'codex' &&
-      this.codexAppServerEnabled() &&
-      !hasCodexBridgeExtras;
+      args.engine === 'codex' && this.codexAppServerEnabled() && !hasCodexBridgeExtras;
     return this.stampUsageProvenance(
       await (args.engine === 'codex'
         ? appserver
@@ -602,11 +552,7 @@ export class EngineCore {
     const model = args.model ?? DEFAULT_WORKER_MODEL;
 
     // Pin the SDK subprocess to Atlas's ISOLATED config/state home — never ~/.claude.
-    const claudeConfigDir = atlasEngineHomeDir(
-      this.homeRoot(),
-      'claude',
-      sandboxKey,
-    );
+    const claudeConfigDir = atlasEngineHomeDir(this.homeRoot(), 'claude', sandboxKey);
 
     // A stored sessionId whose transcript isn't in THIS config dir can't be resumed — the SDK would end
     // the turn with an opaque `error_during_execution`. Detect it up front and fail with a SPECIFIC,
@@ -706,17 +652,12 @@ export class EngineCore {
       })) {
         // Model is actively producing (or a steer is being processed) → don't close input under it. Once
         // `capping` latches, a late task_progress/task_updated frame must NOT undo the forced close.
-        if (streaming && !holdTimer.capping && message.type !== 'result')
-          channel.cancelEnd();
+        if (streaming && !holdTimer.capping && message.type !== 'result') channel.cancelEnd();
         if (message.type === 'system' && message.subtype === 'init') {
           resolvedSession = message.session_id;
           // Surface the resume handle the instant the session exists, so a mid-turn halt is recoverable.
-          if (resolvedSession)
-            onEvent?.({ kind: 'session', sessionId: resolvedSession });
-        } else if (
-          message.type === 'system' &&
-          message.subtype === 'task_started'
-        ) {
+          if (resolvedSession) onEvent?.({ kind: 'session', sessionId: resolvedSession });
+        } else if (message.type === 'system' && message.subtype === 'task_started') {
           // An SDK run_in_background Bash task began — track it so the turn holds its input open until the
           // task settles (its `task_notification`) instead of closing on the immediate first `result`. A Task
           // SUBAGENT's task_started carries `subagent_type` (task_type "local_agent"); a bare bg Bash does not
@@ -735,14 +676,9 @@ export class EngineCore {
             taskType: message.task_type,
             // The spawning Task tool_use id, present for a backgrounded Task subagent — lets the web tie this
             // to the subagent's card (its child blocks' `parentToolUseId`).
-            ...(message.tool_use_id
-              ? { parentToolUseId: message.tool_use_id }
-              : {}),
+            ...(message.tool_use_id ? { parentToolUseId: message.tool_use_id } : {}),
           });
-        } else if (
-          message.type === 'system' &&
-          message.subtype === 'task_notification'
-        ) {
+        } else if (message.type === 'system' && message.subtype === 'task_notification') {
           // The task settled (completed/failed/stopped). Drop it from the live set; a settlement +
           // auto-continuation is imminent, so restart the hold window (or clear it if none remain).
           onEvent?.({
@@ -752,15 +688,10 @@ export class EngineCore {
             detail: message.summary,
             // Settlement of a backgrounded Task subagent — carry the spawning Task id so the web marks that
             // subagent's card settled (its anchor `tool_result` was only the immediate launch ack).
-            ...(message.tool_use_id
-              ? { parentToolUseId: message.tool_use_id }
-              : {}),
+            ...(message.tool_use_id ? { parentToolUseId: message.tool_use_id } : {}),
           });
           holdTimer.trackTaskSettled(message.task_id);
-        } else if (
-          message.type === 'system' &&
-          message.subtype === 'api_retry'
-        ) {
+        } else if (message.type === 'system' && message.subtype === 'api_retry') {
           // The SDK hit a retryable API error (overloaded/5xx/gateway/rate-limit) and is retrying NATIVELY
           // with its own backoff — surface it (we do NOT host-retry these) so the live indicator can show the
           // SDK's own countdown. Mid-turn: no turn end, the turn continues once a retry succeeds.
@@ -781,12 +712,8 @@ export class EngineCore {
             kind: 'rate_limit',
             status: info.status,
             ...(info.resetsAt != null ? { resetsAt: info.resetsAt } : {}),
-            ...(info.rateLimitType
-              ? { rateLimitType: info.rateLimitType }
-              : {}),
-            ...(info.utilization != null
-              ? { utilization: info.utilization }
-              : {}),
+            ...(info.rateLimitType ? { rateLimitType: info.rateLimitType } : {}),
+            ...(info.utilization != null ? { utilization: info.utilization } : {}),
           });
           const hit = limitFromRateEvent(info);
           if (hit) sessionLimit = hit;
@@ -869,16 +796,13 @@ export class EngineCore {
                 contextTokens >= rotationNudge.softTokens
               ) {
                 const level = Math.floor(
-                  (contextTokens - rotationNudge.softTokens) /
-                    rotationNudge.reminderDeltaTokens,
+                  (contextTokens - rotationNudge.softTokens) / rotationNudge.reminderDeltaTokens,
                 );
                 if (level > firedNudgeLevel) {
                   const isFirst = firedNudgeLevel < 0;
                   firedNudgeLevel = level;
                   channel.injectRotationNudge(
-                    isFirst
-                      ? rotationNudge.softText
-                      : rotationNudge.reminderText,
+                    isFirst ? rotationNudge.softText : rotationNudge.reminderText,
                   );
                 }
               }
@@ -929,14 +853,12 @@ export class EngineCore {
               // structured frame hasn't already latched the hit, latch it here from the text.
               const isLimitLine = detectSessionLimitText(block.text);
               if (isLimitLine) {
-                if (!sessionLimit)
-                  sessionLimit = textSessionLimitHit(block.text);
+                if (!sessionLimit) sessionLimit = textSessionLimitHit(block.text);
               } else {
                 onEvent?.({ kind: 'text', text: block.text, ...sub });
               }
             } else if (block.type === 'thinking' && block.thinking) {
-              if (richStream)
-                onEvent?.({ kind: 'thinking', text: block.thinking, ...sub });
+              if (richStream) onEvent?.({ kind: 'thinking', text: block.thinking, ...sub });
             } else if (block.type === 'tool_use' && block.name) {
               // Rich turns get the full tool call (id + input) so the UI can render it; coarse turns keep
               // the legacy name-only `tool` event.
@@ -974,8 +896,7 @@ export class EngineCore {
             }>) {
               if (block.type === 'tool_result') {
                 const isStreamClosed =
-                  block.is_error === true &&
-                  containsStreamClosed(block.content);
+                  block.is_error === true && containsStreamClosed(block.content);
                 streamClosedRun = isStreamClosed ? streamClosedRun + 1 : 0; // any healthy result resets the run
                 if (isStreamClosed) streamClosedTotal++;
                 onEvent?.({
@@ -1017,10 +938,8 @@ export class EngineCore {
             result = message.result;
             onEvent?.({
               kind: 'turn_debug',
-              terminalReason: (message as { terminal_reason?: string })
-                .terminal_reason,
-              stopReason: (message as { stop_reason?: string | null })
-                .stop_reason,
+              terminalReason: (message as { terminal_reason?: string }).terminal_reason,
+              stopReason: (message as { stop_reason?: string | null }).stop_reason,
             });
             // A background-task hold produces ≥2 results per turn (the immediate first result + the
             // auto-continuation after the task settles). SUM the billing tokens across results; the
@@ -1072,13 +991,9 @@ export class EngineCore {
             const parts = [
               `Claude engine ended: ${r.subtype}`,
               r.stop_reason ? `stop_reason=${r.stop_reason}` : '',
-              r.terminal_reason
-                ? `terminal_reason=${JSON.stringify(r.terminal_reason)}`
-                : '',
+              r.terminal_reason ? `terminal_reason=${JSON.stringify(r.terminal_reason)}` : '',
               r.errors?.length ? `errors=${r.errors.join(' | ')}` : '',
-              stderrTail.length
-                ? `stderr(tail)=${stderrTail.join('').slice(-2000)}`
-                : '',
+              stderrTail.length ? `stderr(tail)=${stderrTail.join('').slice(-2000)}` : '',
             ].filter(Boolean);
             const errorMessage = parts.join('; ');
             // A non-success end that is really a subscription session-limit wall must NOT throw the generic
@@ -1096,8 +1011,7 @@ export class EngineCore {
       // A 401 / expired token / "not logged in" → a RESUMABLE auth error carrying the live session,
       // so the driver pauses (not fails) and a re-ping continues this same session. Else re-throw.
       const msg = err instanceof Error ? err.message : String(err);
-      if (isAuthErrorMessage(msg))
-        throw new EngineAuthError(msg, resolvedSession, 'claude');
+      if (isAuthErrorMessage(msg)) throw new EngineAuthError(msg, resolvedSession, 'claude');
       if (streamClosedTripped) throw err; // circuit-breaker: never treat as a cooperative abort
       // Backstop: a subscription wall that surfaced ONLY as a thrown SDK error (e.g. "Claude Code returned
       // an error result: You've hit your session limit …") — no frame latched it first. That is a clean
@@ -1145,9 +1059,7 @@ export class EngineCore {
       ...(planText ? { planText } : {}),
       ...(usage ? { usage } : {}),
       ...(sessionLimit ? { sessionLimit } : {}),
-      ...(streamClosedTotal > 0
-        ? { streamClosedCount: streamClosedTotal }
-        : {}),
+      ...(streamClosedTotal > 0 ? { streamClosedCount: streamClosedTotal } : {}),
       ...(refreshedAuthSecret ? { refreshedAuthSecret } : {}),
     };
   }
@@ -1164,21 +1076,12 @@ export class EngineCore {
     // Subscription-only: an overlay home owning its own auth.json (refreshed each turn) + — for an execute
     // turn — a config.toml with the host tool bridge (`[mcp_servers.atlasbridge]`) plus any user-defined
     // stdio MCP servers. The cache key keeps separate sandboxes apart. NO apiKey is ever passed.
-    const codexHome = ensureCodexAuthHome(
-      root,
-      sandboxKey,
-      auth.secret,
-      bridge,
-      extraMcpServers,
-    );
+    const codexHome = ensureCodexAuthHome(root, sandboxKey, auth.secret, bridge, extraMcpServers);
     const cacheKey = `sub:${engineHomeKeyString(sandboxKey)}`;
     let client = this.codexClients.get(cacheKey);
     if (!client) {
       // The SDK's `env` REPLACES inheritance — pass process.env through and override CODEX_HOME.
-      const env = { ...process.env, CODEX_HOME: codexHome } as Record<
-        string,
-        string
-      >;
+      const env = { ...process.env, CODEX_HOME: codexHome } as Record<string, string>;
       client = new this.codexSdk.Codex({ env });
       this.codexClients.set(cacheKey, client);
     }
@@ -1217,16 +1120,7 @@ export class EngineCore {
     bridgeTools?: string[],
     extraMcpServers?: CodexExtraMcpServers,
   ): Promise<EngineRunResult> {
-    const {
-      task,
-      cwd,
-      systemPrompt,
-      sandboxKey,
-      sessionId,
-      onEvent,
-      signal,
-      richStream,
-    } = args;
+    const { task, cwd, systemPrompt, sandboxKey, sessionId, onEvent, signal, richStream } = args;
     const auth = this.resolveAuth('codex', args.auth);
     // Pass through ONLY an explicit caller override (none today); otherwise leave unset so
     // `codexThreadOptions` omits `model` and the subscription account's default is used (see note above).
@@ -1249,14 +1143,8 @@ export class EngineCore {
         : undefined;
 
     const client = this.getCodex(sandboxKey, auth, bridge, extraMcpServers);
-    const opts = this.codexThreadOptions(
-      cwd,
-      model,
-      toCodexEffort(args.modelReasoningEffort),
-    );
-    const thread = sessionId
-      ? client.resumeThread(sessionId, opts)
-      : client.startThread(opts);
+    const opts = this.codexThreadOptions(cwd, model, toCodexEffort(args.modelReasoningEffort));
+    const thread = sessionId ? client.resumeThread(sessionId, opts) : client.startThread(opts);
 
     // Codex has no systemPrompt option — seed the persona as a first-turn preamble. Resumes already
     // carry it in thread history.
@@ -1279,8 +1167,7 @@ export class EngineCore {
             // session id (NOT our domain Job/Thread), so it is out of scope for the domain rename.
             resolvedSession = event.thread_id;
             // Surface the resume handle immediately (turn start) for mid-turn halt recovery.
-            if (resolvedSession)
-              onEvent?.({ kind: 'session', sessionId: resolvedSession });
+            if (resolvedSession) onEvent?.({ kind: 'session', sessionId: resolvedSession });
             break;
           case 'item.completed': {
             const item = event.item;
@@ -1303,8 +1190,7 @@ export class EngineCore {
               case 'command_execution':
                 if (richStream) {
                   const isError =
-                    item.status === 'failed' ||
-                    (item.exit_code != null && item.exit_code !== 0);
+                    item.status === 'failed' || (item.exit_code != null && item.exit_code !== 0);
                   onEvent?.({
                     kind: 'tool_use',
                     id: item.id,
@@ -1344,20 +1230,14 @@ export class EngineCore {
                       id,
                       result: item.status,
                       isError: item.status === 'failed',
-                      structuredPatch: computeCodexStructuredPatch(
-                        cwd,
-                        change.path,
-                        change.kind,
-                      ),
+                      structuredPatch: computeCodexStructuredPatch(cwd, change.path, change.kind),
                     });
                   }
                 } else {
                   onEvent?.({
                     kind: 'tool',
                     name: 'edit',
-                    detail: item.changes
-                      .map((c) => `${c.kind} ${c.path}`)
-                      .join(', '),
+                    detail: item.changes.map((c) => `${c.kind} ${c.path}`).join(', '),
                   });
                 }
                 break;
@@ -1406,8 +1286,7 @@ export class EngineCore {
     } catch (err) {
       // 401 / expired creds mid-Codex-turn → resumable auth error carrying the live thread id.
       const msg = err instanceof Error ? err.message : String(err);
-      if (isAuthErrorMessage(msg))
-        throw new EngineAuthError(msg, resolvedSession, 'codex');
+      if (isAuthErrorMessage(msg)) throw new EngineAuthError(msg, resolvedSession, 'codex');
       throw err;
     }
 

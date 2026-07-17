@@ -7,16 +7,12 @@
  * `createSdkMcpServer()` + an MCP `Client`), not just direct zod parsing, so they catch exactly what the
  * SDK actually does at the wire.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
+import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import {
-  TOOL_SHAPES,
-  TOOL_DESCRIPTIONS,
-  toolJsonSchema,
-} from './host-tool-schemas';
 import { WORKSPACE_PROFILE_TOOL_NAMES } from '@shared/bridge-names/workspace-profile-bridge-options';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { TOOL_DESCRIPTIONS, TOOL_SHAPES, toolJsonSchema } from './host-tool-schemas';
 
 // A single decision, fully populated, reused by every plan-shaped tool.
 const decisionItemPayload = {
@@ -300,9 +296,7 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
 
 describe('host-tool-schemas — in-memory MCP roundtrip guard', () => {
   it('PAYLOADS covers every TOOL_SHAPES entry (so no tool silently skips the roundtrip guard)', () => {
-    expect(Object.keys(PAYLOADS).sort()).toEqual(
-      Object.keys(TOOL_SHAPES).sort(),
-    );
+    expect(Object.keys(PAYLOADS).sort()).toEqual(Object.keys(TOOL_SHAPES).sort());
   });
 
   const names = Object.keys(TOOL_SHAPES);
@@ -311,23 +305,17 @@ describe('host-tool-schemas — in-memory MCP roundtrip guard', () => {
 
   beforeAll(async () => {
     const tools = names.map((name) =>
-      tool(
-        name,
-        TOOL_DESCRIPTIONS[name] ?? name,
-        TOOL_SHAPES[name],
-        async (args) => {
-          captured[name] = args;
-          return { content: [{ type: 'text', text: 'ok' }] };
-        },
-      ),
+      tool(name, TOOL_DESCRIPTIONS[name] ?? name, TOOL_SHAPES[name], async (args) => {
+        captured[name] = args;
+        return { content: [{ type: 'text', text: 'ok' }] };
+      }),
     );
     const { instance } = createSdkMcpServer({
       name: 'host-tool-schemas-spec',
       version: '1.0.0',
       tools,
     });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await instance.connect(serverTransport);
     client = new Client({
       name: 'host-tool-schemas-spec-client',
@@ -389,10 +377,9 @@ describe('host-tool-schemas — toolJsonSchema', () => {
 describe('host-tool-schemas — TOOL_DESCRIPTIONS parity', () => {
   it('every TOOL_SHAPES entry has a matching TOOL_DESCRIPTIONS entry', () => {
     for (const name of Object.keys(TOOL_SHAPES)) {
-      expect(
-        typeof TOOL_DESCRIPTIONS[name],
-        `"${name}" is missing a TOOL_DESCRIPTIONS entry`,
-      ).toBe('string');
+      expect(typeof TOOL_DESCRIPTIONS[name], `"${name}" is missing a TOOL_DESCRIPTIONS entry`).toBe(
+        'string',
+      );
       expect(
         TOOL_DESCRIPTIONS[name].length,
         `"${name}" has an empty TOOL_DESCRIPTIONS entry`,

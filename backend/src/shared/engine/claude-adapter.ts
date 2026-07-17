@@ -27,15 +27,14 @@ type RunClaudeFn = (
  */
 export class ClaudeAdapter implements EngineAdapter {
   readonly engine = 'claude' as const;
-  readonly capabilities: ReadonlySet<EngineCapability> =
-    new Set<EngineCapability>([
-      'postToolUseContext',
-      'writeGuard',
-      'midTurnSteer',
-      'holdTimer',
-      'subagents',
-      'richStream',
-    ]);
+  readonly capabilities: ReadonlySet<EngineCapability> = new Set<EngineCapability>([
+    'postToolUseContext',
+    'writeGuard',
+    'midTurnSteer',
+    'holdTimer',
+    'subagents',
+    'richStream',
+  ]);
 
   constructor(
     private readonly runClaudeFn: RunClaudeFn,
@@ -70,14 +69,10 @@ export class ClaudeAdapter implements EngineAdapter {
         if (toolName !== 'Bash') return null;
         const command = (input as { command?: unknown } | undefined)?.command;
         const cmd = typeof command === 'string' ? command : '';
-        if (
-          svcNudgeRule.trigger.kind !== 'tool-match' ||
-          !svcNudgeRule.trigger.match(cmd)
-        )
+        if (svcNudgeRule.trigger.kind !== 'tool-match' || !svcNudgeRule.trigger.match(cmd))
           return null;
         // First matching command always fires; then at most once per delta of context growth.
-        if (!svcNudgeShouldFire(lastSvcNudgeTokens, tokens, deltaTokens))
-          return null;
+        if (!svcNudgeShouldFire(lastSvcNudgeTokens, tokens, deltaTokens)) return null;
         lastSvcNudgeTokens = tokens;
         return svcNudgeRule.render({ command: cmd });
       };

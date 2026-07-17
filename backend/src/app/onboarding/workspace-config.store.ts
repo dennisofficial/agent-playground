@@ -1,10 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import type { InstallMatch } from '@shared/prompt-kit/jit/install-awareness';
 import { Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { OrgWorkspaceMountEntity, RepoEntity } from '../persistence/entities';
 import type { MountMode, MountSpec } from '../sandbox/container-paths';
-import type { InstallMatch } from '@shared/prompt-kit/jit/install-awareness';
 import type { SeenTooling } from '../workspace-profile/seen-tooling';
 import { loadLegacyManifestFile } from './legacy-worktree-manifest';
 
@@ -40,16 +40,9 @@ export class WorkspaceConfigStore {
 
   /** Set (or clear, when empty/blank) the repo's cold-boot setup script. Live for every future job's next
    *  cold attach — no PR. */
-  async setSetupScript(
-    orgId: string,
-    repoId: string,
-    script: string | null,
-  ): Promise<void> {
+  async setSetupScript(orgId: string, repoId: string, script: string | null): Promise<void> {
     const trimmed = script?.trim() ? script : null;
-    await this.repos.update(
-      { id: repoId, org_id: orgId },
-      { setup_script: trimmed },
-    );
+    await this.repos.update({ id: repoId, org_id: orgId }, { setup_script: trimmed });
     this.logger.log(
       `${trimmed ? 'set' : 'cleared'} setup script org=${orgId} repo=${repoId}` +
         (trimmed ? ` (${trimmed.length} chars)` : ''),
@@ -58,10 +51,7 @@ export class WorkspaceConfigStore {
 
   /** The repo's preview recipe (`repos.preview_instructions`), or null when unset. Spliced into the
    *  Spin-up-preview seed (see `previewPrepRule`). */
-  async getPreviewInstructions(
-    orgId: string,
-    repoId: string,
-  ): Promise<string | null> {
+  async getPreviewInstructions(orgId: string, repoId: string): Promise<string | null> {
     const row = await this.repos.findOne({
       where: { id: repoId, org_id: orgId },
     });
@@ -76,10 +66,7 @@ export class WorkspaceConfigStore {
     instructions: string | null,
   ): Promise<void> {
     const trimmed = instructions?.trim() ? instructions : null;
-    await this.repos.update(
-      { id: repoId, org_id: orgId },
-      { preview_instructions: trimmed },
-    );
+    await this.repos.update({ id: repoId, org_id: orgId }, { preview_instructions: trimmed });
     this.logger.log(
       `${trimmed ? 'set' : 'cleared'} preview instructions org=${orgId} repo=${repoId}` +
         (trimmed ? ` (${trimmed.length} chars)` : ''),
@@ -88,10 +75,7 @@ export class WorkspaceConfigStore {
 
   /** The dependency manifests the Workspace Profile has acknowledged (`repos.profile_seen_manifests`),
    *  or null when never seeded — see {@link RepoEntity.profile_seen_manifests}. */
-  async getSeenManifests(
-    orgId: string,
-    repoId: string,
-  ): Promise<string[] | null> {
+  async getSeenManifests(orgId: string, repoId: string): Promise<string[] | null> {
     const row = await this.repos.findOne({
       where: { id: repoId, org_id: orgId },
     });
@@ -100,16 +84,9 @@ export class WorkspaceConfigStore {
 
   /** Record the manifest set the profile has now acknowledged (seeded at onboarding, refreshed when the
    *  brain records a setup script). Sorted + de-duped so the new-stack diff is stable. */
-  async setSeenManifests(
-    orgId: string,
-    repoId: string,
-    manifests: string[],
-  ): Promise<void> {
+  async setSeenManifests(orgId: string, repoId: string, manifests: string[]): Promise<void> {
     const unique = Array.from(new Set(manifests)).sort();
-    await this.repos.update(
-      { id: repoId, org_id: orgId },
-      { profile_seen_manifests: unique },
-    );
+    await this.repos.update({ id: repoId, org_id: orgId }, { profile_seen_manifests: unique });
   }
 
   /**
@@ -167,12 +144,7 @@ export class WorkspaceConfigStore {
   }
 
   /** Upsert a mount by `path` — idempotent; re-recording the same path replaces `mode`, never duplicates. */
-  async upsertMount(
-    orgId: string,
-    repoId: string,
-    path: string,
-    mode: MountMode,
-  ): Promise<void> {
+  async upsertMount(orgId: string, repoId: string, path: string, mode: MountMode): Promise<void> {
     const row =
       (await this.mounts.findOne({
         where: { org_id: orgId, repo_id: repoId, path },
@@ -185,15 +157,9 @@ export class WorkspaceConfigStore {
   }
 
   /** Remove a mount. */
-  async removeMount(
-    orgId: string,
-    repoId: string,
-    path: string,
-  ): Promise<void> {
+  async removeMount(orgId: string, repoId: string, path: string): Promise<void> {
     await this.mounts.delete({ org_id: orgId, repo_id: repoId, path });
-    this.logger.log(
-      `removed worktree mount org=${orgId} repo=${repoId} path=${path}`,
-    );
+    this.logger.log(`removed worktree mount org=${orgId} repo=${repoId} path=${path}`);
   }
 
   /**
@@ -203,11 +169,7 @@ export class WorkspaceConfigStore {
    * stays empty, which is correct. Best-effort by design: callers should `.catch()` this and never let a
    * bad legacy file block provisioning.
    */
-  async importLegacyIfEmpty(
-    orgId: string,
-    repoId: string,
-    worktreePath: string,
-  ): Promise<void> {
+  async importLegacyIfEmpty(orgId: string, repoId: string, worktreePath: string): Promise<void> {
     const existingMounts = await this.mounts.find({
       where: { org_id: orgId, repo_id: repoId },
     });
@@ -216,8 +178,7 @@ export class WorkspaceConfigStore {
     const { manifest } = loadLegacyManifestFile(worktreePath);
     if (manifest.mounts.length === 0) return;
 
-    for (const m of manifest.mounts)
-      await this.upsertMount(orgId, repoId, m.path, m.mode);
+    for (const m of manifest.mounts) await this.upsertMount(orgId, repoId, m.path, m.mode);
     this.logger.log(
       `imported legacy worktree manifest org=${orgId} repo=${repoId} mounts=${manifest.mounts.length}`,
     );

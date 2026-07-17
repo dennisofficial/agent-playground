@@ -1,18 +1,11 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
-import {
-  findLifecycleRule,
-  operatorMessageRules,
-  type JitFireCtx,
-} from '@shared/prompt-kit/jit';
+import { findLifecycleRule, operatorMessageRules, type JitFireCtx } from '@shared/prompt-kit/jit';
 import type { TurnChunk } from '../prompt-kit/harness';
 import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
 import { descriptorForLane } from '../surface/thread-registry';
 // Direct file path (NOT the '../driver' barrel, which pulls the whole driver → a brain↔driver ES cycle) — only
 // the lane-seeder token + type are needed here.
-import {
-  LANE_SEEDER,
-  type LaneSeeder,
-} from '../driver/build-lane-delivery.service';
+import { LANE_SEEDER, type LaneSeeder } from '../driver/build-lane-delivery.service';
 
 /** The lifecycle events this executor knows how to fire (mirrors `JitTrigger`'s `'lifecycle'` variant).
  *  `preview-requested` was retired in Thread 4 — post_build's preview now seeds directly via
@@ -73,17 +66,14 @@ export class JitHostExecutor {
       jobId: ctx.jobId,
       ...(ctx.buildPath !== undefined ? { buildPath: ctx.buildPath } : {}),
       ...(ctx.baseBranch !== undefined ? { baseBranch: ctx.baseBranch } : {}),
-      ...(ctx.decisionRecordId !== undefined
-        ? { decisionRecordId: ctx.decisionRecordId }
-        : {}),
+      ...(ctx.decisionRecordId !== undefined ? { decisionRecordId: ctx.decisionRecordId } : {}),
     };
     const body = rule.render(fireCtx);
 
     // LANE DISPATCH (d4, mechanism-only): a build-lane target routes through the read-only build-lane seed
     // path (`seedLane`) — NEVER the operator chat surface. The two existing lifecycle rules stay brain-only,
     // so this branch is unexercised today; it exists so the seed MECHANISM is lane-capable.
-    const buildLane =
-      ctx.lane && ctx.lane !== 'main' ? descriptorForLane(ctx.lane) : null;
+    const buildLane = ctx.lane && ctx.lane !== 'main' ? descriptorForLane(ctx.lane) : null;
     if (buildLane?.descriptor.kind === 'builder') {
       const threadId = buildLane.ids[0];
       if (this.laneSeeder && ctx.orgId && threadId) {
@@ -115,18 +105,13 @@ export class JitHostExecutor {
    * byte-identical to the pre-JIT framing. `ctx.prependText` is threaded straight through once the recall
    * job populates it.
    */
-  collectOperatorPrepends(ctx: {
-    jobId?: string;
-    prependText?: string;
-  }): TurnChunk[] {
+  collectOperatorPrepends(ctx: { jobId?: string; prependText?: string }): TurnChunk[] {
     const chunks: TurnChunk[] = [];
     for (const rule of operatorMessageRules()) {
       if (rule.delivery !== 'turn-prefix') continue; // only turn-prefix rules render as prepend chunks (mirrors fireLifecycle's delivery guard)
       const fireCtx: JitFireCtx = {
         ...(ctx.jobId !== undefined ? { jobId: ctx.jobId } : {}),
-        ...(ctx.prependText !== undefined
-          ? { prependText: ctx.prependText }
-          : {}),
+        ...(ctx.prependText !== undefined ? { prependText: ctx.prependText } : {}),
       };
       const body = rule.render(fireCtx);
       if (!body) continue; // empty render (default no-op memory rail) → no prefix chunk → byte-identical
@@ -141,8 +126,6 @@ export class JitHostExecutor {
 
   /** True when the declarative catalog currently enables at least one operator turn-prefix rule. */
   hasEnabledOperatorPrepends(): boolean {
-    return operatorMessageRules().some(
-      (rule) => rule.delivery === 'turn-prefix',
-    );
+    return operatorMessageRules().some((rule) => rule.delivery === 'turn-prefix');
   }
 }

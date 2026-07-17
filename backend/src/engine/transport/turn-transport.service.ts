@@ -1,16 +1,9 @@
-import { randomUUID } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
-import type { Redis } from 'ioredis';
-import type {
-  EngineEvent,
-  EngineRunResult,
-  TurnSpec,
-} from '@shared/engine/engine.types';
+import type { EngineEvent, EngineRunResult, TurnSpec } from '@shared/engine/engine.types';
 import { turnKeys } from '@shared/engine/redis-turn-keys';
-import {
-  REDIS_STREAM_PORT,
-  type RedisStreamPort,
-} from '../../_lib/redis/redis.port';
+import type { Redis } from 'ioredis';
+import { randomUUID } from 'node:crypto';
+import { REDIS_STREAM_PORT, type RedisStreamPort } from '../../_lib/redis/redis.port';
 import { REDIS_CLIENT } from '../../_lib/redis/redis.tokens';
 import { ToolBridgeReader } from './bridges/tool-bridge-reader';
 
@@ -92,9 +85,7 @@ export class TurnTransport {
 
   /** Append one progress event. Fire-and-forget (best-effort) — mirrors the entrypoint's `onEvent`. */
   emitEvent(turnId: string, e: EngineEvent): void {
-    void this.port
-      .xadd(turnKeys(turnId).events, { t: 'event', e })
-      .catch(() => undefined);
+    void this.port.xadd(turnKeys(turnId).events, { t: 'event', e }).catch(() => undefined);
   }
 
   /** Append the single terminal `final` frame (awaited — the host tails this to end the turn). */
@@ -104,18 +95,14 @@ export class TurnTransport {
 
   /** Append the terminal `error` frame (best-effort — a failed write must not mask the original error). */
   async emitError(turnId: string, frame: EngineErrorFrame): Promise<void> {
-    await this.port
-      .xadd(turnKeys(turnId).events, frame)
-      .catch(() => undefined);
+    await this.port.xadd(turnKeys(turnId).events, frame).catch(() => undefined);
   }
 
   /** Start the periodic heartbeat; `unref`'d so it never holds the one-shot process open past `final`. */
   startHeartbeat(turnId: string): void {
     const { events } = turnKeys(turnId);
     this.heartbeat = setInterval(() => {
-      void this.port
-        .xadd(events, { t: 'heartbeat', ts: Date.now() })
-        .catch(() => undefined);
+      void this.port.xadd(events, { t: 'heartbeat', ts: Date.now() }).catch(() => undefined);
     }, HEARTBEAT_MS);
     if (typeof this.heartbeat.unref === 'function') this.heartbeat.unref();
   }
@@ -161,9 +148,7 @@ export class TurnTransport {
    * internally (a subscribed connection can't issue normal commands), so this needs no raw client.
    */
   async onAbort(turnId: string, cb: () => void): Promise<void> {
-    this.abortUnsub = await this.port.subscribe(turnKeys(turnId).abort, () =>
-      cb(),
-    );
+    this.abortUnsub = await this.port.subscribe(turnKeys(turnId).abort, () => cb());
   }
 
   /**
@@ -182,13 +167,9 @@ export class TurnTransport {
       async *[Symbol.asyncIterator]() {
         let lastId = '0-0';
         while (!stopped) {
-          const r = (await conn.xread(
-            'BLOCK',
-            STEER_BLOCK_MS,
-            'STREAMS',
-            input,
-            lastId,
-          )) as Array<[string, Array<[string, string[]]>]> | null;
+          const r = (await conn.xread('BLOCK', STEER_BLOCK_MS, 'STREAMS', input, lastId)) as Array<
+            [string, Array<[string, string[]]>]
+          > | null;
           if (!r) continue;
           for (const [, entries] of r) {
             for (const [eid, f] of entries) {

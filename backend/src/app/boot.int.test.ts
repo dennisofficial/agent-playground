@@ -10,12 +10,9 @@ import {
   type JobDispatcher,
 } from './brain';
 import { ThreadDriver } from './driver';
-import {
-  GithubEventsWebhookController,
-  GithubStateWebhookController,
-} from './ingress';
+import { GithubEventsWebhookController, GithubStateWebhookController } from './ingress';
 import { BRAIN_SINK, StimulusIntake, type BrainSink } from './stimulus';
-import { WebSurface, CHAT_SURFACE, type ChatSurface } from './surface';
+import { CHAT_SURFACE, WebSurface, type ChatSurface } from './surface';
 import { TestBridgeController } from './test-bridge';
 
 /**

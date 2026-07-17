@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { randomBytes } from 'node:crypto';
 import type { Redis } from 'ioredis';
+import { randomBytes } from 'node:crypto';
 import { REDIS_CLIENT } from '../../_lib/redis/redis.tokens';
 
 /** How long a stashed connect nonce survives before the install round-trip is considered abandoned. */

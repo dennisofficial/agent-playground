@@ -39,9 +39,7 @@ export class ProjectRoutingService {
     const target = normalizeRepoSlug(ownerRepo);
     if (!target) return null;
     const candidates = await this.repos.find();
-    const match = candidates.find(
-      (r) => normalizeRepoSlug(r.git_url) === target,
-    );
+    const match = candidates.find((r) => normalizeRepoSlug(r.git_url) === target);
     if (!match) {
       this.logger.debug(`No repo matches github repo ${target}`);
       return null;
@@ -50,10 +48,7 @@ export class ProjectRoutingService {
   }
 
   /** Resolve a caller-supplied `(orgId, repoId-uuid)` to a repo route. Null when not connected. */
-  async routeProjectId(
-    orgId: string,
-    repoId: string,
-  ): Promise<ProjectRoute | null> {
+  async routeProjectId(orgId: string, repoId: string): Promise<ProjectRoute | null> {
     const match = await this.repos.findOne({
       where: { id: repoId, org_id: orgId },
     });
@@ -72,9 +67,7 @@ export class ProjectRoutingService {
  *   Acme/Web                        → acme/web
  * Returns null when no `owner/repo` pair can be extracted.
  */
-export function normalizeRepoSlug(
-  ref: string | null | undefined,
-): string | null {
+export function normalizeRepoSlug(ref: string | null | undefined): string | null {
   if (!ref) return null;
   let s = ref.trim();
   s = s.replace(/^[a-z]+:\/\//i, ''); // https:// , ssh://

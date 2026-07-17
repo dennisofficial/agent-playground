@@ -1,8 +1,4 @@
-import {
-  Injectable,
-  Logger,
-  type BeforeApplicationShutdown,
-} from '@nestjs/common';
+import { Injectable, Logger, type BeforeApplicationShutdown } from '@nestjs/common';
 import { LeaderElectionService } from '../cluster';
 import { AgentSessionManager } from './agent-session-manager.service';
 

@@ -1,16 +1,13 @@
 import type { HookCallback, Options } from '@anthropic-ai/claude-agent-sdk';
-import { join } from 'node:path';
 import type { EngineLocalHooks } from '@workspace/agent-engine';
+import { join } from 'node:path';
 import {
   detectInstallCommand,
   githubFetchGuardRule,
   installAwarenessRule,
 } from '../../prompt-kit/jit';
 import type { EngineHomeKey } from '../engine-home';
-import {
-  INTERNAL_PROFILE_AWARENESS_TOOL,
-  type RunEngineArgs,
-} from '../engine.types';
+import { INTERNAL_PROFILE_AWARENESS_TOOL, type RunEngineArgs } from '../engine.types';
 import {
   applyPerRunCtxToAgents,
   AUTO_APPROVE,
@@ -69,8 +66,7 @@ export function buildClaudeOptions(p: BuildClaudeOptionsParams): Options {
   // Install-awareness (PostToolUse hook, added to `options` below): a Bash install is detected in-container
   // (cheap regex gate) and round-tripped to the reserved `__profile_awareness` host tool via `bridgeCall`.
   // Only wired when this turn carries a tool bridge — otherwise the round-trip has no transport (fail-silent).
-  const installAwarenessEnabled =
-    installAwarenessRule.enabled && !!p.bridgeCall;
+  const installAwarenessEnabled = installAwarenessRule.enabled && !!p.bridgeCall;
 
   // PostToolUse Bash hooks, one callback per enabled feature (built before `options` so the literal just
   // spreads the assembled array). The atlas-svc nudge is delivered through the engine-local
@@ -102,10 +98,7 @@ export function buildClaudeOptions(p: BuildClaudeOptionsParams): Options {
         tool_input?: { command?: unknown };
       };
       if (inp.tool_name !== 'Bash') return {};
-      const cmd =
-        typeof inp.tool_input?.command === 'string'
-          ? inp.tool_input.command
-          : '';
+      const cmd = typeof inp.tool_input?.command === 'string' ? inp.tool_input.command : '';
       if (!detectInstallCommand(cmd)) return {};
       try {
         const text = await Promise.race([
@@ -113,9 +106,7 @@ export function buildClaudeOptions(p: BuildClaudeOptionsParams): Options {
             command: cmd,
             sessionType: p.sandboxKey.type,
           }),
-          new Promise<null>((r) =>
-            setTimeout(() => r(null), INSTALL_AWARENESS_TIMEOUT_MS),
-          ),
+          new Promise<null>((r) => setTimeout(() => r(null), INSTALL_AWARENESS_TIMEOUT_MS)),
         ]);
         if (typeof text !== 'string' || !text) return {};
         return {
@@ -136,8 +127,7 @@ export function buildClaudeOptions(p: BuildClaudeOptionsParams): Options {
   // chrome, not content. Pure/local (no host round-trip), so no timeout guard is needed.
   const fetchPostToolUseHooks: HookCallback[] = [];
   const githubGuard = githubFetchGuardRule.trigger;
-  const fetchToolMatcher =
-    githubGuard.kind === 'url-match' ? githubGuard.toolMatcher : '';
+  const fetchToolMatcher = githubGuard.kind === 'url-match' ? githubGuard.toolMatcher : '';
   if (githubFetchGuardRule.enabled && githubGuard.kind === 'url-match') {
     fetchPostToolUseHooks.push(async (input) => {
       const url = (input as { tool_input?: { url?: unknown } }).tool_input?.url;

@@ -21,9 +21,6 @@ export function fence(tag: string, body: string): string {
 }
 
 /** Like {@link fence}, but emits `<tag>\n(none)\n</tag>` for empty/blank input so the section stays explicit. */
-export function fenceOrNone(
-  tag: string,
-  body: string | null | undefined,
-): string {
+export function fenceOrNone(tag: string, body: string | null | undefined): string {
   return fence(tag, (body ?? '').trim() || '(none)');
 }

@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
 import type { Decision } from '@shared/domain/decision-record';
+import { describe, expect, it } from 'vitest';
 import { renderDecisionRecordMd } from './decision-record-md';
 
 describe('renderDecisionRecordMd', () => {
@@ -21,22 +21,16 @@ describe('renderDecisionRecordMd', () => {
       {
         decisionClass: 'api_contract',
         title: 'Availability endpoint',
-        ruling:
-          'Add a live availability check that also considers held orders.',
+        ruling: 'Add a live availability check that also considers held orders.',
       },
     ];
-    const md = renderDecisionRecordMd(
-      decisions,
-      'Customer-chosen subdomains for servers.',
-    );
+    const md = renderDecisionRecordMd(decisions, 'Customer-chosen subdomains for servers.');
 
     expect(md).toContain('## Overview');
     expect(md).toContain('Customer-chosen subdomains for servers.');
     expect(md).toContain('## Data model');
     expect(md).toContain('#### Subdomain column');
-    expect(md).toContain(
-      '> **Q:** Where does the customer pick the subdomain?',
-    );
+    expect(md).toContain('> **Q:** Where does the customer pick the subdomain?');
     expect(md).toContain('> **A:** In the new-server wizard');
     expect(md).toContain('## API contract');
     // A decision without a question renders no Q&A block.

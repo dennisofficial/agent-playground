@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
 import type { EngineUsage } from '@shared/engine';
+import { describe, expect, it, vi } from 'vitest';
 import type { AppVersionService } from '../cluster/app-version.service';
 import { TurnUsageProjector } from './turn-usage-projector.service';
 
@@ -88,9 +88,7 @@ describe('TurnUsageProjector', () => {
     expect(stat.raw).toBe(usage);
 
     expect(modelUsage.save).toHaveBeenCalledOnce();
-    const rows = modelUsage.save.mock.calls[0][0] as Array<
-      Record<string, unknown>
-    >;
+    const rows = modelUsage.save.mock.calls[0][0] as Array<Record<string, unknown>>;
     expect(rows).toHaveLength(2);
     const opus = rows.find((r) => r.model === 'claude-opus-4-8');
     const sonnet = rows.find((r) => r.model === 'claude-sonnet-5');

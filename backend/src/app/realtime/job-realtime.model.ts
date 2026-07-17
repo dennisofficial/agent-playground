@@ -1,9 +1,5 @@
-import {
-  type ModelConfig,
-  RealtimeRuleGuard,
-  type Row,
-} from '@workspace/pg-realtime';
 import { deriveNeedsYou, type JobProvenance } from '@shared/domain/job';
+import { type ModelConfig, RealtimeRuleGuard, type Row } from '@workspace/pg-realtime';
 import type { CiCounts } from '../git';
 
 /**
@@ -61,13 +57,8 @@ export interface ThreadRealtimeRow extends Row {
 }
 
 /** Row-level scope: a user may stream only threads belonging to an org they are a member of. */
-class ThreadOrgGuard extends RealtimeRuleGuard<
-  RealtimePrincipal,
-  ThreadRealtimeRow
-> {
-  canRead(
-    user: RealtimePrincipal | null,
-  ): { orgId: { $in: string[] } } | false {
+class ThreadOrgGuard extends RealtimeRuleGuard<RealtimePrincipal, ThreadRealtimeRow> {
+  canRead(user: RealtimePrincipal | null): { orgId: { $in: string[] } } | false {
     if (!user || user.orgIds.length === 0) return false;
     return { orgId: { $in: user.orgIds } };
   }
@@ -81,8 +72,7 @@ function mapRow(raw: Row): ThreadRealtimeRow {
   const openQuestion = Number(raw.open_question_count ?? 0) > 0;
   // Durable/mcp secret requests are per-card (like questions), counted by `open_secret_count`; ephemeral
   // requests still use the single-slot `awaiting_secret_id` pointer. Either awaiting the operator counts.
-  const awaitingSecret =
-    raw.awaiting_secret_id != null || Number(raw.open_secret_count ?? 0) > 0;
+  const awaitingSecret = raw.awaiting_secret_id != null || Number(raw.open_secret_count ?? 0) > 0;
   const createdAt = raw.created_at;
   return {
     jobId: String(raw.id),
@@ -95,8 +85,7 @@ function mapRow(raw: Row): ThreadRealtimeRow {
       openQuestion,
       awaitingSecret,
     }),
-    createdAt:
-      createdAt instanceof Date ? createdAt.toISOString() : String(createdAt),
+    createdAt: createdAt instanceof Date ? createdAt.toISOString() : String(createdAt),
     orgId: String(raw.org_id),
     repoId: String(raw.repo_id),
     featureBranch: (raw.feature_branch as string | null) ?? null,
@@ -106,10 +95,8 @@ function mapRow(raw: Row): ThreadRealtimeRow {
     prMergeable: (raw.pr_mergeable as string | null) ?? null,
     prState: (raw.pr_state as string | null) ?? null,
     portState: (raw.port_state as string | null) ?? null,
-    buildStagesDone:
-      raw.build_stages_done == null ? null : Number(raw.build_stages_done),
-    buildStagesTotal:
-      raw.build_stages_total == null ? null : Number(raw.build_stages_total),
+    buildStagesDone: raw.build_stages_done == null ? null : Number(raw.build_stages_done),
+    buildStagesTotal: raw.build_stages_total == null ? null : Number(raw.build_stages_total),
     shipping: status === 'shipping',
     createdBy: (raw.created_by as JobProvenance | null) ?? null,
   };

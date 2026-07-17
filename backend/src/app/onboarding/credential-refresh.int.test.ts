@@ -13,38 +13,27 @@
  * so no real Anthropic OAuth traffic is ever sent.
  */
 
+import type { NestExpressApplication } from '@nestjs/platform-express';
+import { Test } from '@nestjs/testing';
+import { getDataSourceToken } from '@nestjs/typeorm';
+import { ENGINE_RUNNER } from '@shared/engine';
 import * as http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { getDataSourceToken } from '@nestjs/typeorm';
-import { Test } from '@nestjs/testing';
-import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DataSource } from 'typeorm';
-import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-} from 'vitest';
-import { CLASSIFIER_LLM } from '../decision-gate';
-import { ENGINE_RUNNER } from '@shared/engine';
-import { GithubPrService, LocalGitService } from '../git';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { AppModule } from '../app.module';
-import { DB_CONNECTION } from '../persistence/database.module';
+import { CLASSIFIER_LLM } from '../decision-gate';
 import {
   FakeClassifierLlm,
   FakeEngineRunner,
   FakeGithubPrService,
   FakeLocalGitService,
 } from '../e2e/e2e-stubs';
+import { GithubPrService, LocalGitService } from '../git';
+import { DB_CONNECTION } from '../persistence/database.module';
 import { ClaudeCredentialStore } from './claude-credential.store';
 import { CredentialKeepAliveService } from './credential-keepalive.service';
-import {
-  CredentialNeedsReauthError,
-  CredentialRefreshService,
-} from './credential-refresh.service';
+import { CredentialNeedsReauthError, CredentialRefreshService } from './credential-refresh.service';
 import { CredentialResolver } from './credential-resolver.service';
 import { OauthUsageService } from './oauth-usage.service';
 
@@ -113,19 +102,16 @@ let prevTokenUrl: string | undefined;
 /** Seed a `personal` credential expiring in `expiresInMs`, select it as the org's active credential. */
 async function seedCred(expiresInMs: number, label: string): Promise<string> {
   const credId = await seedCredUnselected(expiresInMs, label);
-  await ds.query(
-    `UPDATE organizations SET selected_claude_credential_id = $1 WHERE id = $2`,
-    [credId, ORG],
-  );
+  await ds.query(`UPDATE organizations SET selected_claude_credential_id = $1 WHERE id = $2`, [
+    credId,
+    ORG,
+  ]);
   return credId;
 }
 
 /** Seed a `personal` credential expiring in `expiresInMs` WITHOUT selecting it — proves the sweep covers
  *  every connected account, not just each org's selected one. */
-async function seedCredUnselected(
-  expiresInMs: number,
-  label: string,
-): Promise<string> {
+async function seedCredUnselected(expiresInMs: number, label: string): Promise<string> {
   return store.upsertPersonal(ORG, {
     label,
     accessToken: `seed-access-${label}`,
@@ -147,9 +133,7 @@ async function getRow(credId: string): Promise<{
 }
 
 beforeAll(async () => {
-  await new Promise<void>((resolve) =>
-    tokenServer.listen(0, '127.0.0.1', () => resolve()),
-  );
+  await new Promise<void>((resolve) => tokenServer.listen(0, '127.0.0.1', () => resolve()));
   const port = (tokenServer.address() as AddressInfo).port;
 
   const prevSurface = process.env.SURFACE;
@@ -195,10 +179,7 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
-  if (ds)
-    await ds
-      .query(`DELETE FROM organizations WHERE id = $1`, [ORG])
-      .catch(() => undefined);
+  if (ds) await ds.query(`DELETE FROM organizations WHERE id = $1`, [ORG]).catch(() => undefined);
   await app?.close();
   await new Promise<void>((resolve) => tokenServer.close(() => resolve()));
   if (prevTokenUrl === undefined) delete process.env.CLAUDE_OAUTH_TOKEN_URL;
@@ -240,8 +221,7 @@ describe('CredentialRefreshService.ensureFresh (live Postgres + stub OAuth token
     expect(requestCount).toBe(1);
     expect(secretA).toBe(secretB);
     const accessTokenOf = (secret: string): string =>
-      (JSON.parse(secret) as { claudeAiOauth: { accessToken: string } })
-        .claudeAiOauth.accessToken;
+      (JSON.parse(secret) as { claudeAiOauth: { accessToken: string } }).claudeAiOauth.accessToken;
     expect(accessTokenOf(secretA)).toBe('stub-access-1');
 
     const row = await getRow(credId);
@@ -281,9 +261,9 @@ describe('CredentialRefreshService.ensureFresh (live Postgres + stub OAuth token
     const before = await getRow(credId);
     handler = errorHandler(503);
 
-    await expect(
-      credRefresh.ensureFresh(ORG, credId),
-    ).rejects.not.toBeInstanceOf(CredentialNeedsReauthError);
+    await expect(credRefresh.ensureFresh(ORG, credId)).rejects.not.toBeInstanceOf(
+      CredentialNeedsReauthError,
+    );
 
     const row = await getRow(credId);
     expect(row.status).toBe('active');
@@ -304,10 +284,7 @@ describe('CredentialRefreshService.ensureFresh (live Postgres + stub OAuth token
   });
 
   it('the keep-alive sweep refreshes a NON-selected personal credential nearing expiry', async () => {
-    const credId = await seedCredUnselected(
-      10 * 60_000,
-      'keepalive-unselected',
-    ); // inside the 35-min sweep window
+    const credId = await seedCredUnselected(10 * 60_000, 'keepalive-unselected'); // inside the 35-min sweep window
     const before = await getRow(credId);
     expect(before.last_refreshed_at).toBeNull();
 
@@ -345,10 +322,7 @@ describe('CredentialRefreshService.ensureFresh (live Postgres + stub OAuth token
     const credId = await seedCred(5 * 60_000, 'usage-concurrent');
     handler = successHandler(150);
 
-    await Promise.all([
-      usage.getForCredential(ORG, credId),
-      credRefresh.ensureFresh(ORG, credId),
-    ]);
+    await Promise.all([usage.getForCredential(ORG, credId), credRefresh.ensureFresh(ORG, credId)]);
 
     expect(requestCount).toBe(1);
   });

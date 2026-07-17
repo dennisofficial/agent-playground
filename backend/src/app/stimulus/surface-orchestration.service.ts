@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
 import type { EventSeverity } from '@shared/domain';
+import { Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity } from '../persistence/entities';
 import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
@@ -59,9 +59,7 @@ export class SurfaceOrchestration {
       this.logger.warn(`announcement post failed (continuing): ${err}`);
       return undefined;
     }
-    this.logger.log(
-      `announced event thread ${input.jobId} on repo ${thread.repo_id}`,
-    );
+    this.logger.log(`announced event thread ${input.jobId} on repo ${thread.repo_id}`);
     return thread.id;
   }
 }

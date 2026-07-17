@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
 import type { Message, TurnEnvelope } from '@shared/domain';
 import type { EngineEvent } from '@shared/engine/engine.types';
+import { describe, expect, it, vi } from 'vitest';
 import { AgentSessionManager } from './agent-session-manager.service';
 
 const JOB_ID = 'th-ack-001';
@@ -36,12 +36,8 @@ function stimulusStub(fields: {
     author: { id: 'U1', displayName: 'Dennis' },
     replyRoute: { surfaceId: 'web', jobRef: JOB_ID },
     receivedAt: new Date('2026-07-02T12:00:00Z'),
-    ...(fields.seedQuestionId
-      ? { deliveredQuestionIds: [fields.seedQuestionId] }
-      : {}),
-    ...(fields.seedSecretId
-      ? { deliveredSecretIds: [fields.seedSecretId] }
-      : {}),
+    ...(fields.seedQuestionId ? { deliveredQuestionIds: [fields.seedQuestionId] } : {}),
+    ...(fields.seedSecretId ? { deliveredSecretIds: [fields.seedSecretId] } : {}),
     ...(fields.seedFileId ? { deliveredFileIds: [fields.seedFileId] } : {}),
   };
 }
@@ -60,21 +56,16 @@ function makeManager(opts: {
 }) {
   const store = {
     getQuestionCard: opts.getQuestionCard ?? vi.fn().mockResolvedValue(null),
-    markQuestionDelivered:
-      opts.markQuestionDelivered ?? vi.fn().mockResolvedValue(undefined),
+    markQuestionDelivered: opts.markQuestionDelivered ?? vi.fn().mockResolvedValue(undefined),
     getSecretCard: opts.getSecretCard ?? vi.fn().mockResolvedValue(null),
-    markSecretDelivered:
-      opts.markSecretDelivered ?? vi.fn().mockResolvedValue(undefined),
-    clearAwaitingSecret:
-      opts.clearAwaitingSecret ?? vi.fn().mockResolvedValue(undefined),
+    markSecretDelivered: opts.markSecretDelivered ?? vi.fn().mockResolvedValue(undefined),
+    clearAwaitingSecret: opts.clearAwaitingSecret ?? vi.fn().mockResolvedValue(undefined),
     getFileCard: opts.getFileCard ?? vi.fn().mockResolvedValue(null),
-    markFileDelivered:
-      opts.markFileDelivered ?? vi.fn().mockResolvedValue(undefined),
+    markFileDelivered: opts.markFileDelivered ?? vi.fn().mockResolvedValue(undefined),
   };
   const stimulusStore = {
     findChatStimulusById: opts.findChatStimulusById,
-    markChatDelivered:
-      opts.markChatDelivered ?? vi.fn().mockResolvedValue(undefined),
+    markChatDelivered: opts.markChatDelivered ?? vi.fn().mockResolvedValue(undefined),
   };
   const inert = {} as never;
   const manager = new AgentSessionManager(
@@ -120,19 +111,13 @@ async function flush() {
 }
 
 function callStampInputAck(manager: AgentSessionManager, e: EngineEvent) {
-  (
-    manager as unknown as { stampInputAck: (e: EngineEvent) => void }
-  ).stampInputAck(e);
+  (manager as unknown as { stampInputAck: (e: EngineEvent) => void }).stampInputAck(e);
 }
 
 describe('AgentSessionManager.stampInputAck / markCardDeliveredForStimulus', () => {
   it('stamps a delivered QUESTION card + the stimulus row', async () => {
-    const findChatStimulusById = vi
-      .fn()
-      .mockResolvedValue(stimulusStub({ seedQuestionId: 'q1' }));
-    const getQuestionCard = vi
-      .fn()
-      .mockResolvedValue({ answer: 'yes', deliveredAt: null });
+    const findChatStimulusById = vi.fn().mockResolvedValue(stimulusStub({ seedQuestionId: 'q1' }));
+    const getQuestionCard = vi.fn().mockResolvedValue({ answer: 'yes', deliveredAt: null });
     const { manager, store, stimulusStore } = makeManager({
       findChatStimulusById,
       getQuestionCard,
@@ -148,9 +133,7 @@ describe('AgentSessionManager.stampInputAck / markCardDeliveredForStimulus', () 
   });
 
   it('stamps a delivered SECRET card AND clears the secret gate', async () => {
-    const findChatStimulusById = vi
-      .fn()
-      .mockResolvedValue(stimulusStub({ seedSecretId: 's1' }));
+    const findChatStimulusById = vi.fn().mockResolvedValue(stimulusStub({ seedSecretId: 's1' }));
     const getSecretCard = vi.fn().mockResolvedValue({
       provided_at: new Date('2026-07-02T12:00:00Z'),
       delivered_at: null,
@@ -172,9 +155,7 @@ describe('AgentSessionManager.stampInputAck / markCardDeliveredForStimulus', () 
   });
 
   it('stamps a delivered FILE card', async () => {
-    const findChatStimulusById = vi
-      .fn()
-      .mockResolvedValue(stimulusStub({ seedFileId: 'f1' }));
+    const findChatStimulusById = vi.fn().mockResolvedValue(stimulusStub({ seedFileId: 'f1' }));
     const getFileCard = vi.fn().mockResolvedValue({
       provided_at: new Date('2026-07-02T12:00:00Z'),
       delivered_at: null,
@@ -205,12 +186,8 @@ describe('AgentSessionManager.stampInputAck / markCardDeliveredForStimulus', () 
   });
 
   it('an UNANSWERED question card is not stamped, but the stimulus row is still marked delivered', async () => {
-    const findChatStimulusById = vi
-      .fn()
-      .mockResolvedValue(stimulusStub({ seedQuestionId: 'q1' }));
-    const getQuestionCard = vi
-      .fn()
-      .mockResolvedValue({ answer: null, deliveredAt: null });
+    const findChatStimulusById = vi.fn().mockResolvedValue(stimulusStub({ seedQuestionId: 'q1' }));
+    const getQuestionCard = vi.fn().mockResolvedValue({ answer: null, deliveredAt: null });
     const { manager, store, stimulusStore } = makeManager({
       findChatStimulusById,
       getQuestionCard,
@@ -224,15 +201,9 @@ describe('AgentSessionManager.stampInputAck / markCardDeliveredForStimulus', () 
   });
 
   it('does NOT mark the stimulus row delivered when the question card stamp fails', async () => {
-    const findChatStimulusById = vi
-      .fn()
-      .mockResolvedValue(stimulusStub({ seedQuestionId: 'q1' }));
-    const getQuestionCard = vi
-      .fn()
-      .mockResolvedValue({ answer: 'yes', deliveredAt: null });
-    const markQuestionDelivered = vi
-      .fn()
-      .mockRejectedValue(new Error('db write failed'));
+    const findChatStimulusById = vi.fn().mockResolvedValue(stimulusStub({ seedQuestionId: 'q1' }));
+    const getQuestionCard = vi.fn().mockResolvedValue({ answer: 'yes', deliveredAt: null });
+    const markQuestionDelivered = vi.fn().mockRejectedValue(new Error('db write failed'));
     const { manager, stimulusStore } = makeManager({
       findChatStimulusById,
       getQuestionCard,
@@ -247,9 +218,7 @@ describe('AgentSessionManager.stampInputAck / markCardDeliveredForStimulus', () 
   });
 
   it('clears the secret gate even when the secret card was already marked delivered', async () => {
-    const findChatStimulusById = vi
-      .fn()
-      .mockResolvedValue(stimulusStub({ seedSecretId: 's1' }));
+    const findChatStimulusById = vi.fn().mockResolvedValue(stimulusStub({ seedSecretId: 's1' }));
     const getSecretCard = vi.fn().mockResolvedValue({
       provided_at: new Date('2026-07-02T12:00:00Z'),
       delivered_at: new Date('2026-07-02T12:00:01Z'),
@@ -269,17 +238,13 @@ describe('AgentSessionManager.stampInputAck / markCardDeliveredForStimulus', () 
   });
 
   it('does NOT mark the stimulus row delivered when clearing the secret gate fails', async () => {
-    const findChatStimulusById = vi
-      .fn()
-      .mockResolvedValue(stimulusStub({ seedSecretId: 's1' }));
+    const findChatStimulusById = vi.fn().mockResolvedValue(stimulusStub({ seedSecretId: 's1' }));
     const getSecretCard = vi.fn().mockResolvedValue({
       provided_at: new Date('2026-07-02T12:00:00Z'),
       delivered_at: null,
       ephemeral: true,
     });
-    const clearAwaitingSecret = vi
-      .fn()
-      .mockRejectedValue(new Error('gate clear failed'));
+    const clearAwaitingSecret = vi.fn().mockRejectedValue(new Error('gate clear failed'));
     const { manager, store, stimulusStore } = makeManager({
       findChatStimulusById,
       getSecretCard,

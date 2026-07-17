@@ -1,5 +1,3 @@
-import { describe, expect, it, vi } from 'vitest';
-import type { Repository } from 'typeorm';
 import {
   EngineAuthError,
   isEngineDetachedError,
@@ -7,11 +5,13 @@ import {
   type EngineRunnerPort,
   type RunEngineArgs,
 } from '@shared/engine';
-import type { ThreadEntity } from '../persistence/entities';
-import type { FeatureSandbox } from '../git';
-import { TurnRunnerService } from './turn-runner.service';
 import { agentMessage } from '@shared/prompt-kit/message';
+import type { Repository } from 'typeorm';
+import { describe, expect, it, vi } from 'vitest';
 import type { TurnUsageProjector } from '../analytics/turn-usage-projector.service';
+import type { FeatureSandbox } from '../git';
+import type { ThreadEntity } from '../persistence/entities';
+import { TurnRunnerService } from './turn-runner.service';
 
 /**
  * TurnRunnerService — DURABILITY of the resume handle. The point: a coding session must survive a halt
@@ -28,13 +28,11 @@ function fakeSteps(priorSessionId: string | null = null) {
     findOne: vi.fn(async () =>
       current === null ? null : ({ session_id: current } as ThreadEntity),
     ),
-    update: vi.fn(
-      async (where: { id: unknown }, patch: { session_id?: string }) => {
-        updates.push({ id: where.id, patch });
-        if (patch.session_id) current = patch.session_id;
-        return { affected: 1 } as never;
-      },
-    ),
+    update: vi.fn(async (where: { id: unknown }, patch: { session_id?: string }) => {
+      updates.push({ id: where.id, patch });
+      if (patch.session_id) current = patch.session_id;
+      return { affected: 1 } as never;
+    }),
   } as unknown as Repository<ThreadEntity>;
   return { repo, updates, last: () => current };
 }
@@ -107,9 +105,7 @@ describe('TurnRunnerService — session-handle durability', () => {
       }),
     };
     const runner = new TurnRunnerService(engine, repo);
-    await expect(runner.runTurn(baseInput)).rejects.toBeInstanceOf(
-      EngineAuthError,
-    );
+    await expect(runner.runTurn(baseInput)).rejects.toBeInstanceOf(EngineAuthError);
     expect(last()).toBe('sess-401');
   });
 
@@ -208,9 +204,7 @@ describe('TurnRunnerService — evidence dir threading', () => {
       evidenceDir: '/context/evidence/010-backend',
     });
 
-    expect(received[0].target?.evidenceDir).toBe(
-      '/context/evidence/010-backend',
-    );
+    expect(received[0].target?.evidenceDir).toBe('/context/evidence/010-backend');
   });
 
   it('omits evidenceDir on the target when the turn passes none', async () => {
@@ -348,8 +342,7 @@ describe('TurnRunnerService — provenance threading', () => {
     });
     const engine: EngineRunnerPort = {
       run: vi.fn(),
-      tryClaimAttach: (t: string) =>
-        attached.has(t) ? false : (attached.add(t), true),
+      tryClaimAttach: (t: string) => (attached.has(t) ? false : (attached.add(t), true)),
       releaseAttach: (t: string) => {
         attached.delete(t);
       },

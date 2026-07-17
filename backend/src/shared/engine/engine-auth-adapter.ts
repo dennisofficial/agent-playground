@@ -1,7 +1,7 @@
 import type { SessionEngine } from '../domain';
-import type { EngineHomeKey } from './engine-home';
 import { claudeAuthAdapter } from './adapters/claude-auth.adapter';
 import { codexAuthAdapter } from './adapters/codex-auth.adapter';
+import type { EngineHomeKey } from './engine-home';
 
 /**
  * The engine-agnostic seam for a subscription-auth turn's ENGINE-side mechanics — materializing a

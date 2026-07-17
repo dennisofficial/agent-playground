@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { applyPerRunCtxToAgents } from './engine-core';
 import { Agent } from '../prompt-kit/system/agent';
 import { renderAgentPrompt } from '../prompt-kit/system/assemble';
+import { applyPerRunCtxToAgents } from './engine-core';
 
 /**
  * The engine-assembled subagent personas are built IN-CONTAINER from static prompts, so the wire-forwarded
@@ -32,12 +32,8 @@ const baseAgents = () => ({
 describe('applyPerRunCtxToAgents', () => {
   it('returns the map UNCHANGED when neither repoConventions nor previewInstructions is set', () => {
     const agents = baseAgents();
-    expect(applyPerRunCtxToAgents(agents, { repoConventions: null })).toBe(
-      agents,
-    );
-    expect(applyPerRunCtxToAgents(agents, { repoConventions: undefined })).toBe(
-      agents,
-    );
+    expect(applyPerRunCtxToAgents(agents, { repoConventions: null })).toBe(agents);
+    expect(applyPerRunCtxToAgents(agents, { repoConventions: undefined })).toBe(agents);
     expect(
       applyPerRunCtxToAgents(agents, {
         repoConventions: null,

@@ -7,8 +7,8 @@
  * fine — `order` is a global sort key, the group is just code organization).
  */
 import { Agent, ENGINEERING_STAGES } from '../agent';
-import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isBuildBrain, isOnboarding, notOnboarding } from '../conditions';
+import { Fragment, FragmentGroup } from '../fragment.decorator';
 import {
   CLOUD_SANDBOX_NOTE,
   PLAYGROUND_NOTE,

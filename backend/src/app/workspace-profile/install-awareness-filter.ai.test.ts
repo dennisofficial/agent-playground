@@ -12,6 +12,7 @@
  * `/context/evidence` when the env var is unset, e.g. a local `pnpm test:ai` run outside Atlas) as the
  * required live proof that Stage 2 filters/enriches against a real model, not a mock.
  */
+import type { InstallMatch } from '@shared/prompt-kit/jit/install-awareness';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -19,7 +20,6 @@ import {
   AnthropicInstallAwarenessFilter,
   type InstallFilterVerdict,
 } from './install-awareness-filter';
-import type { InstallMatch } from '@shared/prompt-kit/jit/install-awareness';
 
 const API_KEY = process.env.ANTHROPIC_API_KEY;
 const describeLive = API_KEY ? describe : describe.skip;
@@ -92,61 +92,53 @@ const SCENARIOS: Scenario[] = [
   },
 ];
 
-describeLive(
-  'AnthropicInstallAwarenessFilter — LIVE Haiku filter/enricher',
-  () => {
-    const results: {
-      scenario: string;
-      input: InstallMatch;
-      verdict: InstallFilterVerdict | undefined;
-    }[] = [];
+describeLive('AnthropicInstallAwarenessFilter — LIVE Haiku filter/enricher', () => {
+  const results: {
+    scenario: string;
+    input: InstallMatch;
+    verdict: InstallFilterVerdict | undefined;
+  }[] = [];
 
-    it.each(SCENARIOS)(
-      '$name',
-      async ({ match, profileBlock, expectSuppress }) => {
-        const filter = new AnthropicInstallAwarenessFilter(async () => API_KEY);
+  it.each(SCENARIOS)('$name', async ({ match, profileBlock, expectSuppress }) => {
+    const filter = new AnthropicInstallAwarenessFilter(async () => API_KEY);
 
-        const verdict = await filter.filter({
-          orgId: 'live-test',
-          match,
-          profileBlock,
-        });
-        results.push({
-          scenario: expect.getState().currentTestName ?? match.key,
-          input: match,
-          verdict,
-        });
-
-        expect(verdict).toBeDefined();
-        expect(verdict?.suppress).toBe(expectSuppress);
-        if (!expectSuppress) {
-          // A kept verdict must justify itself — a non-empty suggestion or reason, not a silent no-op.
-          expect(
-            (verdict?.suggestion || verdict?.reason || '').length,
-          ).toBeGreaterThan(0);
-        }
-      },
-    );
-
-    it('writes the captured verdicts to the evidence bundle', () => {
-      mkdirSync(EVIDENCE_DIR, { recursive: true });
-      const lines = [
-        '# install-awareness-filter — LIVE Haiku verdicts',
-        '',
-        `Model: claude-haiku-4-5-20251001. Captured ${new Date().toISOString()}.`,
-        '',
-        ...results.map((r) =>
-          [
-            `## ${r.scenario}`,
-            '',
-            `- input: \`${JSON.stringify(r.input)}\``,
-            `- verdict: \`${JSON.stringify(r.verdict)}\``,
-            '',
-          ].join('\n'),
-        ),
-      ];
-      writeFileSync(join(EVIDENCE_DIR, 'RESULTS.md'), lines.join('\n'), 'utf8');
-      expect(results.length).toBe(SCENARIOS.length);
+    const verdict = await filter.filter({
+      orgId: 'live-test',
+      match,
+      profileBlock,
     });
-  },
-);
+    results.push({
+      scenario: expect.getState().currentTestName ?? match.key,
+      input: match,
+      verdict,
+    });
+
+    expect(verdict).toBeDefined();
+    expect(verdict?.suppress).toBe(expectSuppress);
+    if (!expectSuppress) {
+      // A kept verdict must justify itself — a non-empty suggestion or reason, not a silent no-op.
+      expect((verdict?.suggestion || verdict?.reason || '').length).toBeGreaterThan(0);
+    }
+  });
+
+  it('writes the captured verdicts to the evidence bundle', () => {
+    mkdirSync(EVIDENCE_DIR, { recursive: true });
+    const lines = [
+      '# install-awareness-filter — LIVE Haiku verdicts',
+      '',
+      `Model: claude-haiku-4-5-20251001. Captured ${new Date().toISOString()}.`,
+      '',
+      ...results.map((r) =>
+        [
+          `## ${r.scenario}`,
+          '',
+          `- input: \`${JSON.stringify(r.input)}\``,
+          `- verdict: \`${JSON.stringify(r.verdict)}\``,
+          '',
+        ].join('\n'),
+      ),
+    ];
+    writeFileSync(join(EVIDENCE_DIR, 'RESULTS.md'), lines.join('\n'), 'utf8');
+    expect(results.length).toBe(SCENARIOS.length);
+  });
+});

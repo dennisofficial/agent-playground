@@ -1,14 +1,7 @@
-import {
-  Column,
-  Entity,
-  Index,
-  JoinColumn,
-  ManyToOne,
-  PrimaryColumn,
-} from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
-import { OrganizationEntity } from './organization.entity';
+import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryColumn } from 'typeorm';
 import type { McpSurface } from './mcp-server.entity';
+import { OrganizationEntity } from './organization.entity';
 
 /**
  * The registry row for a user/brain-defined SKILL — a named, real **directory** (`SKILL.md` + supporting

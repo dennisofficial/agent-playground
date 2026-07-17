@@ -17,9 +17,7 @@ export class LinkThreadsToTickets1782508269876 implements MigrationInterface {
 
   public async down(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`DROP INDEX "public"."uq_threads_ticket_id"`);
-    await queryRunner.query(
-      `ALTER TABLE "threads" DROP CONSTRAINT "fk_threads_ticket_id_tickets"`,
-    );
+    await queryRunner.query(`ALTER TABLE "threads" DROP CONSTRAINT "fk_threads_ticket_id_tickets"`);
     await queryRunner.query(`ALTER TABLE "threads" DROP COLUMN "ticket_id"`);
   }
 }

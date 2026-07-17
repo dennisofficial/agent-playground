@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  formatReviewComments,
-  mapMessageSource,
-} from './web-surface.controller';
+import { formatReviewComments, mapMessageSource } from './web-surface.controller';
 
 /**
  * `formatReviewComments` is what actually drives Atlas's turn (the `review_comments_card` persisted
@@ -28,15 +25,11 @@ describe('formatReviewComments', () => {
       { file: 'plan.md', quote: 'a' },
       { file: '02-engine.md', quote: 'b' },
     ]);
-    expect(text.indexOf('<quote>a</quote>')).toBeLessThan(
-      text.indexOf('<quote>b</quote>'),
-    );
+    expect(text.indexOf('<quote>a</quote>')).toBeLessThan(text.indexOf('<quote>b</quote>'));
   });
 
   it('omits the <note> element for a comment with no note', () => {
-    const text = formatReviewComments([
-      { file: 'plan.md', quote: 'quote only' },
-    ]);
+    const text = formatReviewComments([{ file: 'plan.md', quote: 'quote only' }]);
     expect(text).toContain('<quote>quote only</quote>');
     expect(text).not.toContain('<note>');
   });
@@ -46,9 +39,7 @@ describe('formatReviewComments', () => {
       [{ file: 'plan.md', quote: 'q' }],
       'please also double-check the retry logic',
     );
-    expect(text).toContain(
-      '<message>please also double-check the retry logic</message>',
-    );
+    expect(text).toContain('<message>please also double-check the retry logic</message>');
   });
 
   it('omits <message> for a whitespace-only message', () => {
@@ -73,18 +64,12 @@ describe('formatReviewComments', () => {
         },
       },
     ]);
-    expect(text).toContain(
-      '<comment file="src/csv-export.ts" old-lines="3" new-lines="10">',
-    );
+    expect(text).toContain('<comment file="src/csv-export.ts" old-lines="3" new-lines="10">');
     expect(text).toContain('```diff');
     expect(text).toContain('- const lines = [headers.join(",")];');
-    expect(text).toContain(
-      '+ const lines = [headers.map(escapeCell).join(",")];',
-    );
+    expect(text).toContain('+ const lines = [headers.map(escapeCell).join(",")];');
     // note is XML-escaped
-    expect(text).toContain(
-      '<note>use the helper &amp; keep &lt;T&gt; generic</note>',
-    );
+    expect(text).toContain('<note>use the helper &amp; keep &lt;T&gt; generic</note>');
     expect(text).not.toContain('<quote>');
   });
 

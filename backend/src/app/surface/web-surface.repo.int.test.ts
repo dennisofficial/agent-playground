@@ -39,9 +39,7 @@ const SECRET_CONTENT = 'ANTHROPIC_API_KEY=sk-live-not-a-real-secret\n';
 
 let root: string;
 let app: import('@nestjs/common').INestApplication;
-let server: ReturnType<
-  import('@nestjs/common').INestApplication['getHttpServer']
->;
+let server: ReturnType<import('@nestjs/common').INestApplication['getHttpServer']>;
 /** Mutable so individual tests can flip the "no sandbox" case via `mockResolvedValueOnce`. */
 let findSandbox: ReturnType<typeof vi.fn>;
 
@@ -58,10 +56,7 @@ beforeAll(async () => {
   git(['config', 'commit.gpgsign', 'false'], root);
 
   mkdirSync(join(root, 'backend', 'sandbox'), { recursive: true });
-  writeFileSync(
-    join(root, 'backend', 'sandbox', 'Dockerfile'),
-    DOCKERFILE_CONTENT,
-  );
+  writeFileSync(join(root, 'backend', 'sandbox', 'Dockerfile'), DOCKERFILE_CONTENT);
   git(['add', 'backend/sandbox/Dockerfile'], root);
   git(['commit', '-q', '-m', 'init'], root);
 
@@ -83,9 +78,7 @@ beforeAll(async () => {
       if (token === JobLifecycleService) return { findSandbox };
       if (token === getRepositoryToken(JobEntity, DB_CONNECTION)) {
         return {
-          findOne: vi.fn(() =>
-            Promise.resolve({ id: JOB_ID, org_id: ORG_ID, repo_id: REPO_ID }),
-          ),
+          findOne: vi.fn(() => Promise.resolve({ id: JOB_ID, org_id: ORG_ID, repo_id: REPO_ID })),
         };
       }
       return {}; // auto-mock every other collaborator (unused by these two endpoints)
@@ -129,11 +122,7 @@ const fileUrl = (path: string) =>
 describe('WebSurfaceController repo endpoints — LIVE HTTP (real Nest app, real git worktree)', () => {
   it('GET .../repo/tree → 200 { files: [tracked files] }, secret ABSENT', async () => {
     const res = await request(server).get(treeUrl);
-    console.log(
-      `OBSERVED GET ${treeUrl} →`,
-      res.status,
-      JSON.stringify(res.body),
-    );
+    console.log(`OBSERVED GET ${treeUrl} →`, res.status, JSON.stringify(res.body));
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
       files: ['backend/.gitignore', 'backend/sandbox/Dockerfile'],
@@ -144,11 +133,7 @@ describe('WebSurfaceController repo endpoints — LIVE HTTP (real Nest app, real
   it('GET .../repo/tree with no sandbox → 200 { files: [] }', async () => {
     findSandbox.mockResolvedValueOnce(null);
     const res = await request(server).get(treeUrl);
-    console.log(
-      `OBSERVED GET ${treeUrl} (no sandbox) →`,
-      res.status,
-      JSON.stringify(res.body),
-    );
+    console.log(`OBSERVED GET ${treeUrl} (no sandbox) →`, res.status, JSON.stringify(res.body));
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ files: [] });
   });
@@ -189,11 +174,7 @@ describe('WebSurfaceController repo endpoints — LIVE HTTP (real Nest app, real
     findSandbox.mockResolvedValueOnce(null);
     const url = fileUrl('backend/sandbox/Dockerfile');
     const res = await request(server).get(url);
-    console.log(
-      `OBSERVED GET ${url} (no sandbox) →`,
-      res.status,
-      JSON.stringify(res.body),
-    );
+    console.log(`OBSERVED GET ${url} (no sandbox) →`, res.status, JSON.stringify(res.body));
     expect(res.status).toBe(404);
   });
 });

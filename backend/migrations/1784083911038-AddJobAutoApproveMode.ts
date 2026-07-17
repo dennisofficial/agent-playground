@@ -21,14 +21,10 @@ export class AddJobAutoApproveMode1783960000000 implements MigrationInterface {
 
   public async down(queryRunner: QueryRunner): Promise<void> {
     // Lossy: plan/ship/both all collapse to the single `auto_approve` boolean.
-    await queryRunner.query(
-      `ALTER TABLE "jobs" ADD "auto_approve" boolean NOT NULL DEFAULT false`,
-    );
+    await queryRunner.query(`ALTER TABLE "jobs" ADD "auto_approve" boolean NOT NULL DEFAULT false`);
     await queryRunner.query(
       `UPDATE "jobs" SET "auto_approve" = true WHERE "auto_approve_mode" IN ('plan','ship','both')`,
     );
-    await queryRunner.query(
-      `ALTER TABLE "jobs" DROP COLUMN "auto_approve_mode"`,
-    );
+    await queryRunner.query(`ALTER TABLE "jobs" DROP COLUMN "auto_approve_mode"`);
   }
 }

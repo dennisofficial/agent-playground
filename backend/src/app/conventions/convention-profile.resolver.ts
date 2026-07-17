@@ -42,10 +42,7 @@ export class ConventionProfileResolver {
    * The repo's attached house-style, or `null` when none is attached (or the pointer dangles to a
    * removed profile). This is the misfire guard: no attachment ⇒ no injection.
    */
-  async resolveForRepo(
-    orgId: string,
-    repoId: string,
-  ): Promise<ResolvedConventions | null> {
+  async resolveForRepo(orgId: string, repoId: string): Promise<ResolvedConventions | null> {
     const repo = await this.repos.findOne({
       where: { id: repoId, org_id: orgId },
     });
@@ -81,9 +78,7 @@ export class ConventionProfileResolver {
   /** Every profile for an org WITH its body — for the console editor (no secrets here, so the body is fine). */
   async allProfiles(
     orgId: string,
-  ): Promise<
-    { slug: string; name: string; body: string; detectHint: string | null }[]
-  > {
+  ): Promise<{ slug: string; name: string; body: string; detectHint: string | null }[]> {
     const rows = await this.profiles.find({
       where: { org_id: orgId },
       order: { slug: 'ASC' },
@@ -105,10 +100,7 @@ export class ConventionProfileResolver {
   }
 
   /** One full profile, or null. */
-  async getProfile(
-    orgId: string,
-    slug: string,
-  ): Promise<ConventionProfileEntity | null> {
+  async getProfile(orgId: string, slug: string): Promise<ConventionProfileEntity | null> {
     return this.profiles.findOne({ where: { org_id: orgId, slug } });
   }
 
@@ -137,25 +129,16 @@ export class ConventionProfileResolver {
    * a bad slug throws rather than silently pointing a repo at nothing. This is the commit the owner-gated
    * `propose_convention_profile` approval (and a future console control) calls.
    */
-  async attach(
-    orgId: string,
-    repoId: string,
-    slug: string | null,
-  ): Promise<void> {
+  async attach(orgId: string, repoId: string, slug: string | null): Promise<void> {
     if (slug) {
       const profile = await this.profiles.findOne({
         where: { org_id: orgId, slug },
       });
       if (!profile) {
-        throw new Error(
-          `convention profile "${slug}" does not exist in org ${orgId}`,
-        );
+        throw new Error(`convention profile "${slug}" does not exist in org ${orgId}`);
       }
     }
-    await this.repos.update(
-      { id: repoId, org_id: orgId },
-      { convention_profile_slug: slug },
-    );
+    await this.repos.update({ id: repoId, org_id: orgId }, { convention_profile_slug: slug });
     this.logger.log(
       `attached convention profile org=${orgId} repo=${repoId} slug=${slug ?? '(none)'}`,
     );

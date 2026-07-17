@@ -2,15 +2,15 @@ import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
-  OrgInviteEntity,
-  UserEntity,
   OrganizationEntity,
   OrganizationMemberEntity,
+  OrgInviteEntity,
+  UserEntity,
 } from '../persistence/entities';
 import { InviteController } from './invite.controller';
-import { OrgController } from './org.controller';
 import { OrgMembershipGuard } from './org-membership.guard';
 import { OrgOwnerGuard } from './org-owner.guard';
+import { OrgController } from './org.controller';
 import { OrganizationService } from './organization.service';
 
 /**
@@ -22,12 +22,7 @@ import { OrganizationService } from './organization.service';
 @Module({
   imports: [
     TypeOrmModule.forFeature(
-      [
-        OrganizationEntity,
-        OrganizationMemberEntity,
-        OrgInviteEntity,
-        UserEntity,
-      ],
+      [OrganizationEntity, OrganizationMemberEntity, OrgInviteEntity, UserEntity],
       DB_CONNECTION,
     ),
   ],

@@ -1,8 +1,8 @@
+import type { DecisionRecord, Step } from '@shared/domain';
 import { describe, expect, it } from 'vitest';
-import { extractOrientation } from './thread-driver.service';
 import { renderBatchTask } from '../prompt-kit';
 import type { DriverThread } from './driver-store.service';
-import type { DecisionRecord, Step } from '@shared/domain';
+import { extractOrientation } from './thread-driver.service';
 
 describe('extractOrientation', () => {
   it('pulls the trimmed body out of a <repo-orientation> block', () => {
@@ -18,22 +18,17 @@ describe('extractOrientation', () => {
   it('returns null when the block is absent, empty, or the input is undefined', () => {
     expect(extractOrientation(undefined)).toBeNull();
     expect(extractOrientation('a plan with no orientation block')).toBeNull();
-    expect(
-      extractOrientation('<repo-orientation>   </repo-orientation>'),
-    ).toBeNull();
+    expect(extractOrientation('<repo-orientation>   </repo-orientation>')).toBeNull();
   });
 
   it('finds the block even when fenced in a code block and is case-insensitive', () => {
-    const fenced =
-      '```\n<REPO-ORIENTATION>layout: single package</REPO-ORIENTATION>\n```';
+    const fenced = '```\n<REPO-ORIENTATION>layout: single package</REPO-ORIENTATION>\n```';
     expect(extractOrientation(fenced)).toBe('layout: single package');
   });
 
   it('caps a runaway body to keep the build task bounded', () => {
     const huge = 'x'.repeat(5000);
-    const out = extractOrientation(
-      `<repo-orientation>${huge}</repo-orientation>`,
-    )!;
+    const out = extractOrientation(`<repo-orientation>${huge}</repo-orientation>`)!;
     expect(out.length).toBeLessThanOrEqual(1501); // 1500 + the ellipsis
     expect(out.endsWith('…')).toBe(true);
   });

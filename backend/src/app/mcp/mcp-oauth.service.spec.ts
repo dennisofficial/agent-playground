@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
 import type { EnvService } from '@core/config/env/env.service';
 import type { Repository } from 'typeorm';
+import { describe, expect, it } from 'vitest';
 import type { McpServerEntity } from '../persistence/entities';
 import { McpOAuthService, NEEDS_REAUTH } from './mcp-oauth.service';
 import { McpServerStore } from './mcp-server.store';
@@ -15,18 +15,13 @@ class FakeRepo {
   }
   async save(row: McpServerEntity): Promise<McpServerEntity> {
     const i = this.rows.findIndex(
-      (r) =>
-        r.org_id === row.org_id && r.scope === row.scope && r.name === row.name,
+      (r) => r.org_id === row.org_id && r.scope === row.scope && r.name === row.name,
     );
     if (i >= 0) this.rows[i] = row;
     else this.rows.push(row);
     return row;
   }
-  async findOne({
-    where,
-  }: {
-    where: Partial<McpServerEntity>;
-  }): Promise<McpServerEntity | null> {
+  async findOne({ where }: { where: Partial<McpServerEntity> }): Promise<McpServerEntity | null> {
     return this.rows.find((r) => this.match(r, where)) ?? null;
   }
   async find({
@@ -55,10 +50,7 @@ function make(): { svc: McpOAuthService; store: McpServerStore } {
           ? 'http://localhost:4002'
           : undefined,
   } as EnvService;
-  const store = new McpServerStore(
-    repo as unknown as Repository<McpServerEntity>,
-    env,
-  );
+  const store = new McpServerStore(repo as unknown as Repository<McpServerEntity>, env);
   return { svc: new McpOAuthService(store, env), store };
 }
 
@@ -90,16 +82,14 @@ describe('McpOAuthService — signed state', () => {
       name: 'jira',
       nonce: 'WRONG',
     });
-    await expect(svc.completeAuthorization(state, 'code')).rejects.toThrow(
-      /stale or replayed/,
-    );
+    await expect(svc.completeAuthorization(state, 'code')).rejects.toThrow(/stale or replayed/);
   });
 
   it('rejects a tampered / malformed state before any row lookup', async () => {
     const { svc } = make();
-    await expect(
-      svc.completeAuthorization('not-a-real-state', 'code'),
-    ).rejects.toThrow(/invalid oauth state/);
+    await expect(svc.completeAuthorization('not-a-real-state', 'code')).rejects.toThrow(
+      /invalid oauth state/,
+    );
     const good = svc.signState({
       orgId: 'o',
       scope: '*',
@@ -158,18 +148,15 @@ describe('McpOAuthService.currentAccessToken', () => {
       obtainedAt: Date.now() - 60 * 60_000, // an hour old — past the conservative default TTL
     });
     // Inject a fake SDK auth() that rotates the token instead of hitting the network.
-    (svc as unknown as { authSdkPromise: Promise<unknown> }).authSdkPromise =
-      Promise.resolve({
-        auth: async (provider: {
-          saveTokens: (t: unknown) => Promise<void>;
-        }) => {
-          await provider.saveTokens({
-            access_token: 'at-refreshed',
-            refresh_token: 'rt2',
-          });
-          return 'AUTHORIZED';
-        },
-      });
+    (svc as unknown as { authSdkPromise: Promise<unknown> }).authSdkPromise = Promise.resolve({
+      auth: async (provider: { saveTokens: (t: unknown) => Promise<void> }) => {
+        await provider.saveTokens({
+          access_token: 'at-refreshed',
+          refresh_token: 'rt2',
+        });
+        return 'AUTHORIZED';
+      },
+    });
     expect(await svc.currentAccessToken(row)).toBe('at-refreshed');
   });
 
@@ -186,9 +173,7 @@ describe('McpOAuthService.currentAccessToken', () => {
       obtainedAt: Date.now() - 60_000,
     });
     expect(await svc.currentAccessToken(row)).toBeNull();
-    expect((await store.rawRow('org1', '*', 'jira'))!.validation_error).toBe(
-      NEEDS_REAUTH,
-    );
+    expect((await store.rawRow('org1', '*', 'jira'))!.validation_error).toBe(NEEDS_REAUTH);
   });
 });
 
@@ -226,28 +211,22 @@ describe('McpOAuthService.beginAuthorization', () => {
       { validationError: 'needs re-auth' },
     );
 
-    const RMU =
-      'https://mcp.example.com/.well-known/oauth-protected-resource/x';
+    const RMU = 'https://mcp.example.com/.well-known/oauth-protected-resource/x';
     let seenOpts: { resourceMetadataUrl?: URL } | undefined;
-    (svc as unknown as { authSdkPromise: Promise<unknown> }).authSdkPromise =
-      Promise.resolve({
-        extractResourceMetadataUrl: (res: Response) => {
-          const m = (res.headers.get('WWW-Authenticate') ?? '').match(
-            /resource_metadata="([^"]+)"/,
-          );
-          return m ? new URL(m[1]) : undefined;
-        },
-        auth: async (
-          provider: { redirectToAuthorization: (u: URL) => void },
-          opts: { resourceMetadataUrl?: URL },
-        ) => {
-          seenOpts = opts;
-          provider.redirectToAuthorization(
-            new URL('https://auth.example.com/authorize?x=1'),
-          );
-          return 'REDIRECT';
-        },
-      });
+    (svc as unknown as { authSdkPromise: Promise<unknown> }).authSdkPromise = Promise.resolve({
+      extractResourceMetadataUrl: (res: Response) => {
+        const m = (res.headers.get('WWW-Authenticate') ?? '').match(/resource_metadata="([^"]+)"/);
+        return m ? new URL(m[1]) : undefined;
+      },
+      auth: async (
+        provider: { redirectToAuthorization: (u: URL) => void },
+        opts: { resourceMetadataUrl?: URL },
+      ) => {
+        seenOpts = opts;
+        provider.redirectToAuthorization(new URL('https://auth.example.com/authorize?x=1'));
+        return 'REDIRECT';
+      },
+    });
 
     const origFetch = globalThis.fetch;
     globalThis.fetch = (async () =>
@@ -256,18 +235,12 @@ describe('McpOAuthService.beginAuthorization', () => {
         headers: { 'WWW-Authenticate': `Bearer resource_metadata="${RMU}"` },
       })) as typeof fetch;
     try {
-      const { authorizeUrl } = await svc.beginAuthorization(
-        'org1',
-        '*',
-        'jira',
-      );
+      const { authorizeUrl } = await svc.beginAuthorization('org1', '*', 'jira');
       expect(authorizeUrl).toContain('auth.example.com');
       // The probed resource_metadata hint reached auth() (so discovery follows it, not the host root).
       expect(seenOpts?.resourceMetadataUrl?.href).toBe(RMU);
       // Stale client + discovery + tokens were dropped by the clean-blob reset.
-      const blob = store.readOAuthBlob(
-        (await store.rawRow('org1', '*', 'jira'))!,
-      );
+      const blob = store.readOAuthBlob((await store.rawRow('org1', '*', 'jira'))!);
       expect(blob.clientInformation).toBeUndefined();
       expect(blob.discoveryState).toBeUndefined();
       expect(blob.tokens).toBeUndefined();

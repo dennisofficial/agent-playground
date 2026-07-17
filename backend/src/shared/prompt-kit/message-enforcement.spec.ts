@@ -14,9 +14,9 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  assertEnforcementSeamConfigured,
   SANCTIONED_SEAM_GLOBS,
   SEALED_DELIVERY_PRIMITIVES,
-  assertEnforcementSeamConfigured,
 } from './message';
 
 // `__dirname` is backend/src/shared/prompt-kit; the backend package root is three up. The seam globs are
@@ -62,9 +62,7 @@ function backendRelative(file: string): string {
 /** A `src/app/foo/**` glob matches any file under that prefix; anything else is an exact file path. */
 function isSanctioned(relPath: string): boolean {
   return SANCTIONED_SEAM_GLOBS.some((glob) =>
-    glob.endsWith('/**')
-      ? relPath.startsWith(glob.slice(0, -2))
-      : relPath === glob,
+    glob.endsWith('/**') ? relPath.startsWith(glob.slice(0, -2)) : relPath === glob,
   );
 }
 
@@ -75,9 +73,7 @@ function isCommentLine(line: string): boolean {
 }
 
 /** Non-comment lines of `content` that contain any sealed primitive, with the primitive that hit. */
-function sealedHits(
-  content: string,
-): Array<{ primitive: string; line: string }> {
+function sealedHits(content: string): Array<{ primitive: string; line: string }> {
   const hits: Array<{ primitive: string; line: string }> = [];
   for (const line of content.split('\n')) {
     if (isCommentLine(line)) continue;
@@ -129,8 +125,7 @@ describe('message-enforcement / inverse coverage — the seam actually exercises
   for (const primitive of SEALED_DELIVERY_PRIMITIVES) {
     it(`${primitive} is present in a sanctioned file`, () => {
       const present = FILES_WITH_SEALED_CALLS.some(
-        (f) =>
-          isSanctioned(f.rel) && f.hits.some((h) => h.primitive === primitive),
+        (f) => isSanctioned(f.rel) && f.hits.some((h) => h.primitive === primitive),
       );
       expect(
         present,

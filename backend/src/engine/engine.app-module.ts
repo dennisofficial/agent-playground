@@ -1,13 +1,13 @@
 import { Module } from '@nestjs/common';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+import { IoredisStreamAdapter } from '../_lib/redis/ioredis-stream.adapter';
 import { REDIS_STREAM_PORT } from '../_lib/redis/redis.port';
 import { REDIS_CLIENT } from '../_lib/redis/redis.tokens';
-import { IoredisStreamAdapter } from '../_lib/redis/ioredis-stream.adapter';
 import { engineRedisClientProvider } from './engine-redis-client.provider';
-import { TurnTransport } from './transport/turn-transport.service';
-import { TurnRunner } from './turn-runner.service';
 import { EngineEventBus } from './events/engine-events';
 import { TurnEventForwarder } from './events/turn-event-forwarder';
+import { TurnTransport } from './transport/turn-transport.service';
+import { TurnRunner } from './turn-runner.service';
 
 /**
  * The engine app's composition root. Deliberately does NOT import the host `RedisModule`/`EnvModule` —

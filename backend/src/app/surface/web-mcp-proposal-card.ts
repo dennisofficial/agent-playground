@@ -97,9 +97,7 @@ export function webMcpProposalCard(input: {
     repoId: input.repoId,
     scope: input.scope ?? 'repo',
     mode: input.mode ?? 'register',
-    ...(input.removeNames && input.removeNames.length
-      ? { removeNames: input.removeNames }
-      : {}),
+    ...(input.removeNames && input.removeNames.length ? { removeNames: input.removeNames } : {}),
     servers: input.servers,
   };
 }

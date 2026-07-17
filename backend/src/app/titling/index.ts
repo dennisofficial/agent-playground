@@ -1,9 +1,9 @@
-export { TitlingModule } from './titling.module';
-export { JobTitler } from './job-titler.service';
 export {
   JOB_TITLE_CHAIN,
   JobTitleChain,
-  sanitizeTitle,
   firstLineTitle,
+  sanitizeTitle,
   type JobTitleChainFactory,
 } from './job-title.chain';
+export { JobTitler } from './job-titler.service';
+export { TitlingModule } from './titling.module';

@@ -17,8 +17,6 @@ export class AddJobDirectBuildStartedAt1783950000000 implements MigrationInterfa
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `ALTER TABLE "jobs" DROP COLUMN "direct_build_started_at"`,
-    );
+    await queryRunner.query(`ALTER TABLE "jobs" DROP COLUMN "direct_build_started_at"`);
   }
 }

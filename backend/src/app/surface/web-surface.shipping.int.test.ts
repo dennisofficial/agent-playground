@@ -17,26 +17,26 @@
  * Mirrors `web-surface.halt.int.test.ts` for HTTP/auth setup.
  */
 
-import { getDataSourceToken } from '@nestjs/typeorm';
-import { Test } from '@nestjs/testing';
 import type { NestExpressApplication } from '@nestjs/platform-express';
+import { Test } from '@nestjs/testing';
+import { getDataSourceToken } from '@nestjs/typeorm';
+import { ENGINE_RUNNER } from '@shared/engine';
 import cookieParser from 'cookie-parser';
 import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { CLASSIFIER_LLM } from '../decision-gate';
-import { ENGINE_RUNNER } from '@shared/engine';
-import { GithubPrService, LocalGitService } from '../git';
 import { AppModule } from '../app.module';
-import { DB_CONNECTION } from '../persistence/database.module';
+import { CLASSIFIER_LLM } from '../decision-gate';
 import {
   FakeClassifierLlm,
   FakeEngineRunner,
   FakeLocalGitService,
   FakeThreadTitler,
 } from '../e2e/e2e-stubs';
-import { JobTitler } from '../titling';
+import { GithubPrService, LocalGitService } from '../git';
 import { CredentialResolver } from '../onboarding/credential-resolver.service';
+import { DB_CONNECTION } from '../persistence/database.module';
+import { JobTitler } from '../titling';
 
 const fakeCreds = {
   anthropicKey: async () => undefined,
@@ -62,35 +62,24 @@ let ds: DataSource;
 let server: ReturnType<NestExpressApplication['getHttpServer']>;
 let ownerCookie: string;
 
-async function register(
-  email: string,
-): Promise<{ cookie: string; id: string }> {
+async function register(email: string): Promise<{ cookie: string; id: string }> {
   const res = await request(server)
     .post('/auth/register')
     .send({ email, password: PASSWORD, name: email.split('@')[0] });
   expect(res.status).toBe(200);
-  const setCookie =
-    (res.headers['set-cookie'] as unknown as string[] | undefined) ?? [];
+  const setCookie = (res.headers['set-cookie'] as unknown as string[] | undefined) ?? [];
   const cookie = setCookie.map((c) => c.split(';')[0]).join('; ');
   return { cookie, id: res.body.user.id as string };
 }
 
 async function purge(): Promise<void> {
-  await ds
-    .query(`DELETE FROM jobs WHERE org_id = $1`, [ORG])
-    .catch(() => undefined);
-  await ds
-    .query(`DELETE FROM repos WHERE org_id = $1`, [ORG])
-    .catch(() => undefined);
+  await ds.query(`DELETE FROM jobs WHERE org_id = $1`, [ORG]).catch(() => undefined);
+  await ds.query(`DELETE FROM repos WHERE org_id = $1`, [ORG]).catch(() => undefined);
   await ds
     .query(`DELETE FROM organization_members WHERE org_id = $1`, [ORG])
     .catch(() => undefined);
-  await ds
-    .query(`DELETE FROM organizations WHERE id = $1`, [ORG])
-    .catch(() => undefined);
-  await ds
-    .query(`DELETE FROM users WHERE email = $1`, [OWNER_EMAIL])
-    .catch(() => undefined);
+  await ds.query(`DELETE FROM organizations WHERE id = $1`, [ORG]).catch(() => undefined);
+  await ds.query(`DELETE FROM users WHERE email = $1`, [OWNER_EMAIL]).catch(() => undefined);
 }
 
 beforeAll(async () => {
@@ -174,9 +163,7 @@ afterAll(async () => {
 
 describe('shipping wire — GET /web/jobs (live Postgres, real HTTP)', () => {
   it('projects shipping=true only for a ship-approved running job, false for a plain build and a done job', async () => {
-    const res = await request(server)
-      .get('/web/jobs')
-      .set('Cookie', ownerCookie);
+    const res = await request(server).get('/web/jobs').set('Cookie', ownerCookie);
     expect(res.status).toBe(200);
     const rows = res.body as Array<Record<string, unknown>>;
 
@@ -195,19 +182,10 @@ describe('shipping wire — GET /web/jobs (live Postgres, real HTTP)', () => {
     expect(done).toMatchObject({ status: 'done', shipping: false });
 
     // eslint-disable-next-line no-console -- evidence: dump the OBSERVED live rows verbatim.
-    console.log(
-      'OBSERVED GET /web/jobs [shipping]:',
-      JSON.stringify(shipping, null, 2),
-    );
+    console.log('OBSERVED GET /web/jobs [shipping]:', JSON.stringify(shipping, null, 2));
     // eslint-disable-next-line no-console
-    console.log(
-      'OBSERVED GET /web/jobs [building]:',
-      JSON.stringify(building, null, 2),
-    );
+    console.log('OBSERVED GET /web/jobs [building]:', JSON.stringify(building, null, 2));
     // eslint-disable-next-line no-console
-    console.log(
-      'OBSERVED GET /web/jobs [done]:',
-      JSON.stringify(done, null, 2),
-    );
+    console.log('OBSERVED GET /web/jobs [done]:', JSON.stringify(done, null, 2));
   });
 });

@@ -3,10 +3,10 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { JobBootstrapModule } from '../job-bootstrap';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
-  TranscriptMessageEntity,
-  RepoEntity,
   InboundMessageEntity,
   JobEntity,
+  RepoEntity,
+  TranscriptMessageEntity,
 } from '../persistence/entities';
 import { ChatStimulusBridge } from './chat-stimulus.bridge';
 import { DeliveryPump } from './delivery-pump.service';
@@ -52,11 +52,6 @@ import { SurfaceOrchestration } from './surface-orchestration.service';
     ChatStimulusBridge,
     DeliveryPump,
   ],
-  exports: [
-    StimulusIntake,
-    ProjectRoutingService,
-    StimulusStoreService,
-    DeliveryPump,
-  ],
+  exports: [StimulusIntake, ProjectRoutingService, StimulusStoreService, DeliveryPump],
 })
 export class StimulusModule {}

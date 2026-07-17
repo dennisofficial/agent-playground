@@ -12,9 +12,7 @@ import { JobDependencyService } from './job-dependency.service';
  */
 @Global()
 @Module({
-  imports: [
-    TypeOrmModule.forFeature([JobDependencyEntity, JobEntity], DB_CONNECTION),
-  ],
+  imports: [TypeOrmModule.forFeature([JobDependencyEntity, JobEntity], DB_CONNECTION)],
   providers: [JobDependencyService],
   exports: [JobDependencyService],
 })

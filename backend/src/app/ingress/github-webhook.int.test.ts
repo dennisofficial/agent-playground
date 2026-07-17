@@ -9,45 +9,33 @@
  * and the titler. Drives the actual GithubEventsWebhookController front door with a signed raw body.
  */
 
-import { createHmac } from 'node:crypto';
-import { Test, type TestingModule } from '@nestjs/testing';
-import {
-  TypeOrmModule,
-  getDataSourceToken,
-  getRepositoryToken,
-} from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
-import {
-  afterAll,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from 'vitest';
 import { EnvService } from '@core/config/env/env.service';
+import { Test, type TestingModule } from '@nestjs/testing';
+import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
+import type { EventMessage } from '@shared/domain';
+import { createHmac } from 'node:crypto';
+import { DataSource, Repository } from 'typeorm';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy';
+import type { BaseMoveMergeabilitySync } from '../driver/base-move-mergeability-sync.service';
+import { GitStateReconciler } from '../driver/git-state-reconciler.service';
+import { GithubCiStateSync } from '../driver/github-ci-state-sync.service';
+import { GithubPrStateSync } from '../driver/github-pr-state-sync.service';
+import { JobBootstrapService } from '../job-bootstrap';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   ENTITIES,
+  InboundMessageEntity,
   JobEntity,
   TranscriptMessageEntity,
-  InboundMessageEntity,
 } from '../persistence/entities';
-import { JobBootstrapService } from '../job-bootstrap';
-import type { EventMessage } from '@shared/domain';
 import { EventFilterService } from '../stimulus/event-filter.service';
 import { ProjectRoutingService } from '../stimulus/project-routing.service';
-import { StimulusStoreService } from '../stimulus/stimulus-store.service';
-import { StimulusIntake } from '../stimulus/stimulus-intake.service';
-import { SurfaceOrchestration } from '../stimulus/surface-orchestration.service';
 import { BRAIN_SINK } from '../stimulus/stimulus-consumer';
+import { StimulusIntake } from '../stimulus/stimulus-intake.service';
+import { StimulusStoreService } from '../stimulus/stimulus-store.service';
+import { SurfaceOrchestration } from '../stimulus/surface-orchestration.service';
 import { JobTitler } from '../titling';
-import { GithubPrStateSync } from '../driver/github-pr-state-sync.service';
-import { GithubCiStateSync } from '../driver/github-ci-state-sync.service';
-import { GitStateReconciler } from '../driver/git-state-reconciler.service';
-import type { BaseMoveMergeabilitySync } from '../driver/base-move-mergeability-sync.service';
 import { GithubNotificationSource } from './github-notification.source';
 import {
   GithubEventsWebhookController,
@@ -77,11 +65,7 @@ function dbOpts() {
 }
 
 /** A signed raw-body request the way the front door receives it (HMAC over the EXACT bytes). */
-function signedReq(
-  payload: unknown,
-  eventType: string,
-  deliveryId: string,
-): RawBodyRequest {
+function signedReq(payload: unknown, eventType: string, deliveryId: string): RawBodyRequest {
   const json = JSON.stringify(payload);
   const sig = `sha256=${createHmac('sha256', SECRET).update(Buffer.from(json)).digest('hex')}`;
   return {
@@ -121,10 +105,7 @@ describe('GithubEventsWebhookController return-path (live Postgres)', () => {
 
   beforeAll(async () => {
     mod = await Test.createTestingModule({
-      imports: [
-        TypeOrmModule.forRoot(dbOpts()),
-        TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION),
-      ],
+      imports: [TypeOrmModule.forRoot(dbOpts()), TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION)],
       controllers: [GithubEventsWebhookController],
       providers: [
         ProjectRoutingService,
@@ -148,8 +129,7 @@ describe('GithubEventsWebhookController return-path (live Postgres)', () => {
         {
           provide: EnvService,
           useValue: {
-            get: (k: string) =>
-              k === 'GITHUB_WEBHOOK_SECRET' ? SECRET : undefined,
+            get: (k: string) => (k === 'GITHUB_WEBHOOK_SECRET' ? SECRET : undefined),
           },
         },
         {
@@ -239,11 +219,7 @@ describe('GithubEventsWebhookController return-path (live Postgres)', () => {
 
   it('DROPS (no-owner) when nothing owns the branch — never seeds a job (route-only, d6)', async () => {
     const res = await controller.receive(
-      signedReq(
-        failedCheckRun('someone-elses-branch', 202),
-        'check_run',
-        'd-2',
-      ),
+      signedReq(failedCheckRun('someone-elses-branch', 202), 'check_run', 'd-2'),
     );
 
     // Route-only: a verified event nothing owns is a deliberate no-op — NOT a new job.
@@ -295,12 +271,7 @@ describe('GithubStateWebhookController PR-state path', () => {
     const baseMove = {
       schedule: vi.fn(),
     } as unknown as BaseMoveMergeabilitySync;
-    const controller = new GithubStateWebhookController(
-      adapter,
-      prSync,
-      reconciler,
-      baseMove,
-    );
+    const controller = new GithubStateWebhookController(adapter, prSync, reconciler, baseMove);
 
     const res = await controller.receive({ body: {}, headers: {} });
 
@@ -337,12 +308,7 @@ describe('GithubStateWebhookController PR-state path', () => {
     const baseMove = {
       schedule: vi.fn(),
     } as unknown as BaseMoveMergeabilitySync;
-    const controller = new GithubStateWebhookController(
-      adapter,
-      prSync,
-      reconciler,
-      baseMove,
-    );
+    const controller = new GithubStateWebhookController(adapter, prSync, reconciler, baseMove);
 
     const res = await controller.receive({ body: {}, headers: {} });
 
@@ -373,12 +339,7 @@ describe('GithubStateWebhookController PR-state path', () => {
     const baseMove = {
       schedule: vi.fn(),
     } as unknown as BaseMoveMergeabilitySync;
-    const controller = new GithubStateWebhookController(
-      adapter,
-      prSync,
-      reconciler,
-      baseMove,
-    );
+    const controller = new GithubStateWebhookController(adapter, prSync, reconciler, baseMove);
 
     const res = await controller.receive({ body: {}, headers: {} });
 

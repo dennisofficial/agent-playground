@@ -4,18 +4,18 @@ import { ENGINE_RUNNER } from '@shared/engine';
 import { EngineModule } from '../engine/engine.module';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { ActiveTurnEntity, ToolExecutionEntity } from '../persistence/entities';
-import { TurnRegistry } from './turn-registry.service';
-import { TurnReattachRegistry } from './turn-reattach.registry';
-import { TurnWatchdogService } from './turn-watchdog.service';
-import { TurnStreamReaperService } from './turn-stream-reaper.service';
 import { CONTAINER_ENGINE } from './container-engine.port';
 import { DockerodeContainerEngine } from './dockerode-container-engine';
 import { RedisEngineRunner } from './redis-engine-runner';
-import { SandboxImageBuilder } from './sandbox-image.builder';
 import { SandboxActivityRegistry } from './sandbox-activity.registry';
+import { SandboxImageBuilder } from './sandbox-image.builder';
 import { SandboxManager } from './sandbox-manager.service';
-import { SandboxRefsService } from './sandbox-refs.service';
 import { SANDBOX_PROVIDER } from './sandbox-provider.port';
+import { SandboxRefsService } from './sandbox-refs.service';
+import { TurnReattachRegistry } from './turn-reattach.registry';
+import { TurnRegistry } from './turn-registry.service';
+import { TurnStreamReaperService } from './turn-stream-reaper.service';
+import { TurnWatchdogService } from './turn-watchdog.service';
 
 /**
  * The Atlas v2 SANDBOX module — the Docker execution layer, bound behind two @Global ports so the
@@ -34,10 +34,7 @@ import { SANDBOX_PROVIDER } from './sandbox-provider.port';
 @Module({
   imports: [
     EngineModule,
-    TypeOrmModule.forFeature(
-      [ActiveTurnEntity, ToolExecutionEntity],
-      DB_CONNECTION,
-    ),
+    TypeOrmModule.forFeature([ActiveTurnEntity, ToolExecutionEntity], DB_CONNECTION),
   ],
   providers: [
     { provide: CONTAINER_ENGINE, useClass: DockerodeContainerEngine },

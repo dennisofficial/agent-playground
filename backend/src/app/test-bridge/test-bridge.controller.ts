@@ -13,30 +13,26 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import type { JobKind } from '@shared/domain';
-import { hasAgentPrompt, listAgentPrompts, renderPreview } from '../prompt-kit';
 import { InjectRepository } from '@nestjs/typeorm';
+import type { JobKind } from '@shared/domain';
 import { Public } from '@workspace/auth/server';
 import { Repository } from 'typeorm';
-import {
-  AgentChatSurface,
-  type OutboundChatMessage,
-  parseApprovalMeta,
-} from '../agent-surface';
+import { AgentChatSurface, type OutboundChatMessage, parseApprovalMeta } from '../agent-surface';
 import { DecisionApprovalService } from '../brain';
-import { ThreadDriver, LANE_SEEDER, type LaneSeeder } from '../driver';
+import { LANE_SEEDER, type LaneSeeder, ThreadDriver } from '../driver';
 import { JobBootstrapService } from '../job-bootstrap';
-import { laneFor } from '../surface';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
-  TranscriptMessageEntity,
-  RepoEntity,
-  JobEntity,
-  OrganizationEntity,
-  ThreadEntity,
   ActiveTurnEntity,
   InboundMessageEntity,
+  JobEntity,
+  OrganizationEntity,
+  RepoEntity,
+  ThreadEntity,
+  TranscriptMessageEntity,
 } from '../persistence/entities';
+import { hasAgentPrompt, listAgentPrompts, renderPreview } from '../prompt-kit';
+import { laneFor } from '../surface';
 import type {
   ApproveRequest,
   JobView,
@@ -133,10 +129,7 @@ export class TestBridgeController {
   async seed(@Body() body: SeedRequest): Promise<SeedResponse> {
     this.assertEnabled();
     const { orgId, repoId, repoUrl } = body;
-    await this.orgs.upsert(
-      { id: orgId, name: orgId, slug: orgId, status: 'active' },
-      ['id'],
-    );
+    await this.orgs.upsert({ id: orgId, name: orgId, slug: orgId, status: 'active' }, ['id']);
     await this.repos.upsert(
       {
         org_id: orgId,
@@ -168,9 +161,7 @@ export class TestBridgeController {
     // Resolve the repo by its slug (the test-bridge addresses repos by their human slug).
     const repo = await this.repos.findOne({ where: { slug: channel } });
     if (!repo) {
-      throw new NotFoundException(
-        `No seeded repo ${channel} — POST /test/seed first.`,
-      );
+      throw new NotFoundException(`No seeded repo ${channel} — POST /test/seed first.`);
     }
 
     // A reply continues the supplied thread; a new conversation creates a real thread up front so its id
@@ -216,14 +207,8 @@ export class TestBridgeController {
   @Post('approve')
   async approve(@Body() body: ApproveRequest): Promise<{ ok: boolean }> {
     this.assertEnabled();
-    const ok = this.approvals.resolve(
-      body.jobId,
-      body.verdict ?? 'approve',
-      TESTER_ID,
-    );
-    this.logger.log(
-      `approve job=${body.jobId} verdict=${body.verdict ?? 'approve'} ok=${ok}`,
-    );
+    const ok = this.approvals.resolve(body.jobId, body.verdict ?? 'approve', TESTER_ID);
+    this.logger.log(`approve job=${body.jobId} verdict=${body.verdict ?? 'approve'} ok=${ok}`);
     return { ok };
   }
 
@@ -252,8 +237,7 @@ export class TestBridgeController {
     const job = await this.jobs.findOne({ where: { id: body.jobId } });
     if (!job) throw new NotFoundException(`No job ${body.jobId}`);
 
-    const threadId =
-      body.threadId ?? (await this.resolveBuilderThreadId(body.jobId));
+    const threadId = body.threadId ?? (await this.resolveBuilderThreadId(body.jobId));
     if (!threadId) {
       throw new NotFoundException(
         `No builder thread for job ${body.jobId} — dispatch a build first.`,
@@ -386,10 +370,7 @@ export class TestBridgeController {
    */
   @Get('prompts/:id')
   @Header('Content-Type', 'text/plain; charset=utf-8')
-  previewPrompt(
-    @Param('id') id: string,
-    @Query('jobKind') jobKind?: string,
-  ): string {
+  previewPrompt(@Param('id') id: string, @Query('jobKind') jobKind?: string): string {
     this.assertEnabled();
     if (!hasAgentPrompt(id)) {
       throw new NotFoundException(
@@ -426,20 +407,15 @@ export class TestBridgeController {
 }
 
 /** Parse the first approval card out of a batch of posts (its blocks carry the jobId). */
-function findApprovalCard(
-  posts: OutboundChatMessage[],
-): SayApprovalCard | undefined {
+function findApprovalCard(posts: OutboundChatMessage[]): SayApprovalCard | undefined {
   for (const post of posts) {
     const meta = parseApprovalMeta(post.blocks);
     if (meta) {
       return {
         jobId: meta.jobId,
-        ...(meta.decisionRecordId
-          ? { decisionRecordId: meta.decisionRecordId }
-          : {}),
+        ...(meta.decisionRecordId ? { decisionRecordId: meta.decisionRecordId } : {}),
         // The card's first text is "Plan proposal — <title>"; strip the prefix for a clean title.
-        title:
-          post.text.replace(/^Plan proposal\s*—\s*/, '').trim() || post.text,
+        title: post.text.replace(/^Plan proposal\s*—\s*/, '').trim() || post.text,
       };
     }
   }

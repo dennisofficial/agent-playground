@@ -1,10 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
+import { describe, expect, it, vi } from 'vitest';
+import type { ConventionProfileEntity, RepoEntity } from '../persistence/entities';
 import { ConventionProfileResolver } from './convention-profile.resolver';
-import type {
-  ConventionProfileEntity,
-  RepoEntity,
-} from '../persistence/entities';
 
 /**
  * The resolver's misfire guard is the load-bearing behavior: `resolveForRepo` returns null unless the repo
@@ -77,9 +74,7 @@ describe('ConventionProfileResolver.resolveForRepo', () => {
 describe('ConventionProfileResolver.attach', () => {
   it('rejects a slug that does not exist in the org', async () => {
     const { resolver, repos } = make({ profile: null });
-    await expect(resolver.attach(ORG, REPO, 'nope')).rejects.toThrow(
-      /does not exist/,
-    );
+    await expect(resolver.attach(ORG, REPO, 'nope')).rejects.toThrow(/does not exist/);
     expect(repos.update).not.toHaveBeenCalled();
   });
 

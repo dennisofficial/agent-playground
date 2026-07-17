@@ -2,9 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { GitIdentityService } from './git-identity.service';
 import type { GithubPrService } from './github-pr.service';
 
-const fakeGithub = (
-  user: { login: string; id: number; name: string | null } | null,
-) => {
+const fakeGithub = (user: { login: string; id: number; name: string | null } | null) => {
   const getAuthenticatedUser = vi.fn(async () => user);
   return { getAuthenticatedUser } as unknown as GithubPrService;
 };

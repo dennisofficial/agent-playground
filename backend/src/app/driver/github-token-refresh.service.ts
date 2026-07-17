@@ -1,13 +1,10 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { CredentialResolver } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobSandboxEntity } from '../persistence/entities';
-import { CredentialResolver } from '../onboarding';
-import {
-  SANDBOX_PROVIDER,
-  type SandboxProvider,
-} from '../sandbox/sandbox-provider.port';
+import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox/sandbox-provider.port';
 
 /**
  * Leader-gated periodic sweep (~2 min, DriverModule) that keeps every ACTIVE app-mode sandbox's in-sandbox

@@ -45,15 +45,8 @@ export class SkillFileWriter {
 
   /** The current `SKILL.md` body (frontmatter stripped), or undefined when nothing's on disk yet — used
    *  to show the owner what an `update` proposal would replace (`WebSkillProposalCard.priorBody`). */
-  readSkillBody(
-    orgId: string,
-    scope: string,
-    name: string,
-  ): string | undefined {
-    const file = join(
-      skillDirHost(this.root(), orgId, scope, name),
-      'SKILL.md',
-    );
+  readSkillBody(orgId: string, scope: string, name: string): string | undefined {
+    const file = join(skillDirHost(this.root(), orgId, scope, name), 'SKILL.md');
     if (!existsSync(file)) return undefined;
     const raw = readFileSync(file, 'utf8');
     const match = /^---\n[\s\S]*?\n---\n/.exec(raw);
@@ -118,9 +111,7 @@ export class SkillFileWriter {
   previewDir(dir: string): { skillMd: string; files: string[] } | null {
     const skillMd = join(dir, 'SKILL.md');
     if (!existsSync(skillMd)) return null;
-    const entries = existsSync(dir)
-      ? (readdirSync(dir, { recursive: true }) as string[])
-      : [];
+    const entries = existsSync(dir) ? (readdirSync(dir, { recursive: true }) as string[]) : [];
     const files = entries
       .filter((rel) => statSync(join(dir, rel)).isFile())
       .map((rel) => rel.split(sep).join('/'))
@@ -136,12 +127,7 @@ export class SkillFileWriter {
    * identity disagree with the on-disk dir it's symlinked as). No-op-safe on a missing source (nothing to
    * fork — the caller's registry write is the one that would fail loudly instead).
    */
-  forkSkillDir(
-    orgId: string,
-    scope: string,
-    fromName: string,
-    toName: string,
-  ): void {
+  forkSkillDir(orgId: string, scope: string, fromName: string, toName: string): void {
     const src = skillDirHost(this.root(), orgId, scope, fromName);
     if (!existsSync(src)) return;
     const dest = skillDirHost(this.root(), orgId, scope, toName);
@@ -158,10 +144,7 @@ export class SkillFileWriter {
       if (block && /^name:.*$/m.test(block[0])) {
         writeFileSync(
           skillMd,
-          raw.replace(
-            block[0],
-            block[0].replace(/^name:.*$/m, `name: ${toName}`),
-          ),
+          raw.replace(block[0], block[0].replace(/^name:.*$/m, `name: ${toName}`)),
         );
       }
     }

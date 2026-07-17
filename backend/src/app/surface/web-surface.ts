@@ -1,20 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Observable, Subject } from 'rxjs';
-import type {
-  ChatSurface,
-  InboundChatMessage,
-  PostOptions,
-} from './chat-surface.port';
 import type { SeedRow } from '@shared/domain/seed-row';
 import type { AgentMessage } from '@shared/prompt-kit/message';
-import {
-  SYSTEM_SEED_AUTHOR,
-  wrapSystemNotification,
-} from './chat-surface.port';
-import { APPROVE_ACTION_ID } from './approval-blocks';
+import { Observable, Subject } from 'rxjs';
 import type { ApprovalDecision } from './approval-blocks';
-import { webApprovalCard } from './web-approval-card';
+import { APPROVE_ACTION_ID } from './approval-blocks';
+import type { ChatSurface, InboundChatMessage, PostOptions } from './chat-surface.port';
+import { SYSTEM_SEED_AUTHOR, wrapSystemNotification } from './chat-surface.port';
 import type { WebApprovalCard } from './web-approval-card';
+import { webApprovalCard } from './web-approval-card';
 
 /** A message Atlas POSTED — what SSE subscribers receive. */
 export interface WebOutboundMessage {
@@ -174,11 +167,7 @@ export class WebSurface implements ChatSurface {
    * Inject a human message onto `inbound$` from the web surface (called by the REST controller on
    * `POST /web/say`). Returns the synthetic ts of the injected message.
    */
-  receiveFromClient(
-    channel: string,
-    text: string,
-    opts: WebInboundOptions = {},
-  ): string {
+  receiveFromClient(channel: string, text: string, opts: WebInboundOptions = {}): string {
     const ts = this.mintTs();
     const message: InboundChatMessage = {
       id: ts,
@@ -192,13 +181,9 @@ export class WebSurface implements ChatSurface {
       ...(opts.seedQuestionId ? { seedQuestionId: opts.seedQuestionId } : {}),
       ...(opts.seedFileId ? { seedFileId: opts.seedFileId } : {}),
       ...(opts.seedSecretId ? { seedSecretId: opts.seedSecretId } : {}),
-      ...(opts.seedQuestionIds?.length
-        ? { seedQuestionIds: opts.seedQuestionIds }
-        : {}),
+      ...(opts.seedQuestionIds?.length ? { seedQuestionIds: opts.seedQuestionIds } : {}),
       ...(opts.seedFileIds?.length ? { seedFileIds: opts.seedFileIds } : {}),
-      ...(opts.seedSecretIds?.length
-        ? { seedSecretIds: opts.seedSecretIds }
-        : {}),
+      ...(opts.seedSecretIds?.length ? { seedSecretIds: opts.seedSecretIds } : {}),
       ...(opts.seedRow ? { seedRow: opts.seedRow } : {}),
       ...(opts.priority ? { priority: opts.priority } : {}),
       ...(opts.card ? { card: opts.card } : {}),
@@ -250,22 +235,12 @@ export class WebSurface implements ChatSurface {
       authorId: SYSTEM_SEED_AUTHOR.id,
       authorName: SYSTEM_SEED_AUTHOR.name,
       ...(opts.orgId ? { orgId: opts.orgId } : {}),
-      ...(opts.deliveredQuestionId
-        ? { seedQuestionId: opts.deliveredQuestionId }
-        : {}),
+      ...(opts.deliveredQuestionId ? { seedQuestionId: opts.deliveredQuestionId } : {}),
       ...(opts.deliveredFileId ? { seedFileId: opts.deliveredFileId } : {}),
-      ...(opts.deliveredSecretId
-        ? { seedSecretId: opts.deliveredSecretId }
-        : {}),
-      ...(opts.deliveredQuestionIds?.length
-        ? { seedQuestionIds: opts.deliveredQuestionIds }
-        : {}),
-      ...(opts.deliveredFileIds?.length
-        ? { seedFileIds: opts.deliveredFileIds }
-        : {}),
-      ...(opts.deliveredSecretIds?.length
-        ? { seedSecretIds: opts.deliveredSecretIds }
-        : {}),
+      ...(opts.deliveredSecretId ? { seedSecretId: opts.deliveredSecretId } : {}),
+      ...(opts.deliveredQuestionIds?.length ? { seedQuestionIds: opts.deliveredQuestionIds } : {}),
+      ...(opts.deliveredFileIds?.length ? { seedFileIds: opts.deliveredFileIds } : {}),
+      ...(opts.deliveredSecretIds?.length ? { seedSecretIds: opts.deliveredSecretIds } : {}),
       ...(opts.seedRow ? { seedRow: opts.seedRow } : {}),
     });
   }
@@ -275,15 +250,8 @@ export class WebSurface implements ChatSurface {
    * `POST /web/approve`). Emits on `approval$` so the module bridge can resolve the gate without
    * the surface importing `DecisionApprovalService` (no circular dep).
    */
-  receiveApprovalClick(
-    actionId: string,
-    value: string,
-    ruledBy: string,
-    note?: string,
-  ): void {
-    this.logger.debug(
-      `receiveApprovalClick action=${actionId} ruledBy=${ruledBy}`,
-    );
+  receiveApprovalClick(actionId: string, value: string, ruledBy: string, note?: string): void {
+    this.logger.debug(`receiveApprovalClick action=${actionId} ruledBy=${ruledBy}`);
     this.approvalSubject.next({
       actionId,
       value,
@@ -301,11 +269,7 @@ export class WebSurface implements ChatSurface {
    * the blocks are converted to a `WebApprovalCard` payload so the web client can render the card
    * with its action buttons — no Slack-specific shapes leak to the web layer.
    */
-  async post(
-    channel: string,
-    text: string,
-    opts: PostOptions = {},
-  ): Promise<string | undefined> {
+  async post(channel: string, text: string, opts: PostOptions = {}): Promise<string | undefined> {
     const ts = this.mintTs();
 
     let card: WebApprovalCard | undefined;
@@ -332,11 +296,7 @@ export class WebSurface implements ChatSurface {
    * a history fetch reflects the verdict, and emits an outbound event with the same ts so live SSE
    * subscribers repaint.
    */
-  update(
-    channel: string,
-    ts: string,
-    args: { text?: string; card?: WebApprovalCard },
-  ): void {
+  update(channel: string, ts: string, args: { text?: string; card?: WebApprovalCard }): void {
     const entry = this.outbox.find((m) => m.channel === channel && m.ts === ts);
     if (entry) {
       if (args.text !== undefined) entry.text = args.text;
@@ -350,9 +310,7 @@ export class WebSurface implements ChatSurface {
   /** Messages in a channel (all if no threadTs filter), ordered oldest-first. */
   channelMessages(channel: string, threadTs?: string): WebOutboundMessage[] {
     return this.outbox.filter(
-      (m) =>
-        m.channel === channel &&
-        (threadTs === undefined || m.threadTs === threadTs),
+      (m) => m.channel === channel && (threadTs === undefined || m.threadTs === threadTs),
     );
   }
 
@@ -382,9 +340,7 @@ function detectAndConvertApprovalCard(
   let meta: { jobId: string; decisionRecordId?: string } | undefined;
   for (const block of blocks) {
     if (block.type !== 'actions') continue;
-    const elements = block.elements as
-      | Array<Record<string, unknown>>
-      | undefined;
+    const elements = block.elements as Array<Record<string, unknown>> | undefined;
     if (!elements) continue;
     for (const el of elements) {
       if (el.action_id !== APPROVE_ACTION_ID) continue;
@@ -415,9 +371,7 @@ function detectAndConvertApprovalCard(
   // The headline is either "*Plan proposal — <title>*" (full ceremony) or "*Direct build — <title>*"
   // (fast path); the list block is labelled "*Threads*" or "*Changes*" to match.
   let kind: 'plan' | 'direct' = 'plan';
-  let title =
-    text.replace(/^(?:Plan proposal|Direct build)\s*[—-]\s*/, '').trim() ||
-    text;
+  let title = text.replace(/^(?:Plan proposal|Direct build)\s*[—-]\s*/, '').trim() || text;
 
   for (const block of blocks) {
     if (block.type === 'thread') {
@@ -426,9 +380,7 @@ function detectAndConvertApprovalCard(
       if (raw.startsWith('*Plan proposal') || raw.startsWith('*Direct build')) {
         kind = raw.startsWith('*Direct build') ? 'direct' : 'plan';
         // Extract title from the headline block.
-        const match = /(?:Plan proposal|Direct build)\s*[—-]\s*(.+)\*$/.exec(
-          raw,
-        );
+        const match = /(?:Plan proposal|Direct build)\s*[—-]\s*(.+)\*$/.exec(raw);
         if (match) title = match[1].trim();
       } else if (!summary) {
         summary = raw;
@@ -460,9 +412,7 @@ function detectAndConvertApprovalCard(
       }
     }
     if (block.type === 'actions') {
-      const elements = block.elements as
-        | Array<Record<string, unknown>>
-        | undefined;
+      const elements = block.elements as Array<Record<string, unknown>> | undefined;
       for (const el of elements ?? []) {
         if (typeof el.url === 'string') planUrl = el.url;
       }
@@ -471,9 +421,7 @@ function detectAndConvertApprovalCard(
 
   return webApprovalCard({
     jobId: meta.jobId,
-    ...(meta.decisionRecordId
-      ? { decisionRecordId: meta.decisionRecordId }
-      : {}),
+    ...(meta.decisionRecordId ? { decisionRecordId: meta.decisionRecordId } : {}),
     kind,
     title,
     summary,

@@ -1,10 +1,5 @@
-import {
-  Global,
-  Inject,
-  Module,
-  type OnApplicationShutdown,
-} from '@nestjs/common';
 import { EnvService } from '@core/config/env/env.service';
+import { Global, Inject, Module, type OnApplicationShutdown } from '@nestjs/common';
 import type { Redis } from 'ioredis';
 import { IoredisStreamAdapter } from './ioredis-stream.adapter';
 import { REDIS_STREAM_PORT } from './redis.port';
@@ -30,8 +25,7 @@ import { REDIS_CLIENT, buildRedisClient } from './redis.tokens';
   providers: [
     {
       provide: REDIS_CLIENT,
-      useFactory: (env: EnvService): Redis =>
-        buildRedisClient({ url: env.get('REDIS_URL') }),
+      useFactory: (env: EnvService): Redis => buildRedisClient({ url: env.get('REDIS_URL') }),
       inject: [EnvService],
     },
     {

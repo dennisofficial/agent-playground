@@ -7,9 +7,9 @@
  * approved plan still holds against the rebased base. Typed-function templating (d11): `ctx.baseBranch` /
  * `ctx.buildPath` are typed fields, the wording branches in code.
  */
-import type { JitFireCtx, JitRule } from './rule';
-import { agentMessage } from '../message';
 import { chunkKey } from '../harness/chunk-keys';
+import { agentMessage } from '../message';
+import type { JitFireCtx, JitRule } from './rule';
 
 /** The plan-approved base-check seed body — same instruction for both build paths (`dispatch_build` branches
  *  internally on `job.buildPath`; the seed doesn't need to choose). */
@@ -45,7 +45,6 @@ export const planApprovedRule: JitRule = {
   render: (ctx) => agentMessage(renderPlanApprovedSeed(ctx)),
   seed: {
     label: 'Plan approved — checking the base branch before starting',
-    chunkKey: (ctx) =>
-      chunkKey.planApproved(ctx.decisionRecordId ?? ctx.jobId ?? ''),
+    chunkKey: (ctx) => chunkKey.planApproved(ctx.decisionRecordId ?? ctx.jobId ?? ''),
   },
 };

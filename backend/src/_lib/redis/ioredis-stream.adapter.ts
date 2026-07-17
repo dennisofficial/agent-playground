@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { Redis } from 'ioredis';
-import { REDIS_CLIENT } from './redis.tokens';
 import type { RedisStreamPort, StreamEntry } from './redis.port';
+import { REDIS_CLIENT } from './redis.tokens';
 
 /** The single stream field we store the JSON-encoded frame under (see redis.port.ts). */
 const DATA_FIELD = 'data';
@@ -25,12 +25,7 @@ export class IoredisStreamAdapter implements RedisStreamPort {
   constructor(@Inject(REDIS_CLIENT) private readonly client: Redis) {}
 
   async xadd(stream: string, data: unknown): Promise<string> {
-    const id = await this.client.xadd(
-      stream,
-      '*',
-      DATA_FIELD,
-      JSON.stringify(data),
-    );
+    const id = await this.client.xadd(stream, '*', DATA_FIELD, JSON.stringify(data));
     // ioredis types xadd's return as `string | null`; '*' auto-id never yields null in practice.
     return id ?? '0-0';
   }
@@ -45,13 +40,10 @@ export class IoredisStreamAdapter implements RedisStreamPort {
     let cursor = '0';
     // Bound the walk so a pathological keyspace can't spin forever (turn keyspace is small in practice).
     for (let page = 0; page < 10_000; page++) {
-      const [next, keys] = (await this.client.scan(
-        cursor,
-        'MATCH',
-        match,
-        'COUNT',
-        count,
-      )) as [string, string[]];
+      const [next, keys] = (await this.client.scan(cursor, 'MATCH', match, 'COUNT', count)) as [
+        string,
+        string[],
+      ];
       for (const k of keys) out.add(k);
       cursor = next;
       if (cursor === '0') break; // a full cursor cycle returns to '0'

@@ -16,8 +16,8 @@
  * inside the engine. Read-only advisory subagents (explore/docs/debug/test) are intentionally excluded.
  */
 import { Agent, ENGINEERING_STAGES } from '../agent';
-import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { hasRepoConventions, isBuildBrain } from '../conditions';
+import { Fragment, FragmentGroup } from '../fragment.decorator';
 import type { PromptCtx } from '../prompt-ctx';
 
 @FragmentGroup()

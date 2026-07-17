@@ -5,8 +5,8 @@
  * TOPIC bucket: context / authored artifacts (normal brain only).
  */
 import { Agent, SHIP_STAGES } from '../agent';
-import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isBuildBrain } from '../conditions';
+import { Fragment, FragmentGroup } from '../fragment.decorator';
 
 @FragmentGroup()
 export class ContextGroup {

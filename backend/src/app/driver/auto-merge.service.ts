@@ -1,22 +1,16 @@
-import {
-  forwardRef,
-  Inject,
-  Injectable,
-  Logger,
-  Optional,
-} from '@nestjs/common';
+import { forwardRef, Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
 import type { AutoMergeMethod } from '@workspace/shared';
-import { JobBootstrapService } from '../job-bootstrap';
-import { DB_CONNECTION } from '../persistence/database.module';
-import { JobEntity, TranscriptMessageEntity, RepoEntity } from '../persistence/entities';
+import { Repository } from 'typeorm';
 import { GithubPrService, parseGithubRepoUrl } from '../git/github-pr.service';
+import { JobBootstrapService } from '../job-bootstrap';
 import { CredentialResolver } from '../onboarding';
+import { DB_CONNECTION } from '../persistence/database.module';
+import { JobEntity, RepoEntity, TranscriptMessageEntity } from '../persistence/entities';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
 import { StimulusStoreService } from '../stimulus/stimulus-store.service';
-import { JobLifecycleService } from './job-lifecycle.service';
 import { DriverStoreService } from './driver-store.service';
+import { JobLifecycleService } from './job-lifecycle.service';
 
 /**
  * GitHub-state readiness — the part shared by manual + auto (the manual "Merge PR" card/button uses THIS
@@ -105,9 +99,7 @@ export class AutoMergeService {
     const job = await this.jobs.findOneBy({ id: jobId });
     if (!job) return;
     if (!prMergeReady(job)) {
-      await this.driverStore
-        .neutralizeMergeCard(jobId, 'not-ready')
-        .catch(() => undefined);
+      await this.driverStore.neutralizeMergeCard(jobId, 'not-ready').catch(() => undefined);
       return;
     }
     // GitHub-mergeable → the manual Merge PR card appears regardless of auto_merge (a human can always click).
@@ -118,9 +110,7 @@ export class AutoMergeService {
       const approver = await this.resolveApprover(job);
       await this.mergeNow(jobId, approver);
     } catch (err) {
-      this.logger.warn(
-        `auto-merge could not resolve an approver for job ${jobId}: ${err}`,
-      );
+      this.logger.warn(`auto-merge could not resolve an approver for job ${jobId}: ${err}`);
     }
   }
 
@@ -149,10 +139,7 @@ export class AutoMergeService {
     }
   }
 
-  private async mergeNowLocked(
-    jobId: string,
-    ruledBy: string,
-  ): Promise<boolean> {
+  private async mergeNowLocked(jobId: string, ruledBy: string): Promise<boolean> {
     const job = await this.jobs.findOneBy({ id: jobId });
     if (!job || !prMergeReady(job)) return false; // re-check under the guard
     const repo = await this.repos.findOne({ where: { id: job.repo_id } });
@@ -212,10 +199,7 @@ export class AutoMergeService {
     return `automerge-method:${jobId}:${method}`;
   }
 
-  private async hasMethodDisallowedNote(
-    jobId: string,
-    method: AutoMergeMethod,
-  ): Promise<boolean> {
+  private async hasMethodDisallowedNote(jobId: string, method: AutoMergeMethod): Promise<boolean> {
     const existing = await this.messages.findOne({
       where: { job_id: jobId, ts: this.methodDisallowedTs(jobId, method) },
     });
@@ -235,8 +219,7 @@ export class AutoMergeService {
       where: { job_id: job.id, ts },
     });
     if (existing) return;
-    if (!this.jobBootstrap)
-      throw new Error('auto-merge: JobBootstrapService not wired');
+    if (!this.jobBootstrap) throw new Error('auto-merge: JobBootstrapService not wired');
     const threadId = await this.jobBootstrap.planningThreadId(job.id);
     await this.messages
       .save(
@@ -252,9 +235,7 @@ export class AutoMergeService {
         }),
       )
       .catch((err) =>
-        this.logger.warn(
-          `postMethodDisallowedNoteOnce failed for job ${job.id}: ${err}`,
-        ),
+        this.logger.warn(`postMethodDisallowedNoteOnce failed for job ${job.id}: ${err}`),
       );
   }
 }

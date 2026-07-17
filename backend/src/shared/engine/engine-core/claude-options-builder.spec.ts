@@ -1,17 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import {
-  buildClaudeOptions,
-  type BuildClaudeOptionsParams,
-} from './claude-options-builder';
-import {
-  PLAN_TOOLS,
-  REVIEW_TOOLS,
-  WORKER_TOOLS,
-  WRITER_SUBAGENTS,
-} from './agents-registry';
+import { agentMessage } from '../../prompt-kit/message';
 import type { EngineHomeKey } from '../engine-home';
 import type { RunEngineArgs } from '../engine.types';
-import { agentMessage } from '../../prompt-kit/message';
+import { PLAN_TOOLS, REVIEW_TOOLS, WORKER_TOOLS, WRITER_SUBAGENTS } from './agents-registry';
+import { buildClaudeOptions, type BuildClaudeOptionsParams } from './claude-options-builder';
 
 const KEY: EngineHomeKey = {
   orgId: 'acme',
@@ -57,8 +49,7 @@ describe('buildClaudeOptions', () => {
     expect(o.tools).toBe(WORKER_TOOLS);
     expect(o.permissionMode).toBe('default');
     // The writer subagents are only spawnable on an execute turn.
-    for (const name of Object.keys(WRITER_SUBAGENTS))
-      expect(o.agents).toHaveProperty(name);
+    for (const name of Object.keys(WRITER_SUBAGENTS)) expect(o.agents).toHaveProperty(name);
     expect(o.betas).toContain('context-1m-2025-08-07');
     expect((o as { resume?: string }).resume).toBe('sess');
     expect(o.model).toBe('claude-x');
@@ -74,8 +65,7 @@ describe('buildClaudeOptions', () => {
   it('review turn: REVIEW tools, no writer subagents', () => {
     const o = build('review');
     expect(o.tools).toBe(REVIEW_TOOLS);
-    for (const name of Object.keys(WRITER_SUBAGENTS))
-      expect(o.agents).not.toHaveProperty(name);
+    for (const name of Object.keys(WRITER_SUBAGENTS)) expect(o.agents).not.toHaveProperty(name);
   });
 
   it('omits resume/model/hooks when absent; adds rich-stream fields when requested', () => {

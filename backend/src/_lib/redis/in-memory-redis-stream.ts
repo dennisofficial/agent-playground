@@ -33,10 +33,7 @@ export class InMemoryRedisStream implements RedisStreamPort {
   >();
   /** Wake callbacks registered by blocked readers, keyed by stream. */
   private readonly waiters = new Map<string, Set<() => void>>();
-  private readonly subscribers = new Map<
-    string,
-    Set<(message: unknown) => void>
-  >();
+  private readonly subscribers = new Map<string, Set<(message: unknown) => void>>();
   /** Pending block timers — released eagerly by `releaseBlockingReads()` (test teardown speed-up). */
   private readonly blockTimers = new Set<{ resolve: () => void }>();
   /** Per-key last-access epoch-ms — the slice `OBJECT IDLETIME` needs (stamped on write + read touch). */
@@ -112,14 +109,10 @@ export class InMemoryRedisStream implements RedisStreamPort {
     const take = (): StreamEntry[] => {
       const cursor = this.groups.get(args.stream)?.get(args.group) ?? '0-0';
       const log = this.streams.get(args.stream) ?? [];
-      const fresh = log
-        .filter((e) => cmpId(e.id, cursor) > 0)
-        .slice(0, args.count);
+      const fresh = log.filter((e) => cmpId(e.id, cursor) > 0).slice(0, args.count);
       if (fresh.length) {
         // Advance the group cursor past the last delivered entry.
-        this.groups
-          .get(args.stream)
-          ?.set(args.group, fresh[fresh.length - 1].id);
+        this.groups.get(args.stream)?.set(args.group, fresh[fresh.length - 1].id);
         // Record each delivered entry in the PEL (un-acked, owned by this consumer) for crash recovery.
         const pel = this.pelFor(args.stream, args.group);
         for (const e of fresh) {
@@ -253,10 +246,7 @@ export class InMemoryRedisStream implements RedisStreamPort {
     return Promise.resolve(subs.size);
   }
 
-  subscribe(
-    channel: string,
-    handler: (message: unknown) => void,
-  ): Promise<() => Promise<void>> {
+  subscribe(channel: string, handler: (message: unknown) => void): Promise<() => Promise<void>> {
     const subs = this.subscribers.get(channel) ?? new Set();
     subs.add(handler);
     this.subscribers.set(channel, subs);
@@ -275,9 +265,7 @@ function clone<T>(v: T): T {
 
 /** Minimal Redis-glob → RegExp (only `*` is used by callers here). Escapes all other regex metachars. */
 function globToRegExp(glob: string): RegExp {
-  const escaped = glob
-    .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
-    .replace(/\*/g, '.*');
+  const escaped = glob.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
   return new RegExp(`^${escaped}$`);
 }
 

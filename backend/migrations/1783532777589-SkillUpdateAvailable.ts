@@ -12,8 +12,6 @@ export class SkillUpdateAvailable1783532777589 implements MigrationInterface {
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `ALTER TABLE "workspace_skills" DROP COLUMN "update_available"`,
-    );
+    await queryRunner.query(`ALTER TABLE "workspace_skills" DROP COLUMN "update_available"`);
   }
 }

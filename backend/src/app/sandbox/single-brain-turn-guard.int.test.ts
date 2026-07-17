@@ -1,14 +1,12 @@
-import { getDataSourceToken } from '@nestjs/typeorm';
-import { Test } from '@nestjs/testing';
 import { NestExpressApplication } from '@nestjs/platform-express';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { Test } from '@nestjs/testing';
+import { getDataSourceToken } from '@nestjs/typeorm';
+import { ENGINE_RUNNER } from '@shared/engine';
 import { randomUUID } from 'node:crypto';
 import { DataSource } from 'typeorm';
-import { CLASSIFIER_LLM } from '../decision-gate';
-import { ENGINE_RUNNER } from '@shared/engine';
-import { GithubPrService, LocalGitService } from '../git';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AppModule } from '../app.module';
-import { DB_CONNECTION } from '../persistence/database.module';
+import { CLASSIFIER_LLM } from '../decision-gate';
 import {
   FakeClassifierLlm,
   FakeEngineRunner,
@@ -16,11 +14,10 @@ import {
   FakeLocalGitService,
   FakeThreadTitler,
 } from '../e2e/e2e-stubs';
+import { GithubPrService, LocalGitService } from '../git';
+import { DB_CONNECTION } from '../persistence/database.module';
 import { JobTitler } from '../titling';
-import {
-  BrainTurnAlreadyRunningError,
-  TurnRegistry,
-} from './turn-registry.service';
+import { BrainTurnAlreadyRunningError, TurnRegistry } from './turn-registry.service';
 
 /**
  * Int test for the `ux_active_turns_one_running_brain_per_job` partial unique index (the hard cross-process
@@ -103,14 +100,10 @@ describe('single running brain turn per job (live Postgres partial unique index)
 
   afterAll(async () => {
     if (dataSource) {
-      await dataSource.query(`DELETE FROM active_turns WHERE org_id = $1`, [
-        TEAM_ID,
-      ]);
+      await dataSource.query(`DELETE FROM active_turns WHERE org_id = $1`, [TEAM_ID]);
       await dataSource.query(`DELETE FROM jobs WHERE org_id = $1`, [TEAM_ID]);
       await dataSource.query(`DELETE FROM repos WHERE org_id = $1`, [TEAM_ID]);
-      await dataSource.query(`DELETE FROM organizations WHERE id = $1`, [
-        TEAM_ID,
-      ]);
+      await dataSource.query(`DELETE FROM organizations WHERE id = $1`, [TEAM_ID]);
     }
     await app?.close();
     if (prevSurface === undefined) delete process.env.SURFACE;
@@ -122,28 +115,22 @@ describe('single running brain turn per job (live Postgres partial unique index)
 
   it('rejects a SECOND running brain turn for the same job (BrainTurnAlreadyRunningError)', async () => {
     await registry.register(reg(brain1, jobA, 'brain'));
-    await expect(
-      registry.register(reg(randomUUID(), jobA, 'brain')),
-    ).rejects.toBeInstanceOf(BrainTurnAlreadyRunningError);
+    await expect(registry.register(reg(randomUUID(), jobA, 'brain'))).rejects.toBeInstanceOf(
+      BrainTurnAlreadyRunningError,
+    );
   });
 
   it('ALLOWS a non-brain (step) turn alongside the running brain turn on the same job', async () => {
     // brain1 from the previous test is still running for jobA.
-    await expect(
-      registry.register(reg(randomUUID(), jobA, 'step')),
-    ).resolves.toBeUndefined();
+    await expect(registry.register(reg(randomUUID(), jobA, 'step'))).resolves.toBeUndefined();
   });
 
   it('ALLOWS a brain turn on a DIFFERENT job', async () => {
-    await expect(
-      registry.register(reg(randomUUID(), jobB, 'brain')),
-    ).resolves.toBeUndefined();
+    await expect(registry.register(reg(randomUUID(), jobB, 'brain'))).resolves.toBeUndefined();
   });
 
   it('ALLOWS a fresh brain turn once the prior one is finalized', async () => {
     await registry.finalize(brain1, 'done');
-    await expect(
-      registry.register(reg(randomUUID(), jobA, 'brain')),
-    ).resolves.toBeUndefined();
+    await expect(registry.register(reg(randomUUID(), jobA, 'brain'))).resolves.toBeUndefined();
   });
 });

@@ -24,9 +24,7 @@ describe('previewId', () => {
 
   it('differs by job and by secret (unguessable without the secret)', () => {
     expect(previewId('job-1', SECRET)).not.toBe(previewId('job-2', SECRET));
-    expect(previewId('job-1', SECRET)).not.toBe(
-      previewId('job-1', 'other-secret'),
-    );
+    expect(previewId('job-1', SECRET)).not.toBe(previewId('job-1', 'other-secret'));
   });
 });
 

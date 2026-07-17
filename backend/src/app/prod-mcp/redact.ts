@@ -29,10 +29,7 @@ function redactString(value: string): string {
     // The connection-string pattern must keep the scheme; the generic assignment pattern must keep its
     // prefix group — every other pattern replaces the whole match outright.
     if (pattern.source.startsWith('\\w+:\\/\\/')) {
-      out = out.replace(
-        pattern,
-        (m) => `${m.slice(0, m.indexOf('://') + 3)}${MASK}@`,
-      );
+      out = out.replace(pattern, (m) => `${m.slice(0, m.indexOf('://') + 3)}${MASK}@`);
     } else if (pattern.source.startsWith('("?(?:api')) {
       out = out.replace(pattern, (_m, prefix: string, value: string) => {
         const quote = value[0] === '"' || value[0] === "'" ? value[0] : '';
@@ -54,10 +51,7 @@ const SECRET_KEY_PATTERN =
  * string-scans every string leaf, and additionally blanks the VALUE of any object key that looks like a
  * secret field name (even if its value didn't match a pattern, e.g. an opaque token). Cycle-safe.
  */
-export function redactSecrets(
-  value: unknown,
-  seen: WeakSet<object> = new WeakSet(),
-): unknown {
+export function redactSecrets(value: unknown, seen: WeakSet<object> = new WeakSet()): unknown {
   if (typeof value === 'string') return redactString(value);
   if (value === null || typeof value !== 'object') return value;
   if (value instanceof Date) return value;

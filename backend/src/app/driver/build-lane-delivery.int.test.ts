@@ -22,26 +22,22 @@
  * writer are proven elsewhere).
  */
 
-import { Test, type TestingModule } from '@nestjs/testing';
 import type { ModuleRef } from '@nestjs/core';
-import {
-  TypeOrmModule,
-  getDataSourceToken,
-  getRepositoryToken,
-} from '@nestjs/typeorm';
+import { Test, type TestingModule } from '@nestjs/testing';
+import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy';
+import { JobBootstrapService } from '../job-bootstrap';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { ENTITIES, JobEntity } from '../persistence/entities';
-import { JobBootstrapService } from '../job-bootstrap';
-import { StimulusStoreService, DeliveryPump } from '../stimulus';
+import type { TurnRunnerService } from '../runner';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
+import { DeliveryPump, StimulusStoreService } from '../stimulus';
 import { ThreadInputService } from '../surface/thread-input.service';
 import { laneFor } from '../surface/thread-registry';
-import type { TurnRunnerService } from '../runner';
-import type { DriverStoreService } from './driver-store.service';
 import { BuildLaneDeliveryService } from './build-lane-delivery.service';
+import type { DriverStoreService } from './driver-store.service';
 
 const ORG_ID = '52222222-2222-4222-8222-222222222222';
 const BASE_BRANCH = 'main';
@@ -101,16 +97,8 @@ describe('build-lane host-seed delivery — live Postgres proof', () => {
 
   beforeAll(async () => {
     mod = await Test.createTestingModule({
-      imports: [
-        TypeOrmModule.forRoot(dbOpts()),
-        TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION),
-      ],
-      providers: [
-        JobBootstrapService,
-        StimulusStoreService,
-        DeliveryPump,
-        TurnRegistry,
-      ],
+      imports: [TypeOrmModule.forRoot(dbOpts()), TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION)],
+      providers: [JobBootstrapService, StimulusStoreService, DeliveryPump, TurnRegistry],
     }).compile();
 
     store = mod.get(StimulusStoreService);
@@ -260,20 +248,12 @@ describe('build-lane host-seed delivery — live Postgres proof', () => {
     expect(row.delivered_at).toBeNull();
 
     // Still eligible — this is exactly what the next `kickBatchTurn` folds into the Leg task.
-    const pending = await store.eligiblePendingChat(
-      job.id,
-      2 * 60 * 1000,
-      lane,
-    );
+    const pending = await store.eligiblePendingChat(job.id, 2 * 60 * 1000, lane);
     expect(pending.map((p) => p.body)).toContain('queued work');
 
     // The register hand-off stamps it delivered → it drops out of the queue.
     await store.markChatDelivered(row.id);
-    const afterPending = await store.eligiblePendingChat(
-      job.id,
-      2 * 60 * 1000,
-      lane,
-    );
+    const afterPending = await store.eligiblePendingChat(job.id, 2 * 60 * 1000, lane);
     expect(afterPending).toHaveLength(0);
   });
 
@@ -289,9 +269,7 @@ describe('build-lane host-seed delivery — live Postgres proof', () => {
     });
     await store.leaseChatStimuli([seed.id]);
 
-    expect(
-      await store.eligiblePendingChat(job.id, 2 * 60 * 1000, lane),
-    ).toHaveLength(0);
+    expect(await store.eligiblePendingChat(job.id, 2 * 60 * 1000, lane)).toHaveLength(0);
     expect(await store.undeliveredChatForLane(job.id, lane)).toHaveLength(1);
 
     await store.rekeyLaneToMain(
@@ -308,11 +286,7 @@ describe('build-lane host-seed delivery — live Postgres proof', () => {
     expect(rows[0].delivered_at).toBeNull();
     expect(rows[0].body).toContain('leased leftover');
 
-    const mainPending = await store.eligiblePendingChat(
-      job.id,
-      2 * 60 * 1000,
-      'main',
-    );
+    const mainPending = await store.eligiblePendingChat(job.id, 2 * 60 * 1000, 'main');
     expect(mainPending.map((p) => p.id)).toContain(seed.id);
   });
 
@@ -325,9 +299,7 @@ describe('build-lane host-seed delivery — live Postgres proof', () => {
 
     // A kind that stays `input:'none'` (autofix-lens) is never postable — the read-only gate still holds even
     // with no handler in the way.
-    expect(input.canPost(laneFor('autofix-lens', 'af-1', 'lens-1'))).toBe(
-      false,
-    );
+    expect(input.canPost(laneFor('autofix-lens', 'af-1', 'lens-1'))).toBe(false);
   });
 
   it('(e) pump() re-drives a pending `now` seed into a live steerable Leg — the build-lane sweep backstop', async () => {

@@ -13,9 +13,7 @@ export class AddHostStatsSample1783900000000 implements MigrationInterface {
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `DROP INDEX "public"."idx_host_stats_sample_sampled_at"`,
-    );
+    await queryRunner.query(`DROP INDEX "public"."idx_host_stats_sample_sampled_at"`);
     await queryRunner.query(`DROP TABLE "host_stats_sample"`);
   }
 }

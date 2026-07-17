@@ -1,15 +1,11 @@
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
 // Import from the DIRECT (Nest-free) assembly path, not the prompt-kit barrel — this module bundles into the
 // in-container engine, and the barrel re-exports the NestJS PromptService/PromptKitModule.
-import { renderAgentPrompt } from '../../prompt-kit/system/assemble';
 import { Agent } from '../../prompt-kit/system/agent';
+import { renderAgentPrompt } from '../../prompt-kit/system/assemble';
 import type { PromptCtx } from '../../prompt-kit/system/prompt-ctx';
-import {
-  LSP_NAV_TOOL_NAMES,
-  LSP_TOOL_NAMES,
-  qualifyLspToolNames,
-} from '../lsp-tools';
 import type { RunEngineArgs } from '../engine.types';
+import { LSP_NAV_TOOL_NAMES, LSP_TOOL_NAMES, qualifyLspToolNames } from '../lsp-tools';
 
 // Claude built-in tool sets. `tools` RESTRICTS the available set (unlike `allowedTools`, which only
 // auto-approves).
@@ -54,14 +50,7 @@ export const PLAN_TOOLS = [...WORKER_TOOLS, 'ExitPlanMode'];
 export const REVIEW_TOOLS = ['Read', 'Glob', 'Grep', 'Bash', 'Skill', ...WEB_TOOLS];
 // Auto-approve safe reads, web, and subagent spawning; writes/bash fall through to canUseTool where the
 // boundary is re-applied.
-export const AUTO_APPROVE = [
-  'Read',
-  'Glob',
-  'Grep',
-  'Task',
-  ...SUBAGENT_MGMT_TOOLS,
-  ...WEB_TOOLS,
-];
+export const AUTO_APPROVE = ['Read', 'Glob', 'Grep', 'Task', ...SUBAGENT_MGMT_TOOLS, ...WEB_TOOLS];
 
 // LSP navigation/rename (`atlas-lsp-ts`, registered per-turn — see sandbox/image/lsp-bridge-options.ts).
 // Subagent `tools:` arrays are explicit, not inherited from the parent turn's `allowedTools`, so each
@@ -276,9 +265,7 @@ export function applyPerRunCtxToAgents(
     previewInstructions?: string | null;
   },
 ): NonNullable<Options['agents']> {
-  const preview = args.previewInstructions?.trim()
-    ? args.previewInstructions
-    : null;
+  const preview = args.previewInstructions?.trim() ? args.previewInstructions : null;
   if (!args.repoConventions && !preview) return agents;
   const out = { ...agents };
   const targets = new Map<string, Agent>();
@@ -287,15 +274,12 @@ export function applyPerRunCtxToAgents(
       targets.set(name, agent);
   }
   if (preview) {
-    for (const [name, agent] of Object.entries(PREVIEW_FACING_SUBAGENTS))
-      targets.set(name, agent);
+    for (const [name, agent] of Object.entries(PREVIEW_FACING_SUBAGENTS)) targets.set(name, agent);
   }
   for (const [name, agent] of targets) {
     if (!out[name]) continue;
     const ctx: PromptCtx = {
-      ...(args.repoConventions
-        ? { settings: { repoConventions: args.repoConventions } }
-        : {}),
+      ...(args.repoConventions ? { settings: { repoConventions: args.repoConventions } } : {}),
       ...(preview ? { previewInstructions: preview } : {}),
     };
     out[name] = { ...out[name], prompt: renderAgentPrompt(agent, ctx) };

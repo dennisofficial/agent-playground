@@ -10,14 +10,10 @@ export class SetMemoryOrgIdNotNull1783871430690 implements MigrationInterface {
   name = 'SetMemoryOrgIdNotNull1783871430690';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `ALTER TABLE "memory" ALTER COLUMN "org_id" SET NOT NULL`,
-    );
+    await queryRunner.query(`ALTER TABLE "memory" ALTER COLUMN "org_id" SET NOT NULL`);
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `ALTER TABLE "memory" ALTER COLUMN "org_id" DROP NOT NULL`,
-    );
+    await queryRunner.query(`ALTER TABLE "memory" ALTER COLUMN "org_id" DROP NOT NULL`);
   }
 }

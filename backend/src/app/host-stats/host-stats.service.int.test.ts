@@ -39,9 +39,7 @@ describe('HostStatsService (integration, real host numbers)', () => {
     const snapshot = await service.collect();
 
     const totalMem = os.totalmem();
-    expect(
-      Math.abs(snapshot.memory.totalBytes - totalMem) / totalMem,
-    ).toBeLessThan(0.01);
+    expect(Math.abs(snapshot.memory.totalBytes - totalMem) / totalMem).toBeLessThan(0.01);
 
     expect(snapshot.cpu.usagePct).toBeGreaterThanOrEqual(0);
     expect(snapshot.cpu.usagePct).toBeLessThanOrEqual(100);
@@ -72,10 +70,7 @@ describe('HostStatsService (integration, real host numbers)', () => {
     );
     const service = new HostStatsService(fakeEngine({ list, systemDf }));
 
-    const [first, second] = await Promise.all([
-      service.collect(),
-      service.collect(),
-    ]);
+    const [first, second] = await Promise.all([service.collect(), service.collect()]);
 
     expect(first).toBe(second);
     expect(list).toHaveBeenCalledTimes(1);

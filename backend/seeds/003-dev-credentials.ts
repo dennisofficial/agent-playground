@@ -1,15 +1,11 @@
 import type { Seeder } from '@workspace/nestjs-core';
+import { isNewerCodexAuth } from '../src/app/onboarding/codex-auth-freshness';
+import { decryptSecret, encryptSecret, loadSecretsKey } from '../src/app/onboarding/secret-cipher';
 import {
-  OrgCredentialsEntity,
   OrgClaudeCredentialEntity,
+  OrgCredentialsEntity,
   OrganizationEntity,
 } from '../src/app/persistence/entities';
-import { isNewerCodexAuth } from '../src/app/onboarding/codex-auth-freshness';
-import {
-  decryptSecret,
-  encryptSecret,
-  loadSecretsKey,
-} from '../src/app/onboarding/secret-cipher';
 import { DEV_SEED_IDS } from './_shared/dev-seed-ids';
 
 /**
@@ -33,9 +29,7 @@ export default (async (ds) => {
     }
   })();
   if (!key) {
-    console.log(
-      '  003: SECRETS_ENCRYPTION_KEY not set — skipping dev credentials',
-    );
+    console.log('  003: SECRETS_ENCRYPTION_KEY not set — skipping dev credentials');
     return;
   }
 
@@ -45,16 +39,8 @@ export default (async (ds) => {
   const claudeOauthToken = process.env.CLAUDE_OAUTH_TOKEN;
   const codexAuthSecret = process.env.CODEX_OAUTH_TOKEN;
 
-  if (
-    !anthropicApiKey &&
-    !openaiApiKey &&
-    !githubPat &&
-    !claudeOauthToken &&
-    !codexAuthSecret
-  ) {
-    console.log(
-      '  003: no credentials in env (.env.seed.enc not layered?) — skipping',
-    );
+  if (!anthropicApiKey && !openaiApiKey && !githubPat && !claudeOauthToken && !codexAuthSecret) {
+    console.log('  003: no credentials in env (.env.seed.enc not layered?) — skipping');
     return;
   }
 
@@ -62,13 +48,9 @@ export default (async (ds) => {
   const orgIds = [DEV_SEED_IDS.orgs.atlasTest];
 
   for (const orgId of orgIds) {
-    const org = await ds
-      .getRepository(OrganizationEntity)
-      .findOne({ where: { id: orgId } });
+    const org = await ds.getRepository(OrganizationEntity).findOne({ where: { id: orgId } });
     if (!org) {
-      console.log(
-        `  003: org ${orgId} missing — skipping dev credentials (run 001-dev-org first)`,
-      );
+      console.log(`  003: org ${orgId} missing — skipping dev credentials (run 001-dev-org first)`);
       continue;
     }
 
@@ -93,10 +75,7 @@ export default (async (ds) => {
       const existing = row.codex_auth_secret_enc
         ? decryptSecret(row.codex_auth_secret_enc, key)
         : undefined;
-      if (
-        existing === undefined ||
-        isNewerCodexAuth(codexAuthSecret, existing)
-      ) {
+      if (existing === undefined || isNewerCodexAuth(codexAuthSecret, existing)) {
         row.codex_auth_secret_enc = encryptSecret(codexAuthSecret, key);
       }
     }

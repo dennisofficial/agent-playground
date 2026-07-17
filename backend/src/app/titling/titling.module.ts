@@ -1,11 +1,7 @@
 import { ChatAnthropic } from '@langchain/anthropic';
 import { Global, Module } from '@nestjs/common';
 import { CredentialResolver } from '../onboarding';
-import {
-  JOB_TITLE_CHAIN,
-  JobTitleChain,
-  type JobTitleChainFactory,
-} from './job-title.chain';
+import { JOB_TITLE_CHAIN, JobTitleChain, type JobTitleChainFactory } from './job-title.chain';
 import { JobTitler } from './job-titler.service';
 
 /**

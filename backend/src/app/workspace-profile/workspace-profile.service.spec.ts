@@ -48,8 +48,7 @@ function make(overrides?: {
   const skills = { rowsForTurn: async () => o.skillRows ?? [] };
   const conventions = {
     attachedSlug: async () => o.slug ?? null,
-    resolveForRepo: async () =>
-      o.conventionName ? { name: o.conventionName, body: 'b' } : null,
+    resolveForRepo: async () => (o.conventionName ? { name: o.conventionName, body: 'b' } : null),
   };
   return new WorkspaceProfileService(
     workspaceConfig as never,
@@ -67,9 +66,7 @@ describe('WorkspaceProfileService.describe', () => {
       setupScript: 'pnpm install',
       previewInstructions: 'docker compose up',
       secretFiles: [{ path: '.env', label: 'env' }],
-      mcpRows: [
-        { name: 'github', scope: '*', surfaces: ['build'], enabled: true },
-      ],
+      mcpRows: [{ name: 'github', scope: '*', surfaces: ['build'], enabled: true }],
       skillRows: [
         {
           name: 'migrations',
@@ -155,9 +152,7 @@ describe('WorkspaceProfileService.computeGaps / renderGaps', () => {
 
   it('flags an approved MCP server with an unfilled secret slot (names only, no values, names the fix tool)', async () => {
     const svc = make({
-      unfilledSlots: [
-        { name: 'github', scope: 'repo', slots: ['header:Authorization'] },
-      ],
+      unfilledSlots: [{ name: 'github', scope: 'repo', slots: ['header:Authorization'] }],
     });
     const gaps = await svc.computeGaps('org1', 'repo-1');
     expect(gaps).toHaveLength(1);
@@ -171,10 +166,7 @@ describe('WorkspaceProfileService.computeGaps / renderGaps', () => {
 
   it('flags a NEW manifest not yet acknowledged, once the profile is seeded', async () => {
     const svc = make({ seenManifests: ['package.json'] });
-    const gaps = await svc.computeGaps('org1', 'repo-1', [
-      'package.json',
-      'go.mod',
-    ]);
+    const gaps = await svc.computeGaps('org1', 'repo-1', ['package.json', 'go.mod']);
     expect(gaps).toHaveLength(1);
     expect(gaps[0].kind).toBe('new_stack');
     expect(gaps[0].detail).toContain('go.mod');
@@ -183,16 +175,12 @@ describe('WorkspaceProfileService.computeGaps / renderGaps', () => {
 
   it('never flags a new stack before the profile is seeded (seen === null)', async () => {
     const svc = make({ seenManifests: null });
-    expect(
-      await svc.computeGaps('org1', 'repo-1', ['package.json', 'go.mod']),
-    ).toEqual([]);
+    expect(await svc.computeGaps('org1', 'repo-1', ['package.json', 'go.mod'])).toEqual([]);
   });
 
   it('no new-stack gap when every current manifest is already acknowledged', async () => {
     const svc = make({ seenManifests: ['package.json', 'go.mod'] });
-    expect(await svc.computeGaps('org1', 'repo-1', ['package.json'])).toEqual(
-      [],
-    );
+    expect(await svc.computeGaps('org1', 'repo-1', ['package.json'])).toEqual([]);
   });
 
   it('flags a static server whose auth broke with the request_secret + reset_sandbox fix', async () => {
@@ -237,9 +225,7 @@ describe('WorkspaceProfileService.computeGaps / renderGaps', () => {
 
   it('does not double-report a never-filled slot as broken_auth (unfilled wins)', async () => {
     const svc = make({
-      unfilledSlots: [
-        { name: 'github', scope: 'repo-1', slots: ['header:Authorization'] },
-      ],
+      unfilledSlots: [{ name: 'github', scope: 'repo-1', slots: ['header:Authorization'] }],
       authFailing: [
         {
           name: 'github',

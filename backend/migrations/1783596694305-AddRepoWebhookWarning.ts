@@ -8,8 +8,6 @@ export class AddRepoWebhookWarning1783600000000 implements MigrationInterface {
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `ALTER TABLE "repos" DROP COLUMN "webhook_warning"`,
-    );
+    await queryRunner.query(`ALTER TABLE "repos" DROP COLUMN "webhook_warning"`);
   }
 }

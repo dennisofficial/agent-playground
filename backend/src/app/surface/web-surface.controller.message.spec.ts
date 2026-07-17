@@ -51,14 +51,12 @@ function freshCards(): Record<string, Record<string, unknown>> {
 function makeController() {
   const cards = freshCards();
   const threads = {
-    findOne: vi.fn(
-      async ({ where }: { where: { id: string; org_id: string } }) => ({
-        id: where.id,
-        org_id: where.org_id,
-        repo_id: 'repo-1',
-        awaiting_secret_id: null,
-      }),
-    ),
+    findOne: vi.fn(async ({ where }: { where: { id: string; org_id: string } }) => ({
+      id: where.id,
+      org_id: where.org_id,
+      repo_id: 'repo-1',
+      awaiting_secret_id: null,
+    })),
   };
   const messages = {
     findOne: vi.fn(async ({ where }: { where: { ts: string } }) => {
@@ -78,12 +76,7 @@ function makeController() {
   const surface = {
     name: 'web',
     seedSystemNotification: vi.fn(
-      (
-        _channel: string,
-        _jobId: string,
-        body: string,
-        opts: Record<string, unknown>,
-      ) => {
+      (_channel: string, _jobId: string, body: string, opts: Record<string, unknown>) => {
         seedCalls.push({ body, opts });
         return 'ts-batch';
       },
@@ -198,9 +191,7 @@ describe('WebSurfaceController — /message (card batch, no operator text)', () 
     const { controller, store, secrets } = makeController();
     await expect(
       controller.postMessage(owner, {} as never, 'job-1', {
-        messages: [
-          { type: 'answer_question', questionId: 'q-1', answer: '   ' },
-        ],
+        messages: [{ type: 'answer_question', questionId: 'q-1', answer: '   ' }],
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
     await expect(
@@ -217,9 +208,7 @@ describe('WebSurfaceController — /message (card batch, no operator text)', () 
     ).rejects.toBeInstanceOf(BadRequestException);
     await expect(
       controller.postMessage(owner, {} as never, 'job-1', {
-        messages: [
-          { type: 'bogus', requestId: 'f-1', content: 'A=1' } as never,
-        ],
+        messages: [{ type: 'bogus', requestId: 'f-1', content: 'A=1' } as never],
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
 
@@ -231,9 +220,7 @@ describe('WebSurfaceController — /message (card batch, no operator text)', () 
     const { controller, seedCalls } = makeController();
     // Question-only — membership suffices, no 403.
     const ok = await controller.postMessage(member, {} as never, 'job-1', {
-      messages: [
-        { type: 'answer_question', questionId: 'q-1', answer: 'Postgres' },
-      ],
+      messages: [{ type: 'answer_question', questionId: 'q-1', answer: 'Postgres' }],
     });
     expect(ok.ok).toBe(true);
     expect(seedCalls).toHaveLength(1);
@@ -241,9 +228,7 @@ describe('WebSurfaceController — /message (card batch, no operator text)', () 
     // A secret item requires owner.
     await expect(
       controller.postMessage(member, {} as never, 'job-1', {
-        messages: [
-          { type: 'secret_provided', requestId: 's-1', value: 'x' },
-        ],
+        messages: [{ type: 'secret_provided', requestId: 's-1', value: 'x' }],
       }),
     ).rejects.toBeInstanceOf(ForbiddenException);
     // A file item requires owner.
@@ -265,9 +250,7 @@ describe('WebSurfaceController — /message (card batch, no operator text)', () 
     const { controller, store, secrets, seedCalls } = makeController();
     await expect(
       controller.postMessage(owner, {} as never, 'job-1', {
-        messages: [
-          { type: 'secret_provided', requestId: 's-eph', value: '123456' },
-        ],
+        messages: [{ type: 'secret_provided', requestId: 's-eph', value: '123456' }],
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
     // Never written, never seeded.
@@ -313,8 +296,7 @@ describe('WebSurfaceController — /message (card batch, no operator text)', () 
 
 describe('WebSurfaceController — /message (mixed: answered cards + an operator message)', () => {
   it('composes ONE pre-framed seed turn (answer notices + the operator message, user-last) and delivers it via StimulusIntake', async () => {
-    const { controller, store, secrets, seedCalls, intake, composedCalls } =
-      makeController();
+    const { controller, store, secrets, seedCalls, intake, composedCalls } = makeController();
     const user = { id: 'u-1', displayName: 'Dennis', name: 'Dennis' };
     const res = await controller.postMessage(owner, user as never, 'job-1', {
       messages: [

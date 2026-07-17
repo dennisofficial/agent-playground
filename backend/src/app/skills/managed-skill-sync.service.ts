@@ -7,27 +7,14 @@ import {
   type OnApplicationShutdown,
 } from '@nestjs/common';
 import { SchedulerRegistry } from '@nestjs/schedule';
-import {
-  cpSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { LeaderElectionService } from '../cluster';
 import { LocalGitService } from '../git/local-git.service';
-import {
-  managedGitSkillDirHost,
-  managedGitSkillsRootHost,
-} from './skill-store-paths';
-import {
-  buildSystemSkills,
-  type SystemSkillGitSource,
-} from './system-skill-registry';
+import { managedGitSkillDirHost, managedGitSkillsRootHost } from './skill-store-paths';
+import { buildSystemSkills, type SystemSkillGitSource } from './system-skill-registry';
 
 /** How often the leader re-checks every git-sourced managed skill against its remote — mirrors
  *  `SkillUpdaterService.RECONCILE_INTERVAL_MS`; this tier moves just as rarely. */
@@ -50,9 +37,7 @@ const MANAGED_SKILL_SYNC_INTERVAL = 'skills:managed-skill-sync';
  * bad subpath is logged and skipped, never thrown past `syncAll` — this must not be able to wedge boot.
  */
 @Injectable()
-export class ManagedSkillSyncService
-  implements OnApplicationBootstrap, OnApplicationShutdown
-{
+export class ManagedSkillSyncService implements OnApplicationBootstrap, OnApplicationShutdown {
   private readonly logger = new Logger(ManagedSkillSyncService.name);
   private promoteSub?: { unsubscribe(): void };
   private demoteSub?: { unsubscribe(): void };
@@ -83,8 +68,7 @@ export class ManagedSkillSyncService
 
   private start(): void {
     if (!this.scheduler) return;
-    if (this.scheduler.doesExist('interval', MANAGED_SKILL_SYNC_INTERVAL))
-      return;
+    if (this.scheduler.doesExist('interval', MANAGED_SKILL_SYNC_INTERVAL)) return;
     void this.syncAll(); // boot/promotion sweep
     const iv = setInterval(() => void this.syncAll(), RECONCILE_INTERVAL_MS);
     iv.unref?.(); // never keep the process alive (SchedulerRegistry does not unref for us)
@@ -104,9 +88,7 @@ export class ManagedSkillSyncService
     for (const s of buildSystemSkills()) {
       if (!s.git) continue;
       await this.syncOne(s.name, s.git).catch((err) =>
-        this.logger.warn(
-          `managed-skill sync failed name=${s.name} url=${s.git?.url}: ${err}`,
-        ),
+        this.logger.warn(`managed-skill sync failed name=${s.name} url=${s.git?.url}: ${err}`),
       );
     }
   }
@@ -124,15 +106,10 @@ export class ManagedSkillSyncService
     );
   }
 
-  private async syncOne(
-    name: string,
-    source: SystemSkillGitSource,
-  ): Promise<void> {
+  private async syncOne(name: string, source: SystemSkillGitSource): Promise<void> {
     const head = await this.git.resolveRemoteRef(source.url, source.ref);
     const marker = this.shaMarkerPath(name);
-    const current = existsSync(marker)
-      ? readFileSync(marker, 'utf8').trim()
-      : undefined;
+    const current = existsSync(marker) ? readFileSync(marker, 'utf8').trim() : undefined;
     if (current === head.sha) return; // already current — the common path on every non-boot tick
 
     const tmpDir = await mkdtemp(join(tmpdir(), 'atlas-managed-skill-sync-'));
@@ -140,9 +117,7 @@ export class ManagedSkillSyncService
       await this.git.shallowCloneToPath(source.url, head.ref, tmpDir);
       const srcDir = join(tmpDir, source.subpath);
       if (!existsSync(join(srcDir, 'SKILL.md'))) {
-        throw new Error(
-          `no SKILL.md at subpath '${source.subpath}' in ${source.url}@${head.ref}`,
-        );
+        throw new Error(`no SKILL.md at subpath '${source.subpath}' in ${source.url}@${head.ref}`);
       }
       const dest = managedGitSkillDirHost(this.root(), name);
       rmSync(dest, { recursive: true, force: true });

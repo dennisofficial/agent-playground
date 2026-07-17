@@ -25,10 +25,7 @@ export function isHttpsGithub(gitUrl: string): boolean {
  * needs no credentials). `GIT_TERMINAL_PROMPT=0` (set by the caller) blocks interactive prompts; blanking
  * the helper closes the non-interactive cached-credential path too.
  */
-export function gitAuthEnv(
-  gitUrl: string,
-  token: string | undefined,
-): Record<string, string> {
+export function gitAuthEnv(gitUrl: string, token: string | undefined): Record<string, string> {
   if (!isHttpsGithub(gitUrl)) return {};
   if (!token) {
     // No per-org token → disable all credential helpers so git can't reach host ambient GitHub creds.
@@ -56,10 +53,7 @@ export function gitAuthEnv(
  * the url scoping.) The `!`-prefixed shell helper `cat`s the token file on every `get`, so git/push/fetch
  * always reads the current token regardless of turn length.
  */
-export function gitCredHelperEnv(
-  gitUrl: string,
-  tokenFilePath: string,
-): Record<string, string> {
+export function gitCredHelperEnv(gitUrl: string, tokenFilePath: string): Record<string, string> {
   if (!isHttpsGithub(gitUrl)) return {};
   const helper = `!f() { test "$1" = get && { echo username=x-access-token; echo "password=$(cat ${shQuote(tokenFilePath)})"; }; }; f`;
   return {
@@ -76,9 +70,7 @@ export function parseGithubRepo(gitUrl: string): {
   owner: string;
   repo: string;
 } {
-  const m = gitUrl.match(
-    /^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/,
-  );
+  const m = gitUrl.match(/^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/);
   if (!m) throw new Error(`Not an HTTPS GitHub repo URL: ${gitUrl}`);
   return { owner: m[1], repo: m[2] };
 }

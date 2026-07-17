@@ -12,9 +12,9 @@
  * (`terminal_reason:'completed'`, or absent + `stop_reason:'end_turn'`). A paused/interrupted success
  * result (rate-limit / retry / budget) keeps input OPEN so the pending host-tool call still succeeds.
  */
+import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { rmSync } from 'node:fs';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { EngineCore } from './engine-core';
 import type { EngineHomeKey } from './engine-home';
@@ -26,13 +26,11 @@ afterAll(() => rmSync(HOME_ROOT, { recursive: true, force: true }));
 const idleSteerInput: AsyncIterable<{ id?: string; text: string }> = {
   [Symbol.asyncIterator]() {
     return {
-      next: () =>
-        new Promise<IteratorResult<{ id?: string; text: string }>>(() => {}),
+      next: () => new Promise<IteratorResult<{ id?: string; text: string }>>(() => {}),
     };
   },
 };
-const sleep = (ms: number): Promise<void> =>
-  new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 type ResultFields = { terminal_reason?: string; stop_reason?: string | null };
 type RunState = {
@@ -48,12 +46,7 @@ type RunState = {
  */
 function streamClosedSdk(resultFields: ResultFields, state: RunState) {
   return {
-    query: ({
-      prompt,
-    }: {
-      prompt: AsyncIterable<unknown>;
-      options: Record<string, unknown>;
-    }) =>
+    query: ({ prompt }: { prompt: AsyncIterable<unknown>; options: Record<string, unknown> }) =>
       (async function* () {
         // Background: drain the engine's manual input stream; note when it ENDS (input.end()).
         let inputClosed = false;
@@ -150,11 +143,9 @@ async function runTurn(
 ): Promise<{ state: RunState; toolResults: ToolResult[] }> {
   const state: RunState = {};
   const toolResults: ToolResult[] = [];
-  const core = new EngineCore(
-    streamClosedSdk(resultFields, state),
-    {} as never,
-    { homeRoot: HOME_ROOT },
-  );
+  const core = new EngineCore(streamClosedSdk(resultFields, state), {} as never, {
+    homeRoot: HOME_ROOT,
+  });
   await core.run({
     engine: 'claude',
     task: 'trace the withdraw flow and post the scope card',
@@ -170,12 +161,7 @@ async function runTurn(
     richStream: true,
     auth: { secret: 'oauth-tok' },
     steerInput: idleSteerInput,
-    onEvent: (e: {
-      kind: string;
-      id?: string;
-      isError?: boolean;
-      result?: unknown;
-    }) => {
+    onEvent: (e: { kind: string; id?: string; isError?: boolean; result?: unknown }) => {
       if (e.kind === 'tool_result')
         toolResults.push({
           id: e.id ?? '',
@@ -308,8 +294,7 @@ function toolResultStreamSdk(
   } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
 }
 
-const STREAM_CLOSED_TEXT =
-  'Tool permission request failed: Error: Stream closed';
+const STREAM_CLOSED_TEXT = 'Tool permission request failed: Error: Stream closed';
 const HEALTHY_TEXT = 'ok';
 
 function runCircuitTurn(
@@ -338,8 +323,7 @@ function runCircuitTurn(
 describe('EngineCore — stream-closed circuit breaker (d1)', () => {
   const ORIG_THRESHOLD = process.env.ENGINE_STREAM_CLOSED_THRESHOLD;
   afterEach(() => {
-    if (ORIG_THRESHOLD === undefined)
-      delete process.env.ENGINE_STREAM_CLOSED_THRESHOLD;
+    if (ORIG_THRESHOLD === undefined) delete process.env.ENGINE_STREAM_CLOSED_THRESHOLD;
     else process.env.ENGINE_STREAM_CLOSED_THRESHOLD = ORIG_THRESHOLD;
   });
 

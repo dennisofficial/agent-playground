@@ -57,9 +57,7 @@ export class GithubAppController {
     @CurrentUser() user: UserEntity,
   ): Promise<{ url: string }> {
     if (!this.appTokens.isConfigured()) {
-      throw new BadRequestException(
-        'GitHub App is not configured on this server',
-      );
+      throw new BadRequestException('GitHub App is not configured on this server');
     }
     const nonce = await this.stateStore.stash(org.id, user.id);
     const slug = await this.appTokens.appSlug();
@@ -78,14 +76,10 @@ export class GithubAppController {
     const creds = await this.store.read(org.id);
     if (body.mode === 'app') {
       if (!creds?.githubAppInstallationId) {
-        throw new BadRequestException(
-          'Connect the GitHub App before switching to app mode',
-        );
+        throw new BadRequestException('Connect the GitHub App before switching to app mode');
       }
     } else if (!creds?.githubPat) {
-      throw new BadRequestException(
-        'Save a GitHub PAT before switching to PAT mode',
-      );
+      throw new BadRequestException('Save a GitHub PAT before switching to PAT mode');
     }
     await this.store.write(org.id, { githubAuthMode: body.mode });
     await this.onboarding.tryActivate(org.id);
@@ -173,18 +167,14 @@ export class GithubAppCallbackController {
 
     const consumed = await this.stateStore.consume(state);
     if (!consumed) {
-      this.logger.warn(
-        'github app callback: unknown, expired, or already-used state',
-      );
+      this.logger.warn('github app callback: unknown, expired, or already-used state');
       res.redirect(302, `${frontend}/?githubApp=error&reason=invalid_state`);
       return;
     }
     const { orgId, userId } = consumed;
     const settingsUrl = `${frontend}/orgs/${orgId}/settings`;
 
-    const installation = await this.appTokens
-      .getInstallation(installationId)
-      .catch(() => null);
+    const installation = await this.appTokens.getInstallation(installationId).catch(() => null);
     const mintedOk = await this.appTokens
       .getInstallationToken(installationId)
       .then(() => true)
@@ -193,32 +183,21 @@ export class GithubAppCallbackController {
       this.logger.warn(
         `github app callback: installation ${installationId} failed verification for org ${orgId}`,
       );
-      res.redirect(
-        302,
-        `${settingsUrl}?githubApp=error&reason=verification_failed`,
-      );
+      res.redirect(302, `${settingsUrl}?githubApp=error&reason=verification_failed`);
       return;
     }
 
     // Common-ownership reuse gate: an installation already held by ANOTHER org may be linked here only
     // when the initiating user also owns one of those holder orgs (spreading their own installation
     // across their own orgs). Otherwise it's a cross-tenant takeover attempt — refuse.
-    const otherHolders = await this.store.orgsHoldingInstallation(
-      installationId,
-      orgId,
-    );
+    const otherHolders = await this.store.orgsHoldingInstallation(installationId, orgId);
     if (otherHolders.length > 0) {
-      const mayReuse = userId
-        ? await this.orgs.ownsAnyOf(userId, otherHolders)
-        : false;
+      const mayReuse = userId ? await this.orgs.ownsAnyOf(userId, otherHolders) : false;
       if (!mayReuse) {
         this.logger.warn(
           `github app callback: installation ${installationId} held by another owner's org — denying reuse for org ${orgId}`,
         );
-        res.redirect(
-          302,
-          `${settingsUrl}?githubApp=error&reason=already_connected`,
-        );
+        res.redirect(302, `${settingsUrl}?githubApp=error&reason=already_connected`);
         return;
       }
     }
@@ -230,9 +209,7 @@ export class GithubAppCallbackController {
 
     // Best-effort — never fail the redirect over an activation hiccup.
     await this.onboarding.tryActivate(orgId).catch((err) => {
-      this.logger.warn(
-        `github app callback: tryActivate failed for org ${orgId}: ${err}`,
-      );
+      this.logger.warn(`github app callback: tryActivate failed for org ${orgId}: ${err}`);
     });
 
     res.redirect(302, `${settingsUrl}?githubApp=connected`);

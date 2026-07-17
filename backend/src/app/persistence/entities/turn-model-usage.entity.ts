@@ -1,14 +1,7 @@
-import {
-  Column,
-  Entity,
-  Index,
-  JoinColumn,
-  ManyToOne,
-  PrimaryColumn,
-} from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
-import { TurnStatsEntity } from './turn-stats.entity';
+import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryColumn } from 'typeorm';
 import { numberColumn } from './numeric.transformer';
+import { TurnStatsEntity } from './turn-stats.entity';
 
 /**
  * One row per (turn, model) — the SDK's `result.modelUsage` map exploded into a typed table, so

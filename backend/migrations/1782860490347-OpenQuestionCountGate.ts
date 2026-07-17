@@ -11,9 +11,7 @@ export class OpenQuestionCountGate1782860490347 implements MigrationInterface {
   name = 'OpenQuestionCountGate1782860490347';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `ALTER TABLE "threads" DROP COLUMN "awaiting_question_id"`,
-    );
+    await queryRunner.query(`ALTER TABLE "threads" DROP COLUMN "awaiting_question_id"`);
     await queryRunner.query(
       `ALTER TABLE "threads" ADD "open_question_count" integer NOT NULL DEFAULT '0'`,
     );
@@ -29,11 +27,7 @@ export class OpenQuestionCountGate1782860490347 implements MigrationInterface {
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `ALTER TABLE "threads" DROP COLUMN "open_question_count"`,
-    );
-    await queryRunner.query(
-      `ALTER TABLE "threads" ADD "awaiting_question_id" text`,
-    );
+    await queryRunner.query(`ALTER TABLE "threads" DROP COLUMN "open_question_count"`);
+    await queryRunner.query(`ALTER TABLE "threads" ADD "awaiting_question_id" text`);
   }
 }

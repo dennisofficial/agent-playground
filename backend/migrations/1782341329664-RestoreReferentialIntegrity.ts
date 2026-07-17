@@ -173,24 +173,16 @@ export class RestoreReferentialIntegrity1782341329664 implements MigrationInterf
     await queryRunner.query(
       `ALTER TABLE "phases" DROP CONSTRAINT "fk_phases_org_id_organizations"`,
     );
-    await queryRunner.query(
-      `ALTER TABLE "phases" DROP CONSTRAINT "fk_phases_thread_id_threads"`,
-    );
-    await queryRunner.query(
-      `ALTER TABLE "phases" DROP CONSTRAINT "fk_phases_section_id_sections"`,
-    );
+    await queryRunner.query(`ALTER TABLE "phases" DROP CONSTRAINT "fk_phases_thread_id_threads"`);
+    await queryRunner.query(`ALTER TABLE "phases" DROP CONSTRAINT "fk_phases_section_id_sections"`);
     await queryRunner.query(
       `ALTER TABLE "sections" DROP CONSTRAINT "fk_sections_org_id_organizations"`,
     );
     await queryRunner.query(
       `ALTER TABLE "sections" DROP CONSTRAINT "fk_sections_thread_id_threads"`,
     );
-    await queryRunner.query(
-      `ALTER TABLE "stimuli" DROP CONSTRAINT "fk_stimuli_thread_id_threads"`,
-    );
-    await queryRunner.query(
-      `ALTER TABLE "stimuli" DROP CONSTRAINT "fk_stimuli_repo_id_repos"`,
-    );
+    await queryRunner.query(`ALTER TABLE "stimuli" DROP CONSTRAINT "fk_stimuli_thread_id_threads"`);
+    await queryRunner.query(`ALTER TABLE "stimuli" DROP CONSTRAINT "fk_stimuli_repo_id_repos"`);
     await queryRunner.query(
       `ALTER TABLE "stimuli" DROP CONSTRAINT "fk_stimuli_org_id_organizations"`,
     );
@@ -200,9 +192,7 @@ export class RestoreReferentialIntegrity1782341329664 implements MigrationInterf
     await queryRunner.query(
       `ALTER TABLE "threads" DROP CONSTRAINT "fk_threads_decision_record_id_decision_records"`,
     );
-    await queryRunner.query(
-      `ALTER TABLE "threads" DROP CONSTRAINT "fk_threads_repo_id_repos"`,
-    );
+    await queryRunner.query(`ALTER TABLE "threads" DROP CONSTRAINT "fk_threads_repo_id_repos"`);
     await queryRunner.query(
       `ALTER TABLE "threads" DROP CONSTRAINT "fk_threads_org_id_organizations"`,
     );
@@ -218,9 +208,7 @@ export class RestoreReferentialIntegrity1782341329664 implements MigrationInterf
     await queryRunner.query(
       `ALTER TABLE "decision_records" DROP CONSTRAINT "fk_decision_records_org_id_organizations"`,
     );
-    await queryRunner.query(
-      `ALTER TABLE "repos" DROP CONSTRAINT "fk_repos_org_id_organizations"`,
-    );
+    await queryRunner.query(`ALTER TABLE "repos" DROP CONSTRAINT "fk_repos_org_id_organizations"`);
     await queryRunner.query(
       `ALTER TABLE "org_invites" DROP CONSTRAINT "fk_org_invites_accepted_by_users"`,
     );

@@ -18,15 +18,7 @@ describe('thread-group-kind registry', () => {
 
   it('defines all five thread-group kinds exactly once', () => {
     const kinds = THREAD_GROUP_KIND_SPECS.map((s) => s.kind).sort();
-    expect(kinds).toEqual(
-      [
-        'planning',
-        'section',
-        'master_review',
-        'post_build',
-        'ship',
-      ].sort(),
-    );
+    expect(kinds).toEqual(['planning', 'section', 'master_review', 'post_build', 'ship'].sort());
   });
 
   it('section contains sequential builder legs (d1) + 0..N review_agent + exactly one review_fix', () => {
@@ -46,11 +38,7 @@ describe('thread-group-kind registry', () => {
 
   it('planning requires a title (round disambiguation); other singleton kinds do not', () => {
     expect(threadGroupKindSpec('planning').titleRequired).toBe(true);
-    for (const kind of [
-      'master_review',
-      'post_build',
-      'ship',
-    ] as const) {
+    for (const kind of ['master_review', 'post_build', 'ship'] as const) {
       expect(threadGroupKindSpec(kind).titleRequired).toBe(false);
     }
   });
@@ -75,12 +63,8 @@ describe('thread-group-kind registry', () => {
   it('spawnAt names the orchestration seam for every kind', () => {
     expect(threadGroupKindSpec('planning').spawnAt).toBe('job_start');
     expect(threadGroupKindSpec('section').spawnAt).toBe('dispatch');
-    expect(threadGroupKindSpec('master_review').spawnAt).toBe(
-      'after_build_thread_groups',
-    );
-    expect(threadGroupKindSpec('post_build').spawnAt).toBe(
-      'after_master_review',
-    );
+    expect(threadGroupKindSpec('master_review').spawnAt).toBe('after_build_thread_groups');
+    expect(threadGroupKindSpec('post_build').spawnAt).toBe('after_master_review');
     expect(threadGroupKindSpec('ship').spawnAt).toBe('after_ship');
   });
 
@@ -96,18 +80,10 @@ describe('thread-group-kind registry', () => {
     });
 
     it('throws on an unrecognized value (strict, unlike ThreadType\'s "general" fallback)', () => {
-      expect(() => coerceThreadGroupKind('bogus')).toThrow(
-        /not a valid ThreadGroupKind/,
-      );
-      expect(() => coerceThreadGroupKind('')).toThrow(
-        /not a valid ThreadGroupKind/,
-      );
-      expect(() => coerceThreadGroupKind(undefined)).toThrow(
-        /not a valid ThreadGroupKind/,
-      );
-      expect(() => coerceThreadGroupKind(null)).toThrow(
-        /not a valid ThreadGroupKind/,
-      );
+      expect(() => coerceThreadGroupKind('bogus')).toThrow(/not a valid ThreadGroupKind/);
+      expect(() => coerceThreadGroupKind('')).toThrow(/not a valid ThreadGroupKind/);
+      expect(() => coerceThreadGroupKind(undefined)).toThrow(/not a valid ThreadGroupKind/);
+      expect(() => coerceThreadGroupKind(null)).toThrow(/not a valid ThreadGroupKind/);
     });
   });
 
@@ -118,9 +94,7 @@ describe('thread-group-kind registry', () => {
   });
 
   it('validateThreadGroupKinds rejects a kind with no roles', () => {
-    const bad: ThreadGroupKindSpec[] = [
-      { ...threadGroupKindSpec('planning'), roles: [] },
-    ];
+    const bad: ThreadGroupKindSpec[] = [{ ...threadGroupKindSpec('planning'), roles: [] }];
     expect(() => validateThreadGroupKinds(bad)).toThrow(/declares no roles/);
   });
 
@@ -131,9 +105,7 @@ describe('thread-group-kind registry', () => {
         roles: [{ role: 'ghost' as never, min: 1, max: 1 }],
       },
     ];
-    expect(() => validateThreadGroupKinds(bad)).toThrow(
-      /unknown role "ghost"/,
-    );
+    expect(() => validateThreadGroupKinds(bad)).toThrow(/unknown role "ghost"/);
   });
 
   it('validateThreadGroupKinds rejects a role with max < min', () => {

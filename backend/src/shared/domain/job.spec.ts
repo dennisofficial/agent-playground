@@ -24,9 +24,7 @@ describe('deriveNeedsYou', () => {
     for (const status of ['merged', 'cancelled', 'deleting']) {
       expect(deriveNeedsYou(at({ status }))).toBe(false);
       // Terminal wins over every gate — even an open question cannot light a dying job's dot.
-      expect(
-        deriveNeedsYou(at({ status, openQuestion: true, awaitingSecret: true })),
-      ).toBe(false);
+      expect(deriveNeedsYou(at({ status, openQuestion: true, awaitingSecret: true }))).toBe(false);
     }
   });
 
@@ -38,7 +36,15 @@ describe('deriveNeedsYou', () => {
 
   it('is false in a system-owned phase with no gate', () => {
     // These phases are the system's to advance — an ungated job there waits on the pipeline, not the operator.
-    for (const status of ['scoping', 'planning', 'plan_reviewing', 'building', 'master_review', 'shipping', 'pr_open']) {
+    for (const status of [
+      'scoping',
+      'planning',
+      'plan_reviewing',
+      'building',
+      'master_review',
+      'shipping',
+      'pr_open',
+    ]) {
       expect(deriveNeedsYou(at({ status }))).toBe(false);
     }
   });
@@ -48,30 +54,16 @@ describe('deriveNeedsYou', () => {
   });
 
   it('an open question lights the dot in any non-terminal, non-blocked phase', () => {
-    expect(deriveNeedsYou(at({ status: 'building', openQuestion: true }))).toBe(
-      true,
-    );
-    expect(deriveNeedsYou(at({ status: 'scoping', openQuestion: true }))).toBe(
-      true,
-    );
+    expect(deriveNeedsYou(at({ status: 'building', openQuestion: true }))).toBe(true);
+    expect(deriveNeedsYou(at({ status: 'scoping', openQuestion: true }))).toBe(true);
     // But never for a terminal or dependency-parked job.
-    expect(
-      deriveNeedsYou(at({ status: 'merged', openQuestion: true })),
-    ).toBe(false);
-    expect(
-      deriveNeedsYou(at({ status: 'blocked', openQuestion: true })),
-    ).toBe(false);
+    expect(deriveNeedsYou(at({ status: 'merged', openQuestion: true }))).toBe(false);
+    expect(deriveNeedsYou(at({ status: 'blocked', openQuestion: true }))).toBe(false);
   });
 
   it('an outstanding secret request lights the dot in any non-terminal, non-blocked phase', () => {
-    expect(
-      deriveNeedsYou(at({ status: 'building', awaitingSecret: true })),
-    ).toBe(true);
-    expect(deriveNeedsYou(at({ status: 'scoping', awaitingSecret: true }))).toBe(
-      true,
-    );
-    expect(
-      deriveNeedsYou(at({ status: 'deleting', awaitingSecret: true })),
-    ).toBe(false);
+    expect(deriveNeedsYou(at({ status: 'building', awaitingSecret: true }))).toBe(true);
+    expect(deriveNeedsYou(at({ status: 'scoping', awaitingSecret: true }))).toBe(true);
+    expect(deriveNeedsYou(at({ status: 'deleting', awaitingSecret: true }))).toBe(false);
   });
 });

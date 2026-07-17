@@ -1,9 +1,9 @@
 /**
  * prompt-kit / jit — specs for the `plan-approved` JIT rule (Thread 6: approval-gated dispatch).
  */
-import { describe, it, expect } from 'vitest';
-import { findLifecycleRule } from './rules';
+import { describe, expect, it } from 'vitest';
 import { planApprovedRule, renderPlanApprovedSeed } from './plan-approved';
+import { findLifecycleRule } from './rules';
 
 describe('renderPlanApprovedSeed', () => {
   it('full plan: instructs rebase + auto-resolve conflicts, dispatch_build, hold_build, and names the base', () => {
@@ -53,9 +53,7 @@ describe('planApprovedRule', () => {
     expect(planApprovedRule.seed?.chunkKey({ decisionRecordId: 'dr-1' })).toBe(
       'seed:plan-approved:dr-1',
     );
-    expect(planApprovedRule.seed?.chunkKey({ jobId: 'J' })).toBe(
-      'seed:plan-approved:J',
-    );
+    expect(planApprovedRule.seed?.chunkKey({ jobId: 'J' })).toBe('seed:plan-approved:J');
   });
 
   it('findLifecycleRule resolves plan-approved to planApprovedRule', () => {

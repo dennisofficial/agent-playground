@@ -14,16 +14,12 @@
  *  (g) removeDependency manually lifts an edge and reports it as `removed` in the roster.
  */
 
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
-import {
-  TypeOrmModule,
-  getDataSourceToken,
-  getRepositoryToken,
-} from '@nestjs/typeorm';
+import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
+import type { UnblockBlockerInfo } from '@shared/domain';
 import { DataSource, Repository } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
-import type { UnblockBlockerInfo } from '@shared/domain';
 import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy';
 import { BrainGateway } from '../brain-gateway';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -69,10 +65,7 @@ describe('JobDependencyService (live Postgres)', () => {
 
   beforeAll(async () => {
     mod = await Test.createTestingModule({
-      imports: [
-        TypeOrmModule.forRoot(dbOpts()),
-        TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION),
-      ],
+      imports: [TypeOrmModule.forRoot(dbOpts()), TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION)],
       providers: [
         JobDependencyService,
         {
@@ -131,9 +124,7 @@ describe('JobDependencyService (live Postgres)', () => {
     wakes = [];
   });
 
-  async function makeJob(
-    overrides: Partial<JobEntity> = {},
-  ): Promise<JobEntity> {
+  async function makeJob(overrides: Partial<JobEntity> = {}): Promise<JobEntity> {
     return jobs.save(
       jobs.create({
         org_id: ORG_ID,
@@ -225,10 +216,7 @@ describe('JobDependencyService (live Postgres)', () => {
     });
 
     // The blocker's PR merges.
-    await jobs.update(
-      { id: blocker.id },
-      { pr_state: 'merged', status: 'done' },
-    );
+    await jobs.update({ id: blocker.id }, { pr_state: 'merged', status: 'done' });
     await service.onBlockerResolved(blocker.id, 'merged');
 
     const reloaded = await jobs.findOneByOrFail({ id: dependent.id });
@@ -239,9 +227,7 @@ describe('JobDependencyService (live Postgres)', () => {
       jobId: dependent.id,
       seed: 'build the follow-up',
     });
-    expect(wakes[0].blockers).toEqual([
-      { jobId: blocker.id, title: 'A job', how: 'merged' },
-    ]);
+    expect(wakes[0].blockers).toEqual([{ jobId: blocker.id, title: 'A job', how: 'merged' }]);
   });
 
   // ── (d) multi-blocker: stays blocked until the LAST blocker resolves ───────────────────────────
@@ -265,17 +251,13 @@ describe('JobDependencyService (live Postgres)', () => {
     // First blocker merges — dependent still blocked on c.
     await jobs.update({ id: a.id }, { pr_state: 'merged', status: 'done' });
     await service.onBlockerResolved(a.id, 'merged');
-    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe(
-      'blocked',
-    );
+    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe('blocked');
     expect(wakes).toHaveLength(0);
 
     // Last blocker merges — now it unblocks.
     await jobs.update({ id: c.id }, { pr_state: 'merged', status: 'done' });
     await service.onBlockerResolved(c.id, 'merged');
-    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe(
-      'open',
-    );
+    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe('open');
     expect(wakes).toHaveLength(1);
     expect(wakes[0].blockers.map((b) => b.how)).toEqual(['merged', 'merged']); // both merged cleanly
   });
@@ -291,15 +273,10 @@ describe('JobDependencyService (live Postgres)', () => {
       dependsOnJobId: blocker.id,
     });
 
-    await jobs.update(
-      { id: blocker.id },
-      { pr_state: 'closed', status: 'done' },
-    );
+    await jobs.update({ id: blocker.id }, { pr_state: 'closed', status: 'done' });
     await service.onBlockerResolved(blocker.id, 'closed_unmerged');
 
-    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe(
-      'open',
-    );
+    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe('open');
     expect(wakes).toHaveLength(1);
     expect(wakes[0].blockers).toEqual([
       { jobId: blocker.id, title: 'A job', how: 'closed_unmerged' },
@@ -319,9 +296,7 @@ describe('JobDependencyService (live Postgres)', () => {
     await jobs.update({ id: blocker.id }, { status: 'cancelled' });
     await service.onBlockerResolved(blocker.id, 'cancelled');
 
-    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe(
-      'open',
-    );
+    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe('open');
     expect(wakes[0].blockers).toEqual([
       { jobId: blocker.id, title: 'the blocker', how: 'cancelled' },
     ]);
@@ -341,12 +316,8 @@ describe('JobDependencyService (live Postgres)', () => {
     // from state, so the funnel must treat the resolving blocker as terminal unconditionally.
     await service.onBlockerResolved(blocker.id, 'deleted');
 
-    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe(
-      'open',
-    );
-    expect(wakes[0].blockers).toEqual([
-      { jobId: blocker.id, title: 'A job', how: 'deleted' },
-    ]);
+    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe('open');
+    expect(wakes[0].blockers).toEqual([{ jobId: blocker.id, title: 'A job', how: 'deleted' }]);
   });
 
   it('reports an already-deleting sibling blocker as deleted alongside the resolving one', async () => {
@@ -373,15 +344,10 @@ describe('JobDependencyService (live Postgres)', () => {
     });
 
     await jobs.update({ id: deleting.id }, { status: 'deleting' });
-    await jobs.update(
-      { id: closing.id },
-      { pr_state: 'closed', status: 'done' },
-    );
+    await jobs.update({ id: closing.id }, { pr_state: 'closed', status: 'done' });
     await service.onBlockerResolved(closing.id, 'closed_unmerged');
 
-    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe(
-      'open',
-    );
+    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe('open');
     expect(wakes).toHaveLength(1);
     const hows = wakes[0].blockers.map((b) => b.how);
     expect(hows).toContain('deleted');
@@ -399,9 +365,7 @@ describe('JobDependencyService (live Postgres)', () => {
       jobId: dependent.id,
       dependsOnJobId: blocker.id,
     });
-    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe(
-      'blocked',
-    );
+    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe('blocked');
 
     await service.removeDependency({
       orgId: ORG_ID,
@@ -410,9 +374,7 @@ describe('JobDependencyService (live Postgres)', () => {
       dependsOnJobId: blocker.id,
     });
 
-    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe(
-      'open',
-    );
+    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe('open');
     expect(wakes).toHaveLength(1);
     expect(wakes[0].blockers).toEqual([
       { jobId: blocker.id, title: 'the blocker', how: 'removed' },

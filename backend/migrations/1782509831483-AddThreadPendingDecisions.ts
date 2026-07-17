@@ -18,8 +18,6 @@ export class AddThreadPendingDecisions1782509831483 implements MigrationInterfac
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `ALTER TABLE "threads" DROP COLUMN IF EXISTS "pending_decisions"`,
-    );
+    await queryRunner.query(`ALTER TABLE "threads" DROP COLUMN IF EXISTS "pending_decisions"`);
   }
 }

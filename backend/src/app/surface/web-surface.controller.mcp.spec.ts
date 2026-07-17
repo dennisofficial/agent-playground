@@ -32,11 +32,7 @@ type Mocks = {
   };
 };
 
-function makeController(opts?: {
-  threadRepoId?: string;
-  card?: unknown;
-  secretCard?: unknown;
-}) {
+function makeController(opts?: { threadRepoId?: string; card?: unknown; secretCard?: unknown }) {
   const threadRepoId = opts?.threadRepoId ?? 'repo-1';
   const m: Mocks = {
     seedSystemNotification: vi.fn(() => 'ts-1'),
@@ -57,21 +53,17 @@ function makeController(opts?: {
     validate: vi.fn(async () => ({ discoveredTools: ['t'] })),
     rehydrateThread: vi.fn(async () => undefined),
     messages: {
-      findOne: vi.fn(async () =>
-        opts?.secretCard ? { card: opts.secretCard } : null,
-      ),
+      findOne: vi.fn(async () => (opts?.secretCard ? { card: opts.secretCard } : null)),
       save: vi.fn(async () => undefined),
     },
   };
   const threads = {
-    findOne: vi.fn(
-      async ({ where }: { where: { id: string; org_id: string } }) => ({
-        id: where.id,
-        org_id: where.org_id,
-        repo_id: threadRepoId,
-        awaiting_secret_id: 's-1',
-      }),
-    ),
+    findOne: vi.fn(async ({ where }: { where: { id: string; org_id: string } }) => ({
+      id: where.id,
+      org_id: where.org_id,
+      repo_id: threadRepoId,
+      awaiting_secret_id: 's-1',
+    })),
   };
   const controller = new WebSurfaceController(
     { seedSystemNotification: m.seedSystemNotification, name: 'web' } as never, // surface
@@ -158,9 +150,7 @@ describe('WebSurfaceController — MCP proposal approve (owner-gated commit)', (
     }
     // github's Authorization is committed as an EMPTY secret placeholder (value collected later).
     const githubInput = m.write.mock.calls.find((c) => c[2] === 'github')![3];
-    expect(githubInput.headers).toEqual([
-      { name: 'Authorization', value: '', secret: true },
-    ]);
+    expect(githubInput.headers).toEqual([{ name: 'Authorization', value: '', secret: true }]);
     // deepwiki has no secret slot → probed now so its tool list populates; github (secret) is NOT probed.
     expect(m.validate).toHaveBeenCalledTimes(1);
     expect(m.markMcpProposalApproved).toHaveBeenCalledWith('job-1', 'mcp-1', [
@@ -255,9 +245,9 @@ describe('WebSurfaceController — MCP proposal approve (owner-gated commit)', (
 
   it('404s (BadRequest) when there is no such proposal on the thread', async () => {
     const { controller } = makeController({ card: null });
-    await expect(
-      controller.approveMcpProposal(OWNER, 'job-1', 'nope'),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(controller.approveMcpProposal(OWNER, 'job-1', 'nope')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
   });
 
   it('defensively skips a reserved system name even if a stale card carries one', async () => {
@@ -311,7 +301,10 @@ describe('WebSurfaceController — provide-secret MCP-target lane', () => {
         type: 'secret_provided',
         secretKind: 'mcp',
         outcome: 'stored',
-        mcp: expect.objectContaining({ server: 'github', key: 'Authorization' }),
+        mcp: expect.objectContaining({
+          server: 'github',
+          key: 'Authorization',
+        }),
       }),
       expect.anything(),
     );
@@ -340,11 +333,7 @@ describe('WebSurfaceController — provide-secret MCP-target lane', () => {
     expect(m.setSecret).not.toHaveBeenCalled();
     expect(m.validate).not.toHaveBeenCalled();
     // Per-card lane: no single-slot pointer to clear — stamp the card terminal (withdrawn) instead.
-    expect(m.withdrawSecretRequest).toHaveBeenCalledWith(
-      'job-1',
-      's-1',
-      expect.any(String),
-    );
+    expect(m.withdrawSecretRequest).toHaveBeenCalledWith('job-1', 's-1', expect.any(String));
     // The failure confirmation is a typed `secret_provided` seed with the oauth-refused outcome; the pasted
     // value never rides the message.
     expect(m.intakeChat).toHaveBeenCalledWith(
@@ -372,10 +361,6 @@ describe('WebSurfaceController — provide-secret MCP-target lane', () => {
       value: 'v',
     });
     expect(res.ok).toBe(false);
-    expect(m.withdrawSecretRequest).toHaveBeenCalledWith(
-      'job-1',
-      's-1',
-      expect.any(String),
-    );
+    expect(m.withdrawSecretRequest).toHaveBeenCalledWith('job-1', 's-1', expect.any(String));
   });
 });

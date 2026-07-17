@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  buildDiffSummary,
-  parseGitDiff,
-  type JobDiffNumstatEntry,
-} from './job-diff';
+import { buildDiffSummary, parseGitDiff, type JobDiffNumstatEntry } from './job-diff';
 
 const RAW_DIFF = `diff --git a/src/foo.ts b/src/foo.ts
 index 111111..222222 100644

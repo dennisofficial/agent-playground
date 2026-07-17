@@ -1,5 +1,5 @@
-import type { Seeder } from '@workspace/nestjs-core';
 import { hash } from '@node-rs/argon2';
+import type { Seeder } from '@workspace/nestjs-core';
 import { UserEntity } from '../src/app/persistence/entities';
 import { DEV_SEED_IDS } from './_shared/dev-seed-ids';
 
@@ -14,9 +14,7 @@ export default (async (ds) => {
   const email = process.env.ADMIN_SEED_EMAIL;
   const password = process.env.ADMIN_SEED_PASSWORD;
   if (!email || !password) {
-    console.log(
-      '  000: ADMIN_SEED_EMAIL/ADMIN_SEED_PASSWORD not set — skipping dev user',
-    );
+    console.log('  000: ADMIN_SEED_EMAIL/ADMIN_SEED_PASSWORD not set — skipping dev user');
     return;
   }
 

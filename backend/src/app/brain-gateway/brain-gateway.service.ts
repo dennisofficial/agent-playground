@@ -86,9 +86,7 @@ export class BrainGateway implements BrainGatewayHandler {
     return this.handler;
   }
 
-  openPrAtShip(
-    input: Parameters<BrainGatewayHandler['openPrAtShip']>[0],
-  ): Promise<void> {
+  openPrAtShip(input: Parameters<BrainGatewayHandler['openPrAtShip']>[0]): Promise<void> {
     return this.require().openPrAtShip(input);
   }
 
@@ -98,9 +96,7 @@ export class BrainGateway implements BrainGatewayHandler {
     return this.require().seedPreviewOnPostBuild(input);
   }
 
-  seedPostBuildGate(
-    input: Parameters<BrainGatewayHandler['seedPostBuildGate']>[0],
-  ): Promise<void> {
+  seedPostBuildGate(input: Parameters<BrainGatewayHandler['seedPostBuildGate']>[0]): Promise<void> {
     return this.require().seedPostBuildGate(input);
   }
 

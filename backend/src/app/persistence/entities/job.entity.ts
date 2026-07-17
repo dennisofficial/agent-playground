@@ -1,15 +1,8 @@
-import {
-  Column,
-  Entity,
-  Index,
-  JoinColumn,
-  ManyToOne,
-  PrimaryGeneratedColumn,
-} from 'typeorm';
-import type { AutoApproveMode } from '@workspace/shared';
-import { TimestampedEntity } from '@workspace/shared/schemas';
 import type { Decision } from '@shared/domain/decision-record';
 import type { JobProvenance } from '@shared/domain/job';
+import type { AutoApproveMode } from '@workspace/shared';
+import { TimestampedEntity } from '@workspace/shared/schemas';
+import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import type { CiCounts } from '../../git';
 import { DecisionRecordEntity } from './decision-record.entity';
 import { OrganizationEntity } from './organization.entity';

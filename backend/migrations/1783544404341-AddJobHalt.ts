@@ -17,9 +17,7 @@ export class AddJobHalt1783544404341 implements MigrationInterface {
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `UPDATE "jobs" SET status = 'failed' WHERE halt->>'kind' = 'failed'`,
-    );
+    await queryRunner.query(`UPDATE "jobs" SET status = 'failed' WHERE halt->>'kind' = 'failed'`);
     await queryRunner.query(`UPDATE "jobs" SET status = 'paused'
             WHERE halt->>'kind' IN ('blocked_credentials', 'budget_exhausted', 'incomplete')`);
     await queryRunner.query(`ALTER TABLE "jobs" DROP COLUMN "halt"`);

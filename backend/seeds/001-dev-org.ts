@@ -23,9 +23,7 @@ import { DEV_SEED_IDS } from './_shared/dev-seed-ids';
 export default (async (ds) => {
   const users = ds.getRepository(UserEntity);
   const ownerEmail =
-    process.env.SEED_OWNER_EMAIL ??
-    process.env.ADMIN_SEED_EMAIL ??
-    'dennislysenko@hotmail.com';
+    process.env.SEED_OWNER_EMAIL ?? process.env.ADMIN_SEED_EMAIL ?? 'dennislysenko@hotmail.com';
 
   let owner = await users.findOne({ where: { email: ownerEmail } });
   if (!owner) {
@@ -33,25 +31,19 @@ export default (async (ds) => {
     owner = first ?? null;
   }
   if (!owner) {
-    console.log(
-      '  001: no users found — run 000-dev-user (set ADMIN_SEED_*) first',
-    );
+    console.log('  001: no users found — run 000-dev-user (set ADMIN_SEED_*) first');
     return;
   }
 
   const orgs = ds.getRepository(OrganizationEntity);
   const members = ds.getRepository(OrganizationMemberEntity);
 
-  const SPEC = [
-    { id: DEV_SEED_IDS.orgs.atlasTest, name: 'Atlas Test', slug: 'atlas-test' },
-  ];
+  const SPEC = [{ id: DEV_SEED_IDS.orgs.atlasTest, name: 'Atlas Test', slug: 'atlas-test' }];
 
   for (const o of SPEC) {
     const existing = await orgs.findOne({ where: { id: o.id } });
     if (!existing) {
-      await orgs.save(
-        orgs.create({ id: o.id, name: o.name, slug: o.slug, status: 'active' }),
-      );
+      await orgs.save(orgs.create({ id: o.id, name: o.name, slug: o.slug, status: 'active' }));
       console.log(`  001: created demo org "${o.name}"`);
     } else {
       console.log(
@@ -64,8 +56,6 @@ export default (async (ds) => {
       where: { org_id: o.id, user_id: owner.id },
     });
     if (!mem)
-      await members.save(
-        members.create({ org_id: o.id, user_id: owner.id, role: 'owner' }),
-      );
+      await members.save(members.create({ org_id: o.id, user_id: owner.id, role: 'owner' }));
   }
 }) satisfies Seeder;

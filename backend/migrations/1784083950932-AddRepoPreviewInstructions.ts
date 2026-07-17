@@ -9,14 +9,10 @@ export class AddRepoPreviewInstructions1784010000000 implements MigrationInterfa
   name = 'AddRepoPreviewInstructions1784010000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `ALTER TABLE "repos" ADD "preview_instructions" text`,
-    );
+    await queryRunner.query(`ALTER TABLE "repos" ADD "preview_instructions" text`);
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `ALTER TABLE "repos" DROP COLUMN "preview_instructions"`,
-    );
+    await queryRunner.query(`ALTER TABLE "repos" DROP COLUMN "preview_instructions"`);
   }
 }

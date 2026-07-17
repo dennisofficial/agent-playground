@@ -21,31 +21,31 @@
  *  - resolving the last blocker replays the exact HTTP-assembled seed through the existing wake funnel.
  */
 
-import { getDataSourceToken } from '@nestjs/typeorm';
-import { Test } from '@nestjs/testing';
 import type { NestExpressApplication } from '@nestjs/platform-express';
+import { Test } from '@nestjs/testing';
+import { getDataSourceToken } from '@nestjs/typeorm';
+import type { UnblockBlockerInfo } from '@shared/domain';
+import { ENGINE_RUNNER } from '@shared/engine';
 import cookieParser from 'cookie-parser';
 import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { CLASSIFIER_LLM } from '../decision-gate';
-import { ENGINE_RUNNER } from '@shared/engine';
-import type { UnblockBlockerInfo } from '@shared/domain';
-import { GithubPrService, LocalGitService } from '../git';
 import { AppModule } from '../app.module';
 import { BrainGateway } from '../brain-gateway';
-import { DB_CONNECTION } from '../persistence/database.module';
+import { CLASSIFIER_LLM } from '../decision-gate';
 import {
   FakeClassifierLlm,
   FakeEngineRunner,
   FakeLocalGitService,
   FakeThreadTitler,
 } from '../e2e/e2e-stubs';
-import { JobTitler } from '../titling';
-import { CredentialResolver } from '../onboarding/credential-resolver.service';
+import { GithubPrService, LocalGitService } from '../git';
 import { JobDependencyService } from '../job-deps';
-import { WebSurface } from './web-surface';
+import { CredentialResolver } from '../onboarding/credential-resolver.service';
+import { DB_CONNECTION } from '../persistence/database.module';
+import { JobTitler } from '../titling';
 import type { InboundChatMessage } from './chat-surface.port';
+import { WebSurface } from './web-surface';
 
 const fakeCreds = {
   anthropicKey: async () => undefined,
@@ -81,24 +81,19 @@ let jobDeps: JobDependencyService;
 let ownerCookie: string;
 let wakes: WakeCall[];
 
-async function register(
-  email: string,
-): Promise<{ cookie: string; id: string }> {
+async function register(email: string): Promise<{ cookie: string; id: string }> {
   const res = await request(server)
     .post('/auth/register')
     .send({ email, password: PASSWORD, name: email.split('@')[0] });
   expect(res.status).toBe(200);
-  const setCookie =
-    (res.headers['set-cookie'] as unknown as string[] | undefined) ?? [];
+  const setCookie = (res.headers['set-cookie'] as unknown as string[] | undefined) ?? [];
   const cookie = setCookie.map((c) => c.split(';')[0]).join('; ');
   return { cookie, id: res.body.user.id as string };
 }
 
 async function purge(): Promise<void> {
   await ds
-    .query(`DELETE FROM job_dependencies WHERE org_id = ANY($1)`, [
-      [ORG, FOREIGN_ORG],
-    ])
+    .query(`DELETE FROM job_dependencies WHERE org_id = ANY($1)`, [[ORG, FOREIGN_ORG]])
     .catch(() => undefined);
   await ds
     .query(`DELETE FROM jobs WHERE org_id = ANY($1)`, [[ORG, FOREIGN_ORG]])
@@ -107,25 +102,19 @@ async function purge(): Promise<void> {
     .query(`DELETE FROM repos WHERE org_id = ANY($1)`, [[ORG, FOREIGN_ORG]])
     .catch(() => undefined);
   await ds
-    .query(`DELETE FROM organization_members WHERE org_id = ANY($1)`, [
-      [ORG, FOREIGN_ORG],
-    ])
+    .query(`DELETE FROM organization_members WHERE org_id = ANY($1)`, [[ORG, FOREIGN_ORG]])
     .catch(() => undefined);
   await ds
     .query(`DELETE FROM organizations WHERE id = ANY($1)`, [[ORG, FOREIGN_ORG]])
     .catch(() => undefined);
-  await ds
-    .query(`DELETE FROM users WHERE email = $1`, [OWNER_EMAIL])
-    .catch(() => undefined);
+  await ds.query(`DELETE FROM users WHERE email = $1`, [OWNER_EMAIL]).catch(() => undefined);
 }
 
 function jobsUrl(): string {
   return `/web/orgs/${ORG}/repos/${REPO}/jobs`;
 }
 
-async function loadJobRow(
-  jobId: string,
-): Promise<Record<string, unknown> | undefined> {
+async function loadJobRow(jobId: string): Promise<Record<string, unknown> | undefined> {
   const rows: Array<Record<string, unknown>> = await ds.query(
     `SELECT status, activity, blocked_seed_message, feature_branch FROM jobs WHERE id = $1`,
     [jobId],
@@ -263,26 +252,20 @@ beforeEach(() => {
 describe('POST .../jobs — dependsOn (born-blocked create)', () => {
   it('rejects a malformed dependsOn id with 400 and creates no row', async () => {
     const before = await countJobs();
-    const res = await request(server)
-      .post(jobsUrl())
-      .set('Cookie', ownerCookie)
-      .send({
-        firstMessage: 'depends on a malformed id',
-        dependsOn: 'not-a-uuid',
-      });
+    const res = await request(server).post(jobsUrl()).set('Cookie', ownerCookie).send({
+      firstMessage: 'depends on a malformed id',
+      dependsOn: 'not-a-uuid',
+    });
     expect(res.status).toBe(400);
     expect(await countJobs()).toBe(before);
   });
 
   it('rejects an unknown (but well-formed) dependsOn id with 404 and creates no row', async () => {
     const before = await countJobs();
-    const res = await request(server)
-      .post(jobsUrl())
-      .set('Cookie', ownerCookie)
-      .send({
-        firstMessage: 'depends on a ghost',
-        dependsOn: '99999999-9999-4999-8999-000000000000',
-      });
+    const res = await request(server).post(jobsUrl()).set('Cookie', ownerCookie).send({
+      firstMessage: 'depends on a ghost',
+      dependsOn: '99999999-9999-4999-8999-000000000000',
+    });
     expect(res.status).toBe(404);
     expect(await countJobs()).toBe(before); // no orphan row left behind
   });
@@ -349,10 +332,9 @@ describe('POST .../jobs — dependsOn (born-blocked create)', () => {
       .set('Cookie', ownerCookie)
       .send({ firstMessage: 'a job whose PR already merged' });
     const terminalId = terminalRes.body.jobId as string;
-    await ds.query(
-      `UPDATE jobs SET pr_state = 'merged', status = 'done' WHERE id = $1`,
-      [terminalId],
-    );
+    await ds.query(`UPDATE jobs SET pr_state = 'merged', status = 'done' WHERE id = $1`, [
+      terminalId,
+    ]);
 
     const { result: res, emitted } = await captureInbound(() =>
       request(server)
@@ -397,20 +379,14 @@ describe('POST .../jobs — dependsOn (born-blocked create)', () => {
     expect(await blockersOf(dependent)).toEqual(expect.arrayContaining([a, b]));
 
     // Resolve the first blocker — still parked on the second.
-    await ds.query(
-      `UPDATE jobs SET pr_state = 'merged', status = 'done' WHERE id = $1`,
-      [a],
-    );
+    await ds.query(`UPDATE jobs SET pr_state = 'merged', status = 'done' WHERE id = $1`, [a]);
     await jobDeps.onBlockerResolved(a, 'merged');
     expect((await loadJobRow(dependent))?.status).toBe('blocked');
     expect(wakes).toHaveLength(0);
 
     // Resolve the last blocker — the existing (unmodified) wake funnel fires, replaying the exact
     // bodyText this endpoint assembled and stored as blocked_seed_message.
-    await ds.query(
-      `UPDATE jobs SET pr_state = 'merged', status = 'done' WHERE id = $1`,
-      [b],
-    );
+    await ds.query(`UPDATE jobs SET pr_state = 'merged', status = 'done' WHERE id = $1`, [b]);
     await jobDeps.onBlockerResolved(b, 'merged');
 
     const row = await loadJobRow(dependent);

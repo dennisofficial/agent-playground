@@ -1,11 +1,11 @@
+import type { EnvService } from '@core/config/env/env.service';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
-import type { EnvService } from '@core/config/env/env.service';
 import type { Repository } from 'typeorm';
-import type { SandboxProvider } from '../sandbox/sandbox-provider.port';
+import { describe, expect, it, vi } from 'vitest';
 import type { JobEntity } from '../persistence/entities';
+import type { SandboxProvider } from '../sandbox/sandbox-provider.port';
 import type { CaddyAdminClient } from './caddy-admin.client';
 import { ExposureService } from './exposure.service';
 
@@ -40,9 +40,7 @@ function makeService(
   options: { previewBaseDomain?: string | null } = {},
 ) {
   const previewBaseDomain =
-    options.previewBaseDomain === undefined
-      ? 'example.com'
-      : options.previewBaseDomain;
+    options.previewBaseDomain === undefined ? 'example.com' : options.previewBaseDomain;
   const caddy = {
     deleteRoutesByPrefix: vi.fn(async () => undefined),
     unbridgeCaddyFromSandbox: vi.fn(async () => undefined),
@@ -129,10 +127,7 @@ describe('ExposureService.reconcileAll — port_state teardown sweep', () => {
     expect(createQueryBuilder).toHaveBeenCalled();
     expect(calls.set).toEqual({ port_state: null });
     expect(calls.where).toEqual(['port_state IS NOT NULL', undefined]);
-    expect(calls.andWhere).toEqual([
-      'id NOT IN (:...live)',
-      { live: ['a', 'b'] },
-    ]);
+    expect(calls.andWhere).toEqual(['id NOT IN (:...live)', { live: ['a', 'b'] }]);
     expect(qb.execute).toHaveBeenCalled();
   });
 

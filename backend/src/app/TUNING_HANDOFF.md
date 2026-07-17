@@ -5,6 +5,7 @@
 > Architecture Redesign** (host scheduler + per-thread sessions; see
 > [`../../../docs/adr/0009-threads-architecture-redesign.md`](../../../docs/adr/0009-threads-architecture-redesign.md)),
 > so its file/seam map and several of its assumptions are historical. Known stale references to watch for:
+>
 > - **`driver/section-driver.service.ts` does not exist** — the build driver is `driver/thread-driver.service.ts`
 >   (and it is now the pure host **scheduler**, not an FSM). Anywhere this doc says "section-driver", read
 >   `thread-driver`.

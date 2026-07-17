@@ -1,6 +1,6 @@
-import { describe, expect, it, beforeEach, vi } from 'vitest';
-import type { Repository } from 'typeorm';
 import type { EnvService } from '@core/config/env/env.service';
+import type { Repository } from 'typeorm';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkspaceSkillEntity } from '../persistence/entities';
 import { SkillResolver } from './skill-resolver.service';
 import { WorkspaceSkillStore } from './workspace-skill.store';
@@ -22,8 +22,7 @@ class FakeRepo {
   }
   async save(row: WorkspaceSkillEntity): Promise<WorkspaceSkillEntity> {
     const i = this.rows.findIndex(
-      (r) =>
-        r.org_id === row.org_id && r.scope === row.scope && r.name === row.name,
+      (r) => r.org_id === row.org_id && r.scope === row.scope && r.name === row.name,
     );
     if (i >= 0) this.rows[i] = row;
     else this.rows.push(row);
@@ -45,10 +44,7 @@ class FakeRepo {
     return this.rows.filter((r) => conds.some((c) => this.match(r, c)));
   }
   async delete(): Promise<void> {}
-  private match(
-    r: WorkspaceSkillEntity,
-    where: Partial<WorkspaceSkillEntity>,
-  ): boolean {
+  private match(r: WorkspaceSkillEntity, where: Partial<WorkspaceSkillEntity>): boolean {
     return Object.entries(where).every(
       ([k, v]) => (r as unknown as Record<string, unknown>)[k] === v,
     );
@@ -57,9 +53,7 @@ class FakeRepo {
 
 function make(): { resolver: SkillResolver; store: WorkspaceSkillStore } {
   const repo = new FakeRepo();
-  const store = new WorkspaceSkillStore(
-    repo as unknown as Repository<WorkspaceSkillEntity>,
-  );
+  const store = new WorkspaceSkillStore(repo as unknown as Repository<WorkspaceSkillEntity>);
   return { resolver: new SkillResolver(store, fakeEnv), store };
 }
 
@@ -71,9 +65,7 @@ describe('SkillResolver.resolveForTurn', () => {
   });
 
   it('returns [] when the org has no skills', async () => {
-    expect(await resolver.resolveForTurn('org1', 'repo-1', 'build')).toEqual(
-      [],
-    );
+    expect(await resolver.resolveForTurn('org1', 'repo-1', 'build')).toEqual([]);
   });
 
   it('a repo-scoped skill OVERRIDES an org-scoped skill of the same name', async () => {
@@ -95,21 +87,15 @@ describe('SkillResolver.resolveForTurn', () => {
 
   it('filters by surface (default surfaces is build-only)', async () => {
     await store.write('org1', '*', 'buildonly', { description: 'd' });
-    expect(await resolver.resolveForTurn('org1', 'repo-1', 'brain')).toEqual(
-      [],
-    );
-    expect(
-      (await resolver.resolveForTurn('org1', 'repo-1', 'build')).map(
-        (s) => s.name,
-      ),
-    ).toEqual(['buildonly']);
+    expect(await resolver.resolveForTurn('org1', 'repo-1', 'brain')).toEqual([]);
+    expect((await resolver.resolveForTurn('org1', 'repo-1', 'build')).map((s) => s.name)).toEqual([
+      'buildonly',
+    ]);
   });
 
   it('excludes disabled skills', async () => {
     await store.write('org1', '*', 'off', { description: 'd', enabled: false });
-    expect(await resolver.resolveForTurn('org1', 'repo-1', 'build')).toEqual(
-      [],
-    );
+    expect(await resolver.resolveForTurn('org1', 'repo-1', 'build')).toEqual([]);
   });
 
   it('returns name/description/dirPath (plain data, no secrets or file content)', async () => {

@@ -6,7 +6,6 @@
  */
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
-import type { PromptCtx } from '../prompt-ctx';
 import {
   CLARITY_OVER_COMMENTS_NOTE,
   DELETION_SAFETY_NOTE,
@@ -27,6 +26,7 @@ import {
   TS_STYLE_NOTE,
   VALIDATE_BY_RUNNING_NOTE,
 } from '../fragments';
+import type { PromptCtx } from '../prompt-ctx';
 
 // Gate for host-tool prose that only makes sense on the BATCH turn — where complete_thread and
 // record_deviation are actually registered. On commit turns those tools aren't in the model's per-turn

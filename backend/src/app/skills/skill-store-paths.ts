@@ -1,5 +1,5 @@
-import { join } from 'node:path';
 import { repoStateDir } from '@shared/state-root';
+import { join } from 'node:path';
 
 /**
  * Path helpers for the central, durable skills store — real directories on the host (`SKILL.md` +
@@ -29,10 +29,7 @@ export function skillsStoreRoot(root: string | undefined): string {
  * what `SandboxManager` bind-mounts into every sandbox for that org (see `CONTAINER_SKILLS_STORE`),
  * exactly like `SandboxRefsService.teamRefsDir`.
  */
-export function orgSkillsRootHost(
-  root: string | undefined,
-  orgId: string,
-): string {
+export function orgSkillsRootHost(root: string | undefined, orgId: string): string {
   return join(skillsStoreRoot(root), 'orgs', safe(orgId));
 }
 
@@ -73,10 +70,7 @@ export function managedGitSkillsRootHost(root: string | undefined): string {
 }
 
 /** One git-sourced managed skill's dir, given its registry `name`. Same sanitization as {@link safe}. */
-export function managedGitSkillDirHost(
-  root: string | undefined,
-  name: string,
-): string {
+export function managedGitSkillDirHost(root: string | undefined, name: string): string {
   return join(managedGitSkillsRootHost(root), safe(name));
 }
 

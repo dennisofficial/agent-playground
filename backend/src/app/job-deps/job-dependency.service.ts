@@ -6,8 +6,8 @@ import {
   Optional,
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
 import type { UnblockBlockerInfo } from '@shared/domain/message';
+import { DataSource, Repository } from 'typeorm';
 import { BrainGateway } from '../brain-gateway';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobDependencyEntity, JobEntity } from '../persistence/entities';
@@ -24,8 +24,7 @@ const BLOCKABLE_STATUSES = new Set([
   'blocked',
 ]);
 const TERMINAL_BLOCKER_STATUSES = ['cancelled', 'deleting'];
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function assertUuid(value: string): void {
   if (!UUID_RE.test(value)) {
@@ -34,11 +33,7 @@ function assertUuid(value: string): void {
 }
 
 /** How a resolved blocker actually resolved — fed into {@link JobDependencyService.onBlockerResolved}. */
-export type BlockerResolution =
-  | 'merged'
-  | 'closed_unmerged'
-  | 'cancelled'
-  | 'deleted';
+export type BlockerResolution = 'merged' | 'closed_unmerged' | 'cancelled' | 'deleted';
 
 /** A non-terminal-safe classification of a blocker (excludes the in-flight `merged` case). */
 type NonLandedResolution = Exclude<BlockerResolution, 'merged'>;
@@ -113,9 +108,7 @@ export class JobDependencyService {
 
   private isTerminalState(prState: string | null, status: string): boolean {
     return (
-      prState === 'merged' ||
-      prState === 'closed' ||
-      TERMINAL_BLOCKER_STATUSES.includes(status)
+      prState === 'merged' || prState === 'closed' || TERMINAL_BLOCKER_STATUSES.includes(status)
     );
   }
 
@@ -228,9 +221,7 @@ export class JobDependencyService {
       );
     }
 
-    const liveTurn = await this.turnRegistry
-      ?.runningBrainTurn(jobId)
-      .catch(() => null);
+    const liveTurn = await this.turnRegistry?.runningBrainTurn(jobId).catch(() => null);
     if (liveTurn?.turn_id) {
       throw new BadRequestException(
         "can't block a job while its brain is currently running; wait for it to stop before blocking it",
@@ -290,13 +281,17 @@ export class JobDependencyService {
     });
 
     const blockers = await this.blockersOf(jobId);
-    const allTerminal = blockers.every((b) =>
-      this.isTerminalState(b.prState, b.status),
-    );
+    const allTerminal = blockers.every((b) => this.isTerminalState(b.prState, b.status));
     if (allTerminal) {
       const infos: UnblockBlockerInfo[] = [
         ...(removed
-          ? [{ jobId: removed.id, title: removed.title, how: 'removed' as const }]
+          ? [
+              {
+                jobId: removed.id,
+                title: removed.title,
+                how: 'removed' as const,
+              },
+            ]
           : []),
         ...this.classifiedBlockerInfos(blockers),
       ];
@@ -315,9 +310,7 @@ export class JobDependencyService {
    */
   async reconcileBlockedJob(jobId: string): Promise<boolean> {
     const blockers = await this.blockersOf(jobId);
-    const allTerminal = blockers.every((b) =>
-      this.isTerminalState(b.prState, b.status),
-    );
+    const allTerminal = blockers.every((b) => this.isTerminalState(b.prState, b.status));
     if (!allTerminal) return false;
     return this.unblockAndWake(jobId, this.classifiedBlockerInfos(blockers));
   }
@@ -340,19 +333,16 @@ export class JobDependencyService {
   }
 
   /** Blockers for MANY jobs in one query (avoids N+1 in the list DTOs). Returns dependentJobId → its blockers. */
-  async blockersOfManyBlocked(
-    jobIds: string[],
-  ): Promise<Map<string, JobBlockerRow[]>> {
+  async blockersOfManyBlocked(jobIds: string[]): Promise<Map<string, JobBlockerRow[]>> {
     const map = new Map<string, JobBlockerRow[]>();
     if (jobIds.length === 0) return map;
-    const rows: Array<JobBlockerRow & { dependentId: string }> =
-      await this.dataSource.query(
-        `SELECT d.job_id AS "dependentId", j.id AS "jobId", j.title AS title, j.pr_state AS "prState", j.status AS status
+    const rows: Array<JobBlockerRow & { dependentId: string }> = await this.dataSource.query(
+      `SELECT d.job_id AS "dependentId", j.id AS "jobId", j.title AS title, j.pr_state AS "prState", j.status AS status
          FROM job_dependencies d
          JOIN jobs j ON j.id = d.depends_on_job_id
         WHERE d.job_id = ANY($1)`,
-        [jobIds],
-      );
+      [jobIds],
+    );
     for (const r of rows) {
       const { dependentId, ...blocker } = r;
       const list = map.get(dependentId) ?? [];
@@ -379,23 +369,14 @@ export class JobDependencyService {
    * and for each still-`blocked` dependent whose OTHER blockers (if any) are also terminal, conditionally
    * unparks it and wakes its brain. Fail-soft PER dependent — one bad wake must never block the others.
    */
-  async onBlockerResolved(
-    blockerJobId: string,
-    resolution: BlockerResolution,
-  ): Promise<void> {
+  async onBlockerResolved(blockerJobId: string, resolution: BlockerResolution): Promise<void> {
     const dependents = await this.dependentsOf(blockerJobId);
     for (const dependent of dependents) {
       if (dependent.status !== 'blocked') continue;
       try {
-        await this.wakeDependentIfAllTerminal(
-          dependent,
-          blockerJobId,
-          resolution,
-        );
+        await this.wakeDependentIfAllTerminal(dependent, blockerJobId, resolution);
       } catch (err) {
-        this.logger.warn(
-          `onBlockerResolved: wake failed for dependent=${dependent.id}: ${err}`,
-        );
+        this.logger.warn(`onBlockerResolved: wake failed for dependent=${dependent.id}: ${err}`);
       }
     }
   }
@@ -409,8 +390,7 @@ export class JobDependencyService {
     // The blocker resolving RIGHT NOW is treated as terminal unconditionally — required for the
     // `deleted` path, where its row still exists at call time and won't yet look terminal from state.
     const allTerminal = blockers.every(
-      (b) =>
-        b.jobId === blockerJobId || this.isTerminalState(b.prState, b.status),
+      (b) => b.jobId === blockerJobId || this.isTerminalState(b.prState, b.status),
     );
     if (!allTerminal) return; // a still-open sibling blocker keeps it parked.
 
@@ -425,11 +405,7 @@ export class JobDependencyService {
       .execute();
     if (!upd.affected) return; // lost the race — already unblocked.
 
-    const blockerInfos = this.resolvedBlockerInfos(
-      blockers,
-      blockerJobId,
-      resolution,
-    );
+    const blockerInfos = this.resolvedBlockerInfos(blockers, blockerJobId, resolution);
     const woke = await this.wakeWithRetry(
       dependent.id,
       dependent.org_id,
@@ -445,10 +421,7 @@ export class JobDependencyService {
       this.logger.error(
         `wakeUnblockedJob exhausted retries for job=${dependent.id}; re-parked blocked — no sweep remains to auto-retry this, needs operator attention`,
       );
-      await this.jobs.update(
-        { id: dependent.id, status: 'scoping' },
-        { status: 'blocked' },
-      );
+      await this.jobs.update({ id: dependent.id, status: 'scoping' }, { status: 'blocked' });
     }
   }
 
@@ -510,17 +483,13 @@ export class JobDependencyService {
       jobId: b.jobId,
       title: b.title,
       how:
-        b.jobId === blockerJobId
-          ? resolution
-          : this.classifyResolvedBlocker(b.prState, b.status),
+        b.jobId === blockerJobId ? resolution : this.classifyResolvedBlocker(b.prState, b.status),
     }));
   }
 
   /** Classify a set of already-terminal blockers from their persisted state (the manual-unblock/sweep paths,
    *  which have no live resolution to report). */
-  private classifiedBlockerInfos(
-    blockers: JobBlockerRow[],
-  ): UnblockBlockerInfo[] {
+  private classifiedBlockerInfos(blockers: JobBlockerRow[]): UnblockBlockerInfo[] {
     return blockers.map((b) => ({
       jobId: b.jobId,
       title: b.title,
@@ -531,10 +500,7 @@ export class JobDependencyService {
   /** Conditional unblock + wake used by the manual-unblock (`removeDependency`) and sweep
    *  (`reconcileBlockedJob`) paths; `blockers` names the jobs that were holding this one so the wake message
    *  can reorient the brain. */
-  private async unblockAndWake(
-    jobId: string,
-    blockers: UnblockBlockerInfo[],
-  ): Promise<boolean> {
+  private async unblockAndWake(jobId: string, blockers: UnblockBlockerInfo[]): Promise<boolean> {
     const upd = await this.jobs
       .createQueryBuilder()
       .update()
@@ -562,10 +528,7 @@ export class JobDependencyService {
     this.logger.error(
       `wakeUnblockedJob exhausted retries for job=${jobId}; re-parked blocked — no sweep remains to auto-retry this, needs operator attention`,
     );
-    await this.jobs.update(
-      { id: jobId, status: 'scoping' },
-      { status: 'blocked' },
-    );
+    await this.jobs.update({ id: jobId, status: 'scoping' }, { status: 'blocked' });
     return false;
   }
 

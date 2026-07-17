@@ -38,8 +38,5 @@ export function renderMemoryRecall(facts: RecalledForPrefix[]): string {
 /** Trivial-message guard (d2): skip acknowledgements so we don't embed "ok"/"thanks". */
 export function isSubstantiveQuery(text: string): boolean {
   const t = text.trim();
-  return (
-    t.length >= MIN_QUERY_CHARS &&
-    t.split(/\s+/).filter(Boolean).length >= MIN_QUERY_WORDS
-  );
+  return t.length >= MIN_QUERY_CHARS && t.split(/\s+/).filter(Boolean).length >= MIN_QUERY_WORDS;
 }

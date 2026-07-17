@@ -10,9 +10,6 @@ import { slugify } from '@workspace/shared';
  * (`thread-driver.service.ts`) and brain import it from here, keeping the edge pointing the correct way
  * (services → hub) and avoiding the load-order cycle a heavy cross-service import would create.
  */
-export function threadDirName(thread: {
-  ordinal: number;
-  brief: string;
-}): string {
+export function threadDirName(thread: { ordinal: number; brief: string }): string {
   return `${String(thread.ordinal).padStart(3, '0')}-${slugify(thread.brief)}`;
 }

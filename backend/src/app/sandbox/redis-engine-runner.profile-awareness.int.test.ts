@@ -7,28 +7,24 @@
  * Mirrors `profile-awareness.service.int.test.ts`'s DB bootstrap and
  * `redis-engine-runner.spec.ts`'s tool-bridge `fakeContainers`/`execDetached` pattern.
  */
+import type { EnvService } from '@core/config/env/env.service';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { TypeOrmModule, getDataSourceToken } from '@nestjs/typeorm';
+import type { EngineEvent, RunEngineArgs, ToolBridgeOptions } from '@shared/engine/engine.types';
+import { agentMessage } from '@shared/prompt-kit/message';
 import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy';
+import { InMemoryRedisStream } from '../../_lib/redis/in-memory-redis-stream';
+import { WorkspaceConfigStore } from '../onboarding/workspace-config.store';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { ENTITIES } from '../persistence/entities';
-import { WorkspaceConfigStore } from '../onboarding/workspace-config.store';
 import { ProfileAwarenessService } from '../workspace-profile/profile-awareness.service';
-import { InMemoryRedisStream } from '../../_lib/redis/in-memory-redis-stream';
+import type { ContainerEngine } from './container-engine.port';
 import { RedisEngineRunner } from './redis-engine-runner';
 import { turnKeys } from './redis-turn-keys';
-import type { EnvService } from '@core/config/env/env.service';
 import type { SandboxActivityRegistry } from './sandbox-activity.registry';
 import type { TurnRegistry } from './turn-registry.service';
-import type { ContainerEngine } from './container-engine.port';
-import type {
-  EngineEvent,
-  RunEngineArgs,
-  ToolBridgeOptions,
-} from '@shared/engine/engine.types';
-import { agentMessage } from '@shared/prompt-kit/message';
 
 const ORG_ID = '3bbbbbbb-2222-4222-8222-222222222222';
 
@@ -87,63 +83,51 @@ function baseArgs(onEvent: (e: EngineEvent) => void): RunEngineArgs {
  * for `__profile_awareness`, polls the replies stream for the correlated reply, then emits the reply's
  * result as a text event before ending the turn.
  */
-function fakeContainersWithProfileAwarenessCall(
-  redis: InMemoryRedisStream,
-  command: string,
-) {
+function fakeContainersWithProfileAwarenessCall(redis: InMemoryRedisStream, command: string) {
   return {
-    execDetached: vi.fn(
-      (
-        _id: string,
-        _argv: string[],
-        opts?: { env?: Record<string, string> },
-      ) => {
-        const turnId = opts?.env?.TURN_ID;
-        if (!turnId) return Promise.resolve({});
-        const k = turnKeys(turnId);
-        void (async () => {
-          const callId = `call-${turnId}`;
-          await redis.xadd(k.tools, {
-            t: 'tool_request',
-            id: callId,
-            name: '__profile_awareness',
-            args: { command },
+    execDetached: vi.fn((_id: string, _argv: string[], opts?: { env?: Record<string, string> }) => {
+      const turnId = opts?.env?.TURN_ID;
+      if (!turnId) return Promise.resolve({});
+      const k = turnKeys(turnId);
+      void (async () => {
+        const callId = `call-${turnId}`;
+        await redis.xadd(k.tools, {
+          t: 'tool_request',
+          id: callId,
+          name: '__profile_awareness',
+          args: { command },
+        });
+        let lastId = '0-0';
+        let done = false;
+        for (let i = 0; i < 50 && !done; i++) {
+          const r = await redis.xread({
+            stream: k.replies,
+            lastId,
+            count: 10,
+            blockMs: 50,
           });
-          let lastId = '0-0';
-          let done = false;
-          for (let i = 0; i < 50 && !done; i++) {
-            const r = await redis.xread({
-              stream: k.replies,
-              lastId,
-              count: 10,
-              blockMs: 50,
+          for (const entry of r) {
+            const d = entry.data as {
+              id?: string;
+              t?: string;
+              result?: unknown;
+            };
+            if (d.id !== callId) continue;
+            if (d.t === 'tool_progress') continue;
+            const text = d.t === 'tool_response' && typeof d.result === 'string' ? d.result : '';
+            await redis.xadd(k.events, {
+              t: 'event',
+              e: { kind: 'text', text },
             });
-            for (const entry of r) {
-              const d = entry.data as {
-                id?: string;
-                t?: string;
-                result?: unknown;
-              };
-              if (d.id !== callId) continue;
-              if (d.t === 'tool_progress') continue;
-              const text =
-                d.t === 'tool_response' && typeof d.result === 'string'
-                  ? d.result
-                  : '';
-              await redis.xadd(k.events, {
-                t: 'event',
-                e: { kind: 'text', text },
-              });
-              done = true;
-              break;
-            }
-            if (r.length) lastId = r[r.length - 1].id;
+            done = true;
+            break;
           }
-          await redis.xadd(k.events, { t: 'final', r: { result: 'DONE' } });
-        })();
-        return Promise.resolve({});
-      },
-    ),
+          if (r.length) lastId = r[r.length - 1].id;
+        }
+        await redis.xadd(k.events, { t: 'final', r: { result: 'DONE' } });
+      })();
+      return Promise.resolve({});
+    }),
   } as unknown as ContainerEngine;
 }
 
@@ -155,10 +139,7 @@ describe('RedisEngineRunner + ProfileAwarenessService (live Postgres) — instal
 
   beforeAll(async () => {
     mod = await Test.createTestingModule({
-      imports: [
-        TypeOrmModule.forRoot(dbOpts()),
-        TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION),
-      ],
+      imports: [TypeOrmModule.forRoot(dbOpts()), TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION)],
       providers: [WorkspaceConfigStore, ProfileAwarenessService],
     }).compile();
 
@@ -180,22 +161,15 @@ describe('RedisEngineRunner + ProfileAwarenessService (live Postgres) — instal
   });
 
   afterAll(async () => {
-    await ds
-      ?.query(`DELETE FROM repos WHERE org_id = $1`, [ORG_ID])
-      .catch(() => undefined);
-    await ds
-      ?.query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID])
-      .catch(() => undefined);
+    await ds?.query(`DELETE FROM repos WHERE org_id = $1`, [ORG_ID]).catch(() => undefined);
+    await ds?.query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID]).catch(() => undefined);
     await mod?.close();
   });
 
-  async function ledger(): Promise<
-    Array<{ key: string; firstSeenAt: string }>
-  > {
-    const rows = await ds.query(
-      `SELECT profile_seen_tooling AS t FROM repos WHERE id = $1`,
-      [repoId],
-    );
+  async function ledger(): Promise<Array<{ key: string; firstSeenAt: string }>> {
+    const rows = await ds.query(`SELECT profile_seen_tooling AS t FROM repos WHERE id = $1`, [
+      repoId,
+    ]);
     return rows[0].t ?? [];
   }
 
@@ -222,13 +196,7 @@ describe('RedisEngineRunner + ProfileAwarenessService (live Postgres) — instal
     const redis = new InMemoryRedisStream();
     const events: EngineEvent[] = [];
     const containers = fakeContainersWithProfileAwarenessCall(redis, command);
-    const runner = new RedisEngineRunner(
-      containers,
-      redis,
-      fakeEnv,
-      fakeActivity,
-      fakeRegistry(),
-    );
+    const runner = new RedisEngineRunner(containers, redis, fakeEnv, fakeActivity, fakeRegistry());
 
     const out = await runner.run({
       ...baseArgs((e) => events.push(e)),
@@ -237,9 +205,9 @@ describe('RedisEngineRunner + ProfileAwarenessService (live Postgres) — instal
     });
 
     expect(out).toMatchObject({ result: 'DONE' });
-    const replyText = events.find(
-      (e) => (e as { kind?: string }).kind === 'text',
-    ) as { kind: 'text'; text: string } | undefined;
+    const replyText = events.find((e) => (e as { kind?: string }).kind === 'text') as
+      | { kind: 'text'; text: string }
+      | undefined;
     expect(replyText?.text).toContain('[profile-awareness]');
     expect(replyText?.text).toContain('pnpm:left-pad-throwaway-dep');
 
@@ -254,13 +222,7 @@ describe('RedisEngineRunner + ProfileAwarenessService (live Postgres) — instal
     const redis = new InMemoryRedisStream();
     const events: EngineEvent[] = [];
     const containers = fakeContainersWithProfileAwarenessCall(redis, command);
-    const runner = new RedisEngineRunner(
-      containers,
-      redis,
-      fakeEnv,
-      fakeActivity,
-      fakeRegistry(),
-    );
+    const runner = new RedisEngineRunner(containers, redis, fakeEnv, fakeActivity, fakeRegistry());
 
     await runner.run({
       ...baseArgs((e) => events.push(e)),
@@ -268,9 +230,9 @@ describe('RedisEngineRunner + ProfileAwarenessService (live Postgres) — instal
       toolBridge: makeBridge(),
     });
 
-    const replyText = events.find(
-      (e) => (e as { kind?: string }).kind === 'text',
-    ) as { kind: 'text'; text: string } | undefined;
+    const replyText = events.find((e) => (e as { kind?: string }).kind === 'text') as
+      | { kind: 'text'; text: string }
+      | undefined;
     // `service.handle` returns null on dedup; the tool-bridge reply's result is null, so the fake
     // container's text extraction (only a STRING result becomes text) yields an empty string.
     expect(replyText?.text).toBe('');

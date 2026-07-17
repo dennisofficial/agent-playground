@@ -7,9 +7,9 @@
  * `driverExecutableKinds` (kinds with `execution: 'top-level'`), and step 3 materializes children via
  * `spec.children`.
  */
-import { Agent, renderAgentPrompt } from '../prompt-kit';
 import type { SessionEngine } from '@shared/domain';
 import type { ReasoningEffort } from '@shared/engine';
+import { Agent, renderAgentPrompt } from '../prompt-kit';
 import type { ThreadKindSpec, ThreadRole } from './spec';
 
 /**
@@ -38,7 +38,8 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     engine: 'claude',
     mode: 'conversational',
     execution: 'render-only',
-    reasoningEffort: 'high',    inputPolicy: 'operator',
+    reasoningEffort: 'high',
+    inputPolicy: 'operator',
     operatorInput: true,
     taskScope: 'main',
     runner: 'session-backed',
@@ -53,7 +54,8 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     // The plan reviewer reasons hard — the effort the `review_plan` turn actually runs at
     // (`plan-review.service.ts` reads it from here, single source of truth).
     reasoningEffort: 'xhigh',
-    execution: 'render-only',    inputPolicy: 'agent',
+    execution: 'render-only',
+    inputPolicy: 'agent',
     operatorInput: false,
     taskScope: 'none',
     runner: 'session-backed',
@@ -66,7 +68,8 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     engine: 'claude',
     mode: 'execute',
     execution: 'top-level',
-    reasoningEffort: 'high',    inputPolicy: 'none',
+    reasoningEffort: 'high',
+    inputPolicy: 'none',
     operatorInput: true,
     taskScope: 'thread',
     runner: 'execute-turn',
@@ -88,7 +91,8 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     engine: 'claude',
     mode: 'review',
     execution: 'child',
-    reasoningEffort: 'high',    inputPolicy: 'none',
+    reasoningEffort: 'high',
+    inputPolicy: 'none',
     operatorInput: false,
     taskScope: 'none',
     runner: 'execute-turn',
@@ -100,7 +104,8 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     engine: 'claude',
     mode: 'execute',
     execution: 'child',
-    reasoningEffort: 'high',    inputPolicy: 'none',
+    reasoningEffort: 'high',
+    inputPolicy: 'none',
     operatorInput: false,
     taskScope: 'none',
     runner: 'execute-turn',
@@ -113,7 +118,8 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     engine: 'codex',
     mode: 'execute',
     execution: 'top-level',
-    reasoningEffort: 'xhigh',    inputPolicy: 'none',
+    reasoningEffort: 'xhigh',
+    inputPolicy: 'none',
     operatorInput: false,
     taskScope: 'thread',
     runner: 'execute-turn',
@@ -127,7 +133,8 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     engine: 'claude',
     mode: 'conversational',
     execution: 'render-only',
-    reasoningEffort: 'high',    inputPolicy: 'operator',
+    reasoningEffort: 'high',
+    inputPolicy: 'operator',
     operatorInput: true,
     taskScope: 'thread',
     runner: 'session-backed',
@@ -141,16 +148,15 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     engine: 'claude',
     mode: 'conversational',
     execution: 'render-only',
-    reasoningEffort: 'high',    inputPolicy: 'operator',
+    reasoningEffort: 'high',
+    inputPolicy: 'operator',
     operatorInput: true,
     taskScope: 'thread',
     runner: 'session-backed',
   },
 ];
 
-const BY_KIND = new Map<string, ThreadKindSpec>(
-  THREAD_KIND_SPECS.map((s) => [s.kind, s]),
-);
+const BY_KIND = new Map<string, ThreadKindSpec>(THREAD_KIND_SPECS.map((s) => [s.kind, s]));
 
 const THREAD_ROLE_SET = new Set<string>(THREAD_KIND_SPECS.map((s) => s.kind));
 
@@ -167,16 +173,13 @@ export function coerceThreadRole(raw: unknown): ThreadRole {
 /** The kinds the DRIVER's top loop executes as build sections (`builder` + `master_review`). Everything
  *  else is a child (`review_agent`/`review_fix`) or render-only (`planner`/`codex_review`/`post_build`/`ship`). */
 export const driverExecutableKinds: ReadonlySet<ThreadRole> = new Set(
-  THREAD_KIND_SPECS.filter((s) => s.execution === 'top-level').map(
-    (s) => s.kind,
-  ),
+  THREAD_KIND_SPECS.filter((s) => s.execution === 'top-level').map((s) => s.kind),
 );
 
 /** Resolve a kind's spec, or throw (an unknown kind is a bug — every row's kind is registry-backed). */
 export function threadKindSpec(kind: string): ThreadKindSpec {
   const spec = BY_KIND.get(kind);
-  if (!spec)
-    throw new Error(`thread-kind: unknown kind "${kind}" (no ThreadKindSpec).`);
+  if (!spec) throw new Error(`thread-kind: unknown kind "${kind}" (no ThreadKindSpec).`);
   return spec;
 }
 
@@ -204,8 +207,7 @@ export interface LaneDefaultFooter {
  */
 export function laneDefaultFooter(kind: string): LaneDefaultFooter {
   const spec = threadKindSpec(kind);
-  const claudeModel =
-    spec.mode === 'conversational' ? CLAUDE_BRAIN_MODEL : CLAUDE_WORKER_MODEL;
+  const claudeModel = spec.mode === 'conversational' ? CLAUDE_BRAIN_MODEL : CLAUDE_WORKER_MODEL;
   return {
     engine: spec.engine,
     ...(spec.engine === 'claude' ? { model: claudeModel } : {}),
@@ -218,9 +220,7 @@ export function laneDefaultFooter(kind: string): LaneDefaultFooter {
  * kind, an agent not in the `Agent` enum, a child that names an unknown kind, and a smoke render of every
  * kind's `Agent` prompt (surfaces a throwing fragment early).
  */
-export function validateThreadKinds(
-  specs: readonly ThreadKindSpec[] = THREAD_KIND_SPECS,
-): void {
+export function validateThreadKinds(specs: readonly ThreadKindSpec[] = THREAD_KIND_SPECS): void {
   const validAgents = new Set<string>(Object.values(Agent));
   const validKinds = new Set<string>(specs.map((s) => s.kind));
   const seen = new Set<string>();
@@ -230,9 +230,7 @@ export function validateThreadKinds(
     }
     seen.add(s.kind);
     if (!validAgents.has(s.agent)) {
-      throw new Error(
-        `thread-kind: kind "${s.kind}" binds an unknown Agent "${s.agent}".`,
-      );
+      throw new Error(`thread-kind: kind "${s.kind}" binds an unknown Agent "${s.agent}".`);
     }
     // A `children` factory must only reference kinds that have a spec (so the materializer always resolves).
     if (s.children) {

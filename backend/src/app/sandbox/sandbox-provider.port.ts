@@ -1,5 +1,5 @@
-import type { FeatureSandbox } from '../git';
 import type { ResolvedMcpServer } from '@shared/engine/engine.types';
+import type { FeatureSandbox } from '../git';
 
 /** DI token for the {@link SandboxProvider}. */
 export const SANDBOX_PROVIDER = Symbol('SANDBOX_PROVIDER');
@@ -193,10 +193,7 @@ export interface SandboxProvider {
    * Best-effort: writes even before the container is running (the hub reads it on boot), never throws.
    * Optional on the port so test fakes needn't implement it.
    */
-  kickMcpHubRefresh?(input: {
-    jobId: string;
-    servers: ResolvedMcpServer[];
-  }): Promise<void>;
+  kickMcpHubRefresh?(input: { jobId: string; servers: ResolvedMcpServer[] }): Promise<void>;
 
   /**
    * The DETERMINISTIC container name of a thread's sandbox (`atlas-sbx-thread-<jobId>`) — the host the

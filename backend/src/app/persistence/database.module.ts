@@ -22,9 +22,7 @@ export const MCP_READER_CONNECTION = 'mcp-reader';
 export const MCP_WRITER_CONNECTION = 'mcp-writer';
 
 /** SSL: off in dev (`disable`), verify-full in prod by default; overridable via POSTGRES_SSL_MODE. */
-export function resolveSsl(
-  env: EnvService,
-): false | { rejectUnauthorized: boolean } {
+export function resolveSsl(env: EnvService): false | { rejectUnauthorized: boolean } {
   const mode =
     env.get('POSTGRES_SSL_MODE') ??
     (env.get('NODE_ENV') === 'production' ? 'verify-full' : 'disable');

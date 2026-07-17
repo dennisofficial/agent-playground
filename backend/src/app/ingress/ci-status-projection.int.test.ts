@@ -10,25 +10,25 @@
  * write.
  */
 
-import { createHmac } from 'node:crypto';
+import { EnvService } from '@core/config/env/env.service';
 import { Test, type TestingModule } from '@nestjs/testing';
-import {
-  TypeOrmModule,
-  getDataSourceToken,
-  getRepositoryToken,
-} from '@nestjs/typeorm';
+import { getDataSourceToken, getRepositoryToken, TypeOrmModule } from '@nestjs/typeorm';
+import { createHmac } from 'node:crypto';
 import { DataSource, Repository } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { EnvService } from '@core/config/env/env.service';
 import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy';
-import { DB_CONNECTION } from '../persistence/database.module';
 import {
-  ENTITIES,
-  JobEntity,
-  RepoEntity,
-  UserEntity,
-} from '../persistence/entities';
+  DriverStoreService,
+  GithubCiStateSync,
+  GithubPrStateSync,
+  GitStateReconciler,
+} from '../driver';
+import { GithubPrService } from '../git';
 import { JobBootstrapService } from '../job-bootstrap';
+import { JobDependencyService } from '../job-deps';
+import { CredentialResolver } from '../onboarding';
+import { DB_CONNECTION } from '../persistence/database.module';
+import { ENTITIES, JobEntity, RepoEntity, UserEntity } from '../persistence/entities';
 import {
   EventFilterService,
   ProjectRoutingService,
@@ -37,19 +37,10 @@ import {
   SurfaceOrchestration,
 } from '../stimulus';
 import { BRAIN_SINK } from '../stimulus/stimulus-consumer';
+import { WebSurfaceController } from '../surface/web-surface.controller';
 import { JobTitler } from '../titling';
-import { CredentialResolver } from '../onboarding';
-import { GithubPrService } from '../git';
-import {
-  DriverStoreService,
-  GithubCiStateSync,
-  GithubPrStateSync,
-  GitStateReconciler,
-} from '../driver';
-import { JobDependencyService } from '../job-deps';
 import { GithubNotificationSource } from './github-notification.source';
 import { GithubEventsWebhookController } from './github-webhook.controller';
-import { WebSurfaceController } from '../surface/web-surface.controller';
 
 const ORG_ID = '41111111-1111-4111-8111-111111111111';
 const SECRET = 'gh-int-secret';
@@ -84,10 +75,7 @@ describe('ciStatus projections end-to-end (live Postgres, booted HTTP server)', 
 
   beforeAll(async () => {
     mod = await Test.createTestingModule({
-      imports: [
-        TypeOrmModule.forRoot(dbOpts()),
-        TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION),
-      ],
+      imports: [TypeOrmModule.forRoot(dbOpts()), TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION)],
       controllers: [GithubEventsWebhookController],
       providers: [
         ProjectRoutingService,
@@ -113,8 +101,7 @@ describe('ciStatus projections end-to-end (live Postgres, booted HTTP server)', 
         {
           provide: EnvService,
           useValue: {
-            get: (k: string) =>
-              k === 'GITHUB_WEBHOOK_SECRET' ? SECRET : undefined,
+            get: (k: string) => (k === 'GITHUB_WEBHOOK_SECRET' ? SECRET : undefined),
           },
         },
         {
@@ -209,26 +196,20 @@ describe('ciStatus projections end-to-end (live Postgres, booted HTTP server)', 
 
     // ── HEADER PROJECTION (before) ──────────────────────────────────────────────────────────────
     const before = await driverStore.getPipelineState(jobId, ORG_ID);
-    console.log(
-      '[ci-proj] header before:',
-      (before as { ciStatus?: unknown }).ciStatus,
-    );
+    console.log('[ci-proj] header before:', (before as { ciStatus?: unknown }).ciStatus);
     expect((before as { ciStatus?: unknown }).ciStatus).toBe('pending');
 
     // ── SIDEBAR PROJECTION (before) — real WebSurfaceController.allThreads, minimal DI ─────────────
     const inst = Object.create(WebSurfaceController.prototype);
     inst.orgService = {
-      listForUser: async () => [
-        { id: ORG_ID, slug: 'gh-ci-proj-org', name: 'GH CI Proj Org' },
-      ],
+      listForUser: async () => [{ id: ORG_ID, slug: 'gh-ci-proj-org', name: 'GH CI Proj Org' }],
     };
     inst.jobs = jobs;
     inst.repos = repos;
     inst.jobDeps = { blockersOfManyBlocked: async () => new Map() };
-    const rowsBefore = (await WebSurfaceController.prototype.allThreads.call(
-      inst,
-      { id: 'user-1' } as UserEntity,
-    )) as Array<{ jobId: string; ciStatus?: unknown }>;
+    const rowsBefore = (await WebSurfaceController.prototype.allThreads.call(inst, {
+      id: 'user-1',
+    } as UserEntity)) as Array<{ jobId: string; ciStatus?: unknown }>;
     const rowBefore = rowsBefore.find((r) => r.jobId === jobId);
     console.log('[ci-proj] sidebar before:', rowBefore?.ciStatus);
     expect(rowBefore?.ciStatus).toBe('pending');
@@ -266,17 +247,13 @@ describe('ciStatus projections end-to-end (live Postgres, booted HTTP server)', 
 
     // ── HEADER PROJECTION (after) ───────────────────────────────────────────────────────────────
     const after = await driverStore.getPipelineState(jobId, ORG_ID);
-    console.log(
-      '[ci-proj] header after:',
-      (after as { ciStatus?: unknown }).ciStatus,
-    );
+    console.log('[ci-proj] header after:', (after as { ciStatus?: unknown }).ciStatus);
     expect((after as { ciStatus?: unknown }).ciStatus).toBe('success');
 
     // ── SIDEBAR PROJECTION (after) ──────────────────────────────────────────────────────────────
-    const rowsAfter = (await WebSurfaceController.prototype.allThreads.call(
-      inst,
-      { id: 'user-1' } as UserEntity,
-    )) as Array<{ jobId: string; ciStatus?: unknown }>;
+    const rowsAfter = (await WebSurfaceController.prototype.allThreads.call(inst, {
+      id: 'user-1',
+    } as UserEntity)) as Array<{ jobId: string; ciStatus?: unknown }>;
     const rowAfter = rowsAfter.find((r) => r.jobId === jobId);
     console.log('[ci-proj] sidebar after:', rowAfter?.ciStatus);
     expect(rowAfter?.ciStatus).toBe('success');

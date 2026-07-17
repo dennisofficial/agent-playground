@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import type { Repository } from 'typeorm';
 import type { PrStateDelta } from '@shared/domain';
+import type { Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity } from '../persistence/entities';
 import { StimulusStoreService } from '../stimulus';
@@ -29,23 +29,12 @@ export class GithubPrStateSync {
 
   async dispatch(delta: PrStateDelta): Promise<void> {
     if (delta.action === 'opened') {
-      return this.onPrOpened(
-        delta.orgId,
-        delta.repoId,
-        delta.headRef,
-        delta.url,
-        delta.prNumber,
-      );
+      return this.onPrOpened(delta.orgId, delta.repoId, delta.headRef, delta.url, delta.prNumber);
     }
     if (delta.action === 'reopened') {
       return this.onPrReopened(delta.orgId, delta.repoId, delta.prNumber);
     }
-    return this.onPrClosed(
-      delta.orgId,
-      delta.repoId,
-      delta.prNumber,
-      delta.merged,
-    );
+    return this.onPrClosed(delta.orgId, delta.repoId, delta.prNumber, delta.merged);
   }
 
   /** A PR opened for a job's branch — record it (idempotent: a job that already has a pr_number is left alone). */
@@ -56,11 +45,7 @@ export class GithubPrStateSync {
     url: string,
     number: number,
   ): Promise<void> {
-    const job = await this.stimStore.findOwningJobByBranch(
-      orgId,
-      repoId,
-      headRef,
-    );
+    const job = await this.stimStore.findOwningJobByBranch(orgId, repoId, headRef);
     if (!job) {
       this.logger.debug(
         `pr #${number} opened — no owning job for branch "${headRef}" in ${repoId} (ignored)`,
@@ -81,17 +66,8 @@ export class GithubPrStateSync {
   }
 
   /** A PR merged or closed-without-merge — apply the terminal state via the shared apply-logic. */
-  async onPrClosed(
-    orgId: string,
-    repoId: string,
-    number: number,
-    merged: boolean,
-  ): Promise<void> {
-    const job = await this.stimStore.findOwningJobByPrNumber(
-      orgId,
-      repoId,
-      number,
-    );
+  async onPrClosed(orgId: string, repoId: string, number: number, merged: boolean): Promise<void> {
+    const job = await this.stimStore.findOwningJobByPrNumber(orgId, repoId, number);
     if (!job) {
       this.logger.debug(
         `pr #${number} ${merged ? 'merged' : 'closed'} — no owning job in ${repoId} (ignored)`,
@@ -102,20 +78,10 @@ export class GithubPrStateSync {
   }
 
   /** A previously-closed PR reopened — flip `pr_state` back to `open`; the job's `status` stays `done`. */
-  async onPrReopened(
-    orgId: string,
-    repoId: string,
-    number: number,
-  ): Promise<void> {
-    const job = await this.stimStore.findOwningJobByPrNumber(
-      orgId,
-      repoId,
-      number,
-    );
+  async onPrReopened(orgId: string, repoId: string, number: number): Promise<void> {
+    const job = await this.stimStore.findOwningJobByPrNumber(orgId, repoId, number);
     if (!job) {
-      this.logger.debug(
-        `pr #${number} reopened — no owning job in ${repoId} (ignored)`,
-      );
+      this.logger.debug(`pr #${number} reopened — no owning job in ${repoId} (ignored)`);
       return;
     }
     await this.jobs.update({ id: job.id }, { pr_state: 'open' });

@@ -50,9 +50,7 @@ export class SandboxRefsService {
   }): Promise<string | undefined> {
     const dir = this.teamRefsDir(input.orgId);
     if (!dir) {
-      this.logger.warn(
-        'ensureReference called but no REFS_ROOT/REFS_ROOT configured — skipping',
-      );
+      this.logger.warn('ensureReference called but no REFS_ROOT/REFS_ROOT configured — skipping');
       return undefined;
     }
     const slug = this.safe(input.repoId);

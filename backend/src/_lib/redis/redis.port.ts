@@ -104,8 +104,5 @@ export interface RedisStreamPort {
    * unsubscribe fn is invoked. Each subscription gets its OWN connection (a subscribed ioredis
    * connection can't issue normal commands), torn down on unsubscribe.
    */
-  subscribe(
-    channel: string,
-    handler: (message: unknown) => void,
-  ): Promise<() => Promise<void>>;
+  subscribe(channel: string, handler: (message: unknown) => void): Promise<() => Promise<void>>;
 }

@@ -12,9 +12,7 @@ describe('gitAuthEnv (token never in argv / config)', () => {
     const env = gitAuthEnv('https://github.com/acme/app.git', 'ghp_secret');
     expect(env.GIT_CONFIG_COUNT).toBe('1');
     expect(env.GIT_CONFIG_KEY_0).toBe('http.https://github.com/.extraheader');
-    const expected = Buffer.from('x-access-token:ghp_secret').toString(
-      'base64',
-    );
+    const expected = Buffer.from('x-access-token:ghp_secret').toString('base64');
     expect(env.GIT_CONFIG_VALUE_0).toBe(`AUTHORIZATION: basic ${expected}`);
   });
 
@@ -53,18 +51,13 @@ describe('gitAuthEnv (token never in argv / config)', () => {
   });
 
   it('sameGitUrl tolerates trailing .git / slash', () => {
-    expect(
-      sameGitUrl('https://github.com/a/b.git', 'https://github.com/a/b/'),
-    ).toBe(true);
+    expect(sameGitUrl('https://github.com/a/b.git', 'https://github.com/a/b/')).toBe(true);
   });
 });
 
 describe('gitCredHelperEnv (file-backed, url-scoped)', () => {
   it('sets a url-scoped credential helper that cats the token file on every git invocation', () => {
-    const env = gitCredHelperEnv(
-      'https://github.com/acme/app.git',
-      '/.atlas/github-token',
-    );
+    const env = gitCredHelperEnv('https://github.com/acme/app.git', '/.atlas/github-token');
     expect(env.GIT_CONFIG_COUNT).toBe('2');
     expect(env.GIT_CONFIG_KEY_0).toBe('credential.helper');
     expect(env.GIT_CONFIG_VALUE_0).toBe('');
@@ -74,11 +67,7 @@ describe('gitCredHelperEnv (file-backed, url-scoped)', () => {
   });
 
   it('returns {} for non-github urls — the helper never scopes to a non-GitHub remote', () => {
-    expect(
-      gitCredHelperEnv('file:///tmp/x.git', '/.atlas/github-token'),
-    ).toEqual({});
-    expect(
-      gitCredHelperEnv('git@github.com:acme/app.git', '/.atlas/github-token'),
-    ).toEqual({});
+    expect(gitCredHelperEnv('file:///tmp/x.git', '/.atlas/github-token')).toEqual({});
+    expect(gitCredHelperEnv('git@github.com:acme/app.git', '/.atlas/github-token')).toEqual({});
   });
 });

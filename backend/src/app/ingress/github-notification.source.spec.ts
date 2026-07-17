@@ -1,12 +1,9 @@
+import type { EnvService } from '@core/config/env/env.service';
+import type { CiSyncDelta, RawNotification } from '@shared/domain';
 import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import type { EnvService } from '@core/config/env/env.service';
 import type { ProjectRoute, ProjectRoutingService } from '../stimulus';
-import {
-  GithubNotificationSource,
-  verifyGithubSignature,
-} from './github-notification.source';
-import type { CiSyncDelta, RawNotification } from '@shared/domain';
+import { GithubNotificationSource, verifyGithubSignature } from './github-notification.source';
 
 const SECRET = 'gh-webhook-secret';
 
@@ -40,10 +37,7 @@ function sign(body: string, secret = SECRET): string {
   return `sha256=${createHmac('sha256', secret).update(Buffer.from(body)).digest('hex')}`;
 }
 
-function raw(
-  body: unknown,
-  headers: Record<string, string | undefined>,
-): RawNotification {
+function raw(body: unknown, headers: Record<string, string | undefined>): RawNotification {
   const json = JSON.stringify(body);
   return { rawBody: Buffer.from(json), headers, body };
 }
@@ -51,31 +45,23 @@ function raw(
 describe('verifyGithubSignature', () => {
   it('accepts a correct sha256 HMAC of the raw bytes', () => {
     const body = JSON.stringify({ a: 1 });
-    expect(verifyGithubSignature(Buffer.from(body), sign(body), SECRET)).toBe(
-      true,
-    );
+    expect(verifyGithubSignature(Buffer.from(body), sign(body), SECRET)).toBe(true);
   });
 
   it('rejects a tampered body', () => {
     const body = JSON.stringify({ a: 1 });
     const sig = sign(body);
-    expect(verifyGithubSignature(Buffer.from(body + 'x'), sig, SECRET)).toBe(
-      false,
-    );
+    expect(verifyGithubSignature(Buffer.from(body + 'x'), sig, SECRET)).toBe(false);
   });
 
   it('rejects a signature made with the wrong secret', () => {
     const body = JSON.stringify({ a: 1 });
-    expect(
-      verifyGithubSignature(Buffer.from(body), sign(body, 'wrong'), SECRET),
-    ).toBe(false);
+    expect(verifyGithubSignature(Buffer.from(body), sign(body, 'wrong'), SECRET)).toBe(false);
   });
 
   it('rejects a malformed signature (length mismatch, no throw)', () => {
     const body = JSON.stringify({ a: 1 });
-    expect(
-      verifyGithubSignature(Buffer.from(body), 'sha256=short', SECRET),
-    ).toBe(false);
+    expect(verifyGithubSignature(Buffer.from(body), 'sha256=short', SECRET)).toBe(false);
   });
 });
 
@@ -108,9 +94,7 @@ describe('GithubNotificationSource.handle', () => {
 
   it('rejects a missing signature header (unverifiable)', async () => {
     const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
-    const res = await src.handle(
-      raw(failedWorkflow, { 'x-github-event': 'workflow_run' }),
-    );
+    const res = await src.handle(raw(failedWorkflow, { 'x-github-event': 'workflow_run' }));
     expect(res).toMatchObject({ outcome: 'rejected', reason: 'unverifiable' });
   });
 

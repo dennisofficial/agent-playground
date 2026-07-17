@@ -25,9 +25,7 @@ export class AddRepoDecisionsManifest1782687668193 implements MigrationInterface
     await queryRunner.query(
       `ALTER TABLE "repo_decisions" DROP CONSTRAINT "fk_repo_decisions_org_id_organizations"`,
     );
-    await queryRunner.query(
-      `DROP INDEX "public"."idx_repo_decisions_org_id_repo_id"`,
-    );
+    await queryRunner.query(`DROP INDEX "public"."idx_repo_decisions_org_id_repo_id"`);
     await queryRunner.query(`DROP TABLE "repo_decisions"`);
   }
 }

@@ -1,16 +1,10 @@
+import type { EnvService } from '@core/config/env/env.service';
+import Docker from 'dockerode';
 import { execFile } from 'node:child_process';
-import {
-  existsSync,
-  mkdtempSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import type { EnvService } from '@core/config/env/env.service';
-import Docker from 'dockerode';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { LocalGitService, type FeatureSandbox, type ProjectRepo } from '../git';
 import { bundleMcpBridge, bundleMcpHub, ensureEngineApp } from './bundle-engine';
@@ -56,8 +50,7 @@ beforeAll(async () => {
 describe('SandboxManager — submodule repo full-clone (integration, needs Docker)', () => {
   const engine = new DockerodeContainerEngine(env());
   const builder = new SandboxImageBuilder(env(), engine);
-  const g = (args: string[], cwd: string) =>
-    execFileAsync('git', args, { cwd });
+  const g = (args: string[], cwd: string) => execFileAsync('git', args, { cwd });
 
   let root: string;
   let homeRoot: string;
@@ -85,10 +78,7 @@ describe('SandboxManager — submodule repo full-clone (integration, needs Docke
     await g(['init', '-q', '-b', 'main'], subRemote);
     await g(['config', 'user.email', 'test@atlas.dev'], subRemote);
     await g(['config', 'user.name', 'Test'], subRemote);
-    writeFileSync(
-      join(subRemote, 'package.json'),
-      '{"name":"@workspace/shared"}',
-    );
+    writeFileSync(join(subRemote, 'package.json'), '{"name":"@workspace/shared"}');
     await g(['add', '-A'], subRemote);
     await g(['commit', '-qm', 'sub'], subRemote);
 
@@ -140,11 +130,7 @@ describe('SandboxManager — submodule repo full-clone (integration, needs Docke
       worktreePath: worktree,
       gitUrl: '',
     };
-    manager = new SandboxManager(
-      engine,
-      builder,
-      env({ AGENT_HOME_ROOT: homeRoot }),
-    );
+    manager = new SandboxManager(engine, builder, env({ AGENT_HOME_ROOT: homeRoot }));
 
     if (!dockerUp) return;
     // Reclaim any STALE container from a prior run (deterministic name → warm reuse with dead binds).
@@ -154,30 +140,24 @@ describe('SandboxManager — submodule repo full-clone (integration, needs Docke
   afterAll(async () => {
     if (prevAllowProtocol === undefined) delete process.env.GIT_ALLOW_PROTOCOL;
     else process.env.GIT_ALLOW_PROTOCOL = prevAllowProtocol;
-    if (containerId)
-      await engine.remove(containerId, { force: true }).catch(() => undefined);
+    if (containerId) await engine.remove(containerId, { force: true }).catch(() => undefined);
     if (artifacts) {
       await engine.removeNetwork(artifacts.net).catch(() => undefined);
       await engine.removeVolume(artifacts.vol).catch(() => undefined);
     }
-    for (const p of [root, homeRoot])
-      if (p) rmSync(p, { recursive: true, force: true });
+    for (const p of [root, homeRoot]) if (p) rmSync(p, { recursive: true, force: true });
   });
 
   it('provisions the submodule repo as a full clone (real .git dir + gitdir under .git/modules)', () => {
     // Host-side fast fail — proves the clone path took effect before we ever touch Docker.
     expect(statSync(join(worktree, '.git')).isDirectory()).toBe(true);
-    expect(
-      existsSync(join(worktree, '.git', 'modules', 'packages', 'shared')),
-    ).toBe(true);
+    expect(existsSync(join(worktree, '.git', 'modules', 'packages', 'shared'))).toBe(true);
   });
 
   it('attaches with NO linked-worktree overlay and runs `git add -A` in-container without fataling', async () => {
     if (!dockerUp) {
       // eslint-disable-next-line no-console
-      console.warn(
-        'Docker not reachable — skipping SandboxManager submodule integration test',
-      );
+      console.warn('Docker not reachable — skipping SandboxManager submodule integration test');
       return;
     }
     // The engine app + MCP bundles are generated, not committed — ensure/produce them (as the API does on
@@ -197,17 +177,11 @@ describe('SandboxManager — submodule repo full-clone (integration, needs Docke
     // Positive proof the CLONE path took effect: the worktree is bound at /workspace, but the guard skipped
     // the linked-worktree overlay — NO /.atlas/git-common bind and NO /workspace/.git shadow (the clone's
     // `.git` is a real dir on the single /workspace mount, so it needs neither).
-    const raw = await new Docker()
-      .getContainer(attached.containerId!)
-      .inspect();
+    const raw = await new Docker().getContainer(attached.containerId!).inspect();
     const mounts = (raw.Mounts ?? []) as Array<{ Destination?: string }>;
     expect(mounts.some((m) => m.Destination === CONTAINER_WORKTREE)).toBe(true);
-    expect(mounts.some((m) => m.Destination === CONTAINER_GIT_COMMON)).toBe(
-      false,
-    );
-    expect(
-      mounts.some((m) => m.Destination === `${CONTAINER_WORKTREE}/.git`),
-    ).toBe(false);
+    expect(mounts.some((m) => m.Destination === CONTAINER_GIT_COMMON)).toBe(false);
+    expect(mounts.some((m) => m.Destination === `${CONTAINER_WORKTREE}/.git`)).toBe(false);
 
     // THE PROD REPRO, now green: touch a file, stage EVERYTHING (which recurses into the submodule), and
     // read status back. This fataled in prod with exit 128 (`cannot chdir` / `not a git repository`).
@@ -227,13 +201,7 @@ describe('SandboxManager — submodule repo full-clone (integration, needs Docke
     // bridges within the single /workspace mount.
     const sub = await engine.exec(
       attached.containerId!,
-      [
-        'git',
-        '-C',
-        `${CONTAINER_WORKTREE}/packages/shared`,
-        'rev-parse',
-        '--is-inside-work-tree',
-      ],
+      ['git', '-C', `${CONTAINER_WORKTREE}/packages/shared`, 'rev-parse', '--is-inside-work-tree'],
       { user: attached.execUser },
     );
     expect(sub.exitCode).toBe(0);

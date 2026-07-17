@@ -1,24 +1,20 @@
-import {
-  Module,
-  OnApplicationBootstrap,
-  OnApplicationShutdown,
-} from '@nestjs/common';
+import { Module, OnApplicationBootstrap, OnApplicationShutdown } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Subscription } from 'rxjs';
 import { AgentSessionManager } from '../brain/agent-session-manager.service';
+import type { ApprovalVerdict } from '../brain/decision-approval.service';
 import { DecisionApprovalService } from '../brain/decision-approval.service';
-import { DB_CONNECTION } from '../persistence/database.module';
 import { GitModule } from '../git/git.module';
 import { JobBootstrapModule } from '../job-bootstrap';
-import { StimulusModule } from '../stimulus/stimulus.module';
+import { DB_CONNECTION } from '../persistence/database.module';
 import {
-  TranscriptMessageEntity,
-  RepoEntity,
   JobEntity,
+  RepoEntity,
   SubagentEntity,
+  TranscriptMessageEntity,
 } from '../persistence/entities';
-import { WebSurface } from './web-surface';
+import { StimulusModule } from '../stimulus/stimulus.module';
 import {
   AMEND_APPROVE_ACTION_ID,
   AMEND_DISMISS_ACTION_ID,
@@ -32,10 +28,10 @@ import {
   RETRACT_SHIP_ACTION_ID,
   SHIP_ACTION_ID,
 } from './approval-blocks';
-import { parseWebApprovalMeta } from './web-approval-card';
-import { WebSurfaceController } from './web-surface.controller';
 import { JobTitleService } from './job-title.service';
-import type { ApprovalVerdict } from '../brain/decision-approval.service';
+import { parseWebApprovalMeta } from './web-approval-card';
+import { WebSurface } from './web-surface';
+import { WebSurfaceController } from './web-surface.controller';
 
 /**
  * R0 — WEB SURFACE MODULE. Provides `WebSurface` + the `WebSurfaceController` HTTP/SSE edge,
@@ -79,9 +75,7 @@ import type { ApprovalVerdict } from '../brain/decision-approval.service';
   controllers: [WebSurfaceController],
   exports: [WebSurface],
 })
-export class WebSurfaceModule
-  implements OnApplicationBootstrap, OnApplicationShutdown
-{
+export class WebSurfaceModule implements OnApplicationBootstrap, OnApplicationShutdown {
   private approvalSub?: Subscription;
 
   constructor(
@@ -92,130 +86,101 @@ export class WebSurfaceModule
   ) {}
 
   onApplicationBootstrap(): void {
-    this.approvalSub = this.surface.approval$.subscribe(
-      ({ actionId, value, ruledBy, note }) => {
-        const meta = parseWebApprovalMeta(value);
-        if (!meta) return;
+    this.approvalSub = this.surface.approval$.subscribe(({ actionId, value, ruledBy, note }) => {
+      const meta = parseWebApprovalMeta(value);
+      if (!meta) return;
 
-        // SHIP-REVIEW gate: not a plan verdict — resume the driver so it re-reaches `finalizeBuild` and ships.
-        // Resolved lazily via ModuleRef (the surface must not import the driver — that would form a cycle,
-        // DriverModule already depends on the surface for CHAT_SURFACE). Idempotent: `resolveShipApprovalDurably`
-        // only acts while the job is `awaiting_ship_review`, so a stale/double click is a no-op.
-        if (actionId === SHIP_ACTION_ID) {
-          void resolveShipApproval(this.moduleRef, meta.jobId, ruledBy).catch(
-            () => undefined,
-          );
-          return;
-        }
+      // SHIP-REVIEW gate: not a plan verdict — resume the driver so it re-reaches `finalizeBuild` and ships.
+      // Resolved lazily via ModuleRef (the surface must not import the driver — that would form a cycle,
+      // DriverModule already depends on the surface for CHAT_SURFACE). Idempotent: `resolveShipApprovalDurably`
+      // only acts while the job is `awaiting_ship_review`, so a stale/double click is a no-op.
+      if (actionId === SHIP_ACTION_ID) {
+        void resolveShipApproval(this.moduleRef, meta.jobId, ruledBy).catch(() => undefined);
+        return;
+      }
 
-        // RETRACT the ship-review gate: the "Back to building" click. Same lazy-driver resolution as the
-        // approve branch above; `retractShipDurably` is idempotent (acts only while parked), so a stale click
-        // is a safe no-op.
-        if (actionId === RETRACT_SHIP_ACTION_ID) {
-          void retractShip(this.moduleRef, meta.jobId, ruledBy).catch(
-            () => undefined,
-          );
-          return;
-        }
+      // RETRACT the ship-review gate: the "Back to building" click. Same lazy-driver resolution as the
+      // approve branch above; `retractShipDurably` is idempotent (acts only while parked), so a stale click
+      // is a safe no-op.
+      if (actionId === RETRACT_SHIP_ACTION_ID) {
+        void retractShip(this.moduleRef, meta.jobId, ruledBy).catch(() => undefined);
+        return;
+      }
 
-        // APPROVE the brain's "Amend build?" proposal: run the SAME operator retract path (so the retract note
-        // is operator-authored, never "Operator wants…"), neutralize the proposal card, and — only if the
-        // retract actually fired — wake the brain to do the follow-up work. Idempotent throughout.
-        if (actionId === AMEND_APPROVE_ACTION_ID) {
-          void amendApprove(
-            this.moduleRef,
-            this.asm,
-            meta.jobId,
-            ruledBy,
-          ).catch(() => undefined);
-          return;
-        }
+      // APPROVE the brain's "Amend build?" proposal: run the SAME operator retract path (so the retract note
+      // is operator-authored, never "Operator wants…"), neutralize the proposal card, and — only if the
+      // retract actually fired — wake the brain to do the follow-up work. Idempotent throughout.
+      if (actionId === AMEND_APPROVE_ACTION_ID) {
+        void amendApprove(this.moduleRef, this.asm, meta.jobId, ruledBy).catch(() => undefined);
+        return;
+      }
 
-        // DISMISS the brain's amend proposal: just neutralize the card. The gate stays parked at ship-review.
-        if (actionId === AMEND_DISMISS_ACTION_ID) {
-          void neutralizeAmendProposal(
-            this.moduleRef,
-            meta.jobId,
-            'Dismissed — staying at ship review.',
-          ).catch(() => undefined);
-          return;
-        }
-
-        // APPROVE the brain's "Re-plan?" proposal (heavy amend): execute the re-plan (append a fresh Planning
-        // group, job.status -> planning), neutralize the proposal card, and — only if the CAS actually fired —
-        // wake the new planner thread. Idempotent throughout (executeReplan's CAS + neutralizeReplanProposal's
-        // row scan).
-        if (actionId === REPLAN_APPROVE_ACTION_ID) {
-          void replanApprove(
-            this.moduleRef,
-            this.asm,
-            meta.jobId,
-            ruledBy,
-          ).catch(() => undefined);
-          return;
-        }
-
-        // DISMISS the brain's re-plan proposal: just neutralize the card. The job stays wherever it was.
-        if (actionId === REPLAN_DISMISS_ACTION_ID) {
-          void neutralizeReplanProposal(
-            this.moduleRef,
-            meta.jobId,
-            'Dismissed — staying at ship review.',
-          ).catch(() => undefined);
-          return;
-        }
-
-        // atlas-prod gated DB write: EXECUTE or DENY the operator-approved statement. Not a plan verdict — the
-        // `writeId` (the ledger row to act on) rides in the card `value` alongside `jobId`; `parseWebApprovalMeta`
-        // only surfaces `jobId`, so parse `writeId` from the raw value here. `executeApproved`/`denyWrite` are
-        // idempotent (act only on a `pending` row), so a stale/double click is a safe no-op.
-        if (
-          actionId === DB_WRITE_APPROVE_ACTION_ID ||
-          actionId === DB_WRITE_DENY_ACTION_ID
-        ) {
-          const writeId = parseWriteId(value);
-          if (!writeId) return;
-          const approve = actionId === DB_WRITE_APPROVE_ACTION_ID;
-          // `meta.jobId` is the card's authorized job — the controller already validated it matches the route
-          // job and belongs to the caller's org. Pass it down so the ledger row is verified to belong to it
-          // (a foreign/stale `writeId` can't be executed/denied on the back of an unrelated job's approval).
-          void resolveDbWrite(
-            this.moduleRef,
-            writeId,
-            meta.jobId,
-            ruledBy,
-            approve,
-          ).catch(() => undefined);
-          return;
-        }
-
-        const verdict = actionIdToVerdict(actionId);
-        if (!verdict) return;
-
-        const resolved = this.approvals.resolve(
+      // DISMISS the brain's amend proposal: just neutralize the card. The gate stays parked at ship-review.
+      if (actionId === AMEND_DISMISS_ACTION_ID) {
+        void neutralizeAmendProposal(
+          this.moduleRef,
           meta.jobId,
-          verdict,
-          ruledBy,
-          note,
-          meta.decisionRecordId,
+          'Dismissed — staying at ship review.',
+        ).catch(() => undefined);
+        return;
+      }
+
+      // APPROVE the brain's "Re-plan?" proposal (heavy amend): execute the re-plan (append a fresh Planning
+      // group, job.status -> planning), neutralize the proposal card, and — only if the CAS actually fired —
+      // wake the new planner thread. Idempotent throughout (executeReplan's CAS + neutralizeReplanProposal's
+      // row scan).
+      if (actionId === REPLAN_APPROVE_ACTION_ID) {
+        void replanApprove(this.moduleRef, this.asm, meta.jobId, ruledBy).catch(() => undefined);
+        return;
+      }
+
+      // DISMISS the brain's re-plan proposal: just neutralize the card. The job stays wherever it was.
+      if (actionId === REPLAN_DISMISS_ACTION_ID) {
+        void neutralizeReplanProposal(
+          this.moduleRef,
+          meta.jobId,
+          'Dismissed — staying at ship review.',
+        ).catch(() => undefined);
+        return;
+      }
+
+      // atlas-prod gated DB write: EXECUTE or DENY the operator-approved statement. Not a plan verdict — the
+      // `writeId` (the ledger row to act on) rides in the card `value` alongside `jobId`; `parseWebApprovalMeta`
+      // only surfaces `jobId`, so parse `writeId` from the raw value here. `executeApproved`/`denyWrite` are
+      // idempotent (act only on a `pending` row), so a stale/double click is a safe no-op.
+      if (actionId === DB_WRITE_APPROVE_ACTION_ID || actionId === DB_WRITE_DENY_ACTION_ID) {
+        const writeId = parseWriteId(value);
+        if (!writeId) return;
+        const approve = actionId === DB_WRITE_APPROVE_ACTION_ID;
+        // `meta.jobId` is the card's authorized job — the controller already validated it matches the route
+        // job and belongs to the caller's org. Pass it down so the ledger row is verified to belong to it
+        // (a foreign/stale `writeId` can't be executed/denied on the back of an unrelated job's approval).
+        void resolveDbWrite(this.moduleRef, writeId, meta.jobId, ruledBy, approve).catch(
+          () => undefined,
         );
-        if (!resolved) {
-          // No LIVE in-memory handle. Either a genuinely stale/double click, OR the in-memory pending map
-          // was dropped by a restart while the thread stayed durably `awaiting_approval` (the documented
-          // durability gap). Fall back to the restart-safe durable resolver, which acts only if the job is
-          // still awaiting — so a true stale click remains a no-op. Fire-and-forget; errors are logged.
-          void this.asm
-            .resolveApprovalDurably(
-              meta.jobId,
-              verdict,
-              ruledBy,
-              note,
-              meta.decisionRecordId,
-            )
-            .catch(() => undefined);
-        }
-      },
-    );
+        return;
+      }
+
+      const verdict = actionIdToVerdict(actionId);
+      if (!verdict) return;
+
+      const resolved = this.approvals.resolve(
+        meta.jobId,
+        verdict,
+        ruledBy,
+        note,
+        meta.decisionRecordId,
+      );
+      if (!resolved) {
+        // No LIVE in-memory handle. Either a genuinely stale/double click, OR the in-memory pending map
+        // was dropped by a restart while the thread stayed durably `awaiting_approval` (the documented
+        // durability gap). Fall back to the restart-safe durable resolver, which acts only if the job is
+        // still awaiting — so a true stale click remains a no-op. Fire-and-forget; errors are logged.
+        void this.asm
+          .resolveApprovalDurably(meta.jobId, verdict, ruledBy, note, meta.decisionRecordId)
+          .catch(() => undefined);
+      }
+    });
   }
 
   onApplicationShutdown(): void {
@@ -243,11 +208,7 @@ async function resolveShipApproval(
  * Retract a ship-review gate back to planning. Mirrors {@link resolveShipApproval}'s lazy `ThreadDriver`
  * resolution; `retractShipDurably` is itself idempotent (acts only while `awaiting_ship_review`).
  */
-async function retractShip(
-  moduleRef: ModuleRef,
-  jobId: string,
-  ruledBy: string,
-): Promise<void> {
+async function retractShip(moduleRef: ModuleRef, jobId: string, ruledBy: string): Promise<void> {
   const { ThreadDriver } = await import('../driver/thread-driver.service.js');
   const driver = moduleRef.get(ThreadDriver, { strict: false });
   await driver.retractShipDurably(jobId, ruledBy);
@@ -266,8 +227,7 @@ async function amendApprove(
   ruledBy: string,
 ): Promise<void> {
   const { ThreadDriver } = await import('../driver/thread-driver.service.js');
-  const { DriverStoreService } =
-    await import('../driver/driver-store.service.js');
+  const { DriverStoreService } = await import('../driver/driver-store.service.js');
   const driver = moduleRef.get(ThreadDriver, { strict: false });
   const store = moduleRef.get(DriverStoreService, { strict: false });
   const acted = await driver.retractShipDurably(jobId, ruledBy);
@@ -284,8 +244,7 @@ async function neutralizeAmendProposal(
   jobId: string,
   verdictLine: string,
 ): Promise<void> {
-  const { DriverStoreService } =
-    await import('../driver/driver-store.service.js');
+  const { DriverStoreService } = await import('../driver/driver-store.service.js');
   const store = moduleRef.get(DriverStoreService, { strict: false });
   await store.neutralizeAmendProposal(jobId, verdictLine);
 }
@@ -303,19 +262,14 @@ async function replanApprove(
   jobId: string,
   ruledBy: string,
 ): Promise<void> {
-  const { DriverStoreService } =
-    await import('../driver/driver-store.service.js');
+  const { DriverStoreService } = await import('../driver/driver-store.service.js');
   const store = moduleRef.get(DriverStoreService, { strict: false });
   const job = await store.loadJob(jobId).catch(() => null);
   if (!job) return;
   const result = await store.executeReplan(jobId, job.orgId);
   await store.neutralizeReplanProposal(jobId, 'Approved — re-planning.');
   if (result) {
-    await asm.wakeForReplan(
-      jobId,
-      result.threadId,
-      'Operator approved the re-plan proposal.',
-    );
+    await asm.wakeForReplan(jobId, result.threadId, 'Operator approved the re-plan proposal.');
   }
 }
 
@@ -328,8 +282,7 @@ async function neutralizeReplanProposal(
   jobId: string,
   verdictLine: string,
 ): Promise<void> {
-  const { DriverStoreService } =
-    await import('../driver/driver-store.service.js');
+  const { DriverStoreService } = await import('../driver/driver-store.service.js');
   const store = moduleRef.get(DriverStoreService, { strict: false });
   await store.neutralizeReplanProposal(jobId, verdictLine);
 }
@@ -361,8 +314,7 @@ async function resolveDbWrite(
   ruledBy: string,
   approve: boolean,
 ): Promise<void> {
-  const { ProdDiagnosticsService } =
-    await import('../prod-mcp/prod-diagnostics.service.js');
+  const { ProdDiagnosticsService } = await import('../prod-mcp/prod-diagnostics.service.js');
   const svc = moduleRef.get(ProdDiagnosticsService, { strict: false });
   if (approve) await svc.executeApproved(writeId, ruledBy, expectedJobId);
   else await svc.denyWrite(writeId, ruledBy, expectedJobId);

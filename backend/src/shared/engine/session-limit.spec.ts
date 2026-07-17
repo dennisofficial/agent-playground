@@ -39,15 +39,13 @@ describe('limitFromRateEvent', () => {
 
   it('passes an already-millisecond resetsAt through unchanged', () => {
     const ms = Date.parse('2026-07-09T22:00:00.000Z');
-    expect(
-      limitFromRateEvent({ status: 'rejected', resetsAt: ms })?.resetAt,
-    ).toBe('2026-07-09T22:00:00.000Z');
+    expect(limitFromRateEvent({ status: 'rejected', resetsAt: ms })?.resetAt).toBe(
+      '2026-07-09T22:00:00.000Z',
+    );
   });
 
   it('returns null for an allowed_warning frame', () => {
-    expect(
-      limitFromRateEvent({ status: 'allowed_warning', utilization: 82 }),
-    ).toBeNull();
+    expect(limitFromRateEvent({ status: 'allowed_warning', utilization: 82 })).toBeNull();
   });
 
   it('returns null for an allowed frame', () => {
@@ -66,17 +64,13 @@ describe('limitFromRateEvent', () => {
 
 describe('detectSessionLimitText', () => {
   it('is true for the printed limit lines', () => {
-    expect(
-      detectSessionLimitText("You've hit your session limit · resets 5:20pm"),
-    ).toBe(true);
+    expect(detectSessionLimitText("You've hit your session limit · resets 5:20pm")).toBe(true);
     expect(detectSessionLimitText("You've hit your usage limit")).toBe(true);
     expect(detectSessionLimitText('usage limit reached')).toBe(true);
   });
 
   it('is false for ordinary prose and nullish input', () => {
-    expect(
-      detectSessionLimitText('I reached the end of the file and hit save.'),
-    ).toBe(false);
+    expect(detectSessionLimitText('I reached the end of the file and hit save.')).toBe(false);
     expect(detectSessionLimitText(null)).toBe(false);
     expect(detectSessionLimitText(undefined)).toBe(false);
   });

@@ -1,7 +1,7 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { BadRequestException } from '@nestjs/common';
-import { ConventionProfilesController } from './convention-profiles.controller';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConventionProfileResolver } from './convention-profile.resolver';
+import { ConventionProfilesController } from './convention-profiles.controller';
 
 /**
  * The console API surface: list/upsert/delete profiles + attach one to a repo. Guards (membership/owner)
@@ -12,11 +12,7 @@ const ORG = { id: 'org-1' } as never;
 
 function make() {
   const resolver = {
-    allProfiles: vi
-      .fn()
-      .mockResolvedValue([
-        { slug: 'p', name: 'P', body: 'b', detectHint: null },
-      ]),
+    allProfiles: vi.fn().mockResolvedValue([{ slug: 'p', name: 'P', body: 'b', detectHint: null }]),
     attachedSlug: vi.fn().mockResolvedValue('p'),
     upsertProfile: vi.fn().mockResolvedValue(undefined),
     deleteProfile: vi.fn().mockResolvedValue(undefined),
@@ -47,15 +43,11 @@ describe('ConventionProfilesController', () => {
       body: 'B',
       detectHint: 'H',
     });
-    expect(c.resolver.upsertProfile).toHaveBeenCalledWith(
-      'org-1',
-      'nestjs-next-shared',
-      {
-        name: 'N',
-        body: 'B',
-        detectHint: 'H',
-      },
-    );
+    expect(c.resolver.upsertProfile).toHaveBeenCalledWith('org-1', 'nestjs-next-shared', {
+      name: 'N',
+      body: 'B',
+      detectHint: 'H',
+    });
   });
 
   it('rejects an invalid slug', async () => {
@@ -85,8 +77,8 @@ describe('ConventionProfilesController', () => {
     (c.resolver.attach as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
       new Error('does not exist'),
     );
-    await expect(
-      c.controller.attach(ORG, 'repo-1', { slug: 'nope' }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(c.controller.attach(ORG, 'repo-1', { slug: 'nope' })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
   });
 });

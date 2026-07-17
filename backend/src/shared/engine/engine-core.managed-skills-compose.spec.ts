@@ -1,11 +1,4 @@
-import {
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  readlinkSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -25,10 +18,7 @@ afterAll(() => rmSync(ROOT, { recursive: true, force: true }));
 
 function writeSkillMd(dir: string, description: string): void {
   mkdirSync(dir, { recursive: true });
-  writeFileSync(
-    join(dir, 'SKILL.md'),
-    `---\ndescription: ${description}\n---\nbody\n`,
-  );
+  writeFileSync(join(dir, 'SKILL.md'), `---\ndescription: ${description}\n---\nbody\n`);
 }
 
 describe('composeSkillsDir — managed (system) skills', () => {
@@ -129,8 +119,6 @@ describe('composeSkillsDir — managed (system) skills', () => {
       MANAGED_ROOT,
       MANAGED_GIT_ROOT,
     );
-    expect(existsSync(join(CLAUDE_CONFIG_DIR, 'skills', 'unsynced'))).toBe(
-      false,
-    );
+    expect(existsSync(join(CLAUDE_CONFIG_DIR, 'skills', 'unsynced'))).toBe(false);
   });
 });

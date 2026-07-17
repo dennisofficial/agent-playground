@@ -1,13 +1,6 @@
-import {
-  Column,
-  Entity,
-  Index,
-  JoinColumn,
-  ManyToOne,
-  PrimaryGeneratedColumn,
-} from 'typeorm';
-import { TimestampedEntity } from '@workspace/shared/schemas';
 import type { AutoApproveMode } from '@workspace/shared';
+import { TimestampedEntity } from '@workspace/shared/schemas';
+import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { OrgClaudeCredentialEntity } from './org-claude-credential.entity';
 
 /**
@@ -50,8 +43,7 @@ export class OrganizationEntity extends TimestampedEntity {
   })
   @JoinColumn({
     name: 'selected_claude_credential_id',
-    foreignKeyConstraintName:
-      'fk_organizations_selected_claude_credential_claude_credentials',
+    foreignKeyConstraintName: 'fk_organizations_selected_claude_credential_claude_credentials',
   })
   selectedClaudeCredential?: OrgClaudeCredentialEntity | null;
 

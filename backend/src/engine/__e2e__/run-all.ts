@@ -11,15 +11,15 @@
 // sandbox — is enforced by the HOST's `RedisEngineRunner` / `activity.thread(containerId, …)` semaphore,
 // NOT by the engine app itself. It needs the real running backend to validate meaningfully and is exercised
 // separately against the live product (the job pipeline), not via raw `docker exec` here.
-import { requireSandboxArg, type ScenarioResult } from './lib/harness';
-import { run as normalTurn } from './normal-turn.e2e';
-import { run as steering } from './steering.e2e';
 import { run as aborting } from './aborting.e2e';
-import { run as reattach } from './reattach.e2e';
-import { run as errorHandling } from './error-handling.e2e';
-import { run as toolBridge } from './tool-bridge.e2e';
-import { run as mcpServers } from './mcp-servers.e2e';
 import { run as adversarial } from './adversarial.e2e';
+import { run as errorHandling } from './error-handling.e2e';
+import { requireSandboxArg, type ScenarioResult } from './lib/harness';
+import { run as mcpServers } from './mcp-servers.e2e';
+import { run as normalTurn } from './normal-turn.e2e';
+import { run as reattach } from './reattach.e2e';
+import { run as steering } from './steering.e2e';
+import { run as toolBridge } from './tool-bridge.e2e';
 
 interface Entry {
   name: string;
@@ -42,7 +42,11 @@ const SCENARIOS: Entry[] = [
 async function main(): Promise<void> {
   const sandbox = requireSandboxArg('run-all.ts');
   console.log(`\n=== engine e2e: ${SCENARIOS.length} scenarios on ${sandbox} ===\n`);
-  const results: Array<{ name: string; required: boolean; result: ScenarioResult }> = [];
+  const results: Array<{
+    name: string;
+    required: boolean;
+    result: ScenarioResult;
+  }> = [];
   for (const s of SCENARIOS) {
     console.log(`\n───── ${s.name} ─────`);
     try {
@@ -50,7 +54,11 @@ async function main(): Promise<void> {
       results.push({ name: s.name, required: s.required, result });
       console.log(`${result.pass ? 'PASS' : 'FAIL'} ${s.name}: ${result.detail}`);
     } catch (e) {
-      results.push({ name: s.name, required: s.required, result: { pass: false, detail: `threw: ${String(e).slice(0, 160)}` } });
+      results.push({
+        name: s.name,
+        required: s.required,
+        result: { pass: false, detail: `threw: ${String(e).slice(0, 160)}` },
+      });
       console.log(`FAIL ${s.name}: threw ${String(e).slice(0, 160)}`);
     }
   }

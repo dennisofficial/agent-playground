@@ -144,16 +144,11 @@ export const RECORD_LEG_HANDOFF_DESCRIPTION =
  * `carriedTasks` is the (possibly empty) `renderOpenLegTasks` block; an empty block is omitted. Byte-identical
  * to the prior `[ROTATION_PREAMBLE, handoff, ...tasks].join('\n\n')`.
  */
-export function composeLegSeed(
-  handoff: string,
-  carriedTasks: AgentMessage,
-): AgentMessage {
+export function composeLegSeed(handoff: string, carriedTasks: AgentMessage): AgentMessage {
   return agentMessage(
-    [
-      ROTATION_PREAMBLE,
-      fromExternal(handoff),
-      ...(carriedTasks ? [carriedTasks] : []),
-    ].join('\n\n'),
+    [ROTATION_PREAMBLE, fromExternal(handoff), ...(carriedTasks ? [carriedTasks] : [])].join(
+      '\n\n',
+    ),
   );
 }
 
@@ -161,14 +156,9 @@ export function composeLegSeed(
  * Fold a rotation seed into the fresh Leg's turn task: seed (primacy slot) → base task → {@link ROTATION_RESUME_TAIL}
  * (recency slot, where LLM recall is highest). A non-rotated Leg (no seed) gets the bare base task unchanged.
  */
-export function foldLegSeed(
-  seed: AgentMessage | null,
-  baseTask: AgentMessage,
-): AgentMessage {
+export function foldLegSeed(seed: AgentMessage | null, baseTask: AgentMessage): AgentMessage {
   return agentMessage(
-    seed
-      ? `${seed}\n\n---\n\n${baseTask}\n\n---\n\n${ROTATION_RESUME_TAIL}`
-      : baseTask,
+    seed ? `${seed}\n\n---\n\n${baseTask}\n\n---\n\n${ROTATION_RESUME_TAIL}` : baseTask,
   );
 }
 
@@ -185,9 +175,7 @@ export function foldLegTurn(
   baseTask: AgentMessage,
   servicesBlock: string,
 ): AgentMessage {
-  const withServices = agentMessage(
-    servicesBlock ? `${baseTask}\n\n${servicesBlock}` : baseTask,
-  );
+  const withServices = agentMessage(servicesBlock ? `${baseTask}\n\n${servicesBlock}` : baseTask);
   return foldLegSeed(seed != null ? fromExternal(seed) : null, withServices);
 }
 

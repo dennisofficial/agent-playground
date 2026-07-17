@@ -1,7 +1,7 @@
 import type { ToolImpl } from '@shared/engine/engine.types';
-import type { TaskEventSink } from './turn-harness.service';
-import type { TaskScope } from './thread-registry';
 import type { TaskItem } from '../persistence/entities';
+import type { TaskScope } from './thread-registry';
+import type { TaskEventSink } from './turn-harness.service';
 
 /**
  * The shared `task_create`/`task_update`/`task_list`/`task_get` host-bridge handlers — one factory used
@@ -13,10 +13,7 @@ import type { TaskItem } from '../persistence/entities';
  * them is always a valid `task_update` key. The `TaskEntity` uuid PK stays the internal row identity; reads
  * hit the durable rows fresh, so a builder-leg rotation (a new session) never loses the carried checklist.
  */
-export function makeTaskTools(
-  sink: TaskEventSink,
-  scope: TaskScope,
-): Record<string, ToolImpl> {
+export function makeTaskTools(sink: TaskEventSink, scope: TaskScope): Record<string, ToolImpl> {
   return {
     task_create: async (args) => {
       const subject = String(args['subject'] ?? '').trim();
@@ -53,9 +50,7 @@ export function renderTaskList(tasks: TaskItem[]): string {
   if (tasks.length === 0) return 'No tasks found.';
   return tasks
     .map((t) => {
-      const blocked = t.blockedBy?.length
-        ? ` (blocked by ${t.blockedBy.join(', ')})`
-        : '';
+      const blocked = t.blockedBy?.length ? ` (blocked by ${t.blockedBy.join(', ')})` : '';
       return `#${t.id} [${t.status}] ${t.subject}${blocked}`;
     })
     .join('\n');
@@ -66,7 +61,6 @@ export function renderTaskDetail(t: TaskItem): string {
   const lines = [`#${t.id} [${t.status}] ${t.subject}`];
   if (t.description) lines.push(`  description: ${t.description}`);
   if (t.activeForm) lines.push(`  activeForm: ${t.activeForm}`);
-  if (t.blockedBy?.length)
-    lines.push(`  blocked by: ${t.blockedBy.join(', ')}`);
+  if (t.blockedBy?.length) lines.push(`  blocked by: ${t.blockedBy.join(', ')}`);
   return lines.join('\n');
 }

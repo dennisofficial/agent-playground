@@ -1,15 +1,15 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { DB_CONNECTION } from '../persistence/database.module';
 import { JobBootstrapModule } from '../job-bootstrap';
+import { DB_CONNECTION } from '../persistence/database.module';
 import {
-  TranscriptMessageEntity,
-  RepoEntity,
-  JobEntity,
-  OrganizationEntity,
-  ThreadEntity,
   ActiveTurnEntity,
   InboundMessageEntity,
+  JobEntity,
+  OrganizationEntity,
+  RepoEntity,
+  ThreadEntity,
+  TranscriptMessageEntity,
 } from '../persistence/entities';
 import { TestBridgeController } from './test-bridge.controller';
 

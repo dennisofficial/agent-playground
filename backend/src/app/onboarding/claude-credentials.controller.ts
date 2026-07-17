@@ -17,6 +17,8 @@ import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
 import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
 import { OrgMembershipGuard } from '../org/org-membership.guard';
 import { OrgOwnerGuard } from '../org/org-owner.guard';
+import { ClaudeCredentialStore, type ClaudeCredentialSummary } from './claude-credential.store';
+import { ClaudeOAuthPkceStore } from './claude-oauth-pkce.store';
 import {
   buildAuthorizeUrl,
   buildClaudeOAuthConfig,
@@ -24,11 +26,6 @@ import {
   generatePkce,
   type ClaudeOAuthConfig,
 } from './claude-oauth.client';
-import { ClaudeOAuthPkceStore } from './claude-oauth-pkce.store';
-import {
-  ClaudeCredentialStore,
-  type ClaudeCredentialSummary,
-} from './claude-credential.store';
 import { OauthUsageService } from './oauth-usage.service';
 import { OnboardingService } from './onboarding.service';
 
@@ -75,9 +72,7 @@ export class ClaudeCredentialsController {
   /** Kick off consent: mint + stash a fresh PKCE verifier, return the URL the owner opens. */
   @Post('authorize-url')
   @UseGuards(OrgOwnerGuard)
-  async authorizeUrl(
-    @CurrentOrg() org: CurrentOrgCtx,
-  ): Promise<{ url: string; state: string }> {
+  async authorizeUrl(@CurrentOrg() org: CurrentOrgCtx): Promise<{ url: string; state: string }> {
     const config = this.config();
     const { verifier, challenge, state } = generatePkce();
     await this.pkce.stash(org.id, state, verifier);
@@ -108,10 +103,7 @@ export class ClaudeCredentialsController {
     }
 
     const created = rows.find((row) => row.id === id);
-    if (!created)
-      throw new Error(
-        `claude credential ${id} vanished immediately after create`,
-      );
+    if (!created) throw new Error(`claude credential ${id} vanished immediately after create`);
     if (created.isSelected && !usageInvalidated) {
       await this.usageService.invalidate(org.id);
     }
@@ -119,19 +111,10 @@ export class ClaudeCredentialsController {
     return created;
   }
 
-  private async createPersonal(
-    org: CurrentOrgCtx,
-    body: CreateCredentialDto,
-  ): Promise<string> {
-    if (!body.state)
-      throw new BadRequestException(
-        'state is required for the OAuth login flow',
-      );
+  private async createPersonal(org: CurrentOrgCtx, body: CreateCredentialDto): Promise<string> {
+    if (!body.state) throw new BadRequestException('state is required for the OAuth login flow');
     const code = body.code;
-    if (!code)
-      throw new BadRequestException(
-        'code is required for the OAuth login flow',
-      );
+    if (!code) throw new BadRequestException('code is required for the OAuth login flow');
     const verifier = await this.pkce.consume(org.id, body.state);
     if (!verifier) throw new BadRequestException('expired or invalid state');
     const tokens = await exchangeCode(this.config(), {
@@ -151,20 +134,13 @@ export class ClaudeCredentialsController {
     });
   }
 
-  private async createSetupToken(
-    org: CurrentOrgCtx,
-    body: CreateCredentialDto,
-  ): Promise<string> {
+  private async createSetupToken(org: CurrentOrgCtx, body: CreateCredentialDto): Promise<string> {
     const label = body.label?.trim();
-    if (!label)
-      throw new BadRequestException('label is required for a setup-token');
+    if (!label) throw new BadRequestException('label is required for a setup-token');
     const setupToken = body.setupToken;
-    if (!setupToken)
-      throw new BadRequestException('code or setupToken is required');
+    if (!setupToken) throw new BadRequestException('code or setupToken is required');
     if (!setupToken.startsWith(SETUP_TOKEN_PREFIX)) {
-      throw new BadRequestException(
-        `setup token must start with "${SETUP_TOKEN_PREFIX}"`,
-      );
+      throw new BadRequestException(`setup token must start with "${SETUP_TOKEN_PREFIX}"`);
     }
     return this.store.createSetupToken(org.id, {
       label,
@@ -174,9 +150,7 @@ export class ClaudeCredentialsController {
 
   @Get()
   @UseGuards(OrgOwnerGuard)
-  async list(
-    @CurrentOrg() org: CurrentOrgCtx,
-  ): Promise<ClaudeCredentialSummary[]> {
+  async list(@CurrentOrg() org: CurrentOrgCtx): Promise<ClaudeCredentialSummary[]> {
     return this.store.list(org.id);
   }
 
@@ -194,10 +168,7 @@ export class ClaudeCredentialsController {
 
   @Delete(':id')
   @UseGuards(OrgOwnerGuard)
-  async remove(
-    @CurrentOrg() org: CurrentOrgCtx,
-    @Param('id') id: string,
-  ): Promise<{ ok: true }> {
+  async remove(@CurrentOrg() org: CurrentOrgCtx, @Param('id') id: string): Promise<{ ok: true }> {
     const changed = await this.store.remove(org.id, id);
     if (changed) await this.usageService.invalidate(org.id);
     return { ok: true };
@@ -205,10 +176,7 @@ export class ClaudeCredentialsController {
 
   @Get(':id/usage')
   @UseGuards(OrgOwnerGuard)
-  async usage(
-    @CurrentOrg() org: CurrentOrgCtx,
-    @Param('id') id: string,
-  ): Promise<OrgUsage> {
+  async usage(@CurrentOrg() org: CurrentOrgCtx, @Param('id') id: string): Promise<OrgUsage> {
     return this.usageService.getForCredential(org.id, id);
   }
 }

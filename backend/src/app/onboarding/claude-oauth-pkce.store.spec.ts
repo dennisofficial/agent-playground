@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
 import type Redis from 'ioredis';
+import { describe, expect, it } from 'vitest';
 import { ClaudeOAuthPkceStore } from './claude-oauth-pkce.store';
 
 /** Map-backed fake standing in for the `ioredis` calls the store makes: `set(k,v,'EX',ttl)` / `get` / `del`. */
@@ -48,8 +48,6 @@ describe('ClaudeOAuthPkceStore', () => {
     const { store } = makeStore();
     await store.stash('org1', 'state1', 'verifier-org1');
     await expect(store.consume('org2', 'state1')).resolves.toBeNull();
-    await expect(store.consume('org1', 'state1')).resolves.toBe(
-      'verifier-org1',
-    );
+    await expect(store.consume('org1', 'state1')).resolves.toBe('verifier-org1');
   });
 });

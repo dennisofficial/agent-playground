@@ -10,8 +10,6 @@ export class AddSessionLimitTextMisfires1784131997433 implements MigrationInterf
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `ALTER TABLE "jobs" DROP COLUMN "session_limit_text_misfires"`,
-    );
+    await queryRunner.query(`ALTER TABLE "jobs" DROP COLUMN "session_limit_text_misfires"`);
   }
 }

@@ -3,8 +3,8 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { CredentialResolver } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { MemoryEntity } from '../persistence/entities';
-import { MemoryStore } from './memory.store';
 import { EMBEDDING_PROVIDER, OpenAIEmbeddingProvider } from './embedding';
+import { MemoryStore } from './memory.store';
 
 /**
  * The Atlas v2 MEMORY module — the pgvector semantic-memory primitives (`MemoryStore`) over the

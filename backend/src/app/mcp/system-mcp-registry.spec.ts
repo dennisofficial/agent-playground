@@ -1,9 +1,8 @@
-import { describe, expect, it } from 'vitest';
 import { LSP_SERVER_NAME } from '@shared/engine/lsp-tools';
+import { describe, expect, it } from 'vitest';
 import { buildSystemMcpServers } from './system-mcp-registry';
 
-const byName = () =>
-  Object.fromEntries(buildSystemMcpServers().map((s) => [s.name, s]));
+const byName = () => Object.fromEntries(buildSystemMcpServers().map((s) => [s.name, s]));
 
 describe('buildSystemMcpServers', () => {
   it('LSP is always active (no key needed)', () => {

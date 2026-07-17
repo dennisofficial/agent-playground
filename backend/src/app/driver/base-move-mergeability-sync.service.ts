@@ -88,10 +88,7 @@ export class BaseMoveMergeabilitySync {
       if (!job) continue;
 
       if (job.pr_mergeable !== result.mergeableState) {
-        await this.jobs.update(
-          { id: job.id },
-          { pr_mergeable: result.mergeableState },
-        );
+        await this.jobs.update({ id: job.id }, { pr_mergeable: result.mergeableState });
       }
 
       if (stillComputing) continue;

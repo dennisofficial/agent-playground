@@ -18,38 +18,25 @@
  */
 
 import { Test, type TestingModule } from '@nestjs/testing';
-import {
-  TypeOrmModule,
-  getDataSourceToken,
-  getRepositoryToken,
-} from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
-import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from 'vitest';
-import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy';
-import { DB_CONNECTION } from '../persistence/database.module';
-import { ENTITIES, JobEntity } from '../persistence/entities';
-import { JobBootstrapService } from '../job-bootstrap';
-import { StimulusStoreService } from '../stimulus/stimulus-store.service';
-import { AgentSessionManager } from './agent-session-manager.service';
-import { JitHostExecutor } from './jit-host-executor';
+import { getDataSourceToken, getRepositoryToken, TypeOrmModule } from '@nestjs/typeorm';
 import type {
   EngineEvent,
   EngineRunnerPort,
   EngineRunResult,
   RunEngineArgs,
 } from '@shared/engine/engine.types';
-import type { TurnRegistry } from '../sandbox/turn-registry.service';
+import { DataSource, Repository } from 'typeorm';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy';
 import type { LeaderElectionService } from '../cluster';
+import { JobBootstrapService } from '../job-bootstrap';
+import { DB_CONNECTION } from '../persistence/database.module';
+import { ENTITIES, JobEntity } from '../persistence/entities';
 import type { TurnChunk } from '../prompt-kit/harness';
+import type { TurnRegistry } from '../sandbox/turn-registry.service';
+import { StimulusStoreService } from '../stimulus/stimulus-store.service';
+import { AgentSessionManager } from './agent-session-manager.service';
+import { JitHostExecutor } from './jit-host-executor';
 
 function dbOpts() {
   return {
@@ -82,10 +69,7 @@ describe('Atlas message-delivery pipeline (integration): real pump + real Stimul
 
   beforeAll(async () => {
     mod = await Test.createTestingModule({
-      imports: [
-        TypeOrmModule.forRoot(dbOpts()),
-        TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION),
-      ],
+      imports: [TypeOrmModule.forRoot(dbOpts()), TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION)],
       providers: [JobBootstrapService, StimulusStoreService],
     }).compile();
 
@@ -156,9 +140,7 @@ describe('Atlas message-delivery pipeline (integration): real pump + real Stimul
   ) {
     const runningBrainTurn = vi
       .fn()
-      .mockResolvedValue(
-        opts.live ? { turn_id: 'turn-live-1', lane: 'main' } : null,
-      );
+      .mockResolvedValue(opts.live ? { turn_id: 'turn-live-1', lane: 'main' } : null);
     const turnRegistry = { runningBrainTurn } as unknown as TurnRegistry;
 
     let capturedTask: string | undefined;
@@ -239,12 +221,8 @@ describe('Atlas message-delivery pipeline (integration): real pump + real Stimul
       opts.jit ??
       (opts.jitChunks || opts.jitEnabled !== undefined
         ? ({
-            hasEnabledOperatorPrepends: vi
-              .fn()
-              .mockReturnValue(opts.jitEnabled ?? true),
-            collectOperatorPrepends: vi
-              .fn()
-              .mockReturnValue(opts.jitChunks ?? []),
+            hasEnabledOperatorPrepends: vi.fn().mockReturnValue(opts.jitEnabled ?? true),
+            collectOperatorPrepends: vi.fn().mockReturnValue(opts.jitChunks ?? []),
           } as unknown as JitHostExecutor)
         : undefined);
 
@@ -364,10 +342,7 @@ describe('Atlas message-delivery pipeline (integration): real pump + real Stimul
     expect(idx3).toBeGreaterThan(idx2);
 
     // Restart-survivable hand-off: all 3 rows are stamped delivered once the turn registers.
-    const pendingAfter = await stimulusStore.eligiblePendingChat(
-      thread.id,
-      60_000,
-    );
+    const pendingAfter = await stimulusStore.eligiblePendingChat(thread.id, 60_000);
     expect(pendingAfter).toHaveLength(0);
   });
 
@@ -388,11 +363,7 @@ describe('Atlas message-delivery pipeline (integration): real pump + real Stimul
     await manager.pumpThread(thread.id, ORG_ID, repoId);
 
     expect(steer).toHaveBeenCalledOnce();
-    const [turnId, stimId, body] = steer.mock.calls[0] as [
-      string,
-      string,
-      string,
-    ];
+    const [turnId, stimId, body] = steer.mock.calls[0] as [string, string, string];
     expect(turnId).toBe('turn-live-1');
     expect(stimId).toBe(stim.id);
     expect(body).toContain('urgent now message');
@@ -524,8 +495,7 @@ describe('Atlas message-delivery pipeline (integration): real pump + real Stimul
     expect(run).toHaveBeenCalledOnce();
     const task = getCapturedTask();
     expect(task).toBeDefined();
-    const rendered =
-      '<system_reminder source="memory">MEMORY: recalled context</system_reminder>';
+    const rendered = '<system_reminder source="memory">MEMORY: recalled context</system_reminder>';
     expect(task).toContain(rendered);
     expect(task).toContain('a plain operator message');
     expect(task!.indexOf(rendered)).toBeLessThan(task!.indexOf('<user'));
@@ -571,9 +541,7 @@ describe('Atlas message-delivery pipeline (integration): real pump + real Stimul
     const task = getCapturedTask();
     expect(task).toContain('<system_reminder source="memory">');
     expect(task).toContain('uses pnpm for package management');
-    expect(task!.indexOf('source="memory"')).toBeLessThan(
-      task!.indexOf('<user'),
-    );
+    expect(task!.indexOf('source="memory"')).toBeLessThan(task!.indexOf('<user'));
   });
 
   it('JIT memory rail disabled: skips auto-recall before any embedding/recall call', async () => {

@@ -1,10 +1,10 @@
-import { Subject } from 'rxjs';
 import type { MessageEvent } from '@nestjs/common';
+import { Subject } from 'rxjs';
 import { describe, expect, it } from 'vitest';
-import { LiveTurnStore } from './live-turn-store';
 import type { LiveStreamFrame } from './live-turn-store';
-import { WebSurfaceController } from './web-surface.controller';
+import { LiveTurnStore } from './live-turn-store';
 import type { WebOutboundMessage } from './web-surface';
+import { WebSurfaceController } from './web-surface.controller';
 
 /**
  * RESUMABLE/DURABLE STREAMING — the core guarantee: a client that connects MID-TURN (refresh,
@@ -30,11 +30,7 @@ describe('LiveTurnStore — cumulative in-flight turn', () => {
 
     const snap = store.snapshot(REPO, THREAD)!;
     expect(snap.active).toBe(true);
-    expect(snap.blocks.map((b) => b.kind)).toEqual([
-      'thinking',
-      'text',
-      'tool',
-    ]);
+    expect(snap.blocks.map((b) => b.kind)).toEqual(['thinking', 'text', 'tool']);
     expect(snap.blocks[1]).toMatchObject({
       kind: 'text',
       text: 'Hello',
@@ -87,11 +83,7 @@ describe('LiveTurnStore — cumulative in-flight turn', () => {
 
     const snap = store.snapshot(REPO, THREAD)!;
     // Exactly one thinking + one text block (pre-fix this was thinking,text,thinking,text — the dup).
-    expect(snap.blocks.map((b) => b.kind)).toEqual([
-      'thinking',
-      'text',
-      'tool',
-    ]);
+    expect(snap.blocks.map((b) => b.kind)).toEqual(['thinking', 'text', 'tool']);
     expect(snap.blocks[0]).toMatchObject({
       kind: 'thinking',
       text: 'reasoning',
@@ -120,9 +112,7 @@ describe('LiveTurnStore — silent reset (orphaned-turn reattach rebuilds a CLEA
     // The lane is gone, and — crucially — no turn_end frame was fanned (which would race the client's
     // async reconcileNow().then(endLiveTurn)). Contrast with `end`, which DOES emit turn_end.
     expect(store.snapshot(REPO, THREAD)).toBeNull();
-    expect(
-      frames.some((f) => (f.event as { kind?: string }).kind === 'turn_end'),
-    ).toBe(false);
+    expect(frames.some((f) => (f.event as { kind?: string }).kind === 'turn_end')).toBe(false);
   });
 
   it('end DOES fan a turn_end (the contrast that makes reset’s silence meaningful)', () => {
@@ -134,9 +124,7 @@ describe('LiveTurnStore — silent reset (orphaned-turn reattach rebuilds a CLEA
     store.end(REPO, THREAD);
     sub.unsubscribe();
 
-    expect(
-      frames.some((f) => (f.event as { kind?: string }).kind === 'turn_end'),
-    ).toBe(true);
+    expect(frames.some((f) => (f.event as { kind?: string }).kind === 'turn_end')).toBe(true);
   });
 
   it('strand → reset → replay rebuilds ONE open text block + a fresh turn_start (baseline strands two)', () => {
@@ -171,9 +159,7 @@ describe('LiveTurnStore — silent reset (orphaned-turn reattach rebuilds a CLEA
     expect(openText).toHaveLength(1);
     expect(openText[0].text).toBe('fresh');
     // A fresh turn_start fired after the reset (isNew) so a connected client rebuilds cleanly.
-    expect(
-      frames.some((f) => (f.event as { kind?: string }).kind === 'turn_start'),
-    ).toBe(true);
+    expect(frames.some((f) => (f.event as { kind?: string }).kind === 'turn_start')).toBe(true);
   });
 });
 
@@ -205,9 +191,7 @@ describe('LiveTurnStore — background subagent settlement (bg_task marks the an
       parentToolUseId: 'tu-bg',
     });
 
-    let anchor = store
-      .snapshot(REPO, THREAD)!
-      .blocks.find((b) => b.toolId === 'tu-bg')!;
+    let anchor = store.snapshot(REPO, THREAD)!.blocks.find((b) => b.toolId === 'tu-bg')!;
     expect(anchor).toMatchObject({ done: true });
     expect(anchor.bgSettled).toBeUndefined(); // still running despite done=true
 
@@ -218,9 +202,7 @@ describe('LiveTurnStore — background subagent settlement (bg_task marks the an
       parentToolUseId: 'tu-bg',
     });
 
-    anchor = store
-      .snapshot(REPO, THREAD)!
-      .blocks.find((b) => b.toolId === 'tu-bg')!;
+    anchor = store.snapshot(REPO, THREAD)!.blocks.find((b) => b.toolId === 'tu-bg')!;
     expect(anchor.bgSettled).toBe(true);
   });
 
@@ -244,9 +226,7 @@ describe('LiveTurnStore — background subagent settlement (bg_task marks the an
       parentToolUseId: 'tu-bg',
     });
 
-    const anchor = store
-      .snapshot(REPO, THREAD)!
-      .blocks.find((b) => b.toolId === 'tu-bg')!;
+    const anchor = store.snapshot(REPO, THREAD)!.blocks.find((b) => b.toolId === 'tu-bg')!;
     expect(anchor.bgSettled).toBeUndefined();
   });
 });
@@ -268,9 +248,7 @@ describe('LiveTurnStore — server emittedAt stamps (lets the web time-merge liv
     sub.unsubscribe();
 
     // turn_start creates no block and carries no stamp; every block-creating delta frame does.
-    const delta = frames.filter(
-      (f) => (f.event as { kind: string }).kind !== 'turn_start',
-    );
+    const delta = frames.filter((f) => (f.event as { kind: string }).kind !== 'turn_start');
     expect(delta).toHaveLength(3);
     for (const f of delta) {
       expect(typeof f.emittedAt).toBe('number');
@@ -278,13 +256,10 @@ describe('LiveTurnStore — server emittedAt stamps (lets the web time-merge liv
       expect((f.event as { emittedAt?: number }).emittedAt).toBe(f.emittedAt);
     }
     const stamps = delta.map((f) => f.emittedAt as number);
-    for (let i = 1; i < stamps.length; i++)
-      expect(stamps[i]).toBeGreaterThan(stamps[i - 1]);
+    for (let i = 1; i < stamps.length; i++) expect(stamps[i]).toBeGreaterThan(stamps[i - 1]);
 
     // The turn_start frame creates no block, so it carries no stamp.
-    const start = frames.find(
-      (f) => (f.event as { kind: string }).kind === 'turn_start',
-    );
+    const start = frames.find((f) => (f.event as { kind: string }).kind === 'turn_start');
     expect(start!.emittedAt).toBeUndefined();
   });
 
@@ -342,28 +317,18 @@ describe('LiveTurnStore — server emittedAt stamps (lets the web time-merge liv
     });
     sub.unsubscribe();
 
-    const append = frames.find(
-      (f) => (f.event as { text?: string }).text === 'lo',
-    )!;
+    const append = frames.find((f) => (f.event as { text?: string }).text === 'lo')!;
     expect(append.emittedAt).toBe(startStamp);
     expect((append.event as { emittedAt?: number }).emittedAt).toBe(startStamp);
 
-    const finalize = frames.find(
-      (f) => (f.event as { kind?: string }).kind === 'text',
-    )!;
+    const finalize = frames.find((f) => (f.event as { kind?: string }).kind === 'text')!;
     expect(finalize.emittedAt).toBe(startStamp);
-    expect((finalize.event as { emittedAt?: number }).emittedAt).toBe(
-      startStamp,
-    );
+    expect((finalize.event as { emittedAt?: number }).emittedAt).toBe(startStamp);
     expect(store.snapshot(REPO, THREAD)!.blocks[0].emittedAt).toBe(startStamp);
 
-    const toolResult = frames.find(
-      (f) => (f.event as { kind?: string }).kind === 'tool_result',
-    )!;
+    const toolResult = frames.find((f) => (f.event as { kind?: string }).kind === 'tool_result')!;
     expect(toolResult.emittedAt).toBe(toolStamp);
-    expect((toolResult.event as { emittedAt?: number }).emittedAt).toBe(
-      toolStamp,
-    );
+    expect((toolResult.event as { emittedAt?: number }).emittedAt).toBe(toolStamp);
   });
 });
 
@@ -430,15 +395,11 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
     const frames: Array<Record<string, unknown>> = [];
     const sub = controller
       .events('org-1', REPO)
-      .subscribe((m: MessageEvent) =>
-        frames.push(m.data as Record<string, unknown>),
-      );
+      .subscribe((m: MessageEvent) => frames.push(m.data as Record<string, unknown>));
 
     // 1) The FIRST thing it receives is a snapshot reflecting everything streamed so far ("Hello").
     const snapshotFrame = frames.find(
-      (f) =>
-        f.type === 'stream' &&
-        (f.event as { kind?: string }).kind === 'snapshot',
+      (f) => f.type === 'stream' && (f.event as { kind?: string }).kind === 'snapshot',
     );
     expect(snapshotFrame).toBeDefined();
     const snapEvent = snapshotFrame!.event as {
@@ -452,9 +413,7 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
     // 2) Subsequent deltas arrive live, with seq AFTER the snapshot (so the client appends, not dupes).
     store.push(REPO, THREAD, { kind: 'text_delta', text: ' world' });
     const deltaFrame = frames.find(
-      (f) =>
-        f.type === 'stream' &&
-        (f.event as { kind?: string }).kind === 'text_delta',
+      (f) => f.type === 'stream' && (f.event as { kind?: string }).kind === 'text_delta',
     );
     expect(deltaFrame).toBeDefined();
     expect((deltaFrame!.event as { text: string }).text).toBe(' world');
@@ -463,9 +422,7 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
     // 3) turn_end is forwarded so the client reconciles against the durable log.
     store.end(REPO, THREAD);
     const endFrame = frames.find(
-      (f) =>
-        f.type === 'stream' &&
-        (f.event as { kind?: string }).kind === 'turn_end',
+      (f) => f.type === 'stream' && (f.event as { kind?: string }).kind === 'turn_end',
     );
     expect(endFrame).toBeDefined();
 
@@ -482,19 +439,13 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
     const frames: Array<Record<string, unknown>> = [];
     const sub = controller
       .events('org-1', REPO)
-      .subscribe((m: MessageEvent) =>
-        frames.push(m.data as Record<string, unknown>),
-      );
+      .subscribe((m: MessageEvent) => frames.push(m.data as Record<string, unknown>));
 
     // 1) The snapshot the controller fans (blocks: s.blocks) carries emittedAt on each block.
     const snapshotFrame = frames.find(
-      (f) =>
-        f.type === 'stream' &&
-        (f.event as { kind?: string }).kind === 'snapshot',
+      (f) => f.type === 'stream' && (f.event as { kind?: string }).kind === 'snapshot',
     );
-    const snapBlocks = (
-      snapshotFrame!.event as { blocks: Array<{ emittedAt?: number }> }
-    ).blocks;
+    const snapBlocks = (snapshotFrame!.event as { blocks: Array<{ emittedAt?: number }> }).blocks;
     expect(typeof snapBlocks[0].emittedAt).toBe('number');
 
     // 2) A subsequent live delta (event: f.event, forwarded verbatim) carries emittedAt inside event.
@@ -505,9 +456,7 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
       input: {},
     });
     const deltaFrame = frames.find(
-      (f) =>
-        f.type === 'stream' &&
-        (f.event as { kind?: string }).kind === 'tool_use',
+      (f) => f.type === 'stream' && (f.event as { kind?: string }).kind === 'tool_use',
     );
     const deltaEvent = deltaFrame!.event as { emittedAt?: number };
     expect(typeof deltaEvent.emittedAt).toBe('number');
@@ -526,9 +475,7 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
     const frames: Array<Record<string, unknown>> = [];
     const sub = controller
       .events('org-1', REPO)
-      .subscribe((m: MessageEvent) =>
-        frames.push(m.data as Record<string, unknown>),
-      );
+      .subscribe((m: MessageEvent) => frames.push(m.data as Record<string, unknown>));
     expect(frames.filter((f) => f.type === 'stream')).toHaveLength(0);
     sub.unsubscribe();
   });

@@ -1,19 +1,19 @@
-import { describe, expect, it, vi } from 'vitest';
+import type { EnvService } from '@core/config/env/env.service';
 import { EngineAuthError, EngineDetachedError } from '@shared/engine';
 import type { EngineEvent, RunEngineArgs } from '@shared/engine/engine.types';
+import { agentMessage } from '@shared/prompt-kit/message';
+import { describe, expect, it, vi } from 'vitest';
 import { InMemoryRedisStream } from '../../_lib/redis/in-memory-redis-stream';
+import type { ContainerEngine, ContainerInfo } from './container-engine.port';
 import {
   RedisEngineRunner,
   TAIL_ALIVE_GRACE_CEILING_MS,
   TAIL_IDLE_TIMEOUT_MS,
 } from './redis-engine-runner';
 import { turnKeys } from './redis-turn-keys';
-import type { EnvService } from '@core/config/env/env.service';
 import type { SandboxActivityRegistry } from './sandbox-activity.registry';
-import type { TurnRegistry } from './turn-registry.service';
-import type { ContainerEngine, ContainerInfo } from './container-engine.port';
-import { agentMessage } from '@shared/prompt-kit/message';
 import type { SandboxProvider } from './sandbox-provider.port';
+import type { TurnRegistry } from './turn-registry.service';
 
 const fakeEnv = { get: () => undefined } as unknown as EnvService;
 const fakeActivity = {
@@ -41,11 +41,7 @@ function fakeRegistry() {
 function fakeContainers(redis: InMemoryRedisStream, frames: unknown[]) {
   return {
     execDetached: vi.fn(
-      async (
-        _id: string,
-        _argv: string[],
-        opts?: { env?: Record<string, string> },
-      ) => {
+      async (_id: string, _argv: string[], opts?: { env?: Record<string, string> }) => {
         const turnId = opts?.env?.TURN_ID;
         if (turnId) {
           const events = turnKeys(turnId).events;
@@ -228,9 +224,7 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
 
     await runner.run(baseArgs(() => undefined));
 
-    const specCall = xadd.mock.calls.find(([key]) =>
-      String(key).endsWith(':spec'),
-    );
+    const specCall = xadd.mock.calls.find(([key]) => String(key).endsWith(':spec'));
     expect(specCall).toBeDefined();
     const spec = specCall![1] as { writableRoots: string[] };
     expect(spec.writableRoots).toContain('/context');
@@ -261,9 +255,7 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
 
       await runner.run(authArgs(() => undefined));
 
-      const spec = xadd.mock.calls.find(([k]) =>
-        String(k).endsWith(':spec'),
-      )![1] as {
+      const spec = xadd.mock.calls.find(([k]) => String(k).endsWith(':spec'))![1] as {
         auth: { secret: string; refreshBack?: unknown };
         persistAuthRefresh?: boolean;
       };
@@ -297,9 +289,7 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
         },
       });
 
-      const spec = xadd.mock.calls.find(([k]) =>
-        String(k).endsWith(':spec'),
-      )![1] as {
+      const spec = xadd.mock.calls.find(([k]) => String(k).endsWith(':spec'))![1] as {
         auth: { secret: string; kind?: string; refreshBack?: unknown };
         persistAuthRefresh?: boolean;
       };
@@ -325,9 +315,7 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
         auth: { secret: 'env-blob' },
       });
 
-      const spec = xadd.mock.calls.find(([k]) =>
-        String(k).endsWith(':spec'),
-      )![1] as {
+      const spec = xadd.mock.calls.find(([k]) => String(k).endsWith(':spec'))![1] as {
         auth: { secret: string };
         persistAuthRefresh?: boolean;
       };
@@ -359,10 +347,7 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
 
       await runner.run(authArgs(() => undefined));
 
-      expect(sink.persist).toHaveBeenCalledWith(
-        { orgId: 'org1', engine: 'codex' },
-        'fresh-blob',
-      );
+      expect(sink.persist).toHaveBeenCalledWith({ orgId: 'org1', engine: 'codex' }, 'fresh-blob');
     });
 
     it('does NOT fire the sink when the result has no refreshed secret', async () => {
@@ -455,9 +440,7 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
       fakeActivity,
       fakeRegistry(),
     );
-    await expect(runner.run(baseArgs(() => {}))).rejects.toThrow(
-      /boom in sandbox/,
-    );
+    await expect(runner.run(baseArgs(() => {}))).rejects.toThrow(/boom in sandbox/);
   });
 
   it('does not retain an unreachable claim entry when a fresh run throws', async () => {
@@ -497,9 +480,7 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
 
   it('maps an auth error frame to EngineAuthError', async () => {
     const redis = new InMemoryRedisStream();
-    const frames = [
-      { t: 'error', message: '401 invalid', auth: true, sessionId: 's9' },
-    ];
+    const frames = [{ t: 'error', message: '401 invalid', auth: true, sessionId: 's9' }];
     const runner = new RedisEngineRunner(
       fakeContainers(redis, frames),
       redis,
@@ -507,9 +488,7 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
       fakeActivity,
       fakeRegistry(),
     );
-    await expect(runner.run(baseArgs(() => {}))).rejects.toBeInstanceOf(
-      EngineAuthError,
-    );
+    await expect(runner.run(baseArgs(() => {}))).rejects.toBeInstanceOf(EngineAuthError);
   });
 
   it('a lost Redis transport mid-tail DETACHES: throws EngineDetachedError, leaves the registry row + streams', async () => {
@@ -603,11 +582,7 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
     // then emit a text event + final on the events stream.
     const containers = {
       execDetached: vi.fn(
-        async (
-          _id: string,
-          _argv: string[],
-          opts?: { env?: Record<string, string> },
-        ) => {
+        async (_id: string, _argv: string[], opts?: { env?: Record<string, string> }) => {
           const turnId = opts?.env?.TURN_ID;
           if (!turnId) return {};
           const k = turnKeys(turnId);
@@ -664,13 +639,7 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
         },
       },
     };
-    const runner = new RedisEngineRunner(
-      containers,
-      redis,
-      fakeEnv,
-      fakeActivity,
-      fakeRegistry(),
-    );
+    const runner = new RedisEngineRunner(containers, redis, fakeEnv, fakeActivity, fakeRegistry());
     const out = await runner.run({
       ...baseArgs((e) => events.push(e)),
       toolBridge: bridge as never,
@@ -680,11 +649,9 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
     expect(sawProgress).toBe(true);
     expect(out).toMatchObject({ result: 'DONE', claimed: true });
     expect(out.turnId).toEqual(expect.any(String));
-    expect(
-      events.some(
-        (e) => (e as { kind?: string; text?: string }).text === 'tool-ok',
-      ),
-    ).toBe(true);
+    expect(events.some((e) => (e as { kind?: string; text?: string }).text === 'tool-ok')).toBe(
+      true,
+    );
   });
 
   it('filters __-prefixed tool names out of the model-facing toolBridgeTools projection', async () => {
@@ -692,11 +659,7 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
     let capturedSpec: Record<string, unknown> | undefined;
     const containers = {
       execDetached: vi.fn(
-        async (
-          _id: string,
-          _argv: string[],
-          opts?: { env?: Record<string, string> },
-        ) => {
+        async (_id: string, _argv: string[], opts?: { env?: Record<string, string> }) => {
           const turnId = opts?.env?.TURN_ID;
           if (turnId) {
             const k = turnKeys(turnId);
@@ -706,9 +669,7 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
               count: 10,
               blockMs: 50,
             });
-            capturedSpec = specFrames[0]?.data as
-              | Record<string, unknown>
-              | undefined;
+            capturedSpec = specFrames[0]?.data as Record<string, unknown> | undefined;
             void redis.xadd(k.events, { t: 'final', r: { result: 'DONE' } });
           }
           return {};
@@ -722,13 +683,7 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
         __profile_awareness: async () => null,
       },
     };
-    const runner = new RedisEngineRunner(
-      containers,
-      redis,
-      fakeEnv,
-      fakeActivity,
-      fakeRegistry(),
-    );
+    const runner = new RedisEngineRunner(containers, redis, fakeEnv, fakeActivity, fakeRegistry());
     await runner.run({
       ...baseArgs(() => undefined),
       toolBridge: bridge as never,
@@ -740,13 +695,7 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
     const redis = new InMemoryRedisStream();
     const frames = [{ t: 'final', r: { result: 'DONE' } }];
     const containers = fakeContainers(redis, frames);
-    const runner = new RedisEngineRunner(
-      containers,
-      redis,
-      fakeEnv,
-      fakeActivity,
-      fakeRegistry(),
-    );
+    const runner = new RedisEngineRunner(containers, redis, fakeEnv, fakeActivity, fakeRegistry());
 
     await runner.run({
       ...baseArgs(() => {}),
@@ -757,13 +706,10 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
       },
     });
 
-    const env = (
-      containers.execDetached as unknown as { mock: { calls: unknown[][] } }
-    ).mock.calls[0][2] as { env: Record<string, string> };
+    const env = (containers.execDetached as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0][2] as { env: Record<string, string> };
     // The token rides the git extraheader (never argv/.git/config), plus the raw token for API/`gh`.
-    expect(env.env.GIT_CONFIG_KEY_0).toBe(
-      'http.https://github.com/.extraheader',
-    );
+    expect(env.env.GIT_CONFIG_KEY_0).toBe('http.https://github.com/.extraheader');
     expect(env.env.GIT_CONFIG_VALUE_0).toContain('AUTHORIZATION: basic ');
     expect(env.env.GIT_TERMINAL_PROMPT).toBe('0');
     expect(env.env.GITHUB_TOKEN).toBe('tok-123');
@@ -812,15 +758,12 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
     });
 
     expect(writeGithubTokenFile).toHaveBeenCalledWith('job-1', 'ghs_123');
-    const env = (
-      containers.execDetached as unknown as { mock: { calls: unknown[][] } }
-    ).mock.calls[0][2] as { env: Record<string, string> };
+    const env = (containers.execDetached as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0][2] as { env: Record<string, string> };
     expect(env.env.GIT_CONFIG_COUNT).toBe('2');
     expect(env.env.GIT_CONFIG_KEY_0).toBe('credential.helper');
     expect(env.env.GIT_CONFIG_VALUE_0).toBe('');
-    expect(env.env.GIT_CONFIG_KEY_1).toBe(
-      'credential.https://github.com.helper',
-    );
+    expect(env.env.GIT_CONFIG_KEY_1).toBe('credential.https://github.com.helper');
     expect(env.env.GIT_CONFIG_VALUE_1).toContain("cat '/.atlas/github-token'");
     expect(env.env.GIT_TERMINAL_PROMPT).toBe('0');
     expect(env.env.GITHUB_TOKEN).toBe('ghs_123');
@@ -865,12 +808,9 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
     });
 
     expect(writeGithubTokenFile).toHaveBeenCalledWith('job-1', 'ghs_transport');
-    const env = (
-      containers.execDetached as unknown as { mock: { calls: unknown[][] } }
-    ).mock.calls[0][2] as { env: Record<string, string> };
-    expect(env.env.GIT_CONFIG_KEY_1).toBe(
-      'credential.https://github.com.helper',
-    );
+    const env = (containers.execDetached as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0][2] as { env: Record<string, string> };
+    expect(env.env.GIT_CONFIG_KEY_1).toBe('credential.https://github.com.helper');
     expect(env.env.GIT_CONFIG_VALUE_1).toContain("cat '/.atlas/github-token'");
     expect(env.env.GITHUB_TOKEN).toBe('ghp_identity');
     expect(env.env.GH_TOKEN).toBe('ghp_identity');
@@ -880,13 +820,7 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
     const redis = new InMemoryRedisStream();
     const frames = [{ t: 'final', r: { result: 'DONE' } }];
     const containers = fakeContainers(redis, frames);
-    const runner = new RedisEngineRunner(
-      containers,
-      redis,
-      fakeEnv,
-      fakeActivity,
-      fakeRegistry(),
-    );
+    const runner = new RedisEngineRunner(containers, redis, fakeEnv, fakeActivity, fakeRegistry());
 
     await runner.run({
       ...baseArgs(() => {}),
@@ -897,9 +831,8 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
       },
     });
 
-    const env = (
-      containers.execDetached as unknown as { mock: { calls: unknown[][] } }
-    ).mock.calls[0][2] as { env: Record<string, string> };
+    const env = (containers.execDetached as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0][2] as { env: Record<string, string> };
     expect(env.env.GIT_CONFIG_COUNT).toBe('1');
     expect(env.env.GIT_CONFIG_KEY_0).toBe('credential.helper');
     expect(env.env.GIT_CONFIG_VALUE_0).toBe('');
@@ -912,13 +845,7 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
     const redis = new InMemoryRedisStream();
     const frames = [{ t: 'final', r: { result: 'DONE' } }];
     const containers = fakeContainers(redis, frames);
-    const runner = new RedisEngineRunner(
-      containers,
-      redis,
-      fakeEnv,
-      fakeActivity,
-      fakeRegistry(),
-    );
+    const runner = new RedisEngineRunner(containers, redis, fakeEnv, fakeActivity, fakeRegistry());
 
     await runner.run({
       ...baseArgs(() => {}),
@@ -936,36 +863,24 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
       },
     });
 
-    const env = (
-      containers.execDetached as unknown as { mock: { calls: unknown[][] } }
-    ).mock.calls[0][2] as { env: Record<string, string> };
+    const env = (containers.execDetached as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0][2] as { env: Record<string, string> };
     expect(env.env.GIT_AUTHOR_NAME).toBe('The Octocat');
-    expect(env.env.GIT_AUTHOR_EMAIL).toBe(
-      '583231+octocat@users.noreply.github.com',
-    );
+    expect(env.env.GIT_AUTHOR_EMAIL).toBe('583231+octocat@users.noreply.github.com');
     expect(env.env.GIT_COMMITTER_NAME).toBe('The Octocat');
-    expect(env.env.GIT_COMMITTER_EMAIL).toBe(
-      '583231+octocat@users.noreply.github.com',
-    );
+    expect(env.env.GIT_COMMITTER_EMAIL).toBe('583231+octocat@users.noreply.github.com');
   });
 
   it('does NOT inject git auth into the exec env when target.gitAuth is absent', async () => {
     const redis = new InMemoryRedisStream();
     const frames = [{ t: 'final', r: { result: 'DONE' } }];
     const containers = fakeContainers(redis, frames);
-    const runner = new RedisEngineRunner(
-      containers,
-      redis,
-      fakeEnv,
-      fakeActivity,
-      fakeRegistry(),
-    );
+    const runner = new RedisEngineRunner(containers, redis, fakeEnv, fakeActivity, fakeRegistry());
 
     await runner.run(baseArgs(() => {})); // baseArgs.target has no gitAuth
 
-    const env = (
-      containers.execDetached as unknown as { mock: { calls: unknown[][] } }
-    ).mock.calls[0][2] as { env: Record<string, string> };
+    const env = (containers.execDetached as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0][2] as { env: Record<string, string> };
     expect(env.env.GITHUB_TOKEN).toBeUndefined();
     expect(env.env.GIT_CONFIG_COUNT).toBeUndefined();
   });
@@ -974,13 +889,7 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
     const redis = new InMemoryRedisStream();
     const frames = [{ t: 'final', r: { result: 'DONE' } }];
     const containers = fakeContainers(redis, frames);
-    const runner = new RedisEngineRunner(
-      containers,
-      redis,
-      fakeEnv,
-      fakeActivity,
-      fakeRegistry(),
-    );
+    const runner = new RedisEngineRunner(containers, redis, fakeEnv, fakeActivity, fakeRegistry());
 
     await runner.run({
       ...baseArgs(() => {}),
@@ -991,9 +900,8 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
       },
     });
 
-    const env = (
-      containers.execDetached as unknown as { mock: { calls: unknown[][] } }
-    ).mock.calls[0][2] as { env: Record<string, string> };
+    const env = (containers.execDetached as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0][2] as { env: Record<string, string> };
     expect(env.env.ATLAS_EVIDENCE_DIR).toBe('/context/evidence/010-backend');
   });
 
@@ -1001,19 +909,12 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
     const redis = new InMemoryRedisStream();
     const frames = [{ t: 'final', r: { result: 'DONE' } }];
     const containers = fakeContainers(redis, frames);
-    const runner = new RedisEngineRunner(
-      containers,
-      redis,
-      fakeEnv,
-      fakeActivity,
-      fakeRegistry(),
-    );
+    const runner = new RedisEngineRunner(containers, redis, fakeEnv, fakeActivity, fakeRegistry());
 
     await runner.run(baseArgs(() => {})); // baseArgs.target has no evidenceDir
 
-    const env = (
-      containers.execDetached as unknown as { mock: { calls: unknown[][] } }
-    ).mock.calls[0][2] as { env: Record<string, string> };
+    const env = (containers.execDetached as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0][2] as { env: Record<string, string> };
     expect(env.env.ATLAS_EVIDENCE_DIR).toBeUndefined();
   });
 
@@ -1161,8 +1062,7 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
 
         // Never emit another frame — the container claims 'running' the whole time, so this must extend
         // patience past the idle timeout, but not forever: it should give up once the ceiling passes.
-        const totalMs =
-          TAIL_IDLE_TIMEOUT_MS + TAIL_ALIVE_GRACE_CEILING_MS + 15_000;
+        const totalMs = TAIL_IDLE_TIMEOUT_MS + TAIL_ALIVE_GRACE_CEILING_MS + 15_000;
         for (let elapsed = 0; elapsed < totalMs; elapsed += 5_000) {
           await tick(redis, 5_000);
         }

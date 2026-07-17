@@ -1,13 +1,6 @@
-import type {
-  CanUseTool,
-  PermissionResult,
-} from '@anthropic-ai/claude-agent-sdk';
-import {
-  join,
-  relative as relativePath,
-  resolve as resolvePath,
-} from 'node:path';
+import type { CanUseTool, PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import { evaluateWriteGuard } from '@workspace/agent-engine';
+import { join, relative as relativePath, resolve as resolvePath } from 'node:path';
 import type { RunEngineArgs } from '../engine.types';
 
 /** Is `path` inside `root` (after resolution)? Confines writes to the worktree. */
@@ -39,10 +32,7 @@ export interface SkillGuardCtx {
 /** Which skill (if any) `filePath` belongs to — the composed symlink dir first (structural: the first path
  *  segment under it IS the skill name), then a match against a resolved skill's store dir (the model
  *  resolved the symlink and is addressing the real path). Undefined → not a skill path at all. */
-function skillNameForPath(
-  filePath: string,
-  ctx: SkillGuardCtx,
-): string | undefined {
+function skillNameForPath(filePath: string, ctx: SkillGuardCtx): string | undefined {
   if (isInsideRoot(filePath, ctx.composedSkillsDir)) {
     const rel = relativePath(
       resolvePath(ctx.composedSkillsDir),
@@ -53,8 +43,7 @@ function skillNameForPath(
   }
   if (ctx.skillsStoreRoot) {
     for (const skill of ctx.skills ?? []) {
-      if (isInsideRoot(filePath, join(ctx.skillsStoreRoot, skill.dirPath)))
-        return skill.name;
+      if (isInsideRoot(filePath, join(ctx.skillsStoreRoot, skill.dirPath))) return skill.name;
     }
   }
   return undefined;
@@ -72,10 +61,7 @@ export function makeCanUseTool(
   roots: string | string[],
   onPlan: (plan: string) => void,
   skillGuard?: SkillGuardCtx,
-  writeGuard?: (
-    toolName: string,
-    input: unknown,
-  ) => { allow: boolean; reason?: string },
+  writeGuard?: (toolName: string, input: unknown) => { allow: boolean; reason?: string },
 ): CanUseTool {
   const allowedRoots = (Array.isArray(roots) ? roots : [roots]).filter(Boolean);
   return async (toolName, input): Promise<PermissionResult> => {
@@ -93,17 +79,14 @@ export function makeCanUseTool(
     if (!readOnlyVerdict.allow) {
       return {
         behavior: 'deny',
-        message:
-          readOnlyVerdict.reason ??
-          'This is a read-only turn — no file writes.',
+        message: readOnlyVerdict.reason ?? 'This is a read-only turn — no file writes.',
       };
     }
     if (skillGuard && SKILL_MUTATING_TOOLS.has(toolName)) {
       const path = typeof input.file_path === 'string' ? input.file_path : '';
       const skillName = path ? skillNameForPath(path, skillGuard) : undefined;
       if (skillName) {
-        if (skillGuard.granted.has(skillName))
-          return { behavior: 'allow', updatedInput: input };
+        if (skillGuard.granted.has(skillName)) return { behavior: 'allow', updatedInput: input };
         return {
           behavior: 'deny',
           message:
@@ -119,9 +102,7 @@ export function makeCanUseTool(
     if (!rootVerdict.allow) {
       return {
         behavior: 'deny',
-        message:
-          rootVerdict.reason ??
-          'Write outside the allowed roots is not allowed.',
+        message: rootVerdict.reason ?? 'Write outside the allowed roots is not allowed.',
       };
     }
     if (writeGuard) {

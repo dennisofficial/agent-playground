@@ -1,17 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import type { GitIdentityService } from '../git/git-identity.service';
+import type { GitHubAppTokenService } from '../git/github-app-token.service';
 import type { ClaudeCredentialStore } from './claude-credential.store';
 import { CredentialResolver } from './credential-resolver.service';
-import type { GitHubAppTokenService } from '../git/github-app-token.service';
-import type { GitIdentityService } from '../git/git-identity.service';
-import type {
-  TenantCredentials,
-  TenantCredentialStore,
-} from './tenant-credential.store';
+import type { TenantCredentials, TenantCredentialStore } from './tenant-credential.store';
 
 /** A store stubbed to return one org's creds (or null for any other / no row). */
-function fakeStore(
-  rows: Record<string, TenantCredentials | null>,
-): TenantCredentialStore {
+function fakeStore(rows: Record<string, TenantCredentials | null>): TenantCredentialStore {
   return {
     read: (orgId: string) => Promise.resolve(rows[orgId] ?? null),
   } as unknown as TenantCredentialStore;
@@ -19,14 +14,10 @@ function fakeStore(
 
 /** A claude store stubbed to return one org's SELECTED decrypted credential (or null). */
 function fakeClaudeStore(
-  rows: Record<
-    string,
-    { id: string; kind: 'setup_token' | 'personal'; secret: string } | null
-  >,
+  rows: Record<string, { id: string; kind: 'setup_token' | 'personal'; secret: string } | null>,
 ): ClaudeCredentialStore {
   return {
-    getSelectedDecrypted: (orgId: string) =>
-      Promise.resolve(rows[orgId] ?? null),
+    getSelectedDecrypted: (orgId: string) => Promise.resolve(rows[orgId] ?? null),
   } as unknown as ClaudeCredentialStore;
 }
 
@@ -38,19 +29,15 @@ function fakeAppTokens(
   } = {},
 ): GitHubAppTokenService {
   return {
-    getInstallationToken:
-      overrides.getInstallationToken ?? (() => Promise.resolve('ghs_minted')),
+    getInstallationToken: overrides.getInstallationToken ?? (() => Promise.resolve('ghs_minted')),
     appBotIdentity:
-      overrides.appBotIdentity ??
-      (() => Promise.resolve({ name: 'x[bot]', email: 'x' })),
+      overrides.appBotIdentity ?? (() => Promise.resolve({ name: 'x[bot]', email: 'x' })),
   } as unknown as GitHubAppTokenService;
 }
 
 /** A `GitIdentityService` stubbed to resolve a fixed human identity for any token — or undefined (invalid PAT) when overridden. */
 function fakeIdentities(
-  resolve?: (
-    token: string,
-  ) => Promise<{ name: string; email: string } | undefined>,
+  resolve?: (token: string) => Promise<{ name: string; email: string } | undefined>,
 ): GitIdentityService {
   return {
     resolve:
@@ -344,8 +331,7 @@ describe('CredentialResolver — per-org rows, no env fallback', () => {
         fakeStore({ T1: { githubAppInstallationId: '123' } }),
         fakeClaudeStore({}),
         fakeAppTokens({
-          appBotIdentity: () =>
-            Promise.resolve({ name: 'atlas-bot[bot]', email: 'bot@x' }),
+          appBotIdentity: () => Promise.resolve({ name: 'atlas-bot[bot]', email: 'bot@x' }),
           getInstallationToken: () => Promise.resolve('ghs_minted'),
         }),
         fakeIdentities(),
@@ -360,8 +346,7 @@ describe('CredentialResolver — per-org rows, no env fallback', () => {
         }),
         fakeClaudeStore({}),
         fakeAppTokens({
-          appBotIdentity: () =>
-            Promise.resolve({ name: 'atlas-bot[bot]', email: 'bot@x' }),
+          appBotIdentity: () => Promise.resolve({ name: 'atlas-bot[bot]', email: 'bot@x' }),
           getInstallationToken: () => Promise.resolve('ghs_minted'),
         }),
         fakeIdentities(),
@@ -417,8 +402,7 @@ describe('CredentialResolver — per-org rows, no env fallback', () => {
         }),
         fakeClaudeStore({}),
         fakeAppTokens({
-          appBotIdentity: () =>
-            Promise.resolve({ name: 'atlas-bot[bot]', email: 'bot@x' }),
+          appBotIdentity: () => Promise.resolve({ name: 'atlas-bot[bot]', email: 'bot@x' }),
           getInstallationToken: () => Promise.resolve('ghs_minted'),
         }),
         fakeIdentities(),
@@ -436,8 +420,7 @@ describe('CredentialResolver — per-org rows, no env fallback', () => {
         }),
         fakeClaudeStore({}),
         fakeAppTokens({
-          appBotIdentity: () =>
-            Promise.resolve({ name: 'atlas-bot[bot]', email: 'bot@x' }),
+          appBotIdentity: () => Promise.resolve({ name: 'atlas-bot[bot]', email: 'bot@x' }),
           getInstallationToken: () => Promise.resolve('ghs_minted'),
         }),
         fakeIdentities(() => Promise.resolve(undefined)),
@@ -503,8 +486,7 @@ describe('CredentialResolver — per-org rows, no env fallback', () => {
         fakeStore({ T1: creds }),
         fakeClaudeStore({}),
         fakeAppTokens({
-          appBotIdentity: () =>
-            Promise.resolve({ name: 'atlas-bot[bot]', email: 'bot@x' }),
+          appBotIdentity: () => Promise.resolve({ name: 'atlas-bot[bot]', email: 'bot@x' }),
           getInstallationToken: () => Promise.resolve('ghs_minted'),
         }),
         fakeIdentities(),

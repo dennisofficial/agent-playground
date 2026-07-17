@@ -1,32 +1,22 @@
-import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { type EngineEvent, type EngineUsage, resolveContextLimit } from '@shared/engine';
+import { randomUUID } from 'node:crypto';
 import { type QueryDeepPartialEntity, Repository } from 'typeorm';
-import {
-  type EngineEvent,
-  type EngineUsage,
-  resolveContextLimit,
-} from '@shared/engine';
 import { AppVersionService } from '../cluster/app-version.service';
+import { OauthUsageService } from '../onboarding/oauth-usage.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
-  TranscriptMessageEntity,
-  ThreadGroupEntity,
   SubagentEntity,
   TaskEntity,
   type TaskItem,
   ThreadEntity,
+  ThreadGroupEntity,
+  TranscriptMessageEntity,
 } from '../persistence/entities';
 import { LiveTurnStore } from './live-turn-store';
+import { applyEdge, hasBlockedByInput, inverseEdgeOps, isStr, mergeBlockedBy } from './task-edges';
 import { type TaskScope } from './thread-registry';
-import {
-  applyEdge,
-  hasBlockedByInput,
-  inverseEdgeOps,
-  isStr,
-  mergeBlockedBy,
-} from './task-edges';
-import { OauthUsageService } from '../onboarding/oauth-usage.service';
 
 /**
  * The durable destination for a turn's transcript blocks — a narrow port (just `appendBlock`) so a
@@ -154,12 +144,7 @@ export class MessageBlockSink implements BlockSink {
       where: { job_id: jobId, kind: 'agent_prompt' },
       select: { id: true, meta: true },
     });
-    if (
-      existing.some(
-        (m) =>
-          (m.meta as { promptKey?: string } | null)?.promptKey === promptKey,
-      )
-    ) {
+    if (existing.some((m) => (m.meta as { promptKey?: string } | null)?.promptKey === promptKey)) {
       return;
     }
     // Stamp the key into meta so the dedup read above finds it on the NEXT call — the single source of
@@ -185,10 +170,7 @@ export interface TaskEventSink {
   /** INSERT one task row into the scope's thread group; returns its short per-stage `#N` id (the row's dense
    *  `ordinal`). Throws if the scope's thread group can't be resolved (the caller has already validated the
    *  input). */
-  createTask(
-    scope: TaskScope,
-    input: Record<string, unknown>,
-  ): Promise<{ id: string }>;
+  createTask(scope: TaskScope, input: Record<string, unknown>): Promise<{ id: string }>;
   /** UPDATE (or, on `status:'deleted'`, remove) the row named by `input.taskId` within the scope's thread group. */
   updateTask(
     scope: TaskScope,
@@ -243,20 +225,13 @@ export class EntityTaskEventSink implements TaskEventSink {
     return run;
   }
 
-  async createTask(
-    scope: TaskScope,
-    input: Record<string, unknown>,
-  ): Promise<{ id: string }> {
+  async createTask(scope: TaskScope, input: Record<string, unknown>): Promise<{ id: string }> {
     return this.chain(scope, async () => {
       const resolved = await this.resolveThreadGroupId(scope);
-      if (!resolved)
-        throw new Error(`task scope not found: ${scope.kind}:${scope.id}`);
+      if (!resolved) throw new Error(`task scope not found: ${scope.kind}:${scope.id}`);
       const { threadGroupId, orgId } = resolved;
       const ordinal = (await this.maxTaskOrdinal(threadGroupId)) + 1;
-      const blockedBy = await this.validBlockedBy(
-        threadGroupId,
-        mergeBlockedBy([], input),
-      );
+      const blockedBy = await this.validBlockedBy(threadGroupId, mergeBlockedBy([], input));
       const created = await this.tasks.save(
         this.tasks.create({
           thread_group_id: threadGroupId,
@@ -313,8 +288,7 @@ export class EntityTaskEventSink implements TaskEventSink {
           mergeBlockedBy(row.blocked_by ?? [], input),
           String(row.ordinal),
         );
-      if (Object.keys(patch).length)
-        await this.tasks.update({ id: row.id }, patch);
+      if (Object.keys(patch).length) await this.tasks.update({ id: row.id }, patch);
 
       await this.applyInverseEdges(threadGroupId, String(row.ordinal), input);
       return { ok: true };
@@ -392,10 +366,7 @@ export class EntityTaskEventSink implements TaskEventSink {
     return unique.filter((id) => valid.has(id));
   }
 
-  private async removeBlockedByReference(
-    threadGroupId: string,
-    sourceId: string,
-  ): Promise<void> {
+  private async removeBlockedByReference(threadGroupId: string, sourceId: string): Promise<void> {
     const rows = await this.tasks.find({
       where: { thread_group_id: threadGroupId },
       select: { id: true, blocked_by: true },
@@ -419,12 +390,8 @@ export class EntityTaskEventSink implements TaskEventSink {
 
 /** Map a `task_update` status onto a persisted status. `deleted` is handled before this (a deleted task
  *  is REMOVED, not stored); `dropped` is a DB-only status this tool surface never sets. */
-function mapTaskStatus(
-  raw: unknown,
-): 'pending' | 'in_progress' | 'completed' | null {
-  return raw === 'pending' || raw === 'in_progress' || raw === 'completed'
-    ? raw
-    : null;
+function mapTaskStatus(raw: unknown): 'pending' | 'in_progress' | 'completed' | null {
+  return raw === 'pending' || raw === 'in_progress' || raw === 'completed' ? raw : null;
 }
 
 /** Map a thread-group-owned {@link TaskEntity} row back to the `TaskItem` wire/domain shape (mirrors
@@ -538,11 +505,7 @@ export interface TurnHarness {
    * asked (the `task` is a plain engine param, never an event, so nothing else persists it). Insert-once by
    * `promptKey` (survives restart/re-kick/re-drive). Best-effort — never throws into the turn.
    */
-  emitPrompt(
-    task: string,
-    promptKey: string,
-    extraMeta?: Record<string, unknown>,
-  ): Promise<void>;
+  emitPrompt(task: string, promptKey: string, extraMeta?: Record<string, unknown>): Promise<void>;
   /**
    * Persist the accumulated transcript (+ a text fallback if none emitted), append a `turn_meta` block when
    * `turnMeta.usage` is present, then end the live lane.
@@ -664,9 +627,7 @@ export class TurnHarnessFactory {
     };
     // Merge the per-role tag into a block's meta WITHOUT clobbering the block's own fields (the spread order
     // below always puts `metaTag` first). Returns undefined when there's nothing to attach (brain text).
-    const tagMeta = (
-      extra?: Record<string, unknown>,
-    ): Record<string, unknown> | undefined => {
+    const tagMeta = (extra?: Record<string, unknown>): Record<string, unknown> | undefined => {
       const merged = { ...(metaTag ?? {}), ...(extra ?? {}) };
       return Object.keys(merged).length > 0 ? merged : undefined;
     };
@@ -697,9 +658,7 @@ export class TurnHarnessFactory {
             ...(subagentId ? { subagentId } : {}),
           })
           .catch((err) => {
-            this.logger.warn(
-              `appendBlock failed for thread=${jobId} lane=${lane}: ${err}`,
-            );
+            this.logger.warn(`appendBlock failed for thread=${jobId} lane=${lane}: ${err}`);
             return undefined;
           });
 
@@ -707,9 +666,7 @@ export class TurnHarnessFactory {
         // row is persisted, upsert the `subagents` row with a real `parent_message_id`. Best-effort/
         // fire-and-forget: never blocks or fails the turn.
         const pending =
-          b.kind === 'tool' && b.toolId
-            ? subagentsByToolUse.get(b.toolId)
-            : undefined;
+          b.kind === 'tool' && b.toolId ? subagentsByToolUse.get(b.toolId) : undefined;
         if (pending && messageId) {
           void this.subagentStore.upsert({
             id: pending.id,
@@ -728,11 +685,7 @@ export class TurnHarnessFactory {
     };
 
     return {
-      emitPrompt: async (
-        task: string,
-        promptKey: string,
-        extraMeta?: Record<string, unknown>,
-      ) => {
+      emitPrompt: async (task: string, promptKey: string, extraMeta?: Record<string, unknown>) => {
         if (!task.trim()) return;
         await this.sink
           .appendBlockOnce(jobId, promptKey, {
@@ -749,9 +702,7 @@ export class TurnHarnessFactory {
             },
           })
           .catch((err) =>
-            this.logger.warn(
-              `emitPrompt failed for thread=${jobId} lane=${lane}: ${err}`,
-            ),
+            this.logger.warn(`emitPrompt failed for thread=${jobId} lane=${lane}: ${err}`),
           );
       },
 
@@ -767,9 +718,7 @@ export class TurnHarnessFactory {
             // subagent activity out of the transcript into its own sub-page.
             if (!e.text.trim()) break;
             const meta = tagMeta(
-              e.parentToolUseId
-                ? { parentToolUseId: e.parentToolUseId }
-                : undefined,
+              e.parentToolUseId ? { parentToolUseId: e.parentToolUseId } : undefined,
             );
             blocks.push({
               kind: 'chat',
@@ -782,9 +731,7 @@ export class TurnHarnessFactory {
           case 'thinking': {
             if (!e.text.trim()) break;
             const meta = tagMeta(
-              e.parentToolUseId
-                ? { parentToolUseId: e.parentToolUseId }
-                : undefined,
+              e.parentToolUseId ? { parentToolUseId: e.parentToolUseId } : undefined,
             );
             blocks.push({
               kind: 'thinking',
@@ -809,9 +756,7 @@ export class TurnHarnessFactory {
                 input: e.input ?? null,
                 result: null,
                 isError: false,
-                ...(e.parentToolUseId
-                  ? { parentToolUseId: e.parentToolUseId }
-                  : {}),
+                ...(e.parentToolUseId ? { parentToolUseId: e.parentToolUseId } : {}),
               },
               emittedAt: stamp(),
             });
@@ -819,13 +764,9 @@ export class TurnHarnessFactory {
             // subagent spawning a subagent is out of scope). Track it so its children can be tagged with
             // `subagent_id` and its `subagents` row created once its own anchor message is persisted (persistAll).
             if (e.name === 'Task' && !e.parentToolUseId) {
-              const rawInput = e.input as
-                | { subagent_type?: unknown }
-                | undefined;
+              const rawInput = e.input as { subagent_type?: unknown } | undefined;
               const agentType =
-                typeof rawInput?.subagent_type === 'string'
-                  ? rawInput.subagent_type
-                  : null;
+                typeof rawInput?.subagent_type === 'string' ? rawInput.subagent_type : null;
               subagentsByToolUse.set(toolId, {
                 id: randomUUID(),
                 toolUseId: toolId,
@@ -842,19 +783,13 @@ export class TurnHarnessFactory {
             // Pair with the newest still-open tool block (preserving interleaved order with text/thinking).
             for (let i = blocks.length - 1; i >= 0; i--) {
               const b = blocks[i];
-              if (
-                b.kind === 'tool' &&
-                !b.done &&
-                (b.toolId === e.id || !e.id)
-              ) {
+              if (b.kind === 'tool' && !b.done && (b.toolId === e.id || !e.id)) {
                 b.done = true;
                 b.meta = {
                   ...b.meta,
                   result: e.result ?? null,
                   isError: e.isError ?? false,
-                  ...(e.structuredPatch
-                    ? { structuredPatch: e.structuredPatch }
-                    : {}),
+                  ...(e.structuredPatch ? { structuredPatch: e.structuredPatch } : {}),
                 };
                 break;
               }
@@ -868,8 +803,7 @@ export class TurnHarnessFactory {
             // stays live-only — the turn-end `turn_meta` already carries the orchestrator's occupancy.
             if (e.parentToolUseId) {
               const pendingUsage = subagentsByToolUse.get(e.parentToolUseId);
-              if (pendingUsage && e.contextModel)
-                pendingUsage.model = e.contextModel;
+              if (pendingUsage && e.contextModel) pendingUsage.model = e.contextModel;
               for (let i = blocks.length - 1; i >= 0; i--) {
                 const b = blocks[i];
                 if (b.kind === 'tool' && b.meta?.id === e.parentToolUseId) {
@@ -877,9 +811,7 @@ export class TurnHarnessFactory {
                     ...b.meta,
                     subContextTokens: e.contextTokens,
                     subContextLimit: e.contextLimit,
-                    ...(e.contextModel
-                      ? { subContextModel: e.contextModel }
-                      : {}),
+                    ...(e.contextModel ? { subContextModel: e.contextModel } : {}),
                   };
                   break;
                 }
@@ -893,9 +825,7 @@ export class TurnHarnessFactory {
             // lifecycle is a 3-state (running|done|failed), not a superset of the SDK's task states.
             if (
               e.parentToolUseId &&
-              (e.status === 'completed' ||
-                e.status === 'failed' ||
-                e.status === 'stopped')
+              (e.status === 'completed' || e.status === 'failed' || e.status === 'stopped')
             ) {
               const pending = subagentsByToolUse.get(e.parentToolUseId);
               if (pending) {
@@ -924,8 +854,7 @@ export class TurnHarnessFactory {
           case 'turn_debug': {
             if ('terminalReason' in e) terminalReason = e.terminalReason;
             if ('stopReason' in e) stopReason = e.stopReason;
-            if (typeof e.streamClosedCount === 'number')
-              streamClosedCount = e.streamClosedCount;
+            if (typeof e.streamClosedCount === 'number') streamClosedCount = e.streamClosedCount;
             break;
           }
           default:
@@ -937,11 +866,7 @@ export class TurnHarnessFactory {
         if (closed) return;
         closed = true;
         // Fallback: a turn that emitted NO text block — keep the final summary so the reply isn't lost.
-        if (
-          !blocks.some((b) => b.kind === 'chat') &&
-          finalText &&
-          finalText.trim()
-        ) {
+        if (!blocks.some((b) => b.kind === 'chat') && finalText && finalText.trim()) {
           blocks.push({
             kind: 'chat',
             text: finalText.trim(),
@@ -977,8 +902,7 @@ export class TurnHarnessFactory {
                   ? Math.max(0, u.inputTokens - (u.cacheReadTokens ?? 0))
                   : null))
               : null;
-          const ctxTokens =
-            turnMeta?.contextTokens ?? u?.contextTokens ?? codexOccupancy;
+          const ctxTokens = turnMeta?.contextTokens ?? u?.contextTokens ?? codexOccupancy;
           const ctxLimit =
             turnMeta?.contextLimit ??
             (ctxTokens != null
@@ -988,22 +912,15 @@ export class TurnHarnessFactory {
           // SAME clock that drove the "Atlas is working… 19m 24s" indicator, so the footer matches the last
           // reading). `snapshot` is valid here — `persistAll()` ends the live lane only afterwards; a turn
           // that pushed no events (no snapshot) simply carries no duration.
-          const startedAt = this.liveTurns.snapshot(
-            channel,
-            jobId,
-            lane,
-          )?.startedAt;
-          const workedMs =
-            startedAt != null ? Math.max(0, Date.now() - startedAt) : undefined;
+          const startedAt = this.liveTurns.snapshot(channel, jobId, lane)?.startedAt;
+          const workedMs = startedAt != null ? Math.max(0, Date.now() - startedAt) : undefined;
           blocks.push({
             kind: 'turn_meta',
             emittedAt: stamp(),
             meta: {
               ...(metaTag ?? {}),
               ...(u ? { usage: u as unknown as Record<string, unknown> } : {}),
-              ...(turnMeta?.credentialId
-                ? { credentialId: turnMeta.credentialId }
-                : {}),
+              ...(turnMeta?.credentialId ? { credentialId: turnMeta.credentialId } : {}),
               ...(u
                 ? { contextTokens: ctxTokens ?? null }
                 : ctxTokens != null

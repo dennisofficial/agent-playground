@@ -33,9 +33,7 @@ const JOB_ID = 'job-1';
 
 let root: string;
 let app: import('@nestjs/common').INestApplication;
-let server: ReturnType<
-  import('@nestjs/common').INestApplication['getHttpServer']
->;
+let server: ReturnType<import('@nestjs/common').INestApplication['getHttpServer']>;
 /** Mutable so the "no sandbox" case can flip it via `mockResolvedValueOnce`. */
 let findSandbox: ReturnType<typeof vi.fn>;
 
@@ -70,10 +68,7 @@ beforeAll(async () => {
   git(['commit', '-q', '-m', 'add bar'], root);
 
   // An additional UNCOMMITTED edit on top — never `git add`ed — proving the diff also carries live work.
-  writeFileSync(
-    join(root, 'foo.ts'),
-    'line1\nline2-changed\nline3\nline4-uncommitted\n',
-  );
+  writeFileSync(join(root, 'foo.ts'), 'line1\nline2-changed\nline3\nline4-uncommitted\n');
 
   const realGit = new LocalGitService({ get: () => undefined } as never);
 
@@ -85,13 +80,10 @@ beforeAll(async () => {
   })
     .useMocker((token) => {
       if (token === LocalGitService) return realGit;
-      if (token === JobLifecycleService)
-        return { findSandbox, resolveBaseBranch };
+      if (token === JobLifecycleService) return { findSandbox, resolveBaseBranch };
       if (token === getRepositoryToken(JobEntity, DB_CONNECTION)) {
         return {
-          findOne: vi.fn(() =>
-            Promise.resolve({ id: JOB_ID, org_id: ORG_ID, repo_id: REPO_ID }),
-          ),
+          findOne: vi.fn(() => Promise.resolve({ id: JOB_ID, org_id: ORG_ID, repo_id: REPO_ID })),
         };
       }
       return {}; // auto-mock every other collaborator (unused by this endpoint)
@@ -131,18 +123,12 @@ const diffSummaryUrl = `/web/orgs/${ORG_ID}/repos/${REPO_ID}/jobs/${JOB_ID}/diff
 describe('WebSurfaceController jobDiff — LIVE HTTP (real Nest app, real git worktree)', () => {
   it('GET .../diff → 200, structured files with committed + uncommitted changes merged', async () => {
     const res = await request(server).get(diffUrl);
-    console.log(
-      `OBSERVED GET ${diffUrl} →`,
-      res.status,
-      JSON.stringify(res.body),
-    );
+    console.log(`OBSERVED GET ${diffUrl} →`, res.status, JSON.stringify(res.body));
 
     expect(res.status).toBe(200);
     expect(res.body.truncated).toBe(false);
 
-    const foo = res.body.files.find(
-      (f: { path: string }) => f.path === 'foo.ts',
-    );
+    const foo = res.body.files.find((f: { path: string }) => f.path === 'foo.ts');
     expect(foo).toBeDefined();
     expect(foo.status).toBe('modified');
     expect(foo.binary).toBe(false);
@@ -150,16 +136,10 @@ describe('WebSurfaceController jobDiff — LIVE HTTP (real Nest app, real git wo
     expect(foo.deletions).toBeGreaterThan(0);
     expect(foo.hunks.length).toBeGreaterThan(0);
     const signPrefixes = new Set(foo.hunks[0].lines.map((l: string) => l[0]));
-    expect(
-      [...signPrefixes].every((c) => c === ' ' || c === '+' || c === '-'),
-    ).toBe(true);
-    expect(foo.hunks[0].lines.some((l: string) => l.startsWith('+'))).toBe(
-      true,
-    );
+    expect([...signPrefixes].every((c) => c === ' ' || c === '+' || c === '-')).toBe(true);
+    expect(foo.hunks[0].lines.some((l: string) => l.startsWith('+'))).toBe(true);
 
-    const bar = res.body.files.find(
-      (f: { path: string }) => f.path === 'bar.ts',
-    );
+    const bar = res.body.files.find((f: { path: string }) => f.path === 'bar.ts');
     expect(bar).toBeDefined();
     expect(bar.status).toBe('added');
     expect(bar.additions).toBeGreaterThan(0);
@@ -168,29 +148,19 @@ describe('WebSurfaceController jobDiff — LIVE HTTP (real Nest app, real git wo
   it('GET .../diff with no sandbox → 200 { files: [], truncated: false }', async () => {
     findSandbox.mockResolvedValueOnce(null);
     const res = await request(server).get(diffUrl);
-    console.log(
-      `OBSERVED GET ${diffUrl} (no sandbox) →`,
-      res.status,
-      JSON.stringify(res.body),
-    );
+    console.log(`OBSERVED GET ${diffUrl} (no sandbox) →`, res.status, JSON.stringify(res.body));
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ files: [], truncated: false });
   });
 
   it('GET .../diff/summary → 200, lightweight files with status and no hunks', async () => {
     const res = await request(server).get(diffSummaryUrl);
-    console.log(
-      `OBSERVED GET ${diffSummaryUrl} →`,
-      res.status,
-      JSON.stringify(res.body),
-    );
+    console.log(`OBSERVED GET ${diffSummaryUrl} →`, res.status, JSON.stringify(res.body));
 
     expect(res.status).toBe(200);
     expect(res.body).not.toHaveProperty('truncated');
 
-    const foo = res.body.files.find(
-      (f: { path: string }) => f.path === 'foo.ts',
-    );
+    const foo = res.body.files.find((f: { path: string }) => f.path === 'foo.ts');
     expect(foo).toMatchObject({
       path: 'foo.ts',
       status: 'modified',
@@ -200,9 +170,7 @@ describe('WebSurfaceController jobDiff — LIVE HTTP (real Nest app, real git wo
     expect(foo.deletions).toBeGreaterThan(0);
     expect(foo).not.toHaveProperty('hunks');
 
-    const bar = res.body.files.find(
-      (f: { path: string }) => f.path === 'bar.ts',
-    );
+    const bar = res.body.files.find((f: { path: string }) => f.path === 'bar.ts');
     expect(bar).toMatchObject({
       path: 'bar.ts',
       status: 'added',

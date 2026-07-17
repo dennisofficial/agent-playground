@@ -1,13 +1,6 @@
 import { EnvService } from '@core/config/env/env.service';
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import {
-  cpSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-} from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative } from 'node:path';
@@ -73,11 +66,7 @@ export class SkillInstallerService {
   /** Install (or re-install, on update) `input.sourceUrl` — returns every vendored skill's registry row. */
   async install(input: SkillInstallInput): Promise<SkillView[]> {
     const token = await this.resolveToken(input.sourceUrl, input.orgId);
-    const { ref, sha } = await this.git.resolveRemoteRef(
-      input.sourceUrl,
-      input.ref,
-      token,
-    );
+    const { ref, sha } = await this.git.resolveRemoteRef(input.sourceUrl, input.ref, token);
 
     const tmpDir = await mkdtemp(join(tmpdir(), 'atlas-skill-install-'));
     try {
@@ -97,14 +86,7 @@ export class SkillInstallerService {
         // enough per-skill DB round trip (real Postgres, not a test's in-memory fake) the cleanup wins
         // the race and every skill after the first reports "no SKILL.md" — exactly what happened
         // installing the real `anthropics/skills` marketplace (17 skills in the manifest, 1 vendored).
-        return await this.installMarketplace(
-          input,
-          tmpDir,
-          root,
-          manifestPath,
-          ref,
-          sha,
-        );
+        return await this.installMarketplace(input, tmpDir, root, manifestPath, ref, sha);
       }
       if (!existsSync(join(root, 'SKILL.md'))) {
         throw new BadRequestException(
@@ -112,13 +94,7 @@ export class SkillInstallerService {
             `${input.sourceUrl}@${ref} isn't a skill or a marketplace repo`,
         );
       }
-      const skill = await this.vendorSkill(
-        input,
-        root,
-        ref,
-        sha,
-        input.subpath ?? null,
-      );
+      const skill = await this.vendorSkill(input, root, ref, sha, input.subpath ?? null);
       return [skill];
     } finally {
       await rm(tmpDir, { recursive: true, force: true }).catch((err) =>
@@ -136,11 +112,7 @@ export class SkillInstallerService {
    */
   async preview(input: SkillInstallInput): Promise<SkillPreviewRow[]> {
     const token = await this.resolveToken(input.sourceUrl, input.orgId);
-    const { ref } = await this.git.resolveRemoteRef(
-      input.sourceUrl,
-      input.ref,
-      token,
-    );
+    const { ref } = await this.git.resolveRemoteRef(input.sourceUrl, input.ref, token);
     const tmpDir = await mkdtemp(join(tmpdir(), 'atlas-skill-preview-'));
     try {
       await this.git.shallowCloneToPath(input.sourceUrl, ref, tmpDir, token);
@@ -161,9 +133,7 @@ export class SkillInstallerService {
           `no SKILL.md at '${input.subpath ?? '/'}' in ${input.sourceUrl}@${ref} — not a single skill dir`,
         );
       }
-      const frontmatter = parseSkillFrontmatter(
-        readFileSync(join(root, 'SKILL.md'), 'utf8'),
-      );
+      const frontmatter = parseSkillFrontmatter(readFileSync(join(root, 'SKILL.md'), 'utf8'));
       const name = sanitizeName(frontmatter.name ?? basename(root));
       const description =
         frontmatter.description ??
@@ -186,26 +156,20 @@ export class SkillInstallerService {
     ref: string,
     sha: string,
   ): Promise<SkillView[]> {
-    const manifest = JSON.parse(
-      readFileSync(manifestPath, 'utf8'),
-    ) as MarketplaceManifest;
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as MarketplaceManifest;
     const results: SkillView[] = [];
     for (const plugin of manifest.plugins ?? []) {
       const pluginDir = join(marketplaceRoot, plugin.source ?? './');
       for (const skillRel of pluginSkillRels(plugin, pluginDir)) {
         const skillDir = join(pluginDir, skillRel);
         if (!existsSync(join(skillDir, 'SKILL.md'))) {
-          this.logger.warn(
-            `marketplace ${input.sourceUrl}: skipping '${skillRel}' — no SKILL.md`,
-          );
+          this.logger.warn(`marketplace ${input.sourceUrl}: skipping '${skillRel}' — no SKILL.md`);
           continue;
         }
         // Store the subpath relative to the CLONE ROOT (not the marketplace root) so a re-install with the
         // same `input.subpath` finds the manifest again, and the updater's re-expand walks the same tree.
         const subpath = relative(cloneRoot, skillDir);
-        results.push(
-          await this.vendorSkill(input, skillDir, ref, sha, subpath),
-        );
+        results.push(await this.vendorSkill(input, skillDir, ref, sha, subpath));
       }
     }
     if (results.length === 0) {
@@ -228,8 +192,7 @@ export class SkillInstallerService {
     const frontmatter = parseSkillFrontmatter(md);
     const name = sanitizeName(frontmatter.name ?? basename(srcDir));
     const description =
-      frontmatter.description ??
-      `Installed from ${input.sourceUrl}${subpath ? `/${subpath}` : ''}`;
+      frontmatter.description ?? `Installed from ${input.sourceUrl}${subpath ? `/${subpath}` : ''}`;
 
     const dest = skillDirHost(this.root(), input.orgId, input.scope, name);
     rmSync(dest, { recursive: true, force: true });
@@ -254,17 +217,12 @@ export class SkillInstallerService {
     );
     const view = await this.store.get(input.orgId, input.scope, name);
     if (!view)
-      throw new Error(
-        `skill '${name}' vanished immediately after write — should be unreachable`,
-      );
+      throw new Error(`skill '${name}' vanished immediately after write — should be unreachable`);
     return view;
   }
 
   /** Anonymous for public repos / non-GitHub remotes; the org's PAT for private GitHub repos. */
-  private async resolveToken(
-    sourceUrl: string,
-    orgId: string,
-  ): Promise<string | undefined> {
+  private async resolveToken(sourceUrl: string, orgId: string): Promise<string | undefined> {
     if (!sourceUrl.startsWith('https://github.com/')) return undefined;
     return this.creds.hostGithubToken(orgId);
   }
@@ -288,16 +246,11 @@ function sanitizeName(name: string): string {
  * child directory containing a `SKILL.md` IS a skill (github.com/anthropics/claude-code plugin marketplace
  * spec). A present-but-empty `skills: []` is treated as "none" (explicit opt-out), not a signal to scan.
  */
-function pluginSkillRels(
-  plugin: { skills?: string[] },
-  pluginDir: string,
-): string[] {
+function pluginSkillRels(plugin: { skills?: string[] }, pluginDir: string): string[] {
   if (plugin.skills && plugin.skills.length > 0) return plugin.skills;
   const skillsDir = join(pluginDir, 'skills');
   if (!existsSync(skillsDir)) return [];
   return readdirSync(skillsDir, { withFileTypes: true })
-    .filter(
-      (e) => e.isDirectory() && existsSync(join(skillsDir, e.name, 'SKILL.md')),
-    )
+    .filter((e) => e.isDirectory() && existsSync(join(skillsDir, e.name, 'SKILL.md')))
     .map((e) => join('skills', e.name));
 }

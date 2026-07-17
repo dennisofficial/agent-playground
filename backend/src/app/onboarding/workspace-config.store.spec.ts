@@ -3,21 +3,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Repository } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type {
-  OrgWorkspaceMountEntity,
-  RepoEntity,
-} from '../persistence/entities';
+import type { OrgWorkspaceMountEntity, RepoEntity } from '../persistence/entities';
 import { WorkspaceConfigStore } from './workspace-config.store';
 
 /** A tiny in-memory stand-in for a TypeORM repository (composite-key find/save/update/delete). */
-function memRepo<T extends object>(
-  keys: (keyof T)[],
-): Repository<T> & { rows: T[] } {
+function memRepo<T extends object>(keys: (keyof T)[]): Repository<T> & { rows: T[] } {
   let rows: T[] = [];
   const match = (where: Partial<T>) => (r: T) =>
-    (Object.entries(where) as [keyof T, unknown][]).every(
-      ([k, v]) => r[k] === v,
-    );
+    (Object.entries(where) as [keyof T, unknown][]).every(([k, v]) => r[k] === v);
   return {
     get rows() {
       return rows;
@@ -25,8 +18,7 @@ function memRepo<T extends object>(
     create: (v: Partial<T>) => ({ ...v }) as T,
     find: async ({ where }: { where?: Partial<T> } = {}) =>
       where ? rows.filter(match(where)) : rows,
-    findOne: async ({ where }: { where: Partial<T> }) =>
-      rows.find(match(where)) ?? null,
+    findOne: async ({ where }: { where: Partial<T> }) => rows.find(match(where)) ?? null,
     save: async (row: T) => {
       rows = rows.filter((r) => !keys.every((k) => r[k] === row[k]));
       rows.push(row);
@@ -34,9 +26,7 @@ function memRepo<T extends object>(
     },
     update: async (where: Partial<T>, partial: Partial<T>) => {
       let affected = 0;
-      rows = rows.map((r) =>
-        match(where)(r) ? (affected++, { ...r, ...partial }) : r,
-      );
+      rows = rows.map((r) => (match(where)(r) ? (affected++, { ...r, ...partial }) : r));
       return { affected, raw: [] };
     },
     delete: async (where: Partial<T>) => {
@@ -64,23 +54,17 @@ describe('WorkspaceConfigStore', () => {
   it('upsertMount is idempotent and upserts by path (never duplicates, replaces mode)', async () => {
     await store.upsertMount(ORG, REPO, '.venv', 'per-thread');
     await store.upsertMount(ORG, REPO, '.venv', 'per-thread');
-    expect(await store.listMounts(ORG, REPO)).toEqual([
-      { path: '.venv', mode: 'per-thread' },
-    ]);
+    expect(await store.listMounts(ORG, REPO)).toEqual([{ path: '.venv', mode: 'per-thread' }]);
 
     await store.upsertMount(ORG, REPO, '.venv', 'shared-ro');
-    expect(await store.listMounts(ORG, REPO)).toEqual([
-      { path: '.venv', mode: 'shared-ro' },
-    ]);
+    expect(await store.listMounts(ORG, REPO)).toEqual([{ path: '.venv', mode: 'shared-ro' }]);
   });
 
   it('removeMount drops exactly that mount', async () => {
     await store.upsertMount(ORG, REPO, 'a', 'per-thread');
     await store.upsertMount(ORG, REPO, 'b', 'per-thread');
     await store.removeMount(ORG, REPO, 'a');
-    expect(await store.listMounts(ORG, REPO)).toEqual([
-      { path: 'b', mode: 'per-thread' },
-    ]);
+    expect(await store.listMounts(ORG, REPO)).toEqual([{ path: 'b', mode: 'per-thread' }]);
   });
 
   it('scopes mounts by org+repo — another org/repo sees nothing', async () => {
@@ -134,9 +118,7 @@ describe('WorkspaceConfigStore', () => {
         }),
       );
       await store.importLegacyIfEmpty(ORG, REPO, wt);
-      expect(await store.listMounts(ORG, REPO)).toEqual([
-        { path: '.venv', mode: 'per-thread' },
-      ]);
+      expect(await store.listMounts(ORG, REPO)).toEqual([{ path: '.venv', mode: 'per-thread' }]);
     });
 
     it('no-ops when the DB already has rows, even if a legacy file exists', async () => {
@@ -146,9 +128,7 @@ describe('WorkspaceConfigStore', () => {
         JSON.stringify({ mounts: [{ path: 'from-file', mode: 'per-thread' }] }),
       );
       await store.importLegacyIfEmpty(ORG, REPO, wt);
-      expect(await store.listMounts(ORG, REPO)).toEqual([
-        { path: 'existing', mode: 'per-thread' },
-      ]);
+      expect(await store.listMounts(ORG, REPO)).toEqual([{ path: 'existing', mode: 'per-thread' }]);
     });
 
     it('no-ops when the DB is empty and there is no legacy file', async () => {

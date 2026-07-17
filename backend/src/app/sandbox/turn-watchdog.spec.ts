@@ -1,12 +1,12 @@
-import { describe, expect, it, vi } from 'vitest';
+import type { EnvService } from '@core/config/env/env.service';
 import { SchedulerRegistry } from '@nestjs/schedule';
-import { TurnWatchdogService } from './turn-watchdog.service';
+import { describe, expect, it, vi } from 'vitest';
+import type { RedisStreamPort } from '../../_lib/redis/redis.port';
+import type { LeaderElectionService } from '../cluster';
+import type { ActiveTurnEntity } from '../persistence/entities';
 import { turnKeys } from './redis-turn-keys';
 import type { TurnRegistry } from './turn-registry.service';
-import type { LeaderElectionService } from '../cluster';
-import type { EnvService } from '@core/config/env/env.service';
-import type { RedisStreamPort } from '../../_lib/redis/redis.port';
-import type { ActiveTurnEntity } from '../persistence/entities';
+import { TurnWatchdogService } from './turn-watchdog.service';
 
 const env = (vals: Record<string, unknown> = {}) =>
   ({ get: (k: string) => vals[k] }) as unknown as EnvService;
@@ -80,9 +80,7 @@ describe('TurnWatchdogService.sweep', () => {
 
   it('a liveness-probe failure falls back to finalizing (fail towards cleanup, as before)', async () => {
     const registry = {
-      findStale: vi.fn(
-        async () => [{ turn_id: 't1', job_id: 'th1' }] as ActiveTurnEntity[],
-      ),
+      findStale: vi.fn(async () => [{ turn_id: 't1', job_id: 'th1' }] as ActiveTurnEntity[]),
       finalize: vi.fn(async () => undefined),
     } as unknown as TurnRegistry & { finalize: ReturnType<typeof vi.fn> };
     const redis = {
@@ -105,12 +103,7 @@ describe('TurnWatchdogService.sweep', () => {
       finalize: ReturnType<typeof vi.fn>;
     };
 
-    await new TurnWatchdogService(
-      registry,
-      election,
-      env(),
-      redisWithIdle(),
-    ).sweep();
+    await new TurnWatchdogService(registry, election, env(), redisWithIdle()).sweep();
 
     expect(registry.findStale).toHaveBeenCalledWith(90_000); // default
     expect(registry.finalize).not.toHaveBeenCalled();
@@ -128,12 +121,7 @@ describe('TurnWatchdogService.sweep', () => {
     };
 
     await expect(
-      new TurnWatchdogService(
-        registry,
-        election,
-        env(),
-        redisWithIdle(),
-      ).sweep(),
+      new TurnWatchdogService(registry, election, env(), redisWithIdle()).sweep(),
     ).resolves.toBeUndefined();
     expect(registry.finalize).not.toHaveBeenCalled();
   });
@@ -163,14 +151,7 @@ describe('TurnWatchdogService reattach trigger', () => {
       handlerFor: vi.fn(() => handler),
     } as unknown as import('./turn-reattach.registry').TurnReattachRegistry;
 
-    await new TurnWatchdogService(
-      registry,
-      election,
-      env(),
-      redis,
-      undefined,
-      reattach,
-    ).sweep();
+    await new TurnWatchdogService(registry, election, env(), redis, undefined, reattach).sweep();
 
     expect(reattach.handlerFor).toHaveBeenCalledWith('step'); // routed by kind
     expect(handler).toHaveBeenCalledTimes(1);
@@ -193,14 +174,7 @@ describe('TurnWatchdogService reattach trigger', () => {
       handlerFor: vi.fn(() => handler),
     } as unknown as import('./turn-reattach.registry').TurnReattachRegistry;
 
-    await new TurnWatchdogService(
-      registry,
-      election,
-      env(),
-      redis,
-      undefined,
-      reattach,
-    ).sweep();
+    await new TurnWatchdogService(registry, election, env(), redis, undefined, reattach).sweep();
 
     expect(handler).toHaveBeenCalledTimes(1);
     expect(registry.heartbeat).toHaveBeenCalledWith('t-live');
@@ -225,14 +199,7 @@ describe('TurnWatchdogService reattach trigger', () => {
     } as unknown as import('./turn-reattach.registry').TurnReattachRegistry;
 
     await expect(
-      new TurnWatchdogService(
-        registry,
-        election,
-        env(),
-        redis,
-        undefined,
-        reattach,
-      ).sweep(),
+      new TurnWatchdogService(registry, election, env(), redis, undefined, reattach).sweep(),
     ).resolves.toBeUndefined();
     expect(registry.heartbeat).toHaveBeenCalledWith('t-live');
     expect(registry.finalize).not.toHaveBeenCalled();
@@ -252,14 +219,7 @@ describe('TurnWatchdogService reattach trigger', () => {
       handlerFor: vi.fn(() => undefined),
     } as unknown as import('./turn-reattach.registry').TurnReattachRegistry;
 
-    await new TurnWatchdogService(
-      registry,
-      election,
-      env(),
-      redis,
-      undefined,
-      reattach,
-    ).sweep();
+    await new TurnWatchdogService(registry, election, env(), redis, undefined, reattach).sweep();
 
     expect(reattach.handlerFor).toHaveBeenCalledWith('rotation');
     expect(registry.heartbeat).toHaveBeenCalledWith('t-live');
@@ -281,14 +241,7 @@ describe('TurnWatchdogService reattach trigger', () => {
       handlerFor: vi.fn(() => handler),
     } as unknown as import('./turn-reattach.registry').TurnReattachRegistry;
 
-    await new TurnWatchdogService(
-      registry,
-      election,
-      env(),
-      redis,
-      undefined,
-      reattach,
-    ).sweep();
+    await new TurnWatchdogService(registry, election, env(), redis, undefined, reattach).sweep();
 
     expect(handler).not.toHaveBeenCalled(); // dead → not a reattach candidate
     expect(registry.finalize).toHaveBeenCalledWith('t-dead', 'failed');

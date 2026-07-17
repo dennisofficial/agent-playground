@@ -41,11 +41,7 @@ export type TailPollResult =
  * (an fd already open on the log file); shrank → the file was truncated by an `atlas-svc run` restart, so
  * the caller must re-snapshot from scratch (a fresh `readServiceLogTail`) rather than trust `offset`.
  */
-export function nextTailFrame(
-  offset: number,
-  size: number,
-  fd: number,
-): TailPollResult {
+export function nextTailFrame(offset: number, size: number, fd: number): TailPollResult {
   if (size === offset) return { kind: 'unchanged' };
   if (size < offset) return { kind: 'reset', nextOffset: size };
   const len = size - offset;

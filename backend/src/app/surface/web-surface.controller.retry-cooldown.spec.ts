@@ -8,7 +8,14 @@ import { WebSurfaceController } from './web-surface.controller';
  * chained builder method returns itself, and `execute` is a per-test-controlled `vi.fn()` standing in for the
  * `claimManualRetry` CAS update.
  */
-function fakeJobsRepo(row: { id: string; org_id: string; repo_id: string; halt: string | null; status: string; title: string | null }) {
+function fakeJobsRepo(row: {
+  id: string;
+  org_id: string;
+  repo_id: string;
+  halt: string | null;
+  status: string;
+  title: string | null;
+}) {
   const execute = vi.fn(async () => ({ affected: 1 }));
   const qb: Record<string, unknown> = {};
   for (const m of ['update', 'set', 'where', 'andWhere']) qb[m] = () => qb;
@@ -32,7 +39,10 @@ function makeController(opts: {
   intakeChat?: ReturnType<typeof vi.fn>;
 }) {
   return new WebSurfaceController(
-    { seedSystemNotification: opts.seedSystemNotification, name: 'web' } as never, // surface
+    {
+      seedSystemNotification: opts.seedSystemNotification,
+      name: 'web',
+    } as never, // surface
     {} as never, // liveTurns
     {} as never, // driverStore
     {} as never, // threadLifecycle
@@ -68,7 +78,14 @@ function makeController(opts: {
 describe('WebSurfaceController — manual retry cooldown', () => {
   describe('retry (build "Retry"/force-resume button)', () => {
     it('claims the cooldown slot and dispatches the retry on a first, unforced call', async () => {
-      const jobs = fakeJobsRepo({ id: 'job-1', org_id: 'org-1', repo_id: 'repo-1', halt: 'error', status: 'running', title: null });
+      const jobs = fakeJobsRepo({
+        id: 'job-1',
+        org_id: 'org-1',
+        repo_id: 'repo-1',
+        halt: 'error',
+        status: 'running',
+        title: null,
+      });
       const dispatcherRetry = vi.fn(async () => undefined);
       const controller = makeController({
         jobs,
@@ -85,7 +102,14 @@ describe('WebSurfaceController — manual retry cooldown', () => {
     });
 
     it('throws a 429 and does not dispatch when the cooldown claim fails', async () => {
-      const jobs = fakeJobsRepo({ id: 'job-1', org_id: 'org-1', repo_id: 'repo-1', halt: 'error', status: 'running', title: null });
+      const jobs = fakeJobsRepo({
+        id: 'job-1',
+        org_id: 'org-1',
+        repo_id: 'repo-1',
+        halt: 'error',
+        status: 'running',
+        title: null,
+      });
       jobs.execute.mockResolvedValue({ affected: 0 });
       const dispatcherRetry = vi.fn(async () => undefined);
       const controller = makeController({
@@ -100,7 +124,14 @@ describe('WebSurfaceController — manual retry cooldown', () => {
     });
 
     it('reports the 429 as too-many-requests', async () => {
-      const jobs = fakeJobsRepo({ id: 'job-1', org_id: 'org-1', repo_id: 'repo-1', halt: 'error', status: 'running', title: null });
+      const jobs = fakeJobsRepo({
+        id: 'job-1',
+        org_id: 'org-1',
+        repo_id: 'repo-1',
+        halt: 'error',
+        status: 'running',
+        title: null,
+      });
       jobs.execute.mockResolvedValue({ affected: 0 });
       const controller = makeController({
         jobs,
@@ -115,7 +146,14 @@ describe('WebSurfaceController — manual retry cooldown', () => {
     });
 
     it('skips the cooldown claim entirely and dispatches when force=true, even if the claim would fail', async () => {
-      const jobs = fakeJobsRepo({ id: 'job-1', org_id: 'org-1', repo_id: 'repo-1', halt: 'session_limit', status: 'running', title: null });
+      const jobs = fakeJobsRepo({
+        id: 'job-1',
+        org_id: 'org-1',
+        repo_id: 'repo-1',
+        halt: 'session_limit',
+        status: 'running',
+        title: null,
+      });
       jobs.execute.mockResolvedValue({ affected: 0 });
       const dispatcherRetry = vi.fn(async () => undefined);
       const controller = makeController({
@@ -135,7 +173,14 @@ describe('WebSurfaceController — manual retry cooldown', () => {
 
   describe('retryTurn ("Resume" button on a retryable turn error)', () => {
     it('claims the cooldown slot and seeds the resume nudge on a first, unforced call', async () => {
-      const jobs = fakeJobsRepo({ id: 'job-1', org_id: 'org-1', repo_id: 'repo-1', halt: null, status: 'running', title: 'Fix the flaky test' });
+      const jobs = fakeJobsRepo({
+        id: 'job-1',
+        org_id: 'org-1',
+        repo_id: 'repo-1',
+        halt: null,
+        status: 'running',
+        title: 'Fix the flaky test',
+      });
       const seedSystemNotification = vi.fn();
       const setSessionResume = vi.fn(async () => undefined);
       const intakeChat = vi.fn(async () => undefined);
@@ -163,7 +208,14 @@ describe('WebSurfaceController — manual retry cooldown', () => {
     });
 
     it('throws a 429 and does not seed a resume nudge when the cooldown claim fails', async () => {
-      const jobs = fakeJobsRepo({ id: 'job-1', org_id: 'org-1', repo_id: 'repo-1', halt: null, status: 'running', title: null });
+      const jobs = fakeJobsRepo({
+        id: 'job-1',
+        org_id: 'org-1',
+        repo_id: 'repo-1',
+        halt: null,
+        status: 'running',
+        title: null,
+      });
       jobs.execute.mockResolvedValue({ affected: 0 });
       const seedSystemNotification = vi.fn();
       const setSessionResume = vi.fn();
@@ -182,7 +234,14 @@ describe('WebSurfaceController — manual retry cooldown', () => {
     });
 
     it('skips the cooldown claim entirely and proceeds when force=true, even if the claim would fail', async () => {
-      const jobs = fakeJobsRepo({ id: 'job-1', org_id: 'org-1', repo_id: 'repo-1', halt: null, status: 'running', title: null });
+      const jobs = fakeJobsRepo({
+        id: 'job-1',
+        org_id: 'org-1',
+        repo_id: 'repo-1',
+        halt: null,
+        status: 'running',
+        title: null,
+      });
       jobs.execute.mockResolvedValue({ affected: 0 });
       const seedSystemNotification = vi.fn();
       const setSessionResume = vi.fn(async () => undefined);

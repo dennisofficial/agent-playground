@@ -1,25 +1,14 @@
-import {
-  Inject,
-  Injectable,
-  Logger,
-  type OnModuleDestroy,
-} from '@nestjs/common';
+import { Inject, Injectable, Logger, type OnModuleDestroy } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { Repository } from 'typeorm';
 import { JobBootstrapService } from '../job-bootstrap';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { TranscriptMessageEntity, JobSandboxEntity } from '../persistence/entities';
-import {
-  SANDBOX_PROVIDER,
-  type SandboxProvider,
-} from '../sandbox/sandbox-provider.port';
+import { JobSandboxEntity, TranscriptMessageEntity } from '../persistence/entities';
+import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox/sandbox-provider.port';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
-import {
-  parseSessionTranscriptTurns,
-  type SessionTranscript,
-} from './session-transcript';
+import { parseSessionTranscriptTurns, type SessionTranscript } from './session-transcript';
 import { backfillThreadFromTurns } from './turn-backfill';
 
 /** Defaults for the mid-flight watcher: poll every 8s, give up after 20 min (longer than any brain turn). */
@@ -118,9 +107,7 @@ export class TurnRecoveryService implements OnModuleDestroy {
 
     await this.sweep(pending, deadline);
     if (pending.size === 0 || this.destroyed) return;
-    this.logger.log(
-      `Turn recovery: watching ${pending.size} mid-flight turn(s) to completion`,
-    );
+    this.logger.log(`Turn recovery: watching ${pending.size} mid-flight turn(s) to completion`);
 
     await new Promise<void>((resolve) => {
       this.watchTimer = setInterval(() => {
@@ -151,9 +138,7 @@ export class TurnRecoveryService implements OnModuleDestroy {
         continue;
       }
       const status = await this.recoverThread(jobId).catch((err) => {
-        this.logger.warn(
-          `turn recovery watch failed for thread=${jobId}: ${err}`,
-        );
+        this.logger.warn(`turn recovery watch failed for thread=${jobId}: ${err}`);
         return 'absent' as RecoverStatus;
       });
       if (status !== 'incomplete') pending.delete(jobId); // recovered / already / absent → done watching
@@ -174,9 +159,7 @@ export class TurnRecoveryService implements OnModuleDestroy {
       .getRawMany<{ jobId: string }>();
     const out: string[] = [];
     for (const { jobId } of rows) {
-      const live = await this.turnRegistry
-        .hasRunningForThread(jobId)
-        .catch(() => false);
+      const live = await this.turnRegistry.hasRunningForThread(jobId).catch(() => false);
       if (!live) out.push(jobId);
     }
     return out;
@@ -201,21 +184,12 @@ export class TurnRecoveryService implements OnModuleDestroy {
     // back-fill. The LAST turn is included only when it ended clean (else it may still be generating).
     const turns = transcript.turns;
     const lastEndedClean = turns[turns.length - 1].endedClean;
-    const recoverable = turns.filter(
-      (t, i) => t.endedClean || i < turns.length - 1,
-    );
+    const recoverable = turns.filter((t, i) => t.endedClean || i < turns.length - 1);
 
     const threadId = await this.jobBootstrap.planningThreadId(jobId);
-    const inserted = await backfillThreadFromTurns(
-      this.messages,
-      jobId,
-      threadId,
-      recoverable,
-    );
+    const inserted = await backfillThreadFromTurns(this.messages, jobId, threadId, recoverable);
     if (inserted > 0)
-      this.logger.log(
-        `Turn recovery: back-filled ${inserted} block(s) for thread=${jobId}`,
-      );
+      this.logger.log(`Turn recovery: back-filled ${inserted} block(s) for thread=${jobId}`);
 
     // `incomplete` keeps the watcher polling until the tail turn completes; otherwise recovered/already.
     if (!lastEndedClean) return inserted > 0 ? 'recovered' : 'incomplete';
@@ -240,9 +214,7 @@ export class TurnRecoveryService implements OnModuleDestroy {
         }
       }
     }
-    return newest
-      ? parseSessionTranscriptTurns(readFileSync(newest.path, 'utf8'))
-      : null;
+    return newest ? parseSessionTranscriptTurns(readFileSync(newest.path, 'utf8')) : null;
   }
 
   private clearWatch(): void {

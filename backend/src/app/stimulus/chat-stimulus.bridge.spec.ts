@@ -1,14 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
+import type { EventMessage, Message, SeedRow } from '@shared/domain';
 import { Subject } from 'rxjs';
 import type { Repository } from 'typeorm';
+import { describe, expect, it, vi } from 'vitest';
 import type { JobEntity } from '../persistence/entities';
-import type {
-  ChatSurface,
-  InboundChatMessage,
-} from '../surface/chat-surface.port';
+import type { ChatSurface, InboundChatMessage } from '../surface/chat-surface.port';
 import { ChatStimulusBridge } from './chat-stimulus.bridge';
 import type { StimulusIntake } from './stimulus-intake.service';
-import type { EventMessage, Message, SeedRow } from '@shared/domain';
 
 type IntakeCall = {
   message: Exclude<Message, EventMessage>;
@@ -69,16 +66,12 @@ function makeBridge(threads: JobEntity[]): {
   const legacySeedCalls: LegacySeedCall[] = [];
   const intake = {
     intakeChat: vi.fn(
-      async (
-        message: IntakeCall['message'],
-        transport: IntakeCall['transport'],
-      ) => void calls.push({ message, transport }),
+      async (message: IntakeCall['message'], transport: IntakeCall['transport']) =>
+        void calls.push({ message, transport }),
     ),
     intakeLegacySeed: vi.fn(
-      async (
-        input: LegacySeedCall['input'],
-        transport: LegacySeedCall['transport'],
-      ) => void legacySeedCalls.push({ input, transport }),
+      async (input: LegacySeedCall['input'], transport: LegacySeedCall['transport']) =>
+        void legacySeedCalls.push({ input, transport }),
     ),
   } as unknown as StimulusIntake;
   const inbound$ = new Subject<InboundChatMessage>();

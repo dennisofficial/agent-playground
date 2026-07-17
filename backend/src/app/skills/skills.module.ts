@@ -7,11 +7,8 @@ import { RepoEntity, WorkspaceSkillEntity } from '../persistence/entities';
 import { ManagedSkillSyncService } from './managed-skill-sync.service';
 import { SkillFileWriter } from './skill-file-writer.service';
 import { SkillInstallerService } from './skill-installer.service';
+import { AnthropicSkillNudgeSelector, SKILL_NUDGE_SELECTOR } from './skill-nudge-llm';
 import { SkillResolver } from './skill-resolver.service';
-import {
-  AnthropicSkillNudgeSelector,
-  SKILL_NUDGE_SELECTOR,
-} from './skill-nudge-llm';
 import { SkillUpdaterService } from './skill-updater.service';
 import { SkillsController } from './skills.controller';
 import { SystemSkillResolver } from './system-skill-resolver.service';
@@ -29,10 +26,7 @@ import { WorkspaceSkillStore } from './workspace-skill.store';
  */
 @Global()
 @Module({
-  imports: [
-    TypeOrmModule.forFeature([WorkspaceSkillEntity, RepoEntity], DB_CONNECTION),
-    GitModule,
-  ],
+  imports: [TypeOrmModule.forFeature([WorkspaceSkillEntity, RepoEntity], DB_CONNECTION), GitModule],
   controllers: [SkillsController],
   providers: [
     WorkspaceSkillStore,

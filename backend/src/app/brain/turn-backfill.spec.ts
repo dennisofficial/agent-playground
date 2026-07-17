@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
+import { describe, expect, it, vi } from 'vitest';
 import type { TranscriptMessageEntity } from '../persistence/entities';
 import { parseSessionTranscriptTurns } from './session-transcript';
 import { backfillThreadFromTurns } from './turn-backfill';
@@ -54,9 +54,7 @@ const TURN = [
     sessionId: 's',
     timestamp: '2026-06-30T12:00:03.000Z',
     message: {
-      content: [
-        { type: 'tool_use', id: 'ta', name: 'ask_question', input: {} },
-      ],
+      content: [{ type: 'tool_use', id: 'ta', name: 'ask_question', input: {} }],
     },
   }),
 ].join('\n');
@@ -117,17 +115,9 @@ function makeMessages(seed: Row[] = []) {
 describe('backfillThreadFromTurns', () => {
   it("inserts a turn's blocks, dropping the interrupted (unpaired) tool call", async () => {
     const { repo, saved } = makeMessages();
-    const inserted = await backfillThreadFromTurns(
-      repo,
-      'th',
-      'thread-1',
-      turnsOf(),
-    );
+    const inserted = await backfillThreadFromTurns(repo, 'th', 'thread-1', turnsOf());
     expect(inserted).toBe(2);
-    expect(saved.map((r) => (r.meta as { sdkUuid: string }).sdkUuid)).toEqual([
-      'b-text',
-      'b-read',
-    ]);
+    expect(saved.map((r) => (r.meta as { sdkUuid: string }).sdkUuid)).toEqual(['b-text', 'b-read']);
     expect(saved.map((r) => r.kind)).toEqual(['chat', 'tool']);
     expect(saved.every((r) => r.author_id === 'atlas')).toBe(true);
   });
@@ -144,15 +134,8 @@ describe('backfillThreadFromTurns', () => {
   });
 
   it('skips a whole turn whose final reply is already persisted', async () => {
-    const { repo, saved } = makeMessages([
-      { author_id: 'atlas', text: 'hi there', kind: 'chat' },
-    ]);
-    const inserted = await backfillThreadFromTurns(
-      repo,
-      'th',
-      'thread-1',
-      turnsOf(),
-    );
+    const { repo, saved } = makeMessages([{ author_id: 'atlas', text: 'hi there', kind: 'chat' }]);
+    const inserted = await backfillThreadFromTurns(repo, 'th', 'thread-1', turnsOf());
     expect(inserted).toBe(0);
     expect(saved).toHaveLength(1); // only the seed
   });
@@ -208,9 +191,7 @@ describe('backfillThreadFromTurns', () => {
       parseSessionTranscriptTurns(jsonl).turns,
     );
     expect(inserted).toBe(1);
-    expect(
-      saved.slice(1).map((r) => (r.meta as { sdkUuid: string }).sdkUuid),
-    ).toEqual(['b-text']);
+    expect(saved.slice(1).map((r) => (r.meta as { sdkUuid: string }).sdkUuid)).toEqual(['b-text']);
   });
 
   it('dedupes a tool block already persisted by SDK tool_use id (meta.id)', async () => {
@@ -259,20 +240,14 @@ describe('backfillThreadFromTurns', () => {
       parseSessionTranscriptTurns(jsonl).turns,
     );
     expect(inserted).toBe(1);
-    expect(
-      saved.slice(1).map((r) => (r.meta as { sdkUuid: string }).sdkUuid),
-    ).toEqual(['b-text']);
+    expect(saved.slice(1).map((r) => (r.meta as { sdkUuid: string }).sdkUuid)).toEqual(['b-text']);
   });
 
   it('is idempotent — a second run inserts nothing', async () => {
     const { repo, saved } = makeMessages();
-    expect(
-      await backfillThreadFromTurns(repo, 'th', 'thread-1', turnsOf()),
-    ).toBe(2);
+    expect(await backfillThreadFromTurns(repo, 'th', 'thread-1', turnsOf())).toBe(2);
     const afterFirst = saved.length;
-    expect(
-      await backfillThreadFromTurns(repo, 'th', 'thread-1', turnsOf()),
-    ).toBe(0);
+    expect(await backfillThreadFromTurns(repo, 'th', 'thread-1', turnsOf())).toBe(0);
     expect(saved.length).toBe(afterFirst);
   });
 });

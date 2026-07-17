@@ -87,14 +87,10 @@ export async function collectPending(
   leaseMs: number,
   logger?: Pick<Logger, 'warn'>,
 ): Promise<CollectedPending | null> {
-  const pending = await store
-    .eligiblePendingChat(jobId, leaseMs, lane)
-    .catch((err) => {
-      logger?.warn(
-        `pump: eligiblePendingChat failed for thread=${jobId}: ${err}`,
-      );
-      return [] as TurnEnvelope[];
-    });
+  const pending = await store.eligiblePendingChat(jobId, leaseMs, lane).catch((err) => {
+    logger?.warn(`pump: eligiblePendingChat failed for thread=${jobId}: ${err}`);
+    return [] as TurnEnvelope[];
+  });
   if (pending.length === 0) return null;
   return {
     pending,
@@ -114,16 +110,12 @@ export async function steerPending(
 ): Promise<void> {
   await store
     .leaseChatStimuli(pending.map((p) => p.id))
-    .catch((err) =>
-      logger?.debug(`pump: leaseChat failed (continuing): ${err}`),
-    );
+    .catch((err) => logger?.debug(`pump: leaseChat failed (continuing): ${err}`));
   for (const p of pending) {
     await lane
       .steer(turnId, p.id, lane.renderBody(p))
       .catch((err) =>
-        logger?.warn(
-          `pump: steer of turn ${turnId} failed (sweep will re-drive): ${err}`,
-        ),
+        logger?.warn(`pump: steer of turn ${turnId} failed (sweep will re-drive): ${err}`),
       );
   }
 }
@@ -142,17 +134,12 @@ export async function trySteerLive(
 ): Promise<boolean> {
   const live = await lane.resolveLiveTurn().catch(() => null);
   if (!live?.turn_id || !lane.canSteer()) return false;
-  const pending = await store
-    .eligiblePendingChat(lane.jobId, leaseMs, lane.lane)
-    .catch((err) => {
-      logger?.warn(
-        `pump: eligiblePendingChat failed for thread=${lane.jobId}: ${err}`,
-      );
-      return [] as TurnEnvelope[];
-    });
+  const pending = await store.eligiblePendingChat(lane.jobId, leaseMs, lane.lane).catch((err) => {
+    logger?.warn(`pump: eligiblePendingChat failed for thread=${lane.jobId}: ${err}`);
+    return [] as TurnEnvelope[];
+  });
   const nowOnly = pending.filter(isNowPriority);
-  if (nowOnly.length)
-    await steerPending(store, lane, live.turn_id, nowOnly, logger);
+  if (nowOnly.length) await steerPending(store, lane, live.turn_id, nowOnly, logger);
   return true;
 }
 
@@ -169,10 +156,7 @@ export class DeliveryPump {
   constructor(private readonly store: StimulusStoreService) {}
 
   async pump(lane: DeliveryLane): Promise<void> {
-    if (
-      await trySteerLive(this.store, lane, CHAT_DELIVERY_LEASE_MS, this.logger)
-    )
-      return;
+    if (await trySteerLive(this.store, lane, CHAT_DELIVERY_LEASE_MS, this.logger)) return;
 
     const collected = await collectPending(
       this.store,
@@ -190,14 +174,7 @@ export class DeliveryPump {
     const live = await lane.resolveLiveTurn().catch(() => null);
     if (live?.turn_id && lane.canSteer()) {
       const nowOnly = collected.pending.filter(isNowPriority);
-      if (nowOnly.length)
-        await steerPending(
-          this.store,
-          lane,
-          live.turn_id,
-          nowOnly,
-          this.logger,
-        );
+      if (nowOnly.length) await steerPending(this.store, lane, live.turn_id, nowOnly, this.logger);
       return;
     }
 

@@ -9,7 +9,6 @@
  */
 import { Agent, ENGINE_SUBAGENTS } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
-import type { PromptCtx } from '../prompt-ctx';
 import {
   CLARITY_OVER_COMMENTS_NOTE,
   DESIGN_DISCIPLINE_NOTE,
@@ -29,6 +28,7 @@ import {
   TS_STYLE_NOTE,
   VERIFY_CURRENCY,
 } from '../fragments';
+import type { PromptCtx } from '../prompt-ctx';
 
 @FragmentGroup()
 export class SubagentsGroup {

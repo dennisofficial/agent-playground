@@ -1,11 +1,8 @@
-import { SystemMessage } from '@langchain/core/messages';
-import {
-  ChatPromptTemplate,
-  HumanMessagePromptTemplate,
-} from '@langchain/core/prompts';
-import { RunnableSequence, type Runnable } from '@langchain/core/runnables';
-import { StringOutputParser } from '@langchain/core/output_parsers';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
+import { SystemMessage } from '@langchain/core/messages';
+import { StringOutputParser } from '@langchain/core/output_parsers';
+import { ChatPromptTemplate, HumanMessagePromptTemplate } from '@langchain/core/prompts';
+import { RunnableSequence, type Runnable } from '@langchain/core/runnables';
 
 /**
  * The THREAD-TITLE chain — a tiny non-agentic LLM call that turns a thread's first message into a short,

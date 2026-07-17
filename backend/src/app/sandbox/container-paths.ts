@@ -3,8 +3,8 @@
  * runner so they're a stable, dependency-light import for the manager / runner / provisioner.
  */
 
-import { posix } from 'node:path';
 import { MCP_HUB_PORT as SHARED_MCP_HUB_PORT } from '@shared/mcp/mcp-hub-config';
+import { posix } from 'node:path';
 
 /**
  * The ENGINE's own isolated home INSIDE the sandbox — session transcripts (long-lived → resume across
@@ -92,9 +92,7 @@ export const CONTAINER_PNPM_STORE = `${CONTAINER_AGENT_HOME}/pnpm-store`;
  * into its own worktree. Reserved mounts are dropped (with a warning) both when the brain authors config
  * and when it is resolved at provision time.
  */
-export const RESERVED_WORKTREE_MOUNTS: ReadonlySet<string> = new Set([
-  '.pnpm-store',
-]);
+export const RESERVED_WORKTREE_MOUNTS: ReadonlySet<string> = new Set(['.pnpm-store']);
 
 /**
  * Cache/state mount mode.
@@ -243,9 +241,7 @@ export function isReservedContainerPath(path: string): boolean {
   if (norm === '/') return true;
   return RESERVED_CONTAINER_MOUNTS.some((r) => {
     const rr = r.replace(/\/+$/, '');
-    return (
-      norm === rr || norm.startsWith(`${rr}/`) || rr.startsWith(`${norm}/`)
-    );
+    return norm === rr || norm.startsWith(`${rr}/`) || rr.startsWith(`${norm}/`);
   });
 }
 
@@ -260,12 +256,7 @@ export function normalizeMounts(raw: unknown): {
   for (const e of raw) {
     const o = e as Record<string, unknown>;
     const path = String(o?.['path'] ?? '').trim();
-    if (
-      !path ||
-      path.split('/').includes('..') ||
-      path.length > MAX_MOUNT_PATH_LEN
-    )
-      continue;
+    if (!path || path.split('/').includes('..') || path.length > MAX_MOUNT_PATH_LEN) continue;
     if (isExternalMountPath(path)) {
       // ABSOLUTE path = an EXTERNAL durable mount at that exact container location (e.g. a tool's default
       // `~/.config/gcloud` → `/root/.config/gcloud`), bound OUTSIDE /workspace so nothing lands in the
@@ -279,15 +270,11 @@ export function normalizeMounts(raw: unknown): {
     } else if (isReservedMountPath(path)) {
       // Worktree-relative reserved paths (e.g. `.pnpm-store`) are system-managed caches with no
       // legitimate reason to be mounted into a repo's own worktree — drop + warn.
-      warnings.push(
-        `mount "${path}" is auto-managed by the system (do not add it) — dropped`,
-      );
+      warnings.push(`mount "${path}" is auto-managed by the system (do not add it) — dropped`);
       continue;
     }
     const mode: MountMode =
-      o?.['mode'] === 'shared-ro' || o?.['mode'] === 'shared-rw'
-        ? o['mode']
-        : 'per-thread';
+      o?.['mode'] === 'shared-ro' || o?.['mode'] === 'shared-rw' ? o['mode'] : 'per-thread';
     out.push({ path, mode });
   }
   return { mounts: out, warnings };

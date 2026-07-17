@@ -12,17 +12,13 @@
  */
 
 import { Test, type TestingModule } from '@nestjs/testing';
-import {
-  TypeOrmModule,
-  getDataSourceToken,
-  getRepositoryToken,
-} from '@nestjs/typeorm';
+import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy';
+import { JobDependencyService } from '../job-deps';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { ENTITIES, JobEntity } from '../persistence/entities';
-import { JobDependencyService } from '../job-deps';
 import { JobTitler } from '../titling';
 import { BrainStoreService } from './brain-store.service';
 
@@ -55,14 +51,14 @@ describe('BrainStoreService retry-counter durability (live Postgres)', () => {
 
   beforeAll(async () => {
     mod = await Test.createTestingModule({
-      imports: [
-        TypeOrmModule.forRoot(dbOpts()),
-        TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION),
-      ],
+      imports: [TypeOrmModule.forRoot(dbOpts()), TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION)],
       providers: [
         BrainStoreService,
         { provide: JobTitler, useValue: {} },
-        { provide: JobDependencyService, useValue: { blockersOf: async () => [] } },
+        {
+          provide: JobDependencyService,
+          useValue: { blockersOf: async () => [] },
+        },
       ],
     }).compile();
 
@@ -109,27 +105,57 @@ describe('BrainStoreService retry-counter durability (live Postgres)', () => {
 
   it('claimBenignAbortRedrive is a CAS bounded by the cap (increments up to cap, then refuses)', async () => {
     const { jobId } = await seedBareJob();
-    expect(await store.claimBenignAbortRedrive(jobId, 2)).toEqual({ ok: true, used: 1 });
-    expect(await store.claimBenignAbortRedrive(jobId, 2)).toEqual({ ok: true, used: 2 });
+    expect(await store.claimBenignAbortRedrive(jobId, 2)).toEqual({
+      ok: true,
+      used: 1,
+    });
+    expect(await store.claimBenignAbortRedrive(jobId, 2)).toEqual({
+      ok: true,
+      used: 2,
+    });
     // At the cap → refused, budget unchanged.
-    expect(await store.claimBenignAbortRedrive(jobId, 2)).toEqual({ ok: false, used: 2 });
+    expect(await store.claimBenignAbortRedrive(jobId, 2)).toEqual({
+      ok: false,
+      used: 2,
+    });
   });
 
   it('claimTransientRetryRedrive is a CAS bounded by the cap (increments up to cap, then refuses)', async () => {
     const { jobId } = await seedBareJob();
-    expect(await store.claimTransientRetryRedrive(jobId, 2)).toEqual({ ok: true, used: 1 });
-    expect(await store.claimTransientRetryRedrive(jobId, 2)).toEqual({ ok: true, used: 2 });
+    expect(await store.claimTransientRetryRedrive(jobId, 2)).toEqual({
+      ok: true,
+      used: 1,
+    });
+    expect(await store.claimTransientRetryRedrive(jobId, 2)).toEqual({
+      ok: true,
+      used: 2,
+    });
     // At the cap → refused, budget unchanged.
-    expect(await store.claimTransientRetryRedrive(jobId, 2)).toEqual({ ok: false, used: 2 });
+    expect(await store.claimTransientRetryRedrive(jobId, 2)).toEqual({
+      ok: false,
+      used: 2,
+    });
   });
 
   it('claimSessionLimitTextMisfire is a CAS bounded by the cap (increments up to cap, then refuses)', async () => {
     const { jobId } = await seedBareJob();
-    expect(await store.claimSessionLimitTextMisfire(jobId, 3)).toEqual({ ok: true, used: 1 });
-    expect(await store.claimSessionLimitTextMisfire(jobId, 3)).toEqual({ ok: true, used: 2 });
-    expect(await store.claimSessionLimitTextMisfire(jobId, 3)).toEqual({ ok: true, used: 3 });
+    expect(await store.claimSessionLimitTextMisfire(jobId, 3)).toEqual({
+      ok: true,
+      used: 1,
+    });
+    expect(await store.claimSessionLimitTextMisfire(jobId, 3)).toEqual({
+      ok: true,
+      used: 2,
+    });
+    expect(await store.claimSessionLimitTextMisfire(jobId, 3)).toEqual({
+      ok: true,
+      used: 3,
+    });
     // At the cap → refused, budget unchanged.
-    expect(await store.claimSessionLimitTextMisfire(jobId, 3)).toEqual({ ok: false, used: 3 });
+    expect(await store.claimSessionLimitTextMisfire(jobId, 3)).toEqual({
+      ok: false,
+      used: 3,
+    });
   });
 
   it('two concurrent claimSessionLimitTextMisfire calls at the cap boundary — exactly one succeeds (row-level CAS)', async () => {
@@ -148,12 +174,18 @@ describe('BrainStoreService retry-counter durability (live Postgres)', () => {
   it('claimBenignAbortRedrive and claimTransientRetryRedrive both stamp retry_last_attempt_at', async () => {
     const { jobId } = await seedBareJob();
     const before = Date.now();
-    expect(await store.claimBenignAbortRedrive(jobId, 5)).toEqual({ ok: true, used: 1 });
+    expect(await store.claimBenignAbortRedrive(jobId, 5)).toEqual({
+      ok: true,
+      used: 1,
+    });
     let row = await jobs.findOne({ where: { id: jobId } });
     expect(row?.retry_last_attempt_at).toBeInstanceOf(Date);
     expect(row!.retry_last_attempt_at!.getTime()).toBeGreaterThanOrEqual(before - 1000);
 
-    expect(await store.claimTransientRetryRedrive(jobId, 5)).toEqual({ ok: true, used: 1 });
+    expect(await store.claimTransientRetryRedrive(jobId, 5)).toEqual({
+      ok: true,
+      used: 1,
+    });
     row = await jobs.findOne({ where: { id: jobId } });
     expect(row?.retry_last_attempt_at).toBeInstanceOf(Date);
     expect(row!.retry_last_attempt_at!.getTime()).toBeGreaterThanOrEqual(before - 1000);
@@ -179,10 +211,7 @@ describe('BrainStoreService retry-counter durability (live Postgres)', () => {
     await store.claimSessionLimitTextMisfire(jobId, 5);
     // Bump the driver's own lane columns directly (no DriverStoreService in scope here) to prove
     // clearBrainRetryCounters doesn't reach across lanes.
-    await jobs.update(
-      { id: jobId },
-      { auth_retry_attempts: 3, driver_transient_retries: 4 },
-    );
+    await jobs.update({ id: jobId }, { auth_retry_attempts: 3, driver_transient_retries: 4 });
     const before = await jobs.findOne({ where: { id: jobId } });
     const stampBefore = before!.retry_last_attempt_at;
     expect(stampBefore).toBeInstanceOf(Date);

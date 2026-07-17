@@ -25,15 +25,11 @@ export class UnifyGithubAuthMode1784010000000 implements MigrationInterface {
     await queryRunner.query(
       `ALTER TABLE "org_credentials" DROP CONSTRAINT "CHK_org_credentials_github_identity_mode"`,
     );
-    await queryRunner.query(
-      `ALTER TABLE "org_credentials" DROP COLUMN "github_identity_mode"`,
-    );
+    await queryRunner.query(`ALTER TABLE "org_credentials" DROP COLUMN "github_identity_mode"`);
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `ALTER TABLE "org_credentials" ADD "github_identity_mode" text`,
-    );
+    await queryRunner.query(`ALTER TABLE "org_credentials" ADD "github_identity_mode" text`);
     await queryRunner.query(
       `ALTER TABLE "org_credentials" ADD CONSTRAINT "CHK_org_credentials_github_identity_mode" CHECK ("github_identity_mode" IN ('pat', 'app'))`,
     );

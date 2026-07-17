@@ -1,8 +1,5 @@
 import type { Seeder } from '@workspace/nestjs-core';
-import {
-  OrganizationEntity,
-  RepoEntity,
-} from '../src/app/persistence/entities';
+import { OrganizationEntity, RepoEntity } from '../src/app/persistence/entities';
 import { DEV_SEED_IDS } from './_shared/dev-seed-ids';
 
 /**
@@ -23,13 +20,9 @@ export default (async (ds) => {
   const repos = ds.getRepository(RepoEntity);
   const org_id = DEV_SEED_IDS.orgs.atlasTest;
   const slug = 'test-repo';
-  const org = await ds
-    .getRepository(OrganizationEntity)
-    .findOne({ where: { id: org_id } });
+  const org = await ds.getRepository(OrganizationEntity).findOne({ where: { id: org_id } });
   if (!org) {
-    console.log(
-      `  002: org ${org_id} missing — skipping repo ${slug} (run 001-dev-org first)`,
-    );
+    console.log(`  002: org ${org_id} missing — skipping repo ${slug} (run 001-dev-org first)`);
     return;
   }
 
@@ -37,8 +30,7 @@ export default (async (ds) => {
     (await repos.findOne({ where: { id: DEV_SEED_IDS.repos.testRepo } })) ??
     (await repos.findOne({ where: { org_id, slug } }));
 
-  const row =
-    existing ?? repos.create({ id: DEV_SEED_IDS.repos.testRepo, org_id, slug });
+  const row = existing ?? repos.create({ id: DEV_SEED_IDS.repos.testRepo, org_id, slug });
   row.name = 'test-repo';
   row.git_url = 'https://github.com/dennisofficial/test-repo';
   row.default_branch = 'main';

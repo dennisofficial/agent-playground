@@ -95,18 +95,12 @@ export function webSkillProposalCard(input: {
     surfaces: input.surfaces,
     mode: input.mode,
     rationale: input.rationale,
-    ...(input.stagingPath !== undefined
-      ? { stagingPath: input.stagingPath }
-      : {}),
+    ...(input.stagingPath !== undefined ? { stagingPath: input.stagingPath } : {}),
     ...(input.preview !== undefined ? { preview: input.preview } : {}),
     ...(input.sourceUrl !== undefined ? { sourceUrl: input.sourceUrl } : {}),
     ...(input.sourceRef !== undefined ? { sourceRef: input.sourceRef } : {}),
-    ...(input.sourceSubpath !== undefined
-      ? { sourceSubpath: input.sourceSubpath }
-      : {}),
-    ...(input.installPreview !== undefined
-      ? { installPreview: input.installPreview }
-      : {}),
+    ...(input.sourceSubpath !== undefined ? { sourceSubpath: input.sourceSubpath } : {}),
+    ...(input.installPreview !== undefined ? { installPreview: input.installPreview } : {}),
     ...(input.priorBody !== undefined ? { priorBody: input.priorBody } : {}),
   };
 }

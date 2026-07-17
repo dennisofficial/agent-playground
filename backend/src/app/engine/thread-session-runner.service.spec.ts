@@ -1,12 +1,13 @@
-import { describe, expect, it, vi } from 'vitest';
-import type { Repository } from 'typeorm';
 import { EngineSessionLimitError } from '@shared/engine';
+import type { Repository } from 'typeorm';
+import { describe, expect, it, vi } from 'vitest';
 import type { ThreadEntity } from '../persistence/entities';
 import { ThreadSessionRunnerService } from './thread-session-runner.service';
 
-function makeRunner(
-  update = vi.fn().mockResolvedValue(undefined),
-): { runner: ThreadSessionRunnerService; update: ReturnType<typeof vi.fn> } {
+function makeRunner(update = vi.fn().mockResolvedValue(undefined)): {
+  runner: ThreadSessionRunnerService;
+  update: ReturnType<typeof vi.fn>;
+} {
   const threads = { update } as unknown as Repository<ThreadEntity>;
   return { runner: new ThreadSessionRunnerService(threads), update };
 }
@@ -14,13 +15,9 @@ function makeRunner(
 describe('ThreadSessionRunnerService.classifyThrownHalt', () => {
   it('labels a clean session/usage-limit end as session_limit', () => {
     const { runner } = makeRunner();
-    expect(
-      runner.classifyThrownHalt(new EngineSessionLimitError('limit')),
-    ).toBe('session_limit');
+    expect(runner.classifyThrownHalt(new EngineSessionLimitError('limit'))).toBe('session_limit');
     // Any error carrying the structural `isSessionLimit` flag counts too (not only the concrete class).
-    expect(runner.classifyThrownHalt({ isSessionLimit: true })).toBe(
-      'session_limit',
-    );
+    expect(runner.classifyThrownHalt({ isSessionLimit: true })).toBe('session_limit');
   });
 
   it('labels every other thrown end as error', () => {
@@ -48,14 +45,8 @@ describe('ThreadSessionRunnerService.markHalt', () => {
 describe('ThreadSessionRunnerService.noteThrownHalt', () => {
   it('classifies then persists in one step, returning the reason', async () => {
     const { runner, update } = makeRunner();
-    const reason = await runner.noteThrownHalt(
-      't1',
-      new EngineSessionLimitError('limit'),
-    );
+    const reason = await runner.noteThrownHalt('t1', new EngineSessionLimitError('limit'));
     expect(reason).toBe('session_limit');
-    expect(update).toHaveBeenCalledWith(
-      { id: 't1' },
-      { halt_reason: 'session_limit' },
-    );
+    expect(update).toHaveBeenCalledWith({ id: 't1' }, { halt_reason: 'session_limit' });
   });
 });

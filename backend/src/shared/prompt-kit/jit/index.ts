@@ -4,11 +4,11 @@
  * A pure catalog of trigger·threshold·delivery·payload rules consumed by two thin executors (engine-local +
  * host-side). Zero-dep and container-safe like the rest of the hub.
  */
+export * from './bg-task-cap';
+export * from './github-fetch-guard';
+export * from './install-awareness';
+export * from './memory-recall';
+export * from './plan-approved';
 export * from './rule';
 export * from './rules';
 export * from './svc-nudge';
-export * from './github-fetch-guard';
-export * from './install-awareness';
-export * from './bg-task-cap';
-export * from './plan-approved';
-export * from './memory-recall';

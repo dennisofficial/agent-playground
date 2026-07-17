@@ -1,21 +1,15 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import type { EnvService } from '@core/config/env/env.service';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { EnvService } from '@core/config/env/env.service';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { WorkspaceSkillEntity } from '../persistence/entities';
-import {
-  parseSkillFrontmatter,
-  stripSkillFrontmatter,
-} from '../skills/skill-frontmatter';
+import { buildReviewPrompt } from '../prompt-kit';
+import { parseSkillFrontmatter, stripSkillFrontmatter } from '../skills/skill-frontmatter';
 import { SkillResolver } from '../skills/skill-resolver.service';
-import {
-  orgSkillsRootHost,
-  skillRelativeDir,
-} from '../skills/skill-store-paths';
+import { orgSkillsRootHost, skillRelativeDir } from '../skills/skill-store-paths';
 import type { WorkspaceSkillStore } from '../skills/workspace-skill.store';
 import { lensById, reviewAgentsForThread } from './autofix-lenses';
-import { buildReviewPrompt } from '../prompt-kit';
 import type { AutoFixContext } from './autofix.types';
 
 // Isolates these tests from whatever `system-skill-registry.ts` actually ships (it ships a real
@@ -41,8 +35,7 @@ const baseCtx: AutoFixContext = {
 
 describe('parseSkillFrontmatter — reviewForTypes/reviewForGlobs', () => {
   it('parses the documented snake_case list keys into the camelCase DTO fields', () => {
-    const md =
-      '---\nname: x\nreview_for_types: [frontend]\nreview_for_globs: **/*.tsx\n---\nbody';
+    const md = '---\nname: x\nreview_for_types: [frontend]\nreview_for_globs: **/*.tsx\n---\nbody';
     const fm = parseSkillFrontmatter(md);
     expect(fm.reviewForTypes).toEqual(['frontend']);
     expect(fm.reviewForGlobs).toEqual(['**/*.tsx']);
@@ -50,18 +43,12 @@ describe('parseSkillFrontmatter — reviewForTypes/reviewForGlobs', () => {
 
   it('parses the bracketed list form `[a, b]` into a string array', () => {
     const md = '---\nname: x\nreviewForTypes: [frontend, backend]\n---\nbody';
-    expect(parseSkillFrontmatter(md).reviewForTypes).toEqual([
-      'frontend',
-      'backend',
-    ]);
+    expect(parseSkillFrontmatter(md).reviewForTypes).toEqual(['frontend', 'backend']);
   });
 
   it('parses the bare comma form `a, b` into a string array', () => {
     const md = '---\nname: x\nreviewForGlobs: **/*.tsx, backend/**\n---\nbody';
-    expect(parseSkillFrontmatter(md).reviewForGlobs).toEqual([
-      '**/*.tsx',
-      'backend/**',
-    ]);
+    expect(parseSkillFrontmatter(md).reviewForGlobs).toEqual(['**/*.tsx', 'backend/**']);
   });
 
   it('parses both keys together on a full frontmatter block', () => {
@@ -103,39 +90,24 @@ describe('stripSkillFrontmatter', () => {
 
 describe('reviewAgentsForThread — framework axis', () => {
   it('empty (default) frameworkSkillNames -> no framework lens', () => {
-    expect(reviewAgentsForThread('frontend').map((l) => l.id)).not.toContain(
-      'framework',
-    );
-    expect(
-      reviewAgentsForThread('frontend', []).map((l) => l.id),
-    ).not.toContain('framework');
+    expect(reviewAgentsForThread('frontend').map((l) => l.id)).not.toContain('framework');
+    expect(reviewAgentsForThread('frontend', []).map((l) => l.id)).not.toContain('framework');
   });
 
   it('a non-empty frameworkSkillNames -> the framework lens is appended LAST', () => {
-    const ids = reviewAgentsForThread('frontend', [
-      'react-review-checklist',
-    ]).map((l) => l.id);
+    const ids = reviewAgentsForThread('frontend', ['react-review-checklist']).map((l) => l.id);
     expect(ids[ids.length - 1]).toBe('framework');
     expect(ids).toEqual(['correctness', 'holistic', 'framework']);
   });
 
   it('docs still drops correctness, framework still appended last', () => {
-    const ids = reviewAgentsForThread('docs', ['react-review-checklist']).map(
-      (l) => l.id,
-    );
+    const ids = reviewAgentsForThread('docs', ['react-review-checklist']).map((l) => l.id);
     expect(ids).toEqual(['holistic', 'framework']);
   });
 
   it('data still adds data_safety on top of the always-on lenses, framework appended after it', () => {
-    const ids = reviewAgentsForThread('data', ['react-review-checklist']).map(
-      (l) => l.id,
-    );
-    expect(ids).toEqual([
-      'correctness',
-      'holistic',
-      'data_safety',
-      'framework',
-    ]);
+    const ids = reviewAgentsForThread('data', ['react-review-checklist']).map((l) => l.id);
+    expect(ids).toEqual(['correctness', 'holistic', 'data_safety', 'framework']);
   });
 
   // Existing (non-framework) routing must still hold, unaffected by this new axis.
@@ -145,9 +117,7 @@ describe('reviewAgentsForThread — framework axis', () => {
   });
 
   it('data still includes data_safety with no framework names', () => {
-    expect(reviewAgentsForThread('data').map((l) => l.id)).toContain(
-      'data_safety',
-    );
+    expect(reviewAgentsForThread('data').map((l) => l.id)).toContain('data_safety');
   });
 });
 
@@ -200,10 +170,7 @@ describe('SkillResolver.resolveReviewSkillsForThread', () => {
 
   beforeAll(() => {
     tempRoot = mkdtempSync(join(tmpdir(), 'atlas-skills-test-'));
-    const dir = join(
-      orgSkillsRootHost(tempRoot, orgId),
-      skillRelativeDir('*', skillName),
-    );
+    const dir = join(orgSkillsRootHost(tempRoot, orgId), skillRelativeDir('*', skillName));
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'SKILL.md'), skillMd, 'utf8');
     fakeEnv = {
@@ -235,45 +202,31 @@ describe('SkillResolver.resolveReviewSkillsForThread', () => {
 
   it('matches by thread type when no changed file matches the glob', async () => {
     const resolver = makeResolver(baseRow);
-    const out = await resolver.resolveReviewSkillsForThread(
-      orgId,
-      repoId,
-      'frontend',
-      ['backend/index.ts'],
-    );
+    const out = await resolver.resolveReviewSkillsForThread(orgId, repoId, 'frontend', [
+      'backend/index.ts',
+    ]);
     expect(out.map((s) => s.name)).toEqual([skillName]);
   });
 
   it('matches by changed-file glob when the thread type does not match', async () => {
     const resolver = makeResolver(baseRow);
-    const out = await resolver.resolveReviewSkillsForThread(
-      orgId,
-      repoId,
-      'backend',
-      ['src/Component.tsx'],
-    );
+    const out = await resolver.resolveReviewSkillsForThread(orgId, repoId, 'backend', [
+      'src/Component.tsx',
+    ]);
     expect(out.map((s) => s.name)).toEqual([skillName]);
   });
 
   it('excludes the skill when NEITHER axis matches', async () => {
     const resolver = makeResolver(baseRow);
-    const out = await resolver.resolveReviewSkillsForThread(
-      orgId,
-      repoId,
-      'backend',
-      ['backend/index.ts'],
-    );
+    const out = await resolver.resolveReviewSkillsForThread(orgId, repoId, 'backend', [
+      'backend/index.ts',
+    ]);
     expect(out).toEqual([]);
   });
 
   it('a matched skill returns its SKILL.md body with frontmatter stripped', async () => {
     const resolver = makeResolver(baseRow);
-    const [match] = await resolver.resolveReviewSkillsForThread(
-      orgId,
-      repoId,
-      'frontend',
-      [],
-    );
+    const [match] = await resolver.resolveReviewSkillsForThread(orgId, repoId, 'frontend', []);
     expect(match).toBeDefined();
     expect(match.name).toBe(skillName);
     expect(match.body).toBe(skillBody.trim());
@@ -287,12 +240,9 @@ describe('SkillResolver.resolveReviewSkillsForThread', () => {
       review_for_types: [],
       review_for_globs: [],
     });
-    const out = await resolver.resolveReviewSkillsForThread(
-      orgId,
-      repoId,
-      'frontend',
-      ['src/Component.tsx'],
-    );
+    const out = await resolver.resolveReviewSkillsForThread(orgId, repoId, 'frontend', [
+      'src/Component.tsx',
+    ]);
     expect(out).toEqual([]);
   });
 });

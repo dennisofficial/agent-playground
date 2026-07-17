@@ -1,10 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
 import type { DataSource } from 'typeorm';
-import {
-  assertReadOnlySelect,
-  MAX_RESULT_BYTES,
-  runReadOnlyQuery,
-} from './query';
+import { describe, expect, it, vi } from 'vitest';
+import { assertReadOnlySelect, MAX_RESULT_BYTES, runReadOnlyQuery } from './query';
 
 describe('assertReadOnlySelect', () => {
   it('accepts a plain SELECT', () => {
@@ -12,9 +8,7 @@ describe('assertReadOnlySelect', () => {
   });
 
   it('accepts a lowercase select', () => {
-    expect(assertReadOnlySelect('select id from jobs')).toBe(
-      'select id from jobs',
-    );
+    expect(assertReadOnlySelect('select id from jobs')).toBe('select id from jobs');
   });
 
   it('strips one trailing semicolon', () => {
@@ -69,9 +63,7 @@ describe('runReadOnlyQuery', () => {
       }),
     } as unknown as DataSource;
 
-    await expect(
-      runReadOnlyQuery(ds, 'SELECT 1 AS value', []),
-    ).resolves.toEqual({
+    await expect(runReadOnlyQuery(ds, 'SELECT 1 AS value', [])).resolves.toEqual({
       rows: [{ value: 1 }],
       rowCount: 1,
       truncated: false,
@@ -100,9 +92,7 @@ describe('runReadOnlyQuery', () => {
       }),
     } as unknown as DataSource;
 
-    await expect(runReadOnlyQuery(ds, 'SELECT 1', [])).rejects.toThrow(
-      'query failed',
-    );
+    await expect(runReadOnlyQuery(ds, 'SELECT 1', [])).rejects.toThrow('query failed');
     expect(query.mock.calls.map(([sql]) => sql)).toEqual([
       'START TRANSACTION READ ONLY',
       "SET LOCAL statement_timeout = '10s'",
@@ -156,9 +146,9 @@ describe('runReadOnlyQuery', () => {
       createQueryRunner: vi.fn(),
     } as unknown as DataSource;
 
-    await expect(
-      runReadOnlyQuery(ds, 'SELECT 1 AS value', [], Number.NaN),
-    ).rejects.toThrow('limit must be a finite number');
+    await expect(runReadOnlyQuery(ds, 'SELECT 1 AS value', [], Number.NaN)).rejects.toThrow(
+      'limit must be a finite number',
+    );
   });
 
   it('truncates and reports rowCount/rows at the effective limit when the driver returns one extra row', async () => {
@@ -177,12 +167,7 @@ describe('runReadOnlyQuery', () => {
       }),
     } as unknown as DataSource;
 
-    const result = await runReadOnlyQuery(
-      ds,
-      'SELECT 1 AS value',
-      [],
-      effective,
-    );
+    const result = await runReadOnlyQuery(ds, 'SELECT 1 AS value', [], effective);
     expect(result.truncated).toBe(true);
     expect(result.rowCount).toBe(effective);
     expect(result.rows).toHaveLength(effective);

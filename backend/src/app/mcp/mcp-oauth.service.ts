@@ -1,6 +1,4 @@
 import { EnvService } from '@core/config/env/env.service';
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type {
   OAuthClientProvider,
   OAuthDiscoveryState,
@@ -11,6 +9,8 @@ import type {
   OAuthClientMetadata,
   OAuthTokens,
 } from '@modelcontextprotocol/sdk/shared/auth.js';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { loadSecretsKey } from '../onboarding/secret-cipher';
 import type { McpOAuthBlob, McpServerEntity } from '../persistence/entities';
 import { McpServerStore } from './mcp-server.store';
@@ -96,8 +96,7 @@ export class McpOAuthService {
   ): Promise<{ authorizeUrl: string }> {
     const row = await this.store.rawRow(orgId, dbScope, name);
     if (!row) throw new BadRequestException('unknown mcp server');
-    if (row.auth_kind !== 'oauth')
-      throw new BadRequestException('server is not an oauth server');
+    if (row.auth_kind !== 'oauth') throw new BadRequestException('server is not an oauth server');
     const serverUrl = row.config.url;
     if (!serverUrl) throw new BadRequestException('oauth server has no url');
     this.assertCallbackBase(); // fail loudly if BACKEND_HOST can't build a valid redirect_uri
@@ -118,14 +117,7 @@ export class McpOAuthService {
     // connector's AS. Best-effort — undefined leaves the SDK's default discovery unchanged.
     const resourceMetadataUrl = await this.probeResourceMetadataUrl(serverUrl);
 
-    const provider = new RowOAuthProvider(
-      this,
-      orgId,
-      dbScope,
-      name,
-      blob,
-      row,
-    );
+    const provider = new RowOAuthProvider(this, orgId, dbScope, name, blob, row);
     const { auth } = await this.authSdk();
     const result = await auth(provider, { serverUrl, resourceMetadataUrl });
     if (result !== 'REDIRECT' || !provider.authorizeUrl) {
@@ -144,9 +136,7 @@ export class McpOAuthService {
    * any failure (no challenge, network error) — the caller then uses default discovery, so this can only help,
    * never break, an existing flow.
    */
-  private async probeResourceMetadataUrl(
-    serverUrl: string,
-  ): Promise<URL | undefined> {
+  private async probeResourceMetadataUrl(serverUrl: string): Promise<URL | undefined> {
     try {
       const { extractResourceMetadataUrl } = await this.authSdk();
       const res = await fetch(serverUrl, {
@@ -168,9 +158,7 @@ export class McpOAuthService {
       });
       return extractResourceMetadataUrl(res);
     } catch (err) {
-      this.logger.warn(
-        `oauth resource-metadata probe failed for ${serverUrl}: ${String(err)}`,
-      );
+      this.logger.warn(`oauth resource-metadata probe failed for ${serverUrl}: ${String(err)}`);
       return undefined;
     }
   }
@@ -189,44 +177,26 @@ export class McpOAuthService {
     const { orgId, scope: dbScope, name, nonce } = payload;
 
     const row = await this.store.rawRow(orgId, dbScope, name);
-    if (!row || row.auth_kind !== 'oauth')
-      throw new BadRequestException('unknown oauth server');
+    if (!row || row.auth_kind !== 'oauth') throw new BadRequestException('unknown oauth server');
     const blob = this.store.readOAuthBlob(row);
     if (!blob.nonce || blob.nonce !== nonce)
       throw new BadRequestException('stale or replayed oauth state');
     const serverUrl = row.config.url;
     if (!serverUrl) throw new BadRequestException('oauth server has no url');
 
-    const provider = new RowOAuthProvider(
-      this,
-      orgId,
-      dbScope,
-      name,
-      blob,
-      row,
-    );
+    const provider = new RowOAuthProvider(this, orgId, dbScope, name, blob, row);
     const { auth } = await this.authSdk();
     const result = await auth(provider, { serverUrl, authorizationCode: code });
     if (result !== 'AUTHORIZED')
-      throw new BadRequestException(
-        `unexpected oauth complete result: ${result}`,
-      );
+      throw new BadRequestException(`unexpected oauth complete result: ${result}`);
 
     // Clear the one-shot consent state (verifier + nonce), keep tokens + client info + discovery.
     provider.blob.codeVerifier = undefined;
     provider.blob.nonce = undefined;
     await this.persist(orgId, dbScope, name, provider.blob, null);
 
-    await this.recordInitialValidation(
-      orgId,
-      dbScope,
-      name,
-      row,
-      provider.blob,
-    );
-    this.logger.log(
-      `oauth complete org=${orgId} scope=${dbScope} name=${name}`,
-    );
+    await this.recordInitialValidation(orgId, dbScope, name, row, provider.blob);
+    this.logger.log(`oauth complete org=${orgId} scope=${dbScope} name=${name}`);
     return { orgId, scope: McpServerStore.fromDbScope(dbScope), name };
   }
 
@@ -244,10 +214,7 @@ export class McpOAuthService {
    * a build turn to decide whether to re-write the hub config (`kickMcpHubRefresh`) so a long-lived sandbox picks
    * up a fresh Bearer. Cheap no-op (`rotated:false`) when the org+repo has no oauth servers.
    */
-  async refreshForSandbox(
-    orgId: string,
-    repoId: string,
-  ): Promise<{ rotated: boolean }> {
+  async refreshForSandbox(orgId: string, repoId: string): Promise<{ rotated: boolean }> {
     const rows = (await this.store.rowsForTurn(orgId, repoId)).filter(
       (r) => r.enabled && r.auth_kind === 'oauth',
     );
@@ -260,9 +227,7 @@ export class McpOAuthService {
   }
 
   /** SDK-based validation for an oauth row: connect with the current token and list tools. Never throws. */
-  async validate(
-    row: McpServerEntity,
-  ): Promise<{ discoveredTools?: string[]; error?: string }> {
+  async validate(row: McpServerEntity): Promise<{ discoveredTools?: string[]; error?: string }> {
     const token = await this.currentAccessToken(row);
     if (!token) return { error: NEEDS_REAUTH };
     const url = row.config.url;
@@ -291,19 +256,10 @@ export class McpOAuthService {
     if (!serverUrl) return { token: access, rotated: false };
 
     try {
-      const provider = new RowOAuthProvider(
-        this,
-        orgId,
-        dbScope,
-        name,
-        blob,
-        row,
-      );
+      const provider = new RowOAuthProvider(this, orgId, dbScope, name, blob, row);
       const { auth } = await this.authSdk();
       const result = await auth(provider, { serverUrl }); // refreshes via the stored refresh_token
-      const newAccess = provider.blob.tokens?.['access_token'] as
-        | string
-        | undefined;
+      const newAccess = provider.blob.tokens?.['access_token'] as string | undefined;
       if (result === 'AUTHORIZED' && newAccess) {
         // Clear any prior needs-reauth marker on a successful refresh.
         if (row.validation_error)
@@ -326,16 +282,13 @@ export class McpOAuthService {
   private isNearExpiry(blob: McpOAuthBlob): boolean {
     if (!blob.obtainedAt) return false;
     const expiresIn = blob.tokens?.['expires_in'] as number | undefined;
-    if (expiresIn)
-      return Date.now() >= blob.obtainedAt + expiresIn * 1000 - EXPIRY_SKEW_MS;
+    if (expiresIn) return Date.now() >= blob.obtainedAt + expiresIn * 1000 - EXPIRY_SKEW_MS;
     // No stated expiry: only worth pre-emptively refreshing when we actually CAN (a refresh_token exists).
     // Some providers issue expiring access tokens without an `expires_in`; assume a conservative lifetime so
     // they still get refreshed instead of silently 401ing at runtime. With no refresh_token there is nothing
     // to refresh, so treat the token as long-lived.
     if (!blob.tokens?.['refresh_token']) return false;
-    return (
-      Date.now() >= blob.obtainedAt + DEFAULT_TOKEN_TTL_MS - EXPIRY_SKEW_MS
-    );
+    return Date.now() >= blob.obtainedAt + DEFAULT_TOKEN_TTL_MS - EXPIRY_SKEW_MS;
   }
 
   private async markNeedsReauth(
@@ -359,8 +312,7 @@ export class McpOAuthService {
     blob: McpOAuthBlob,
     validationError?: string | null,
   ): Promise<void> {
-    const opts =
-      validationError === undefined ? undefined : { validationError };
+    const opts = validationError === undefined ? undefined : { validationError };
     await this.store.writeOAuthBlob(orgId, dbScope, name, blob, opts);
   }
 
@@ -386,18 +338,13 @@ export class McpOAuthService {
       );
     }
     if (u.protocol !== 'http:' && u.protocol !== 'https:') {
-      throw new BadRequestException(
-        `BACKEND_HOST must be http(s), got ${u.protocol}`,
-      );
+      throw new BadRequestException(`BACKEND_HOST must be http(s), got ${u.protocol}`);
     }
   }
 
   private stateKey(): Buffer {
     // Domain-separate from the raw AES key so the HMAC and the cipher never share key material directly.
-    return createHmac(
-      'sha256',
-      loadSecretsKey(this.env.get('SECRETS_ENCRYPTION_KEY')),
-    )
+    return createHmac('sha256', loadSecretsKey(this.env.get('SECRETS_ENCRYPTION_KEY')))
       .update('mcp-oauth-state-v1')
       .digest();
   }
@@ -420,15 +367,11 @@ export class McpOAuthService {
     } catch {
       return null;
     }
-    const expected = createHmac('sha256', this.stateKey())
-      .update(json)
-      .digest();
-    if (mac.length !== expected.length || !timingSafeEqual(mac, expected))
-      return null;
+    const expected = createHmac('sha256', this.stateKey()).update(json).digest();
+    if (mac.length !== expected.length || !timingSafeEqual(mac, expected)) return null;
     try {
       const p = JSON.parse(json.toString('utf8')) as StatePayload;
-      if (!p.orgId || !p.name || !p.nonce || typeof p.scope !== 'string')
-        return null;
+      if (!p.orgId || !p.name || !p.nonce || typeof p.scope !== 'string') return null;
       return p;
     } catch {
       return null;
@@ -458,8 +401,7 @@ export class McpOAuthService {
     token: string,
   ): Promise<{ discoveredTools?: string[]; error?: string }> {
     try {
-      const { Client } =
-        await import('@modelcontextprotocol/sdk/client/index.js');
+      const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
       const requestInit = { headers: { Authorization: `Bearer ${token}` } };
       const client = new Client(
         { name: 'atlas-mcp-oauth-validator', version: '1.0.0' },
@@ -467,8 +409,7 @@ export class McpOAuthService {
       );
       const makeTransport = async () => {
         if (transport === 'sse') {
-          const { SSEClientTransport } =
-            await import('@modelcontextprotocol/sdk/client/sse.js');
+          const { SSEClientTransport } = await import('@modelcontextprotocol/sdk/client/sse.js');
           return new SSEClientTransport(new URL(url), { requestInit });
         }
         const { StreamableHTTPClientTransport } =
@@ -536,9 +477,7 @@ class RowOAuthProvider implements OAuthClientProvider {
    * `scopes_supported` over this clientMetadata scope, so this is only the effective request when the
    * resource advertises no scopes of its own (otherwise it's a harmless no-op / de-duped).
    */
-  private withOfflineAccess(
-    configured: string | undefined,
-  ): string | undefined {
+  private withOfflineAccess(configured: string | undefined): string | undefined {
     const disc = this.discoveryState();
     const advertised = [
       ...(disc?.authorizationServerMetadata?.scopes_supported ?? []),

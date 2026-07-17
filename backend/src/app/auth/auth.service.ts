@@ -7,8 +7,8 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { JwtService } from '@workspace/auth/server';
 import { hash, verify } from '@node-rs/argon2';
+import { JwtService } from '@workspace/auth/server';
 import type { CookieOptions, Request, Response } from 'express';
 import { Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -81,11 +81,7 @@ export class AuthService implements OnApplicationBootstrap {
   }
 
   /** Verify credentials, then set cookies. Returns the session object. */
-  async login(
-    email: string,
-    password: string,
-    res: Response,
-  ): Promise<AuthSession> {
+  async login(email: string, password: string, res: Response): Promise<AuthSession> {
     const user = await this.users.findOne({ where: { email } });
     // Same error for missing user vs bad password (no account enumeration).
     if (!user || !(await verify(user.password_hash, password))) {
@@ -196,10 +192,7 @@ export class AuthService implements OnApplicationBootstrap {
     });
   }
 
-  private cookieBase(): Pick<
-    CookieOptions,
-    'httpOnly' | 'sameSite' | 'secure' | 'domain'
-  > {
+  private cookieBase(): Pick<CookieOptions, 'httpOnly' | 'sameSite' | 'secure' | 'domain'> {
     const domain = this.env.get('COOKIE_DOMAIN');
     return {
       httpOnly: true,
@@ -211,9 +204,6 @@ export class AuthService implements OnApplicationBootstrap {
   }
 
   private readCookie(req: Request, name: string): string | null {
-    return (
-      (req as Request & { cookies?: Record<string, string> }).cookies?.[name] ??
-      null
-    );
+    return (req as Request & { cookies?: Record<string, string> }).cookies?.[name] ?? null;
   }
 }

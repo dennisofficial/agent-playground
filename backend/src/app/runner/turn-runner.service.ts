@@ -1,16 +1,6 @@
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
 import type { SessionEngine, SessionMode, SessionRef } from '@shared/domain';
-import {
-  ENGINE_RUNNER,
-  EngineAuthError,
-  EngineDetachedError,
-  EngineSessionLimitError,
-  SANDBOX_RESET_NOTICE,
-  pickKeys,
-  type EngineRunnerPort,
-} from '@shared/engine';
 import type {
   EngineAuth,
   EngineEvent,
@@ -25,12 +15,22 @@ import type {
   ToolBridgeOptions,
   TurnMeta,
 } from '@shared/engine';
-import type { FeatureSandbox } from '../git';
+import {
+  ENGINE_RUNNER,
+  EngineAuthError,
+  EngineDetachedError,
+  EngineSessionLimitError,
+  SANDBOX_RESET_NOTICE,
+  pickKeys,
+  type EngineRunnerPort,
+} from '@shared/engine';
 import { type AgentMessage } from '@shared/prompt-kit/message';
-import { prependNotice } from '../prompt-kit/harness';
+import { Repository } from 'typeorm';
 import { TurnUsageProjector } from '../analytics/turn-usage-projector.service';
+import type { FeatureSandbox } from '../git';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { ThreadEntity } from '../persistence/entities';
+import { prependNotice } from '../prompt-kit/harness';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
 
 /** What one turn needs to run. The sandbox supplies the worktree (the engine cwd) + branch. */
@@ -159,10 +159,7 @@ type TurnInputDerivedOrRequiredKey =
   | 'mode'
   | 'task'
   | 'systemPrompt'; // required, forwarded explicitly (omission already errors)
-type TurnInputForwardKey = Exclude<
-  keyof RunTurnInput,
-  TurnInputDerivedOrRequiredKey
->;
+type TurnInputForwardKey = Exclude<keyof RunTurnInput, TurnInputDerivedOrRequiredKey>;
 const TURN_INPUT_FORWARD_KEYS = [
   'auth',
   'userMcpServers',
@@ -239,9 +236,7 @@ export class TurnRunnerService {
     // step IS the thread row, so the `stepId` the driver passes is the thread's own id (see driver-store's
     // `toSyntheticStep`). Rotation is now "insert the next builder thread row" (d1), so there is no per-step
     // rotation state to fold here — a rotated Leg is simply a fresh thread row born with `session_id = null`.
-    const priorThread = stepId
-      ? await this.threads.findOne({ where: { id: stepId } })
-      : null;
+    const priorThread = stepId ? await this.threads.findOne({ where: { id: stepId } }) : null;
     const priorSessionId = priorThread?.session_id ?? undefined;
 
     // The engine-home key namespaces the isolated home + Codex client cache, so two concurrent jobs never
@@ -259,9 +254,7 @@ export class TurnRunnerService {
     // so only the FIRST resumed turn in this drive carries the notice.
     const needsResetNotice = sandbox.warm === false && !!priorSessionId;
     if (sandbox.warm === false) sandbox.warm = true;
-    const task = needsResetNotice
-      ? prependNotice(SANDBOX_RESET_NOTICE, input.task)
-      : input.task;
+    const task = needsResetNotice ? prependNotice(SANDBOX_RESET_NOTICE, input.task) : input.task;
 
     this.logger.log(
       `Turn: job=${jobId} step=${stepId ?? '-'} engine=${engine} mode=${mode} ` +
@@ -298,9 +291,7 @@ export class TurnRunnerService {
                 worktreeHost: sandbox.worktreePath,
                 ...(sandbox.execUser ? { user: sandbox.execUser } : {}),
                 ...(input.gitAuth ? { gitAuth: input.gitAuth } : {}),
-                ...(input.evidenceDir
-                  ? { evidenceDir: input.evidenceDir }
-                  : {}),
+                ...(input.evidenceDir ? { evidenceDir: input.evidenceDir } : {}),
               },
             }
           : {}),
@@ -310,18 +301,13 @@ export class TurnRunnerService {
         ...pickKeys(input, TURN_INPUT_FORWARD_KEYS),
         onEvent,
         ...(input.signal ? { signal: input.signal } : {}),
-        ...(input.onTurnRegistered
-          ? { onTurnRegistered: input.onTurnRegistered }
-          : {}),
+        ...(input.onTurnRegistered ? { onTurnRegistered: input.onTurnRegistered } : {}),
       });
     } catch (err) {
       // On a 401/auth failure, PERSIST the session id so a re-ping resumes this same session (the
       // agent's partial work is on disk in the worktree) instead of starting the step from scratch.
       if (err instanceof EngineAuthError && stepId && err.sessionId) {
-        await this.threads.update(
-          { id: stepId },
-          { session_id: err.sessionId },
-        );
+        await this.threads.update({ id: stepId }, { session_id: err.sessionId });
       }
       throw err;
     }
@@ -342,10 +328,7 @@ export class TurnRunnerService {
     // failing the build. Only the build lane calls runTurn (the brain reads result.sessionLimit directly).
     if (result.sessionLimit) {
       if (stepId && result.sessionId) {
-        await this.threads.update(
-          { id: stepId },
-          { session_id: result.sessionId },
-        );
+        await this.threads.update({ id: stepId }, { session_id: result.sessionId });
       }
       const { resetAt, rateLimitType, source } = result.sessionLimit;
       const message = `Claude session limit${rateLimitType ? ` (${rateLimitType})` : ''}${resetAt ? `; resets ${resetAt}` : ''}`;
@@ -363,10 +346,7 @@ export class TurnRunnerService {
     // belt-and-braces for the turn-START `session` event above (a turn that surfaced no session event
     // still records its id here).
     if (stepId && result.sessionId) {
-      await this.threads.update(
-        { id: stepId },
-        { session_id: result.sessionId },
-      );
+      await this.threads.update({ id: stepId }, { session_id: result.sessionId });
     }
 
     // Durable per-model usage/cost analytics (best-effort; never blocks the turn). Every build/step/
@@ -451,16 +431,9 @@ export class TurnRunnerService {
    * master-review leg is running, or nothing is) returns false so the caller queues into the next-turn drain
    * rather than an unread input stream. Mirrors the brain's `steerIntoLiveBrainTurn`, lane-generic.
    */
-  async steerLane(
-    jobId: string,
-    lane: string,
-    id: string,
-    text: string,
-  ): Promise<boolean> {
+  async steerLane(jobId: string, lane: string, id: string, text: string): Promise<boolean> {
     if (!this.turnRegistry || !this.engine.steer) return false;
-    const live = await this.turnRegistry
-      .runningSteerableTurn(jobId, lane)
-      .catch(() => null);
+    const live = await this.turnRegistry.runningSteerableTurn(jobId, lane).catch(() => null);
     if (!live?.turn_id) return false;
     await this.engine.steer(live.turn_id, id, text);
     return true;
@@ -472,9 +445,7 @@ export class TurnRunnerService {
    */
   async stopLane(jobId: string, lane: string): Promise<boolean> {
     if (!this.turnRegistry || !this.engine.stop) return false;
-    const live = await this.turnRegistry
-      .runningSteerableTurn(jobId, lane)
-      .catch(() => null);
+    const live = await this.turnRegistry.runningSteerableTurn(jobId, lane).catch(() => null);
     if (!live?.turn_id) return false;
     await this.engine.stop(live.turn_id);
     return true;
@@ -506,9 +477,7 @@ export class TurnRunnerService {
     liveRoute?: { channel: string; jobId: string; lane?: string };
   }): Promise<RunTurnResult> {
     if (!this.engine.reattach) {
-      throw new Error(
-        'bound ENGINE_RUNNER has no reattach() — cannot re-attach turn',
-      );
+      throw new Error('bound ENGINE_RUNNER has no reattach() — cannot re-attach turn');
     }
     const { turnId, containerId, stepId } = input;
     // DOUBLE-ATTACH GUARD (mirror of the brain's `reattachOne`). The engine's realtime/tools/events consumer
@@ -527,9 +496,7 @@ export class TurnRunnerService {
       // Reuse EngineDetachedError as the propagation vehicle: the driver's `reattachBatchTurn` already treats
       // a detached throw as "leave the live turn alone" — propagate WITHOUT re-kicking a live engine or
       // finalizing the row — which is exactly what we want when another attach loop already owns this turn.
-      throw new EngineDetachedError(
-        `turn ${turnId} already attached in this process`,
-      );
+      throw new EngineDetachedError(`turn ${turnId} already attached in this process`);
     }
     try {
       const onEvent = (e: EngineEvent): void => {
@@ -540,9 +507,7 @@ export class TurnRunnerService {
         }
         input.onEvent?.(e);
       };
-      this.logger.log(
-        `Re-attach turn=${turnId} container=${containerId} step=${stepId ?? '-'}`,
-      );
+      this.logger.log(`Re-attach turn=${turnId} container=${containerId} step=${stepId ?? '-'}`);
       const result = await this.engine.reattach(turnId, containerId, {
         onEvent,
         ...(input.toolBridge ? { toolBridge: input.toolBridge } : {}),

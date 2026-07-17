@@ -1,5 +1,5 @@
-import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
+import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 
 /** The exact lifecycle a proposed recovery write moves through. Stored as a text column (repo convention
  * — no Postgres enums), never as a DB enum. */

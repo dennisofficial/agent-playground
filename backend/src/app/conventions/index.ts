@@ -1,6 +1,6 @@
-export { ConventionsModule } from './conventions.module';
 export {
   ConventionProfileResolver,
-  type ResolvedConventions,
   type ProfileSummary,
+  type ResolvedConventions,
 } from './convention-profile.resolver';
+export { ConventionsModule } from './conventions.module';

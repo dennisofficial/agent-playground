@@ -19,17 +19,13 @@
  */
 
 import { Test, type TestingModule } from '@nestjs/testing';
-import {
-  TypeOrmModule,
-  getDataSourceToken,
-  getRepositoryToken,
-} from '@nestjs/typeorm';
+import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy';
+import { JobBootstrapService } from '../job-bootstrap';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { ENTITIES, JobEntity } from '../persistence/entities';
-import { JobBootstrapService } from '../job-bootstrap';
 import { StimulusStoreService } from './stimulus-store.service';
 
 const ORG_ID = '51111111-1111-4111-8111-111111111111';
@@ -61,10 +57,7 @@ describe('delivery priority (now|queue|later) — live Postgres DB-query proof',
 
   beforeAll(async () => {
     mod = await Test.createTestingModule({
-      imports: [
-        TypeOrmModule.forRoot(dbOpts()),
-        TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION),
-      ],
+      imports: [TypeOrmModule.forRoot(dbOpts()), TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION)],
       providers: [JobBootstrapService, StimulusStoreService],
     }).compile();
 

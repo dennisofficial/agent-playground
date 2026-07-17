@@ -9,9 +9,9 @@
  * harness. The registry (`registry.ts`) is boot-validated (`validateThreadKinds`) exactly like
  * `validateFragments`.
  */
-import type { Agent } from '../prompt-kit';
 import type { SessionEngine } from '@shared/domain';
 import type { ReasoningEffort } from '@shared/engine';
+import type { Agent } from '../prompt-kit';
 import type { ThreadInput } from '../surface/thread-registry';
 
 /**

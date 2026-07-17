@@ -9,15 +9,15 @@
  * uuid `blocked_by`, runs the migration's `up()`, and asserts the renumbered ordinals + remapped edges.
  */
 
-import { randomUUID } from 'node:crypto';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { TypeOrmModule, getDataSourceToken } from '@nestjs/typeorm';
+import { randomUUID } from 'node:crypto';
 import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy';
 import { DB_CONNECTION } from './database.module';
-import { ENTITIES } from './entities';
 import { DENSE_TASK_ORDINALS_UP } from './dense-task-ordinals.sql';
+import { ENTITIES } from './entities';
 
 const ORG_ID = '21111111-1111-4111-8111-111111111111';
 const BASE_BRANCH = 'main';
@@ -114,16 +114,18 @@ describe('DenseTaskOrdinals migration (live Postgres)', () => {
     ds.query(
       `SELECT title, ordinal, blocked_by FROM tasks WHERE thread_group_id = $1 ORDER BY ordinal`,
       [threadGroupId],
-    ) as Promise<
-      Array<{ title: string; ordinal: number; blocked_by: string[] }>
-    >;
+    ) as Promise<Array<{ title: string; ordinal: number; blocked_by: string[] }>>;
 
   it('densely renumbers ordinals per thread group and remaps blocked_by uuid → #N (dropping dangling)', async () => {
     const groupA = await seedThreadGroup(10);
     const groupB = await seedThreadGroup(20);
 
     // Group A: gap-numbered 10/20/30 with uuid blocked_by edges + one dangling uuid.
-    const aX = await seedTask({ threadGroupId: groupA, ordinal: 10, title: 'A-X' });
+    const aX = await seedTask({
+      threadGroupId: groupA,
+      ordinal: 10,
+      title: 'A-X',
+    });
     const aY = await seedTask({
       threadGroupId: groupA,
       ordinal: 20,
@@ -138,7 +140,11 @@ describe('DenseTaskOrdinals migration (live Postgres)', () => {
     });
 
     // Group B: independent thread group — its #N must restart at 1 (proves per-group partitioning).
-    const bP = await seedTask({ threadGroupId: groupB, ordinal: 10, title: 'B-P' });
+    const bP = await seedTask({
+      threadGroupId: groupB,
+      ordinal: 10,
+      title: 'B-P',
+    });
     await seedTask({
       threadGroupId: groupB,
       ordinal: 20,

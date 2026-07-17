@@ -1,6 +1,6 @@
 import type { MessageEvent } from '@nestjs/common';
-import { Observable } from 'rxjs';
 import type { SubscriptionImpl } from '@workspace/pg-realtime';
+import { Observable } from 'rxjs';
 
 /**
  * Adapt a pg-realtime subscription to a Nest SSE stream. Attaching the handler (`on`) lazily kicks the
@@ -10,9 +10,7 @@ import type { SubscriptionImpl } from '@workspace/pg-realtime';
  *
  * Re-implements cubix's trimmed `sseObservable` locally (the vendored package ships core only).
  */
-export function subscriptionToObservable(
-  sub: SubscriptionImpl,
-): Observable<MessageEvent> {
+export function subscriptionToObservable(sub: SubscriptionImpl): Observable<MessageEvent> {
   return new Observable<MessageEvent>((subscriber) => {
     sub.on((delta) => subscriber.next({ data: delta }));
     return () => sub.close();

@@ -17,10 +17,10 @@
  */
 // Pillar 1: the @Fragment/@FragmentGroup system-prompt library (assembler, TEXT catalog, audience/context
 // types, conditions, dev-only preview).
-export * from '@shared/prompt-kit/system';
 export * from '@shared/prompt-kit/message';
-export * from './prompt.service';
+export * from '@shared/prompt-kit/system';
 export * from './prompt-kit.module';
+export * from './prompt.service';
 
 // ── The SECOND category: user-message / task-body templates, plus self-contained, host-initiated one-shot
 // turns (NOT assembled, NOT `Agent`s) — both now live under `messages/`. ──

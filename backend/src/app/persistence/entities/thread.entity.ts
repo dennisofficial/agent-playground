@@ -1,16 +1,9 @@
-import {
-  Column,
-  Entity,
-  Index,
-  JoinColumn,
-  ManyToOne,
-  PrimaryGeneratedColumn,
-} from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
-import { OrganizationEntity } from './organization.entity';
-import { JobEntity } from './job.entity';
-import { ThreadGroupEntity } from './thread-group.entity';
+import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import type { ReviewFinding } from '../../autofix/autofix.types';
+import { JobEntity } from './job.entity';
+import { OrganizationEntity } from './organization.entity';
+import { ThreadGroupEntity } from './thread-group.entity';
 
 /**
  * One THREAD of a job — a first-class, typed lane differentiated only by `role` (`planner | codex_review |

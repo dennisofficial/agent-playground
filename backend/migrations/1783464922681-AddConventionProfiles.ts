@@ -10,9 +10,7 @@ export class AddConventionProfiles1783464922681 implements MigrationInterface {
     await queryRunner.query(
       `CREATE INDEX "idx_convention_profiles_org_id" ON "convention_profiles" ("org_id") `,
     );
-    await queryRunner.query(
-      `ALTER TABLE "repos" ADD "convention_profile_slug" text`,
-    );
+    await queryRunner.query(`ALTER TABLE "repos" ADD "convention_profile_slug" text`);
     await queryRunner.query(
       `ALTER TABLE "convention_profiles" ADD CONSTRAINT "fk_convention_profiles_org_id_organizations" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE NO ACTION`,
     );
@@ -22,12 +20,8 @@ export class AddConventionProfiles1783464922681 implements MigrationInterface {
     await queryRunner.query(
       `ALTER TABLE "convention_profiles" DROP CONSTRAINT "fk_convention_profiles_org_id_organizations"`,
     );
-    await queryRunner.query(
-      `ALTER TABLE "repos" DROP COLUMN "convention_profile_slug"`,
-    );
-    await queryRunner.query(
-      `DROP INDEX "public"."idx_convention_profiles_org_id"`,
-    );
+    await queryRunner.query(`ALTER TABLE "repos" DROP COLUMN "convention_profile_slug"`);
+    await queryRunner.query(`DROP INDEX "public"."idx_convention_profiles_org_id"`);
     await queryRunner.query(`DROP TABLE "convention_profiles"`);
   }
 }

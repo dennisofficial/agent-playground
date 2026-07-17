@@ -45,9 +45,7 @@ const threadItem = z.object({
   brief: z.string().optional(),
   type: z.string().optional(),
   steps: z
-    .array(
-      z.object({ title: z.string().optional(), brief: z.string().optional() }),
-    )
+    .array(z.object({ title: z.string().optional(), brief: z.string().optional() }))
     .optional(),
 });
 
@@ -94,9 +92,7 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
   },
   task_update: {
     taskId: z.string(),
-    status: z
-      .enum(['pending', 'in_progress', 'completed', 'deleted'])
-      .optional(),
+    status: z.enum(['pending', 'in_progress', 'completed', 'deleted']).optional(),
     subject: z.string().optional(),
     description: z.string().optional(),
     activeForm: z.string().optional(),
@@ -408,10 +404,8 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
     'one-line summary plus, ideally, the changes you made and the verification you ran.',
   request_operator_input:
     'Ask the operator a blocking question when you need a human decision before you can continue.',
-  record_leg_handoff:
-    'Record a handoff note for the next leg of this thread before you stop.',
-  record_deviation:
-    'Log a one-line off-spec change you made so it surfaces to the operator.',
+  record_leg_handoff: 'Record a handoff note for the next leg of this thread before you stop.',
+  record_deviation: 'Log a one-line off-spec change you made so it surfaces to the operator.',
   report_findings:
     'Report review findings as you discover them (call repeatedly across the review — findings accumulate). ' +
     'Each finding is { lens, severity (low|medium|high), file (repo-relative or null), title (one line), detail }. ' +
@@ -428,19 +422,16 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
     'Get the full detail (description, activeForm, blockedBy) of one task in your live list by its id.',
 
   // ── Brain tools ───────────────────────────────────────────────────────────────────────────────
-  get_pipeline_state:
-    'Read the current pipeline state (threads, decisions, plan) for this job.',
+  get_pipeline_state: 'Read the current pipeline state (threads, decisions, plan) for this job.',
   get_decision_record: 'Read the full decision record for this job.',
   dispatch_build:
     'Start the approved build after the base-check (branches internally: full plan → build pipeline, direct → in-session implement).',
   hold_build:
     'Hold the approved build and return to planning when the rebased base makes the plan redundant or requires revision (reason surfaced to the operator).',
-  finalize_build:
-    'Finalize the build once every thread is complete and verified.',
+  finalize_build: 'Finalize the build once every thread is complete and verified.',
   list_mcp_servers: 'List the MCP servers configured for this org/repo.',
   list_skills: 'List the skills available to this workspace.',
-  list_convention_profiles:
-    'List the convention (house-style) profiles for this repo.',
+  list_convention_profiles: 'List the convention (house-style) profiles for this repo.',
   recall: 'Recall stored facts relevant to an optional query.',
   remember: 'Store a durable fact at the given scope for later recall.',
   forget: 'Delete (soft) a stored memory by its id.',
@@ -460,12 +451,9 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   create_decision: 'Record a new decision for this job.',
   update_decision: 'Update an existing decision by id.',
   delete_decision: 'Delete a decision by id.',
-  review_plan:
-    'Review and revise the current plan overview, goal, decisions, and threads.',
-  propose_plan:
-    'Propose a plan: an overview, goal, decisions, and the threads to build.',
-  start_direct_build:
-    'Start a direct build with a summary, change outline, and decisions.',
+  review_plan: 'Review and revise the current plan overview, goal, decisions, and threads.',
+  propose_plan: 'Propose a plan: an overview, goal, decisions, and the threads to build.',
+  start_direct_build: 'Start a direct build with a summary, change outline, and decisions.',
   create_job:
     'Create a new job seeded with a first message; optionally dependsOn one or more existing job ids on this repo to be born blocked until they merge.',
   list_jobs:
@@ -480,11 +468,9 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   request_secret:
     'Request a secret from the operator (file, env, or MCP header/env slot). NOT for OAuth MCP servers — ' +
     'those are connected by the owner with the MCP proposal-card Connect button or in the console (MCP settings → Connect), never via a pasted secret.',
-  request_file:
-    'Request a file from the operator at a given path, with a description.',
+  request_file: 'Request a file from the operator at a given path, with a description.',
   withdraw_file_request: 'Withdraw a pending file request you no longer need.',
-  withdraw_secret_request:
-    'Withdraw a pending durable/MCP secret request you no longer need.',
+  withdraw_secret_request: 'Withdraw a pending durable/MCP secret request you no longer need.',
   write_workspace_config: 'Write the workspace config (mounts) for this repo.',
   write_setup_script:
     'Write the per-sandbox cold-boot setup script for this workspace — idempotent commands that ARM the box ' +
@@ -500,8 +486,7 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   read_preview_instructions:
     "Read the repo's current PREVIEW RECIPE (raw body) so you can edit it safely before write_preview_instructions " +
     '(which overwrites the whole thing). Returns { ok, present, instructions }.',
-  derive_secret:
-    'Derive and store a secret file at a path from a computed value.',
+  derive_secret: 'Derive and store a secret file at a path from a computed value.',
   reset_sandbox:
     'Recreate this job’s sandbox so you can PROVE it cold-boots from durable config. Default: recreates the ' +
     'CONTAINER only (worktree + session survive). `hard:true`: recreates the WHOLE sandbox from scratch — ' +
@@ -511,17 +496,14 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
     'a dirty tree or unpushed commits (the host never commits for you — commit + push first). The reset ' +
     'happens on your NEXT turn — call it, then STOP.',
   propose_skill: 'Propose a new skill for this org or repo, with rationale.',
-  propose_skill_install:
-    'Propose installing a skill from a source URL for this org or repo.',
-  request_skill_edit_access:
-    'Request edit access to an existing skill, with rationale.',
+  propose_skill_install: 'Propose installing a skill from a source URL for this org or repo.',
+  request_skill_edit_access: 'Request edit access to an existing skill, with rationale.',
   propose_skill_removal: 'Propose removing a skill from this org or repo.',
   propose_mcp_servers:
     'Propose one or more MCP servers for this org or repo. Use authKind:"oauth" (http/sse, no secret slot) ' +
     'for a server that needs interactive login — the owner completes it via the console Connect.',
   propose_mcp_removal: 'Propose removing an MCP server from this org or repo.',
-  propose_convention_profile:
-    'Propose a new convention (house-style) profile for this repo.',
+  propose_convention_profile: 'Propose a new convention (house-style) profile for this repo.',
   finish_onboarding:
     'Finish workspace onboarding with a summary and the verification you performed. For a repo with ' +
     'user-facing surfaces, `verified` must include live preview-accessibility evidence — each public preview ' +
@@ -539,8 +521,7 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
     'Raw Claude Code session JSONL for a job — list sessions, render a session (atlas-tx `show` semantics), or grep across sessions.',
   atlas_context_read:
     "A job's durable /context dir (specs/generated/artifacts) — a tree listing when path is omitted, else a file's contents or a subdir's tree.",
-  atlas_worktree_tree:
-    "A job's git worktree file tree (skips .git, node_modules).",
+  atlas_worktree_tree: "A job's git worktree file tree (skips .git, node_modules).",
   atlas_worktree_file: "One file's contents from a job's git worktree.",
   propose_prod_write:
     'Propose an arbitrary single-statement SQL WRITE (INSERT/UPDATE/DELETE/WITH) against the production ' +
@@ -554,7 +535,5 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
  */
 export function toolJsonSchema(name: string): Record<string, unknown> {
   const shape = TOOL_SHAPES[name];
-  return shape
-    ? z.toJSONSchema(z.object(shape))
-    : { type: 'object', additionalProperties: true };
+  return shape ? z.toJSONSchema(z.object(shape)) : { type: 'object', additionalProperties: true };
 }

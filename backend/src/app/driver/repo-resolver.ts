@@ -1,14 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
 import type { Job } from '@shared/domain';
 import type { SandboxGitIdentity } from '@shared/engine/engine.types';
-import {
-  GitIdentityService,
-  LocalGitService,
-  parseGithubRepoUrl,
-  type ProjectRepo,
-} from '../git';
+import { Repository } from 'typeorm';
+import { GitIdentityService, LocalGitService, parseGithubRepoUrl, type ProjectRepo } from '../git';
 import { CredentialResolver } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { RepoEntity } from '../persistence/entities';
@@ -58,9 +53,7 @@ export class GitDriverRepoResolver implements DriverRepoResolver {
       where: { id: thread.repoId },
     });
     if (!project) {
-      throw new Error(
-        `No repos row for id=${thread.repoId} (org=${thread.orgId})`,
-      );
+      throw new Error(`No repos row for id=${thread.repoId} (org=${thread.orgId})`);
     }
     const parsed = parseGithubRepoUrl(project.git_url);
     if (!parsed) {

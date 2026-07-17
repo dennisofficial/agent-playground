@@ -20,31 +20,31 @@
  * session, which lazily provisions the job's sandbox on its first turn.
  */
 
-import { getDataSourceToken } from '@nestjs/typeorm';
-import { Test } from '@nestjs/testing';
 import type { NestExpressApplication } from '@nestjs/platform-express';
+import { Test } from '@nestjs/testing';
+import { getDataSourceToken } from '@nestjs/typeorm';
+import { ENGINE_RUNNER } from '@shared/engine';
 import cookieParser from 'cookie-parser';
 import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { CLASSIFIER_LLM } from '../decision-gate';
-import { ENGINE_RUNNER } from '@shared/engine';
-import { GithubPrService, LocalGitService } from '../git';
 import { AppModule } from '../app.module';
-import { DB_CONNECTION } from '../persistence/database.module';
-import { SANDBOX_PROVIDER } from '../sandbox';
+import { CLASSIFIER_LLM } from '../decision-gate';
 import {
   FakeClassifierLlm,
   FakeEngineRunner,
   FakeLocalGitService,
   FakeThreadTitler,
 } from '../e2e/e2e-stubs';
-import { JobTitler } from '../titling';
+import { GithubPrService, LocalGitService } from '../git';
+import { JobBootstrapService } from '../job-bootstrap';
 import { CredentialResolver } from '../onboarding/credential-resolver.service';
 import { WorkspaceConfigStore } from '../onboarding/workspace-config.store';
-import { JobBootstrapService } from '../job-bootstrap';
-import { webShipReviewCard } from './web-approval-card';
+import { DB_CONNECTION } from '../persistence/database.module';
 import { PREVIEW_PREP_SEED_BODY } from '../prompt-kit';
+import { SANDBOX_PROVIDER } from '../sandbox';
+import { JobTitler } from '../titling';
+import { webShipReviewCard } from './web-approval-card';
 
 const fakeCreds = {
   anthropicKey: async () => undefined,
@@ -69,40 +69,27 @@ let bootstrap: JobBootstrapService;
 let server: ReturnType<NestExpressApplication['getHttpServer']>;
 let ownerCookie: string;
 
-async function register(
-  email: string,
-): Promise<{ cookie: string; id: string }> {
+async function register(email: string): Promise<{ cookie: string; id: string }> {
   const res = await request(server)
     .post('/auth/register')
     .send({ email, password: PASSWORD, name: email.split('@')[0] });
   expect(res.status).toBe(200);
-  const setCookie =
-    (res.headers['set-cookie'] as unknown as string[] | undefined) ?? [];
+  const setCookie = (res.headers['set-cookie'] as unknown as string[] | undefined) ?? [];
   const cookie = setCookie.map((c) => c.split(';')[0]).join('; ');
   return { cookie, id: res.body.user.id as string };
 }
 
 async function purge(): Promise<void> {
   await ds
-    .query(`DELETE FROM transcript_messages WHERE job_id = ANY($1)`, [
-      [GATE_JOB, RUNNING_JOB],
-    ])
+    .query(`DELETE FROM transcript_messages WHERE job_id = ANY($1)`, [[GATE_JOB, RUNNING_JOB]])
     .catch(() => undefined);
-  await ds
-    .query(`DELETE FROM jobs WHERE org_id = $1`, [ORG])
-    .catch(() => undefined);
-  await ds
-    .query(`DELETE FROM repos WHERE org_id = $1`, [ORG])
-    .catch(() => undefined);
+  await ds.query(`DELETE FROM jobs WHERE org_id = $1`, [ORG]).catch(() => undefined);
+  await ds.query(`DELETE FROM repos WHERE org_id = $1`, [ORG]).catch(() => undefined);
   await ds
     .query(`DELETE FROM organization_members WHERE org_id = $1`, [ORG])
     .catch(() => undefined);
-  await ds
-    .query(`DELETE FROM organizations WHERE id = $1`, [ORG])
-    .catch(() => undefined);
-  await ds
-    .query(`DELETE FROM users WHERE email = $1`, [OWNER_EMAIL])
-    .catch(() => undefined);
+  await ds.query(`DELETE FROM organizations WHERE id = $1`, [ORG]).catch(() => undefined);
+  await ds.query(`DELETE FROM users WHERE email = $1`, [OWNER_EMAIL]).catch(() => undefined);
 }
 
 async function seedShipCardRow(jobId: string): Promise<void> {
@@ -119,9 +106,7 @@ async function seedShipCardRow(jobId: string): Promise<void> {
   );
 }
 
-async function shipCard(
-  jobId: string,
-): Promise<Record<string, unknown> | undefined> {
+async function shipCard(jobId: string): Promise<Record<string, unknown> | undefined> {
   const rows = (await ds.query(
     `SELECT card FROM transcript_messages WHERE job_id = $1 AND ts = $2 AND kind = 'card' LIMIT 1`,
     [jobId, `ship-review:${jobId}`],
@@ -214,9 +199,7 @@ beforeEach(async () => {
   await ds.query(`DELETE FROM transcript_messages WHERE job_id = ANY($1)`, [
     [GATE_JOB, RUNNING_JOB],
   ]);
-  await ds.query(`DELETE FROM jobs WHERE id = ANY($1)`, [
-    [GATE_JOB, RUNNING_JOB],
-  ]);
+  await ds.query(`DELETE FROM jobs WHERE id = ANY($1)`, [[GATE_JOB, RUNNING_JOB]]);
   // No stored preview recipe by default — each `it` that needs one sets it explicitly.
   await configStore.setPreviewInstructions(ORG, REPO, null);
 });
@@ -240,9 +223,7 @@ describe('spin-up-preview — POST .../jobs/:jobId/spin-up-preview (live Postgre
   it('first click at the gate: 201 {ok:true,ts:""}, stamps the card, durably seeds ONE full-body preview pill', async () => {
     await seedGateJob();
 
-    const res = await request(server)
-      .post(previewUrl(GATE_JOB))
-      .set('Cookie', ownerCookie);
+    const res = await request(server).post(previewUrl(GATE_JOB)).set('Cookie', ownerCookie);
 
     // The whole web-surface controller returns 201 for POSTs (no `@HttpCode`); the body is the contract.
     // The durable pump enqueues the seed without a rendered message row, so there is no timestamp to echo.
@@ -298,9 +279,7 @@ describe('spin-up-preview — POST .../jobs/:jobId/spin-up-preview (live Postgre
     await request(server).post(previewUrl(GATE_JOB)).set('Cookie', ownerCookie);
     const firstStamp = (await shipCard(GATE_JOB))?.previewRequestedAt;
 
-    const res = await request(server)
-      .post(previewUrl(GATE_JOB))
-      .set('Cookie', ownerCookie);
+    const res = await request(server).post(previewUrl(GATE_JOB)).set('Cookie', ownerCookie);
 
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({ ok: true, ts: '' });
@@ -317,9 +296,7 @@ describe('spin-up-preview — POST .../jobs/:jobId/spin-up-preview (live Postgre
     await bootstrap.ensurePlanningThreadGroup(RUNNING_JOB, ORG);
     await seedShipCardRow(RUNNING_JOB);
 
-    const res = await request(server)
-      .post(previewUrl(RUNNING_JOB))
-      .set('Cookie', ownerCookie);
+    const res = await request(server).post(previewUrl(RUNNING_JOB)).set('Cookie', ownerCookie);
 
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({ ok: false, ts: '' });

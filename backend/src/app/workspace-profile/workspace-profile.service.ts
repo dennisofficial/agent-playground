@@ -1,9 +1,9 @@
 import { Injectable } from '@nestjs/common';
+import { ConventionProfileResolver } from '../conventions';
+import { McpServerStore } from '../mcp';
 import { WorkspaceConfigStore } from '../onboarding/workspace-config.store';
 import { WorkspaceSecretFileStore } from '../onboarding/workspace-secret.store';
-import { McpServerStore } from '../mcp';
 import { WorkspaceSkillStore } from '../skills';
-import { ConventionProfileResolver } from '../conventions';
 
 /**
  * The current state of a repo's WORKSPACE PROFILE — the one named area (secrets, mounts, caches, setup,
@@ -45,11 +45,7 @@ export interface WorkspaceProfileSnapshot {
  * MCP server whose auth USED to work and later FAILED (expired static secret / dead OAuth refresh token).
  */
 export interface ProfileGap {
-  kind:
-    | 'unfilled_mcp_secret'
-    | 'new_stack'
-    | 'broken_auth'
-    | 'needs_oauth_connect';
+  kind: 'unfilled_mcp_secret' | 'new_stack' | 'broken_auth' | 'needs_oauth_connect';
   /** Human-readable, secret-SAFE (names only) description including the tool to fix it. */
   detail: string;
 }
@@ -75,10 +71,7 @@ export class WorkspaceProfileService {
   ) {}
 
   /** Aggregate the current state across all seven dimensions (~5 cheap queries). */
-  async describe(
-    orgId: string,
-    repoId: string,
-  ): Promise<WorkspaceProfileSnapshot> {
+  async describe(orgId: string, repoId: string): Promise<WorkspaceProfileSnapshot> {
     const [
       mounts,
       setupScript,
@@ -122,9 +115,7 @@ export class WorkspaceProfileService {
         description: r.description,
         enabled: r.enabled,
       })),
-      houseStyle: houseStyleSlug
-        ? { slug: houseStyleSlug, name: houseStyle?.name ?? null }
-        : null,
+      houseStyle: houseStyleSlug ? { slug: houseStyleSlug, name: houseStyle?.name ?? null } : null,
     };
   }
 

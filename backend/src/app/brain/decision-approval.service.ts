@@ -1,10 +1,4 @@
-import {
-  Inject,
-  Injectable,
-  Logger,
-  type OnModuleDestroy,
-} from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
+import { Inject, Injectable, Logger, type OnModuleDestroy } from '@nestjs/common';
 import {
   CHAT_SURFACE,
   decisionApprovalBlocks,
@@ -87,8 +81,7 @@ export class DecisionApprovalService implements OnModuleDestroy {
 
   onModuleDestroy(): void {
     for (const state of this.pending.values()) {
-      if (!state.resolved)
-        state.reject(new Error('Atlas shutting down — approval abandoned.'));
+      if (!state.resolved) state.reject(new Error('Atlas shutting down — approval abandoned.'));
     }
     this.pending.clear();
   }
@@ -98,20 +91,13 @@ export class DecisionApprovalService implements OnModuleDestroy {
    * the brain awaits. The card carries the jobId (+ decisionRecordId) in its button values, so a verdict
    * survives a restart of the verdict source.
    */
-  async request(
-    target: ApprovalTarget,
-    card: DecisionApprovalCard,
-  ): Promise<ApprovalHandle> {
+  async request(target: ApprovalTarget, card: DecisionApprovalCard): Promise<ApprovalHandle> {
     const blocks = decisionApprovalBlocks(card);
-    const cardTs = await this.surface.post(
-      target.channel,
-      `Plan proposal — ${card.title}`,
-      {
-        ...(target.threadTs ? { threadTs: target.threadTs } : {}),
-        ...(target.orgId ? { orgId: target.orgId } : {}),
-        blocks,
-      },
-    );
+    const cardTs = await this.surface.post(target.channel, `Plan proposal — ${card.title}`, {
+      ...(target.threadTs ? { threadTs: target.threadTs } : {}),
+      ...(target.orgId ? { orgId: target.orgId } : {}),
+      blocks,
+    });
 
     let resolve!: (r: ApprovalResolution) => void;
     let reject!: (e: Error) => void;
@@ -136,9 +122,7 @@ export class DecisionApprovalService implements OnModuleDestroy {
       reject,
     };
     this.pending.set(card.jobId, state);
-    this.logger.log(
-      `approval requested for job ${card.jobId} (card ${cardTs ?? '(unposted)'})`,
-    );
+    this.logger.log(`approval requested for job ${card.jobId} (card ${cardTs ?? '(unposted)'})`);
 
     return {
       jobId: card.jobId,
@@ -174,9 +158,7 @@ export class DecisionApprovalService implements OnModuleDestroy {
       ...(note ? { note } : {}),
       ...(clickedDecisionRecordId ? { clickedDecisionRecordId } : {}),
     };
-    this.logger.log(
-      `approval for job ${jobId} ruled "${verdict}" by ${ruledBy}`,
-    );
+    this.logger.log(`approval for job ${jobId} ruled "${verdict}" by ${ruledBy}`);
     state.resolve(resolution);
     this.pending.delete(jobId);
     return true;

@@ -23,10 +23,7 @@ describe('agent-facing approval simulation (AgentChatSurface + DecisionApprovalS
     const approvals = new DecisionApprovalService(surface);
 
     // The brain posts the card into the job's thread and awaits the verdict.
-    const handle = await approvals.request(
-      { channel: 'C1', threadTs: 'root.1' },
-      card,
-    );
+    const handle = await approvals.request({ channel: 'C1', threadTs: 'root.1' }, card);
     expect(handle.resolved).toBe(false);
 
     // The driver script reads the posted card off the surface (no Slack), grabs its jobId.
@@ -60,12 +57,7 @@ describe('agent-facing approval simulation (AgentChatSurface + DecisionApprovalS
     const captured = await waiting;
     expect(captured.jobId).toBe('job-2');
 
-    approvals.resolve(
-      captured.jobId,
-      'request_changes',
-      'U-DENNIS',
-      'use streaming',
-    );
+    approvals.resolve(captured.jobId, 'request_changes', 'U-DENNIS', 'use streaming');
     const verdict = await handle.verdict;
     expect(verdict.verdict).toBe('request_changes');
     expect(verdict.note).toBe('use streaming');

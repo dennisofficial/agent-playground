@@ -1,19 +1,12 @@
 import { execFileSync } from 'node:child_process';
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Repository } from 'typeorm';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { LocalGitService } from '../git/local-git.service';
 import type { CredentialResolver } from '../onboarding';
 import type { WorkspaceSkillEntity } from '../persistence/entities';
-import { LocalGitService } from '../git/local-git.service';
 import { SkillInstallerService } from './skill-installer.service';
 import { skillDirHost } from './skill-store-paths';
 import { WorkspaceSkillStore } from './workspace-skill.store';
@@ -40,8 +33,7 @@ class FakeRepo {
   async save(row: WorkspaceSkillEntity): Promise<WorkspaceSkillEntity> {
     if (this.delayMs > 0) await new Promise((r) => setTimeout(r, this.delayMs));
     const i = this.rows.findIndex(
-      (r) =>
-        r.org_id === row.org_id && r.scope === row.scope && r.name === row.name,
+      (r) => r.org_id === row.org_id && r.scope === row.scope && r.name === row.name,
     );
     if (i >= 0) this.rows[i] = row;
     else this.rows.push(row);
@@ -58,10 +50,7 @@ class FakeRepo {
     return this.rows;
   }
   async delete(): Promise<void> {}
-  private match(
-    r: WorkspaceSkillEntity,
-    where: Partial<WorkspaceSkillEntity>,
-  ): boolean {
+  private match(r: WorkspaceSkillEntity, where: Partial<WorkspaceSkillEntity>): boolean {
     return Object.entries(where).every(
       ([k, v]) => (r as unknown as Record<string, unknown>)[k] === v,
     );
@@ -214,9 +203,7 @@ describe('SkillInstallerService (real git, local fixture repos)', () => {
       githubToken: async () => undefined,
       hostGithubToken: async () => undefined,
     } as unknown as CredentialResolver; // local paths need no token
-    store = new WorkspaceSkillStore(
-      new FakeRepo() as unknown as Repository<WorkspaceSkillEntity>,
-    );
+    store = new WorkspaceSkillStore(new FakeRepo() as unknown as Repository<WorkspaceSkillEntity>);
     installer = new SkillInstallerService(env, git, creds, store);
   });
 
@@ -242,9 +229,7 @@ describe('SkillInstallerService (real git, local fixture repos)', () => {
     expect(skill.update_policy).toBe('track-ref'); // default when unspecified
 
     const dest = skillDirHost(storeRoot, 'org1', '*', 'my-skill');
-    expect(readFileSync(join(dest, 'SKILL.md'), 'utf8')).toContain(
-      'Use when doing the thing',
-    );
+    expect(readFileSync(join(dest, 'SKILL.md'), 'utf8')).toContain('Use when doing the thing');
     expect(existsSync(join(dest, 'references', 'x.md'))).toBe(true);
 
     // The row is queryable back through the store, same as any other skill.
@@ -353,9 +338,7 @@ describe('SkillInstallerService (real git, local fixture repos)', () => {
         },
       ]);
       // Read-only: nothing landed in the store or the registry.
-      expect(existsSync(skillDirHost(storeRoot, 'org1', '*', 'my-skill'))).toBe(
-        false,
-      );
+      expect(existsSync(skillDirHost(storeRoot, 'org1', '*', 'my-skill'))).toBe(false);
       expect(await store.get('org1', '*', 'my-skill')).toBeNull();
 
       await installer.install({ orgId: 'org1', scope: '*', sourceUrl });
@@ -370,18 +353,15 @@ describe('SkillInstallerService (real git, local fixture repos)', () => {
 
   it('preview() rejects a marketplace-root subpath — the brain install path is single-skill only', async () => {
     const sourceUrl = makeMarketplaceRepo(tmp);
-    await expect(
-      installer.preview({ orgId: 'org1', scope: '*', sourceUrl }),
-    ).rejects.toThrow(/marketplace root/);
+    await expect(installer.preview({ orgId: 'org1', scope: '*', sourceUrl })).rejects.toThrow(
+      /marketplace root/,
+    );
   });
 
   it('re-installing (the update path) re-vendors content and bumps installed_sha on a new commit', async () => {
     const work = join(tmp, 'single-work');
     initRepo(work);
-    writeFileSync(
-      join(work, 'SKILL.md'),
-      '---\nname: my-skill\ndescription: v1\n---\nBody v1.\n',
-    );
+    writeFileSync(join(work, 'SKILL.md'), '---\nname: my-skill\ndescription: v1\n---\nBody v1.\n');
     const sourceUrl = commitAndBare(tmp, work, 'single.git');
     const [first] = await installer.install({
       orgId: 'org1',
@@ -389,10 +369,7 @@ describe('SkillInstallerService (real git, local fixture repos)', () => {
       sourceUrl,
     });
 
-    writeFileSync(
-      join(work, 'SKILL.md'),
-      '---\nname: my-skill\ndescription: v2\n---\nBody v2.\n',
-    );
+    writeFileSync(join(work, 'SKILL.md'), '---\nname: my-skill\ndescription: v2\n---\nBody v2.\n');
     commitAndBare(tmp, work, 'single.git');
     const [second] = await installer.install({
       orgId: 'org1',

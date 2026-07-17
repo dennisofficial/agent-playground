@@ -1,24 +1,15 @@
+import type { EnvService } from '@core/config/env/env.service';
 import { BadRequestException } from '@nestjs/common';
 import type { Response } from 'express';
 import { describe, expect, it, vi } from 'vitest';
-import type { EnvService } from '@core/config/env/env.service';
-import type { CurrentOrgCtx } from '../org/current-org.decorator';
 import type { GitHubAppTokenService } from '../git/github-app-token.service';
+import type { CurrentOrgCtx } from '../org/current-org.decorator';
 import type { OrganizationService } from '../org/organization.service';
 import type { UserEntity } from '../persistence/entities';
-import {
-  GithubAppCallbackController,
-  GithubAppController,
-} from './github-app.controller';
-import type {
-  GithubAppConnectState,
-  GithubAppStateStore,
-} from './github-app-state.store';
+import type { GithubAppConnectState, GithubAppStateStore } from './github-app-state.store';
+import { GithubAppCallbackController, GithubAppController } from './github-app.controller';
 import type { OnboardingService } from './onboarding.service';
-import type {
-  TenantCredentials,
-  TenantCredentialStore,
-} from './tenant-credential.store';
+import type { TenantCredentials, TenantCredentialStore } from './tenant-credential.store';
 
 const ORG: CurrentOrgCtx = { id: 'org-1', role: 'owner' };
 const USER = { id: 'user-1' } as UserEntity;
@@ -34,9 +25,7 @@ function fakeStore(
   return {
     read: vi.fn(async () => overrides.read ?? null),
     write: vi.fn(overrides.write ?? (async () => undefined)),
-    orgsHoldingInstallation: vi.fn(
-      async () => overrides.orgsHoldingInstallation ?? [],
-    ),
+    orgsHoldingInstallation: vi.fn(async () => overrides.orgsHoldingInstallation ?? []),
     presence: vi.fn(async () => ({
       hasAnthropic: false,
       hasOpenai: false,
@@ -81,8 +70,7 @@ function fakeAppTokens(
         id: '999',
         account: { login: 'acme', id: 1, type: 'Organization' },
       })),
-    getInstallationToken:
-      overrides.getInstallationToken ?? vi.fn(async () => 'ghs_minted'),
+    getInstallationToken: overrides.getInstallationToken ?? vi.fn(async () => 'ghs_minted'),
   } as unknown as GitHubAppTokenService & {
     isConfigured: ReturnType<typeof vi.fn>;
     appSlug: ReturnType<typeof vi.fn>;
@@ -103,9 +91,7 @@ function fakeStateStore(
 ) {
   return {
     stash: vi.fn(async () => overrides.stash ?? 'nonce-abc'),
-    consume: vi.fn(
-      overrides.consume ?? (async () => ({ orgId: 'org-1', userId: 'user-1' })),
-    ),
+    consume: vi.fn(overrides.consume ?? (async () => ({ orgId: 'org-1', userId: 'user-1' }))),
   } as unknown as GithubAppStateStore & {
     stash: ReturnType<typeof vi.fn>;
     consume: ReturnType<typeof vi.fn>;
@@ -149,9 +135,7 @@ describe('GithubAppController', () => {
         fakeOnboarding(),
         fakeStateStore(),
       );
-      await expect(controller.installUrl(ORG, USER)).rejects.toBeInstanceOf(
-        BadRequestException,
-      );
+      await expect(controller.installUrl(ORG, USER)).rejects.toBeInstanceOf(BadRequestException);
     });
   });
 
@@ -164,9 +148,9 @@ describe('GithubAppController', () => {
         fakeOnboarding(),
         fakeStateStore(),
       );
-      await expect(
-        controller.setMode(ORG, { mode: 'app' }),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      await expect(controller.setMode(ORG, { mode: 'app' })).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
       expect(store.write).not.toHaveBeenCalled();
     });
 
@@ -195,9 +179,9 @@ describe('GithubAppController', () => {
         fakeOnboarding(),
         fakeStateStore(),
       );
-      await expect(
-        controller.setMode(ORG, { mode: 'pat' }),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      await expect(controller.setMode(ORG, { mode: 'pat' })).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
       expect(store.write).not.toHaveBeenCalled();
     });
 

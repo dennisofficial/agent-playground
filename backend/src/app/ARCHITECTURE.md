@@ -66,7 +66,7 @@ The hierarchy (detail in `CLAUDE.md`):
   denormalized for job-wide queries).
 - **Thread group** (`thread_groups`, real uuid) — a first-class pipeline unit (`thread-group.entity.ts`). A
   job's pipeline is the ordinal-ordered, APPEND-ONLY sequence of its thread groups: `planning → section×N →
-  master_review → post_build → ship`; a heavy post-build amendment APPENDS a fresh `planning(2) → …` round
+master_review → post_build → ship`; a heavy post-build amendment APPENDS a fresh `planning(2) → …` round
   rather than replacing the prior groups, which stay as dormant, visible history. `kind` is a closed,
   code-validated vocabulary (not a DB enum) declared in `thread-group-kind/registry.ts`'s
   `THREAD_GROUP_KIND_SPECS`: `planning | section | master_review | post_build | ship`. `title` is nullable,
@@ -76,7 +76,7 @@ The hierarchy (detail in `CLAUDE.md`):
   gap-numbered (×10) INTERNAL sort key — never shown; the UI derives a per-kind, 1-based **display index**
   (Section 1/2, Leg 1/2) in the read-model mapper (`driver/driver-store.service.ts`).
 - **Thread** (`threads`, real uuid) — ONE Claude Code session, differentiated by `role` (`planner |
-  codex_review | builder | review_agent | review_fix | master_review | post_build | ship`,
+codex_review | builder | review_agent | review_fix | master_review | post_build | ship`,
   `thread-kind/registry.ts`'s `THREAD_KIND_SPECS`), related by `parent_thread_id` (a `builder` is the parent
   of its `review_agent`/`review_fix` siblings; a rotated Leg chains to the prior Leg). **Every thread belongs
   to exactly one thread group** (`threads.thread_group_id` NOT NULL) — even a pure-chat job that never builds
@@ -97,13 +97,13 @@ not mid-build (`thread-group-kind/registry.ts`, `thread-kind/registry.ts`).
 
 **Thread-group kinds** (`THREAD_GROUP_KIND_SPECS`) — the pipeline shape:
 
-| kind            | holds threads (roles)                            | chattable?            | spawn-at                 |
-| --------------- | ------------------------------------------------ | --------------------- | ------------------------ |
-| `planning`      | `planner`, `codex_review`                        | planner ✔ / codex ✘   | `job_start`              |
-| `section`       | `builder` (Legs), `review_agent`, `review_fix`   | builder ✔ / reviews ✘ | `dispatch`               |
-| `master_review` | `master_review`                                  | ✔                     | `after_build_thread_groups` |
-| `post_build`    | `post_build`                                      | ✔                     | `after_master_review`    |
-| `ship`          | `ship`                                            | ✔                     | `after_ship`             |
+| kind            | holds threads (roles)                          | chattable?            | spawn-at                    |
+| --------------- | ---------------------------------------------- | --------------------- | --------------------------- |
+| `planning`      | `planner`, `codex_review`                      | planner ✔ / codex ✘   | `job_start`                 |
+| `section`       | `builder` (Legs), `review_agent`, `review_fix` | builder ✔ / reviews ✘ | `dispatch`                  |
+| `master_review` | `master_review`                                | ✔                     | `after_build_thread_groups` |
+| `post_build`    | `post_build`                                   | ✔                     | `after_master_review`       |
+| `ship`          | `ship`                                         | ✔                     | `after_ship`                |
 
 **Thread roles** (`THREAD_KIND_SPECS`) — the per-session behavior (engine, mode, `operatorInput`). Only
 `codex_review`, `review_agent`, and `review_fix` are non-chattable (`operatorInput: false`); everything else
@@ -220,7 +220,7 @@ scoping ──(planner Writes /context/specs/**)──▶ planning ──review_
   group per declared entry, in order, and seeds Section 1's first Leg (advancing `focused_thread_id`).
 - For each Section: seed builder Leg(s) with rotation; then, for `build_path='plan'`, the Section's
   `review_agent`(s) run and their findings feed a `review_fix` pass.
-- `master_review`* (`*` = plan builds only) runs once over the whole diff after all Sections complete.
+- `master_review`_ (`_` = plan builds only) runs once over the whole diff after all Sections complete.
 - `post_build` is seeded as a fresh session; `jobs.status = ready`; the operator (or the thread) chooses
   ship / preview / amend.
 - `ship` opens the PR and subscribes to host CI/mergeability events; the PR lifecycle drives
@@ -248,7 +248,7 @@ tool-event stream); `planning → plan_reviewing` = `review_plan`; `plan_reviewi
 follow group completion + host PR/CI events.
 
 **`jobs.focused_thread_id`** is the server-authoritative ROUTING pointer the console opens to — distinct from
-*session liveness* (whether a thread currently has a running turn, which is a live runtime signal, never
+_session liveness_ (whether a thread currently has a running turn, which is a live runtime signal, never
 persisted). The URL is `/workspace/:jobId/:threadId`. The host advances focus as the pipeline moves
 (create → planner; approve → Section 1 Leg 1; each newly-active thread → that thread; `ready` → post_build;
 `ship_it` → ship); an operator clicking a thread overrides it (the web setter added in the console rewire).
@@ -302,16 +302,16 @@ a direct build is identical to a normal build (real threads, Legs/rotation allow
 
 ## 11. Inputs & steering surfaces
 
-| Input                        | Route                                                            | Target                                                                     | Status |
-| ---------------------------- | --------------------------------------------------------------- | -------------------------------------------------------------------------- | ------ |
-| Operator message             | `POST …/jobs/:jobId/say`                                         | the addressed thread's session (defaults to `focused_thread_id`)           | ✅     |
-| Plan verdict                 | `POST …/jobs/:jobId/approve`                                     | approval gate → materialize Sections + dispatch on approve                 | ✅     |
-| Answer a question card       | `POST …/jobs/:jobId/answer-question`                            | the asking thread (`answer`)                                               | ✅     |
-| Provide a secret             | `POST …/jobs/:jobId/provide-secret`                             | encrypted store + grant (onboarding)                                       | ✅     |
-| Set focused thread           | the console focus-setter endpoint                               | writes `jobs.focused_thread_id` (operator override of host routing)        | ✅     |
-| Live observability           | `GET …/repos/:repoId/events` (SSE) + `GET /web/jobs/realtime`   | outbound stream (chat + cards + build events; cross-org "needs you")       | ✅     |
-| Automated event              | `POST /webhooks/github/events`                                  | route to the owning job's live thread (`ship` once it exists, else planner), else drop — route-only (§12) | ✅ |
-| Per-thread operator chat     | thread-scoped `/say` (`lane = "thread:<id>"`)                   | the addressed thread — steers a live turn, or (if dormant) wakes + folds guidance into the next turn | ✅ uniform on every chattable role (`operatorInput`) |
+| Input                    | Route                                                         | Target                                                                                                    | Status                                               |
+| ------------------------ | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| Operator message         | `POST …/jobs/:jobId/say`                                      | the addressed thread's session (defaults to `focused_thread_id`)                                          | ✅                                                   |
+| Plan verdict             | `POST …/jobs/:jobId/approve`                                  | approval gate → materialize Sections + dispatch on approve                                                | ✅                                                   |
+| Answer a question card   | `POST …/jobs/:jobId/answer-question`                          | the asking thread (`answer`)                                                                              | ✅                                                   |
+| Provide a secret         | `POST …/jobs/:jobId/provide-secret`                           | encrypted store + grant (onboarding)                                                                      | ✅                                                   |
+| Set focused thread       | the console focus-setter endpoint                             | writes `jobs.focused_thread_id` (operator override of host routing)                                       | ✅                                                   |
+| Live observability       | `GET …/repos/:repoId/events` (SSE) + `GET /web/jobs/realtime` | outbound stream (chat + cards + build events; cross-org "needs you")                                      | ✅                                                   |
+| Automated event          | `POST /webhooks/github/events`                                | route to the owning job's live thread (`ship` once it exists, else planner), else drop — route-only (§12) | ✅                                                   |
+| Per-thread operator chat | thread-scoped `/say` (`lane = "thread:<id>"`)                 | the addressed thread — steers a live turn, or (if dormant) wakes + folds guidance into the next turn      | ✅ uniform on every chattable role (`operatorInput`) |
 
 Every thread supports thread-scoped operator messages; whether a ROLE accepts them is the one boolean
 `operatorInput` in `thread-kind/registry.ts` (ON for `planner`/`builder`/`master_review`/`post_build`/`ship`,
@@ -399,7 +399,7 @@ stays as the ungated completion signal (sets `thread.status = done` + `terminal_
 Everything a repo needs to be a **runnable, correctly-configured workspace** is one named area: the
 **Workspace Profile**. It has seven dimensions, each stored separately but conceived as one thing:
 
-| Dimension            | Storage                                                  | Upkeep tool                                            |
+| Dimension            | Storage                                                 | Upkeep tool                                            |
 | -------------------- | ------------------------------------------------------- | ------------------------------------------------------ |
 | Secret files         | `org_workspace_secret_files`                            | `request_secret` / `request_file` / `derive_secret`    |
 | Mounts               | `org_workspace_mounts`                                  | `write_workspace_config`                               |

@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { DecisionRecord, Job } from '@shared/domain';
-import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
 import { BrainGateway } from '../brain-gateway';
+import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
 import { DriverStoreService } from './driver-store.service';
 import type { ResolvedRepo } from './repo-resolver';
 
@@ -91,8 +91,7 @@ export class BuildShipService {
     // against the branch HEAD is actually on — not the host-named `sandbox.branch` (= feature_branch).
     // `current_branch` is kept fresh by the observation listener; re-read once as a safety net (detached
     // HEAD → null → fall back to the canonical name). Persist so discovery + GitHub-event correlation see it.
-    const observed =
-      job.currentBranch ?? (await this.git.currentBranch(sandbox.worktreePath));
+    const observed = job.currentBranch ?? (await this.git.currentBranch(sandbox.worktreePath));
     const shipBranch = observed ?? sandbox.branch;
     if (observed && observed !== job.currentBranch) {
       await this.store.setCurrentBranch(job.id, observed);
@@ -110,9 +109,7 @@ export class BuildShipService {
       decisionRecordId: job.decisionRecordId ?? null,
     });
     // Advance the routing pointer (d4): ship was dispatched — the ship thread is now the active head.
-    await this.store
-      .setFocusedThread(job.id, ship.threadId)
-      .catch(() => undefined);
+    await this.store.setFocusedThread(job.id, ship.threadId).catch(() => undefined);
     await this.brainGateway.openPrAtShip({
       jobId: job.id,
       orgId: job.orgId,
@@ -156,9 +153,7 @@ export class BuildShipService {
       this.logger.warn(
         `job=${job.id}: no GitHub token — cannot push / open PR. Leaving as running.`,
       );
-      await relay(
-        ':warning: Build complete but no GitHub token is configured — PR not opened.',
-      );
+      await relay(':warning: Build complete but no GitHub token is configured — PR not opened.');
       return { ok: false, reason: 'no-token' };
     }
 

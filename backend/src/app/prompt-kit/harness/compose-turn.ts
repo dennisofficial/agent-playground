@@ -11,8 +11,8 @@
  * `renderTurn` already orders notices → reminders → untrusted → `<user>` (last) and keeps same-kind chunks in
  * input order, so coalesced `<user>` chunks stay chronological and a prefix always renders before the bubble.
  */
-import { agentMessage, fromExternal, type AgentMessage } from '@shared/prompt-kit/message';
 import { renderTurn, type TurnChunk } from '@shared/prompt-kit/harness/tag-vocabulary';
+import { agentMessage, fromExternal, type AgentMessage } from '@shared/prompt-kit/message';
 
 export type ComposeTurnInput = {
   /** system_notice / system_reminder chunks that frame the turn (rendered before the `<user>` bubble). */
@@ -39,10 +39,7 @@ export function composeTurn(input: ComposeTurnInput): AgentMessage {
  * `<user>` rendering; the caller marks the non-hub body via `fromExternal` at the seam. Byte-identical to the old
  * inline `framedPrefix ? `${framedPrefix}\n${body}` : body`.
  */
-export function composeSeedTurn(
-  prefixChunks: TurnChunk[],
-  body: AgentMessage,
-): AgentMessage {
+export function composeSeedTurn(prefixChunks: TurnChunk[], body: AgentMessage): AgentMessage {
   const framedPrefix = renderTurn(prefixChunks);
   return agentMessage(framedPrefix ? `${framedPrefix}\n${body}` : body);
 }
@@ -53,9 +50,6 @@ export function composeSeedTurn(
  * with the engine types), so it crosses the seam via `fromExternal`; the hub owns the fold + mint rather than the
  * caller free-handing an `agentMessage`. Byte-identical to `${notice}\n\n${task}`.
  */
-export function prependNotice(
-  notice: string,
-  task: AgentMessage,
-): AgentMessage {
+export function prependNotice(notice: string, task: AgentMessage): AgentMessage {
   return agentMessage(`${fromExternal(notice)}\n\n${task}`);
 }

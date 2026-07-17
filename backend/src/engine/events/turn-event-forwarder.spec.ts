@@ -1,7 +1,7 @@
-import { Test } from '@nestjs/testing';
 import { EventEmitterModule } from '@nestjs/event-emitter';
-import { describe, expect, it, vi } from 'vitest';
+import { Test } from '@nestjs/testing';
 import type { EngineEvent } from '@shared/engine/engine.types';
+import { describe, expect, it, vi } from 'vitest';
 import { TurnTransport } from '../transport/turn-transport.service';
 import { EngineEventBus } from './engine-events';
 import { TurnEventForwarder } from './turn-event-forwarder';

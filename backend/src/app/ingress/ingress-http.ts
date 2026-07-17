@@ -12,13 +12,13 @@ import type {
   NotificationSource,
   RawNotification,
 } from '@shared/domain';
-import type { IntakeOutcome, StimulusIntake } from '../stimulus';
 import type {
   BaseMoveMergeabilitySync,
   GithubCiStateSync,
   GithubPrStateSync,
   GitStateReconciler,
 } from '../driver';
+import type { IntakeOutcome, StimulusIntake } from '../stimulus';
 import type { GithubNotificationSource } from './github-notification.source';
 
 /** Express request shape the ingress controllers read (rawBody enabled on the Nest app). */
@@ -46,11 +46,7 @@ export function toRawNotification(req: RawBodyRequest): RawNotification {
     // is present because the Atlas HTTP app is created with `rawBody: true`.
     rawBody:
       req.rawBody ??
-      Buffer.from(
-        typeof req.body === 'string'
-          ? req.body
-          : JSON.stringify(req.body ?? {}),
-      ),
+      Buffer.from(typeof req.body === 'string' ? req.body : JSON.stringify(req.body ?? {})),
     headers: normalizeHeaders(req.headers),
     body: req.body,
   };
@@ -95,15 +91,11 @@ export async function mapTriageToHttp(
   result: IngressResult,
 ): Promise<Record<string, unknown>> {
   if (result.outcome === 'rejected') {
-    logger.warn(
-      `${adapter.source} rejected (${result.reason}): ${result.detail ?? ''}`,
-    );
+    logger.warn(`${adapter.source} rejected (${result.reason}): ${result.detail ?? ''}`);
     throw rejectionToHttp(result.reason, result.detail);
   }
   if (result.outcome === 'ignored') {
-    logger.debug(
-      `${adapter.source} ignored (${result.reason}): ${result.detail ?? ''}`,
-    );
+    logger.debug(`${adapter.source} ignored (${result.reason}): ${result.detail ?? ''}`);
     return { status: 'ignored', reason: result.reason };
   }
   if (result.outcome !== 'accepted') {
@@ -140,9 +132,7 @@ export async function runWorkEvent(
   reconciler: GitStateReconciler,
   req: RawBodyRequest,
 ): Promise<Record<string, unknown>> {
-  const { triage, ci, rearm } = await adapter.handleWorkEvent(
-    toRawNotification(req),
-  );
+  const { triage, ci, rearm } = await adapter.handleWorkEvent(toRawNotification(req));
   if (ci) ciSync.schedule(ci); // fire-and-forget, debounced — never blocks the 202 or the triage path
   if (rearm) {
     await reconciler.markJobDue(rearm.orgId, rearm.repoId, {
@@ -171,20 +161,14 @@ export async function runPrWebhook(
   reconciler: GitStateReconciler,
   baseMove: BaseMoveMergeabilitySync,
 ): Promise<Record<string, unknown>> {
-  const result: IngressResult = await adapter.handlePrWebhook(
-    toRawNotification(req),
-  );
+  const result: IngressResult = await adapter.handlePrWebhook(toRawNotification(req));
 
   if (result.outcome === 'rejected') {
-    logger.warn(
-      `${adapter.source} rejected (${result.reason}): ${result.detail ?? ''}`,
-    );
+    logger.warn(`${adapter.source} rejected (${result.reason}): ${result.detail ?? ''}`);
     throw rejectionToHttp(result.reason, result.detail);
   }
   if (result.outcome === 'ignored') {
-    logger.debug(
-      `${adapter.source} ignored (${result.reason}): ${result.detail ?? ''}`,
-    );
+    logger.debug(`${adapter.source} ignored (${result.reason}): ${result.detail ?? ''}`);
     return { status: 'ignored', reason: result.reason };
   }
   if (result.outcome === 'pr-sync') {
@@ -206,20 +190,13 @@ export async function runPrWebhook(
   return { status: 'ignored', reason: 'unsupported' };
 }
 
-function rejectionToHttp(
-  reason: IngressRejectionReason,
-  detail?: string,
-): HttpException {
+function rejectionToHttp(reason: IngressRejectionReason, detail?: string): HttpException {
   switch (reason) {
     case 'bad-signature':
     case 'unverifiable':
-      return new UnauthorizedException(
-        detail ?? 'signature verification failed',
-      );
+      return new UnauthorizedException(detail ?? 'signature verification failed');
     case 'unroutable':
-      return new NotFoundException(
-        detail ?? 'no project routes this notification',
-      );
+      return new NotFoundException(detail ?? 'no project routes this notification');
     case 'malformed':
       return new BadRequestException(detail ?? 'malformed payload');
     case 'unsupported':

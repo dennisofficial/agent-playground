@@ -1,10 +1,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import {
-  isExternalMountPath,
-  isReservedMountPath,
-} from '../sandbox/container-paths';
 import type { MountMode, MountSpec } from '../sandbox/container-paths';
+import { isExternalMountPath, isReservedMountPath } from '../sandbox/container-paths';
 
 /**
  * The shape of a legacy committed `atlas.json` (repo root) or its predecessor `.atlas/worktree.json`.
@@ -43,9 +40,7 @@ const EMPTY: WorktreeManifest = { mounts: [] };
  */
 export function loadLegacyManifestFile(worktreePath: string): LoadedManifest {
   const current = join(worktreePath, MANIFEST_REL);
-  const file = existsSync(current)
-    ? current
-    : join(worktreePath, LEGACY_MANIFEST_REL);
+  const file = existsSync(current) ? current : join(worktreePath, LEGACY_MANIFEST_REL);
   if (!existsSync(file)) return { manifest: EMPTY, warnings: [] };
 
   const warnings: string[] = [];
@@ -53,9 +48,7 @@ export function loadLegacyManifestFile(worktreePath: string): LoadedManifest {
     if (statSync(file).size > MAX_BYTES) {
       return {
         manifest: EMPTY,
-        warnings: [
-          `legacy worktree manifest exceeds ${MAX_BYTES} bytes — ignored`,
-        ],
+        warnings: [`legacy worktree manifest exceeds ${MAX_BYTES} bytes — ignored`],
       };
     }
     const raw = JSON.parse(readFileSync(file, 'utf8')) as unknown;
@@ -72,9 +65,7 @@ export function loadLegacyManifestFile(worktreePath: string): LoadedManifest {
   } catch (err) {
     return {
       manifest: EMPTY,
-      warnings: [
-        `legacy worktree manifest is unreadable: ${(err as Error).message}`,
-      ],
+      warnings: [`legacy worktree manifest is unreadable: ${(err as Error).message}`],
     };
   }
 }
@@ -82,15 +73,11 @@ export function loadLegacyManifestFile(worktreePath: string): LoadedManifest {
 function asArray(v: unknown, label: string, warnings: string[]): unknown[] {
   if (v === undefined) return [];
   if (!Array.isArray(v)) {
-    warnings.push(
-      `legacy worktree manifest "${label}" is not an array — ignored`,
-    );
+    warnings.push(`legacy worktree manifest "${label}" is not an array — ignored`);
     return [];
   }
   if (v.length > MAX_ENTRIES) {
-    warnings.push(
-      `legacy worktree manifest "${label}" exceeds ${MAX_ENTRIES} entries — truncated`,
-    );
+    warnings.push(`legacy worktree manifest "${label}" exceeds ${MAX_ENTRIES} entries — truncated`);
     return v.slice(0, MAX_ENTRIES);
   }
   return v;
@@ -100,11 +87,7 @@ function validPath(p: unknown): p is string {
   return typeof p === 'string' && p.length > 0 && p.length <= MAX_PATH_LEN;
 }
 
-const MOUNT_MODES: readonly MountMode[] = [
-  'per-thread',
-  'shared-ro',
-  'shared-rw',
-];
+const MOUNT_MODES: readonly MountMode[] = ['per-thread', 'shared-ro', 'shared-rw'];
 
 function parseMounts(v: unknown, warnings: string[]): MountSpec[] {
   const out: MountSpec[] = [];

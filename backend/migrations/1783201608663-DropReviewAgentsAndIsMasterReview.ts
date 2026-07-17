@@ -14,12 +14,8 @@ export class DropReviewAgentsAndIsMasterReview1783201608663 implements Migration
   name = 'DropReviewAgentsAndIsMasterReview1783201608663';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `ALTER TABLE "threads" DROP COLUMN "review_agents"`,
-    );
-    await queryRunner.query(
-      `ALTER TABLE "threads" DROP COLUMN "is_master_review"`,
-    );
+    await queryRunner.query(`ALTER TABLE "threads" DROP COLUMN "review_agents"`);
+    await queryRunner.query(`ALTER TABLE "threads" DROP COLUMN "is_master_review"`);
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {

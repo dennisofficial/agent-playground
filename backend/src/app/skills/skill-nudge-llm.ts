@@ -1,15 +1,8 @@
 import { ChatAnthropic } from '@langchain/anthropic';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { SystemMessage } from '@langchain/core/messages';
-import {
-  ChatPromptTemplate,
-  HumanMessagePromptTemplate,
-} from '@langchain/core/prompts';
-import {
-  RunnableLambda,
-  RunnableSequence,
-  type Runnable,
-} from '@langchain/core/runnables';
+import { ChatPromptTemplate, HumanMessagePromptTemplate } from '@langchain/core/prompts';
+import { RunnableLambda, RunnableSequence, type Runnable } from '@langchain/core/runnables';
 import { z } from 'zod';
 import { fence, fenceOrNone } from '../prompt-fence';
 
@@ -58,11 +51,7 @@ export namespace SelectSkillNudgeChain {
     relevant: z.array(
       z.object({
         name: z.string(),
-        reason: z
-          .string()
-          .describe(
-            'One short line explaining why the skill directly applies.',
-          ),
+        reason: z.string().describe('One short line explaining why the skill directly applies.'),
       }),
     ),
   });
@@ -128,10 +117,7 @@ export class AnthropicSkillNudgeSelector implements SkillNudgeSelector {
 
   private async chain(
     orgId?: string,
-  ): Promise<
-    | Runnable<SelectSkillNudgeChain.Input, SelectSkillNudgeChain.Output>
-    | undefined
-  > {
+  ): Promise<Runnable<SelectSkillNudgeChain.Input, SelectSkillNudgeChain.Output> | undefined> {
     const key = await this.apiKey(orgId);
     if (!key) return undefined;
     let c = this.chains.get(key);

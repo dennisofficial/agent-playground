@@ -32,10 +32,7 @@ function renderCell(value: unknown): string {
 
 function needsQuoting(cell: string, delimiter: string): boolean {
   return (
-    cell.includes(delimiter) ||
-    cell.includes('"') ||
-    cell.includes('\r') ||
-    cell.includes('\n')
+    cell.includes(delimiter) || cell.includes('"') || cell.includes('\r') || cell.includes('\n')
   );
 }
 
@@ -44,25 +41,17 @@ function quoteCell(cell: string, delimiter: string): string {
   return `"${cell.replace(/"/g, '""')}"`;
 }
 
-function renderDelimited(
-  rows: Record<string, unknown>[],
-  delimiter: string,
-): string {
+function renderDelimited(rows: Record<string, unknown>[], delimiter: string): string {
   const columns = columnsOf(rows);
   const header = columns.map((c) => quoteCell(c, delimiter)).join(delimiter);
   const lines = rows.map((row) =>
-    columns
-      .map((col) => quoteCell(renderCell(row[col]), delimiter))
-      .join(delimiter),
+    columns.map((col) => quoteCell(renderCell(row[col]), delimiter)).join(delimiter),
   );
   return [header, ...lines].join('\n');
 }
 
 /** Render a row set into one of the line-delimited formats (one row per line). */
-export function renderRows(
-  rows: Record<string, unknown>[],
-  format: QueryFormat,
-): string {
+export function renderRows(rows: Record<string, unknown>[], format: QueryFormat): string {
   switch (format) {
     case 'jsonl':
       return rows.map((r) => JSON.stringify(r)).join('\n');

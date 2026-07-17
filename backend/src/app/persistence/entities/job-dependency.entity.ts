@@ -1,3 +1,4 @@
+import { TimestampedEntity } from '@workspace/shared/schemas';
 import {
   Column,
   Entity,
@@ -7,10 +8,9 @@ import {
   PrimaryGeneratedColumn,
   Unique,
 } from 'typeorm';
-import { TimestampedEntity } from '@workspace/shared/schemas';
+import { JobEntity } from './job.entity';
 import { OrganizationEntity } from './organization.entity';
 import { RepoEntity } from './repo.entity';
-import { JobEntity } from './job.entity';
 
 /**
  * A job dependency edge — "`job_id` is blocked by `depends_on_job_id`". ADVISORY only: it

@@ -4,15 +4,15 @@
  * an isolated agent home. No roles, no effort knob, no AskUserQuestion relay, no skills/MCP — those
  * v1 concepts are dropped (engines run vanilla). Zero v1 imports.
  */
-import type { SessionEngine, SessionMode } from '../domain';
-import type { AgentMessage } from '../prompt-kit/message';
-import type { EngineHomeKey } from './engine-home';
 import type {
   EngineAuth,
   EngineEvent,
   EngineRunResult,
   ReasoningEffort,
 } from '@workspace/agent-engine';
+import type { SessionEngine, SessionMode } from '../domain';
+import type { AgentMessage } from '../prompt-kit/message';
+import type { EngineHomeKey } from './engine-home';
 
 // The vendor-agnostic engine leaf types (EngineEvent, EngineUsage, EngineRunResult, EngineAuth,
 // ReasoningEffort, the context-limit helpers, the error classes/markers, SessionLimitHit, EngineHomeKey,
@@ -436,10 +436,7 @@ export interface RunEngineArgs {
    * install-awareness PostToolUse hook uses it to reach the reserved `__profile_awareness` host tool.
    * Host-only closure — NEVER serialized into the turn spec.
    */
-  bridgeCall?: (
-    name: string,
-    args: Record<string, unknown>,
-  ) => Promise<unknown>;
+  bridgeCall?: (name: string, args: Record<string, unknown>) => Promise<unknown>;
   /**
    * Optional registry context for a RESTART-SURVIVABLE Redis-transport turn. When set (and
    * `ENGINE_TRANSPORT=redis`), the runner records an `active_turns` row so a fresh backend can
@@ -483,18 +480,11 @@ type HostOnlyArgKey =
   | 'turnMeta'
   | 'liveRoute';
 /** Fields TRANSFORMED at the boundary (mapped to container-space by `buildSpec`, not copied verbatim). */
-type TransformedArgKey =
-  | 'cwd'
-  | 'writableRoots'
-  | 'auth'
-  | 'persistAuthRefresh';
+type TransformedArgKey = 'cwd' | 'writableRoots' | 'auth' | 'persistAuthRefresh';
 /** Everything else is copied VERBATIM. Derived from `keyof RunEngineArgs` — this is the load-bearing line:
  *  a NEW field lands here automatically, and the exhaustiveness check below then fails until it is either
  *  forwarded (added to {@link SPEC_VERBATIM_KEYS}) or classified (added to HostOnly/Transformed above). */
-export type SpecVerbatimKey = Exclude<
-  keyof RunEngineArgs,
-  HostOnlyArgKey | TransformedArgKey
->;
+export type SpecVerbatimKey = Exclude<keyof RunEngineArgs, HostOnlyArgKey | TransformedArgKey>;
 
 /** The verbatim fields copied host→container. `satisfies` rejects a misclassified/typo'd key; the
  *  `_SPEC_VERBATIM_KEYS_EXHAUSTIVE` check below rejects a MISSING one. Together ⇒ exact coverage. */
@@ -524,10 +514,7 @@ const _SPEC_VERBATIM_KEYS_EXHAUSTIVE: [
 ] extends [never]
   ? true
   : {
-      ADD_TO_SPEC_VERBATIM_KEYS: Exclude<
-        SpecVerbatimKey,
-        (typeof SPEC_VERBATIM_KEYS)[number]
-      >;
+      ADD_TO_SPEC_VERBATIM_KEYS: Exclude<SpecVerbatimKey, (typeof SPEC_VERBATIM_KEYS)[number]>;
     } = true;
 void _SPEC_VERBATIM_KEYS_EXHAUSTIVE;
 
@@ -556,10 +543,7 @@ export interface TurnSpec extends Pick<RunEngineArgs, SpecVerbatimKey> {
 
 /** Copy exactly `keys` from `obj` (typed). Used to forward verbatim wire fields without hand-listing spreads;
  *  `undefined` values are harmless (JSON serialization drops them, and absent ≡ undefined for the engine). */
-export function pickKeys<T, K extends readonly (keyof T)[]>(
-  obj: T,
-  keys: K,
-): Pick<T, K[number]> {
+export function pickKeys<T, K extends readonly (keyof T)[]>(obj: T, keys: K): Pick<T, K[number]> {
   const out = {} as Pick<T, K[number]>;
   for (const k of keys) out[k] = obj[k];
   return out;
@@ -573,14 +557,7 @@ export interface TurnMeta {
   channel: string;
   /** Transcript lane: 'main' (brain) | 'thread:<threadId>' (a build thread) | 'codex-review:<jobId>'. */
   lane: string;
-  kind:
-    | 'brain'
-    | 'step'
-    | 'review'
-    | 'gate'
-    | 'autofix'
-    | 'compaction'
-    | 'rotation';
+  kind: 'brain' | 'step' | 'review' | 'gate' | 'autofix' | 'compaction' | 'rotation';
   /** Per-kind params needed to rebuild the turn on re-attach (author, prompt, route, timeouts, …). */
   ctx?: Record<string, unknown>;
 }

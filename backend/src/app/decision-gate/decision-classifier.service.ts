@@ -41,8 +41,7 @@ export class DecisionClassifier {
     record: ClassifierRecord,
     orgId?: string,
   ): Promise<DecisionClassification> {
-    const text =
-      `${proposed.description}\n${proposed.context ?? ''}`.toLowerCase();
+    const text = `${proposed.description}\n${proposed.context ?? ''}`.toLowerCase();
 
     // ── 1. Deterministic always-ask detection ───────────────────────────────────────────────────
     // Each class has a keyword signature; the FIRST that hits decides the touched class.
@@ -73,8 +72,7 @@ export class DecisionClassifier {
     if (NEVER_ASK_RE.test(text)) {
       return {
         verdict: 'proceed',
-        reason:
-          'Internal structure / naming / file placement / test layout — never-ask.',
+        reason: 'Internal structure / naming / file placement / test layout — never-ask.',
         via: 'rule',
       };
     }
@@ -133,8 +131,7 @@ const CLASS_LABELS: Record<DecisionClass, string> = {
   api_contract: 'public / cross-service API contract',
   dependency: 'new dependency / library / service',
   infrastructure: 'infrastructure / topology',
-  cross_cutting:
-    'cross-cutting pattern (auth/caching/state/concurrency/error-handling)',
+  cross_cutting: 'cross-cutting pattern (auth/caching/state/concurrency/error-handling)',
   one_way_door: 'one-way door (irreversible)',
 };
 
@@ -183,10 +180,7 @@ function detectAlwaysAskClass(text: string): DecisionClass | undefined {
 }
 
 /** A locked decision of class `cls`, if the record has one. */
-function findCovering(
-  decisions: Decision[],
-  cls: DecisionClass,
-): Decision | undefined {
+function findCovering(decisions: Decision[], cls: DecisionClass): Decision | undefined {
   return decisions.find((d) => d.decisionClass === cls);
 }
 

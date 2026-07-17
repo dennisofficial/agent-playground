@@ -3,12 +3,12 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity } from '../persistence/entities';
-import { WebSurface } from './web-surface';
 import {
   JOB_TITLE_CHAIN,
   type JobTitleChainFactory,
   sanitizeTitle,
 } from '../titling/job-title.chain';
+import { WebSurface } from './web-surface';
 
 /**
  * Generates a concise title for a thread from its first message and applies it live. Runs fire-and-forget
@@ -29,10 +29,7 @@ export class JobTitleService {
   ) {}
 
   /** Generate a title from a message, or `undefined` when no Anthropic key resolves / the model errors. */
-  async generate(input: {
-    message: string;
-    orgId?: string;
-  }): Promise<string | undefined> {
+  async generate(input: { message: string; orgId?: string }): Promise<string | undefined> {
     const chain = await this.chainFor(input.orgId);
     if (!chain) return undefined;
     const raw = await chain.invoke({ message: input.message.slice(0, 4000) });

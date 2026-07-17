@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
 import type { EnvService } from '@core/config/env/env.service';
+import { describe, expect, it } from 'vitest';
 import { AppVersionService } from './app-version.service';
 
 function envMock(GIT_SHA: string | undefined): EnvService {

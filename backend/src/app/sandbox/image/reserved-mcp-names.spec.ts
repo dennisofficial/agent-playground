@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  RESERVED_MCP_SERVER_NAMES,
-  isReservedMcpName,
-} from './reserved-mcp-names';
+import { RESERVED_MCP_SERVER_NAMES, isReservedMcpName } from './reserved-mcp-names';
 
 describe('reserved-mcp-names', () => {
   it('reserves both host bridges, the Codex bridge, and the system-tier servers', () => {

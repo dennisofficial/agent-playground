@@ -5,13 +5,9 @@
  * TOPIC bucket: orientation / doing-the-work.
  */
 import { Agent, ENGINEERING_STAGES } from '../agent';
-import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isOnboarding, notOnboarding } from '../conditions';
-import {
-  DOCS_BEFORE_GREP,
-  SUBAGENT_NUDGE_NOTE,
-  VERIFY_CURRENCY,
-} from '../fragments';
+import { Fragment, FragmentGroup } from '../fragment.decorator';
+import { DOCS_BEFORE_GREP, SUBAGENT_NUDGE_NOTE, VERIFY_CURRENCY } from '../fragments';
 
 @FragmentGroup()
 export class OrientationGroup {

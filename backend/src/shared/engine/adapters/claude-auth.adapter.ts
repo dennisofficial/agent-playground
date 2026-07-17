@@ -1,28 +1,21 @@
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { applyClaudeAuth } from '../claude-auth';
-import { atlasEngineHomeDir, type EngineHomeKey } from '../engine-home';
-import type { EngineAuthAdapter } from '../engine-auth-adapter';
 import { isNewerClaudeCredential } from '../../onboarding/claude-credential-freshness';
+import { applyClaudeAuth } from '../claude-auth';
+import type { EngineAuthAdapter } from '../engine-auth-adapter';
+import { atlasEngineHomeDir, type EngineHomeKey } from '../engine-home';
 
 const CREDENTIALS_FILENAME = '.credentials.json';
 
-function credentialsFile(
-  homeRoot: string | undefined,
-  key: EngineHomeKey,
-): string {
-  return join(
-    atlasEngineHomeDir(homeRoot, 'claude', key),
-    CREDENTIALS_FILENAME,
-  );
+function credentialsFile(homeRoot: string | undefined, key: EngineHomeKey): string {
+  return join(atlasEngineHomeDir(homeRoot, 'claude', key), CREDENTIALS_FILENAME);
 }
 
 function validate(secret: string): void {
   let accessToken: unknown;
   try {
-    accessToken = (
-      JSON.parse(secret) as { claudeAiOauth?: { accessToken?: unknown } }
-    ).claudeAiOauth?.accessToken;
+    accessToken = (JSON.parse(secret) as { claudeAiOauth?: { accessToken?: unknown } })
+      .claudeAiOauth?.accessToken;
   } catch {
     throw new Error(
       'Claude personal credential is invalid: not valid JSON (expected {claudeAiOauth:{accessToken,...}}).',

@@ -28,9 +28,7 @@ export class AddProdMaintenanceWrite1784020000000 implements MigrationInterface 
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `DROP INDEX "public"."idx_prod_maintenance_write_job_id_status"`,
-    );
+    await queryRunner.query(`DROP INDEX "public"."idx_prod_maintenance_write_job_id_status"`);
     await queryRunner.query(`DROP TABLE "prod_maintenance_write"`);
   }
 }

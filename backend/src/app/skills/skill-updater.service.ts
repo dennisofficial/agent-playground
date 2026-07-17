@@ -43,9 +43,7 @@ const SKILL_UPDATER_INTERVAL = 'skills:skill-updater';
  * assumed — see the P2 handoff summary.
  */
 @Injectable()
-export class SkillUpdaterService
-  implements OnApplicationBootstrap, OnApplicationShutdown
-{
+export class SkillUpdaterService implements OnApplicationBootstrap, OnApplicationShutdown {
   private readonly logger = new Logger(SkillUpdaterService.name);
   private promoteSub?: { unsubscribe(): void };
   private demoteSub?: { unsubscribe(): void };
@@ -82,10 +80,7 @@ export class SkillUpdaterService
     if (!this.scheduler) return;
     if (this.scheduler.doesExist('interval', SKILL_UPDATER_INTERVAL)) return;
     void this.reconcileAll(); // boot/promotion sweep
-    const iv = setInterval(
-      () => void this.reconcileAll(),
-      RECONCILE_INTERVAL_MS,
-    );
+    const iv = setInterval(() => void this.reconcileAll(), RECONCILE_INTERVAL_MS);
     iv.unref?.(); // never keep the process alive (SchedulerRegistry does not unref for us)
     this.scheduler.addInterval(SKILL_UPDATER_INTERVAL, iv);
     this.logger.log('skill updater started (leader)');
@@ -129,9 +124,7 @@ export class SkillUpdaterService
           ),
         ),
       )
-      .catch((err) =>
-        this.logger.warn(`update-check failed org=${orgId}: ${err}`),
-      );
+      .catch((err) => this.logger.warn(`update-check failed org=${orgId}: ${err}`));
   }
 
   /** Apply-now for one row, regardless of `update_policy` — the console's "update" button / API endpoint. */

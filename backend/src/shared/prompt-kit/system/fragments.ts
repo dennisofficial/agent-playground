@@ -147,9 +147,7 @@ export type RunningServiceInfo = {
  * of restarting them. The driver probes the live supervisor state and maps it to {@link RunningServiceInfo};
  * this renders the prose. Returns '' for an empty list so the caller can omit the block entirely.
  */
-export function renderRunningServicesNote(
-  services: RunningServiceInfo[],
-): string {
+export function renderRunningServicesNote(services: RunningServiceInfo[]): string {
   if (services.length === 0) return '';
   const lines = services.map((s) => {
     const port = s.port != null ? ` — port ${s.port}` : '';
@@ -503,9 +501,7 @@ const PREVIEW_RECIPE_NONE = '(no preview recipe saved yet)';
 
 /** The fenced-markdown rendering of a recipe body, shared by the operator seed and the build-lane view. */
 export function fencedRecipe(recipeBody: string): string {
-  return (
-    '```md\n' + recipeBody + (recipeBody.endsWith('\n') ? '' : '\n') + '```'
-  );
+  return '```md\n' + recipeBody + (recipeBody.endsWith('\n') ? '' : '\n') + '```';
 }
 
 /** The one rule that keeps the recipe reusable: it is REPO-scoped, job-agnostic memory, not a log of this
@@ -544,9 +540,7 @@ export function composePreviewPrepSeed(instructions: string | null): string {
 
 /** Build-lane READ-ONLY view of the saved recipe (the brain owns writes). '' when none, so a gating
  *  fragment drops entirely. Same fenced formatting as the operator seed. */
-export function renderBuildLanePreviewRecipe(
-  instructions: string | null,
-): string {
+export function renderBuildLanePreviewRecipe(instructions: string | null): string {
   const recipe = instructions?.trim() ? instructions : null;
   if (!recipe) return '';
   return [

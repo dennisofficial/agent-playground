@@ -22,12 +22,7 @@ export class ClaudeOAuthPkceStore {
 
   /** Stash `verifier` for `(orgId, state)`, expiring after {@link PKCE_TTL_SECONDS}. */
   async stash(orgId: string, state: string, verifier: string): Promise<void> {
-    await this.redis.set(
-      pkceKey(orgId, state),
-      verifier,
-      'EX',
-      PKCE_TTL_SECONDS,
-    );
+    await this.redis.set(pkceKey(orgId, state), verifier, 'EX', PKCE_TTL_SECONDS);
   }
 
   /** Read + delete the verifier for `(orgId, state)` — single-use. Null when absent/expired/already consumed. */

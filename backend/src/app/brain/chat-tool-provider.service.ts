@@ -1,49 +1,44 @@
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import type { Decision, TurnEnvelope } from '@shared/domain';
+import type { ToolImpl } from '@shared/engine/engine.types';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
-import type { Decision, TurnEnvelope } from '@shared/domain';
-import type { ToolImpl } from '@shared/engine/engine.types';
-import {
-  type McpProposalServer,
-  type WebQuestionCard,
-  webConventionProposalCard,
-  webConventionEditProposalCard,
-  webMcpProposalCard,
-  webSkillEditAccessCard,
-  webSkillProposalCard,
-} from '../surface';
+import { ConventionProfileResolver } from '../conventions';
+import { BuildShipService } from '../driver/build-ship.service';
+import { JobLifecycleService } from '../driver/job-lifecycle.service';
+import { DRIVER_REPO, type DriverRepoResolver } from '../driver/repo-resolver';
+import { LocalGitService } from '../git';
+import { McpServerStore } from '../mcp';
+import { WorkspaceConfigStore, WorkspaceSecretFileStore } from '../onboarding';
 import type {
   McpAuthKind,
   McpOAuthTokenAuthMethod,
   McpSurface,
   StoredMcpOAuthConfig,
 } from '../persistence/entities';
-import { JobLifecycleService } from '../driver/job-lifecycle.service';
-import { BuildShipService } from '../driver/build-ship.service';
 import { shipOpenPrBody } from '../prompt-kit';
-import { WorkspaceConfigStore, WorkspaceSecretFileStore } from '../onboarding';
-import { McpServerStore } from '../mcp';
-import { ConventionProfileResolver } from '../conventions';
-import {
-  SkillFileWriter,
-  SkillInstallerService,
-  WorkspaceSkillStore,
-} from '../skills';
-import { detectRepoManifests } from '../workspace-profile';
 import { normalizeMounts } from '../sandbox/container-paths';
-import { LocalGitService } from '../git';
 import { isReservedMcpName } from '../sandbox/image/reserved-mcp-names';
-import { renderDecisionRecordMd } from './decision-record-md';
+import { SkillFileWriter, SkillInstallerService, WorkspaceSkillStore } from '../skills';
+import {
+  type McpProposalServer,
+  type WebQuestionCard,
+  webConventionEditProposalCard,
+  webConventionProposalCard,
+  webMcpProposalCard,
+  webSkillEditAccessCard,
+  webSkillProposalCard,
+} from '../surface';
+import { detectRepoManifests } from '../workspace-profile';
 import { BrainStoreService } from './brain-store.service';
+import { renderDecisionRecordMd } from './decision-record-md';
 import { SelfSufficiencyToolsService } from './self-sufficiency-tools.service';
-import { DRIVER_REPO, type DriverRepoResolver } from '../driver/repo-resolver';
 
 /** A safe, short error message for a tool's `{ ok:false, reason }` (surfaces validation/404 cleanly). */
 function errText(err: unknown): string {
-  if (err && typeof err === 'object' && 'message' in err)
-    return String(err.message).slice(0, 200);
+  if (err && typeof err === 'object' && 'message' in err) return String(err.message).slice(0, 200);
   return String(err).slice(0, 200);
 }
 
@@ -181,8 +176,7 @@ export class ChatToolProvider {
       if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
         return {
           ok: false,
-          reason:
-            'name must be an env-var-style identifier (e.g. STRIPE_WEBHOOK_SECRET)',
+          reason: 'name must be an env-var-style identifier (e.g. STRIPE_WEBHOOK_SECRET)',
         };
       }
       if (!path || path.startsWith('/') || path.split('/').includes('..')) {
@@ -202,15 +196,10 @@ export class ChatToolProvider {
       if (!description) {
         return {
           ok: false,
-          reason:
-            'description is required (what this value is and how you derived it)',
+          reason: 'description is required (what this value is and how you derived it)',
         };
       }
-      const existing = await this.secretStore.read(
-        stimulus.orgId,
-        stimulus.repoId,
-        path,
-      );
+      const existing = await this.secretStore.read(stimulus.orgId, stimulus.repoId, path);
       if (existing != null && !overwrite) {
         return {
           ok: false,
@@ -221,13 +210,7 @@ export class ChatToolProvider {
       }
       // A single write IS the value + the authority: (repo, path) is the file's identity; `name` rides
       // along as the display label. Renders on your next hydration and every future job's.
-      await this.secretStore.write(
-        stimulus.orgId,
-        stimulus.repoId,
-        path,
-        value,
-        name,
-      );
+      await this.secretStore.write(stimulus.orgId, stimulus.repoId, path, value, name);
       await this.store.appendSystemEvent(
         stimulus.jobId,
         `🔑 Derived and stored \`${name}\` (${description}) — future jobs on this repo won't need to re-derive it.`,
@@ -251,8 +234,7 @@ export class ChatToolProvider {
       if (args['secrets'] !== undefined) {
         return {
           ok: false,
-          reason:
-            'secrets do not go in workspace config — use request_secret instead',
+          reason: 'secrets do not go in workspace config — use request_secret instead',
         };
       }
       const { mounts: newMounts, warnings } = normalizeMounts(args['mounts']);
@@ -264,25 +246,15 @@ export class ChatToolProvider {
         // mount fingerprint, so its NEXT attach recreates the container (binds only apply at create time).
         // We warn about that so the brain configures mounts BEFORE starting long-running processes — adding a
         // mount mid-login was what silently killed the gcloud process + wiped its `.gcloud` dir.
-        const priorMountSig = (
-          await this.configStore.listMounts(stimulus.orgId, stimulus.repoId)
-        )
+        const priorMountSig = (await this.configStore.listMounts(stimulus.orgId, stimulus.repoId))
           .map((m) => `${m.path}:${m.mode}`)
           .sort()
           .join(',');
         for (const m of newMounts) {
-          await this.configStore.upsertMount(
-            stimulus.orgId,
-            stimulus.repoId,
-            m.path,
-            m.mode,
-          );
+          await this.configStore.upsertMount(stimulus.orgId, stimulus.repoId, m.path, m.mode);
         }
 
-        const mounts = await this.configStore.listMounts(
-          stimulus.orgId,
-          stimulus.repoId,
-        );
+        const mounts = await this.configStore.listMounts(stimulus.orgId, stimulus.repoId);
         const mountSetChanged =
           mounts
             .map((m) => `${m.path}:${m.mode}`)
@@ -320,28 +292,15 @@ export class ChatToolProvider {
    */
   buildWriteSetupScriptTool(stimulus: TurnEnvelope): ToolImpl {
     return async (args) => {
-      const script = String(args['script'] ?? '').trim()
-        ? String(args['script'])
-        : null;
+      const script = String(args['script'] ?? '').trim() ? String(args['script']) : null;
       try {
-        await this.configStore.setSetupScript(
-          stimulus.orgId,
-          stimulus.repoId,
-          script,
-        );
+        await this.configStore.setSetupScript(stimulus.orgId, stimulus.repoId, script);
         // Recording a setup script is an "I've addressed the stack" moment — acknowledge the worktree's
         // current dependency manifests so a manifest already present stops reading as a NEW stack.
         if (script) {
-          const sandbox = await this.lifecycle.findSandbox(
-            stimulus.jobId,
-            stimulus.orgId,
-          );
+          const sandbox = await this.lifecycle.findSandbox(stimulus.jobId, stimulus.orgId);
           if (sandbox)
-            await this.refreshSeenManifests(
-              stimulus.orgId,
-              stimulus.repoId,
-              sandbox.worktreePath,
-            );
+            await this.refreshSeenManifests(stimulus.orgId, stimulus.repoId, sandbox.worktreePath);
         }
         await this.store.appendSystemEvent(
           stimulus.jobId,
@@ -369,10 +328,7 @@ export class ChatToolProvider {
   buildReadSetupScriptTool(stimulus: TurnEnvelope): ToolImpl {
     return async () => {
       try {
-        const script = await this.configStore.getSetupScript(
-          stimulus.orgId,
-          stimulus.repoId,
-        );
+        const script = await this.configStore.getSetupScript(stimulus.orgId, stimulus.repoId);
         return { ok: true, present: script !== null, script };
       } catch (err) {
         this.logger.warn(
@@ -439,15 +395,9 @@ export class ChatToolProvider {
     worktreePath: string,
   ): Promise<void> {
     try {
-      await this.configStore.setSeenManifests(
-        orgId,
-        repoId,
-        detectRepoManifests(worktreePath),
-      );
+      await this.configStore.setSeenManifests(orgId, repoId, detectRepoManifests(worktreePath));
     } catch (err) {
-      this.logger.warn(
-        `refreshSeenManifests failed for org=${orgId} repo=${repoId}: ${err}`,
-      );
+      this.logger.warn(`refreshSeenManifests failed for org=${orgId} repo=${repoId}: ${err}`);
     }
   }
 
@@ -485,14 +435,11 @@ export class ChatToolProvider {
       return out.length > 0 ? out : undefined;
     };
     return async (args) => {
-      const raw = Array.isArray(args['servers'])
-        ? (args['servers'] as unknown[])
-        : null;
+      const raw = Array.isArray(args['servers']) ? (args['servers'] as unknown[]) : null;
       if (!raw || raw.length === 0) {
         return {
           ok: false,
-          reason:
-            'servers must be a non-empty array of proposed MCP server definitions',
+          reason: 'servers must be a non-empty array of proposed MCP server definitions',
         };
       }
       const servers: McpProposalServer[] = [];
@@ -512,11 +459,7 @@ export class ChatToolProvider {
           };
         }
         const transport = String(s['transport'] ?? '').trim();
-        if (
-          transport !== 'http' &&
-          transport !== 'sse' &&
-          transport !== 'stdio'
-        ) {
+        if (transport !== 'http' && transport !== 'sse' && transport !== 'stdio') {
           return {
             ok: false,
             reason: `server "${name}": transport must be http | sse | stdio`,
@@ -543,17 +486,14 @@ export class ChatToolProvider {
         const headers = normPairs(s['headers']);
         const env = normPairs(s['env']);
         const surfaces = (
-          Array.isArray(s['surfaces'])
-            ? (s['surfaces'] as unknown[]).map((x) => String(x))
-            : []
+          Array.isArray(s['surfaces']) ? (s['surfaces'] as unknown[]).map((x) => String(x)) : []
         ).filter((x): x is McpSurface => VALID_SURFACES.has(x as McpSurface));
         const reason = String(s['reason'] ?? '').trim() || undefined;
         // Auth kind: 'static' (header/env slots filled via request_secret) or 'oauth' (interactive OAuth 2.1
         // the OWNER completes via Connect). OAuth is http/sse-only and owns the Authorization header itself,
         // so a secret slot on an oauth server is invalid (it would read as an unfillable gap). Mirrors
         // McpServersController.assertShape.
-        const authKind: McpAuthKind =
-          s['authKind'] === 'oauth' ? 'oauth' : 'static';
+        const authKind: McpAuthKind = s['authKind'] === 'oauth' ? 'oauth' : 'static';
         if (authKind === 'oauth') {
           if (transport === 'stdio') {
             return {
@@ -561,10 +501,7 @@ export class ChatToolProvider {
               reason: `server "${name}": oauth is only supported for http/sse transports`,
             };
           }
-          if (
-            (headers ?? []).some((h) => h.secret) ||
-            (env ?? []).some((e) => e.secret)
-          ) {
+          if ((headers ?? []).some((h) => h.secret) || (env ?? []).some((e) => e.secret)) {
             return {
               ok: false,
               reason: `server "${name}": an oauth server must NOT declare secret header/env slots — the OWNER completes OAuth with the proposal-card Connect button or in the console (MCP settings → Connect); OAuth manages the Authorization header itself`,
@@ -573,11 +510,9 @@ export class ChatToolProvider {
         }
         const oauthRaw = (s['oauth'] ?? {}) as Record<string, unknown>;
         const oauthScope = String(oauthRaw['scope'] ?? '').trim() || undefined;
-        const oauthTam = [
-          'none',
-          'client_secret_post',
-          'client_secret_basic',
-        ].includes(String(oauthRaw['tokenAuthMethod'] ?? ''))
+        const oauthTam = ['none', 'client_secret_post', 'client_secret_basic'].includes(
+          String(oauthRaw['tokenAuthMethod'] ?? ''),
+        )
           ? (String(oauthRaw['tokenAuthMethod']) as McpOAuthTokenAuthMethod)
           : undefined;
         const oauth: StoredMcpOAuthConfig | undefined =
@@ -628,16 +563,10 @@ export class ChatToolProvider {
             reason: 'Could not open the MCP proposal (thread not found).',
           };
         const needSecrets = servers.flatMap((s) => [
-          ...(s.headers ?? [])
-            .filter((h) => h.secret)
-            .map((h) => `${s.name} header:${h.name}`),
-          ...(s.env ?? [])
-            .filter((e) => e.secret)
-            .map((e) => `${s.name} env:${e.name}`),
+          ...(s.headers ?? []).filter((h) => h.secret).map((h) => `${s.name} header:${h.name}`),
+          ...(s.env ?? []).filter((e) => e.secret).map((e) => `${s.name} env:${e.name}`),
         ]);
-        const oauthNames = servers
-          .filter((s) => s.authKind === 'oauth')
-          .map((s) => s.name);
+        const oauthNames = servers.filter((s) => s.authKind === 'oauth').map((s) => s.name);
         return {
           ok: true,
           requestId,
@@ -686,9 +615,7 @@ export class ChatToolProvider {
             : 'This org has no house-style profiles defined — skip propose_convention_profile.',
         };
       } catch (err) {
-        this.logger.warn(
-          `list_convention_profiles failed for org=${stimulus.orgId}: ${err}`,
-        );
+        this.logger.warn(`list_convention_profiles failed for org=${stimulus.orgId}: ${err}`);
         return { ok: false, reason: errText(err) };
       }
     };
@@ -744,8 +671,7 @@ export class ChatToolProvider {
         if (!opened.ok)
           return {
             ok: false,
-            reason:
-              'Could not open the convention proposal (thread not found).',
+            reason: 'Could not open the convention proposal (thread not found).',
           };
         return {
           ok: true,
@@ -785,8 +711,7 @@ export class ChatToolProvider {
       if (!SLUG_RE.test(slug)) {
         return {
           ok: false,
-          reason:
-            'slug must be lowercase letters/digits/_/- (e.g. nestjs-next-shared)',
+          reason: 'slug must be lowercase letters/digits/_/- (e.g. nestjs-next-shared)',
         };
       }
       if (!body)
@@ -805,10 +730,7 @@ export class ChatToolProvider {
           reason: 'house-style profiles are not configured for this org',
         };
       try {
-        const existing = await this.conventions.getProfile(
-          stimulus.orgId,
-          slug,
-        );
+        const existing = await this.conventions.getProfile(stimulus.orgId, slug);
         const mode: 'create' | 'update' = existing ? 'update' : 'create';
         const name = nameArg || existing?.name;
         if (!name)
@@ -829,10 +751,10 @@ export class ChatToolProvider {
           ...(existing ? { priorBody: existing.body } : {}),
           rationale,
         });
-        const opened = await this.store.openConventionEditProposal(
-          stimulus.jobId,
-          { requestId, card },
-        );
+        const opened = await this.store.openConventionEditProposal(stimulus.jobId, {
+          requestId,
+          card,
+        });
         if (!opened.ok)
           return {
             ok: false,
@@ -900,9 +822,7 @@ export class ChatToolProvider {
               : ''),
         };
       } catch (err) {
-        this.logger.warn(
-          `list_mcp_servers failed for org=${stimulus.orgId}: ${err}`,
-        );
+        this.logger.warn(`list_mcp_servers failed for org=${stimulus.orgId}: ${err}`);
         return { ok: false, reason: errText(err) };
       }
     };
@@ -922,15 +842,13 @@ export class ChatToolProvider {
           message: 'Skills are not configured for this org.',
         };
       try {
-        const skills = (await this.skillStore.list(stimulus.orgId)).map(
-          (s) => ({
-            name: s.name,
-            scope: s.scope === 'org' ? 'org' : 'repo',
-            description: s.description,
-            surfaces: s.surfaces,
-            enabled: s.enabled,
-          }),
-        );
+        const skills = (await this.skillStore.list(stimulus.orgId)).map((s) => ({
+          name: s.name,
+          scope: s.scope === 'org' ? 'org' : 'repo',
+          description: s.description,
+          surfaces: s.surfaces,
+          enabled: s.enabled,
+        }));
         return {
           ok: true,
           skills,
@@ -940,9 +858,7 @@ export class ChatToolProvider {
             : 'No skills registered yet — propose_skill to create the first.',
         };
       } catch (err) {
-        this.logger.warn(
-          `list_skills failed for org=${stimulus.orgId}: ${err}`,
-        );
+        this.logger.warn(`list_skills failed for org=${stimulus.orgId}: ${err}`);
         return { ok: false, reason: errText(err) };
       }
     };
@@ -974,8 +890,7 @@ export class ChatToolProvider {
       if (!NAME_RE.test(name)) {
         return {
           ok: false,
-          reason:
-            'name must be lowercase letters/digits/_/- (e.g. house-migrations)',
+          reason: 'name must be lowercase letters/digits/_/- (e.g. house-migrations)',
         };
       }
       if (!description)
@@ -993,11 +908,7 @@ export class ChatToolProvider {
       }
       try {
         const dbScope = scope === 'org' ? '*' : stimulus.repoId;
-        const existing = await this.skillStore.get(
-          stimulus.orgId,
-          dbScope,
-          name,
-        );
+        const existing = await this.skillStore.get(stimulus.orgId, dbScope, name);
         if (existing) {
           return {
             ok: false,
@@ -1028,11 +939,7 @@ export class ChatToolProvider {
         }
         const requestId = `skill-${randomUUID()}`;
         // Freeze exactly what exists now — approval vendors this immutable copy, not the still-writable draft.
-        const stagingPath = this.skillFiles.freezeDraft(
-          draftDir,
-          stimulus.orgId,
-          requestId,
-        );
+        const stagingPath = this.skillFiles.freezeDraft(draftDir, stimulus.orgId, requestId);
         const preview = this.skillFiles.previewDir(stagingPath) ?? undefined;
         const card = webSkillProposalCard({
           jobId: stimulus.jobId,
@@ -1099,8 +1006,7 @@ export class ChatToolProvider {
       if (!/^https:\/\/\S+$/.test(sourceUrl)) {
         return {
           ok: false,
-          reason:
-            'sourceUrl must be an https git URL (e.g. https://github.com/anthropics/skills)',
+          reason: 'sourceUrl must be an https git URL (e.g. https://github.com/anthropics/skills)',
         };
       }
       if (!rationale)
@@ -1157,8 +1063,7 @@ export class ChatToolProvider {
         if (!opened.ok)
           return {
             ok: false,
-            reason:
-              'Could not open the skill install proposal (thread not found).',
+            reason: 'Could not open the skill install proposal (thread not found).',
           };
         return {
           ok: true,
@@ -1196,31 +1101,21 @@ export class ChatToolProvider {
       if (!name)
         return {
           ok: false,
-          reason:
-            'skill (the name to unlock) is required — call list_skills first',
+          reason: 'skill (the name to unlock) is required — call list_skills first',
         };
       if (!rationale)
         return {
           ok: false,
           reason: 'rationale — why you need to edit this skill — is required',
         };
-      if (!this.skillStore)
-        return { ok: false, reason: 'skills are not configured for this org' };
+      if (!this.skillStore) return { ok: false, reason: 'skills are not configured for this org' };
       try {
         // Repo scope overrides an org skill of the same name (SkillResolver's own precedence) — resolve
         // whichever one is actually ACTIVE for this repo/job.
-        const repoRow = await this.skillStore.get(
-          stimulus.orgId,
-          stimulus.repoId,
-          name,
-        );
+        const repoRow = await this.skillStore.get(stimulus.orgId, stimulus.repoId, name);
         const orgRow = repoRow
           ? null
-          : await this.skillStore.get(
-              stimulus.orgId,
-              WorkspaceSkillStore.toDbScope('org'),
-              name,
-            );
+          : await this.skillStore.get(stimulus.orgId, WorkspaceSkillStore.toDbScope('org'), name);
         const row = repoRow ?? orgRow;
         if (!row) {
           return {
@@ -1241,15 +1136,14 @@ export class ChatToolProvider {
           sourceRef: row.source_ref,
           rationale,
         });
-        const opened = await this.store.openSkillEditAccessRequest(
-          stimulus.jobId,
-          { requestId, card },
-        );
+        const opened = await this.store.openSkillEditAccessRequest(stimulus.jobId, {
+          requestId,
+          card,
+        });
         if (!opened.ok) {
           return {
             ok: false,
-            reason:
-              'Could not open the edit-access request (thread not found).',
+            reason: 'Could not open the edit-access request (thread not found).',
           };
         }
         return {
@@ -1283,22 +1177,16 @@ export class ChatToolProvider {
       const rationale = String(args['rationale'] ?? '').trim();
       const scope: 'org' | 'repo' =
         String(args['scope'] ?? 'repo').trim() === 'org' ? 'org' : 'repo';
-      if (!name)
-        return { ok: false, reason: 'name (the skill to remove) is required' };
+      if (!name) return { ok: false, reason: 'name (the skill to remove) is required' };
       if (!rationale)
         return {
           ok: false,
           reason: 'rationale — why the skill should be removed — is required',
         };
-      if (!this.skillStore)
-        return { ok: false, reason: 'skills are not configured for this org' };
+      if (!this.skillStore) return { ok: false, reason: 'skills are not configured for this org' };
       try {
         const dbScope = scope === 'org' ? '*' : stimulus.repoId;
-        const existing = await this.skillStore.get(
-          stimulus.orgId,
-          dbScope,
-          name,
-        );
+        const existing = await this.skillStore.get(stimulus.orgId, dbScope, name);
         if (!existing) {
           return {
             ok: false,
@@ -1315,11 +1203,7 @@ export class ChatToolProvider {
           description: '',
           surfaces: existing.surfaces,
           mode: 'remove',
-          priorBody: this.skillFiles?.readSkillBody(
-            stimulus.orgId,
-            dbScope,
-            name,
-          ),
+          priorBody: this.skillFiles?.readSkillBody(stimulus.orgId, dbScope, name),
           rationale,
         });
         const opened = await this.store.openSkillProposal(stimulus.jobId, {
@@ -1329,8 +1213,7 @@ export class ChatToolProvider {
         if (!opened.ok)
           return {
             ok: false,
-            reason:
-              'Could not open the skill removal proposal (thread not found).',
+            reason: 'Could not open the skill removal proposal (thread not found).',
           };
         return {
           ok: true,
@@ -1377,11 +1260,7 @@ export class ChatToolProvider {
         };
       try {
         const dbScope = scope === 'org' ? '*' : stimulus.repoId;
-        const existing = await this.mcpStore.rawRow(
-          stimulus.orgId,
-          dbScope,
-          name,
-        );
+        const existing = await this.mcpStore.rawRow(stimulus.orgId, dbScope, name);
         if (!existing) {
           return {
             ok: false,
@@ -1405,8 +1284,7 @@ export class ChatToolProvider {
         if (!opened.ok)
           return {
             ok: false,
-            reason:
-              'Could not open the MCP removal proposal (thread not found).',
+            reason: 'Could not open the MCP removal proposal (thread not found).',
           };
         return {
           ok: true,
@@ -1453,23 +1331,13 @@ export class ChatToolProvider {
             'do NOT finish — say what is still blocking instead.',
         };
       }
-      const sandbox = await this.lifecycle.findSandbox(
-        stimulus.jobId,
-        stimulus.orgId,
-      );
-      if (!sandbox)
-        return { ok: false, reason: 'no sandbox for this thread yet' };
+      const sandbox = await this.lifecycle.findSandbox(stimulus.jobId, stimulus.orgId);
+      if (!sandbox) return { ok: false, reason: 'no sandbox for this thread yet' };
 
       // Persist the boot evidence as a durable, operator-visible record before concluding.
-      await this.store.appendSystemEvent(
-        stimulus.jobId,
-        `✅ Boot verified — ${verified}`,
-      );
+      await this.store.appendSystemEvent(stimulus.jobId, `✅ Boot verified — ${verified}`);
       if (summary)
-        await this.store.appendSystemEvent(
-          stimulus.jobId,
-          `🎉 Onboarding complete — ${summary}`,
-        );
+        await this.store.appendSystemEvent(stimulus.jobId, `🎉 Onboarding complete — ${summary}`);
 
       // Everything past this point (marking onboarded, checking for a diff, shipping) can hit a transient
       // DB/git/GitHub failure — never let that throw and crash the turn. Warn, and give Atlas the real
@@ -1481,11 +1349,7 @@ export class ChatToolProvider {
         await this.lifecycle.markRepoOnboarded(stimulus.orgId, stimulus.repoId);
         // Seed the new-stack baseline: the bulk pass has seen the whole stack, so acknowledge every
         // dependency manifest now — future jobs only flag manifests that appear AFTER this.
-        await this.refreshSeenManifests(
-          stimulus.orgId,
-          stimulus.repoId,
-          sandbox.worktreePath,
-        );
+        await this.refreshSeenManifests(stimulus.orgId, stimulus.repoId, sandbox.worktreePath);
 
         const hasChanges = await this.git.hasChanges(sandbox.worktreePath);
         if (!hasChanges) {
@@ -1521,8 +1385,7 @@ export class ChatToolProvider {
           return {
             ok: true,
             prOpened: false,
-            message:
-              'Made repo changes but no GitHub token is set — connect one to open the PR.',
+            message: 'Made repo changes but no GitHub token is set — connect one to open the PR.',
           };
         }
         return {
@@ -1575,15 +1438,8 @@ export class ChatToolProvider {
    * read-only mount). Called on every decision mutation, so the file stays incremental + in lockstep with
    * the structured `pending_decisions` — coding agents read it for grounding but never author it.
    */
-  async writeDecisionRecordMd(
-    jobId: string,
-    orgId: string,
-    decisions: Decision[],
-  ): Promise<void> {
-    const generatedDir = join(
-      this.lifecycle.contextDirHost(jobId, orgId),
-      'generated',
-    );
+  async writeDecisionRecordMd(jobId: string, orgId: string, decisions: Decision[]): Promise<void> {
+    const generatedDir = join(this.lifecycle.contextDirHost(jobId, orgId), 'generated');
     await mkdir(generatedDir, { recursive: true });
     await writeFile(
       join(generatedDir, 'decision-record.md'),

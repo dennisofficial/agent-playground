@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
 import type { ResolvedMcpServer } from '@shared/engine/engine.types';
+import { describe, expect, it } from 'vitest';
 import { parseHubConfig, serverKey } from './mcp-hub-config';
 import {
   buildStdioSpawn,
@@ -84,17 +84,11 @@ describe('decodeRoute', () => {
 
 describe('validServer', () => {
   it('requires a name + a usable endpoint per transport', () => {
-    expect(
-      validServer({ name: 'a', transport: 'http', url: 'https://x' }),
-    ).toBe(true);
-    expect(validServer({ name: 'a', transport: 'stdio', command: 'x' })).toBe(
-      true,
-    );
+    expect(validServer({ name: 'a', transport: 'http', url: 'https://x' })).toBe(true);
+    expect(validServer({ name: 'a', transport: 'stdio', command: 'x' })).toBe(true);
     expect(validServer({ name: 'a', transport: 'http' })).toBe(false);
     expect(validServer({ name: 'a', transport: 'stdio' })).toBe(false);
-    expect(validServer({ name: '', transport: 'http', url: 'https://x' })).toBe(
-      false,
-    );
+    expect(validServer({ name: '', transport: 'http', url: 'https://x' })).toBe(false);
   });
 });
 
@@ -136,9 +130,7 @@ describe('diffServers', () => {
   });
 
   it('ignores invalid desired servers', () => {
-    const { add } = diffServers(new Map(), [
-      { name: 'bad', transport: 'http' },
-    ]);
+    const { add } = diffServers(new Map(), [{ name: 'bad', transport: 'http' }]);
     expect(add).toEqual([]);
   });
 });
@@ -155,15 +147,11 @@ describe('parseHubConfig', () => {
   it('returns null on malformed / partial JSON so the hub keeps its current connections', () => {
     expect(parseHubConfig('{ not json')).toBeNull();
     expect(parseHubConfig('{"servers":[]}')).toBeNull(); // no spawn
-    expect(
-      parseHubConfig('{"spawn":{"cwd":"/workspace","home":"/home/atlas"}}'),
-    ).toBeNull(); // no servers
+    expect(parseHubConfig('{"spawn":{"cwd":"/workspace","home":"/home/atlas"}}')).toBeNull(); // no servers
   });
 
   it('defaults a missing baseEnv to {}', () => {
-    const cfg = parseHubConfig(
-      '{"spawn":{"cwd":"/w","home":"/h"},"servers":[]}',
-    );
+    const cfg = parseHubConfig('{"spawn":{"cwd":"/w","home":"/h"},"servers":[]}');
     expect(cfg?.spawn.baseEnv).toEqual({});
   });
 });

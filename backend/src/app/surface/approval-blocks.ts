@@ -89,20 +89,14 @@ const truncate = (text: string, max: number): string =>
  * the verdict buttons. When `planUrl` is given, a leading "📊 View full plan" link button opens the
  * web plan view.
  */
-export function decisionApprovalBlocks(
-  card: DecisionApprovalCard,
-): Array<Record<string, unknown>> {
+export function decisionApprovalBlocks(card: DecisionApprovalCard): Array<Record<string, unknown>> {
   const value = JSON.stringify({
     jobId: card.jobId,
-    ...(card.decisionRecordId
-      ? { decisionRecordId: card.decisionRecordId }
-      : {}),
+    ...(card.decisionRecordId ? { decisionRecordId: card.decisionRecordId } : {}),
   } satisfies ApprovalActionMeta);
 
   const isDirect = card.kind === 'direct';
-  const headline = isDirect
-    ? `*Direct build — ${card.title}*`
-    : `*Plan proposal — ${card.title}*`;
+  const headline = isDirect ? `*Direct build — ${card.title}*` : `*Plan proposal — ${card.title}*`;
   const listLabel = isDirect ? 'Changes' : 'Threads';
   const contextLine = isDirect
     ? 'Approve to let Atlas implement this change directly. The verdict is Dennis’s call.'

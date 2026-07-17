@@ -79,9 +79,7 @@ describe('atlasEngineHomeDir (isolated agent home, never ~/.claude)', () => {
   });
 
   it('atlasAgentHomeBase defaults under the repo-relative .atlas-state when no root', () => {
-    expect(atlasAgentHomeBase(undefined)).toContain(
-      join('.atlas-state', 'agent-home'),
-    );
+    expect(atlasAgentHomeBase(undefined)).toContain(join('.atlas-state', 'agent-home'));
     expect(atlasAgentHomeBase(undefined)).not.toContain('.agent-playground');
     expect(atlasAgentHomeBase('/custom')).toBe('/custom');
   });
@@ -89,9 +87,7 @@ describe('atlasEngineHomeDir (isolated agent home, never ~/.claude)', () => {
 
 describe('engineHomeKeyString (cache-key stringification, not a filesystem path)', () => {
   it('is stable for the same key and distinct for different jobs', () => {
-    expect(engineHomeKeyString(brainKey)).toBe(
-      engineHomeKeyString({ ...brainKey }),
-    );
+    expect(engineHomeKeyString(brainKey)).toBe(engineHomeKeyString({ ...brainKey }));
     expect(engineHomeKeyString(brainKey)).not.toBe(
       engineHomeKeyString({ ...brainKey, jobId: 'feat-y' }),
     );

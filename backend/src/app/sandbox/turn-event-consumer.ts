@@ -19,9 +19,7 @@ export interface TurnEventConsumerOptions {
  *  `onEntry` returns true — reclaiming any stranded pending entries ONCE at start (crash recovery), then
  *  reading only fresh ('>') entries thereafter. Mirrors `RedisEngineRunner.consumeTools`'s existing shape;
  *  used by the realtime + watchdog consumer groups, and consumeTools itself now delegates here too. */
-export async function drainTurnEventConsumer(
-  opts: TurnEventConsumerOptions,
-): Promise<void> {
+export async function drainTurnEventConsumer(opts: TurnEventConsumerOptions): Promise<void> {
   const { redis, stream, group, consumer, onEntry, isDone } = opts;
   const count = opts.count ?? 16;
   const blockMs = opts.blockMs ?? 1000;

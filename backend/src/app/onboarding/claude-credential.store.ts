@@ -1,19 +1,10 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import {
-  DataSource,
-  EntityManager,
-  LessThan,
-  QueryFailedError,
-  Repository,
-} from 'typeorm';
-import { DB_CONNECTION } from '../persistence/database.module';
-import {
-  OrganizationEntity,
-  OrgClaudeCredentialEntity,
-} from '../persistence/entities';
 import { isNewerClaudeCredential } from '@shared/onboarding/claude-credential-freshness';
+import { DataSource, EntityManager, LessThan, QueryFailedError, Repository } from 'typeorm';
+import { DB_CONNECTION } from '../persistence/database.module';
+import { OrganizationEntity, OrgClaudeCredentialEntity } from '../persistence/entities';
 import { decryptSecret, encryptSecret, loadSecretsKey } from './secret-cipher';
 
 /** Cheap, NON-secret listing row for the settings UI — no decryption, no secret values. */
@@ -99,9 +90,7 @@ export class ClaudeCredentialStore {
    * for `setup_token`, or a `claudeAiOauth` JSON blob for `personal`. Null when no credential is selected,
    * or the pointer is dangling (row deleted since selection).
    */
-  async getSelectedDecrypted(
-    orgId: string,
-  ): Promise<SelectedClaudeCredential | null> {
+  async getSelectedDecrypted(orgId: string): Promise<SelectedClaudeCredential | null> {
     const org = await this.orgRepo.findOne({ where: { id: orgId } });
     const selectedId = org?.selected_claude_credential_id;
     if (!selectedId) return null;
@@ -163,10 +152,7 @@ export class ClaudeCredentialStore {
   }
 
   /** Decrypt ONE credential row by id (org-scoped) into the injectable secret shape — the by-id sibling of `getSelectedDecrypted`. Null when the row is absent or belongs to another org. */
-  async getDecryptedById(
-    orgId: string,
-    id: string,
-  ): Promise<DecryptedClaudeCredential | null> {
+  async getDecryptedById(orgId: string, id: string): Promise<DecryptedClaudeCredential | null> {
     const row = await this.repo.findOne({ where: { id, org_id: orgId } });
     if (!row) return null;
     return {
@@ -236,9 +222,7 @@ export class ClaudeCredentialStore {
     });
     try {
       const saved = await this.repo.save(row);
-      this.logger.log(
-        `created personal claude credential for org=${orgId} id=${saved.id}`,
-      );
+      this.logger.log(`created personal claude credential for org=${orgId} id=${saved.id}`);
       return saved.id;
     } catch (err) {
       if (!accountEmail || !isUniqueViolation(err)) throw err;
@@ -273,10 +257,7 @@ export class ClaudeCredentialStore {
   }
 
   /** Create a new `setup_token` credential row. Does NOT select it — callers call `setSelected`. */
-  async createSetupToken(
-    orgId: string,
-    p: { label: string; token: string },
-  ): Promise<string> {
+  async createSetupToken(orgId: string, p: { label: string; token: string }): Promise<string> {
     const key = this.key(); // throws loudly when SECRETS_ENCRYPTION_KEY is unset
     const row = this.repo.create({
       org_id: orgId,
@@ -291,9 +272,7 @@ export class ClaudeCredentialStore {
       status: 'active',
     });
     const saved = await this.repo.save(row);
-    this.logger.log(
-      `created setup-token claude credential for org=${orgId} id=${saved.id}`,
-    );
+    this.logger.log(`created setup-token claude credential for org=${orgId} id=${saved.id}`);
     return saved.id;
   }
 
@@ -304,15 +283,10 @@ export class ClaudeCredentialStore {
       this.orgRepo.findOne({ where: { id: orgId } }),
     ]);
     if (!row) {
-      throw new Error(
-        `setSelected: no claude credential ${credentialId} for org=${orgId}`,
-      );
+      throw new Error(`setSelected: no claude credential ${credentialId} for org=${orgId}`);
     }
     const changed = org?.selected_claude_credential_id !== credentialId;
-    await this.orgRepo.update(
-      { id: orgId },
-      { selected_claude_credential_id: credentialId },
-    );
+    await this.orgRepo.update({ id: orgId }, { selected_claude_credential_id: credentialId });
     return changed;
   }
 
@@ -332,46 +306,38 @@ export class ClaudeCredentialStore {
   async upsertLegacySetupToken(orgId: string, token: string): Promise<boolean> {
     const key = this.key(); // throws loudly when SECRETS_ENCRYPTION_KEY is unset
     const org = await this.orgRepo.findOne({ where: { id: orgId } });
-    const { rowId, secretChanged } = await this.dataSource.transaction(
-      async (m) => {
-        const existing = await m.findOne(OrgClaudeCredentialEntity, {
-          where: {
-            org_id: orgId,
-            kind: 'setup_token',
-            label: LEGACY_SETUP_TOKEN_LABEL,
-          },
-        });
-        let secretChanged = true;
-        if (existing) {
-          try {
-            secretChanged =
-              decryptSecret(existing.access_token_enc, key) !== token;
-          } catch {
-            secretChanged = true;
-          }
+    const { rowId, secretChanged } = await this.dataSource.transaction(async (m) => {
+      const existing = await m.findOne(OrgClaudeCredentialEntity, {
+        where: {
+          org_id: orgId,
+          kind: 'setup_token',
+          label: LEGACY_SETUP_TOKEN_LABEL,
+        },
+      });
+      let secretChanged = true;
+      if (existing) {
+        try {
+          secretChanged = decryptSecret(existing.access_token_enc, key) !== token;
+        } catch {
+          secretChanged = true;
         }
-        const row =
-          existing ??
-          m.create(OrgClaudeCredentialEntity, {
-            org_id: orgId,
-            label: LEGACY_SETUP_TOKEN_LABEL,
-            kind: 'setup_token',
-            refresh_token_enc: null,
-            expires_at: null,
-            status: 'active',
-          });
-        row.access_token_enc = encryptSecret(token, key);
-        const saved = await m.save(row);
-        return { rowId: saved.id, secretChanged };
-      },
-    );
-    await this.orgRepo.update(
-      { id: orgId },
-      { selected_claude_credential_id: rowId },
-    );
-    this.logger.log(
-      `upserted legacy setup-token claude credential for org=${orgId} id=${rowId}`,
-    );
+      }
+      const row =
+        existing ??
+        m.create(OrgClaudeCredentialEntity, {
+          org_id: orgId,
+          label: LEGACY_SETUP_TOKEN_LABEL,
+          kind: 'setup_token',
+          refresh_token_enc: null,
+          expires_at: null,
+          status: 'active',
+        });
+      row.access_token_enc = encryptSecret(token, key);
+      const saved = await m.save(row);
+      return { rowId: saved.id, secretChanged };
+    });
+    await this.orgRepo.update({ id: orgId }, { selected_claude_credential_id: rowId });
+    this.logger.log(`upserted legacy setup-token claude credential for org=${orgId} id=${rowId}`);
     return secretChanged || org?.selected_claude_credential_id !== rowId;
   }
 
@@ -407,15 +373,12 @@ export class ClaudeCredentialStore {
       row.status = 'active';
       row.last_refreshed_at = new Date();
       if (oauth.scopes !== undefined) row.scopes = oauth.scopes.join(' ');
-      if (oauth.subscriptionType !== undefined)
-        row.subscription_type = oauth.subscriptionType;
+      if (oauth.subscriptionType !== undefined) row.subscription_type = oauth.subscriptionType;
       await m.save(row);
       return true;
     });
     if (wrote) {
-      this.logger.log(
-        `advanced claude credential for org=${orgId} id=${credentialId}`,
-      );
+      this.logger.log(`advanced claude credential for org=${orgId} id=${credentialId}`);
     }
   }
 
@@ -424,11 +387,7 @@ export class ClaudeCredentialStore {
    * transaction) — the refresh core calls this AFTER its lock transaction has rolled back, so a shared
    * transaction would discard the flag along with the aborted refresh.
    */
-  async markNeedsReauth(
-    orgId: string,
-    credentialId: string,
-    reason?: string,
-  ): Promise<void> {
+  async markNeedsReauth(orgId: string, credentialId: string, reason?: string): Promise<void> {
     await this.repo.update(
       { id: credentialId, org_id: orgId, kind: 'personal' },
       { status: 'needs_reauth' },
@@ -476,8 +435,7 @@ export class ClaudeCredentialStore {
     row.status = 'active';
     row.last_refreshed_at = new Date();
     if (oauth.scopes !== undefined) row.scopes = oauth.scopes.join(' ');
-    if (oauth.subscriptionType !== undefined)
-      row.subscription_type = oauth.subscriptionType;
+    if (oauth.subscriptionType !== undefined) row.subscription_type = oauth.subscriptionType;
     await m.save(row);
   }
 
@@ -531,9 +489,7 @@ type ClaudeOauth = {
 /** Parse + shape-validate a `{claudeAiOauth:{…}}` refreshed blob; null on malformed input (never throws). */
 function parseClaudeOauth(secret: string): ClaudeOauth | null {
   try {
-    const oauth = (
-      JSON.parse(secret) as { claudeAiOauth?: Partial<ClaudeOauth> }
-    ).claudeAiOauth;
+    const oauth = (JSON.parse(secret) as { claudeAiOauth?: Partial<ClaudeOauth> }).claudeAiOauth;
     if (
       !oauth ||
       typeof oauth.accessToken !== 'string' ||
@@ -552,7 +508,6 @@ function isUniqueViolation(err: unknown): boolean {
   if (!(err instanceof QueryFailedError)) return false;
   const pgCode =
     (err as QueryFailedError & { code?: unknown }).code ??
-    (err as QueryFailedError & { driverError?: { code?: unknown } }).driverError
-      ?.code;
+    (err as QueryFailedError & { driverError?: { code?: unknown } }).driverError?.code;
   return pgCode === PG_UNIQUE_VIOLATION;
 }

@@ -61,22 +61,12 @@ export function previewId(jobId: string, secret: string): string {
 }
 
 /** The public preview host for a named dev service — `<previewId>-<name>.<baseDomain>`. */
-export function hostFor(
-  jobId: string,
-  name: string,
-  secret: string,
-  baseDomain: string,
-): string {
+export function hostFor(jobId: string, name: string, secret: string, baseDomain: string): string {
   return `${previewId(jobId, secret)}-${name}.${baseDomain}`;
 }
 
 /** The public preview URL for a named dev service — always https (Caddy terminates TLS). */
-export function urlFor(
-  jobId: string,
-  name: string,
-  secret: string,
-  baseDomain: string,
-): string {
+export function urlFor(jobId: string, name: string, secret: string, baseDomain: string): string {
   return `https://${hostFor(jobId, name, secret, baseDomain)}`;
 }
 

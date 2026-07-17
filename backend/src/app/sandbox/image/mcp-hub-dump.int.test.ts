@@ -1,13 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, sep } from 'node:path';
-import { createServer } from 'node:net';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
-import { Hub } from './mcp-hub-server';
+import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { createServer } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join, sep } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DUMP_SUBDIR, DUMP_THRESHOLD_BYTES } from './mcp-hub-dump';
+import { Hub } from './mcp-hub-server';
 
 /** Grab a free loopback port by briefly binding to port 0, then releasing it — `Hub.listen()` takes a
  *  fixed port rather than returning the one it bound, so tests need to pick one up front. */
@@ -49,9 +49,7 @@ describe('hub dump middleware — end to end', () => {
       rows: bigRows,
       rowCount: bigRows.length,
     });
-    expect(Buffer.byteLength(fullPayload, 'utf8')).toBeGreaterThan(
-      DUMP_THRESHOLD_BYTES,
-    );
+    expect(Buffer.byteLength(fullPayload, 'utf8')).toBeGreaterThan(DUMP_THRESHOLD_BYTES);
 
     const stubTool: Tool = {
       name: 'big_query',
@@ -89,9 +87,7 @@ describe('hub dump middleware — end to end', () => {
       arguments: {},
     })) as CallToolResult;
     expect(result.isError).toBeFalsy();
-    const envelope = JSON.parse(
-      (result.content[0] as { text: string }).text,
-    ) as {
+    const envelope = JSON.parse((result.content[0] as { text: string }).text) as {
       dumpedTo: string;
       format: string;
       rowCount: number;

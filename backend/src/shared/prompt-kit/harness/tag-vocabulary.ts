@@ -18,11 +18,7 @@
  */
 
 /** The closed set of chunk kinds. `user` is the only human-authored kind. */
-export type ChunkKind =
-  | 'system_notice'
-  | 'system_reminder'
-  | 'user'
-  | 'untrusted';
+export type ChunkKind = 'system_notice' | 'system_reminder' | 'user' | 'untrusted';
 
 /** One framed piece of a turn. `body` is the raw content; `attrs` become XML attributes. */
 export interface TurnChunk {
@@ -50,10 +46,7 @@ const KIND_ORDER: Record<ChunkKind, number> = {
 };
 
 /** Human/external kinds whose body is untrusted for tag-forgery purposes (a payload can't "break out"). */
-const STRIP_KINDS: ReadonlySet<ChunkKind> = new Set<ChunkKind>([
-  'user',
-  'untrusted',
-]);
+const STRIP_KINDS: ReadonlySet<ChunkKind> = new Set<ChunkKind>(['user', 'untrusted']);
 
 /**
  * Any well-formed open/close tag of THIS vocabulary — used to neutralize forged boundaries.
@@ -124,8 +117,7 @@ export function renderHarnessTag(input: {
   indent?: string;
 }): string {
   const attrStr = renderHarnessAttrs(input.attrs ?? []);
-  if (input.body === undefined)
-    return `${input.indent ?? ''}<${input.tag}${attrStr} />`;
+  if (input.body === undefined) return `${input.indent ?? ''}<${input.tag}${attrStr} />`;
   return `<${input.tag}${attrStr}>\n${input.body}\n</${input.tag}>`;
 }
 

@@ -1,6 +1,6 @@
+import { renderHarnessTag } from '@shared/prompt-kit/harness/tag-vocabulary';
 import { agentMessage, type AgentMessage } from '@shared/prompt-kit/message';
 import { CONTAINER_CONTEXT } from '../../sandbox/container-paths';
-import { renderHarnessTag } from '@shared/prompt-kit/harness/tag-vocabulary';
 
 /**
  * prompt-kit / messages / first-turn-seeds — the small XML seed blocks prepended to a job's first-turn
@@ -19,10 +19,7 @@ export interface AttachmentCardItem {
 }
 
 /** The `<review>` block prepended to the first-turn body for a `kind: 'review'` job (brain orientation). */
-export function renderReviewSeedXml(
-  prNumber: number,
-  repoSlug: string,
-): AgentMessage {
+export function renderReviewSeedXml(prNumber: number, repoSlug: string): AgentMessage {
   const note =
     `Review this EXISTING pull request. Fetch it with \`gh pr view ${prNumber}\` / \`gh pr diff ${prNumber}\`, ` +
     `review the diff, and post findings grouped by severity. Do not build or open a PR of your own.`;
@@ -39,9 +36,7 @@ export function renderReviewSeedXml(
 }
 
 /** The `<uploaded-files>` block prepended to an operator message that carried attachments (brain body). */
-export function renderUploadedFilesXml(
-  items: AttachmentCardItem[],
-): AgentMessage {
+export function renderUploadedFilesXml(items: AttachmentCardItem[]): AgentMessage {
   const rows = items
     .map((it) =>
       renderHarnessTag({

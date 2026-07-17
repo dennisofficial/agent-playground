@@ -1,11 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 import type { CurrentOrgCtx } from '../org/current-org.decorator';
-import {
-  APPROVE_ACTION_ID,
-  SHIP_ACTION_ID,
-  RETRACT_SHIP_ACTION_ID,
-} from './approval-blocks';
+import { APPROVE_ACTION_ID, RETRACT_SHIP_ACTION_ID, SHIP_ACTION_ID } from './approval-blocks';
 import { WebSurfaceController } from './web-surface.controller';
 
 type ControllerMocks = {
@@ -34,9 +30,8 @@ function makeController(thread: {
     appendSystemOperatorMessage: vi.fn(async () => undefined),
   };
   const jobs = {
-    findOne: vi.fn(
-      async ({ where }: { where: { id: string; org_id: string } }) =>
-        where.id === row.id && where.org_id === row.org_id ? row : null,
+    findOne: vi.fn(async ({ where }: { where: { id: string; org_id: string } }) =>
+      where.id === row.id && where.org_id === row.org_id ? row : null,
     ),
   };
   const controller = new WebSurfaceController(

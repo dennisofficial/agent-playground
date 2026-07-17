@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
 import { isSessionLimitError } from '@shared/engine';
+import { Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { ThreadEntity } from '../persistence/entities';
 
@@ -44,10 +44,7 @@ export class ThreadSessionRunnerService {
    * swallowed with a debug log — the label only mis-explains a dormant thread until its next turn clears
    * it, so it must NEVER block or fail a turn (also tolerant of a store schema that predates the column).
    */
-  async markHalt(
-    threadId: string,
-    reason: ThreadHaltReason | null,
-  ): Promise<void> {
+  async markHalt(threadId: string, reason: ThreadHaltReason | null): Promise<void> {
     try {
       await this.threads.update({ id: threadId }, { halt_reason: reason });
     } catch (err) {
@@ -67,10 +64,7 @@ export class ThreadSessionRunnerService {
   }
 
   /** Classify a thrown ending and set the label in one step, returning the reason written. */
-  async noteThrownHalt(
-    threadId: string,
-    err: unknown,
-  ): Promise<ThrownHaltReason> {
+  async noteThrownHalt(threadId: string, err: unknown): Promise<ThrownHaltReason> {
     const reason = this.classifyThrownHalt(err);
     await this.markHalt(threadId, reason);
     return reason;

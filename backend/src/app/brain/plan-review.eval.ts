@@ -254,10 +254,7 @@ function extractText(content: unknown): string {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
   return content
-    .filter(
-      (b): b is { type: string; text: string } =>
-        (b as { type?: string })?.type === 'text',
-    )
+    .filter((b): b is { type: string; text: string } => (b as { type?: string })?.type === 'text')
     .map((b) => b.text)
     .join('\n');
 }
@@ -269,10 +266,7 @@ function buildRunnable() {
   const model = new ChatAnthropic({ model: MODEL, maxTokens: 8_000 });
   return {
     async invoke(input: In): Promise<Out> {
-      const res = await model.invoke([
-        new SystemMessage(SYSTEM),
-        ...input.messages,
-      ]);
+      const res = await model.invoke([new SystemMessage(SYSTEM), ...input.messages]);
       const raw = extractText(res.content);
       return { raw, findings: parsePlanFindings(raw) };
     },
@@ -289,8 +283,7 @@ export default defineModule<In, Out>({
           new HumanMessage(
             renderTask({
               goal: "Show each user's last login time on their profile.",
-              overview:
-                'Stamp last_login_at on successful login and expose it on GET /users/:id.',
+              overview: 'Stamp last_login_at on successful login and expose it on GET /users/:id.',
               plan: CLEAN_PLAN,
               context: CLEAN_CONTEXT,
             }),
@@ -305,8 +298,7 @@ export default defineModule<In, Out>({
           new HumanMessage(
             renderTask({
               goal: "Show each user's last login time on their profile.",
-              overview:
-                'Stamp last_login_at on successful login and expose it on GET /users/:id.',
+              overview: 'Stamp last_login_at on successful login and expose it on GET /users/:id.',
               plan: GAP_PLAN,
               context: GAP_CONTEXT,
             }),
@@ -362,8 +354,7 @@ export default defineModule<In, Out>({
     scorer<In, Out>({
       key: 'well-formed-output',
       threshold: 1,
-      run: ({ output }) =>
-        output.findings.length > 0 || /\bNO_FINDINGS\b/i.test(output.raw),
+      run: ({ output }) => output.findings.length > 0 || /\bNO_FINDINGS\b/i.test(output.raw),
     }),
     // clean → the "always finds something" guard: a gap-free plan must not draw a false BLOCKING.
     scorer<In, Out>({
@@ -371,9 +362,7 @@ export default defineModule<In, Out>({
       threshold: 1,
       run: ({ label, output }) => {
         if (label !== 'clean') return undefined; // scoped to this case only
-        const blocking = output.findings.filter(
-          (f) => f.severity === 'BLOCKING',
-        );
+        const blocking = output.findings.filter((f) => f.severity === 'BLOCKING');
         return {
           key: 'no-false-blocking-on-clean-plan',
           grade: blocking.length === 0 ? 1 : 0,
@@ -388,15 +377,12 @@ export default defineModule<In, Out>({
       threshold: 1,
       run: ({ label, output }) => {
         if (label !== 'planted-gap') return undefined;
-        const blocking = output.findings.filter(
-          (f) => f.severity === 'BLOCKING',
-        );
+        const blocking = output.findings.filter((f) => f.severity === 'BLOCKING');
         const caught = blocking.some((f) => /cache/i.test(f.text));
         return {
           key: 'catches-planted-gap',
           grade: caught ? 1 : 0,
-          comment:
-            blocking.map((f) => f.text).join(' | ') || '(no blocking findings)',
+          comment: blocking.map((f) => f.text).join(' | ') || '(no blocking findings)',
         };
       },
     }),
@@ -407,9 +393,7 @@ export default defineModule<In, Out>({
       threshold: 1,
       run: ({ label, output }) => {
         if (label !== 'resume') return undefined;
-        const blocking = output.findings.filter(
-          (f) => f.severity === 'BLOCKING',
-        );
+        const blocking = output.findings.filter((f) => f.severity === 'BLOCKING');
         return {
           key: 'no-escalation-after-genuine-fix',
           grade: blocking.length === 0 ? 1 : 0,

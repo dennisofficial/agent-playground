@@ -166,10 +166,7 @@ export class LiveTurnStore {
         attempt: Number(event['attempt']),
         max: Number(event['maxRetries']),
         retryDelayMs: Number(event['retryDelayMs']),
-        reason:
-          typeof event['reason'] === 'string'
-            ? (event['reason'] as string)
-            : undefined,
+        reason: typeof event['reason'] === 'string' ? (event['reason'] as string) : undefined,
       };
       const seq = ++this.seq;
       state.lastSeq = seq;
@@ -250,12 +247,8 @@ export class LiveTurnStore {
         kind: 'turn_retry',
         attempt: info.attempt,
         max: info.max,
-        ...(info.retryDelayMs != null
-          ? { retryDelayMs: info.retryDelayMs }
-          : {}),
-        ...(info.nextAttemptAt != null
-          ? { nextAttemptAt: info.nextAttemptAt }
-          : {}),
+        ...(info.retryDelayMs != null ? { retryDelayMs: info.retryDelayMs } : {}),
+        ...(info.nextAttemptAt != null ? { nextAttemptAt: info.nextAttemptAt } : {}),
         ...(info.reason != null ? { reason: info.reason } : {}),
       },
     });
@@ -273,11 +266,7 @@ export class LiveTurnStore {
   }
 
   /** The current cumulative snapshot for one turn lane (or null when no turn is in flight). */
-  snapshot(
-    channel: string,
-    jobId: string,
-    lane: string = MAIN_LANE,
-  ): LiveTurnSnapshot | null {
+  snapshot(channel: string, jobId: string, lane: string = MAIN_LANE): LiveTurnSnapshot | null {
     const state = this.turns.get(channel)?.get(this.key(jobId, lane));
     if (!state) return null;
     return {
@@ -344,11 +333,8 @@ export class LiveTurnStore {
     // Only merge into the open block when it belongs to the SAME author (brain vs a given subagent), so a
     // subagent's forwarded text never appends onto the brain's open text block (or another subagent's).
     const pid =
-      typeof ev['parentToolUseId'] === 'string'
-        ? (ev['parentToolUseId'] as string)
-        : undefined;
-    const sameAuthor = (b: LiveTurnBlock | undefined): boolean =>
-      !!b && b.parentToolUseId === pid;
+      typeof ev['parentToolUseId'] === 'string' ? (ev['parentToolUseId'] as string) : undefined;
+    const sameAuthor = (b: LiveTurnBlock | undefined): boolean => !!b && b.parentToolUseId === pid;
     // Finalize the most-recent still-open block of this kind+author. Interleaved thinking (auto-enabled by
     // adaptive thinking) means a turn can have TWO open delta blocks at once — an open `thinking` and an open
     // `text` — so the authoritative block we're closing is NOT necessarily `last`. Checking only `last` here
@@ -397,12 +383,7 @@ export class LiveTurnStore {
         return emittedAt;
       }
       case 'thinking_delta':
-        if (
-          last &&
-          last.kind === 'thinking' &&
-          !last.done &&
-          sameAuthor(last)
-        ) {
+        if (last && last.kind === 'thinking' && !last.done && sameAuthor(last)) {
           last.text = (last.text ?? '') + text;
           return last.emittedAt;
         } else {
@@ -438,8 +419,7 @@ export class LiveTurnStore {
           kind: 'tool',
           key: `b${this.blockSeq++}`,
           toolId: typeof ev['id'] === 'string' ? (ev['id'] as string) : '',
-          name:
-            typeof ev['name'] === 'string' ? (ev['name'] as string) : 'tool',
+          name: typeof ev['name'] === 'string' ? (ev['name'] as string) : 'tool',
           input: ev['input'],
           done: false,
           emittedAt,
@@ -454,8 +434,7 @@ export class LiveTurnStore {
           if (b.kind === 'tool' && !b.done && (b.toolId === id || id === '')) {
             b.result = ev['result'];
             b.isError = Boolean(ev['isError']);
-            if (ev['structuredPatch'] !== undefined)
-              b.structuredPatch = ev['structuredPatch'];
+            if (ev['structuredPatch'] !== undefined) b.structuredPatch = ev['structuredPatch'];
             b.done = true;
             return b.emittedAt;
           }
@@ -468,12 +447,7 @@ export class LiveTurnStore {
         // spawning Task id == the anchor's `toolId`. `started`/`capped` (and untagged bare-Bash bg tasks)
         // carry no anchor to settle → no-op.
         const status = ev['status'];
-        if (
-          pid &&
-          (status === 'completed' ||
-            status === 'failed' ||
-            status === 'stopped')
-        ) {
+        if (pid && (status === 'completed' || status === 'failed' || status === 'stopped')) {
           for (let i = blocks.length - 1; i >= 0; i--) {
             const b = blocks[i];
             if (b.kind === 'tool' && b.toolId === pid) {
