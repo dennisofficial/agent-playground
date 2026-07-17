@@ -1061,6 +1061,7 @@ function assemble(
     end: vi.fn(),
     retry: vi.fn(),
     snapshot: vi.fn(() => null),
+    takePendingOrder: vi.fn(() => []),
   } as unknown as LiveTurnStore;
   const sunk: Array<{
     jobId: string;
@@ -1118,6 +1119,7 @@ function assemble(
         });
       },
     ),
+    stampOrderAt: vi.fn(async () => undefined),
   } as unknown as BlockSink;
   // Captures the direct-CRUD task-sink calls the `task_*` host-bridge handlers make, so the task-bridge
   // tests can assert the checklist writes. The sink is injected into the ThreadDriver (its TASK_EVENT_SINK);

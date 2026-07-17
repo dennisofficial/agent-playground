@@ -2987,13 +2987,9 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       ).mockResolvedValue(undefined);
     };
 
-    it('plan-approve → "Approved — checking the base branch before starting…" (System notice, not Atlas); fires plan-approved, not dispatch', async () => {
+    it('plan-approve → no Atlas message; fires plan-approved, not dispatch', async () => {
       setup(['Backend']); // non-empty ⇒ full plan
       await manager.resolveApprovalDurably(FAKE_JOB_ID, 'approve', 'U-OP');
-      expect(mockStore.appendSystemNotice).toHaveBeenCalledWith(
-        FAKE_JOB_ID,
-        'Approved — checking the base branch before starting…',
-      );
       expect(mockStore.appendAtlasMessage).not.toHaveBeenCalled();
       expect(
         mockDispatcher.dispatch as ReturnType<typeof vi.fn>,
@@ -3006,13 +3002,9 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       );
     });
 
-    it('direct-approve → same "Approved — checking the base branch before starting…" notice (System notice, not Atlas); fires plan-approved, not runDirectBuild', async () => {
+    it('direct-approve → no Atlas message; fires plan-approved, not runDirectBuild', async () => {
       setup([]); // empty threadTitles ⇒ direct build
       await manager.resolveApprovalDurably(FAKE_JOB_ID, 'approve', 'U-OP');
-      expect(mockStore.appendSystemNotice).toHaveBeenCalledWith(
-        FAKE_JOB_ID,
-        'Approved — checking the base branch before starting…',
-      );
       expect(mockStore.appendAtlasMessage).not.toHaveBeenCalled();
       expect(
         (manager as unknown as { runDirectBuild: ReturnType<typeof vi.fn> })
@@ -3594,12 +3586,14 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       end: vi.fn(),
       retry: vi.fn(),
       snapshot: vi.fn(() => null),
+      takePendingOrder: vi.fn(() => []),
     } as unknown as LiveTurnStore;
     // A REAL harness over the mock liveTurns + a mock durable sink — so the streaming spine is exercised
     // end-to-end through the brain (push/end + the durable blocks) exactly as in production.
     const blockSink = {
       appendBlock: vi.fn().mockResolvedValue(undefined),
       appendBlockOnce: vi.fn().mockResolvedValue(undefined),
+      stampOrderAt: vi.fn().mockResolvedValue(undefined),
     } as unknown as BlockSink;
     const usage = {
       applyHarvest: vi.fn().mockResolvedValue(undefined),

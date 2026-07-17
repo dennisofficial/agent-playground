@@ -6543,9 +6543,9 @@ export class AgentSessionManager
         // INSIDE this brain turn, so (like `finalize_build`) it cannot seed a nested open-PR turn — it
         // leak-scans host-side, then hands `shipOpenPrBody` back so the brain commits its env-setup changes and
         // opens the PR itself in THIS turn. The git-state reconciler records the PR later.
-        const pre = await this.ship.preShip(job, repo, sandbox, (m) =>
-          this.store.appendSystemEvent(stimulus.jobId, m),
-        );
+        const pre = await this.ship.preShip(job, repo, sandbox, async (m) => {
+          await this.store.appendSystemEvent(stimulus.jobId, m);
+        });
         if (!pre.ok) {
           if (pre.reason === 'leak-scan') {
             // Hard security block — a hydrated secret/seed path was committed on the onboarding branch.
@@ -6836,10 +6836,6 @@ export class AgentSessionManager
         stimulus.jobId,
         `approved:${decisionRecordId}`,
         'Your plan was approved by the operator.',
-      );
-      await this.saySystemNotice(
-        stimulus,
-        'Approved — checking the base branch before starting…',
       );
       this.jit?.fireLifecycle('plan-approved', {
         repoId: running.repoId,

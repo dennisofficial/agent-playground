@@ -396,6 +396,13 @@ describe('StimulusStoreService — seed-aware recordChatStimulus (durable chat/g
         };
         return qb;
       },
+      // The pill-correlation write (`m.update(TranscriptMessageEntity, pillRow, { stimulus_id })`) patches
+      // the saved row in place, mirroring a real UPDATE.
+      update: vi.fn(async (id: string, patch: Record<string, unknown>) => {
+        const row = rows.find((r) => r.id === id);
+        if (row) Object.assign(row, patch);
+        return { affected: row ? 1 : 0 };
+      }),
     } as unknown as Repository<TranscriptMessageEntity>;
   }
 
@@ -419,6 +426,27 @@ describe('StimulusStoreService — seed-aware recordChatStimulus (durable chat/g
           if (Entity === TranscriptMessageEntity) return messageRepo;
           throw new Error(
             `fakeDataSourceWithMessageRepo: unexpected getRepository(${String(Entity)})`,
+          );
+        },
+        // The pill-correlation write (see `recordChatStimulus`) delegates to the message repo's own
+        // `update`, which patches the row in `messageRows` in place.
+        update: async (
+          Entity: unknown,
+          id: string,
+          patch: Record<string, unknown>,
+        ) => {
+          if (Entity === TranscriptMessageEntity) {
+            return (
+              messageRepo as unknown as {
+                update: (
+                  id: string,
+                  patch: Record<string, unknown>,
+                ) => Promise<unknown>;
+              }
+            ).update(id, patch);
+          }
+          throw new Error(
+            `fakeDataSourceWithMessageRepo: unexpected update(${String(Entity)})`,
           );
         },
       };

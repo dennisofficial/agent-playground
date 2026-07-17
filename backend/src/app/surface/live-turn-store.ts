@@ -150,6 +150,9 @@ export class LiveTurnStore {
   private readonly subject = new Subject<LiveStreamFrame>();
   /** channel (repoId) → `${jobId}::${lane}` → cumulative in-flight turn. */
   private readonly turns = new Map<string, Map<string, TurnState>>();
+  /** `${channel}::${jobId}::${lane}` → pending durable row ids (pure-UI notices posted mid-turn), flushed
+   *  and stamped with `order_at` once that lane's turn ends. See {@link registerPostTurnRow}. */
+  private readonly pendingOrder = new Map<string, string[]>();
   private seq = 0;
   private blockSeq = 0;
   private lastBlockEmitMs = 0;
@@ -340,6 +343,33 @@ export class LiveTurnStore {
       contextModel: s.contextModel,
       contextLimit: s.contextLimit,
     }));
+  }
+
+  /** Register a durable row (a pure-UI notice) written WHILE `lane`'s turn is in flight, so its `order_at`
+   *  can be stamped to just after that turn's last block once it flushes. Returns false (no-op for the
+   *  caller — the row keeps its natural `created_at` ordering) when no turn is currently live on this lane. */
+  registerPostTurnRow(
+    channel: string,
+    jobId: string,
+    rowId: string,
+    lane: string = MAIN_LANE,
+  ): boolean {
+    if (!this.turns.get(channel)?.get(this.key(jobId, lane))) return false;
+    const k = `${channel}::${this.key(jobId, lane)}`;
+    this.pendingOrder.set(k, [...(this.pendingOrder.get(k) ?? []), rowId]);
+    return true;
+  }
+
+  /** Delete-and-return the pending post-turn row ids queued for this lane (called once at turn-end flush). */
+  takePendingOrder(
+    channel: string,
+    jobId: string,
+    lane: string = MAIN_LANE,
+  ): string[] {
+    const k = `${channel}::${this.key(jobId, lane)}`;
+    const rows = this.pendingOrder.get(k) ?? [];
+    this.pendingOrder.delete(k);
+    return rows;
   }
 
   private key(jobId: string, lane: string): string {

@@ -884,7 +884,7 @@ export class DriverStoreService {
     chunkKey: string;
     reminderKind?: string;
   }): Promise<void> {
-    return writeSystemChunk(
+    await writeSystemChunk(
       this.messages,
       {
         jobId: input.jobId,

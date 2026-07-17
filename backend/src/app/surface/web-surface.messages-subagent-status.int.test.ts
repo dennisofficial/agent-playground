@@ -86,8 +86,13 @@ beforeAll(async () => {
             Promise.resolve({ id: JOB_ID, org_id: ORG_ID, repo_id: REPO_ID }),
           ),
         };
-      if (token === getRepositoryToken(TranscriptMessageEntity, DB_CONNECTION))
-        return { find: vi.fn(() => Promise.resolve([anchorRow, childRow])) };
+      if (token === getRepositoryToken(TranscriptMessageEntity, DB_CONNECTION)) {
+        const getMany = vi.fn(() => Promise.resolve([anchorRow, childRow]));
+        const qb: Record<string, unknown> = {};
+        for (const m of ['where', 'orderBy', 'addOrderBy']) qb[m] = () => qb;
+        qb.getMany = getMany;
+        return { createQueryBuilder: vi.fn(() => qb) };
+      }
       if (token === getRepositoryToken(SubagentEntity, DB_CONNECTION))
         return { find: vi.fn(() => Promise.resolve(subagentRows)) };
       return {}; // auto-mock every other collaborator (unused by this endpoint)

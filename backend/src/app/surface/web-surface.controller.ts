@@ -1144,10 +1144,13 @@ export class WebSurfaceController {
     @Param('jobId') jobId: string,
   ): Promise<unknown[]> {
     await this.requireThread(jobId, org.id);
-    const rows = await this.messages.find({
-      where: { job_id: jobId },
-      order: { created_at: 'ASC' },
-    });
+    const rows = await this.messages
+      .createQueryBuilder('m')
+      .where('m.job_id = :jobId', { jobId })
+      .orderBy('COALESCE(m.order_at, m.delivered_at, m.created_at)', 'ASC')
+      .addOrderBy('m.created_at', 'ASC')
+      .addOrderBy('m.id', 'ASC')
+      .getMany();
     // Join the spawned subagents so each anchor (Task launching) message carries its subagent's AUTHORITATIVE
     // status — the web keys the durable card's running/done off this instead of the launch-ack heuristic. The
     // join is `subagents.parent_message_id = messages.id`; scoped by the threads present in this transcript.
