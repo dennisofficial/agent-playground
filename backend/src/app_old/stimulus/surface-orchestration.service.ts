@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import type { EventSeverity } from '@shared/domain';
+import type { EventSeverity } from '../../_shared/domain';
 import { Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity } from '../persistence/entities';

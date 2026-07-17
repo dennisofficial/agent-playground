@@ -1,4 +1,4 @@
-import type { ThreadType } from '@shared/thread-kind/thread-types';
+import type { ThreadType } from '../../_shared/thread-kind/thread-types';
 import type { FindingSeverity, ReviewFinding, ReviewLens } from './autofix.types';
 
 const ALWAYS_ON: ReviewLens[] = [

@@ -6,7 +6,7 @@ import {
   type EngineUsage,
   type JitInjection,
   resolveContextLimit,
-} from '@shared/engine';
+} from '../../_shared/engine';
 import { randomUUID } from 'node:crypto';
 import { type QueryDeepPartialEntity, Repository } from 'typeorm';
 import { isInterruptAbortResult } from '../brain/session-transcript';

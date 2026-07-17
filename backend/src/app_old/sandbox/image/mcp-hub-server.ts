@@ -11,7 +11,7 @@ import {
   isInitializeRequest,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import type { ResolvedMcpServer } from '@shared/engine/engine.types';
+import type { ResolvedMcpServer } from '../../../_shared/engine/engine.types';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import {

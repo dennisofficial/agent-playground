@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import type { DecisionRecord, Job } from '@shared/domain';
+import type { DecisionRecord, Job } from '../../_shared/domain';
 import { BrainGateway } from '../brain-gateway/brain-gateway.service';
 import { GithubPrService } from '../git/github-pr.service';
 import { FeatureSandbox, LocalGitService } from '../git/local-git.service';

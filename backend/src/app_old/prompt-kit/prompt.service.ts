@@ -1,8 +1,8 @@
 import { Injectable, type OnModuleInit } from '@nestjs/common';
-import type { AgentMessage } from '@shared/prompt-kit/message';
-import { Agent } from '@shared/prompt-kit/system/agent';
-import { primeFragments, renderAgentPrompt } from '@shared/prompt-kit/system/assemble';
-import type { PromptCtx } from '@shared/prompt-kit/system/prompt-ctx';
+import type { AgentMessage } from '../../_shared/prompt-kit/message';
+import { Agent } from '../../_shared/prompt-kit/system/agent';
+import { primeFragments, renderAgentPrompt } from '../../_shared/prompt-kit/system/assemble';
+import type { PromptCtx } from '../../_shared/prompt-kit/system/prompt-ctx';
 
 @Injectable()
 export class PromptService implements OnModuleInit {

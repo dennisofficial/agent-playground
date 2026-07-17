@@ -6,7 +6,7 @@ import {
   PayloadTooLargeException,
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import type { DraftPayload, DraftStagedAnswer, ReviewComment } from '@shared/domain/composer-draft';
+import type { DraftPayload, DraftStagedAnswer, ReviewComment } from '../../_shared/domain/composer-draft';
 import { access, copyFile, mkdir, rename, unlink, writeFile } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import { DataSource, EntityManager, QueryFailedError, Repository } from 'typeorm';

@@ -9,7 +9,7 @@ import type {
   ParsedEvent,
   PrStateDelta,
   RawNotification,
-} from '@shared/domain';
+} from '../../_shared/domain';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { ProjectRoutingService } from '../stimulus/project-routing.service';
 

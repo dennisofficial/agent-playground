@@ -1,6 +1,6 @@
 import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { ENGINE_RUNNER } from '@shared/engine';
+import { ENGINE_RUNNER } from '../../_shared/engine';
 import { EngineModule } from '../engine/engine.module';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { ActiveTurnEntity, ToolExecutionEntity } from '../persistence/entities';

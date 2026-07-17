@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
-import type { SeedRow } from '@shared/domain/seed-row';
-import type { AgentMessage } from '@shared/prompt-kit/message';
+import type { SeedRow } from '../../_shared/domain/seed-row';
+import type { AgentMessage } from '../../_shared/prompt-kit/message';
 import { Observable, Subject } from 'rxjs';
 import type { ApprovalDecision } from './approval-blocks';
 import { APPROVE_ACTION_ID } from './approval-blocks';

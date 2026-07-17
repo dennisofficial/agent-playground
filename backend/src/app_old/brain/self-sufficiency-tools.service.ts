@@ -1,5 +1,5 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
-import type { ToolImpl } from '@shared/engine/engine.types';
+import type { ToolImpl } from '../../_shared/engine/engine.types';
 import { randomUUID } from 'node:crypto';
 import { McpServerStore } from '../mcp/mcp-server.store';
 import { MemoryStore } from '../memory/memory.store';

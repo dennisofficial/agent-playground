@@ -1,4 +1,4 @@
-import { repoStateDir } from '@shared/state-root';
+import { repoStateDir } from '../../_shared/state-root';
 import { join } from 'node:path';
 
 

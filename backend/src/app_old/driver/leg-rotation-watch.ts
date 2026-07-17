@@ -1,4 +1,4 @@
-import { ROTATION_REMINDER_DELTA_TOKENS, ROTATION_SOFT_TOKENS } from '@shared/prompt-kit/jit';
+import { ROTATION_REMINDER_DELTA_TOKENS, ROTATION_SOFT_TOKENS } from '../../_shared/prompt-kit/jit';
 
 export type LegRotationSignalPhase = 'soft' | 'reminder';
 

@@ -1,4 +1,4 @@
-import type { DecisionClass, DecisionRecord } from '@shared/domain';
+import type { DecisionClass, DecisionRecord } from '../../_shared/domain';
 
 export type DecisionVerdict = 'covered' | 'proceed' | 'ask';
 

@@ -1,5 +1,5 @@
 import { Logger } from '@nestjs/common';
-import type { EventMessage, TurnEnvelope } from '@shared/domain';
+import type { EventMessage, TurnEnvelope } from '../../_shared/domain';
 
 export const BRAIN_SINK = Symbol('BRAIN_SINK');
 

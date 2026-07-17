@@ -3,7 +3,7 @@ import {
   detectInstallCommand,
   renderInstallAwareness,
   type InstallMatch,
-} from '@shared/prompt-kit/jit/install-awareness';
+} from '../../_shared/prompt-kit/jit/install-awareness';
 import { WorkspaceConfigStore } from '../onboarding/workspace-config.store';
 import { INSTALL_AWARENESS_FILTER, type InstallAwarenessFilter } from './install-awareness-filter';
 import {

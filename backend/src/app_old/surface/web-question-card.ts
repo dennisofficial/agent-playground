@@ -1,5 +1,5 @@
 
-import type { DecisionClass } from '@shared/domain/decision-record';
+import type { DecisionClass } from '../../_shared/domain/decision-record';
 
 export interface WebQuestionOption {
   id: string;

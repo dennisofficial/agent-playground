@@ -1,4 +1,4 @@
-import type { DraftPayload } from '@shared/domain/composer-draft';
+import type { DraftPayload } from '../../../_shared/domain/composer-draft';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { JobEntity } from './job.entity';

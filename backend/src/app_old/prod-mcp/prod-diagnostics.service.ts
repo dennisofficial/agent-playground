@@ -1,9 +1,9 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import type { TurnEnvelope } from '@shared/domain';
-import { atlasAgentHomeBase } from '@shared/engine/engine-home';
-import { agentMessage, type AgentMessage } from '@shared/prompt-kit/message';
+import type { TurnEnvelope } from '../../_shared/domain';
+import { atlasAgentHomeBase } from '../../_shared/engine/engine-home';
+import { agentMessage, type AgentMessage } from '../../_shared/prompt-kit/message';
 import { DataSource, Repository } from 'typeorm';
 import { JobBootstrapService } from '../job-bootstrap/job-bootstrap.service';
 import {

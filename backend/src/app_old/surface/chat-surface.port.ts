@@ -1,8 +1,8 @@
-import type { SeedRow } from '@shared/domain/seed-row';
-import type { AgentMessage } from '@shared/prompt-kit/message';
+import type { SeedRow } from '../../_shared/domain/seed-row';
+import type { AgentMessage } from '../../_shared/prompt-kit/message';
 import type { Observable } from 'rxjs';
 
-import { renderChunk } from '@shared/stimulus/chunk-vocabulary';
+import { renderChunk } from '../../_shared/stimulus/chunk-vocabulary';
 
 export const CHAT_SURFACE = Symbol('CHAT_SURFACE');
 

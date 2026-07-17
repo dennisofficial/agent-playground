@@ -1,7 +1,7 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
-import type { DecisionRecord, Job, SessionEngine, Step, ThreadCondition } from '@shared/domain';
-import { CODEX_REVIEW_OUTAGE_RETRY_MS } from '@shared/domain';
+import type { DecisionRecord, Job, SessionEngine, Step, ThreadCondition } from '../../_shared/domain';
+import { CODEX_REVIEW_OUTAGE_RETRY_MS } from '../../_shared/domain';
 import {
   cleanAuthHaltReason,
   EngineAuthError,
@@ -13,21 +13,21 @@ import {
   type EngineHomeType,
   type ToolBridgeOptions,
   type ToolImpl,
-} from '@shared/engine';
-import type { GitAuth } from '@shared/engine/engine.types';
+} from '../../_shared/engine';
+import type { GitAuth } from '../../_shared/engine/engine.types';
 import {
   HOST_RETRY_BACKOFF_MS,
   HOST_TRANSPORT_TRANSIENT_RE,
   INTERNAL_PROFILE_AWARENESS_TOOL,
   isTransientAuthError,
   MAX_HOST_RETRIES,
-} from '@shared/engine/engine.types';
+} from '../../_shared/engine/engine.types';
 import {
   defaultResumeAt,
   isCorroboratedSessionLimit,
   SESSION_LIMIT_TEXT_MISFIRE_MAX,
-} from '@shared/engine/session-limit';
-import { summarizeTurnFailure } from '@shared/engine/turn-failure-summary';
+} from '../../_shared/engine/session-limit';
+import { summarizeTurnFailure } from '../../_shared/engine/turn-failure-summary';
 import { modeApprovesShip } from '@workspace/shared';
 import { Sema } from 'async-sema';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -40,9 +40,9 @@ import { WorkspaceConfigStore } from '../onboarding/workspace-config.store';
 import { threadDirName } from '../prompt-kit/harness/thread-dir-name';
 import { CONTAINER_CONTEXT } from '../sandbox/container-paths';
 import { LiveTurnStore, MAIN_LANE } from '../surface/live-turn-store';
-import { chunkKey } from '@shared/prompt-kit/harness/chunk-keys';
-import { legRotationRule } from '@shared/prompt-kit/jit';
-import { fromExternal, type AgentMessage } from '@shared/prompt-kit/message';
+import { chunkKey } from '../../_shared/prompt-kit/harness/chunk-keys';
+import { legRotationRule } from '../../_shared/prompt-kit/jit';
+import { fromExternal, type AgentMessage } from '../../_shared/prompt-kit/message';
 import {
   composeLegSeed,
   foldLegTurn,
@@ -50,9 +50,9 @@ import {
   ROTATION_REMINDER_NUDGE,
   ROTATION_SOFT_NUDGE,
   stripContextPressureTag,
-} from '@shared/prompt-kit/messages/build-handoff';
-import { renderAgentPrompt, renderRunningServicesNote } from '@shared/prompt-kit/system';
-import { coerceThreadType, ThreadType } from '@shared/thread-kind/thread-types';
+} from '../../_shared/prompt-kit/messages/build-handoff';
+import { renderAgentPrompt, renderRunningServicesNote } from '../../_shared/prompt-kit/system';
+import { coerceThreadType, ThreadType } from '../../_shared/thread-kind/thread-types';
 import {
   dedupeFindings,
   lensById,

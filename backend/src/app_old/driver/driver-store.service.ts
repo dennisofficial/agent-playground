@@ -12,9 +12,9 @@ import type {
   Thread,
   ThreadCondition,
   ThreadStatus,
-} from '@shared/domain';
-import type { AgentMessage } from '@shared/prompt-kit/message';
-import { coerceThreadType } from '@shared/thread-kind/thread-types';
+} from '../../_shared/domain';
+import type { AgentMessage } from '../../_shared/prompt-kit/message';
+import { coerceThreadType } from '../../_shared/thread-kind/thread-types';
 import { randomUUID } from 'node:crypto';
 import { DataSource, In, IsNull, MoreThan, Raw, Repository } from 'typeorm';
 import type { ReviewFinding } from '../autofix/autofix.types';

@@ -1,6 +1,6 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
-import type { SessionEngine } from '@shared/domain';
+import type { SessionEngine } from '../../_shared/domain';
 import {
   AUTH_REFRESH_SINK,
   type AuthRefreshSink,
@@ -10,15 +10,15 @@ import {
   type EngineRunResult,
   type EngineRunnerPort,
   type RunEngineArgs,
-} from '@shared/engine';
+} from '../../_shared/engine';
 import type {
   HostFrame,
   ToolBridgeOptions,
   ToolRequestFrame,
   TurnSpec,
-} from '@shared/engine/engine.types';
-import { SPEC_VERBATIM_KEYS, pickKeys } from '@shared/engine/engine.types';
-import { dispatchToolRequest } from '@shared/engine/tool-bridge-host';
+} from '../../_shared/engine/engine.types';
+import { SPEC_VERBATIM_KEYS, pickKeys } from '../../_shared/engine/engine.types';
+import { dispatchToolRequest } from '../../_shared/engine/tool-bridge-host';
 import { randomUUID } from 'node:crypto';
 import { REDIS_STREAM_PORT, type RedisStreamPort } from '../../_lib/redis/redis.port';
 import { gitAuthEnv, gitCredHelperEnv } from '../git/git-auth';

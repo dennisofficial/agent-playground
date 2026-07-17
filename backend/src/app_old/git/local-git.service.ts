@@ -1,6 +1,6 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Injectable, Logger } from '@nestjs/common';
-import { repoStateDir } from '@shared/state-root';
+import { repoStateDir } from '../../_shared/state-root';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, readdir, rm, stat } from 'node:fs/promises';

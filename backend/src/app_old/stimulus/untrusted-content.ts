@@ -1,5 +1,5 @@
 
-import { renderChunk } from '@shared/stimulus/chunk-vocabulary';
+import { renderChunk } from '../../_shared/stimulus/chunk-vocabulary';
 
 export const UNTRUSTED_OPEN = '<<<UNTRUSTED_EVENT_DATA>>>';
 export const UNTRUSTED_CLOSE = '<<<END_UNTRUSTED_EVENT_DATA>>>';

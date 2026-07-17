@@ -1,8 +1,8 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
-import { findLifecycleRule, operatorMessageRules, type JitFireCtx } from '@shared/prompt-kit/jit';
+import { findLifecycleRule, operatorMessageRules, type JitFireCtx } from '../../_shared/prompt-kit/jit';
 import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
 import { descriptorForLane } from '../surface/thread-registry';
-import { TurnChunk } from '@shared/prompt-kit/harness/tag-vocabulary';
+import { TurnChunk } from '../../_shared/prompt-kit/harness/tag-vocabulary';
 import { LANE_SEEDER, type LaneSeeder } from '../driver/build-lane-delivery.service';
 
 export type JitLifecycleEvent = 'plan-approved';

@@ -1,5 +1,5 @@
 import { Logger } from '@nestjs/common';
-import type { Job } from '@shared/domain';
+import type { Job } from '../../_shared/domain';
 
 export const JOB_DISPATCHER = Symbol('JOB_DISPATCHER');
 

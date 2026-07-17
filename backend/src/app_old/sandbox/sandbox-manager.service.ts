@@ -1,7 +1,7 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
-import { atlasAgentHomeBase } from '@shared/engine/engine-home';
-import type { ResolvedMcpServer } from '@shared/engine/engine.types';
+import { atlasAgentHomeBase } from '../../_shared/engine/engine-home';
+import type { ResolvedMcpServer } from '../../_shared/engine/engine.types';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {

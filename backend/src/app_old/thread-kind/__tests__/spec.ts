@@ -1,6 +1,6 @@
-import type { SessionEngine } from '@shared/domain';
-import type { ReasoningEffort } from '@shared/engine';
-import { Agent } from '@shared/prompt-kit/system';
+import type { SessionEngine } from '../../../_shared/domain';
+import type { ReasoningEffort } from '../../../_shared/engine';
+import { Agent } from '../../../_shared/prompt-kit/system';
 import type { ThreadKind as LaneKind, ThreadInput } from '../../surface/thread-registry';
 
 export type ThreadRole =

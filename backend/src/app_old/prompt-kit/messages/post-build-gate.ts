@@ -1,4 +1,4 @@
-import { agentMessage, type AgentMessage } from '@shared/prompt-kit/message';
+import { agentMessage, type AgentMessage } from '../../../_shared/prompt-kit/message';
 
 export function postBuildGateSeed(): AgentMessage {
   return agentMessage(

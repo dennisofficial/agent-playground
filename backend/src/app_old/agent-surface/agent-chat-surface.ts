@@ -1,8 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
-import type { SeedRow } from '@shared/domain';
-import type { AgentMessage } from '@shared/prompt-kit/message';
 import { firstValueFrom, Observable, Subject, timeout } from 'rxjs';
 import { filter, first } from 'rxjs/operators';
+import type { SeedRow } from '../../_shared/domain';
+import type { AgentMessage } from '../../_shared/prompt-kit/message';
 import { APPROVE_ACTION_ID, type ApprovalActionMeta } from '../surface/approval-blocks';
 import type { ChatSurface, InboundChatMessage, PostOptions } from '../surface/chat-surface.port';
 import { SYSTEM_SEED_AUTHOR, wrapSystemNotification } from '../surface/chat-surface.port';
@@ -54,7 +54,6 @@ export class AgentChatSurface implements ChatSurface {
   get outbound$(): Observable<OutboundChatMessage> {
     return this.outboundSubject.asObservable();
   }
-
 
   sendFromHuman(channel: string, text: string, opts: SendOptions = {}): string {
     const ts = this.mintTs();
@@ -113,7 +112,6 @@ export class AgentChatSurface implements ChatSurface {
     return ts;
   }
 
-
   async post(channel: string, text: string, opts: PostOptions = {}): Promise<string | undefined> {
     const ts = this.mintTs();
     const message: OutboundChatMessage = {
@@ -129,7 +127,6 @@ export class AgentChatSurface implements ChatSurface {
     return ts;
   }
 
-
   waitForReply(
     predicate: (m: OutboundChatMessage) => boolean,
     timeoutMs = 10_000,
@@ -142,7 +139,6 @@ export class AgentChatSurface implements ChatSurface {
   threadMessages(threadTs: string): OutboundChatMessage[] {
     return this.outbox.filter((m) => m.threadTs === threadTs);
   }
-
 
   approvalCards(): CapturedApprovalCard[] {
     const cards: CapturedApprovalCard[] = [];
@@ -200,8 +196,7 @@ export function parseApprovalMeta(
       try {
         const meta = JSON.parse(raw) as ApprovalActionMeta;
         if (meta && typeof meta.jobId === 'string') return meta;
-      } catch {
-      }
+      } catch {}
     }
   }
   return undefined;

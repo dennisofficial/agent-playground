@@ -1,5 +1,5 @@
-import type { SessionEngine } from '@shared/domain';
-import type { EngineAuth, EngineHomeKey, GitAuth } from '@shared/engine';
+import type { SessionEngine } from '../../_shared/domain';
+import type { EngineAuth, EngineHomeKey, GitAuth } from '../../_shared/engine';
 
 export type FindingSeverity = 'low' | 'medium' | 'high';
 

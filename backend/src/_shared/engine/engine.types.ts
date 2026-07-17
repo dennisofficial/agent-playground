@@ -31,7 +31,6 @@ export interface ExecutionTarget {
   evidenceDir?: string;
 }
 
-
 export interface ToolRequestFrame {
   t: 'tool_request';
   id: string;
@@ -137,7 +136,6 @@ export interface RunEngineArgs {
   turnMeta?: TurnMeta;
   liveRoute?: { channel: string; jobId: string; lane?: string };
 }
-
 
 type HostOnlyArgKey =
   | 'onEvent'

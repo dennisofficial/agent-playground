@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { SandboxGitIdentity } from '@shared/engine/engine.types';
+import type { SandboxGitIdentity } from '../../_shared/engine/engine.types';
 import { GithubPrService } from './github-pr.service';
 
 @Injectable()

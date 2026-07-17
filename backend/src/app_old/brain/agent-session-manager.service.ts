@@ -20,10 +20,10 @@ import type {
   SeedRow,
   TurnEnvelope,
   UnblockBlockerInfo,
-} from '@shared/domain';
-import { DECISION_CLASS_IDS, nextDecisionId } from '@shared/domain';
-import type { DecisionClass } from '@shared/domain/decision-record';
-import type { EngineHomeKey } from '@shared/engine/engine-home';
+} from '../../_shared/domain';
+import { DECISION_CLASS_IDS, nextDecisionId } from '../../_shared/domain';
+import type { DecisionClass } from '../../_shared/domain/decision-record';
+import type { EngineHomeKey } from '../../_shared/engine/engine-home';
 import type {
   EngineEvent,
   EngineRunnerPort,
@@ -31,7 +31,7 @@ import type {
   GitAuth,
   RunEngineArgs,
   ToolImpl,
-} from '@shared/engine/engine.types';
+} from '../../_shared/engine/engine.types';
 import {
   ENGINE_RUNNER,
   HOST_RETRY_BACKOFF_MS,
@@ -42,22 +42,22 @@ import {
   MAX_HOST_RETRIES,
   resolveContextLimit,
   SANDBOX_RESET_NOTICE,
-} from '@shared/engine/engine.types';
+} from '../../_shared/engine/engine.types';
 import {
   defaultResumeAt,
   isCorroboratedSessionLimit,
   SESSION_LIMIT_TEXT_MISFIRE_MAX,
-} from '@shared/engine/session-limit';
-import type { TurnFailureCategory } from '@shared/engine/turn-failure-summary';
-import { summarizeTurnFailure } from '@shared/engine/turn-failure-summary';
-import { isReservedMcpName } from '@shared/mcp/reserved-mcp-names';
-import { chunkKey } from '@shared/prompt-kit/harness/chunk-keys';
-import { renderTurn, TurnChunk } from '@shared/prompt-kit/harness/tag-vocabulary';
-import { isSubstantiveQuery, renderMemoryRecall } from '@shared/prompt-kit/jit';
-import type { AgentMessage } from '@shared/prompt-kit/message';
-import { fromExternal } from '@shared/prompt-kit/message';
-import { Agent, composePreviewPrepSeed } from '@shared/prompt-kit/system';
-import { coerceThreadType, type ThreadType } from '@shared/thread-kind/thread-types';
+} from '../../_shared/engine/session-limit';
+import type { TurnFailureCategory } from '../../_shared/engine/turn-failure-summary';
+import { summarizeTurnFailure } from '../../_shared/engine/turn-failure-summary';
+import { isReservedMcpName } from '../../_shared/mcp/reserved-mcp-names';
+import { chunkKey } from '../../_shared/prompt-kit/harness/chunk-keys';
+import { renderTurn, TurnChunk } from '../../_shared/prompt-kit/harness/tag-vocabulary';
+import { isSubstantiveQuery, renderMemoryRecall } from '../../_shared/prompt-kit/jit';
+import type { AgentMessage } from '../../_shared/prompt-kit/message';
+import { fromExternal } from '../../_shared/prompt-kit/message';
+import { Agent, composePreviewPrepSeed } from '../../_shared/prompt-kit/system';
+import { coerceThreadType, type ThreadType } from '../../_shared/thread-kind/thread-types';
 import { modeApprovesPlan } from '@workspace/shared';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';

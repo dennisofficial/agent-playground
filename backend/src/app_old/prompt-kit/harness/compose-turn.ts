@@ -1,5 +1,5 @@
-import { renderTurn, type TurnChunk } from '@shared/prompt-kit/harness/tag-vocabulary';
-import { agentMessage, fromExternal, type AgentMessage } from '@shared/prompt-kit/message';
+import { renderTurn, type TurnChunk } from '../../../_shared/prompt-kit/harness/tag-vocabulary';
+import { agentMessage, fromExternal, type AgentMessage } from '../../../_shared/prompt-kit/message';
 
 export type ComposeTurnInput = {
   prefixChunks: TurnChunk[];

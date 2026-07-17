@@ -1,4 +1,4 @@
-import type { AgentMessage } from '@shared/prompt-kit/message';
+import type { AgentMessage } from '../../_shared/prompt-kit/message';
 import type { Repository } from 'typeorm';
 import type { TranscriptMessageEntity } from './entities/transcript-message.entity';
 

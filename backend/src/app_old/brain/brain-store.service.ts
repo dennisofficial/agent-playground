@@ -1,9 +1,9 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import type { Decision, Job, JobActivity, JobKind, JobStatus } from '@shared/domain';
-import { nextDecisionId } from '@shared/domain';
-import type { AgentMessage } from '@shared/prompt-kit/message';
-import { coerceThreadType } from '@shared/thread-kind/thread-types';
+import type { Decision, Job, JobActivity, JobKind, JobStatus } from '../../_shared/domain';
+import { nextDecisionId } from '../../_shared/domain';
+import type { AgentMessage } from '../../_shared/prompt-kit/message';
+import { coerceThreadType } from '../../_shared/thread-kind/thread-types';
 import type { AutoApproveMode } from '@workspace/shared';
 import { DataSource, In, IsNull, MoreThan, Not, type ObjectLiteral, Repository } from 'typeorm';
 import { JobBootstrapService } from '../job-bootstrap/job-bootstrap.service';

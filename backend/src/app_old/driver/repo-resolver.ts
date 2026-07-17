@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import type { Job } from '@shared/domain';
-import type { SandboxGitIdentity } from '@shared/engine/engine.types';
+import type { Job } from '../../_shared/domain';
+import type { SandboxGitIdentity } from '../../_shared/engine/engine.types';
 import { Repository } from 'typeorm';
 import { GitIdentityService } from '../git/git-identity.service';
 import { parseGithubRepoUrl } from '../git/github-pr.service';

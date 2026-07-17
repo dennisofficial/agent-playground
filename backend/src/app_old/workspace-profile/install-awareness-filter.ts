@@ -3,7 +3,7 @@ import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import { SystemMessage } from '@langchain/core/messages';
 import { ChatPromptTemplate, HumanMessagePromptTemplate } from '@langchain/core/prompts';
 import { RunnableLambda, RunnableSequence, type Runnable } from '@langchain/core/runnables';
-import type { InstallMatch } from '@shared/prompt-kit/jit/install-awareness';
+import type { InstallMatch } from '../../_shared/prompt-kit/jit/install-awareness';
 import { z } from 'zod';
 import { fence, fenceOrNone } from '../prompt-fence';
 

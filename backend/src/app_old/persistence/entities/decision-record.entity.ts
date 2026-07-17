@@ -1,4 +1,4 @@
-import type { Decision } from '@shared/domain/decision-record';
+import type { Decision } from '../../../_shared/domain/decision-record';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { JobEntity } from './job.entity';

@@ -1,4 +1,4 @@
-import type { ToolImpl } from '@shared/engine/engine.types';
+import type { ToolImpl } from '../../_shared/engine/engine.types';
 import type { TaskItem } from '../persistence/entities';
 import type { TaskScope } from './thread-registry';
 import type { TaskEventSink } from './turn-harness.service';

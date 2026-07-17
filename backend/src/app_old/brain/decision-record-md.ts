@@ -1,5 +1,5 @@
-import type { Decision } from '@shared/domain/decision-record';
-import { DECISION_CLASS_IDS, DECISION_CLASS_META } from '@shared/domain/decision-record';
+import type { Decision } from '../../_shared/domain/decision-record';
+import { DECISION_CLASS_IDS, DECISION_CLASS_META } from '../../_shared/domain/decision-record';
 
 
 function renderDecision(d: Decision): string {

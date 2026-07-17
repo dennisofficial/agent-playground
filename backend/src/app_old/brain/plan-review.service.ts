@@ -1,8 +1,8 @@
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import type { EngineAuth, EngineHomeKey } from '@shared/engine';
-import { ENGINE_RUNNER, type EngineRunnerPort } from '@shared/engine';
-import { Agent, renderAgentPrompt } from '@shared/prompt-kit/system';
+import type { EngineAuth, EngineHomeKey } from '../../_shared/engine';
+import { ENGINE_RUNNER, type EngineRunnerPort } from '../../_shared/engine';
+import { Agent, renderAgentPrompt } from '../../_shared/prompt-kit/system';
 import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';

@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import type { EventMessage, Message, ParsedEvent, SeedRow } from '@shared/domain';
-import { assertNever } from '@shared/domain';
+import type { EventMessage, Message, ParsedEvent, SeedRow } from '../../_shared/domain';
+import { assertNever } from '../../_shared/domain';
 import { createHash } from 'node:crypto';
 import { composeMessageBody } from '../prompt-kit/harness/compose-message';
 import { EventFilterService } from './event-filter.service';

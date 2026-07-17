@@ -1,4 +1,4 @@
-import type { Decision } from '@shared/domain';
+import type { Decision } from '../../_shared/domain';
 
 
 export interface VerificationEvidence {

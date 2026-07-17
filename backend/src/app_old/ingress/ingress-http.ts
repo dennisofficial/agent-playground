@@ -11,7 +11,7 @@ import type {
   IngressResult,
   NotificationSource,
   RawNotification,
-} from '@shared/domain';
+} from '../../_shared/domain';
 import { BaseMoveMergeabilitySync } from '../driver/base-move-mergeability-sync.service';
 import { GitStateReconciler } from '../driver/git-state-reconciler.service';
 import { GithubCiStateSync } from '../driver/github-ci-state-sync.service';

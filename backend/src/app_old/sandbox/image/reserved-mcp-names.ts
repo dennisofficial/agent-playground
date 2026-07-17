@@ -1,1 +1,1 @@
-export * from '../../../shared/mcp/reserved-mcp-names';
+export * from '../../../_shared/mcp/reserved-mcp-names';

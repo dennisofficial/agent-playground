@@ -1,9 +1,9 @@
-import type { Message, UserMessage } from '@shared/domain/message';
-import { assertNever } from '@shared/domain/message';
-import type { SeedRow } from '@shared/domain/seed-row';
-import { chunkKey } from '@shared/prompt-kit/harness/chunk-keys';
-import { renderChunk } from '@shared/prompt-kit/harness/tag-vocabulary';
-import { agentMessage, type AgentMessage } from '@shared/prompt-kit/message';
+import type { Message, UserMessage } from '../../../_shared/domain/message';
+import { assertNever } from '../../../_shared/domain/message';
+import type { SeedRow } from '../../../_shared/domain/seed-row';
+import { chunkKey } from '../../../_shared/prompt-kit/harness/chunk-keys';
+import { renderChunk } from '../../../_shared/prompt-kit/harness/tag-vocabulary';
+import { agentMessage, type AgentMessage } from '../../../_shared/prompt-kit/message';
 import { shipOpenPrBody } from '../messages/ship-open-pr';
 import {
   COMPACTION_INSTRUCTION,

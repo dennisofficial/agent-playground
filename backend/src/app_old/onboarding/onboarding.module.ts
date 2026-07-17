@@ -1,6 +1,6 @@
 import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { AUTH_REFRESH_SINK } from '@shared/engine/auth-refresh.port';
+import { AUTH_REFRESH_SINK } from '../../_shared/engine/auth-refresh.port';
 import { GitModule } from '../git/git.module';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {

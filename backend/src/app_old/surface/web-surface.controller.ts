@@ -30,13 +30,13 @@ import {
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { InjectRepository } from '@nestjs/typeorm';
-import type { ReviewComment } from '@shared/domain/composer-draft';
-import type { JobKind } from '@shared/domain/job';
-import { deriveNeedsYou } from '@shared/domain/job';
-import { isReservedMcpName } from '@shared/mcp/reserved-mcp-names';
-import { chunkKey } from '@shared/prompt-kit/harness/chunk-keys';
-import type { AgentMessage } from '@shared/prompt-kit/message';
-import { renderTurn, type TurnChunk } from '@shared/stimulus/chunk-vocabulary';
+import type { ReviewComment } from '../../_shared/domain/composer-draft';
+import type { JobKind } from '../../_shared/domain/job';
+import { deriveNeedsYou } from '../../_shared/domain/job';
+import { isReservedMcpName } from '../../_shared/mcp/reserved-mcp-names';
+import { chunkKey } from '../../_shared/prompt-kit/harness/chunk-keys';
+import type { AgentMessage } from '../../_shared/prompt-kit/message';
+import { renderTurn, type TurnChunk } from '../../_shared/stimulus/chunk-vocabulary';
 import { CurrentUser, Public } from '@workspace/auth/server';
 import {
   isAutoApproveMode,

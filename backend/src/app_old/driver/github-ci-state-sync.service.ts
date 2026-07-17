@@ -1,6 +1,6 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import type { CiSyncDelta } from '@shared/domain';
+import type { CiSyncDelta } from '../../_shared/domain';
 import type { Repository } from 'typeorm';
 import { GithubPrService, parseGithubRepoUrl } from '../git/github-pr.service';
 import { CredentialResolver } from '../onboarding/credential-resolver.service';

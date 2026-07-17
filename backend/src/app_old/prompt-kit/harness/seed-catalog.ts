@@ -1,7 +1,7 @@
-import type { JobProvenance } from '@shared/domain/job';
-import type { EventMessage, UnblockBlockerInfo } from '@shared/domain/message';
-import { renderChunk } from '@shared/prompt-kit/harness/tag-vocabulary';
-import { agentMessage, fromExternal, type AgentMessage } from '@shared/prompt-kit/message';
+import type { JobProvenance } from '../../../_shared/domain/job';
+import type { EventMessage, UnblockBlockerInfo } from '../../../_shared/domain/message';
+import { renderChunk } from '../../../_shared/prompt-kit/harness/tag-vocabulary';
+import { agentMessage, fromExternal, type AgentMessage } from '../../../_shared/prompt-kit/message';
 
 
 

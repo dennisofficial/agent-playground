@@ -8,10 +8,10 @@ import type {
   MessageType,
   SeedRow,
   TurnEnvelope,
-} from '@shared/domain';
-import type { JobProvenance } from '@shared/domain/job';
-import { chunkKey } from '@shared/prompt-kit/harness/chunk-keys';
-import { fromExternal } from '@shared/prompt-kit/message';
+} from '../../_shared/domain';
+import type { JobProvenance } from '../../_shared/domain/job';
+import { chunkKey } from '../../_shared/prompt-kit/harness/chunk-keys';
+import { fromExternal } from '../../_shared/prompt-kit/message';
 import { DataSource, In, IsNull, QueryFailedError, Repository } from 'typeorm';
 import { JobBootstrapService } from '../job-bootstrap/job-bootstrap.service';
 import { DB_CONNECTION } from '../persistence/database.module';

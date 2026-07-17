@@ -1,6 +1,6 @@
 import { Injectable, Logger, type OnApplicationBootstrap } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
-import { fromExternal } from '@shared/prompt-kit/message';
+import { fromExternal } from '../../_shared/prompt-kit/message';
 import { TurnRunnerService } from '../runner/turn-runner.service';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
 import { CollectedPending, DeliveryLane, DeliveryPump } from '../stimulus/delivery-pump.service';

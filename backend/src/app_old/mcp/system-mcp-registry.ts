@@ -1,4 +1,4 @@
-import { LSP_SERVER_NAME, LSP_TOOL_NAMES } from '@shared/engine/lsp-tools';
+import { LSP_SERVER_NAME, LSP_TOOL_NAMES } from '../../_shared/engine/lsp-tools';
 
 export interface SystemMcpServer {
   name: string;

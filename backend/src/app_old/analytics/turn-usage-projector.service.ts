@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { type EngineUsage, resolveContextLimit } from '@shared/engine';
 import { Repository } from 'typeorm';
+import { type EngineUsage, resolveContextLimit } from '../../_shared/engine';
 import { AppVersionService } from '../cluster/app-version.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity, TurnModelUsageEntity, TurnStatsEntity } from '../persistence/entities';
@@ -43,7 +43,7 @@ export class TurnUsageProjector {
       const tag = identity.metaTag ?? {};
       const stepId = pickUuid(tag.phaseId) ?? laneSuffix(identity.lane, 'phase:');
       const threadId = laneSuffix(identity.lane, 'thread:');
-      const { phaseId: _phaseId, ...restTags } = tag as Record<string, unknown>;
+      const { phaseId: _phaseId, ...restTags } = tag;
       const tags = Object.keys(restTags).length ? restTags : null;
 
       const contextLimit =

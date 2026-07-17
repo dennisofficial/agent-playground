@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
-import type { EngineEvent, ExecutionTarget, RunEngineArgs } from '@shared/engine';
-import { ENGINE_RUNNER, type EngineRunnerPort } from '@shared/engine';
-import { Agent, renderAgentPrompt } from '@shared/prompt-kit/system';
+import type { EngineEvent, ExecutionTarget, RunEngineArgs } from '../../_shared/engine';
+import { ENGINE_RUNNER, type EngineRunnerPort } from '../../_shared/engine';
+import { Agent, renderAgentPrompt } from '../../_shared/prompt-kit/system';
 import { TurnUsageProjector } from '../analytics/turn-usage-projector.service';
 import { ConventionProfileResolver } from '../conventions/convention-profile.resolver';
 import { LocalGitService } from '../git/local-git.service';
@@ -111,7 +111,6 @@ export class AutoFixStage {
   ): Promise<AutoFixSummary> {
     return this.run('pull_request', ctx, options);
   }
-
 
   private async run(
     mode: 'thread' | 'pull_request',
@@ -281,7 +280,6 @@ export class AutoFixStage {
     const harness = this.harnessFor(ctx, sub)?.harness;
     await harness?.finish(message).catch(() => undefined);
   }
-
 
   async ensureContextDiff(ctx: AutoFixContext): Promise<AutoFixContext> {
     return this.ensureDiff(ctx);

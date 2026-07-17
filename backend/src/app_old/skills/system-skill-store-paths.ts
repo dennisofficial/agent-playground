@@ -1,4 +1,4 @@
-import { monorepoRoot } from '@shared/state-root';
+import { monorepoRoot } from '../../_shared/state-root';
 import { join } from 'node:path';
 
 

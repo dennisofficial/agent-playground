@@ -1,5 +1,5 @@
-import { agentMessage, type AgentMessage } from '@shared/prompt-kit/message';
-import { GIT_SAFETY_NOTE } from '@shared/prompt-kit/system/fragments';
+import { agentMessage, type AgentMessage } from '../../../_shared/prompt-kit/message';
+import { GIT_SAFETY_NOTE } from '../../../_shared/prompt-kit/system/fragments';
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;

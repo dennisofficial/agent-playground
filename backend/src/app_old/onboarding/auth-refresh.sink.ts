@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
-import type { SessionEngine } from '@shared/domain';
-import type { AuthRefreshSink } from '@shared/engine/auth-refresh.port';
+import type { SessionEngine } from '../../_shared/domain';
+import type { AuthRefreshSink } from '../../_shared/engine/auth-refresh.port';
 import { ClaudeCredentialStore } from './claude-credential.store';
 import { TenantCredentialStore } from './tenant-credential.store';
 

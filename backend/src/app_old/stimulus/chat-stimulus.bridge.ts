@@ -7,7 +7,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import type { UserMessage } from '@shared/domain';
+import type { UserMessage } from '../../_shared/domain';
 import { Subscription } from 'rxjs';
 import { Repository } from 'typeorm';
 import { JobBootstrapService } from '../job-bootstrap/job-bootstrap.service';

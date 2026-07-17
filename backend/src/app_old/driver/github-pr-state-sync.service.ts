@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import type { PrStateDelta } from '@shared/domain';
+import type { PrStateDelta } from '../../_shared/domain';
 import type { Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity } from '../persistence/entities';

@@ -1,4 +1,4 @@
-import { agentMessage, type AgentMessage } from '@shared/prompt-kit/message';
+import { agentMessage, type AgentMessage } from '../../../_shared/prompt-kit/message';
 import type { AutoFixContext, ReviewFinding, ReviewLens } from '../../autofix/autofix.types';
 import { fence } from '../../prompt-fence';
 

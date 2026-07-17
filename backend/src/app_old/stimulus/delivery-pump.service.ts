@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
-import type { TurnEnvelope } from '@shared/domain';
-import type { TurnChunk } from '@shared/stimulus/chunk-vocabulary';
+import type { TurnEnvelope } from '../../_shared/domain';
+import type { TurnChunk } from '../../_shared/stimulus/chunk-vocabulary';
 import { StimulusStoreService } from './stimulus-store.service';
 
 

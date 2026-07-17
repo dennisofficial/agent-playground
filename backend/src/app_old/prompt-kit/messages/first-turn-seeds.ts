@@ -1,5 +1,5 @@
-import { renderHarnessTag } from '@shared/prompt-kit/harness/tag-vocabulary';
-import { agentMessage, type AgentMessage } from '@shared/prompt-kit/message';
+import { renderHarnessTag } from '../../../_shared/prompt-kit/harness/tag-vocabulary';
+import { agentMessage, type AgentMessage } from '../../../_shared/prompt-kit/message';
 import { CONTAINER_CONTEXT } from '../../sandbox/container-paths';
 
 

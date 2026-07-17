@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { ContextBreakdown, JitInjection, JitInjectionRule } from '@shared/engine';
+import type { ContextBreakdown, JitInjection, JitInjectionRule } from '../../_shared/engine';
 import { Observable, Subject } from 'rxjs';
 import { isInterruptAbortResult } from '../brain/session-transcript';
 

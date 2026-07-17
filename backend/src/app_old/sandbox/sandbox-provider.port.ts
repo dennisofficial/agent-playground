@@ -1,4 +1,4 @@
-import type { ResolvedMcpServer } from '@shared/engine/engine.types';
+import type { ResolvedMcpServer } from '../../_shared/engine/engine.types';
 import { FeatureSandbox } from '../git/local-git.service';
 
 export const SANDBOX_PROVIDER = Symbol('SANDBOX_PROVIDER');

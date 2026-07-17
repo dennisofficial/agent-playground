@@ -1,1 +1,1 @@
-export * from '../../../shared/mcp/mcp-hub-config';
+export * from '../../../_shared/mcp/mcp-hub-config';

@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import type { UnblockBlockerInfo } from '@shared/domain/message';
+import type { UnblockBlockerInfo } from '../../_shared/domain/message';
 
 export interface BrainGatewayHandler {
   openPrAtShip(input: {
