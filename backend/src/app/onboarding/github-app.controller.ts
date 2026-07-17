@@ -11,8 +11,6 @@ import {
   Query,
   Res,
   UseGuards,
-  UsePipes,
-  ValidationPipe,
 } from '@nestjs/common';
 import { CurrentUser, Public } from '@workspace/auth/server';
 import { IsIn } from 'class-validator';
@@ -40,7 +38,6 @@ class SetGithubAuthModeDto {
  */
 @Controller('web/orgs/:orgId/github-app')
 @UseGuards(OrgMembershipGuard)
-@UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
 export class GithubAppController {
   constructor(
     private readonly store: TenantCredentialStore,

@@ -7,8 +7,6 @@ import {
   Patch,
   Post,
   UseGuards,
-  UsePipes,
-  ValidationPipe,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsBoolean, IsIn, IsOptional, IsString } from 'class-validator';
@@ -73,7 +71,6 @@ interface RepoView {
  */
 @Controller('web/orgs/:orgId/repos')
 @UseGuards(OrgMembershipGuard)
-@UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
 export class RepoController {
   constructor(
     private readonly onboarding: OnboardingService,

@@ -4,8 +4,6 @@ import {
   Get,
   Put,
   UseGuards,
-  UsePipes,
-  ValidationPipe,
 } from '@nestjs/common';
 import { IsOptional, IsString } from 'class-validator';
 import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
@@ -37,7 +35,6 @@ class SetCredentialsDto {
  */
 @Controller('web/orgs/:orgId/credentials')
 @UseGuards(OrgMembershipGuard)
-@UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
 export class OrgCredentialsController {
   constructor(
     private readonly store: TenantCredentialStore,

@@ -8,8 +8,6 @@ import {
   Patch,
   Post,
   UseGuards,
-  UsePipes,
-  ValidationPipe,
 } from '@nestjs/common';
 import { CurrentUser } from '@workspace/auth/server';
 import {
@@ -80,7 +78,6 @@ class InviteDto {
  * carry the live invite-link tokens.
  */
 @Controller('web/orgs')
-@UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
 export class OrgController {
   constructor(
     private readonly orgs: OrganizationService,

@@ -28,6 +28,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
+import { Allow, IsOptional, IsString } from 'class-validator';
 import {
   createReadStream,
   existsSync,
@@ -342,24 +343,41 @@ function listContextBucket(dir: string, prefix = '', depth = 0): ContextFile[] {
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-interface CreateThreadDto {
-  firstMessage: string;
+class CreateThreadDto {
+  /** Optional at the pipe: `createJob` accepts an absent body text when files are attached. */
+  @IsOptional()
+  @IsString()
+  firstMessage?: string;
+  @IsOptional()
+  @IsString()
   title?: string;
+  @IsOptional()
+  @IsString()
   baseBranch?: string;
   /** Operator-chosen job kind. Only the operator-selectable kinds are honored (see `OPERATOR_JOB_KINDS`). */
+  @IsOptional()
+  @IsString()
   kind?: string;
-  /** For `kind: 'review'` — the PR number to review; seeds a `<review>` framing block on turn 1. */
+  /** For `kind: 'review'` — the PR number to review; seeds a `<review>` framing block on turn 1.
+   *  `@Allow()`: accepts the string|number union (multipart sends a string); `Number(...)` coerces in-handler. */
+  @Allow()
   prNumber?: string | number;
   /** Operator-chosen auto-approve mode to arm at creation; absent falls back to the org's
    *  `default_auto_approve_mode` (see `WebSurfaceController.createJob`); a present-but-invalid value is
    *  rejected rather than silently falling back. */
+  @IsOptional()
+  @IsString()
   autoApproveMode?: string;
   /** Operator-chosen auto-merge toggle to arm at creation; absent falls back to the org's
    *  `default_auto_merge` (see `WebSurfaceController.createJob`); a present-but-invalid value is rejected
-   *  rather than silently falling back. */
+   *  rather than silently falling back. `@Allow()`: multipart sends the string 'true'/'false', coerced by
+   *  `coerceBoolean` in-handler. */
+  @Allow()
   autoMerge?: boolean;
   /** Job ids to block on (born-blocked), mirroring `create_job`'s `dependsOn`. Accepts a single id or
-   *  an array — the multipart create path delivers repeated `dependsOn` form fields either way. */
+   *  an array — the multipart create path delivers repeated `dependsOn` form fields either way.
+   *  `@Allow()`: `toStringArray` normalizes the single|array union in-handler. */
+  @Allow()
   dependsOn?: string | string[];
 }
 
@@ -394,8 +412,10 @@ type MessageInput =
   | { type: 'secret_provided'; requestId: string; value: string };
 /** `/message` request body. `messages` is a JSON array — or its JSON-stringified form when the request
  *  is multipart (carrying `files` for a `user` item's attachments), since form fields are always strings. */
-interface MessageBatchDto {
-  messages: MessageInput[] | string;
+class MessageBatchDto {
+  /** `@Allow()`: array | JSON-string union; the handler JSON.parses + `normalizeMessageInput`s each item. */
+  @Allow()
+  messages!: MessageInput[] | string;
 }
 /** One highlighted-and-annotated selection in a review-comments batch. */
 interface ReviewCommentItemDto {
@@ -416,25 +436,38 @@ interface ReviewCommentItemDto {
     fragment: string;
   };
 }
-interface ReviewCommentsDto {
-  items: ReviewCommentItemDto[];
+class ReviewCommentsDto {
+  /** `@Allow()`: nested item array validated (non-empty) + formatted in-handler. */
+  @Allow()
+  items!: ReviewCommentItemDto[];
   /** Optional operator prose accompanying the batch — rendered underneath the card. */
+  @IsOptional()
+  @IsString()
   message?: string;
 }
 /** `PUT …/jobs/:jobId/draft` request body — the wire (cleartext) draft payload. */
-interface DraftPayloadDto {
-  text: string;
-  stagedAnswers: DraftStagedAnswerWire[];
-  comments: ReviewComment[];
+class DraftPayloadDto {
+  @IsString()
+  text!: string;
+  /** `@Allow()`: nested wire arrays; the handler byte-counts / persists them as-is. */
+  @Allow()
+  stagedAnswers!: DraftStagedAnswerWire[];
+  @Allow()
+  comments!: ReviewComment[];
 }
-interface RenameThreadDto {
-  title: string;
+class RenameThreadDto {
+  @IsString()
+  title!: string;
 }
-interface SetAutoApproveDto {
-  mode: AutoApproveMode;
+class SetAutoApproveDto {
+  /** `isAutoApproveMode` does the enum check in-handler. */
+  @IsString()
+  mode!: AutoApproveMode;
 }
-interface SetAutoMergeDto {
-  autoMerge: boolean;
+class SetAutoMergeDto {
+  /** `@Allow()`: coerced by `coerceBoolean` in-handler (accepts boolean or 'true'/'false'). */
+  @Allow()
+  autoMerge!: boolean;
 }
 function coerceBoolean(raw: unknown): boolean | undefined {
   if (raw === true || raw === 'true') return true;
@@ -446,21 +479,34 @@ function toStringArray(v: unknown): string[] {
   const arr = Array.isArray(v) ? v : v == null || v === '' ? [] : [v];
   return [...new Set(arr.map((x) => String(x).trim()).filter(Boolean))];
 }
-interface ApproveDto {
-  actionId: string;
-  value: string;
+class ApproveDto {
+  @IsString()
+  actionId!: string;
+  @IsString()
+  value!: string;
+  @IsOptional()
+  @IsString()
   note?: string;
+  /** Accepted from the client but IGNORED — the server stamps the AUTHENTICATED operator, never the
+   *  client-sent `ruledBy` (see the distrust note in `approve`). Declared only so `forbidNonWhitelisted`
+   *  doesn't 400 the web frontend, which sends it on every approval call. */
+  @IsOptional()
+  @IsString()
+  ruledBy?: string;
 }
 interface ApproveResult {
   ok: boolean;
   jobId?: string;
   message?: string;
 }
-interface ProvideSecretDto {
+class ProvideSecretDto {
   /** The secret card's id (its message `ts`). */
-  requestId: string;
-  /** The plaintext secret value — written to the encrypted store + granted, NEVER persisted in the card. */
-  value: string;
+  @IsString()
+  requestId!: string;
+  /** The plaintext secret value — written to the encrypted store + granted, NEVER persisted in the card.
+   *  The handler additionally rejects an empty value. */
+  @IsString()
+  value!: string;
 }
 /** Upload cap for `request_file` — file secrets are small config/key files (JSON, .pem, .env.keys), not blobs. */
 const MAX_FILE_UPLOAD_BYTES = 512 * 1024;

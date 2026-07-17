@@ -7,8 +7,6 @@ import {
   Post,
   Req,
   Res,
-  UsePipes,
-  ValidationPipe,
 } from '@nestjs/common';
 import { CurrentUser, Public } from '@workspace/auth/server';
 import type { Request, Response } from 'express';
@@ -25,11 +23,10 @@ import type { UserEntity } from '../persistence/entities';
  * same-origin via the web app's `/auth/*` proxy rewrite. Cookie-mode (the `@workspace/auth` web
  * client): login/register return `{ user: <session> }`; `/auth/session` returns the BARE session.
  *
- * `@UsePipes(ValidationPipe)` is bound here explicitly — the Atlas app has no global pipe, so the DTO
- * decorators would not otherwise fire. `whitelist` strips unknown props; `transform` coerces types.
+ * Validation runs through the global `APP_PIPE` (registered in `AppModule`); the DTOs below are
+ * class-validator-decorated.
  */
 @Controller('auth')
-@UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
 export class AuthController {
   constructor(
     private readonly auth: AuthService,

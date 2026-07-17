@@ -8,8 +8,6 @@ import {
   Param,
   Put,
   UseGuards,
-  UsePipes,
-  ValidationPipe,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsIn, IsOptional, IsString, MinLength } from 'class-validator';
@@ -57,7 +55,6 @@ class SetPreviewRecipeDto {
  */
 @Controller('web/orgs/:orgId/repos/:repoId/workspace-profile')
 @UseGuards(OrgMembershipGuard)
-@UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
 export class WorkspaceProfileController {
   constructor(
     private readonly workspaceConfig: WorkspaceConfigStore,
