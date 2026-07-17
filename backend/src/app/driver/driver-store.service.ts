@@ -1666,7 +1666,7 @@ export class DriverStoreService {
     };
 
     // The ACTIVE pipeline is the thread groups under the job's current revision (plus the revision-agnostic
-    // singletons like planning/plan_review, whose thread group carries a null record). Prior revisions' thread
+    // singleton `planning` thread group, whose thread group carries a null record). Prior revisions' thread
     // groups are surfaced separately as browsable history.
     const activeRecordId = job.decision_record_id;
     const activeThreadGroups = threadGroups.filter(
@@ -1674,16 +1674,16 @@ export class DriverStoreService {
         s.decision_record_id == null || s.decision_record_id === activeRecordId,
     );
     // The PLAN REVIEW as a first-class navigator row (the Codex review dialogue Main communicates with) —
-    // derived from the plan_review thread group's single thread's status. Null when no plan_review thread group exists.
-    const planReviewThreadGroup = threadGroups.find((s) => s.kind === 'plan_review');
-    const planReviewThread = planReviewThreadGroup
-      ? (threadsByThreadGroup.get(planReviewThreadGroup.id) ?? [])[0]
-      : undefined;
-    const planReview = planReviewThread
+    // derived from the codex_review thread living in the planning group (d10: no separate plan_review thread
+    // group). Null when no codex_review thread exists yet (review_plan never dispatched).
+    const codexReviewThread = allThreads
+      .filter((t) => t.role === 'codex_review')
+      .sort((a, b) => b.created_at.getTime() - a.created_at.getTime())[0];
+    const planReview = codexReviewThread
       ? {
-          status: planReviewThread.status,
+          status: codexReviewThread.status,
           // The Codex-review lane's pre-turn footer default ("Codex · xHigh").
-          defaultFooter: laneDefaultFooter('plan_review'),
+          defaultFooter: laneDefaultFooter('codex_review'),
         }
       : null;
 

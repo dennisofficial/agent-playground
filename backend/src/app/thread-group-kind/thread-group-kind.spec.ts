@@ -55,18 +55,21 @@ describe('thread-group-kind registry', () => {
     }
   });
 
-  it('each singleton kind declares exactly one role, min 1 max 1', () => {
-    for (const kind of [
-      'planning',
-      'master_review',
-      'post_build',
-      'ship',
-    ] as const) {
+  it('each single-role singleton kind declares exactly one role, min 1 max 1', () => {
+    for (const kind of ['master_review', 'post_build', 'ship'] as const) {
       const spec = threadGroupKindSpec(kind);
       expect(spec.roles).toHaveLength(1);
       expect(spec.roles[0].min).toBe(1);
       expect(spec.roles[0].max).toBe(1);
     }
+  });
+
+  it('planning declares its required planner (min 1 max 1) + optional codex_review (min 0 max 1), d10', () => {
+    const spec = threadGroupKindSpec('planning');
+    const planner = spec.roles.find((r) => r.role === 'planner')!;
+    expect(planner).toEqual({ role: 'planner', min: 1, max: 1 });
+    const codexReview = spec.roles.find((r) => r.role === 'codex_review')!;
+    expect(codexReview).toEqual({ role: 'codex_review', min: 0, max: 1 });
   });
 
   it('spawnAt names the orchestration seam for every kind', () => {

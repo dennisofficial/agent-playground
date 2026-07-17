@@ -37,7 +37,7 @@ const fakeElection = {
  * The synchronous, Atlas-driven Codex review service:
  *   - parsePlanFindings extracts severity-tagged FINDING lines / recognises NO_FINDINGS.
  *   - serialize/deserialize round-trip findings for the durable row.
- *   - review() runs ONE Codex turn, persists the job's `plan_review` thread, resumes the session.
+ *   - review() runs ONE Codex turn, persists the job's `codex_review` thread, resumes the session.
  *   - reviewForCurrentSpecs is the propose_plan mandatory-run gate (terminal + matching spec_hash).
  */
 
@@ -96,8 +96,8 @@ describe('summarizeEngineError', () => {
 
 // ── review() + the gate ──────────────────────────────────────────────────────────────────────
 
-/** The retired `codex_reviews` field names these fixtures still accept, translated onto the new
- *  `plan_review` thread's `config` (see `PlanReviewConfig`) — keeps each test's seed literal unchanged. */
+/** The retired `codex_reviews` field names these fixtures still accept, translated onto the
+ *  `codex_review` thread's `config` (see `PlanReviewConfig`) — keeps each test's seed literal unchanged. */
 type PlanReviewThreadSeed = {
   id?: string;
   job_id?: string;
@@ -112,7 +112,7 @@ type PlanReviewThreadSeed = {
   updated_at?: Date;
 };
 
-/** A minimal in-memory fake of `this.threads` (a job's `plan_review`-role thread rows) — the retired
+/** A minimal in-memory fake of `this.threads` (a job's `codex_review`-role thread rows) — the retired
  *  `codex_reviews` repo now folds onto `ThreadEntity.session_id` + `.config`. */
 function fakePlanReviewThreadsRepo(seed: PlanReviewThreadSeed[] = []) {
   const rows = seed.map((r, i) => ({
@@ -120,12 +120,12 @@ function fakePlanReviewThreadsRepo(seed: PlanReviewThreadSeed[] = []) {
     job_id: r.job_id,
     org_id: r.org_id,
     thread_group_id: 'thread-group-1',
-    role: 'plan_review',
+    role: 'codex_review',
     parent_thread_id: null,
     ordinal: 10,
     brief: 'Plan review',
     type: 'general',
-    status: 'reviewing',
+    status: 'idle',
     condition: 'none',
     session_id: r.codex_session_id ?? null,
     config: {
@@ -200,7 +200,7 @@ function fakePlanReviewThreadsRepo(seed: PlanReviewThreadSeed[] = []) {
       qb.getMany = async () =>
         rows.filter(
           (r) =>
-            r.role === 'plan_review' &&
+            r.role === 'codex_review' &&
             (r.config as { status?: string })?.status === 'running',
         );
       qb.getRawOne = async () => {
@@ -217,10 +217,19 @@ function fakePlanReviewThreadsRepo(seed: PlanReviewThreadSeed[] = []) {
   } as unknown as Repository<ThreadEntity>;
 }
 
-/** A minimal in-memory fake of `this.threadGroups` — auto-vivifies the job's single `plan_review` thread group.
- *  No test asserts on the thread group row itself; it just needs to resolve consistently. */
+/** A minimal in-memory fake of `this.threadGroups` — seeded with the job's ONE `planning` thread group
+ *  (every job is bootstrapped with one before `PlanReviewService` ever runs, per `job-bootstrap.service.ts`),
+ *  since `ensureCodexReviewThread` anchors the `codex_review` thread inside it rather than creating one. */
 function fakeThreadGroupsRepo() {
-  const rows: ThreadGroupEntity[] = [];
+  const rows: ThreadGroupEntity[] = [
+    {
+      id: 'planning-group-1',
+      job_id: 'job-1',
+      org_id: 'org-1',
+      kind: 'planning',
+      ordinal: 10,
+    } as ThreadGroupEntity,
+  ];
   return {
     findOne: vi.fn(
       async ({ where }: { where: { job_id: string; kind: string } }) =>

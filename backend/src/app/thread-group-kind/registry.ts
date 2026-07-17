@@ -13,7 +13,10 @@ import type { ThreadGroupKindSpec, ThreadGroupKind } from './spec';
 export const THREAD_GROUP_KIND_SPECS: readonly ThreadGroupKindSpec[] = [
   {
     kind: 'planning',
-    roles: [{ role: 'planner', min: 1, max: 1 }],
+    roles: [
+      { role: 'planner', min: 1, max: 1 },
+      { role: 'codex_review', min: 0, max: 1 }, // review_plan spawns/wakes this inside the SAME planning group (d10) — never created for jobs that skip review.
+    ],
     hasReview: false,
     titleRequired: true,
     spawnAt: 'job_start',

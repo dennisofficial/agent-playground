@@ -286,9 +286,9 @@ export class PlanReviewService {
             .resolveForRepo(input.orgId, job.repo_id)
             .catch(() => null)
         : null;
-    // The reviewer's reasoning effort — sourced from the `plan_review` kind spec so it lives in one place
+    // The reviewer's reasoning effort — sourced from the `codex_review` kind spec so it lives in one place
     // (and the composer footer's pre-turn default matches what the turn actually runs at).
-    const reviewEffort = threadKindSpec('plan_review').reasoningEffort;
+    const reviewEffort = threadKindSpec('codex_review').reasoningEffort;
 
     const attempt = async (
       resumeSessionId: string | undefined,
@@ -476,17 +476,17 @@ export class PlanReviewService {
   }
 
   /** The single plan-review row for a job (latest thread if a race ever created more than one), rebuilt
-   *  from the `plan_review` thread + its `config`. Null when the job has no plan_review thread yet. */
+   *  from the `codex_review` thread + its `config`. Null when the job has no codex_review thread yet. */
   async loadRow(jobId: string): Promise<PlanReviewRow | null> {
     const thread = await this.threads.findOne({
-      where: { job_id: jobId, role: 'plan_review' },
+      where: { job_id: jobId, role: 'codex_review' },
       order: { created_at: 'DESC' },
     });
     return thread ? toReviewRow(thread) : null;
   }
 
   /**
-   * The WORK-OWED backstop worklist: `plan_review` threads whose `config.status` is still `running` (a
+   * The WORK-OWED backstop worklist: `codex_review` threads whose `config.status` is still `running` (a
    * `review_plan` was dispatched but neither completed nor consumed). A running row whose job has no live
    * brain turn is the interrupted-`review_plan` fingerprint the backstop re-drives (it survives the Redis
    * stream cleanup that wipes tool-bridge recovery on the alive-grace/watchdog path).
@@ -494,41 +494,38 @@ export class PlanReviewService {
   async findRunningReviews(): Promise<PlanReviewRow[]> {
     const rows = await this.threads
       .createQueryBuilder('t')
-      .where("t.role = 'plan_review'")
+      .where("t.role = 'codex_review'")
       .andWhere("t.config ->> 'status' = 'running'")
       .getMany();
     return rows.map(toReviewRow);
   }
 
   /**
-   * Find-or-create the job's ONE `plan_review` thread group + its render/identity-only thread; returns the thread
-   * id. The thread group appends after existing thread groups (gap-numbered); the thread is a top-level (parent null) row
-   * whose ordinal is job-GLOBAL-unique (past the highest existing top-level ordinal — the `planning` thread
-   * at 0), to satisfy the job-wide UNIQUE(job_id, parent_thread_id, ordinal). Idempotent: a resume/re-review
-   * reuses the same thread group + thread. The driver never executes the row (render-only role).
+   * Find-or-create the job's `codex_review`-role thread INSIDE its existing `planning` thread group (d10:
+   * planning + plan-review collapsed into one thread group) — returns the thread id. Never creates a new
+   * thread group: the planning thread group always exists once the job is bootstrapped
+   * (`job-bootstrap.service.ts`'s `ensurePlanningThreadGroup`), so its absence here is a bug elsewhere, not
+   * something to paper over. Ordered `ordinal: 'DESC'` to land on the CURRENT planning group, mirroring
+   * `job-bootstrap.service.ts`'s `planningThreadId()` (a heavy amend can append a later planning group). The
+   * new thread is a top-level (parent null) row whose ordinal is job-GLOBAL-unique (past the highest existing
+   * top-level ordinal), to satisfy the job-wide UNIQUE(job_id, parent_thread_id, ordinal). Idempotent: a
+   * resume/re-review reuses the same thread. The driver never executes the row (render-only role).
    */
-  private async ensurePlanReviewThread(
+  private async ensureCodexReviewThread(
     jobId: string,
     orgId: string,
   ): Promise<string> {
-    let threadGroup = await this.threadGroups.findOne({
-      where: { job_id: jobId, kind: 'plan_review' },
-      order: { ordinal: 'ASC' },
+    const threadGroup = await this.threadGroups.findOne({
+      where: { job_id: jobId, kind: 'planning' },
+      order: { ordinal: 'DESC' },
     });
     if (!threadGroup) {
-      const ordinal = (await this.maxOrdinal(this.threadGroups, jobId)) + ORDINAL_GAP;
-      threadGroup = await this.threadGroups.save(
-        this.threadGroups.create({
-          job_id: jobId,
-          org_id: orgId,
-          ordinal,
-          kind: 'plan_review',
-          config: {},
-        }),
+      throw new Error(
+        `plan-review: job ${jobId} has no planning thread group to anchor its codex_review thread`,
       );
     }
     const existingThread = await this.threads.findOne({
-      where: { thread_group_id: threadGroup.id, role: 'plan_review' },
+      where: { thread_group_id: threadGroup.id, role: 'codex_review' },
     });
     if (existingThread) return existingThread.id;
     const threadOrdinal =
@@ -542,12 +539,12 @@ export class PlanReviewService {
         thread_group_id: threadGroup.id,
         job_id: jobId,
         org_id: orgId,
-        role: 'plan_review',
+        role: 'codex_review',
         parent_thread_id: null,
         ordinal: threadOrdinal,
         brief: 'Plan review',
         type: 'general',
-        status: 'reviewing',
+        status: 'idle',
         config: {},
       }),
     );
@@ -555,13 +552,13 @@ export class PlanReviewService {
   }
 
   /**
-   * Upsert the job's plan-review state onto its `plan_review` thread's `config` (find-or-creating the
-   * thread group + thread), fold the Codex session onto `thread.session_id` (done by the caller's session event),
-   * and return the flat {@link PlanReviewRow}. A transition to `running` refreshes the spec hash + clears
-   * stale findings; `resumeCount` is the plan-version/round number, bumped ONLY when the specs actually
-   * changed (a genuine re-review). A same-spec_hash re-drive is a RECOVERY of the same round — keep the
-   * count stable so the prompt idempotency key (`codex:<jobId>:<round>`) still dedups and a flaky recovery
-   * can't burn the re-review ceiling.
+   * Upsert the job's plan-review state onto its `codex_review` thread's `config` (find-or-creating the
+   * thread inside the job's existing planning thread group), fold the Codex session onto `thread.session_id`
+   * (done by the caller's session event), and return the flat {@link PlanReviewRow}. A transition to
+   * `running` refreshes the spec hash + clears stale findings; `resumeCount` is the plan-version/round
+   * number, bumped ONLY when the specs actually changed (a genuine re-review). A same-spec_hash re-drive is
+   * a RECOVERY of the same round — keep the count stable so the prompt idempotency key
+   * (`codex:<jobId>:<round>`) still dedups and a flaky recovery can't burn the re-review ceiling.
    */
   private async persistRow(
     existing: PlanReviewRow | null,
@@ -573,7 +570,7 @@ export class PlanReviewService {
   ): Promise<PlanReviewRow> {
     const threadId =
       existing?.id ??
-      (await this.ensurePlanReviewThread(input.jobId, input.orgId));
+      (await this.ensureCodexReviewThread(input.jobId, input.orgId));
     const thread = await this.threads.findOneOrFail({
       where: { id: threadId },
     });
