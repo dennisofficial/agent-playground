@@ -305,11 +305,13 @@ export class JobDependencyService {
   }
 
   /**
-   * BACKSTOP reconcile for ONE `blocked` job (the {@link JobUnblockSweep} entrypoint): if every remaining
-   * blocker is terminal-or-ABSENT (a deleted blocker row simply doesn't appear in `blockersOf`, so an empty
-   * or all-terminal set unblocks), unpark + wake it. Idempotent — the conditional UPDATE no-ops if the job
-   * already moved off `blocked`. The sweep is a dropped-event backstop with no live resolution to report, so
-   * it classifies the remaining terminal blockers from their persisted state. Returns whether it unblocked.
+   * BACKSTOP reconcile for ONE `blocked` job: if every remaining blocker is terminal-or-ABSENT (a deleted
+   * blocker row simply doesn't appear in `blockersOf`, so an empty or all-terminal set unblocks), unpark +
+   * wake it. Idempotent — the conditional UPDATE no-ops if the job already moved off `blocked`. Classifies
+   * the remaining terminal blockers from their persisted state (no live resolution to report).
+   * NOTE: currently unreferenced — its old caller, `JobUnblockSweep`, was deleted along with the other
+   * auto-resume sweeps, and nothing has replaced it as a periodic backstop yet. Left in place as the one
+   * manual/future entrypoint for re-reconciling a stuck `blocked` job.
    */
   async reconcileBlockedJob(jobId: string): Promise<boolean> {
     const blockers = await this.blockersOf(jobId);
@@ -428,33 +430,60 @@ export class JobDependencyService {
       blockerJobId,
       resolution,
     );
-    try {
-      await this.brainGateway.wakeUnblockedJob(
-        dependent.id,
-        dependent.org_id,
-        dependent.repo_id,
-        {
-          seed: dependent.blocked_seed_message,
-          blockers: blockerInfos,
-        },
-      );
-      // Only drop the seed once the wake is confirmed dispatched — otherwise a sweep-driven retry would
-      // have nothing to replay.
-      await this.jobs.update(
-        { id: dependent.id },
-        { blocked_seed_message: null },
-      );
-    } catch (err) {
-      // The wake dropped — re-park (seed intact) so the JobUnblockSweep re-drives it. Guarded on `scoping`
-      // so we never clobber a status the just-started wake already advanced past.
-      this.logger.warn(
-        `wakeUnblockedJob failed for job=${dependent.id}; re-parking for sweep: ${err}`,
+    const woke = await this.wakeWithRetry(
+      dependent.id,
+      dependent.org_id,
+      dependent.repo_id,
+      dependent.blocked_seed_message,
+      blockerInfos,
+    );
+    if (!woke) {
+      // Every in-process retry dropped too (`JobUnblockSweep`, the old backstop that re-drove a re-parked
+      // job, is gone — there is no sweep left to hand this off to). Re-park (seed intact) so a FUTURE
+      // `onBlockerResolved`/manual-unblock call can still retry it, but this is now a genuine dead end
+      // absent one of those — surface it loudly so an operator can notice and manually re-drive.
+      this.logger.error(
+        `wakeUnblockedJob exhausted retries for job=${dependent.id}; re-parked blocked — no sweep remains to auto-retry this, needs operator attention`,
       );
       await this.jobs.update(
         { id: dependent.id, status: 'scoping' },
         { status: 'blocked' },
       );
     }
+  }
+
+  /** Attempt `wakeUnblockedJob` with a few short in-process retries (no durable sweep survives to retry a
+   *  dropped wake anymore — see the removed `JobUnblockSweep`), dropping the seed only once dispatch is
+   *  confirmed. Returns whether the wake ultimately succeeded. */
+  private async wakeWithRetry(
+    jobId: string,
+    orgId: string,
+    repoId: string,
+    seed: string | null,
+    blockers: UnblockBlockerInfo[],
+    attempts = 3,
+    backoffMs = 300,
+  ): Promise<boolean> {
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        await this.brainGateway.wakeUnblockedJob(jobId, orgId, repoId, {
+          seed,
+          blockers,
+        });
+        // Only drop the seed once the wake is confirmed dispatched — otherwise a further retry would have
+        // nothing to replay.
+        await this.jobs.update({ id: jobId }, { blocked_seed_message: null });
+        return true;
+      } catch (err) {
+        this.logger.warn(
+          `wakeUnblockedJob attempt ${attempt}/${attempts} failed for job=${jobId}: ${err}`,
+        );
+        if (attempt < attempts) {
+          await new Promise((r) => setTimeout(r, backoffMs * attempt));
+        }
+      }
+    }
+    return false;
   }
 
   /** How a blocker OTHER than the one resolving right now resolved, from its persisted state. Only called
@@ -519,27 +548,25 @@ export class JobDependencyService {
 
     const job = await this.jobs.findOne({ where: { id: jobId } });
     if (!job) return true;
-    try {
-      await this.brainGateway.wakeUnblockedJob(jobId, job.org_id, job.repo_id, {
-        seed: job.blocked_seed_message,
-        blockers,
-      });
-      // Only drop the seed once the wake is confirmed dispatched.
-      await this.jobs.update({ id: jobId }, { blocked_seed_message: null });
-      return true;
-    } catch (err) {
-      // The wake dropped — re-park (seed intact) so the JobUnblockSweep re-drives it, and report
-      // "not unblocked" so the sweep keeps this job eligible. Guarded on `scoping` to avoid clobbering a
-      // status the just-started wake already advanced past.
-      this.logger.warn(
-        `wakeUnblockedJob failed for job=${jobId}; re-parking for sweep: ${err}`,
-      );
-      await this.jobs.update(
-        { id: jobId, status: 'scoping' },
-        { status: 'blocked' },
-      );
-      return false;
-    }
+    const woke = await this.wakeWithRetry(
+      jobId,
+      job.org_id,
+      job.repo_id,
+      job.blocked_seed_message,
+      blockers,
+    );
+    if (woke) return true;
+    // Every in-process retry dropped too (no `JobUnblockSweep` backstop survives to hand this off to
+    // anymore). Re-park (seed intact) so a future call can still retry it, but report "not unblocked" —
+    // this is now a genuine dead end absent one, so surface it loudly for an operator to notice.
+    this.logger.error(
+      `wakeUnblockedJob exhausted retries for job=${jobId}; re-parked blocked — no sweep remains to auto-retry this, needs operator attention`,
+    );
+    await this.jobs.update(
+      { id: jobId, status: 'scoping' },
+      { status: 'blocked' },
+    );
+    return false;
   }
 
   /**

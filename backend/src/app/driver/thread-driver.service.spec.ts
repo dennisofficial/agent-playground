@@ -164,7 +164,7 @@ function makeStore(state: StoreState): {
       ? 'master_review'
       : thread.kind === 'post_build' || thread.kind === 'ci'
         ? thread.kind
-        : ((thread.config?.threadGroupKind as string | undefined) ?? 'build');
+        : ((thread.config?.threadGroupKind as string | undefined) ?? 'section');
   const ensureSingletonThread = (input: {
     kind: 'post_build' | 'ci';
     brief: string;

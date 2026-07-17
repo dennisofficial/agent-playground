@@ -534,18 +534,16 @@ export class ThreadDriver implements JobDispatcher {
    */
   async resumePaused(jobId: string): Promise<void> {
     const job = await this.store.loadJob(jobId).catch(() => null);
-    // Resumes a credential/401 halt, a session-limit park, OR a master_review Codex-outage hold (the
-    // auto-resume sweep + the operator ping both route here). Any other halt kind (or none) is ignored.
+    // Job-level halt is gone (d8/d11) — a "paused" job is simply a drivable-status job sitting idle:
+    // parked on a session-limit/Codex-outage resume clock, OR stuck on a credential halt that carries no
+    // clock at all (`classifyAndSurfaceAuthHalt`'s SURFACE branch sets none). The auto-resume sweep + the
+    // operator ping both route here. Refuse only when there's nothing to resume.
     if (
       !job ||
-      ![
-        'blocked_credentials',
-        'session_limit',
-        'codex_review_unavailable',
-      ].includes(job.halt?.kind ?? '')
+      !['building', 'master_review', 'shipping'].includes(job.status)
     ) {
       this.logger.warn(
-        `resumePaused job=${jobId}: not a resumable halt (${job?.halt?.kind ?? 'gone'}) — ignoring`,
+        `resumePaused job=${jobId}: not resumable (status=${job?.status ?? 'gone'}) — ignoring`,
       );
       return;
     }
@@ -618,13 +616,16 @@ export class ThreadDriver implements JobDispatcher {
       this.logger.warn(`retry job=${jobId}: thread not found — ignoring`);
       return;
     }
-    if (!job.halt) {
+    // Job-level halt is gone (d8/d11) — any drivable-status job that isn't currently being driven is
+    // retryable (a genuinely fine job just re-enters the same idempotent drive and fast-forwards through
+    // already-done work). Refuse only when there's nothing left to retry: a terminal/off-ramp status.
+    if (['merged', 'cancelled', 'deleting'].includes(job.status)) {
       this.logger.warn(
-        `retry job=${jobId}: not retryable (not halted) — ignoring`,
+        `retry job=${jobId}: not retryable (status=${job.status}) — ignoring`,
       );
       return;
     }
-    this.logger.log(`retry job=${jobId} — re-driving a ${job.halt.kind} halt`);
+    this.logger.log(`retry job=${jobId} — re-driving (status=${job.status})`);
     // OPERATOR RE-ARM (driver-transient lane): an explicit human retry always starts a fresh transient-drive
     // retry budget too — mirrors the old function-local `attempt` counter, which reset on every drive()
     // re-entry. Boot `resume()` never calls `retry()`, so it still keeps the accumulated, restart-safe count.
@@ -757,12 +758,19 @@ export class ThreadDriver implements JobDispatcher {
     }
     const job = await this.store.loadJob(jobId).catch(() => null);
     if (!job) return { ok: false, reason: 'job not found' };
-    if (job.halt?.kind !== 'codex_review_unavailable') {
+    // Job-level halt is gone (d8/d11) — a Codex-outage hold now shows as the job STUCK at status
+    // 'master_review': every normal completion path moves it on (a clean-but-incomplete stop parks for
+    // ship review via `parkForShipReview`→`ready`; a done review proceeds toward shipping), so only a
+    // thrown hold (`holdForCodexReviewOutage`) leaves it sitting here with its master_review thread not done.
+    if (job.status !== 'master_review') {
       return { ok: false, reason: 'not a Codex-outage hold' };
     }
     const threads = await this.store.threadsForJob(jobId).catch(() => []);
     const mr = threads.find((t) => t.kind === 'master_review');
     if (!mr) return { ok: false, reason: 'no master review thread' };
+    if (mr.status === 'done') {
+      return { ok: false, reason: 'not a Codex-outage hold' };
+    }
     await this.store
       .recordThreadTermination(mr.id, {
         status: 'done',
