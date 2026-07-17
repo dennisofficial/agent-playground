@@ -4,7 +4,7 @@
  * live `threads.status`, writes it change-gated onto the `jobs` row, and the value round-trips through
  * the real `GET /web/jobs` HTTP surface (mirrors `web-surface.shipping.int.test.ts` for HTTP/auth setup).
  *
- * Seeds a job with 4 build/direct_build thread groups — A (all builders done), B (last builder
+ * Seeds a job with 4 `section` thread groups — A (all builders done), B (last builder
  * auto_fixing, rest done — the anti-regression case), C (a builder still executing), D (zero builder
  * threads yet) — plus one non-build (master_review) thread group that must be ignored entirely, and
  * asserts:
@@ -161,8 +161,8 @@ describe('DriverStoreService.recomputeBuildStageProgress (live Postgres + GET /w
       }),
     );
 
-    const buildGroup = (kind: 'build' | 'direct_build', title: string) =>
-      store.createThreadGroup({ jobId: job.id, orgId: ORG, kind, title });
+    const buildGroup = (title: string) =>
+      store.createThreadGroup({ jobId: job.id, orgId: ORG, kind: 'section', title });
     // Root threads share a JOB-GLOBAL ordinal uniqueness constraint (`uq_threads_job_parent_ordinal`),
     // so each builder across every thread group needs its own explicit, non-colliding ordinal — the
     // per-thread-group auto-ordinal default would collide across sibling thread groups.
@@ -178,27 +178,27 @@ describe('DriverStoreService.recomputeBuildStageProgress (live Postgres + GET /w
       });
 
     // Group A — all builders done → counts as done.
-    const groupA = await buildGroup('build', 'A');
+    const groupA = await buildGroup('A');
     const a1 = await builder(groupA.id, 'A leg 1');
     await store.setThreadStatus(a1.id, 'done');
 
     // Group B — last builder auto_fixing (mid-review), rest done → STILL counts as done (the
     // anti-regression case: builder work is finished, review just hasn't wrapped up yet).
-    const groupB = await buildGroup('direct_build', 'B');
+    const groupB = await buildGroup('B');
     const b1 = await builder(groupB.id, 'B leg 1');
     const b2 = await builder(groupB.id, 'B leg 2');
     await store.setThreadStatus(b1.id, 'done');
     await store.setThreadStatus(b2.id, 'done');
 
     // Group C — a builder still executing → NOT done.
-    const groupC = await buildGroup('build', 'C');
+    const groupC = await buildGroup('C');
     const c1 = await builder(groupC.id, 'C leg 1');
     await store.setThreadStatus(c1.id, 'idle');
 
     // Group D — zero builder threads yet → NOT done (pre-creation guard).
-    await buildGroup('build', 'D');
+    await buildGroup('D');
 
-    // A non-build thread group must be ignored entirely (not counted in total).
+    // A non-section thread group must be ignored entirely (not counted in total).
     await store.createThreadGroup({
       jobId: job.id,
       orgId: ORG,

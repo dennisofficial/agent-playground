@@ -1844,7 +1844,7 @@ export class BrainStoreService {
         // level; the `planning`/`plan_review` singletons survive (only build-lifecycle kinds are cut).
         await threadGroups.delete({
           job_id: input.jobId,
-          kind: In(['build', 'direct_build', 'master_review']),
+          kind: In(['section', 'master_review']),
         });
       }
       // else (priorHasDone): DELETE NOTHING. The prior revision's thread groups/threads keep their
@@ -1871,9 +1871,9 @@ export class BrainStoreService {
       );
 
       // Build path only (`threadTitles.length > 0`; direct build passes `[]` and onboarding/event never
-      // persist a plan). One `build` THREAD GROUP per plan section — each owning its FIRST builder thread carrying
+      // persist a plan). One `section` THREAD GROUP per plan section — each owning its FIRST builder thread carrying
       // the authored plan — then ONE `master_review` thread group after them. Direct build gets its own
-      // `direct_build` thread group at dispatch time (a separate seam), so persistPlan skips thread group creation for it.
+      // `section` thread group at dispatch time (a separate seam), so persistPlan skips thread group creation for it.
       if (input.threadTitles.length > 0) {
         let threadGroupOrdinal =
           (await maxOrdinal(threadGroups, input.jobId)) + ORDINAL_GAP;
@@ -1896,7 +1896,7 @@ export class BrainStoreService {
               job_id: input.jobId,
               org_id: input.orgId,
               ordinal: threadGroupOrdinal,
-              kind: 'build',
+              kind: 'section',
               // The slice name labels the thread group (titleRequired:true); its review-selection type moves here.
               title: brief,
               type: input.threadTypes?.[i] ?? null,
@@ -1920,7 +1920,7 @@ export class BrainStoreService {
               plan: authored?.length ? renderPlan(authored) : null,
               handoff_in: null,
               handoff_out: null,
-              status: 'pending',
+              status: 'idle',
             }),
           );
           threadOrdinal += ORDINAL_GAP;
@@ -1952,7 +1952,7 @@ export class BrainStoreService {
             plan: null,
             handoff_in: null,
             handoff_out: null,
-            status: 'pending',
+            status: 'idle',
           }),
         );
       }
@@ -2098,7 +2098,7 @@ export class BrainStoreService {
       .filter(
         (t) => t.parent_thread_id == null && isDriverExecutableKind(t.role),
       )
-      .every((t) => t.status === 'pending');
+      .every((t) => t.status === 'idle');
   }
 
   /** Cancel a thread's build (a denied plan). */

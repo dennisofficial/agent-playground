@@ -724,7 +724,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect((next.config as { pendingLegSeed?: string }).pendingLegSeed).toBe(
       'SEED PREAMBLE + HANDOFF BODY',
     );
-    expect(next.status).toBe('pending');
+    expect(next.status).toBe('idle');
 
     // The seed reads back off the NEW row for the driver-side fold.
     expect(await store.getPendingLegSeed(next.id)).toBe(

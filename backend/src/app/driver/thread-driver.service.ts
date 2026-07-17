@@ -1224,7 +1224,7 @@ export class ThreadDriver implements JobDispatcher {
         s.decision_record_id == null || s.decision_record_id === activeRecordId,
     );
     // EXECUTABLE THREAD GROUPS: a thread group is driven here only if its kind contains a
-    // driver-executable role (build/direct_build → `builder`; master_review → `master_review`).
+    // driver-executable role (section → `builder`; master_review → `master_review`).
     // planning/plan_review are render-only (their runtime lives in the brain), and post_build/ci don't
     // exist yet. Route off the registry, never a hardcoded kind list.
     const executableThreadGroups = currentThreadGroups.filter((s) =>

@@ -307,7 +307,7 @@ export class DriverStoreService {
   }
 
   /** Recompute the job's build-stage progress and write it change-gated onto the jobs row so the flat
-   *  realtime projection carries it live. A build/direct_build thread group is "done" when it has >=1
+   *  realtime projection carries it live. A `section` thread group is "done" when it has >=1
    *  builder thread and all its builder threads have finished building — status 'done' or 'auto_fixing'
    *  (the review-window affordance). Review is NOT required, and 'auto_fixing' prevents the count
    *  regressing while a just-finished builder is being reviewed. Scoped to the job's ACTIVE plan
@@ -320,7 +320,7 @@ export class DriverStoreService {
     const groups = await this.threadGroups.find({ where: { job_id: jobId } });
     const buildGroups = groups.filter(
       (g) =>
-        (g.kind === 'build' || g.kind === 'direct_build') &&
+        g.kind === 'section' &&
         (activeRecordId
           ? g.decision_record_id === activeRecordId
           : g.decision_record_id == null),
@@ -1066,7 +1066,7 @@ export class DriverStoreService {
           type: current.type,
           handoff_in: input.handoff,
           session_id: null,
-          status: 'pending',
+          status: 'idle',
           config: {
             pendingLegSeed: input.seed,
             ...(input.rotationCapped ? { rotationCapped: true } : {}),
@@ -1386,7 +1386,7 @@ export class DriverStoreService {
         ordinal: (i + 1) * ORDINAL_GAP,
         brief: c.brief,
         config: c.config,
-        status: 'pending',
+        status: 'idle',
       }),
     );
     try {

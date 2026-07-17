@@ -69,24 +69,24 @@ describe('BrainStoreService.buildNotStarted', () => {
     await expect(store.buildNotStarted('job-1')).resolves.toBe(false);
   });
 
-  it('plan build path, every root-executable thread still pending → true', async () => {
+  it('plan build path, every root-executable thread still idle → true', async () => {
     const jobs = fakeJobsRepo({ id: 'job-1', build_path: 'plan' });
     const threads = fakeThreadsRepo([
-      // Root-executable (builder, top-level, no parent) — still pending.
+      // Root-executable (builder, top-level, no parent) — still idle.
       {
         id: 't-1',
         job_id: 'job-1',
         role: 'builder',
         parent_thread_id: null,
-        status: 'pending',
+        status: 'idle',
       },
-      // A second root-executable lane, also pending.
+      // A second root-executable lane, also idle.
       {
         id: 't-2',
         job_id: 'job-1',
         role: 'master_review',
         parent_thread_id: null,
-        status: 'pending',
+        status: 'idle',
       },
       // Non-executable kind (main, the conversational root) — excluded from the filter regardless of status.
       {
@@ -109,7 +109,7 @@ describe('BrainStoreService.buildNotStarted', () => {
     await expect(store.buildNotStarted('job-1')).resolves.toBe(true);
   });
 
-  it('plan build path, a root-executable thread has moved past pending → false (started)', async () => {
+  it('plan build path, a root-executable thread has moved past idle → false (started)', async () => {
     const jobs = fakeJobsRepo({ id: 'job-1', build_path: 'plan' });
     const threads = fakeThreadsRepo([
       {
@@ -124,7 +124,7 @@ describe('BrainStoreService.buildNotStarted', () => {
         job_id: 'job-1',
         role: 'master_review',
         parent_thread_id: null,
-        status: 'pending',
+        status: 'idle',
       },
     ]);
     const store = makeStore({ jobs, threads });
