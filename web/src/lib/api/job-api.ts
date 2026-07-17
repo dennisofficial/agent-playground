@@ -150,6 +150,9 @@ export interface RawThreadMessage {
   stimulusId?: string;
   /** ISO time the row was actually delivered (taken by the SDK/engine), or absent while still in flight. */
   deliveredAt?: string;
+  /** Effective render-order override (transcript_messages.order_at) — set only for mid-turn pure-UI
+   *  notices re-stamped at turn end. Absent/null for the common case (falls back to deliveredAt/postedAt). */
+  orderAt?: string | null;
 }
 
 /** UI message shape — normalized so the conversation classifier can read it uniformly. */
@@ -198,6 +201,8 @@ export interface JobMessage {
   stimulusId?: string;
   /** See {@link RawThreadMessage.deliveredAt} — carried through `normalizeMessage` unchanged. */
   deliveredAt?: string;
+  /** See {@link RawThreadMessage.orderAt} — carried through `normalizeMessage` unchanged. */
+  orderAt?: string | null;
 }
 
 export function normalizeMessage(r: RawThreadMessage): JobMessage {
@@ -218,6 +223,7 @@ export function normalizeMessage(r: RawThreadMessage): JobMessage {
     postedAt: r.postedAt,
     stimulusId: r.stimulusId,
     deliveredAt: r.deliveredAt,
+    orderAt: r.orderAt,
   };
 }
 

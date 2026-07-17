@@ -1202,6 +1202,9 @@ export class WebSurfaceController {
       // rows). The client renders a "sending…" affordance until `deliveredAt` lands.
       stimulusId: m.stimulus_id,
       deliveredAt: m.delivered_at,
+      // Effective render-order override (mid-turn pure-UI notices only) — see transcript_messages.order_at.
+      // The client falls back to deliveredAt then postedAt when absent.
+      orderAt: m.order_at,
     }));
   }
 
