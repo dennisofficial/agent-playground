@@ -1,4 +1,4 @@
-import type { ResolvedMcpServer } from '@shared/engine/engine.types';
+import type { ResolvedMcpServer } from '../engine/engine.types';
 
 export const MCP_HUB_PORT = 8785;
 
