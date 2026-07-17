@@ -9,19 +9,20 @@ import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { AppModule } from '../../app.module';
-import { BrainGateway } from '../../brain-gateway';
-import { CLASSIFIER_LLM } from '../../decision-gate';
+import { BrainGateway } from '../../brain-gateway/brain-gateway.service';
+import { CLASSIFIER_LLM } from '../../decision-gate/classifier-llm';
 import {
   FakeClassifierLlm,
   FakeEngineRunner,
   FakeLocalGitService,
   FakeThreadTitler,
 } from '../../e2e/e2e-stubs';
-import { GithubPrService, LocalGitService } from '../../git';
-import { JobDependencyService } from '../../job-deps';
+import { GithubPrService } from '../../git/github-pr.service';
+import { LocalGitService } from '../../git/local-git.service';
+import { JobDependencyService } from '../../job-deps/job-dependency.service';
 import { CredentialResolver } from '../../onboarding/credential-resolver.service';
 import { DB_CONNECTION } from '../../persistence/database.module';
-import { JobTitler } from '../../titling';
+import { JobTitler } from '../../titling/job-titler.service';
 import type { InboundChatMessage } from '../chat-surface.port';
 import { WebSurface } from '../web-surface';
 

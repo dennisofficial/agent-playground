@@ -5,12 +5,12 @@ import { join } from 'node:path';
 import type { Repository } from 'typeorm';
 import { describe, expect, it, vi } from 'vitest';
 import type { JobLifecycleService } from '../../driver/job-lifecycle.service';
-import type { JobDependencyService } from '../../job-deps';
-import type { CredentialResolver } from '../../onboarding';
+import type { JobDependencyService } from '../../job-deps/job-dependency.service';
+import type { CredentialResolver } from '../../onboarding/credential-resolver.service';
 import type { JobEntity, ThreadEntity, ThreadGroupEntity } from '../../persistence/entities';
-import type { BlockSink, TurnHarnessFactory } from '../../surface';
+import type { BlockSink, TurnHarnessFactory } from '../../surface/turn-harness.service';
 import { BrainStoreService } from '../brain-store.service';
-import type { PlanReviewInput } from '../plan-review.service';
+import type { PlanReviewInput } from '../../prompt-kit/messages/plan-review';
 import {
   deserializeFindings,
   parsePlanFindings,
@@ -25,7 +25,7 @@ const fakeCreds = {
 
 const fakeElection = {
   isDraining: () => false,
-} as unknown as import('../../cluster').LeaderElectionService;
+} as unknown as import('../../cluster/leader-election.service').LeaderElectionService;
 
 
 

@@ -1,6 +1,6 @@
 import type { Repository } from 'typeorm';
 import { describe, expect, it, vi } from 'vitest';
-import type { JobDependencyService } from '../../job-deps';
+import type { JobDependencyService } from '../../job-deps/job-dependency.service';
 import type { JobEntity, ThreadEntity } from '../../persistence/entities';
 import { BrainStoreService } from '../brain-store.service';
 

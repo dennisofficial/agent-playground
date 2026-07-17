@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-const SRC = join(__dirname);
+const SRC = join(__dirname, '..');
 const SHARED_SRC = join(SRC, '..', 'shared');
 const LOCAL_GIT_SRC = join(SRC, 'git', 'local-git.service.ts');
 

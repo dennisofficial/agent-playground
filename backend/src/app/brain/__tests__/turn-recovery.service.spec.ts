@@ -169,7 +169,7 @@ function makeBootstrap() {
   return {
     planningThreadId: vi.fn(async () => 'thread-1'),
     ensurePlanningThreadGroup: vi.fn(async () => undefined),
-  } as unknown as import('../../job-bootstrap').JobBootstrapService;
+  } as unknown as import('../../job-bootstrap/job-bootstrap.service').JobBootstrapService;
 }
 
 const INTERRUPTED_FIRST_TURN: Row[] = [

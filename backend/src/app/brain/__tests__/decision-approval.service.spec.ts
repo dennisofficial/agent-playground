@@ -1,11 +1,7 @@
 import { Subject } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type {
-  ChatSurface,
-  DecisionApprovalCard,
-  InboundChatMessage,
-  PostOptions,
-} from '../../surface';
+import type { DecisionApprovalCard } from '../../surface/approval-blocks';
+import type { ChatSurface, InboundChatMessage, PostOptions } from '../../surface/chat-surface.port';
 import { DecisionApprovalService } from '../decision-approval.service';
 
 class FakeSurface implements ChatSurface {

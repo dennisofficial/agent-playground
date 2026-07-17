@@ -5,7 +5,7 @@ import { DataSource, Repository } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { CustomNamingStrategy } from '../../../_lib/database/custom-naming.strategy';
 import { DriverStoreService } from '../../driver/driver-store.service';
-import { JobDependencyService } from '../../job-deps';
+import { JobDependencyService } from '../../job-deps/job-dependency.service';
 import { DB_CONNECTION } from '../../persistence/database.module';
 import {
   ENTITIES,

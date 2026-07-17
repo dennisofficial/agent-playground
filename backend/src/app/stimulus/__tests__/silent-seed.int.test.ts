@@ -7,7 +7,7 @@ import { CustomNamingStrategy } from '../../../_lib/database/custom-naming.strat
 import { DB_CONNECTION } from '../../persistence/database.module';
 import { ENTITIES, JobEntity } from '../../persistence/entities';
 import { SYSTEM_SEED_AUTHOR } from '../../surface/chat-surface.port';
-import { JobBootstrapService } from '../job-bootstrap';
+import { JobBootstrapService } from '../../job-bootstrap/job-bootstrap.service';
 import { StimulusStoreService } from '../stimulus-store.service';
 
 const ORG_ID = '52222222-2222-4222-8222-222222222222';

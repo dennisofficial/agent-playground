@@ -1,7 +1,7 @@
 import type { EnvService } from '@core/config/env/env.service';
 import { describe, expect, it, vi } from 'vitest';
 import { InMemoryRedisStream } from '../../../_lib/redis/in-memory-redis-stream';
-import type { LeaderElectionService } from '../cluster/leader-election.service';
+import type { LeaderElectionService } from '../../cluster/leader-election.service';
 import { turnKeys } from '../redis-turn-keys';
 import type { TurnRegistry } from '../turn-registry.service';
 import { TurnStreamReaperService } from '../turn-stream-reaper.service';

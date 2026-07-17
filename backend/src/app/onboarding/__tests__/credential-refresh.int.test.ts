@@ -22,8 +22,9 @@ import {
   CredentialRefreshService,
 } from '../credential-refresh.service';
 import { CredentialResolver } from '../credential-resolver.service';
-import { CLASSIFIER_LLM } from '../decision-gate';
-import { GithubPrService, LocalGitService } from '../git';
+import { CLASSIFIER_LLM } from '../../decision-gate/classifier-llm';
+import { GithubPrService } from '../../git/github-pr.service';
+import { LocalGitService } from '../../git/local-git.service';
 import { OauthUsageService } from '../oauth-usage.service';
 
 const fakeCreds = {

@@ -6,7 +6,8 @@ import {
   type BaseMessageLike,
 } from '@langchain/core/messages';
 import { defineModule, scorer } from '@workspace/ai-testing';
-import { Agent, renderAgentPrompt, renderReviewIntent } from '../prompt-kit';
+import { Agent, renderAgentPrompt } from '@shared/prompt-kit/system';
+import { renderReviewIntent } from '../prompt-kit/messages/plan-review';
 import { parsePlanFindings, type ReviewFinding } from './plan-review.service';
 
 

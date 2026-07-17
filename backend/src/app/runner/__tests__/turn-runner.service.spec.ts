@@ -10,7 +10,7 @@ import type { Repository } from 'typeorm';
 import { describe, expect, it, vi } from 'vitest';
 import type { TurnUsageProjector } from '../../analytics/turn-usage-projector.service';
 import type { ThreadEntity } from '../../persistence/entities';
-import type { FeatureSandbox } from '../git';
+import type { FeatureSandbox } from '../../git/local-git.service';
 import { TurnRunnerService } from '../turn-runner.service';
 
 

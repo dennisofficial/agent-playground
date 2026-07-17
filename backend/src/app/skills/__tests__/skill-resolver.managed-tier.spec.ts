@@ -7,7 +7,7 @@ import { WorkspaceSkillStore } from '../workspace-skill.store';
 
 const fakeEnv = { get: () => undefined } as unknown as EnvService;
 
-vi.mock('./system-skill-registry', () => ({
+vi.mock('../system-skill-registry', () => ({
   buildSystemSkills: () => [
     {
       name: 'shared',

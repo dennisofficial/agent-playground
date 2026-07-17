@@ -1,7 +1,7 @@
 import type { Repository } from 'typeorm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JobEntity } from '../../persistence/entities';
-import { retryResumeNudge, sessionLimitResetNudge } from '../../prompt-kit/harness';
+import { retryResumeNudge, sessionLimitResetNudge } from '../../prompt-kit/harness/seed-catalog';
 import type { ChatSurface } from '../../surface/chat-surface.port';
 import type { DriverStoreService } from '../driver-store.service';
 import { SessionResumeSweep } from '../session-resume-sweep.service';

@@ -6,7 +6,7 @@ import { randomBytes } from 'node:crypto';
 import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AppModule } from '../../app.module';
-import { CLASSIFIER_LLM } from '../../decision-gate';
+import { CLASSIFIER_LLM } from '../../decision-gate/classifier-llm';
 import {
   FakeClassifierLlm,
   FakeEngineRunner,
@@ -14,14 +14,15 @@ import {
   FakeLocalGitService,
   FakeThreadTitler,
 } from '../../e2e/e2e-stubs';
-import { GithubPrService, LocalGitService } from '../../git';
-import { JobBootstrapService } from '../../job-bootstrap';
-import { WorkspaceSecretFileStore } from '../../onboarding';
+import { GithubPrService } from '../../git/github-pr.service';
+import { LocalGitService } from '../../git/local-git.service';
+import { JobBootstrapService } from '../../job-bootstrap/job-bootstrap.service';
+import { WorkspaceSecretFileStore } from '../../onboarding/workspace-secret.store';
 import { DB_CONNECTION } from '../../persistence/database.module';
-import { SANDBOX_PROVIDER } from '../../sandbox';
-import { webSecretInputCard } from '../../surface';
+import { SANDBOX_PROVIDER } from '../../sandbox/sandbox-provider.port';
+import { webSecretInputCard } from '../../surface/web-secret-input-card';
 import { WebSurfaceController } from '../../surface/web-surface.controller';
-import { JobTitler } from '../../titling';
+import { JobTitler } from '../../titling/job-titler.service';
 import { BrainStoreService } from '../brain-store.service';
 
 const ORG_ID = '55555555-5555-8555-8555-555555555555';

@@ -5,12 +5,13 @@ import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/t
 import { DataSource, Repository } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { CustomNamingStrategy } from '../../../_lib/database/custom-naming.strategy';
-import { JobBootstrapService } from '../../job-bootstrap';
+import { JobBootstrapService } from '../../job-bootstrap/job-bootstrap.service';
 import { DB_CONNECTION } from '../../persistence/database.module';
 import { ENTITIES, JobEntity } from '../../persistence/entities';
-import type { TurnRunnerService } from '../../runner';
+import type { TurnRunnerService } from '../../runner/turn-runner.service';
 import { TurnRegistry } from '../../sandbox/turn-registry.service';
-import { DeliveryPump, StimulusStoreService } from '../../stimulus';
+import { DeliveryPump } from '../../stimulus/delivery-pump.service';
+import { StimulusStoreService } from '../../stimulus/stimulus-store.service';
 import { ThreadInputService } from '../../surface/thread-input.service';
 import { laneFor } from '../../surface/thread-registry';
 import { BuildLaneDeliveryService } from '../build-lane-delivery.service';

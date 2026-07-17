@@ -2,9 +2,9 @@ import type { Message, TurnEnvelope } from '@shared/domain';
 import type { EngineRunnerPort } from '@shared/engine/engine.types';
 import type { TurnChunk } from '@shared/stimulus/chunk-vocabulary';
 import { describe, expect, it, vi } from 'vitest';
-import type { LeaderElectionService } from '../../cluster';
+import type { LeaderElectionService } from '../../cluster/leader-election.service';
 import type { TurnRegistry } from '../../sandbox/turn-registry.service';
-import { SYSTEM_SEED_AUTHOR } from '../../surface';
+import { SYSTEM_SEED_AUTHOR } from '../../surface/chat-surface.port';
 import { AgentSessionManager } from '../agent-session-manager.service';
 
 interface CollectedLike {

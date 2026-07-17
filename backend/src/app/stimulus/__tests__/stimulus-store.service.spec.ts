@@ -8,7 +8,7 @@ import {
   TranscriptMessageEntity,
 } from '../../persistence/entities';
 import { SYSTEM_SEED_AUTHOR } from '../../surface/chat-surface.port';
-import type { JobBootstrapService } from '../job-bootstrap';
+import type { JobBootstrapService } from '../../job-bootstrap/job-bootstrap.service';
 import { DuplicateStimulusError, StimulusStoreService } from '../stimulus-store.service';
 
 function makeBootstrap() {

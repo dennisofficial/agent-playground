@@ -1,7 +1,7 @@
 import type { Message, TurnEnvelope } from '@shared/domain';
 import { describe, expect, it, vi } from 'vitest';
-import { Agent } from '../../prompt-kit';
-import type { ThreadRole } from '../../thread-kind';
+import { Agent } from '@shared/prompt-kit/system';
+import type { ThreadRole } from '../../thread-kind/__tests__/spec';
 import { AgentSessionManager } from '../agent-session-manager.service';
 
 const JOB_ID = 'th-agent-001';

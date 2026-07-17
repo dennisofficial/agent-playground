@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { serviceStatus } from '../../exposure/service-markers';
-import type { ServiceLivenessProbe } from '../../sandbox';
+import type { ServiceLivenessProbe } from '../../sandbox/sandbox-provider.port';
 
 describe('serviceStatus', () => {
   const T1 = '2026-07-02T10:00:00Z'; // a previous container generation

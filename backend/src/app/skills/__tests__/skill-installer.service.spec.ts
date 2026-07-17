@@ -6,7 +6,7 @@ import type { Repository } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { LocalGitService } from '../../git/local-git.service';
 import type { WorkspaceSkillEntity } from '../../persistence/entities';
-import type { CredentialResolver } from '../onboarding';
+import type { CredentialResolver } from '../../onboarding/credential-resolver.service';
 import { SkillInstallerService } from '../skill-installer.service';
 import { skillDirHost } from '../skill-store-paths';
 import { WorkspaceSkillStore } from '../workspace-skill.store';

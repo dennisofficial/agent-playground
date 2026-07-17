@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { WorkspaceSkillEntity } from '../../persistence/entities';
-import { buildReviewPrompt } from '../../prompt-kit';
+import { buildReviewPrompt } from '../../prompt-kit/messages/autofix-lenses';
 import { parseSkillFrontmatter, stripSkillFrontmatter } from '../../skills/skill-frontmatter';
 import { SkillResolver } from '../../skills/skill-resolver.service';
 import { orgSkillsRootHost, skillRelativeDir } from '../../skills/skill-store-paths';
@@ -12,7 +12,7 @@ import type { WorkspaceSkillStore } from '../../skills/workspace-skill.store';
 import { lensById, reviewAgentsForThread } from '../autofix-lenses';
 import type { AutoFixContext } from '../autofix.types';
 
-vi.mock('../skills/system-skill-registry', () => ({
+vi.mock('../../skills/system-skill-registry', () => ({
   buildSystemSkills: () => [],
 }));
 

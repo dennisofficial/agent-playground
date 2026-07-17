@@ -12,7 +12,7 @@ import type {
   RepoEntity,
 } from '../../persistence/entities';
 import { CredentialResolver } from '../credential-resolver.service';
-import type { GithubPrService, RepoInfo } from '../git';
+import type { GithubPrService, RepoInfo } from '../../git/github-pr.service';
 import { OnboardingService } from '../onboarding.service';
 import type { CredentialPresence, TenantCredentialStore } from '../tenant-credential.store';
 

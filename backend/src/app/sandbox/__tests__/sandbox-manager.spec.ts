@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { FeatureSandbox } from '../../git';
+import type { FeatureSandbox } from '../../git/local-git.service';
 import type {
   ContainerEngine,
   ContainerInfo,

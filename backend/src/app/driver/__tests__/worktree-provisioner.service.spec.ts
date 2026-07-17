@@ -16,7 +16,7 @@ describe('WorktreeProvisioner.provisionAndAttach — onMilestone pass-through', 
     const config = {
       importLegacyIfEmpty: vi.fn(async () => undefined),
       getSetupScript: vi.fn(async () => null),
-    } as unknown as import('../../onboarding').WorkspaceConfigStore;
+    } as unknown as import('../../onboarding/workspace-config.store').WorkspaceConfigStore;
     const attach = vi.fn(async () => ({
       repoId: 'proj',
       branch: 'main',
@@ -27,13 +27,13 @@ describe('WorktreeProvisioner.provisionAndAttach — onMilestone pass-through', 
     const sandboxProvider = {
       attach,
       kickMcpHubRefresh,
-    } as unknown as import('../../sandbox').SandboxProvider;
+    } as unknown as import('../../sandbox/sandbox-provider.port').SandboxProvider;
     const resolveForSandbox = vi.fn(async () => [
       { name: 's', transport: 'http', url: 'https://s' },
     ]);
     const mcp = {
       resolveForSandbox,
-    } as unknown as import('../../mcp').McpResolver;
+    } as unknown as import('../../mcp/mcp-resolver.service').McpResolver;
 
     const provisioner = new WorktreeProvisioner(hydrator, awareness, config, mcp, sandboxProvider);
     return { provisioner, attach, kickMcpHubRefresh, resolveForSandbox };

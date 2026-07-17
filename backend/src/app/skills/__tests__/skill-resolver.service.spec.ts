@@ -7,7 +7,7 @@ import { WorkspaceSkillStore } from '../workspace-skill.store';
 
 const fakeEnv = { get: () => undefined } as unknown as EnvService;
 
-vi.mock('./system-skill-registry', () => ({ buildSystemSkills: () => [] }));
+vi.mock('../system-skill-registry', () => ({ buildSystemSkills: () => [] }));
 
 class FakeRepo {
   rows: WorkspaceSkillEntity[] = [];

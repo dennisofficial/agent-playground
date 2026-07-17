@@ -24,14 +24,14 @@ import { BRAIN_SINK } from '../../stimulus/stimulus-consumer';
 import { StimulusIntake } from '../../stimulus/stimulus-intake.service';
 import { StimulusStoreService } from '../../stimulus/stimulus-store.service';
 import { SurfaceOrchestration } from '../../stimulus/surface-orchestration.service';
-import { JobTitler } from '../../titling';
+import { JobTitler } from '../../titling/job-titler.service';
 import { GithubNotificationSource } from '../github-notification.source';
 import {
   GithubEventsWebhookController,
   GithubStateWebhookController,
 } from '../github-webhook.controller';
 import type { RawBodyRequest } from '../ingress-http';
-import { JobBootstrapService } from '../job-bootstrap';
+import { JobBootstrapService } from '../../job-bootstrap/job-bootstrap.service';
 
 const ORG_ID = '31111111-1111-4111-8111-111111111111';
 const SECRET = 'gh-int-secret';

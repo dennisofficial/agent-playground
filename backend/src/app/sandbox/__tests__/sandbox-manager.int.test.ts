@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { FeatureSandbox } from '../../git';
+import type { FeatureSandbox } from '../../git/local-git.service';
 import { ensureEngineApp } from '../bundle-engine';
 import { CONTAINER_CONTEXT, CONTAINER_PLAYGROUND, CONTAINER_WORKTREE } from '../container-paths';
 import { DockerodeContainerEngine } from '../dockerode-container-engine';
