@@ -1,32 +1,16 @@
 "use client";
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useState, type ReactNode } from "react";
-import { ThemeProvider } from "next-themes";
 import { AuthInitializer } from "@/features/auth/components/auth-initializer";
+import { ReduxProvider } from "@/redux/provider";
+import { ThemeProvider } from "next-themes";
+import type { ReactNode } from "react";
 
 /**
  * Client provider composition for the whole app:
- *  - TanStack Query (REST history + mutations; the SSE subscription merges into this same cache).
+ *  - Redux Toolkit store + RTK Query (REST reads/writes; SSE deltas patch the same cache).
  *  - AuthInitializer (one-time session probe).
- *
- * The QueryClient is created once per browser session via useState (never re-created on re-render).
  */
 export function Providers({ children }: { children: ReactNode }) {
-  const [queryClient] = useState(
-    () =>
-      new QueryClient({
-        defaultOptions: {
-          queries: {
-            // Live data arrives over SSE — keep history fresh but don't hammer on focus.
-            staleTime: 15_000,
-            refetchOnWindowFocus: false,
-            retry: 1,
-          },
-        },
-      }),
-  );
-
   return (
     <ThemeProvider
       attribute="data-theme"
@@ -35,10 +19,10 @@ export function Providers({ children }: { children: ReactNode }) {
       value={{ light: "daylight", dark: "night" }}
       disableTransitionOnChange
     >
-      <QueryClientProvider client={queryClient}>
+      <ReduxProvider>
         <AuthInitializer />
         {children}
-      </QueryClientProvider>
+      </ReduxProvider>
     </ThemeProvider>
   );
 }

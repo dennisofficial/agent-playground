@@ -1,6 +1,6 @@
 "use client";
 
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@/lib/api/_tanstack-shim";
 import { useEffect } from "react";
 import { env } from "@/lib/env";
 import { qk } from "./query-keys";
@@ -246,7 +246,7 @@ export function useAllJobsRealtime(): void {
       }
     };
 
-    return subscribeSse(`${env.NEXT_PUBLIC_HTTP_URL}/web/jobs/realtime`, {
+    return subscribeSse(`${env.NEXT_PUBLIC_BACKEND_URL}/web/jobs/realtime`, {
       onFrame,
     });
   }, [qc]);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@/lib/api/_tanstack-shim";
 import { useEffect } from "react";
 import { env } from "@/lib/env";
 import { composerStore } from "./composer-store";
@@ -60,7 +60,7 @@ export function useDraftsRealtime(): void {
       }
     };
 
-    return subscribeSse(`${env.NEXT_PUBLIC_HTTP_URL}/web/drafts/realtime`, {
+    return subscribeSse(`${env.NEXT_PUBLIC_BACKEND_URL}/web/drafts/realtime`, {
       onFrame,
     });
   }, [qc]);

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@/lib/api/_tanstack-shim";
 import { useSearchParams } from "next/navigation";
 import {
   AlertCircle,

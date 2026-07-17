@@ -204,12 +204,10 @@ function installConnectivityKick(): void {
  * Subscribe to the shared EventSource for `url`. Returns an unsubscribe fn. The connection opens on the
  * first subscriber and closes shortly after the last one detaches (see `IDLE_LINGER_MS`).
  */
-export function subscribeSse(url: string, sub: SseSubscriber): () => void {
-  installConnectivityKick();
-  let conn = registry.get(url);
-  if (!conn) {
-    conn = new SharedConnection(url, () => registry.delete(url));
-    registry.set(url, conn);
-  }
-  return conn.add(sub);
+export function subscribeSse(_url: string, _sub: SseSubscriber): () => void {
+  // TODO(rtk): the realtime SSE endpoints (/web/.../events, /realtime) aren't wired on the new backend
+  // yet — no-op so no EventSource connections are opened (avoids 404 reconnect loops). The connection-
+  // pooling implementation (SharedConnection + registry, above) is retained for when they exist; restore
+  // this body from git history to re-enable it.
+  return () => {};
 }

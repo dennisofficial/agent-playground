@@ -1,6 +1,7 @@
 "use client";
 
 import { Auth, type AuthState } from "@workspace/auth";
+import type { AxiosInstance } from "axios";
 import { env } from "./env";
 
 export type { AuthState };
@@ -22,6 +23,8 @@ export interface AtlasAuth {
   recheck(): Promise<void>;
   onAuthStateChanged(cb: (state: AuthState) => void): () => void;
   readonly currentAuthState: AuthState;
+  /** Attach the 401→refresh→retry interceptors to a caller-owned axios instance (RTK Query's baseQuery). */
+  attachInterceptors(instance: AxiosInstance): void;
   signIn(email: string, password: string): Promise<void>;
   register(email: string, password: string, name?: string): Promise<void>;
   signInWithGoogle(): Promise<void>;
@@ -54,7 +57,7 @@ class RealAuth implements AtlasAuth {
   constructor() {
     this.inner.configure({
       // Absolute base → the Atlas HTTP app directly (cookie session rides on credentialed CORS).
-      apiBaseUrl: env.NEXT_PUBLIC_HTTP_URL,
+      apiBaseUrl: env.NEXT_PUBLIC_BACKEND_URL,
       authBasePath: "/auth",
       sessionToAuthState: (s) => ({
         authenticated: true,
@@ -76,6 +79,9 @@ class RealAuth implements AtlasAuth {
   }
   onAuthStateChanged(cb: (state: AuthState) => void): () => void {
     return this.inner.onAuthStateChanged(cb);
+  }
+  attachInterceptors(instance: AxiosInstance): void {
+    this.inner.attachInterceptors(instance);
   }
   async signIn(email: string, password: string): Promise<void> {
     try {

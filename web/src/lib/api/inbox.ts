@@ -1,9 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
-import { env } from "@/lib/env";
-import { fetchWithRefresh } from "./refresh";
-import { qk } from "./query-keys";
+import { stubQuery, type QueryResultLike } from "./_stub";
 import { toJobStatus, toJobKind } from "./status";
 import type {
   WireJobStatus,
@@ -175,43 +172,14 @@ export function normalize(r: RawInboxThread): InboxThread {
   };
 }
 
-async function fetchAllThreads(): Promise<InboxThread[]> {
-  const res = await fetchWithRefresh(`${env.NEXT_PUBLIC_HTTP_URL}/web/jobs`, {
-    headers: { accept: "application/json" },
-  });
-  if (!res.ok) throw new Error(`threads ${res.status}`);
-  const rows = (await res.json()) as RawInboxThread[];
-  return rows.map(normalize);
+// TODO(rtk): backend `GET /web/jobs` not wired yet — inbox renders empty on purpose.
+export function useAllJobs(): QueryResultLike<InboxThread[]> {
+  return stubQuery<InboxThread[]>([]);
 }
 
-export function useAllJobs() {
-  return useQuery({
-    queryKey: qk.allJobs(),
-    queryFn: fetchAllThreads,
-    staleTime: 15_000,
-  });
-}
-
-async function fetchArchivedThreads(): Promise<InboxThread[]> {
-  const res = await fetchWithRefresh(
-    `${env.NEXT_PUBLIC_HTTP_URL}/web/jobs/archived`,
-    { headers: { accept: "application/json" } },
-  );
-  if (!res.ok) throw new Error(`archived threads ${res.status}`);
-  const rows = (await res.json()) as RawInboxThread[];
-  return rows.map(normalize);
-}
-
-/** The operator's archived jobs (the collapsed "Archived" sidebar group) — fetched only once `enabled`
- *  (the group has actually been expanded), mirroring `useJobDiff`'s lazy `enabled` gate. Archived jobs are
- *  immutable (read-only, terminal), so a long `staleTime` is safe. */
-export function useArchivedJobs(enabled: boolean) {
-  return useQuery({
-    queryKey: qk.archivedJobs(),
-    queryFn: fetchArchivedThreads,
-    enabled,
-    staleTime: 5 * 60_000,
-  });
+// TODO(rtk): backend `GET /web/jobs/archived` not wired yet — empty archived group.
+export function useArchivedJobs(_enabled: boolean): QueryResultLike<InboxThread[]> {
+  return stubQuery<InboxThread[]>([]);
 }
 
 /** A repo subgroup: the in-flight threads on one repo. */

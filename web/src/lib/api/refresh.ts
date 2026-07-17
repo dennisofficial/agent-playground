@@ -26,7 +26,7 @@ type RefreshOutcome = "ok" | "unauthorized" | "transient";
 
 async function postRefresh(): Promise<RefreshOutcome> {
   try {
-    const res = await fetch(`${env.NEXT_PUBLIC_HTTP_URL}/auth/refresh`, {
+    const res = await fetch(`${env.NEXT_PUBLIC_BACKEND_URL}/auth/refresh`, {
       method: "POST",
       credentials: "include",
     });

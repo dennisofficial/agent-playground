@@ -26,24 +26,21 @@ export const env = createEnv({
   emptyStringAsUndefined: true,
   shared: {
     // Provided by Next.js (dev/build). Never set NODE_ENV in a dotenv file.
-    NODE_ENV: z.enum(ENodeEnv).default(ENodeEnv.DEV),
+    NODE_ENV: z.enum(ENodeEnv),
   },
   server: {
     BUILD_ID: z.string().default("dev"),
   },
   client: {
-    NEXT_PUBLIC_APP_ENV: z.enum(EAppEnv).default(EAppEnv.LOCAL),
-    // Where the Atlas standalone HTTP app (ATLAS_SURFACE=web) listens — the browser hits it directly.
-    NEXT_PUBLIC_HTTP_URL: z.url().default("http://localhost:4002"),
-    // Short git SHA of the running web build (e.g. "sha-abc1234"), baked in at `next build` time from the
-    // CI image tag. Defaults to "dev" for local/un-tagged builds.
+    NEXT_PUBLIC_APP_ENV: z.enum(EAppEnv),
+    NEXT_PUBLIC_BACKEND_URL: z.url(),
     NEXT_PUBLIC_GIT_SHA: z.string().default("dev"),
   },
   runtimeEnv: {
     NODE_ENV: process.env.NODE_ENV,
     BUILD_ID: process.env.BUILD_ID,
     NEXT_PUBLIC_APP_ENV: process.env.NEXT_PUBLIC_APP_ENV,
-    NEXT_PUBLIC_HTTP_URL: process.env.NEXT_PUBLIC_HTTP_URL,
+    NEXT_PUBLIC_BACKEND_URL: process.env.NEXT_PUBLIC_BACKEND_URL,
     NEXT_PUBLIC_GIT_SHA: process.env.NEXT_PUBLIC_GIT_SHA,
   },
 });

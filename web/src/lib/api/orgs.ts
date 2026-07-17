@@ -1,9 +1,22 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AutoApproveMode, AutoMergeMethod } from "@workspace/shared";
+import {
+  useCreateOrgMutation,
+  useDeleteOrgMutation,
+  useGetOrgMembersQuery,
+  useUpdateOrgMutation,
+} from "@/redux/query/api/org.api";
 import { env } from "@/lib/env";
+import {
+  modeApprovesPlan,
+  modeApprovesShip,
+  type AutoApproveMode,
+  type AutoMergeMethod,
+  type UpdateOrgDto,
+} from "@workspace/shared";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { adaptMutation, adaptQuery, type MutationResultLike } from "./_stub";
+import { useMutation, useQuery, useQueryClient } from "./_tanstack-shim";
 import type { OrgSummary } from "./me";
 import { fetchWithRefresh } from "./refresh";
 import { qk } from "./query-keys";
@@ -16,7 +29,7 @@ import { readUsageCache, removeUsageCache, usePersistUsage } from "./usage-cache
  * (credentials PUT) are owner-only. Secrets are never returned — credentials GET is presence flags only.
  */
 
-const BASE = `${env.NEXT_PUBLIC_HTTP_URL}/web`;
+const BASE = `${env.NEXT_PUBLIC_BACKEND_URL}/web`;
 
 const usageCacheKey = (key: readonly string[]) => key.join(":");
 
@@ -53,13 +66,9 @@ export interface Member {
   role: string;
 }
 
+// WIRED (RTK): GET /web/orgs/:orgId/members
 export function useOrgMembers(orgId: string) {
-  return useQuery({
-    queryKey: qk.orgMembers(orgId),
-    queryFn: () => webJson<Member[]>(`/orgs/${orgId}/members`),
-    enabled: Boolean(orgId),
-    staleTime: 30_000,
-  });
+  return adaptQuery(useGetOrgMembersQuery(orgId, { skip: !orgId }));
 }
 
 // ── Credentials (presence only — never the secret values) ────────────────────────────────────────
@@ -797,19 +806,15 @@ export function useMcpOAuthConnect(orgId: string) {
 // `qk.session()`. The cross-org inbox (`/web/threads`, `useAllJobs`) embeds `org.name` per row and
 // feeds the sidebar / workspace / command palette / rail badges, so rename + delete also invalidate it.
 
-/** Create an org — the caller becomes its owner; it starts in `onboarding`. */
-export function useCreateOrg() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (name: string) =>
-      webJson<OrgSummary>(`/orgs`, {
-        method: "POST",
-        body: JSON.stringify({ name }),
-      }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.session() });
-    },
-  });
+/** Create an org — the caller becomes its owner; it starts in `onboarding`.
+ *  WIRED (RTK): POST /web/orgs. Vars stay `string` (name) for existing callers; the mutation
+ *  invalidates SESSION so `useCurrentUser`'s org list refetches. */
+export function useCreateOrg(): MutationResultLike<OrgSummary, string> {
+  const [trigger, state] = useCreateOrgMutation();
+  return adaptMutation([
+    (name: string) => trigger({ name }),
+    state,
+  ]) as unknown as MutationResultLike<OrgSummary, string>;
 }
 
 /** Body for `PATCH /web/orgs/:orgId` — rename, re-slug, and/or set automation defaults (owner only). */
@@ -820,33 +825,38 @@ export interface UpdateOrgBody {
   defaultAutoMerge?: boolean;
 }
 
-/** Owner-only rename / re-slug. */
-export function useUpdateOrg(orgId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: UpdateOrgBody) =>
-      webJson<OrgSummary>(`/orgs/${orgId}`, {
-        method: "PATCH",
-        body: JSON.stringify(body),
-      }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.session() });
-      void qc.invalidateQueries({ queryKey: qk.allJobs() });
-    },
-  });
+/** Bridge the legacy web update body (slug + 4-value mode) to the backend's UpdateOrgDto (two booleans).
+ *  `slug` is dropped (the backend no longer stores it); the mode splits into plan/ship flags. */
+function toUpdateOrgDto(body: UpdateOrgBody): UpdateOrgDto {
+  return {
+    name: body.name,
+    defaultAutoMerge: body.defaultAutoMerge,
+    ...(body.defaultAutoApproveMode !== undefined
+      ? {
+          defaultAutoApprove: modeApprovesPlan(body.defaultAutoApproveMode),
+          defaultAutoShip: modeApprovesShip(body.defaultAutoApproveMode),
+        }
+      : {}),
+  };
 }
 
-/** Owner-only delete — tears down the org's repos, threads, and live agent sessions. Irreversible. */
-export function useDeleteOrg(orgId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: () =>
-      webJson<{ ok: boolean }>(`/orgs/${orgId}`, { method: "DELETE" }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.session() });
-      void qc.invalidateQueries({ queryKey: qk.allJobs() });
-    },
-  });
+/** Owner-only rename / automation-defaults update. WIRED (RTK): PATCH /web/orgs/:orgId. */
+export function useUpdateOrg(orgId: string): MutationResultLike<OrgSummary, UpdateOrgBody> {
+  const [trigger, state] = useUpdateOrgMutation();
+  return adaptMutation([
+    (body: UpdateOrgBody) => trigger({ orgId, body: toUpdateOrgDto(body) }),
+    state,
+  ]) as unknown as MutationResultLike<OrgSummary, UpdateOrgBody>;
+}
+
+/** Owner-only delete — tears down the org's repos, threads, and live agent sessions. Irreversible.
+ *  WIRED (RTK): DELETE /web/orgs/:orgId. */
+export function useDeleteOrg(orgId: string): MutationResultLike<{ ok: boolean }, void> {
+  const [trigger, state] = useDeleteOrgMutation();
+  return adaptMutation([() => trigger(orgId), state]) as unknown as MutationResultLike<
+    { ok: boolean },
+    void
+  >;
 }
 
 // ── Repos (the settings Repos tab — connect / re-validate / edit / disconnect) ─────────────────────

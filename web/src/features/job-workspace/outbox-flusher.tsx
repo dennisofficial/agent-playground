@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@/lib/api/_tanstack-shim";
 import {
   connectivity,
   useConnectivity,

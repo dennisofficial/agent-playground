@@ -53,7 +53,7 @@ interface LogFrame {
 const key = (ref: JobRef, id: string): string =>
   `${ref.orgId}:${ref.repoId}:${ref.jobId}:${id}`;
 const url = (ref: JobRef, id: string): string =>
-  `${env.NEXT_PUBLIC_HTTP_URL}/web/orgs/${ref.orgId}/repos/${ref.repoId}/jobs/${ref.jobId}/services/${encodeURIComponent(id)}/log-events`;
+  `${env.NEXT_PUBLIC_BACKEND_URL}/web/orgs/${ref.orgId}/repos/${ref.repoId}/jobs/${ref.jobId}/services/${encodeURIComponent(id)}/log-events`;
 
 /**
  * Cap on the client-side buffer, in LINES. Without this, a long-running chatty service would grow this

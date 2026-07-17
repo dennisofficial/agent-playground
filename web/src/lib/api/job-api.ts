@@ -26,7 +26,7 @@ import type { ReviewComment } from "@/features/job-workspace/review-comments";
  * contract — it replaces the dead channel client (`client.ts`).
  */
 
-const BASE = `${env.NEXT_PUBLIC_HTTP_URL}/web`;
+const BASE = `${env.NEXT_PUBLIC_BACKEND_URL}/web`;
 
 /** Everything needed to address one thread. The inbox row (`/web/jobs`) carries all three. */
 export interface JobRef {

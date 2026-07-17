@@ -1,11 +1,6 @@
 "use client";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
-import { env } from "@/lib/env";
-import { fetchWithRefresh } from "./refresh";
-import { qk } from "./query-keys";
-import { subscribeSse } from "./sse-manager";
+import { stubQuery, type QueryResultLike } from "./_stub";
 
 /**
  * The host box's live machine-stats snapshot (`GET /web/host-stats`). Login-gated but NOT org-scoped —
@@ -41,82 +36,14 @@ export type HostStatsHistoryPoint = {
 
 export type HostStatsHistory = { points: HostStatsHistoryPoint[] };
 
-const BASE = `${env.NEXT_PUBLIC_HTTP_URL}/web`;
-
-async function fetchHostStats(): Promise<HostStats> {
-  const res = await fetchWithRefresh(`${BASE}/host-stats`, {
-    headers: { accept: "application/json" },
-  });
-  if (!res.ok) {
-    const err = new Error(res.statusText) as Error & { status?: number };
-    err.status = res.status;
-    throw err;
-  }
-  return (await res.json()) as HostStats;
+// TODO(rtk): backend host-stats endpoints not wired yet — widgets render their empty state.
+export function useHostStats(): QueryResultLike<HostStats> {
+  return stubQuery<HostStats>();
 }
 
-async function fetchHistory(hours: number): Promise<HostStatsHistory> {
-  const res = await fetchWithRefresh(`${BASE}/host-stats/history?hours=${hours}`, {
-    headers: { accept: "application/json" },
-  });
-  if (!res.ok) {
-    const err = new Error(res.statusText) as Error & { status?: number };
-    err.status = res.status;
-    throw err;
-  }
-  return (await res.json()) as HostStatsHistory;
+export function useHostStatsHistory(_hours = 24): QueryResultLike<HostStatsHistory> {
+  return stubQuery<HostStatsHistory>();
 }
 
-/**
- * Poll the host-stats snapshot every 5s (matching `useServices`), only while the tab is focused —
- * this is ancillary top-bar chrome, so it must never block or error the shell. React Query keeps the
- * last snapshot on a transient failure; the widget dims rather than throws.
- */
-export function useHostStats() {
-  return useQuery({
-    queryKey: qk.hostStats(),
-    queryFn: fetchHostStats,
-    staleTime: 4_000,
-    refetchInterval: 5_000,
-    refetchIntervalInBackground: false,
-  });
-}
-
-/**
- * The last `hours` of bucketed host-stats samples (`GET /host-stats/history`), feeding the panel's
- * per-metric sparklines. Polled on a slow 60s cadence — the SSE stream below keeps the live number fresh
- * in between, so the chart only needs to catch up on new buckets, not track every sample.
- */
-export function useHostStatsHistory(hours = 24) {
-  return useQuery({
-    queryKey: qk.hostStatsHistory(hours),
-    queryFn: () => fetchHistory(hours),
-    staleTime: 60_000,
-    refetchInterval: 60_000,
-    refetchIntervalInBackground: false,
-  });
-}
-
-/**
- * Live-patches the `host-stats` query cache from the `/host-stats/realtime` SSE stream — each frame is the
- * full snapshot JSON, so this simply overwrites the cache rather than diffing. Unlike the jobs realtime
- * stream, this endpoint never sends a `disabled` control frame, so there's nothing to seal on.
- */
-export function useHostStatsRealtime(): void {
-  const qc = useQueryClient();
-
-  useEffect(() => {
-    const onFrame = (data: string) => {
-      try {
-        const snap = JSON.parse(data) as HostStats;
-        qc.setQueryData(qk.hostStats(), snap);
-      } catch {
-        // ignore parse errors
-      }
-    };
-
-    return subscribeSse(`${env.NEXT_PUBLIC_HTTP_URL}/web/host-stats/realtime`, {
-      onFrame,
-    });
-  }, [qc]);
-}
+/** No-op until the `/web/host-stats/realtime` SSE endpoint exists. */
+export function useHostStatsRealtime(): void {}

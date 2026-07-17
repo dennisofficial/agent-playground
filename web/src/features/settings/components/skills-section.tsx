@@ -620,7 +620,7 @@ function SkillRow({
       </div>
       {fork.isSuccess ? (
         <div className="mt-2.5 text-[11px] text-green">
-          Forked to “{fork.data.name}” — find it under Custom below.
+          Forked to “{fork.data?.name}” — find it under Custom below.
         </div>
       ) : null}
     </div>

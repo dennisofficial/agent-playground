@@ -1,6 +1,6 @@
 "use client";
 
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@/lib/api/_tanstack-shim";
 import { useEffect, useRef } from "react";
 import { env } from "@/lib/env";
 import { qk } from "./query-keys";
@@ -247,7 +247,7 @@ export function useJobEvents(ref: JobRef): void {
       sweepLiveTurnsAfterReconnect();
     };
 
-    const url = `${env.NEXT_PUBLIC_HTTP_URL}/web/orgs/${orgId}/repos/${repoId}/events`;
+    const url = `${env.NEXT_PUBLIC_BACKEND_URL}/web/orgs/${orgId}/repos/${repoId}/events`;
     const unsubscribe = subscribeSse(url, { onFrame, onOpen });
     return () => {
       if (debounce) clearTimeout(debounce);

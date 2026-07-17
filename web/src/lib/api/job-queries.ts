@@ -1,12 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import {
-  useMutation,
-  useQueries,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "./_tanstack-shim";
 import { qk } from "./query-keys";
 import { useOrgs } from "./me";
 import { composerStore } from "./composer-store";
@@ -76,27 +71,10 @@ export interface RepoChoice {
  * `GET /orgs/:id/repos` per org (parallel). Only `accessOk` repos are conversation containers, but we
  * return all connected repos and let the caller reflect emptiness.
  */
+// TODO(rtk): per-org `GET /orgs/:id/repos` not wired yet — no repos to choose from.
 export function useAllRepos(): { repos: RepoChoice[]; isLoading: boolean } {
-  const { orgs, isLoading: orgsLoading } = useOrgs();
-  const results = useQueries({
-    queries: orgs.map((o) => ({
-      queryKey: qk.orgRepos(o.id),
-      queryFn: () => fetchOrgRepos(o.id),
-      staleTime: 30_000,
-    })),
-  });
-
-  const repos = useMemo(() => {
-    const out: RepoChoice[] = [];
-    orgs.forEach((o, i) => {
-      const list = results[i]?.data ?? [];
-      for (const repo of list) out.push({ orgId: o.id, orgName: o.name, repo });
-    });
-    return out;
-  }, [orgs, results]);
-
-  const isLoading = orgsLoading || results.some((r) => r.isLoading);
-  return { repos, isLoading };
+  const { isLoading } = useOrgs();
+  return { repos: [], isLoading };
 }
 
 /** A thread's durable message log. SSE keeps it fresh via `useJobEvents` (refetch on any frame). */

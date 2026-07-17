@@ -1,22 +1,24 @@
 "use client";
 
-import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useGetSessionQuery } from "@/redux/query/api/auth.api";
 import type { AutoApproveMode } from "@workspace/shared";
-import { env } from "@/lib/env";
-import { fetchWithRefresh } from "./refresh";
-import { qk } from "./query-keys";
+import { useMemo } from "react";
+import { adaptQuery, type QueryResultLike } from "./_stub";
 
-/** An org the operator belongs to, as carried on the session (`GET /auth/session`). */
+/**
+ * An org the operator belongs to, as carried on the session (`GET /auth/session`).
+ *
+ * NOTE (contract drift): the backend no longer returns `slug`, and replaced
+ * `defaultAutoApproveMode` with the three booleans `defaultAutoApprove` / `defaultAutoShip` /
+ * `defaultAutoMerge`. `useCurrentUser` bridges the new shape to this (still web-local) type until
+ * the web is updated to consume `@workspace/shared`'s `OrgSummary` directly.
+ */
 export interface OrgSummary {
   id: string;
   slug: string;
   name: string;
-  /** `onboarding` until credentials + a repo are validated, then `active`. */
   status: string;
-  /** The caller's role IN this org: `owner` | `member` (admin reserved). */
   role: string;
-  /** Org-level defaults a new job inherits at creation unless the create request sets it explicitly. */
   defaultAutoApproveMode: AutoApproveMode;
   defaultAutoMerge: boolean;
 }
@@ -29,38 +31,39 @@ export interface CurrentUser {
   orgs: OrgSummary[];
 }
 
-async function fetchCurrentUser(): Promise<CurrentUser> {
-  // Direct, credentialed call to the Atlas app (the session cookie authorizes it). `fetchWithRefresh`
-  // re-ups the access cookie + retries once if it expired mid-session. The session carries the caller's
-  // orgs so the shell can render the org rail / settings without a second round-trip.
-  const res = await fetchWithRefresh(
-    `${env.NEXT_PUBLIC_HTTP_URL}/auth/session`,
-    {
-      headers: { accept: "application/json" },
-    },
-  );
-  if (!res.ok) throw new Error(`session ${res.status}`);
-  const body = (await res.json()) as Partial<CurrentUser>;
-  return {
-    id: body.id ?? "",
-    email: body.email ?? "",
-    name: body.name ?? null,
-    orgs: Array.isArray(body.orgs) ? body.orgs : [],
-  };
+/** Bridge the backend's two-boolean model onto the legacy 4-value mode this UI still reads. */
+function toApproveMode(autoApprove: boolean, autoShip: boolean): AutoApproveMode {
+  if (autoApprove && autoShip) return "both";
+  if (autoApprove) return "plan";
+  if (autoShip) return "ship";
+  return "off";
 }
 
 /**
- * The current operator's session (identity + orgs). Mounts only inside the authenticated shell, so the
- * session cookie is present; a 401 (e.g. just after sign-out) leaves `data` undefined and callers fall
- * back gracefully.
+ * The current operator's session (identity + orgs) via RTK Query (`GET /auth/session`). Returns the
+ * TanStack-shaped result the shell already consumes; a 401 leaves `data` undefined and callers fall back.
  */
-export function useCurrentUser() {
-  return useQuery({
-    queryKey: qk.session(),
-    queryFn: fetchCurrentUser,
-    staleTime: 60_000,
-    retry: false,
-  });
+export function useCurrentUser(): QueryResultLike<CurrentUser> {
+  const result = useGetSessionQuery();
+  const mapped = useMemo<CurrentUser | undefined>(() => {
+    const s = result.data;
+    if (!s) return undefined;
+    return {
+      id: s.id,
+      email: s.email,
+      name: s.name,
+      orgs: s.orgs.map((o) => ({
+        id: o.id,
+        slug: o.id, // backend dropped slug; fall back to id until the UI stops needing it
+        name: o.name,
+        status: o.status,
+        role: o.role,
+        defaultAutoApproveMode: toApproveMode(o.defaultAutoApprove, o.defaultAutoShip),
+        defaultAutoMerge: o.defaultAutoMerge,
+      })),
+    };
+  }, [result.data]);
+  return adaptQuery<CurrentUser>({ ...result, data: mapped });
 }
 
 /** The operator's orgs, split into owned vs joined for the rail (owned first, then joined). */

@@ -125,7 +125,7 @@ class ConnectivityStore {
   private async probe(): Promise<void> {
     if (this.degradedSince === null) return; // recovered out from under this scheduled tick
     try {
-      await fetch(`${env.NEXT_PUBLIC_HTTP_URL}/web/ping`, {
+      await fetch(`${env.NEXT_PUBLIC_BACKEND_URL}/web/ping`, {
         credentials: "include",
         cache: "no-store",
       });

@@ -220,7 +220,7 @@ importers:
         specifier: ^5.0.0
         version: 5.0.6
       '@types/node':
-        specifier: ^22.10.7
+        specifier: ^22.19.20
         version: 22.19.20
       '@types/pg':
         specifier: ^8.11.10
@@ -383,6 +383,12 @@ importers:
 
   shared:
     dependencies:
+      class-transformer:
+        specifier: ^0.5.1
+        version: 0.5.1
+      class-validator:
+        specifier: ^0.14.2
+        version: 0.14.4
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -664,15 +670,15 @@ importers:
 
   web:
     dependencies:
+      '@reduxjs/toolkit':
+        specifier: ^2.9.0
+        version: 2.12.0(react-redux@9.3.0(@types/react@19.2.17)(react@19.2.7)(redux@5.0.1))(react@19.2.7)
       '@shikijs/langs':
         specifier: ^4.3.1
         version: 4.3.1
       '@t3-oss/env-nextjs':
         specifier: ^0.13.11
         version: 0.13.11(typescript@6.0.3)(zod@4.4.3)
-      '@tanstack/react-query':
-        specifier: ^5.90.2
-        version: 5.101.0(react@19.2.7)
       '@tanstack/react-virtual':
         specifier: ^3.14.6
         version: 3.14.6(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -681,7 +687,7 @@ importers:
         version: link:../submodules/jwt-auth
       '@workspace/shared':
         specifier: workspace:*
-        version: link:../shared
+        version: file:shared(class-transformer@0.5.1)(class-validator@0.15.1)
       anser:
         specifier: ^2.3.5
         version: 2.3.5
@@ -718,6 +724,9 @@ importers:
       react-markdown:
         specifier: ^10.1.0
         version: 10.1.0(@types/react@19.2.17)(react@19.2.7)
+      react-redux:
+        specifier: ^9.2.0
+        version: 9.3.0(@types/react@19.2.17)(react@19.2.7)(redux@5.0.1)
       react-resizable-panels:
         specifier: ^4.11.2
         version: 4.11.2(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -752,9 +761,6 @@ importers:
       '@tailwindcss/typography':
         specifier: ^0.5.20
         version: 0.5.20(tailwindcss@4.3.0)
-      '@tanstack/react-query-devtools':
-        specifier: ^5.90.2
-        version: 5.101.0(@tanstack/react-query@5.101.0(react@19.2.7))(react@19.2.7)
       '@types/node':
         specifier: ^20
         version: 20.19.42
@@ -2834,23 +2840,6 @@ packages:
     peerDependencies:
       tailwindcss: '>=3.0.0 || >=4.0.0 || insiders'
 
-  '@tanstack/query-core@5.101.0':
-    resolution: {integrity: sha512-cQetA74EB+seWySv1TTKr828TnP0u39m6LykwDXIo84SNortpDkp30TMEjkqtYCNP9c40uT/iwl6MLiufEt0Ow==}
-
-  '@tanstack/query-devtools@5.101.0':
-    resolution: {integrity: sha512-MVqw17k08RQtGGLEL654+dX/btbX9p/8WjkznO//zusLTMaObxi3Q+MoFwGVkC9K3tqjn8qrrNhJevXx4fJTeQ==}
-
-  '@tanstack/react-query-devtools@5.101.0':
-    resolution: {integrity: sha512-cpZA0+WqKXwrwMfiWZEGGF6QrIWVQFbhBtxqDF5sQsAfrFf47HIE6fiPbQU3wyAUEN2+7UNqLCQe7oG6m3f93w==}
-    peerDependencies:
-      '@tanstack/react-query': ^5.101.0
-      react: 19.2.7
-
-  '@tanstack/react-query@5.101.0':
-    resolution: {integrity: sha512-rLlJXSpkqfizLWgkR5+eLeIk0MvTx/meEIR7LRjxic+qxiQP8zVjq7BqQkiCMNLQBlLfuOLqqr6KO5GtrDlmSg==}
-    peerDependencies:
-      react: 19.2.7
-
   '@tanstack/react-virtual@3.14.6':
     resolution: {integrity: sha512-4+Uq8m0/gzO4kMCHUEpTtGX1RnONK0C+g88b2ltwPMWUBiaVarBuWKoPJaz7gj1cKCVRAdyu+U8GcKhwCc2beA==}
     peerDependencies:
@@ -3297,6 +3286,12 @@ packages:
         optional: true
       typeorm:
         optional: true
+
+  '@workspace/shared@file:shared':
+    resolution: {directory: shared, type: directory}
+    peerDependencies:
+      class-transformer: ^0.5.1
+      class-validator: ^0.14.2
 
   '@xtuc/ieee754@1.2.0':
     resolution: {integrity: sha512-DX8nKgqcGwsc0eJSqYt5lwP4DH5FlHnmuWWBRy7X0NcaGR0ZtuyeESgMwTYVEtxmsNGY+qit4QYT/MIYTOTPeA==}
@@ -8835,21 +8830,6 @@ snapshots:
       postcss-selector-parser: 6.0.10
       tailwindcss: 4.3.0
 
-  '@tanstack/query-core@5.101.0': {}
-
-  '@tanstack/query-devtools@5.101.0': {}
-
-  '@tanstack/react-query-devtools@5.101.0(@tanstack/react-query@5.101.0(react@19.2.7))(react@19.2.7)':
-    dependencies:
-      '@tanstack/query-devtools': 5.101.0
-      '@tanstack/react-query': 5.101.0(react@19.2.7)
-      react: 19.2.7
-
-  '@tanstack/react-query@5.101.0(react@19.2.7)':
-    dependencies:
-      '@tanstack/query-core': 5.101.0
-      react: 19.2.7
-
   '@tanstack/react-virtual@3.14.6(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
       '@tanstack/virtual-core': 3.17.4
@@ -9442,6 +9422,12 @@ snapshots:
       '@nestjs/typeorm': 11.0.1(@nestjs/common@11.1.26(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@5.5.0))(@nestjs/core@11.1.26)(reflect-metadata@0.2.2)(rxjs@7.8.2)(typeorm@0.3.30(ioredis@5.11.1(supports-color@5.5.0))(mongodb@6.21.0)(pg@8.21.0)(supports-color@5.5.0)(ts-node@10.9.2(@swc/core@1.15.40)(@types/node@22.19.20)(typescript@6.0.3)))
       express: 5.2.1
       typeorm: 0.3.30(ioredis@5.11.1(supports-color@5.5.0))(mongodb@6.21.0)(pg@8.21.0)(supports-color@5.5.0)(ts-node@10.9.2(@swc/core@1.15.40)(@types/node@22.19.20)(typescript@6.0.3))
+
+  '@workspace/shared@file:shared(class-transformer@0.5.1)(class-validator@0.15.1)':
+    dependencies:
+      class-transformer: 0.5.1
+      class-validator: 0.15.1
+      zod: 4.4.3
 
   '@xtuc/ieee754@1.2.0': {}
 

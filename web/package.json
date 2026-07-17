@@ -13,9 +13,10 @@
     "test:e2e:ui": "dotenvx run -f ../backend/.env.local.enc -f ../backend/.env.seed.enc -f ../backend/.env.personal --ignore=MISSING_ENV_FILE -o -- playwright test --ui"
   },
   "dependencies": {
+    "@reduxjs/toolkit": "^2.9.0",
     "@t3-oss/env-nextjs": "^0.13.11",
-    "@tanstack/react-query": "^5.90.2",
     "@tanstack/react-virtual": "^3.14.6",
+    "react-redux": "^9.2.0",
     "@workspace/auth": "workspace:*",
     "@workspace/shared": "workspace:*",
     "anser": "^2.3.5",
@@ -44,7 +45,6 @@
     "@playwright/test": "^1.61.1",
     "@tailwindcss/postcss": "^4",
     "@tailwindcss/typography": "^0.5.20",
-    "@tanstack/react-query-devtools": "^5.90.2",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
