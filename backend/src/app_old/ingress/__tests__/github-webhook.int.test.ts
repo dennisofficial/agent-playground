@@ -1,4 +1,3 @@
-
 import { EnvService } from '@core/config/env/env.service';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
@@ -11,6 +10,7 @@ import type { BaseMoveMergeabilitySync } from '../../driver/base-move-mergeabili
 import { GitStateReconciler } from '../../driver/git-state-reconciler.service';
 import { GithubCiStateSync } from '../../driver/github-ci-state-sync.service';
 import { GithubPrStateSync } from '../../driver/github-pr-state-sync.service';
+import { JobBootstrapService } from '../../job-bootstrap/job-bootstrap.service';
 import { DB_CONNECTION } from '../../persistence/database.module';
 import {
   ENTITIES,
@@ -31,7 +31,6 @@ import {
   GithubStateWebhookController,
 } from '../github-webhook.controller';
 import type { RawBodyRequest } from '../ingress-http';
-import { JobBootstrapService } from '../../job-bootstrap/job-bootstrap.service';
 
 const ORG_ID = '31111111-1111-4111-8111-111111111111';
 const SECRET = 'gh-int-secret';

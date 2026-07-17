@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import type { InstallMatch } from '../../_shared/prompt-kit/jit/install-awareness';
 import { Repository } from 'typeorm';
+import type { InstallMatch } from '../../_shared/prompt-kit/jit/install-awareness';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { OrgWorkspaceMountEntity, RepoEntity } from '../persistence/entities';
 import type { MountMode, MountSpec } from '../sandbox/container-paths';

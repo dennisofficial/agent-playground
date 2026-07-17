@@ -1,6 +1,5 @@
 import type { Decision } from '../../_shared/domain';
 
-
 export interface VerificationEvidence {
   kind: string;
   command: string;

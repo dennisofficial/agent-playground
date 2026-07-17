@@ -2,7 +2,6 @@ import type { PipelineMarker } from '../../persistence/entities/job.entity';
 
 export type { PipelineMarker };
 
-
 interface PipelineStateView {
   status?: string;
   decisionRecordId?: string | null;

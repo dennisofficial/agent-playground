@@ -1,4 +1,3 @@
-
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
@@ -6,12 +5,12 @@ import type { UnblockBlockerInfo } from '@shared/domain';
 import { DataSource, Repository } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { CustomNamingStrategy } from '../../../_lib/database/custom-naming.strategy';
+import { BrainGateway } from '../../brain-gateway/brain-gateway.service';
 import { JobUnblockSweep } from '../../driver/job-unblock-sweep.service';
 import { JobBootstrapService } from '../../job-bootstrap/job-bootstrap.service';
 import { DB_CONNECTION } from '../../persistence/database.module';
 import { ENTITIES, JobEntity } from '../../persistence/entities';
 import { StimulusStoreService } from '../../stimulus/stimulus-store.service';
-import { BrainGateway } from '../../brain-gateway/brain-gateway.service';
 import { JobDependencyService } from '../job-dependency.service';
 
 const ORG_ID = '2c111111-1111-4111-8111-111111111111';

@@ -1,4 +1,3 @@
-
 import Redis from 'ioredis';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -56,8 +55,7 @@ export function authFromEnv(): { secret: string; kind?: 'personal' | 'setup-toke
     if (typeof j?.claudeAiOauth?.accessToken === 'string') {
       return { secret, kind: 'personal' };
     }
-  } catch {
-  }
+  } catch {}
   return { secret };
 }
 
@@ -306,8 +304,7 @@ export function killEngineIn(sandbox: string): void {
       stdio: 'ignore',
       timeout: 15_000,
     });
-  } catch {
-  }
+  } catch {}
 }
 
 export function requireSandboxArg(script: string): string {

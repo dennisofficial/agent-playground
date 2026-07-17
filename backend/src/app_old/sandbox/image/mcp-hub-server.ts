@@ -11,7 +11,6 @@ import {
   isInitializeRequest,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import type { ResolvedMcpServer } from '../../../_shared/engine/engine.types';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import {
@@ -21,6 +20,7 @@ import {
   type ServerResponse,
 } from 'node:http';
 import { join } from 'node:path';
+import type { ResolvedMcpServer } from '../../../_shared/engine/engine.types';
 import { CONTAINER_MCP_HUB_CONFIG, CONTAINER_MCP_HUB_DIR, MCP_HUB_PORT } from '../container-paths';
 import {
   parseHubConfig,
@@ -208,8 +208,7 @@ class UpstreamConnection {
     this.connected = false;
     try {
       await this.client?.close();
-    } catch {
-    }
+    } catch {}
   }
 }
 
@@ -412,8 +411,7 @@ async function main(): Promise<void> {
         lastMtime = m;
         hub.loadAndReconcile();
       }
-    } catch {
-    }
+    } catch {}
   }, CONFIG_POLL_MS);
 }
 

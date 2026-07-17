@@ -1,4 +1,3 @@
-
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
 import { getDataSourceToken } from '@nestjs/typeorm';
@@ -8,12 +7,15 @@ import type { AddressInfo } from 'node:net';
 import { DataSource } from 'typeorm';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { AppOldModule } from '../../app-v1.module';
+import { CLASSIFIER_LLM } from '../../decision-gate/classifier-llm';
 import {
   FakeClassifierLlm,
   FakeEngineRunner,
   FakeGithubPrService,
   FakeLocalGitService,
 } from '../../e2e/e2e-stubs';
+import { GithubPrService } from '../../git/github-pr.service';
+import { LocalGitService } from '../../git/local-git.service';
 import { DB_CONNECTION } from '../../persistence/database.module';
 import { ClaudeCredentialStore } from '../claude-credential.store';
 import { CredentialKeepAliveService } from '../credential-keepalive.service';
@@ -22,9 +24,6 @@ import {
   CredentialRefreshService,
 } from '../credential-refresh.service';
 import { CredentialResolver } from '../credential-resolver.service';
-import { CLASSIFIER_LLM } from '../../decision-gate/classifier-llm';
-import { GithubPrService } from '../../git/github-pr.service';
-import { LocalGitService } from '../../git/local-git.service';
 import { OauthUsageService } from '../oauth-usage.service';
 
 const fakeCreds = {
@@ -34,7 +33,6 @@ const fakeCreds = {
   hostGithubToken: () => Promise.resolve(undefined),
   engineAuth: () => Promise.resolve(undefined),
 };
-
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

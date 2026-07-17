@@ -1,5 +1,6 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Injectable, Logger } from '@nestjs/common';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import type {
   CiSyncDelta,
   EventKind,
@@ -10,7 +11,6 @@ import type {
   PrStateDelta,
   RawNotification,
 } from '../../_shared/domain';
-import { createHmac, timingSafeEqual } from 'node:crypto';
 import { ProjectRoutingService } from '../stimulus/project-routing.service';
 
 @Injectable()

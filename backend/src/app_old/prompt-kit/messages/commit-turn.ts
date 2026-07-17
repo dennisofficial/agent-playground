@@ -1,6 +1,5 @@
 import { agentMessage, type AgentMessage } from '../../../_shared/prompt-kit/message';
 
-
 export function renderCommitTurnTask(): AgentMessage {
   return agentMessage(
     `You have UNCOMMITTED changes in the working tree, but the thread is otherwise finished. Commit them` +

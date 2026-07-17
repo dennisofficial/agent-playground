@@ -1,4 +1,3 @@
-
 import { EnvService } from '@core/config/env/env.service';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
@@ -9,8 +8,9 @@ import { join } from 'node:path';
 import { DataSource, Repository } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CustomNamingStrategy } from '../../../_lib/database/custom-naming.strategy';
-import type { FeatureSandbox, ProjectRepo } from '../../git/local-git.service';
+import { BrainGateway } from '../../brain-gateway/brain-gateway.service';
 import { GithubPrService } from '../../git/github-pr.service';
+import type { FeatureSandbox, ProjectRepo } from '../../git/local-git.service';
 import { LocalGitService } from '../../git/local-git.service';
 import { JobDependencyService } from '../../job-deps/job-dependency.service';
 import { CredentialResolver } from '../../onboarding/credential-resolver.service';
@@ -33,11 +33,9 @@ import { SandboxActivityRegistry } from '../../sandbox/sandbox-activity.registry
 import { SANDBOX_PROVIDER } from '../../sandbox/sandbox-provider.port';
 import { TurnRegistry } from '../../sandbox/turn-registry.service';
 import { SkillUpdaterService } from '../../skills/skill-updater.service';
-import { BrainGateway } from '../../brain-gateway/brain-gateway.service';
+import { JobLifecycleService, ProvisioningNotReadyError } from '../job-lifecycle.service';
 import { DRIVER_REPO, type ResolvedRepo } from '../repo-resolver';
-import { JobLifecycleService } from '../job-lifecycle.service';
 import { WorktreeProvisioner } from '../worktree-provisioner.service';
-import { ProvisioningNotReadyError } from '../job-lifecycle.service';
 
 import { ENTITIES } from '../../persistence/entities';
 
@@ -57,7 +55,6 @@ function dbOpts() {
     ssl: false as const,
   };
 }
-
 
 const FAKE_PROJECT_SLUG = 'r2-gate-proj';
 const FAKE_TEAM_ID = '11111111-1111-4111-8111-111111111111'; // sentinel org uuid
@@ -181,7 +178,6 @@ class FakeSandboxProvider {
     return join(this.stateRoot, 'transcripts', jobId);
   }
 }
-
 
 let mod: TestingModule;
 let threadLifecycle: JobLifecycleService;
@@ -370,7 +366,6 @@ async function seedTranscriptMessageAt(jobId: string, createdAt: Date): Promise<
   );
 }
 
-
 describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
   it('createJob persists an attached sandbox with the feature branch cut at create', async () => {
     const result = await create('Add dark mode');
@@ -555,7 +550,6 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     expect(await sandboxes.findOne({ where: { job_id: jobId } })).toBeNull();
   });
 
-
   it('claimArchiveJob is single-flight: flips status→archived + stamps archived_at once, then returns false', async () => {
     const { jobId } = await create();
 
@@ -693,7 +687,6 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
 
     await expect(threadLifecycle.findSandbox(jobId, FAKE_TEAM_ID)).resolves.toBeNull();
   });
-
 
   it('ensureProvisioned provisions a complete sandbox for a BARE thread row', async () => {
     const jobId = await createBareThread();

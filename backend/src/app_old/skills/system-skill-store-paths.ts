@@ -1,6 +1,5 @@
-import { monorepoRoot } from '../../_shared/state-root';
 import { join } from 'node:path';
-
+import { monorepoRoot } from '../../_shared/state-root';
 
 export function managedSkillsRootHost(): string {
   return join(monorepoRoot(), 'backend', 'skills-managed');

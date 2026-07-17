@@ -1,5 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { randomUUID } from 'node:crypto';
+import { type QueryDeepPartialEntity, Repository } from 'typeorm';
 import {
   type ContextBreakdown,
   type EngineEvent,
@@ -7,8 +9,6 @@ import {
   type JitInjection,
   resolveContextLimit,
 } from '../../_shared/engine';
-import { randomUUID } from 'node:crypto';
-import { type QueryDeepPartialEntity, Repository } from 'typeorm';
 import { isInterruptAbortResult } from '../brain/session-transcript';
 import { AppVersionService } from '../cluster/app-version.service';
 import { OauthUsageService } from '../onboarding/oauth-usage.service';
@@ -535,13 +535,9 @@ export class TurnHarnessFactory {
         : Date.now();
       const pending = this.liveTurns.takePendingOrder(channel, jobId, lane);
       for (let i = 0; i < pending.length; i++) {
-        await this.sink
-          .stampOrderAt(pending[i], new Date(maxEmit + 1 + i))
-          .catch((err) => {
-            this.logger.warn(
-              `stampOrderAt failed for thread=${jobId} lane=${lane}: ${err}`,
-            );
-          });
+        await this.sink.stampOrderAt(pending[i], new Date(maxEmit + 1 + i)).catch((err) => {
+          this.logger.warn(`stampOrderAt failed for thread=${jobId} lane=${lane}: ${err}`);
+        });
       }
       this.liveTurns.end(channel, jobId, lane); // fans turn_end + drops the in-flight buffer
     };

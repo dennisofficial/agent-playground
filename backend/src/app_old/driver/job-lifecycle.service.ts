@@ -55,7 +55,6 @@ export class ProvisioningNotReadyError extends Error {
   }
 }
 
-
 function setupErrorFrom(sandbox: FeatureSandbox): string | null {
   const r = sandbox.setupScriptResult;
   return r && !r.ok ? `exit ${r.exitCode}: ${r.tail}` : null;
@@ -294,7 +293,6 @@ export class JobLifecycleService {
     return true;
   }
 
-
   async ensureContainer(
     jobId: string,
     orgId: string,
@@ -437,7 +435,6 @@ export class JobLifecycleService {
     );
   }
 
-
   async claimArchiveJob(jobId: string, orgId: string): Promise<boolean> {
     const res = await this.jobs.update(
       { id: jobId, org_id: orgId, status: Not(In(['archived', 'deleting'])) },
@@ -556,7 +553,6 @@ export class JobLifecycleService {
       );
     return retried;
   }
-
 
   async reconcileDeletingJobs(): Promise<number> {
     const stuck = await this.jobs.find({
@@ -762,7 +758,6 @@ export class JobLifecycleService {
     await this.sandboxes.save(row);
     this.logger.log(`detached thread ${row.job_id} container (${reason})`);
   }
-
 
   private async provisionSandbox(
     thread: JobEntity,

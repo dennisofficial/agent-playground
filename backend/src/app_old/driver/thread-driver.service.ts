@@ -1,6 +1,16 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
-import type { DecisionRecord, Job, SessionEngine, Step, ThreadCondition } from '../../_shared/domain';
+import { modeApprovesShip } from '@workspace/shared';
+import { Sema } from 'async-sema';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import type {
+  DecisionRecord,
+  Job,
+  SessionEngine,
+  Step,
+  ThreadCondition,
+} from '../../_shared/domain';
 import { CODEX_REVIEW_OUTAGE_RETRY_MS } from '../../_shared/domain';
 import {
   cleanAuthHaltReason,
@@ -28,18 +38,6 @@ import {
   SESSION_LIMIT_TEXT_MISFIRE_MAX,
 } from '../../_shared/engine/session-limit';
 import { summarizeTurnFailure } from '../../_shared/engine/turn-failure-summary';
-import { modeApprovesShip } from '@workspace/shared';
-import { Sema } from 'async-sema';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { LeaderElectionService } from '../cluster/leader-election.service';
-import { ClaudeCredentialStore } from '../onboarding/claude-credential.store';
-import { CredentialResolver } from '../onboarding/credential-resolver.service';
-import { OauthUsageService } from '../onboarding/oauth-usage.service';
-import { WorkspaceConfigStore } from '../onboarding/workspace-config.store';
-import { threadDirName } from '../prompt-kit/harness/thread-dir-name';
-import { CONTAINER_CONTEXT } from '../sandbox/container-paths';
-import { LiveTurnStore, MAIN_LANE } from '../surface/live-turn-store';
 import { chunkKey } from '../../_shared/prompt-kit/harness/chunk-keys';
 import { legRotationRule } from '../../_shared/prompt-kit/jit';
 import { fromExternal, type AgentMessage } from '../../_shared/prompt-kit/message';
@@ -65,6 +63,7 @@ import { BrainGateway } from '../brain-gateway/brain-gateway.service';
 import { JitHostExecutor } from '../brain/jit-host-executor';
 import { JobDispatcher } from '../brain/job-dispatcher';
 import { SelfSufficiencyToolsService } from '../brain/self-sufficiency-tools.service';
+import { LeaderElectionService } from '../cluster/leader-election.service';
 import {
   ConventionProfileResolver,
   ResolvedConventions,
@@ -77,6 +76,10 @@ import { FeatureSandbox, LocalGitService } from '../git/local-git.service';
 import { JobBootstrapService } from '../job-bootstrap/job-bootstrap.service';
 import { McpOAuthService } from '../mcp/mcp-oauth.service';
 import { McpResolver } from '../mcp/mcp-resolver.service';
+import { ClaudeCredentialStore } from '../onboarding/claude-credential.store';
+import { CredentialResolver } from '../onboarding/credential-resolver.service';
+import { OauthUsageService } from '../onboarding/oauth-usage.service';
+import { WorkspaceConfigStore } from '../onboarding/workspace-config.store';
 import type {
   ActiveTurnEntity,
   SessionAnchor,
@@ -85,6 +88,7 @@ import type {
   ThreadTerminalRecord,
 } from '../persistence/entities';
 import { composeTurn } from '../prompt-kit/harness/compose-turn';
+import { threadDirName } from '../prompt-kit/harness/thread-dir-name';
 import {
   renderBatchTask,
   renderMasterReviewTask,
@@ -94,6 +98,7 @@ import {
 import { renderCommitTurnTask } from '../prompt-kit/messages/commit-turn';
 import { renderPlan, type PlannedStep } from '../prompt-kit/messages/render-plan';
 import { TurnRunnerService } from '../runner/turn-runner.service';
+import { CONTAINER_CONTEXT } from '../sandbox/container-paths';
 import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox/sandbox-provider.port';
 import type { ReattachOutcome } from '../sandbox/turn-reattach.registry';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
@@ -102,6 +107,7 @@ import { SkillResolver } from '../skills/skill-resolver.service';
 import { CHAT_DELIVERY_LEASE_MS, userChunkFor } from '../stimulus/delivery-pump.service';
 import { StimulusStoreService } from '../stimulus/stimulus-store.service';
 import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
+import { LiveTurnStore, MAIN_LANE } from '../surface/live-turn-store';
 import { makeTaskTools } from '../surface/task-tools';
 import { laneFor } from '../surface/thread-registry';
 import {
@@ -475,7 +481,6 @@ export class ThreadDriver implements JobDispatcher {
     return { ok: true };
   }
 
-
   private async drive(jobId: string): Promise<void> {
     if (this.active.has(jobId)) {
       this.logger.warn(`drive job=${jobId} already active — skipping duplicate`);
@@ -638,8 +643,7 @@ export class ThreadDriver implements JobDispatcher {
             max: maxRetries,
             nextAttemptAt: Date.now() + HOST_RETRY_BACKOFF_MS,
           });
-        } catch {
-        }
+        } catch {}
         await new Promise((r) => setTimeout(r, HOST_RETRY_BACKOFF_MS));
       }
     }
@@ -664,8 +668,7 @@ export class ThreadDriver implements JobDispatcher {
             max: MAX_HOST_RETRIES,
             nextAttemptAt: Date.now() + HOST_RETRY_BACKOFF_MS,
           });
-        } catch {
-        }
+        } catch {}
         await this.scheduleBuildHostRetry(jobId, err.message);
         this.logger.warn(
           `job=${jobId} transient auth halt — auto-retry ${n}/${MAX_HOST_RETRIES} in ${HOST_RETRY_BACKOFF_MS}ms`,
@@ -1445,7 +1448,6 @@ export class ThreadDriver implements JobDispatcher {
       return { outcome, handoff: null };
     }
 
-
     const handoffOut = this.summarizeHandoff(thread, steps, reports);
     await this.store.setThreadHandoffOut(thread.id, handoffOut);
     const droppedTasks = await this.store.dropOpenThreadTasks(thread.id).catch(() => 0);
@@ -2132,7 +2134,6 @@ export class ThreadDriver implements JobDispatcher {
         );
       }
 
-
       if (isLastBatch) {
         const term = await this.store.getTerminalRecord(thread.id);
         outcome = term?.status ?? 'incomplete';
@@ -2816,7 +2817,6 @@ export class ThreadDriver implements JobDispatcher {
     });
   }
 
-
   private async ensureSandbox(job: Job): Promise<FeatureSandbox> {
     const ensured = await this.threadLifecycle.ensureContainer(job.id, job.orgId);
     if (!ensured) {
@@ -2893,7 +2893,6 @@ export class ThreadDriver implements JobDispatcher {
       .catch((err) => this.logger.warn(`autofix_anchor append failed for job=${job.id}: ${err}`));
   }
 }
-
 
 export class PausableDeadline {
   private readonly controller = new AbortController();

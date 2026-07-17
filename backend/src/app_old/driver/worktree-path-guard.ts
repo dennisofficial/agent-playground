@@ -2,7 +2,6 @@ import { existsSync, lstatSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, posix, sep } from 'node:path';
 import { isReservedContainerPath, MAX_MOUNT_PATH_LEN } from '../sandbox/container-paths';
 
-
 export class WorktreePathError extends Error {}
 
 export function resolveExternalMountTarget(path: string): string {

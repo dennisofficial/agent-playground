@@ -1,8 +1,8 @@
-import type { Decision } from '../../../_shared/domain/decision-record';
-import type { JobProvenance } from '../../../_shared/domain/job';
 import type { AutoApproveMode, JobActivity, JobHalt, JobStatus } from '@workspace/shared';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import type { Decision } from '../../../_shared/domain/decision-record';
+import type { JobProvenance } from '../../../_shared/domain/job';
 import type { LiveVerificationVerdict } from '../../driver/live-verification-judge';
 import { CiCounts } from '../../git/github-pr.service';
 import { DecisionRecordEntity } from './decision-record.entity';

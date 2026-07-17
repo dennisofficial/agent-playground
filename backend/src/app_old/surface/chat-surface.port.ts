@@ -1,11 +1,10 @@
+import type { Observable } from 'rxjs';
 import type { SeedRow } from '../../_shared/domain/seed-row';
 import type { AgentMessage } from '../../_shared/prompt-kit/message';
-import type { Observable } from 'rxjs';
 
 import { renderChunk } from '../../_shared/stimulus/chunk-vocabulary';
 
 export const CHAT_SURFACE = Symbol('CHAT_SURFACE');
-
 
 export interface InboundChatMessage {
   id: string;

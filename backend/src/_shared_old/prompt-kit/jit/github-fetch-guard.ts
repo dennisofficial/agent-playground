@@ -1,4 +1,3 @@
-
 export const FETCH_TOOL_MATCHER = 'WebFetch|mcp__fetch__.*';
 
 export function detectGithubHtmlUrl(url: string): string | null {

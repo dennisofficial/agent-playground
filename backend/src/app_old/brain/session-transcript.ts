@@ -1,4 +1,3 @@
-
 export interface RecoveredBlock {
   kind: 'chat' | 'thinking' | 'tool';
   text?: string;
@@ -66,8 +65,7 @@ function parseLines(jsonl: string): RawLine[] {
     if (!t) continue;
     try {
       parsed.push(JSON.parse(t) as RawLine);
-    } catch {
-    }
+    } catch {}
   }
   return parsed;
 }

@@ -1,6 +1,5 @@
 import { createHmac } from 'node:crypto';
 
-
 const BASE32_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
 
 const PREVIEW_ID_LENGTH = 10;

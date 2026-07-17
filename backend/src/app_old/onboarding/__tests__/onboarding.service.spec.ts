@@ -2,6 +2,7 @@ import type { EnvService } from '@core/config/env/env.service';
 import type { ModuleRef } from '@nestjs/core';
 import type { Repository } from 'typeorm';
 import { describe, expect, it } from 'vitest';
+import type { GithubPrService, RepoInfo } from '../../git/github-pr.service';
 import type {
   DecisionRecordEntity,
   InboundMessageEntity,
@@ -12,10 +13,8 @@ import type {
   RepoEntity,
 } from '../../persistence/entities';
 import { CredentialResolver } from '../credential-resolver.service';
-import type { GithubPrService, RepoInfo } from '../../git/github-pr.service';
 import { OnboardingService } from '../onboarding.service';
 import type { CredentialPresence, TenantCredentialStore } from '../tenant-credential.store';
-
 
 function makeOrgs() {
   const map = new Map<string, OrganizationEntity>();

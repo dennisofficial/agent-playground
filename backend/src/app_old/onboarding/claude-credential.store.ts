@@ -1,8 +1,8 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { isNewerClaudeCredential } from '../../_shared/onboarding/claude-credential-freshness';
 import { DataSource, EntityManager, LessThan, QueryFailedError, Repository } from 'typeorm';
+import { isNewerClaudeCredential } from '../../_shared/onboarding/claude-credential-freshness';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { OrganizationEntity, OrgClaudeCredentialEntity } from '../persistence/entities';
 import { decryptSecret, encryptSecret, loadSecretsKey } from './secret-cipher';

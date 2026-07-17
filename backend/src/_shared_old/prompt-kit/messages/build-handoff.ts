@@ -1,4 +1,3 @@
-
 import { renderHarnessTag } from '../harness/tag-vocabulary';
 import { agentMessage, fromExternal, type AgentMessage } from '../message';
 

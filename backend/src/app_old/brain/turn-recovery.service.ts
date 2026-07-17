@@ -164,8 +164,7 @@ export class TurnRecoveryService implements OnModuleDestroy {
         try {
           const mtimeMs = statSync(path).mtimeMs;
           if (!newest || mtimeMs > newest.mtimeMs) newest = { path, mtimeMs };
-        } catch {
-        }
+        } catch {}
       }
     }
     return newest ? parseSessionTranscriptTurns(readFileSync(newest.path, 'utf8')) : null;

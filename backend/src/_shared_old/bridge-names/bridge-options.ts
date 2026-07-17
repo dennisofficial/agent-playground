@@ -1,4 +1,3 @@
-
 import { BRIDGE_SERVER_NAME } from '@workspace/shared';
 export { BRIDGE_SERVER_NAME };
 

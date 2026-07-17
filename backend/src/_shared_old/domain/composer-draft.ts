@@ -1,4 +1,3 @@
-
 export type ReviewComment = {
   id: string;
   file: CommentTarget;

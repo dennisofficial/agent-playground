@@ -1,4 +1,3 @@
-
 export function fence(tag: string, body: string): string {
   const open = `<${tag}>`;
   const close = `</${tag}>`;

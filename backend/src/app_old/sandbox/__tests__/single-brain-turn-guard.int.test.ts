@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AppOldModule } from '../../app-v1.module';
+import { CLASSIFIER_LLM } from '../../decision-gate/classifier-llm';
 import {
   FakeClassifierLlm,
   FakeEngineRunner,
@@ -17,7 +18,6 @@ import { GithubPrService } from '../../git/github-pr.service';
 import { LocalGitService } from '../../git/local-git.service';
 import { DB_CONNECTION } from '../../persistence/database.module';
 import { JobTitler } from '../../titling/job-titler.service';
-import { CLASSIFIER_LLM } from '../../decision-gate/classifier-llm';
 import { BrainTurnAlreadyRunningError, TurnRegistry } from '../turn-registry.service';
 
 const TEAM_ID = '44444444-4444-4444-8444-444444444444'; // sentinel org uuid

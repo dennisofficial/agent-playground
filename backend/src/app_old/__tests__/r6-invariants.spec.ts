@@ -1,4 +1,3 @@
-
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -6,7 +5,6 @@ import { describe, expect, it } from 'vitest';
 const SRC = join(__dirname, '..');
 const SHARED_SRC = join(SRC, '..', 'shared');
 const LOCAL_GIT_SRC = join(SRC, 'git', 'local-git.service.ts');
-
 
 describe('R6 invariant (a): LocalGitService host-git safety flags', () => {
   const src = readFileSync(LOCAL_GIT_SRC, 'utf8');
@@ -43,7 +41,6 @@ describe('R6 invariant (a): LocalGitService host-git safety flags', () => {
     expect(src).toContain('GIT_CONFIG_NOSYSTEM');
   });
 });
-
 
 describe('R6 invariant (b): ScopingInvestigatorService deleted; EngineRunner only via ports', () => {
   it('scoping-investigator.service.ts does NOT exist in app/brain/', () => {
@@ -94,7 +91,6 @@ describe('R6 invariant (b): ScopingInvestigatorService deleted; EngineRunner onl
   });
 });
 
-
 describe('R6 invariant (c): cross-thread tool-scope denial (reference)', () => {
   it('dispatchToolRequest source enforces per-thread scope before dispatching any tool', () => {
     const src = readFileSync(join(SHARED_SRC, 'engine', 'tool-bridge-host.ts'), 'utf8');
@@ -109,8 +105,6 @@ describe('R6 invariant (c): cross-thread tool-scope denial (reference)', () => {
     expect(src).toContain('dispatchToolRequest');
   });
 });
-
-
 
 function grepAppSrc(pattern: RegExp, excludeSuffixes: string[] = []): string[] {
   return grepAppDir('', pattern, excludeSuffixes);

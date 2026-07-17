@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import type { ContextBreakdown, JitInjection, JitInjectionRule } from '../../_shared/engine';
 import { Observable, Subject } from 'rxjs';
+import type { ContextBreakdown, JitInjection, JitInjectionRule } from '../../_shared/engine';
 import { isInterruptAbortResult } from '../brain/session-transcript';
 
 export interface LiveTurnBlock {
@@ -258,11 +258,7 @@ export class LiveTurnStore {
   /** Delete-and-return the pending post-turn row ids queued for this lane (called once at turn-end flush).
    *  Also closes registration for this lane until `end`/`reset`, so a row posted while the async DB stamps
    *  are running cannot register after the drain and then never receive an `order_at`. */
-  takePendingOrder(
-    channel: string,
-    jobId: string,
-    lane: string = MAIN_LANE,
-  ): string[] {
+  takePendingOrder(channel: string, jobId: string, lane: string = MAIN_LANE): string[] {
     const k = this.orderKey(channel, jobId, lane);
     this.closingOrder.add(k);
     const rows = this.pendingOrder.get(k) ?? [];

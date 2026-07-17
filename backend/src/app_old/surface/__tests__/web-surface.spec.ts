@@ -1,4 +1,3 @@
-
 import { agentMessage } from '@shared/prompt-kit/message';
 import { firstValueFrom } from 'rxjs';
 import { filter, take, toArray } from 'rxjs/operators';
@@ -20,7 +19,6 @@ import {
 } from '../web-approval-card';
 import { WebSurface } from '../web-surface';
 
-
 const SAMPLE_CARD: DecisionApprovalCard = {
   jobId: 'job-abc',
   decisionRecordId: 'dr-xyz',
@@ -29,7 +27,6 @@ const SAMPLE_CARD: DecisionApprovalCard = {
   threads: ['Backend: Stripe client + webhooks', 'Frontend: checkout page'],
   decisions: [{ decisionClass: 'dependency', title: 'Payment gateway', ruling: 'Stripe' }],
 };
-
 
 describe('WebSurface — inbound + outbound', () => {
   let surface: WebSurface;
@@ -125,7 +122,6 @@ describe('WebSurface — inbound + outbound', () => {
   });
 });
 
-
 describe('WebSurface — approval card conversion', () => {
   let surface: WebSurface;
 
@@ -209,7 +205,6 @@ describe('WebSurface — approval card conversion', () => {
   });
 });
 
-
 describe('WebSurface — approval click via approval$', () => {
   it('receiveApprovalClick emits on approval$ with all fields', async () => {
     const surface = new WebSurface();
@@ -273,7 +268,6 @@ describe('WebSurface — approval click via approval$', () => {
   });
 });
 
-
 describe('WebSurface — update()', () => {
   it('mutates the outbox entry and re-emits the updated message', async () => {
     const surface = new WebSurface();
@@ -315,7 +309,6 @@ describe('WebSurface — update()', () => {
     expect(() => surface.update('C-web', 'ts-ghost', { text: 'noop' })).not.toThrow();
   });
 });
-
 
 describe('webApprovalCard (pure builder)', () => {
   it('produces a WebApprovalCard with all domain fields', () => {
@@ -392,7 +385,6 @@ describe('webApprovalCard (pure builder)', () => {
   });
 });
 
-
 describe('parseWebApprovalMeta', () => {
   it('round-trips jobId + decisionRecordId', () => {
     const value = JSON.stringify({ jobId: 'job-1', decisionRecordId: 'dr-2' });
@@ -416,7 +408,6 @@ describe('parseWebApprovalMeta', () => {
     expect(parseWebApprovalMeta(JSON.stringify({ other: 'field' }))).toBeUndefined();
   });
 });
-
 
 describe('WebSurface.channelMessages', () => {
   it('returns all messages in a channel when no threadTs filter', async () => {

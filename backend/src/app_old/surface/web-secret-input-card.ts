@@ -1,4 +1,3 @@
-
 export interface WebSecretInputCard {
   type: 'secret_input_card';
   jobId: string;

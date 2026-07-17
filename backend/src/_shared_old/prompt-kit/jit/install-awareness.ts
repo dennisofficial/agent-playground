@@ -1,4 +1,3 @@
-
 export type InstallAction = 'add' | 'remove';
 export type InstallKind = 'repo-manifest' | 'env-binary';
 

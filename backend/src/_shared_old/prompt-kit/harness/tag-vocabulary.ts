@@ -1,4 +1,3 @@
-
 export type ChunkKind = 'system_notice' | 'system_reminder' | 'user' | 'untrusted' | 'passthrough';
 
 export interface TurnChunk {

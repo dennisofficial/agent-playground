@@ -16,27 +16,27 @@
  * the true, unchanged wall-clock time — only ordering is affected, never the timestamp shown to the
  * operator.
  */
-import { getDataSourceToken } from '@nestjs/typeorm';
-import { Test } from '@nestjs/testing';
 import type { NestExpressApplication } from '@nestjs/platform-express';
+import { Test } from '@nestjs/testing';
+import { getDataSourceToken } from '@nestjs/typeorm';
+import { ENGINE_RUNNER } from '@shared/engine';
 import cookieParser from 'cookie-parser';
 import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { CLASSIFIER_LLM } from '../decision-gate/classifier-llm';
-import { ENGINE_RUNNER } from '@shared/engine';
-import { GithubPrService } from '../git/github-pr.service';
-import { LocalGitService } from '../git/local-git.service';
 import { AppOldModule } from '../app-v1.module';
-import { DB_CONNECTION } from '../persistence/database.module';
+import { CLASSIFIER_LLM } from '../decision-gate/classifier-llm';
 import {
   FakeClassifierLlm,
   FakeEngineRunner,
   FakeLocalGitService,
   FakeThreadTitler,
 } from '../e2e/e2e-stubs';
-import { JobTitler } from '../titling/job-titler.service';
+import { GithubPrService } from '../git/github-pr.service';
+import { LocalGitService } from '../git/local-git.service';
 import { CredentialResolver } from '../onboarding/credential-resolver.service';
+import { DB_CONNECTION } from '../persistence/database.module';
+import { JobTitler } from '../titling/job-titler.service';
 
 const fakeCreds = {
   anthropicKey: async () => undefined,
@@ -59,35 +59,24 @@ let ds: DataSource;
 let server: ReturnType<NestExpressApplication['getHttpServer']>;
 let ownerCookie: string;
 
-async function register(
-  email: string,
-): Promise<{ cookie: string; id: string }> {
+async function register(email: string): Promise<{ cookie: string; id: string }> {
   const res = await request(server)
     .post('/auth/register')
     .send({ email, password: PASSWORD, name: email.split('@')[0] });
   expect(res.status).toBe(200);
-  const setCookie =
-    (res.headers['set-cookie'] as unknown as string[] | undefined) ?? [];
+  const setCookie = (res.headers['set-cookie'] as unknown as string[] | undefined) ?? [];
   const cookie = setCookie.map((c) => c.split(';')[0]).join('; ');
   return { cookie, id: res.body.user.id as string };
 }
 
 async function purge(): Promise<void> {
-  await ds
-    .query(`DELETE FROM jobs WHERE org_id = $1`, [ORG])
-    .catch(() => undefined);
-  await ds
-    .query(`DELETE FROM repos WHERE org_id = $1`, [ORG])
-    .catch(() => undefined);
+  await ds.query(`DELETE FROM jobs WHERE org_id = $1`, [ORG]).catch(() => undefined);
+  await ds.query(`DELETE FROM repos WHERE org_id = $1`, [ORG]).catch(() => undefined);
   await ds
     .query(`DELETE FROM organization_members WHERE org_id = $1`, [ORG])
     .catch(() => undefined);
-  await ds
-    .query(`DELETE FROM organizations WHERE id = $1`, [ORG])
-    .catch(() => undefined);
-  await ds
-    .query(`DELETE FROM users WHERE email = $1`, [OWNER_EMAIL])
-    .catch(() => undefined);
+  await ds.query(`DELETE FROM organizations WHERE id = $1`, [ORG]).catch(() => undefined);
+  await ds.query(`DELETE FROM users WHERE email = $1`, [OWNER_EMAIL]).catch(() => undefined);
 }
 
 /** Mirrors `brain-store.int.test.ts`'s `ensurePlanningThread` — every `transcript_messages` row needs a
@@ -248,14 +237,12 @@ describe('GET .../messages — brain-processing order, not raw insert order (liv
 
     // Sanity: prove this genuinely reproduces the reported bug — under raw created_at ordering the pill
     // (t0) sorts BEFORE the reply (t0+30s), which is the wrong, reported behavior.
-    const pillRow = await ds.query(
-      `SELECT created_at FROM transcript_messages WHERE id = $1`,
-      [pillId],
-    );
-    const replyRow = await ds.query(
-      `SELECT created_at FROM transcript_messages WHERE id = $1`,
-      [replyId],
-    );
+    const pillRow = await ds.query(`SELECT created_at FROM transcript_messages WHERE id = $1`, [
+      pillId,
+    ]);
+    const replyRow = await ds.query(`SELECT created_at FROM transcript_messages WHERE id = $1`, [
+      replyId,
+    ]);
     expect(new Date(pillRow[0].created_at).getTime()).toBeLessThan(
       new Date(replyRow[0].created_at).getTime(),
     );
@@ -285,9 +272,7 @@ describe('GET .../messages — brain-processing order, not raw insert order (liv
 
     // Display timestamp stays truthful — the pill's `postedAt` is still its real (early) insert time, NOT
     // its later delivered_at. Only render POSITION moved.
-    expect(new Date(body[pillIdx].postedAt as string).getTime()).toBe(
-      t0.getTime(),
-    );
+    expect(new Date(body[pillIdx].postedAt as string).getTime()).toBe(t0.getTime());
   });
 
   it('(B) mid-turn pure-UI notice deferral: order_at renders a deferred notice after the reply, timestamp unchanged', async () => {
@@ -340,8 +325,6 @@ describe('GET .../messages — brain-processing order, not raw insert order (liv
     expect(replyIdx).toBeLessThan(noticeIdx);
 
     // Display timestamp stays truthful — postedAt is still the real early post time, not order_at.
-    expect(new Date(body[noticeIdx].postedAt as string).getTime()).toBe(
-      t0.getTime() + 5_000,
-    );
+    expect(new Date(body[noticeIdx].postedAt as string).getTime()).toBe(t0.getTime() + 5_000);
   });
 });

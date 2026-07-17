@@ -9,10 +9,9 @@ import { agentMessage } from '@shared/prompt-kit/message';
 import type { Repository } from 'typeorm';
 import { describe, expect, it, vi } from 'vitest';
 import type { TurnUsageProjector } from '../../analytics/turn-usage-projector.service';
-import type { ThreadEntity } from '../../persistence/entities';
 import type { FeatureSandbox } from '../../git/local-git.service';
+import type { ThreadEntity } from '../../persistence/entities';
 import { TurnRunnerService } from '../turn-runner.service';
-
 
 function fakeSteps(priorSessionId: string | null = null) {
   const updates: Array<{ id: unknown; patch: { session_id?: string } }> = [];

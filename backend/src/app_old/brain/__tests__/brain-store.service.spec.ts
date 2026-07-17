@@ -4,7 +4,6 @@ import type { JobDependencyService } from '../../job-deps/job-dependency.service
 import type { JobEntity, ThreadEntity } from '../../persistence/entities';
 import { BrainStoreService } from '../brain-store.service';
 
-
 function fakeJobsRepo() {
   return {
     findOne: vi.fn(async () => null as Partial<JobEntity> | null),

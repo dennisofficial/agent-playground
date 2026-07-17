@@ -1,4 +1,3 @@
-
 import { stripTags } from '../harness/tag-vocabulary';
 
 export type RecalledForPrefix = { id: string; fact: string; scope: string };

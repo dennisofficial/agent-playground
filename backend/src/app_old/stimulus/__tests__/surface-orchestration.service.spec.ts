@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { JobEntity } from '../../persistence/entities';
 import { AgentChatSurface } from '../../agent-surface/agent-chat-surface';
+import type { JobEntity } from '../../persistence/entities';
 import { SurfaceOrchestration } from '../surface-orchestration.service';
 
 function threadsRepo(thread: Partial<JobEntity> | null) {

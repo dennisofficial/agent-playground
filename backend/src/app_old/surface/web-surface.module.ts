@@ -52,11 +52,7 @@ import { WebSurfaceController } from './web-surface.controller';
     JobBootstrapModule,
     StimulusModule,
   ],
-  providers: [
-    WebSurface,
-    JobTitleService,
-    ComposerDraftService,
-  ],
+  providers: [WebSurface, JobTitleService, ComposerDraftService],
   controllers: [WebSurfaceController],
   exports: [WebSurface],
 })

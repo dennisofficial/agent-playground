@@ -1,6 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 
-
 const ALGO = 'aes-256-gcm';
 const IV_LEN = 12; // 96-bit nonce, the GCM standard
 const TAG_LEN = 16;

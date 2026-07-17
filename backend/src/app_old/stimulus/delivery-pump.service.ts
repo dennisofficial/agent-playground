@@ -3,7 +3,6 @@ import type { TurnEnvelope } from '../../_shared/domain';
 import type { TurnChunk } from '../../_shared/stimulus/chunk-vocabulary';
 import { StimulusStoreService } from './stimulus-store.service';
 
-
 export const CHAT_DELIVERY_LEASE_MS = 2 * 60 * 1000;
 
 export interface CollectedPending {

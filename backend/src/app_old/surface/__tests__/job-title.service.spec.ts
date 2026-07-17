@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { sanitizeTitle, type JobTitleChainFactory } from '../../titling/job-title.chain';
 import { JobTitleService } from '../job-title.service';
 
-
 function fakeFactory(title: string | null, opts: { throws?: boolean } = {}): JobTitleChainFactory {
   return async () => {
     if (title === null && !opts.throws) return undefined;

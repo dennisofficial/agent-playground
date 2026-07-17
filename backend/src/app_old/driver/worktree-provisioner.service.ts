@@ -41,7 +41,6 @@ export class WorktreeProvisioner {
     const { sandbox, orgId, jobId, repoDbId } = input;
     const worktreePath = sandbox.worktreePath;
 
-
     if (repoDbId) {
       await this.config
         .importLegacyIfEmpty(orgId, repoDbId, worktreePath)

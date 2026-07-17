@@ -7,7 +7,6 @@ import type {
 } from '../container-engine.port';
 import { SandboxManager } from '../sandbox-manager.service';
 
-
 const JOB_ID = 'job-1234abcd';
 const EXPECTED_NAME = `atlas-sbx-thread-${JOB_ID}`;
 

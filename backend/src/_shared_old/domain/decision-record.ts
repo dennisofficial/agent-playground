@@ -1,4 +1,3 @@
-
 export const DECISION_CLASS_META = [
   { id: 'data_model', heading: 'Data model', grill: 'data model/schema' },
   {

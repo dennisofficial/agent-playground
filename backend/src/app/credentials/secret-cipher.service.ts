@@ -17,7 +17,9 @@ export class SecretCipherService {
 
   constructor(env: EnvService) {
     const raw = env.get('SECRETS_ENCRYPTION_KEY');
-    const key = /^[0-9a-fA-F]{64}$/.test(raw) ? Buffer.from(raw, 'hex') : Buffer.from(raw, 'base64');
+    const key = /^[0-9a-fA-F]{64}$/.test(raw)
+      ? Buffer.from(raw, 'hex')
+      : Buffer.from(raw, 'base64');
     if (key.length !== 32) {
       throw new Error(
         `SECRETS_ENCRYPTION_KEY must decode to 32 bytes (got ${key.length}) — use 64 hex chars or 32-byte base64.`,
@@ -36,7 +38,8 @@ export class SecretCipherService {
 
   decrypt(blob: string): string {
     const parts = blob.split('.');
-    if (parts.length !== 3) throw new Error('Malformed encrypted secret blob (expected iv.tag.ct).');
+    if (parts.length !== 3)
+      throw new Error('Malformed encrypted secret blob (expected iv.tag.ct).');
     const [ivB64, tagB64, ctB64] = parts;
     const iv = Buffer.from(ivB64, 'base64');
     const tag = Buffer.from(tagB64, 'base64');

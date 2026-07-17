@@ -1,4 +1,3 @@
-
 import type { CiSyncDelta } from '@shared/domain';
 import type { Repository } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

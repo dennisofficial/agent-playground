@@ -1,4 +1,3 @@
-
 export const WORKSPACE_PROFILE_BRIDGE_NAME = 'workspace-profile';
 
 export const WORKSPACE_PROFILE_TOOL_NAMES = [

@@ -1,7 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { AutoMergeMethod } from '@workspace/shared';
 
-
 const API = 'https://api.github.com';
 
 function isOkStatus(status: number): boolean {

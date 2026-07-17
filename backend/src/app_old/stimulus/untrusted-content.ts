@@ -1,4 +1,3 @@
-
 import { renderChunk } from '../../_shared/stimulus/chunk-vocabulary';
 
 export const UNTRUSTED_OPEN = '<<<UNTRUSTED_EVENT_DATA>>>';

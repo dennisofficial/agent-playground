@@ -1,11 +1,11 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Injectable, Logger } from '@nestjs/common';
-import { repoStateDir } from '../../_shared/state-root';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, readdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { repoStateDir } from '../../_shared/state-root';
 import { gitAuthEnv } from './git-auth';
 import { readForbiddenPaths } from './hydration-sidecar';
 
@@ -415,8 +415,7 @@ export class LocalGitService {
       });
       const m = ref.match(/refs\/remotes\/origin\/(.+)$/);
       if (m) return m[1];
-    } catch {
-    }
+    } catch {}
     return 'main';
   }
 
@@ -465,7 +464,6 @@ export class LocalGitService {
     });
     return status.length > 0;
   }
-
 
   async worktreeSafeToRecut(worktreePath: string, branch: string): Promise<boolean> {
     try {
@@ -563,8 +561,7 @@ export class LocalGitService {
       let isClone = false;
       try {
         isClone = existsSync(dotGit) && (await stat(dotGit)).isDirectory();
-      } catch {
-      }
+      } catch {}
 
       const localBranchExists = await this.refExists(
         sandbox.worktreePath,
@@ -584,8 +581,7 @@ export class LocalGitService {
             gitUrl: repo.gitUrl,
             token: repo.token,
           });
-        } catch {
-        }
+        } catch {}
         if (await this.refExists(sandbox.worktreePath, `refs/remotes/origin/${featureBranch}`)) {
           await this.git(['checkout', '-b', featureBranch, `origin/${featureBranch}`], {
             cwd: sandbox.worktreePath,
@@ -608,8 +604,7 @@ export class LocalGitService {
       let isClone = false;
       try {
         isClone = existsSync(dotGit) && (await stat(dotGit)).isDirectory();
-      } catch {
-      }
+      } catch {}
       if (isClone) {
         await rm(worktreePath, { recursive: true, force: true }).catch((err) =>
           this.logger.warn(`clone remove failed for ${worktreePath}: ${err}`),

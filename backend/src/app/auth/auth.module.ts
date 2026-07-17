@@ -17,7 +17,9 @@ import { User, UserRepo } from './entities/user.entity';
         const accessSecret = env.get('JWT_ACCESS_SECRET');
         const refreshSecret = env.get('JWT_REFRESH_SECRET');
         if (!accessSecret || !refreshSecret) {
-          throw new Error('JWT_ACCESS_SECRET and JWT_REFRESH_SECRET are required for the auth guard.');
+          throw new Error(
+            'JWT_ACCESS_SECRET and JWT_REFRESH_SECRET are required for the auth guard.',
+          );
         }
         return { accessSecret, refreshSecret, issuer: env.get('BACKEND_HOST') };
       },

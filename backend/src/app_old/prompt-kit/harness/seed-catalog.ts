@@ -3,8 +3,6 @@ import type { EventMessage, UnblockBlockerInfo } from '../../../_shared/domain/m
 import { renderChunk } from '../../../_shared/prompt-kit/harness/tag-vocabulary';
 import { agentMessage, fromExternal, type AgentMessage } from '../../../_shared/prompt-kit/message';
 
-
-
 export const RESET_VERIFY_TEXT: AgentMessage = agentMessage(
   [
     'You reset the sandbox — this is a FRESH container. The worktree, DB-backed mounts, granted secrets, seed,',
@@ -23,7 +21,6 @@ export const RESET_VERIFY_TEXT: AgentMessage = agentMessage(
 export function resetContinuationNotice(): AgentMessage {
   return agentMessage('Your sandbox was reset — continuing on the fresh container.');
 }
-
 
 export const COMPACTION_SYSTEM: AgentMessage = agentMessage(
   [
@@ -55,7 +52,6 @@ export const COMPACTION_INSTRUCTION: AgentMessage = agentMessage(
   ].join('\n'),
 );
 
-
 export const CONTINUATION_PREAMBLE: AgentMessage = agentMessage(
   [
     '<session_compacted>',
@@ -71,7 +67,6 @@ export function foldCompactionSeed(seed: AgentMessage, task: AgentMessage): Agen
   return agentMessage(`${seed}\n\n---\n\n${task}`);
 }
 
-
 export function renderWorkOwedNudge(): AgentMessage {
   return agentMessage(
     [
@@ -86,7 +81,6 @@ export function renderWorkOwedNudge(): AgentMessage {
     ].join('\n'),
   );
 }
-
 
 const BLOCKER_HOW_LABEL: Record<UnblockBlockerInfo['how'], string> = {
   merged: 'merged',
@@ -185,7 +179,6 @@ export function renderUnblockedNote(blockers: UnblockBlockerInfo[]): string {
   );
 }
 
-
 export function renderFollowUpJobSeed(input: {
   firstMessage: string;
   parent: JobProvenance | null;
@@ -203,7 +196,6 @@ export function renderFollowUpJobSeed(input: {
   return agentMessage(`${framing}\n\n${firstMessage}`);
 }
 
-
 export function wakeForAmendApprovedBody(): AgentMessage {
   return agentMessage(
     [
@@ -215,7 +207,6 @@ export function wakeForAmendApprovedBody(): AgentMessage {
     ].join('\n'),
   );
 }
-
 
 export function renderRequestChangesDelivery(note: string): AgentMessage {
   return agentMessage(
@@ -231,7 +222,6 @@ export function renderRequestChangesDelivery(note: string): AgentMessage {
   );
 }
 
-
 export function renderEventDelivery(event: EventMessage): AgentMessage {
   const framing = [
     `An automated ${event.source} notification (severity ${event.severity}) opened this thread —`,
@@ -246,7 +236,6 @@ export function renderEventDelivery(event: EventMessage): AgentMessage {
   });
   return agentMessage(`${framing}\n\n${fenced}`);
 }
-
 
 export function answeredQuestionBody(question: string, answer: string): AgentMessage {
   return agentMessage(`The operator answered your question ${JSON.stringify(question)}: ${answer}`);
@@ -267,7 +256,6 @@ export function frameAnswer(question: string, answer: string): AgentMessage {
     }),
   );
 }
-
 
 export function retryResumeNudge(title?: string): AgentMessage {
   return agentMessage(
@@ -411,7 +399,6 @@ export function fileUploaded(path: string): AgentMessage {
     `The operator uploaded the file for \`${path}\` (stored encrypted, granted). Continue onboarding.`,
   );
 }
-
 
 export function maskedSecretNotice(
   name: string,

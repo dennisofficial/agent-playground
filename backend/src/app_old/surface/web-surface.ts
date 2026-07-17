@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { Observable, Subject } from 'rxjs';
 import type { SeedRow } from '../../_shared/domain/seed-row';
 import type { AgentMessage } from '../../_shared/prompt-kit/message';
-import { Observable, Subject } from 'rxjs';
 import type { ApprovalDecision } from './approval-blocks';
 import { APPROVE_ACTION_ID } from './approval-blocks';
 import type { ChatSurface, InboundChatMessage, PostOptions } from './chat-surface.port';
@@ -116,7 +116,6 @@ export class WebSurface implements ChatSurface, MessageChangeNotifier {
     this.resumeSubject.next({ jobId });
   }
 
-
   receiveFromClient(channel: string, text: string, opts: WebInboundOptions = {}): string {
     const ts = this.mintTs();
     const message: InboundChatMessage = {
@@ -193,7 +192,6 @@ export class WebSurface implements ChatSurface, MessageChangeNotifier {
     });
   }
 
-
   async post(channel: string, text: string, opts: PostOptions = {}): Promise<string | undefined> {
     const ts = this.mintTs();
 
@@ -225,7 +223,6 @@ export class WebSurface implements ChatSurface, MessageChangeNotifier {
     }
   }
 
-
   channelMessages(channel: string, threadTs?: string): WebOutboundMessage[] {
     return this.outbox.filter(
       (m) => m.channel === channel && (threadTs === undefined || m.threadTs === threadTs),
@@ -241,7 +238,6 @@ export class WebSurface implements ChatSurface, MessageChangeNotifier {
     return `${Math.floor(Date.now() / 1000)}.${String(this.seq).padStart(6, '0')}`;
   }
 }
-
 
 function detectAndConvertApprovalCard(
   blocks: Array<Record<string, unknown>>,
@@ -266,8 +262,7 @@ function detectAndConvertApprovalCard(
               : {}),
           };
         }
-      } catch {
-      }
+      } catch {}
     }
   }
   if (!meta) return undefined;

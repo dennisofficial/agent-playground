@@ -1,6 +1,5 @@
-
-import { MCP_HUB_PORT as SHARED_MCP_HUB_PORT } from '../../_shared/mcp/mcp-hub-config';
 import { posix } from 'node:path';
+import { MCP_HUB_PORT as SHARED_MCP_HUB_PORT } from '../../_shared/mcp/mcp-hub-config';
 
 export const CONTAINER_AGENT_HOME = '/.atlas';
 

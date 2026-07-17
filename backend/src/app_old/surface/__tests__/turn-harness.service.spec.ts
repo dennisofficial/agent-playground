@@ -611,16 +611,12 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
     expect(orderStamps).toHaveLength(1);
     expect(orderStamps[0].rowId).toBe('notice-row-1');
     const chat = persisted.find((p) => p.block.kind === 'chat')!;
-    expect(orderStamps[0].at.getTime()).toBeGreaterThan(
-      chat.block.createdAt!.getTime(),
-    );
+    expect(orderStamps[0].at.getTime()).toBeGreaterThan(chat.block.createdAt!.getTime());
   });
 
   it('registerPostTurnRow is a no-op (returns false) when no turn is live on the lane', () => {
     const { live } = setup();
-    expect(live.registerPostTurnRow('R', 'nonexistent-job', 'row-x')).toBe(
-      false,
-    );
+    expect(live.registerPostTurnRow('R', 'nonexistent-job', 'row-x')).toBe(false);
   });
 });
 

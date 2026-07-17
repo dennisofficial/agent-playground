@@ -1,12 +1,12 @@
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import type { EngineAuth, EngineHomeKey } from '../../_shared/engine';
-import { ENGINE_RUNNER, type EngineRunnerPort } from '../../_shared/engine';
-import { Agent, renderAgentPrompt } from '../../_shared/prompt-kit/system';
 import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { type ObjectLiteral, Repository } from 'typeorm';
+import type { EngineAuth, EngineHomeKey } from '../../_shared/engine';
+import { ENGINE_RUNNER, type EngineRunnerPort } from '../../_shared/engine';
+import { Agent, renderAgentPrompt } from '../../_shared/prompt-kit/system';
 import { LeaderElectionService } from '../cluster/leader-election.service';
 import { ConventionProfileResolver } from '../conventions/convention-profile.resolver';
 import { JobLifecycleService } from '../driver/job-lifecycle.service';
@@ -30,7 +30,6 @@ import {
 export function codexReviewLane(jobId: string): string {
   return laneFor('codex-review', jobId);
 }
-
 
 export { deserializeFindings, parsePlanFindings, serializeFindings, type ReviewFinding };
 

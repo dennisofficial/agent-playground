@@ -1,5 +1,13 @@
 import { AUTO_MERGE_METHODS, type AutoMergeMethod } from '@workspace/shared';
-import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn, Repository } from 'typeorm';
+import {
+  Column,
+  Entity,
+  Index,
+  JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+  Repository,
+} from 'typeorm';
 import { TimestampedEntity } from '../../../_lib/database/base.entity';
 import { Organization } from '../../org/entities/organization.entity';
 

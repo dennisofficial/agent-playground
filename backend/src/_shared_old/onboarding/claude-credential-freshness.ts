@@ -1,4 +1,3 @@
-
 export function parseClaudeExpiresAt(secret: string): number | null {
   try {
     const obj = JSON.parse(secret) as {

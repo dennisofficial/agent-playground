@@ -125,8 +125,7 @@ export class SteerInputChannel {
           }
           injectSteer(id, fromExternal(text));
         }
-      } catch {
-      }
+      } catch {}
     })();
   }
 

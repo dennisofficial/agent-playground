@@ -1,10 +1,10 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Injectable, Logger } from '@nestjs/common';
-import type { ResolvedSkill } from '../../_shared/engine/engine.types';
-import type { ThreadType } from '../../_shared/thread-kind/thread-types';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import picomatch from 'picomatch';
+import type { ResolvedSkill } from '../../_shared/engine/engine.types';
+import type { ThreadType } from '../../_shared/thread-kind/thread-types';
 import type { McpSurface, WorkspaceSkillEntity } from '../persistence/entities';
 import { stripSkillFrontmatter } from './skill-frontmatter';
 import {

@@ -6,7 +6,6 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import { MemoryEntity } from '../persistence/entities';
 import { EMBEDDING_PROVIDER, type EmbeddingProvider } from './embedding';
 
-
 export interface StoredFact {
   id: string;
   fact: string;

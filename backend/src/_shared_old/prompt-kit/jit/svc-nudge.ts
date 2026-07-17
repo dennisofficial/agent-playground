@@ -1,4 +1,3 @@
-
 export function detectLongRunningCommand(command: string): string | null {
   const cmd = command.trim();
   if (!cmd) return null;

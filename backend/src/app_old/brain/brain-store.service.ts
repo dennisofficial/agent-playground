@@ -1,15 +1,14 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import type { AutoApproveMode } from '@workspace/shared';
+import { DataSource, In, IsNull, MoreThan, Not, type ObjectLiteral, Repository } from 'typeorm';
 import type { Decision, Job, JobActivity, JobKind, JobStatus } from '../../_shared/domain';
 import { nextDecisionId } from '../../_shared/domain';
 import type { AgentMessage } from '../../_shared/prompt-kit/message';
 import { coerceThreadType } from '../../_shared/thread-kind/thread-types';
-import type { AutoApproveMode } from '@workspace/shared';
-import { DataSource, In, IsNull, MoreThan, Not, type ObjectLiteral, Repository } from 'typeorm';
 import { JobBootstrapService } from '../job-bootstrap/job-bootstrap.service';
 import { JobDependencyService } from '../job-deps/job-dependency.service';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { LiveTurnStore } from '../surface/live-turn-store';
 import {
   DecisionRecordEntity,
   InboundMessageEntity,
@@ -22,6 +21,7 @@ import {
 import { writeSystemChunk } from '../persistence/system-chunk-writer';
 import type { PlannedStep } from '../prompt-kit/messages/render-plan';
 import { renderPlan } from '../prompt-kit/messages/render-plan';
+import { LiveTurnStore } from '../surface/live-turn-store';
 import { WebConventionEditProposalCard } from '../surface/web-convention-edit-proposal-card';
 import { WebConventionProposalCard } from '../surface/web-convention-proposal-card';
 import { nextFileRequestId, WebFileRequestCard } from '../surface/web-file-request-card';
@@ -116,9 +116,7 @@ export class BrainStoreService {
       });
       if (job) this.liveTurns.registerPostTurnRow(job.repo_id, jobId, rowId);
     } catch (err) {
-      this.logger.debug(
-        `deferPostTurnRow failed for job=${jobId} (ignored): ${err}`,
-      );
+      this.logger.debug(`deferPostTurnRow failed for job=${jobId} (ignored): ${err}`);
     }
   }
 
@@ -329,7 +327,6 @@ export class BrainStoreService {
     };
   }
 
-
   async appendCardMessage(
     jobId: string,
     input: { ts: string; text?: string; card: Record<string, unknown> },
@@ -435,7 +432,6 @@ export class BrainStoreService {
     });
     return answered[0] ?? null;
   }
-
 
   async openQuestion(
     jobId: string,
@@ -620,7 +616,6 @@ export class BrainStoreService {
        )`,
     );
   }
-
 
   async openSecretRequest(
     jobId: string,
@@ -879,7 +874,6 @@ export class BrainStoreService {
     );
   }
 
-
   private async fileRequestCards(jobId: string): Promise<TranscriptMessageEntity[]> {
     const rows = await this.messages.find({
       where: { job_id: jobId, kind: 'card' },
@@ -996,7 +990,6 @@ export class BrainStoreService {
     return rows;
   }
 
-
   async openMcpProposal(
     jobId: string,
     input: { requestId: string; card: WebMcpProposalCard },
@@ -1046,7 +1039,6 @@ export class BrainStoreService {
     });
   }
 
-
   async openConventionProposal(
     jobId: string,
     input: { requestId: string; card: WebConventionProposalCard },
@@ -1085,7 +1077,6 @@ export class BrainStoreService {
       approved_at: new Date().toISOString(),
     });
   }
-
 
   async openConventionEditProposal(
     jobId: string,
@@ -1126,7 +1117,6 @@ export class BrainStoreService {
       approved_at: new Date().toISOString(),
     });
   }
-
 
   async openSkillProposal(
     jobId: string,
@@ -1173,7 +1163,6 @@ export class BrainStoreService {
     });
   }
 
-
   async openSkillEditAccessRequest(
     jobId: string,
     input: { requestId: string; card: WebSkillEditAccessCard },
@@ -1217,7 +1206,6 @@ export class BrainStoreService {
       ...(forkedTo ? { forkedTo } : {}),
     });
   }
-
 
   async pendingDecisions(jobId: string): Promise<Decision[]> {
     const row = await this.jobs.findOne({ where: { id: jobId } });
@@ -1690,7 +1678,6 @@ export class BrainStoreService {
     const row = await this.jobs.findOneOrFail({ where: { id: jobId } });
     return toThread(row);
   }
-
 
   async createFollowUpJob(input: {
     orgId: string;

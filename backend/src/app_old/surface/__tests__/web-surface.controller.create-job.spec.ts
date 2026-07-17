@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 import type { CurrentOrgCtx } from '../../org/current-org.decorator';
 import { WebSurfaceController } from '../web-surface.controller';
 
-
 type OrgDefaults = {
   default_auto_approve_mode: string;
   default_auto_merge: boolean;

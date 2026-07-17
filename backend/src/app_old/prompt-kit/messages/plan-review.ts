@@ -2,7 +2,6 @@ import type { Decision } from '../../../_shared/domain';
 import { agentMessage, type AgentMessage } from '../../../_shared/prompt-kit/message';
 import type { PlannedStep } from './render-plan';
 
-
 export type PlanReviewInput = {
   jobId: string;
   orgId: string;

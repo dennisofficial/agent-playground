@@ -1,4 +1,3 @@
-
 export interface WebSkillEditAccessCard {
   type: 'skill_edit_access_card';
   jobId: string;

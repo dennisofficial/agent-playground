@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import type { SessionEngine, SessionMode, SessionRef } from '../../_shared/domain';
 import type {
   EngineAuth,
@@ -25,7 +26,6 @@ import {
   type EngineRunnerPort,
 } from '../../_shared/engine';
 import { type AgentMessage } from '../../_shared/prompt-kit/message';
-import { Repository } from 'typeorm';
 import { TurnUsageProjector } from '../analytics/turn-usage-projector.service';
 import { FeatureSandbox } from '../git/local-git.service';
 import { DB_CONNECTION } from '../persistence/database.module';

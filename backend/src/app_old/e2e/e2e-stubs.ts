@@ -1,10 +1,9 @@
 import { Logger } from '@nestjs/common';
-import type { EngineRunResult, RunEngineArgs } from '../../_shared/engine';
 import { randomUUID } from 'node:crypto';
+import type { EngineRunResult, RunEngineArgs } from '../../_shared/engine';
 import type { ClassifierLlm } from '../decision-gate/classifier-llm';
 import { OpenPullRequestArgs, PullRequestResult } from '../git/github-pr.service';
 import { FeatureSandbox, ProjectRepo } from '../git/local-git.service';
-
 
 export class FakeClassifierLlm implements ClassifierLlm {
   async classify(input: {
@@ -135,8 +134,7 @@ export class FakeLocalGitService {
     return this.createBaseWorktree(repo, jobId);
   }
 
-  async ensureSubmodules(): Promise<void> {
-  }
+  async ensureSubmodules(): Promise<void> {}
 
   async isIgnored(): Promise<boolean> {
     return true;
@@ -159,8 +157,7 @@ export class FakeLocalGitService {
     this.pushed.push(sandbox.branch);
   }
 
-  async removeSandbox(): Promise<void> {
-  }
+  async removeSandbox(): Promise<void> {}
 
   async headSha(): Promise<string> {
     this.commitSeq += 1;
@@ -212,8 +209,7 @@ export class FakeGithubPrService {
     return { isDraft: false };
   }
 
-  async commentOnPullRequest(): Promise<void> {
-  }
+  async commentOnPullRequest(): Promise<void> {}
 
   async getRepo(): Promise<null> {
     return null;

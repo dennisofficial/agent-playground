@@ -24,7 +24,10 @@ export class CredentialsService {
   }
 
   /** Store (or replace) several secrets for an org in a single upsert. No-op when empty. */
-  async setMany(orgId: string, entries: { key: ECredentialKey; plaintext: string }[]): Promise<void> {
+  async setMany(
+    orgId: string,
+    entries: { key: ECredentialKey; plaintext: string }[],
+  ): Promise<void> {
     if (entries.length === 0) return;
     const rows = entries.map((e) => ({
       orgId,

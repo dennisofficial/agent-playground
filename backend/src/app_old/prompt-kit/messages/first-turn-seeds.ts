@@ -2,7 +2,6 @@ import { renderHarnessTag } from '../../../_shared/prompt-kit/harness/tag-vocabu
 import { agentMessage, type AgentMessage } from '../../../_shared/prompt-kit/message';
 import { CONTAINER_CONTEXT } from '../../sandbox/container-paths';
 
-
 export interface AttachmentCardItem {
   name: string;
   path: string;

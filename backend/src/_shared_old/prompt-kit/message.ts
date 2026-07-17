@@ -1,4 +1,3 @@
-
 declare const AGENT_MESSAGE_BRAND: unique symbol;
 
 export type AgentMessage = string & {

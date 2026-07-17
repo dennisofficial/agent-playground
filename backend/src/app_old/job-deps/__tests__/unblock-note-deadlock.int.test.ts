@@ -20,13 +20,13 @@ import type { UnblockBlockerInfo } from '@shared/domain/message';
 import { DataSource, Repository } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { CustomNamingStrategy } from '../../../_lib/database/custom-naming.strategy';
+import { BrainGateway } from '../../brain-gateway/brain-gateway.service';
 import { JobBootstrapService } from '../../job-bootstrap/job-bootstrap.service';
 import { DB_CONNECTION } from '../../persistence/database.module';
 import { ENTITIES, JobEntity } from '../../persistence/entities';
+import { renderUnblockedNote } from '../../prompt-kit/harness/seed-catalog';
 import { StimulusStoreService } from '../../stimulus/stimulus-store.service';
 import { SYSTEM_SEED_AUTHOR } from '../../surface/chat-surface.port';
-import { renderUnblockedNote } from '../../prompt-kit/harness/seed-catalog';
-import { BrainGateway } from '../../brain-gateway/brain-gateway.service';
 import { JobDependencyService } from '../job-dependency.service';
 
 const ORG_ID = '2c333333-3333-4333-8333-333333333333';
@@ -54,7 +54,10 @@ function dbOpts() {
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   let timer: NodeJS.Timeout;
   const guard = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${label} did not settle within ${ms}ms (deadlock?)`)), ms);
+    timer = setTimeout(
+      () => reject(new Error(`${label} did not settle within ${ms}ms (deadlock?)`)),
+      ms,
+    );
   });
   return Promise.race([p, guard]).finally(() => clearTimeout(timer)) as Promise<T>;
 }
@@ -166,7 +169,11 @@ describe('job-unblock note write holds no jobs-row lock (deadlock regression, li
 
     // Blocker merges → the wake funnel records the REAL unblock note (transcript FK write) and flips the
     // dependent open. Pre-fix this held FOR UPDATE across that write and dead-locked; guard with a timeout.
-    await withTimeout(service.onBlockerResolved(blocker.id, 'merged'), 5_000, 'onBlockerResolved(merged)');
+    await withTimeout(
+      service.onBlockerResolved(blocker.id, 'merged'),
+      5_000,
+      'onBlockerResolved(merged)',
+    );
 
     // The flip committed …
     expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe('open');

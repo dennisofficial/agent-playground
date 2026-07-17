@@ -31,5 +31,4 @@ export class JobKindGroup {
   event(): string {
     return jobKindFragment('event');
   }
-
 }

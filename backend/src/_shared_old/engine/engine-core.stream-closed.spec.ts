@@ -186,7 +186,6 @@ describe('EngineCore — streaming input-close gated on a genuinely-completed re
   });
 });
 
-
 type CircuitState = { abortController?: AbortController };
 
 function toolResultStreamSdk(

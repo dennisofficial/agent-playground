@@ -1,8 +1,8 @@
-
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
 import { getDataSourceToken } from '@nestjs/typeorm';
 import { ENGINE_RUNNER } from '@shared/engine';
+import { PREVIEW_PREP_SEED_BODY } from '@shared/prompt-kit/system';
 import cookieParser from 'cookie-parser';
 import request from 'supertest';
 import { DataSource } from 'typeorm';
@@ -21,7 +21,6 @@ import { JobBootstrapService } from '../../job-bootstrap/job-bootstrap.service';
 import { CredentialResolver } from '../../onboarding/credential-resolver.service';
 import { WorkspaceConfigStore } from '../../onboarding/workspace-config.store';
 import { DB_CONNECTION } from '../../persistence/database.module';
-import { PREVIEW_PREP_SEED_BODY } from '@shared/prompt-kit/system';
 import { SANDBOX_PROVIDER } from '../../sandbox/sandbox-provider.port';
 import { JobTitler } from '../../titling/job-titler.service';
 import { webShipReviewCard } from '../web-approval-card';

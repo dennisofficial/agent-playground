@@ -8,7 +8,6 @@ import type {
 } from '../../persistence/entities';
 import { ComposerDraftService } from '../composer-draft.service';
 
-
 function memRepo<T extends object>(keys: (keyof T)[]): Repository<T> {
   let rows: T[] = [];
   const match = (where: Partial<T>) => (r: T) =>

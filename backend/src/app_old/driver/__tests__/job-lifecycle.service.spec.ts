@@ -1,4 +1,3 @@
-
 import type { EnvService } from '@core/config/env/env.service';
 import type { ModuleRef } from '@nestjs/core';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -6,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Repository } from 'typeorm';
 import { describe, expect, it, vi } from 'vitest';
+import type { BrainGateway } from '../../brain-gateway/brain-gateway.service';
 import type { GithubPrService } from '../../git/github-pr.service';
 import type { LocalGitService } from '../../git/local-git.service';
 import type { JobDependencyService } from '../../job-deps/job-dependency.service';
@@ -15,12 +15,10 @@ import { SandboxActivityRegistry } from '../../sandbox/sandbox-activity.registry
 import { type SandboxProvider } from '../../sandbox/sandbox-provider.port';
 import { TurnRegistry } from '../../sandbox/turn-registry.service';
 import type { SkillUpdaterService } from '../../skills/skill-updater.service';
-import type { BrainGateway } from '../../brain-gateway/brain-gateway.service';
 import type { DriverStoreService } from '../driver-store.service';
 import { JobLifecycleService } from '../job-lifecycle.service';
 import type { DriverRepoResolver } from '../repo-resolver';
 import type { WorktreeProvisioner } from '../worktree-provisioner.service';
-
 
 function makeRow(overrides: Partial<JobSandboxEntity> = {}): JobSandboxEntity {
   return {
@@ -230,11 +228,12 @@ function makeServiceForReset(
 function rowToSandbox(svc: JobLifecycleService, row: JobSandboxEntity) {
   return (
     svc as unknown as {
-      rowToSandbox(r: JobSandboxEntity): Promise<import('../../git/local-git.service').FeatureSandbox>;
+      rowToSandbox(
+        r: JobSandboxEntity,
+      ): Promise<import('../../git/local-git.service').FeatureSandbox>;
     }
   ).rowToSandbox(row);
 }
-
 
 describe('JobLifecycleService.rowToSandbox', () => {
   it('populates execUser with the host uid:gid for a row WITH a container_id (docker mode)', async () => {

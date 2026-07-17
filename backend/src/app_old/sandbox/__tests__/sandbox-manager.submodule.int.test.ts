@@ -6,7 +6,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { LocalGitService, type FeatureSandbox, type ProjectRepo } from '../../git/local-git.service';
+import {
+  LocalGitService,
+  type FeatureSandbox,
+  type ProjectRepo,
+} from '../../git/local-git.service';
 import { bundleMcpBridge, bundleMcpHub, ensureEngineApp } from '../bundle-engine';
 import { CONTAINER_GIT_COMMON, CONTAINER_WORKTREE } from '../container-paths';
 import { DockerodeContainerEngine } from '../dockerode-container-engine';

@@ -1,4 +1,3 @@
-
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
 import { getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
@@ -8,6 +7,7 @@ import request from 'supertest';
 import { DataSource, Repository } from 'typeorm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AppOldModule } from '../../app-v1.module';
+import { CLASSIFIER_LLM } from '../../decision-gate/classifier-llm';
 import {
   FakeClassifierLlm,
   FakeEngineRunner,
@@ -20,7 +20,6 @@ import { CredentialResolver } from '../../onboarding/credential-resolver.service
 import { DB_CONNECTION } from '../../persistence/database.module';
 import { JobEntity } from '../../persistence/entities';
 import { JobTitler } from '../../titling/job-titler.service';
-import { CLASSIFIER_LLM } from '../../decision-gate/classifier-llm';
 import { DriverStoreService } from '../driver-store.service';
 
 const fakeCreds = {

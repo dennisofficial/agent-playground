@@ -65,7 +65,6 @@ export class RealtimeService implements OnApplicationBootstrap, OnApplicationShu
     });
   }
 
-
   private startEngine(): Promise<void> {
     return (this.engineOp = this.engineOp.catch(() => undefined).then(() => this.doStartEngine()));
   }

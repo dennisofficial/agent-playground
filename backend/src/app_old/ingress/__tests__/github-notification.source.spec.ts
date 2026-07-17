@@ -2,8 +2,8 @@ import type { EnvService } from '@core/config/env/env.service';
 import type { CiSyncDelta, RawNotification } from '@shared/domain';
 import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { GithubNotificationSource, verifyGithubSignature } from '../github-notification.source';
 import type { ProjectRoute, ProjectRoutingService } from '../../stimulus/project-routing.service';
+import { GithubNotificationSource, verifyGithubSignature } from '../github-notification.source';
 
 const SECRET = 'gh-webhook-secret';
 

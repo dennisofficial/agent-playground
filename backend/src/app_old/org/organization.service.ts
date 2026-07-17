@@ -195,7 +195,6 @@ export class OrganizationService {
     }));
   }
 
-
   async createInvite(orgId: string, email: string, invitedBy: string): Promise<InviteView> {
     const token = randomUUID();
     const row = await this.invites.save(

@@ -60,7 +60,6 @@ export class WorkspaceSkillStore {
     return scope === ORG_SCOPE ? 'org' : scope;
   }
 
-
   async list(orgId: string): Promise<SkillView[]> {
     const rows = await this.skills.find({ where: { org_id: orgId } });
     return rows.map((r) => this.view(r));
@@ -93,7 +92,6 @@ export class WorkspaceSkillStore {
     };
   }
 
-
   async write(orgId: string, dbScope: string, name: string, input: SkillInput): Promise<void> {
     const row =
       (await this.skills.findOne({
@@ -119,7 +117,6 @@ export class WorkspaceSkillStore {
     await this.skills.delete({ org_id: orgId, scope: dbScope, name });
     this.logger.log(`deleted skill org=${orgId} scope=${dbScope} name=${name}`);
   }
-
 
   async rowsForTurn(orgId: string, repoId: string): Promise<WorkspaceSkillEntity[]> {
     return this.skills.find({

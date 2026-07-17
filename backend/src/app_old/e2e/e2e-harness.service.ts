@@ -3,10 +3,10 @@ import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
 import { getDataSourceToken } from '@nestjs/typeorm';
-import type { Message, TurnEnvelope } from '../../_shared/domain';
-import { ENGINE_RUNNER } from '../../_shared/engine';
 import { createHmac, randomUUID } from 'node:crypto';
 import { DataSource, Repository } from 'typeorm';
+import type { Message, TurnEnvelope } from '../../_shared/domain';
+import { ENGINE_RUNNER } from '../../_shared/engine';
 import { AgentChatSurface, CapturedApprovalCard } from '../agent-surface/agent-chat-surface';
 import { AppOldModule } from '../app-v1.module';
 import { AgentSessionManager } from '../brain/agent-session-manager.service';
@@ -180,7 +180,6 @@ export class E2eHarness {
     return { ok: scenarios.every((s) => s.ok), scenarios };
   }
 
-
   private async seedTenant(): Promise<void> {
     const gitUrl = this.config.live ? this.repoUrl() : OFFLINE_REPO_URL;
     const baseBranch = this.config.baseBranch ?? 'main';
@@ -268,7 +267,6 @@ export class E2eHarness {
     await q(`DELETE FROM organizations WHERE id = $1`, [TEAM_ID]).catch(() => undefined);
     await q(`DELETE FROM users WHERE id = $1`, [DEFAULT_HUMAN_ID]).catch(() => undefined);
   }
-
 
   private async scenarioFeature(): Promise<E2eScenarioResult> {
     const steps: E2eStep[] = [];
@@ -443,7 +441,6 @@ export class E2eHarness {
     };
   }
 
-
   private async scenarioEvent(): Promise<E2eScenarioResult> {
     const steps: E2eStep[] = [];
     const record = mkRecorder(steps, this.logger, 'event');
@@ -521,7 +518,6 @@ export class E2eHarness {
       return { name: 'event', ok: false, steps };
     }
   }
-
 
   private async scenarioSecurity(): Promise<E2eScenarioResult> {
     const steps: E2eStep[] = [];
@@ -608,7 +604,6 @@ export class E2eHarness {
     );
   }
 
-
   private async postGithub(
     payload: unknown,
     runId: number,
@@ -629,7 +624,6 @@ export class E2eHarness {
     const json = (await res.json().catch(() => undefined)) as Record<string, unknown> | undefined;
     return { status: res.status, json };
   }
-
 
   private repo<T extends object>(entity: { new (): T }): Repository<T> {
     return this.dataSource.getRepository(entity);
@@ -696,7 +690,6 @@ export class E2eHarness {
     return (await this.repo(JobEntity).findOne({ where: { id: jobId } })) ?? undefined;
   }
 
-
   private repoUrl(): string {
     if (this.config.live && !this.config.gitUrl) {
       throw new Error('--live requires --repo https://github.com/<owner>/<repo>');
@@ -710,7 +703,6 @@ export class E2eHarness {
     return `${parsed.owner}/${parsed.repo}`;
   }
 }
-
 
 function mkRecorder(
   steps: E2eStep[],

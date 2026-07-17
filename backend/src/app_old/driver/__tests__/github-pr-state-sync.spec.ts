@@ -1,4 +1,3 @@
-
 import type { PrStateDelta } from '@shared/domain';
 import type { Repository } from 'typeorm';
 import { describe, expect, it, vi } from 'vitest';

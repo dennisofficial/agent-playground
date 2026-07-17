@@ -7,7 +7,6 @@ import { agentMessage } from '../prompt-kit/message';
 import { EngineCore } from './engine-core';
 import type { EngineHomeKey } from './engine-home';
 
-
 const HOME_ROOT = join(tmpdir(), `atlas-engine-core-codex-hooks-spec-${process.pid}`);
 afterAll(() => rmSync(HOME_ROOT, { recursive: true, force: true }));
 

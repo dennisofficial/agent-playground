@@ -30,13 +30,6 @@ import {
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { InjectRepository } from '@nestjs/typeorm';
-import type { ReviewComment } from '../../_shared/domain/composer-draft';
-import type { JobKind } from '../../_shared/domain/job';
-import { deriveNeedsYou } from '../../_shared/domain/job';
-import { isReservedMcpName } from '../../_shared/mcp/reserved-mcp-names';
-import { chunkKey } from '../../_shared/prompt-kit/harness/chunk-keys';
-import type { AgentMessage } from '../../_shared/prompt-kit/message';
-import { renderTurn, type TurnChunk } from '../../_shared/stimulus/chunk-vocabulary';
 import { CurrentUser, Public } from '@workspace/auth/server';
 import {
   isAutoApproveMode,
@@ -59,6 +52,13 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { basename, extname, join, relative, resolve, sep } from 'node:path';
 import { Observable, catchError, defer, filter, from, map, merge, switchMap } from 'rxjs';
 import { In, Not, Repository } from 'typeorm';
+import type { ReviewComment } from '../../_shared/domain/composer-draft';
+import type { JobKind } from '../../_shared/domain/job';
+import { deriveNeedsYou } from '../../_shared/domain/job';
+import { isReservedMcpName } from '../../_shared/mcp/reserved-mcp-names';
+import { chunkKey } from '../../_shared/prompt-kit/harness/chunk-keys';
+import type { AgentMessage } from '../../_shared/prompt-kit/message';
+import { renderTurn, type TurnChunk } from '../../_shared/stimulus/chunk-vocabulary';
 import { BrainGateway } from '../brain-gateway/brain-gateway.service';
 import { AgentSessionManager } from '../brain/agent-session-manager.service';
 import { BrainStoreService } from '../brain/brain-store.service';
@@ -253,8 +253,7 @@ function listContextBucket(dir: string, prefix = '', depth = 0): ContextFile[] {
         const st = statSync(join(dir, e.name));
         out.push({ name: rel, size: st.size, mtime: st.mtime.toISOString() });
       }
-    } catch {
-    }
+    } catch {}
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -377,7 +376,6 @@ class ProvideSecretDto {
   value!: string;
 }
 const MAX_FILE_UPLOAD_BYTES = 512 * 1024;
-
 
 function resolveUploadFilePath(root: string, relPath: string): string {
   const cleaned = relPath.replace(/^[/\\]+/, '');
@@ -565,7 +563,6 @@ export class WebSurfaceController {
     return { ok: true, surface: this.surface.name };
   }
 
-
   @Get('jobs')
   async allThreads(@CurrentUser() user: UserEntity): Promise<unknown[]> {
     const orgs = await this.orgService.listForUser(user.id);
@@ -663,7 +660,6 @@ export class WebSurfaceController {
       catchError(() => realtimeDisabledStream()),
     );
   }
-
 
   @Get('orgs/:orgId/repos/:repoId/jobs')
   @UseGuards(OrgMembershipGuard)
@@ -1198,7 +1194,6 @@ export class WebSurfaceController {
     }
     return { xml: renderUploadedFilesXml(items), items };
   }
-
 
   @Get('orgs/:orgId/repos/:repoId/jobs/:jobId/draft')
   @UseGuards(OrgMembershipGuard)
@@ -2898,7 +2893,6 @@ export class WebSurfaceController {
       createdAt: t.created_at,
     };
   }
-
 
   private async requireThread(jobId: string, orgId: string): Promise<JobEntity> {
     const thread = await this.jobs.findOne({

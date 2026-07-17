@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import { randomUUID } from 'node:crypto';
+import { DataSource, In, IsNull, MoreThan, Raw, Repository } from 'typeorm';
 import type {
   Decision,
   DecisionRecord,
@@ -15,8 +17,6 @@ import type {
 } from '../../_shared/domain';
 import type { AgentMessage } from '../../_shared/prompt-kit/message';
 import { coerceThreadType } from '../../_shared/thread-kind/thread-types';
-import { randomUUID } from 'node:crypto';
-import { DataSource, In, IsNull, MoreThan, Raw, Repository } from 'typeorm';
 import type { ReviewFinding } from '../autofix/autofix.types';
 import { JobDependencyService } from '../job-deps/job-dependency.service';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -95,7 +95,6 @@ export class DriverStoreService {
     private readonly stimulusStore: StimulusStoreService,
   ) {}
 
-
   async findOpenOperatorInputCard(
     jobId: string,
   ): Promise<{ questionId: string; question: string } | null> {
@@ -169,7 +168,6 @@ export class DriverStoreService {
       .setParameter('patch', JSON.stringify({ deliveredAt: new Date().toISOString() }))
       .execute();
   }
-
 
   async loadJob(jobId: string): Promise<Job> {
     return toJob(await this.jobs.findOneOrFail({ where: { id: jobId } }));
@@ -288,7 +286,6 @@ export class DriverStoreService {
   async setCurrentBranch(jobId: string, branch: string | null): Promise<void> {
     await this.jobs.update({ id: jobId }, { current_branch: branch });
   }
-
 
   async parkForShipReview(
     jobId: string,
@@ -445,7 +442,6 @@ export class DriverStoreService {
     }
   }
 
-
   async postMergeCard(jobId: string): Promise<void> {
     const ts = `merge-ready:${jobId}`;
     const card = webMergeReadyCard(jobId) as unknown as Record<string, unknown>;
@@ -512,13 +508,11 @@ export class DriverStoreService {
     );
   }
 
-
   async decisionRecord(decisionRecordId: string | null): Promise<DecisionRecord | null> {
     if (!decisionRecordId) return null;
     const row = await this.records.findOne({ where: { id: decisionRecordId } });
     return row ? toRecord(row) : null;
   }
-
 
   async threadsForJob(jobId: string): Promise<DriverThread[]> {
     const job = await this.jobs.findOne({ where: { id: jobId } });
@@ -547,7 +541,6 @@ export class DriverStoreService {
     const row = await this.threads.findOne({ where: { id: threadId } });
     return row?.start_sha ?? candidate;
   }
-
 
   async recordActiveLeg(
     anchorStepId: string,
@@ -758,7 +751,6 @@ export class DriverStoreService {
       .filter((r) => r.deviations.length > 0);
   }
 
-
   async recordThreadTermination(threadId: string, record: ThreadTerminalRecord): Promise<void> {
     await this.threads.update({ id: threadId }, { terminal_record: record });
   }
@@ -774,7 +766,6 @@ export class DriverStoreService {
     });
     return row?.terminal_record ?? null;
   }
-
 
   async threadJobId(threadId: string): Promise<string | null> {
     const row = await this.threads.findOne({
@@ -873,7 +864,6 @@ export class DriverStoreService {
     };
   }
 
-
   async materializeReviewChildren(
     parent: { id: string; jobId: string; orgId: string },
     childSpecs: Array<{
@@ -924,7 +914,6 @@ export class DriverStoreService {
     await this.threads.update({ id: threadId }, { review_findings: findings });
   }
 
-
   async stepsForThread(threadId: string): Promise<Step[]> {
     const thread = await this.threads.findOne({ where: { id: threadId } });
     if (!thread) return [];
@@ -955,8 +944,7 @@ export class DriverStoreService {
     await this.threads.update({ id: stepId }, { commit_sha: commitSha });
   }
 
-  async setBatchOrdinals(_assignments: Array<[string, number]>): Promise<void> {
-  }
+  async setBatchOrdinals(_assignments: Array<[string, number]>): Promise<void> {}
 
   private async builderLegOrdinal(thread: {
     id: string;
@@ -987,7 +975,6 @@ export class DriverStoreService {
       commitSha: thread.commit_sha,
     };
   }
-
 
   async getPipelineState(jobId: string, orgId: string): Promise<unknown> {
     const job = await this.jobs.findOne({
@@ -1153,7 +1140,6 @@ export class DriverStoreService {
       threadTitles: record.thread_titles,
     };
   }
-
 
   async threadGroupsForJob(jobId: string): Promise<ThreadGroupEntity[]> {
     return this.threadGroups.find({
@@ -1443,12 +1429,10 @@ export class DriverStoreService {
     return row?.max ?? 0;
   }
 
-
   async route(thread: Job): Promise<JobRoute> {
     return { channel: thread.repoId, threadTs: thread.id, orgId: thread.orgId };
   }
 }
-
 
 function groupBy<T, K>(list: readonly T[], key: (item: T) => K): Map<K, T[]> {
   const out = new Map<K, T[]>();

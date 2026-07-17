@@ -1,17 +1,20 @@
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { afterEach } from 'vitest';
+import { AgentChatSurface } from '../agent-surface/agent-chat-surface';
 import { AppOldModule } from '../app-v1.module';
-import { StimulusIntake } from '../stimulus/stimulus-intake.service';
-import { GithubEventsWebhookController, GithubStateWebhookController } from '../ingress/github-webhook.controller';
 import { AgentSessionManager } from '../brain/agent-session-manager.service';
 import { DecisionApprovalService } from '../brain/decision-approval.service';
-import { BRAIN_SINK, BrainSink } from '../stimulus/stimulus-consumer';
-import { ThreadDriver } from '../driver/thread-driver.service';
 import { JOB_DISPATCHER, JobDispatcher } from '../brain/job-dispatcher';
+import { ThreadDriver } from '../driver/thread-driver.service';
+import {
+  GithubEventsWebhookController,
+  GithubStateWebhookController,
+} from '../ingress/github-webhook.controller';
+import { BRAIN_SINK, BrainSink } from '../stimulus/stimulus-consumer';
+import { StimulusIntake } from '../stimulus/stimulus-intake.service';
 import { CHAT_SURFACE, ChatSurface } from '../surface/chat-surface.port';
 import { WebSurface } from '../surface/web-surface';
-import { AgentChatSurface } from '../agent-surface/agent-chat-surface';
 
 describe('AppModule HTTP boot (full DI assembly, live Postgres)', () => {
   it('boots the real composition root via NestFactory.create({ rawBody: true }), resolves the W2 graph, and closes', async () => {

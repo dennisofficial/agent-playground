@@ -1,5 +1,5 @@
-import type { AgentMessage } from '../../_shared/prompt-kit/message';
 import type { Repository } from 'typeorm';
+import type { AgentMessage } from '../../_shared/prompt-kit/message';
 import type { TranscriptMessageEntity } from './entities/transcript-message.entity';
 
 export interface SystemChunkInput {

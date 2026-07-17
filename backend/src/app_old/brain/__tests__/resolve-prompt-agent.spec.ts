@@ -1,6 +1,6 @@
 import type { Message, TurnEnvelope } from '@shared/domain';
-import { describe, expect, it, vi } from 'vitest';
 import { Agent } from '@shared/prompt-kit/system';
+import { describe, expect, it, vi } from 'vitest';
 import type { ThreadRole } from '../../thread-kind/__tests__/spec';
 import { AgentSessionManager } from '../agent-session-manager.service';
 

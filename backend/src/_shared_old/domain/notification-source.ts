@@ -1,4 +1,3 @@
-
 import type { EventKind } from './message';
 import type { EventSeverity } from './seed-row';
 

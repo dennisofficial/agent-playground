@@ -1,4 +1,3 @@
-
 export const ATLAS_PROD_BRIDGE_NAME = 'atlas-prod';
 
 export const ATLAS_PROD_TOOL_NAMES = [

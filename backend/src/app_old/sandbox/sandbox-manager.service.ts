@@ -1,7 +1,5 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
-import { atlasAgentHomeBase } from '../../_shared/engine/engine-home';
-import type { ResolvedMcpServer } from '../../_shared/engine/engine.types';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
@@ -18,6 +16,11 @@ import {
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
+import { atlasAgentHomeBase } from '../../_shared/engine/engine-home';
+import type { ResolvedMcpServer } from '../../_shared/engine/engine.types';
+import { CaddyAdminClient } from '../exposure/caddy-admin.client';
+import { previewId, routePrefix } from '../exposure/exposure-naming';
+import { FeatureSandbox } from '../git/local-git.service';
 import { managedGitSkillsRootHost, orgSkillsRootHost } from '../skills/skill-store-paths';
 import { managedSkillsRootHost } from '../skills/system-skill-store-paths';
 import {
@@ -54,9 +57,6 @@ import type {
   ServiceLivenessProbe,
   SetupScriptResult,
 } from './sandbox-provider.port';
-import { CaddyAdminClient } from '../exposure/caddy-admin.client';
-import { previewId, routePrefix } from '../exposure/exposure-naming';
-import { FeatureSandbox } from '../git/local-git.service';
 
 const execFileAsync = promisify(execFile);
 
@@ -134,7 +134,6 @@ const L_PROJECT = 'atlas.project';
 const L_BRANCH = 'atlas.branch';
 const L_THREAD = 'atlas.thread';
 const L_CFG = 'atlas.cfg';
-
 
 export function dedupeBindsByTarget(binds: string[]): {
   binds: string[];
@@ -444,7 +443,6 @@ export class SandboxManager implements SandboxProvider {
     }
     return { networks, volumes };
   }
-
 
   private augment(sandbox: FeatureSandbox, containerId: string, warm: boolean): FeatureSandbox {
     const user = hostExecUser();
@@ -775,8 +773,7 @@ export class SandboxManager implements SandboxProvider {
       if (m.mode === 'shared-rw') {
         try {
           chmodSync(hostDir, 0o700);
-        } catch {
-        }
+        } catch {}
       }
       if (external) {
         binds.push(`${hostDir}:${m.path}${ro}`);
@@ -806,8 +803,7 @@ export class SandboxManager implements SandboxProvider {
     if (uid !== undefined && gid !== undefined) {
       try {
         chownSync(dir, uid, gid);
-      } catch {
-      }
+      } catch {}
     }
   }
 

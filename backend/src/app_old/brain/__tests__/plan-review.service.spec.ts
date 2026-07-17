@@ -8,9 +8,9 @@ import type { JobLifecycleService } from '../../driver/job-lifecycle.service';
 import type { JobDependencyService } from '../../job-deps/job-dependency.service';
 import type { CredentialResolver } from '../../onboarding/credential-resolver.service';
 import type { JobEntity, ThreadEntity, ThreadGroupEntity } from '../../persistence/entities';
+import type { PlanReviewInput } from '../../prompt-kit/messages/plan-review';
 import type { BlockSink, TurnHarnessFactory } from '../../surface/turn-harness.service';
 import { BrainStoreService } from '../brain-store.service';
-import type { PlanReviewInput } from '../../prompt-kit/messages/plan-review';
 import {
   deserializeFindings,
   parsePlanFindings,
@@ -26,8 +26,6 @@ const fakeCreds = {
 const fakeElection = {
   isDraining: () => false,
 } as unknown as import('../../cluster/leader-election.service').LeaderElectionService;
-
-
 
 describe('parsePlanFindings', () => {
   it('extracts severity-tagged findings', () => {
@@ -75,7 +73,6 @@ describe('summarizeEngineError', () => {
     expect(summarizeEngineError(new Error('{"error":{"message":"bad token"}}'))).toBe('bad token');
   });
 });
-
 
 type PlanReviewThreadSeed = {
   id?: string;
@@ -524,7 +521,6 @@ describe('PlanReviewService.review — reflects onto jobs.activity (§6)', () =>
     expect(cap._activities()[cap._activities().length - 1]).toBe('idle');
   });
 });
-
 
 function fakeStoreJobs() {
   const patches: Array<Record<string, unknown>> = [];

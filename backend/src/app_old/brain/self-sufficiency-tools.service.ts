@@ -1,6 +1,6 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
-import type { ToolImpl } from '../../_shared/engine/engine.types';
 import { randomUUID } from 'node:crypto';
+import type { ToolImpl } from '../../_shared/engine/engine.types';
 import { McpServerStore } from '../mcp/mcp-server.store';
 import { MemoryStore } from '../memory/memory.store';
 import { webFileRequestCard } from '../surface/web-file-request-card';

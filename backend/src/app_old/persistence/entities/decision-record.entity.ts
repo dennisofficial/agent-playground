@@ -1,6 +1,6 @@
-import type { Decision } from '../../../_shared/domain/decision-record';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import type { Decision } from '../../../_shared/domain/decision-record';
 import { JobEntity } from './job.entity';
 import { OrganizationEntity } from './organization.entity';
 import { RepoEntity } from './repo.entity';

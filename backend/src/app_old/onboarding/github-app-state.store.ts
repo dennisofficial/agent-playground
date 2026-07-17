@@ -44,8 +44,7 @@ export class GithubAppStateStore {
           userId: typeof parsed.userId === 'string' ? parsed.userId : null,
         };
       }
-    } catch {
-    }
+    } catch {}
     return { orgId: raw, userId: null };
   }
 }

@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 import type { CurrentOrgCtx } from '../../org/current-org.decorator';
 import { WebSurfaceController } from '../web-surface.controller';
 
-
 function freshCards(): Record<string, Record<string, unknown>> {
   return {
     'q-1': {

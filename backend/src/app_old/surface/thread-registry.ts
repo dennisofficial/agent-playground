@@ -1,4 +1,3 @@
-
 export interface TaskScope {
   kind: 'thread' | 'main';
   id: string;

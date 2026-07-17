@@ -155,7 +155,11 @@ export class AuthService implements OnApplicationBootstrap {
     ]);
     const base = this.cookieBase();
     res.cookie(ACCESS_COOKIE, access, { ...base, path: '/', maxAge: ACCESS_MAX_AGE_MS });
-    res.cookie(REFRESH_COOKIE, refresh, { ...base, path: REFRESH_PATH, maxAge: REFRESH_MAX_AGE_MS });
+    res.cookie(REFRESH_COOKIE, refresh, {
+      ...base,
+      path: REFRESH_PATH,
+      maxAge: REFRESH_MAX_AGE_MS,
+    });
   }
 
   private cookieBase(): Pick<CookieOptions, 'httpOnly' | 'sameSite' | 'secure' | 'domain'> {

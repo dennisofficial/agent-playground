@@ -1,4 +1,3 @@
-
 import type { AutoApproveMode, JobActivity, JobHalt, JobStatus } from '@workspace/shared';
 import { JOB_ACTIVITIES } from '@workspace/shared';
 import type { ThreadType } from '../thread-kind/thread-types';

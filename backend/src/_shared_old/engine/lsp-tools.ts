@@ -1,4 +1,3 @@
-
 export const LSP_SERVER_NAME = 'atlas-lsp-ts';
 
 export const LSP_TOOL_NAMES = ['rename_symbol', 'references', 'definition', 'hover', 'diagnostics'];

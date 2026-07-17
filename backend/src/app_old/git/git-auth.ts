@@ -1,4 +1,3 @@
-
 export function isHttpsGithub(gitUrl: string): boolean {
   return gitUrl.startsWith('https://github.com/');
 }

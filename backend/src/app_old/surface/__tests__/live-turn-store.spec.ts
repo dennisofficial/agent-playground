@@ -6,7 +6,6 @@ import { LiveTurnStore } from '../live-turn-store';
 import type { WebOutboundMessage } from '../web-surface';
 import { WebSurfaceController } from '../web-surface.controller';
 
-
 const REPO = 'repo-1';
 const THREAD = 'thread-1';
 
@@ -70,9 +69,7 @@ describe('LiveTurnStore — cumulative in-flight turn', () => {
     const registeredDuringTurnEnd: boolean[] = [];
     const sub = store.stream$.subscribe((frame) => {
       if ((frame.event as { kind?: string }).kind === 'turn_end') {
-        registeredDuringTurnEnd.push(
-          store.registerPostTurnRow(REPO, THREAD, 'notice-during-end'),
-        );
+        registeredDuringTurnEnd.push(store.registerPostTurnRow(REPO, THREAD, 'notice-during-end'));
       }
     });
     store.end(REPO, THREAD);

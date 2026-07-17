@@ -58,7 +58,6 @@ export class McpOAuthService {
     return this.authSdkPromise;
   }
 
-
   async beginAuthorization(
     orgId: string,
     dbScope: string,
@@ -172,7 +171,6 @@ export class McpOAuthService {
     return this.listToolsWithToken(url, row.transport, token);
   }
 
-
   private async ensureFresh(
     row: McpServerEntity,
   ): Promise<{ token: string | null; rotated: boolean }> {
@@ -233,7 +231,6 @@ export class McpOAuthService {
     });
   }
 
-
   async persist(
     orgId: string,
     dbScope: string,
@@ -244,7 +241,6 @@ export class McpOAuthService {
     const opts = validationError === undefined ? undefined : { validationError };
     await this.store.writeOAuthBlob(orgId, dbScope, name, blob, opts);
   }
-
 
   callbackUrl(): string {
     return new URL(OAUTH_CALLBACK_PATH, this.backendBase()).toString();
@@ -301,7 +297,6 @@ export class McpOAuthService {
       return null;
     }
   }
-
 
   private async recordInitialValidation(
     orgId: string,

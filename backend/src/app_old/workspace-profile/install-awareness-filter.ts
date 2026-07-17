@@ -3,10 +3,9 @@ import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import { SystemMessage } from '@langchain/core/messages';
 import { ChatPromptTemplate, HumanMessagePromptTemplate } from '@langchain/core/prompts';
 import { RunnableLambda, RunnableSequence, type Runnable } from '@langchain/core/runnables';
-import type { InstallMatch } from '../../_shared/prompt-kit/jit/install-awareness';
 import { z } from 'zod';
+import type { InstallMatch } from '../../_shared/prompt-kit/jit/install-awareness';
 import { fence, fenceOrNone } from '../prompt-fence';
-
 
 export const INSTALL_FILTER_MODEL = 'claude-haiku-4-5-20251001';
 

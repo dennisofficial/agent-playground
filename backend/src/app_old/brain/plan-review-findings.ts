@@ -1,4 +1,3 @@
-
 export type ReviewFinding = { severity: 'BLOCKING' | 'ADVISORY'; text: string };
 
 export function parsePlanFindings(reviewerOutput: string): ReviewFinding[] {

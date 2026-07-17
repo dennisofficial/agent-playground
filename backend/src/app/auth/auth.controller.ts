@@ -1,6 +1,11 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Post, Req, Res } from '@nestjs/common';
 import { CurrentUser, Public } from '@workspace/auth/server';
-import { LoginDto, RegisterDto, type AuthSession, type CurrentUserResponse } from '@workspace/shared';
+import {
+  LoginDto,
+  RegisterDto,
+  type AuthSession,
+  type CurrentUserResponse,
+} from '@workspace/shared';
 import type { Request, Response } from 'express';
 import { OrgService } from '../org/org.service';
 import { AuthService } from './auth.service';

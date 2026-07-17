@@ -1,6 +1,4 @@
-
 import { renderHarnessTag } from '../harness/tag-vocabulary';
-
 
 export const CLOUD_SANDBOX_NOTE =
   "You run in a CLOUD SANDBOX — your own container with the checkout at /workspace — not on the operator's " +
@@ -52,7 +50,6 @@ export const REVIEW_SCOPE_NOTE =
   'correctness bugs, behavior the change silently removed or broke, security issues, missing edge cases ' +
   'or error handling, violations of the conventions this repo already follows, and seams where ' +
   'separately-built pieces integrate badly with each other';
-
 
 export const MONOREPO_VERIFY_HINT =
   "In a monorepo/workspace the real typecheck/build/test commands often live in a sub-package's " +
@@ -202,7 +199,6 @@ export const DESIGN_DISCIPLINE_NOTE =
   'one-implementation ceremony. Match incidental repo conventions, but if the current shape fights the ' +
   'requirement, migrate the pattern deliberately and completely.';
 
-
 export const SUBAGENT_KERNEL_NOTE =
   'You are a SUBAGENT — a parent agent spawned you (via Task) to do ONE scoped job in a SINGLE turn. There ' +
   'is no conversation here: no operator to ask, no follow-up message coming, no next turn. Finish the whole ' +
@@ -341,7 +337,6 @@ export function renderBuildLanePreviewRecipe(instructions: string | null): strin
     fencedRecipe(recipe),
   ].join('\n');
 }
-
 
 export const VALIDATE_BY_RUNNING_NOTE =
   'VALIDATE BY RUNNING — your typecheck/build/test VERIFY step is the FLOOR, not the finish line. WHEN ' +

@@ -27,7 +27,6 @@ const baseCtx: AutoFixContext = {
   intent: 'add a y constant',
 };
 
-
 describe('parseSkillFrontmatter — reviewForTypes/reviewForGlobs', () => {
   it('parses the documented snake_case list keys into the camelCase DTO fields', () => {
     const md = '---\nname: x\nreview_for_types: [frontend]\nreview_for_globs: **/*.tsx\n---\nbody';
@@ -81,7 +80,6 @@ describe('stripSkillFrontmatter', () => {
   });
 });
 
-
 describe('reviewAgentsForThread — framework axis', () => {
   it('empty (default) frameworkSkillNames -> no framework lens', () => {
     expect(reviewAgentsForThread('frontend').map((l) => l.id)).not.toContain('framework');
@@ -113,7 +111,6 @@ describe('reviewAgentsForThread — framework axis', () => {
     expect(reviewAgentsForThread('data').map((l) => l.id)).toContain('data_safety');
   });
 });
-
 
 describe('buildReviewPrompt — framework lens body injection', () => {
   const frameworkLens = lensById('framework');
@@ -147,7 +144,6 @@ describe('buildReviewPrompt — framework lens body injection', () => {
     expect(p).toContain(frameworkLens!.label);
   });
 });
-
 
 describe('SkillResolver.resolveReviewSkillsForThread', () => {
   const orgId = 'org1';

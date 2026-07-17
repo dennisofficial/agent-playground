@@ -5,11 +5,10 @@ import {
   SystemMessage,
   type BaseMessageLike,
 } from '@langchain/core/messages';
-import { defineModule, scorer } from '@workspace/ai-testing';
 import { Agent, renderAgentPrompt } from '@shared/prompt-kit/system';
+import { defineModule, scorer } from '@workspace/ai-testing';
 import { renderReviewIntent } from '../prompt-kit/messages/plan-review';
 import { parsePlanFindings, type ReviewFinding } from './plan-review.service';
-
 
 type In = { messages: BaseMessageLike[] };
 type Out = { raw: string; findings: ReviewFinding[] };
@@ -42,7 +41,6 @@ function renderTask(input: {
     'Now judge per <what_to_judge> + <output_contract>.',
   ].join('\n');
 }
-
 
 const CLEAN_CONTEXT = `
 @Entity({ name: 'users' })
@@ -93,7 +91,6 @@ Thread: Backend
 Verify: an integration test logs in, then GETs the user and asserts lastLoginAt is a recent timestamp;
   "pnpm db:migrate" applies the new migration cleanly against the test DB.
 `.trim();
-
 
 const GAP_CONTEXT = `
 @Entity({ name: 'users' })
@@ -157,7 +154,6 @@ Verify: an integration test logs in, then GETs the user and asserts lastLoginAt 
   "pnpm db:migrate" applies the new migration cleanly against the test DB.
 `.trim();
 
-
 const RESUME_ROUND1_CONTEXT = `
 @Controller('reports')
 export class ReportsController {
@@ -194,7 +190,6 @@ const RESUME_ROUND2_NOTE = `
 I added @UseGuards(AdminGuard) so only admins can call the export endpoint, and a 5-req/min throttle.
 Please re-review.
 `.trim();
-
 
 function extractText(content: unknown): string {
   if (typeof content === 'string') return content;

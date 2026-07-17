@@ -1,3 +1,4 @@
+import { Agent, jobKindFragment, renderAgentPrompt } from '@shared/prompt-kit/system';
 import {
   AUTHOR_LIVE_VALIDATION_NOTE,
   BASELINE_FIRST_NOTE,
@@ -27,7 +28,6 @@ import {
   renderPreview,
 } from '@shared/prompt-kit/system/preview';
 import { describe, expect, it } from 'vitest';
-import { Agent, jobKindFragment, renderAgentPrompt } from '@shared/prompt-kit/system';
 
 describe('jobKindFragment', () => {
   it('is empty for null/undefined + onboarding; distinct per build kind', () => {

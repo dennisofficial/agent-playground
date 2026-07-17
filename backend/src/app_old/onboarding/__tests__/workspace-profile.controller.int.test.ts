@@ -1,4 +1,3 @@
-
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
 import { getDataSourceToken } from '@nestjs/typeorm';
@@ -8,13 +7,12 @@ import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { AppOldModule } from '../../app-v1.module';
-import { FakeClassifierLlm, FakeEngineRunner, FakeLocalGitService } from '../../e2e/e2e-stubs';
-import { DB_CONNECTION } from '../../persistence/database.module';
-import { CredentialResolver } from '../credential-resolver.service';
 import { CLASSIFIER_LLM } from '../../decision-gate/classifier-llm';
+import { FakeClassifierLlm, FakeEngineRunner, FakeLocalGitService } from '../../e2e/e2e-stubs';
 import { GithubPrService } from '../../git/github-pr.service';
 import { LocalGitService } from '../../git/local-git.service';
-
+import { DB_CONNECTION } from '../../persistence/database.module';
+import { CredentialResolver } from '../credential-resolver.service';
 
 class StubGithubPrService {
   async getRepo(_token: string, owner: string, repo: string): Promise<unknown> {
@@ -39,7 +37,6 @@ const fakeCreds = {
   hostGithubToken: async () => 'fake-token',
   engineAuth: async () => ({ secret: 'test-secret' }),
 };
-
 
 const ORG = '66666666-6666-4666-8666-666666666661';
 const OTHER_ORG = '66666666-6666-4666-8666-666666666662';

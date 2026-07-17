@@ -26,9 +26,9 @@ import type { JobBootstrapService } from '../../job-bootstrap/job-bootstrap.serv
 import type { JobDependencyService } from '../../job-deps/job-dependency.service';
 import type { MemoryStore } from '../../memory/memory.store';
 import type { CredentialResolver } from '../../onboarding/credential-resolver.service';
+import type { OauthUsageService } from '../../onboarding/oauth-usage.service';
 import type { WorkspaceConfigStore } from '../../onboarding/workspace-config.store';
 import type { WorkspaceSecretFileStore } from '../../onboarding/workspace-secret.store';
-import type { OauthUsageService } from '../../onboarding/oauth-usage.service';
 import type { JobSandboxEntity } from '../../persistence/entities';
 import { interruptRedriveNudge, retryResumeNudge } from '../../prompt-kit/harness/seed-catalog';
 import { TOOL_SHAPES } from '../../sandbox/image/host-tool-schemas';

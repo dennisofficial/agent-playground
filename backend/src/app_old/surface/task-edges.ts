@@ -1,4 +1,3 @@
-
 export const isStr = (v: unknown): v is string => typeof v === 'string';
 
 export const strArr = (v: unknown): string[] => (Array.isArray(v) ? v.filter(isStr) : []);

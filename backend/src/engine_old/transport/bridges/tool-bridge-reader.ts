@@ -55,8 +55,7 @@ export class ToolBridgeReader {
           this.opts.log(`tool-bridge reader stalled >${READER_STALL_MS}ms — resetting connection`);
           try {
             this.sub.disconnect();
-          } catch {
-          }
+          } catch {}
           try {
             this.sub = this.opts.makeSub(); // loop's next xread uses the new connection (see loop())
           } catch (err) {

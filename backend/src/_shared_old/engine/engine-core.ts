@@ -128,8 +128,13 @@ function computeCodexStructuredPatch(
   return patch.hunks.length ? patch.hunks : undefined;
 }
 
-export { detectLongRunningCommand, SVC_NUDGE_TEXT, svcNudgeShouldFire };
-export { detectGithubHtmlUrl, renderGithubFetchNudge };
+export {
+  detectGithubHtmlUrl,
+  detectLongRunningCommand,
+  renderGithubFetchNudge,
+  SVC_NUDGE_TEXT,
+  svcNudgeShouldFire,
+};
 
 function isTurnGenuinelyDone(m: {
   terminal_reason?: string;
@@ -141,7 +146,6 @@ function isTurnGenuinelyDone(m: {
 }
 
 export { toClaudeEffort, toCodexEffort } from './engine-core/usage';
-
 
 export interface EngineCoreConfig {
   homeRoot?: string;
@@ -343,7 +347,6 @@ export class EngineCore {
     );
   }
 
-
   private async runClaude(
     args: RunEngineArgs,
     extraClaudeOptions?: Record<string, unknown>,
@@ -517,8 +520,7 @@ export class EngineCore {
               });
             }
           })
-          .catch(() => {
-          })
+          .catch(() => {})
           .finally(() => {
             if (breakdownRequest === request) breakdownRequest = undefined;
           });
@@ -861,7 +863,6 @@ export class EngineCore {
       ...(refreshedAuthSecret ? { refreshedAuthSecret } : {}),
     };
   }
-
 
   private getCodex(
     sandboxKey: EngineHomeKey,

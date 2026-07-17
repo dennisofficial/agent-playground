@@ -9,6 +9,13 @@ import {
 } from '@nestjs/common';
 import { SchedulerRegistry } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
+import { modeApprovesPlan } from '@workspace/shared';
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import type { Subscription } from 'rxjs';
+import { Repository } from 'typeorm';
 import type {
   Decision,
   EventMessage,
@@ -58,13 +65,6 @@ import type { AgentMessage } from '../../_shared/prompt-kit/message';
 import { fromExternal } from '../../_shared/prompt-kit/message';
 import { Agent, composePreviewPrepSeed } from '../../_shared/prompt-kit/system';
 import { coerceThreadType, type ThreadType } from '../../_shared/thread-kind/thread-types';
-import { modeApprovesPlan } from '@workspace/shared';
-import { createHash, randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import type { Subscription } from 'rxjs';
-import { Repository } from 'typeorm';
 import { TurnUsageProjector } from '../analytics/turn-usage-projector.service';
 import { BrainGateway } from '../brain-gateway/brain-gateway.service';
 import { LeaderElectionService } from '../cluster/leader-election.service';
@@ -744,7 +744,6 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     await this.enqueueChat(recorded);
   }
 
-
   async handleChatTurn(stimulus: TurnEnvelope): Promise<void> {
     if (this.election.getState() === 'draining') return;
 
@@ -1021,7 +1020,6 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     });
     await this.enqueueChat(recorded);
   }
-
 
   async enqueueChat(stimulus: TurnEnvelope): Promise<void> {
     await this.pumpThread(
@@ -1529,8 +1527,6 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     if (stimulus.message.type === 'reset_verify' && !this.pendingResetVerify.has(resetKey)) return;
 
     if (await this.isJobBlocked(stimulus.jobId)) return;
-
-
 
     const alreadyProvisioned = await this.lifecycle.findSandbox(stimulus.jobId, stimulus.orgId);
     if (!alreadyProvisioned) {
@@ -2291,7 +2287,6 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     return slug;
   }
 
-
   buildTools(
     stimulus: TurnEnvelope,
     kind: string | null = null,
@@ -2737,7 +2732,6 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
       },
 
       propose_plan: async (args) => {
-
         const overview = String(args['overview'] ?? '').trim();
         const goal = String(args['goal'] ?? '').trim();
         const kind: JobKind =
@@ -3328,7 +3322,6 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
       ...atlasProd,
     };
   }
-
 
   private selfSufficiencyTools(stimulus: TurnEnvelope) {
     return this.selfSufficiency.buildTools({
@@ -4589,7 +4582,6 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     );
   }
 
-
   private async prepareRepropose(jobId: string): Promise<{ refuse?: string }> {
     const existing = await this.store.loadJob(jobId).catch(() => null);
     if (!existing) return {};
@@ -4785,7 +4777,6 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     return true;
   }
 
-
   private async runCompaction(
     stimulus: TurnEnvelope,
     sandbox: { worktreePath: string; containerId?: string | null },
@@ -4941,8 +4932,7 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     try {
       const ctx = (row.ctx ?? {}) as { credentialId?: string };
       result = await this.engineRunner.reattach!(row.turn_id, row.container_id, {
-        onEvent: () => {
-        },
+        onEvent: () => {},
         ...(ctx.credentialId ? { credentialId: ctx.credentialId } : {}),
       });
     } catch (err) {
@@ -5020,7 +5010,6 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     );
   }
 
-
   private async runDirectBuild(stimulus: TurnEnvelope, job: Job): Promise<void> {
     const instruction =
       'The direct-build plan was APPROVED. Implement the change now, directly, in the repo ' +
@@ -5052,7 +5041,6 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
       await this.say(stimulus, `The direct build hit an error — ${String(err).slice(0, 200)}`);
     }
   }
-
 
   async startFollowUpJob(
     jobId: string,
@@ -5107,7 +5095,6 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     });
     await this.handleChatTurn(stimulus);
   }
-
 
   async deliverEvent(stimulus: EventMessage): Promise<void> {
     await this.pumpEvent(stimulus);
@@ -5211,7 +5198,6 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
       );
     }
   }
-
 
   private async buildAwarenessPrefix(jobId: string, orgId: string): Promise<string | null> {
     try {
@@ -5383,7 +5369,6 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
       .appendMarker(jobId, { id, text, at: new Date().toISOString() })
       .catch((err) => this.logger.debug(`milestone append failed (continuing): ${err}`));
   }
-
 
   private async say(stimulus: TurnEnvelope, text: string): Promise<void> {
     let channel = stimulus.replyRoute.jobRef;
@@ -5726,7 +5711,6 @@ function jobTitle(summary: string): string {
   return firstLine.length > 80 ? `${firstLine.slice(0, 77)}...` : firstLine;
 }
 
-
 const DECISION_CLASSES: ReadonlySet<string> = new Set<string>(DECISION_CLASS_IDS);
 
 function asDecisionClass(v: unknown): DecisionClass | undefined {
@@ -5781,7 +5765,6 @@ function deriveDecisionTitle(source: string): string {
   const cleaned = firstLine.replace(/[?:.]+$/, '').trim();
   return cleaned.length > 72 ? `${cleaned.slice(0, 69)}...` : cleaned || 'Decision';
 }
-
 
 function optStr(v: unknown): string | undefined {
   const s = typeof v === 'string' ? v.trim() : '';

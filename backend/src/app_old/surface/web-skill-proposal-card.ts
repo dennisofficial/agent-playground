@@ -1,4 +1,3 @@
-
 export interface WebSkillProposalCard {
   type: 'skill_proposal_card';
   jobId: string;

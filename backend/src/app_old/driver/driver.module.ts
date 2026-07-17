@@ -11,7 +11,14 @@ import {
 import { SchedulerRegistry } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import type { Subscription } from 'rxjs';
+import { AutoFixModule } from '../autofix/autofix.module';
+import { JOB_DISPATCHER } from '../brain/job-dispatcher';
 import { LeaderElectionService } from '../cluster/leader-election.service';
+import { DecisionGateModule } from '../decision-gate/decision-gate.module';
+import { DriverApprovalGateway } from '../driver-approval-gateway/driver-approval-gateway.service';
+import { ExposureService } from '../exposure/exposure.service';
+import { JobBootstrapModule } from '../job-bootstrap/job-bootstrap.module';
+import { OnboardingService } from '../onboarding/onboarding.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
@@ -24,15 +31,8 @@ import {
   ThreadGroupEntity,
   TranscriptMessageEntity,
 } from '../persistence/entities';
-import { TurnReattachRegistry } from '../sandbox/turn-reattach.registry';
-import { AutoFixModule } from '../autofix/autofix.module';
-import { JOB_DISPATCHER } from '../brain/job-dispatcher';
-import { DecisionGateModule } from '../decision-gate/decision-gate.module';
-import { DriverApprovalGateway } from '../driver-approval-gateway/driver-approval-gateway.service';
-import { ExposureService } from '../exposure/exposure.service';
-import { JobBootstrapModule } from '../job-bootstrap/job-bootstrap.module';
-import { OnboardingService } from '../onboarding/onboarding.service';
 import { RunnerModule } from '../runner/runner.module';
+import { TurnReattachRegistry } from '../sandbox/turn-reattach.registry';
 import { StimulusStoreService } from '../stimulus/stimulus-store.service';
 import { StimulusModule } from '../stimulus/stimulus.module';
 import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';

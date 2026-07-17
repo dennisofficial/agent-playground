@@ -1,4 +1,3 @@
-
 import type { DecisionClass } from '../../_shared/domain/decision-record';
 
 export interface WebQuestionOption {

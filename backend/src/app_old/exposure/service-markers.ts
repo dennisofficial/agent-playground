@@ -61,8 +61,7 @@ export function readServiceMarkers(dir: string): ReadServiceMarker[] {
       const st = statSync(join(dir, `${id}.log`));
       logBytes = st.size;
       logUpdatedAt = st.mtime.toISOString();
-    } catch {
-    }
+    } catch {}
     const name =
       typeof parsed.name === 'string' && SERVICE_ID_RE.test(parsed.name) ? parsed.name : id;
     const port =

@@ -1,4 +1,3 @@
-
 export const APPROVE_ACTION_ID = 'atlas_approval:approve';
 export const REQUEST_CHANGES_ACTION_ID = 'atlas_approval:request_changes';
 export const DENY_ACTION_ID = 'atlas_approval:deny';

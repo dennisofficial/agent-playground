@@ -1,8 +1,8 @@
 import type { Job } from '@shared/domain';
 import { describe, expect, it, vi } from 'vitest';
+import type { BrainGateway } from '../../brain-gateway/brain-gateway.service';
 import type { GithubPrService } from '../../git/github-pr.service';
 import type { FeatureSandbox, LocalGitService } from '../../git/local-git.service';
-import type { BrainGateway } from '../../brain-gateway/brain-gateway.service';
 import { BuildShipService } from '../build-ship.service';
 import type { DriverStoreService } from '../driver-store.service';
 import type { ResolvedRepo } from '../repo-resolver';

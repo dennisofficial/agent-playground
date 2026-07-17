@@ -1,4 +1,3 @@
-
 export function parseCodexLastRefresh(secret: string): number | null {
   try {
     const obj = JSON.parse(secret) as { last_refresh?: unknown };

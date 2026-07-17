@@ -7,7 +7,6 @@ import { Logger } from '@nestjs/common';
 import { z } from 'zod';
 import { fence, fenceOrNone } from '../prompt-fence';
 
-
 export interface LiveVerificationVerdict {
   runtimeSurfaceTouched: boolean;
   liveVerificationAdequate: boolean;

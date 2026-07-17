@@ -72,7 +72,6 @@ export class McpServerStore {
     return scope === ORG_SCOPE ? 'org' : scope;
   }
 
-
   async list(orgId: string): Promise<RedactedMcpServer[]> {
     const rows = await this.servers.find({ where: { org_id: orgId } });
     return rows.map((r) => this.redact(r));
@@ -100,7 +99,6 @@ export class McpServerStore {
       needsReauth: r.auth_kind === 'oauth' && r.validation_error != null,
     };
   }
-
 
   async write(orgId: string, dbScope: string, name: string, input: McpServerInput): Promise<void> {
     const existing = await this.servers.findOne({
@@ -198,7 +196,6 @@ export class McpServerStore {
     await this.servers.save(row);
   }
 
-
   async rowsForTurn(orgId: string, repoId: string): Promise<McpServerEntity[]> {
     return this.servers.find({
       where: [
@@ -286,7 +283,6 @@ export class McpServerStore {
     if (!row.secrets_enc) return {};
     return JSON.parse(decryptSecret(row.secrets_enc, this.key())) as McpSecretValues;
   }
-
 
   readOAuthBlob(row: McpServerEntity): McpOAuthBlob {
     if (!row.oauth_enc) return {};

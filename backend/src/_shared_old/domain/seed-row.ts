@@ -1,4 +1,3 @@
-
 export type StimulusTrust = 'trusted' | 'untrusted';
 
 export type SeedRow =

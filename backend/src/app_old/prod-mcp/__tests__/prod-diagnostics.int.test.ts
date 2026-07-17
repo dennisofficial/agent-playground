@@ -1,4 +1,3 @@
-
 import { EnvService } from '@core/config/env/env.service';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
@@ -6,6 +5,7 @@ import type { Message, TurnEnvelope } from '@shared/domain';
 import { DataSource, Repository } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CustomNamingStrategy } from '../../../_lib/database/custom-naming.strategy';
+import { JobBootstrapService } from '../../job-bootstrap/job-bootstrap.service';
 import {
   DB_CONNECTION,
   MCP_READER_CONNECTION,
@@ -19,7 +19,6 @@ import {
   TranscriptMessageEntity,
 } from '../../persistence/entities';
 import { CHAT_SURFACE } from '../../surface/chat-surface.port';
-import { JobBootstrapService } from '../../job-bootstrap/job-bootstrap.service';
 import { ProdDiagnosticsService } from '../prod-diagnostics.service';
 
 const ORG_ID = '31111111-1111-4111-8111-111111111111';

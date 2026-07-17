@@ -1,4 +1,3 @@
-
 export interface WebFileRequestCard {
   type: 'file_request_card';
   jobId: string;

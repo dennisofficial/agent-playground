@@ -1,4 +1,3 @@
-
 import { Test, type TestingModule } from '@nestjs/testing';
 import { getDataSourceToken, getRepositoryToken, TypeOrmModule } from '@nestjs/typeorm';
 import type {
@@ -7,6 +6,7 @@ import type {
   EngineRunResult,
   RunEngineArgs,
 } from '@shared/engine/engine.types';
+import type { TurnChunk } from '@shared/prompt-kit/harness/tag-vocabulary';
 import { DataSource, Repository } from 'typeorm';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CustomNamingStrategy } from '../../../_lib/database/custom-naming.strategy';
@@ -14,7 +14,6 @@ import type { LeaderElectionService } from '../../cluster/leader-election.servic
 import { JobBootstrapService } from '../../job-bootstrap/job-bootstrap.service';
 import { DB_CONNECTION } from '../../persistence/database.module';
 import { ENTITIES, JobEntity } from '../../persistence/entities';
-import type { TurnChunk } from '@shared/prompt-kit/harness/tag-vocabulary';
 import type { TurnRegistry } from '../../sandbox/turn-registry.service';
 import { StimulusStoreService } from '../../stimulus/stimulus-store.service';
 import { AgentSessionManager } from '../agent-session-manager.service';

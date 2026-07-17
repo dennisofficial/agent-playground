@@ -388,6 +388,5 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
 
     await store.reconcileOpenSecretCounts();
     expect(await openSecretCount(thread)).toBe(1);
-
   });
 });

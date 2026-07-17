@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import { DataSource, In, IsNull, QueryFailedError, Repository } from 'typeorm';
 import type {
   EventKind,
   EventMessage,
@@ -12,7 +13,6 @@ import type {
 import type { JobProvenance } from '../../_shared/domain/job';
 import { chunkKey } from '../../_shared/prompt-kit/harness/chunk-keys';
 import { fromExternal } from '../../_shared/prompt-kit/message';
-import { DataSource, In, IsNull, QueryFailedError, Repository } from 'typeorm';
 import { JobBootstrapService } from '../job-bootstrap/job-bootstrap.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { InboundMessageEntity, JobEntity, TranscriptMessageEntity } from '../persistence/entities';
@@ -263,29 +263,21 @@ export class StimulusStoreService {
       } else if (input.systemChunk !== 'skip') {
         const desc = input.systemChunk;
         const isUntrusted = (desc.kind ?? 'system_notice') === 'untrusted';
-        const fullBody =
-          !isUntrusted && input.body !== desc.label ? input.body : undefined;
-        pillRow = await writeSystemChunk(
-          m.getRepository(TranscriptMessageEntity),
-          {
-            jobId: input.jobId,
-            threadId,
-            kind: desc.kind ?? 'system_notice',
-            text: fromExternal(desc.label),
-            chunkKey: desc.chunkKey,
-            ...(desc.untrustedSource
-              ? { untrustedSource: desc.untrustedSource }
-              : {}),
-            ...(desc.severity ? { severity: desc.severity } : {}),
-            ...(fullBody ? { fullBody: fromExternal(fullBody) } : {}),
-            ...(desc.framing ? { framing: desc.framing } : {}),
-            // Frontend per-seed-type pill discriminant (mirrors `meta.eventKind`); only for a genuine typed
-            // internal-seed row, never a plain operator `'user'` turn or a type-less legacy seed.
-            ...(input.type && input.type !== 'user'
-              ? { seedType: input.type }
-              : {}),
-          },
-        );
+        const fullBody = !isUntrusted && input.body !== desc.label ? input.body : undefined;
+        pillRow = await writeSystemChunk(m.getRepository(TranscriptMessageEntity), {
+          jobId: input.jobId,
+          threadId,
+          kind: desc.kind ?? 'system_notice',
+          text: fromExternal(desc.label),
+          chunkKey: desc.chunkKey,
+          ...(desc.untrustedSource ? { untrustedSource: desc.untrustedSource } : {}),
+          ...(desc.severity ? { severity: desc.severity } : {}),
+          ...(fullBody ? { fullBody: fromExternal(fullBody) } : {}),
+          ...(desc.framing ? { framing: desc.framing } : {}),
+          // Frontend per-seed-type pill discriminant (mirrors `meta.eventKind`); only for a genuine typed
+          // internal-seed row, never a plain operator `'user'` turn or a type-less legacy seed.
+          ...(input.type && input.type !== 'user' ? { seedType: input.type } : {}),
+        });
       }
 
       const inbound = await m.save(
@@ -512,7 +504,6 @@ export class StimulusStoreService {
     };
   }
 
-
   async eligiblePendingChat(
     jobId: string,
     leaseMs: number,
@@ -713,7 +704,6 @@ export class StimulusStoreService {
   async resetChatLeases(): Promise<void> {
     await this.stimuli.update({ kind: 'chat', delivered_at: IsNull() }, { attempted_at: null });
   }
-
 
   async eligiblePendingEvents(leaseMs: number): Promise<EventMessage[]> {
     const cutoff = new Date(Date.now() - leaseMs);

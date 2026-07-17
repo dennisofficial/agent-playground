@@ -4,20 +4,20 @@ import {
   Delete,
   Get,
   Inject,
-  type MessageEvent,
   Param,
   ParseUUIDPipe,
   Patch,
   Post,
   Sse,
+  type MessageEvent,
 } from '@nestjs/common';
 import { CurrentUser } from '@workspace/auth/server';
 import { RealtimeEngine } from '@workspace/pg-realtime';
 import { PG_REALTIME_ENGINE, sseObservable } from '@workspace/pg-realtime/nest';
 import { CreateOrgDto, UpdateOrgDto, type MemberView, type OrgSummary } from '@workspace/shared';
 import type { Observable } from 'rxjs';
-import type { User } from '../auth/entities/user.entity';
 import { sseSnapshotList } from '../../_lib/realtime/sse-snapshot';
+import type { User } from '../auth/entities/user.entity';
 import { OrgService } from './org.service';
 
 @Controller('orgs')
@@ -93,7 +93,14 @@ export class OrgController {
     @Param('orgId', ParseUUIDPipe) orgId: string,
   ): Observable<MessageEvent> {
     return sseSnapshotList<MemberView>(
-      [() => this.realtime.openSubscription({ model: 'organization_members', user, filter: { orgId } })],
+      [
+        () =>
+          this.realtime.openSubscription({
+            model: 'organization_members',
+            user,
+            filter: { orgId },
+          }),
+      ],
       () => this.orgs.membersOf(user.id, orgId),
       (m) => m.userId,
     ) as Observable<MessageEvent>;

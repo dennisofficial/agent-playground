@@ -1,11 +1,11 @@
+import { type ModelConfig, RealtimeRuleGuard, type Row } from '@workspace/pg-realtime';
+import type { JobHalt, JobStatus } from '@workspace/shared';
 import {
   deriveNeedsYou,
   JOB_ACTIVITIES,
   type JobActivity,
   type JobProvenance,
 } from '../../_shared/domain/job';
-import { type ModelConfig, RealtimeRuleGuard, type Row } from '@workspace/pg-realtime';
-import type { JobHalt, JobStatus } from '@workspace/shared';
 import { CiCounts } from '../git/github-pr.service';
 
 export interface RealtimePrincipal {

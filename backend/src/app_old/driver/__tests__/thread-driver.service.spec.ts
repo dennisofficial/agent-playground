@@ -21,10 +21,14 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
+import type { AutoFixStage } from '../../autofix/autofix.stage';
+import type { BrainGateway } from '../../brain-gateway/brain-gateway.service';
+import type { LeaderElectionService } from '../../cluster/leader-election.service';
+import type { PlanVisibilityService } from '../../decision-gate/plan-visibility.service';
 import type { GithubPrService } from '../../git/github-pr.service';
 import type { FeatureSandbox, LocalGitService, ProjectRepo } from '../../git/local-git.service';
-import type { CredentialResolver } from '../../onboarding/credential-resolver.service';
 import type { ClaudeCredentialStore } from '../../onboarding/claude-credential.store';
+import type { CredentialResolver } from '../../onboarding/credential-resolver.service';
 import type { OauthUsageService } from '../../onboarding/oauth-usage.service';
 import type { TaskItem, ThreadTerminalRecord } from '../../persistence/entities';
 import type { PlannedStep } from '../../prompt-kit/messages/render-plan';
@@ -36,16 +40,10 @@ import type { ChatSurface } from '../../surface/chat-surface.port';
 import type { LiveTurnStore } from '../../surface/live-turn-store';
 import type { BlockSink, TaskEventSink } from '../../surface/turn-harness.service';
 import { TurnHarnessFactory } from '../../surface/turn-harness.service';
-import type { AutoFixStage } from '../../autofix/autofix.stage';
-import type { BrainGateway } from '../../brain-gateway/brain-gateway.service';
 import { BuildShipService } from '../build-ship.service';
-import type { LeaderElectionService } from '../../cluster/leader-election.service';
-import type { PlanVisibilityService } from '../../decision-gate/plan-visibility.service';
 import type { DriverStoreService, DriverThread, JobRoute } from '../driver-store.service';
 import type { DriverRepoResolver, ResolvedRepo } from '../repo-resolver';
 import { ThreadDriver, renderCompletionMd, shortReason } from '../thread-driver.service';
-
-
 
 interface OperatorInputCard {
   questionId: string;
@@ -533,7 +531,6 @@ type HaltFields = {
   halt_fix_attempts?: number;
 };
 
-
 const REPO: ProjectRepo = {
   repoId: 'proj',
   gitUrl: 'https://github.com/acme/widget',
@@ -767,7 +764,6 @@ function makeSurface(): { surface: ChatSurface; posts: string[] } {
   } as unknown as ChatSurface;
   return { surface, posts };
 }
-
 
 function makeJob(overrides: Partial<Job> = {}): Job {
   return {
@@ -1133,7 +1129,6 @@ function assemble(
     stopAllServices,
   };
 }
-
 
 describe('ThreadDriver — the legible thread/step pipeline', () => {
   it('walks a 2-thread job to ONE PR (lock one step per thread → orchestrate execute → autofix → handoff → next → PR-tail)', async () => {
@@ -2632,7 +2627,6 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
   });
 });
 
-
 describe('ThreadDriver — reviewAgentsForThread selection + semaphore concurrency', () => {
   function lensIdsMaterialized(state: StoreState): (string | undefined)[] {
     return (state.reviewChildren ?? [])
@@ -2758,7 +2752,6 @@ describe('ThreadDriver — start_sha is captured once and RESUME-safe (the per-t
     expect(state.threads[0].startSha).toBe('base-sha');
   });
 });
-
 
 async function waitForNotDoneHalt(h: { driver: ThreadDriver }, state: StoreState): Promise<void> {
   await flushUntil(() => state.threads.some((t) => t.condition === 'incomplete'));
@@ -3036,7 +3029,6 @@ describe('ThreadDriver — not-done handling, operator redrive, and complete_thr
   });
 });
 
-
 async function flush(): Promise<void> {
   for (let i = 0; i < 100; i++) {
     await Promise.resolve();
@@ -3068,7 +3060,6 @@ async function flushUntil(pred: () => boolean, cap = 300): Promise<void> {
     await new Promise((r) => setTimeout(r, 0));
   }
 }
-
 
 describe('ThreadDriver — ship-review gate (human approval before the PR)', () => {
   function baseState(job = makeJob({ shipReviewApprovedAt: null })): StoreState {
@@ -3190,7 +3181,6 @@ describe('ThreadDriver — ship-review gate (human approval before the PR)', () 
   });
 });
 
-
 describe('ThreadDriver — ship-review gate auto-approve (per-job opt-in)', () => {
   function baseState(job: Job): StoreState {
     return {
@@ -3277,7 +3267,6 @@ describe('ThreadDriver — ship-review gate auto-approve (per-job opt-in)', () =
     },
   );
 });
-
 
 describe('ThreadDriver — 401 auth recovery', () => {
   function flakyAuthTurn(): TurnRunnerService {
@@ -3430,7 +3419,6 @@ describe('ThreadDriver — 401 auth recovery', () => {
     expect(state.job.status).toBe('running'); // the ping itself does not flip a non-paused job
   });
 });
-
 
 describe('ThreadDriver — master_review Codex-outage hold', () => {
   function masterReviewState(): StoreState {
@@ -3632,7 +3620,6 @@ describe('shortReason', () => {
   });
 });
 
-
 describe('ThreadDriver — master-review bridged task list', () => {
   function baseState(): StoreState {
     return {
@@ -3739,7 +3726,6 @@ describe('ThreadDriver — master-review bridged task list', () => {
     expect(h.taskEvents).toHaveLength(0);
   });
 });
-
 
 describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
   function wireRotationStore(h: ReturnType<typeof assemble>): {

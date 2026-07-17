@@ -2,13 +2,13 @@ import type { SeedRow } from '@shared/domain';
 import type { DataSource, Repository } from 'typeorm';
 import { QueryFailedError } from 'typeorm';
 import { describe, expect, it, vi } from 'vitest';
+import type { JobBootstrapService } from '../../job-bootstrap/job-bootstrap.service';
 import {
   InboundMessageEntity,
   JobEntity,
   TranscriptMessageEntity,
 } from '../../persistence/entities';
 import { SYSTEM_SEED_AUTHOR } from '../../surface/chat-surface.port';
-import type { JobBootstrapService } from '../../job-bootstrap/job-bootstrap.service';
 import { DuplicateStimulusError, StimulusStoreService } from '../stimulus-store.service';
 
 function makeBootstrap() {
@@ -382,24 +382,15 @@ describe('StimulusStoreService — seed-aware recordChatStimulus (durable chat/g
         },
         // The pill-correlation write (see `recordChatStimulus`) delegates to the message repo's own
         // `update`, which patches the row in `messageRows` in place.
-        update: async (
-          Entity: unknown,
-          id: string,
-          patch: Record<string, unknown>,
-        ) => {
+        update: async (Entity: unknown, id: string, patch: Record<string, unknown>) => {
           if (Entity === TranscriptMessageEntity) {
             return (
               messageRepo as unknown as {
-                update: (
-                  id: string,
-                  patch: Record<string, unknown>,
-                ) => Promise<unknown>;
+                update: (id: string, patch: Record<string, unknown>) => Promise<unknown>;
               }
             ).update(id, patch);
           }
-          throw new Error(
-            `fakeDataSourceWithMessageRepo: unexpected update(${String(Entity)})`,
-          );
+          throw new Error(`fakeDataSourceWithMessageRepo: unexpected update(${String(Entity)})`);
         },
       };
       return cb(manager);

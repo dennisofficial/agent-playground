@@ -6,7 +6,6 @@ import { RunnableLambda, RunnableSequence, type Runnable } from '@langchain/core
 import { z } from 'zod';
 import { fence, fenceOrNone } from '../prompt-fence';
 
-
 export interface ClassifierLlmVerdict {
   verdict: 'ask' | 'proceed';
   decisionClass?: string;

@@ -2,7 +2,6 @@ import type { JobActivity } from '@workspace/shared';
 import { describe, expect, it } from 'vitest';
 import { deriveNeedsYou } from './job';
 
-
 type Input = Parameters<typeof deriveNeedsYou>[0];
 
 function at(overrides: Partial<Input> & { status: string }): Input {

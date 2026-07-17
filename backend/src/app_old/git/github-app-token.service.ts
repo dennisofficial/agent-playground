@@ -2,7 +2,6 @@ import { EnvService } from '@core/config/env/env.service';
 import { Injectable } from '@nestjs/common';
 import { createSign } from 'node:crypto';
 
-
 const API = 'https://api.github.com';
 
 @Injectable()

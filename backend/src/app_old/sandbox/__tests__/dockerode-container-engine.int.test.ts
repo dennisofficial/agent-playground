@@ -4,7 +4,6 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DockerodeContainerEngine } from '../dockerode-container-engine';
 import { SandboxImageBuilder } from '../sandbox-image.builder';
 
-
 const env = { get: () => undefined } as unknown as EnvService;
 
 let dockerUp = false;
@@ -29,8 +28,7 @@ describe('DockerodeContainerEngine (integration, needs Docker)', () => {
     if (id) await engine.remove(id, { force: true }).catch(() => undefined);
     try {
       await new Docker().getVolume(volume).remove({ force: true });
-    } catch {
-    }
+    } catch {}
   });
 
   it('builds image, runs a privileged DinD sandbox, execs, and lists by label', async () => {

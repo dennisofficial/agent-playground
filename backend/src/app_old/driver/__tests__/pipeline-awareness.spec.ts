@@ -6,7 +6,6 @@ import {
   type PipelineMarker,
 } from '../pipeline-awareness';
 
-
 const RUNNING_STATE = {
   jobId: 't1',
   status: 'running',

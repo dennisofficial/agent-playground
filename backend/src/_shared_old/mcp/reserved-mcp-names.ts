@@ -1,4 +1,3 @@
-
 export const RESERVED_MCP_SERVER_NAMES: readonly string[] = [
   'atlas-host-bridge', // the general host tool bridge (Claude)
   'workspace-profile', // the dedicated Workspace Profile bridge (Claude)

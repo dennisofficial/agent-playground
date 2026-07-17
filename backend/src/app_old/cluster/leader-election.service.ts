@@ -96,7 +96,6 @@ export class LeaderElectionService implements OnApplicationBootstrap, OnApplicat
     if (client) await client.end().catch(() => undefined);
   }
 
-
   private async connectAndAcquire(): Promise<void> {
     if (this.state === 'draining' || this.connecting || this.client) return;
     this.connecting = true;

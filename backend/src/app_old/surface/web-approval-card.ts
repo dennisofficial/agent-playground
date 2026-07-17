@@ -1,4 +1,3 @@
-
 import type { ApprovalDecision, DecisionApprovalCard } from './approval-blocks';
 import {
   AMEND_APPROVE_ACTION_ID,
@@ -251,7 +250,6 @@ export function parseWebApprovalMeta(
           : {}),
       };
     }
-  } catch {
-  }
+  } catch {}
   return undefined;
 }

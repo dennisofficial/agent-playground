@@ -1,4 +1,3 @@
-
 import type { ChunkKind, TurnChunk } from '../stimulus/chunk-vocabulary';
 import type { JobProvenance } from './job';
 import type { EventSeverity, SeedRow } from './seed-row';
@@ -19,7 +18,6 @@ export type MessageAttachment = {
   kind: 'image' | 'file';
   size: number;
 };
-
 
 export type UserMessage = MessageBase & {
   type: 'user';
@@ -58,7 +56,6 @@ export type SecretProvidedMessage = MessageBase & {
   reason?: string;
 };
 
-
 export type EventKind =
   | 'ci_failure'
   | 'review_changes_requested'
@@ -76,7 +73,6 @@ export type EventMessage = MessageBase & {
   correlation?: { branch?: string; prNumber?: number };
   resumeThreadId?: string;
 };
-
 
 export type ResetVerifyMessage = MessageBase & {
   type: 'reset_verify';
@@ -152,7 +148,6 @@ export type SessionLimitResetMessage = MessageBase & {
   trust: 'system';
   title?: string;
 };
-
 
 export type McpApprovedMessage = MessageBase & {
   type: 'mcp_approved';

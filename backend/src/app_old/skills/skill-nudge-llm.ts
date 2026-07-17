@@ -6,7 +6,6 @@ import { RunnableLambda, RunnableSequence, type Runnable } from '@langchain/core
 import { z } from 'zod';
 import { fence, fenceOrNone } from '../prompt-fence';
 
-
 export type SkillNudgeSelection = { name: string; reason: string };
 
 export type SkillNudgeSelectorInput = {

@@ -1,10 +1,22 @@
-
 import { EnvService } from '@core/config/env/env.service';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { TypeOrmModule, getDataSourceToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CustomNamingStrategy } from '../../../_lib/database/custom-naming.strategy';
+import { BrainGateway } from '../../brain-gateway/brain-gateway.service';
+import { JobLifecycleService } from '../../driver/job-lifecycle.service';
+import { JOB_TEARDOWN } from '../../driver/job-teardown.port';
+import {
+  DRIVER_REPO,
+  type DriverRepoResolver,
+  type ResolvedRepo,
+} from '../../driver/repo-resolver';
+import { WorktreeProvisioner } from '../../driver/worktree-provisioner.service';
+import { GithubPrService } from '../../git/github-pr.service';
+import type { FeatureSandbox, ProjectRepo } from '../../git/local-git.service';
+import { LocalGitService } from '../../git/local-git.service';
+import { JobDependencyService } from '../../job-deps/job-dependency.service';
 import { CredentialResolver } from '../../onboarding/credential-resolver.service';
 import { TenantCredentialStore } from '../../onboarding/tenant-credential.store';
 import { DB_CONNECTION } from '../../persistence/database.module';
@@ -22,20 +34,11 @@ import {
   TranscriptMessageEntity,
   UserEntity,
 } from '../../persistence/entities';
-import { TurnRegistry } from '../../sandbox/turn-registry.service';
-import { SkillUpdaterService } from '../../skills/skill-updater.service';
-import { BrainGateway } from '../../brain-gateway/brain-gateway.service';
-import { JobLifecycleService } from '../../driver/job-lifecycle.service';
-import { JOB_TEARDOWN } from '../../driver/job-teardown.port';
-import { DRIVER_REPO, type DriverRepoResolver, type ResolvedRepo } from '../../driver/repo-resolver';
-import { WorktreeProvisioner } from '../../driver/worktree-provisioner.service';
-import type { FeatureSandbox, ProjectRepo } from '../../git/local-git.service';
-import { GithubPrService } from '../../git/github-pr.service';
-import { LocalGitService } from '../../git/local-git.service';
-import { JobDependencyService } from '../../job-deps/job-dependency.service';
-import { OrganizationService } from '../organization.service';
 import { SandboxActivityRegistry } from '../../sandbox/sandbox-activity.registry';
 import { SANDBOX_PROVIDER } from '../../sandbox/sandbox-provider.port';
+import { TurnRegistry } from '../../sandbox/turn-registry.service';
+import { SkillUpdaterService } from '../../skills/skill-updater.service';
+import { OrganizationService } from '../organization.service';
 
 function dbOpts() {
   return {
@@ -53,7 +56,6 @@ function dbOpts() {
     ssl: false as const,
   };
 }
-
 
 class FakeGitService {
   async ensureRepo(input: {
@@ -120,7 +122,6 @@ class FakeSandboxProvider {
     return `/fake/playgrounds/${orgId}/${jobId}`;
   }
 }
-
 
 const ORG_ID = '22222222-2222-4222-8222-222222222222'; // the org under deletion
 const OTHER_ORG_ID = '33333333-3333-4333-8333-333333333333'; // a sibling that must SURVIVE

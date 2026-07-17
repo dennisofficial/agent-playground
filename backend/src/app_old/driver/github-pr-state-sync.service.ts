@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import type { PrStateDelta } from '../../_shared/domain';
 import type { Repository } from 'typeorm';
+import type { PrStateDelta } from '../../_shared/domain';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity } from '../persistence/entities';
 import { StimulusStoreService } from '../stimulus/stimulus-store.service';

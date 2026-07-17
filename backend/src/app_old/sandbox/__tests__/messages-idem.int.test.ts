@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AppOldModule } from '../../app-v1.module';
+import { CLASSIFIER_LLM } from '../../decision-gate/classifier-llm';
 import {
   FakeClassifierLlm,
   FakeEngineRunner,
@@ -23,7 +24,6 @@ import {
   TurnHarnessFactory,
 } from '../../surface/turn-harness.service';
 import { JobTitler } from '../../titling/job-titler.service';
-import { CLASSIFIER_LLM } from '../../decision-gate/classifier-llm';
 
 const TEAM_ID = '66666666-6666-4666-8666-666666666666'; // sentinel org uuid (distinct from sibling tests)
 

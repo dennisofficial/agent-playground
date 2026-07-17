@@ -1,4 +1,3 @@
-
 import { Test, type TestingModule } from '@nestjs/testing';
 import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
@@ -584,7 +583,6 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(stg.tasks.map((t) => t.subject)).toEqual(['Write the migration', 'Wire the handler']);
   });
 
-
   async function seedJobThread(): Promise<{
     jobId: string;
     threadGroupId: string;
@@ -642,7 +640,6 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     await store.setThreadStatus(masterReview.id, 'executing');
     expect(await store.masterReviewThreadId(jobId)).toBe(masterReview.id);
   });
-
 
   async function seedRotationThread(sessionId: string | null): Promise<{
     jobId: string;
@@ -734,7 +731,6 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect((row?.config as { contextTokensPeak?: number }).contextTokensPeak).toBe(120_000);
   });
 
-
   it("resolveSessionAnchor returns the thread's session id + its builder-leg ordinal (no terminal record needed)", async () => {
     const { threadGroupId, threadId } = await seedRotationThread('sess-1');
 
@@ -762,7 +758,6 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(await store.resolveSessionAnchor(threadId)).toBeUndefined();
   });
 
-
   it('maps the nullable `halt` column (tripwire: the test DB is migrated for the job.status split)', async () => {
     const job = await jobs.save(
       jobs.create({
@@ -780,7 +775,6 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     };
     expect(state.halt).toBeNull();
   });
-
 
   async function seedShipParkedJob(): Promise<{
     jobId: string;
@@ -951,7 +945,6 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     }
   });
 
-
   it('markPreviewRequested stamps the active ship card previewRequestedAt (first click wins)', async () => {
     const { jobId, threadId } = await seedShipParkedJob();
     await seedShipCardRow(jobId, threadId);
@@ -1014,7 +1007,6 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       (cardRow?.card as Record<string, unknown> | undefined)?.previewRequestedAt,
     ).toBeUndefined();
   });
-
 
   async function seedBareJob(): Promise<{ jobId: string }> {
     const job = await jobs.save(

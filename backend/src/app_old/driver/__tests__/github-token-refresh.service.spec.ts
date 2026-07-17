@@ -1,4 +1,3 @@
-
 import type { Repository } from 'typeorm';
 import { describe, expect, it, vi } from 'vitest';
 import type { CredentialResolver } from '../../onboarding/credential-resolver.service';

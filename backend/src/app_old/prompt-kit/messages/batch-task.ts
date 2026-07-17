@@ -5,7 +5,6 @@ import type { DriverThread } from '../../driver/driver-store.service';
 import type { ResolvedRepo } from '../../driver/repo-resolver';
 import type { TaskItem } from '../../persistence/entities';
 
-
 export function renderOpenLegTasks(tasks: TaskItem[]): AgentMessage {
   const open = tasks.filter((t) => t.status === 'pending' || t.status === 'in_progress');
   if (!open.length) return agentMessage('');

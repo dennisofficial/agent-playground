@@ -77,7 +77,6 @@ function deriveFailureSummary(tr: ThreadTerminalRecord | null): string | null {
   return tr.summary ?? null;
 }
 
-
 async function atlasQuery(
   ctx: ToolCtx,
   args: {
@@ -109,7 +108,6 @@ async function atlasQuery(
 async function atlasSchema(ctx: ToolCtx): Promise<unknown> {
   return introspectSchema(ctx.ds);
 }
-
 
 async function jobOverview(ctx: ToolCtx, args: { jobId: string }): Promise<unknown> {
   const job = await loadJob(ctx, args.jobId);
@@ -150,7 +148,6 @@ async function jobOverview(ctx: ToolCtx, args: { jobId: string }): Promise<unkno
     })),
   };
 }
-
 
 interface SessionRawArgs {
   jobId: string;
@@ -221,7 +218,6 @@ function requireSessionFile(
   return { sessionId, path };
 }
 
-
 interface TreeEntry {
   path: string;
   type: 'file' | 'dir';
@@ -269,7 +265,6 @@ function readFileCapped(path: string): string {
   return readFileSync(path, 'utf8');
 }
 
-
 const CONTEXT_SUBDIRS = ['specs', 'generated', 'artifacts', 'evidence'];
 
 async function contextRead(ctx: ToolCtx, args: { jobId: string; path?: string }): Promise<unknown> {
@@ -299,7 +294,6 @@ async function contextRead(ctx: ToolCtx, args: { jobId: string; path?: string })
   }
   return { root, path: args.path, content: readFileCapped(resolved) };
 }
-
 
 const WORKTREE_SKIP_DIRS = new Set(['.git', 'node_modules']);
 
@@ -332,7 +326,6 @@ async function worktreeFile(ctx: ToolCtx, args: { jobId: string; path: string })
     content: readFileCapped(target),
   };
 }
-
 
 export const TOOL_DEFS: Tool[] = [
   {

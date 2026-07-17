@@ -12,11 +12,10 @@ import { FakeClassifierLlm, FakeGithubPrService, FakeLocalGitService } from '../
 import { GithubPrService } from '../../git/github-pr.service';
 import { LocalGitService } from '../../git/local-git.service';
 import { DB_CONNECTION } from '../../persistence/database.module';
-import { SANDBOX_PROVIDER } from '../../sandbox/sandbox-provider.port';
 import { RedisEngineRunner } from '../../sandbox/redis-engine-runner';
+import { SANDBOX_PROVIDER } from '../../sandbox/sandbox-provider.port';
 import { LiveTurnStore } from '../live-turn-store';
 import { WebSurfaceController } from '../web-surface.controller';
-
 
 const ORG_ID = '33333333-3333-4333-8333-333333333333';
 const REPO_SLUG = 'streaming-resume-it';

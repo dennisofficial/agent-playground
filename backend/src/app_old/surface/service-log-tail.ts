@@ -48,6 +48,5 @@ export function openTailFd(path: string): number {
 export function closeTailFd(fd: number): void {
   try {
     closeSync(fd);
-  } catch {
-  }
+  } catch {}
 }

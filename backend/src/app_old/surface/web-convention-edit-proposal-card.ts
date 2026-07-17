@@ -1,4 +1,3 @@
-
 export interface WebConventionEditProposalCard {
   type: 'convention_edit_proposal_card';
   jobId: string;

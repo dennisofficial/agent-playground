@@ -1,5 +1,7 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
+import { REDIS_STREAM_PORT, type RedisStreamPort } from '../../_lib/redis/redis.port';
 import type { SessionEngine } from '../../_shared/domain';
 import {
   AUTH_REFRESH_SINK,
@@ -19,8 +21,6 @@ import type {
 } from '../../_shared/engine/engine.types';
 import { SPEC_VERBATIM_KEYS, pickKeys } from '../../_shared/engine/engine.types';
 import { dispatchToolRequest } from '../../_shared/engine/tool-bridge-host';
-import { randomUUID } from 'node:crypto';
-import { REDIS_STREAM_PORT, type RedisStreamPort } from '../../_lib/redis/redis.port';
 import { gitAuthEnv, gitCredHelperEnv } from '../git/git-auth';
 import {
   CredentialNeedsReauthError,

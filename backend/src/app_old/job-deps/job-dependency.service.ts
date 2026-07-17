@@ -6,8 +6,8 @@ import {
   Optional,
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import type { UnblockBlockerInfo } from '../../_shared/domain/message';
 import { DataSource, Repository } from 'typeorm';
+import type { UnblockBlockerInfo } from '../../_shared/domain/message';
 import { BrainGateway } from '../brain-gateway/brain-gateway.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobDependencyEntity, JobEntity } from '../persistence/entities';
