@@ -10,7 +10,6 @@ import {
   GitBranch,
   KeyRound,
   Layers,
-  Menu,
   Plug,
   Settings as SettingsIcon,
   Sparkles,
@@ -19,11 +18,10 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { ROUTES, type SettingsSection } from "@/lib/routes";
-import { BrandLockup } from "@/components/ui/brand";
-import { AccountMenu } from "@/features/shell/components/account-menu";
+import { TopBar } from "@/features/shell/components/top-bar";
 import { useOrg, useOrgs, type OrgSummary } from "@/lib/api/me";
-import { orgSwatch, orgInitials, roleLabel } from "@/lib/org-display";
-import { useBreakpoint } from "@/lib/use-breakpoint";
+import { orgSwatch, roleLabel } from "@/utils/org-display";
+import { useBreakpoint } from "@/hooks/use-breakpoint";
 import { Drawer } from "@/components/ui/drawer";
 
 const NAV: { id: SettingsSection; label: string; icon: typeof SettingsIcon }[] =
@@ -50,10 +48,11 @@ function sectionFromPath(pathname: string): SettingsSection {
 }
 
 /**
- * Settings shell — a shared App Router layout that renders the top bar + section nav ONCE and persists it
- * across per-section navigation; only the routed `{children}` (the section page) swaps. Resolves the
- * targeted org by id from the session, and owns the shared loading / not-found states so each leaf page
- * can assume the org exists.
+ * Settings shell — a shared App Router layout that renders the app-wide top bar (the same `TopBar` as the
+ * job workspace) + the settings section nav ONCE and persists it across per-section navigation; only the
+ * routed `{children}` (the section page) swaps. The org switcher lives in the nav header (not the top bar),
+ * so hopping between orgs' settings stays next to the section list. Resolves the targeted org by id from
+ * the session, and owns the shared loading / not-found states so each leaf page can assume the org exists.
  */
 export default function OrgSettingsLayout({
   children,
@@ -75,54 +74,13 @@ export default function OrgSettingsLayout({
     if (!isMobile) setNavOpen(false);
   }, [isMobile]);
 
+  const switchOrg = (id: string) => {
+    if (id !== orgId) router.push(ROUTES.orgSettings(id, section));
+  };
+
   return (
     <>
-      {/* Top bar */}
-      <header
-        className="flex h-[52px] shrink-0 items-center gap-2 border-b border-border px-4 backdrop-blur sm:gap-3.5"
-        style={{
-          background: "color-mix(in srgb, var(--panel) 82%, transparent)",
-        }}
-      >
-        <button
-          type="button"
-          onClick={() => setNavOpen(true)}
-          aria-label="Open settings navigation"
-          className="grid h-9 w-9 flex-none -ml-1 place-items-center rounded-md text-dim transition hover:bg-surface-2 md:hidden"
-        >
-          <Menu size={17} />
-        </button>
-        <Link
-          href={ROUTES.workspace()}
-          aria-label="Back to workspace"
-          className="flex-none"
-        >
-          <BrandLockup size="sm" />
-        </Link>
-        <span
-          className="hidden h-[18px] w-px sm:block"
-          style={{ background: "var(--border-2)" }}
-        />
-        <div className="flex min-w-0 items-center gap-2 font-mono text-[11px] text-dim">
-          <OrgSwitcher
-            orgs={orgs}
-            currentId={orgId}
-            currentName={org?.name}
-            onSwitch={(id) => {
-              if (id !== orgId) router.push(ROUTES.orgSettings(id, section));
-            }}
-          />
-          <span className="flex-none text-border-2">/</span>
-          <span className="flex-none text-text">Settings</span>
-        </div>
-        <div className="flex-1" />
-        {org?.role === "member" ? (
-          <span className="rounded-full border border-border-2 bg-surface-2 px-2.5 py-[3px] font-mono text-[9px] text-dim">
-            member
-          </span>
-        ) : null}
-        <AccountMenu />
-      </header>
+      <TopBar onOpenSidebar={() => setNavOpen(true)} />
 
       <div className="flex min-h-0 flex-1">
         {/* Settings nav */}
@@ -137,7 +95,9 @@ export default function OrgSettingsLayout({
               inDrawer
               orgId={orgId}
               org={org}
+              orgs={orgs}
               section={section}
+              onSwitchOrg={switchOrg}
               setNavOpen={setNavOpen}
             />
           </Drawer>
@@ -145,7 +105,9 @@ export default function OrgSettingsLayout({
           <OrgSettingsNav
             orgId={orgId}
             org={org}
+            orgs={orgs}
             section={section}
+            onSwitchOrg={switchOrg}
             setNavOpen={setNavOpen}
           />
         )}
@@ -180,18 +142,23 @@ export default function OrgSettingsLayout({
   );
 }
 
-/** The settings section nav — rendered inline (desktop) or inside the mobile drawer (`inDrawer`). */
+/** The settings section nav — rendered inline (desktop) or inside the mobile drawer (`inDrawer`). Its
+ *  header is the org switcher: the current org plus a dropdown to hop to any other org's settings. */
 function OrgSettingsNav({
   inDrawer,
   orgId,
   org,
+  orgs,
   section,
+  onSwitchOrg,
   setNavOpen,
 }: {
   inDrawer?: boolean;
   orgId: string;
   org: OrgSummary | undefined;
+  orgs: OrgSummary[];
   section: SettingsSection;
+  onSwitchOrg: (orgId: string) => void;
   setNavOpen: (open: boolean) => void;
 }) {
   return (
@@ -204,26 +171,16 @@ function OrgSettingsNav({
         background: "color-mix(in srgb, var(--panel) 60%, transparent)",
       }}
     >
-      <div className="flex items-center gap-2.5 px-2 pb-3 pt-1.5">
-        <span
-          className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-lg font-disp text-[14px] font-semibold text-white"
-          style={{ background: org ? orgSwatch() : "var(--border-2)" }}
-        >
-          {org ? orgInitials(org.name) : "·"}
-        </span>
-        <div className="min-w-0">
-          <div className="truncate text-[12.5px] font-semibold text-text">
-            {org?.name ?? "—"}
-          </div>
-          <div
-            className="font-mono text-[8.5px]"
-            style={{
-              color: org?.status === "active" ? "var(--green)" : "var(--faint)",
-            }}
-          >
-            {org?.status ?? "—"}
-          </div>
-        </div>
+      <div className="px-1 pb-3 pt-0.5">
+        <OrgSwitcher
+          orgs={orgs}
+          currentId={orgId}
+          org={org}
+          onSwitch={(id) => {
+            setNavOpen(false);
+            onSwitchOrg(id);
+          }}
+        />
       </div>
       <div className="px-2 pb-1.5 pt-1 font-mono text-[9px] tracking-[0.16em] text-faint">
         ORGANIZATION
@@ -258,19 +215,19 @@ function OrgSettingsNav({
 }
 
 /**
- * Breadcrumb org switcher — turns the `OrgName / Settings` crumb into a dropdown so the operator can hop
- * between their orgs' settings without going back to the shell. Selecting an org navigates to that org's
- * settings route preserving the active section. Lists every org the operator belongs to, current checked.
+ * Org switcher — the nav header. Shows the current org (swatch + name + status) as a full-width trigger and
+ * drops down a list of every org the operator belongs to; selecting one navigates to that org's settings
+ * preserving the active section. Replaces the former top-bar breadcrumb switcher.
  */
 function OrgSwitcher({
   orgs,
   currentId,
-  currentName,
+  org,
   onSwitch,
 }: {
   orgs: OrgSummary[];
   currentId: string;
-  currentName: string | undefined;
+  org: OrgSummary | undefined;
   onSwitch: (orgId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -286,11 +243,11 @@ function OrgSwitcher({
   }, []);
 
   return (
-    <div className="relative min-w-0" ref={ref}>
+    <div className="relative" ref={ref}>
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex min-w-0 max-w-full items-center gap-1.5 rounded-[5px] border px-1.5 py-[3px] transition"
+        className="flex w-full items-center gap-2.5 rounded-md border px-2 py-1.5 text-left transition"
         style={
           open
             ? {
@@ -299,16 +256,28 @@ function OrgSwitcher({
               }
             : { background: "var(--surface)", borderColor: "var(--border)" }
         }
+        aria-haspopup="listbox"
+        aria-expanded={open}
       >
         <span
-          className="h-2 w-2 shrink-0 rounded-[2px]"
-          style={{ background: currentName ? orgSwatch() : "var(--faint)" }}
+          className="h-2.5 w-2.5 shrink-0 rounded-[3px]"
+          style={{ background: org ? orgSwatch() : "var(--faint)" }}
         />
-        <span className="truncate text-text">
-          {currentName ?? "Organization"}
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[12.5px] font-semibold text-text">
+            {org?.name ?? "Organization"}
+          </span>
+          <span
+            className="block font-mono text-[8.5px]"
+            style={{
+              color: org?.status === "active" ? "var(--green)" : "var(--faint)",
+            }}
+          >
+            {org?.status ?? "—"}
+          </span>
         </span>
         <ChevronDown
-          size={11}
+          size={13}
           className={cn(
             "shrink-0 transition",
             open ? "text-accent" : "text-faint",
@@ -319,7 +288,7 @@ function OrgSwitcher({
 
       {open ? (
         <div
-          className="absolute left-0 top-[calc(100%+6px)] z-50 w-[236px] overflow-hidden rounded-md border border-border bg-panel py-1"
+          className="absolute left-0 right-0 top-[calc(100%+6px)] z-50 overflow-hidden rounded-md border border-border bg-panel py-1"
           style={{ boxShadow: "var(--shadow-menu)" }}
         >
           <div className="px-3 pb-1 pt-1.5 font-mono text-[8.5px] tracking-[0.12em] text-faint">

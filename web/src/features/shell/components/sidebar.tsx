@@ -16,7 +16,6 @@ import {
   type JobSection,
 } from "@/lib/api/job-section";
 import { CiStatusDot, PrStatusIcon, StatusPie } from "@/components/ui/badges";
-import { AccountMenu } from "./account-menu";
 
 /**
  * The workspace sidebar (272px) — a strict three-tier tree: ORGANIZATION (centered uppercase divider) →
@@ -228,11 +227,7 @@ export function Sidebar({
       )}
       style={{ background: "var(--surface-2)" }}
     >
-      <div className="flex-none px-3 pb-2.5 pt-3.5">
-        <AccountMenu variant="sidebar" />
-      </div>
-
-      <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-1.5 pb-3 pt-2">
+      <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-1.5 pb-3 pt-3">
         {/* Dashboard — flat row, no card. */}
         <Link
           href={ROUTES.workspace()}

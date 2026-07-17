@@ -44,8 +44,8 @@ import {
   type LiveBlock,
   type LiveTurn,
 } from "@/lib/api/job-stream";
-import { formatClockTime, formatTokens } from "@/lib/org-display";
-import { assertNever } from "@/lib/assert";
+import { formatClockTime, formatTokens } from "@/utils/org-display";
+import { assertNever } from "@/utils/assert";
 
 /** Per-type tone for {@link MessageTime} — distinct colors so the operator can tell turn boundaries from
  *  in-turn blocks at a glance (the user wants to eyeball density/color before we tune it down). */

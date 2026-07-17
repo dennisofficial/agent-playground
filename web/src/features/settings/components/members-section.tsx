@@ -2,7 +2,7 @@
 
 import { UserPlus } from "lucide-react";
 import { useOrgMembers, type Member } from "@/lib/api/orgs";
-import { orgColor, orgInitials, roleLabel } from "@/lib/org-display";
+import { orgColor, orgInitials, roleLabel } from "@/utils/org-display";
 
 /**
  * Members — the org's people + roles. Read-only this phase: invites exist server-side but are gated

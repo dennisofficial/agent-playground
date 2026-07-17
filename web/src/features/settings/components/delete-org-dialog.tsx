@@ -8,25 +8,23 @@ import { useDeleteOrg } from "@/lib/api/orgs";
 import { ROUTES } from "@/lib/routes";
 
 /**
- * Type-the-slug-to-confirm delete dialog. Confirming hits `DELETE /web/orgs/:orgId` (owner-only), which
+ * Type-the-name-to-confirm delete dialog. Confirming hits `DELETE /web/orgs/:orgId` (owner-only), which
  * tears down the org's repos, threads, and live agent sessions. On success we route to the workspace (the
  * deleted org's settings page no longer resolves).
  */
 export function DeleteOrgDialog({
   orgId,
   orgName,
-  slug,
   onClose,
 }: {
   orgId: string;
   orgName: string;
-  slug: string;
   onClose: () => void;
 }) {
   const router = useRouter();
   const del = useDeleteOrg(orgId);
   const [text, setText] = useState("");
-  const armed = text.trim() === slug;
+  const armed = text.trim() === orgName;
 
   function confirmDelete() {
     if (!armed || del.isPending) return;
@@ -72,7 +70,7 @@ export function DeleteOrgDialog({
             thread. Running agent sessions are torn down. This cannot be undone.
           </p>
           <p className="mb-1.5 text-[11.5px] text-dim">
-            Type <span className="font-mono text-text">{slug}</span> to confirm:
+            Type <span className="font-mono text-text">{orgName}</span> to confirm:
           </p>
           <input
             value={text}
@@ -83,7 +81,7 @@ export function DeleteOrgDialog({
             onKeyDown={(e) => {
               if (e.key === "Enter") confirmDelete();
             }}
-            placeholder={slug}
+            placeholder={orgName}
             className={inputCls}
             autoFocus
           />

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { inputCls } from "@/components/ui/field";
-import { orgSwatch, orgInitials, slugify } from "@/lib/org-display";
+import { orgSwatch, orgInitials } from "@/utils/org-display";
 import type { OrgSummary } from "@/lib/api/me";
 import { useUpdateOrg } from "@/lib/api/orgs";
 import { DeleteOrgDialog } from "./delete-org-dialog";
@@ -14,22 +14,20 @@ import { DeleteOrgDialog } from "./delete-org-dialog";
  */
 export function GeneralSection({ org }: { org: OrgSummary }) {
   const [name, setName] = useState(org.name);
-  const [slug, setSlug] = useState(org.slug);
   const [showDelete, setShowDelete] = useState(false);
   const active = org.status === "active";
   const isOwner = org.role === "owner";
   const update = useUpdateOrg(org.id);
-  const dirty = name.trim() !== org.name || slug !== org.slug;
+  const dirty = name.trim() !== org.name;
 
   function onName(v: string) {
     setName(v);
-    setSlug(slugify(v));
     update.reset();
   }
 
   function save() {
     if (!isOwner || !dirty || update.isPending) return;
-    update.mutate({ name: name.trim(), slug });
+    update.mutate({ name: name.trim() });
   }
 
   return (
@@ -64,24 +62,6 @@ export function GeneralSection({ org }: { org: OrgSummary }) {
               onChange={(e) => onName(e.target.value)}
               className={inputCls}
             />
-          </div>
-          <div>
-            <label className="mb-1.5 block text-[12px] font-medium text-dim">
-              Slug
-            </label>
-            <div className="flex items-center overflow-hidden rounded-md border border-border-2 bg-surface-2">
-              <span className="py-2.5 pl-3 font-mono text-[12.5px] text-faint">
-                atlas.dev/
-              </span>
-              <input
-                value={slug}
-                onChange={(e) => {
-                  setSlug(slugify(e.target.value));
-                  update.reset();
-                }}
-                className="flex-1 bg-transparent py-2.5 pl-px pr-3 font-mono text-[12.5px] font-semibold text-accent outline-none"
-              />
-            </div>
           </div>
           <div className="flex items-center gap-2.5">
             <span className="text-[12px] text-dim">Status</span>
@@ -192,7 +172,6 @@ export function GeneralSection({ org }: { org: OrgSummary }) {
         <DeleteOrgDialog
           orgId={org.id}
           orgName={org.name}
-          slug={org.slug}
           onClose={() => setShowDelete(false)}
         />
       ) : null}

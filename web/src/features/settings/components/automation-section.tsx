@@ -1,42 +1,39 @@
 "use client";
 
-import { useState } from "react";
-import {
-  type AutoApproveMode,
-  modeApprovesPlan,
-  modeApprovesShip,
-} from "@workspace/shared";
-import { composeMode } from "@/features/job-workspace/auto-approve-mode";
 import { SwitchRow } from "@/features/job-workspace/auto-approve-popover";
 import type { OrgSummary } from "@/lib/api/me";
 import { useUpdateOrg } from "@/lib/api/orgs";
+import { useState } from "react";
 
 /**
  * Automation settings — the org-level defaults a new job inherits at creation (the create-job form seeds
- * its Plan/Ship/Merge toggles from these). Owner-only, same PATCH /web/orgs/:orgId as General.
+ * its Plan/Ship/Merge toggles from these). Owner-only, same PATCH /web/orgs/:orgId as General. Each of the
+ * three toggles maps 1:1 to a backend boolean default.
  */
 export function AutomationSection({ org }: { org: OrgSummary }) {
   const isOwner = org.role === "owner";
   const update = useUpdateOrg(org.id);
-  const [mode, setMode] = useState<AutoApproveMode>(org.defaultAutoApproveMode);
+  const [autoApprove, setAutoApprove] = useState(org.defaultAutoApprove);
+  const [autoShip, setAutoShip] = useState(org.defaultAutoShip);
   const [autoMerge, setAutoMerge] = useState(org.defaultAutoMerge);
 
   const dirty =
-    mode !== org.defaultAutoApproveMode || autoMerge !== org.defaultAutoMerge;
+    autoApprove !== org.defaultAutoApprove ||
+    autoShip !== org.defaultAutoShip ||
+    autoMerge !== org.defaultAutoMerge;
 
-  function onMode(next: AutoApproveMode) {
-    setMode(next);
-    update.reset();
-  }
-
-  function onAutoMerge(next: boolean) {
-    setAutoMerge(next);
+  function toggle(setter: (v: boolean) => void, next: boolean) {
+    setter(next);
     update.reset();
   }
 
   function save() {
     if (!isOwner || !dirty || update.isPending) return;
-    update.mutate({ defaultAutoApproveMode: mode, defaultAutoMerge: autoMerge });
+    update.mutate({
+      defaultAutoApprove: autoApprove,
+      defaultAutoShip: autoShip,
+      defaultAutoMerge: autoMerge,
+    });
   }
 
   return (
@@ -58,24 +55,24 @@ export function AutomationSection({ org }: { org: OrgSummary }) {
         <SwitchRow
           title="Plan"
           description="Approve the plan / direct-build gate automatically"
-          checked={modeApprovesPlan(mode)}
+          checked={autoApprove}
           first
           testId="org-default-auto-approve-plan"
-          onChange={(next) => onMode(composeMode(next, modeApprovesShip(mode)))}
+          onChange={(next) => toggle(setAutoApprove, next)}
         />
         <SwitchRow
           title="Ship"
           description="Approve the ship-review gate automatically"
-          checked={modeApprovesShip(mode)}
+          checked={autoShip}
           testId="org-default-auto-approve-ship"
-          onChange={(next) => onMode(composeMode(modeApprovesPlan(mode), next))}
+          onChange={(next) => toggle(setAutoShip, next)}
         />
         <SwitchRow
           title="Merge"
           description="Merge the PR automatically once it's green & mergeable"
           checked={autoMerge}
           testId="org-default-auto-merge"
-          onChange={onAutoMerge}
+          onChange={(next) => toggle(setAutoMerge, next)}
         />
       </div>
 

@@ -30,7 +30,7 @@ import { CommentTray } from "./comment-tray";
 import { QueuedTray } from "./queued-tray";
 import { StagedAnswersTray } from "./staged-answers-tray";
 import { useReviewComments, type ReviewComment } from "./review-comments";
-import { formatEffort, formatModelLabel } from "@/lib/format";
+import { formatEffort, formatModelLabel } from "@/utils/format";
 
 /** Map one staged answer to the wire shape `/message` expects (drops the chip-only `label`). */
 function toMessageItem(a: StagedAnswer): MessageInput {

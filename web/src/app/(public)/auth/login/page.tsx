@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Field, PasswordField } from "@/components/ui/field";
 import { auth } from "@/lib/auth";
 import { ROUTES, safeNext } from "@/lib/routes";
-import { validateEmail, validatePasswordRequired } from "@/lib/validation";
+import { validateEmail, validatePasswordRequired } from "@/utils/validation";
 
 export default function LoginPage() {
   const router = useRouter();

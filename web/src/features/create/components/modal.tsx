@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, type ReactNode } from "react";
 import { X } from "lucide-react";
-import { useBreakpoint } from "@/lib/use-breakpoint";
+import { useBreakpoint } from "@/hooks/use-breakpoint";
 import { cn } from "@/lib/cn";
 
 /**

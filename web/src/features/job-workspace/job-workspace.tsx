@@ -8,7 +8,7 @@ import {
   useDefaultLayout,
   useGroupRef,
 } from "react-resizable-panels";
-import { useBreakpoint } from "@/lib/use-breakpoint";
+import { useBreakpoint } from "@/hooks/use-breakpoint";
 import { Drawer } from "@/components/ui/drawer";
 import { useAllJobs } from "@/lib/api/inbox";
 import {
@@ -24,7 +24,7 @@ import {
 import { useJobEvents } from "@/lib/api/job-events";
 import { MAIN_LANE } from "@/lib/api/job-stream";
 import { toJobKind, toJobStatus } from "@/lib/api/status";
-import { orgSwatch } from "@/lib/org-display";
+import { orgSwatch } from "@/utils/org-display";
 import { pipelineJob, type JobRef } from "@/lib/api/job-api";
 import {
   APPROVE_ACTION_ID,

@@ -8,7 +8,7 @@ import { Markdown } from "./markdown";
 import { useMessage } from "@/lib/api/job-queries";
 import type { JobRef } from "@/lib/api/job-api";
 import type { WebQuestionCard } from "@/lib/api/types";
-import { isSubmitCombo } from "@/lib/keyboard";
+import { isSubmitCombo } from "@/utils/keyboard";
 import {
   composerStore,
   useComposerStagedAnswers,

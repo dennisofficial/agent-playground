@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { formatTokens } from "@/lib/org-display";
+import { formatTokens } from "@/utils/org-display";
 import type { ContextBreakdown } from "@/lib/api/job-stream";
 import { ContextBreakdownPanel } from "./context-breakdown-panel";
 

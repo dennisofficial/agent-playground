@@ -21,7 +21,7 @@ import {
   useSpinUpPreview,
 } from "@/lib/api/job-queries";
 import type { JobRef } from "@/lib/api/job-api";
-import { isSubmitCombo } from "@/lib/keyboard";
+import { isSubmitCombo } from "@/utils/keyboard";
 import {
   AMEND_APPROVE_ACTION_ID,
   AMEND_DISMISS_ACTION_ID,

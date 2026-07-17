@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { auth } from "@/lib/auth";
 import { ROUTES } from "@/lib/routes";
-import { validateEmail } from "@/lib/validation";
+import { validateEmail } from "@/utils/validation";
 
 export default function ForgotPage() {
   const [email, setEmail] = useState("");

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { StatusPie } from "@/components/ui/badges";
-import { orgSwatch } from "@/lib/org-display";
+import { orgSwatch } from "@/utils/org-display";
 import { threadHref } from "@/lib/routes";
 import { STATUS_META } from "@/lib/api/status";
 import type { InboxThread } from "@/lib/api/inbox";

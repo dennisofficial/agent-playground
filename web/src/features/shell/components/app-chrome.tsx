@@ -7,7 +7,7 @@ import { TopBar } from "./top-bar";
 import { CommandPalette } from "./command-palette";
 import { useAllJobsRealtime } from "@/lib/api/all-jobs-realtime";
 import { useDraftsRealtime } from "@/lib/api/draft-realtime";
-import { useBreakpoint } from "@/lib/use-breakpoint";
+import { useBreakpoint } from "@/hooks/use-breakpoint";
 import { Drawer } from "@/components/ui/drawer";
 import { LeftNavProvider } from "@/features/shell/left-nav";
 import { OutboxFlusher } from "@/features/job-workspace/outbox-flusher";

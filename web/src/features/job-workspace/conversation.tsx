@@ -24,7 +24,7 @@ import {
   UserBubble,
 } from "./bubbles";
 import { ToolGroup, segmentToolRun, type ToolItem } from "./tool-calls";
-import { assertNever } from "@/lib/assert";
+import { assertNever } from "@/utils/assert";
 import { ApprovalCardView, VerdictCardView } from "./approval-card";
 import { QuestionCardView } from "./question-card";
 import { SecretCardView } from "./secret-card";

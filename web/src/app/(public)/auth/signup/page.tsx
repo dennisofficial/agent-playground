@@ -18,7 +18,7 @@ import {
   validateEmail,
   validateNameRequired,
   validatePasswordMin,
-} from "@/lib/validation";
+} from "@/utils/validation";
 
 export default function SignupPage() {
   const router = useRouter();

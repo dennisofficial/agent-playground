@@ -2,7 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useCredentialUsage, useOrgUsage } from "@/lib/api/orgs";
-import { formatClockTime } from "@/lib/org-display";
+import { formatClockTime } from "@/utils/org-display";
 import type { WireOrgUsage } from "@/lib/api/types";
 
 type UsageWindow = WireOrgUsage["fiveHour"];

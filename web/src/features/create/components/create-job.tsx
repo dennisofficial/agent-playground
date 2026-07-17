@@ -23,9 +23,9 @@ import { SwitchRow } from "@/features/job-workspace/auto-approve-popover";
 import { useAttachments } from "@/features/job-workspace/use-attachments";
 import { useFileDrop } from "@/features/job-workspace/use-file-drop";
 import { AttachmentTray } from "@/features/job-workspace/attachment-tray";
-import { orgSwatch, orgInitials } from "@/lib/org-display";
+import { orgSwatch, orgInitials } from "@/utils/org-display";
 import { ROUTES, threadHref } from "@/lib/routes";
-import { isSubmitCombo } from "@/lib/keyboard";
+import { isSubmitCombo } from "@/utils/keyboard";
 
 /**
  * Create-thread form — shared by the `@dialog` modal and the `/new` full-page fallback (single source).
@@ -87,7 +87,9 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
   const selectedOrg = orgs.find((o) => o.id === orgId);
   useEffect(() => {
     if (!selectedOrg) return;
-    setAutoApproveMode(selectedOrg.defaultAutoApproveMode ?? "off");
+    setAutoApproveMode(
+      composeMode(selectedOrg.defaultAutoApprove, selectedOrg.defaultAutoShip),
+    );
     setAutoMerge(selectedOrg.defaultAutoMerge ?? false);
   }, [selectedOrg?.id]);
 

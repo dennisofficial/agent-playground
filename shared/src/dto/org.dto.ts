@@ -3,7 +3,6 @@
  * response shapes are interfaces.
  */
 import { IsBoolean, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
-import type { EOrgRole, EOrgStatus } from '../enums';
 
 // ── Requests ──
 
@@ -44,8 +43,10 @@ export class UpdateOrgDto {
 export interface OrgSummary {
   id: string;
   name: string;
-  status: EOrgStatus;
-  role: EOrgRole;
+  /** `EOrgStatus` value on the wire ('onboarding' | 'active' | 'suspended'). */
+  status: string;
+  /** The caller's `EOrgRole` value in this org ('owner' | 'member'). */
+  role: string;
   defaultAutoApprove: boolean;
   defaultAutoShip: boolean;
   defaultAutoMerge: boolean;
@@ -56,5 +57,6 @@ export interface MemberView {
   userId: string;
   email: string;
   name: string | null;
-  role: EOrgRole;
+  /** `EOrgRole` value on the wire ('owner' | 'member'). */
+  role: string;
 }

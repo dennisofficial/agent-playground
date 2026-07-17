@@ -7,13 +7,7 @@ import {
   useUpdateOrgMutation,
 } from "@/redux/query/api/org.api";
 import { env } from "@/lib/env";
-import {
-  modeApprovesPlan,
-  modeApprovesShip,
-  type AutoApproveMode,
-  type AutoMergeMethod,
-  type UpdateOrgDto,
-} from "@workspace/shared";
+import { type AutoMergeMethod, type UpdateOrgDto } from "@workspace/shared";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { adaptMutation, adaptQuery, type MutationResultLike } from "./_stub";
 import { useMutation, useQuery, useQueryClient } from "./_tanstack-shim";
@@ -811,42 +805,14 @@ export function useMcpOAuthConnect(orgId: string) {
  *  invalidates SESSION so `useCurrentUser`'s org list refetches. */
 export function useCreateOrg(): MutationResultLike<OrgSummary, string> {
   const [trigger, state] = useCreateOrgMutation();
-  return adaptMutation([
-    (name: string) => trigger({ name }),
-    state,
-  ]) as unknown as MutationResultLike<OrgSummary, string>;
+  return adaptMutation([(name: string) => trigger({ name }), state]);
 }
 
-/** Body for `PATCH /web/orgs/:orgId` — rename, re-slug, and/or set automation defaults (owner only). */
-export interface UpdateOrgBody {
-  name?: string;
-  slug?: string;
-  defaultAutoApproveMode?: AutoApproveMode;
-  defaultAutoMerge?: boolean;
-}
-
-/** Bridge the legacy web update body (slug + 4-value mode) to the backend's UpdateOrgDto (two booleans).
- *  `slug` is dropped (the backend no longer stores it); the mode splits into plan/ship flags. */
-function toUpdateOrgDto(body: UpdateOrgBody): UpdateOrgDto {
-  return {
-    name: body.name,
-    defaultAutoMerge: body.defaultAutoMerge,
-    ...(body.defaultAutoApproveMode !== undefined
-      ? {
-          defaultAutoApprove: modeApprovesPlan(body.defaultAutoApproveMode),
-          defaultAutoShip: modeApprovesShip(body.defaultAutoApproveMode),
-        }
-      : {}),
-  };
-}
-
-/** Owner-only rename / automation-defaults update. WIRED (RTK): PATCH /web/orgs/:orgId. */
-export function useUpdateOrg(orgId: string): MutationResultLike<OrgSummary, UpdateOrgBody> {
+/** Owner-only rename / automation-defaults update. WIRED (RTK): PATCH /web/orgs/:orgId.
+ *  Takes the shared `UpdateOrgDto` (name + the three auto-* booleans) directly. */
+export function useUpdateOrg(orgId: string): MutationResultLike<OrgSummary, UpdateOrgDto> {
   const [trigger, state] = useUpdateOrgMutation();
-  return adaptMutation([
-    (body: UpdateOrgBody) => trigger({ orgId, body: toUpdateOrgDto(body) }),
-    state,
-  ]) as unknown as MutationResultLike<OrgSummary, UpdateOrgBody>;
+  return adaptMutation([(body: UpdateOrgDto) => trigger({ orgId, body }), state]);
 }
 
 /** Owner-only delete — tears down the org's repos, threads, and live agent sessions. Irreversible.

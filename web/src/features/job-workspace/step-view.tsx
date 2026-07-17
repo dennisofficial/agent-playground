@@ -4,14 +4,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { ArrowRight, Check, Copy, FileText, PanelRight } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { formatBytes } from "@/lib/format";
+import { formatBytes } from "@/utils/format";
 import {
   useContextFile,
   useRepoFile,
   useRepoTree,
   useServices,
 } from "@/lib/api/job-queries";
-import { threadTitle } from "@/lib/thread-title";
+import { threadTitle } from "@/utils/thread-title";
 import { VerdictButtons } from "./approval-card";
 import { Markdown } from "./markdown";
 import {

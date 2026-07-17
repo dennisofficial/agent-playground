@@ -7,7 +7,7 @@ import {
   type BrowserContext,
   type Locator,
 } from "@playwright/test";
-import { BREAKPOINTS } from "@/lib/use-breakpoint";
+import { BREAKPOINTS } from "@/hooks/use-breakpoint";
 import { encodeJobRef } from "@/lib/routes";
 
 /**

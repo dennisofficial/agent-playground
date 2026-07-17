@@ -35,7 +35,7 @@ import {
   StatusPie,
 } from "@/components/ui/badges";
 import { STATUS_META } from "@/lib/api/status";
-import { formatBytes } from "@/lib/format";
+import { formatBytes } from "@/utils/format";
 import { cn } from "@/lib/cn";
 import { pipelineJob, resolveJob, ThreadApiError } from "@/lib/api/job-api";
 import { isOutputGroupHidden } from "./output-group";

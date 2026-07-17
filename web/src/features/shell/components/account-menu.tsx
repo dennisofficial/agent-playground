@@ -3,8 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Building2, LogOut, Settings } from "lucide-react";
-import { useCurrentUser, useOrgs, type CurrentUser } from "@/lib/api/me";
-import { orgSwatch } from "@/lib/org-display";
+import { useCurrentUser, useOrgs } from "@/lib/api/me";
+import { orgSwatch } from "@/utils/org-display";
 import { auth } from "@/lib/auth";
 import { ROUTES } from "@/lib/routes";
 import { CreateOrgDialog } from "./create-org-dialog";
@@ -32,30 +32,13 @@ function identityFromEmail(email: string | undefined): {
   return { name, email, initials };
 }
 
-/** First name for the sidebar greeting — the session name if present, else the email handle. Capitalized. */
-function firstNameOf(
-  me: CurrentUser | undefined,
-  fallbackName: string,
-): string {
-  const raw = (
-    me?.name?.trim().split(/\s+/)[0] ||
-    fallbackName.split(" ")[0] ||
-    "there"
-  ).trim();
-  return raw ? raw.charAt(0).toUpperCase() + raw.slice(1) : "there";
-}
-
 /**
- * Account menu — the avatar/greeting trigger + a panel (signed-in-as · org settings · create org · sign
- * out). Shared by the sidebar header (`variant="sidebar"`: avatar + "What's next, {name}?") and the
- * settings top bar (`variant="avatar"`: a round initials button). Settings is per-org and this is one of
- * its entry points, so it targets the operator's primary org (owned first, else joined).
+ * Account menu — a round initials-avatar trigger + a right-aligned panel (signed-in-as · org settings ·
+ * create org · theme · sign out). Lives in the shared top bar (app chrome + settings shell). Settings is
+ * per-org and this is one of its entry points, so it targets the operator's primary org (owned first, else
+ * joined).
  */
-export function AccountMenu({
-  variant = "avatar",
-}: {
-  variant?: "avatar" | "sidebar";
-}) {
+export function AccountMenu() {
   const [open, setOpen] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -80,44 +63,24 @@ export function AccountMenu({
     window.location.assign(ROUTES.auth.signedOut());
   }
 
-  const isSidebar = variant === "sidebar";
-
   return (
     <div className="relative" ref={ref}>
-      {isSidebar ? (
-        <button
-          type="button"
-          onClick={() => setOpen((o) => !o)}
-          className="flex w-full items-center gap-2.5 rounded-md px-1 py-1 text-left transition hover:bg-surface-2"
-          aria-label="Account"
-        >
-          <Avatar />
-          <span className="min-w-0 flex-1 truncate font-disp text-[13.5px] font-semibold tracking-[-0.01em] text-text">
-            What&apos;s next, {firstNameOf(me, identity.name)}?
-          </span>
-        </button>
-      ) : (
-        <button
-          type="button"
-          onClick={() => setOpen((o) => !o)}
-          className="flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-semibold text-white"
-          style={{
-            background:
-              "linear-gradient(145deg, var(--accent), var(--accent-2))",
-          }}
-          aria-label="Account"
-        >
-          {identity.initials}
-        </button>
-      )}
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-semibold text-white"
+        style={{
+          background:
+            "linear-gradient(145deg, var(--accent), var(--accent-2))",
+        }}
+        aria-label="Account"
+      >
+        {identity.initials}
+      </button>
 
       {open ? (
         <div
-          className={`absolute z-50 w-60 overflow-hidden rounded-md border border-border bg-panel py-1.5 ${
-            isSidebar
-              ? "left-0 top-[calc(100%+6px)]"
-              : "right-0 top-[calc(100%+8px)]"
-          }`}
+          className="absolute right-0 top-[calc(100%+8px)] z-50 w-60 overflow-hidden rounded-md border border-border bg-panel py-1.5"
           style={{ boxShadow: "var(--shadow-menu)" }}
         >
           <div className="px-3 pb-2 pt-1">
@@ -182,26 +145,5 @@ export function AccountMenu({
         <CreateOrgDialog onClose={() => setShowCreate(false)} />
       ) : null}
     </div>
-  );
-}
-
-/** The round person-silhouette avatar from the design's sidebar header. */
-function Avatar() {
-  return (
-    <span
-      className="flex h-8 w-8 shrink-0 items-end justify-center overflow-hidden rounded-full border border-border-2"
-      style={{ background: "var(--surface-3)", boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }}
-    >
-      <svg
-        width="32"
-        height="32"
-        viewBox="0 0 64 64"
-        className="block"
-        aria-hidden
-      >
-        <circle cx="32" cy="26" r="12" fill="var(--faint)" />
-        <path d="M12 59c0-11 9-18 20-18s20 7 20 18z" fill="var(--faint)" />
-      </svg>
-    </span>
   );
 }

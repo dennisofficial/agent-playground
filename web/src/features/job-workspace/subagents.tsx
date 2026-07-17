@@ -4,7 +4,7 @@ import { useState } from "react";
 import { ChevronRight, Sparkles } from "lucide-react";
 import type { JobMessage } from "@/lib/api/job-api";
 import type { LiveBlock } from "@/lib/api/job-stream";
-import { formatModelLabel } from "@/lib/format";
+import { formatModelLabel } from "@/utils/format";
 import { ContextMeter } from "./context-meter";
 
 /**

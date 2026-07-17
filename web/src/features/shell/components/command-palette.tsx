@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Search } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useAllJobs, type InboxThread } from "@/lib/api/inbox";
-import { orgSwatch } from "@/lib/org-display";
+import { orgSwatch } from "@/utils/org-display";
 import { threadHref } from "@/lib/routes";
 
 /**
