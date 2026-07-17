@@ -1,13 +1,13 @@
 import { EnvService } from '@core/config/env/env.service';
+import { ENodeEnv } from '@core/config/env/validation';
 import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule, TypeOrmModuleOptions } from '@nestjs/typeorm';
-import { ENTITIES } from '@workspace/shared/schemas';
 import { CustomNamingStrategy } from './custom-naming.strategy';
 
 function resolveSsl(env: EnvService): false | { rejectUnauthorized: boolean } {
   const mode =
     env.get('POSTGRES_SSL_MODE') ??
-    (env.get('NODE_ENV') === 'production' ? 'verify-full' : 'disable');
+    (env.get('NODE_ENV') === ENodeEnv.PROD ? 'verify-full' : 'disable');
   if (mode === 'disable') return false;
   return { rejectUnauthorized: mode === 'verify-full' };
 }
@@ -24,7 +24,10 @@ function resolveSsl(env: EnvService): false | { rejectUnauthorized: boolean } {
         username: env.get('POSTGRES_USER'),
         password: env.get('POSTGRES_PASSWORD'),
         database: env.get('POSTGRES_DB'),
-        entities: ENTITIES,
+        // Entities are co-located with their feature modules and register themselves via
+        // `@CreateModule({ entities })` (TypeOrmModule.forFeature). autoLoadEntities picks
+        // each one up for the connection, so there is no central entity list to maintain.
+        autoLoadEntities: true,
         synchronize: false,
         namingStrategy: new CustomNamingStrategy(),
         applicationName: 'atlas (TypeORM)',

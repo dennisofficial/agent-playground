@@ -1,19 +1,24 @@
 /**
- * Wire shapes for the admin portal auth API.
+ * Wire shapes for the Atlas web console auth API.
  *
- * IAdminUserResponse is the public projection of an AdminUser — password_hash is
- * deliberately omitted and must NEVER appear in any API response.
+ * These are the web-safe contract types (no TypeORM / backend deps) shared between
+ * the backend and the admin web. A user's password hash is never part of any of them.
  */
-export interface IAdminUserResponse {
+import type { OrgSummary } from './org.dto';
+
+/** Minimal signed-in identity, returned as `{ user }` by login / register / refresh. */
+export interface AuthSession {
   id: string;
   email: string;
   name: string | null;
-  role: string;
-  createdAt: Date;
 }
 
-/** Returned by POST /auth/login, GET /auth/session, and POST /auth/refresh. */
+/** Returned by `GET /auth/session` — the signed-in user plus the orgs they belong to. */
+export interface CurrentUserResponse extends AuthSession {
+  orgs: OrgSummary[];
+}
+
+/** Envelope returned by `POST /auth/login`, `/register`, and `/refresh`. */
 export interface LoginResponse {
-  user: IAdminUserResponse;
+  user: AuthSession;
 }
-

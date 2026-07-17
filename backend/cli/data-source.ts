@@ -3,15 +3,13 @@ import 'reflect-metadata';
 import { resolve } from 'path';
 import { DataSource } from 'typeorm';
 import { CustomNamingStrategy } from '../src/_lib/database/custom-naming.strategy';
-import { ENTITIES } from '../src/app_old/persistence/entities';
 
 /**
- * Standalone DataSource for the TypeORM CLI on Atlas v2's OWN schema — the `app` entities +
- * `migrations/`, against the SAME Postgres as v1 (reuses POSTGRES_*). The twin of
- * `cli/data-source.ts` (which owns the v1 shared schema): the two migration histories are kept
- * SEPARATE so each datasource manages only its own tables. Never imported by the app.
+ * Standalone DataSource for the TypeORM CLI on the fresh Atlas backend schema — the co-located
+ * `src/app/**` entities + `migrations/`. Entities are discovered by glob (they live next to their
+ * feature modules), matching the app's `autoLoadEntities` wiring. Never imported by the app.
  *
- * Run with the `db:*` scripts (e.g. `pnpm db:migrate`).
+ * Run with the `db:*` scripts (e.g. `pnpm db:migrate`, `pnpm db:migration:generate`).
  */
 function resolveSsl(): false | { rejectUnauthorized: boolean } {
   const mode =
@@ -28,7 +26,7 @@ export const AppDataSource = new DataSource({
   username: process.env.POSTGRES_USER,
   password: process.env.POSTGRES_PASSWORD,
   database: process.env.POSTGRES_DB,
-  entities: ENTITIES,
+  entities: [resolve(__dirname, '../src/app/**/*.entity.{ts,js}')],
   migrations: [resolve(__dirname, '../migrations/*.ts')],
   // Atlas keeps its OWN migrations bookkeeping table so its history never tangles with v1's
   // `migrations` table on the shared database.

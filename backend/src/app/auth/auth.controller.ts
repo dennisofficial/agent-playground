@@ -1,0 +1,60 @@
+import { Body, Controller, Get, HttpCode, HttpStatus, Post, Req, Res } from '@nestjs/common';
+import { CurrentUser, Public } from '@workspace/auth/server';
+import type { AuthSession, CurrentUserResponse } from '@workspace/shared';
+import type { Request, Response } from 'express';
+import { OrganizationService } from '../org/organization.service';
+import { AuthService } from './auth.service';
+import { LoginDto, RegisterDto } from './dto/auth.dto';
+import type { User } from './entities/user.entity';
+
+@Controller('auth')
+export class AuthController {
+  constructor(
+    private readonly auth: AuthService,
+    private readonly orgs: OrganizationService,
+  ) {}
+
+  @Public()
+  @Post('login')
+  @HttpCode(HttpStatus.OK)
+  async login(
+    @Body() body: LoginDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<{ user: AuthSession }> {
+    const user = await this.auth.login(body.email, body.password, res);
+    return { user };
+  }
+
+  @Public()
+  @Post('register')
+  @HttpCode(HttpStatus.OK)
+  async register(@Body() body: RegisterDto): Promise<void> {
+    // Always ends in a 403 (pending approval); never issues a session.
+    await this.auth.register(body.email, body.password, body.name);
+  }
+
+  @Get('session')
+  async session(@CurrentUser() user: User): Promise<CurrentUserResponse> {
+    const orgs = await this.orgs.listForUser(user.id);
+    return { id: user.id, email: user.email, name: user.name, orgs };
+  }
+
+  @Public()
+  @Post('refresh')
+  @HttpCode(HttpStatus.OK)
+  async refresh(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<{ ok: true }> {
+    await this.auth.refresh(req, res);
+    return { ok: true };
+  }
+
+  @Public()
+  @Post('logout')
+  @HttpCode(HttpStatus.OK)
+  logout(@Res({ passthrough: true }) res: Response): { ok: true } {
+    this.auth.clearTokens(res);
+    return { ok: true };
+  }
+}
