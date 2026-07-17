@@ -183,10 +183,13 @@ export class BrainStoreService {
 
   /** Read a thread's message log, oldest-first — the transcript the grill turn reads. */
   async transcript(jobId: string): Promise<TranscriptLine[]> {
-    const rows = await this.messages.find({
-      where: { job_id: jobId },
-      order: { created_at: 'ASC' },
-    });
+    const rows = await this.messages
+      .createQueryBuilder('m')
+      .where('m.job_id = :jobId', { jobId })
+      .orderBy('COALESCE(m.order_at, m.delivered_at, m.created_at)', 'ASC')
+      .addOrderBy('m.created_at', 'ASC')
+      .addOrderBy('m.id', 'ASC')
+      .getMany();
     return rows.map((m) => ({
       author: m.author,
       isAtlas: m.author_bot_id != null,

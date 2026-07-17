@@ -153,6 +153,9 @@ export class LiveTurnStore {
   /** `${channel}::${jobId}::${lane}` → pending durable row ids (pure-UI notices posted mid-turn), flushed
    *  and stamped with `order_at` once that lane's turn ends. See {@link registerPostTurnRow}. */
   private readonly pendingOrder = new Map<string, string[]>();
+  /** Order lanes whose pending rows have been drained for turn-end persistence. While set, no new pure-UI
+   *  row can register behind the ending turn and get stranded after the drain. Cleared by `end`/`reset`. */
+  private readonly closingOrder = new Set<string>();
   private seq = 0;
   private blockSeq = 0;
   private lastBlockEmitMs = 0;
@@ -246,6 +249,7 @@ export class LiveTurnStore {
       event: { kind: 'turn_end' },
     });
     this.turns.get(channel)?.delete(this.key(jobId, lane));
+    this.closingOrder.delete(this.orderKey(channel, jobId, lane));
   }
 
   /**
@@ -301,6 +305,7 @@ export class LiveTurnStore {
    */
   reset(channel: string, jobId: string, lane: string = MAIN_LANE): void {
     this.turns.get(channel)?.delete(this.key(jobId, lane));
+    this.closingOrder.delete(this.orderKey(channel, jobId, lane));
   }
 
   /** The current cumulative snapshot for one turn lane (or null when no turn is in flight). */
@@ -354,22 +359,30 @@ export class LiveTurnStore {
     rowId: string,
     lane: string = MAIN_LANE,
   ): boolean {
+    const k = this.orderKey(channel, jobId, lane);
+    if (this.closingOrder.has(k)) return false;
     if (!this.turns.get(channel)?.get(this.key(jobId, lane))) return false;
-    const k = `${channel}::${this.key(jobId, lane)}`;
     this.pendingOrder.set(k, [...(this.pendingOrder.get(k) ?? []), rowId]);
     return true;
   }
 
-  /** Delete-and-return the pending post-turn row ids queued for this lane (called once at turn-end flush). */
+  /** Delete-and-return the pending post-turn row ids queued for this lane (called once at turn-end flush).
+   *  Also closes registration for this lane until `end`/`reset`, so a row posted while the async DB stamps
+   *  are running cannot register after the drain and then never receive an `order_at`. */
   takePendingOrder(
     channel: string,
     jobId: string,
     lane: string = MAIN_LANE,
   ): string[] {
-    const k = `${channel}::${this.key(jobId, lane)}`;
+    const k = this.orderKey(channel, jobId, lane);
+    this.closingOrder.add(k);
     const rows = this.pendingOrder.get(k) ?? [];
     this.pendingOrder.delete(k);
     return rows;
+  }
+
+  private orderKey(channel: string, jobId: string, lane: string): string {
+    return `${channel}::${this.key(jobId, lane)}`;
   }
 
   private key(jobId: string, lane: string): string {

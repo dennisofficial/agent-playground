@@ -356,10 +356,13 @@ export class TestBridgeController {
   async thread(@Query('threadTs') threadTs: string): Promise<ThreadLine[]> {
     this.assertEnabled();
     // `threadTs` is the real thread id — read its durable message log directly.
-    const rows = await this.messages.find({
-      where: { job_id: threadTs },
-      order: { created_at: 'ASC' },
-    });
+    const rows = await this.messages
+      .createQueryBuilder('m')
+      .where('m.job_id = :jobId', { jobId: threadTs })
+      .orderBy('COALESCE(m.order_at, m.delivered_at, m.created_at)', 'ASC')
+      .addOrderBy('m.created_at', 'ASC')
+      .addOrderBy('m.id', 'ASC')
+      .getMany();
     return rows.map((m) => ({
       author: m.author,
       isAtlas: m.author_bot_id != null,
