@@ -85,8 +85,8 @@ async function maxOrdinal<T extends ObjectLiteral>(
  * transitions on the same row. Keeps the conversational brain free of repository wiring — it speaks
  * domain shapes, this maps them to rows.
  *
- * The detailed per-thread PHASE plan is W4's job, NOT the brain's: this writes the high-level thread
- * BRIEFS (each a `pending` thread with no `plan` yet); W4's driver fills `plan` + the step rows
+ * The detailed per-thread build plan is W4's job, NOT the brain's: this writes the high-level thread
+ * BRIEFS (each a `pending` thread with no `plan` yet); W4's driver fills `plan` + appends the builder Legs
  * just-in-time. Zero v1 imports.
  */
 @Injectable()
@@ -299,7 +299,7 @@ export class BrainStoreService {
 
   /**
    * Persist a harness-injected chunk (a `system_notice`, `system_reminder`, or `untrusted` from the chunk-vocabulary) as a
-   * VISIBLE transcript row — so a sandbox-reset notice, a pipeline-awareness or open-questions reminder, etc.
+   * VISIBLE transcript row — so a sandbox-reset notice or open-questions reminder, etc.
    * that the brain reads inline is also legible in the web (the classifier keys on `meta.source`). The row's
    * `text` is the CLEAN body (no XML tag — the tag is engine-only). System-authored (`author_bot_id: null`,
    * NOT the operator, NOT Atlas). Insert-once by `meta.chunkKey` so a re-drive/reattach of the same turn
@@ -1575,7 +1575,7 @@ export class BrainStoreService {
   async setHalted(_jobId: string, _halted: boolean): Promise<void> {}
 
   /**
-   * Set (or clear) the durable auto-resume clock the Main lane parks on when it hits a Claude session/usage
+   * Set (or clear) the durable auto-resume clock a session-backed lane parks on when it hits a Claude session/usage
    * limit. `resumeAt=null` (with `meta=null`) clears the clock so the leader sweep never re-fires — called on
    * the force-resume path (`/retry-turn`). See {@link JobEntity.session_resume_at}.
    */

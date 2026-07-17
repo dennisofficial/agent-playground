@@ -55,7 +55,7 @@ export interface ShipInput {
  * The whole-diff review-and-fix runs UPSTREAM as the build's last thread (the Codex master-review builder —
  * see `thread-driver.service.ts`), so the branch reaching `ship` is already reviewed and fixed; `ship` just
  * publishes it. The open-PR step is a SEEDED BRAIN TURN (`AgentSessionManager.openPrAtShip`), NOT a separate
- * `engine.run` — so it inherits the brain's own engine auth + git auth and renders in the Main conversation.
+ * `engine.run` — so it inherits the ship session's own engine auth + git auth and renders in the ship thread's conversation.
  * References NO threads/steps — its only inputs are the job row, the (optional) decision record, the resolved
  * repo, and the sandbox.
  */
@@ -100,18 +100,18 @@ export class BuildShipService {
     const shipSandbox: FeatureSandbox = { ...sandbox, branch: shipBranch };
     const prTitle = job.title?.trim() || shipBranch;
 
-    // OPEN THE PR — enqueue a seed onto the fresh `ci` session (spawned here, before the seed). The brain
-    // reconciles the branch against its base, pushes, authors the body, and `gh pr create`s, all with its own
-    // authenticated git + `gh`. This ENQUEUES and returns immediately (durable pump); the open-PR turn runs
-    // asynchronously and is latched by the reconciler, so `latchPr` below usually finds no PR yet on this pass.
-    const ci = await this.store.ensureCiThread({
+    // OPEN THE PR — enqueue a seed onto the fresh `ship` session (spawned here, before the seed). The ship
+    // thread reconciles the branch against its base, pushes, authors the body, and `gh pr create`s, all with
+    // its own authenticated git + `gh`. This ENQUEUES and returns immediately (durable pump); the open-PR turn
+    // runs asynchronously and is latched by the reconciler, so `latchPr` below usually finds no PR yet on this pass.
+    const ship = await this.store.ensureShipThread({
       jobId: job.id,
       orgId: job.orgId,
       decisionRecordId: job.decisionRecordId ?? null,
     });
     // Advance the routing pointer (d4): ship was dispatched — the ship thread is now the active head.
     await this.store
-      .setFocusedThread(job.id, ci.threadId)
+      .setFocusedThread(job.id, ship.threadId)
       .catch(() => undefined);
     await this.brainGateway.openPrAtShip({
       jobId: job.id,
@@ -120,7 +120,7 @@ export class BuildShipService {
       branch: shipBranch,
       defaultBranch: repo.defaultBranch,
       title: prTitle,
-      threadId: ci.threadId,
+      threadId: ship.threadId,
     });
 
     const confirmed = await this.latchPr(job, repo, shipSandbox);
@@ -207,10 +207,10 @@ export class BuildShipService {
   ): Promise<{ url: string; number: number } | undefined> {
     const confirmed = await this.discoverOpenPr(repo, sandbox);
     if (confirmed) {
-      // Post-ship seam (d14): the PR is recorded — ensure the job's `ci` thread group thread exists so inbound
+      // Post-ship seam (d14): the PR is recorded — ensure the job's `ship` thread group thread exists so inbound
       // GitHub/CI events have somewhere to route (the routing itself is thread 4's §CI-routing seam). Do this
-      // before publishing `done`, so observers never see a PR-ready job without its CI lane.
-      await this.store.ensureCiThread({
+      // before publishing `done`, so observers never see a PR-ready job without its ship lane.
+      await this.store.ensureShipThread({
         jobId: job.id,
         orgId: job.orgId,
         decisionRecordId: job.decisionRecordId ?? null,

@@ -26,12 +26,6 @@ export {
   type ShipOutcome,
 } from './build-ship.service';
 export {
-  pipelineStateSignature,
-  renderPipelineStateSummary,
-  renderAwarenessPrefix,
-  type PipelineMarker,
-} from './pipeline-awareness';
-export {
   DRIVER_REPO,
   GitDriverRepoResolver,
   type DriverRepoResolver,

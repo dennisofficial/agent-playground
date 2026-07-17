@@ -162,11 +162,11 @@ function makeStore(state: StoreState): {
   const threadGroupKindForThread = (thread: StoreDriverThread): string =>
     thread.kind === 'master_review'
       ? 'master_review'
-      : thread.kind === 'post_build' || thread.kind === 'ci'
+      : thread.kind === 'post_build' || thread.kind === 'ship'
         ? thread.kind
         : ((thread.config?.threadGroupKind as string | undefined) ?? 'section');
   const ensureSingletonThread = (input: {
-    kind: 'post_build' | 'ci';
+    kind: 'post_build' | 'ship';
     brief: string;
   }): { threadGroupId: string; threadId: string } => {
     const existing = state.threads.find(
@@ -214,7 +214,7 @@ function makeStore(state: StoreState): {
         (thread) =>
           thread.jobId === jobId &&
           thread.parentThreadId == null &&
-          ['builder', 'master_review', 'post_build', 'ci'].includes(
+          ['builder', 'master_review', 'post_build', 'ship'].includes(
             thread.kind,
           ),
       )
@@ -302,10 +302,10 @@ function makeStore(state: StoreState): {
       );
       return existing?.id ?? null;
     }),
-    ensureCiThread: vi.fn(async () =>
+    ensureShipThread: vi.fn(async () =>
       ensureSingletonThread({
-        kind: 'ci',
-        brief: 'CI',
+        kind: 'ship',
+        brief: 'Ship',
       }),
     ),
     decisionRecord: vi.fn(async () => state.record),

@@ -371,8 +371,8 @@ export function retryResumeNudge(title?: string): AgentMessage {
   );
 }
 
-/** The auto-resume nudge after a session-limit reset — names the task when known so the resumed Main
- *  session doesn't disorient the brain into re-asking what to continue. */
+/** The auto-resume nudge after a session-limit reset — names the task when known so the resumed
+ *  session doesn't disorient the thread into re-asking what to continue. */
 export function sessionLimitResetNudge(title?: string): AgentMessage {
   return agentMessage(
     title

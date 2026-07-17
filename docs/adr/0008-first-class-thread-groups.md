@@ -8,6 +8,13 @@
   `active_turns.lane` continues as `thread:<id>`; phase/anchor identity now repoints to `thread_id` instead of
   `step_id`). Canonical narrative: `backend/src/app/ARCHITECTURE.md`.
 
+> **Superseded in part by [ADR 0009 (Threads Architecture Redesign)](./0009-threads-architecture-redesign.md).**
+> The containment hierarchy this ADR introduced (`jobs → thread_groups → threads → messages`, plus `tasks` and
+> `subagents`) still stands, but the orchestration and data model it describes — the Main/brain session, the
+> `build`/`direct_build`/`plan_review`/`ci` kinds, and the halt/relay/sweep machinery — were replaced (see ADR
+> 0009 §"What this changes in ADR 0008" for the exact deltas). This ADR remains the historical record of the
+> original thread-group introduction; read the current model in `ARCHITECTURE.md`.
+
 ## Context
 
 Before this refactor, a job's build sub-structure was `jobs → threads (build lanes) → steps (leaves)`, plus

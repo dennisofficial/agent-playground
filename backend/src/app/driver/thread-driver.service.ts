@@ -1083,7 +1083,7 @@ export class ThreadDriver implements JobDispatcher {
     }
   }
 
-  /** Best-effort live lane for a build host retry: current/next executable thread, else the Main fallback. */
+  /** Best-effort live lane for a build host retry: current/next executable thread, else the `main`-lane fallback. */
   private async retryLaneForJob(jobId: string): Promise<string> {
     const threads = await this.store.threadsForJob(jobId).catch(() => []);
     const thread = threads.find(

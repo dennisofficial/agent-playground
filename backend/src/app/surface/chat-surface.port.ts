@@ -163,12 +163,12 @@ export interface ChatSurface {
    */
   emitThreadMeta?(channel: string, jobId: string, title: string): void;
   /**
-   * Seed the thread's brain with a SYSTEM NOTIFICATION — host-originated context the brain should react
-   * to (an answered `ask_question`, a pipeline milestone, an external event). Wraps `body` in
-   * `<system_notification>…</system_notification>`, runs ONE brain turn, and is NEVER persisted as a chat
-   * message (no operator bubble; it doesn't drain the passive pipeline-awareness buffer either). Returns
-   * the synthetic message ts. This ACTIVELY WAKES the brain — reserve it for events worth a turn; for
-   * low-priority "where the build stands" FYI prefer the passive `pipeline_awareness` buffer.
+   * Seed the thread's session with a SYSTEM NOTIFICATION — host-originated context the thread should react
+   * to (an answered `ask_question`, an external event). Wraps `body` in
+   * `<system_notification>…</system_notification>`, runs ONE session turn, and is NEVER persisted as a chat
+   * message (no operator bubble). Returns the synthetic message ts. This ACTIVELY WAKES the thread — reserve
+   * it for events worth a turn (threads are isolated, so there is no passive cross-thread awareness buffer to
+   * fall back on).
    */
   seedSystemNotification?(
     channel: string,

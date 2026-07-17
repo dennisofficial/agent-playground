@@ -154,9 +154,9 @@ type StreamPayload = {
 
 let blockSeq = 0;
 
-/** The default lane — the thread brain's conversational turn (vs `phase:<stepId>` for a build turn). */
+/** The default lane — the thread's own conversational turn (vs `phase:<stepId>` for a build turn). */
 export const MAIN_LANE = "main";
-/** The store keys an in-flight turn by thread AND lane, so a brain turn and a build turn coexist. */
+/** The store keys an in-flight turn by thread AND lane, so a main turn and a build turn coexist. */
 const laneKey = (jobId: string, lane: string): string => `${jobId}::${lane}`;
 
 /**
@@ -265,8 +265,9 @@ class ThreadStreamStore {
     const blocks = cur ? [...cur.blocks] : [];
     const last = blocks[blocks.length - 1];
     const text = typeof ev.text === "string" ? ev.text : "";
-    // Only merge into the open block when it belongs to the SAME author (brain vs a given subagent), so a
-    // subagent's forwarded text never appends onto the brain's open text block (or another subagent's).
+    // Only merge into the open block when it belongs to the SAME author (the thread's own turn vs a given
+    // subagent), so a subagent's forwarded text never appends onto the thread's own open text block (or
+    // another subagent's).
     const pid = ev.parentToolUseId;
     const sameAuthor = (b: LiveBlock | undefined): boolean =>
       !!b && b.parentToolUseId === pid;
@@ -588,7 +589,7 @@ export function sweepLiveTurnsAfterReconnect(): void {
 }
 
 /**
- * Subscribe to one thread's in-flight live turn for a lane (default the brain's `main` turn). The
+ * Subscribe to one thread's in-flight live turn for a lane (default its own `main` turn). The
  * conversation reads `main`; a step sub-page reads its `phase:<stepId>` lane.
  */
 export function useLiveTurn(

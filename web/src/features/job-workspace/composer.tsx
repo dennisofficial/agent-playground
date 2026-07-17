@@ -58,9 +58,10 @@ export interface ComposerFooter {
 }
 
 /**
- * The conversation composer — talks to the thread's brain. Posts to `…/jobs/:jobId/message`. Typed
- * ops ("pause", "approve", "resume", "simplify the rest"…) run the same operations as the buttons; the
- * brain interprets the text, so the composer just sends it. Enter sends; Shift+Enter newlines.
+ * The conversation composer — sends the operator's message to whichever thread the lane routes to. Posts to
+ * `…/jobs/:jobId/message`. Typed ops ("pause", "approve", "resume", "simplify the rest"…) run the same
+ * operations as the buttons; the receiving thread's session interprets the text, so the composer just sends
+ * it. Enter sends; Shift+Enter newlines.
  *
  * Steering: a message sent WHILE a turn is live is injected into the running turn by the backend (the model
  * reacts mid-turn) — no code change here beyond dropping the old client queue. When a turn is live AND the
@@ -70,13 +71,13 @@ export interface ComposerFooter {
  * into the textarea OR drag-and-drop files anywhere onto the conversation pane (the drop target lives in
  * {@link TranscriptView}, which owns the attachment tray and passes it in via `attach`). Attachments preview
  * in a tray (local blob URLs — no base64) and send as a multipart `/message`; the backend writes them to the
- * sandbox and the brain reads them with its Read tool. The `Plan ▾`
+ * sandbox and the thread's session reads them with its Read tool. The `Plan ▾`
  * mode pill remains a static design affordance for now. The model · effort label and the context ring ARE
  * live: they thread the lane's latest `turn_meta` (via the `footer` prop), so they change per lane.
  *
  * The composer renders on EVERY transcript lane. On non-Main lanes it is `readOnly`: the box is dimmed
- * and non-editable and the Send button is disabled (greyed), because the operator steers the brain from
- * the Main conversation, not a build/review lane — but the footer still shows that lane's model/effort/
+ * and non-editable and the Send button is disabled (greyed), because the operator steers via the Main
+ * (planner) conversation, not a build/review lane — but the footer still shows that lane's model/effort/
  * occupancy.
  */
 export function Composer({
@@ -168,7 +169,7 @@ export function Composer({
     if (addPastedImages?.(e)) e.preventDefault();
   }
 
-  // Is the brain's turn live? Same reconciliation the transcript uses: the SSE live turn, self-healed by the
+  // Is this lane's turn live? Same reconciliation the transcript uses: the SSE live turn, self-healed by the
   // authoritative realtime `needsYou` (idle = no turn), so a dropped `turn_end` doesn't strand a Stop button.
   // Read-only lanes never steer, so the Stop/live logic is irrelevant there (hooks stay unconditional).
   const liveActive = useLiveTurn(jobRef.jobId, MAIN_LANE)?.active ?? false;

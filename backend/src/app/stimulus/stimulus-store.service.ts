@@ -102,11 +102,11 @@ export class StimulusStoreService {
    * source, dedupe_key) unique index — a
    * repeated conflict/CI/review event collapses to one delivered message.
    *
-   * ROUTING (thread 4 §CI-routing): once the job's `ci` thread group thread exists (post-ship —
-   * `DriverStoreService.ensureCiThread`), the event's `messages` row AND its `stimuli.lane` both target
-   * that thread (`thread:<ciThreadId>`) instead of planning, so `EventMessage.resumeThreadId` (derived
-   * back from `lane` on read — see `rowToEventMessage`) resumes the `ci` thread's own session. Pre-ship
-   * (no `ci` thread yet) falls back to planning exactly as before.
+   * ROUTING (thread 4 §CI-routing): once the job's `ship` thread group thread exists (post-ship —
+   * `DriverStoreService.ensureShipThread`), the event's `messages` row AND its `stimuli.lane` both target
+   * that thread (`thread:<shipThreadId>`) instead of planning, so `EventMessage.resumeThreadId` (derived
+   * back from `lane` on read — see `rowToEventMessage`) resumes the `ship` thread's own session. Pre-ship
+   * (no `ship` thread yet) falls back to planning exactly as before.
    */
   async attachEventToJob(input: {
     jobId: string;
@@ -127,10 +127,10 @@ export class StimulusStoreService {
     // row — which the at-least-once sweep (keyed on `stimuli.delivered_at`) can never recover, so the card
     // would render forever with the brain never consuming it. One transaction makes it both-or-neither.
     await this.jobBootstrap?.ensurePlanningThreadGroup(input.jobId, input.orgId);
-    const ciThreadId =
-      (await this.jobBootstrap?.ciThreadId(input.jobId)) ?? null;
-    const threadId = ciThreadId ?? (await this.planningThreadId(input.jobId));
-    const lane = ciThreadId ? `thread:${ciThreadId}` : undefined;
+    const shipThreadId =
+      (await this.jobBootstrap?.shipThreadId(input.jobId)) ?? null;
+    const threadId = shipThreadId ?? (await this.planningThreadId(input.jobId));
+    const lane = shipThreadId ? `thread:${shipThreadId}` : undefined;
     let row: InboundMessageEntity;
     try {
       row = await this.dataSource.transaction(async (m) => {
@@ -191,7 +191,7 @@ export class StimulusStoreService {
       dedupeKey: input.dedupeKey,
       severity: input.severity,
       receivedAt: row.created_at.toISOString(),
-      ...(ciThreadId ? { resumeThreadId: ciThreadId } : {}),
+      ...(shipThreadId ? { resumeThreadId: shipThreadId } : {}),
     };
   }
 

@@ -175,7 +175,7 @@ export function JobWorkspace({
       : "planning";
 
   // The LAST plan-approval card in the log (kind `plan`/`direct`/undefined — never the ship-review card
-  // or the brain's `amend` proposal, which are distinct gates with their own inline rendering). A POSITIVE
+  // or the post_build thread's `amend` proposal, which are distinct gates with their own inline rendering). A POSITIVE
   // match so a new gate kind can't accidentally drive the plan navigator. Also feeds the "plan" doc viewer.
   const approvalCard = useMemo<WebApprovalCard | null>(() => {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -245,7 +245,7 @@ export function JobWorkspace({
   // approval time.
   const stepCount = approvalCard?.threads.length ?? 0;
   // The planner ("Main") thread — the planning group's planner thread (undefined pre-plan, where the single
-  // brain thread needs no scoping). When the routed `:threadId` is this thread, the workPane shows the
+  // planner thread needs no scoping). When the routed `:threadId` is this thread, the workPane shows the
   // bespoke Conversation; every other thread renders a PhaseView.
   const plannerThreadId = pipelinePlannerThreadId(pipeline);
   const mainThreadId = plannerThreadId;

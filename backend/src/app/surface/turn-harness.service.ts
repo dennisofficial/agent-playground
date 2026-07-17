@@ -591,8 +591,8 @@ export interface TurnHarnessOptions {
 /**
  * THE SHARED TRANSCRIPT SPINE.
  *
- * Lifted verbatim from the brain's former `makeTurnStreamer` so EVERY engine turn — the thread brain, a
- * build phase, a nested subagent — converts its engine event stream into the AUTHORITATIVE durable blocks
+ * Lifted verbatim from the brain's former `makeTurnStreamer` so EVERY engine turn — a conversational session, a
+ * build turn, a nested subagent — converts its engine event stream into the AUTHORITATIVE durable blocks
  * (`chat`/`thinking`/`tool`), persisted at turn END via {@link BlockSink} (+ an optional usage harvest).
  *
  * The LIVE, resumable push to {@link LiveTurnStore} is normally done by RedisEngineRunner's independent

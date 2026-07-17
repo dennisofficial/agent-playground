@@ -59,7 +59,7 @@ type DemoJob = {
 
 // Do not seed unhalted `running` rows here: the real backend boot sweep treats those as resumable
 // build work. A halted `running` row is safe because the driver only retries it after explicit operator
-// re-engagement, while still giving the responsive UI a phase-preserving halt fixture.
+// re-engagement, while still giving the responsive UI a `halt_reason` fixture to render.
 const DEMO_JOBS: DemoJob[] = [
   {
     id: jobId(1),

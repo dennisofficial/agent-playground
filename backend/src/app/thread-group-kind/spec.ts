@@ -9,11 +9,11 @@ import type { ThreadRole } from '../thread-kind/spec';
 
 /** The KIND of a `ThreadGroupEntity` row — the single differentiator across every pipeline grouping. */
 export type ThreadGroupKind =
-  | 'planning' // the job brain / operator conversation, including the synchronous Codex plan review. Singleton.
+  | 'planning' // the planner / operator conversation, including the synchronous Codex plan review. Singleton.
   | 'section' // a build slice: sequential builder legs (d1) + review agents + one review-fix (or, for `build_path='direct'`, a single builder with no review — a job-level attribute, not a kind).
   | 'master_review' // the ship-time whole-diff Codex review-&-fix. Singleton.
-  | 'post_build' // the ship/amend group (d11/d14) — takes over `openPrAtShip` from Main. Singleton.
-  | 'ship'; // the post-ship group (d14) — takes over CI handling from Main. Singleton.
+  | 'post_build' // the ship/amend gate (d11/d14) — build summary, preview proposal, and the amend loop. Singleton.
+  | 'ship'; // the post-ship group (d14) — owns `openPrAtShip` + the PR/CI lifecycle. Singleton.
 
 /** The symbolic ORCHESTRATION SEAM a thread group of this kind spawns at (thread 3 consumes this to
  *  decide WHEN to create the thread group — no per-kind branching in the orchestrator). */

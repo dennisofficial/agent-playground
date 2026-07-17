@@ -72,11 +72,11 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
         threadGroupId: 'tg1',
         threadId: 'pb1',
       })),
-      // The ship path now ensures the `ci` thread-group thread BEFORE the open-PR seed and enqueues the turn
+      // The ship path now ensures the `ship` thread-group thread BEFORE the open-PR seed and enqueues the turn
       // onto its session; latchPr re-ensures it once the PR is recorded (post-ship seam, d14).
-      ensureCiThread: vi.fn(async () => ({
+      ensureShipThread: vi.fn(async () => ({
         threadGroupId: 'tg2',
-        threadId: 'ci1',
+        threadId: 'ship1',
       })),
       setFocusedThread: vi.fn(async () => undefined),
       ...over,
@@ -118,7 +118,7 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
         branch: 'feature/abcd',
         defaultBranch: 'main',
         title: 'Feature',
-        threadId: 'ci1',
+        threadId: 'ship1',
       }),
     );
     expect(openPullRequest).not.toHaveBeenCalled();
@@ -162,13 +162,13 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
       'https://github.com/acme/widget/pull/7',
       7,
     );
-    expect(store.ensureCiThread).toHaveBeenCalledWith({
+    expect(store.ensureShipThread).toHaveBeenCalledWith({
       jobId: 'j1',
       orgId: 'o1',
       decisionRecordId: null,
     });
     expect(
-      (store.ensureCiThread as ReturnType<typeof vi.fn>).mock
+      (store.ensureShipThread as ReturnType<typeof vi.fn>).mock
         .invocationCallOrder[0],
     ).toBeLessThan(
       (store.setPrReady as ReturnType<typeof vi.fn>).mock
@@ -207,7 +207,7 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
       expect.objectContaining({
         branch: 'feature/abcd',
         title: 'feature/abcd',
-        threadId: 'ci1',
+        threadId: 'ship1',
       }),
     );
   });
@@ -234,7 +234,7 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
     await svc.ship({ job: liveJob, record: null, repo, sandbox });
 
     expect(openPrAtShip).toHaveBeenCalledWith(
-      expect.objectContaining({ branch: 'atlas/renamed', threadId: 'ci1' }),
+      expect.objectContaining({ branch: 'atlas/renamed', threadId: 'ship1' }),
     );
     expect(findOpenPullByHead).toHaveBeenCalledWith('ptok-xyz', {
       owner: 'acme',

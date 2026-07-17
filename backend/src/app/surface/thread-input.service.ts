@@ -22,7 +22,7 @@ export interface ThreadInputHandler {
 /**
  * THE SHARED SEND SEAM — one entry point for "deliver a message into the thread that owns this lane",
  * regardless of thread kind. It does NOT reimplement any transport: each input-accepting kind REGISTERS its
- * existing transport (the Main brain's durable steer/fresh-turn pump; the Codex review dialogue's
+ * existing transport (the planner (main-lane) session's durable steer/fresh-turn pump; the Codex review dialogue's
  * resume-with-reply), and {@link postToThread} routes to it via the {@link THREAD_REGISTRY} single source of
  * truth. Read-only lanes (`input: 'none'` — builders, autofix, ship) have no handler and a post throws
  * rather than silently no-op'ing.

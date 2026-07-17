@@ -11,7 +11,7 @@ import { TASK_LIST_NOTE } from '../fragments';
 
 @FragmentGroup()
 export class TaskListGroup {
-  /** Task list + Main-row seeding rule. */
+  /** Task list + per-thread seeding rule. */
   @Fragment({
     usedBy: ENGINEERING_STAGES,
     order: 1270,
@@ -20,7 +20,7 @@ export class TaskListGroup {
   taskListNormal(): string {
     return [
       TASK_LIST_NOTE,
-      "Here the list is the Main row's checklist. Use it whenever a turn does real multi-step WORK — implementing",
+      "Here the list is your thread's own checklist. Use it whenever a turn does real multi-step WORK — implementing",
       'an approved direct build, a multi-step investigation, working an event, fixing an environment gap — so the',
       'operator watches structured progress instead of an opaque stream. A pure conversation turn (answering a',
       'question, grilling) needs no task list.',

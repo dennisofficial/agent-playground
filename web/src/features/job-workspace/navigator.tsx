@@ -189,9 +189,9 @@ export interface JobMeta {
  * PORTS (the sandbox's live dev servers). The header stays pinned; only the regions scroll. The skeleton
  * never restructures; only the signals inside change (dot color, dimming, the selected row, per-region notes).
  *
- * "Job" is the operator-facing name for what the API still calls a thread; a job's lanes ("Threads") are the
- * Main conversation + the build threads. PORTS is a filtered live view of the sandbox's supervised services
- * (those that declared a port), each exposed row linking out to its public preview URL.
+ * A job's THREADS region lists the Main (planner) conversation plus each build lane, one row per Thread
+ * group. PORTS is a filtered live view of the sandbox's supervised services (those that declared a port),
+ * each exposed row linking out to its public preview URL.
  */
 export function Navigator({
   meta,
@@ -577,7 +577,7 @@ export function Navigator({
             </span>
           </button>
         ) : null}
-        {/* Blocked by — a REAL gate (the brain doesn't run while it's up); appears whenever the job is
+        {/* Blocked by — a REAL gate (no thread runs while it's up); appears whenever the job is
             parked or still carries live blockers. */}
         {st === "blocked" || (meta.blockedBy?.length ?? 0) > 0 ? (
           <button
@@ -685,10 +685,10 @@ export function Navigator({
 
 // ── THREADS: the Main lane + the build-lane tree ───────────────────────────────────────────────────
 
-/** The Main planning lane — the job's brain conversation, the accordion's always-first row (the design's
- *  `active` thread: solid green dot, green rail + wash while it's the open lane). Active when no other
- *  lane is selected; its fold shows the brain session's OWN task list (`job.mainTasks`), with the live
- *  the accordion via {@link PipelineTree}. */
+/** The Main planning lane — the planner thread's own conversation, the accordion's always-first row (the
+ *  design's `active` thread: solid green dot, green rail + wash while it's the open lane). Active when no
+ *  other lane is selected; its fold shows the planner session's OWN task list (`job.mainTasks`), with the
+ *  live the accordion via {@link PipelineTree}. */
 /** The THREADS accordion — the whole pipeline as kind-driven folds (planning + sections + review homes +
  *  post-build + ship), the triage lane, or (pre-approval) the "no build lanes yet" ghost. See
  *  {@link PipelineTree}. */

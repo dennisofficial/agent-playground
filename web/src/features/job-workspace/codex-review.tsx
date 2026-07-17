@@ -8,8 +8,8 @@ import { durableSubBlocks, type SubBlock } from "./subagents";
 
 /**
  * The Codex PLAN REVIEW is a dialogue that rides the shared transcript spine on a `codex-review:<jobId>`
- * lane and tags every durable block with `meta.codexReviewId = jobId`. Like a build phase, that full stream
- * (Codex's reasoning + file reads/commands + findings) is peeled OUT of the main conversation into its own
+ * lane and tags every durable block with `meta.codexReviewId = jobId`. Like a build Leg thread, that full
+ * stream (Codex's reasoning + file reads/commands + findings) is peeled OUT of the main conversation into its own
  * lane sub-page; what stays in Main is a compact {@link CodexReviewCard} per delivered round — the same
  * `source:'system_shared'` findings summary, now clickable — carrying `meta.codexReviewAnchor = true`.
  *

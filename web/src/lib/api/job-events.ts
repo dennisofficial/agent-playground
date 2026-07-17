@@ -19,7 +19,8 @@ import {
 interface SseFrame {
   type?: string;
   jobId?: string;
-  /** Which turn lane this stream frame belongs to: `'main'` (the brain) or `'phase:<stepId>'` (a build). */
+  /** Which turn lane this stream frame belongs to: `'main'` (the thread's own conversational turn) or
+   *  `'phase:<stepId>'` (a build). */
   lane?: string;
   seq?: number;
   event?: {
@@ -36,7 +37,7 @@ interface SseFrame {
 }
 
 /**
- * In-turn `/context` freshness: the brain authors `specs/` (and `artifacts/`) files DURING a turn via its
+ * In-turn `/context` freshness: the thread authors `specs/` (and `artifacts/`) files DURING a turn via its
  * standard Write/Edit tools, but durable messages only persist at `turn_end` — so the SPECS/GENERATED/
  * ARTIFACTS listing would otherwise sit stale until the turn finishes. The `tool_use` engine events
  * already stream live, carrying the `file_path` being written, so we refetch the context listing the
@@ -147,7 +148,7 @@ export function useJobEvents(ref: JobRef): void {
         // re-opened per thread to re-trigger the snapshot; now it stands, so we must not drop siblings.)
         const fThread = frame.jobId;
         if (!fThread) return;
-        // Which lane (the brain `main` turn, or a `phase:<stepId>` build turn). Lanes are independent
+        // Which lane (the thread's own `main` turn, or a `phase:<stepId>` build turn). Lanes are independent
         // in-flight turns on the same thread; the conversation reads `main`, the step sub-page reads its phase.
         const lane = frame.lane ?? "main";
         if (frame.event?.kind === "turn_end") {
@@ -174,7 +175,7 @@ export function useJobEvents(ref: JobRef): void {
           ) {
             refetch();
           }
-          // In-turn freshness for the OPEN thread only: the brain just wrote a `/context` file via Write/Edit
+          // In-turn freshness for the OPEN thread only: the thread just wrote a `/context` file via Write/Edit
           // → refresh the SPECS/GENERATED/ARTIFACTS listing now, instead of waiting for the durable reconcile.
           const ev = frame.event;
           const writePath =

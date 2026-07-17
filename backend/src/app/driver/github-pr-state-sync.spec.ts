@@ -19,10 +19,10 @@ function makeSync() {
   } as unknown as JobLifecycleService;
   const driverStore = {
     setPrReady: vi.fn(),
-    // The post-ship seam (d14): onPrOpened ensures the `ci` thread group thread exists once the PR is recorded.
-    ensureCiThread: vi.fn(async () => ({
-      threadGroupId: 'tg-ci',
-      threadId: 'ci-1',
+    // The post-ship seam (d14): onPrOpened ensures the `ship` thread group thread exists once the PR is recorded.
+    ensureShipThread: vi.fn(async () => ({
+      threadGroupId: 'tg-ship',
+      threadId: 'ship-1',
     })),
   } as unknown as DriverStoreService;
   const stimStore = {
@@ -64,13 +64,13 @@ describe('GithubPrStateSync.onPrOpened', () => {
       'https://github.com/o/r/pull/9',
       9,
     );
-    expect(driverStore.ensureCiThread).toHaveBeenCalledWith({
+    expect(driverStore.ensureShipThread).toHaveBeenCalledWith({
       jobId: 'job-1',
       orgId: 'T1',
       decisionRecordId: null,
     });
     expect(
-      (driverStore.ensureCiThread as ReturnType<typeof vi.fn>).mock
+      (driverStore.ensureShipThread as ReturnType<typeof vi.fn>).mock
         .invocationCallOrder[0],
     ).toBeLessThan(
       (driverStore.setPrReady as ReturnType<typeof vi.fn>).mock
@@ -214,7 +214,7 @@ describe('GithubPrStateSync.dispatch', () => {
       9,
     );
     expect(
-      (driverStore.ensureCiThread as ReturnType<typeof vi.fn>).mock
+      (driverStore.ensureShipThread as ReturnType<typeof vi.fn>).mock
         .invocationCallOrder[0],
     ).toBeLessThan(
       (driverStore.setPrReady as ReturnType<typeof vi.fn>).mock

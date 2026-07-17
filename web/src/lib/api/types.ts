@@ -1,7 +1,7 @@
 /**
  * Contracts for the Atlas web surface (`/web/*`). These MIRROR the backend shapes verbatim:
  *  - `WebApprovalCard` / `WebVerdictCard` — the approval-card payload carried on a message's `card`.
- *  - `PipelineState` — `DriverStoreService.getPipelineState` (job + threads + per-thread steps; carries
+ *  - `PipelineState` — `DriverStoreService.getPipelineState` (job + thread groups + threads; carries
  *    the thread's PR url/number + feature/base branch — the navigator's ARTIFACTS + header read them).
  *
  * The live message + request shapes are owned by `job-api.ts` (the org → repo → thread client).
@@ -56,9 +56,10 @@ export const SHIP_ACTION_ID = "atlas_approval:ship";
  *  `/approve` endpoint with the ship card's `{ jobId }` value. Must match the backend string in
  *  `approval-blocks.ts`. */
 export const RETRACT_SHIP_ACTION_ID = "atlas_approval:retract_ship";
-/** The brain's "Amend build?" PROPOSAL buttons (the `withdraw_ship` tool's card). Unlike the plain
- *  ship-card retract, the gate stays parked until the operator approves: `Approve amend` runs the operator
- *  retract AND wakes the brain; `Dismiss` just clears the card. Must match `approval-blocks.ts`. */
+/** The post_build thread's "Amend build?" PROPOSAL buttons (the `withdraw_ship` tool's card). Unlike the
+ *  plain ship-card retract, the gate stays parked until the operator approves: `Approve amend` runs the
+ *  operator retract AND wakes the post_build thread; `Dismiss` just clears the card. Must match
+ *  `approval-blocks.ts`. */
 export const AMEND_APPROVE_ACTION_ID = "atlas_approval:amend_approve";
 export const AMEND_DISMISS_ACTION_ID = "atlas_approval:amend_dismiss";
 /** The MERGE gate's "Merge PR" button — the THIRD human gate (after Approve/Ship). Auto-merge auto-clicks
@@ -127,7 +128,7 @@ export interface WebApprovalCard {
   /**
    * `plan` (full ceremony) / `direct` (fast path) — the plan-stage approval, labels the list "Sections"
    * vs "Changes". `ship` — the ship-review gate (`Ship it` + `Back to building`;
-   * `threads`/`decisions` empty). `amend` — the brain's "Amend build?" proposal at the ship gate
+   * `threads`/`decisions` empty). `amend` — the post_build thread's "Amend build?" proposal at the ship gate
    * (`Approve amend` + `Dismiss`); the gate stays parked until approved. `merge` — the merge gate
    * (`Merge PR`), posted once the PR is GitHub-mergeable; `threads`/`decisions` empty. `db_write` — the
    * `atlas-prod` gated-write approval card (`Execute write` + `Deny`; `threads`/`decisions` empty); the
@@ -174,7 +175,7 @@ export interface WebQuestionOption {
 }
 
 /**
- * A formal question the brain posed via `ask_question` — rendered as a card with one button per option
+ * A formal question a thread posed via `ask_question` — rendered as a card with one button per option
  * (+ optional free-text "Other"). The operator's pick POSTs an `answer_question` item to `…/threads/:jobId/message`.
  * When `answer` is set the card renders the compact answered state. Mirrors the backend `WebQuestionCard`.
  */
@@ -190,7 +191,7 @@ export interface WebQuestionCard {
   answer?: string;
   answeredAt?: string;
   loggedDecision?: boolean;
-  /** Set when the brain RETRACTED this still-unanswered question (`withdraw_question`) — renders a compact
+  /** Set when the thread RETRACTED this still-unanswered question (`withdraw_question`) — renders a compact
    *  "withdrawn" state with no answer buttons. Terminal, like `answer`. */
   withdrawnAt?: string;
   withdrawnReason?: string;
@@ -200,7 +201,7 @@ export interface WebQuestionCard {
 }
 
 /**
- * A secure SECRET request the onboarding brain posed via `request_secret` — rendered as a masked input.
+ * A secure SECRET request the onboarding thread posed via `request_secret` — rendered as a masked input.
  * The operator's value POSTs to `…/threads/:jobId/provide-secret`, which stores it ENCRYPTED + grants
  * it; the value is NEVER part of this card. When `provided_at` is set the card renders a compact "provided"
  * state. Mirrors the backend `WebSecretInputCard` (deliberately value-free).
@@ -225,14 +226,14 @@ export interface WebSecretInputCard {
   mcp?: { server: string; slot: "header" | "env"; key: string };
   provided_at?: string;
   delivered_at?: string;
-  /** Set when the brain RETRACTED this still-unprovided request (`withdraw_secret_request`) — renders a
+  /** Set when the thread RETRACTED this still-unprovided request (`withdraw_secret_request`) — renders a
    *  compact "withdrawn" state with no input. Terminal, like `provided_at`. */
   withdrawnAt?: string;
   withdrawnReason?: string;
 }
 
 /**
- * A secure FILE request the onboarding brain posed via `request_file` — rendered as a file picker. The
+ * A secure FILE request the onboarding thread posed via `request_file` — rendered as a file picker. The
  * operator's file is read as text and POSTs a `file_answered` item to `…/threads/:jobId/message`, which stores
  * the contents ENCRYPTED + grants them; the contents are NEVER part of this card. When `provided_at` is set the
  * card renders a compact "uploaded" state. Mirrors the backend `WebFileRequestCard` (deliberately value-free).
@@ -246,7 +247,7 @@ export interface WebFileRequestCard {
   filename?: string;
   provided_at?: string;
   delivered_at?: string;
-  /** Set when the brain retracted the request via `withdraw_file_request` — greys the card, drops the picker. */
+  /** Set when the thread retracted the request via `withdraw_file_request` — greys the card, drops the picker. */
   withdrawnAt?: string;
   withdrawnReason?: string;
 }
@@ -329,12 +330,12 @@ export interface WebMcpProposalServer {
     scope?: string;
     tokenAuthMethod?: "none" | "client_secret_post" | "client_secret_basic";
   };
-  /** The brain's one-line rationale for why this server suits the repo. */
+  /** The proposing thread's one-line rationale for why this server suits the repo. */
   reason?: string;
 }
 
 /**
- * A stack-matched MCP-server recommendation the onboarding brain posed via `propose_mcp_servers`. The
+ * A stack-matched MCP-server recommendation the onboarding thread posed via `propose_mcp_servers`. The
  * OWNER approves it (owner-only) at `…/jobs/:jobId/mcp-proposals/:requestId/approve`, which registers each
  * server on the repo; secret slots are then filled via a normal secure secret card. When `approved_at` is
  * set the card renders a compact "registered" state. Value-free (server defs only, never a secret value).
@@ -354,9 +355,9 @@ export interface WebMcpProposalCard {
 }
 
 /**
- * An owner-approvable SKILL proposal the brain posts. `install` = reuse a maintained skill from a git
- * marketplace (`installPreview` shows the exact resolved skill + any overwrite); `create` = a skill the brain
- * AUTHORED as real files (`preview` shows SKILL.md + the file tree); `remove` = delete a registered skill.
+ * An owner-approvable SKILL proposal a thread posts. `install` = reuse a maintained skill from a git
+ * marketplace (`installPreview` shows the exact resolved skill + any overwrite); `create` = a skill the
+ * thread AUTHORED as real files (`preview` shows SKILL.md + the file tree); `remove` = delete a registered skill.
  * The OWNER approves at `…/jobs/:jobId/skill-proposals/:requestId/approve`. Mirrors the backend card.
  */
 export interface WebSkillProposalCard {
@@ -458,7 +459,8 @@ export interface TaskItem {
 /** The thread ROLE — the single differentiator. Mirrors backend `ThreadRole` (`thread-kind/spec.ts`).
  *  `planner` is the operator conversation ("Main"); `codex_review` is the synchronous Codex plan-review
  *  dialogue; `builder`/`master_review` are top-level executable; `review_agent`/`review_fix` are
- *  thread-group-scoped children of a builder; `post_build`/`ship` reuse the brain's conversational session. */
+ *  thread-group-scoped children of a builder; `post_build`/`ship` are each their own single-thread
+ *  conversational session (there is no shared persistent session to reuse). */
 export type ThreadRole =
   | "planner"
   | "codex_review"
@@ -579,8 +581,8 @@ export interface PipelineJob {
    *  null unless status==='blocked' and a seed exists. Powers the blocked overlay's pending-message preview. */
   blockedSeedMessage?: string | null;
   /**
-   * Which build path was committed at approval: `'direct'` (fast, brain-implemented) | `'plan'` (driver
-   * multi-thread) | `null` (never approved — still an open/awaiting-approval proposal that could become
+   * Which build path was committed at approval: `'direct'` (fast — a single builder section with no
+   * review) | `'plan'` (driver multi-thread) | `null` (never approved — still an open/awaiting-approval proposal that could become
    * either). The navigator reads this to suppress the plan-oriented empty-state placeholders (build lanes,
    * `plan.md`, generated docs) for a direct build, where they never apply. Absent on very old payloads.
    */
@@ -640,7 +642,7 @@ export interface PipelineJob {
 
 /**
  * `no_job` = the job never entered the build lifecycle (still `open`, chatting/planning). It still
- * carries the brain's own `mainTasks` (folded from its always-present planning thread group) so the
+ * carries the planner's own `mainTasks` (folded from its always-present planning thread group) so the
  * navigator's Main row can show the checklist pre-plan.
  */
 export type PipelineState =
@@ -663,7 +665,7 @@ export type PipelineState =
     };
 
 /**
- * The Main brain session's task list, from either pipeline shape. `no_job` carries `mainTasks` directly
+ * The Main (planner) thread's task list, from either pipeline shape. `no_job` carries `mainTasks` directly
  * (folded from its planning thread group). An active job has NO top-level `mainTasks` any more — it's the
  * planning thread group's own `tasks` (planning is always exactly one singleton thread group).
  */

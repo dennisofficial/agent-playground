@@ -416,7 +416,7 @@ export function SystemEventPill({
 
 /**
  * A session-compaction pill — renders like {@link SystemEventPill}, but the message carries the full handoff
- * summary (what context was kept when the brain session was compacted). Click to expand and inspect it. The
+ * summary (what context was kept when the thread's session was compacted). Click to expand and inspect it. The
  * summary lives durably on the message row, so it stays auditable for the life of the job.
  */
 export function CompactionSummaryPill({
@@ -537,7 +537,7 @@ function seedTypePresentation(
 }
 
 /**
- * A harness-injected `system_notice` — a durable state change the brain was told about inline (sandbox
+ * A harness-injected `system_notice` — a durable state change the thread's session was told about inline (sandbox
  * reset, secret/file confirmation, an internal-seed wake/nudge). Renders as a collapsed one-line row;
  * click to expand the full body (reset notices run several sentences). NOT an operator or Atlas bubble.
  * A row stamped with a known `meta.seedType` (mirroring `meta.eventKind` on {@link EventBubble}) gets its
@@ -737,7 +737,7 @@ export function UntrustedBlock({ message }: { message: JobMessage }) {
   );
 }
 
-/** The shape of a `turn_meta` block's `meta` — per-turn token usage + context occupancy (see the brain). */
+/** The shape of a `turn_meta` block's `meta` — per-turn token usage + context occupancy the thread's session reports. */
 interface TurnMeta {
   usage?: {
     inputTokens?: number;
@@ -761,7 +761,7 @@ function formatCost(n: number): string {
 /**
  * The end-of-turn line — the turn's timestamp with its detailed token usage (in / out / cache / cost)
  * sitting right beside it, left-aligned like a message timestamp (NOT an isolated full-width divider).
- * Renders the durable `turn_meta` block the brain appends at each turn end.
+ * Renders the durable `turn_meta` block the thread's session appends at each turn end.
  */
 export function TurnMetaDivider({ message }: { message: JobMessage }) {
   const meta = (message.meta ?? {}) as TurnMeta;

@@ -469,7 +469,7 @@ const DONE_TAIL = 2;
 const DONE_FOLD_MIN = 2;
 
 /** The open thread group's TASKS section — the thread group's live, LLM-authored checklist. Exported for
- *  the navigator's Main row, whose fold shows the brain session's own list (`pipelineMainTasks`) the same
+ *  the navigator's Main row, whose fold shows the planner session's own list (`pipelineMainTasks`) the same
  *  way. */
 export function TasksBody({
   tasks,

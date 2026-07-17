@@ -383,7 +383,7 @@ export class AgentSessionManager
     // The shared send seam — the brain registers its `main`-lane transport (the durable steer/fresh-turn
     // pump) so a generic caller can `postToThread(laneFor('main', jobId), …)` without knowing it's the brain.
     private readonly threadInput: ThreadInputService,
-    // Host-side subscription usage snapshot — the Main-lane session-limit park reads `getResetAt(orgId,
+    // Host-side subscription usage snapshot — the session-backed lane's session-limit park reads `getResetAt(orgId,
     // rateLimitType)` to seed the resume clock when the engine didn't surface a precise reset instant.
     // @Global OnboardingModule.
     private readonly usage: OauthUsageService,
@@ -1259,7 +1259,7 @@ export class AgentSessionManager
   /**
    * Render a harness SEED as a visible transcript row — the Command handler for {@link SeedRow}. The console
    * mirrors the agent's turns, so every seed the brain receives must be legible now that the raw
-   * `agent_prompt` snapshot is not shown on Main. Cases: a descriptor → a curated `system_notice`/`untrusted`
+   * `agent_prompt` snapshot is not shown on the `main` lane. Cases: a descriptor → a curated `system_notice`/`untrusted`
    * pill; `'skip'` → the content already has a durable row (an event body); ABSENT → a generic fallback pill,
    * so a newly-added seed can never be silently invisible. Gated to genuine harness seeds (SYSTEM_SEED_AUTHOR,
    * not the reset-verify no-op). Dedup-protected by the descriptor's content-stable `chunkKey` (the generic
@@ -1621,7 +1621,7 @@ export class AgentSessionManager
       : 'main';
   }
 
-  /** Active turns created before lane metadata, or older test doubles, are the legacy main brain lane. */
+  /** Active turns created before lane metadata, or older test doubles, are the legacy `main` lane. */
   private activeTurnLane(turn: { lane?: string | null }): string {
     return turn.lane ?? 'main';
   }
@@ -3260,8 +3260,8 @@ export class AgentSessionManager
       await this.sandboxRows.save(sandboxRow);
     }
 
-    // SESSION/USAGE LIMIT PARK (Main lane): the engine ended the turn CLEANLY on a Claude subscription limit
-    // (not a crash). Park the lane on the durable resume clock — the Main lane has no `halt`, so the clock IS
+    // SESSION/USAGE LIMIT PARK (session-backed lane): the engine ended the turn CLEANLY on a Claude subscription limit
+    // (not a crash). Park the lane on the durable resume clock — the session-backed lane has no `halt`, so the clock IS
     // the park marker — finalize the live stream as a GRACEFUL end (the turn already ended; just flush, don't
     // run the triage success tails), post ONE stable notice, and stop. The leader sweep auto-resumes at the
     // reset (or the operator Force-resumes via `POST …/retry-turn`); every un-park path clears the clock.
@@ -3285,7 +3285,7 @@ export class AgentSessionManager
         const resumeAt =
           result.sessionLimit?.resetAt ??
           (await this.usage.getResetAt(stimulus.orgId, rlType));
-        // The Main lane has no `halt`, so the durable clock IS the park marker: when no precise reset is known,
+        // The session-backed lane has no `halt`, so the durable clock IS the park marker: when no precise reset is known,
         // seed a BOUNDED default (now + shortest window) so the leader sweep auto-resumes and a process restart
         // still has something to resume — a null clock would strand the lane on manual Force-resume only.
         const resumeClock = resumeAt ?? defaultResumeAt();
@@ -3419,7 +3419,7 @@ export class AgentSessionManager
             // sums every round-trip's cache re-reads and blows past the window). Null when the engine
             // didn't surface per-call usage — better a blank ring than a wrong ~94%.
             contextTokens: result.usage.contextTokens ?? null,
-            // Resolve the window from the MAIN agent's model, not a helper picked up by billing usage.
+            // Resolve the window from the session's own agent model, not a helper picked up by billing usage.
             contextLimit: resolveContextLimit(
               result.usage.contextModel ?? result.usage.model,
             ),
@@ -5706,7 +5706,7 @@ export class AgentSessionManager
   }
 
   /**
-   * Cancel any pending Main-lane host-retry backstop for this job (in-process 10s timer + its durable
+   * Cancel any pending session-backed-lane host-retry backstop for this job (in-process 10s timer + its durable
    * `kind:'retry'` resume clock), mirroring the build lane's `ThreadDriver.drive()` guard ('a fresh drive
    * supersedes any parked host-retry timer'). Called at the top of a fresh `runChatTurnInner` and on the
    * successful-turn tail: if the thread recovered through an unrelated path (an operator message, a pump/wake)

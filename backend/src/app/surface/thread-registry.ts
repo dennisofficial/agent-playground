@@ -1,8 +1,9 @@
 /**
  * THE THREAD REGISTRY — the single source of truth for "what thread kinds exist".
  *
- * A Job has many conversational **threads** — the Main brain, the per-track builders, the auto-fix
- * review-lens + fix passes, the terminal ship turn, and the Codex plan-review dialogue. They already share
+ * A Job has many conversational **threads** — the planner (operator-conversation) session, the per-Section
+ * builder legs, the auto-fix review-lens + fix passes, the terminal ship turn, and the Codex plan-review
+ * dialogue. They already share
  * one transport (the {@link TurnHarnessFactory} spine); what USED to be scattered was the glue AROUND that
  * transport: each feature built its own lane string, and `turn-harness` kept a SECOND independent switch
  * (`taskScopeFor`) over those same lane patterns. This registry unifies both — one descriptor per kind
@@ -13,8 +14,8 @@
  */
 
 /**
- * The scope a task event folds into: a build thread's own list (`thread` → `threads.tasks`) or the Main
- * brain session's list (`main` → `jobs.main_tasks`). (The old `job` → `jobs.tasks` PR-Review scope was
+ * The scope a task event folds into: a build thread's own list (`thread` → `threads.tasks`) or the planner
+ * (main-lane) session's list (`main` → `jobs.main_tasks`). (The old `job` → `jobs.tasks` PR-Review scope was
  * dropped when master review became a normal build thread.)
  */
 export interface TaskScope {
@@ -24,8 +25,8 @@ export interface TaskScope {
 
 /** Every kind of thread a job can run. */
 export type ThreadKind =
-  | 'main' // the job brain session — the operator conversation. Lane: `main`.
-  | 'builder' // a build/track thread's own session. Lane: `thread:<threadId>`. (Master review is a builder too.)
+  | 'main' // the planner (operator-conversation) session. Lane: `main`.
+  | 'builder' // a build thread's (a Section's Leg) own session. Lane: `thread:<threadId>`. (Master review is a builder too.)
   | 'autofix-stage' // the auto-fix stage's aggregate/card lane. Lane: `autofix:<autofixId>`.
   | 'autofix-lens' // one review lens's sub-lane. Lane: `autofix:<autofixId>:<lensId>`.
   | 'autofix-fix' // the auto-fix fix turn's sub-lane. Lane: `autofix:<autofixId>:fix`.
@@ -34,7 +35,7 @@ export type ThreadKind =
 
 /**
  * Who holds the input side of a thread — uniform harness-wise (one `postToThread` seam), differing only by
- * policy: `operator` = the human can post (Main, shows a composer); `agent` = another agent drives it
+ * policy: `operator` = the human can post (the planner lane, shows a composer); `agent` = another agent drives it
  * (Codex review — Atlas replies via a tool, no operator composer); `none` = read-only observation.
  */
 export type ThreadInput = 'operator' | 'agent' | 'none';

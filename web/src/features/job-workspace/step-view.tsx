@@ -115,7 +115,7 @@ export function PhaseView({
   blockedBy?: JobBlocker[];
   /**
    * Only the RIGHT (detail) pane's `PhaseView` instance owns the review-comments `activeTarget` — the LEFT
-   * (lane) instance's `selectedNode` is always a transcript lane (a bare thread/step id, or a
+   * (lane) instance's `selectedNode` is always a transcript lane (a bare thread id, or a
    * `rev:`/`fix:`/`codex-review:` child-thread lane), never a commentable file/doc (see
    * `use-selected-node.ts`'s `isDetailNode`), so it must NOT clear the right pane's active target to null
    * every time the operator switches lanes. Defaults false; `job-workspace.tsx` passes true only for the
@@ -134,7 +134,7 @@ export function PhaseView({
     threads.flatMap((t) => t.children ?? []).find((c) => c.id === selectedNode) ??
     null;
 
-  // A `?node=` URL can outlive the node it names (deleted spec, a thread/step id from before a re-plan).
+  // A `?node=` URL can outlive the node it names (deleted spec, a thread id from before a re-plan).
   // Resolve EVERY job-derived token against the live job so a stale link shows NodeNotFound rather than a
   // misleading generic placeholder or a silently-empty build view. `spec:`/`artifact:` self-handle a 404
   // inside FileView; `plan`/`decision`/`diff` render from card/derived data and are always resolvable.
@@ -413,7 +413,7 @@ export function PhaseView({
  * The detail-pane view for one subagent (Task) run. Renders the subagent's OWN transcript — its thinking,
  * narration, and tool calls — peeled out of the main conversation by `meta.parentToolUseId`. Prefers the
  * durable transcript (post-turn); falls back to the live blocks while the subagent is still running.
- * Read-only: the operator steers the brain, not the subagent.
+ * Read-only: the operator steers the parent thread, not the subagent.
  */
 function SubagentView({
   jobRef,
@@ -1057,7 +1057,7 @@ function HtmlFileBody({
   );
 }
 
-/** A `?node=` that no longer resolves (deleted file, re-planned thread/step). Placeholder styling — the
+/** A `?node=` that no longer resolves (deleted file, re-planned thread). Placeholder styling — the
  *  designer will restyle/replace this. */
 function NodeNotFound({
   node,
@@ -1340,7 +1340,7 @@ function RepoFileBody({
 
 /**
  * The detail pane's resting state. The right pane is a CONSTANT container that never closes — when no
- * navigator node is selected it shows this instead of collapsing. Picking a file, thread, or step from the
+ * navigator node is selected it shows this instead of collapsing. Picking a file or thread from the
  * navigator fills it. Matches the PhaseView shell (header bar + body) so the container looks consistent.
  */
 export function EmptyPane() {

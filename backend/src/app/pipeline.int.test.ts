@@ -698,18 +698,18 @@ describe('pipeline (live Postgres) — thread-group-driven drive over a stubbed 
         }),
       );
 
-      // ── 2e: ship() spawned a ci thread-group thread and openPrAtShip fired with ITS (ci) thread id — PR
-      // creation moved to ci, so it must NOT be the post_build thread's id ────────────────────────────
-      const ciThreadGroup = threadGroupsAfter.find((s) => s.kind === 'ci');
-      expect(ciThreadGroup).toBeTruthy();
-      const [ciThread] = await store.threadsForThreadGroup(ciThreadGroup!.id);
-      expect(ciThread.role).toBe('ci');
-      expect(ciThread.id).not.toBe(postBuildThread.id);
+      // ── 2e: ship() spawned a ship thread-group thread and openPrAtShip fired with ITS (ship) thread id — PR
+      // creation moved to ship, so it must NOT be the post_build thread's id ────────────────────────────
+      const shipThreadGroup = threadGroupsAfter.find((s) => s.kind === 'ship');
+      expect(shipThreadGroup).toBeTruthy();
+      const [shipThread] = await store.threadsForThreadGroup(shipThreadGroup!.id);
+      expect(shipThread.role).toBe('ship');
+      expect(shipThread.id).not.toBe(postBuildThread.id);
       expect(brainGateway.openPrAtShip).toHaveBeenCalledTimes(1);
       expect(brainGateway.openPrAtShip).toHaveBeenCalledWith(
         expect.objectContaining({
           jobId: seed.jobId,
-          threadId: ciThread.id,
+          threadId: shipThread.id,
         }),
       );
 
@@ -764,7 +764,7 @@ describe('pipeline (live Postgres) — thread-group-driven drive over a stubbed 
       expect(jobRow.pr_url).toBeNull();
       const threadGroups = await store.threadGroupsForJob(seed.jobId);
       expect(threadGroups.some((s) => s.kind === 'post_build')).toBe(false);
-      expect(threadGroups.some((s) => s.kind === 'ci')).toBe(false);
+      expect(threadGroups.some((s) => s.kind === 'ship')).toBe(false);
       // The frontend builder + master review never drove.
       const frontendBuilder = await threads.findOneOrFail({
         where: { id: seed.frontendBuilderId },

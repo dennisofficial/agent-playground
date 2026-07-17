@@ -6,8 +6,8 @@ import { codexReviewLane } from "./codex-review";
  * THE NODE REGISTRY — the single source of truth for how a navigator `?node=`/`?lane=` token is
  * constructed, which pane it opens in, whether it still resolves against the live job, and (for the
  * transcript-backed ones) which live/durable lane it renders. Every conversational node is a "thread": the
- * Main brain, a build/track thread, a review lens, the post-review fix turn, the Codex plan-review dialogue
- * — they all ride the ONE {@link TranscriptView} on a lane string this registry produces.
+ * Main (planner) thread, a build (Leg) thread, a review lens, the post-review fix turn, the Codex
+ * plan-review dialogue — they all ride the ONE {@link TranscriptView} on a lane string this registry produces.
  *
  * The DETAIL-pane view bodies still live in `step-view.tsx` (they need React hooks + per-branch queries, so
  * they can't be pure data here) — but they dispatch off this registry's builders/placement/lane so the
@@ -166,8 +166,8 @@ export function contextConvoNodeForHref(href: string): string | null {
 /**
  * The live/durable lane a transcript-backed node renders on — the ONE place that maps a node id to its
  * `TranscriptView` lane. Returns `null` for non-transcript nodes (files/plan/decision/ports/…), which have
- * their own view components. `jobId` is needed for the job-scoped Codex/fix lanes; `job` locates a step's
- * owning thread.
+ * their own view components. `jobId` is needed for the job-scoped Codex/fix lanes; `job` locates a
+ * thread node's owning thread.
  */
 export function nodeLane(
   node: string,

@@ -66,7 +66,7 @@ export class JobBootstrapService {
    * The job's planning thread group thread id — the anchor for job-level messages that have no build-lane thread
    * of their own. A job starts with exactly one planning thread group (ensurePlanningThreadGroup above), but a
    * heavy amend (d-amend) can append a LATER one — ordered `DESC` (newest first) so routing always follows the
-   * CURRENT planning group, mirroring `ciThreadId`'s "newest first" rationale below. Throws loudly rather than
+   * CURRENT planning group, mirroring `shipThreadId`'s "newest first" rationale below. Throws loudly rather than
    * letting a caller insert a message with a bogus thread_id if none resolves.
    */
   async planningThreadId(jobId: string): Promise<string> {
@@ -88,13 +88,13 @@ export class JobBootstrapService {
   }
 
   /**
-   * The job's `ci` thread group thread id, or `null` before it exists (pre-ship — `DriverStoreService.ensureCiThread`
+   * The job's `ship` thread group thread id, or `null` before it exists (pre-ship — `DriverStoreService.ensureShipThread`
    * is the sole creator, at the post-ship seam). READ-ONLY lookup — never creates one; used by event/CI
-   * intake (thread 4 §CI-routing) to decide whether an inbound GitHub/CI stimulus targets the `ci` thread
+   * intake (thread 4 §CI-routing) to decide whether an inbound GitHub/CI stimulus targets the `ship` thread
    * or still falls back to planning. Newest first — an append-only re-plan round (d7) can in principle spawn
-   * a later `ci` thread group, and inbound events should always reach the CURRENT one.
+   * a later `ship` thread group, and inbound events should always reach the CURRENT one.
    */
-  async ciThreadId(jobId: string): Promise<string | null> {
+  async shipThreadId(jobId: string): Promise<string | null> {
     const thread = await this.threads.findOne({
       where: { job_id: jobId, role: 'ship' },
       order: { ordinal: 'DESC' },

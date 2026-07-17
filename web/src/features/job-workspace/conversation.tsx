@@ -49,9 +49,10 @@ import { useComposerStagedAnswers } from "@/lib/api/composer-store";
 import { useAllJobs } from "@/lib/api/inbox";
 
 /**
- * Conversation mode — the Main lane (the thread's brain). Just the shared {@link TranscriptView} with the
- * composer turned on: intent, planning, and steering all live here. Every OTHER lane (Codex review, a build
- * thread/step) renders the IDENTICAL TranscriptView without a composer — one renderer, no divergence.
+ * Conversation mode — the Main lane (the planner thread's own chat). Just the shared {@link TranscriptView}
+ * with the composer turned on: intent, planning, and steering all live here. Every OTHER lane (Codex
+ * review, a build Leg thread) renders the IDENTICAL TranscriptView without a composer — one renderer, no
+ * divergence.
  */
 export function Conversation({
   jobRef,
@@ -79,9 +80,9 @@ export function Conversation({
   /** The pending seed message this job will start on when it unblocks — previewed in the blocked overlay. */
   blockedSeedMessage?: string | null;
   /** The planning thread group's thread id — Main's transcript is scoped to it. Undefined for a pre-plan (`no_job`)
-   *  job, where every message belongs to the single brain thread and no scoping is needed. */
+   *  job, where every message belongs to the single planner thread and no scoping is needed. */
   mainThreadId?: string;
-  /** The Main (brain) lane's pre-turn footer default ("Opus 4.8") — shown before the first brain turn. */
+  /** The Main (planner) lane's pre-turn footer default ("Opus 4.8") — shown before the first planner turn. */
   mainDefaultFooter?: LaneDefaultFooter;
   onOpenPlan?: () => void;
   /** Open a node in the right detail pane (e.g. a subagent run's sub-page). */
@@ -118,9 +119,9 @@ export function Conversation({
 }
 
 /**
- * THE ONE transcript renderer — every lane (Main, Codex review, a build thread/step) renders through this
+ * THE ONE transcript renderer — every lane (Main, Codex review, a build Leg thread) renders through this
  * so they look and behave identically: the same typed bubbles, tool-call groups, thinking blocks,
- * subagent/phase cards, token dividers, live streaming, tail-follow, and windowing. The ONLY per-lane
+ * subagent cards, token dividers, live streaming, tail-follow, and windowing. The ONLY per-lane
  * differences are (a) which blocks feed it — `buildLogItems(log, { lane })` scopes membership + peeling —
  * (b) which live lane it subscribes to (`useLiveTurn(jobId, lane)`), and (c) whether it shows a composer.
  * It renders the scrolling body only; the caller supplies the surrounding shell (top bar / pane).
@@ -151,7 +152,8 @@ export function TranscriptView({
    *  Undefined only for the out-of-scope Codex review lane and a pre-plan Main, where the unfiltered log is
    *  already single-thread. */
   threadId?: string;
-  /** Show the composer. On Main it's interactive; on every other lane pass `readOnly` alongside. */
+  /** Show the composer. On Main (the planner) it's interactive; on every other lane pass `readOnly`
+   *  alongside. */
   composer?: boolean;
   /** Read-only lane (not Main): the composer's input + Send are disabled, but its footer stays live. */
   readOnly?: boolean;
@@ -207,14 +209,14 @@ export function TranscriptView({
   // The AUTHORITATIVE turn signal: the server-owned realtime `needsYou` (true = the AI is idle / awaiting
   // you — a turn is NOT running). If it flips true while a stale live turn still lingers (a dropped
   // `turn_end`), we treat the turn as OVER so the "working…" indicator self-heals OFF. Only the Main lane
-  // cross-checks this — the realtime feed is job-level, so it can't gate independent build (phase) lanes,
+  // cross-checks this — the realtime feed is job-level, so it can't gate independent build (Leg) lanes,
   // and a read-only lane (composer on, but not Main) must NOT cross-check it either.
   const realtimeIdle = useRealtimeIdle(composer && !readOnly ? jobRef.jobId : null);
   const turnActive = (liveTurn?.active ?? false) && !realtimeIdle;
 
-  // Whether a BUILD lane (not this Main chat) owns the live work: the job's coarse status is a build phase
+  // Whether a BUILD lane (not this Main chat) owns the live work: the job's coarse status is a build stretch
   // (`building`/`master_review`/`shipping` all fold onto the `running` presentation dot). During a build the
-  // Main brain is dormant, so without this the Main footer keeps showing "Atlas is working…" for work a build
+  // planner is dormant, so without this the Main footer keeps showing "Atlas is working…" for work a build
   // lane is actually doing. Only consulted on the interactive Main lane (same gate as `realtimeIdle`); a build
   // lane's own view drives its own indicator off its own live turn.
   const driverOwnsWork = useRealtimeDriverOwnsWork(
@@ -295,7 +297,7 @@ export function TranscriptView({
     liveTurn?.contextModel,
   ]);
 
-  // The durable transcript, folded into one descriptor per top-level row (tool groups, subagent/phase
+  // The durable transcript, folded into one descriptor per top-level row (tool groups, subagent
   // cards, bubbles), SCOPED to this lane. Windowed: on a long thread only the on-screen rows render.
   const items = useMemo(
     () =>
@@ -564,7 +566,7 @@ export function TranscriptView({
 /**
  * A pinned "N awaiting you" chip, shown whenever the Main lane has unanswered question cards. Clicking it
  * scrolls to the next open question (cycling on repeated clicks) and flashes it — so a card buried by a wall
- * of the brain's thinking is one click away instead of a scroll-hunt. Anchored bottom-LEFT so it never
+ * of the planner's thinking is one click away instead of a scroll-hunt. Anchored bottom-LEFT so it never
  * collides with the centered {@link JumpToLatestButton}.
  */
 function OpenQuestionsChip({
@@ -784,7 +786,7 @@ function buildLogItems(
   };
 
   // The Task block that spawned a subagent → a compact card opening the run's sub-page (used in any lane
-  // that CONTAINS a subagent: Main, and a build phase lane).
+  // that CONTAINS a subagent: Main, and a build (Leg) lane).
   const pushSubagentCard = (message: JobMessage) => {
     flush();
     const summary = sub.summaryById.get(String(message.meta?.id));
@@ -807,7 +809,7 @@ function buildLogItems(
     // Rendered INLINE at its chronological position on every agent lane (a build thread, a review child).
     // Handled here, before `classifyMessage`, else an atlas-authored row falls through as a normal bubble.
     if (message.kind === "agent_prompt") {
-      // The brain's Main transcript mirrors the agent's turns via typed durable rows (operator bubble,
+      // The Main transcript mirrors the agent's turns via typed durable rows (operator bubble,
       // system_notice/system_reminder/untrusted pills) — so the raw serialized prompt snapshot is pure
       // duplication there and is NOT rendered. On the out-of-scope Codex lane it belongs only when tagged.
       const cid =
@@ -1021,10 +1023,10 @@ function buildLogItems(
 
 /**
  * The AUTHORITATIVE "the AI is idle" signal for one job, from the server-owned realtime inbox row
- * (`needsYou`, kept live by `useAllJobsRealtime`). `needsYou === true` means the brain is NOT running a turn
- * and the thread isn't terminal — so a lingering live turn (dropped `turn_end`) should be treated as over.
- * Returns `false` when `jobId` is null (non-Main lanes don't cross-check) or the row isn't cached yet, so
- * the SSE stream stays the sole signal until realtime confirms otherwise (never a false "not working").
+ * (`needsYou`, kept live by `useAllJobsRealtime`). `needsYou === true` means the planner is NOT running a
+ * turn and the thread isn't terminal — so a lingering live turn (dropped `turn_end`) should be treated as
+ * over. Returns `false` when `jobId` is null (non-Main lanes don't cross-check) or the row isn't cached yet,
+ * so the SSE stream stays the sole signal until realtime confirms otherwise (never a false "not working").
  */
 function useRealtimeIdle(jobId: string | null): boolean {
   const { data: threads } = useAllJobs();
@@ -1035,10 +1037,10 @@ function useRealtimeIdle(jobId: string | null): boolean {
 /**
  * Whether a BUILD lane (not this Main chat) owns the live work for one job, from the same inbox row
  * (`useAllJobsRealtime`). True when the job's coarse presentation status is `running` — the build/master-
- * review/shipping phases where a build lane owns the work and the Main brain is dormant. The Main indicator
- * uses it so it doesn't show "working…" for a dormant brain. Returns `false` when `jobId` is null (non-Main
- * lanes don't consult it) or the row isn't cached yet, so a cold cache never falsely SUPPRESSES a genuine
- * indicator.
+ * review/shipping stretch of the pipeline where a build lane owns the work and the planner is dormant. The
+ * Main indicator uses it so it doesn't show "working…" for a dormant planner. Returns `false` when `jobId`
+ * is null (non-Main lanes don't consult it) or the row isn't cached yet, so a cold cache never falsely
+ * SUPPRESSES a genuine indicator.
  */
 function useRealtimeDriverOwnsWork(jobId: string | null): boolean {
   const { data: threads } = useAllJobs();
@@ -1170,7 +1172,7 @@ function ConversationTopBar({
   return (
     <DetailTopBar
       title="Conversation"
-      subtitle="the job brain"
+      subtitle="the planner thread"
       onOpenNav={onOpenNav}
       onOpenDetail={onOpenDetail}
     />

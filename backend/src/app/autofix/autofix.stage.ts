@@ -40,7 +40,7 @@ const DEFAULT_CONCURRENCY = 3;
 
 // ── transcript-lane / meta contract (mirrors the `codex-review:*` convention) ──────────────────────
 // The auto-fix stage streams onto the shared spine so the web can peel it exactly like Codex review / a
-// build phase. The CONTRACT the web consumes (see `docs/handoffs/autofix-review-lane-ui.md`):
+// build turn. The CONTRACT the web consumes (see `docs/handoffs/autofix-review-lane-ui.md`):
 //   • lanes:  stage node `autofix:<autofixId>`  ·  per-lens `autofix:<autofixId>:<lensId>`  ·  fix turn
 //             `autofix:<autofixId>:fix`. Per-lens sub-lanes are REQUIRED — the lenses run concurrently and
 //             `LiveTurnStore` keys an in-flight turn by (channel, jobId, lane), so one shared lane would let
@@ -78,8 +78,8 @@ export const autofixFixLane = (autofixId: string): string =>
  *   twice is a no-op the second time.
  *
  * Composes W1's EngineRunner + LocalGitService, plus the @Global {@link TurnHarnessFactory} (the shared
- * transcript spine) so its review lenses + fix turn stream + persist exactly like the brain, a build phase,
- * and Codex review — used ONLY when the context carries a streaming identity (jobId + channel); absent, the
+ * transcript spine) so its review lenses + fix turn stream + persist exactly like a conversational session, a
+ * build turn, and Codex review — used ONLY when the context carries a streaming identity (jobId + channel); absent, the
  * stage runs the engine directly with no harness (byte-identical to its pre-streaming behavior). Zero v1
  * `slack-app` imports.
  */

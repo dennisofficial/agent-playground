@@ -20,8 +20,8 @@ function makeBootstrap() {
   return {
     planningThreadId: vi.fn(async () => 'thread-planning'),
     ensurePlanningThreadGroup: vi.fn(async () => undefined),
-    // No `ci` thread group thread by default — attachEventToJob falls back to planning (§CI-routing).
-    ciThreadId: vi.fn(async () => null),
+    // No `ship` thread group thread by default — attachEventToJob falls back to planning (§CI-routing).
+    shipThreadId: vi.fn(async () => null),
   } as unknown as JobBootstrapService;
 }
 
@@ -151,7 +151,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
     const bootstrap = {
       planningThreadId: vi.fn(async () => 'thread-planning'),
       ensurePlanningThreadGroup: vi.fn(async () => undefined),
-      ciThreadId: vi.fn(async () => 'thread-ci-1'),
+      shipThreadId: vi.fn(async () => 'thread-ship-1'),
     } as unknown as JobBootstrapService;
     const store = new StimulusStoreService(
       threads.repo,
@@ -172,13 +172,13 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
       body: 'CI failed again',
     });
 
-    // The event card + the delivery-driving stimulus both target the ci thread, not planning.
+    // The event card + the delivery-driving stimulus both target the ship thread, not planning.
     expect(messages.rows[0]).toMatchObject({
       job_id: 'job-7',
-      thread_id: 'thread-ci-1',
+      thread_id: 'thread-ship-1',
     });
-    expect(stimuli.rows[0]).toMatchObject({ lane: 'thread:thread-ci-1' });
-    expect(event.resumeThreadId).toBe('thread-ci-1');
+    expect(stimuli.rows[0]).toMatchObject({ lane: 'thread:thread-ship-1' });
+    expect(event.resumeThreadId).toBe('thread-ship-1');
   });
 
   it('attachEventToJob is ATOMIC — a failed stimulus write leaves NO orphan event card', async () => {

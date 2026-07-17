@@ -9,8 +9,8 @@ import type { JobMessage } from "@/lib/api/job-api";
  *
  * There's no in-conversation card yet (no per-lens OR per-stage anchor node to link a card to beyond this
  * sub-page) — see `docs/handoffs/autofix-review-lane-ui.md` item B for that future work. For now the stage's
- * `autofix_anchor` row and every review block are simply peeled OUT of Main (like a build phase's blocks),
- * leaving only the plain "Reviewing the diff — …" notice line the stage already posts separately.
+ * `autofix_anchor` row and every review block are simply peeled OUT of Main (like a build Leg thread's
+ * blocks), leaving only the plain "Reviewing the diff — …" notice line the stage already posts separately.
  */
 export const autofixLensLane = (autofixId: string, lensId: string): string =>
   `autofix:${autofixId}:${lensId}`;

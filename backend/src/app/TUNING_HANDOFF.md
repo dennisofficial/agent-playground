@@ -1,5 +1,22 @@
 # Atlas v2 — Tuning Session Handoff
 
+> **⚠️ STALE — pre-redesign tuning log. The canonical model lives in [`ARCHITECTURE.md`](./ARCHITECTURE.md) —
+> read that first.** This handoff predates BOTH the **org → repo → job rebuild** AND the **Threads
+> Architecture Redesign** (host scheduler + per-thread sessions; see
+> [`../../../docs/adr/0009-threads-architecture-redesign.md`](../../../docs/adr/0009-threads-architecture-redesign.md)),
+> so its file/seam map and several of its assumptions are historical. Known stale references to watch for:
+> - **`driver/section-driver.service.ts` does not exist** — the build driver is `driver/thread-driver.service.ts`
+>   (and it is now the pure host **scheduler**, not an FSM). Anywhere this doc says "section-driver", read
+>   `thread-driver`.
+> - **The `POST /test/*` test-bridge shape below is pre-rebuild** — the `team`/`project`/`channel`/`threadTs`
+>   seed+say API (`/test/seed`, `/test/say`, `/test/approve`) predates the org→repo→job model; drive a live job
+>   through the `/web/orgs/:orgId/repos/:repoId/jobs…` API instead (see `ARCHITECTURE.md` §11 + `plan.md`'s
+>   verification recipe).
+> - **The failure-relay / driver→brain wake tuning (issue #2) is obsolete** — cross-thread relays and the
+>   persistent brain were deleted in the redesign; threads are isolated + dormant-resumable now.
+>
+> Kept as a dated record of the 6-scenario tuning pass; do not trust its nouns or paths as current.
+
 > **Your mission:** run an iterative **TUNE → TEST loop** on Atlas v2 — drive realistic scenarios through a live Atlas, observe what's weak, fix it in `backend/src/app/`, re-test, repeat. The architecture is sound and proven (it ships clean PRs); these are **brain / communication / gate tuning** fixes, **not** a re-architecture. The issues below were found in a live 6-scenario test pass — reproduce, fix, and re-verify each.
 
 ## 0. Orient first

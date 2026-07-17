@@ -18,18 +18,6 @@ import { ThreadEntity } from './thread.entity';
 import { UserEntity } from './user.entity';
 
 /**
- * One buffered, not-yet-conveyed pipeline milestone (the transient-moment record). `id` is an
- * idempotency key — a build thread group emits the same id repeatedly (the driver fires many events per step),
- * the buffer keeps exactly one. `text` is the passive line shown to the brain; `at` orders the prefix.
- */
-export interface PipelineMarker {
-  id: string;
-  text: string;
-  /** ISO-8601 emission time. */
-  at: string;
-}
-
-/**
  * A THREAD — the unit of work. One intent (a feature or a bugfix) = one sandbox = one worktree = one
  * feature branch = ONE PR. A thread may stay a plain conversation (`status='open'`) or enter the build
  * lifecycle; when it builds, the `threads`/`steps` rows hang directly off it (the former `jobs` layer
@@ -265,8 +253,8 @@ export class JobEntity extends TimestampedEntity {
    * The DURABLE auto-resume clock — when a lane is parked on a Claude session/usage limit, the ISO
    * instant it should auto-resume. Null = not parked. Swept leader-only (`SessionResumeSweep`, mirroring
    * `GitStateReconciler`'s `next_poll_at` due-query pattern: `WHERE session_resume_at <= now()`); cleared
-   * on resume (auto or force). The Main (brain) lane has no `halt` at all, so it needs this column
-   * regardless of the build-lane's `halt.resumeAt`.
+   * on resume (auto or force). The conversational session-backed lanes (planner/post_build/ship) have no
+   * `halt` at all, so they need this column regardless of the build-lane's `halt.resumeAt`.
    */
   @Column({ type: 'timestamptz', nullable: true })
   session_resume_at!: Date | null;

@@ -76,11 +76,12 @@ export class TranscriptMessageEntity extends TimestampedEntity {
 
   /**
    * What this row is:
-   *  - 'chat' (conversational, fed to the grill) | 'thinking' | 'tool' — transcript blocks (the brain AND
-   *    build phases both write these via the shared transcript spine; phase blocks carry `meta.phaseId`).
+   *  - 'chat' (conversational, fed to the grill) | 'thinking' | 'tool' — transcript blocks (the conversational
+   *    sessions AND build turns (Legs) both write these via the shared transcript spine; every row is anchored
+   *    by `thread_id`, and a build turn's blocks additionally carry the legacy `meta.phaseId` join key).
    *  - 'card' — an approval/verdict/question card payload.
    *  - 'build_event' — a system pill (e.g. the Codex-review notice).
-   *  - 'build_anchor' — the synthetic per-batch marker a build phase writes at start; the web renders it as
+   *  - 'build_anchor' — the synthetic per-batch marker a build turn (Leg) writes at start; the web renders it as
    *    the in-conversation "Build step" card that opens the step sub-page (carries `meta.phaseId`/label).
    */
   @Column({ type: 'text', default: 'chat' })
@@ -91,7 +92,7 @@ export class TranscriptMessageEntity extends TimestampedEntity {
   card!: Record<string, unknown> | null;
 
   /**
-   * Opaque metadata: subagent/phase join keys (`parentToolUseId`, `id`, `phaseId`, `batchOrdinal`,
+   * Opaque metadata: subagent/build-turn join keys (`parentToolUseId`, `id`, `phaseId`, `batchOrdinal`,
    * `batchStepIds`), tool `{name,input,result,isError}`, or message provenance (`source`); null otherwise. A
    * `system_operator` box also carries `retryable`/`sessionLimit`/`resumeAt` plus, additively, a
    * `TurnFailureCategory` `category` (`'session_limit'|'auth'|'transient'|'api_overloaded'|'sandbox_lost'|

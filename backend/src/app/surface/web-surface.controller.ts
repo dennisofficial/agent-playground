@@ -1935,7 +1935,7 @@ export class WebSurfaceController {
         replyRoute: { surfaceId: this.surface.name, jobRef: jobId },
       },
     );
-    // Force-resume of a Main-lane session-limit park: clear the durable auto-resume clock so the leader sweep
+    // Force-resume of a session-backed lane's session-limit park: clear the durable auto-resume clock so the leader sweep
     // never re-fires the resume it has now been done early. Harmless when the thread wasn't parked (no-op update).
     await this.store.setSessionResume(jobId, null, null);
     return { ok: true };

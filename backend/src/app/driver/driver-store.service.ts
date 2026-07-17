@@ -1563,9 +1563,9 @@ export class DriverStoreService {
     // cleared on wake). Surfaced only while blocked so the web can preview it in the blocked overlay.
     const blockedSeedMessage =
       job.status === 'blocked' ? (job.blocked_seed_message ?? null) : null;
-    // An `open` job (chatting/planning, never entered the build lifecycle) has no pipeline — but its brain can
-    // already be keeping a task list on its (always-present) planning thread group, and the navigator's Main row shows
-    // it. Ride the no_job payload so the web isn't blind to it before a plan exists.
+    // An `open` job (chatting/planning, never entered the build lifecycle) has no pipeline — but its planner
+    // thread can already be keeping a task list on its (always-present) planning thread group, and the navigator's
+    // planning row shows it. Ride the no_job payload so the web isn't blind to it before a plan exists.
     if (job.status === 'scoping') {
       const planningThreadGroup = await this.threadGroups.findOne({
         where: { job_id: job.id, kind: 'planning' },
@@ -1676,7 +1676,7 @@ export class DriverStoreService {
       (s) =>
         s.decision_record_id == null || s.decision_record_id === activeRecordId,
     );
-    // The PLAN REVIEW as a first-class navigator row (the Codex review dialogue Main communicates with) —
+    // The PLAN REVIEW as a first-class navigator row (the Codex review dialogue the planner thread communicates with) —
     // derived from the codex_review thread living in the planning group (d10: no separate plan_review thread
     // group). Null when no codex_review thread exists yet (review_plan never dispatched).
     const codexReviewThread = allThreads
@@ -2012,18 +2012,18 @@ export class DriverStoreService {
   }
 
   /**
-   * Find (or lazily create) the job's `ci` thread group — the post-ship seam (d14). Created just before the
+   * Find (or lazily create) the job's `ship` thread group — the post-ship seam (d14). Created just before the
    * PR-ready state is published (`setPrReady`); starts with `session_id = null`
    * (a fresh session, isolated from planning) and
-   * sits idle (`ci` is a render-only, session-backed role — see `thread-kind/registry.ts`) until inbound
+   * sits idle (`ship` is a render-only, session-backed role — see `thread-kind/registry.ts`) until inbound
    * GitHub/CI events are routed to it. Once this thread exists, `StimulusStoreService.attachEventToJob`
-   * (via `JobBootstrapService.ciThreadId`, a read-only lookup) stamps `lane=thread:<ciThreadId>` on the
+   * (via `JobBootstrapService.shipThreadId`, a read-only lookup) stamps `lane=thread:<shipThreadId>` on the
    * event stimulus so `AgentSessionManager.deliverEventViaFreshTurn` resumes THIS thread's own session
    * instead of planning's (`/context/specs/sections/04-messaging-chat.md` §CI-routing). Idempotent:
    * `setPrReady` may be reached more than once for a job (the driver path, the reconciler, and the GitHub
    * webhook fast path all call it), so a matching thread group is re-looked-up rather than duplicated.
    */
-  async ensureCiThread(input: {
+  async ensureShipThread(input: {
     jobId: string;
     orgId: string;
     decisionRecordId: string | null;
@@ -2031,7 +2031,7 @@ export class DriverStoreService {
     const threadGroup = await this.threadGroups
       .createQueryBuilder('s')
       .where('s.job_id = :jobId', { jobId: input.jobId })
-      .andWhere('s.kind = :kind', { kind: 'ci' })
+      .andWhere('s.kind = :kind', { kind: 'ship' })
       .andWhere('s.decision_record_id IS NOT DISTINCT FROM :decisionRecordId', {
         decisionRecordId: input.decisionRecordId,
       })
@@ -2046,7 +2046,7 @@ export class DriverStoreService {
       (await this.createThreadGroup({
         jobId: input.jobId,
         orgId: input.orgId,
-        kind: 'ci',
+        kind: 'ship',
         decisionRecordId: input.decisionRecordId,
         title: null,
         type: null,
@@ -2055,8 +2055,8 @@ export class DriverStoreService {
       threadGroupId: created.id,
       jobId: input.jobId,
       orgId: input.orgId,
-      role: 'ci',
-      brief: 'CI — post-ship checks',
+      role: 'ship',
+      brief: 'Ship — PR lifecycle & post-ship checks',
       ordinal: await this.nextRootThreadOrdinal(input.jobId),
     });
     return { threadGroupId: created.id, threadId: thread.id };
@@ -2077,7 +2077,7 @@ export class DriverStoreService {
   }
 
   /** Read-only lookup of the job's `post_build` thread-group thread id (the re-homed session for preview/amend
-   *  seeds), or null when the gate hasn't spawned it yet. Latest by ordinal, mirroring `ciThreadId`. */
+   *  seeds), or null when the gate hasn't spawned it yet. Latest by ordinal, mirroring `shipThreadId`. */
   async postBuildThreadId(jobId: string): Promise<string | null> {
     const row = await this.threads.findOne({
       where: { job_id: jobId, role: 'post_build' },
@@ -2133,7 +2133,7 @@ export class DriverStoreService {
    * cards) that have no build-lane thread of their own. Mirrors d3's backfill fallback ("orphans default to
    * the job's planning thread") now that `messages.thread_id` is NOT NULL. A job starts with exactly one planning
    * thread group (d7), but a heavy amend can append a LATER one — ordered `DESC` (newest first) so this always
-   * anchors on the CURRENT planning group, mirroring `JobBootstrapService.planningThreadId`/`ciThreadId`'s
+   * anchors on the CURRENT planning group, mirroring `JobBootstrapService.planningThreadId`/`shipThreadId`'s
    * "newest first" rationale. Throws loudly rather than inserting a message with a null/bogus thread_id if it
    * somehow doesn't resolve.
    */
