@@ -1619,6 +1619,9 @@ export class DriverStoreService {
       type: coerceThreadType(t.type),
       status: t.status,
       condition: 'none',
+      // Display-only reason the thread's LAST turn ended abnormally (`session_limit|error|…`), or null on a
+      // clean end / before the thread's first turn. Never drives auto-resume — purely a UI signal.
+      haltReason: t.halt_reason,
       hasPlan: t.plan != null,
       sessionId: t.session_id,
       commitSha: t.commit_sha,
@@ -2337,6 +2340,8 @@ interface PipelineReviewChild {
   brief: string;
   status: string;
   condition: string;
+  /** Display-only reason the child's last turn ended abnormally, or null. See {@link toPipelineChild}. */
+  haltReason: string | null;
   lensId?: string;
   findings: number | null;
   lane: string;
@@ -2361,6 +2366,7 @@ function toPipelineChild(
     brief: c.brief,
     status: c.status,
     condition: 'none',
+    haltReason: c.halt_reason,
     ...(lensId ? { lensId } : {}),
     findings: Array.isArray(c.review_findings)
       ? c.review_findings.length

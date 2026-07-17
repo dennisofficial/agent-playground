@@ -2901,6 +2901,29 @@ export class WebSurfaceController {
   }
 
   /**
+   * `POST …/jobs/:jobId/focus` — the operator-override half of the routing pointer (d4): clicking a
+   * thread in the web calls this so `jobs.focused_thread_id` follows, alongside the scheduler's own
+   * advancement (`DriverStoreService.setFocusedThread`, called as the pipeline moves). 404s if the
+   * thread doesn't belong to this job (no cross-job/cross-org pointer hijack).
+   */
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/focus')
+  @UseGuards(OrgMembershipGuard)
+  async focusThread(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+    @Body() body: { threadId?: string },
+  ): Promise<{ status: 'ok' }> {
+    await this.requireThread(jobId, org.id);
+    const threadId = body?.threadId;
+    if (!threadId) throw new BadRequestException('threadId required');
+    const thread = await this.driverStore.getThread(threadId);
+    if (!thread || thread.jobId !== jobId)
+      throw new NotFoundException('thread not found');
+    await this.driverStore.setFocusedThread(jobId, threadId);
+    return { status: 'ok' };
+  }
+
+  /**
    * `GET …/threads/:jobId/context` — list the thread's `/context` files, grouped into `specs` (the
    * plan: plan.md, decision-record.md, diagrams), `artifacts` (human-facing deliverables: preview HTML,
    * mockups, reports), and `evidence` (live-run proof: logs, screenshots, RESULTS.md).
