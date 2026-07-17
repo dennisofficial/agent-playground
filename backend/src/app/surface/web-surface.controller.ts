@@ -1996,7 +1996,7 @@ export class WebSurfaceController {
    * `POST …/jobs/:jobId/spin-up-preview` — the operator tapped "Spin up preview" on the ship-review card.
    * Injects the FULL demo-ready preview procedure as a `SYSTEM_SEED_AUTHOR` seed turn (delivered on demand,
    * NOT standing in the build-brain system prompt) and stamps the ship card "requested" so the button hides.
-   * Gated SERVER-SIDE on `status === 'awaiting_ship_review'` (defense-in-depth against a stale transcript
+   * Gated SERVER-SIDE on `status === 'ready'` (defense-in-depth against a stale transcript
    * card) and on the atomic first-click stamp (`markPreviewRequested`) so a double-click seeds exactly once.
    * Membership-guarded — any org member may request a preview.
    */
@@ -2012,7 +2012,7 @@ export class WebSurfaceController {
       );
     }
     const thread = await this.requireThread(jobId, org.id);
-    if (thread.status !== 'awaiting_ship_review') return { ok: false, ts: '' };
+    if (thread.status !== 'ready') return { ok: false, ts: '' };
     const firstRequest = await this.driverStore.markPreviewRequested(jobId);
     if (!firstRequest) return { ok: true, ts: '' }; // idempotent double-click — already seeded.
     // Best-effort recipe read — a transient DB failure here must NOT lose the seed: `markPreviewRequested`
@@ -3438,7 +3438,7 @@ export class WebSurfaceController {
       });
       this.surface.receiveApprovalClick(APPROVE_ACTION_ID, value, user.id);
     } else if (
-      job.status === 'awaiting_ship_review' &&
+      job.status === 'ready' &&
       modeApprovesShip(body.mode)
     ) {
       this.surface.receiveApprovalClick(
