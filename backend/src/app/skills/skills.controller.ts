@@ -8,8 +8,6 @@ import {
   Post,
   Put,
   UseGuards,
-  UsePipes,
-  ValidationPipe,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import {
@@ -102,7 +100,6 @@ class SetSkillDto implements SkillInput {
  */
 @Controller('web/orgs/:orgId/skills')
 @UseGuards(OrgMembershipGuard)
-@UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
 export class SkillsController {
   constructor(
     private readonly store: WorkspaceSkillStore,

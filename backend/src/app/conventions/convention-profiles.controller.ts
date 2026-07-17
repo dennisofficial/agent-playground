@@ -7,8 +7,6 @@ import {
   Param,
   Put,
   UseGuards,
-  UsePipes,
-  ValidationPipe,
 } from '@nestjs/common';
 import { IsOptional, IsString, MinLength } from 'class-validator';
 import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
@@ -38,7 +36,6 @@ class AttachConventionProfileDto {
  */
 @Controller('web/orgs/:orgId/convention-profiles')
 @UseGuards(OrgMembershipGuard)
-@UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
 export class ConventionProfilesController {
   constructor(private readonly conventions: ConventionProfileResolver) {}
 

@@ -7,8 +7,6 @@ import {
   NotFoundException,
   Put,
   UseGuards,
-  UsePipes,
-  ValidationPipe,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsOptional, IsString, MinLength } from 'class-validator';
@@ -44,7 +42,6 @@ class DeleteFileDto {
  */
 @Controller('web/orgs/:orgId/workspace-secrets')
 @UseGuards(OrgMembershipGuard)
-@UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
 export class WorkspaceSecretsController {
   constructor(
     private readonly store: WorkspaceSecretFileStore,

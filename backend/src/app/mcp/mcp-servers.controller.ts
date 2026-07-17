@@ -8,8 +8,6 @@ import {
   Post,
   Put,
   UseGuards,
-  UsePipes,
-  ValidationPipe,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Type } from 'class-transformer';
@@ -98,7 +96,6 @@ class SetMcpServerDto {
  */
 @Controller('web/orgs/:orgId/mcp-servers')
 @UseGuards(OrgMembershipGuard)
-@UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
 export class McpServersController {
   constructor(
     private readonly store: McpServerStore,

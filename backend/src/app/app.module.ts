@@ -1,3 +1,5 @@
+import { ValidationPipe } from '@nestjs/common';
+import { APP_PIPE } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
 import { EnvService } from '@core/config/env/env.service';
 import { envConfigValidation } from '@core/config/env/validation';
@@ -36,6 +38,20 @@ import { ProdDiagnosticsModule } from './prod-mcp/prod-diagnostics.module';
     PersistenceModule,
     ProdDiagnosticsModule,
     FeaturesModule,
+  ],
+  // One global request-validation pipe for the whole app (replaces the per-controller `@UsePipes`).
+  // `whitelist` strips undeclared body properties, `forbidNonWhitelisted` 400s them, `transform`
+  // instantiates the DTO class. Only class-typed DTOs are validated — interface/inline-typed bodies
+  // resolve to the `Object` metatype, which the pipe skips.
+  providers: [
+    {
+      provide: APP_PIPE,
+      useValue: new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+      }),
+    },
   ],
 })
 export class AppModule {}
