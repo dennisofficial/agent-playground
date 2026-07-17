@@ -52,8 +52,6 @@ type DemoJob = {
   pr_state?: 'open' | 'merged';
   pr_url?: string;
   pr_number?: number;
-  halted?: boolean;
-  halt?: { at: string; kind: 'failed'; reason: string };
   section: string;
   build_path?: 'direct' | 'plan';
   focused_thread_id?: string;
@@ -105,13 +103,6 @@ const DEMO_JOBS: DemoJob[] = [
     kind: 'bugfix',
     title: 'Retry webhook delivery on 5xx',
     status: 'building',
-    halted: true,
-    halt: {
-      at: new Date('2026-07-09T18:42:00.000Z').toISOString(),
-      kind: 'failed',
-      reason:
-        'Verification command exited 1: `pnpm test:e2e` — 3 failing specs in webhook-delivery.spec.ts',
-    },
     section: 'building (halted)',
   },
   {
@@ -193,6 +184,14 @@ const DEMO_JOBS: DemoJob[] = [
     section: 'planning',
   },
 ];
+
+/** Job 5's single builder thread group + thread — seeded purely so the per-thread `haltReason` -> navigator
+ *  `StateBanner` "NOT DONE" fixture has something to render (job 5 is the only demo job whose `section`
+ *  label claims "(halted)"). Not part of the rich job's pipeline. */
+const JOB5_THREAD_GROUP_ID = threadGroupId(5);
+const JOB5_THREAD_ID = threadId(8);
+const JOB5_HALT_REASON =
+  'Verification command exited 1: `pnpm test:e2e` — 3 failing specs in webhook-delivery.spec.ts';
 
 type DemoThreadGroup = {
   id: string;
@@ -510,6 +509,37 @@ async function upsertRichThreads(ds: DataSource): Promise<void> {
   console.log(`  seeded ${RICH_THREADS.length} threads on rich job`);
 }
 
+/** Seeds job 5's lone builder thread group + thread with `halt_reason` set, so it demos the navigator's
+ *  per-thread "NOT DONE" banner outside of the rich job (see {@link JOB5_THREAD_GROUP_ID}). */
+async function upsertJob5HaltedThread(ds: DataSource): Promise<void> {
+  const threadGroups = ds.getRepository(ThreadGroupEntity);
+  const tgRow =
+    (await threadGroups.findOne({ where: { id: JOB5_THREAD_GROUP_ID } })) ??
+    threadGroups.create({ id: JOB5_THREAD_GROUP_ID });
+  tgRow.job_id = jobId(5);
+  tgRow.org_id = ORG_ID;
+  tgRow.ordinal = 200;
+  tgRow.kind = 'section';
+  tgRow.title = 'Retry webhook delivery';
+  await threadGroups.save(tgRow);
+
+  const threads = ds.getRepository(ThreadEntity);
+  const row =
+    (await threads.findOne({ where: { id: JOB5_THREAD_ID } })) ??
+    threads.create({ id: JOB5_THREAD_ID });
+  row.job_id = jobId(5);
+  row.org_id = ORG_ID;
+  row.thread_group_id = JOB5_THREAD_GROUP_ID;
+  row.ordinal = 200;
+  row.brief = 'Retry webhook delivery on 5xx';
+  row.role = 'builder';
+  row.parent_thread_id = null;
+  row.config = {};
+  row.halt_reason = JOB5_HALT_REASON;
+  await threads.save(row);
+  console.log('  seeded 1 halted thread on job 5 (NOT DONE banner fixture)');
+}
+
 async function upsertRichTasks(ds: DataSource): Promise<void> {
   const tasks = ds.getRepository(TaskEntity);
   for (const t of RICH_TASKS) {
@@ -565,6 +595,7 @@ async function main(): Promise<void> {
     await upsertRichThreads(ds);
     await upsertRichTasks(ds);
     await upsertRichMessages(ds);
+    await upsertJob5HaltedThread(ds);
     // Threads must exist before the job's focused_thread_id FK can point at one.
     const jobs = ds.getRepository(JobEntity);
     for (const demo of DEMO_JOBS) {
