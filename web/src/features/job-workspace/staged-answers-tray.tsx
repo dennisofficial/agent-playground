@@ -11,7 +11,10 @@ import { composerStore, useComposerStagedAnswers } from "@/lib/api/composer-stor
  * A secret chip NEVER renders its plaintext value — masked only.
  */
 export function StagedAnswersTray({ jobRef }: { jobRef: JobRef }) {
-  const stagedAnswers = useComposerStagedAnswers(jobRef);
+  // Submitting entries have left the tray — they're mid-send, rendered by their card's own "sending" shell.
+  const stagedAnswers = useComposerStagedAnswers(jobRef).filter(
+    (a) => !a.submitting,
+  );
   if (stagedAnswers.length === 0) return null;
 
   return (
@@ -33,7 +36,11 @@ export function StagedAnswersTray({ jobRef }: { jobRef: JobRef }) {
         <span className="flex-1" />
         <button
           type="button"
-          onClick={() => composerStore.setStagedAnswers(jobRef, () => [])}
+          onClick={() =>
+            // Preserve in-flight (`submitting`) entries — they're mid-send and already hidden from this
+            // tray; wiping them here would leave `composer.tsx`'s `onError` restore with nothing to find.
+            composerStore.setStagedAnswers(jobRef, (prev) => prev.filter((a) => a.submitting))
+          }
           className="rounded-md px-2.5 py-[3px] text-[11px] font-medium text-dim"
         >
           Clear all

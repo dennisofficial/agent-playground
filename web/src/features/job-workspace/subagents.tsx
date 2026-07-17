@@ -87,6 +87,7 @@ export type SubBlock =
       input?: unknown;
       result?: unknown;
       isError?: boolean;
+      superseded?: boolean;
       structuredPatch?: unknown;
       running?: boolean;
       postedAt?: string;
@@ -221,6 +222,7 @@ export function durableSubBlocks(children: JobMessage[]): SubBlock[] {
         input: mm.input,
         result: mm.result,
         isError: Boolean(mm.isError),
+        superseded: Boolean(mm.superseded),
         structuredPatch: mm.structuredPatch,
         postedAt: m.postedAt,
       };
@@ -309,6 +311,7 @@ export function liveSubBlocksForParent(
         input: b.input,
         result: b.result,
         isError: b.isError,
+        superseded: b.superseded,
         structuredPatch: b.structuredPatch,
         running: !b.done,
       });

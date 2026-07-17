@@ -3,6 +3,28 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 
 /**
+ * A context-window occupancy breakdown by category (Claude-Desktop-style), reported alongside the scalar
+ * `contextTokens`/`contextLimit`. Hand-mirrored from `packages/agent-engine/src/types.ts`'s
+ * `ContextBreakdown`/`ContextBreakdownCategory` — the web layer doesn't import the backend package, same
+ * convention as the scalar `contextTokens`/`contextModel`/`contextLimit` fields below.
+ */
+export interface ContextBreakdownCategory {
+  name: string;
+  tokens: number;
+  color: string;
+}
+export interface ContextBreakdown {
+  model: string;
+  totalTokens: number;
+  maxTokens: number;
+  percentage: number;
+  categories: ContextBreakdownCategory[];
+  mcpTools?: { name: string; serverName: string; tokens: number }[];
+  memoryFiles?: { path: string; tokens: number }[];
+  agents?: { agentType: string; tokens: number }[];
+}
+
+/**
  * LIVE engine-stream store — the in-flight turn of a thread's in-sandbox Claude Code session, made
  * RESUMABLE.
  *
@@ -59,6 +81,7 @@ export type LiveBlock =
       input?: unknown;
       result?: unknown;
       isError?: boolean;
+      superseded?: boolean;
       /** Edit/MultiEdit only: structured patch (real file offsets) for the diff body. */
       structuredPatch?: unknown;
       /** JIT PostToolUse additionalContext injections that fired on this tool call (rule + verbatim text). */
@@ -103,6 +126,12 @@ export interface LiveTurn {
   contextModel?: string;
   contextLimit?: number;
   /**
+   * LIVE context-window breakdown by category — updated mid-turn from each `context_breakdown` frame
+   * (main-agent only). `undefined` until the turn's first such frame; carried forward across every other
+   * delta the same way the scalar occupancy fields are, so it survives until the next breakdown or turn end.
+   */
+  contextBreakdown?: ContextBreakdown;
+  /**
    * Per-SUBAGENT live occupancy, keyed by the subagent's spawning Task id (`parentToolUseId`). Each running
    * subagent reports its OWN context ring separately from the main-agent ring above — a `usage` frame that
    * carries `parentToolUseId` lands here instead of the top-level fields. Consumed by `SubagentCard`.
@@ -134,6 +163,7 @@ type StreamPayload = {
   input?: unknown;
   result?: unknown;
   isError?: boolean;
+  superseded?: boolean;
   /** present on a `tool_result` for an Edit/MultiEdit — real file offsets for the diff gutter. */
   structuredPatch?: unknown;
   /** present on `kind:'jit_injection'` — the rule that fired (`text` above carries the injected text). */
@@ -151,6 +181,10 @@ type StreamPayload = {
   contextTokens?: number;
   contextModel?: string;
   contextLimit?: number;
+  /** present on `kind:'context_breakdown'` — the live per-category breakdown (main-agent only). */
+  breakdown?: ContextBreakdown;
+  /** present on `kind:'snapshot'` — the reconnect replay's last-known breakdown. */
+  contextBreakdown?: ContextBreakdown;
   /** present on block-creating delta frames — server epoch-ms this block first appeared. */
   emittedAt?: number;
   /** present on `kind:'turn_retry'` — the in-flight retry's attempt counter (1-based) and budget. */
@@ -236,6 +270,12 @@ class ThreadStreamStore {
         // The reconnect snapshot now carries `startedAt` so elapsed survives refresh/reconnect; fall back
         // to any value we already had, so a snapshot missing it doesn't reset the timer.
         startedAt: ev.startedAt ?? cur?.startedAt,
+        // The reconnect snapshot also carries the last-known scalar occupancy + breakdown, so a mid-turn
+        // refresh doesn't blank the ring — fall back to whatever we already had if the snapshot omits them.
+        contextTokens: ev.contextTokens ?? cur?.contextTokens,
+        contextModel: ev.contextModel ?? cur?.contextModel,
+        contextLimit: ev.contextLimit ?? cur?.contextLimit,
+        contextBreakdown: ev.contextBreakdown ?? cur?.contextBreakdown,
         // Carry the retry state from the snapshot so a reconnect mid-backoff still shows "Reconnecting…".
         retrying: ev.retrying,
       });
@@ -262,6 +302,7 @@ class ThreadStreamStore {
         contextModel: cur?.contextModel,
         contextLimit: cur?.contextLimit,
         subUsage: cur?.subUsage,
+        contextBreakdown: cur?.contextBreakdown,
         retrying: {
           attempt: ev.attempt ?? 0,
           max: ev.max ?? 0,
@@ -382,6 +423,7 @@ class ThreadStreamStore {
               ...b,
               result: ev.result,
               isError: Boolean(ev.isError),
+              superseded: Boolean(ev.superseded),
               ...(ev.structuredPatch !== undefined
                 ? { structuredPatch: ev.structuredPatch }
                 : {}),
@@ -466,6 +508,7 @@ class ThreadStreamStore {
                     : (cur?.subUsage?.[subPid]?.contextLimit ?? 0),
               },
             },
+            contextBreakdown: cur?.contextBreakdown,
           });
           this.notify(key);
           return;
@@ -482,6 +525,40 @@ class ThreadStreamStore {
           contextLimit:
             typeof ev.contextLimit === "number" ? ev.contextLimit : cur?.contextLimit,
           subUsage: cur?.subUsage,
+          contextBreakdown: cur?.contextBreakdown,
+        });
+        this.notify(key);
+        return;
+      }
+      case "context_breakdown": {
+        // LIVE context-window breakdown by category — mirrors the `usage` case above. A frame tagged with
+        // `parentToolUseId` is a SUBAGENT's own breakdown; subagent rings stay tooltip-only (no panel), so
+        // just advance seq and leave the main-agent breakdown untouched.
+        if (ev.parentToolUseId) {
+          this.map.set(key, {
+            blocks,
+            active: true,
+            lastSeq: seq,
+            startedAt: cur?.startedAt,
+            contextTokens: cur?.contextTokens,
+            contextModel: cur?.contextModel,
+            contextLimit: cur?.contextLimit,
+            subUsage: cur?.subUsage,
+            contextBreakdown: cur?.contextBreakdown,
+          });
+          this.notify(key);
+          return;
+        }
+        this.map.set(key, {
+          blocks,
+          active: true,
+          lastSeq: seq,
+          startedAt: cur?.startedAt,
+          contextTokens: cur?.contextTokens,
+          contextModel: cur?.contextModel,
+          contextLimit: cur?.contextLimit,
+          subUsage: cur?.subUsage,
+          contextBreakdown: ev.breakdown ?? cur?.contextBreakdown,
         });
         this.notify(key);
         return;
@@ -497,6 +574,7 @@ class ThreadStreamStore {
           contextModel: cur?.contextModel,
           contextLimit: cur?.contextLimit,
           subUsage: cur?.subUsage,
+          contextBreakdown: cur?.contextBreakdown,
         });
         this.notify(key);
         return;
@@ -512,6 +590,7 @@ class ThreadStreamStore {
       contextModel: cur?.contextModel,
       contextLimit: cur?.contextLimit,
       subUsage: cur?.subUsage,
+      contextBreakdown: cur?.contextBreakdown,
     });
     this.notify(key);
   }

@@ -32,6 +32,7 @@ import { McpProposalCard } from "./mcp-proposal-card";
 import { SkillProposalCard } from "./skill-proposal-card";
 import { FileCardView } from "./file-card";
 import { ReviewCommentsCardView } from "./review-comments-card";
+import { messageSendState } from "./send-state";
 import { AttachmentsCardView } from "./attachments-card";
 import { SubagentCard, indexDurableSubagents, subagentNode } from "./subagents";
 import { AgentPromptBlock } from "./phases";
@@ -48,7 +49,7 @@ import type {
   LaneDefaultFooter,
   WireJobActivity,
 } from "@/lib/api/types";
-import { MAIN_LANE, useLiveTurn } from "@/lib/api/job-stream";
+import { MAIN_LANE, useLiveTurn, type ContextBreakdown } from "@/lib/api/job-stream";
 import { useComposerStagedAnswers } from "@/lib/api/composer-store";
 import { useAllJobs } from "@/lib/api/inbox";
 
@@ -284,6 +285,7 @@ export function TranscriptView({
             tokens: liveTurn.contextTokens,
             limit: liveTurn.contextLimit,
             model: liveTurn.contextModel,
+            contextBreakdown: liveTurn?.contextBreakdown,
           }
         : null;
     if (!liveContext) return base;
@@ -297,6 +299,7 @@ export function TranscriptView({
     liveTurn?.contextTokens,
     liveTurn?.contextLimit,
     liveTurn?.contextModel,
+    liveTurn?.contextBreakdown,
   ]);
 
   // The durable transcript, folded into one descriptor per top-level row (tool groups, subagent/phase
@@ -869,6 +872,7 @@ function buildLogItems(
           input: m.input,
           result: m.result,
           isError: Boolean(m.isError),
+          superseded: Boolean(m.superseded),
           structuredPatch: m.structuredPatch as ToolItem["structuredPatch"],
           jitContext: m.jitContext as ToolItem["jitContext"],
         },
@@ -891,7 +895,7 @@ function buildLogItems(
             key={message.ts}
             text={message.text}
             time={message.postedAt}
-            pending={message.local}
+            pending={messageSendState(message) === "sending"}
           />,
         );
         break;
@@ -949,6 +953,7 @@ function buildLogItems(
             key={message.ts}
             card={c.card}
             time={message.postedAt}
+            pending={messageSendState(message) === "sending"}
           />,
         );
         break;
@@ -1118,6 +1123,7 @@ function laneFooterMeta(
     const meta = (m.meta ?? {}) as LaneMeta & {
       contextTokens?: number | null;
       contextLimit?: number | null;
+      contextBreakdown?: ContextBreakdown | null;
       usage?: {
         model?: string;
         contextModel?: string;
@@ -1145,6 +1151,16 @@ function laneFooterMeta(
         tokens: meta.contextTokens,
         limit: meta.contextLimit,
         model: u.contextModel ?? u.model,
+        contextBreakdown: meta.contextBreakdown,
+      };
+    } else if (!context && meta.contextBreakdown) {
+      // Fallback: this block's scalar occupancy is missing/invalid but it DOES carry a breakdown — let the
+      // ring mount from the breakdown's own totals rather than staying blank.
+      context = {
+        tokens: meta.contextBreakdown.totalTokens,
+        limit: meta.contextBreakdown.maxTokens,
+        model: meta.contextBreakdown.model,
+        contextBreakdown: meta.contextBreakdown,
       };
     }
     if ((model !== undefined || engine !== undefined) && context) break;

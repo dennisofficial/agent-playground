@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  isInterruptAbortResult,
   parseSessionTranscriptTail,
   parseSessionTranscriptTurns,
 } from './session-transcript';
@@ -278,5 +279,111 @@ describe('parseSessionTranscriptTurns', () => {
       id: 'toolu_42',
       result: '# OrthoScribe',
     });
+  });
+
+  it('tags a tool_result as superseded when it is the SDK mid-turn-interrupt cancellation', () => {
+    const interrupted = [
+      line({
+        type: 'user',
+        uuid: 'p1',
+        message: { role: 'user', content: 'investigate' },
+      }),
+      line({
+        type: 'assistant',
+        uuid: 'a-tool',
+        message: {
+          stop_reason: 'tool_use',
+          content: [
+            { type: 'tool_use', id: 'toolu_int', name: 'Read', input: {} },
+          ],
+        },
+      }),
+      line({
+        type: 'user',
+        uuid: 'u-res',
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'toolu_int',
+              content: 'AbortError: interrupt',
+              is_error: true,
+            },
+          ],
+        },
+      }),
+    ].join('\n');
+    const { turns } = parseSessionTranscriptTurns(interrupted);
+    const tool = turns[0].blocks.find((b) => b.kind === 'tool')!;
+    expect(tool.meta.isError).toBe(true);
+    expect(tool.meta.superseded).toBe(true);
+  });
+
+  it('does not tag a genuine tool error as superseded', () => {
+    const genuine = [
+      line({
+        type: 'user',
+        uuid: 'p1',
+        message: { role: 'user', content: 'investigate' },
+      }),
+      line({
+        type: 'assistant',
+        uuid: 'a-tool',
+        message: {
+          stop_reason: 'tool_use',
+          content: [
+            { type: 'tool_use', id: 'toolu_err', name: 'Read', input: {} },
+          ],
+        },
+      }),
+      line({
+        type: 'user',
+        uuid: 'u-res',
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'toolu_err',
+              content: 'Error: ENOENT no such file',
+              is_error: true,
+            },
+          ],
+        },
+      }),
+    ].join('\n');
+    const { turns } = parseSessionTranscriptTurns(genuine);
+    const tool = turns[0].blocks.find((b) => b.kind === 'tool')!;
+    expect(tool.meta.isError).toBe(true);
+    expect(tool.meta.superseded).toBeUndefined();
+  });
+});
+
+describe('isInterruptAbortResult', () => {
+  it('matches the MCP-prefixed AbortError form', () => {
+    expect(isInterruptAbortResult('MCP error -32001: AbortError: interrupt')).toBe(
+      true,
+    );
+  });
+
+  it('matches a bare AbortError: interrupt', () => {
+    expect(isInterruptAbortResult('AbortError: interrupt')).toBe(true);
+  });
+
+  it('matches the SDK "user doesn\'t want to take this action" cancellation text', () => {
+    expect(
+      isInterruptAbortResult(
+        "The user doesn't want to take this action right now. STOP what you are doing and wait for the user to tell you how to proceed.",
+      ),
+    ).toBe(true);
+  });
+
+  it('does not match an ordinary tool error', () => {
+    expect(isInterruptAbortResult('Error: ENOENT no such file')).toBe(false);
+  });
+
+  it('does not match a normal, non-error result', () => {
+    expect(isInterruptAbortResult('# OrthoScribe')).toBe(false);
   });
 });

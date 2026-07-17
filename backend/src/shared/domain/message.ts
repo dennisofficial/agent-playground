@@ -355,6 +355,19 @@ export type TurnEnvelope = {
   seedRow?: SeedRow;
   /** Optional pre-built turn-chunk envelope (advisory framing for a coalesced/composed turn). */
   chunks?: TurnChunk[];
+  /**
+   * COALESCED-BATCH FLAG: set on a combined turn built from several pending rows to record whether ANY
+   * row in the batch was operator-authored — the gate sites that used to inspect a single stimulus's
+   * authorship (`isOperatorAuthored`) read this instead so a mixed batch is judged as a whole. Undefined
+   * on a solo (non-coalesced) turn, which falls back to `isOperatorAuthored(this)`.
+   */
+  containsOperator?: boolean;
+  /**
+   * COALESCED-BATCH CARD IDS: the ids of every card-bearing row folded into a combined turn (per {@link
+   * isSeedCardDelivery}), so the success tail can stamp each one instead of only the turn's own id.
+   * Undefined on a solo turn, which falls back to `[this.id]` when the turn itself is card-bearing.
+   */
+  cardBearingIds?: string[];
   /** DELIVERY PRIORITY (d18): `now` (default) steers/starts; `queue` waits for turn-end; `later` only rides along. */
   priority?: 'now' | 'queue' | 'later';
   /**

@@ -1,6 +1,6 @@
 "use client";
 
-import { Pencil } from "lucide-react";
+import { Loader2, Pencil } from "lucide-react";
 import { MessageTime, UserBubble } from "./bubbles";
 import { Markdown } from "./markdown";
 import { anchorLabel } from "./diff-anchor";
@@ -17,9 +17,13 @@ import type {
 export function ReviewCommentsCardView({
   card,
   time,
+  pending = false,
 }: {
   card: WebReviewCommentsCard;
   time?: string;
+  /** True while this batch is still sending (mirrors `UserBubble`'s `pending`) — dims the card and shows
+   *  the same "sending…" sub-line as the note bubble underneath it. */
+  pending?: boolean;
 }) {
   const byFile = new Map<string, WebReviewCommentItem[]>();
   for (const item of card.items) {
@@ -38,6 +42,7 @@ export function ReviewCommentsCardView({
         style={{
           background: "var(--accent-soft)",
           border: "1px solid var(--accent-line)",
+          opacity: pending ? 0.7 : 1,
         }}
       >
         <div className="flex items-center gap-1.5 font-mono text-[8px] font-semibold uppercase tracking-[0.06em] text-accent-2">
@@ -87,7 +92,12 @@ export function ReviewCommentsCardView({
         </div>
       </div>
       {card.message ? (
-        <UserBubble text={card.message} time={time} />
+        <UserBubble text={card.message} time={time} pending={pending} />
+      ) : pending ? (
+        <span className="flex select-none items-center gap-1 pr-0.5 font-mono text-[9.5px] text-faint">
+          <Loader2 size={9} className="animate-spin" />
+          sending…
+        </span>
       ) : (
         <MessageTime iso={time} tone="user" align="right" />
       )}

@@ -52,6 +52,7 @@ import {
 } from './engine.types';
 import type {
   AdapterRunArgs,
+  ContextBreakdown,
   EngineCapability,
   EngineLocalHooks,
 } from '@workspace/agent-engine';
@@ -65,6 +66,7 @@ import { BackendCodexHomeProvisioner } from './codex-home-provisioner';
 import { EngineAuthResolver } from './engine-core/auth-resolver';
 import { BackgroundHoldTimer } from './engine-core/background-hold-timer';
 import { buildClaudeOptions } from './engine-core/claude-options-builder';
+import { normalizeContextBreakdown } from './engine-core/context-breakdown';
 import { composeSkillsDir } from './engine-core/skills-composer';
 import { SteerInputChannel } from './engine-core/steer-input-channel';
 import {
@@ -239,6 +241,11 @@ export interface EngineCoreConfig {
  * Codex SDK's coding model.
  */
 const DEFAULT_WORKER_MODEL = 'claude-sonnet-5';
+// Bound on the AUTHORITATIVE end-of-turn `getContextUsage()` control round-trip (below). This await sits
+// inside the message-consuming loop that drives the whole turn, so a hang here would freeze message
+// consumption for a turn that can otherwise run for hours; a slow/never-resolving control response must
+// never block reading further SDK messages.
+const CONTEXT_BREAKDOWN_AUTHORITATIVE_TIMEOUT_MS = 5_000;
 // NOTE: Codex runs subscription-only here — a ChatGPT-account OAuth token (see `resolveAuth`; there is no
 // API-key path). A ChatGPT account REJECTS any explicit model with a 400 ("The '<model>' model is not
 // supported when using Codex with a ChatGPT account"), including `gpt-5-codex` and `gpt-5`. So we do NOT
@@ -665,6 +672,14 @@ export class EngineCore {
     // `postToolUseContext` hook it assembles can read the LIVE value by reference mid-query.
     let contextTokens: number | undefined;
     let contextModel: string | undefined;
+    // The last normalized full breakdown (live mid-turn snapshot, superseded by the awaited end-of-turn
+    // fetch below) — rides onto `usage.contextBreakdown` at turn end. `breakdownRequest` serializes the SDK
+    // control round-trips so a slow `getContextUsage()` call never overlaps another one, and
+    // `allowLiveBreakdownEvents` prevents a late fire-and-forget live response from resurrecting a lane after
+    // the turn has already emitted `turn_end`.
+    let lastBreakdown: ContextBreakdown | undefined;
+    let breakdownRequest: Promise<void> | undefined;
+    let allowLiveBreakdownEvents = true;
 
     const options = buildClaudeOptions({
       cwd,
@@ -707,10 +722,50 @@ export class EngineCore {
     // "hold input open + resume" to "end CLEANLY" so we never auto-resume straight back into the wall.
     let sessionLimit: SessionLimitHit | undefined;
     try {
-      for await (const message of this.claudeSdk.query({
+      const claudeQuery = this.claudeSdk.query({
         prompt: channel.prompt,
         options,
-      })) {
+      });
+      const waitForBreakdownRequest = async (
+        request: Promise<void> | undefined,
+      ): Promise<boolean> => {
+        if (!request) return true;
+        return new Promise<boolean>((resolve) => {
+          const timeout = setTimeout(
+            () => resolve(false),
+            CONTEXT_BREAKDOWN_AUTHORITATIVE_TIMEOUT_MS,
+          );
+          void request.then(() => {
+            clearTimeout(timeout);
+            resolve(true);
+          });
+        });
+      };
+      const startBreakdownRequest = (
+        emitLive: boolean,
+      ): Promise<void> | undefined => {
+        if (typeof claudeQuery.getContextUsage !== 'function') return undefined;
+        const request = claudeQuery
+          .getContextUsage()
+          .then((raw) => {
+            lastBreakdown = normalizeContextBreakdown(raw);
+            if (emitLive && allowLiveBreakdownEvents) {
+              onEvent?.({
+                kind: 'context_breakdown',
+                breakdown: lastBreakdown,
+              });
+            }
+          })
+          .catch(() => {
+            // Unsupported / transient control-channel error → keep scalar-only, no throw into the turn.
+          })
+          .finally(() => {
+            if (breakdownRequest === request) breakdownRequest = undefined;
+          });
+        breakdownRequest = request;
+        return request;
+      };
+      for await (const message of claudeQuery) {
         // Model is actively producing (or a steer is being processed) → don't close input under it. Once
         // `capping` latches, a late task_progress/task_updated frame must NOT undo the forced close.
         if (streaming && !holdTimer.capping && message.type !== 'result')
@@ -861,6 +916,13 @@ export class EngineCore {
                 ...(contextModel ? { contextModel } : {}),
                 contextLimit: resolveContextLimit(contextModel),
               });
+              // LIVE full breakdown fetch — a SEPARATE control request from the scalar read above (which
+              // reads the fields already carried on the SDK message that just arrived; this is a NEW async
+              // control round-trip out to the CLI). Fire-and-forget + in-flight-guarded so it can never block
+              // or pile up mid-stream: while a slow response is pending, later assistant frames keep the
+              // scalar ring moving and skip starting another breakdown request. Absent `getContextUsage` (an
+              // older CLI, or Codex-adjacent) is a silent no-op — the scalar occupancy above still works.
+              if (!breakdownRequest) void startBreakdownRequest(true);
               // ENGINE-LOCAL Leg-rotation nudge: this main-agent round-trip's occupancy is the freshest signal,
               // and we're mid-stream (input open, streamingStarted true) — the SAFE moment to steer, so the nudge
               // lands like a manual steer instead of racing the post-`result` close. Level-latch (parity with the
@@ -1031,6 +1093,24 @@ export class EngineCore {
           }
           if (message.subtype === 'success') {
             result = message.result;
+            // AUTHORITATIVE end-of-turn breakdown fetch — unlike the live fetch above, this one is AWAITED:
+            // a fire-and-forget live fetch might not have resolved yet when `finish()` reads
+            // `usage.contextBreakdown` below, so the durable persisted value must come from a call we KNOW
+            // has settled. Still mid-iteration (the query handle is alive) so the control channel is
+            // reachable. On failure, keep whatever the live path above already captured, if anything.
+            // Bounded by a timeout (not just a try/catch on rejection): this await sits inside the
+            // message-consuming loop, so an unbounded/never-resolving control round-trip on this
+            // shipped-but-not-yet-documented SDK method would otherwise stall the whole turn.
+            if (typeof claudeQuery.getContextUsage === 'function') {
+              // If the live request from the last assistant frame is still running, wait briefly for it
+              // rather than starting a second control request. Only issue the authoritative fetch once the
+              // control channel is idle; if the live call never settles, keep scalar-only/last-known
+              // breakdown and, importantly, do not overlap requests.
+              const idle = await waitForBreakdownRequest(breakdownRequest);
+              if (idle && !breakdownRequest) {
+                await waitForBreakdownRequest(startBreakdownRequest(false));
+              }
+            }
             onEvent?.({
               kind: 'turn_debug',
               terminalReason: (message as { terminal_reason?: string })
@@ -1051,6 +1131,8 @@ export class EngineCore {
               usage.contextTokens = contextTokens;
               if (contextModel) usage.contextModel = contextModel;
             }
+            // The durable value rides EngineRunResult.usage.contextBreakdown, same channel as contextTokens above.
+            if (usage && lastBreakdown) usage.contextBreakdown = lastBreakdown;
             // Streaming-input mode: decide whether this success result ends the turn.
             if (streaming) {
               if (holdTimer.capping) {
@@ -1129,6 +1211,7 @@ export class EngineCore {
         throw err;
       }
     } finally {
+      allowLiveBreakdownEvents = false;
       // Stop feeding/consuming input so the detached steer consumer + entrypoint generator unwind.
       channel.markTurnEnded();
       channel.cancelEnd();

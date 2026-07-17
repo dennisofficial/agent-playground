@@ -733,3 +733,22 @@ export const CANDOR_NOTE =
   'cheaper to challenge a bad premise at the planning table than after an autonomous build has run on it. ' +
   'Candor is not contrarianism — agree when the operator is right, keep it respectful and specific, and ' +
   'once you have aired the disagreement and the operator makes the call, execute their decision.';
+
+/**
+ * DIAGRAMS ARE MERMAID, NEVER ASCII ART — the universal MEDIUM rule for any diagram a brain emits. The
+ * operator console renders ```mermaid fences as real, theme-matched diagrams live in the CONVERSATION
+ * (web/src/features/job-workspace/markdown.tsx) as well as in the specs + approval card, so an ASCII
+ * box-drawing is never the right call. Complements planning.group's DIAGRAMS (which teaches which diagram
+ * TYPE to use, and to lean on them, when AUTHORING a plan) — this note governs the FORMAT everywhere,
+ * including an ordinary conversational reply, which the plan-scoped DIAGRAMS fragment never covers.
+ */
+export const DIAGRAM_FORMAT_NOTE =
+  'DIAGRAMS ARE MERMAID, NEVER ASCII ART: whenever you present a diagram — a box-and-arrow topology, a ' +
+  'flow, a sequence, a state machine, an entity sketch — put it in a ```mermaid fenced block, in a plain ' +
+  'conversational REPLY every bit as much as in a spec or artifact. NEVER hand-draw one as ASCII / ' +
+  'box-drawing / art in a ``` or ```text fence. The operator console renders ```mermaid fences as real, ' +
+  'theme-matched diagrams live in the CONVERSATION as well as in the specs and the approval card, so a ' +
+  'mermaid fence is legible and on-brand exactly where hand-drawn ASCII is cramped, misaligns, and cannot ' +
+  'scale. Reach for the type that fits — `flowchart`, `sequenceDiagram`, `stateDiagram-v2`, `erDiagram`. ' +
+  "This governs the MEDIUM, not whether to draw at all: don't force a trivial structure into a diagram (a " +
+  'short list stays a list) — but the moment you would draw one, it is mermaid.';
