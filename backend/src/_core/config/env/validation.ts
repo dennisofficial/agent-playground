@@ -13,7 +13,7 @@ export enum ENodeEnv {
 }
 
 // @reference CLAUDE.md
-export interface IEnvConfig {
+export type IEnvConfig = {
   APP_ENV: EAppEnv;
   NODE_ENV: ENodeEnv;
 
@@ -27,16 +27,16 @@ export interface IEnvConfig {
   POSTGRES_DB: string;
   POSTGRES_SSL_MODE?: string; // optional: diverges by env — disable locally, verify-full in prod
 
-  REDIS_URL?: string; // optional: unset locally → redis://127.0.0.1:6379 fallback; set in deploy
+  REDIS_URL: string;
 
-  SECRETS_ENCRYPTION_KEY: string; // AES key for secrets-at-rest (org/MCP secrets_enc columns)
+  SECRETS_ENCRYPTION_KEY: string;
   JWT_ACCESS_SECRET: string;
   JWT_REFRESH_SECRET: string;
   COOKIE_DOMAIN?: string; // optional: host-only in dev (unset), scoped across subdomains in deploy
 
   ADMIN_SEED_EMAIL?: string; // optional: dev-only — provisions the admin on boot; unset in prod
   ADMIN_SEED_PASSWORD?: string;
-}
+};
 
 export const envConfigValidation = Joi.object<IEnvConfig, true>({
   APP_ENV: Joi.string()
@@ -56,7 +56,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   POSTGRES_DB: Joi.string().required(),
   POSTGRES_SSL_MODE: Joi.string().valid('disable', 'require', 'verify-full').optional(),
 
-  REDIS_URL: Joi.string().uri().optional(),
+  REDIS_URL: Joi.string().uri(),
 
   SECRETS_ENCRYPTION_KEY: Joi.string().required(),
   JWT_ACCESS_SECRET: Joi.string().required(),
