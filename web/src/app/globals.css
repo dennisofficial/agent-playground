@@ -473,15 +473,5 @@ body {
   background: var(--accent-soft);
 }
 
-/* Review-comment highlights (CSS Custom Highlight API) — the committed range under an added comment vs.
-   the range currently held while its popover is open. Registered in review-comments.tsx. */
-::highlight(atlas-comment) {
-  background-color: color-mix(in srgb, var(--accent) 15%, transparent);
-  text-decoration-line: underline;
-  text-decoration-color: var(--accent);
-  text-decoration-thickness: 1.5px;
-  text-underline-offset: 2.5px;
-}
-::highlight(atlas-comment-pending) {
-  background-color: color-mix(in srgb, var(--accent) 27%, transparent);
-}
+/* Review-comment highlight paint (CSS Custom Highlight API) lives in review-comments.tsx, injected at
+   runtime — the build's CSS parser doesn't recognize the `::highlight()` pseudo-element. */

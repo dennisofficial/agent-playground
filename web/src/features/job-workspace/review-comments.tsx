@@ -86,6 +86,25 @@ const HL_SUPPORTED =
 const COMMITTED_NAME = "atlas-comment";
 const PENDING_NAME = "atlas-comment-pending";
 
+// Styling for the two named highlights. Injected at runtime rather than living in globals.css because the
+// build's CSS parser (Turbopack, re-parsing Tailwind v4's Lightning-CSS output) doesn't recognize the
+// `::highlight()` pseudo-element and warns on every rebuild. Injecting here keeps the paint next to its
+// registration and never routes the rule through the PostCSS pipeline. `var(--accent)` still resolves at
+// runtime against the document's theme variables.
+const HIGHLIGHT_STYLE_ID = "atlas-review-highlight-styles";
+const HIGHLIGHT_CSS = `
+::highlight(${COMMITTED_NAME}) {
+  background-color: color-mix(in srgb, var(--accent) 15%, transparent);
+  text-decoration-line: underline;
+  text-decoration-color: var(--accent);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 2.5px;
+}
+::highlight(${PENDING_NAME}) {
+  background-color: color-mix(in srgb, var(--accent) 27%, transparent);
+}
+`;
+
 function newId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function")
     return crypto.randomUUID();
@@ -128,6 +147,13 @@ export function ReviewCommentsProvider({
   // object would exist but never be (re-)registered.
   useEffect(() => {
     if (!HL_SUPPORTED) return;
+    // Inject the highlight paint once (idempotent by id — survives StrictMode double-mount).
+    if (!document.getElementById(HIGHLIGHT_STYLE_ID)) {
+      const style = document.createElement("style");
+      style.id = HIGHLIGHT_STYLE_ID;
+      style.textContent = HIGHLIGHT_CSS;
+      document.head.appendChild(style);
+    }
     committedHl.current = new Highlight();
     pendingHl.current = new Highlight();
     CSS.highlights.set(COMMITTED_NAME, committedHl.current);
