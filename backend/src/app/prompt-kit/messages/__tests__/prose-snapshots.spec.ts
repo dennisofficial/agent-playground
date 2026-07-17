@@ -1,12 +1,12 @@
+import type { DecisionRecord, Step } from '@shared/domain';
 import { describe, expect, it } from 'vitest';
+import type { DriverThread } from '../../../driver/driver-store.service';
+import type { ResolvedRepo } from '../../../driver/repo-resolver';
 import {
   COMMIT_AND_PUSH_INSTRUCTION,
   renderBatchTask,
   renderMasterReviewTask,
 } from '../batch-task';
-import type { DriverThread } from '../../../driver/driver-store.service';
-import type { ResolvedRepo } from '../../../driver/repo-resolver';
-import type { DecisionRecord, Step } from '@shared/domain';
 
 /**
  * Golden-snapshot baseline for the driver-run turn PROSE strings sent into build/review/gate turns. Every
@@ -81,9 +81,9 @@ describe('driver-run turn prose golden snapshots', () => {
   });
 
   it('renderBatchTask — with a decision record (decisions branch baselined too)', async () => {
-    await expect(
-      renderBatchTask(record, baseThread, steps),
-    ).toMatchFileSnapshot('./__snapshots__/render-batch-task-with-record.txt');
+    await expect(renderBatchTask(record, baseThread, steps)).toMatchFileSnapshot(
+      './__snapshots__/render-batch-task-with-record.txt',
+    );
   });
 
   it('renderBatchTask — with a skill nudge (the <available_skills> block spliced in)', async () => {

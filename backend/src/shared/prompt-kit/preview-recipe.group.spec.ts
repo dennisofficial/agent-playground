@@ -47,15 +47,8 @@ describe('preview recipe — WORKER + validate', () => {
   });
 
   it('never reaches other build-facing agents', () => {
-    for (const agent of [
-      Agent.PLANNING,
-      Agent.FAN_OUT,
-      Agent.REVIEW_AGENT,
-      Agent.EXPLORE,
-    ]) {
-      expect(
-        renderAgentPrompt(agent, { previewInstructions: MARKER }),
-      ).not.toContain(MARKER);
+    for (const agent of [Agent.PLANNING, Agent.FAN_OUT, Agent.REVIEW_AGENT, Agent.EXPLORE]) {
+      expect(renderAgentPrompt(agent, { previewInstructions: MARKER })).not.toContain(MARKER);
     }
   });
 });

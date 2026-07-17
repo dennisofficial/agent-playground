@@ -60,13 +60,9 @@ export class AddComposerDrafts1784247434054 implements MigrationInterface {
     await queryRunner.query(
       `ALTER TABLE "composer_drafts" DROP CONSTRAINT "fk_composer_drafts_org_id_organizations"`,
     );
-    await queryRunner.query(
-      `DROP INDEX "public"."idx_composer_draft_attachments_job_id_user_id"`,
-    );
+    await queryRunner.query(`DROP INDEX "public"."idx_composer_draft_attachments_job_id_user_id"`);
     await queryRunner.query(`DROP TABLE "composer_draft_attachments"`);
-    await queryRunner.query(
-      `DROP INDEX "public"."idx_composer_drafts_job_id_user_id"`,
-    );
+    await queryRunner.query(`DROP INDEX "public"."idx_composer_drafts_job_id_user_id"`);
     await queryRunner.query(`DROP TABLE "composer_drafts"`);
   }
 }

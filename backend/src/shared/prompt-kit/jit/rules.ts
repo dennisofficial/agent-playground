@@ -9,22 +9,18 @@
  * The former env knobs are gone (d4): their DEFAULTS are the declared field values below, so runtime behavior at
  * default settings is byte-identical. `enabled` replaces the per-feature kill-switches.
  */
-import { agentMessage } from '../message';
-import {
-  ROTATION_REMINDER_NUDGE,
-  ROTATION_SOFT_NUDGE,
-} from '../messages/build-handoff';
-import { detectLongRunningCommand, renderSvcNudge } from './svc-nudge';
+import { agentMessage, assertEnforcementSeamConfigured } from '../message';
+import { ROTATION_REMINDER_NUDGE, ROTATION_SOFT_NUDGE } from '../messages/build-handoff';
+import { BG_TASK_CAP_NOTICE } from './bg-task-cap';
 import {
   detectGithubHtmlUrl,
-  renderGithubFetchNudge,
   FETCH_TOOL_MATCHER,
+  renderGithubFetchNudge,
 } from './github-fetch-guard';
 import { detectInstallCommand } from './install-awareness';
-import { BG_TASK_CAP_NOTICE } from './bg-task-cap';
 import { planApprovedRule } from './plan-approved';
 import { type JitRule, validateJitRules } from './rule';
-import { assertEnforcementSeamConfigured } from '../message';
+import { detectLongRunningCommand, renderSvcNudge } from './svc-nudge';
 
 /** Was `DEFAULT_SVC_NUDGE_DELTA_TOKENS` (env `SVC_NUDGE_DELTA_TOKENS`). */
 export const SVC_NUDGE_DELTA_TOKENS = 40_000;
@@ -106,9 +102,7 @@ export const legRotationRule: JitRule = {
   },
   delivery: 'steer-now',
   render: (ctx) =>
-    agentMessage(
-      ctx.phase === 'reminder' ? ROTATION_REMINDER_NUDGE : ROTATION_SOFT_NUDGE,
-    ),
+    agentMessage(ctx.phase === 'reminder' ? ROTATION_REMINDER_NUDGE : ROTATION_SOFT_NUDGE),
 };
 
 /**
@@ -163,12 +157,9 @@ assertEnforcementSeamConfigured();
  * lifecycle event left (Thread 4 retired the `preview-requested` firing path — post_build's preview now seeds
  * directly via `composePreviewPrepSeed`, see `AgentSessionManager.seedPreviewOnPostBuild`).
  */
-export function findLifecycleRule(
-  event: 'plan-approved',
-): JitRule | undefined {
+export function findLifecycleRule(event: 'plan-approved'): JitRule | undefined {
   return JIT_RULES.find(
-    (r) =>
-      r.enabled && r.trigger.kind === 'lifecycle' && r.trigger.event === event,
+    (r) => r.enabled && r.trigger.kind === 'lifecycle' && r.trigger.event === event,
   );
 }
 
@@ -177,7 +168,5 @@ export function findLifecycleRule(
  * turn-prefix prepend rail (d18). Kept here so the catalog stays the one place rules are enumerated.
  */
 export function operatorMessageRules(): JitRule[] {
-  return JIT_RULES.filter(
-    (r) => r.enabled && r.trigger.kind === 'operator-message',
-  );
+  return JIT_RULES.filter((r) => r.enabled && r.trigger.kind === 'operator-message');
 }

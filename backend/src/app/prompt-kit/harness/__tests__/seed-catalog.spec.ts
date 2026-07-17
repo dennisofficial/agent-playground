@@ -1,10 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import type { UnblockBlockerInfo } from '@shared/domain';
-import {
-  wakeUnblockedRunningJobBody,
-  renderBornBlockedUnblockPrefix,
-} from '../seed-catalog';
+import { renderBornBlockedUnblockPrefix, wakeUnblockedRunningJobBody } from '../seed-catalog';
 
 const merged: UnblockBlockerInfo = {
   jobId: 'job-aaa',

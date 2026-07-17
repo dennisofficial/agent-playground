@@ -5,10 +5,7 @@ import { drainTurnEventConsumer } from '../turn-event-consumer';
 const STREAM = 'turn:T:events';
 
 /** Append a batch of `{ n }` frames to the events stream, returning their ids. */
-async function seed(
-  redis: InMemoryRedisStream,
-  values: number[],
-): Promise<string[]> {
+async function seed(redis: InMemoryRedisStream, values: number[]): Promise<string[]> {
   const ids: string[] = [];
   for (const n of values) ids.push(await redis.xadd(STREAM, { n }));
   return ids;

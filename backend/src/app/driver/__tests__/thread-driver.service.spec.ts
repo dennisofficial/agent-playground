@@ -1,8 +1,15 @@
-import { tmpdir } from 'node:os';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
-import type { BrainGateway } from '../brain-gateway';
+import type { EnvService } from '@core/config/env/env.service';
+import type {
+  DecisionRecord,
+  Job,
+  Step,
+  StepStatus,
+  Thread,
+  ThreadCondition,
+  ThreadStatus,
+} from '@shared/domain';
+import { CODEX_REVIEW_OUTAGE_RETRY_MS } from '@shared/domain';
+import type { EngineRunnerPort, ToolBridgeOptions } from '@shared/engine';
 import {
   EngineAuthError,
   EngineSessionLimitError,
@@ -10,57 +17,29 @@ import {
   MAX_HOST_RETRIES,
   NO_ENGINE_CREDENTIAL_MARKER,
 } from '@shared/engine';
-import type { EngineRunnerPort, ToolBridgeOptions } from '@shared/engine';
-import {
-  ThreadDriver,
-  shortReason,
-  renderCompletionMd,
-} from '../thread-driver.service';
-import { BuildShipService } from '../build-ship.service';
-import type {
-  DriverStoreService,
-  DriverThread,
-  JobRoute,
-} from '../driver-store.service';
-import type { PlannedStep } from '../../prompt-kit/messages/render-plan';
-import type { DriverRepoResolver, ResolvedRepo } from '../repo-resolver';
-import type { PlanVisibilityService } from '../decision-gate';
-import type { AutoFixStage } from '../autofix';
-import type {
-  GithubPrService,
-  LocalGitService,
-  FeatureSandbox,
-  ProjectRepo,
-} from '../../git';
-import type { TurnRunnerService } from '../../runner';
-import type {
-  BlockSink,
-  ChatSurface,
-  LiveTurnStore,
-  TaskEventSink,
-} from '../../surface';
-import { TurnHarnessFactory } from '../../surface';
-import type { SkillResolver, SkillNudgeSelector } from '../../skills';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
+import type { FeatureSandbox, GithubPrService, LocalGitService, ProjectRepo } from '../../git';
 import type { CredentialResolver } from '../../onboarding';
 import type { ClaudeCredentialStore } from '../../onboarding/claude-credential.store';
 import type { OauthUsageService } from '../../onboarding/oauth-usage.service';
-import type { LeaderElectionService } from '../cluster/leader-election.service';
-import type { EnvService } from '@core/config/env/env.service';
-import type {
-  DecisionRecord,
-  Step,
-  StepStatus,
-  Thread,
-  ThreadStatus,
-  ThreadCondition,
-  Job,
-} from '@shared/domain';
-import { CODEX_REVIEW_OUTAGE_RETRY_MS } from '@shared/domain';
-import type {
-  TaskItem,
-  ThreadTerminalRecord,
-} from '../../persistence/entities';
+import type { TaskItem, ThreadTerminalRecord } from '../../persistence/entities';
+import type { PlannedStep } from '../../prompt-kit/messages/render-plan';
+import type { TurnRunnerService } from '../../runner';
 import { TOOL_SHAPES } from '../../sandbox/image/host-tool-schemas';
+import type { SkillNudgeSelector, SkillResolver } from '../../skills';
+import type { BlockSink, ChatSurface, LiveTurnStore, TaskEventSink } from '../../surface';
+import { TurnHarnessFactory } from '../../surface';
+import type { AutoFixStage } from '../autofix';
+import type { BrainGateway } from '../brain-gateway';
+import { BuildShipService } from '../build-ship.service';
+import type { LeaderElectionService } from '../cluster/leader-election.service';
+import type { PlanVisibilityService } from '../decision-gate';
+import type { DriverStoreService, DriverThread, JobRoute } from '../driver-store.service';
+import type { DriverRepoResolver, ResolvedRepo } from '../repo-resolver';
+import { ThreadDriver, renderCompletionMd, shortReason } from '../thread-driver.service';
 
 /**
  * W4 — the SECTION/PHASE DRIVER unit tests. Every dependency is mocked (NO real LLM / git / network):
@@ -114,11 +93,9 @@ interface StoreState {
 function isFakeSkillNudge(
   value: unknown,
 ): value is { skills: { name: string; reason: string }[]; at: string } {
-  if (value == null || typeof value !== 'object' || Array.isArray(value))
-    return false;
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
-  if (!Array.isArray(record.skills) || typeof record.at !== 'string')
-    return false;
+  if (!Array.isArray(record.skills) || typeof record.at !== 'string') return false;
   return record.skills.every(
     (s) =>
       s != null &&
@@ -161,8 +138,7 @@ function makeStore(state: StoreState): {
   const threadIdForAnchor = (anchorId: string): string =>
     state.steps.find((step) => step.id === anchorId)?.threadId ?? anchorId;
   const threadGroupIdForThread = (thread: StoreDriverThread): string =>
-    (thread.config?.threadGroupId as string | undefined) ??
-    `thread-group-${thread.id}`;
+    (thread.config?.threadGroupId as string | undefined) ?? `thread-group-${thread.id}`;
   const threadGroupKindForThread = (thread: StoreDriverThread): string =>
     thread.kind === 'master_review'
       ? 'master_review'
@@ -221,9 +197,7 @@ function makeStore(state: StoreState): {
         (thread) =>
           thread.jobId === jobId &&
           thread.parentThreadId == null &&
-          ['builder', 'master_review', 'post_build', 'ci'].includes(
-            thread.kind,
-          ),
+          ['builder', 'master_review', 'post_build', 'ci'].includes(thread.kind),
       )
       .map((thread) => ({
         id: threadGroupIdForThread(thread),
@@ -239,16 +213,11 @@ function makeStore(state: StoreState): {
         config: {},
       }));
   const driverThreadsForThreadGroup = (threadGroupId: string) => {
-    const parent = state.threads.find(
-      (thread) => threadGroupIdForThread(thread) === threadGroupId,
-    );
+    const parent = state.threads.find((thread) => threadGroupIdForThread(thread) === threadGroupId);
     if (!parent) return [];
     if (parent.kind === 'builder') {
       return state.threads
-        .filter(
-          (thread) =>
-            thread.id === parent.id || thread.parentThreadId === parent.id,
-        )
+        .filter((thread) => thread.id === parent.id || thread.parentThreadId === parent.id)
         .filter((thread) => thread.kind === 'builder')
         .sort((a, b) => a.ordinal - b.ordinal)
         .map((thread) => ({ ...thread }));
@@ -258,9 +227,7 @@ function makeStore(state: StoreState): {
   const store = {
     loadJob: vi.fn(async () => ({ ...state.job })),
     runningJobs: vi.fn(async () =>
-      state.job.status === 'running' && state.job.halt == null
-        ? [{ ...state.job }]
-        : [],
+      state.job.status === 'running' && state.job.halt == null ? [{ ...state.job }] : [],
     ),
     setJobStatus: vi.fn(async (_id: string, status: Job['status']) => {
       state.job.status = status;
@@ -314,9 +281,7 @@ function makeStore(state: StoreState): {
     postBuildThreadId: vi.fn(async (jobId: string) => {
       const existing = state.threads.find(
         (thread) =>
-          thread.jobId === jobId &&
-          thread.parentThreadId == null &&
-          thread.kind === 'post_build',
+          thread.jobId === jobId && thread.parentThreadId == null && thread.kind === 'post_build',
       );
       return existing?.id ?? null;
     }),
@@ -327,9 +292,7 @@ function makeStore(state: StoreState): {
       }),
     ),
     decisionRecord: vi.fn(async () => state.record),
-    threadGroupsForJob: vi.fn(async (jobId: string) =>
-      threadGroupsForJob(jobId),
-    ),
+    threadGroupsForJob: vi.fn(async (jobId: string) => threadGroupsForJob(jobId)),
     driverThreadsForThreadGroup: vi.fn(async (threadGroupId: string) =>
       driverThreadsForThreadGroup(threadGroupId),
     ),
@@ -345,30 +308,26 @@ function makeStore(state: StoreState): {
       const c = (state.reviewChildren ?? []).find((x) => x.id === id);
       if (c) c.status = status;
     }),
-    setThreadCondition: vi.fn(
-      async (id: string, condition: ThreadCondition) => {
-        const s = state.threads.find((x) => x.id === id);
-        if (s) s.condition = condition;
-        // Child rows (review_agent / review_fix) share this setter.
-        const c = (state.reviewChildren ?? []).find((x) => x.id === id);
-        if (c) c.condition = condition;
-      },
-    ),
+    setThreadCondition: vi.fn(async (id: string, condition: ThreadCondition) => {
+      const s = state.threads.find((x) => x.id === id);
+      if (s) s.condition = condition;
+      // Child rows (review_agent / review_fix) share this setter.
+      const c = (state.reviewChildren ?? []).find((x) => x.id === id);
+      if (c) c.condition = condition;
+    }),
     // Set-once persist of the thread's start HEAD; returns the authoritative (first-written) sha.
     ensureThreadStartSha: vi.fn(async (id: string, candidate: string) => {
       const s = state.threads.find((x) => x.id === id);
       if (s && !s.startSha) s.startSha = candidate;
       return s?.startSha ?? candidate;
     }),
-    setThreadPlan: vi.fn(
-      async (id: string, plan: string, handoffIn: string | null) => {
-        const s = state.threads.find((x) => x.id === id);
-        if (s) {
-          s.plan = plan;
-          s.handoffIn = handoffIn;
-        }
-      },
-    ),
+    setThreadPlan: vi.fn(async (id: string, plan: string, handoffIn: string | null) => {
+      const s = state.threads.find((x) => x.id === id);
+      if (s) {
+        s.plan = plan;
+        s.handoffIn = handoffIn;
+      }
+    }),
     setThreadOrientation: vi.fn(async (id: string, orientation: string) => {
       const s = state.threads.find((x) => x.id === id);
       if (s) s.orientation = orientation;
@@ -407,9 +366,7 @@ function makeStore(state: StoreState): {
       },
     ),
     reviewChildren: vi.fn(async (parentId: string) =>
-      (state.reviewChildren ?? [])
-        .filter((c) => c.parentId === parentId)
-        .map((c) => ({ ...c })),
+      (state.reviewChildren ?? []).filter((c) => c.parentId === parentId).map((c) => ({ ...c })),
     ),
     setThreadReviewFindings: vi.fn(async (id: string, findings: unknown[]) => {
       const c = (state.reviewChildren ?? []).find((x) => x.id === id);
@@ -441,15 +398,13 @@ function makeStore(state: StoreState): {
       state.steps.push(...rows);
       return rows.map((p) => ({ ...p }));
     }),
-    setStepState: vi.fn(
-      async (id: string, stage: string, status: StepStatus) => {
-        const p = state.steps.find((x) => x.id === id);
-        if (p) {
-          p.stage = stage;
-          p.status = status;
-        }
-      },
-    ),
+    setStepState: vi.fn(async (id: string, stage: string, status: StepStatus) => {
+      const p = state.steps.find((x) => x.id === id);
+      if (p) {
+        p.stage = stage;
+        p.status = status;
+      }
+    }),
     setBatchOrdinals: vi.fn(async (assignments: Array<[string, number]>) => {
       for (const [id, batchOrdinal] of assignments) {
         const p = state.steps.find((x) => x.id === id);
@@ -464,9 +419,7 @@ function makeStore(state: StoreState): {
     // ── operator-input cards (request_operator_input) — a small in-memory backing on state ─────────
     findOpenOperatorInputCard: vi.fn(async (_jobId: string) => {
       const open = state.operatorInputCards.find((c) => c.answer == null);
-      return open
-        ? { questionId: open.questionId, question: open.question }
-        : null;
+      return open ? { questionId: open.questionId, question: open.question } : null;
     }),
     openOperatorInputCard: vi.fn(async (_jobId: string, question: string) => {
       const questionId = `q${nextQuestionId++}`;
@@ -478,46 +431,27 @@ function makeStore(state: StoreState): {
       });
       return { questionId };
     }),
-    readOperatorInputAnswer: vi.fn(
-      async (_jobId: string, questionId: string) => {
-        const card = state.operatorInputCards.find(
-          (c) => c.questionId === questionId,
-        );
-        return card?.answer ?? null;
-      },
-    ),
-    markOperatorInputDelivered: vi.fn(
-      async (_jobId: string, questionId: string) => {
-        const card = state.operatorInputCards.find(
-          (c) => c.questionId === questionId,
-        );
-        if (card) card.delivered = true;
-      },
-    ),
+    readOperatorInputAnswer: vi.fn(async (_jobId: string, questionId: string) => {
+      const card = state.operatorInputCards.find((c) => c.questionId === questionId);
+      return card?.answer ?? null;
+    }),
+    markOperatorInputDelivered: vi.fn(async (_jobId: string, questionId: string) => {
+      const card = state.operatorInputCards.find((c) => c.questionId === questionId);
+      if (card) card.delivered = true;
+    }),
     // ── typed terminal record (ADR 0004) — backed on the thread object so a "restart" (fresh driver, same
     //    state) preserves the assertion, exactly like the DB column. ────────────────────────────────────
-    recordThreadTermination: vi.fn(
-      async (threadId: string, terminal: ThreadTerminalRecord) => {
-        const s = state.threads.find((x) => x.id === threadId);
-        if (s)
-          (
-            s as { terminal_record?: ThreadTerminalRecord | null }
-          ).terminal_record = terminal;
-      },
-    ),
+    recordThreadTermination: vi.fn(async (threadId: string, terminal: ThreadTerminalRecord) => {
+      const s = state.threads.find((x) => x.id === threadId);
+      if (s) (s as { terminal_record?: ThreadTerminalRecord | null }).terminal_record = terminal;
+    }),
     clearTerminalRecord: vi.fn(async (threadId: string) => {
       const s = state.threads.find((x) => x.id === threadId);
-      if (s)
-        (
-          s as { terminal_record?: ThreadTerminalRecord | null }
-        ).terminal_record = null;
+      if (s) (s as { terminal_record?: ThreadTerminalRecord | null }).terminal_record = null;
     }),
     getTerminalRecord: vi.fn(async (threadId: string) => {
       const s = state.threads.find((x) => x.id === threadId);
-      return (
-        (s as { terminal_record?: ThreadTerminalRecord | null })
-          ?.terminal_record ?? null
-      );
+      return (s as { terminal_record?: ThreadTerminalRecord | null })?.terminal_record ?? null;
     }),
     // Transcript anchor (halt-wake) — no steps/legs session seeded in these tests, so the anchor resolves
     // undefined; present so `writeCompletionMd` doesn't call an undefined fn.
@@ -525,36 +459,27 @@ function makeStore(state: StoreState): {
     // ── Leg rotation (context-rot mitigation) — no prior rotation in these tests, so the driver folds no seed
     //    and rotates ONLY on a self-authored handoff. `completeLegRotation` is present for the type only. ──
     getPendingLegSeed: vi.fn(async (anchorStepId: string) => {
-      const s = state.threads.find(
-        (x) => x.id === threadIdForAnchor(anchorStepId),
-      );
+      const s = state.threads.find((x) => x.id === threadIdForAnchor(anchorStepId));
       const seed = s?.config?.pendingLegSeed;
       return typeof seed === 'string' ? seed : null;
     }),
     completeLegRotation: vi.fn(async () => null),
     builderLegCountForThreadGroup: vi.fn(async (anchorThreadId: string) => {
-      const current = state.threads.find(
-        (x) => x.id === threadIdForAnchor(anchorThreadId),
-      );
+      const current = state.threads.find((x) => x.id === threadIdForAnchor(anchorThreadId));
       if (!current) return 0;
       const rootId = current.parentThreadId ?? current.id;
       return state.threads.filter(
         (thread) =>
-          thread.kind === 'builder' &&
-          (thread.id === rootId || thread.parentThreadId === rootId),
+          thread.kind === 'builder' && (thread.id === rootId || thread.parentThreadId === rootId),
       ).length;
     }),
     recordBuildSystemChunk: vi.fn(async () => undefined),
     getThreadTasks: vi.fn(async (threadId: string) => {
-      const s = state.threads.find((x) => x.id === threadId) as
-        | { tasks?: TaskItem[] }
-        | undefined;
+      const s = state.threads.find((x) => x.id === threadId) as { tasks?: TaskItem[] } | undefined;
       return Array.isArray(s?.tasks) ? s.tasks : [];
     }),
     dropOpenThreadTasks: vi.fn(async (threadId: string) => {
-      const s = state.threads.find((x) => x.id === threadId) as
-        | { tasks?: TaskItem[] }
-        | undefined;
+      const s = state.threads.find((x) => x.id === threadId) as { tasks?: TaskItem[] } | undefined;
       if (!Array.isArray(s?.tasks)) return 0;
       let dropped = 0;
       s.tasks = s.tasks.map((t) => {
@@ -592,9 +517,7 @@ function makeStore(state: StoreState): {
       return s?.jobId ?? null;
     }),
     masterReviewThreadId: vi.fn(async (jobId: string) => {
-      const s = state.threads.find(
-        (x) => x.jobId === jobId && x.kind === 'master_review',
-      );
+      const s = state.threads.find((x) => x.jobId === jobId && x.kind === 'master_review');
       return s?.id ?? null;
     }),
     // ── durable retry-counter fakes (Thread 1: durable retry counters) ─────────────────────────────
@@ -719,13 +642,11 @@ function makePr(): { pr: GithubPrService; opened: Array<{ head: string }> } {
     // the host CONFIRMS it via head-branch discovery. Return a synthetic PR so `ship` latches
     // pr_url/pr_number and flips the job `done` — mirroring the real "Atlas opened it, host discovered it"
     // flow. (`ship` no longer blind-flips `done` on a discovery miss — that was the flaky-loop bug.)
-    findOpenPullByHead: vi.fn(
-      async (_token: string, args: { head: string }) => ({
-        url: `https://github.com/acme/widget/pull/1`,
-        number: 1,
-        head: args.head,
-      }),
-    ),
+    findOpenPullByHead: vi.fn(async (_token: string, args: { head: string }) => ({
+      url: `https://github.com/acme/widget/pull/1`,
+      number: 1,
+      head: args.head,
+    })),
   } as unknown as GithubPrService;
   return { pr, opened };
 }
@@ -773,10 +694,7 @@ function makeTurn(
         if (remainingFailures > 0) {
           remainingFailures -= 1;
           // A transient infra blip (NOT auth/detached/timeout/unresumable) — the driver retries it silently.
-          throw new Error(
-            opts.transientMessage ??
-              'sandbox exec failed: connection reset by peer',
-          );
+          throw new Error(opts.transientMessage ?? 'sandbox exec failed: connection reset by peer');
         }
         // Simulate the orchestrator voluntarily blocking (Phase 3) — a terminal assertion, no complete_thread.
         if (opts.blockThread && input.toolBridge?.tools?.['block_thread']) {
@@ -1011,10 +929,7 @@ function assemble(
   opts: {
     env?: Record<string, string>;
     turn?: TurnRunnerService;
-    turnRegistry?: Pick<
-      import('../../sandbox/turn-registry.service').TurnRegistry,
-      'listRunning'
-    >;
+    turnRegistry?: Pick<import('../../sandbox/turn-registry.service').TurnRegistry, 'listRunning'>;
     /** Override `CredentialResolver.anthropicKey` — defaults to the env-fallback shape (no key). */
     anthropicKey?: (orgId?: string) => Promise<string | undefined>;
     /** SHIP-REVIEW GATE: feature/bugfix builds now PARK before the PR (awaiting the operator's "Ship it").
@@ -1028,23 +943,14 @@ function assemble(
     /** Point the thread sandbox's worktree at a REAL dir so a test can assert NOTHING is written under
      *  `<worktree>/.atlas/threads/` (the halt-trail relocation regression guard). */
     worktreePath?: string;
-    claudeCreds?: Pick<
-      ClaudeCredentialStore,
-      'getSelectedRefreshMeta' | 'markNeedsReauth'
-    >;
+    claudeCreds?: Pick<ClaudeCredentialStore, 'getSelectedRefreshMeta' | 'markNeedsReauth'>;
     /** The manual "Merge PR" click's resolution path — defaults to a no-op resolve unless a test overrides it. */
-    autoMerge?: Pick<
-      import('../auto-merge.service').AutoMergeService,
-      'mergeNow'
-    >;
+    autoMerge?: Pick<import('../auto-merge.service').AutoMergeService, 'mergeNow'>;
     /** The binding usage window's utilization for a TEXT-fallback session-limit hit's corroboration check
      *  (`OauthUsageService.getUtilization`) — defaults to `undefined` (uncorroborated). */
     usageUtilization?: number;
     /** Override `SkillResolver` so a test can surface build-surface skills the nudge selector picks from. */
-    skillResolver?: Pick<
-      SkillResolver,
-      'resolveForTurn' | 'resolveReviewSkillsForThread'
-    >;
+    skillResolver?: Pick<SkillResolver, 'resolveForTurn' | 'resolveReviewSkillsForThread'>;
     /** Override the Haiku skill-nudge selector — defaults to one that picks nothing. */
     skillNudgeSelector?: SkillNudgeSelector;
   } = {},
@@ -1091,8 +997,7 @@ function assemble(
       ) => {
         sunk.push({ jobId, block });
         if (
-          (block.meta as { source?: unknown } | null)?.source ===
-            'system_operator' &&
+          (block.meta as { source?: unknown } | null)?.source === 'system_operator' &&
           block.text
         ) {
           const notices = state.systemNotices ?? [];
@@ -1115,8 +1020,7 @@ function assemble(
           sunk.some(
             (s) =>
               s.block.kind === 'agent_prompt' &&
-              (s.block.meta as { promptKey?: string } | null)?.promptKey ===
-                promptKey,
+              (s.block.meta as { promptKey?: string } | null)?.promptKey === promptKey,
           )
         ) {
           return;
@@ -1139,19 +1043,13 @@ function assemble(
   let taskSeq = 0;
   const taskSink = {
     createTask: vi.fn(
-      async (
-        scope: { kind: string; id: string },
-        input: Record<string, unknown>,
-      ) => {
+      async (scope: { kind: string; id: string }, input: Record<string, unknown>) => {
         taskEvents.push({ method: 'createTask', scope, input });
         return { id: String(++taskSeq) };
       },
     ),
     updateTask: vi.fn(
-      async (
-        scope: { kind: string; id: string },
-        input: Record<string, unknown>,
-      ) => {
+      async (scope: { kind: string; id: string }, input: Record<string, unknown>) => {
         taskEvents.push({ method: 'updateTask', scope, input });
         return { ok: true };
       },
@@ -1287,8 +1185,7 @@ function assemble(
       // The host-owned context bucket root — where the driver renders `/context/generated` projections
       // (deviations.md, and the relocated halt-trail completion.md). Defaults to `/ctx`; a test can repoint
       // it at a real temp dir to assert the on-disk write.
-      contextDirHost: (_jobId: string, _orgId: string) =>
-        opts.contextDirHost ?? '/ctx',
+      contextDirHost: (_jobId: string, _orgId: string) => opts.contextDirHost ?? '/ctx',
     } as unknown as import('../job-lifecycle.service').JobLifecycleService,
     // BuildShipService: the real terminal "ship" over the same git/pr/store fakes, so the leak-scan/latch
     // assertions hold. The open-PR step is now a SEEDED BRAIN TURN reached via the neutral BrainGateway (no
@@ -1406,15 +1303,11 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     // thread, absent from this mock's thread list).
     expect(h.store.materializeReviewChildren).toHaveBeenCalledTimes(2);
     expect(h.autofix.runReviewLens).toHaveBeenCalled();
-    expect(h.shipSeeds).toEqual([
-      { jobId: state.job.id, branch: 'atlas/feature-job-abcd' },
-    ]);
+    expect(h.shipSeeds).toEqual([{ jobId: state.job.id, branch: 'atlas/feature-job-abcd' }]);
 
     // Both builder threads are done with a handoff; singleton split-pipeline rows may be appended for shipping.
     expect(
-      state.threads
-        .filter((s) => s.kind === 'builder')
-        .every((s) => s.status === 'done'),
+      state.threads.filter((s) => s.kind === 'builder').every((s) => s.status === 'done'),
     ).toBe(true);
     expect(state.threads[1].handoffIn).toContain('Backend');
 
@@ -1444,9 +1337,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     };
     const h = assemble(state);
     h.autofix.runReviewLens.mockRejectedValue(
-      new Error(
-        'Command failed: git status\nfatal: cannot chdir to packages/jwt-auth',
-      ),
+      new Error('Command failed: git status\nfatal: cannot chdir to packages/jwt-auth'),
     );
 
     await h.driver.dispatch(state.job);
@@ -1454,20 +1345,14 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
 
     // A notice went onto a LENS lane ({ lensId }) carrying the folded-in error reason (shortReason).
     const lensNotices = h.autofix.emitReviewNotice.mock.calls.filter(
-      (c) =>
-        (c[1] as { lensId?: string }).lensId &&
-        String(c[2]).includes('failed to run'),
+      (c) => (c[1] as { lensId?: string }).lensId && String(c[2]).includes('failed to run'),
     );
     expect(lensNotices.length).toBeGreaterThan(0);
-    expect(String(lensNotices[0][2])).toContain(
-      'fatal: cannot chdir to packages/jwt-auth',
-    );
+    expect(String(lensNotices[0][2])).toContain('fatal: cannot chdir to packages/jwt-auth');
 
     // Every review_agent child carries the `failed` CONDITION (step stays where it was), and the failure
     // never sank the job.
-    const lensKids = (state.reviewChildren ?? []).filter(
-      (c) => c.kind === 'review_agent',
-    );
+    const lensKids = (state.reviewChildren ?? []).filter((c) => c.kind === 'review_agent');
     expect(lensKids.length).toBeGreaterThan(0);
     expect(lensKids.every((c) => c.condition === 'failed')).toBe(true);
     expect(state.job.status).toBe('done');
@@ -1490,14 +1375,10 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     await flushUntil(() => state.job.status === 'done');
 
     const fixNotices = h.autofix.emitReviewNotice.mock.calls.filter(
-      (c) =>
-        (c[1] as { fix?: boolean }).fix === true &&
-        String(c[2]).includes('nothing to fix'),
+      (c) => (c[1] as { fix?: boolean }).fix === true && String(c[2]).includes('nothing to fix'),
     );
     expect(fixNotices.length).toBeGreaterThan(0);
-    const postKids = (state.reviewChildren ?? []).filter(
-      (c) => c.kind === 'review_fix',
-    );
+    const postKids = (state.reviewChildren ?? []).filter((c) => c.kind === 'review_fix');
     expect(postKids.length).toBeGreaterThan(0);
     expect(postKids.every((c) => c.status === 'done')).toBe(true);
     // No fix turn ran (nothing actionable) — the notice replaced it, not augmented it.
@@ -1533,17 +1414,15 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
         reviewFindings: [],
       },
     ];
-    (h.store.getThread as ReturnType<typeof vi.fn>).mockImplementation(
-      async (id: string) => {
-        const s = state.threads.find((x) => x.id === id);
-        if (!s) return null;
-        if (id === staleId) {
-          s.status = 'done';
-          s.handoffOut = 'HO-from-other-drive';
-        }
-        return { ...s };
-      },
-    );
+    (h.store.getThread as ReturnType<typeof vi.fn>).mockImplementation(async (id: string) => {
+      const s = state.threads.find((x) => x.id === id);
+      if (!s) return null;
+      if (id === staleId) {
+        s.status = 'done';
+        s.handoffOut = 'HO-from-other-drive';
+      }
+      return { ...s };
+    });
 
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
@@ -1552,9 +1431,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(1);
     expect(h.store.materializeReviewChildren).toHaveBeenCalledTimes(1);
     // It never materialized review children for the finished thread (no re-review).
-    const materialized = (
-      h.store.materializeReviewChildren as ReturnType<typeof vi.fn>
-    ).mock.calls;
+    const materialized = (h.store.materializeReviewChildren as ReturnType<typeof vi.fn>).mock.calls;
     expect(materialized.some((c) => c[0].id === staleId)).toBe(false);
     // The build still completes to a PR.
     expect(state.job.status).toBe('done');
@@ -1581,15 +1458,10 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
 
-    const executeStepIds = h.calls
-      .filter((c) => c.mode === 'execute')
-      .map((c) => c.stepId);
+    const executeStepIds = h.calls.filter((c) => c.mode === 'execute').map((c) => c.stepId);
     expect(executeStepIds).not.toContain('sec-be-ph0');
     expect(executeStepIds).toContain('sec-fe-ph0');
-    expect(h.store.setThreadStatus).not.toHaveBeenCalledWith(
-      'sec-be',
-      'executing',
-    );
+    expect(h.store.setThreadStatus).not.toHaveBeenCalledWith('sec-be', 'executing');
     expect(h.store.materializeReviewChildren).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'sec-be' }),
       expect.any(Array),
@@ -1706,9 +1578,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
             turnKind: input.turnMeta?.kind,
             isCommitNudge: input.turnMeta?.ctx?.commitNudge != null,
           });
-          return (
-            baseTurn.runTurn as unknown as (i: typeof input) => Promise<unknown>
-          )(input);
+          return (baseTurn.runTurn as unknown as (i: typeof input) => Promise<unknown>)(input);
         },
       ),
       canReattach: () => false,
@@ -1727,11 +1597,10 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     // The writer "forgot" to commit on its first pass (tree dirty) — the host nudges it once (a kind:'step'
     // resumed turn), and the nudge itself leaves the tree clean.
     let hasChangesCalls = 0;
-    (h.git as unknown as { hasChanges: ReturnType<typeof vi.fn> }).hasChanges =
-      vi.fn(async () => {
-        hasChangesCalls += 1;
-        return hasChangesCalls === 1;
-      });
+    (h.git as unknown as { hasChanges: ReturnType<typeof vi.fn> }).hasChanges = vi.fn(async () => {
+      hasChangesCalls += 1;
+      return hasChangesCalls === 1;
+    });
 
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
@@ -1740,14 +1609,9 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     const nudgeRuns = runs.filter((r) => r.isCommitNudge);
     expect(builderRuns.length).toBeGreaterThan(0);
     expect(nudgeRuns.length).toBeGreaterThan(0);
+    expect(builderRuns.every((r) => r.engine === 'claude' && r.effort === 'high')).toBe(true);
     expect(
-      builderRuns.every((r) => r.engine === 'claude' && r.effort === 'high'),
-    ).toBe(true);
-    expect(
-      nudgeRuns.every(
-        (r) =>
-          r.engine === 'claude' && r.effort === 'high' && r.turnKind === 'step',
-      ),
+      nudgeRuns.every((r) => r.engine === 'claude' && r.effort === 'high' && r.turnKind === 'step'),
     ).toBe(true);
   });
 
@@ -1775,23 +1639,21 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
         };
       },
     );
-    const reattach = vi.fn(
-      async (input: Parameters<TurnRunnerService['reattach']>[0]) => {
-        dirty = false;
-        return {
-          report: 'commit nudge finished',
-          session: {
-            id: 'sess-build',
-            jobId: input.jobId,
-            stepId: input.stepId ?? null,
-            engine: 'claude' as const,
-            mode: 'execute' as const,
-            branch: 'b',
-            worktreePath: '/wt/b',
-          },
-        };
-      },
-    );
+    const reattach = vi.fn(async (input: Parameters<TurnRunnerService['reattach']>[0]) => {
+      dirty = false;
+      return {
+        report: 'commit nudge finished',
+        session: {
+          id: 'sess-build',
+          jobId: input.jobId,
+          stepId: input.stepId ?? null,
+          engine: 'claude' as const,
+          mode: 'execute' as const,
+          branch: 'b',
+          worktreePath: '/wt/b',
+        },
+      };
+    });
     const turn = {
       runTurn,
       reattach,
@@ -1829,8 +1691,9 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       operatorInputCards: [],
     };
     const h = assemble(state, { turn, turnRegistry: { listRunning } as never });
-    (h.git as unknown as { hasChanges: ReturnType<typeof vi.fn> }).hasChanges =
-      vi.fn(async () => dirty);
+    (h.git as unknown as { hasChanges: ReturnType<typeof vi.fn> }).hasChanges = vi.fn(
+      async () => dirty,
+    );
 
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
@@ -1921,9 +1784,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     // A synthetic `build_anchor` row per thread's batch, each tagged with its phaseId.
     const anchors = h.sunk.filter((s) => s.block.kind === 'build_anchor');
     expect(anchors.length).toBeGreaterThan(0);
-    expect(
-      anchors.every((a) => typeof a.block.meta?.phaseId === 'string'),
-    ).toBe(true);
+    expect(anchors.every((a) => typeof a.block.meta?.phaseId === 'string')).toBe(true);
 
     // The transcript blocks landed via the durable sink — all tagged with meta.phaseId (peeled into the
     // step). Excludes the ship turn's own blocks (tagged `shipId` — Atlas opening the PR in-sandbox) and
@@ -1939,25 +1800,19 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
         s.block.meta?.source !== 'system_operator',
     );
     expect(transcript.length).toBeGreaterThan(0);
-    expect(
-      transcript.every((t) => typeof t.block.meta?.phaseId === 'string'),
-    ).toBe(true);
+    expect(transcript.every((t) => typeof t.block.meta?.phaseId === 'string')).toBe(true);
     expect(transcript.some((t) => t.block.kind === 'thinking')).toBe(true);
     expect(
       transcript.some(
-        (t) =>
-          t.block.kind === 'tool' &&
-          (t.block.meta as { name?: string }).name === 'Edit',
+        (t) => t.block.kind === 'tool' && (t.block.meta as { name?: string }).name === 'Edit',
       ),
     ).toBe(true);
 
     // The STABLE thread lane was used (push called with a `thread:` lane arg) — like the brain's `main`.
     const pushCalls = (h.liveTurns.push as ReturnType<typeof vi.fn>).mock.calls;
-    expect(
-      pushCalls.some(
-        (c) => typeof c[3] === 'string' && c[3].startsWith('thread:'),
-      ),
-    ).toBe(true);
+    expect(pushCalls.some((c) => typeof c[3] === 'string' && c[3].startsWith('thread:'))).toBe(
+      true,
+    );
 
     // The old `build_event` relay is gone — no build_event posts to the surface.
     expect(h.posts.every((p) => !p.includes('[tool]'))).toBe(true);
@@ -2007,9 +1862,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(h.store.persistGroupSkillNudge).toHaveBeenCalledWith(
       'thread-group-sec-be',
       expect.objectContaining({
-        skills: [
-          { name: 'nestjs-best-practices', reason: 'backend NestJS work' },
-        ],
+        skills: [{ name: 'nestjs-best-practices', reason: 'backend NestJS work' }],
       }),
     );
   });
@@ -2029,9 +1882,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     await flushUntil(() => baseline.job.status === 'done');
     const basePrompt = String(
       hBase.sunk.find(
-        (s) =>
-          s.block.kind === 'build_anchor' &&
-          s.block.meta?.phaseId === 'sec-be-ph0',
+        (s) => s.block.kind === 'build_anchor' && s.block.meta?.phaseId === 'sec-be-ph0',
       )?.block.meta?.prompt,
     );
 
@@ -2061,11 +1912,8 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
     const prompt = String(
-      h.sunk.find(
-        (s) =>
-          s.block.kind === 'build_anchor' &&
-          s.block.meta?.phaseId === 'sec-be-ph0',
-      )?.block.meta?.prompt,
+      h.sunk.find((s) => s.block.kind === 'build_anchor' && s.block.meta?.phaseId === 'sec-be-ph0')
+        ?.block.meta?.prompt,
     );
 
     expect(select).toHaveBeenCalled();
@@ -2094,9 +1942,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
         },
       },
     };
-    const select = vi.fn(async () => [
-      { name: 'must-not-be-used', reason: 'x' },
-    ]);
+    const select = vi.fn(async () => [{ name: 'must-not-be-used', reason: 'x' }]);
     const h = assemble(state, {
       skillResolver: {
         resolveForTurn: async () =>
@@ -2124,9 +1970,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       .map((a) => String(a.block.meta?.prompt));
     expect(
       prompts.some(
-        (p) =>
-          p.includes('<available_skills>') &&
-          p.includes('`nestjs-best-practices`'),
+        (p) => p.includes('<available_skills>') && p.includes('`nestjs-best-practices`'),
       ),
     ).toBe(true);
   });
@@ -2169,14 +2013,10 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(h.store.persistGroupSkillNudge).toHaveBeenCalledWith(
       'thread-group-sec-be',
       expect.objectContaining({
-        skills: [
-          { name: 'nestjs-best-practices', reason: 'backend NestJS work' },
-        ],
+        skills: [{ name: 'nestjs-best-practices', reason: 'backend NestJS work' }],
       }),
     );
-    const prompt = String(
-      h.sunk.find((s) => s.block.kind === 'build_anchor')?.block.meta?.prompt,
-    );
+    const prompt = String(h.sunk.find((s) => s.block.kind === 'build_anchor')?.block.meta?.prompt);
     expect(prompt).toContain('<available_skills>');
     expect(prompt).toContain('`nestjs-best-practices`');
     expect(prompt).not.toContain('backend NestJS work');
@@ -2213,26 +2053,24 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     // A runner that CAN re-attach; `reattach` resolves the in-flight turn and `runTurn` is a spy that must
     // NOT fire for the execute batch (no re-run). Typed with its real `TurnRunnerService.reattach` param so
     // `reattach.mock.calls[0][0]` below type-checks against what the driver actually passed it.
-    const reattach = vi.fn(
-      async (_input: Parameters<TurnRunnerService['reattach']>[0]) => {
-        // The re-supplied bridge serves the in-flight `complete_thread` the pre-restart turn was mid-way through.
-        await _input.toolBridge?.tools?.['complete_thread']?.({
-          summary: 'resumed and finished',
-        });
-        return {
-          report: 'resumed build',
-          session: {
-            id: 'sess-live',
-            jobId: 'job-abcdef12',
-            stepId: 'sec-be-ph0',
-            engine: 'claude' as const,
-            mode: 'execute' as const,
-            branch: 'b',
-            worktreePath: '/wt/b',
-          },
-        };
-      },
-    );
+    const reattach = vi.fn(async (_input: Parameters<TurnRunnerService['reattach']>[0]) => {
+      // The re-supplied bridge serves the in-flight `complete_thread` the pre-restart turn was mid-way through.
+      await _input.toolBridge?.tools?.['complete_thread']?.({
+        summary: 'resumed and finished',
+      });
+      return {
+        report: 'resumed build',
+        session: {
+          id: 'sess-live',
+          jobId: 'job-abcdef12',
+          stepId: 'sec-be-ph0',
+          engine: 'claude' as const,
+          mode: 'execute' as const,
+          branch: 'b',
+          worktreePath: '/wt/b',
+        },
+      };
+    });
     const runTurn = vi.fn();
     const turn = {
       runTurn,
@@ -2267,9 +2105,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     });
     expect(runTurn).not.toHaveBeenCalled();
     // A resume never re-emits the batch's START markers (no duplicate build_anchor).
-    expect(h.sunk.filter((s) => s.block.kind === 'build_anchor')).toHaveLength(
-      0,
-    );
+    expect(h.sunk.filter((s) => s.block.kind === 'build_anchor')).toHaveLength(0);
     // The resumed turn's transcript persisted + the batch committed → the run finishes; the ship turn ran
     // (Atlas opens the PR in-sandbox, the host never does).
     expect(h.shipSeeds.length).toBeGreaterThanOrEqual(1);
@@ -2292,9 +2128,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     // never cuts a per-feature worktree of its own.
     expect(state.job.featureBranch).toBe('atlas/feature-job-abcd');
     expect(h.git.createFeatureSandbox).not.toHaveBeenCalled();
-    expect(h.calls.filter((c) => c.mode === 'execute').length).toBeGreaterThan(
-      1,
-    );
+    expect(h.calls.filter((c) => c.mode === 'execute').length).toBeGreaterThan(1);
     expect(state.steps.every((p) => p.status === 'done')).toBe(true);
   });
 
@@ -2313,15 +2147,12 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
 
     const steps = state.steps.filter((p) => p.threadId === 'sec-be');
     expect(steps).toHaveLength(1); // one locked step per thread now (the orchestrate anchor)
-    expect(steps.every((p) => p.status === 'done' && p.stage === 'done')).toBe(
-      true,
-    );
+    expect(steps.every((p) => p.status === 'done' && p.stage === 'done')).toBe(true);
     // setStepState was driven to 'building' then 'done' for the one step (explicit, resumable cursor).
-    expect(
-      (h.store.setStepState as ReturnType<typeof vi.fn>).mock.calls.map(
-        (c) => c[2],
-      ),
-    ).toEqual(['building', 'done']);
+    expect((h.store.setStepState as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[2])).toEqual([
+      'building',
+      'done',
+    ]);
   });
 
   it('resume() fast-forwards completed threads/steps after a simulated restart (no re-execution)', async () => {
@@ -2418,14 +2249,8 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     await flushUntil(() => state.job.status === 'done');
 
     expect(h.posts.some((p) => p.includes('Starting the build'))).toBe(true);
-    expect(
-      h.posts.some(
-        (p) => p.includes('Planning thread') && p.includes('Backend'),
-      ),
-    ).toBe(true);
-    expect(h.posts.some((p) => p.toLowerCase().includes('building'))).toBe(
-      true,
-    );
+    expect(h.posts.some((p) => p.includes('Planning thread') && p.includes('Backend'))).toBe(true);
+    expect(h.posts.some((p) => p.toLowerCase().includes('building'))).toBe(true);
     // The ship step no longer posts an "opening the PR" system message — it seeds a visible brain turn.
     expect(h.shipSeeds.length).toBeGreaterThanOrEqual(1);
   });
@@ -2441,21 +2266,16 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     };
     const h = assemble(state);
     // The execute turn explodes → must propagate to a failure relay.
-    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
-      async () => {
-        throw new Error('engine exploded mid-step');
-      },
-    );
+    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      throw new Error('engine exploded mid-step');
+    });
 
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.halt?.kind === 'failed');
 
     expect(state.job.halt?.kind).toBe('failed');
     expect(
-      h.posts.some(
-        (p) =>
-          p.includes('Build failed') && p.includes('engine exploded mid-step'),
-      ),
+      h.posts.some((p) => p.includes('Build failed') && p.includes('engine exploded mid-step')),
     ).toBe(true);
     expect(h.opened).toHaveLength(0); // no PR opened on a failed build
   });
@@ -2481,9 +2301,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(state.threads[0].condition).toBe('incomplete');
     expect(state.job.halt?.kind).toBe('incomplete'); // needs-you, recoverable — NOT done, NOT failed
     expect(h.opened).toHaveLength(0); // nothing shipped
-    expect(
-      h.posts.some((p) => p.includes('without asserting completion')),
-    ).toBe(true); // a durable halt card, never a silent dead-end
+    expect(h.posts.some((p) => p.includes('without asserting completion'))).toBe(true); // a durable halt card, never a silent dead-end
     expect(h.store.materializeReviewChildren).not.toHaveBeenCalled(); // review skipped on a halt
     expect(h.stopAllServices).not.toHaveBeenCalled(); // no service teardown on a halt (only on clean done)
   });
@@ -2510,24 +2328,14 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
 
       await h.driver.dispatch(state.job);
       // The trail is rendered under `<contextDirHost>/generated/threads/<ordinal>-<slug>/` — here `010-backend`.
-      const trail = join(
-        ctxDir,
-        'generated',
-        'threads',
-        '010-backend',
-        'completion.md',
-      );
+      const trail = join(ctxDir, 'generated', 'threads', '010-backend', 'completion.md');
       // Wait for CONTENT, not just the file's existence: writeCompletionMd is fire-and-forget and
       // writeFile creates the (empty) file before the content lands, so an existence-only wait can read
       // '' and flake (observed in CI). Waiting for non-empty content makes the assertions deterministic.
-      await flushUntil(
-        () => existsSync(trail) && readFileSync(trail, 'utf8').length > 0,
-      );
+      await flushUntil(() => existsSync(trail) && readFileSync(trail, 'utf8').length > 0);
 
       expect(existsSync(trail)).toBe(true);
-      expect(readFileSync(trail, 'utf8')).toContain(
-        '# Thread not done: Backend',
-      );
+      expect(readFileSync(trail, 'utf8')).toContain('# Thread not done: Backend');
 
       // Regression guard (the whole point): nothing is written into the git worktree.
       expect(existsSync(join(worktreeDir, '.atlas'))).toBe(false);
@@ -2580,13 +2388,9 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     });
 
     expect(state.job.status).toBe('done'); // recovered
+    expect(calls.filter((c) => c.mode === 'execute').length).toBeGreaterThanOrEqual(2); // retried
     expect(
-      calls.filter((c) => c.mode === 'execute').length,
-    ).toBeGreaterThanOrEqual(2); // retried
-    expect(
-      (h.store.setJobStatus as ReturnType<typeof vi.fn>).mock.calls.some(
-        (c) => c[1] === 'failed',
-      ),
+      (h.store.setJobStatus as ReturnType<typeof vi.fn>).mock.calls.some((c) => c[1] === 'failed'),
     ).toBe(false); // never stamped failed
     expect(h.posts.some((p) => p.includes('Build failed'))).toBe(false); // no phantom error relay
   });
@@ -2618,13 +2422,9 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     });
 
     expect(state.job.status).toBe('done'); // the lane self-healed on a fresh turn
+    expect(calls.filter((c) => c.mode === 'execute').length).toBeGreaterThanOrEqual(2); // re-drove after the storm throw
     expect(
-      calls.filter((c) => c.mode === 'execute').length,
-    ).toBeGreaterThanOrEqual(2); // re-drove after the storm throw
-    expect(
-      (h.store.setJobStatus as ReturnType<typeof vi.fn>).mock.calls.some(
-        (c) => c[1] === 'failed',
-      ),
+      (h.store.setJobStatus as ReturnType<typeof vi.fn>).mock.calls.some((c) => c[1] === 'failed'),
     ).toBe(false); // never stamped failed
     expect(h.posts.some((p) => p.includes('Build failed'))).toBe(false); // no phantom failure relay
   });
@@ -2648,37 +2448,28 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     });
 
     expect(state.job.status).toBe('done'); // recovered on the LAST retry within budget
-    expect(
-      calls.filter((c) => c.mode === 'execute').length,
-    ).toBeGreaterThanOrEqual(MAX_HOST_RETRIES + 1);
+    expect(calls.filter((c) => c.mode === 'execute').length).toBeGreaterThanOrEqual(
+      MAX_HOST_RETRIES + 1,
+    );
 
     // Each attempt posts a durable quiet `system_notice` (never the scary "Build failed" relay).
     const retryNotices = h.sunk.filter(
-      (s) =>
-        (s.block.meta as { source?: string } | null)?.source ===
-        'system_notice',
+      (s) => (s.block.meta as { source?: string } | null)?.source === 'system_notice',
     );
     expect(retryNotices).toHaveLength(MAX_HOST_RETRIES);
-    expect(retryNotices[0].block.text).toContain(
-      `auto-retry 1/${MAX_HOST_RETRIES}`,
-    );
+    expect(retryNotices[0].block.text).toContain(`auto-retry 1/${MAX_HOST_RETRIES}`);
     expect(retryNotices[MAX_HOST_RETRIES - 1].block.text).toContain(
       `auto-retry ${MAX_HOST_RETRIES}/${MAX_HOST_RETRIES}`,
     );
     expect(h.posts.some((p) => p.includes('Build failed'))).toBe(false);
 
     // Each attempt also fans a best-effort `turn_retry` indicator, attempts numbered 1..MAX_HOST_RETRIES.
-    const retryCalls = (h.liveTurns.retry as ReturnType<typeof vi.fn>).mock
-      .calls;
+    const retryCalls = (h.liveTurns.retry as ReturnType<typeof vi.fn>).mock.calls;
     expect(retryCalls).toHaveLength(MAX_HOST_RETRIES);
-    expect(
-      retryCalls.map((c) => (c[3] as { attempt: number }).attempt),
-    ).toEqual(Array.from({ length: MAX_HOST_RETRIES }, (_, i) => i + 1));
-    expect(
-      retryCalls.every(
-        (c) => (c[3] as { max: number }).max === MAX_HOST_RETRIES,
-      ),
-    ).toBe(true);
+    expect(retryCalls.map((c) => (c[3] as { attempt: number }).attempt)).toEqual(
+      Array.from({ length: MAX_HOST_RETRIES }, (_, i) => i + 1),
+    );
+    expect(retryCalls.every((c) => (c[3] as { max: number }).max === MAX_HOST_RETRIES)).toBe(true);
   });
 
   it('shutdown drain: a step error WHILE DRAINING leaves the job running (resumable on boot), never failed', async () => {
@@ -2695,25 +2486,19 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     // mock flips `draining` before throwing), so the in-flight turn's host-side await is cut off → it throws
     // like a generic abort. Without the guard this would flip the job `failed` and boot-resume would never
     // re-drive it (`runningJobs()` only re-drives `status:'running'`).
-    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
-      async () => {
-        h.electionState.draining = true; // SIGTERM lands while the turn is in flight
-        throw new Error('aborted: backend draining');
-      },
-    );
+    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      h.electionState.draining = true; // SIGTERM lands while the turn is in flight
+      throw new Error('aborted: backend draining');
+    });
 
     await h.driver.dispatch(state.job);
     // Wait until the execute turn has been attempted (so the drive catch has run), then drain a few ticks.
-    await flushUntil(
-      () => (h.turn.runTurn as ReturnType<typeof vi.fn>).mock.calls.length > 0,
-    );
+    await flushUntil(() => (h.turn.runTurn as ReturnType<typeof vi.fn>).mock.calls.length > 0);
     await flushUntil(() => false, 20);
 
     expect(state.job.status).toBe('running'); // LEFT running — boot-resume continues it
     expect(
-      (h.store.setJobStatus as ReturnType<typeof vi.fn>).mock.calls.some(
-        (c) => c[1] === 'failed',
-      ),
+      (h.store.setJobStatus as ReturnType<typeof vi.fn>).mock.calls.some((c) => c[1] === 'failed'),
     ).toBe(false); // never stamped failed
     expect(h.posts.some((p) => p.includes('Build failed'))).toBe(false); // no failure relay on shutdown
   });
@@ -2750,9 +2535,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(1);
     expect(h.opened).toHaveLength(0);
     expect(state.job.status).toBe('running');
-    expect(
-      (h.store.setJobHalt as ReturnType<typeof vi.fn>).mock.calls,
-    ).toHaveLength(0); // a cooperative yield is NOT a failure — no halt recorded
+    expect((h.store.setJobHalt as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0); // a cooperative yield is NOT a failure — no halt recorded
   });
 
   it('aborts + relays a step that exceeds PHASE_TIMEOUT_MS (issue #3 circuit breaker)', async () => {
@@ -2775,11 +2558,9 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     await flushUntil(() => state.job.halt?.kind === 'failed');
 
     expect(state.job.halt?.kind).toBe('failed');
-    expect(
-      h.posts.some(
-        (p) => p.includes('Build failed') && p.includes('PHASE_TIMEOUT_MS'),
-      ),
-    ).toBe(true);
+    expect(h.posts.some((p) => p.includes('Build failed') && p.includes('PHASE_TIMEOUT_MS'))).toBe(
+      true,
+    );
   });
 
   it('relays off-spec DEVIATION lines a step flags in its report (issue #7)', async () => {
@@ -2793,15 +2574,10 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     };
     const h = assemble(state);
     (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
-      async (input: {
-        mode: string;
-        stepId?: string | null;
-        toolBridge?: ToolBridgeOptions;
-      }) => {
+      async (input: { mode: string; stepId?: string | null; toolBridge?: ToolBridgeOptions }) => {
         await assertThreadDone(input);
         return {
-          report:
-            'Implemented the endpoint.\nDEVIATION: added a README nobody asked for.',
+          report: 'Implemented the endpoint.\nDEVIATION: added a README nobody asked for.',
           session: {
             id: 's',
             jobId: 'j',
@@ -2819,9 +2595,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     await flushUntil(() => state.job.status === 'done');
 
     expect(
-      h.posts.some(
-        (p) => p.includes('Off-spec') && p.includes('README nobody asked for'),
-      ),
+      h.posts.some((p) => p.includes('Off-spec') && p.includes('README nobody asked for')),
     ).toBe(true);
     expect(state.job.status).toBe('done'); // a deviation is surfaced, not a failure
   });
@@ -2836,18 +2610,11 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       operatorInputCards: [],
     };
     const h = assemble(state);
-    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
-      async () => {
-        // Raw SDK/CLI string — must never leak to the operator. Deterministic-fatal (not a transient
-        // rotation-race blip), so it surfaces immediately rather than entering the host auto-retry backstop.
-        throw new EngineAuthError(
-          'Not logged in · Please run /login',
-          'sess-401',
-          undefined,
-          true,
-        );
-      },
-    );
+    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      // Raw SDK/CLI string — must never leak to the operator. Deterministic-fatal (not a transient
+      // rotation-race blip), so it surfaces immediately rather than entering the host auto-retry backstop.
+      throw new EngineAuthError('Not logged in · Please run /login', 'sess-401', undefined, true);
+    });
 
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.halt?.kind === 'blocked_credentials');
@@ -2877,16 +2644,14 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       operatorInputCards: [],
     };
     const h = assemble(state);
-    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
-      async () => {
-        throw new EngineSessionLimitError(
-          `Claude session limit (five_hour); resets ${resetAt}`,
-          resetAt,
-          'five_hour',
-          'sess-limit',
-        );
-      },
-    );
+    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      throw new EngineSessionLimitError(
+        `Claude session limit (five_hour); resets ${resetAt}`,
+        resetAt,
+        'five_hour',
+        'sess-limit',
+      );
+    });
 
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.halt?.kind === 'session_limit');
@@ -2900,25 +2665,14 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       resetAt,
       expect.objectContaining({ lane: 'build', resetSource: 'usage_api' }),
     );
-    expect(
-      h.sunk.filter((s) => s.block.meta?.sessionLimit === true),
-    ).toHaveLength(1);
-    expect(
-      h.posts.filter((p) => p.includes("You've hit your session limit")),
-    ).toHaveLength(1);
+    expect(h.sunk.filter((s) => s.block.meta?.sessionLimit === true)).toHaveLength(1);
+    expect(h.posts.filter((p) => p.includes("You've hit your session limit"))).toHaveLength(1);
 
     await h.driver.retry(state.job.id);
-    await flushUntil(
-      () =>
-        (h.store.setJobHalt as ReturnType<typeof vi.fn>).mock.calls.length >= 2,
-    );
+    await flushUntil(() => (h.store.setJobHalt as ReturnType<typeof vi.fn>).mock.calls.length >= 2);
 
-    expect(
-      h.sunk.filter((s) => s.block.meta?.sessionLimit === true),
-    ).toHaveLength(1);
-    expect(
-      h.posts.filter((p) => p.includes("You've hit your session limit")),
-    ).toHaveLength(1);
+    expect(h.sunk.filter((s) => s.block.meta?.sessionLimit === true)).toHaveLength(1);
+    expect(h.posts.filter((p) => p.includes("You've hit your session limit"))).toHaveLength(1);
   });
 
   it('a text-fallback session limit uncorroborated by the usage window quiet-retries instead of parking', async () => {
@@ -2931,18 +2685,16 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       operatorInputCards: [],
     };
     const h = assemble(state, { usageUtilization: 40 });
-    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
-      async () => {
-        throw new EngineSessionLimitError(
-          "You've hit your session limit",
-          undefined,
-          'five_hour',
-          'sess-limit',
-          undefined,
-          'text',
-        );
-      },
-    );
+    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      throw new EngineSessionLimitError(
+        "You've hit your session limit",
+        undefined,
+        'five_hour',
+        'sess-limit',
+        undefined,
+        'text',
+      );
+    });
 
     await h.driver.dispatch(state.job);
     await flushUntil(() =>
@@ -2961,9 +2713,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
         (args) => (args[1] as { kind?: string })?.kind === 'session_limit',
       ),
     ).toBe(false);
-    expect(
-      h.posts.filter((p) => p.includes("You've hit your session limit")),
-    ).toHaveLength(0);
+    expect(h.posts.filter((p) => p.includes("You've hit your session limit"))).toHaveLength(0);
     expect(h.store.claimSessionLimitTextMisfire).toHaveBeenCalledTimes(1);
   });
 
@@ -2977,32 +2727,26 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       operatorInputCards: [],
     };
     const h = assemble(state, { usageUtilization: 98 });
-    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
-      async () => {
-        throw new EngineSessionLimitError(
-          "You've hit your session limit",
-          undefined,
-          'five_hour',
-          'sess-limit',
-          undefined,
-          'text',
-        );
-      },
-    );
+    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      throw new EngineSessionLimitError(
+        "You've hit your session limit",
+        undefined,
+        'five_hour',
+        'sess-limit',
+        undefined,
+        'text',
+      );
+    });
 
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.halt?.kind === 'session_limit');
 
     expect(state.job.halt?.kind).toBe('session_limit');
-    expect(
-      h.posts.filter((p) => p.includes("You've hit your session limit")),
-    ).toHaveLength(1);
-    const resumeCall = (
-      h.store.setSessionResume as ReturnType<typeof vi.fn>
-    ).mock.calls.find((args) => args[0] === state.job.id);
-    expect(
-      (resumeCall?.[2] as { kind?: string } | undefined)?.kind,
-    ).toBeUndefined();
+    expect(h.posts.filter((p) => p.includes("You've hit your session limit"))).toHaveLength(1);
+    const resumeCall = (h.store.setSessionResume as ReturnType<typeof vi.fn>).mock.calls.find(
+      (args) => args[0] === state.job.id,
+    );
+    expect((resumeCall?.[2] as { kind?: string } | undefined)?.kind).toBeUndefined();
   });
 
   it('a text-fallback session limit durably parks once the misfire budget is exhausted (backstop escalation)', async () => {
@@ -3020,32 +2764,26 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     // SESSION_LIMIT_TEXT_MISFIRE_MAX and parks immediately.
     await h.store.claimSessionLimitTextMisfire(state.job.id, 3);
     await h.store.claimSessionLimitTextMisfire(state.job.id, 3);
-    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
-      async () => {
-        throw new EngineSessionLimitError(
-          "You've hit your session limit",
-          undefined,
-          'five_hour',
-          'sess-limit',
-          undefined,
-          'text',
-        );
-      },
-    );
+    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      throw new EngineSessionLimitError(
+        "You've hit your session limit",
+        undefined,
+        'five_hour',
+        'sess-limit',
+        undefined,
+        'text',
+      );
+    });
 
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.halt?.kind === 'session_limit');
 
     expect(state.job.halt?.kind).toBe('session_limit');
-    expect(
-      h.posts.filter((p) => p.includes("You've hit your session limit")),
-    ).toHaveLength(1);
-    const resumeCall = (
-      h.store.setSessionResume as ReturnType<typeof vi.fn>
-    ).mock.calls.find((args) => args[0] === state.job.id);
-    expect(
-      (resumeCall?.[2] as { kind?: string } | undefined)?.kind,
-    ).toBeUndefined();
+    expect(h.posts.filter((p) => p.includes("You've hit your session limit"))).toHaveLength(1);
+    const resumeCall = (h.store.setSessionResume as ReturnType<typeof vi.fn>).mock.calls.find(
+      (args) => args[0] === state.job.id,
+    );
+    expect((resumeCall?.[2] as { kind?: string } | undefined)?.kind).toBeUndefined();
   });
 
   it('resumePaused re-drives a paused job to completion; no-ops if the job is not paused', async () => {
@@ -3103,9 +2841,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
           stepId?: string | null;
           toolBridge?: ToolBridgeOptions;
         }) => {
-          const result = await input.toolBridge!.tools[
-            'request_operator_input'
-          ]({
+          const result = await input.toolBridge!.tools['request_operator_input']({
             question: 'Use Postgres or SQLite?',
           });
           // The orchestrator resumes with the answer, finishes the work, and asserts completion.
@@ -3133,16 +2869,14 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     const originalOpen = (
       h.store.openOperatorInputCard as ReturnType<typeof vi.fn>
     ).getMockImplementation()!;
-    (
-      h.store.openOperatorInputCard as ReturnType<typeof vi.fn>
-    ).mockImplementation(async (jobId: string, question: string) => {
-      const opened = await originalOpen(jobId, question);
-      const card = state.operatorInputCards.find(
-        (c) => c.questionId === opened.questionId,
-      );
-      if (card) card.answer = 'Use Postgres.';
-      return opened;
-    });
+    (h.store.openOperatorInputCard as ReturnType<typeof vi.fn>).mockImplementation(
+      async (jobId: string, question: string) => {
+        const opened = await originalOpen(jobId, question);
+        const card = state.operatorInputCards.find((c) => c.questionId === opened.questionId);
+        if (card) card.answer = 'Use Postgres.';
+        return opened;
+      },
+    );
 
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
@@ -3155,9 +2889,9 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
 
     // The pause is now on the condition overlay: it went to 'paused' then back to 'none' around the pause,
     // while the STEP stays at 'executing' throughout.
-    const conditionCalls = (
-      h.store.setThreadCondition as ReturnType<typeof vi.fn>
-    ).mock.calls.map((c) => c[1]);
+    const conditionCalls = (h.store.setThreadCondition as ReturnType<typeof vi.fn>).mock.calls.map(
+      (c) => c[1],
+    );
     expect(conditionCalls).toContain('paused');
     const pausedIdx = conditionCalls.indexOf('paused');
     expect(conditionCalls.slice(pausedIdx + 1)).toContain('none');
@@ -3180,17 +2914,7 @@ describe('ThreadDriver — reviewAgentsForThread selection + semaphore concurren
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      threads: [
-        thread(
-          'sec-data',
-          10,
-          'Data migration',
-          'pending',
-          false,
-          'none',
-          'data',
-        ),
-      ],
+      threads: [thread('sec-data', 10, 'Data migration', 'pending', false, 'none', 'data')],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
       operatorInputCards: [],
@@ -3209,9 +2933,7 @@ describe('ThreadDriver — reviewAgentsForThread selection + semaphore concurren
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      threads: [
-        thread('sec-docs', 10, 'Docs pass', 'pending', false, 'none', 'docs'),
-      ],
+      threads: [thread('sec-docs', 10, 'Docs pass', 'pending', false, 'none', 'docs')],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
       operatorInputCards: [],
@@ -3233,9 +2955,7 @@ describe('ThreadDriver — reviewAgentsForThread selection + semaphore concurren
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      threads: [
-        thread('sec-be', 10, 'Backend', 'pending', false, 'none', 'general'),
-      ],
+      threads: [thread('sec-be', 10, 'Backend', 'pending', false, 'none', 'general')],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
       operatorInputCards: [],
@@ -3270,9 +2990,7 @@ function stubChangedFileNames(
   git: LocalGitService,
   impl: (worktreePath: string, baseSha: string) => Promise<string[]>,
 ): void {
-  (
-    git as unknown as { changedFileNames: ReturnType<typeof vi.fn> }
-  ).changedFileNames = vi.fn(impl);
+  (git as unknown as { changedFileNames: ReturnType<typeof vi.fn> }).changedFileNames = vi.fn(impl);
 }
 
 describe('ThreadDriver — start_sha is captured once and RESUME-safe (the per-thread review base)', () => {
@@ -3327,13 +3045,8 @@ describe('ThreadDriver — start_sha is captured once and RESUME-safe (the per-t
 /** Wait until a thread lands in the single "not done" state (`condition==='incomplete'`) and the drive has
  *  FULLY exited (its `finally` cleared the `active` guard) — the real precondition for an operator redrive,
  *  which would otherwise hit the `active` no-op while `drive` is still unwinding. */
-async function waitForNotDoneHalt(
-  h: { driver: ThreadDriver },
-  state: StoreState,
-): Promise<void> {
-  await flushUntil(() =>
-    state.threads.some((t) => t.condition === 'incomplete'),
-  );
+async function waitForNotDoneHalt(h: { driver: ThreadDriver }, state: StoreState): Promise<void> {
+  await flushUntil(() => state.threads.some((t) => t.condition === 'incomplete'));
   const active = (h.driver as unknown as { active?: Set<string> }).active;
   await flushUntil(() => !active?.has(state.job.id));
 }
@@ -3354,14 +3067,8 @@ describe('ThreadDriver — not-done handling, operator redrive, and complete_thr
     await h.driver.dispatch(state.job);
     await waitForNotDoneHalt(h, state);
     // A redrive issued right after the halt succeeds (job flips back to running from the incomplete halt):
-    await h.driver.redriveThread(
-      state.job.id,
-      'sec-be',
-      'grant the env and retry',
-    );
-    await flushUntil(
-      () => (state.threads[0].orientation ?? '') === 'grant the env and retry',
-    );
+    await h.driver.redriveThread(state.job.id, 'sec-be', 'grant the env and retry');
+    await flushUntil(() => (state.threads[0].orientation ?? '') === 'grant the env and retry');
     expect(state.threads[0].orientation).toBe('grant the env and retry');
   });
 
@@ -3416,8 +3123,8 @@ describe('ThreadDriver — not-done handling, operator redrive, and complete_thr
     await waitForNotDoneHalt(h, state);
     // A not-done thread writes NO terminal record (`complete_thread` is the sole done-report).
     expect(
-      (state.threads[0] as { terminal_record?: ThreadTerminalRecord | null })
-        .terminal_record ?? null,
+      (state.threads[0] as { terminal_record?: ThreadTerminalRecord | null }).terminal_record ??
+        null,
     ).toBeNull();
     expect(state.threads[0].condition).toBe('incomplete');
 
@@ -3429,9 +3136,7 @@ describe('ThreadDriver — not-done handling, operator redrive, and complete_thr
     );
     await flushUntil(() => state.job.status === 'done');
 
-    expect(state.threads[0].orientation).toBe(
-      'the key is granted now — retry the build',
-    ); // guidance populated the dead orientation hook
+    expect(state.threads[0].orientation).toBe('the key is granted now — retry the build'); // guidance populated the dead orientation hook
     expect(state.job.status).toBe('done'); // shipped after the fix
   });
 
@@ -3450,11 +3155,7 @@ describe('ThreadDriver — not-done handling, operator redrive, and complete_thr
       'drive',
     ).mockResolvedValue(undefined);
 
-    const result = await h.driver.redriveThread(
-      state.job.id,
-      'sec-be',
-      'retry now',
-    );
+    const result = await h.driver.redriveThread(state.job.id, 'sec-be', 'retry now');
 
     expect(result.ok).toBe(true);
     expect(state.threads[0].status).toBe('executing');
@@ -3489,12 +3190,7 @@ describe('ThreadDriver — not-done handling, operator redrive, and complete_thr
             // A SINGLE assertion with the checklist STILL open — the regression: this used to bounce (and,
             // because the one-shot was per-turn, re-bounce on every re-delivery → permanent `incomplete`).
             // It must now latch on the first call and never wedge.
-            returns.push(
-              (await ct({ summary: 'built the backend' })) as Record<
-                string,
-                unknown
-              >,
-            );
+            returns.push((await ct({ summary: 'built the backend' })) as Record<string, unknown>);
           }
           return {
             report: 'built',
@@ -3520,9 +3216,8 @@ describe('ThreadDriver — not-done handling, operator redrive, and complete_thr
 
     // Latched on the FIRST call (not bounced); the open items came back only as an advisory NOTE.
     expect(String(returns[0]?.['warning'] ?? '')).toContain('open item');
-    const term = (
-      state.threads[0] as { terminal_record?: ThreadTerminalRecord | null }
-    ).terminal_record;
+    const term = (state.threads[0] as { terminal_record?: ThreadTerminalRecord | null })
+      .terminal_record;
     expect(term?.status).toBe('done');
     expect(state.job.status).toBe('done');
     // The host force-closes the unreconciled leftovers to `dropped` on the done transition.
@@ -3557,18 +3252,8 @@ describe('ThreadDriver — not-done handling, operator redrive, and complete_thr
           if (ct) {
             // Both calls assert done with the checklist STILL open: the first latches (advisory note, never
             // a block); the second is idempotent (`afterTerminal`). Neither is bounced.
-            returns.push(
-              (await ct({ summary: 'built the backend' })) as Record<
-                string,
-                unknown
-              >,
-            );
-            returns.push(
-              (await ct({ summary: 'built the backend' })) as Record<
-                string,
-                unknown
-              >,
-            );
+            returns.push((await ct({ summary: 'built the backend' })) as Record<string, unknown>);
+            returns.push((await ct({ summary: 'built the backend' })) as Record<string, unknown>);
           }
           return {
             report: 'built',
@@ -3594,9 +3279,8 @@ describe('ThreadDriver — not-done handling, operator redrive, and complete_thr
 
     expect(String(returns[0]?.['warning'] ?? '')).toContain('open item');
     expect(returns[1]?.['warning']).toBeUndefined();
-    const term = (
-      state.threads[0] as { terminal_record?: ThreadTerminalRecord | null }
-    ).terminal_record;
+    const term = (state.threads[0] as { terminal_record?: ThreadTerminalRecord | null })
+      .terminal_record;
     expect(term?.status).toBe('done');
     expect(h.store.dropOpenThreadTasks).toHaveBeenCalledWith('sec-be');
     // Both stragglers flipped to `dropped` — the host never claims they were completed.
@@ -3617,18 +3301,12 @@ describe('ThreadDriver — not-done handling, operator redrive, and complete_thr
     (state.threads[0] as unknown as HaltFields).halt_fix_attempts = 0;
     const h = assemble(state);
     // Call with a jobId that is NOT the thread's owner (a hallucinated / cross-job threadId).
-    const r = await h.driver.redriveThread(
-      'some-other-job',
-      'sec-be',
-      'guidance',
-    );
+    const r = await h.driver.redriveThread('some-other-job', 'sec-be', 'guidance');
     expect(r.ok).toBe(false);
     expect(r.reason).toMatch(/not part of this job/i);
     // The thread was NOT mutated (orientation untouched) and NO budget was spent:
     expect(state.threads[0].orientation).toBeNull();
-    expect((state.threads[0] as unknown as HaltFields).halt_fix_attempts).toBe(
-      0,
-    );
+    expect((state.threads[0] as unknown as HaltFields).halt_fix_attempts).toBe(0);
   });
 
   it("redriveThread REFUSES an already-done thread — no budget, no mutation, no drive (won't resurrect a completed thread)", async () => {
@@ -3644,18 +3322,12 @@ describe('ThreadDriver — not-done handling, operator redrive, and complete_thr
     const h = assemble(state);
     // A stale `retry_thread` (the brain acting on an old view) must not clear the record + flip the finished
     // thread back to `executing` — that would erase the `done` evidence and re-run a completed thread.
-    const r = await h.driver.redriveThread(
-      state.job.id,
-      'sec-be',
-      'stale retry',
-    );
+    const r = await h.driver.redriveThread(state.job.id, 'sec-be', 'stale retry');
     expect(r.ok).toBe(false);
     expect(r.reason).toMatch(/already complete/i);
     // Untouched: status still done, no terminal-record clear, no `executing` flip, no budget spent, no drive.
     expect(state.threads[0].status).toBe('done');
-    expect((state.threads[0] as unknown as HaltFields).halt_fix_attempts).toBe(
-      0,
-    );
+    expect((state.threads[0] as unknown as HaltFields).halt_fix_attempts).toBe(0);
     expect(state.threads[0].orientation).toBeNull();
     expect(h.store.clearTerminalRecord).not.toHaveBeenCalled();
   });
@@ -3686,17 +3358,11 @@ async function flush(): Promise<void> {
  *  loop settle instantly via the real event loop (deterministic under parallel-worker load — no fake-timer
  *  drain race). Every OTHER timer keeps its true duration, so the phase deadline's HARD wall-clock bound is
  *  untouched and never fires during the fast test. */
-async function withInstantHostRetryBackoff(
-  fn: () => Promise<void>,
-): Promise<void> {
+async function withInstantHostRetryBackoff(fn: () => Promise<void>): Promise<void> {
   const realSetTimeout = globalThis.setTimeout;
   const spy = vi
     .spyOn(globalThis, 'setTimeout')
-    .mockImplementation(((
-      cb: (...args: unknown[]) => void,
-      delay?: number,
-      ...args: unknown[]
-    ) =>
+    .mockImplementation(((cb: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) =>
       realSetTimeout(
         cb,
         delay === HOST_RETRY_BACKOFF_MS ? 0 : delay,
@@ -3721,9 +3387,7 @@ async function flushUntil(pred: () => boolean, cap = 300): Promise<void> {
 // ── ship-review gate: park a reviewed build for the operator's "Ship it" before opening the PR ──────
 
 describe('ThreadDriver — ship-review gate (human approval before the PR)', () => {
-  function baseState(
-    job = makeJob({ shipReviewApprovedAt: null }),
-  ): StoreState {
+  function baseState(job = makeJob({ shipReviewApprovedAt: null })): StoreState {
     return {
       job,
       record: makeRecord(),
@@ -3756,17 +3420,12 @@ describe('ThreadDriver — ship-review gate (human approval before the PR)', () 
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'awaiting_ship_review');
 
-    const acted = await h.driver.resolveShipApprovalDurably(
-      state.job.id,
-      'dennis',
-    );
+    const acted = await h.driver.resolveShipApprovalDurably(state.job.id, 'dennis');
     expect(acted).toBe(true);
     await flushUntil(() => state.job.status === 'done');
 
     expect(state.job.shipReviewApprovedAt).toBeInstanceOf(Date);
-    expect(h.shipSeeds).toEqual([
-      { jobId: state.job.id, branch: 'atlas/feature-job-abcd' },
-    ]);
+    expect(h.shipSeeds).toEqual([{ jobId: state.job.id, branch: 'atlas/feature-job-abcd' }]);
     // The re-drive fast-forwarded the already-done threads — it did NOT re-execute or re-review them.
     expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(2);
     expect(h.store.materializeReviewChildren).toHaveBeenCalledTimes(2);
@@ -3789,9 +3448,7 @@ describe('ThreadDriver — ship-review gate (human approval before the PR)', () 
     await flushUntil(() => state.job.status === 'done');
 
     expect(state.job.shipReviewApprovedAt).toBeInstanceOf(Date);
-    expect(h.shipSeeds).toEqual([
-      { jobId: state.job.id, branch: 'atlas/feature-job-abcd' },
-    ]);
+    expect(h.shipSeeds).toEqual([{ jobId: state.job.id, branch: 'atlas/feature-job-abcd' }]);
   });
 
   it('a second (stale/double) ship approval is a no-op once the job has shipped', async () => {
@@ -3803,17 +3460,12 @@ describe('ThreadDriver — ship-review gate (human approval before the PR)', () 
     await h.driver.resolveShipApprovalDurably(state.job.id, 'dennis');
     await flushUntil(() => state.job.status === 'done');
 
-    const again = await h.driver.resolveShipApprovalDurably(
-      state.job.id,
-      'dennis',
-    );
+    const again = await h.driver.resolveShipApprovalDurably(state.job.id, 'dennis');
     expect(again).toBe(false);
   });
 
   it('does NOT gate an event-kind build — it ships straight through', async () => {
-    const state = baseState(
-      makeJob({ kind: 'event', shipReviewApprovedAt: null }),
-    );
+    const state = baseState(makeJob({ kind: 'event', shipReviewApprovedAt: null }));
     const h = assemble(state, { autoShipApprove: false });
 
     await h.driver.dispatch(state.job);
@@ -3914,9 +3566,7 @@ describe('ThreadDriver — ship-review gate auto-approve (per-job opt-in)', () =
     const state = baseState(job);
     const h = assemble(state, { autoShipApprove: false });
     const ownerSpy = vi.fn(async (_orgId: string) => 'owner-99');
-    (
-      h.store as unknown as { ownerUserId: ReturnType<typeof vi.fn> }
-    ).ownerUserId = ownerSpy;
+    (h.store as unknown as { ownerUserId: ReturnType<typeof vi.fn> }).ownerUserId = ownerSpy;
     const approverSpy = vi.spyOn(
       h.driver as unknown as {
         resolveAutoApprover: (j: Job) => Promise<string>;
@@ -3970,12 +3620,7 @@ describe('ThreadDriver — 401 auth recovery', () => {
         }) => {
           if (++executes === 1) {
             // Deterministic-fatal (not transient), so it surfaces immediately instead of auto-retrying.
-            throw new EngineAuthError(
-              '401 Invalid API key',
-              'sess-401',
-              undefined,
-              true,
-            );
+            throw new EngineAuthError('401 Invalid API key', 'sess-401', undefined, true);
           }
           await assertThreadDone(input);
           return {
@@ -4058,11 +3703,7 @@ describe('ThreadDriver — 401 auth recovery', () => {
     // Surfaced only once the retry budget is spent — flips the credential to needs_reauth.
     expect(state.job.halt?.kind).toBe('blocked_credentials');
     expect(markNeedsReauth).toHaveBeenCalledTimes(1);
-    expect(markNeedsReauth).toHaveBeenCalledWith(
-      'T1',
-      'claude-cred',
-      '401 Invalid API key',
-    );
+    expect(markNeedsReauth).toHaveBeenCalledWith('T1', 'claude-cred', '401 Invalid API key');
 
     // The generic `isTransientDriveError` retry loop never engages for an EngineAuthError — each
     // classify-and-retry cycle re-enters through exactly ONE runTurn call (initial + MAX_HOST_RETRIES resumes).
@@ -4073,14 +3714,12 @@ describe('ThreadDriver — 401 auth recovery', () => {
     // No paused banner during the retry window — only the durable quiet notice + live indicator fan, once
     // per retry attempt.
     const retryNotices = h.sunk.filter(
-      (s) =>
-        (s.block.meta as { source?: string } | null)?.source ===
-        'system_notice',
+      (s) => (s.block.meta as { source?: string } | null)?.source === 'system_notice',
     );
     expect(retryNotices).toHaveLength(MAX_HOST_RETRIES);
-    expect(
-      (h.liveTurns.retry as ReturnType<typeof vi.fn>).mock.calls,
-    ).toHaveLength(MAX_HOST_RETRIES);
+    expect((h.liveTurns.retry as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(
+      MAX_HOST_RETRIES,
+    );
   });
 
   it('a Codex no-credential halt does not touch Claude credential recovery state', async () => {
@@ -4121,9 +3760,7 @@ describe('ThreadDriver — 401 auth recovery', () => {
     expect(pausePost).toContain('No Codex account is connected');
     // A NO_ENGINE_CREDENTIAL marker is deterministic-fatal — surfaced on the FIRST classification, never
     // routed through the host auto-retry backstop (one runTurn call, no retry notice/indicator).
-    expect((turn.runTurn as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(
-      1,
-    );
+    expect((turn.runTurn as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
     expect(h.liveTurns.retry).not.toHaveBeenCalled();
   });
 
@@ -4154,12 +3791,7 @@ describe('ThreadDriver — master_review Codex-outage hold', () => {
     const state = masterReviewState();
     const turn = {
       runTurn: vi.fn(async () => {
-        throw new EngineAuthError(
-          'Codex is unreachable',
-          'sess',
-          'codex',
-          true,
-        );
+        throw new EngineAuthError('Codex is unreachable', 'sess', 'codex', true);
       }),
       canReattach: () => false,
     } as unknown as TurnRunnerService;
@@ -4173,12 +3805,8 @@ describe('ThreadDriver — master_review Codex-outage hold', () => {
     const resumeAt = state.job.halt?.resumeAt;
     expect(resumeAt).toBeDefined();
     const resumeMs = new Date(resumeAt as string).getTime();
-    expect(resumeMs).toBeGreaterThanOrEqual(
-      before + CODEX_REVIEW_OUTAGE_RETRY_MS - 5_000,
-    );
-    expect(resumeMs).toBeLessThanOrEqual(
-      before + CODEX_REVIEW_OUTAGE_RETRY_MS + 5_000,
-    );
+    expect(resumeMs).toBeGreaterThanOrEqual(before + CODEX_REVIEW_OUTAGE_RETRY_MS - 5_000);
+    expect(resumeMs).toBeLessThanOrEqual(before + CODEX_REVIEW_OUTAGE_RETRY_MS + 5_000);
     // master_review is left non-done so a re-drive re-runs it.
     expect(state.threads[0].status).not.toBe('done');
     expect(h.store.setThreadStatus).not.toHaveBeenCalledWith('mr', 'done');
@@ -4191,9 +3819,7 @@ describe('ThreadDriver — master_review Codex-outage hold', () => {
 
     await withInstantHostRetryBackoff(async () => {
       await h.driver.dispatch(state.job);
-      await flushUntil(
-        () => state.job.halt?.kind === 'codex_review_unavailable',
-      );
+      await flushUntil(() => state.job.halt?.kind === 'codex_review_unavailable');
     });
 
     expect(state.job.halt?.kind).toBe('codex_review_unavailable');
@@ -4211,12 +3837,7 @@ describe('ThreadDriver — master_review Codex-outage hold', () => {
     };
     const turn = {
       runTurn: vi.fn(async () => {
-        throw new EngineAuthError(
-          'Codex is unreachable',
-          'sess',
-          'codex',
-          true,
-        );
+        throw new EngineAuthError('Codex is unreachable', 'sess', 'codex', true);
       }),
       canReattach: () => false,
     } as unknown as TurnRunnerService;
@@ -4236,9 +3857,7 @@ describe('ThreadDriver — master_review Codex-outage hold', () => {
         kind: 'codex_review_unavailable',
         reason: 'Master review is paused — Codex is unreachable.',
         at: new Date().toISOString(),
-        resumeAt: new Date(
-          Date.now() + CODEX_REVIEW_OUTAGE_RETRY_MS,
-        ).toISOString(),
+        resumeAt: new Date(Date.now() + CODEX_REVIEW_OUTAGE_RETRY_MS).toISOString(),
       },
     });
     const h = assemble(state);
@@ -4259,9 +3878,7 @@ describe('ThreadDriver — master_review Codex-outage hold', () => {
         kind: 'codex_review_unavailable',
         reason: 'Master review is paused — Codex is unreachable.',
         at: new Date().toISOString(),
-        resumeAt: new Date(
-          Date.now() + CODEX_REVIEW_OUTAGE_RETRY_MS,
-        ).toISOString(),
+        resumeAt: new Date(Date.now() + CODEX_REVIEW_OUTAGE_RETRY_MS).toISOString(),
       },
     });
     const h = assemble(state, { autoShipApprove: false });
@@ -4275,11 +3892,7 @@ describe('ThreadDriver — master_review Codex-outage hold', () => {
     );
     expect(h.store.setThreadStatus).toHaveBeenCalledWith('mr', 'done');
     expect(h.store.clearJobHalt).toHaveBeenCalledWith(state.job.id);
-    expect(h.store.setSessionResume).toHaveBeenCalledWith(
-      state.job.id,
-      null,
-      null,
-    );
+    expect(h.store.setSessionResume).toHaveBeenCalledWith(state.job.id, null, null);
     expect(h.store.setJobStatus).toHaveBeenCalledWith(state.job.id, 'running');
 
     await flushUntil(() => state.job.status === 'awaiting_ship_review');
@@ -4298,9 +3911,8 @@ describe('ThreadDriver — master_review Codex-outage hold', () => {
 
     expect(state.job.status).toBe('awaiting_ship_review');
     expect(state.threads[0].condition).toBe('incomplete');
-    const card = (
-      h.store.parkForShipReview as unknown as ReturnType<typeof vi.fn>
-    ).mock.calls[0]?.[1] as
+    const card = (h.store.parkForShipReview as unknown as ReturnType<typeof vi.fn>).mock
+      .calls[0]?.[1] as
       | {
           verifications?: Array<{
             title: string;
@@ -4442,20 +4054,16 @@ describe('ThreadDriver — master-review bridged task list', () => {
     for (const tools of [masterReviewTools, builderTools]) {
       for (const name of Object.keys(tools)) {
         if (name.startsWith('__')) continue;
-        expect(
-          TOOL_SHAPES,
-          `driver tool "${name}" must have a TOOL_SHAPES entry`,
-        ).toHaveProperty(name);
+        expect(TOOL_SHAPES, `driver tool "${name}" must have a TOOL_SHAPES entry`).toHaveProperty(
+          name,
+        );
       }
     }
   });
 
   it('task_create writes the row through the sink and returns the durable id string to the model', async () => {
     const h = assemble(baseState());
-    const tools = bridgeFor(
-      h,
-      thread('mr', 90, 'Master review', 'executing', true),
-    ).tools;
+    const tools = bridgeFor(h, thread('mr', 90, 'Master review', 'executing', true)).tools;
 
     const r1 = await tools.task_create({
       subject: 'Review the merged diff',
@@ -4470,9 +4078,7 @@ describe('ThreadDriver — master-review bridged task list', () => {
     expect(r2).toBe('Task #2 created: Apply fixes');
 
     // All writes landed on the master-review THREAD scope, via the same sink every thread lane uses.
-    expect(
-      h.taskEvents.map((e) => [e.method, e.scope.kind, e.scope.id]),
-    ).toEqual([
+    expect(h.taskEvents.map((e) => [e.method, e.scope.kind, e.scope.id])).toEqual([
       ['createTask', 'thread', 'mr'],
       ['createTask', 'thread', 'mr'],
       ['updateTask', 'thread', 'mr'],
@@ -4485,10 +4091,7 @@ describe('ThreadDriver — master-review bridged task list', () => {
 
   it('rejects a task_create with no subject and a task_update with no taskId (no sink write)', async () => {
     const h = assemble(baseState());
-    const tools = bridgeFor(
-      h,
-      thread('mr', 90, 'Master review', 'executing', true),
-    ).tools;
+    const tools = bridgeFor(h, thread('mr', 90, 'Master review', 'executing', true)).tools;
     expect(await tools.task_create({})).toMatchObject({ ok: false });
     expect(await tools.task_update({})).toMatchObject({ ok: false });
     expect(h.taskEvents).toHaveLength(0);
@@ -4504,9 +4107,7 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
     rotations: () => number;
   } {
     let rotations = 0;
-    (
-      h.store.completeLegRotation as ReturnType<typeof vi.fn>
-    ).mockImplementation(
+    (h.store.completeLegRotation as ReturnType<typeof vi.fn>).mockImplementation(
       async (inp: {
         anchorStepId: string;
         handoff: string;
@@ -4514,14 +4115,12 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
         rotationCapped?: boolean;
       }) => {
         const anchorThreadId =
-          h.state.steps.find((step) => step.id === inp.anchorStepId)
-            ?.threadId ?? inp.anchorStepId;
+          h.state.steps.find((step) => step.id === inp.anchorStepId)?.threadId ?? inp.anchorStepId;
         const current = h.state.threads.find((t) => t.id === anchorThreadId);
         if (!current) return null;
         const rootId = current.parentThreadId ?? current.id;
         const threadGroupId =
-          (current.config?.threadGroupId as string | undefined) ??
-          `thread-group-${rootId}`;
+          (current.config?.threadGroupId as string | undefined) ?? `thread-group-${rootId}`;
         const siblings = h.state.threads
           .filter(
             (thread) =>
@@ -4529,15 +4128,10 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
               (thread.id === rootId || thread.parentThreadId === rootId),
           )
           .sort((a, b) => a.ordinal - b.ordinal);
-        const fromIndex = siblings.findIndex(
-          (thread) => thread.id === current.id,
-        );
+        const fromIndex = siblings.findIndex((thread) => thread.id === current.id);
         const fromLeg = fromIndex >= 0 ? fromIndex + 1 : siblings.length;
         const toLeg = fromLeg + 1;
-        const maxOrdinal = siblings.reduce(
-          (max, thread) => Math.max(max, thread.ordinal),
-          0,
-        );
+        const maxOrdinal = siblings.reduce((max, thread) => Math.max(max, thread.ordinal), 0);
         current.config = {
           ...(current.config ?? {}),
           threadGroupId,
@@ -4615,9 +4209,7 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
           // Leg 1: the batch turn IS steerable (armed), and it exposes the handoff tool. Simulate the context
           // filling past the soft threshold, then the model self-authoring its handoff and YIELDING (no complete_thread).
           expect(input.steerable).toBe(true);
-          expect(input.toolBridge?.tools?.['record_leg_handoff']).toBeTypeOf(
-            'function',
-          );
+          expect(input.toolBridge?.tools?.['record_leg_handoff']).toBeTypeOf('function');
           input.onEvent?.({
             kind: 'usage',
             contextTokens: 210_000,
@@ -4836,9 +4428,7 @@ describe('ThreadDriver.reattachTurnRow — watchdog-triggered build reattach', (
     };
     const h = assemble(state);
 
-    await expect(h.driver.reattachTurnRow(stepRow(state.job.id))).resolves.toBe(
-      'deferred',
-    );
+    await expect(h.driver.reattachTurnRow(stepRow(state.job.id))).resolves.toBe('deferred');
     // No drive was kicked — a non-drivable job keeps its existing recovery path.
     expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(0);
   });
@@ -4860,9 +4450,7 @@ describe('ThreadDriver.reattachTurnRow — watchdog-triggered build reattach', (
     };
     const h = assemble(state);
 
-    await expect(h.driver.reattachTurnRow(stepRow(state.job.id))).resolves.toBe(
-      'deferred',
-    );
+    await expect(h.driver.reattachTurnRow(stepRow(state.job.id))).resolves.toBe('deferred');
     expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(0);
   });
 
@@ -4879,9 +4467,7 @@ describe('ThreadDriver.reattachTurnRow — watchdog-triggered build reattach', (
     // Simulate a drive already running for this job (boot resume / a prior wake).
     (h.driver as unknown as { active: Set<string> }).active.add(state.job.id);
 
-    await expect(h.driver.reattachTurnRow(stepRow(state.job.id))).resolves.toBe(
-      'attached',
-    );
+    await expect(h.driver.reattachTurnRow(stepRow(state.job.id))).resolves.toBe('attached');
     // The active guard means the watchdog wake did NOT kick a second drive.
     expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(0);
   });
@@ -4897,13 +4483,9 @@ describe('ThreadDriver.reattachTurnRow — watchdog-triggered build reattach', (
     };
     const h = assemble(state);
 
-    await expect(h.driver.reattachTurnRow(stepRow(state.job.id))).resolves.toBe(
-      'attached',
-    );
+    await expect(h.driver.reattachTurnRow(stepRow(state.job.id))).resolves.toBe('attached');
     // The wake kicked a real drive: it fast-forwards/executes and walks the build to done.
     await flushUntil(() => state.job.status === 'done');
-    expect(h.calls.filter((c) => c.mode === 'execute').length).toBeGreaterThan(
-      0,
-    );
+    expect(h.calls.filter((c) => c.mode === 'execute').length).toBeGreaterThan(0);
   });
 });

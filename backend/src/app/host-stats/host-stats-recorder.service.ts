@@ -26,9 +26,7 @@ const PRUNE_INTERVAL = 'host-stats:prune';
  * depends on the other's cadence or lifecycle. Mirrors `TurnWatchdogService`'s leader-gated lifecycle.
  */
 @Injectable()
-export class HostStatsRecorderService
-  implements OnApplicationBootstrap, OnApplicationShutdown
-{
+export class HostStatsRecorderService implements OnApplicationBootstrap, OnApplicationShutdown {
   private readonly logger = new Logger(HostStatsRecorderService.name);
   private promoteSub?: Subscription;
   private demoteSub?: Subscription;
@@ -61,10 +59,7 @@ export class HostStatsRecorderService
   private start(): void {
     if (!this.scheduler) return;
     if (!this.scheduler.doesExist('interval', SAMPLE_INTERVAL)) {
-      const sampleIv = setInterval(
-        () => void this.sample(),
-        SAMPLE_INTERVAL_MS,
-      );
+      const sampleIv = setInterval(() => void this.sample(), SAMPLE_INTERVAL_MS);
       sampleIv.unref?.();
       this.scheduler.addInterval(SAMPLE_INTERVAL, sampleIv);
     }

@@ -53,8 +53,7 @@ function makeManualInput(): {
                 value: queue.shift() as SDKUserMessage,
                 done: false,
               });
-            if (done)
-              return Promise.resolve({ value: undefined as never, done: true });
+            if (done) return Promise.resolve({ value: undefined as never, done: true });
             return new Promise((res) => {
               resolveNext = res;
             });
@@ -102,9 +101,7 @@ export class SteerInputChannel {
   ) {
     this.streaming = !!steerInput;
     this.input = this.streaming ? makeManualInput() : undefined;
-    this.steerIter = this.streaming
-      ? steerInput![Symbol.asyncIterator]()
-      : undefined;
+    this.steerIter = this.streaming ? steerInput![Symbol.asyncIterator]() : undefined;
     if (!this.input) return;
     const input = this.input;
     input.push(steerUserMessage(task));

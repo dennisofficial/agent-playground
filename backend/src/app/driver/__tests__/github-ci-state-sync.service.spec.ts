@@ -4,13 +4,13 @@
  * mocked objects. No DB, no Docker. Uses fake timers to exercise the ~5s debounce.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Repository } from 'typeorm';
-import type { CredentialResolver } from '../../onboarding';
-import type { GithubPrService, PullDetail } from '../../git';
-import type { StimulusStoreService } from '../../stimulus';
 import type { CiSyncDelta } from '@shared/domain';
+import type { Repository } from 'typeorm';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { GithubPrService, PullDetail } from '../../git';
+import type { CredentialResolver } from '../../onboarding';
 import type { JobEntity, RepoEntity } from '../../persistence/entities';
+import type { StimulusStoreService } from '../../stimulus';
 import { GithubCiStateSync } from '../github-ci-state-sync.service';
 
 function detail(over: Partial<PullDetail> = {}): PullDetail {
@@ -82,14 +82,7 @@ function make(over: {
   const autoMerge = {
     maybeAutoMerge: vi.fn().mockResolvedValue(undefined),
   } as unknown as import('../auto-merge.service').AutoMergeService;
-  const sync = new GithubCiStateSync(
-    stimStore,
-    creds,
-    pr,
-    repos,
-    jobs,
-    autoMerge,
-  );
+  const sync = new GithubCiStateSync(stimStore, creds, pr, repos, jobs, autoMerge);
   return {
     sync,
     stimStore,

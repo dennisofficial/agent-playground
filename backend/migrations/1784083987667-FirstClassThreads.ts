@@ -25,9 +25,7 @@ export class FirstClassThreads1784083987667 implements MigrationInterface {
     await queryRunner.query(
       `CREATE TABLE "stages" ("created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "updated_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "id" uuid NOT NULL DEFAULT uuid_generate_v4(), "job_id" uuid NOT NULL, "org_id" uuid NOT NULL, "ordinal" integer NOT NULL, "kind" text NOT NULL, "title" text, "type" text, "status" text NOT NULL DEFAULT 'pending', "condition" text NOT NULL DEFAULT 'none', "decision_record_id" uuid, "config" jsonb NOT NULL DEFAULT '{}', CONSTRAINT "pk_stages" PRIMARY KEY ("id"))`,
     );
-    await queryRunner.query(
-      `CREATE INDEX "idx_stages_job_id" ON "stages" ("job_id") `,
-    );
+    await queryRunner.query(`CREATE INDEX "idx_stages_job_id" ON "stages" ("job_id") `);
     await queryRunner.query(
       `CREATE INDEX "idx_stages_job_id_ordinal" ON "stages" ("job_id", "ordinal") `,
     );
@@ -47,9 +45,7 @@ export class FirstClassThreads1784083987667 implements MigrationInterface {
     await queryRunner.query(
       `CREATE TABLE "tasks" ("created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "updated_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "id" uuid NOT NULL DEFAULT uuid_generate_v4(), "stage_id" uuid NOT NULL, "org_id" uuid NOT NULL, "ordinal" integer NOT NULL, "title" text NOT NULL, "brief" text, "active_form" text, "status" text NOT NULL DEFAULT 'pending', "blocked_by" jsonb NOT NULL DEFAULT '[]', CONSTRAINT "pk_tasks" PRIMARY KEY ("id"))`,
     );
-    await queryRunner.query(
-      `CREATE INDEX "idx_tasks_stage_id" ON "tasks" ("stage_id") `,
-    );
+    await queryRunner.query(`CREATE INDEX "idx_tasks_stage_id" ON "tasks" ("stage_id") `);
     await queryRunner.query(
       `CREATE INDEX "idx_tasks_stage_id_ordinal" ON "tasks" ("stage_id", "ordinal") `,
     );
@@ -63,9 +59,7 @@ export class FirstClassThreads1784083987667 implements MigrationInterface {
     await queryRunner.query(
       `CREATE TABLE "subagents" ("created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "updated_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "id" uuid NOT NULL DEFAULT uuid_generate_v4(), "thread_id" uuid NOT NULL, "parent_message_id" uuid NOT NULL, "tool_use_id" text NOT NULL, "agent_type" text, "model" text, "status" text NOT NULL DEFAULT 'running', "session_ref" text, "input_tokens" bigint NOT NULL DEFAULT '0', "output_tokens" bigint NOT NULL DEFAULT '0', "cache_read_tokens" bigint NOT NULL DEFAULT '0', "cache_write_tokens" bigint NOT NULL DEFAULT '0', "cost_usd" numeric, "started_at" TIMESTAMP WITH TIME ZONE, "ended_at" TIMESTAMP WITH TIME ZONE, CONSTRAINT "pk_subagents" PRIMARY KEY ("id"))`,
     );
-    await queryRunner.query(
-      `CREATE INDEX "idx_subagents_thread_id" ON "subagents" ("thread_id") `,
-    );
+    await queryRunner.query(`CREATE INDEX "idx_subagents_thread_id" ON "subagents" ("thread_id") `);
     await queryRunner.query(
       `CREATE INDEX "idx_subagents_tool_use_id" ON "subagents" ("tool_use_id") `,
     );
@@ -83,12 +77,8 @@ export class FirstClassThreads1784083987667 implements MigrationInterface {
     await queryRunner.query(`ALTER TABLE "threads" ADD "stage_id" uuid`);
     await queryRunner.query(`ALTER TABLE "threads" ADD "session_id" text`);
     await queryRunner.query(`ALTER TABLE "threads" ADD "commit_sha" text`);
-    await queryRunner.query(
-      `ALTER TABLE "threads" RENAME COLUMN "kind" TO "role"`,
-    );
-    await queryRunner.query(
-      `CREATE INDEX "idx_threads_stage_id" ON "threads" ("stage_id") `,
-    );
+    await queryRunner.query(`ALTER TABLE "threads" RENAME COLUMN "kind" TO "role"`);
+    await queryRunner.query(`CREATE INDEX "idx_threads_stage_id" ON "threads" ("stage_id") `);
     await queryRunner.query(
       `ALTER TABLE "threads" ADD CONSTRAINT "fk_threads_stage_id_stages" FOREIGN KEY ("stage_id") REFERENCES "stages"("id") ON DELETE CASCADE ON UPDATE NO ACTION`,
     );
@@ -369,12 +359,8 @@ export class FirstClassThreads1784083987667 implements MigrationInterface {
         `);
 
     // ── Step 10: enforce NOT NULL ────────────────────────────────────────────────────────
-    await queryRunner.query(
-      `ALTER TABLE "threads" ALTER COLUMN "stage_id" SET NOT NULL`,
-    );
-    await queryRunner.query(
-      `ALTER TABLE "messages" ALTER COLUMN "thread_id" SET NOT NULL`,
-    );
+    await queryRunner.query(`ALTER TABLE "threads" ALTER COLUMN "stage_id" SET NOT NULL`);
+    await queryRunner.query(`ALTER TABLE "messages" ALTER COLUMN "thread_id" SET NOT NULL`);
 
     // ── Step 11: drop the retired tables + columns ───────────────────────────────────────
     await queryRunner.query(`DROP TABLE "build_legs"`);
@@ -384,18 +370,12 @@ export class FirstClassThreads1784083987667 implements MigrationInterface {
     // threads.decision_record_id moved to stages (d7). Its own FK/index go first; the composite
     // unique index that referenced it is recreated WITHOUT it (now (job_id, parent_thread_id,
     // ordinal) NULLS NOT DISTINCT — see ThreadEntity), keeping the same name.
-    await queryRunner.query(
-      `DROP INDEX "public"."uq_threads_job_parent_ordinal"`,
-    );
+    await queryRunner.query(`DROP INDEX "public"."uq_threads_job_parent_ordinal"`);
     await queryRunner.query(
       `ALTER TABLE "threads" DROP CONSTRAINT "fk_threads_decision_record_id_decision_records"`,
     );
-    await queryRunner.query(
-      `DROP INDEX "public"."idx_threads_decision_record_id"`,
-    );
-    await queryRunner.query(
-      `ALTER TABLE "threads" DROP COLUMN "decision_record_id"`,
-    );
+    await queryRunner.query(`DROP INDEX "public"."idx_threads_decision_record_id"`);
+    await queryRunner.query(`ALTER TABLE "threads" DROP COLUMN "decision_record_id"`);
     await queryRunner.query(`ALTER TABLE "threads" DROP COLUMN "tasks"`);
 
     // Guarantee (job_id, parent_thread_id, ordinal) uniqueness before the NULLS NOT DISTINCT index.
@@ -445,9 +425,7 @@ export class FirstClassThreads1784083987667 implements MigrationInterface {
     await queryRunner.query(
       `ALTER TABLE "messages" DROP CONSTRAINT "fk_messages_thread_id_threads"`,
     );
-    await queryRunner.query(
-      `DROP INDEX "public"."idx_messages_thread_id_created_at"`,
-    );
+    await queryRunner.query(`DROP INDEX "public"."idx_messages_thread_id_created_at"`);
     await queryRunner.query(`DROP INDEX "public"."idx_messages_subagent_id"`);
     await queryRunner.query(`ALTER TABLE "messages" DROP COLUMN "subagent_id"`);
     await queryRunner.query(`ALTER TABLE "messages" DROP COLUMN "thread_id"`);
@@ -457,25 +435,15 @@ export class FirstClassThreads1784083987667 implements MigrationInterface {
     await queryRunner.query(`DROP TABLE "tasks"`);
 
     // threads — reverse the ALTERs, then drop stages (threads/tasks FKs to it are gone by now).
-    await queryRunner.query(
-      `DROP INDEX "public"."uq_threads_job_parent_ordinal"`,
-    );
-    await queryRunner.query(
-      `ALTER TABLE "threads" DROP CONSTRAINT "fk_threads_stage_id_stages"`,
-    );
+    await queryRunner.query(`DROP INDEX "public"."uq_threads_job_parent_ordinal"`);
+    await queryRunner.query(`ALTER TABLE "threads" DROP CONSTRAINT "fk_threads_stage_id_stages"`);
     await queryRunner.query(`DROP INDEX "public"."idx_threads_stage_id"`);
     await queryRunner.query(`ALTER TABLE "threads" DROP COLUMN "stage_id"`);
     await queryRunner.query(`ALTER TABLE "threads" DROP COLUMN "session_id"`);
     await queryRunner.query(`ALTER TABLE "threads" DROP COLUMN "commit_sha"`);
-    await queryRunner.query(
-      `ALTER TABLE "threads" RENAME COLUMN "role" TO "kind"`,
-    );
-    await queryRunner.query(
-      `ALTER TABLE "threads" ADD "tasks" jsonb NOT NULL DEFAULT '[]'`,
-    );
-    await queryRunner.query(
-      `ALTER TABLE "threads" ADD "decision_record_id" uuid`,
-    );
+    await queryRunner.query(`ALTER TABLE "threads" RENAME COLUMN "role" TO "kind"`);
+    await queryRunner.query(`ALTER TABLE "threads" ADD "tasks" jsonb NOT NULL DEFAULT '[]'`);
+    await queryRunner.query(`ALTER TABLE "threads" ADD "decision_record_id" uuid`);
     await queryRunner.query(
       `CREATE INDEX "idx_threads_decision_record_id" ON "threads" ("decision_record_id") `,
     );
@@ -489,20 +457,14 @@ export class FirstClassThreads1784083987667 implements MigrationInterface {
     await queryRunner.query(`DROP TABLE "stages"`);
 
     // jobs — restore main_tasks.
-    await queryRunner.query(
-      `ALTER TABLE "jobs" ADD "main_tasks" jsonb NOT NULL DEFAULT '[]'`,
-    );
+    await queryRunner.query(`ALTER TABLE "jobs" ADD "main_tasks" jsonb NOT NULL DEFAULT '[]'`);
 
     // Recreate the three dropped tables EMPTY (correct shape, no data restore).
     await queryRunner.query(
       `CREATE TABLE "steps" ("created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "updated_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "id" uuid NOT NULL DEFAULT uuid_generate_v4(), "thread_id" uuid NOT NULL, "job_id" uuid NOT NULL, "org_id" uuid NOT NULL, "ordinal" integer NOT NULL, "title" text, "brief" text NOT NULL, "stage" text NOT NULL DEFAULT 'build', "status" text NOT NULL DEFAULT 'pending', "session_id" text, "batch_ordinal" integer, "commit_sha" text, "rotating_session_id" text, "pending_leg_seed" text, "leg_ordinal" integer NOT NULL DEFAULT '1', CONSTRAINT "uq_steps_thread_id_ordinal" UNIQUE ("thread_id", "ordinal"), CONSTRAINT "pk_steps" PRIMARY KEY ("id"))`,
     );
-    await queryRunner.query(
-      `CREATE INDEX "idx_steps_job_id" ON "steps" ("job_id") `,
-    );
-    await queryRunner.query(
-      `CREATE INDEX "idx_steps_thread_id" ON "steps" ("thread_id") `,
-    );
+    await queryRunner.query(`CREATE INDEX "idx_steps_job_id" ON "steps" ("job_id") `);
+    await queryRunner.query(`CREATE INDEX "idx_steps_thread_id" ON "steps" ("thread_id") `);
     await queryRunner.query(
       `ALTER TABLE "steps" ADD CONSTRAINT "fk_steps_thread_id_threads" FOREIGN KEY ("thread_id") REFERENCES "threads"("id") ON DELETE CASCADE ON UPDATE NO ACTION`,
     );
@@ -516,9 +478,7 @@ export class FirstClassThreads1784083987667 implements MigrationInterface {
     await queryRunner.query(
       `CREATE TABLE "build_legs" ("created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "updated_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "id" uuid NOT NULL DEFAULT uuid_generate_v4(), "org_id" uuid NOT NULL, "job_id" uuid NOT NULL, "thread_id" uuid NOT NULL, "ordinal" integer NOT NULL, "session_id" text, "status" text NOT NULL DEFAULT 'active', "handoff_md" text, "context_tokens_peak" integer, "ended_at" TIMESTAMP WITH TIME ZONE, CONSTRAINT "uq_build_legs_thread_id_ordinal" UNIQUE ("thread_id", "ordinal"), CONSTRAINT "pk_build_legs" PRIMARY KEY ("id"))`,
     );
-    await queryRunner.query(
-      `CREATE INDEX "idx_build_legs_job_id" ON "build_legs" ("job_id") `,
-    );
+    await queryRunner.query(`CREATE INDEX "idx_build_legs_job_id" ON "build_legs" ("job_id") `);
     await queryRunner.query(
       `CREATE INDEX "idx_build_legs_thread_id" ON "build_legs" ("thread_id") `,
     );

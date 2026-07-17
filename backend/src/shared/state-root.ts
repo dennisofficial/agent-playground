@@ -37,8 +37,6 @@ export function repoStateRoot(): string {
 }
 
 /** A named subdir of {@link repoStateRoot}. Callers create it lazily, exactly as before. */
-export function repoStateDir(
-  name: 'agent-home' | 'repos' | 'hydration-state' | 'skills',
-): string {
+export function repoStateDir(name: 'agent-home' | 'repos' | 'hydration-state' | 'skills'): string {
   return join(repoStateRoot(), name);
 }

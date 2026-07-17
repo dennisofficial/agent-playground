@@ -1,6 +1,6 @@
-import type { Observable } from 'rxjs';
 import type { SeedRow } from '@shared/domain/seed-row';
 import type { AgentMessage } from '@shared/prompt-kit/message';
+import type { Observable } from 'rxjs';
 
 import { renderChunk } from '@shared/stimulus/chunk-vocabulary';
 
@@ -133,11 +133,7 @@ export interface ChatSurface {
    * the handle a caller uses to seed/continue a thread. Returns undefined if the surface couldn't
    * post (e.g. no client bound).
    */
-  post(
-    channel: string,
-    text: string,
-    opts?: PostOptions,
-  ): Promise<string | undefined>;
+  post(channel: string, text: string, opts?: PostOptions): Promise<string | undefined>;
   /**
    * OPTIONAL — repaint a previously posted message (e.g. replace the approval card with a verdict
    * card after the operator rules). The web adapter mutates the outbox entry and re-emits on

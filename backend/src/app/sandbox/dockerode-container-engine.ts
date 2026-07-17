@@ -146,13 +146,8 @@ export class DockerodeContainerEngine implements ContainerEngine {
     await this.docker.getContainer(id).start();
   }
 
-  async exec(
-    id: string,
-    argv: string[],
-    opts: ExecOptions = {},
-  ): Promise<ExecResult> {
-    const needsStdin =
-      opts.stdin !== undefined || opts.onStdinReady !== undefined;
+  async exec(id: string, argv: string[], opts: ExecOptions = {}): Promise<ExecResult> {
+    const needsStdin = opts.stdin !== undefined || opts.onStdinReady !== undefined;
     const exec = await this.docker.getContainer(id).exec({
       Cmd: argv,
       AttachStdout: true,
@@ -231,13 +226,10 @@ export class DockerodeContainerEngine implements ContainerEngine {
 
   async disconnectNetwork(id: string, network: string): Promise<void> {
     try {
-      await this.docker
-        .getNetwork(network)
-        .disconnect({ Container: id, Force: true });
+      await this.docker.getNetwork(network).disconnect({ Container: id, Force: true });
     } catch (err) {
       // Not on the network / no such network/container → already in the desired state.
-      if (!/not connected|no such|is not connected|404/i.test(String(err)))
-        throw err;
+      if (!/not connected|no such|is not connected|404/i.test(String(err))) throw err;
     }
   }
 
@@ -271,20 +263,13 @@ export class DockerodeContainerEngine implements ContainerEngine {
       await this.docker.getContainer(id).stop({ t: opts.timeoutSec ?? 10 });
     } catch (err) {
       // 304 = already stopped; 404 = already gone — both fine.
-      if (
-        !/already stopped|not running|no such container|404|304/i.test(
-          String(err),
-        )
-      )
-        throw err;
+      if (!/already stopped|not running|no such container|404|304/i.test(String(err))) throw err;
     }
   }
 
   async remove(id: string, opts: { force?: boolean } = {}): Promise<void> {
     try {
-      await this.docker
-        .getContainer(id)
-        .remove({ force: opts.force ?? true, v: false });
+      await this.docker.getContainer(id).remove({ force: opts.force ?? true, v: false });
     } catch (err) {
       if (!/no such container|404/i.test(String(err))) throw err;
     }
@@ -310,14 +295,8 @@ export class DockerodeContainerEngine implements ContainerEngine {
     }
   }
 
-  async list(
-    opts: { label?: string | string[]; all?: boolean } = {},
-  ): Promise<ContainerInfo[]> {
-    const labels = opts.label
-      ? Array.isArray(opts.label)
-        ? opts.label
-        : [opts.label]
-      : undefined;
+  async list(opts: { label?: string | string[]; all?: boolean } = {}): Promise<ContainerInfo[]> {
+    const labels = opts.label ? (Array.isArray(opts.label) ? opts.label : [opts.label]) : undefined;
     const raw = await this.docker.listContainers({
       all: opts.all ?? true,
       ...(labels ? { filters: { label: labels } } : {}),
@@ -358,8 +337,7 @@ export class DockerodeContainerEngine implements ContainerEngine {
     const containersBytes = sum((df.Containers ?? []).map((c) => c.SizeRw));
     const volumesBytes = sum((df.Volumes ?? []).map((v) => v.UsageData?.Size));
     const buildCacheBytes = sum((df.BuildCache ?? []).map((b) => b.Size));
-    const totalBytes =
-      imagesBytes + containersBytes + volumesBytes + buildCacheBytes;
+    const totalBytes = imagesBytes + containersBytes + volumesBytes + buildCacheBytes;
     return {
       imagesBytes,
       containersBytes,
@@ -385,8 +363,7 @@ export class DockerodeContainerEngine implements ContainerEngine {
       // Docker reports StartedAt as the zero-time '0001-01-01T00:00:00Z' for a never-started container;
       // normalize that to null so callers don't treat it as a real boot time.
       const started = info.State?.StartedAt;
-      const startedAt =
-        started && !started.startsWith('0001-01-01') ? started : null;
+      const startedAt = started && !started.startsWith('0001-01-01') ? started : null;
       return {
         id: info.Id,
         name: (info.Name ?? '').replace(/^\//, ''),
@@ -409,8 +386,7 @@ function toExposedPorts(
   ports: CreateContainerSpec['ports'],
 ): Record<string, Record<string, never>> {
   const out: Record<string, Record<string, never>> = {};
-  for (const p of ports ?? [])
-    out[`${p.containerPort}/${p.protocol ?? 'tcp'}`] = {};
+  for (const p of ports ?? []) out[`${p.containerPort}/${p.protocol ?? 'tcp'}`] = {};
   return out;
 }
 

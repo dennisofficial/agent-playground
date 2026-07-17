@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import type { DecisionClassification } from './decision-gate.types';
 import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
+import type { DecisionClassification } from './decision-gate.types';
 
 /** A thread's plan to surface for human visibility. */
 export interface SectionPlanPost {
@@ -58,11 +58,7 @@ export class PlanVisibilityService {
 
 /** Render the thread plan as a plain-text Slack post (mrkdwn). Pure — unit-testable. */
 export function renderSectionPlan(post: SectionPlanPost): string {
-  const lines: string[] = [
-    `:clipboard: *Plan — ${post.title}*`,
-    '',
-    post.plan.trim(),
-  ];
+  const lines: string[] = [`:clipboard: *Plan — ${post.title}*`, '', post.plan.trim()];
   const surfaced = (post.decisions ?? []).filter((d) => d.verdict !== 'ask');
   if (surfaced.length > 0) {
     lines.push('', '*Decisions made autonomously* (override anytime):');

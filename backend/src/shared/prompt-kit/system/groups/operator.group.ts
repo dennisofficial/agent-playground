@@ -6,8 +6,8 @@
  * composed brain. Ordered `9000` — after everything else, in both the normal and onboarding subsets.
  */
 import { ENGINEERING_STAGES } from '../agent';
-import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { hasOrgInstructions } from '../conditions';
+import { Fragment, FragmentGroup } from '../fragment.decorator';
 import type { PromptCtx } from '../prompt-ctx';
 
 @FragmentGroup()

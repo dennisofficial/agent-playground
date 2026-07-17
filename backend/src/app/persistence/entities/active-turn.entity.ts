@@ -1,12 +1,5 @@
-import {
-  Column,
-  Entity,
-  Index,
-  JoinColumn,
-  ManyToOne,
-  PrimaryColumn,
-} from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
+import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryColumn } from 'typeorm';
 import { JobEntity } from './job.entity';
 
 /**
@@ -66,14 +59,7 @@ export class ActiveTurnEntity extends TimestampedEntity {
    *  (reseed + pill), NOT the transcript-persist path — `reattachOwnedTurns` dispatches it by kind. A
    *  'rotation' turn is the builder's Leg-rotation fallback handoff turn (the analog of 'compaction'). */
   @Column({ type: 'text' })
-  kind!:
-    | 'brain'
-    | 'step'
-    | 'review'
-    | 'gate'
-    | 'autofix'
-    | 'compaction'
-    | 'rotation';
+  kind!: 'brain' | 'step' | 'review' | 'gate' | 'autofix' | 'compaction' | 'rotation';
 
   /** The sandbox container running the ephemeral engine process (for liveness/teardown). */
   @Column({ type: 'text', nullable: true })

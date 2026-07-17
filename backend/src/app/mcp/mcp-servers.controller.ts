@@ -31,23 +31,19 @@ import {
   type McpOAuthTokenAuthMethod,
   type McpSurface,
 } from '../persistence/entities';
+import { McpOAuthService } from './mcp-oauth.service';
+import { McpProbeService } from './mcp-probe.service';
 import {
   McpServerStore,
   ORG_SCOPE,
   type McpHeaderInput,
   type RedactedMcpServer,
 } from './mcp-server.store';
-import { McpOAuthService } from './mcp-oauth.service';
-import { McpProbeService } from './mcp-probe.service';
-import { SystemMcpResolver } from './system-mcp-resolver.service';
 import { type SystemMcpServer } from './system-mcp-registry';
+import { SystemMcpResolver } from './system-mcp-resolver.service';
 
 const SURFACES = ['brain', 'build', 'review'] as const;
-const TOKEN_AUTH_METHODS = [
-  'none',
-  'client_secret_post',
-  'client_secret_basic',
-] as const;
+const TOKEN_AUTH_METHODS = ['none', 'client_secret_post', 'client_secret_basic'] as const;
 
 class McpHeaderDto implements McpHeaderInput {
   @IsString() @MinLength(1) name!: string;
@@ -154,9 +150,7 @@ export class McpServersController {
     if (!row) throw new BadRequestException('unknown mcp server');
     // OAuth servers can't be validated with static headers — go through the SDK client + stored token.
     const result =
-      row.auth_kind === 'oauth'
-        ? await this.oauth.validate(row)
-        : await this.probe.validate(row);
+      row.auth_kind === 'oauth' ? await this.oauth.validate(row) : await this.probe.validate(row);
     await this.store.recordValidation(org.id, dbScope, name, result);
     return { ok: !result.error, ...result };
   }
@@ -183,26 +177,18 @@ export class McpServersController {
     const repo = await this.repos.findOne({
       where: { id: scope, org_id: orgId },
     });
-    if (!repo)
-      throw new BadRequestException(
-        `unknown repo scope '${scope}' for this org`,
-      );
+    if (!repo) throw new BadRequestException(`unknown repo scope '${scope}' for this org`);
     return scope;
   }
 
   /** Transport-shape guard the class-validator DTO can't express (url vs command/args mutual need). */
   private assertShape(body: SetMcpServerDto): void {
     if (body.transport === 'stdio') {
-      if (!body.command)
-        throw new BadRequestException('stdio transport requires a command');
+      if (!body.command) throw new BadRequestException('stdio transport requires a command');
       if (body.authKind === 'oauth')
-        throw new BadRequestException(
-          'oauth is only supported for http/sse transports',
-        );
+        throw new BadRequestException('oauth is only supported for http/sse transports');
     } else if (!body.url) {
-      throw new BadRequestException(
-        `${body.transport} transport requires a url`,
-      );
+      throw new BadRequestException(`${body.transport} transport requires a url`);
     }
   }
 }

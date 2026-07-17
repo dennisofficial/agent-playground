@@ -17,11 +17,7 @@ import { OrgMembershipGuard } from '../org/org-membership.guard';
 import { OrgOwnerGuard } from '../org/org-owner.guard';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { RepoEntity } from '../persistence/entities';
-import {
-  normalizeMounts,
-  type MountMode,
-  type MountSpec,
-} from '../sandbox/container-paths';
+import { normalizeMounts, type MountMode, type MountSpec } from '../sandbox/container-paths';
 import { WorkspaceConfigStore } from './workspace-config.store';
 import { WorkspaceSecretFileStore } from './workspace-secret.store';
 
@@ -83,14 +79,13 @@ export class WorkspaceProfileController {
     seenManifests: string[] | null;
   }> {
     await this.assertRepo(org.id, repoId);
-    const [mounts, setupScript, previewRecipe, seenManifests, secretFiles] =
-      await Promise.all([
-        this.workspaceConfig.listMounts(org.id, repoId),
-        this.workspaceConfig.getSetupScript(org.id, repoId),
-        this.workspaceConfig.getPreviewInstructions(org.id, repoId),
-        this.workspaceConfig.getSeenManifests(org.id, repoId),
-        this.secretFiles.list(org.id, repoId),
-      ]);
+    const [mounts, setupScript, previewRecipe, seenManifests, secretFiles] = await Promise.all([
+      this.workspaceConfig.listMounts(org.id, repoId),
+      this.workspaceConfig.getSetupScript(org.id, repoId),
+      this.workspaceConfig.getPreviewInstructions(org.id, repoId),
+      this.workspaceConfig.getSeenManifests(org.id, repoId),
+      this.secretFiles.list(org.id, repoId),
+    ]);
     return {
       mounts,
       setupScript,
@@ -111,19 +106,12 @@ export class WorkspaceProfileController {
     @Body() body: SetMountDto,
   ): Promise<{ ok: true; restartsSandbox: true }> {
     await this.assertRepo(org.id, repoId);
-    const { mounts, warnings } = normalizeMounts([
-      { path: body.path, mode: body.mode },
-    ]);
+    const { mounts, warnings } = normalizeMounts([{ path: body.path, mode: body.mode }]);
     if (mounts.length === 0) {
       throw new BadRequestException(warnings[0] ?? 'invalid mount path');
     }
     const [spec] = mounts;
-    await this.workspaceConfig.upsertMount(
-      org.id,
-      repoId,
-      spec.path,
-      spec.mode,
-    );
+    await this.workspaceConfig.upsertMount(org.id, repoId, spec.path, spec.mode);
     return { ok: true, restartsSandbox: true };
   }
 
@@ -147,11 +135,7 @@ export class WorkspaceProfileController {
     @Body() body: SetSetupScriptDto,
   ): Promise<{ ok: true }> {
     await this.assertRepo(org.id, repoId);
-    await this.workspaceConfig.setSetupScript(
-      org.id,
-      repoId,
-      body.script ?? null,
-    );
+    await this.workspaceConfig.setSetupScript(org.id, repoId, body.script ?? null);
     // `seenManifests` is intentionally left untouched here: the brain tool refreshes it because it has
     // the live worktree to re-detect manifests against; this HTTP context has no sandbox/checkout to
     // detect anything from, so the acknowledged set stays whatever onboarding last recorded.
@@ -166,11 +150,7 @@ export class WorkspaceProfileController {
     @Body() body: SetPreviewRecipeDto,
   ): Promise<{ ok: true }> {
     await this.assertRepo(org.id, repoId);
-    await this.workspaceConfig.setPreviewInstructions(
-      org.id,
-      repoId,
-      body.instructions ?? null,
-    );
+    await this.workspaceConfig.setPreviewInstructions(org.id, repoId, body.instructions ?? null);
     return { ok: true };
   }
 }

@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
 import type Redis from 'ioredis';
+import { describe, expect, it } from 'vitest';
 import { GithubAppStateStore } from '../github-app-state.store';
 
 /** Map-backed fake standing in for the `ioredis` calls the store makes: `set(k,v,'EX',ttl)` / atomic eval consume. */
@@ -11,11 +11,7 @@ class FakeRedis {
     return Promise.resolve('OK');
   }
 
-  eval(
-    _script: string,
-    _keyCount: number,
-    key: string,
-  ): Promise<string | null> {
+  eval(_script: string, _keyCount: number, key: string): Promise<string | null> {
     const value = this.data.get(key) ?? null;
     this.data.delete(key);
     return Promise.resolve(value);

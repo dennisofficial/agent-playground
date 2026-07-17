@@ -1,24 +1,16 @@
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import type { EngineEvent, ExecutionTarget, RunEngineArgs } from '@shared/engine';
 import { ENGINE_RUNNER, type EngineRunnerPort } from '@shared/engine';
-import type {
-  EngineEvent,
-  ExecutionTarget,
-  RunEngineArgs,
-} from '@shared/engine';
+import { Agent, renderAgentPrompt } from '@shared/prompt-kit/system';
 import { TurnUsageProjector } from '../analytics/turn-usage-projector.service';
+import { ConventionProfileResolver } from '../conventions/convention-profile.resolver';
 import { LocalGitService } from '../git/local-git.service';
+import { buildFixPrompt, buildReviewPrompt } from '../prompt-kit/messages/autofix-lenses';
 import { CONTAINER_CONTEXT } from '../sandbox/container-paths';
-import {
-  TurnHarnessFactory,
-  type TurnHarness,
-} from '../surface/turn-harness.service';
 import { laneFor } from '../surface/thread-registry';
-import {
-  DEFAULT_LENSES,
-  dedupeFindings,
-  meetsSeverity,
-  parseFindings,
-} from './autofix-lenses';
+import { TurnHarnessFactory, type TurnHarness } from '../surface/turn-harness.service';
+import { threadKindSpec } from '../thread-kind/registry';
+import { DEFAULT_LENSES, dedupeFindings, meetsSeverity, parseFindings } from './autofix-lenses';
 import type {
   AutoFixCommit,
   AutoFixContext,
@@ -29,13 +21,6 @@ import type {
   ReviewFinding,
   ReviewLens,
 } from './autofix.types';
-import { ConventionProfileResolver } from '../conventions/convention-profile.resolver';
-import {
-  buildFixPrompt,
-  buildReviewPrompt,
-} from '../prompt-kit/messages/autofix-lenses';
-import { Agent, renderAgentPrompt } from '@shared/prompt-kit/system';
-import { threadKindSpec } from '../thread-kind/registry';
 
 /** Conservative defaults — the driver can call the stage with no opts and get safe behavior. */
 const DEFAULT_FIX_MIN_SEVERITY: FindingSeverity = 'medium';
@@ -54,14 +39,12 @@ const DEFAULT_CONCURRENCY = 3;
 // These are thin re-exports of the THREAD_REGISTRY (`../surface/thread-registry`) — the wire strings are
 // byte-identical; the names are kept so existing callers don't churn.
 /** The stage node lane (the card / aggregate opens this). */
-export const autofixLane = (autofixId: string): string =>
-  laneFor('autofix-stage', autofixId);
+export const autofixLane = (autofixId: string): string => laneFor('autofix-stage', autofixId);
 /** One review lens's sub-lane — live-safe for the concurrent fan-out. */
 export const autofixLensLane = (autofixId: string, lensId: string): string =>
   laneFor('autofix-lens', autofixId, lensId);
 /** The fix turn's sub-lane. */
-export const autofixFixLane = (autofixId: string): string =>
-  laneFor('autofix-fix', autofixId);
+export const autofixFixLane = (autofixId: string): string => laneFor('autofix-fix', autofixId);
 
 /**
  * W7 — the AUTO-FIX STAGE. A fan-out of N parallel read-only review passes (one per lens) over a
@@ -163,9 +146,7 @@ export class AutoFixStage {
     | undefined {
     if (!ctx.jobId || !ctx.channel || !ctx.autofixId) return undefined;
     const isFix = 'fix' in sub;
-    const lane = isFix
-      ? autofixFixLane(ctx.autofixId)
-      : autofixLensLane(ctx.autofixId, sub.lensId);
+    const lane = isFix ? autofixFixLane(ctx.autofixId) : autofixLensLane(ctx.autofixId, sub.lensId);
     const harness = this.turnHarness.create({
       jobId: ctx.jobId,
       orgId: ctx.orgId,
@@ -186,10 +167,7 @@ export class AutoFixStage {
    * `ctx.gitRange` scopes it to the thread (e.g. the thread's start sha `..HEAD`) — the reviewer pulls
    * the diff itself from that range.
    */
-  async autofixThread(
-    ctx: AutoFixContext,
-    options: AutoFixOptions = {},
-  ): Promise<AutoFixSummary> {
+  async autofixThread(ctx: AutoFixContext, options: AutoFixOptions = {}): Promise<AutoFixSummary> {
     return this.run('thread', ctx, options);
   }
 
@@ -225,13 +203,10 @@ export class AutoFixStage {
     // otherwise committed nothing) would otherwise burn N review turns on an empty diff and find nothing.
     // Deterministic short-circuit: skip the lens fan-out + fix turn and return a clean summary.
     if (!ctx.changedFiles?.length) {
-      this.logger.log(
-        `Auto-fix (${mode}) "${label}": 0 changed files — skipping review`,
-      );
+      this.logger.log(`Auto-fix (${mode}) "${label}": 0 changed files — skipping review`);
       // The lenses never run, but a status hook may have seeded them `pending` — resolve them so the
       // navigator's review folder doesn't show agents stuck pending forever.
-      for (const lens of lenses)
-        this.notifyLensStatus(options, lens.id, 'skipped');
+      for (const lens of lenses) this.notifyLensStatus(options, lens.id, 'skipped');
       return {
         mode,
         lensesRun: [],
@@ -248,19 +223,11 @@ export class AutoFixStage {
     );
 
     // 1) Fan out the review passes in parallel (capped), each a read-only review turn.
-    const findings = await this.fanOutReview(
-      lenses,
-      ctx,
-      concurrency,
-      engine,
-      options,
-    );
+    const findings = await this.fanOutReview(lenses, ctx, concurrency, engine, options);
 
     // 2) Aggregate + dedupe across lenses.
     const deduped = dedupeFindings(findings);
-    const actionable = deduped.filter((f) =>
-      meetsSeverity(f.severity, fixMinSeverity),
-    );
+    const actionable = deduped.filter((f) => meetsSeverity(f.severity, fixMinSeverity));
 
     this.logger.log(
       `Auto-fix (${mode}) "${label}": ${deduped.length} unique finding(s), ${actionable.length} ≥ ${fixMinSeverity}`,
@@ -325,19 +292,12 @@ export class AutoFixStage {
   ): Promise<ReviewFinding[]> {
     this.notifyLensStatus(options, lens.id, 'running');
     try {
-      const found = await this.reviewLensCore(
-        lens,
-        ctx,
-        engine ?? 'claude',
-        options,
-      );
+      const found = await this.reviewLensCore(lens, ctx, engine ?? 'claude', options);
       this.logger.debug(`Lens "${lens.id}": ${found.length} finding(s)`);
       this.notifyLensStatus(options, lens.id, 'passed', found.length);
       return found;
     } catch (err) {
-      this.logger.warn(
-        `Lens "${lens.id}" review pass failed (dropped): ${err}`,
-      );
+      this.logger.warn(`Lens "${lens.id}" review pass failed (dropped): ${err}`);
       this.notifyLensStatus(options, lens.id, 'failed');
       return [];
     }
@@ -368,15 +328,10 @@ export class AutoFixStage {
         engine: engine ?? 'claude',
         task,
         cwd: ctx.worktreePath,
-        systemPrompt: renderAgentPrompt(
-          Agent.AUTOFIX_REVIEW,
-          await this.promptCtx(ctx),
-        ),
+        systemPrompt: renderAgentPrompt(Agent.AUTOFIX_REVIEW, await this.promptCtx(ctx)),
         sandboxKey: { ...ctx.sandboxKey, subId: `review-${lens.id}` },
         mode: 'review',
-        ...(harness
-          ? { richStream: true, onEvent: (e) => harness.onEvent(e) }
-          : {}),
+        ...(harness ? { richStream: true, onEvent: (e) => harness.onEvent(e) } : {}),
         ...(streaming ? { liveRoute: streaming.route } : {}),
         ...(target ? { target } : {}),
         ...(options.model ? { model: options.model } : {}),
@@ -385,9 +340,7 @@ export class AutoFixStage {
       });
       await harness?.finish(
         res.result,
-        res.usage
-          ? { usage: res.usage, credentialId: res.credentialId ?? null }
-          : undefined,
+        res.usage ? { usage: res.usage, credentialId: res.credentialId ?? null } : undefined,
       );
       if (ctx.jobId) {
         void this.usage?.record(
@@ -449,12 +402,7 @@ export class AutoFixStage {
     options: AutoFixOptions = {},
   ): Promise<ReviewFinding[]> {
     const enriched = await this.ensureDiff(ctx);
-    return this.reviewLensCore(
-      lens,
-      enriched,
-      options.engine ?? 'claude',
-      options,
-    );
+    return this.reviewLensCore(lens, enriched, options.engine ?? 'claude', options);
   }
 
   /** Run the single fix turn over the deduped, severity-filtered findings (the `post_review` child thread's
@@ -465,13 +413,7 @@ export class AutoFixStage {
     options: AutoFixOptions = {},
   ): Promise<{ fixReport: string; commits: AutoFixCommit[] }> {
     const enriched = await this.ensureDiff(ctx);
-    return this.applyAndCommit(
-      enriched,
-      findings,
-      'thread',
-      options.engine ?? 'claude',
-      options,
-    );
+    return this.applyAndCommit(enriched, findings, 'thread', options.engine ?? 'claude', options);
   }
 
   /** Fire the optional per-lens status hook, swallowing any error (display-only, never sinks a pass). */
@@ -485,9 +427,7 @@ export class AutoFixStage {
     try {
       options.onLensStatus(lensId, status, findings);
     } catch (err) {
-      this.logger.warn(
-        `onLensStatus hook threw (ignored) for "${lensId}": ${err}`,
-      );
+      this.logger.warn(`onLensStatus hook threw (ignored) for "${lensId}": ${err}`);
     }
   }
 
@@ -521,10 +461,7 @@ export class AutoFixStage {
         engine: engine ?? 'claude',
         task,
         cwd: ctx.worktreePath,
-        systemPrompt: renderAgentPrompt(
-          Agent.AUTOFIX_FIX,
-          await this.promptCtx(ctx),
-        ),
+        systemPrompt: renderAgentPrompt(Agent.AUTOFIX_FIX, await this.promptCtx(ctx)),
         sandboxKey: { ...ctx.sandboxKey, subId: 'fix' },
         mode: 'execute',
         ...(harness ? { richStream: true } : {}),
@@ -541,9 +478,7 @@ export class AutoFixStage {
     }
     await harness?.finish(
       res.result,
-      res.usage
-        ? { usage: res.usage, credentialId: res.credentialId ?? null }
-        : undefined,
+      res.usage ? { usage: res.usage, credentialId: res.credentialId ?? null } : undefined,
     );
     if (ctx.jobId) {
       void this.usage?.record(
@@ -576,9 +511,7 @@ export class AutoFixStage {
     }
     const head = await this.git.headSha(ctx.worktreePath).catch(() => null);
     if (!head || head === baseSha) {
-      this.logger.log(
-        `Auto-fix (${mode}): fix turn produced no new commit — nothing to apply`,
-      );
+      this.logger.log(`Auto-fix (${mode}): fix turn produced no new commit — nothing to apply`);
       return { fixReport, commits: [] };
     }
     const label = ctx.label ? `: ${ctx.label}` : '';
@@ -586,9 +519,7 @@ export class AutoFixStage {
       mode === 'pull_request'
         ? `chore(autofix): PR-tail review fixes${label}`
         : `chore(autofix): thread review fixes${label}`;
-    this.logger.log(
-      `Auto-fix (${mode}): fix agent committed ${head.slice(0, 8)}`,
-    );
+    this.logger.log(`Auto-fix (${mode}): fix agent committed ${head.slice(0, 8)}`);
     return { fixReport, commits: [{ sha: head, message }] };
   }
 
@@ -606,14 +537,9 @@ export class AutoFixStage {
   }
 
   /** `git diff --name-only [range]` in the worktree — best-effort (returns [] on failure). */
-  private async gitNameOnly(
-    worktreePath: string,
-    range?: string,
-  ): Promise<string[]> {
+  private async gitNameOnly(worktreePath: string, range?: string): Promise<string[]> {
     try {
-      const args = range
-        ? ['diff', '--name-only', range]
-        : ['diff', '--name-only', 'HEAD'];
+      const args = range ? ['diff', '--name-only', range] : ['diff', '--name-only', 'HEAD'];
       const out = await this.rawGit(worktreePath, args);
       return out
         ? out

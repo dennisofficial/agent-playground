@@ -1,12 +1,12 @@
+import type { EnvService } from '@core/config/env/env.service';
 import { execFile } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import type { EnvService } from '@core/config/env/env.service';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { LocalGitService } from '../local-git.service';
 import { writeForbiddenPaths } from '../hydration-sidecar';
+import { LocalGitService } from '../local-git.service';
 
 const execFileAsync = promisify(execFile);
 
@@ -66,9 +66,7 @@ describe('LocalGitService — gitignore + pre-ship leak-scan (real git)', () => 
     await g(['add', '-f', '.env.keys']);
     await g(['commit', '-qm', 'sneak in a secret']);
 
-    expect(await git.scanBranchForForbidden(repo, baseSha)).toEqual([
-      '.env.keys',
-    ]);
+    expect(await git.scanBranchForForbidden(repo, baseSha)).toEqual(['.env.keys']);
   });
 
   it('catches a secret ADDED then DELETED in a later commit (per-commit, not the net diff)', async () => {
@@ -86,9 +84,7 @@ describe('LocalGitService — gitignore + pre-ship leak-scan (real git)', () => 
     const netDiff = await g(['diff', '--name-only', `${baseSha}..HEAD`]);
     expect(netDiff.stdout).not.toContain('.env.keys');
 
-    expect(await git.scanBranchForForbidden(repo, baseSha)).toEqual([
-      '.env.keys',
-    ]);
+    expect(await git.scanBranchForForbidden(repo, baseSha)).toEqual(['.env.keys']);
   });
 
   it('returns [] for ordinary changes (forbidden file present but never committed)', async () => {

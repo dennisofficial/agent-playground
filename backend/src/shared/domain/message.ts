@@ -17,8 +17,8 @@
  */
 
 import type { ChunkKind, TurnChunk } from '../stimulus/chunk-vocabulary';
-import type { EventSeverity, SeedRow } from './seed-row';
 import type { JobProvenance } from './job';
+import type { EventSeverity, SeedRow } from './seed-row';
 
 export type { ChunkKind };
 

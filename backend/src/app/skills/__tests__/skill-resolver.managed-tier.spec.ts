@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
-import type { Repository } from 'typeorm';
 import type { EnvService } from '@core/config/env/env.service';
+import type { Repository } from 'typeorm';
+import { describe, expect, it, vi } from 'vitest';
 import type { WorkspaceSkillEntity } from '../../persistence/entities';
 import { SkillResolver } from '../skill-resolver.service';
 import { WorkspaceSkillStore } from '../workspace-skill.store';
@@ -45,8 +45,7 @@ class FakeRepo {
   }
   async save(row: WorkspaceSkillEntity): Promise<WorkspaceSkillEntity> {
     const i = this.rows.findIndex(
-      (r) =>
-        r.org_id === row.org_id && r.scope === row.scope && r.name === row.name,
+      (r) => r.org_id === row.org_id && r.scope === row.scope && r.name === row.name,
     );
     if (i >= 0) this.rows[i] = row;
     else this.rows.push(row);
@@ -68,10 +67,7 @@ class FakeRepo {
     return this.rows.filter((r) => conds.some((c) => this.match(r, c)));
   }
   async delete(): Promise<void> {}
-  private match(
-    r: WorkspaceSkillEntity,
-    where: Partial<WorkspaceSkillEntity>,
-  ): boolean {
+  private match(r: WorkspaceSkillEntity, where: Partial<WorkspaceSkillEntity>): boolean {
     return Object.entries(where).every(
       ([k, v]) => (r as unknown as Record<string, unknown>)[k] === v,
     );
@@ -80,9 +76,7 @@ class FakeRepo {
 
 function make(): { resolver: SkillResolver; store: WorkspaceSkillStore } {
   const repo = new FakeRepo();
-  const store = new WorkspaceSkillStore(
-    repo as unknown as Repository<WorkspaceSkillEntity>,
-  );
+  const store = new WorkspaceSkillStore(repo as unknown as Repository<WorkspaceSkillEntity>);
   return { resolver: new SkillResolver(store, fakeEnv), store };
 }
 

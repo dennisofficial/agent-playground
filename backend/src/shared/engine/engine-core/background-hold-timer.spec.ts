@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { BackgroundHoldTimer } from './background-hold-timer';
 import { bgTaskCapRule } from '../../prompt-kit/jit';
+import { BackgroundHoldTimer } from './background-hold-timer';
 
 const HOLD_MS = 1_000;
 

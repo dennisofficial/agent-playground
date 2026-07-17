@@ -5,10 +5,10 @@
  *
  * TOPIC bucket: the planning conversation. Interpolates `DECISION_CLASS_IDS` exactly as the source did.
  */
-import { Agent, ENGINEERING_STAGES } from '../agent';
-import { Fragment, FragmentGroup } from '../fragment.decorator';
-import { isBuildBrain, isOnboarding, notOnboarding } from '../conditions';
 import { DECISION_CLASS_IDS } from '../../../domain';
+import { Agent, ENGINEERING_STAGES } from '../agent';
+import { isBuildBrain, isOnboarding, notOnboarding } from '../conditions';
+import { Fragment, FragmentGroup } from '../fragment.decorator';
 
 @FragmentGroup()
 export class ConversationGroup {

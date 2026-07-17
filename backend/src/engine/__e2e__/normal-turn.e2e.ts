@@ -31,7 +31,8 @@ export async function run(sandbox: string): Promise<ScenarioResult> {
 
     const { frames, final, error } = await tailEvents(redis, turnId, { timeoutMs: 120_000 });
     console.log(`[normal] frames: ${frameKinds(frames)}`);
-    if (error) return { pass: false, detail: `error frame: ${String(error.message).slice(0, 200)}` };
+    if (error)
+      return { pass: false, detail: `error frame: ${String(error.message).slice(0, 200)}` };
     if (!final) return { pass: false, detail: 'no final frame' };
 
     const result = finalResult(final).toLowerCase();

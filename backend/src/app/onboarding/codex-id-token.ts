@@ -5,11 +5,8 @@ export function decodeCodexAccountEmail(authJson: string): string | undefined {
     if (typeof idToken !== 'string') return undefined; // API-key-only blob
     const payload = idToken.split('.')[1];
     if (!payload) return undefined;
-    const claims = JSON.parse(
-      Buffer.from(payload, 'base64url').toString('utf8'),
-    );
-    const email =
-      claims?.email ?? claims?.['https://api.openai.com/profile']?.email;
+    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    const email = claims?.email ?? claims?.['https://api.openai.com/profile']?.email;
     if (typeof email !== 'string') return undefined;
     return email.trim() || undefined;
   } catch {

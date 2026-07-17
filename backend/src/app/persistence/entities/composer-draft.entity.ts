@@ -1,15 +1,8 @@
-import {
-  Column,
-  Entity,
-  Index,
-  JoinColumn,
-  ManyToOne,
-  PrimaryGeneratedColumn,
-} from 'typeorm';
-import { TimestampedEntity } from '@workspace/shared/schemas';
 import type { DraftPayload } from '@shared/domain/composer-draft';
-import { OrganizationEntity } from './organization.entity';
+import { TimestampedEntity } from '@workspace/shared/schemas';
+import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { JobEntity } from './job.entity';
+import { OrganizationEntity } from './organization.entity';
 import { UserEntity } from './user.entity';
 
 /**

@@ -1,15 +1,13 @@
-import { getDataSourceToken } from '@nestjs/typeorm';
-import { Test } from '@nestjs/testing';
 import { NestExpressApplication } from '@nestjs/platform-express';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { DataSource } from 'typeorm';
+import { Test } from '@nestjs/testing';
+import { getDataSourceToken } from '@nestjs/typeorm';
 import type { Message, TurnEnvelope } from '@shared/domain';
-import { CLASSIFIER_LLM } from '../../decision-gate';
 import { ENGINE_RUNNER } from '@shared/engine';
-import { GithubPrService, LocalGitService } from '../../git';
-import { DRIVER_REPO } from '../../driver';
+import { DataSource } from 'typeorm';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AppModule } from '../../app.module';
-import { DB_CONNECTION } from '../../persistence/database.module';
+import { CLASSIFIER_LLM } from '../../decision-gate';
+import { DRIVER_REPO } from '../../driver';
 import {
   FakeClassifierLlm,
   FakeEngineRunner,
@@ -17,6 +15,8 @@ import {
   FakeLocalGitService,
   FakeThreadTitler,
 } from '../../e2e/e2e-stubs';
+import { GithubPrService, LocalGitService } from '../../git';
+import { DB_CONNECTION } from '../../persistence/database.module';
 import { JobTitler } from '../../titling';
 import { AgentSessionManager } from '../agent-session-manager.service';
 
@@ -163,16 +163,12 @@ describe('Direct-build turn-end latch (live Postgres)', () => {
     expect(after.pr_number).not.toBeNull();
 
     // The PR was discovered by the LIVE (current) branch, not the host-named feature branch.
-    expect(
-      fakePr.opened.some(
-        (o) => (o.args as { head?: string }).head === LIVE_BRANCH,
-      ),
-    ).toBe(true);
-    expect(
-      fakePr.opened.some(
-        (o) => (o.args as { head?: string }).head === FEATURE_BRANCH,
-      ),
-    ).toBe(false);
+    expect(fakePr.opened.some((o) => (o.args as { head?: string }).head === LIVE_BRANCH)).toBe(
+      true,
+    );
+    expect(fakePr.opened.some((o) => (o.args as { head?: string }).head === FEATURE_BRANCH)).toBe(
+      false,
+    );
 
     // The latch only records the PR + flips status. The flag was consumed — a subsequent turn-end must
     // not re-latch.

@@ -2,10 +2,7 @@ import '@core/tracing'; // MUST be first: starts the Langfuse OTEL SDK before an
 
 import { EnvService } from '@core/config/env/env.service';
 import { ENodeEnv } from '@core/config/env/validation';
-import {
-  checkRestartLoop,
-  renderRestartStormWarning,
-} from '@core/dev-restart-guard';
+import { checkRestartLoop, renderRestartStormWarning } from '@core/dev-restart-guard';
 import { setupLogger } from '@core/setup-logger';
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
@@ -94,9 +91,7 @@ async function bootstrap() {
 process.on('unhandledRejection', (reason) => {
   new Logger('Bootstrap').error(
     `Unhandled promise rejection (kept process alive): ${
-      reason instanceof Error
-        ? (reason.stack ?? reason.message)
-        : String(reason)
+      reason instanceof Error ? (reason.stack ?? reason.message) : String(reason)
     }`,
   );
 });
@@ -108,10 +103,7 @@ bootstrap().catch((err: unknown) => {
   // otherwise reads as a generic stack dump easy to miss in scrollback, and a `nest --watch` supervisor
   // will keep respawning the crashing child on every recompile, producing exactly the kind of restart
   // storm `dev-restart-guard.ts` warns about (two instances racing the same port).
-  if (
-    err instanceof Error &&
-    (err as NodeJS.ErrnoException).code === 'EADDRINUSE'
-  ) {
+  if (err instanceof Error && (err as NodeJS.ErrnoException).code === 'EADDRINUSE') {
     log.error(
       `Fatal: port already in use — another process (likely a second \`pnpm dev\`) is already bound to ` +
         `it. Stop that instance before starting this one; running two dev servers against the same port ` +

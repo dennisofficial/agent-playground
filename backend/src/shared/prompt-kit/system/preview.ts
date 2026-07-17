@@ -5,10 +5,10 @@
  * agent + a representative context, so the preview renders EXACTLY what production sends. (Replaces the former
  * `registry.ts` — there is only one assembly path now.)
  */
-import { Agent } from './agent';
 import type { JobKind } from '../../domain';
-import type { PromptCtx } from './prompt-ctx';
+import { Agent } from './agent';
 import { renderAgentPrompt } from './assemble';
+import type { PromptCtx } from './prompt-ctx';
 
 export interface AgentPromptInfo {
   /** Stable preview id (kept close to the old registry ids so `/test/prompts/<id>` URLs still resolve). */
@@ -276,15 +276,10 @@ export function hasAgentPrompt(id: string): boolean {
 }
 
 /** Render a previewable prompt by id, optionally overriding the job kind. Returns null for an unknown id. */
-export function renderPreview(
-  id: string,
-  jobKindOverride?: JobKind | null,
-): string | null {
+export function renderPreview(id: string, jobKindOverride?: JobKind | null): string | null {
   const entry = AGENT_PROMPTS.find((a) => a.id === id);
   if (!entry) return null;
   const ctx =
-    jobKindOverride !== undefined
-      ? { ...entry.ctx, jobKind: jobKindOverride }
-      : entry.ctx;
+    jobKindOverride !== undefined ? { ...entry.ctx, jobKind: jobKindOverride } : entry.ctx;
   return renderAgentPrompt(entry.agent, ctx);
 }

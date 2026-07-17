@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { AgentChatSurface } from '../agent-surface';
 import type { JobEntity } from '../../persistence/entities';
+import { AgentChatSurface } from '../agent-surface';
 import { SurfaceOrchestration } from '../surface-orchestration.service';
 
 function threadsRepo(thread: Partial<JobEntity> | null) {
@@ -21,10 +21,7 @@ const INPUT = {
 describe('SurfaceOrchestration.announceEvent (repo-addressed, real thread id)', () => {
   it('posts the headline into the thread and returns the thread id', async () => {
     const surface = new AgentChatSurface();
-    const svc = new SurfaceOrchestration(
-      surface,
-      threadsRepo({ id: 'thread-1', repo_id: 'web' }),
-    );
+    const svc = new SurfaceOrchestration(surface, threadsRepo({ id: 'thread-1', repo_id: 'web' }));
 
     const ts = await svc.announceEvent(INPUT);
 

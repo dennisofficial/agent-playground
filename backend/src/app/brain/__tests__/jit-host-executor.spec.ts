@@ -1,21 +1,14 @@
+import { memoryPrependRule, renderPlanApprovedSeed } from '@shared/prompt-kit/jit';
 import { Subject } from 'rxjs';
 import { describe, expect, it } from 'vitest';
-import type {
-  ChatSurface,
-  InboundChatMessage,
-} from '../../surface/chat-surface.port';
-import {
-  memoryPrependRule,
-  renderPlanApprovedSeed,
-} from '@shared/prompt-kit/jit';
+import type { ChatSurface, InboundChatMessage } from '../../surface/chat-surface.port';
 import { JitHostExecutor } from '../jit-host-executor';
 
 /** Captures the exact args a `seedSystemNotification` call receives — the parity proof. */
 class FakeSurface implements ChatSurface {
   readonly name = 'fake';
   readonly inbound$ = new Subject<InboundChatMessage>();
-  calls: Array<Parameters<Required<ChatSurface>['seedSystemNotification']>> =
-    [];
+  calls: Array<Parameters<Required<ChatSurface>['seedSystemNotification']>> = [];
 
   async post(): Promise<string | undefined> {
     return undefined;
@@ -38,9 +31,7 @@ describe('JitHostExecutor', () => {
     };
     const executor = new JitHostExecutor(surface);
 
-    expect(
-      executor.fireLifecycle('plan-approved', { repoId: 'R', jobId: 'J' }),
-    ).toBe('');
+    expect(executor.fireLifecycle('plan-approved', { repoId: 'R', jobId: 'J' })).toBe('');
   });
 
   it('fires the plan-approved rule, threading buildPath/baseBranch/decisionRecordId through to render + chunkKey', () => {

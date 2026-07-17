@@ -40,13 +40,7 @@ describe('WorktreeProvisioner.provisionAndAttach — onMilestone pass-through', 
       resolveForSandbox,
     } as unknown as import('../../mcp').McpResolver;
 
-    const provisioner = new WorktreeProvisioner(
-      hydrator,
-      awareness,
-      config,
-      mcp,
-      sandboxProvider,
-    );
+    const provisioner = new WorktreeProvisioner(hydrator, awareness, config, mcp, sandboxProvider);
     return { provisioner, attach, kickMcpHubRefresh, resolveForSandbox };
   }
 
@@ -66,9 +60,7 @@ describe('WorktreeProvisioner.provisionAndAttach — onMilestone pass-through', 
       onMilestone,
     });
 
-    expect(attach).toHaveBeenCalledWith(
-      expect.objectContaining({ onMilestone }),
-    );
+    expect(attach).toHaveBeenCalledWith(expect.objectContaining({ onMilestone }));
   });
 
   it('passes onMilestone as undefined when the caller omits it (no crash, no phantom callback)', async () => {
@@ -85,14 +77,11 @@ describe('WorktreeProvisioner.provisionAndAttach — onMilestone pass-through', 
       jobId: 'job-1',
     });
 
-    expect(attach).toHaveBeenCalledWith(
-      expect.objectContaining({ onMilestone: undefined }),
-    );
+    expect(attach).toHaveBeenCalledWith(expect.objectContaining({ onMilestone: undefined }));
   });
 
   it('resolves user MCP servers by the repo UUID (repoDbId) — NOT the slug-valued sandbox.repoId — and pushes them to the hub', async () => {
-    const { provisioner, kickMcpHubRefresh, resolveForSandbox } =
-      makeProvisioner();
+    const { provisioner, kickMcpHubRefresh, resolveForSandbox } = makeProvisioner();
 
     await provisioner.provisionAndAttach({
       // sandbox.repoId is the SLUG; the repo UUID is carried separately as repoDbId. mcp_servers.scope is
@@ -116,8 +105,7 @@ describe('WorktreeProvisioner.provisionAndAttach — onMilestone pass-through', 
   });
 
   it('skips the hub refresh entirely when there is no repoDbId (no UUID → nothing to scope by)', async () => {
-    const { provisioner, kickMcpHubRefresh, resolveForSandbox } =
-      makeProvisioner();
+    const { provisioner, kickMcpHubRefresh, resolveForSandbox } = makeProvisioner();
 
     await provisioner.provisionAndAttach({
       sandbox: {

@@ -12,26 +12,26 @@
  *     `needsYou: false` — proving the new field doesn't leak/default to a false-positive.
  */
 
-import { getDataSourceToken } from '@nestjs/typeorm';
-import { Test } from '@nestjs/testing';
 import type { NestExpressApplication } from '@nestjs/platform-express';
+import { Test } from '@nestjs/testing';
+import { getDataSourceToken } from '@nestjs/typeorm';
+import { ENGINE_RUNNER } from '@shared/engine';
 import cookieParser from 'cookie-parser';
 import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { CLASSIFIER_LLM } from '../../decision-gate';
-import { ENGINE_RUNNER } from '@shared/engine';
-import { GithubPrService, LocalGitService } from '../../git';
 import { AppModule } from '../../app.module';
-import { DB_CONNECTION } from '../../persistence/database.module';
+import { CLASSIFIER_LLM } from '../../decision-gate';
 import {
   FakeClassifierLlm,
   FakeEngineRunner,
   FakeLocalGitService,
   FakeThreadTitler,
 } from '../../e2e/e2e-stubs';
-import { JobTitler } from '../../titling';
+import { GithubPrService, LocalGitService } from '../../git';
 import { CredentialResolver } from '../../onboarding/credential-resolver.service';
+import { DB_CONNECTION } from '../../persistence/database.module';
+import { JobTitler } from '../../titling';
 
 const fakeCreds = {
   anthropicKey: async () => undefined,
@@ -59,35 +59,24 @@ let ds: DataSource;
 let server: ReturnType<NestExpressApplication['getHttpServer']>;
 let ownerCookie: string;
 
-async function register(
-  email: string,
-): Promise<{ cookie: string; id: string }> {
+async function register(email: string): Promise<{ cookie: string; id: string }> {
   const res = await request(server)
     .post('/auth/register')
     .send({ email, password: PASSWORD, name: email.split('@')[0] });
   expect(res.status).toBe(200);
-  const setCookie =
-    (res.headers['set-cookie'] as unknown as string[] | undefined) ?? [];
+  const setCookie = (res.headers['set-cookie'] as unknown as string[] | undefined) ?? [];
   const cookie = setCookie.map((c) => c.split(';')[0]).join('; ');
   return { cookie, id: res.body.user.id as string };
 }
 
 async function purge(): Promise<void> {
-  await ds
-    .query(`DELETE FROM jobs WHERE org_id = $1`, [ORG])
-    .catch(() => undefined);
-  await ds
-    .query(`DELETE FROM repos WHERE org_id = $1`, [ORG])
-    .catch(() => undefined);
+  await ds.query(`DELETE FROM jobs WHERE org_id = $1`, [ORG]).catch(() => undefined);
+  await ds.query(`DELETE FROM repos WHERE org_id = $1`, [ORG]).catch(() => undefined);
   await ds
     .query(`DELETE FROM organization_members WHERE org_id = $1`, [ORG])
     .catch(() => undefined);
-  await ds
-    .query(`DELETE FROM organizations WHERE id = $1`, [ORG])
-    .catch(() => undefined);
-  await ds
-    .query(`DELETE FROM users WHERE email = $1`, [OWNER_EMAIL])
-    .catch(() => undefined);
+  await ds.query(`DELETE FROM organizations WHERE id = $1`, [ORG]).catch(() => undefined);
+  await ds.query(`DELETE FROM users WHERE email = $1`, [OWNER_EMAIL]).catch(() => undefined);
 }
 
 beforeAll(async () => {
@@ -144,12 +133,7 @@ beforeAll(async () => {
   await ds.query(
     `INSERT INTO jobs (id, org_id, repo_id, origin, title, status, halt)
      VALUES ($1, $2, $3, 'control', 'Halted build', 'running', $4::jsonb)`,
-    [
-      HALTED_JOB,
-      ORG,
-      REPO,
-      JSON.stringify({ kind: 'failed', reason: 'build broke', at: HALT_AT }),
-    ],
+    [HALTED_JOB, ORG, REPO, JSON.stringify({ kind: 'failed', reason: 'build broke', at: HALT_AT })],
   );
 
   // A HEALTHY sibling, same phase, no halt — proves the field doesn't leak/default to a false positive.
@@ -181,14 +165,10 @@ afterAll(async () => {
 
 describe('Job.halt wire — GET /web/jobs and GET /web/orgs/:orgId/repos/:repoId/jobs (live Postgres, real HTTP)', () => {
   it('GET /web/jobs (cross-org inbox): halted job keeps status as the pure phase + surfaces halt + needsYou', async () => {
-    const res = await request(server)
-      .get('/web/jobs')
-      .set('Cookie', ownerCookie);
+    const res = await request(server).get('/web/jobs').set('Cookie', ownerCookie);
     expect(res.status).toBe(200);
 
-    const halted = (res.body as Array<Record<string, unknown>>).find(
-      (r) => r.jobId === HALTED_JOB,
-    );
+    const halted = (res.body as Array<Record<string, unknown>>).find((r) => r.jobId === HALTED_JOB);
     expect(halted).toBeDefined();
     // THE ASSERTION THE JUDGE WANTS: status is the pure phase, halt is populated alongside it.
     expect(halted).toMatchObject({
@@ -219,20 +199,11 @@ describe('Job.halt wire — GET /web/jobs and GET /web/orgs/:orgId/repos/:repoId
     });
 
     // eslint-disable-next-line no-console -- evidence: dump the OBSERVED live rows verbatim.
-    console.log(
-      'OBSERVED GET /web/jobs [reviewing]:',
-      JSON.stringify(reviewing, null, 2),
-    );
+    console.log('OBSERVED GET /web/jobs [reviewing]:', JSON.stringify(reviewing, null, 2));
     // eslint-disable-next-line no-console -- evidence: dump the OBSERVED live rows verbatim.
-    console.log(
-      'OBSERVED GET /web/jobs [halted]:',
-      JSON.stringify(halted, null, 2),
-    );
+    console.log('OBSERVED GET /web/jobs [halted]:', JSON.stringify(halted, null, 2));
     // eslint-disable-next-line no-console
-    console.log(
-      'OBSERVED GET /web/jobs [healthy]:',
-      JSON.stringify(healthy, null, 2),
-    );
+    console.log('OBSERVED GET /web/jobs [healthy]:', JSON.stringify(healthy, null, 2));
   });
 
   it('GET /web/orgs/:orgId/repos/:repoId/jobs (per-repo list): same halt shape', async () => {
@@ -241,9 +212,7 @@ describe('Job.halt wire — GET /web/jobs and GET /web/orgs/:orgId/repos/:repoId
       .set('Cookie', ownerCookie);
     expect(res.status).toBe(200);
 
-    const halted = (res.body as Array<Record<string, unknown>>).find(
-      (r) => r.id === HALTED_JOB,
-    );
+    const halted = (res.body as Array<Record<string, unknown>>).find((r) => r.id === HALTED_JOB);
     expect(halted).toBeDefined();
     expect(halted).toMatchObject({
       status: 'running',
@@ -251,9 +220,7 @@ describe('Job.halt wire — GET /web/jobs and GET /web/orgs/:orgId/repos/:repoId
       needsYou: true,
     });
 
-    const healthy = (res.body as Array<Record<string, unknown>>).find(
-      (r) => r.id === HEALTHY_JOB,
-    );
+    const healthy = (res.body as Array<Record<string, unknown>>).find((r) => r.id === HEALTHY_JOB);
     expect(healthy).toBeDefined();
     expect(healthy).toMatchObject({
       status: 'running',

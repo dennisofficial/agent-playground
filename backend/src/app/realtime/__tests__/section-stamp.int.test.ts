@@ -80,28 +80,21 @@ describe('jobs_stamp_section_entered trigger (live Postgres)', () => {
     });
 
     // Enter 'planning' for the first time — a new anchor key is stamped.
-    await ds.query(`UPDATE jobs SET status = 'planning' WHERE id = $1`, [
+    await ds.query(`UPDATE jobs SET status = 'planning' WHERE id = $1`, [jobId]);
+    const afterPlanning = await ds.query(`SELECT section_first_entered FROM jobs WHERE id = $1`, [
       jobId,
     ]);
-    const afterPlanning = await ds.query(
-      `SELECT section_first_entered FROM jobs WHERE id = $1`,
-      [jobId],
-    );
-    const firstPlanningAnchor = afterPlanning[0].section_first_entered
-      .planning as string;
+    const firstPlanningAnchor = afterPlanning[0].section_first_entered.planning as string;
     expect(firstPlanningAnchor).toEqual(expect.any(String));
 
     // Move on to 'running', then kick back to 'planning' — a RE-entry into a status already anchored.
     await ds.query(`UPDATE jobs SET status = 'running' WHERE id = $1`, [jobId]);
     await new Promise((resolve) => setTimeout(resolve, 10));
-    await ds.query(`UPDATE jobs SET status = 'planning' WHERE id = $1`, [
+    await ds.query(`UPDATE jobs SET status = 'planning' WHERE id = $1`, [jobId]);
+
+    const afterReentry = await ds.query(`SELECT section_first_entered FROM jobs WHERE id = $1`, [
       jobId,
     ]);
-
-    const afterReentry = await ds.query(
-      `SELECT section_first_entered FROM jobs WHERE id = $1`,
-      [jobId],
-    );
     const map = afterReentry[0].section_first_entered as Record<string, string>;
     // The re-entry anchor must be UNCHANGED — first-entry-only, never overwritten.
     expect(map.planning).toBe(firstPlanningAnchor);

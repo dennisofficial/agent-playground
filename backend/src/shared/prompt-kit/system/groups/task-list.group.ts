@@ -5,8 +5,8 @@
  * TOPIC bucket: the live task list.
  */
 import { Agent, ENGINEERING_STAGES } from '../agent';
-import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isOnboarding, notOnboarding } from '../conditions';
+import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { TASK_LIST_NOTE } from '../fragments';
 
 @FragmentGroup()

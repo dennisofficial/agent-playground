@@ -1,15 +1,11 @@
 import {
-  type ModelConfig,
-  RealtimeRuleGuard,
-  type Row,
-} from '@workspace/pg-realtime';
-import type { JobHalt, JobStatus } from '@workspace/shared';
-import {
   deriveNeedsYou,
   JOB_ACTIVITIES,
   type JobActivity,
   type JobProvenance,
 } from '@shared/domain/job';
+import { type ModelConfig, RealtimeRuleGuard, type Row } from '@workspace/pg-realtime';
+import type { JobHalt, JobStatus } from '@workspace/shared';
 import { CiCounts } from '../git/github-pr.service';
 
 /**
@@ -86,10 +82,7 @@ export interface ThreadRealtimeRow extends Row {
  * live. The web console fetches archived jobs separately (`GET /web/jobs/archived`); it needs no client
  * filter — an archived job simply arrives as a `remove`.
  */
-class ThreadOrgGuard extends RealtimeRuleGuard<
-  RealtimePrincipal,
-  ThreadRealtimeRow
-> {
+class ThreadOrgGuard extends RealtimeRuleGuard<RealtimePrincipal, ThreadRealtimeRow> {
   canRead(
     user: RealtimePrincipal | null,
   ): { orgId: { $in: string[] }; status: { $ne: string } } | false {
@@ -102,9 +95,7 @@ function mapRow(raw: Row): ThreadRealtimeRow {
   const status = String(raw.status) as JobStatus;
   // The WAL row values are `unknown`, so narrow `activity` to the union (unknown/bad → 'idle').
   const rawActivity = String(raw.activity ?? 'idle');
-  const activity: JobActivity = (JOB_ACTIVITIES as readonly string[]).includes(
-    rawActivity,
-  )
+  const activity: JobActivity = (JOB_ACTIVITIES as readonly string[]).includes(rawActivity)
     ? (rawActivity as JobActivity)
     : 'idle';
   // The durable human-input gate (see `deriveNeedsYou`): how many `ask_question` cards await the operator.
@@ -113,8 +104,7 @@ function mapRow(raw: Row): ThreadRealtimeRow {
   const openQuestion = Number(raw.open_question_count ?? 0) > 0;
   // Durable/mcp secret requests are per-card (like questions), counted by `open_secret_count`; ephemeral
   // requests still use the single-slot `awaiting_secret_id` pointer. Either awaiting the operator counts.
-  const awaitingSecret =
-    raw.awaiting_secret_id != null || Number(raw.open_secret_count ?? 0) > 0;
+  const awaitingSecret = raw.awaiting_secret_id != null || Number(raw.open_secret_count ?? 0) > 0;
   const halted = raw.halted === true;
   const createdAt = raw.created_at;
   return {
@@ -132,8 +122,7 @@ function mapRow(raw: Row): ThreadRealtimeRow {
       awaitingSecret,
       halted: halted || raw.halt != null,
     }),
-    createdAt:
-      createdAt instanceof Date ? createdAt.toISOString() : String(createdAt),
+    createdAt: createdAt instanceof Date ? createdAt.toISOString() : String(createdAt),
     orgId: String(raw.org_id),
     repoId: String(raw.repo_id),
     featureBranch: (raw.feature_branch as string | null) ?? null,
@@ -143,18 +132,14 @@ function mapRow(raw: Row): ThreadRealtimeRow {
     prMergeable: (raw.pr_mergeable as string | null) ?? null,
     prState: (raw.pr_state as string | null) ?? null,
     portState: (raw.port_state as string | null) ?? null,
-    buildStagesDone:
-      raw.build_stages_done == null ? null : Number(raw.build_stages_done),
-    buildStagesTotal:
-      raw.build_stages_total == null ? null : Number(raw.build_stages_total),
+    buildStagesDone: raw.build_stages_done == null ? null : Number(raw.build_stages_done),
+    buildStagesTotal: raw.build_stages_total == null ? null : Number(raw.build_stages_total),
     // Small timestamp col, always present in the `SELECT *` snapshot / WAL new-row image (never TOASTed).
     shipping: status === 'running' && raw.ship_review_approved_at != null,
     halt: (raw.halt as JobHalt | null) ?? null,
     createdBy: (raw.created_by as JobProvenance | null) ?? null,
     sectionFirstEntered:
-      (raw.section_first_entered as Partial<
-        Record<JobStatus, string>
-      > | null) ?? null,
+      (raw.section_first_entered as Partial<Record<JobStatus, string>> | null) ?? null,
   };
 }
 

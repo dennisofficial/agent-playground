@@ -24,8 +24,7 @@ export type Scenario = (sandbox: string) => Promise<ScenarioResult>;
 export const REDIS_URL_HOST = 'redis://127.0.0.1:6380';
 /** The SAME Redis as the sandbox reaches it: the container shares the `atlas-redis` docker network
  *  (alias `redis`, port 6379). Overridable via E2E_SANDBOX_REDIS_URL for a differently-wired host. */
-export const REDIS_URL_CONTAINER =
-  process.env.E2E_SANDBOX_REDIS_URL ?? 'redis://redis:6379';
+export const REDIS_URL_CONTAINER = process.env.E2E_SANDBOX_REDIS_URL ?? 'redis://redis:6379';
 /** Hard requirement for live validation: every scenario pins Haiku for cost control. */
 export const HAIKU = 'claude-haiku-4-5-20251001';
 
@@ -106,7 +105,17 @@ export interface SpecOverrides {
  * `atlasEngineHomeDir`); a distinct per-turn jobId keeps each scenario off the sandbox's real session.
  */
 export function makeSpec(turnId: string, o: SpecOverrides = {}): Record<string, unknown> {
-  const { task, systemPrompt, mode, steerable, richStream, toolBridgeTools, auth, homeType, ...rest } = o;
+  const {
+    task,
+    systemPrompt,
+    mode,
+    steerable,
+    richStream,
+    toolBridgeTools,
+    auth,
+    homeType,
+    ...rest
+  } = o;
   const spec: Record<string, unknown> = {
     turnId,
     engine: 'claude',
@@ -277,9 +286,7 @@ export function frameKinds(frames: Frame[]): string {
 
 /** The `EngineEvent`s carried by `{t:'event', e}` frames. */
 export function events(frames: Frame[]): Array<Record<string, unknown>> {
-  return frames
-    .filter((f) => f.t === 'event')
-    .map((f) => f.e as Record<string, unknown>);
+  return frames.filter((f) => f.t === 'event').map((f) => f.e as Record<string, unknown>);
 }
 
 /** The `final` frame's result string (`final.r.result`), or ''. */
@@ -319,10 +326,11 @@ export function startToolResponder(
   redis: Redis,
   turnId: string,
   opts: {
-    onRequest: (req: { id: string; name: string; args: unknown }) =>
-      | { result: unknown }
-      | { error: string }
-      | null;
+    onRequest: (req: {
+      id: string;
+      name: string;
+      args: unknown;
+    }) => { result: unknown } | { error: string } | null;
     heartbeat?: boolean;
   },
 ): ToolResponder {
@@ -386,8 +394,6 @@ export function requireSandboxArg(script: string): string {
 
 /** Standard PASS/FAIL log + exit for a single scenario run directly. */
 export function report(tag: string, pass: boolean, detail?: string): never {
-  console.log(
-    `[${tag}] RESULT: ${pass ? 'PASS' : 'FAIL'}${detail ? ` — ${detail}` : ''}`,
-  );
+  console.log(`[${tag}] RESULT: ${pass ? 'PASS' : 'FAIL'}${detail ? ` — ${detail}` : ''}`);
   process.exit(pass ? 0 : 1);
 }

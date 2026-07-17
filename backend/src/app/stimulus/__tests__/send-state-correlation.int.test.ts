@@ -14,26 +14,14 @@
  */
 
 import { Test, type TestingModule } from '@nestjs/testing';
-import {
-  TypeOrmModule,
-  getDataSourceToken,
-  getRepositoryToken,
-} from '@nestjs/typeorm';
+import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
-import {
-  afterAll,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CustomNamingStrategy } from '../../../_lib/database/custom-naming.strategy';
 import { DB_CONNECTION } from '../../persistence/database.module';
 import { ENTITIES, JobEntity } from '../../persistence/entities';
-import { JobBootstrapService } from '../job-bootstrap';
 import { MESSAGE_CHANGE_NOTIFIER } from '../../surface/message-change-notifier.port';
+import { JobBootstrapService } from '../job-bootstrap';
 import { StimulusStoreService } from '../stimulus-store.service';
 
 const ORG_ID = '53333333-3333-4333-8333-333333333333';
@@ -75,10 +63,7 @@ describe('send-state correlation — live Postgres DB-query proof', () => {
 
   beforeAll(async () => {
     mod = await Test.createTestingModule({
-      imports: [
-        TypeOrmModule.forRoot(dbOpts()),
-        TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION),
-      ],
+      imports: [TypeOrmModule.forRoot(dbOpts()), TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION)],
       providers: [
         JobBootstrapService,
         StimulusStoreService,
@@ -110,9 +95,7 @@ describe('send-state correlation — live Postgres DB-query proof', () => {
 
   beforeEach(async () => {
     notifier.emitMessagesChanged.mockClear();
-    await ds.query(
-      'TRUNCATE inbound_messages, transcript_messages, jobs RESTART IDENTITY CASCADE',
-    );
+    await ds.query('TRUNCATE inbound_messages, transcript_messages, jobs RESTART IDENTITY CASCADE');
   });
 
   async function makeThread(title: string): Promise<JobEntity> {
@@ -136,10 +119,7 @@ describe('send-state correlation — live Postgres DB-query proof', () => {
   }
 
   async function inboundDeliveredAt(id: string): Promise<Date | null> {
-    const rows = await ds.query(
-      `SELECT delivered_at FROM inbound_messages WHERE id = $1`,
-      [id],
-    );
+    const rows = await ds.query(`SELECT delivered_at FROM inbound_messages WHERE id = $1`, [id]);
     return rows[0]?.delivered_at ?? null;
   }
 
@@ -163,10 +143,9 @@ describe('send-state correlation — live Postgres DB-query proof', () => {
     });
 
     // The delivery-ledger row carries the FULL composed turn — that is what the brain reads.
-    const inbound = await ds.query(
-      `SELECT body FROM inbound_messages WHERE id = $1`,
-      [recorded.id],
-    );
+    const inbound = await ds.query(`SELECT body FROM inbound_messages WHERE id = $1`, [
+      recorded.id,
+    ]);
     expect(inbound[0].body).toBe(COMPOSED_BODY);
 
     // Exactly ONE transcript row: the operator bubble rendering ONLY the note (no "…+ a message" pill).
@@ -181,10 +160,7 @@ describe('send-state correlation — live Postgres DB-query proof', () => {
 
     // Send-persist emitted the realtime nudge exactly once.
     expect(notifier.emitMessagesChanged).toHaveBeenCalledTimes(1);
-    expect(notifier.emitMessagesChanged).toHaveBeenCalledWith(
-      repoId,
-      thread.id,
-    );
+    expect(notifier.emitMessagesChanged).toHaveBeenCalledWith(repoId, thread.id);
   });
 
   it('markChatDelivered stamps BOTH ledger + correlated bubble, emits once, and is idempotent', async () => {
@@ -213,10 +189,7 @@ describe('send-state correlation — live Postgres DB-query proof', () => {
 
     // Delivery-stamp emitted exactly once.
     expect(notifier.emitMessagesChanged).toHaveBeenCalledTimes(1);
-    expect(notifier.emitMessagesChanged).toHaveBeenCalledWith(
-      repoId,
-      thread.id,
-    );
+    expect(notifier.emitMessagesChanged).toHaveBeenCalledWith(repoId, thread.id);
 
     // Idempotent: a second call neither throws nor re-emits (already-delivered → no-op).
     await expect(store.markChatDelivered(recorded.id)).resolves.toBeUndefined();

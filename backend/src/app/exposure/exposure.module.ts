@@ -1,7 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { JobEntity } from '../persistence/entities';
 import { DB_CONNECTION } from '../persistence/database.module';
+import { JobEntity } from '../persistence/entities';
 import { ExposureService } from './exposure.service';
 
 /**

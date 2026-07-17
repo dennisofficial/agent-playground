@@ -1,9 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { JobDependencyService } from '../job-deps/job-dependency.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity } from '../persistence/entities';
-import { JobDependencyService } from '../job-deps/job-dependency.service';
 
 /**
  * The JOB-UNBLOCK SWEEP — the durable backstop for the event-driven wake funnel

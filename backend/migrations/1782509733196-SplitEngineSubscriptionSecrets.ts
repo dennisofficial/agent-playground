@@ -13,28 +13,18 @@ export class SplitEngineSubscriptionSecrets1782509733196 implements MigrationInt
   name = 'SplitEngineSubscriptionSecrets1782509733196';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `ALTER TABLE "org_credentials" ADD "claude_oauth_token_enc" text`,
-    );
-    await queryRunner.query(
-      `ALTER TABLE "org_credentials" ADD "codex_auth_secret_enc" text`,
-    );
+    await queryRunner.query(`ALTER TABLE "org_credentials" ADD "claude_oauth_token_enc" text`);
+    await queryRunner.query(`ALTER TABLE "org_credentials" ADD "codex_auth_secret_enc" text`);
     // Preserve existing subscription secrets — the old single column only ever held Claude OAuth tokens.
     await queryRunner.query(
       `UPDATE "org_credentials" SET "claude_oauth_token_enc" = "engine_auth_secret_enc" WHERE "engine_auth_secret_enc" IS NOT NULL`,
     );
-    await queryRunner.query(
-      `ALTER TABLE "org_credentials" DROP COLUMN "engine_auth_mode"`,
-    );
-    await queryRunner.query(
-      `ALTER TABLE "org_credentials" DROP COLUMN "engine_auth_secret_enc"`,
-    );
+    await queryRunner.query(`ALTER TABLE "org_credentials" DROP COLUMN "engine_auth_mode"`);
+    await queryRunner.query(`ALTER TABLE "org_credentials" DROP COLUMN "engine_auth_secret_enc"`);
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `ALTER TABLE "org_credentials" ADD "engine_auth_secret_enc" text`,
-    );
+    await queryRunner.query(`ALTER TABLE "org_credentials" ADD "engine_auth_secret_enc" text`);
     await queryRunner.query(
       `ALTER TABLE "org_credentials" ADD "engine_auth_mode" text NOT NULL DEFAULT 'api_key'`,
     );
@@ -42,11 +32,7 @@ export class SplitEngineSubscriptionSecrets1782509733196 implements MigrationInt
     await queryRunner.query(
       `UPDATE "org_credentials" SET "engine_auth_secret_enc" = "claude_oauth_token_enc", "engine_auth_mode" = 'subscription' WHERE "claude_oauth_token_enc" IS NOT NULL`,
     );
-    await queryRunner.query(
-      `ALTER TABLE "org_credentials" DROP COLUMN "codex_auth_secret_enc"`,
-    );
-    await queryRunner.query(
-      `ALTER TABLE "org_credentials" DROP COLUMN "claude_oauth_token_enc"`,
-    );
+    await queryRunner.query(`ALTER TABLE "org_credentials" DROP COLUMN "codex_auth_secret_enc"`);
+    await queryRunner.query(`ALTER TABLE "org_credentials" DROP COLUMN "claude_oauth_token_enc"`);
   }
 }

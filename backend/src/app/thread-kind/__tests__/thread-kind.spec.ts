@@ -1,5 +1,5 @@
+import { Agent } from '@shared/prompt-kit/system';
 import { describe, expect, it } from 'vitest';
-import { Agent } from '../prompt-kit';
 import {
   THREAD_KIND_SPECS,
   driverExecutableKinds,
@@ -36,10 +36,7 @@ describe('thread-kind registry', () => {
   });
 
   it('only builder + master_review are driver-executable top-level kinds', () => {
-    expect([...driverExecutableKinds].sort()).toEqual([
-      'builder',
-      'master_review',
-    ]);
+    expect([...driverExecutableKinds].sort()).toEqual(['builder', 'master_review']);
     expect(isDriverExecutableKind('builder')).toBe(true);
     expect(isDriverExecutableKind('master_review')).toBe(true);
     expect(isDriverExecutableKind('planning')).toBe(false);
@@ -64,9 +61,7 @@ describe('thread-kind registry', () => {
     expect(kids.filter((k) => k.kind === 'review_agent')).toHaveLength(0);
     const posts = kids.filter((k) => k.kind === 'review_fix');
     expect(posts).toHaveLength(1);
-    expect(
-      (posts[0].config as { minSeverity?: string }).minSeverity,
-    ).toBeTruthy();
+    expect((posts[0].config as { minSeverity?: string }).minSeverity).toBeTruthy();
   });
 
   it('threadKindSpec throws on an unknown kind', () => {

@@ -1,14 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
 import type { Job } from '@shared/domain';
 import type { SandboxGitIdentity } from '@shared/engine/engine.types';
+import { Repository } from 'typeorm';
+import { GitIdentityService } from '../git/git-identity.service';
+import { parseGithubRepoUrl } from '../git/github-pr.service';
+import { LocalGitService, ProjectRepo } from '../git/local-git.service';
 import { CredentialResolver } from '../onboarding/credential-resolver.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { RepoEntity } from '../persistence/entities';
-import { LocalGitService, ProjectRepo } from '../git/local-git.service';
-import { GitIdentityService } from '../git/git-identity.service';
-import { parseGithubRepoUrl } from '../git/github-pr.service';
 
 /** The DI token for the repo resolver — a seam so the driver test can bind a fake (no real git/clone). */
 export const DRIVER_REPO = Symbol('DRIVER_REPO');
@@ -55,9 +55,7 @@ export class GitDriverRepoResolver implements DriverRepoResolver {
       where: { id: thread.repoId },
     });
     if (!project) {
-      throw new Error(
-        `No repos row for id=${thread.repoId} (org=${thread.orgId})`,
-      );
+      throw new Error(`No repos row for id=${thread.repoId} (org=${thread.orgId})`);
     }
     const parsed = parseGithubRepoUrl(project.git_url);
     if (!parsed) {

@@ -102,10 +102,7 @@ function isOperatorPrompt(m: RawLine): boolean {
   if (typeof c === 'string') return true;
   if (Array.isArray(c)) {
     const blocks = c as Array<{ type?: string }>;
-    return (
-      blocks.some((b) => b?.type === 'text') &&
-      !blocks.some((b) => b?.type === 'tool_result')
-    );
+    return blocks.some((b) => b?.type === 'text') && !blocks.some((b) => b?.type === 'tool_result');
   }
   return false;
 }
@@ -136,8 +133,7 @@ function mapTurnBlocks(lines: RawLine[]): {
   let endedClean = false;
 
   for (const m of lines) {
-    const emittedAt =
-      typeof m.timestamp === 'string' ? new Date(m.timestamp) : undefined;
+    const emittedAt = typeof m.timestamp === 'string' ? new Date(m.timestamp) : undefined;
     const uuid = typeof m.uuid === 'string' ? m.uuid : undefined;
     const base = (): Record<string, unknown> => ({
       recovered: true,
@@ -150,11 +146,7 @@ function mapTurnBlocks(lines: RawLine[]): {
         ? (m.message!.content as Array<Record<string, unknown>>)
         : [];
       for (const block of content) {
-        if (
-          block.type === 'text' &&
-          typeof block.text === 'string' &&
-          block.text.trim()
-        ) {
+        if (block.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
           blocks.push({
             kind: 'chat',
             text: block.text,
@@ -172,10 +164,7 @@ function mapTurnBlocks(lines: RawLine[]): {
             meta: base(),
             ...(emittedAt ? { emittedAt } : {}),
           });
-        } else if (
-          block.type === 'tool_use' &&
-          typeof block.name === 'string'
-        ) {
+        } else if (block.type === 'tool_use' && typeof block.name === 'string') {
           const id = typeof block.id === 'string' ? block.id : '';
           blocks.push({
             kind: 'tool',
@@ -199,13 +188,10 @@ function mapTurnBlocks(lines: RawLine[]): {
         : [];
       // Edit/MultiEdit carry a `structuredPatch` (real file offsets) on the line's `toolUseResult` — mirror
       // engine-core and attach it so a recovered turn's diff gutter shows true line numbers, not 1-based.
-      const patch = (
-        m.toolUseResult as { structuredPatch?: unknown } | undefined
-      )?.structuredPatch;
+      const patch = (m.toolUseResult as { structuredPatch?: unknown } | undefined)?.structuredPatch;
       for (const block of content) {
         if (block.type !== 'tool_result') continue;
-        const toolUseId =
-          typeof block.tool_use_id === 'string' ? block.tool_use_id : '';
+        const toolUseId = typeof block.tool_use_id === 'string' ? block.tool_use_id : '';
         // Pair with the newest still-unpaired tool block (mirrors engine-core / turn-harness pairing).
         for (let i = blocks.length - 1; i >= 0; i--) {
           const b = blocks[i];
@@ -217,10 +203,8 @@ function mapTurnBlocks(lines: RawLine[]): {
             b.toolPaired = true;
             b.meta.result = block.content ?? null;
             b.meta.isError = Boolean(block.is_error);
-            if (b.meta.isError && isInterruptAbortResult(block.content))
-              b.meta.superseded = true;
-            if (Array.isArray(patch) && patch.length)
-              b.meta.structuredPatch = patch;
+            if (b.meta.isError && isInterruptAbortResult(block.content)) b.meta.superseded = true;
+            if (Array.isArray(patch) && patch.length) b.meta.structuredPatch = patch;
             break;
           }
         }
@@ -240,9 +224,7 @@ function mapTurnBlocks(lines: RawLine[]): {
  */
 export function parseSessionTranscriptTurns(jsonl: string): SessionTranscript {
   const parsed = parseLines(jsonl);
-  const sessionId = parsed.find(
-    (m) => typeof m.sessionId === 'string',
-  )?.sessionId;
+  const sessionId = parsed.find((m) => typeof m.sessionId === 'string')?.sessionId;
 
   const promptIdx: number[] = [];
   parsed.forEach((m, i) => {

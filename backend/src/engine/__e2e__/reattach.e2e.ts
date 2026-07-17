@@ -30,9 +30,9 @@ async function readUntil(
   let cur = cursor;
   const t0 = Date.now();
   while (Date.now() - t0 < timeoutMs) {
-    const r = (await redis
-      .xread('BLOCK', 2000, 'STREAMS', stream, cur)
-      .catch(() => null)) as Array<[string, Array<[string, string[]]>]> | null;
+    const r = (await redis.xread('BLOCK', 2000, 'STREAMS', stream, cur).catch(() => null)) as Array<
+      [string, Array<[string, string[]]>]
+    > | null;
     if (!r) {
       if (ids.length === 0) continue;
       if (stop(ids.length, final)) break;
@@ -57,8 +57,7 @@ export async function run(sandbox: string): Promise<ScenarioResult> {
   try {
     const spec = makeSpec(turnId, {
       richStream: true,
-      task:
-        'Count slowly from 1 to 15. Output each number on its own line with a short factoid. Take your time.',
+      task: 'Count slowly from 1 to 15. Output each number on its own line with a short factoid. Take your time.',
       systemPrompt: 'You are a verbose test assistant; produce a long multi-line streamed answer.',
     });
     console.log(`[reattach] turn ${turnId} on ${sandbox}`);
@@ -70,7 +69,9 @@ export async function run(sandbox: string): Promise<ScenarioResult> {
     // HOST #1: read a handful of events, then "crash" — stop reading, saving the cursor.
     const h1 = await readUntil(redis, k.events, '0-0', (seen) => seen >= 4, 90_000);
     const seen1 = new Set(h1.ids);
-    console.log(`[reattach] HOST #1 read ${h1.ids.length} event(s); CRASHING at cursor ${h1.cursor}`);
+    console.log(
+      `[reattach] HOST #1 read ${h1.ids.length} event(s); CRASHING at cursor ${h1.cursor}`,
+    );
     if (h1.ids.length === 0) return { pass: false, detail: 'HOST #1 saw no events' };
     if (h1.final) {
       // Turn finished before we could split the stream — inconclusive for the mid-stream reattach claim.

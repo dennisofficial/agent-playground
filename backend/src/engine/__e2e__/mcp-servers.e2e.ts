@@ -50,7 +50,8 @@ export async function run(sandbox: string): Promise<ScenarioResult> {
 
     const { frames, final, error } = await tailEvents(redis, turnId, { timeoutMs: 180_000 });
     console.log(`[mcp] frames: ${frameKinds(frames)}`);
-    if (error) return { pass: false, detail: `error frame: ${String(error.message).slice(0, 200)}` };
+    if (error)
+      return { pass: false, detail: `error frame: ${String(error.message).slice(0, 200)}` };
 
     const evs = events(frames);
     // tool_use (rich) or coarse tool event naming the qualified LSP MCP tool.
@@ -61,9 +62,7 @@ export async function run(sandbox: string): Promise<ScenarioResult> {
     );
     const lspUseIds = new Set(lspUses.map((e) => e.id).filter(Boolean));
     // A tool_result correlated to one of those calls = the MCP subprocess answered (the round-trip).
-    const lspResults = evs.filter(
-      (e) => e.kind === 'tool_result' && lspUseIds.has(e.id),
-    );
+    const lspResults = evs.filter((e) => e.kind === 'tool_result' && lspUseIds.has(e.id));
     const anyResult = lspResults.find((e) => e.isError !== true);
     console.log(
       `[mcp] atlas-lsp-ts tool_use=${lspUses.length} tool_result=${lspResults.length} (non-error result present=${!!anyResult}); final=${!!final}`,

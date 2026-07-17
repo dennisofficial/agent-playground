@@ -1,11 +1,11 @@
-import { randomUUID } from 'node:crypto';
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import type { ToolImpl } from '@shared/engine/engine.types';
-import { BrainStoreService } from './brain-store.service';
+import { randomUUID } from 'node:crypto';
 import { McpServerStore } from '../mcp/mcp-server.store';
 import { MemoryStore } from '../memory/memory.store';
-import { webSecretInputCard } from '../surface/web-secret-input-card';
 import { webFileRequestCard } from '../surface/web-file-request-card';
+import { webSecretInputCard } from '../surface/web-secret-input-card';
+import { BrainStoreService } from './brain-store.service';
 
 /** The tenant + authoring context a build/brain thread supplies when asking for this toolset. */
 type SelfSufficiencyContext = {
@@ -78,9 +78,7 @@ export class SelfSufficiencyToolsService {
         if (!id) return { forgotten: false, reason: 'id is required' };
         try {
           const { deleted } = await this.memory.forget(id, ctx.orgId);
-          return deleted
-            ? { forgotten: true }
-            : { forgotten: false, reason: 'no such memory' };
+          return deleted ? { forgotten: true } : { forgotten: false, reason: 'no such memory' };
         } catch (err) {
           return { forgotten: false, reason: String(err) };
         }
@@ -92,9 +90,7 @@ export class SelfSufficiencyToolsService {
         if (!fact) return { updated: false, reason: 'fact is required' };
         try {
           const { updated } = await this.memory.updateFact(id, fact, ctx.orgId);
-          return updated
-            ? { updated: true }
-            : { updated: false, reason: 'no such memory' };
+          return updated ? { updated: true } : { updated: false, reason: 'no such memory' };
         } catch (err) {
           return { updated: false, reason: String(err) };
         }
@@ -142,8 +138,7 @@ export class SelfSufficiencyToolsService {
         if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(label)) {
           return {
             ok: false,
-            reason:
-              'name (label) must be an identifier (e.g. GCLOUD_AUTH_CODE)',
+            reason: 'name (label) must be an identifier (e.g. GCLOUD_AUTH_CODE)',
           };
         }
         const requestId = `s-${randomUUID()}`;
@@ -246,15 +241,13 @@ export class SelfSufficiencyToolsService {
       if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
         return {
           ok: false,
-          reason:
-            'name must be an env-var-style identifier (e.g. DATABASE_URL)',
+          reason: 'name must be an env-var-style identifier (e.g. DATABASE_URL)',
         };
       }
       if (!path || path.startsWith('/') || path.split('/').includes('..')) {
         return {
           ok: false,
-          reason:
-            'path must be a worktree-relative file path (e.g. .env), no leading / or ..',
+          reason: 'path must be a worktree-relative file path (e.g. .env), no leading / or ..',
         };
       }
       const requestId = `s-${randomUUID()}`;
@@ -302,8 +295,7 @@ export class SelfSufficiencyToolsService {
       if (!path || path.startsWith('/') || path.split('/').includes('..')) {
         return {
           ok: false,
-          reason:
-            'path must be a worktree-relative file path (e.g. .env.keys), no leading / or ..',
+          reason: 'path must be a worktree-relative file path (e.g. .env.keys), no leading / or ..',
         };
       }
       if (!description)

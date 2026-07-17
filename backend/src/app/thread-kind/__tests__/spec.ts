@@ -11,11 +11,8 @@
  */
 import type { SessionEngine } from '@shared/domain';
 import type { ReasoningEffort } from '@shared/engine';
-import type {
-  ThreadInput,
-  ThreadKind as LaneKind,
-} from '../../surface/thread-registry';
 import { Agent } from '@shared/prompt-kit/system';
+import type { ThreadKind as LaneKind, ThreadInput } from '../../surface/thread-registry';
 
 /**
  * The ROLE of a `threads` row — the single differentiator across every thread-like concept (renamed from

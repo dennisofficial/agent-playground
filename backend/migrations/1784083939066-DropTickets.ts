@@ -14,19 +14,13 @@ export class DropTickets1784000000000 implements MigrationInterface {
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     // 1. Sever the jobs → tickets link first (index, FK, then column).
-    await queryRunner.query(
-      `DROP INDEX IF EXISTS "public"."uq_threads_ticket_id"`,
-    );
+    await queryRunner.query(`DROP INDEX IF EXISTS "public"."uq_threads_ticket_id"`);
     await queryRunner.query(
       `ALTER TABLE "jobs" DROP CONSTRAINT IF EXISTS "fk_jobs_ticket_id_tickets"`,
     );
-    await queryRunner.query(
-      `ALTER TABLE "jobs" DROP COLUMN IF EXISTS "ticket_id"`,
-    );
+    await queryRunner.query(`ALTER TABLE "jobs" DROP COLUMN IF EXISTS "ticket_id"`);
     // 2. Drop the ticket tables. CASCADE cleans dependent FKs/indexes (incl. idx_tickets_embedding_hnsw).
-    await queryRunner.query(
-      `DROP TABLE IF EXISTS "ticket_dependencies" CASCADE`,
-    );
+    await queryRunner.query(`DROP TABLE IF EXISTS "ticket_dependencies" CASCADE`);
     await queryRunner.query(`DROP TABLE IF EXISTS "ticket_counters" CASCADE`);
     await queryRunner.query(`DROP TABLE IF EXISTS "tickets" CASCADE`);
   }
@@ -82,9 +76,7 @@ export class DropTickets1784000000000 implements MigrationInterface {
       `ALTER TABLE "ticket_counters" ADD CONSTRAINT "fk_ticket_counters_repo_id_repos" FOREIGN KEY ("repo_id") REFERENCES "repos"("id") ON DELETE CASCADE ON UPDATE NO ACTION`,
     );
     // AddTicketEmbedding: 1536-dim vector + pgvector HNSW cosine index.
-    await queryRunner.query(
-      `ALTER TABLE "tickets" ADD "embedding" vector(1536)`,
-    );
+    await queryRunner.query(`ALTER TABLE "tickets" ADD "embedding" vector(1536)`);
     await queryRunner.query(
       `CREATE INDEX IF NOT EXISTS "idx_tickets_embedding_hnsw" ON "tickets" USING hnsw ("embedding" vector_cosine_ops)`,
     );

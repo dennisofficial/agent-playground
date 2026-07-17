@@ -47,19 +47,14 @@ describe('pipelineStateSignature', () => {
   });
 
   it('is deterministic for the same state', () => {
-    expect(pipelineStateSignature(RUNNING_STATE)).toBe(
-      pipelineStateSignature(RUNNING_STATE),
-    );
+    expect(pipelineStateSignature(RUNNING_STATE)).toBe(pipelineStateSignature(RUNNING_STATE));
   });
 
   it('changes when a thread status advances (the in-place overwrite the snapshot CAN see)', () => {
     const before = pipelineStateSignature(RUNNING_STATE);
     const after = pipelineStateSignature({
       ...RUNNING_STATE,
-      threads: [
-        RUNNING_STATE.threads[0],
-        { ...RUNNING_STATE.threads[1], status: 'done' },
-      ],
+      threads: [RUNNING_STATE.threads[0], { ...RUNNING_STATE.threads[1], status: 'done' }],
     });
     expect(after).not.toBe(before);
   });
@@ -88,9 +83,7 @@ describe('renderPipelineStateSummary', () => {
     const summary = renderPipelineStateSummary(RUNNING_STATE);
     expect(summary).toContain('Current build state: running.');
     expect(summary).toContain('Thread 1 "Backend": done [2/2 steps done]');
-    expect(summary).toContain(
-      'Thread 2 "Frontend": executing [0/1 steps done]',
-    );
+    expect(summary).toContain('Thread 2 "Frontend": executing [0/1 steps done]');
   });
 
   it('includes the PR url when present', () => {
@@ -124,16 +117,11 @@ describe('renderAwarenessPrefix', () => {
     const prefix = renderAwarenessPrefix(markers, null);
     expect(prefix).toContain('informational, no action needed unless asked');
     expect(prefix).toContain('- Your plan was approved by the operator.');
-    expect(prefix).toContain(
-      '- The build pipeline has started running the approved plan.',
-    );
+    expect(prefix).toContain('- The build pipeline has started running the approved plan.');
   });
 
   it('appends the net-state summary when one is conveyed', () => {
-    const prefix = renderAwarenessPrefix(
-      markers,
-      'Current build state: running.',
-    );
+    const prefix = renderAwarenessPrefix(markers, 'Current build state: running.');
     expect(prefix).toContain('Current build state: running.');
   });
 

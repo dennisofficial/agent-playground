@@ -26,9 +26,7 @@ const KEEPALIVE_INTERVAL_NAME = 'onboarding:credential-keepalive';
  * `SkillUpdaterService`: an `@Global` module has no reason to route through another domain's reap timer.
  */
 @Injectable()
-export class CredentialKeepAliveService
-  implements OnApplicationBootstrap, OnApplicationShutdown
-{
+export class CredentialKeepAliveService implements OnApplicationBootstrap, OnApplicationShutdown {
   private readonly logger = new Logger(CredentialKeepAliveService.name);
   private promoteSub?: { unsubscribe(): void };
   private demoteSub?: { unsubscribe(): void };
@@ -85,9 +83,7 @@ export class CredentialKeepAliveService
     if (this.running) return;
     this.running = true;
     try {
-      const due = await this.store.listExpiringPersonal(
-        KEEPALIVE_EXPIRY_WINDOW_MS,
-      );
+      const due = await this.store.listExpiringPersonal(KEEPALIVE_EXPIRY_WINDOW_MS);
       let refreshed = 0;
       let failed = 0;
       for (const { orgId, credentialId } of due) {
@@ -100,9 +96,7 @@ export class CredentialKeepAliveService
           })
           .catch((err) => {
             failed += 1;
-            this.logger.warn(
-              `keep-alive refresh failed org=${orgId} id=${credentialId}: ${err}`,
-            );
+            this.logger.warn(`keep-alive refresh failed org=${orgId} id=${credentialId}: ${err}`);
           });
       }
       const health = await this.store.credentialHealthSnapshot();

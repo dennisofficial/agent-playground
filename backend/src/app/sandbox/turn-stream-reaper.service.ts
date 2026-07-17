@@ -1,16 +1,10 @@
 import { EnvService } from '@core/config/env/env.service';
+import type { OnApplicationBootstrap, OnApplicationShutdown } from '@nestjs/common';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
-import type {
-  OnApplicationBootstrap,
-  OnApplicationShutdown,
-} from '@nestjs/common';
 import { SchedulerRegistry } from '@nestjs/schedule';
 import type { Subscription } from 'rxjs';
+import { REDIS_STREAM_PORT, type RedisStreamPort } from '../../_lib/redis/redis.port';
 import { LeaderElectionService } from '../cluster/leader-election.service';
-import {
-  REDIS_STREAM_PORT,
-  type RedisStreamPort,
-} from '../../_lib/redis/redis.port';
 import { TurnRegistry } from './turn-registry.service';
 
 /** Match every per-turn transport key (`turn:{T}:spec|events|tools|replies`). */
@@ -42,9 +36,7 @@ const DEFAULT_IDLE_MS = 300_000;
  * on demotion/shutdown, disabled entirely against a `*_test` DB. Fail-soft throughout.
  */
 @Injectable()
-export class TurnStreamReaperService
-  implements OnApplicationBootstrap, OnApplicationShutdown
-{
+export class TurnStreamReaperService implements OnApplicationBootstrap, OnApplicationShutdown {
   private readonly logger = new Logger(TurnStreamReaperService.name);
   private promoteSub?: Subscription;
   private demoteSub?: Subscription;
@@ -146,14 +138,10 @@ export class TurnStreamReaperService
         .then(() => {
           reaped++;
         })
-        .catch((err) =>
-          this.logger.debug(`reaper del ${turnId} failed (ignored): ${err}`),
-        );
+        .catch((err) => this.logger.debug(`reaper del ${turnId} failed (ignored): ${err}`));
     }
     if (reaped > 0) {
-      this.logger.warn(
-        `reaped ${reaped} orphaned turn stream set(s) — no active_turns row`,
-      );
+      this.logger.warn(`reaped ${reaped} orphaned turn stream set(s) — no active_turns row`);
     }
   }
 }

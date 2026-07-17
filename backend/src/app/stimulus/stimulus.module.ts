@@ -1,11 +1,12 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { JobBootstrapModule } from '../job-bootstrap/job-bootstrap.module';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
-  TranscriptMessageEntity,
-  RepoEntity,
   InboundMessageEntity,
   JobEntity,
+  RepoEntity,
+  TranscriptMessageEntity,
 } from '../persistence/entities';
 import { ChatStimulusBridge } from './chat-stimulus.bridge';
 import { DeliveryPump } from './delivery-pump.service';
@@ -14,7 +15,6 @@ import { ProjectRoutingService } from './project-routing.service';
 import { StimulusIntake } from './stimulus-intake.service';
 import { StimulusStoreService } from './stimulus-store.service';
 import { SurfaceOrchestration } from './surface-orchestration.service';
-import { JobBootstrapModule } from '../job-bootstrap/job-bootstrap.module';
 
 /**
  * The STIMULUS seam — the intake pipeline both edges (chat + events) flow through:
@@ -52,11 +52,6 @@ import { JobBootstrapModule } from '../job-bootstrap/job-bootstrap.module';
     ChatStimulusBridge,
     DeliveryPump,
   ],
-  exports: [
-    StimulusIntake,
-    ProjectRoutingService,
-    StimulusStoreService,
-    DeliveryPump,
-  ],
+  exports: [StimulusIntake, ProjectRoutingService, StimulusStoreService, DeliveryPump],
 })
 export class StimulusModule {}

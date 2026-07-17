@@ -4,12 +4,12 @@
  * objects. No DB, no Docker. Uses fake timers to exercise the ~5s debounce.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
-import type { CredentialResolver } from '../../onboarding';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GithubPrService } from '../../git';
-import type { StimulusIntake } from '../../stimulus';
+import type { CredentialResolver } from '../../onboarding';
 import type { JobEntity, RepoEntity } from '../../persistence/entities';
+import type { StimulusIntake } from '../../stimulus';
 import { BaseMoveMergeabilitySync } from '../base-move-mergeability-sync.service';
 
 type MergeabilityResult = {
@@ -59,9 +59,7 @@ function make(over: {
     hostGithubToken: vi.fn(async () => 'tok'),
   } as unknown as CredentialResolver;
 
-  const listOpenPullMergeability = vi.fn(
-    async () => over.results ?? [result()],
-  );
+  const listOpenPullMergeability = vi.fn(async () => over.results ?? [result()]);
   const pr = {
     listOpenPullMergeability,
     isGraphqlRateLimited: vi.fn(() => false),
@@ -126,10 +124,7 @@ describe('BaseMoveMergeabilitySync.refresh (via schedule)', () => {
     });
     sync.schedule('T1', 'repo-1');
     await vi.advanceTimersByTimeAsync(5_000);
-    expect(update).toHaveBeenCalledWith(
-      { id: 'job-1' },
-      { pr_mergeable: 'behind' },
-    );
+    expect(update).toHaveBeenCalledWith({ id: 'job-1' }, { pr_mergeable: 'behind' });
   });
 
   it('does NOT write when pr_mergeable already matches', async () => {
@@ -192,9 +187,7 @@ describe('BaseMoveMergeabilitySync.refresh (via schedule)', () => {
 
   it('re-schedules once when a result is unknown (GitHub still computing)', async () => {
     const { sync, listOpenPullMergeability } = make({
-      results: [
-        result({ mergeableState: 'unknown', mergeStateStatus: 'UNKNOWN' }),
-      ],
+      results: [result({ mergeableState: 'unknown', mergeStateStatus: 'UNKNOWN' })],
     });
     sync.schedule('T1', 'repo-1');
     await vi.advanceTimersByTimeAsync(5_000);
@@ -206,24 +199,17 @@ describe('BaseMoveMergeabilitySync.refresh (via schedule)', () => {
 
   it('writes unknown while GitHub is still computing so stale settled badges clear', async () => {
     const { sync, update } = make({
-      results: [
-        result({ mergeableState: 'unknown', mergeStateStatus: 'UNKNOWN' }),
-      ],
+      results: [result({ mergeableState: 'unknown', mergeStateStatus: 'UNKNOWN' })],
       job: { pr_mergeable: 'clean' },
     });
     sync.schedule('T1', 'repo-1');
     await vi.advanceTimersByTimeAsync(5_000);
-    expect(update).toHaveBeenCalledWith(
-      { id: 'job-1' },
-      { pr_mergeable: 'unknown' },
-    );
+    expect(update).toHaveBeenCalledWith({ id: 'job-1' }, { pr_mergeable: 'unknown' });
   });
 
   it('caps unknown retries so a stuck repo does not retry forever', async () => {
     const { sync, listOpenPullMergeability } = make({
-      results: [
-        result({ mergeableState: 'unknown', mergeStateStatus: 'UNKNOWN' }),
-      ],
+      results: [result({ mergeableState: 'unknown', mergeStateStatus: 'UNKNOWN' })],
     });
     sync.schedule('T1', 'repo-1');
     // Initial refresh + up to MAX_UNKNOWN_RETRIES (3) re-schedules = 4 calls total, then it stops.

@@ -7,8 +7,8 @@
  * These shapes live in THIS subfolder, never `domain/index.ts`. Zero imports from `harness/**` or the
  * v1 `slack-app` surface — the stage talks only to W1's `EngineRunner` + `LocalGitService`.
  */
-import type { EngineAuth, EngineHomeKey, GitAuth } from '@shared/engine';
 import type { SessionEngine } from '@shared/domain';
+import type { EngineAuth, EngineHomeKey, GitAuth } from '@shared/engine';
 
 /** How severe a finding is — drives whether the fix turn is even attempted (see `fixMinSeverity`). */
 export type FindingSeverity = 'low' | 'medium' | 'high';
@@ -110,11 +110,7 @@ export interface AutoFixOptions {
    * finding count) after it. Lets the driver persist live per-agent review status onto the thread so the
    * navigator's review folder can show each agent's state. Best-effort: the stage swallows hook errors.
    */
-  onLensStatus?: (
-    lensId: string,
-    status: LensStatus,
-    findings?: number,
-  ) => void;
+  onLensStatus?: (lensId: string, status: LensStatus, findings?: number) => void;
 }
 
 /** A review lens's live status as the auto-fix stage reports it (`pending` is the driver's seed state). */

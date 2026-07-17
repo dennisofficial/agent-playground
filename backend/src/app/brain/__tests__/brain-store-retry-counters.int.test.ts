@@ -12,17 +12,13 @@
  */
 
 import { Test, type TestingModule } from '@nestjs/testing';
-import {
-  TypeOrmModule,
-  getDataSourceToken,
-  getRepositoryToken,
-} from '@nestjs/typeorm';
+import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { CustomNamingStrategy } from '../../../_lib/database/custom-naming.strategy';
+import { JobDependencyService } from '../../job-deps';
 import { DB_CONNECTION } from '../../persistence/database.module';
 import { ENTITIES, JobEntity } from '../../persistence/entities';
-import { JobDependencyService } from '../../job-deps';
 import { JobTitler } from '../../titling';
 import { BrainStoreService } from '../brain-store.service';
 
@@ -55,10 +51,7 @@ describe('BrainStoreService retry-counter durability (live Postgres)', () => {
 
   beforeAll(async () => {
     mod = await Test.createTestingModule({
-      imports: [
-        TypeOrmModule.forRoot(dbOpts()),
-        TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION),
-      ],
+      imports: [TypeOrmModule.forRoot(dbOpts()), TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION)],
       providers: [
         BrainStoreService,
         { provide: JobTitler, useValue: {} },
@@ -187,9 +180,7 @@ describe('BrainStoreService retry-counter durability (live Postgres)', () => {
     });
     let row = await jobs.findOne({ where: { id: jobId } });
     expect(row?.retry_last_attempt_at).toBeInstanceOf(Date);
-    expect(row!.retry_last_attempt_at!.getTime()).toBeGreaterThanOrEqual(
-      before - 1000,
-    );
+    expect(row!.retry_last_attempt_at!.getTime()).toBeGreaterThanOrEqual(before - 1000);
 
     expect(await store.claimTransientRetryRedrive(jobId, 5)).toEqual({
       ok: true,
@@ -197,9 +188,7 @@ describe('BrainStoreService retry-counter durability (live Postgres)', () => {
     });
     row = await jobs.findOne({ where: { id: jobId } });
     expect(row?.retry_last_attempt_at).toBeInstanceOf(Date);
-    expect(row!.retry_last_attempt_at!.getTime()).toBeGreaterThanOrEqual(
-      before - 1000,
-    );
+    expect(row!.retry_last_attempt_at!.getTime()).toBeGreaterThanOrEqual(before - 1000);
   });
 
   it('two concurrent claimBenignAbortRedrive calls at the cap boundary — exactly one succeeds (row-level CAS)', async () => {
@@ -222,10 +211,7 @@ describe('BrainStoreService retry-counter durability (live Postgres)', () => {
     await store.claimSessionLimitTextMisfire(jobId, 5);
     // Bump the driver's own lane columns directly (no DriverStoreService in scope here) to prove
     // clearBrainRetryCounters doesn't reach across lanes.
-    await jobs.update(
-      { id: jobId },
-      { auth_retry_attempts: 3, driver_transient_retries: 4 },
-    );
+    await jobs.update({ id: jobId }, { auth_retry_attempts: 3, driver_transient_retries: 4 });
     const before = await jobs.findOne({ where: { id: jobId } });
     const stampBefore = before!.retry_last_attempt_at;
     expect(stampBefore).toBeInstanceOf(Date);

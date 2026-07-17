@@ -1,19 +1,10 @@
-import {
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  existsSync,
-} from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { LocalGitService } from '../../git';
 import { readForbiddenPaths } from '../../git';
-import type {
-  WorkspaceConfigStore,
-  WorkspaceSecretFileStore,
-} from '../../onboarding';
+import type { WorkspaceConfigStore, WorkspaceSecretFileStore } from '../../onboarding';
 import type { MountSpec } from '../../sandbox/container-paths';
 import { WorktreeHydrator } from '../worktree-hydrator.service';
 
@@ -42,9 +33,7 @@ function fakeSecrets(world: SecretWorld): WorkspaceSecretFileStore {
     (world.files ?? []).filter((f) => (f.repoId ?? REPO) === repoId);
   return {
     read: async (orgId: string, repoId: string, path: string) =>
-      orgId === ORG
-        ? (forRepo(repoId).find((f) => f.path === path)?.value ?? null)
-        : null,
+      orgId === ORG ? (forRepo(repoId).find((f) => f.path === path)?.value ?? null) : null,
     listForRepo: async (_orgId: string, repoId: string) =>
       forRepo(repoId).map((f) => ({
         path: f.path,
@@ -205,9 +194,7 @@ describe('WorktreeHydrator', () => {
         ],
       }),
     );
-    expect(await h.resolveMounts(ORG, REPO, wt)).toEqual([
-      { path: '.venv', mode: 'per-thread' },
-    ]);
+    expect(await h.resolveMounts(ORG, REPO, wt)).toEqual([{ path: '.venv', mode: 'per-thread' }]);
   });
 
   it('resolveMounts keeps a valid EXTERNAL (absolute) mount and drops a reserved one', async () => {
@@ -261,11 +248,7 @@ describe('WorktreeHydrator', () => {
   });
 
   it('computeSig changes when a mount is added (so write_workspace_config re-triggers hydration)', async () => {
-    const before = new WorktreeHydrator(
-      fakeGit(new Set()),
-      fakeSecrets({}),
-      fakeConfig({}),
-    );
+    const before = new WorktreeHydrator(fakeGit(new Set()), fakeSecrets({}), fakeConfig({}));
     const after = new WorktreeHydrator(
       fakeGit(new Set()),
       fakeSecrets({}),
@@ -278,23 +261,13 @@ describe('WorktreeHydrator', () => {
 
   describe('resilience — a worktree-config store failure never throws', () => {
     it('resolveMounts returns [] (not a rejection) when the store is down', async () => {
-      const h = new WorktreeHydrator(
-        fakeGit(new Set()),
-        fakeSecrets({}),
-        failingConfig(),
-      );
+      const h = new WorktreeHydrator(fakeGit(new Set()), fakeSecrets({}), failingConfig());
       await expect(h.resolveMounts(ORG, REPO, wt)).resolves.toEqual([]);
     });
 
     it('computeSig still resolves (treating mounts as empty) when the store is down', async () => {
-      const h = new WorktreeHydrator(
-        fakeGit(new Set()),
-        fakeSecrets({}),
-        failingConfig(),
-      );
-      await expect(h.computeSig(wt, ORG, REPO)).resolves.toEqual(
-        expect.any(String),
-      );
+      const h = new WorktreeHydrator(fakeGit(new Set()), fakeSecrets({}), failingConfig());
+      await expect(h.computeSig(wt, ORG, REPO)).resolves.toEqual(expect.any(String));
     });
 
     it('hydrateFiles resolves with a notice (not a rejection) when the store is down, and secrets still render', async () => {

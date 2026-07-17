@@ -3,8 +3,8 @@ import {
   DEFAULT_ROTATION_REMINDER_DELTA_TOKENS,
   DEFAULT_ROTATION_SOFT_TOKENS,
   LegRotationWatch,
-  type LegRotationSignal,
   resolveRotationThresholds,
+  type LegRotationSignal,
 } from '../leg-rotation-watch';
 
 const THRESHOLDS = { softTokens: 150_000, reminderDeltaTokens: 25_000 };
@@ -49,9 +49,7 @@ describe('LegRotationWatch', () => {
     watch.observe({ contextTokens: 155_000, contextLimit: 1_000_000 }); // soft
     watch.observe({ contextTokens: 180_000, contextLimit: 1_000_000 }); // +delta → reminder 1
     watch.observe({ contextTokens: 210_000, contextLimit: 1_000_000 }); // +2delta → reminder 2
-    expect(
-      signals.map((s) => ({ phase: s.phase, reminderIndex: s.reminderIndex })),
-    ).toEqual([
+    expect(signals.map((s) => ({ phase: s.phase, reminderIndex: s.reminderIndex }))).toEqual([
       { phase: 'soft', reminderIndex: 0 },
       { phase: 'reminder', reminderIndex: 1 },
       { phase: 'reminder', reminderIndex: 2 },

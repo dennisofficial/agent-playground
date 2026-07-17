@@ -1,8 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { describe, expect, it } from 'vitest';
 import {
   DUMP_SUBDIR,
   DUMP_THRESHOLD_BYTES,
@@ -49,13 +49,10 @@ describe('maybeDumpLargeResult', () => {
 
   it('dumps a large reader csv envelope to a clean .csv file', () => {
     withTempPlayground((playgroundDir) => {
-      const csvText = [
-        'id,name',
-        ...Array.from({ length: 3000 }, (_, i) => `${i},row-${i}`),
-      ].join('\n');
-      expect(Buffer.byteLength(csvText, 'utf8')).toBeGreaterThan(
-        DUMP_THRESHOLD_BYTES,
+      const csvText = ['id,name', ...Array.from({ length: 3000 }, (_, i) => `${i},row-${i}`)].join(
+        '\n',
       );
+      expect(Buffer.byteLength(csvText, 'utf8')).toBeGreaterThan(DUMP_THRESHOLD_BYTES);
       const envelope = JSON.stringify({
         format: 'csv',
         text: csvText,
@@ -98,9 +95,7 @@ describe('maybeDumpLargeResult', () => {
         rows,
         rowCount: rows.length,
       });
-      expect(Buffer.byteLength(envelope, 'utf8')).toBeGreaterThan(
-        DUMP_THRESHOLD_BYTES,
-      );
+      expect(Buffer.byteLength(envelope, 'utf8')).toBeGreaterThan(DUMP_THRESHOLD_BYTES);
       const result = textResult(envelope);
 
       const out = maybeDumpLargeResult(
@@ -127,9 +122,7 @@ describe('maybeDumpLargeResult', () => {
         })),
       };
       const text = JSON.stringify(schema);
-      expect(Buffer.byteLength(text, 'utf8')).toBeGreaterThan(
-        DUMP_THRESHOLD_BYTES,
-      );
+      expect(Buffer.byteLength(text, 'utf8')).toBeGreaterThan(DUMP_THRESHOLD_BYTES);
       const result = textResult(text);
 
       const out = maybeDumpLargeResult(
@@ -150,10 +143,7 @@ describe('maybeDumpLargeResult', () => {
 
   it('dumps large non-JSON text to a .txt file', () => {
     withTempPlayground((playgroundDir) => {
-      const text = bigString(
-        'line one\nline two\n',
-        DUMP_THRESHOLD_BYTES + 5_000,
-      );
+      const text = bigString('line one\nline two\n', DUMP_THRESHOLD_BYTES + 5_000);
       const result = textResult(text);
 
       const out = maybeDumpLargeResult(

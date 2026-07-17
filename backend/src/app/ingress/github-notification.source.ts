@@ -1,6 +1,5 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Injectable, Logger } from '@nestjs/common';
-import { createHmac, timingSafeEqual } from 'node:crypto';
 import type {
   CiSyncDelta,
   EventKind,
@@ -11,6 +10,7 @@ import type {
   PrStateDelta,
   RawNotification,
 } from '@shared/domain';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { ProjectRoutingService } from '../stimulus/project-routing.service';
 
 /**
@@ -100,11 +100,7 @@ export class GithubNotificationSource implements NotificationSource {
       orgId: g.route.orgId,
       repoId: g.route.repoId,
       source: this.source,
-      dedupeKey: deriveDedupeKey(
-        g.eventType,
-        g.body,
-        raw.headers['x-github-delivery'],
-      ),
+      dedupeKey: deriveDedupeKey(g.eventType, g.body, raw.headers['x-github-delivery']),
       severity: summary.severity,
       eventKind: summary.eventKind,
       body: summary.body,
@@ -353,11 +349,7 @@ interface EventSummary {
 }
 
 /** Verify GitHub's `sha256=<hex>` HMAC of the raw bytes, constant-time. */
-export function verifyGithubSignature(
-  rawBody: Buffer,
-  signature: string,
-  secret: string,
-): boolean {
+export function verifyGithubSignature(rawBody: Buffer, signature: string, secret: string): boolean {
   const expected = `sha256=${createHmac('sha256', secret).update(rawBody).digest('hex')}`;
   const a = Buffer.from(expected);
   const b = Buffer.from(signature);
@@ -371,10 +363,7 @@ export function verifyGithubSignature(
  * review submissions / comments. The correlation hint (branch + PR number) routes each to the job that
  * owns it; a match that finds no owner falls through to seed-a-new-thread (external CI).
  */
-function summarizeGithubEvent(
-  eventType: string,
-  body: GithubWebhookBody,
-): EventSummary | null {
+function summarizeGithubEvent(eventType: string, body: GithubWebhookBody): EventSummary | null {
   const repo = body.repository?.full_name;
   if (eventType === 'workflow_run') {
     const run = body.workflow_run;
@@ -516,11 +505,7 @@ function parseCiDelta(
   route: { orgId: string; repoId: string },
   body: GithubWebhookBody,
 ): CiSyncDelta | null {
-  if (
-    eventType !== 'workflow_run' &&
-    eventType !== 'check_run' &&
-    eventType !== 'check_suite'
-  )
+  if (eventType !== 'workflow_run' && eventType !== 'check_run' && eventType !== 'check_suite')
     return null;
   const prNumber =
     body.workflow_run?.pull_requests?.[0]?.number ??
@@ -535,14 +520,8 @@ function parseCiDelta(
   return { orgId: route.orgId, repoId: route.repoId, prNumber, branch };
 }
 
-function checkRunBranch(
-  check: NonNullable<GithubWebhookBody['check_run']>,
-): string | null {
-  return (
-    check.check_suite?.head_branch ??
-    check.pull_requests?.[0]?.head?.ref ??
-    null
-  );
+function checkRunBranch(check: NonNullable<GithubWebhookBody['check_run']>): string | null {
+  return check.check_suite?.head_branch ?? check.pull_requests?.[0]?.head?.ref ?? null;
 }
 
 /**
@@ -563,9 +542,7 @@ function deriveDedupeKey(
   deliveryId: string | undefined,
 ): string {
   const ciSha =
-    body.workflow_run?.head_sha ??
-    body.check_run?.head_sha ??
-    body.check_suite?.head_sha;
+    body.workflow_run?.head_sha ?? body.check_run?.head_sha ?? body.check_suite?.head_sha;
   if (ciSha) return `ci:${ciSha}`;
   const groupId =
     body.workflow_run?.id ??
@@ -573,7 +550,6 @@ function deriveDedupeKey(
     body.check_suite?.id ??
     body.review?.id ??
     body.comment?.id;
-  if (groupId !== undefined && groupId !== null)
-    return `${eventType}:${groupId}`;
+  if (groupId !== undefined && groupId !== null) return `${eventType}:${groupId}`;
   return `delivery:${deliveryId ?? 'unknown'}`;
 }

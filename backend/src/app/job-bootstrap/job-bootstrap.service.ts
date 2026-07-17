@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { ThreadGroupEntity, ThreadEntity } from '../persistence/entities';
+import { ThreadEntity, ThreadGroupEntity } from '../persistence/entities';
 
 /** Ordinals are gap-numbered (10, 20, 30…) so a later insert can splice without renumbering. */
 const ORDINAL_GAP = 10;

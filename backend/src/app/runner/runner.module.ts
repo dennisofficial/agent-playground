@@ -14,11 +14,7 @@ import { TurnRunnerService } from './turn-runner.service';
  * comes from the persistence module on the 'atlas' connection. Zero v1 imports.
  */
 @Module({
-  imports: [
-    EngineModule,
-    GitModule,
-    TypeOrmModule.forFeature([ThreadEntity], DB_CONNECTION),
-  ],
+  imports: [EngineModule, GitModule, TypeOrmModule.forFeature([ThreadEntity], DB_CONNECTION)],
   providers: [TurnRunnerService],
   exports: [TurnRunnerService, EngineModule, GitModule],
 })

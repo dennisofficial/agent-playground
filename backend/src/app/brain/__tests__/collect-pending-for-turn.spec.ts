@@ -1,7 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
 import type { Message, TurnEnvelope } from '@shared/domain';
-import type { TurnChunk } from '@shared/stimulus/chunk-vocabulary';
 import type { EngineRunnerPort } from '@shared/engine/engine.types';
+import type { TurnChunk } from '@shared/stimulus/chunk-vocabulary';
+import { describe, expect, it, vi } from 'vitest';
 import type { LeaderElectionService } from '../../cluster';
 import type { TurnRegistry } from '../../sandbox/turn-registry.service';
 import { SYSTEM_SEED_AUTHOR } from '../../surface';
@@ -68,11 +68,7 @@ function seedRow(id: string, receivedAt: Date): TurnEnvelope {
 
 /** An operator-authored chat `TurnEnvelope` (a real human message). */
 function operatorRow(id: string, receivedAt: Date): TurnEnvelope {
-  return pendingRow(
-    id,
-    undefined as unknown as TurnEnvelope['priority'],
-    receivedAt,
-  );
+  return pendingRow(id, undefined as unknown as TurnEnvelope['priority'], receivedAt);
 }
 
 /** A manager wired with only the deps `collectPendingForTurn` touches; everything else inert. */
@@ -151,9 +147,7 @@ describe('AgentSessionManager.collectPendingForTurn (owned coalescing selection,
   });
 
   it('a thread whose ONLY pending row is `later`: composes it (ride-along) but does not wake', async () => {
-    const pending = [
-      pendingRow('only-later', 'later', new Date('2026-07-02T12:00:00Z')),
-    ];
+    const pending = [pendingRow('only-later', 'later', new Date('2026-07-02T12:00:00Z'))];
     const { manager } = makeManager(pending);
 
     const collected = await (
@@ -201,11 +195,7 @@ describe('AgentSessionManager.collectPendingForTurn (message-agnostic coalescing
     const t0 = new Date('2026-07-02T12:00:00Z');
     const t1 = new Date('2026-07-02T12:00:01Z');
     const t2 = new Date('2026-07-02T12:00:02Z');
-    const pending = [
-      operatorRow('a', t0),
-      operatorRow('b', t1),
-      seedRow('s', t2),
-    ];
+    const pending = [operatorRow('a', t0), operatorRow('b', t1), seedRow('s', t2)];
     const { manager } = makeManager(pending);
 
     const collected = await (
@@ -239,9 +229,7 @@ describe('AgentSessionManager.collectPendingForTurn (message-agnostic coalescing
     // The operator row is framed as a real `<user>` chunk.
     expect(body).toContain('<user name="Dennis"');
     // Canonical kind order: passthrough (3) precedes user (4).
-    expect(body.indexOf(seed.body)).toBeLessThan(
-      body.indexOf('<user name="Dennis"'),
-    );
+    expect(body.indexOf(seed.body)).toBeLessThan(body.indexOf('<user name="Dennis"'));
   });
 
   it('stampBatchOnRegistered stamps a plain row immediately but defers a card-bearing seed row', () => {

@@ -1,6 +1,6 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
+import type { SessionEngine } from '@shared/domain';
 import {
   AUTH_REFRESH_SINK,
   type AuthRefreshSink,
@@ -11,28 +11,24 @@ import {
   type EngineRunnerPort,
   type RunEngineArgs,
 } from '@shared/engine';
-import { dispatchToolRequest } from '@shared/engine/tool-bridge-host';
-import { SPEC_VERBATIM_KEYS, pickKeys } from '@shared/engine/engine.types';
 import type {
   HostFrame,
   ToolBridgeOptions,
   ToolRequestFrame,
   TurnSpec,
 } from '@shared/engine/engine.types';
-import {
-  REDIS_STREAM_PORT,
-  type RedisStreamPort,
-} from '../../_lib/redis/redis.port';
-import { CredentialResolver } from '../onboarding/credential-resolver.service';
+import { SPEC_VERBATIM_KEYS, pickKeys } from '@shared/engine/engine.types';
+import { dispatchToolRequest } from '@shared/engine/tool-bridge-host';
+import { randomUUID } from 'node:crypto';
+import { REDIS_STREAM_PORT, type RedisStreamPort } from '../../_lib/redis/redis.port';
+import { gitAuthEnv, gitCredHelperEnv } from '../git/git-auth';
 import {
   CredentialNeedsReauthError,
   CredentialRefreshService,
 } from '../onboarding/credential-refresh.service';
-import type { SessionEngine } from '@shared/domain';
-import {
-  CONTAINER_ENGINE,
-  type ContainerEngine,
-} from './container-engine.port';
+import { CredentialResolver } from '../onboarding/credential-resolver.service';
+import { LiveTurnStore } from '../surface/live-turn-store';
+import { CONTAINER_ENGINE, type ContainerEngine } from './container-engine.port';
 import {
   CONTAINER_AGENT_HOME,
   CONTAINER_CONTEXT,
@@ -43,25 +39,17 @@ import {
   CONTAINER_WORKTREE,
   GITHUB_TOKEN_FILE,
 } from './container-paths';
-import { SandboxActivityRegistry } from './sandbox-activity.registry';
 import {
-  SANDBOX_PROVIDER,
-  type SandboxProvider,
-} from './sandbox-provider.port';
-import {
-  BrainTurnAlreadyRunningError,
-  TurnRegistry,
-} from './turn-registry.service';
-import {
-  turnKeys,
-  TOOLS_GROUP,
-  EVENTS_RUNNER_GROUP,
   EVENTS_REALTIME_GROUP,
+  EVENTS_RUNNER_GROUP,
   EVENTS_WATCHDOG_GROUP,
+  TOOLS_GROUP,
+  turnKeys,
 } from './redis-turn-keys';
+import { SandboxActivityRegistry } from './sandbox-activity.registry';
+import { SANDBOX_PROVIDER, type SandboxProvider } from './sandbox-provider.port';
 import { drainTurnEventConsumer } from './turn-event-consumer';
-import { LiveTurnStore } from '../surface/live-turn-store';
-import { gitAuthEnv, gitCredHelperEnv } from '../git/git-auth';
+import { BrainTurnAlreadyRunningError, TurnRegistry } from './turn-registry.service';
 
 /** A frame the in-container engine appends to `turn:{T}:events` (mirrors the pipe runner's NDJSON frames). */
 type EventFrame =
@@ -81,8 +69,7 @@ export const TAIL_IDLE_TIMEOUT_MS = 120_000;
 
 /** How often the host pings a tool call's liveness while its handler is awaited. The in-container
  *  reader treats a GAP of several of these (see TOOL_HEARTBEAT_GAP_MS) as a host-side hang. */
-const TOOL_HEARTBEAT_INTERVAL_MS =
-  Number(process.env['TOOL_HEARTBEAT_INTERVAL_MS']) || 10_000;
+const TOOL_HEARTBEAT_INTERVAL_MS = Number(process.env['TOOL_HEARTBEAT_INTERVAL_MS']) || 10_000;
 
 /** Absolute ceiling on extended patience for a container that's still `running` past the idle timeout —
  *  covers a real (if unusual) live-verification turn that starves the heartbeat under heavy CPU/IO, without
@@ -158,9 +145,7 @@ export class RedisEngineRunner implements EngineRunnerPort {
   async run(args: RunEngineArgs): Promise<EngineRunResult> {
     const target = args.target;
     if (!target?.containerId) {
-      throw new Error(
-        'RedisEngineRunner requires args.target.containerId (docker sandbox mode)',
-      );
+      throw new Error('RedisEngineRunner requires args.target.containerId (docker sandbox mode)');
     }
 
     // Resolve the per-org subscription secret HERE — the single seam EVERY engine turn flows through — so no
@@ -171,9 +156,7 @@ export class RedisEngineRunner implements EngineRunnerPort {
     // "no credential" error — same outcome as before, just no longer dependent on each caller remembering.
     let auth =
       args.auth ??
-      (this.creds
-        ? await this.creds.engineAuth(args.sandboxKey.orgId, args.engine)
-        : undefined);
+      (this.creds ? await this.creds.engineAuth(args.sandboxKey.orgId, args.engine) : undefined);
     // Proactively refresh a personal Claude OAuth token on the HOST before the turn materializes it —
     // serialized per-credential by `ensureFresh`'s row lock so concurrent turns share ONE refresh instead of
     // racing the rotating refresh token. This runs on whichever credential is in effect regardless of whether
@@ -203,9 +186,7 @@ export class RedisEngineRunner implements EngineRunnerPort {
             true,
           );
         }
-        this.logger.warn(
-          `pre-turn claude refresh failed (continuing with stored secret): ${err}`,
-        );
+        this.logger.warn(`pre-turn claude refresh failed (continuing with stored secret): ${err}`);
       }
     }
     if (auth && auth !== args.auth) args = { ...args, auth };
@@ -260,9 +241,7 @@ export class RedisEngineRunner implements EngineRunnerPort {
         // row) needs a durable row, so rethrow — the message stays pending and the pump retries. Without a
         // hand-off the turn can still run un-registered (loses restart re-attach only), so warn + continue.
         if (args.onTurnRegistered) throw err;
-        this.logger.warn(
-          `turn ${turnId}: registry.register failed (continuing): ${err}`,
-        );
+        this.logger.warn(`turn ${turnId}: registry.register failed (continuing): ${err}`);
       }
     }
 
@@ -270,9 +249,7 @@ export class RedisEngineRunner implements EngineRunnerPort {
     //    fires from INSIDE runAttached once the kick lands — the true restart-survivable hand-off point
     //    (registered row + a running engine; boot re-attach never re-kicks). Only when the row exists.
     const onKicked =
-      args.turnMeta && args.onTurnRegistered
-        ? () => args.onTurnRegistered!(turnId)
-        : undefined;
+      args.turnMeta && args.onTurnRegistered ? () => args.onTurnRegistered!(turnId) : undefined;
     // App-mode in-sandbox git reads its token from a host-refreshed file (mid-turn refresh). Seed it fresh
     // at spawn — the exec env is frozen for the turn's lifetime, so the file (not the env) carries rolls.
     if (
@@ -283,9 +260,7 @@ export class RedisEngineRunner implements EngineRunnerPort {
     ) {
       await this.sandboxProvider
         .writeGithubTokenFile(args.turnMeta.jobId, target.gitAuth.token)
-        .catch((err) =>
-          this.logger.warn(`seed github-token file failed: ${err}`),
-        );
+        .catch((err) => this.logger.warn(`seed github-token file failed: ${err}`));
     }
 
     try {
@@ -323,18 +298,11 @@ export class RedisEngineRunner implements EngineRunnerPort {
    * runs after `runAttached` has reclaimed the Redis streams, so the refreshed blob only survives in the
    * in-memory `result`; a host crash in this window drops that one refresh (self-corrects next turn).
    */
-  private async persistAuthRefresh(
-    args: RunEngineArgs,
-    result: EngineRunResult,
-  ): Promise<void> {
+  private async persistAuthRefresh(args: RunEngineArgs, result: EngineRunResult): Promise<void> {
     const provenance = args.auth?.refreshBack;
-    if (!result.refreshedAuthSecret || !provenance || !this.authRefreshSink)
-      return;
+    if (!result.refreshedAuthSecret || !provenance || !this.authRefreshSink) return;
     try {
-      await this.authRefreshSink.persist(
-        provenance,
-        result.refreshedAuthSecret,
-      );
+      await this.authRefreshSink.persist(provenance, result.refreshedAuthSecret);
     } catch (err) {
       this.logger.warn(
         `auth-refresh write-back failed (ignored): ${err instanceof Error ? err.message : err}`,
@@ -348,14 +316,8 @@ export class RedisEngineRunner implements EngineRunnerPort {
    * log to rebuild the transcript) + serving the tool bridge — WITHOUT re-kicking the engine. Used by the
    * brain's boot reconcile. See ADR 0001.
    */
-  async reattach(
-    turnId: string,
-    containerId: string,
-    args: AttachArgs,
-  ): Promise<EngineRunResult> {
-    this.logger.log(
-      `re-attaching to in-flight turn ${turnId} (container ${containerId})`,
-    );
+  async reattach(turnId: string, containerId: string, args: AttachArgs): Promise<EngineRunResult> {
+    this.logger.log(`re-attaching to in-flight turn ${turnId} (container ${containerId})`);
     return this.runAttached(
       turnId,
       turnKeys(turnId),
@@ -437,31 +399,24 @@ export class RedisEngineRunner implements EngineRunnerPort {
       this.attached.add(turnId);
       try {
         // Tool-bridge turns: create the host consumer group up front so no tool_request is missed.
-        if (args.toolBridge)
-          await this.redis.ensureGroup(keys.tools, TOOLS_GROUP);
+        if (args.toolBridge) await this.redis.ensureGroup(keys.tools, TOOLS_GROUP);
         // The always-on events groups: the runner's own tail + the watchdog liveness stamp each drain
         // `turn:{T}:events` on an independent cursor. Ensure them up front (before the kick) so no early
         // frame is missed. The realtime group is ensured lazily inside its own loop (opt-in per turn).
         await this.redis.ensureGroup(keys.events, EVENTS_RUNNER_GROUP);
         await this.redis.ensureGroup(keys.events, EVENTS_WATCHDOG_GROUP);
         if (kickTarget) {
-          await this.containers.execDetached(
-            kickTarget.containerId,
-            ['atlas-engine-turn'],
-            {
-              ...(kickTarget.user ? { user: kickTarget.user } : {}),
-              env: this.execEnv(turnId, kickTarget),
-              cwd: CONTAINER_WORKTREE,
-            },
-          );
+          await this.containers.execDetached(kickTarget.containerId, ['atlas-engine-turn'], {
+            ...(kickTarget.user ? { user: kickTarget.user } : {}),
+            env: this.execEnv(turnId, kickTarget),
+            cwd: CONTAINER_WORKTREE,
+          });
           // Hand-off point: the row is registered AND the engine is running detached, so the turn is now
           // restart-survivable (boot re-attach resumes it without re-kicking). Fire the caller's stamp hook.
           try {
             onKicked?.();
           } catch (err) {
-            this.logger.debug(
-              `turn ${turnId}: onTurnRegistered hook threw (ignored): ${err}`,
-            );
+            this.logger.debug(`turn ${turnId}: onTurnRegistered hook threw (ignored): ${err}`);
           }
         }
         // The tools loop runs CONCURRENTLY with the events tail; it stops when the tail flips `done`.
@@ -498,14 +453,10 @@ export class RedisEngineRunner implements EngineRunnerPort {
         } else {
           // finalize deletes the row and reports whether THIS caller deleted it. An UNREGISTERED turn has no
           // row to race on ⇒ it is always the sole finisher ⇒ claimed = true regardless of affected count.
-          const deletedByUs = await this.registry
-            .finalize(turnId, 'done')
-            .catch((err) => {
-              this.logger.debug(
-                `turn ${turnId}: finalize failed (ignored): ${err}`,
-              );
-              return true; // finalize error ⇒ default to claimed: dropping a real transcript is worse than a rare dup
-            });
+          const deletedByUs = await this.registry.finalize(turnId, 'done').catch((err) => {
+            this.logger.debug(`turn ${turnId}: finalize failed (ignored): ${err}`);
+            return true; // finalize error ⇒ default to claimed: dropping a real transcript is worse than a rare dup
+          });
           const won = wasRegistered ? deletedByUs : true;
           // Carry the outcome on `result` when there is one; only the error path (no `result`) needs the
           // Map, and consumeClaim() drains that entry. Stashing a result-carried outcome would leak an
@@ -519,9 +470,7 @@ export class RedisEngineRunner implements EngineRunnerPort {
           await this.redis
             .del(keys.spec, keys.events, keys.tools, keys.replies)
             .catch((err) =>
-              this.logger.debug(
-                `turn ${turnId}: stream cleanup failed (ignored): ${err}`,
-              ),
+              this.logger.debug(`turn ${turnId}: stream cleanup failed (ignored): ${err}`),
             );
         }
       }
@@ -543,8 +492,7 @@ export class RedisEngineRunner implements EngineRunnerPort {
     // Route bridged-tool throws to the real Logger so the true cause (message + stack) lands in the
     // host logs — the sandbox only ever sees a bounded `.message`, so without this an empty/opaque
     // handler error is invisible except as a bare `Error:` in the operator UI.
-    bridge.onToolError ??= (line: string) =>
-      this.logger.error(`turn ${turnId}: ${line}`);
+    bridge.onToolError ??= (line: string) => this.logger.error(`turn ${turnId}: ${line}`);
     await drainTurnEventConsumer({
       redis: this.redis,
       stream: keys.tools,
@@ -559,9 +507,7 @@ export class RedisEngineRunner implements EngineRunnerPort {
         // reply instead of re-running the (often side-effecting) tool.
         // `getToolReply` returns the reply as a plain decoded-JSON record (its storage shape), not the
         // narrower `HostFrame` union — cast here as the dispatch path below already does for the write.
-        const cached = await this.registry
-          .getToolReply(turnId, req.id)
-          .catch(() => null);
+        const cached = await this.registry.getToolReply(turnId, req.id).catch(() => null);
         let reply: HostFrame | null = cached as HostFrame | null;
         if (!reply) {
           // Emit an IMMEDIATE heartbeat on pickup (before starting the interval) so the in-container
@@ -587,12 +533,7 @@ export class RedisEngineRunner implements EngineRunnerPort {
         if (!cached) {
           // Record the reply BEFORE acking so the dedup row exists if we die before the ack lands.
           await this.registry
-            .recordToolReply(
-              turnId,
-              req.id,
-              req.name,
-              reply as unknown as Record<string, unknown>,
-            )
+            .recordToolReply(turnId, req.id, req.name, reply as unknown as Record<string, unknown>)
             .catch(() => undefined);
         }
         await this.redis.xadd(keys.replies, reply);
@@ -757,13 +698,10 @@ export class RedisEngineRunner implements EngineRunnerPort {
               }
               // Already in a confirmed-alive grace window — don't hammer `docker inspect` on every ~1s
               // poll tick, just keep waiting until the next throttled re-check is due.
-              if (Date.now() - lastInspectAt < TAIL_INSPECT_THROTTLE_MS)
-                continue;
+              if (Date.now() - lastInspectAt < TAIL_INSPECT_THROTTLE_MS) continue;
             }
             lastInspectAt = Date.now();
-            const info = await this.containers
-              .inspect(containerId)
-              .catch(() => null);
+            const info = await this.containers.inspect(containerId).catch(() => null);
             if (info?.state === 'running') {
               aliveGraceSince ??= Date.now();
               this.logger.warn(
@@ -785,11 +723,7 @@ export class RedisEngineRunner implements EngineRunnerPort {
           const frame = entry.data as EventFrame;
           if (frame.t === 'event') {
             const e = frame.e;
-            args.onEvent?.(
-              e.kind === 'rate_limit'
-                ? { ...e, credentialId: args.credentialId }
-                : e,
-            );
+            args.onEvent?.(e.kind === 'rate_limit' ? { ...e, credentialId: args.credentialId } : e);
           } else if (frame.t === 'final') result = frame.r;
           else if (frame.t === 'error') {
             errorMsg = frame.message;
@@ -832,14 +766,10 @@ export class RedisEngineRunner implements EngineRunnerPort {
     }
 
     if (errorMsg) {
-      if (errorAuth)
-        throw new EngineAuthError(errorMsg, errorSession, errorEngine);
+      if (errorAuth) throw new EngineAuthError(errorMsg, errorSession, errorEngine);
       throw new Error(`in-sandbox engine turn failed: ${errorMsg}`);
     }
-    if (!result)
-      throw new Error(
-        `in-sandbox engine turn produced no result (turn ${turnId})`,
-      );
+    if (!result) throw new Error(`in-sandbox engine turn produced no result (turn ${turnId})`);
     return result;
   }
 
@@ -860,11 +790,7 @@ export class RedisEngineRunner implements EngineRunnerPort {
       ...pickKeys(args, SPEC_VERBATIM_KEYS),
       turnId,
       cwd: this.toContainerCwd(args.cwd, target),
-      writableRoots: [
-        CONTAINER_CONTEXT,
-        CONTAINER_PLAYGROUND,
-        ...(args.writableRoots ?? []),
-      ],
+      writableRoots: [CONTAINER_CONTEXT, CONTAINER_PLAYGROUND, ...(args.writableRoots ?? [])],
       // Send the secret + the non-secret `kind` discriminator into the container — STRIP the host-only
       // `refreshBack` provenance so org ids never ride Redis into the sandbox. Carry the non-secret
       // `persistAuthRefresh` gate ONLY when set so the in-container engine reads its refreshed auth.json
@@ -883,18 +809,13 @@ export class RedisEngineRunner implements EngineRunnerPort {
       // they're filtered out here even though host dispatch still resolves them by their bare name.
       ...(args.toolBridge
         ? {
-            toolBridgeTools: Object.keys(args.toolBridge.tools).filter(
-              (n) => !n.startsWith('__'),
-            ),
+            toolBridgeTools: Object.keys(args.toolBridge.tools).filter((n) => !n.startsWith('__')),
           }
         : {}),
     };
   }
 
-  private toContainerCwd(
-    hostCwd: string,
-    target: NonNullable<RunEngineArgs['target']>,
-  ): string {
+  private toContainerCwd(hostCwd: string, target: NonNullable<RunEngineArgs['target']>): string {
     const root = target.worktreeHost;
     if (root && (hostCwd === root || hostCwd.startsWith(`${root}/`))) {
       return `${CONTAINER_WORKTREE}${hostCwd.slice(root.length)}`;
@@ -930,9 +851,7 @@ export class RedisEngineRunner implements EngineRunnerPort {
     // The container-reachable Redis URL (the sandbox joins the internal atlas-bus net; falls back to the
     // host REDIS_URL for same-host/dev). Phase 5 swaps this for a per-turn ACL-scoped credential.
     e.REDIS_URL =
-      this.env.get('SANDBOX_REDIS_URL') ??
-      this.env.get('REDIS_URL') ??
-      'redis://redis:6379';
+      this.env.get('SANDBOX_REDIS_URL') ?? this.env.get('REDIS_URL') ?? 'redis://redis:6379';
     // Authenticated git for mutation turns (brain / build): the agent can fetch/push/merge against the
     // remote from inside the sandbox. The GIT_CONFIG_* extraheader keeps the token out of argv/.git/config
     // (same mechanism as host git + SandboxRefsService); GITHUB_TOKEN/GH_TOKEN let it drive the API/`gh`.

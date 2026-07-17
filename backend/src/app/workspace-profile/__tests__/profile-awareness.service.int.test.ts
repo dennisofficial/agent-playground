@@ -11,9 +11,9 @@ import { TypeOrmModule, getDataSourceToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { CustomNamingStrategy } from '../../../_lib/database/custom-naming.strategy';
+import { WorkspaceConfigStore } from '../../onboarding/workspace-config.store';
 import { DB_CONNECTION } from '../../persistence/database.module';
 import { ENTITIES } from '../../persistence/entities';
-import { WorkspaceConfigStore } from '../../onboarding/workspace-config.store';
 import { ProfileAwarenessService } from '../profile-awareness.service';
 
 const ORG_ID = '3aaaaaaa-1111-4111-8111-111111111111';
@@ -43,10 +43,7 @@ describe('ProfileAwarenessService (live Postgres)', () => {
 
   beforeAll(async () => {
     mod = await Test.createTestingModule({
-      imports: [
-        TypeOrmModule.forRoot(dbOpts()),
-        TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION),
-      ],
+      imports: [TypeOrmModule.forRoot(dbOpts()), TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION)],
       providers: [WorkspaceConfigStore, ProfileAwarenessService],
     }).compile();
 
@@ -68,22 +65,15 @@ describe('ProfileAwarenessService (live Postgres)', () => {
   });
 
   afterAll(async () => {
-    await ds
-      ?.query(`DELETE FROM repos WHERE org_id = $1`, [ORG_ID])
-      .catch(() => undefined);
-    await ds
-      ?.query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID])
-      .catch(() => undefined);
+    await ds?.query(`DELETE FROM repos WHERE org_id = $1`, [ORG_ID]).catch(() => undefined);
+    await ds?.query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID]).catch(() => undefined);
     await mod?.close();
   });
 
-  async function ledger(): Promise<
-    Array<{ key: string; firstSeenAt: string }>
-  > {
-    const rows = await ds.query(
-      `SELECT profile_seen_tooling AS t FROM repos WHERE id = $1`,
-      [repoId],
-    );
+  async function ledger(): Promise<Array<{ key: string; firstSeenAt: string }>> {
+    const rows = await ds.query(`SELECT profile_seen_tooling AS t FROM repos WHERE id = $1`, [
+      repoId,
+    ]);
     return rows[0].t ?? [];
   }
 
@@ -116,10 +106,7 @@ describe('ProfileAwarenessService (live Postgres)', () => {
   it('apt-get install doctl: fires an "added" checklist and records apt:doctl', async () => {
     const text = await handle('apt-get install doctl');
     expect(text).toContain('apt:doctl');
-    expect((await ledger()).map((t) => t.key).sort()).toEqual([
-      'apt:doctl',
-      'pnpm:eslint',
-    ]);
+    expect((await ledger()).map((t) => t.key).sort()).toEqual(['apt:doctl', 'pnpm:eslint']);
   });
 
   it('pnpm remove eslint: fires a "retire" checklist and drops pnpm:eslint', async () => {

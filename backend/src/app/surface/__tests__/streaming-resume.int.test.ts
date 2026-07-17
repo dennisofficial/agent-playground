@@ -1,28 +1,20 @@
-import { getDataSourceToken } from '@nestjs/typeorm';
-import { Test } from '@nestjs/testing';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MessageEvent } from '@nestjs/common';
+import { Test } from '@nestjs/testing';
+import { getDataSourceToken } from '@nestjs/typeorm';
+import { ENGINE_RUNNER } from '@shared/engine';
+import type { EngineRunResult, RunEngineArgs } from '@shared/engine/engine.types';
 import { DataSource } from 'typeorm';
-import { randomUUID } from 'node:crypto';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { AgentChatSurface } from '../../agent-surface';
 import { AppModule } from '../../app.module';
 import { CLASSIFIER_LLM } from '../../decision-gate';
-import { ENGINE_RUNNER } from '@shared/engine';
-import type {
-  RunEngineArgs,
-  EngineRunResult,
-} from '@shared/engine/engine.types';
+import { FakeClassifierLlm, FakeGithubPrService, FakeLocalGitService } from '../../e2e/e2e-stubs';
 import { GithubPrService, LocalGitService } from '../../git';
 import { DB_CONNECTION } from '../../persistence/database.module';
 import { SANDBOX_PROVIDER } from '../../sandbox';
 import { RedisEngineRunner } from '../../sandbox/redis-engine-runner';
-import { AgentChatSurface } from '../../agent-surface';
 import { LiveTurnStore } from '../live-turn-store';
 import { WebSurfaceController } from '../web-surface.controller';
-import {
-  FakeClassifierLlm,
-  FakeGithubPrService,
-  FakeLocalGitService,
-} from '../../e2e/e2e-stubs';
 
 /**
  * FULL-APP E2E for RESUMABLE/DURABLE streaming. Boots the REAL `AppModule` (SURFACE=agent) with the
@@ -131,15 +123,9 @@ describe('Streaming resume (full AppModule, live Postgres, faked boundaries)', (
   }, 60_000);
 
   async function purge() {
-    await ds
-      .query(`DELETE FROM jobs WHERE org_id = $1`, [ORG_ID])
-      .catch(() => undefined);
-    await ds
-      .query(`DELETE FROM repos WHERE org_id = $1`, [ORG_ID])
-      .catch(() => undefined);
-    await ds
-      .query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID])
-      .catch(() => undefined);
+    await ds.query(`DELETE FROM jobs WHERE org_id = $1`, [ORG_ID]).catch(() => undefined);
+    await ds.query(`DELETE FROM repos WHERE org_id = $1`, [ORG_ID]).catch(() => undefined);
+    await ds.query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID]).catch(() => undefined);
   }
 
   afterAll(async () => {
@@ -185,19 +171,14 @@ describe('Streaming resume (full AppModule, live Postgres, faked boundaries)', (
     const frames: Array<Record<string, unknown>> = [];
     const sub = controller
       .events(ORG_ID, repoId)
-      .subscribe((m: MessageEvent) =>
-        frames.push(m.data as Record<string, unknown>),
-      );
+      .subscribe((m: MessageEvent) => frames.push(m.data as Record<string, unknown>));
     const snapshotFrame = frames.find(
-      (f) =>
-        f.type === 'stream' &&
-        (f.event as { kind?: string }).kind === 'snapshot',
+      (f) => f.type === 'stream' && (f.event as { kind?: string }).kind === 'snapshot',
     );
     expect(snapshotFrame).toBeDefined();
-    expect(
-      (snapshotFrame!.event as { blocks: Array<{ text?: string }> }).blocks[0]
-        .text,
-    ).toBe('Hello');
+    expect((snapshotFrame!.event as { blocks: Array<{ text?: string }> }).blocks[0].text).toBe(
+      'Hello',
+    );
 
     // Release the turn → it finishes and persists.
     runner.release.resolve();
@@ -209,29 +190,21 @@ describe('Streaming resume (full AppModule, live Postgres, faked boundaries)', (
         [jobId],
       );
       return rows.some(
-        (r: { text: string; kind: string }) =>
-          r.kind === 'chat' && r.text === 'Hello world',
+        (r: { text: string; kind: string }) => r.kind === 'chat' && r.text === 'Hello world',
       );
     });
     expect(liveTurns.snapshot(repoId, jobId)).toBeNull();
 
     // The late subscriber also saw the turn_end marker (its cue to reconcile against /messages).
     expect(
-      frames.some(
-        (f) =>
-          f.type === 'stream' &&
-          (f.event as { kind?: string }).kind === 'turn_end',
-      ),
+      frames.some((f) => f.type === 'stream' && (f.event as { kind?: string }).kind === 'turn_end'),
     ).toBe(true);
     sub.unsubscribe();
   }, 30_000);
 });
 
 /** Poll a predicate until true or timeout. */
-async function waitFor(
-  pred: () => Promise<boolean>,
-  timeoutMs = 10_000,
-): Promise<void> {
+async function waitFor(pred: () => Promise<boolean>, timeoutMs = 10_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     if (await pred()) return;

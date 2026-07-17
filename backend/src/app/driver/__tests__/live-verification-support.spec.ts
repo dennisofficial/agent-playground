@@ -43,8 +43,7 @@ describe('renderTerminalRecordSummary', () => {
   it('surfaces a decisive token that sits past char 300 of an outputTail (the ADR-0005 job bug)', () => {
     // Reproduces job 76f0ee2a: the `effort=high` proof landed ~char 900, past the old 300-char slice.
     const outputTail =
-      'health check + login curl'.padEnd(900, '.') +
-      'RESPONSE BODY: {"effort":"high"}';
+      'health check + login curl'.padEnd(900, '.') + 'RESPONSE BODY: {"effort":"high"}';
     const summary = renderTerminalRecordSummary({
       summary: 'plumbed effort',
       verification: [ev({ outputTail })],

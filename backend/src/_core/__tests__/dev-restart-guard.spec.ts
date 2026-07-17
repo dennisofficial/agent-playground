@@ -4,9 +4,9 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   checkRestartLoop,
-  renderRestartStormWarning,
   DEFAULT_RESTART_WINDOW_MS,
-} from './dev-restart-guard';
+  renderRestartStormWarning,
+} from '../dev-restart-guard';
 
 describe('checkRestartLoop', () => {
   let dir: string;
@@ -107,20 +107,13 @@ describe('checkRestartLoop', () => {
   it('a corrupt history file is treated as empty, never throws', () => {
     const badFile = join(dir, 'corrupt.json');
     writeFileSync(badFile, 'not json{{{');
-    expect(() =>
-      checkRestartLoop({ filePath: badFile, now: () => 0 }),
-    ).not.toThrow();
+    expect(() => checkRestartLoop({ filePath: badFile, now: () => 0 })).not.toThrow();
     const result = checkRestartLoop({ filePath: badFile, now: () => 0 });
     expect(result.recentCount).toBeGreaterThanOrEqual(1);
   });
 
   it('an unwritable path degrades to a safe non-storm result instead of throwing', () => {
-    const unwritable = join(
-      dir,
-      'nonexistent-parent',
-      'sub',
-      '.dev-boot-log.json',
-    );
+    const unwritable = join(dir, 'nonexistent-parent', 'sub', '.dev-boot-log.json');
     const result = checkRestartLoop({ filePath: unwritable, now: () => 0 });
     expect(result).toEqual({
       recentCount: 1,

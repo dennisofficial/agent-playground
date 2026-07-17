@@ -5,18 +5,12 @@
  * TOPIC bucket: host tools. Interpolates the runtime `BRIDGE_SERVER_NAME` and reuses the shared
  * `TOOL_QUALIFICATION_NOTE` catalog block.
  */
-import { Agent, ENGINEERING_STAGES } from '../agent';
-import { Fragment, FragmentGroup } from '../fragment.decorator';
-import {
-  isAtlasRepo,
-  isBuildBrain,
-  isOnboarding,
-  isReview,
-  notOnboarding,
-} from '../conditions';
+import { ATLAS_PROD_BRIDGE_NAME } from '../../../bridge-names/atlas-prod-bridge-options';
 import { BRIDGE_SERVER_NAME } from '../../../bridge-names/bridge-options';
 import { WORKSPACE_PROFILE_BRIDGE_NAME } from '../../../bridge-names/workspace-profile-bridge-options';
-import { ATLAS_PROD_BRIDGE_NAME } from '../../../bridge-names/atlas-prod-bridge-options';
+import { Agent, ENGINEERING_STAGES } from '../agent';
+import { isAtlasRepo, isBuildBrain, isOnboarding, isReview, notOnboarding } from '../conditions';
+import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { LSP_TOOLS_NOTE, TOOL_QUALIFICATION_NOTE } from '../fragments';
 
 @FragmentGroup()

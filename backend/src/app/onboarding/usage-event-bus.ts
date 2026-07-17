@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { Subject, type Observable } from 'rxjs';
 import type { OrgUsage } from '@workspace/shared';
+import { Subject, type Observable } from 'rxjs';
 
 /** One org's usage snapshot changed — fanned out so the repo /events SSE can push the live usage ring to clients. */
 export type UsageChange = {

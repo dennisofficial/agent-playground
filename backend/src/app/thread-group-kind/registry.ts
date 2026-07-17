@@ -4,7 +4,7 @@
  * a misconfigured kind (a role with no `ThreadKindSpec`, a duplicate kind) fails at startup, not mid-build.
  */
 import { THREAD_KIND_SPECS } from '../thread-kind/registry';
-import type { ThreadGroupKindSpec, ThreadGroupKind } from './__tests__/spec';
+import type { ThreadGroupKind, ThreadGroupKindSpec } from './__tests__/spec';
 
 /**
  * THE thread-group-kind registry. One spec per kind; thread 3's orchestration reads everything about a
@@ -75,16 +75,11 @@ const BY_THREAD_GROUP_KIND = new Map<string, ThreadGroupKindSpec>(
  *  registry-backed). */
 export function threadGroupKindSpec(kind: string): ThreadGroupKindSpec {
   const spec = BY_THREAD_GROUP_KIND.get(kind);
-  if (!spec)
-    throw new Error(
-      `thread-group-kind: unknown kind "${kind}" (no ThreadGroupKindSpec).`,
-    );
+  if (!spec) throw new Error(`thread-group-kind: unknown kind "${kind}" (no ThreadGroupKindSpec).`);
   return spec;
 }
 
-const THREAD_GROUP_KIND_SET = new Set<string>(
-  THREAD_GROUP_KIND_SPECS.map((s) => s.kind),
-);
+const THREAD_GROUP_KIND_SET = new Set<string>(THREAD_GROUP_KIND_SPECS.map((s) => s.kind));
 
 /** Coerce any raw value to a valid ThreadGroupKind, or throw — mirrors `coerceThreadType`'s shape but
  *  stays strict (unlike the open `general` fallback, an unrecognized thread-group kind is always a bug,
@@ -92,9 +87,7 @@ const THREAD_GROUP_KIND_SET = new Set<string>(
 export function coerceThreadGroupKind(raw: unknown): ThreadGroupKind {
   const value = String(raw ?? '').trim();
   if (!THREAD_GROUP_KIND_SET.has(value)) {
-    throw new Error(
-      `thread-group-kind: "${value}" is not a valid ThreadGroupKind.`,
-    );
+    throw new Error(`thread-group-kind: "${value}" is not a valid ThreadGroupKind.`);
   }
   return value as ThreadGroupKind;
 }
@@ -111,9 +104,7 @@ export function validateThreadGroupKinds(
   const seen = new Set<string>();
   for (const s of specs) {
     if (seen.has(s.kind)) {
-      throw new Error(
-        `thread-group-kind: duplicate spec for kind "${s.kind}".`,
-      );
+      throw new Error(`thread-group-kind: duplicate spec for kind "${s.kind}".`);
     }
     seen.add(s.kind);
     if (s.roles.length === 0) {
@@ -121,14 +112,10 @@ export function validateThreadGroupKinds(
     }
     for (const r of s.roles) {
       if (!validRoles.has(r.role)) {
-        throw new Error(
-          `thread-group-kind: kind "${s.kind}" references unknown role "${r.role}".`,
-        );
+        throw new Error(`thread-group-kind: kind "${s.kind}" references unknown role "${r.role}".`);
       }
       if (r.max !== null && r.max < r.min) {
-        throw new Error(
-          `thread-group-kind: kind "${s.kind}" role "${r.role}" has max < min.`,
-        );
+        throw new Error(`thread-group-kind: kind "${s.kind}" role "${r.role}" has max < min.`);
       }
     }
   }

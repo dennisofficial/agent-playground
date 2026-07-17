@@ -64,9 +64,7 @@ export function clampEvidenceOutput(s: string, cap = 3000): string {
 
 /** Compact rendering of a candidate terminal record for the live-verification judge's input — untrusted,
  *  fenced by the caller. */
-export function renderTerminalRecordSummary(
-  r: TerminalRecordSummaryInput,
-): string {
+export function renderTerminalRecordSummary(r: TerminalRecordSummaryInput): string {
   const parts = [`Summary: ${r.summary}`];
   parts.push(
     r.changes?.length
@@ -89,19 +87,14 @@ export function renderTerminalRecordSummary(
   );
   if (r.deviations?.length)
     parts.push(`Deviations:\n${r.deviations.map((d) => `- ${d}`).join('\n')}`);
-  if (r.gaps?.length)
-    parts.push(`Gaps:\n${r.gaps.map((g) => `- ${g}`).join('\n')}`);
+  if (r.gaps?.length) parts.push(`Gaps:\n${r.gaps.map((g) => `- ${g}`).join('\n')}`);
   return parts.join('\n\n');
 }
 
 /** Compact rendering of the locked decisions for the live-verification judge's input — same shape as
  *  the batch-task decisions block. */
-export function renderLockedDecisionsSummary(
-  record: { decisions: Decision[] } | null,
-): string {
+export function renderLockedDecisionsSummary(record: { decisions: Decision[] } | null): string {
   return record?.decisions.length
-    ? record.decisions
-        .map((d) => `- [${d.decisionClass}] ${d.title}: ${d.ruling}`)
-        .join('\n')
+    ? record.decisions.map((d) => `- [${d.decisionClass}] ${d.title}: ${d.ruling}`).join('\n')
     : '(none)';
 }

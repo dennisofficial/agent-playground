@@ -36,9 +36,7 @@ describe('turns / ship-open-pr', () => {
       });
 
       const quotedBranch = "'feat/o'\\''hara;$(touch bad)'";
-      expect(task).toContain(
-        `git log --oneline 'HEAD..origin/release/x'\\''y'`,
-      );
+      expect(task).toContain(`git log --oneline 'HEAD..origin/release/x'\\''y'`);
       expect(task).toContain(`git merge 'origin/release/x'\\''y'`);
       expect(task).toContain(`git push -u origin ${quotedBranch}`);
       expect(task).toContain(

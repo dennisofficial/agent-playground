@@ -1,18 +1,15 @@
-import { describe, expect, it, vi } from 'vitest';
-import { QueryFailedError } from 'typeorm';
-import type { DataSource, Repository } from 'typeorm';
 import type { SeedRow } from '@shared/domain';
+import type { DataSource, Repository } from 'typeorm';
+import { QueryFailedError } from 'typeorm';
+import { describe, expect, it, vi } from 'vitest';
 import {
-  TranscriptMessageEntity,
   InboundMessageEntity,
   JobEntity,
+  TranscriptMessageEntity,
 } from '../../persistence/entities';
 import { SYSTEM_SEED_AUTHOR } from '../../surface/chat-surface.port';
-import {
-  DuplicateStimulusError,
-  StimulusStoreService,
-} from '../stimulus-store.service';
 import type { JobBootstrapService } from '../job-bootstrap';
+import { DuplicateStimulusError, StimulusStoreService } from '../stimulus-store.service';
 
 /** A JobBootstrapService stub — every message row a store method writes anchors on this planning thread
  *  (`messages.thread_id` is NOT NULL). */
@@ -80,14 +77,8 @@ function fakeDataSource(
       },
       // Correlation write (transcript row ← its delivery-ledger row): patch the staged row in place so a
       // committed row reflects the update, mirroring a real transaction's UPDATE-then-commit.
-      update: async (
-        Entity: unknown,
-        id: string,
-        patch: Record<string, unknown>,
-      ) => {
-        const target = staged.find(
-          (s) => s.Entity === Entity && s.saved.id === id,
-        );
+      update: async (Entity: unknown, id: string, patch: Record<string, unknown>) => {
+        const target = staged.find((s) => s.Entity === Entity && s.saved.id === id);
         if (target) Object.assign(target.saved, patch);
         return { affected: target ? 1 : 0 };
       },
@@ -201,8 +192,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
     const messages = fakeRepo<TranscriptMessageEntity>('msg');
     const stimuli = fakeRepo<InboundMessageEntity>('stim');
     const ds = fakeDataSource(
-      (Entity) =>
-        Entity === TranscriptMessageEntity ? messages.rows : stimuli.rows,
+      (Entity) => (Entity === TranscriptMessageEntity ? messages.rows : stimuli.rows),
       { failOn: InboundMessageEntity },
     );
     const store = new StimulusStoreService(
@@ -236,15 +226,12 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
     const messages = fakeRepo<TranscriptMessageEntity>('msg');
     const stimuli = fakeRepo<InboundMessageEntity>('stim');
     // The stimulus INSERT (second write in the tx) hits the (org, repo, source, dedupe_key) unique index.
-    const uniqueErr = new QueryFailedError(
-      'insert',
-      [],
-      new Error('dup'),
-    ) as QueryFailedError & { code?: string };
+    const uniqueErr = new QueryFailedError('insert', [], new Error('dup')) as QueryFailedError & {
+      code?: string;
+    };
     uniqueErr.code = '23505';
     const ds = fakeDataSource(
-      (Entity) =>
-        Entity === TranscriptMessageEntity ? messages.rows : stimuli.rows,
+      (Entity) => (Entity === TranscriptMessageEntity ? messages.rows : stimuli.rows),
       { failOn: InboundMessageEntity, failWith: uniqueErr },
     );
     const store = new StimulusStoreService(
@@ -326,8 +313,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
     const stimuli = fakeRepo<InboundMessageEntity>('stim');
     // The stimulus save (the SECOND write in the transaction) fails.
     const ds = fakeDataSource(
-      (Entity) =>
-        Entity === TranscriptMessageEntity ? messages.rows : stimuli.rows,
+      (Entity) => (Entity === TranscriptMessageEntity ? messages.rows : stimuli.rows),
       { failOn: InboundMessageEntity },
     );
     const store = new StimulusStoreService(
@@ -364,8 +350,7 @@ describe('StimulusStoreService — seed-aware recordChatStimulus (durable chat/g
    */
   function fakeMessageRepoWithQueryBuilder(rows: TranscriptMessageEntity[]) {
     return {
-      create: (data: Partial<TranscriptMessageEntity>) =>
-        ({ ...data }) as TranscriptMessageEntity,
+      create: (data: Partial<TranscriptMessageEntity>) => ({ ...data }) as TranscriptMessageEntity,
       save: vi.fn(async (e: TranscriptMessageEntity) => {
         const saved = {
           ...e,
@@ -385,9 +370,7 @@ describe('StimulusStoreService — seed-aware recordChatStimulus (durable chat/g
           },
           andWhere(_expr: string, params: Record<string, unknown>) {
             if (params.key !== undefined) {
-              chunkKey = (
-                JSON.parse(params.key as string) as { chunkKey?: string }
-              ).chunkKey;
+              chunkKey = (JSON.parse(params.key as string) as { chunkKey?: string }).chunkKey;
             }
             return qb;
           },
@@ -405,9 +388,7 @@ describe('StimulusStoreService — seed-aware recordChatStimulus (durable chat/g
 
   /** A `DataSource.transaction` fake whose manager exposes `getRepository(TranscriptMessageEntity)` (for
    *  `writeSystemChunk`) alongside the plain `create`/`save` the direct InboundMessageEntity write uses. */
-  function fakeDataSourceWithMessageRepo(
-    messageRepo: Repository<TranscriptMessageEntity>,
-  ) {
+  function fakeDataSourceWithMessageRepo(messageRepo: Repository<TranscriptMessageEntity>) {
     let seq = 0;
     const transaction = vi.fn(async (cb: (m: unknown) => Promise<unknown>) => {
       const manager = {

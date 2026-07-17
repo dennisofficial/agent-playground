@@ -226,9 +226,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   POSTGRES_USER: Joi.string().required(),
   POSTGRES_PASSWORD: Joi.string().required(),
   POSTGRES_DB: Joi.string().required(),
-  POSTGRES_SSL_MODE: Joi.string()
-    .valid('disable', 'require', 'verify-full')
-    .optional(),
+  POSTGRES_SSL_MODE: Joi.string().valid('disable', 'require', 'verify-full').optional(),
 
   // Redis (host↔sandbox engine bus)
   REDIS_URL: Joi.string().uri().optional(),

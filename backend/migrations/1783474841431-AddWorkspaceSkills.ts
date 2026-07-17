@@ -19,9 +19,7 @@ export class AddWorkspaceSkills1783474841431 implements MigrationInterface {
     await queryRunner.query(
       `ALTER TABLE "workspace_skills" DROP CONSTRAINT "fk_workspace_skills_org_id_organizations"`,
     );
-    await queryRunner.query(
-      `DROP INDEX "public"."idx_workspace_skills_org_id"`,
-    );
+    await queryRunner.query(`DROP INDEX "public"."idx_workspace_skills_org_id"`);
     await queryRunner.query(`DROP TABLE "workspace_skills"`);
   }
 }

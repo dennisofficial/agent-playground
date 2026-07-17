@@ -13,9 +13,7 @@ describe('wrapUntrusted (untrusted-content contract)', () => {
       severity: 'critical',
       body: 'stack trace',
     });
-    expect(out).toBe(
-      '<untrusted source="github" severity="critical">stack trace</untrusted>',
-    );
+    expect(out).toBe('<untrusted source="github" severity="critical">stack trace</untrusted>');
   });
 
   it('neutralizes a payload that forges the closing tag (injection resistance)', () => {

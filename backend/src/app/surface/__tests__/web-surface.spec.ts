@@ -15,26 +15,26 @@
  * No I/O, no Postgres, no LLM — pure in-process unit tests.
  */
 
-import { firstValueFrom } from 'rxjs';
-import { take, toArray, filter } from 'rxjs/operators';
-import { describe, it, expect, beforeEach } from 'vitest';
-import { WebSurface } from '../web-surface';
 import { agentMessage } from '@shared/prompt-kit/message';
+import { firstValueFrom } from 'rxjs';
+import { filter, take, toArray } from 'rxjs/operators';
+import { beforeEach, describe, expect, it } from 'vitest';
+import type { DecisionApprovalCard } from '../approval-blocks';
 import {
-  decisionApprovalBlocks,
   APPROVE_ACTION_ID,
+  decisionApprovalBlocks,
   DENY_ACTION_ID,
   REQUEST_CHANGES_ACTION_ID,
   RETRACT_SHIP_ACTION_ID,
   SHIP_ACTION_ID,
 } from '../approval-blocks';
-import type { DecisionApprovalCard } from '../approval-blocks';
 import {
+  parseWebApprovalMeta,
   webApprovalCard,
   webShipReviewCard,
   webVerdictCard,
-  parseWebApprovalMeta,
 } from '../web-approval-card';
+import { WebSurface } from '../web-surface';
 
 // ── Fixtures ──────────────────────────────────��──────────────────────────���──────────────────────
 
@@ -44,9 +44,7 @@ const SAMPLE_CARD: DecisionApprovalCard = {
   title: 'Payments integration',
   summary: 'Use Stripe; add a webhooks table.',
   threads: ['Backend: Stripe client + webhooks', 'Frontend: checkout page'],
-  decisions: [
-    { decisionClass: 'dependency', title: 'Payment gateway', ruling: 'Stripe' },
-  ],
+  decisions: [{ decisionClass: 'dependency', title: 'Payment gateway', ruling: 'Stripe' }],
 };
 
 // ── 1 + 2: inbound$ and outbound$ ────────────────────────────────────────────────────────────���─
@@ -104,9 +102,7 @@ describe('WebSurface — inbound + outbound', () => {
     expect(msg.threadTs).toBe('thread-9'); // lands in the thread
     expect(msg.seed).toBe(true); // NOT persisted as a chat bubble (intake skips recordChatStimulus)
     expect(msg.authorId).toBe('U-SYSTEM'); // System, not the operator (no awareness drain)
-    expect(msg.text).toBe(
-      '<system_notice>Build failed on step 3</system_notice>',
-    );
+    expect(msg.text).toBe('<system_notice>Build failed on step 3</system_notice>');
     expect(msg.orgId).toBe('T-acme');
   });
 
@@ -136,9 +132,7 @@ describe('WebSurface — inbound + outbound', () => {
   });
 
   it('post() emits multiple messages in order', async () => {
-    const collected = firstValueFrom(
-      surface.outbound$.pipe(take(3), toArray()),
-    );
+    const collected = firstValueFrom(surface.outbound$.pipe(take(3), toArray()));
 
     await surface.post('C-web', 'First');
     await surface.post('C-web', 'Second');
@@ -162,11 +156,7 @@ describe('WebSurface — approval card conversion', () => {
     const blocks = decisionApprovalBlocks(SAMPLE_CARD);
     const outbound = firstValueFrom(surface.outbound$.pipe(take(1)));
 
-    const ts = await surface.post(
-      'C-web',
-      `Plan proposal — ${SAMPLE_CARD.title}`,
-      { blocks },
-    );
+    const ts = await surface.post('C-web', `Plan proposal — ${SAMPLE_CARD.title}`, { blocks });
     expect(ts).toBeDefined();
 
     const msg = await outbound;
@@ -190,9 +180,7 @@ describe('WebSurface — approval card conversion', () => {
     expect(actionIds).not.toContain(REQUEST_CHANGES_ACTION_ID);
 
     // The value round-trips through JSON correctly.
-    const approveAction = card.actions.find(
-      (a) => a.actionId === APPROVE_ACTION_ID,
-    )!;
+    const approveAction = card.actions.find((a) => a.actionId === APPROVE_ACTION_ID)!;
     expect(approveAction.style).toBe('primary');
     const meta = parseWebApprovalMeta(approveAction.value);
     expect(meta?.jobId).toBe('job-abc');
@@ -233,9 +221,7 @@ describe('WebSurface — approval card conversion', () => {
   });
 
   it('post() with non-approval blocks does NOT produce a card', async () => {
-    const blocks = [
-      { type: 'thread', text: { type: 'mrkdwn', text: 'Hello' } },
-    ];
+    const blocks = [{ type: 'thread', text: { type: 'mrkdwn', text: 'Hello' } }];
     await surface.post('C-web', 'Hello', { blocks });
     expect(surface.outbox[0].card).toBeUndefined();
   });
@@ -281,12 +267,7 @@ describe('WebSurface — approval click via approval$', () => {
     const click = firstValueFrom(surface.approval$.pipe(take(1)));
 
     const value = JSON.stringify({ jobId: 'job-abc' });
-    surface.receiveApprovalClick(
-      DENY_ACTION_ID,
-      value,
-      'U-dennis',
-      'use Stripe, not Braintree',
-    );
+    surface.receiveApprovalClick(DENY_ACTION_ID, value, 'U-dennis', 'use Stripe, not Braintree');
 
     const event = await click;
     expect(event.note).toBe('use Stripe, not Braintree');
@@ -324,11 +305,7 @@ describe('WebSurface — update()', () => {
 
     // Post the original approval card.
     const blocks = decisionApprovalBlocks(SAMPLE_CARD);
-    const ts = await surface.post(
-      'C-web',
-      `Plan proposal — ${SAMPLE_CARD.title}`,
-      { blocks },
-    );
+    const ts = await surface.post('C-web', `Plan proposal — ${SAMPLE_CARD.title}`, { blocks });
     expect(ts).toBeDefined();
 
     // Subscribe BEFORE calling update.
@@ -365,9 +342,7 @@ describe('WebSurface — update()', () => {
 
   it('update on a non-existent ts is a silent no-op', () => {
     const surface = new WebSurface();
-    expect(() =>
-      surface.update('C-web', 'ts-ghost', { text: 'noop' }),
-    ).not.toThrow();
+    expect(() => surface.update('C-web', 'ts-ghost', { text: 'noop' })).not.toThrow();
   });
 });
 
@@ -439,9 +414,7 @@ describe('webApprovalCard (pure builder)', () => {
       label: 'Amend build',
       style: 'default',
     });
-    expect(
-      parseWebApprovalMeta(actions.get(RETRACT_SHIP_ACTION_ID)!.value),
-    ).toEqual({
+    expect(parseWebApprovalMeta(actions.get(RETRACT_SHIP_ACTION_ID)!.value)).toEqual({
       jobId: 'job-ship',
     });
     expect(card.verifications).toEqual([
@@ -472,9 +445,7 @@ describe('parseWebApprovalMeta', () => {
   });
 
   it('returns undefined when jobId is missing', () => {
-    expect(
-      parseWebApprovalMeta(JSON.stringify({ other: 'field' })),
-    ).toBeUndefined();
+    expect(parseWebApprovalMeta(JSON.stringify({ other: 'field' }))).toBeUndefined();
   });
 });
 

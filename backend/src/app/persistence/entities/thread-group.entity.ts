@@ -1,15 +1,8 @@
-import {
-  Column,
-  Entity,
-  Index,
-  JoinColumn,
-  ManyToOne,
-  PrimaryGeneratedColumn,
-} from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
-import { OrganizationEntity } from './organization.entity';
-import { JobEntity } from './job.entity';
+import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { DecisionRecordEntity } from './decision-record.entity';
+import { JobEntity } from './job.entity';
+import { OrganizationEntity } from './organization.entity';
 
 /**
  * A THREAD GROUP — the first-class §N pipeline grouping (d2/d7). A job's pipeline is the ordinal-ordered

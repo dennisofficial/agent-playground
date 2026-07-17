@@ -1,16 +1,9 @@
 import { ChatAnthropic } from '@langchain/anthropic';
-import { Logger } from '@nestjs/common';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { SystemMessage } from '@langchain/core/messages';
-import {
-  ChatPromptTemplate,
-  HumanMessagePromptTemplate,
-} from '@langchain/core/prompts';
-import {
-  RunnableLambda,
-  RunnableSequence,
-  type Runnable,
-} from '@langchain/core/runnables';
+import { ChatPromptTemplate, HumanMessagePromptTemplate } from '@langchain/core/prompts';
+import { RunnableLambda, RunnableSequence, type Runnable } from '@langchain/core/runnables';
+import { Logger } from '@nestjs/common';
 import { z } from 'zod';
 import { fence, fenceOrNone } from '../prompt-fence';
 
@@ -79,9 +72,7 @@ export namespace JudgeLiveVerificationChain {
     missingChecks: z
       .string()
       .optional()
-      .describe(
-        'One short semicolon-joined line naming what live check is missing.',
-      ),
+      .describe('One short semicolon-joined line naming what live check is missing.'),
   });
   export type Output = z.infer<typeof Schema>;
 
@@ -152,25 +143,16 @@ export class AnthropicLiveVerificationJudge implements LiveVerificationJudge {
   private readonly logger = new Logger('LiveVerificationJudge');
   private readonly chains = new Map<
     string,
-    Runnable<
-      JudgeLiveVerificationChain.Input,
-      JudgeLiveVerificationChain.Output
-    >
+    Runnable<JudgeLiveVerificationChain.Input, JudgeLiveVerificationChain.Output>
   >();
 
   /** @param apiKey resolves the active Anthropic key for a tenant (e.g. CredentialResolver.anthropicKey). */
-  constructor(
-    private readonly apiKey: (orgId?: string) => Promise<string | undefined>,
-  ) {}
+  constructor(private readonly apiKey: (orgId?: string) => Promise<string | undefined>) {}
 
   private async chain(
     orgId?: string,
   ): Promise<
-    | Runnable<
-        JudgeLiveVerificationChain.Input,
-        JudgeLiveVerificationChain.Output
-      >
-    | undefined
+    Runnable<JudgeLiveVerificationChain.Input, JudgeLiveVerificationChain.Output> | undefined
   > {
     const key = await this.apiKey(orgId);
     if (!key) return undefined;

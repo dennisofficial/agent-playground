@@ -74,11 +74,7 @@ export class CredentialRefreshService {
     let hardFailStatus: number | undefined;
     try {
       return await this.dataSource.transaction(async (m) => {
-        const held = await this.store.findPersonalUnderLock(
-          m,
-          orgId,
-          credentialId,
-        );
+        const held = await this.store.findPersonalUnderLock(m, orgId, credentialId);
         if (!held) {
           throw new Error(`credential ${credentialId} not found under lock`);
         }
@@ -98,15 +94,10 @@ export class CredentialRefreshService {
           });
           const secret = toClaudeBlob(t);
           await this.store.writeRefreshedWithinTxn(m, held.row, secret);
-          this.logger.log(
-            `refreshed claude credential org=${orgId} id=${credentialId}`,
-          );
+          this.logger.log(`refreshed claude credential org=${orgId} id=${credentialId}`);
           return secret;
         } catch (err) {
-          if (
-            err instanceof ClaudeOAuthHttpError &&
-            isHardAuthFailure(err.status)
-          ) {
+          if (err instanceof ClaudeOAuthHttpError && isHardAuthFailure(err.status)) {
             hardFailStatus = err.status;
           }
           throw err;

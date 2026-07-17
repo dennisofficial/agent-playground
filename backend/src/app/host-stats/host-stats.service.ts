@@ -3,10 +3,7 @@ import { statfsSync } from 'node:fs';
 import { statfs } from 'node:fs/promises';
 import * as os from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
-import {
-  CONTAINER_ENGINE,
-  type ContainerEngine,
-} from '../sandbox/container-engine.port';
+import { CONTAINER_ENGINE, type ContainerEngine } from '../sandbox/container-engine.port';
 import type { HostStatsDto } from './host-stats.types';
 
 const CACHE_MS = 2_000;
@@ -35,9 +32,7 @@ export class HostStatsService {
   private inflight?: Promise<HostStatsDto>;
   private prevCpu?: CpuAggregate;
 
-  constructor(
-    @Inject(CONTAINER_ENGINE) private readonly engine: ContainerEngine,
-  ) {
+  constructor(@Inject(CONTAINER_ENGINE) private readonly engine: ContainerEngine) {
     const candidate = process.env.HOST_STATS_DISK_PATH ?? '/srv/atlas/data';
     try {
       statfsSync(candidate);
@@ -93,8 +88,7 @@ export class HostStatsService {
     const next = aggregateCpuTimes();
     const deltaTotal = next.total - prev.total;
     const deltaIdle = next.idle - prev.idle;
-    const usagePct =
-      deltaTotal > 0 ? Math.round(100 * (1 - deltaIdle / deltaTotal)) : 0;
+    const usagePct = deltaTotal > 0 ? Math.round(100 * (1 - deltaIdle / deltaTotal)) : 0;
     this.prevCpu = next;
     return {
       usagePct,

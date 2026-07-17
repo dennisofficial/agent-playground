@@ -1,19 +1,19 @@
 import type { EnvService } from '@core/config/env/env.service';
+import type { EngineRunnerPort, RunEngineArgs } from '@shared/engine';
+import { agentMessage } from '@shared/prompt-kit/message';
+import Docker from 'dockerode';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import Docker from 'dockerode';
+import type { Repository } from 'typeorm';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import type { EngineRunnerPort, RunEngineArgs } from '@shared/engine';
 import type { FeatureSandbox } from '../../git';
-import { agentMessage } from '@shared/prompt-kit/message';
 import type { ThreadEntity } from '../../persistence/entities';
 import { TurnRunnerService } from '../../runner/turn-runner.service';
 import { DockerodeContainerEngine } from '../dockerode-container-engine';
 import { SandboxImageBuilder } from '../sandbox-image.builder';
 import { SandboxManager } from '../sandbox-manager.service';
-import type { Repository } from 'typeorm';
 
 /**
  * Integration test: Docker restart-recovery + durable session.
@@ -31,21 +31,14 @@ const env = (v: Record<string, string | undefined> = {}) =>
   ({ get: (k: string) => v[k] }) as unknown as EnvService;
 
 /** Map-backed threads repository that survives across TurnRunnerService instances (models Postgres). */
-function makeDurablePhaseRepo(initial: {
-  id: string;
-  session_id: string | null;
-}) {
+function makeDurablePhaseRepo(initial: { id: string; session_id: string | null }) {
   const row: { id: string; session_id: string | null } = { ...initial };
   const repo = {
-    findOne: vi.fn(
-      async () => ({ session_id: row.session_id }) as ThreadEntity,
-    ),
-    update: vi.fn(
-      async (_where: { id: unknown }, patch: { session_id?: string }) => {
-        if (patch.session_id !== undefined) row.session_id = patch.session_id;
-        return { affected: 1 } as never;
-      },
-    ),
+    findOne: vi.fn(async () => ({ session_id: row.session_id }) as ThreadEntity),
+    update: vi.fn(async (_where: { id: unknown }, patch: { session_id?: string }) => {
+      if (patch.session_id !== undefined) row.session_id = patch.session_id;
+      return { affected: 1 } as never;
+    }),
   } as unknown as Repository<ThreadEntity>;
   return { repo, row };
 }
@@ -79,30 +72,17 @@ describe('Docker restart recovery + durable session (integration, needs Docker)'
     repoRoot = mkdtempSync(join(tmpdir(), 'atlas-restart-'));
     homeRoot = mkdtempSync(join(tmpdir(), 'atlas-restart-home-'));
 
-    const git = (args: string[], cwd: string) =>
-      execFileSync('git', args, { cwd, stdio: 'pipe' });
+    const git = (args: string[], cwd: string) => execFileSync('git', args, { cwd, stdio: 'pipe' });
     git(['init', '-q'], repoRoot);
-    execFileSync('git', [
-      '-C',
-      repoRoot,
-      'config',
-      'user.email',
-      'test@example.com',
-    ]);
+    execFileSync('git', ['-C', repoRoot, 'config', 'user.email', 'test@example.com']);
     execFileSync('git', ['-C', repoRoot, 'config', 'user.name', 'Test']);
-    execFileSync('bash', [
-      '-c',
-      `echo "# restart-test" > ${repoRoot}/README.md`,
-    ]);
+    execFileSync('bash', ['-c', `echo "# restart-test" > ${repoRoot}/README.md`]);
     git(['add', '-A'], repoRoot);
     git(['commit', '-qm', 'init'], repoRoot);
 
     // Linked worktree — the real Atlas shape (.git is a file, external gitdir).
     worktree = join(repoRoot, '.worktrees', 'restart-feat');
-    git(
-      ['worktree', 'add', '-q', worktree, '-b', 'atlas/restart-feat'],
-      repoRoot,
-    );
+    git(['worktree', 'add', '-q', worktree, '-b', 'atlas/restart-feat'], repoRoot);
 
     sandbox = {
       repoId: 'restart-proj',
@@ -111,19 +91,13 @@ describe('Docker restart recovery + durable session (integration, needs Docker)'
       gitUrl: '',
     };
 
-    manager1 = new SandboxManager(
-      engine1,
-      builder1,
-      env({ AGENT_HOME_ROOT: homeRoot }),
-    );
+    manager1 = new SandboxManager(engine1, builder1, env({ AGENT_HOME_ROOT: homeRoot }));
   });
 
   afterAll(async () => {
     // Best-effort: tear down any container that survived a test failure.
     if (attachedContainerId) {
-      await engine1
-        .remove(attachedContainerId, { force: true })
-        .catch(() => undefined);
+      await engine1.remove(attachedContainerId, { force: true }).catch(() => undefined);
     }
     for (const p of [repoRoot, homeRoot]) {
       if (p) rmSync(p, { recursive: true, force: true });
@@ -133,9 +107,7 @@ describe('Docker restart recovery + durable session (integration, needs Docker)'
   it('re-adopts the same container and resumes the persisted session after a simulated restart', async () => {
     if (!dockerUp) {
       // eslint-disable-next-line no-console
-      console.warn(
-        'Docker not reachable — skipping restart-recovery integration test',
-      );
+      console.warn('Docker not reachable — skipping restart-recovery integration test');
       return;
     }
 
@@ -189,11 +161,7 @@ describe('Docker restart recovery + durable session (integration, needs Docker)'
     // ── Simulate process restart: brand-new SandboxManager (new objects) ─────────────────
     const engine2 = new DockerodeContainerEngine(env());
     const builder2 = new SandboxImageBuilder(env(), engine2);
-    const manager2 = new SandboxManager(
-      engine2,
-      builder2,
-      env({ AGENT_HOME_ROOT: homeRoot }),
-    );
+    const manager2 = new SandboxManager(engine2, builder2, env({ AGENT_HOME_ROOT: homeRoot }));
 
     const s2 = await manager2.attach({ sandbox, orgId: 'team-restart' });
 

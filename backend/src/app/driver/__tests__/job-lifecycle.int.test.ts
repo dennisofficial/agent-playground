@@ -17,54 +17,39 @@
  * provider (no Docker). Truncates the relevant tables before each test case to keep isolation.
  */
 
+import { EnvService } from '@core/config/env/env.service';
 import { Test, type TestingModule } from '@nestjs/testing';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
+import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
 import { randomUUID } from 'node:crypto';
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DataSource, Repository } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { EnvService } from '@core/config/env/env.service';
 import { CustomNamingStrategy } from '../../../_lib/database/custom-naming.strategy';
-import { BrainGateway } from '../brain-gateway';
 import type { FeatureSandbox, ProjectRepo } from '../../git';
-import { LocalGitService } from '../../git';
-import { CredentialResolver } from '../../onboarding';
-import { TenantCredentialStore } from '../../onboarding';
-import { GithubPrService } from '../../git';
+import { GithubPrService, LocalGitService } from '../../git';
 import { JobDependencyService } from '../../job-deps';
+import { CredentialResolver, TenantCredentialStore } from '../../onboarding';
 import { DB_CONNECTION } from '../../persistence/database.module';
 import {
   ActiveTurnEntity,
   DecisionRecordEntity,
-  TranscriptMessageEntity,
+  InboundMessageEntity,
+  JobEntity,
+  JobSandboxEntity,
   OrgCredentialsEntity,
   OrganizationEntity,
   RepoEntity,
   ThreadEntity,
-  InboundMessageEntity,
-  JobEntity,
-  JobSandboxEntity,
   ToolExecutionEntity,
+  TranscriptMessageEntity,
 } from '../../persistence/entities';
 import { SANDBOX_PROVIDER, SandboxActivityRegistry } from '../../sandbox';
 import { TurnRegistry } from '../../sandbox/turn-registry.service';
 import { SkillUpdaterService } from '../../skills/skill-updater.service';
-import {
-  DRIVER_REPO,
-  type DriverRepoResolver,
-  JobLifecycleService,
-  WorktreeProvisioner,
-  type ResolvedRepo,
-} from '../index';
+import { BrainGateway } from '../brain-gateway';
+import { DRIVER_REPO, JobLifecycleService, WorktreeProvisioner, type ResolvedRepo } from '../index';
 import { ProvisioningNotReadyError } from '../job-lifecycle.service';
 
 import { ENTITIES } from '../../persistence/entities';
@@ -113,10 +98,7 @@ class FakeGitService {
     };
   }
 
-  async createBaseWorktree(
-    repo: ProjectRepo,
-    jobId: string,
-  ): Promise<FeatureSandbox> {
+  async createBaseWorktree(repo: ProjectRepo, jobId: string): Promise<FeatureSandbox> {
     const path = `${repo.repoPath}/.worktrees/thread-${jobId}`;
     this.worktreesByThreadId.set(jobId, path);
     return {
@@ -147,10 +129,7 @@ class FakeGitService {
     return false;
   }
 
-  async createBaseClone(
-    repo: ProjectRepo,
-    jobId: string,
-  ): Promise<FeatureSandbox> {
+  async createBaseClone(repo: ProjectRepo, jobId: string): Promise<FeatureSandbox> {
     return this.createBaseWorktree(repo, jobId);
   }
 
@@ -163,10 +142,7 @@ class FakeGitService {
     this.removedWorktrees.push(worktreePath);
   }
 
-  async createFeatureSandbox(
-    repo: ProjectRepo,
-    branch: string,
-  ): Promise<FeatureSandbox> {
+  async createFeatureSandbox(repo: ProjectRepo, branch: string): Promise<FeatureSandbox> {
     return {
       repoId: repo.repoId,
       branch,
@@ -381,13 +357,7 @@ beforeEach(async () => {
       SET git_url = EXCLUDED.git_url, default_branch = EXCLUDED.default_branch
     RETURNING id
   `,
-    [
-      FAKE_TEAM_ID,
-      FAKE_PROJECT_SLUG,
-      'R2 Gate Repo',
-      FAKE_REPO_URL,
-      FAKE_BASE_BRANCH,
-    ],
+    [FAKE_TEAM_ID, FAKE_PROJECT_SLUG, 'R2 Gate Repo', FAKE_REPO_URL, FAKE_BASE_BRANCH],
   );
   repoId = repoRows[0].id;
 });
@@ -419,10 +389,7 @@ async function createBareThread(): Promise<string> {
 /** Insert one `transcript_messages` row (with its owning `thread_groups`/`threads` parents) at an
  *  explicit `created_at`, so `archiveInactiveJobs`'s `MAX(transcript_messages.created_at)` eligibility
  *  query has real activity to anchor on. */
-async function seedTranscriptMessageAt(
-  jobId: string,
-  createdAt: Date,
-): Promise<void> {
+async function seedTranscriptMessageAt(jobId: string, createdAt: Date): Promise<void> {
   const [threadGroup] = await ds.query(
     `INSERT INTO thread_groups (job_id, org_id, ordinal, kind) VALUES ($1, $2, 10, 'build') RETURNING id`,
     [jobId, FAKE_TEAM_ID],
@@ -492,10 +459,7 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     expect(provider.tornDown.length).toBeGreaterThanOrEqual(1);
 
     // The next turn re-attaches against the surviving worktree.
-    const reattached = await threadLifecycle.ensureContainer(
-      jobId,
-      FAKE_TEAM_ID,
-    );
+    const reattached = await threadLifecycle.ensureContainer(jobId, FAKE_TEAM_ID);
     expect(reattached).not.toBeNull();
     const row = await sandboxes.findOneOrFail({ where: { job_id: jobId } });
     expect(row.lifecycle).toBe('attached');
@@ -514,9 +478,7 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
 
     // Idempotent: a second close is a no-op and ensureContainer returns null for a closed thread.
     await threadLifecycle.closeJob(jobId, FAKE_TEAM_ID);
-    expect(
-      await threadLifecycle.ensureContainer(jobId, FAKE_TEAM_ID),
-    ).toBeNull();
+    expect(await threadLifecycle.ensureContainer(jobId, FAKE_TEAM_ID)).toBeNull();
   });
 
   it('closeJob reclaims the container by NAME even after a boot reconcile nulled container_id (leak fix)', async () => {
@@ -572,12 +534,8 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
 
     const count = async (table: string, col = 'job_id') =>
       Number(
-        (
-          await ds.query(
-            `SELECT COUNT(*) AS count FROM ${table} WHERE ${col} = $1`,
-            [jobId],
-          )
-        )[0].count,
+        (await ds.query(`SELECT COUNT(*) AS count FROM ${table} WHERE ${col} = $1`, [jobId]))[0]
+          .count,
       );
     expect(await count('jobs', 'id')).toBe(0);
     expect(await count('transcript_messages')).toBe(0);
@@ -594,11 +552,7 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     // Simulate the durable, out-of-worktree scratch dirs a live job would accumulate.
     const playground = provider.playgroundDirHost(FAKE_TEAM_ID, jobId);
     const context = provider.contextDirHost(FAKE_TEAM_ID, jobId);
-    const draftUpload = provider.draftUploadsDirHost(
-      FAKE_TEAM_ID,
-      jobId,
-      randomUUID(),
-    );
+    const draftUpload = provider.draftUploadsDirHost(FAKE_TEAM_ID, jobId, randomUUID());
     const transcriptDir = provider.brainTranscriptProjectsDir(jobId)!;
     for (const dir of [playground, context, draftUpload, transcriptDir]) {
       mkdirSync(dir, { recursive: true });
@@ -622,19 +576,13 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
 
     const first = await threadLifecycle.claimDeleteJob(jobId, FAKE_TEAM_ID);
     expect(first).toBe(true);
-    expect((await jobs.findOneOrFail({ where: { id: jobId } })).status).toBe(
-      'deleting',
-    );
+    expect((await jobs.findOneOrFail({ where: { id: jobId } })).status).toBe('deleting');
 
     // A second concurrent claim matches 0 rows (status is already `deleting`) — the guard that stops two
     // DELETE requests from interleaving into the cascade-then-resurrect FK crash.
-    expect(await threadLifecycle.claimDeleteJob(jobId, FAKE_TEAM_ID)).toBe(
-      false,
-    );
+    expect(await threadLifecycle.claimDeleteJob(jobId, FAKE_TEAM_ID)).toBe(false);
     // A claim on a job that never existed also returns false (no row to flip).
-    expect(
-      await threadLifecycle.claimDeleteJob(randomUUID(), FAKE_TEAM_ID),
-    ).toBe(false);
+    expect(await threadLifecycle.claimDeleteJob(randomUUID(), FAKE_TEAM_ID)).toBe(false);
   });
 
   it('a second deleteJobDeep on an already-gone job is a no-op and does not throw (FK-crash regression)', async () => {
@@ -645,9 +593,7 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
 
     // Pre-fix, closeJob's `sandboxes.save(row)` would INSERT the cascade-deleted sandbox back and violate
     // fk_job_sandboxes_job_id_jobs. It must now be a clean no-op.
-    await expect(
-      threadLifecycle.deleteJobDeep(jobId, FAKE_TEAM_ID),
-    ).resolves.toBeUndefined();
+    await expect(threadLifecycle.deleteJobDeep(jobId, FAKE_TEAM_ID)).resolves.toBeUndefined();
   });
 
   it('reconcileDeletingJobs finishes a job stranded in `deleting`', async () => {
@@ -674,26 +620,16 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
 
     // A second concurrent claim matches 0 rows (status is already `archived`) — single-flight, same shape
     // as `claimDeleteJob`.
-    expect(await threadLifecycle.claimArchiveJob(jobId, FAKE_TEAM_ID)).toBe(
-      false,
-    );
-    expect(
-      await threadLifecycle.claimArchiveJob(randomUUID(), FAKE_TEAM_ID),
-    ).toBe(false);
+    expect(await threadLifecycle.claimArchiveJob(jobId, FAKE_TEAM_ID)).toBe(false);
+    expect(await threadLifecycle.claimArchiveJob(randomUUID(), FAKE_TEAM_ID)).toBe(false);
   });
 
   it('claimArchiveJob does not steal a job already claimed for hard delete', async () => {
     const { jobId } = await create();
 
-    expect(await threadLifecycle.claimDeleteJob(jobId, FAKE_TEAM_ID)).toBe(
-      true,
-    );
-    expect(await threadLifecycle.claimArchiveJob(jobId, FAKE_TEAM_ID)).toBe(
-      false,
-    );
-    expect((await jobs.findOneOrFail({ where: { id: jobId } })).status).toBe(
-      'deleting',
-    );
+    expect(await threadLifecycle.claimDeleteJob(jobId, FAKE_TEAM_ID)).toBe(true);
+    expect(await threadLifecycle.claimArchiveJob(jobId, FAKE_TEAM_ID)).toBe(false);
+    expect((await jobs.findOneOrFail({ where: { id: jobId } })).status).toBe('deleting');
   });
 
   it('archiveJobDeep reclaims the container + worktree and drops /playground + draft uploads + the on-disk session JSONL, but KEEPS the jobs row, /context, and transcript', async () => {
@@ -702,11 +638,7 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
 
     const playground = provider.playgroundDirHost(FAKE_TEAM_ID, jobId);
     const context = provider.contextDirHost(FAKE_TEAM_ID, jobId);
-    const draftUpload = provider.draftUploadsDirHost(
-      FAKE_TEAM_ID,
-      jobId,
-      randomUUID(),
-    );
+    const draftUpload = provider.draftUploadsDirHost(FAKE_TEAM_ID, jobId, randomUUID());
     const transcriptDir = provider.brainTranscriptProjectsDir(jobId)!;
     for (const dir of [playground, context, draftUpload, transcriptDir]) {
       mkdirSync(dir, { recursive: true });
@@ -735,10 +667,9 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     expect(
       Number(
         (
-          await ds.query(
-            `SELECT COUNT(*) AS count FROM transcript_messages WHERE job_id = $1`,
-            [jobId],
-          )
+          await ds.query(`SELECT COUNT(*) AS count FROM transcript_messages WHERE job_id = $1`, [
+            jobId,
+          ])
         )[0].count,
       ),
     ).toBeGreaterThanOrEqual(1);
@@ -751,10 +682,7 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     try {
       // Eligible: merged, last message well before the cutoff.
       const eligible = await create('Idle merged job');
-      await seedTranscriptMessageAt(
-        eligible.jobId,
-        new Date(Date.now() - 10_000),
-      );
+      await seedTranscriptMessageAt(eligible.jobId, new Date(Date.now() - 10_000));
       await jobs.update({ id: eligible.jobId }, { pr_state: 'merged' });
 
       // Ineligible: merged but ACTIVE (last message recent, well inside the 5s TTL).
@@ -774,14 +702,8 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
       // Ineligible: already claimed for hard delete. The archive sweep must not convert a hard-delete drain
       // into a retained archived row, even if the PR is terminal and the transcript is idle.
       const deleting = await create('Deleting merged job');
-      await seedTranscriptMessageAt(
-        deleting.jobId,
-        new Date(Date.now() - 10_000),
-      );
-      await jobs.update(
-        { id: deleting.jobId },
-        { status: 'deleting', pr_state: 'merged' },
-      );
+      await seedTranscriptMessageAt(deleting.jobId, new Date(Date.now() - 10_000));
+      await jobs.update({ id: deleting.jobId }, { status: 'deleting', pr_state: 'merged' });
 
       // Not an exact count: this file never truncates between cases/runs, so earlier eligible rows may
       // still be sitting around. Assert the count includes ours and check each job's own outcome below.
@@ -833,18 +755,14 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     expect(found).not.toBeNull();
     expect(found!.branch).toBe(`feature/${jobId.slice(0, 8)}`);
 
-    expect(
-      await threadLifecycle.findSandbox(randomUUID(), FAKE_TEAM_ID),
-    ).toBeNull();
+    expect(await threadLifecycle.findSandbox(randomUUID(), FAKE_TEAM_ID)).toBeNull();
   });
 
   it('findSandbox returns null for a closed sandbox row so archived reads do not touch reclaimed worktrees', async () => {
     const { jobId } = await create();
     await sandboxes.update({ job_id: jobId }, { lifecycle: 'closed' });
 
-    await expect(
-      threadLifecycle.findSandbox(jobId, FAKE_TEAM_ID),
-    ).resolves.toBeNull();
+    await expect(threadLifecycle.findSandbox(jobId, FAKE_TEAM_ID)).resolves.toBeNull();
   });
 
   // ── ensureProvisioned — lazy first-turn provisioning (the conversation prerequisite) ───────────────
@@ -919,9 +837,9 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
       }),
     );
     const before = provider.attachCount;
-    await expect(
-      threadLifecycle.ensureProvisioned(thread.id, FAKE_TEAM_ID),
-    ).rejects.toBeInstanceOf(ProvisioningNotReadyError);
+    await expect(threadLifecycle.ensureProvisioned(thread.id, FAKE_TEAM_ID)).rejects.toBeInstanceOf(
+      ProvisioningNotReadyError,
+    );
     expect(provider.attachCount).toBe(before);
   });
 });
@@ -1062,13 +980,9 @@ describe('R2 gate — detachContainer finalizes active_turns (real TurnRegistry,
     }).compile();
 
     hygieneLifecycle = hygieneMod.get(JobLifecycleService);
-    hygieneSandboxes = hygieneMod.get(
-      getRepositoryToken(JobSandboxEntity, DB_CONNECTION),
-    );
+    hygieneSandboxes = hygieneMod.get(getRepositoryToken(JobSandboxEntity, DB_CONNECTION));
     hygieneJobs = hygieneMod.get(getRepositoryToken(JobEntity, DB_CONNECTION));
-    activeTurns = hygieneMod.get(
-      getRepositoryToken(ActiveTurnEntity, DB_CONNECTION),
-    );
+    activeTurns = hygieneMod.get(getRepositoryToken(ActiveTurnEntity, DB_CONNECTION));
     hygieneDs = hygieneMod.get<DataSource>(getDataSourceToken(DB_CONNECTION));
 
     await hygieneDs.query(
@@ -1088,13 +1002,7 @@ describe('R2 gate — detachContainer finalizes active_turns (real TurnRegistry,
         SET git_url = EXCLUDED.git_url, default_branch = EXCLUDED.default_branch
       RETURNING id
     `,
-      [
-        FAKE_TEAM_ID,
-        FAKE_PROJECT_SLUG,
-        'R2 Gate Repo',
-        FAKE_REPO_URL,
-        FAKE_BASE_BRANCH,
-      ],
+      [FAKE_TEAM_ID, FAKE_PROJECT_SLUG, 'R2 Gate Repo', FAKE_REPO_URL, FAKE_BASE_BRANCH],
     );
     hygieneRepoId = repoRows[0].id;
   });
@@ -1131,10 +1039,7 @@ describe('R2 gate — detachContainer finalizes active_turns (real TurnRegistry,
     // let a steered operator message vanish — see the module doc comment above).
     const turnId = randomUUID();
     await seedRunningTurn(jobId, turnId);
-    await hygieneSandboxes.update(
-      { job_id: jobId },
-      { last_active_at: new Date(0) },
-    ); // past idle TTL
+    await hygieneSandboxes.update({ job_id: jobId }, { last_active_at: new Date(0) }); // past idle TTL
 
     const reaped = await hygieneLifecycle.reapIdle();
     expect(reaped).toBeGreaterThanOrEqual(1);
@@ -1161,21 +1066,13 @@ describe('R2 gate — detachContainer finalizes active_turns (real TurnRegistry,
     await seedRunningTurn(jobA, turnA);
     await seedRunningTurn(jobB, turnB);
     // Only job A goes idle.
-    await hygieneSandboxes.update(
-      { job_id: jobA },
-      { last_active_at: new Date(0) },
-    );
-    await hygieneSandboxes.update(
-      { job_id: jobB },
-      { last_active_at: new Date() },
-    );
+    await hygieneSandboxes.update({ job_id: jobA }, { last_active_at: new Date(0) });
+    await hygieneSandboxes.update({ job_id: jobB }, { last_active_at: new Date() });
 
     await hygieneLifecycle.reapIdle();
 
     expect(await activeTurns.findOne({ where: { turn_id: turnA } })).toBeNull();
-    expect(
-      await activeTurns.findOne({ where: { turn_id: turnB } }),
-    ).not.toBeNull();
+    expect(await activeTurns.findOne({ where: { turn_id: turnB } })).not.toBeNull();
   });
 
   it('an on-demand resetContainer (the reset_sandbox tool) also finalizes the running turn', async () => {
@@ -1191,9 +1088,7 @@ describe('R2 gate — detachContainer finalizes active_turns (real TurnRegistry,
     const out = await hygieneLifecycle.resetContainer(jobId, FAKE_TEAM_ID);
     expect(out).toEqual({ reset: true });
 
-    expect(
-      await activeTurns.findOne({ where: { turn_id: turnId } }),
-    ).toBeNull();
+    expect(await activeTurns.findOne({ where: { turn_id: turnId } })).toBeNull();
   });
 
   it('a thread with NO running turn reaps cleanly (failRunningForJob is a real no-op, not an error)', async () => {
@@ -1203,14 +1098,9 @@ describe('R2 gate — detachContainer finalizes active_turns (real TurnRegistry,
       baseBranch: FAKE_BASE_BRANCH,
       displayName: 'Hygiene gate quiet thread',
     });
-    await hygieneSandboxes.update(
-      { job_id: jobId },
-      { last_active_at: new Date(0) },
-    );
+    await hygieneSandboxes.update({ job_id: jobId }, { last_active_at: new Date(0) });
 
-    await expect(hygieneLifecycle.reapIdle()).resolves.toBeGreaterThanOrEqual(
-      1,
-    );
+    await expect(hygieneLifecycle.reapIdle()).resolves.toBeGreaterThanOrEqual(1);
     const row = await hygieneSandboxes.findOneOrFail({
       where: { job_id: jobId },
     });

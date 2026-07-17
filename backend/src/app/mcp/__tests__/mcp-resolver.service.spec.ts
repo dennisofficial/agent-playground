@@ -1,9 +1,9 @@
-import { describe, expect, it, beforeEach } from 'vitest';
 import type { EnvService } from '@core/config/env/env.service';
 import type { Repository } from 'typeorm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import type { McpServerEntity } from '../../persistence/entities';
-import { McpResolver } from '../mcp-resolver.service';
 import { McpOAuthService } from '../mcp-oauth.service';
+import { McpResolver } from '../mcp-resolver.service';
 import { McpServerStore } from '../mcp-server.store';
 
 const KEY = 'b'.repeat(64);
@@ -16,18 +16,13 @@ class FakeRepo {
   }
   async save(row: McpServerEntity): Promise<McpServerEntity> {
     const i = this.rows.findIndex(
-      (r) =>
-        r.org_id === row.org_id && r.scope === row.scope && r.name === row.name,
+      (r) => r.org_id === row.org_id && r.scope === row.scope && r.name === row.name,
     );
     if (i >= 0) this.rows[i] = row;
     else this.rows.push(row);
     return row;
   }
-  async findOne({
-    where,
-  }: {
-    where: Partial<McpServerEntity>;
-  }): Promise<McpServerEntity | null> {
+  async findOne({ where }: { where: Partial<McpServerEntity> }): Promise<McpServerEntity | null> {
     return this.rows.find((r) => this.match(r, where)) ?? null;
   }
   async find({
@@ -51,10 +46,7 @@ function make(): { resolver: McpResolver; store: McpServerStore } {
   const env = {
     get: (k: string) => (k === 'SECRETS_ENCRYPTION_KEY' ? KEY : undefined),
   } as EnvService;
-  const store = new McpServerStore(
-    repo as unknown as Repository<McpServerEntity>,
-    env,
-  );
+  const store = new McpServerStore(repo as unknown as Repository<McpServerEntity>, env);
   const oauth = new McpOAuthService(store, env);
   return { resolver: new McpResolver(store, oauth), store };
 }
@@ -67,9 +59,7 @@ describe('McpResolver.resolveForTurn', () => {
   });
 
   it('returns [] when the org has no servers', async () => {
-    expect(await resolver.resolveForTurn('org1', 'repo-1', 'brain')).toEqual(
-      [],
-    );
+    expect(await resolver.resolveForTurn('org1', 'repo-1', 'brain')).toEqual([]);
   });
 
   it('a repo-scoped server OVERRIDES an org-scoped server of the same name', async () => {
@@ -101,14 +91,10 @@ describe('McpResolver.resolveForTurn', () => {
       url: 'https://x',
       surfaces: ['build'],
     });
-    expect(await resolver.resolveForTurn('org1', 'repo-1', 'brain')).toEqual(
-      [],
-    );
-    expect(
-      (await resolver.resolveForTurn('org1', 'repo-1', 'build')).map(
-        (s) => s.name,
-      ),
-    ).toEqual(['buildonly']);
+    expect(await resolver.resolveForTurn('org1', 'repo-1', 'brain')).toEqual([]);
+    expect((await resolver.resolveForTurn('org1', 'repo-1', 'build')).map((s) => s.name)).toEqual([
+      'buildonly',
+    ]);
   });
 
   it('excludes disabled servers', async () => {
@@ -117,9 +103,7 @@ describe('McpResolver.resolveForTurn', () => {
       url: 'https://x',
       enabled: false,
     });
-    expect(await resolver.resolveForTurn('org1', 'repo-1', 'brain')).toEqual(
-      [],
-    );
+    expect(await resolver.resolveForTurn('org1', 'repo-1', 'brain')).toEqual([]);
   });
 
   it('inlines decrypted secret header values for a remote server', async () => {

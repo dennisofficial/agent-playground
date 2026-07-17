@@ -1,8 +1,8 @@
-import { describe, expect, it, vi } from 'vitest';
 import type { InsertEvent } from 'typeorm';
+import { describe, expect, it } from 'vitest';
 import type { AppVersionService } from '../../cluster/app-version.service';
-import { MessageGitShaSubscriber } from '../message-git-sha.subscriber';
 import type { TranscriptMessageEntity } from '../entities';
+import { MessageGitShaSubscriber } from '../message-git-sha.subscriber';
 
 function make(sha = 'sha-abc1234') {
   const dataSource = { subscribers: [] as unknown[] };

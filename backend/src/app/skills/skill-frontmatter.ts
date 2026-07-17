@@ -58,8 +58,7 @@ export function parseSkillFrontmatter(md: string): SkillFrontmatter {
     ) {
       const list = parseListValue(kv[2]);
       if (list.length > 0) {
-        if (key === 'reviewForTypes' || key === 'review_for_types')
-          out.reviewForTypes = list;
+        if (key === 'reviewForTypes' || key === 'review_for_types') out.reviewForTypes = list;
         else out.reviewForGlobs = list;
       }
       continue;

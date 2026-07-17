@@ -8,8 +8,8 @@
  * TOPIC bucket: the workspace profile (environment & provisioning). Was `environment.group.ts`.
  */
 import { Agent, ENGINEERING_STAGES } from '../agent';
-import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isOnboarding, notOnboarding } from '../conditions';
+import { Fragment, FragmentGroup } from '../fragment.decorator';
 import type { PromptCtx } from '../prompt-ctx';
 
 /** The named area + its seven dimensions and the upkeep tool for each. Shared by both framings. */

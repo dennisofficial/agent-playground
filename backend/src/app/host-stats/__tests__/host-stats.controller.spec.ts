@@ -1,12 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { HostStatsController } from '../host-stats.controller';
 import type { HostStatsSampleRepository } from '../host-stats-sample.repository';
+import { HostStatsController } from '../host-stats.controller';
 import type { HostStatsService } from '../host-stats.service';
 import type { HostStatsHistoryPoint } from '../host-stats.types';
 
-function controllerWithHistory(
-  history: (hours: number) => Promise<HostStatsHistoryPoint[]>,
-) {
+function controllerWithHistory(history: (hours: number) => Promise<HostStatsHistoryPoint[]>) {
   return new HostStatsController(
     {} as HostStatsService,
     { history } as unknown as HostStatsSampleRepository,

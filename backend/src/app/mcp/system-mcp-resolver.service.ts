@@ -1,8 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import {
-  buildSystemMcpServers,
-  type SystemMcpServer,
-} from './system-mcp-registry';
+import { buildSystemMcpServers, type SystemMcpServer } from './system-mcp-registry';
 
 /**
  * Resolves the SYSTEM tier of MCP servers — the built-ins the sandbox attaches on execute turns (the

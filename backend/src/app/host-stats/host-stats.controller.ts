@@ -1,15 +1,6 @@
-import { Controller, Get, Query, Sse } from '@nestjs/common';
 import type { MessageEvent } from '@nestjs/common';
-import {
-  EMPTY,
-  catchError,
-  from,
-  interval,
-  map,
-  Observable,
-  startWith,
-  switchMap,
-} from 'rxjs';
+import { Controller, Get, Query, Sse } from '@nestjs/common';
+import { catchError, EMPTY, from, interval, map, Observable, startWith, switchMap } from 'rxjs';
 import { HostStatsSampleRepository } from './host-stats-sample.repository';
 import { HostStatsService } from './host-stats.service';
 import type { HostStatsDto, HostStatsHistoryPoint } from './host-stats.types';
@@ -17,8 +8,7 @@ import type { HostStatsDto, HostStatsHistoryPoint } from './host-stats.types';
 /** Realtime SSE push cadence. */
 const REALTIME_MS = 3_000;
 
-const clamp = (n: number, lo: number, hi: number) =>
-  Math.min(hi, Math.max(lo, n));
+const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
 function parseHistoryHours(raw: string | undefined): number {
   if (raw === undefined) return 24;
@@ -53,9 +43,7 @@ export class HostStatsController {
   }
 
   @Get('history')
-  history(
-    @Query('hours') hoursRaw?: string,
-  ): Promise<{ points: HostStatsHistoryPoint[] }> {
+  history(@Query('hours') hoursRaw?: string): Promise<{ points: HostStatsHistoryPoint[] }> {
     const hours = parseHistoryHours(hoursRaw);
     return this.samples.history(hours).then((points) => ({ points }));
   }

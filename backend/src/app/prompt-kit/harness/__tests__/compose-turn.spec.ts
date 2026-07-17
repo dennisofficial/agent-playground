@@ -1,7 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
-import { composeTurn } from '../compose-turn';
 import { type TurnChunk } from '@shared/prompt-kit/harness/tag-vocabulary';
+import { composeTurn } from '../compose-turn';
 
 const userChunk = (name: string, body: string, at: string): TurnChunk => ({
   kind: 'user',
@@ -15,9 +15,7 @@ describe('composeTurn', () => {
       prefixChunks: [],
       userChunks: [userChunk('Dennis', 'ship it', '2026-07-04T00:00:00.000Z')],
     });
-    expect(turn).toBe(
-      '<user name="Dennis" at="2026-07-04T00:00:00.000Z">ship it</user>',
-    );
+    expect(turn).toBe('<user name="Dennis" at="2026-07-04T00:00:00.000Z">ship it</user>');
   });
 
   it('(b) coalesces a batch of 3 into 3 chronological <user> chunks after any prefixes', () => {
@@ -57,9 +55,7 @@ describe('composeTurn', () => {
           attrs: { reminderKind: 'memory' },
         },
       ],
-      userChunks: [
-        userChunk('Dennis', 'how do we build?', '2026-07-04T00:00:00.000Z'),
-      ],
+      userChunks: [userChunk('Dennis', 'how do we build?', '2026-07-04T00:00:00.000Z')],
     });
     expect(turn).toBe(
       [

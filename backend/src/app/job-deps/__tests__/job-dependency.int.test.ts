@@ -19,23 +19,19 @@
  *  (g) removeDependency manually lifts an edge and reports it as `removed` in the roster.
  */
 
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
-import {
-  TypeOrmModule,
-  getDataSourceToken,
-  getRepositoryToken,
-} from '@nestjs/typeorm';
+import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
+import type { UnblockBlockerInfo } from '@shared/domain';
 import { DataSource, Repository } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
-import type { UnblockBlockerInfo } from '@shared/domain';
 import { CustomNamingStrategy } from '../../../_lib/database/custom-naming.strategy';
-import { BrainGateway } from '../brain-gateway';
-import { DB_CONNECTION } from '../../persistence/database.module';
-import { ENTITIES, JobEntity } from '../../persistence/entities';
 import { JobUnblockSweep } from '../../driver/job-unblock-sweep.service';
 import { JobBootstrapService } from '../../job-bootstrap/job-bootstrap.service';
+import { DB_CONNECTION } from '../../persistence/database.module';
+import { ENTITIES, JobEntity } from '../../persistence/entities';
 import { StimulusStoreService } from '../../stimulus/stimulus-store.service';
+import { BrainGateway } from '../brain-gateway';
 import { JobDependencyService } from '../job-dependency.service';
 
 const ORG_ID = '2c111111-1111-4111-8111-111111111111';
@@ -98,10 +94,7 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
 
   beforeAll(async () => {
     mod = await Test.createTestingModule({
-      imports: [
-        TypeOrmModule.forRoot(dbOpts()),
-        TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION),
-      ],
+      imports: [TypeOrmModule.forRoot(dbOpts()), TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION)],
       providers: [
         JobDependencyService,
         JobUnblockSweep,
@@ -132,11 +125,7 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
                 await wait;
               }
             },
-            pumpUnblockedJob: async (
-              jobId: string,
-              orgId: string,
-              repoId: string,
-            ) => {
+            pumpUnblockedJob: async (jobId: string, orgId: string, repoId: string) => {
               pumpCalls.push({ jobId, orgId, repoId });
             },
           },
@@ -192,9 +181,7 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     );
   }
 
-  async function makeJob(
-    overrides: Partial<JobEntity> = {},
-  ): Promise<JobEntity> {
+  async function makeJob(overrides: Partial<JobEntity> = {}): Promise<JobEntity> {
     return jobs.save(
       jobs.create({
         org_id: ORG_ID,
@@ -378,10 +365,7 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     });
 
     // The blocker's PR merges.
-    await jobs.update(
-      { id: blocker.id },
-      { pr_state: 'merged', status: 'done' },
-    );
+    await jobs.update({ id: blocker.id }, { pr_state: 'merged', status: 'done' });
     await service.onBlockerResolved(blocker.id, 'merged');
 
     const reloaded = await jobs.findOneByOrFail({ id: dependent.id });
@@ -389,9 +373,7 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     // The JIT unblock note was recorded with the resolved blocker roster, and the pump was invoked.
     expect(noteCalls).toHaveLength(1);
     expect(noteCalls[0].jobId).toBe(dependent.id);
-    expect(noteCalls[0].blockers).toEqual([
-      { jobId: blocker.id, title: 'A job', how: 'merged' },
-    ]);
+    expect(noteCalls[0].blockers).toEqual([{ jobId: blocker.id, title: 'A job', how: 'merged' }]);
     expect(pumpCalls.map((p) => p.jobId)).toEqual([dependent.id]);
     // The born-blocked brief still sits in the queue (the pump is mocked here, so nothing drained it).
     const rows = await seedRows(dependent.id);
@@ -419,22 +401,15 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     // First blocker merges — dependent still blocked on c.
     await jobs.update({ id: a.id }, { pr_state: 'merged', status: 'done' });
     await service.onBlockerResolved(a.id, 'merged');
-    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe(
-      'blocked',
-    );
+    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe('blocked');
     expect(noteCalls).toHaveLength(0);
 
     // Last blocker merges — now it unblocks.
     await jobs.update({ id: c.id }, { pr_state: 'merged', status: 'done' });
     await service.onBlockerResolved(c.id, 'merged');
-    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe(
-      'open',
-    );
+    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe('open');
     expect(noteCalls).toHaveLength(1);
-    expect(noteCalls[0].blockers.map((b) => b.how)).toEqual([
-      'merged',
-      'merged',
-    ]); // both merged cleanly
+    expect(noteCalls[0].blockers.map((b) => b.how)).toEqual(['merged', 'merged']); // both merged cleanly
   });
 
   it('serializes concurrent unblock attempts so only the winner records and pumps', async () => {
@@ -475,9 +450,7 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     releaseFirstNote();
     await Promise.all([first, second]);
 
-    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe(
-      'open',
-    );
+    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe('open');
     expect(noteCalls).toHaveLength(1);
     expect(pumpCalls.map((p) => p.jobId)).toEqual([dependent.id]);
   });
@@ -493,15 +466,10 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
       dependsOnJobId: blocker.id,
     });
 
-    await jobs.update(
-      { id: blocker.id },
-      { pr_state: 'closed', status: 'done' },
-    );
+    await jobs.update({ id: blocker.id }, { pr_state: 'closed', status: 'done' });
     await service.onBlockerResolved(blocker.id, 'closed_unmerged');
 
-    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe(
-      'open',
-    );
+    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe('open');
     expect(noteCalls).toHaveLength(1);
     expect(noteCalls[0].blockers).toEqual([
       { jobId: blocker.id, title: 'A job', how: 'closed_unmerged' },
@@ -521,9 +489,7 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     await jobs.update({ id: blocker.id }, { status: 'cancelled' });
     await service.onBlockerResolved(blocker.id, 'cancelled');
 
-    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe(
-      'open',
-    );
+    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe('open');
     expect(noteCalls[0].blockers).toEqual([
       { jobId: blocker.id, title: 'the blocker', how: 'cancelled' },
     ]);
@@ -543,12 +509,8 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     // from state, so the funnel must treat the resolving blocker as terminal unconditionally.
     await service.onBlockerResolved(blocker.id, 'deleted');
 
-    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe(
-      'open',
-    );
-    expect(noteCalls[0].blockers).toEqual([
-      { jobId: blocker.id, title: 'A job', how: 'deleted' },
-    ]);
+    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe('open');
+    expect(noteCalls[0].blockers).toEqual([{ jobId: blocker.id, title: 'A job', how: 'deleted' }]);
   });
 
   it('reports an already-deleting sibling blocker as deleted alongside the resolving one', async () => {
@@ -575,15 +537,10 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     });
 
     await jobs.update({ id: deleting.id }, { status: 'deleting' });
-    await jobs.update(
-      { id: closing.id },
-      { pr_state: 'closed', status: 'done' },
-    );
+    await jobs.update({ id: closing.id }, { pr_state: 'closed', status: 'done' });
     await service.onBlockerResolved(closing.id, 'closed_unmerged');
 
-    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe(
-      'open',
-    );
+    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe('open');
     expect(noteCalls).toHaveLength(1);
     const hows = noteCalls[0].blockers.map((b) => b.how);
     expect(hows).toContain('deleted');
@@ -601,9 +558,7 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
       jobId: dependent.id,
       dependsOnJobId: blocker.id,
     });
-    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe(
-      'blocked',
-    );
+    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe('blocked');
 
     // A dropped wake event: the blocker vanishes (hard delete cascades its job_dependencies edge) but
     // the dependent is still parked. The sweep must reconcile it.
@@ -611,9 +566,7 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
 
     const unblocked = await sweep.tick();
     expect(unblocked).toBe(1);
-    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe(
-      'open',
-    );
+    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe('open');
     expect(noteCalls).toHaveLength(1);
     expect(noteCalls[0].blockers).toEqual([]); // the blocker row vanished, so there is nothing to name
   });
@@ -628,9 +581,7 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
       jobId: dependent.id,
       dependsOnJobId: blocker.id,
     });
-    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe(
-      'blocked',
-    );
+    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe('blocked');
 
     await service.removeDependency({
       orgId: ORG_ID,
@@ -639,9 +590,7 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
       dependsOnJobId: blocker.id,
     });
 
-    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe(
-      'open',
-    );
+    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe('open');
     expect(noteCalls).toHaveLength(1);
     expect(noteCalls[0].blockers).toEqual([
       { jobId: blocker.id, title: 'the blocker', how: 'removed' },

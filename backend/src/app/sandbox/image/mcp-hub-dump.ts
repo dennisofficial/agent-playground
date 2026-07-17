@@ -6,9 +6,9 @@
  * `mcp-hub-server.ts`.
  */
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { randomBytes } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
-import { randomBytes } from 'node:crypto';
 import { CONTAINER_PLAYGROUND } from '../container-paths';
 
 export const DUMP_THRESHOLD_BYTES = 25_000; // ~6k tokens; below this, keep inline
@@ -23,8 +23,7 @@ const ALLOWED_EXT = new Set(['json', 'jsonl', 'csv', 'tsv', 'txt']);
 const clampExt = (ext: string): string => (ALLOWED_EXT.has(ext) ? ext : 'txt');
 
 /** Strip a tool name to a safe filename component — no `/` or `..` can survive. */
-const safe = (toolName: string): string =>
-  toolName.replace(/[^a-zA-Z0-9_-]/g, '');
+const safe = (toolName: string): string => toolName.replace(/[^a-zA-Z0-9_-]/g, '');
 
 /** Compact, hub-controlled (UTC) timestamp for the dump filename, e.g. `20260712-031500`. */
 function tsCompact(date: Date): string {
@@ -69,8 +68,7 @@ type Extracted = {
   previewSource: string;
 };
 
-const firstLines = (text: string, n: number): string =>
-  text.split('\n').slice(0, n).join('\n');
+const firstLines = (text: string, n: number): string => text.split('\n').slice(0, n).join('\n');
 
 /** Parse the reader's `atlas_query` envelope (or fall back to generic JSON/text) into the payload that
  *  actually gets written to disk, so the file holds the clean rows/text rather than the JSON wrapper. */
@@ -138,8 +136,7 @@ export function maybeDumpLargeResult(
   if (!isDumpEnabled(serverName) || result.isError) return result;
 
   const content = result.content ?? [];
-  if (content.length === 0 || content.some((c) => c.type !== 'text'))
-    return result;
+  if (content.length === 0 || content.some((c) => c.type !== 'text')) return result;
 
   const text = content.map((c) => (c as { text: string }).text).join('');
   if (Buffer.byteLength(text, 'utf8') <= DUMP_THRESHOLD_BYTES) return result;
@@ -152,10 +149,7 @@ export function maybeDumpLargeResult(
     const dir = join(resolvedDeps.playgroundDir, DUMP_SUBDIR);
     resolvedDeps.mkdir(dir);
     const stamp = tsCompact(resolvedDeps.now());
-    const file = join(
-      dir,
-      `${safe(toolName)}-${stamp}-${resolvedDeps.rand()}.${clamped}`,
-    );
+    const file = join(dir, `${safe(toolName)}-${stamp}-${resolvedDeps.rand()}.${clamped}`);
     // Containment assertion (belt-and-suspenders): every filename component is already sanitized
     // (safe() strips to [A-Za-z0-9_-] so no '.'/'/'; ext is allowlisted), but assert the resolved path
     // is still inside `dir` and bail to inline if not — the hub runs as root, so never write outside.
@@ -185,9 +179,7 @@ export function maybeDumpLargeResult(
       ],
     };
   } catch (err) {
-    console.error(
-      `[mcp-hub-dump] failed to dump result for ${toolName}: ${String(err)}`,
-    );
+    console.error(`[mcp-hub-dump] failed to dump result for ${toolName}: ${String(err)}`);
     return result;
   }
 }

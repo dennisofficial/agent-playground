@@ -1,15 +1,8 @@
-import {
-  Column,
-  Entity,
-  Index,
-  JoinColumn,
-  ManyToOne,
-  PrimaryGeneratedColumn,
-} from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
+import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { JobEntity } from './job.entity';
-import { ThreadEntity } from './thread.entity';
 import { SubagentEntity } from './subagent.entity';
+import { ThreadEntity } from './thread.entity';
 
 /**
  * One message in a thread's append-only log. `thread_id` is the real partition key (d3) — every message

@@ -19,40 +19,27 @@
  */
 
 import { Test, type TestingModule } from '@nestjs/testing';
-import {
-  TypeOrmModule,
-  getDataSourceToken,
-  getRepositoryToken,
-} from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
-import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from 'vitest';
-import { CustomNamingStrategy } from '../../../_lib/database/custom-naming.strategy';
-import { DB_CONNECTION } from '../../persistence/database.module';
-import { ENTITIES, JobEntity } from '../../persistence/entities';
-import { JobBootstrapService } from '../../job-bootstrap';
-import { StimulusStoreService } from '../../stimulus/stimulus-store.service';
-import { AgentSessionManager } from '../agent-session-manager.service';
-import { SYSTEM_SEED_AUTHOR } from '../../surface/chat-surface.port';
+import { getDataSourceToken, getRepositoryToken, TypeOrmModule } from '@nestjs/typeorm';
 import type {
   EngineEvent,
   EngineRunnerPort,
   EngineRunResult,
   RunEngineArgs,
 } from '@shared/engine/engine.types';
+import { DataSource, Repository } from 'typeorm';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { CustomNamingStrategy } from '../../../_lib/database/custom-naming.strategy';
+import type { LeaderElectionService } from '../../cluster';
+import { JobBootstrapService } from '../../job-bootstrap';
+import { DB_CONNECTION } from '../../persistence/database.module';
+import { ENTITIES, JobEntity } from '../../persistence/entities';
 import {
   BrainTurnAlreadyRunningError,
   type TurnRegistry,
 } from '../../sandbox/turn-registry.service';
-import type { LeaderElectionService } from '../../cluster';
+import { StimulusStoreService } from '../../stimulus/stimulus-store.service';
+import { SYSTEM_SEED_AUTHOR } from '../../surface/chat-surface.port';
+import { AgentSessionManager } from '../agent-session-manager.service';
 
 function dbOpts() {
   return {
@@ -97,10 +84,7 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
 
   beforeAll(async () => {
     mod = await Test.createTestingModule({
-      imports: [
-        TypeOrmModule.forRoot(dbOpts()),
-        TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION),
-      ],
+      imports: [TypeOrmModule.forRoot(dbOpts()), TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION)],
       providers: [JobBootstrapService, StimulusStoreService],
     }).compile();
 
@@ -129,9 +113,7 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
   });
 
   beforeEach(async () => {
-    await ds.query(
-      'TRUNCATE inbound_messages, transcript_messages, jobs RESTART IDENTITY CASCADE',
-    );
+    await ds.query('TRUNCATE inbound_messages, transcript_messages, jobs RESTART IDENTITY CASCADE');
   });
 
   async function purgeOwnRows(): Promise<void> {
@@ -190,14 +172,10 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
       // which is all the durable pump needs. Keeps the transcript-side assertions out of scope.
       systemChunk: 'skip',
       ...(target.priority ? { priority: target.priority } : {}),
-      ...(target.seedQuestionId
-        ? { seedQuestionId: target.seedQuestionId }
-        : {}),
+      ...(target.seedQuestionId ? { seedQuestionId: target.seedQuestionId } : {}),
       ...(target.seedSecretId ? { seedSecretId: target.seedSecretId } : {}),
       ...(target.seedFileId ? { seedFileId: target.seedFileId } : {}),
-      ...(target.seedQuestionIds
-        ? { seedQuestionIds: target.seedQuestionIds }
-        : {}),
+      ...(target.seedQuestionIds ? { seedQuestionIds: target.seedQuestionIds } : {}),
       ...(target.seedSecretIds ? { seedSecretIds: target.seedSecretIds } : {}),
       ...(target.seedFileIds ? { seedFileIds: target.seedFileIds } : {}),
     });
@@ -216,10 +194,7 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
 
   /** Clear the delivery lease so a subsequent sweep/pump can re-collect a row a dead steer left owed. */
   async function expireLease(jobId: string): Promise<void> {
-    await ds.query(
-      'UPDATE inbound_messages SET attempted_at = NULL WHERE job_id = $1',
-      [jobId],
-    );
+    await ds.query('UPDATE inbound_messages SET attempted_at = NULL WHERE job_id = $1', [jobId]);
   }
 
   /**
@@ -236,8 +211,7 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
     const turnRegistry = { runningBrainTurn } as unknown as TurnRegistry;
 
     let capturedTask: string | undefined;
-    let runImpl: ((args: RunEngineArgs) => Promise<EngineRunResult>) | null =
-      null;
+    let runImpl: ((args: RunEngineArgs) => Promise<EngineRunResult>) | null = null;
     const run = vi.fn((args: RunEngineArgs): Promise<EngineRunResult> => {
       capturedTask = args.task;
       if (runImpl) return runImpl(args);
@@ -398,9 +372,7 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
       setLive: (turnId: string | null) => {
         liveTurn = turnId;
       },
-      setRunImpl: (
-        impl: ((args: RunEngineArgs) => Promise<EngineRunResult>) | null,
-      ) => {
+      setRunImpl: (impl: ((args: RunEngineArgs) => Promise<EngineRunResult>) | null) => {
         runImpl = impl;
       },
     };
@@ -417,14 +389,10 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
       deliveredAt: null,
     });
 
-    const seed = await recordSeed(
-      thread.id,
-      '<system_notice>answer q-1</system_notice>',
-      {
-        seedQuestionId: 'q-1',
-        priority: 'now',
-      },
-    );
+    const seed = await recordSeed(thread.id, '<system_notice>answer q-1</system_notice>', {
+      seedQuestionId: 'q-1',
+      priority: 'now',
+    });
 
     // MID-TURN: the pump steers the live turn; the steer XADDs but the turn dies before any `input_ack`.
     await manager.pumpThread(thread.id, ORG_ID, repoId);
@@ -448,14 +416,10 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
       deliveredAt: null,
     });
 
-    const seed = await recordSeed(
-      thread.id,
-      '<system_notice>answer q-1</system_notice>',
-      {
-        seedQuestionId: 'q-1',
-        priority: 'now',
-      },
-    );
+    const seed = await recordSeed(thread.id, '<system_notice>answer q-1</system_notice>', {
+      seedQuestionId: 'q-1',
+      priority: 'now',
+    });
 
     // 1) MID-TURN steer — no ack, nothing stamped.
     await manager.pumpThread(thread.id, ORG_ID, repoId);
@@ -521,18 +485,13 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
     expect(task).not.toContain('<user name="System"');
     expect(task).toContain('a normal operator reply');
     expect(task).toContain('<user name="Dennis"');
-    expect(task!.indexOf(framed)).toBeLessThan(
-      task!.indexOf('a normal operator reply'),
-    );
+    expect(task!.indexOf(framed)).toBeLessThan(task!.indexOf('a normal operator reply'));
 
     // Both durable rows land delivered together — the plain operator row on registration, the card-bearing
     // seed row on the success tail — so the coalescing extends to the delivery ledger too.
     expect((await rowState(seed.id)).delivered_at).not.toBeNull();
     expect((await rowState(operator.id)).delivered_at).not.toBeNull();
-    const stillPending = await stimulusStore.eligiblePendingChat(
-      thread.id,
-      60_000,
-    );
+    const stillPending = await stimulusStore.eligiblePendingChat(thread.id, 60_000);
     expect(stillPending).toHaveLength(0);
   });
 
@@ -548,14 +507,10 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
       ephemeral: true,
     });
 
-    const seed = await recordSeed(
-      thread.id,
-      '<system_notice>secret provided</system_notice>',
-      {
-        seedSecretId: 'sec-1',
-        priority: 'now',
-      },
-    );
+    const seed = await recordSeed(thread.id, '<system_notice>secret provided</system_notice>', {
+      seedSecretId: 'sec-1',
+      priority: 'now',
+    });
 
     // 1) MID-TURN steer — no ack. The gate must stay SET and the card undelivered (never wedged half-open).
     await manager.pumpThread(thread.id, ORG_ID, repoId);
@@ -585,14 +540,10 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
       deliveredAt: null,
     });
 
-    const seed = await recordSeed(
-      thread.id,
-      '<system_notice>answer q-1</system_notice>',
-      {
-        seedQuestionId: 'q-1',
-        priority: 'now',
-      },
-    );
+    const seed = await recordSeed(thread.id, '<system_notice>answer q-1</system_notice>', {
+      seedQuestionId: 'q-1',
+      priority: 'now',
+    });
 
     // Register (so the turn is restart-survivable) then die BEFORE the success tail runs.
     h.setRunImpl((args) => {
@@ -625,10 +576,7 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
         seedFileId?: string;
       };
       arm: (store: ReturnType<typeof makeManager>['store']) => void;
-      assertCard: (
-        store: ReturnType<typeof makeManager>['store'],
-        jobId: string,
-      ) => void;
+      assertCard: (store: ReturnType<typeof makeManager>['store'], jobId: string) => void;
     };
     const variants: Variant[] = [
       {
@@ -640,10 +588,7 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
             deliveredAt: null,
           }),
         assertCard: (store, jobId) =>
-          expect(store.markQuestionDelivered).toHaveBeenCalledWith(
-            jobId,
-            'q-1',
-          ),
+          expect(store.markQuestionDelivered).toHaveBeenCalledWith(jobId, 'q-1'),
       },
       {
         name: 'secret',
@@ -656,14 +601,8 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
             ephemeral: true,
           }),
         assertCard: (store, jobId) => {
-          expect(store.markSecretDelivered).toHaveBeenCalledWith(
-            jobId,
-            'sec-1',
-          );
-          expect(store.clearAwaitingSecret).toHaveBeenCalledWith(
-            jobId,
-            'sec-1',
-          );
+          expect(store.markSecretDelivered).toHaveBeenCalledWith(jobId, 'sec-1');
+          expect(store.clearAwaitingSecret).toHaveBeenCalledWith(jobId, 'sec-1');
         },
       },
       {
@@ -685,11 +624,10 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
         const { manager, store } = makeManager({ leader: true });
         v.arm(store);
 
-        const seed = await recordSeed(
-          thread.id,
-          '<system_notice>reattached seed</system_notice>',
-          { ...v.target, priority: 'now' },
-        );
+        const seed = await recordSeed(thread.id, '<system_notice>reattached seed</system_notice>', {
+          ...v.target,
+          priority: 'now',
+        });
 
         // An `active_turns`-shaped row whose ctx carries the durable stimulus id, so the reattach success tail
         // stamps the RIGHT row (the reconstructed ChatStimulus.id is the engine turn id, not the stimuli id).
@@ -742,16 +680,12 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
     });
 
     // ONE combined seed carrying arrays of ids (never the singular `seed*Id`).
-    const seed = await recordSeed(
-      thread.id,
-      '<system_notice>batch of 3</system_notice>',
-      {
-        seedQuestionIds: ['q-1'],
-        seedFileIds: ['file-1'],
-        seedSecretIds: ['sec-1'],
-        priority: 'now',
-      },
-    );
+    const seed = await recordSeed(thread.id, '<system_notice>batch of 3</system_notice>', {
+      seedQuestionIds: ['q-1'],
+      seedFileIds: ['file-1'],
+      seedSecretIds: ['sec-1'],
+      priority: 'now',
+    });
 
     await manager.pumpThread(thread.id, ORG_ID, repoId);
 
@@ -810,10 +744,7 @@ describe('atomic stimulus claim (d2): kills the delivery self-race', () => {
 
   beforeAll(async () => {
     mod = await Test.createTestingModule({
-      imports: [
-        TypeOrmModule.forRoot(dbOpts()),
-        TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION),
-      ],
+      imports: [TypeOrmModule.forRoot(dbOpts()), TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION)],
       providers: [JobBootstrapService, StimulusStoreService],
     }).compile();
 
@@ -842,9 +773,7 @@ describe('atomic stimulus claim (d2): kills the delivery self-race', () => {
   });
 
   beforeEach(async () => {
-    await ds.query(
-      'TRUNCATE inbound_messages, transcript_messages, jobs RESTART IDENTITY CASCADE',
-    );
+    await ds.query('TRUNCATE inbound_messages, transcript_messages, jobs RESTART IDENTITY CASCADE');
   });
 
   async function purgeOwnRows(): Promise<void> {
@@ -887,10 +816,7 @@ describe('atomic stimulus claim (d2): kills the delivery self-race', () => {
 
   /** Clear the delivery lease so a subsequent sweep/pump can re-collect a row a dead steer left owed. */
   async function expireLease(jobId: string): Promise<void> {
-    await ds.query(
-      'UPDATE inbound_messages SET attempted_at = NULL WHERE job_id = $1',
-      [jobId],
-    );
+    await ds.query('UPDATE inbound_messages SET attempted_at = NULL WHERE job_id = $1', [jobId]);
   }
 
   /**
@@ -931,8 +857,7 @@ describe('atomic stimulus claim (d2): kills the delivery self-race', () => {
     const turnRegistry = { runningBrainTurn } as unknown as TurnRegistry;
 
     let capturedTask: string | undefined;
-    let runImpl: ((args: RunEngineArgs) => Promise<EngineRunResult>) | null =
-      null;
+    let runImpl: ((args: RunEngineArgs) => Promise<EngineRunResult>) | null = null;
     const run = vi.fn((args: RunEngineArgs): Promise<EngineRunResult> => {
       capturedTask = args.task;
       if (runImpl) return runImpl(args);
@@ -1088,9 +1013,7 @@ describe('atomic stimulus claim (d2): kills the delivery self-race', () => {
       setLive: (turnId: string | null) => {
         liveTurn = turnId;
       },
-      setRunImpl: (
-        impl: ((args: RunEngineArgs) => Promise<EngineRunResult>) | null,
-      ) => {
+      setRunImpl: (impl: ((args: RunEngineArgs) => Promise<EngineRunResult>) | null) => {
         runImpl = impl;
       },
     };
@@ -1115,10 +1038,7 @@ describe('atomic stimulus claim (d2): kills the delivery self-race', () => {
 
     // Sweep-recovery of an expired lease is preserved: once the lease clears, a fresh claim wins again.
     await expireLease(thread.id);
-    const reclaimed = await stimulusStore.claimChatStimuli(
-      [stimulus.id],
-      60_000,
-    );
+    const reclaimed = await stimulusStore.claimChatStimuli([stimulus.id], 60_000);
     expect(reclaimed).toEqual([stimulus.id]);
   });
 
@@ -1127,10 +1047,7 @@ describe('atomic stimulus claim (d2): kills the delivery self-race', () => {
     const h1 = makeManager({ live: false, leader: true });
     const h2 = makeManager({ live: false, leader: true });
 
-    const stimulus = await recordOperator(
-      thread.id,
-      'one message, two callers',
-    );
+    const stimulus = await recordOperator(thread.id, 'one message, two callers');
 
     await Promise.all([
       h1.manager.pumpThread(thread.id, ORG_ID, repoId),

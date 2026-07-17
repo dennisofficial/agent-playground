@@ -6,10 +6,10 @@
  * ('plan' | 'ship' | 'both'), so the brain is only told to verify harder at the gate(s) that actually
  * auto-advance. Ordered 1250 — in the approval-context band (after planning ≤1240, before job-kind 1900).
  */
-import { Agent, SHIP_STAGES } from '../agent';
 import { modeApprovesPlan, modeApprovesShip } from '@workspace/shared';
-import { Fragment, FragmentGroup } from '../fragment.decorator';
+import { Agent, SHIP_STAGES } from '../agent';
 import { hasAutoApprove } from '../conditions';
+import { Fragment, FragmentGroup } from '../fragment.decorator';
 import type { PromptCtx } from '../prompt-ctx';
 
 @FragmentGroup()

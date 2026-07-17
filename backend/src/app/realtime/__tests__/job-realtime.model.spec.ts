@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
 import type { Row } from '@workspace/pg-realtime';
+import { describe, expect, it } from 'vitest';
 import { THREADS_MODEL } from '../job-realtime.model';
 
 /**
@@ -45,9 +45,7 @@ describe('THREADS_MODEL.mapRow', () => {
   });
 
   it('narrows the activity axis onto the row, defaulting unknown values to idle', () => {
-    expect(mapRow(baseRow({ activity: 'plan_review' })).activity).toBe(
-      'plan_review',
-    );
+    expect(mapRow(baseRow({ activity: 'plan_review' })).activity).toBe('plan_review');
     // A malformed / unrecognized WAL value must never leak — it narrows to 'idle'.
     expect(mapRow(baseRow({ activity: 'garbage' })).activity).toBe('idle');
     expect(mapRow(baseRow({ activity: undefined })).activity).toBe('idle');
@@ -56,9 +54,7 @@ describe('THREADS_MODEL.mapRow', () => {
   it('suppresses needsYou while a plan review runs, even when status is planning and idle-phase', () => {
     // `activity='plan_review'` is the single-table signal the mapper reads so the live dot stays dark while
     // the system owns the review (the parent turn may already be finalized).
-    const row = mapRow(
-      baseRow({ status: 'planning', activity: 'plan_review' }),
-    );
+    const row = mapRow(baseRow({ status: 'planning', activity: 'plan_review' }));
     expect(row.activity).toBe('plan_review');
     expect(row.needsYou).toBe(false);
   });
@@ -74,9 +70,7 @@ describe('THREADS_MODEL.mapRow', () => {
       reason: 'review died',
       at: '2026-07-08T00:00:00.000Z',
     };
-    const row = mapRow(
-      baseRow({ status: 'planning', activity: 'plan_review', halt }),
-    );
+    const row = mapRow(baseRow({ status: 'planning', activity: 'plan_review', halt }));
     expect(row.needsYou).toBe(true);
   });
 

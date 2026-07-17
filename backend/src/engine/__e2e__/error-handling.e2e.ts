@@ -34,10 +34,17 @@ export async function run(sandbox: string): Promise<ScenarioResult> {
     await xadd(redis, k.spec, spec);
     kickEngine(sandbox, turnId, { detached: true, quiet: true });
 
-    const { frames, final, error, timedOut } = await tailEvents(redis, turnId, { timeoutMs: 60_000 });
+    const { frames, final, error, timedOut } = await tailEvents(redis, turnId, {
+      timeoutMs: 60_000,
+    });
     console.log(`[error] frames: ${frameKinds(frames)}`);
-    if (timedOut) return { pass: false, detail: 'HANG: no terminal frame within 60s (should fail fast)' };
-    if (final) return { pass: false, detail: 'unexpected success final (auth was omitted — expected an error)' };
+    if (timedOut)
+      return { pass: false, detail: 'HANG: no terminal frame within 60s (should fail fast)' };
+    if (final)
+      return {
+        pass: false,
+        detail: 'unexpected success final (auth was omitted — expected an error)',
+      };
     if (!error) return { pass: false, detail: 'no error frame produced' };
 
     const message = String(error.message ?? '');

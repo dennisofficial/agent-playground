@@ -21,54 +21,32 @@
  *  - HALT PATH (separate drive): a `block_thread` halt leaves the thread `blocked`/paused, stops the job
  *    driving (no ship, no PR), and NEVER calls `BrainGateway` — proving the headless driver property (2c).
  */
-import { Test, type TestingModule } from '@nestjs/testing';
-import {
-  TypeOrmModule,
-  getDataSourceToken,
-  getRepositoryToken,
-} from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
-import {
-  afterAll,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from 'vitest';
-import { ConsoleLogger, Logger } from '@nestjs/common';
 import type { EnvService } from '@core/config/env/env.service';
+import { ConsoleLogger, Logger } from '@nestjs/common';
+import { Test, type TestingModule } from '@nestjs/testing';
+import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
+import type { ToolBridgeOptions } from '@shared/engine';
+import { DataSource, Repository } from 'typeorm';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy';
+import { BuildShipService } from '../driver/build-ship.service';
+import { DriverStoreService } from '../driver/driver-store.service';
+import type { ResolvedRepo } from '../driver/repo-resolver';
+import { ThreadDriver } from '../driver/thread-driver.service';
+import type { OauthUsageService } from '../onboarding/oauth-usage.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { ENTITIES, JobEntity, ThreadEntity } from '../persistence/entities';
-import { JobDependencyService } from './job-deps';
 import { StimulusStoreService } from '../stimulus/stimulus-store.service';
-import { DriverStoreService } from '../driver/driver-store.service';
-import { ThreadDriver } from '../driver/thread-driver.service';
-import { BuildShipService } from '../driver/build-ship.service';
-import type { DriverRepoResolver, ResolvedRepo } from '../driver/repo-resolver';
-import type { PlanVisibilityService } from './decision-gate';
 import type { AutoFixStage } from './autofix';
-import type {
-  GithubPrService,
-  LocalGitService,
-  FeatureSandbox,
-  ProjectRepo,
-} from './git';
-import type { TurnRunnerService } from './runner';
-import type {
-  BlockSink,
-  ChatSurface,
-  LiveTurnStore,
-  TaskEventSink,
-} from './surface';
-import { TurnHarnessFactory } from './surface';
-import type { ToolBridgeOptions } from '@shared/engine';
-import type { CredentialResolver } from './onboarding';
-import type { OauthUsageService } from '../onboarding/oauth-usage.service';
-import type { LeaderElectionService } from './cluster';
 import type { BrainGateway } from './brain-gateway';
+import type { LeaderElectionService } from './cluster';
+import type { PlanVisibilityService } from './decision-gate';
+import type { FeatureSandbox, GithubPrService, LocalGitService, ProjectRepo } from './git';
+import { JobDependencyService } from './job-deps';
+import type { CredentialResolver } from './onboarding';
+import type { TurnRunnerService } from './runner';
+import type { BlockSink, ChatSurface, LiveTurnStore, TaskEventSink } from './surface';
+import { TurnHarnessFactory } from './surface';
 
 function dbOpts() {
   return {
@@ -121,9 +99,7 @@ function makeFakeTurn(script: ThreadScript): {
   calls: Array<{ mode: string; stepId?: string | null }>;
 } {
   const calls: Array<{ mode: string; stepId?: string | null }> = [];
-  const verification = [
-    { kind: 'test', command: 'pnpm test', exitCode: 0, outputTail: 'ok' },
-  ];
+  const verification = [{ kind: 'test', command: 'pnpm test', exitCode: 0, outputTail: 'ok' }];
   const turn = {
     runTurn: vi.fn(
       async (input: {
@@ -208,13 +184,11 @@ function makePr(): GithubPrService {
       number: 7,
       existing: false,
     })),
-    findOpenPullByHead: vi.fn(
-      async (_token: string, args: { head: string }) => ({
-        url: 'https://github.com/acme/pipeline-int/pull/7',
-        number: 7,
-        head: args.head,
-      }),
-    ),
+    findOpenPullByHead: vi.fn(async (_token: string, args: { head: string }) => ({
+      url: 'https://github.com/acme/pipeline-int/pull/7',
+      number: 7,
+      head: args.head,
+    })),
   } as unknown as GithubPrService;
 }
 
@@ -238,10 +212,7 @@ describe('pipeline (live Postgres) — thread-group-driven drive over a stubbed 
 
   beforeAll(async () => {
     mod = await Test.createTestingModule({
-      imports: [
-        TypeOrmModule.forRoot(dbOpts()),
-        TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION),
-      ],
+      imports: [TypeOrmModule.forRoot(dbOpts()), TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION)],
       providers: [
         DriverStoreService,
         {
@@ -287,17 +258,12 @@ describe('pipeline (live Postgres) — thread-group-driven drive over a stubbed 
   });
 
   beforeEach(async () => {
-    await ds.query(
-      'TRUNCATE tasks, threads, thread_groups, jobs RESTART IDENTITY CASCADE',
-    );
+    await ds.query('TRUNCATE tasks, threads, thread_groups, jobs RESTART IDENTITY CASCADE');
   });
 
   /** Assemble the REAL driver with the canned collaborators + the given fake turn / brain-gateway spy —
    *  wiring copied verbatim from `driver/host-retry-backstop.int.test.ts` (the constructor is unchanged). */
-  function makeDriver(
-    turn: TurnRunnerService,
-    brainGateway: BrainGateway,
-  ): ThreadDriver {
+  function makeDriver(turn: TurnRunnerService, brainGateway: BrainGateway): ThreadDriver {
     const env = {
       get: (k: string) => (k === 'DRIVER_TRANSIENT_RETRY_MS' ? '1' : undefined),
     } as unknown as EnvService;
@@ -604,10 +570,7 @@ describe('pipeline (live Postgres) — thread-group-driven drive over a stubbed 
 
       // The backend builder must have a live session for a rotation to abandon (the fake engine's turn does
       // not itself persist one — the real recordActiveLeg does, but only AFTER the rotate decision).
-      await store.setThreadSessionId(
-        seed.backendBuilderId,
-        'sess-backend-leg1',
-      );
+      await store.setThreadSessionId(seed.backendBuilderId, 'sess-backend-leg1');
 
       const brainGateway = makeBrainGatewaySpy();
       const { turn, calls } = makeFakeTurn({
@@ -634,12 +597,8 @@ describe('pipeline (live Postgres) — thread-group-driven drive over a stubbed 
       expect(finalStatus).toBe('done');
 
       // ── 2a: `record_leg_handoff` inserted a 2nd builder into the SAME thread group, sharing the thread group tasks ──
-      const backendThreads = await store.threadsForThreadGroup(
-        seed.backendThreadGroupId,
-      );
-      const backendBuilders = backendThreads.filter(
-        (t) => t.role === 'builder',
-      );
+      const backendThreads = await store.threadsForThreadGroup(seed.backendThreadGroupId);
+      const backendBuilders = backendThreads.filter((t) => t.role === 'builder');
       expect(backendBuilders).toHaveLength(2);
       const [leg1, leg2] = backendBuilders;
       expect(leg1.id).toBe(seed.backendBuilderId);
@@ -649,9 +608,7 @@ describe('pipeline (live Postgres) — thread-group-driven drive over a stubbed 
       // The thread group's task checklist is thread-group-owned, so BOTH legs read the SAME list across the
       // rotation. `tasksForThreadGroup` returns raw rows (uuid PK); `getThreadTasks` maps to `TaskItem`
       // whose surfaced id is the short per-stage #N (the row's dense `ordinal`), not the uuid.
-      const threadGroupTasks = await store.tasksForThreadGroup(
-        seed.backendThreadGroupId,
-      );
+      const threadGroupTasks = await store.tasksForThreadGroup(seed.backendThreadGroupId);
       expect(threadGroupTasks.map((t) => t.id)).toEqual([seed.taskId]);
       const leg1Tasks = await store.getThreadTasks(leg1.id);
       const leg2Tasks = await store.getThreadTasks(leg2.id);
@@ -663,31 +620,21 @@ describe('pipeline (live Postgres) — thread-group-driven drive over a stubbed 
         (t) => t.role === 'review_agent' || t.role === 'review_fix',
       );
       // Tree-parented off the LAST builder (leg 2), NOT leg 1 — review runs once, after the whole thread group.
-      expect(
-        backendReviewers.every((t) => t.parent_thread_id === leg2.id),
-      ).toBe(true);
+      expect(backendReviewers.every((t) => t.parent_thread_id === leg2.id)).toBe(true);
       // …but thread-group-scoped: every review child carries the build thread group's id.
-      expect(
-        backendReviewers.every(
-          (t) => t.thread_group_id === seed.backendThreadGroupId,
-        ),
-      ).toBe(true);
+      expect(backendReviewers.every((t) => t.thread_group_id === seed.backendThreadGroupId)).toBe(
+        true,
+      );
       expect(
         backendReviewers.filter((t) => t.role === 'review_agent').length,
       ).toBeGreaterThanOrEqual(1);
-      expect(
-        backendReviewers.filter((t) => t.role === 'review_fix'),
-      ).toHaveLength(1);
+      expect(backendReviewers.filter((t) => t.role === 'review_fix')).toHaveLength(1);
       // Run once, not per leg: leg 1 has NO review children of its own.
-      const leg1Children = backendThreads.filter(
-        (t) => t.parent_thread_id === leg1.id,
-      );
+      const leg1Children = backendThreads.filter((t) => t.parent_thread_id === leg1.id);
       expect(leg1Children).toEqual([]);
 
       // Both build thread groups' builders + the master review all completed via the stubbed engine.
-      const executeStepIds = calls
-        .filter((c) => c.mode === 'execute')
-        .map((c) => c.stepId);
+      const executeStepIds = calls.filter((c) => c.mode === 'execute').map((c) => c.stepId);
       expect(executeStepIds).toContain(seed.backendBuilderId);
       expect(executeStepIds).toContain(leg2.id); // the fresh rotated leg drove its own turn
       expect(executeStepIds).toContain(seed.frontendBuilderId);
@@ -695,13 +642,9 @@ describe('pipeline (live Postgres) — thread-group-driven drive over a stubbed 
       // ── 2d: the ship-review GATE (right after master review, before/independent of ship approval)
       // spawned a post_build thread-group thread — it does NOT open the PR ──────────────────────────────
       const threadGroupsAfter = await store.threadGroupsForJob(seed.jobId);
-      const postBuildThreadGroup = threadGroupsAfter.find(
-        (s) => s.kind === 'post_build',
-      );
+      const postBuildThreadGroup = threadGroupsAfter.find((s) => s.kind === 'post_build');
       expect(postBuildThreadGroup).toBeTruthy();
-      const [postBuildThread] = await store.threadsForThreadGroup(
-        postBuildThreadGroup!.id,
-      );
+      const [postBuildThread] = await store.threadsForThreadGroup(postBuildThreadGroup!.id);
       expect(postBuildThread.role).toBe('post_build');
 
       // The gate delivers the post_build session's opening turn (the build summary + preview offer) via
@@ -733,9 +676,7 @@ describe('pipeline (live Postgres) — thread-group-driven drive over a stubbed 
 
       const finalJob = await jobs.findOneOrFail({ where: { id: seed.jobId } });
       expect(finalJob.status).toBe('done');
-      expect(finalJob.pr_url).toBe(
-        'https://github.com/acme/pipeline-int/pull/7',
-      );
+      expect(finalJob.pr_url).toBe('https://github.com/acme/pipeline-int/pull/7');
 
       console.log(
         'OBSERVED thread group kinds (after ship):',
@@ -765,8 +706,7 @@ describe('pipeline (live Postgres) — thread-group-driven drive over a stubbed 
       let condition: string | null = null;
       while (Date.now() < deadline) {
         condition =
-          (await store.getThread(seed.backendBuilderId).catch(() => null))
-            ?.condition ?? null;
+          (await store.getThread(seed.backendBuilderId).catch(() => null))?.condition ?? null;
         if (condition === 'incomplete') break;
         await new Promise((r) => setTimeout(r, 25));
       }

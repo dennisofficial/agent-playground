@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -102,22 +102,16 @@ describe('LocalGitService (host git, daemon-free)', () => {
   it('reads the current branch, and null on a detached HEAD', async () => {
     const r = await repo();
     const sandbox = await svc.createFeatureSandbox(r, 'atlas/feature-x');
-    expect(await svc.currentBranch(sandbox.worktreePath)).toBe(
-      'atlas/feature-x',
-    );
+    expect(await svc.currentBranch(sandbox.worktreePath)).toBe('atlas/feature-x');
     // A rename (what the in-sandbox agent might do) is observed as the new branch.
-    execFileSync(
-      'git',
-      ['-C', sandbox.worktreePath, 'checkout', '-b', 'feat/renamed'],
-      { encoding: 'utf8' },
-    );
+    execFileSync('git', ['-C', sandbox.worktreePath, 'checkout', '-b', 'feat/renamed'], {
+      encoding: 'utf8',
+    });
     expect(await svc.currentBranch(sandbox.worktreePath)).toBe('feat/renamed');
     // Detached HEAD → `git branch --show-current` prints empty → null (don't clobber last-known).
-    execFileSync(
-      'git',
-      ['-C', sandbox.worktreePath, 'checkout', '--detach', 'HEAD'],
-      { encoding: 'utf8' },
-    );
+    execFileSync('git', ['-C', sandbox.worktreePath, 'checkout', '--detach', 'HEAD'], {
+      encoding: 'utf8',
+    });
     expect(await svc.currentBranch(sandbox.worktreePath)).toBeNull();
   });
 
@@ -145,13 +139,9 @@ describe('LocalGitService (host git, daemon-free)', () => {
     commit(sandbox.worktreePath, 'feat: gate');
     await svc.push(sandbox);
     // The bare origin now has the feature branch.
-    const branches = execFileSync(
-      'git',
-      ['-C', originUrl, 'branch', '--list', 'atlas/feature-x'],
-      {
-        encoding: 'utf8',
-      },
-    ).trim();
+    const branches = execFileSync('git', ['-C', originUrl, 'branch', '--list', 'atlas/feature-x'], {
+      encoding: 'utf8',
+    }).trim();
     expect(branches).toContain('atlas/feature-x');
   });
 
@@ -167,9 +157,7 @@ describe('LocalGitService (host git, daemon-free)', () => {
       const sandbox = await svc.createFeatureSandbox(r, 'atlas/feature-x');
       writeFileSync(join(sandbox.worktreePath, 'F.md'), 'x\n');
       commit(sandbox.worktreePath, 'unpushed local commit'); // never pushed — still safe for a linked worktree
-      expect(
-        await svc.worktreeSafeToRecut(sandbox.worktreePath, 'atlas/feature-x'),
-      ).toBe(true);
+      expect(await svc.worktreeSafeToRecut(sandbox.worktreePath, 'atlas/feature-x')).toBe(true);
     });
 
     it('a FULL CLONE with unpushed commits is UNSAFE (rm -rf would lose them)', async () => {
@@ -178,9 +166,7 @@ describe('LocalGitService (host git, daemon-free)', () => {
       const sb = await svc.switchBranch(base, r, 'atlas/feat-y');
       writeFileSync(join(sb.worktreePath, 'F.md'), 'x\n');
       commit(sb.worktreePath, 'unpushed'); // origin/atlas/feat-y does not exist → unsafe
-      expect(
-        await svc.worktreeSafeToRecut(sb.worktreePath, 'atlas/feat-y'),
-      ).toBe(false);
+      expect(await svc.worktreeSafeToRecut(sb.worktreePath, 'atlas/feat-y')).toBe(false);
     });
 
     it('a FULL CLONE whose branch is fully pushed is safe', async () => {
@@ -188,9 +174,7 @@ describe('LocalGitService (host git, daemon-free)', () => {
       const base = await svc.createBaseClone(r, 'job-safe');
       const sb = await svc.switchBranch(base, r, 'atlas/feat-z');
       await svc.push(sb); // origin/atlas/feat-z now exists at HEAD — nothing ahead
-      expect(
-        await svc.worktreeSafeToRecut(sb.worktreePath, 'atlas/feat-z'),
-      ).toBe(true);
+      expect(await svc.worktreeSafeToRecut(sb.worktreePath, 'atlas/feat-z')).toBe(true);
     });
   });
 
@@ -222,15 +206,10 @@ describe('LocalGitService (host git, daemon-free)', () => {
       const r = await repo();
       const sandbox = await svc.createFeatureSandbox(r, 'atlas/feature-x');
       const base = await svc.headSha(sandbox.worktreePath);
-      writeFileSync(
-        join(sandbox.worktreePath, 'README.md'),
-        '# origin\nedited\n',
-      );
+      writeFileSync(join(sandbox.worktreePath, 'README.md'), '# origin\nedited\n');
       commit(sandbox.worktreePath, 'edit readme');
 
-      expect(await svc.changedFileNames(sandbox.worktreePath, base)).toEqual([
-        'README.md',
-      ]);
+      expect(await svc.changedFileNames(sandbox.worktreePath, base)).toEqual(['README.md']);
     });
 
     it('includes an UNTRACKED new file — the case a plain `git diff` would silently miss', async () => {
@@ -238,14 +217,9 @@ describe('LocalGitService (host git, daemon-free)', () => {
       const sandbox = await svc.createFeatureSandbox(r, 'atlas/feature-x');
       const base = await svc.headSha(sandbox.worktreePath);
       // Never staged, never committed — exactly the shape `complete_thread` sees mid-turn, before commit.
-      writeFileSync(
-        join(sandbox.worktreePath, 'NEW_ROUTE.ts'),
-        'export const x = 1;\n',
-      );
+      writeFileSync(join(sandbox.worktreePath, 'NEW_ROUTE.ts'), 'export const x = 1;\n');
 
-      expect(await svc.changedFileNames(sandbox.worktreePath, base)).toEqual([
-        'NEW_ROUTE.ts',
-      ]);
+      expect(await svc.changedFileNames(sandbox.worktreePath, base)).toEqual(['NEW_ROUTE.ts']);
     });
 
     it('no changes → empty list', async () => {
@@ -253,18 +227,14 @@ describe('LocalGitService (host git, daemon-free)', () => {
       const sandbox = await svc.createFeatureSandbox(r, 'atlas/feature-x');
       const base = await svc.headSha(sandbox.worktreePath);
 
-      expect(await svc.changedFileNames(sandbox.worktreePath, base)).toEqual(
-        [],
-      );
+      expect(await svc.changedFileNames(sandbox.worktreePath, base)).toEqual([]);
     });
 
     it('an invalid base sha is caught, never thrown — empty list', async () => {
       const r = await repo();
       const sandbox = await svc.createFeatureSandbox(r, 'atlas/feature-x');
 
-      expect(
-        await svc.changedFileNames(sandbox.worktreePath, 'not-a-real-sha'),
-      ).toEqual([]);
+      expect(await svc.changedFileNames(sandbox.worktreePath, 'not-a-real-sha')).toEqual([]);
     });
   });
 });

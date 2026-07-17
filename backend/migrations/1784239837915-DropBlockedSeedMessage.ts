@@ -1,8 +1,6 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class DropBlockedSeedMessage1784239837915
-  implements MigrationInterface
-{
+export class DropBlockedSeedMessage1784239837915 implements MigrationInterface {
   name = 'DropBlockedSeedMessage1784239837915';
 
   /**
@@ -128,9 +126,7 @@ export class DropBlockedSeedMessage1784239837915
       END $$;
     `);
 
-    await queryRunner.query(
-      `ALTER TABLE "jobs" DROP COLUMN "blocked_seed_message"`,
-    );
+    await queryRunner.query(`ALTER TABLE "jobs" DROP COLUMN "blocked_seed_message"`);
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {

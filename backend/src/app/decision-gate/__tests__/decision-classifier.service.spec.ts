@@ -1,13 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Decision } from '@shared/domain';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ClassifierLlm, ClassifierLlmVerdict } from '../classifier-llm';
 import { DecisionClassifier } from '../decision-classifier.service';
 import type { ClassifierRecord } from '../decision-gate.types';
 
 /** A fake LLM whose verdict the test controls (and whose calls it can assert). */
-function fakeLlm(
-  verdict: ClassifierLlmVerdict | undefined,
-): ClassifierLlm & { calls: number } {
+function fakeLlm(verdict: ClassifierLlmVerdict | undefined): ClassifierLlm & { calls: number } {
   return {
     calls: 0,
     async classify() {
@@ -35,8 +33,7 @@ describe('DecisionClassifier', () => {
     const c = new DecisionClassifier(llm);
     const res = await c.classify(
       {
-        description:
-          'Add a deleted_at column to the users table for soft deletes',
+        description: 'Add a deleted_at column to the users table for soft deletes',
       },
       emptyRecord,
     );
@@ -73,17 +70,14 @@ describe('DecisionClassifier', () => {
     'Decide the token strategy: refresh token rotation and storage',
     'Encrypt secrets at rest with AES-256',
     'Add OAuth2 login via Google',
-  ])(
-    'security/auth-mechanism decision → ask (cross_cutting): %s',
-    async (description) => {
-      const c = new DecisionClassifier(llm);
-      const res = await c.classify({ description }, emptyRecord);
-      expect(res.verdict).toBe('ask');
-      expect(res.decisionClass).toBe('cross_cutting');
-      expect(res.via).toBe('rule');
-      expect(llm.calls).toBe(0);
-    },
-  );
+  ])('security/auth-mechanism decision → ask (cross_cutting): %s', async (description) => {
+    const c = new DecisionClassifier(llm);
+    const res = await c.classify({ description }, emptyRecord);
+    expect(res.verdict).toBe('ask');
+    expect(res.decisionClass).toBe('cross_cutting');
+    expect(res.via).toBe('rule');
+    expect(llm.calls).toBe(0);
+  });
 
   it('one-way door → ask (one_way_door)', async () => {
     const c = new DecisionClassifier(llm);
@@ -111,8 +105,7 @@ describe('DecisionClassifier', () => {
     const c = new DecisionClassifier(llm);
     const res = await c.classify(
       {
-        description:
-          'Decide the file placement for the new test layout under __tests__',
+        description: 'Decide the file placement for the new test layout under __tests__',
       },
       emptyRecord,
     );
@@ -129,8 +122,7 @@ describe('DecisionClassifier', () => {
     });
     const res = await c.classify(
       {
-        description:
-          'Use the authentication pattern already chosen — the shared JWT guard',
+        description: 'Use the authentication pattern already chosen — the shared JWT guard',
       },
       record,
     );
@@ -165,8 +157,7 @@ describe('DecisionClassifier', () => {
     const c = new DecisionClassifier(llm);
     const res = await c.classify(
       {
-        description:
-          'Change how the widget service returns its result to callers',
+        description: 'Change how the widget service returns its result to callers',
       },
       emptyRecord,
     );
@@ -190,8 +181,7 @@ describe('DecisionClassifier', () => {
     });
     const res = await c.classify(
       {
-        description:
-          'Tweak how the widget service returns to callers, staying v1-compatible',
+        description: 'Tweak how the widget service returns to callers, staying v1-compatible',
       },
       record,
     );

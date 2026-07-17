@@ -15,26 +15,26 @@
  * is the real wire. Mirrors `web-surface.halt.int.test.ts` for HTTP/auth setup.
  */
 
-import { getDataSourceToken } from '@nestjs/typeorm';
-import { Test } from '@nestjs/testing';
 import type { NestExpressApplication } from '@nestjs/platform-express';
+import { Test } from '@nestjs/testing';
+import { getDataSourceToken } from '@nestjs/typeorm';
+import { ENGINE_RUNNER } from '@shared/engine';
 import cookieParser from 'cookie-parser';
 import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { CLASSIFIER_LLM } from '../../decision-gate';
-import { ENGINE_RUNNER } from '@shared/engine';
-import { GithubPrService, LocalGitService } from '../../git';
 import { AppModule } from '../../app.module';
-import { DB_CONNECTION } from '../../persistence/database.module';
+import { CLASSIFIER_LLM } from '../../decision-gate';
 import {
   FakeClassifierLlm,
   FakeEngineRunner,
   FakeLocalGitService,
   FakeThreadTitler,
 } from '../../e2e/e2e-stubs';
-import { JobTitler } from '../../titling';
+import { GithubPrService, LocalGitService } from '../../git';
 import { CredentialResolver } from '../../onboarding/credential-resolver.service';
+import { DB_CONNECTION } from '../../persistence/database.module';
+import { JobTitler } from '../../titling';
 
 const fakeCreds = {
   anthropicKey: async () => undefined,
@@ -55,9 +55,7 @@ const gh = {
   ): Promise<void> {
     this.calls.push({ token, owner, repo, number });
     if (this.shouldThrow) {
-      throw new Error(
-        'GitHub refused to close PR #999 (403): Resource not accessible',
-      );
+      throw new Error('GitHub refused to close PR #999 (403): Resource not accessible');
     }
   },
 };
@@ -76,15 +74,12 @@ let ds: DataSource;
 let server: ReturnType<NestExpressApplication['getHttpServer']>;
 let ownerCookie: string;
 
-async function register(
-  email: string,
-): Promise<{ cookie: string; id: string }> {
+async function register(email: string): Promise<{ cookie: string; id: string }> {
   const res = await request(server)
     .post('/auth/register')
     .send({ email, password: PASSWORD, name: email.split('@')[0] });
   expect(res.status).toBe(200);
-  const setCookie =
-    (res.headers['set-cookie'] as unknown as string[] | undefined) ?? [];
+  const setCookie = (res.headers['set-cookie'] as unknown as string[] | undefined) ?? [];
   const cookie = setCookie.map((c) => c.split(';')[0]).join('; ');
   return { cookie, id: res.body.user.id as string };
 }
@@ -98,30 +93,20 @@ async function seedOpenPrJob(id: string, prNumber: number): Promise<void> {
 }
 
 async function jobRow(id: string): Promise<{ status: string } | undefined> {
-  const rows = (await ds.query(`SELECT status FROM jobs WHERE id = $1`, [
-    id,
-  ])) as Array<{
+  const rows = (await ds.query(`SELECT status FROM jobs WHERE id = $1`, [id])) as Array<{
     status: string;
   }>;
   return rows[0];
 }
 
 async function purge(): Promise<void> {
-  await ds
-    .query(`DELETE FROM jobs WHERE org_id = $1`, [ORG])
-    .catch(() => undefined);
-  await ds
-    .query(`DELETE FROM repos WHERE org_id = $1`, [ORG])
-    .catch(() => undefined);
+  await ds.query(`DELETE FROM jobs WHERE org_id = $1`, [ORG]).catch(() => undefined);
+  await ds.query(`DELETE FROM repos WHERE org_id = $1`, [ORG]).catch(() => undefined);
   await ds
     .query(`DELETE FROM organization_members WHERE org_id = $1`, [ORG])
     .catch(() => undefined);
-  await ds
-    .query(`DELETE FROM organizations WHERE id = $1`, [ORG])
-    .catch(() => undefined);
-  await ds
-    .query(`DELETE FROM users WHERE email = $1`, [OWNER_EMAIL])
-    .catch(() => undefined);
+  await ds.query(`DELETE FROM organizations WHERE id = $1`, [ORG]).catch(() => undefined);
+  await ds.query(`DELETE FROM users WHERE email = $1`, [OWNER_EMAIL]).catch(() => undefined);
 }
 
 beforeAll(async () => {
@@ -190,17 +175,13 @@ describe('DELETE /web/orgs/:orgId/repos/:repoId/jobs/:jobId?prAction=… (live P
     gh.calls = [];
 
     const res = await request(server)
-      .delete(
-        `/web/orgs/${ORG}/repos/${REPO}/jobs/${JOB_CLOSE_OK}?prAction=close`,
-      )
+      .delete(`/web/orgs/${ORG}/repos/${REPO}/jobs/${JOB_CLOSE_OK}?prAction=close`)
       .set('Cookie', ownerCookie);
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true });
     // The GitHub PR was closed with the repo's parsed owner/repo and the job's PR number.
-    expect(gh.calls).toEqual([
-      { token: 'fake-token', owner: 'acme', repo: 'app', number: 101 },
-    ]);
+    expect(gh.calls).toEqual([{ token: 'fake-token', owner: 'acme', repo: 'app', number: 101 }]);
     // The delete proceeded past the close gate: the row is either already gone (background teardown) or
     // durably claimed as 'deleting' (committed before the response).
     const row = await jobRow(JOB_CLOSE_OK);
@@ -209,11 +190,7 @@ describe('DELETE /web/orgs/:orgId/repos/:repoId/jobs/:jobId?prAction=… (live P
     // eslint-disable-next-line no-console -- evidence: dump the OBSERVED close call + resulting row.
     console.log(
       'OBSERVED close-ok:',
-      JSON.stringify(
-        { status: res.status, body: res.body, ghCalls: gh.calls, row },
-        null,
-        2,
-      ),
+      JSON.stringify({ status: res.status, body: res.body, ghCalls: gh.calls, row }, null, 2),
     );
   });
 
@@ -222,16 +199,12 @@ describe('DELETE /web/orgs/:orgId/repos/:repoId/jobs/:jobId?prAction=… (live P
     gh.calls = [];
 
     const res = await request(server)
-      .delete(
-        `/web/orgs/${ORG}/repos/${REPO}/jobs/${JOB_CLOSE_FAIL}?prAction=close`,
-      )
+      .delete(`/web/orgs/${ORG}/repos/${REPO}/jobs/${JOB_CLOSE_FAIL}?prAction=close`)
       .set('Cookie', ownerCookie);
 
     expect(res.status).toBe(502);
     // A close was attempted…
-    expect(gh.calls).toEqual([
-      { token: 'fake-token', owner: 'acme', repo: 'app', number: 102 },
-    ]);
+    expect(gh.calls).toEqual([{ token: 'fake-token', owner: 'acme', repo: 'app', number: 102 }]);
     // …but the delete was ABORTED: the row is intact and was never claimed (status unchanged).
     const row = await jobRow(JOB_CLOSE_FAIL);
     expect(row).toBeDefined();
@@ -240,11 +213,7 @@ describe('DELETE /web/orgs/:orgId/repos/:repoId/jobs/:jobId?prAction=… (live P
     // eslint-disable-next-line no-console -- evidence: dump the OBSERVED 502 + intact row.
     console.log(
       'OBSERVED close-fail:',
-      JSON.stringify(
-        { status: res.status, body: res.body, ghCalls: gh.calls, row },
-        null,
-        2,
-      ),
+      JSON.stringify({ status: res.status, body: res.body, ghCalls: gh.calls, row }, null, 2),
     );
   });
 
@@ -266,11 +235,7 @@ describe('DELETE /web/orgs/:orgId/repos/:repoId/jobs/:jobId?prAction=… (live P
     // eslint-disable-next-line no-console -- evidence: dump the OBSERVED leave result.
     console.log(
       'OBSERVED leave:',
-      JSON.stringify(
-        { status: res.status, body: res.body, ghCalls: gh.calls, row },
-        null,
-        2,
-      ),
+      JSON.stringify({ status: res.status, body: res.body, ghCalls: gh.calls, row }, null, 2),
     );
   });
 

@@ -13,9 +13,7 @@ import type { ActiveTurnEntity } from '../persistence/entities';
 export type ReattachOutcome = 'attached' | 'deferred';
 
 /** Reattach one in-flight turn addressed by its `active_turns` row. Owned by the kind's driver/brain. */
-export type TurnReattachHandler = (
-  row: ActiveTurnEntity,
-) => Promise<ReattachOutcome>;
+export type TurnReattachHandler = (row: ActiveTurnEntity) => Promise<ReattachOutcome>;
 
 /**
  * The neutral routing table from an `active_turns.kind` to the component that can RE-ATTACH a turn of that
@@ -28,10 +26,7 @@ export type TurnReattachHandler = (
 @Injectable()
 export class TurnReattachRegistry {
   private readonly logger = new Logger(TurnReattachRegistry.name);
-  private readonly handlers = new Map<
-    ActiveTurnEntity['kind'],
-    TurnReattachHandler
-  >();
+  private readonly handlers = new Map<ActiveTurnEntity['kind'], TurnReattachHandler>();
 
   /** Bind the reattach handler for a turn kind (idempotent; a re-register replaces the prior binding). */
   register(kind: ActiveTurnEntity['kind'], handler: TurnReattachHandler): void {

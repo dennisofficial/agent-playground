@@ -11,26 +11,22 @@
 
 import type { EnvService } from '@core/config/env/env.service';
 import type { ModuleRef } from '@nestjs/core';
-import type { BrainGateway } from '../brain-gateway';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
-import type {
-  RepoEntity,
-  JobEntity,
-  JobSandboxEntity,
-} from '../../persistence/entities';
+import { describe, expect, it, vi } from 'vitest';
 import type { GithubPrService, LocalGitService } from '../../git';
+import type { JobDependencyService } from '../../job-deps';
 import type { CredentialResolver } from '../../onboarding';
-import type { SkillUpdaterService } from '../../skills/skill-updater.service';
-import type { DriverRepoResolver } from '../repo-resolver';
+import type { JobEntity, JobSandboxEntity, RepoEntity } from '../../persistence/entities';
 import { SandboxActivityRegistry, type SandboxProvider } from '../../sandbox';
 import { TurnRegistry } from '../../sandbox/turn-registry.service';
-import { JobLifecycleService } from '../job-lifecycle.service';
+import type { SkillUpdaterService } from '../../skills/skill-updater.service';
+import type { BrainGateway } from '../brain-gateway';
 import type { DriverStoreService } from '../driver-store.service';
-import type { JobDependencyService } from '../../job-deps';
+import { JobLifecycleService } from '../job-lifecycle.service';
+import type { DriverRepoResolver } from '../repo-resolver';
 import type { WorktreeProvisioner } from '../worktree-provisioner.service';
 
 // ── helpers ─────────────────────────────────────────────────────────────────────────────────────
@@ -254,9 +250,7 @@ function makeServiceForReset(
 function rowToSandbox(svc: JobLifecycleService, row: JobSandboxEntity) {
   return (
     svc as unknown as {
-      rowToSandbox(
-        r: JobSandboxEntity,
-      ): Promise<import('../../git').FeatureSandbox>;
+      rowToSandbox(r: JobSandboxEntity): Promise<import('../../git').FeatureSandbox>;
     }
   ).rowToSandbox(row);
 }
@@ -274,10 +268,8 @@ describe('JobLifecycleService.rowToSandbox', () => {
     expect(sandbox).toMatchObject({ containerId: 'abc123def456' });
 
     // execUser must be recomputed — on Linux/macOS process.getuid/getgid are available.
-    const uid =
-      typeof process.getuid === 'function' ? process.getuid() : undefined;
-    const gid =
-      typeof process.getgid === 'function' ? process.getgid() : undefined;
+    const uid = typeof process.getuid === 'function' ? process.getuid() : undefined;
+    const gid = typeof process.getgid === 'function' ? process.getgid() : undefined;
 
     if (uid !== undefined && gid !== undefined) {
       expect(sandbox.execUser).toBe(`${uid}:${gid}`);
@@ -326,10 +318,7 @@ describe('JobLifecycleService.rehydrateThread', () => {
         worktree_path: wt,
         hydration_sig: 'old',
       } as Partial<JobSandboxEntity>);
-      const { svc, sandboxes, provisionAndAttach } = makeServiceWithMocks(
-        row,
-        'new-sig',
-      );
+      const { svc, sandboxes, provisionAndAttach } = makeServiceWithMocks(row, 'new-sig');
 
       const ok = await svc.rehydrateThread('thread-1', 'T1');
 
@@ -394,9 +383,7 @@ describe('JobLifecycleService.resetContainer', () => {
   });
 
   it('returns no-container (no teardown) when the row has no live container', async () => {
-    const { svc, teardown } = makeServiceForReset(
-      makeRow({ container_id: null }),
-    );
+    const { svc, teardown } = makeServiceForReset(makeRow({ container_id: null }));
     expect(await svc.resetContainer('thread-1', 'T1')).toEqual({
       reset: false,
       reason: 'no-container',
@@ -462,9 +449,7 @@ describe('JobLifecycleService — onMilestone forwarding', () => {
 
       await svc.ensureContainer('thread-1', 'T1', onMilestone);
 
-      expect(provisionAndAttach).toHaveBeenCalledWith(
-        expect.objectContaining({ onMilestone }),
-      );
+      expect(provisionAndAttach).toHaveBeenCalledWith(expect.objectContaining({ onMilestone }));
     } finally {
       rmSync(wt, { recursive: true, force: true });
     }
@@ -578,10 +563,7 @@ describe('JobLifecycleService.applyGithubPrState', () => {
     const { svc, jobs, order, neutralizeMergeCard } = makeServiceForApply();
     const result = await svc.applyGithubPrState(job, 'merged');
     expect(result).toBe('noop');
-    expect(jobs.update).toHaveBeenCalledWith(
-      { id: 'job-1' },
-      { pr_state: 'merged' },
-    );
+    expect(jobs.update).toHaveBeenCalledWith({ id: 'job-1' }, { pr_state: 'merged' });
     // Only the pr_state write — merge no longer detaches (that happens at archive now).
     expect(order).toEqual(['update:merged']);
     expect(svc.detachJobContainer).not.toHaveBeenCalled();
@@ -592,10 +574,7 @@ describe('JobLifecycleService.applyGithubPrState', () => {
     const { svc, jobs, order, neutralizeMergeCard } = makeServiceForApply();
     const result = await svc.applyGithubPrState(job, 'closed');
     expect(result).toBe('noop');
-    expect(jobs.update).toHaveBeenCalledWith(
-      { id: 'job-1' },
-      { pr_state: 'closed' },
-    );
+    expect(jobs.update).toHaveBeenCalledWith({ id: 'job-1' }, { pr_state: 'closed' });
     expect(order).toEqual(['update:closed']);
     expect(svc.detachJobContainer).not.toHaveBeenCalled();
     expect(neutralizeMergeCard).toHaveBeenCalledWith('job-1', 'not-ready');
@@ -605,10 +584,7 @@ describe('JobLifecycleService.applyGithubPrState', () => {
     const { svc, jobs, order } = makeServiceForApply();
     const result = await svc.applyGithubPrState(job, 'gone');
     expect(result).toBe('noop');
-    expect(jobs.update).toHaveBeenCalledWith(
-      { id: 'job-1' },
-      { pr_state: 'closed' },
-    );
+    expect(jobs.update).toHaveBeenCalledWith({ id: 'job-1' }, { pr_state: 'closed' });
     expect(order).toEqual(['update:closed']);
     expect(svc.detachJobContainer).not.toHaveBeenCalled();
   });
@@ -695,11 +671,10 @@ describe('JobLifecycleService.closeJobPullRequest', () => {
   });
 
   it('resolves the repo + token and closes the PR when pr_state is open', async () => {
-    const { svc, projects, closePullRequest, hostGithubToken } =
-      makeServiceForClose({
-        id: 'repo-1',
-        git_url: 'https://github.com/acme/app.git',
-      });
+    const { svc, projects, closePullRequest, hostGithubToken } = makeServiceForClose({
+      id: 'repo-1',
+      git_url: 'https://github.com/acme/app.git',
+    });
 
     await svc.closeJobPullRequest({
       id: 'job-1',
@@ -805,8 +780,7 @@ describe('JobLifecycleService — merge detaches (keeps context) + stale-sandbox
       worktree_path: '/wt',
       session_id: 'sess-1',
     });
-    const { svc, update, teardownByIdentity, removeSandbox } =
-      makeServiceForDetach(row);
+    const { svc, update, teardownByIdentity, removeSandbox } = makeServiceForDetach(row);
 
     await svc.detachJobContainer('thread-1', 'T1');
 
@@ -1025,9 +999,7 @@ describe('JobLifecycleService — archive lifecycle', () => {
 
     const sandboxUpdate = vi.fn().mockResolvedValue({ affected: 1 });
     const sandboxes = {
-      findOne: vi
-        .fn()
-        .mockResolvedValue(opts.row === undefined ? null : opts.row),
+      findOne: vi.fn().mockResolvedValue(opts.row === undefined ? null : opts.row),
       update: sandboxUpdate,
       save: vi.fn(),
       create: vi.fn(),
@@ -1069,9 +1041,7 @@ describe('JobLifecycleService — archive lifecycle', () => {
         teardownByIdentity,
         playgroundDirHost,
         contextDirHost,
-        draftUploadsDirHost: vi.fn(
-          (o: string, j: string, u: string) => `/draft/${o}/${j}/${u}`,
-        ),
+        draftUploadsDirHost: vi.fn((o: string, j: string, u: string) => `/draft/${o}/${j}/${u}`),
         brainTranscriptProjectsDir,
       } as unknown as SandboxProvider,
       { provisionAndAttach: vi.fn() } as unknown as WorktreeProvisioner,
@@ -1134,9 +1104,8 @@ describe('JobLifecycleService — archive lifecycle', () => {
     (
       svc as unknown as { removeJobContextDir: (o: string, j: string) => void }
     ).removeJobContextDir = removeContext;
-    (
-      svc as unknown as { removeOnDiskSessionJsonl: (j: string) => void }
-    ).removeOnDiskSessionJsonl = removeJsonl;
+    (svc as unknown as { removeOnDiskSessionJsonl: (j: string) => void }).removeOnDiskSessionJsonl =
+      removeJsonl;
 
     await svc.archiveJobDeep('job-1', 'T1');
 

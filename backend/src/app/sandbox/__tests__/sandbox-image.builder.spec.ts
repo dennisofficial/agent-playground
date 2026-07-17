@@ -59,11 +59,7 @@ describe('SandboxImageBuilder.ensureImage — auto-rebuild on context change', (
     const { engine, buildImage } = engineWith(null);
     const builder = new SandboxImageBuilder(env(), engine);
 
-    await Promise.all([
-      builder.ensureImage(),
-      builder.ensureImage(),
-      builder.ensureImage(),
-    ]);
+    await Promise.all([builder.ensureImage(), builder.ensureImage(), builder.ensureImage()]);
 
     expect(buildImage).toHaveBeenCalledOnce();
   });
@@ -102,10 +98,7 @@ describe('SandboxImageBuilder.ensureImage — auto-rebuild on context change', (
     const first = vi.fn();
     const second = vi.fn();
 
-    await Promise.all([
-      builder.ensureImage(first),
-      builder.ensureImage(second),
-    ]);
+    await Promise.all([builder.ensureImage(first), builder.ensureImage(second)]);
 
     expect(buildImage).toHaveBeenCalledOnce();
     expect(first).toHaveBeenCalledOnce();

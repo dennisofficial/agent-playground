@@ -1,11 +1,4 @@
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -52,18 +45,13 @@ describe('SkillFileWriter — forkSkillDir (fork-to-custom)', () => {
 
   it('is a no-op when the source skill has nothing on disk', () => {
     writer.forkSkillDir('org1', '*', 'missing-skill', 'missing-skill-custom');
-    expect(
-      existsSync(skillDirHost(storeRoot, 'org1', '*', 'missing-skill-custom')),
-    ).toBe(false);
+    expect(existsSync(skillDirHost(storeRoot, 'org1', '*', 'missing-skill-custom'))).toBe(false);
   });
 
   it('leaves a SKILL.md with no `name:` frontmatter line untouched (defensive — never crashes)', () => {
     const src = skillDirHost(storeRoot, 'org1', '*', 'no-name-skill');
     mkdirSync(src, { recursive: true });
-    writeFileSync(
-      join(src, 'SKILL.md'),
-      '---\ndescription: no name field here\n---\n\nBody.\n',
-    );
+    writeFileSync(join(src, 'SKILL.md'), '---\ndescription: no name field here\n---\n\nBody.\n');
 
     writer.forkSkillDir('org1', '*', 'no-name-skill', 'no-name-skill-custom');
 
@@ -123,12 +111,8 @@ describe('SkillFileWriter — draft freeze / vendor / preview (file-based author
     // Approval vendors the frozen staging copy, NOT the mutated live draft.
     writer.vendorDir(staging, 'org1', '*', 'house-migrations');
     const dest = skillDirHost(storeRoot, 'org1', '*', 'house-migrations');
-    expect(readFileSync(join(dest, 'SKILL.md'), 'utf8')).toContain(
-      'Version A.',
-    );
-    expect(readFileSync(join(dest, 'SKILL.md'), 'utf8')).not.toContain(
-      'Version B',
-    );
+    expect(readFileSync(join(dest, 'SKILL.md'), 'utf8')).toContain('Version A.');
+    expect(readFileSync(join(dest, 'SKILL.md'), 'utf8')).not.toContain('Version B');
     expect(existsSync(join(dest, 'references', 'r.md'))).toBe(true); // full multi-file fidelity
 
     // removeStaging cleans up the frozen copy.

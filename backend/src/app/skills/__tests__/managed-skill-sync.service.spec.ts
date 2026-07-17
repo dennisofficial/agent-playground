@@ -1,16 +1,9 @@
+import type { EnvService } from '@core/config/env/env.service';
 import { execFileSync } from 'node:child_process';
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { EnvService } from '@core/config/env/env.service';
 import type { LeaderElectionService } from '../../cluster/leader-election.service';
 import { LocalGitService } from '../../git/local-git.service';
 import { ManagedSkillSyncService } from '../managed-skill-sync.service';
@@ -135,9 +128,7 @@ describe('ManagedSkillSyncService (real git, local fixture repo)', () => {
     };
     const svc = make();
     await expect(svc.syncAll()).resolves.toBeUndefined();
-    expect(existsSync(managedGitSkillDirHost(store, 'fixture-skill'))).toBe(
-      false,
-    );
+    expect(existsSync(managedGitSkillDirHost(store, 'fixture-skill'))).toBe(false);
   });
 
   it('is fail-soft: an unreachable remote is skipped, not thrown', async () => {
@@ -148,8 +139,6 @@ describe('ManagedSkillSyncService (real git, local fixture repo)', () => {
     };
     const svc = make();
     await expect(svc.syncAll()).resolves.toBeUndefined();
-    expect(existsSync(managedGitSkillDirHost(store, 'fixture-skill'))).toBe(
-      false,
-    );
+    expect(existsSync(managedGitSkillDirHost(store, 'fixture-skill'))).toBe(false);
   });
 });

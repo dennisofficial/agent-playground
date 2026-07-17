@@ -39,8 +39,7 @@ export class McpResolver {
       if (!r.surfaces.includes(surface)) continue;
       const winner = byName.get(r.name);
       // A repo-scoped row (scope !== '*') always beats an org-scoped one; otherwise first-seen org wins.
-      if (!winner || (winner.scope === '*' && r.scope !== '*'))
-        byName.set(r.name, r);
+      if (!winner || (winner.scope === '*' && r.scope !== '*')) byName.set(r.name, r);
     }
 
     const out: ResolvedMcpServer[] = [];
@@ -55,10 +54,7 @@ export class McpResolver {
    * hub holds the union; each turn's `resolveForTurn` picks the surface subset that turn actually exposes).
    * Secrets inlined (the config lands on the durable `/.atlas`, same trust boundary as the agent home).
    */
-  async resolveForSandbox(
-    orgId: string,
-    repoId: string,
-  ): Promise<ResolvedMcpServer[]> {
+  async resolveForSandbox(orgId: string, repoId: string): Promise<ResolvedMcpServer[]> {
     const rows = await this.store.rowsForTurn(orgId, repoId);
     if (rows.length === 0) return [];
 
@@ -66,8 +62,7 @@ export class McpResolver {
     for (const r of rows) {
       if (!r.enabled) continue;
       const winner = byName.get(r.name);
-      if (!winner || (winner.scope === '*' && r.scope !== '*'))
-        byName.set(r.name, r);
+      if (!winner || (winner.scope === '*' && r.scope !== '*')) byName.set(r.name, r);
     }
 
     const out: ResolvedMcpServer[] = [];
@@ -91,8 +86,7 @@ export class McpResolver {
 
     if (row.transport === 'stdio') {
       if (row.config.command) server.command = row.config.command;
-      if (row.config.args && row.config.args.length > 0)
-        server.args = row.config.args;
+      if (row.config.args && row.config.args.length > 0) server.args = row.config.args;
       const env = this.inline(row.config.env, secrets.env);
       if (env) server.env = env;
     } else {

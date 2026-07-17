@@ -1,3 +1,5 @@
+import type { AutoMergeMethod } from '@workspace/shared';
+import { TimestampedEntity } from '@workspace/shared/schemas';
 import {
   Column,
   Entity,
@@ -7,8 +9,6 @@ import {
   PrimaryGeneratedColumn,
   Unique,
 } from 'typeorm';
-import type { AutoMergeMethod } from '@workspace/shared';
-import { TimestampedEntity } from '@workspace/shared/schemas';
 import type { SeenTooling } from '../../workspace-profile/seen-tooling';
 import { OrganizationEntity } from './organization.entity';
 

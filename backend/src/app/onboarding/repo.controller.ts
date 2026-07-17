@@ -1,22 +1,13 @@
-import {
-  Body,
-  Controller,
-  Delete,
-  Get,
-  Param,
-  Patch,
-  Post,
-  UseGuards,
-} from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { AUTO_MERGE_METHODS, type AutoMergeMethod } from '@workspace/shared';
 import { IsBoolean, IsIn, IsOptional, IsString } from 'class-validator';
 import { Repository } from 'typeorm';
-import { AUTO_MERGE_METHODS, type AutoMergeMethod } from '@workspace/shared';
 import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
 import { OrgMembershipGuard } from '../org/org-membership.guard';
 import { OrgOwnerGuard } from '../org/org-owner.guard';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { RepoEntity, JobEntity } from '../persistence/entities';
+import { JobEntity, RepoEntity } from '../persistence/entities';
 import { OnboardingService, type ConnectedRepo } from './onboarding.service';
 
 class ConnectRepoDto {
@@ -118,9 +109,7 @@ export class RepoController {
       gitUrl: r.git_url,
       defaultBranch: r.default_branch,
       accessOk: r.access_ok,
-      accessCheckedAt: r.access_checked_at
-        ? r.access_checked_at.toISOString()
-        : null,
+      accessCheckedAt: r.access_checked_at ? r.access_checked_at.toISOString() : null,
       threadCount: countByRepo.get(r.id) ?? 0,
       onboardingThreadId: r.onboarding_job_id,
       onboardedAt: r.onboarded_at ? r.onboarded_at.toISOString() : null,
@@ -177,12 +166,8 @@ export class RepoController {
   ): Promise<ConnectedRepo> {
     return this.onboarding.updateRepo(org.id, repoId, {
       ...(body.name !== undefined ? { name: body.name } : {}),
-      ...(body.defaultBranch !== undefined
-        ? { defaultBranch: body.defaultBranch }
-        : {}),
-      ...(body.branchPrefix !== undefined
-        ? { branchPrefix: body.branchPrefix }
-        : {}),
+      ...(body.defaultBranch !== undefined ? { defaultBranch: body.defaultBranch } : {}),
+      ...(body.branchPrefix !== undefined ? { branchPrefix: body.branchPrefix } : {}),
       ...(body.defaultAutoMergeMethod !== undefined
         ? { defaultAutoMergeMethod: body.defaultAutoMergeMethod }
         : {}),

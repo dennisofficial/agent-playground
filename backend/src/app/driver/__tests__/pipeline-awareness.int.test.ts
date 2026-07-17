@@ -15,7 +15,7 @@
 import { Test, type TestingModule } from '@nestjs/testing';
 import { TypeOrmModule, getDataSourceToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { CustomNamingStrategy } from '../../../_lib/database/custom-naming.strategy';
 import { DB_CONNECTION } from '../../persistence/database.module';
 import { ENTITIES } from '../../persistence/entities';
@@ -54,10 +54,7 @@ describe('PipelineAwarenessStore (live Postgres)', () => {
 
   beforeAll(async () => {
     mod = await Test.createTestingModule({
-      imports: [
-        TypeOrmModule.forRoot(dbOpts()),
-        TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION),
-      ],
+      imports: [TypeOrmModule.forRoot(dbOpts()), TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION)],
       providers: [PipelineAwarenessStore],
     }).compile();
 
@@ -79,15 +76,9 @@ describe('PipelineAwarenessStore (live Postgres)', () => {
   });
 
   afterAll(async () => {
-    await ds
-      ?.query(`DELETE FROM jobs WHERE org_id = $1`, [ORG_ID])
-      .catch(() => undefined);
-    await ds
-      ?.query(`DELETE FROM repos WHERE org_id = $1`, [ORG_ID])
-      .catch(() => undefined);
-    await ds
-      ?.query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID])
-      .catch(() => undefined);
+    await ds?.query(`DELETE FROM jobs WHERE org_id = $1`, [ORG_ID]).catch(() => undefined);
+    await ds?.query(`DELETE FROM repos WHERE org_id = $1`, [ORG_ID]).catch(() => undefined);
+    await ds?.query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID]).catch(() => undefined);
     await mod?.close();
   });
 
@@ -101,10 +92,7 @@ describe('PipelineAwarenessStore (live Postgres)', () => {
 
   it('defaults to an empty buffer for a fresh thread (the migration backfill)', async () => {
     const jobId = await newThread();
-    const rows = await ds.query(
-      `SELECT pipeline_awareness AS a FROM jobs WHERE id = $1`,
-      [jobId],
-    );
+    const rows = await ds.query(`SELECT pipeline_awareness AS a FROM jobs WHERE id = $1`, [jobId]);
     expect(rows[0].a).toEqual({ markerQueue: [], conveyedStateSig: null });
   });
 
@@ -112,18 +100,12 @@ describe('PipelineAwarenessStore (live Postgres)', () => {
     const jobId = await newThread();
     await store.appendMarker(jobId, marker('approved:dr-1', 'Plan approved.'));
     await store.appendMarker(jobId, marker('approved:dr-1', 'Plan approved.')); // dup id
-    await store.appendMarker(
-      jobId,
-      marker('dispatched:dr-1', 'Build started.'),
-    );
+    await store.appendMarker(jobId, marker('dispatched:dr-1', 'Build started.'));
 
     // A FRESH store instance (a new process) reads the durable buffer — proves it's persisted, not in-mem.
     const fresh = new PipelineAwarenessStore(ds);
     const { markers } = await fresh.drainAndAdvance(jobId, null);
-    expect(markers.map((m) => m.id)).toEqual([
-      'approved:dr-1',
-      'dispatched:dr-1',
-    ]);
+    expect(markers.map((m) => m.id)).toEqual(['approved:dr-1', 'dispatched:dr-1']);
   });
 
   it('drains markers exactly once (a second drain is empty)', async () => {

@@ -1,12 +1,9 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
-import type {
-  TranscriptMessageEntity,
-  JobSandboxEntity,
-} from '../../persistence/entities';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { JobSandboxEntity, TranscriptMessageEntity } from '../../persistence/entities';
 import type { SandboxProvider } from '../../sandbox/sandbox-provider.port';
 import { TurnRecoveryService } from '../turn-recovery.service';
 
@@ -87,17 +84,14 @@ const TRANSCRIPT = [
     message: {
       id: 'm2',
       stop_reason: 'end_turn',
-      content: [
-        { type: 'text', text: 'Here is the deep dive of the whole system.' },
-      ],
+      content: [{ type: 'text', text: 'Here is the deep dive of the whole system.' }],
     },
   }),
 ].join('\n');
 
 const THREAD_ID = 'thread-xyz';
 const FINAL_REPLY = 'Here is the deep dive of the whole system.';
-const PROVISIONING_NOTICE =
-  'Setting up an isolated workspace for this thread — one moment…';
+const PROVISIONING_NOTICE = 'Setting up an isolated workspace for this thread — one moment…';
 
 function seedTranscript(content = TRANSCRIPT): string {
   const root = mkdtempSync(join(tmpdir(), 'turn-recovery-'));
@@ -150,10 +144,7 @@ function makeMessages(seed: Row[]) {
 
 /** sandboxRows mock: `candidateThreadIds` returns the given thread ids; `findOne` answers the compaction
  *  recovery-skip check in `recoverThread` (a job's `compacting_session_id`, default null = not compacting). */
-function makeSandboxRows(
-  threadIds: string[],
-  compactingById: Record<string, string | null> = {},
-) {
+function makeSandboxRows(threadIds: string[], compactingById: Record<string, string | null> = {}) {
   return {
     createQueryBuilder: () => {
       const qb: Record<string, unknown> = {};
@@ -213,15 +204,13 @@ describe('TurnRecoveryService', () => {
 
     expect(recovered).toBe(1);
     const inserted = saved.slice(INTERRUPTED_FIRST_TURN.length);
-    expect(inserted.map((r) => r.kind)).toEqual([
-      'thinking',
-      'chat',
-      'tool',
-      'chat',
+    expect(inserted.map((r) => r.kind)).toEqual(['thinking', 'chat', 'tool', 'chat']);
+    expect(inserted.map((r) => (r.meta as { sdkUuid: string }).sdkUuid)).toEqual([
+      'a-think',
+      'a-text',
+      'a-tool',
+      'a-final',
     ]);
-    expect(
-      inserted.map((r) => (r.meta as { sdkUuid: string }).sdkUuid),
-    ).toEqual(['a-think', 'a-text', 'a-tool', 'a-final']);
     expect(inserted.every((r) => r.author_id === 'atlas')).toBe(true);
     const times = inserted.map((r) => (r.created_at as Date).getTime());
     expect(times.every((t, i) => i === 0 || t > times[i - 1])).toBe(true);
@@ -408,9 +397,7 @@ describe('TurnRecoveryService', () => {
         message: {
           id: 'mi',
           stop_reason: 'tool_use',
-          content: [
-            { type: 'text', text: 'Here is what the investigation found.' },
-          ],
+          content: [{ type: 'text', text: 'Here is what the investigation found.' }],
         },
       }),
       // dangling ask_question: no tool_result, no end_turn — the interruption point (re-issued next turn).
@@ -447,9 +434,7 @@ describe('TurnRecoveryService', () => {
         message: {
           id: 'mh',
           stop_reason: 'end_turn',
-          content: [
-            { type: 'text', text: 'Sorry, I finished the investigation.' },
-          ],
+          content: [{ type: 'text', text: 'Sorry, I finished the investigation.' }],
         },
       }),
     ].join('\n');
@@ -476,15 +461,13 @@ describe('TurnRecoveryService', () => {
     const inserted = saved.slice(2);
     // The investigation's text + paired tool are restored; the dangling ask_question is dropped; the already-
     // persisted "Hello?" reply is NOT re-inserted.
-    expect(
-      inserted.map((r) => (r.meta as { sdkUuid: string }).sdkUuid),
-    ).toEqual(['i-text', 'i-read', 'i-sum']);
+    expect(inserted.map((r) => (r.meta as { sdkUuid: string }).sdkUuid)).toEqual([
+      'i-text',
+      'i-read',
+      'i-sum',
+    ]);
     expect(inserted.map((r) => r.kind)).toEqual(['chat', 'tool', 'chat']);
-    expect(
-      inserted.some(
-        (r) => (r.meta as { sdkUuid?: string }).sdkUuid === 'i-ask',
-      ),
-    ).toBe(false);
+    expect(inserted.some((r) => (r.meta as { sdkUuid?: string }).sdkUuid === 'i-ask')).toBe(false);
   });
 
   it('skips a thread that has a live Redis turn (re-attach owns it)', async () => {
@@ -528,22 +511,14 @@ describe('TurnRecoveryService', () => {
     });
 
     const inserted = saved.slice(INTERRUPTED_FIRST_TURN.length);
-    expect(inserted.map((r) => r.kind)).toEqual([
-      'thinking',
-      'chat',
-      'tool',
-      'chat',
-    ]);
+    expect(inserted.map((r) => r.kind)).toEqual(['thinking', 'chat', 'tool', 'chat']);
   });
 
   it('finishAndRecover stops watching after the timeout if the turn never completes', async () => {
     const root = mkdtempSync(join(tmpdir(), 'turn-recovery-'));
     const slugDir = join(root, 'brain_x', 'claude', 'projects', '-workspace');
     mkdirSync(slugDir, { recursive: true });
-    writeFileSync(
-      join(slugDir, 's1.jsonl'),
-      TRANSCRIPT.split('\n').slice(0, 4).join('\n'),
-    ); // never completes
+    writeFileSync(join(slugDir, 's1.jsonl'), TRANSCRIPT.split('\n').slice(0, 4).join('\n')); // never completes
     const projects = join(root, 'brain_x', 'claude', 'projects');
 
     const { repo, saved } = makeMessages(INTERRUPTED_FIRST_TURN);

@@ -21,8 +21,7 @@ const CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 const SCOPES = 'org:create_api_key user:profile user:inference';
 
 /** Manual (paste-the-code) redirect the CLI uses; hosts that want a real callback override `redirectUri`. */
-export const MANUAL_REDIRECT_URL =
-  'https://platform.claude.com/oauth/code/callback';
+export const MANUAL_REDIRECT_URL = 'https://platform.claude.com/oauth/code/callback';
 
 /** The beta header Anthropic's OAuth token endpoint requires. */
 const OAUTH_BETA_HEADER = 'oauth-2025-04-20';
@@ -41,10 +40,7 @@ export const DEFAULT_CLAUDE_OAUTH_CONFIG: ClaudeOAuthConfig = {
 /** The env keys this module reads to point at a non-default OAuth deployment (or a test token server). */
 export type ClaudeOAuthEnvReader = {
   get(
-    key:
-      | 'CLAUDE_OAUTH_AUTHORIZE_URL'
-      | 'CLAUDE_OAUTH_CLIENT_ID'
-      | 'CLAUDE_OAUTH_TOKEN_URL',
+    key: 'CLAUDE_OAUTH_AUTHORIZE_URL' | 'CLAUDE_OAUTH_CLIENT_ID' | 'CLAUDE_OAUTH_TOKEN_URL',
   ): string | undefined;
 };
 
@@ -54,18 +50,12 @@ export type ClaudeOAuthEnvReader = {
  * controller's authorize/exchange, the usage refresh, the credential-refresh core) resolves through, so a
  * test can retarget `tokenUrl` at a local stub server via one env key.
  */
-export function buildClaudeOAuthConfig(
-  env: ClaudeOAuthEnvReader,
-): ClaudeOAuthConfig {
+export function buildClaudeOAuthConfig(env: ClaudeOAuthEnvReader): ClaudeOAuthConfig {
   return {
     ...DEFAULT_CLAUDE_OAUTH_CONFIG,
-    authorizeUrl:
-      env.get('CLAUDE_OAUTH_AUTHORIZE_URL') ??
-      DEFAULT_CLAUDE_OAUTH_CONFIG.authorizeUrl,
-    tokenUrl:
-      env.get('CLAUDE_OAUTH_TOKEN_URL') ?? DEFAULT_CLAUDE_OAUTH_CONFIG.tokenUrl,
-    clientId:
-      env.get('CLAUDE_OAUTH_CLIENT_ID') ?? DEFAULT_CLAUDE_OAUTH_CONFIG.clientId,
+    authorizeUrl: env.get('CLAUDE_OAUTH_AUTHORIZE_URL') ?? DEFAULT_CLAUDE_OAUTH_CONFIG.authorizeUrl,
+    tokenUrl: env.get('CLAUDE_OAUTH_TOKEN_URL') ?? DEFAULT_CLAUDE_OAUTH_CONFIG.tokenUrl,
+    clientId: env.get('CLAUDE_OAUTH_CLIENT_ID') ?? DEFAULT_CLAUDE_OAUTH_CONFIG.clientId,
   };
 }
 
@@ -98,11 +88,7 @@ export type TokenSet = {
 };
 
 function base64url(buf: Buffer): string {
-  return buf
-    .toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
+  return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 /** Fresh PKCE material for one authorize round-trip: an S256 challenge/verifier pair + a random `state`. */
@@ -217,29 +203,19 @@ function parseTokenSet(raw: unknown): TokenSet {
     typeof refreshToken !== 'string' ||
     typeof expiresIn !== 'number'
   ) {
-    throw new Error(
-      'claude oauth token response missing access_token/refresh_token/expires_in',
-    );
+    throw new Error('claude oauth token response missing access_token/refresh_token/expires_in');
   }
   const scopes = typeof body.scope === 'string' ? body.scope : undefined;
   const subscriptionType =
-    (typeof body.subscription_type === 'string'
-      ? body.subscription_type
-      : undefined) ??
+    (typeof body.subscription_type === 'string' ? body.subscription_type : undefined) ??
     (typeof body.account?.subscription_type === 'string'
       ? body.account.subscription_type
       : undefined);
   const accountEmail =
-    typeof body.account?.email_address === 'string'
-      ? body.account.email_address
-      : undefined;
+    typeof body.account?.email_address === 'string' ? body.account.email_address : undefined;
   const organization =
-    (typeof body.organization?.name === 'string'
-      ? body.organization.name
-      : undefined) ??
-    (typeof body.organization?.uuid === 'string'
-      ? body.organization.uuid
-      : undefined);
+    (typeof body.organization?.name === 'string' ? body.organization.name : undefined) ??
+    (typeof body.organization?.uuid === 'string' ? body.organization.uuid : undefined);
   return {
     accessToken,
     refreshToken,

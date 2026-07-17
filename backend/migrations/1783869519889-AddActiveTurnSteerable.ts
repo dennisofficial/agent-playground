@@ -15,8 +15,6 @@ export class AddActiveTurnSteerable1783869519889 implements MigrationInterface {
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `ALTER TABLE "active_turns" DROP COLUMN "steerable"`,
-    );
+    await queryRunner.query(`ALTER TABLE "active_turns" DROP COLUMN "steerable"`);
   }
 }

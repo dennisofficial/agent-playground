@@ -5,29 +5,26 @@ import { GitModule } from '../git/git.module';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
-  OrganizationEntity,
-  OrgClaudeCredentialEntity,
-  OrgCredentialsEntity,
-  OrgWorkspaceSecretFileEntity,
-  OrgWorkspaceMountEntity,
-  RepoEntity,
   InboundMessageEntity,
   JobEntity,
   JobSandboxEntity,
+  OrganizationEntity,
+  OrgClaudeCredentialEntity,
+  OrgCredentialsEntity,
+  OrgWorkspaceMountEntity,
+  OrgWorkspaceSecretFileEntity,
+  RepoEntity,
 } from '../persistence/entities';
 import { AuthRefreshSinkService } from './auth-refresh.sink';
-import { ClaudeCredentialsController } from './claude-credentials.controller';
 import { ClaudeCredentialStore } from './claude-credential.store';
+import { ClaudeCredentialsController } from './claude-credentials.controller';
 import { ClaudeOAuthPkceStore } from './claude-oauth-pkce.store';
 import { CredentialKeepAliveService } from './credential-keepalive.service';
 import { CredentialRefreshService } from './credential-refresh.service';
 import { CredentialResolver } from './credential-resolver.service';
 import { OrgCredentialsController } from './credentials.controller';
-import {
-  GithubAppCallbackController,
-  GithubAppController,
-} from './github-app.controller';
 import { GithubAppStateStore } from './github-app-state.store';
+import { GithubAppCallbackController, GithubAppController } from './github-app.controller';
 import { OauthUsageService } from './oauth-usage.service';
 import { OnboardingController } from './onboarding.controller';
 import { OnboardingService } from './onboarding.service';
@@ -35,9 +32,9 @@ import { RepoController } from './repo.controller';
 import { TenantCredentialStore } from './tenant-credential.store';
 import { UsageEventBus } from './usage-event-bus';
 import { OrgUsageController } from './usage.controller';
-import { WorkspaceSecretFileStore } from './workspace-secret.store';
 import { WorkspaceConfigStore } from './workspace-config.store';
 import { WorkspaceProfileController } from './workspace-profile.controller';
+import { WorkspaceSecretFileStore } from './workspace-secret.store';
 import { WorkspaceSecretsController } from './workspace-secrets.controller';
 
 /**

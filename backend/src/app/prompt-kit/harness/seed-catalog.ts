@@ -1,10 +1,7 @@
-import type {
-  EventMessage,
-  UnblockBlockerInfo,
-} from '@shared/domain/message';
 import type { JobProvenance } from '@shared/domain/job';
-import { agentMessage, fromExternal, type AgentMessage } from '@shared/prompt-kit/message';
+import type { EventMessage, UnblockBlockerInfo } from '@shared/domain/message';
 import { renderChunk } from '@shared/prompt-kit/harness/tag-vocabulary';
+import { agentMessage, fromExternal, type AgentMessage } from '@shared/prompt-kit/message';
 
 /**
  * prompt-kit / harness — the seeded system-event CONTENT catalog.
@@ -49,9 +46,7 @@ export const RESET_VERIFY_TEXT: AgentMessage = agentMessage(
  * {@link RESET_VERIFY_TEXT}, consumed by whichever turn cold-attaches first.
  */
 export function resetContinuationNotice(): AgentMessage {
-  return agentMessage(
-    'Your sandbox was reset — continuing on the fresh container.',
-  );
+  return agentMessage('Your sandbox was reset — continuing on the fresh container.');
 }
 
 // ── Compaction ───────────────────────────────────────────────────────────────────────────────────────────
@@ -118,10 +113,7 @@ export const CONTINUATION_PREAMBLE: AgentMessage = agentMessage(
  * that round-trip — so the caller re-crosses the seam with `fromExternal`. Byte-identical to the former inline
  * `${seed}\n\n---\n\n${task}`.
  */
-export function foldCompactionSeed(
-  seed: AgentMessage,
-  task: AgentMessage,
-): AgentMessage {
+export function foldCompactionSeed(seed: AgentMessage, task: AgentMessage): AgentMessage {
   return agentMessage(`${seed}\n\n---\n\n${task}`);
 }
 
@@ -199,9 +191,7 @@ function renderBlockerContext(blockers: UnblockBlockerInfo[]): string {
  * job already had a session). Names the blockers, frames the block as possibly soft, and steers the brain to
  * find out why, REBASE, and re-check whether those jobs changed its scope before resuming its planned work.
  */
-export function wakeUnblockedRunningJobBody(
-  blockers: UnblockBlockerInfo[],
-): AgentMessage {
+export function wakeUnblockedRunningJobBody(blockers: UnblockBlockerInfo[]): AgentMessage {
   return agentMessage(
     'You were BLOCKED mid-flight and are now UNBLOCKED — resuming.\n\n' +
       renderBlockerContext(blockers) +
@@ -223,9 +213,7 @@ export function wakeUnblockedRunningJobBody(
  * SUPERSEDED in the wake path by the queue-backed model ({@link renderBornBlockedProvenanceNote} at creation
  * + {@link renderUnblockedNote} on wake, drained as one coalesced turn); retained for its unit spec.
  */
-export function renderBornBlockedUnblockPrefix(
-  blockers: UnblockBlockerInfo[],
-): string {
+export function renderBornBlockedUnblockPrefix(blockers: UnblockBlockerInfo[]): string {
   return (
     'This job was CREATED already blocked, and the job(s) it was waiting on have now resolved. You have NOT ' +
     'started any work yet — the brief below is your starting point.\n\n' +
@@ -243,9 +231,7 @@ export function renderBornBlockedUnblockPrefix(
  * note. Carries provenance ONLY (no blocker roster — that half is the wake note); when `parent` is null the
  * job was opened by the operator, so it frames a plain "created blocked" opener.
  */
-export function renderBornBlockedProvenanceNote(
-  parent: JobProvenance | null,
-): string {
+export function renderBornBlockedProvenanceNote(parent: JobProvenance | null): string {
   if (!parent) {
     return (
       'This job was CREATED already blocked — it is held until the job(s) it depends on resolve. You have ' +
@@ -330,8 +316,8 @@ export function wakeForAmendApprovedBody(): AgentMessage {
   return agentMessage(
     [
       'The operator APPROVED your amend proposal — the ship-review gate is retracted and the job is now',
-      '**amending**. Review the operator\'s requested change against the diff and evidence in this',
-      "session, then make the fix, then call `report_verification({ passed: true })`",
+      "**amending**. Review the operator's requested change against the diff and evidence in this",
+      'session, then make the fix, then call `report_verification({ passed: true })`',
       'with your live evidence — that re-parks the job directly at the ship-review gate (amending →',
       'ready-to-ship, no rebuild). Do not re-propose unless something material changed.',
     ].join('\n'),
@@ -391,13 +377,8 @@ export function renderEventDelivery(event: EventMessage): AgentMessage {
 /** The inner text of an answered-question seed, shared by {@link frameAnswer} (brain-side, fenced as a
  *  `system_notice`) and the web-surface controller's `/answer-question` endpoint (which wraps the same
  *  text via `seedSystemNotification`'s own `<system_notice>` envelope). */
-export function answeredQuestionBody(
-  question: string,
-  answer: string,
-): AgentMessage {
-  return agentMessage(
-    `The operator answered your question ${JSON.stringify(question)}: ${answer}`,
-  );
+export function answeredQuestionBody(question: string, answer: string): AgentMessage {
+  return agentMessage(`The operator answered your question ${JSON.stringify(question)}: ${answer}`);
 }
 
 /**
@@ -407,16 +388,11 @@ export function answeredQuestionBody(
  * operator-authored freeform, so it crosses the branded seam via `fromExternal` before it is spliced in.
  * The whole body is re-minted so the controller never hand-concatenates a bare string across the seam.
  */
-export function batchAnswerBody(
-  notices: AgentMessage[],
-  note?: string,
-): AgentMessage {
+export function batchAnswerBody(notices: AgentMessage[], note?: string): AgentMessage {
   const joined = notices.join('\n');
   const trimmed = note?.trim();
   if (!trimmed) return agentMessage(joined);
-  return agentMessage(
-    `${joined}\n\nThe operator also added a note:\n${fromExternal(trimmed)}`,
-  );
+  return agentMessage(`${joined}\n\nThe operator also added a note:\n${fromExternal(trimmed)}`);
 }
 
 /** Frame a delivered answer as a SYSTEM SEED (matches the live `/answer-question` path), not a chat line. */
@@ -438,9 +414,7 @@ export function frameAnswer(question: string, answer: string): AgentMessage {
  *  brain into re-asking what to continue. */
 export function retryResumeNudge(title?: string): AgentMessage {
   return agentMessage(
-    title
-      ? `Please continue with the current task: "${title}".`
-      : 'Please continue.',
+    title ? `Please continue with the current task: "${title}".` : 'Please continue.',
   );
 }
 
@@ -474,10 +448,7 @@ export function sessionLimitResetNudge(title?: string): AgentMessage {
 
 /** `/provide-secret` (ephemeral, delivery failed) — the reader died/wasn't reading; tells the brain to
  *  restart the interactive login rather than wedge on a dead card. */
-export function secretEphemeralUndelivered(
-  name: string,
-  reason: string,
-): AgentMessage {
+export function secretEphemeralUndelivered(name: string, reason: string): AgentMessage {
   return agentMessage(
     `The one-time value \`${name}\` could not be delivered (${reason}). Restart the interactive login and request the code again.`,
   );
@@ -501,10 +472,7 @@ export function mcpSecretOauthRefused(server: string): AgentMessage {
 
 /** `/provide-secret` (MCP target, server row gone) — the server was deleted between propose/approve and
  *  provide. */
-export function mcpSecretStoreFailed(
-  key: string,
-  server: string,
-): AgentMessage {
+export function mcpSecretStoreFailed(key: string, server: string): AgentMessage {
   return agentMessage(
     `Could not store the secret \`${key}\` — MCP server \`${server}\` is no longer registered on this repo. Re-propose it if still needed.`,
   );
@@ -512,11 +480,7 @@ export function mcpSecretStoreFailed(
 
 /** `/provide-secret` (MCP target, stored) — masked confirmation that a credential slot was written; the
  *  server's tools are not loaded into this session until every slot is filled and it's reset. */
-export function mcpSecretStored(
-  key: string,
-  server: string,
-  slot: string,
-): AgentMessage {
+export function mcpSecretStored(key: string, server: string, slot: string): AgentMessage {
   return agentMessage(
     `The operator provided the secret \`${key}\` for MCP server \`${server}\` (${slot}, stored encrypted). The server is registered but its \`mcp__${server}__*\` tools are NOT loaded into this session yet — once all its secret slots are filled, call reset_sandbox to load it, then invoke one of its tools to verify (see MCP SERVERS).`,
   );
@@ -530,10 +494,7 @@ export function secretStored(name: string, path: string): AgentMessage {
 }
 
 /** `/mcp-proposals/:requestId/approve` (removal card) — names what was removed, or reports the no-op. */
-export function mcpRemoved(
-  removed: string[],
-  scope: 'org' | 'repo' | undefined,
-): AgentMessage {
+export function mcpRemoved(removed: string[], scope: 'org' | 'repo' | undefined): AgentMessage {
   return agentMessage(
     removed.length
       ? `The operator approved removing MCP server(s) ${removed.map((n) => `\`${n}\``).join(', ')} ${scope === 'org' ? 'org-wide' : 'from this repo'}. reset_sandbox to drop them from a fresh session.`
@@ -556,9 +517,7 @@ export function mcpApproved(input: {
     committed.length
       ? `The operator approved the MCP proposal — registered ${committed
           .map((n) => `\`${n}\``)
-          .join(
-            ', ',
-          )} ${scope === 'org' ? 'org-wide (every repo)' : 'on this repo'}.` +
+          .join(', ')} ${scope === 'org' ? 'org-wide (every repo)' : 'on this repo'}.` +
           (needSecrets.length
             ? ` Fill each secret slot now via request_secret (mcp target): ${needSecrets.join('; ')}. After every slot is filled, reset_sandbox to load the server(s), then invoke a tool to verify (see MCP SERVERS).`
             : '') +
@@ -589,11 +548,7 @@ export function conventionEdited(mode: string, name: string): AgentMessage {
 }
 
 /** `/skill-proposals/:requestId/approve` — confirms a skill install/remove. */
-export function skillApproved(
-  mode: string,
-  name: string,
-  scope: string,
-): AgentMessage {
+export function skillApproved(mode: string, name: string, scope: string): AgentMessage {
   return agentMessage(
     mode === 'remove'
       ? `The operator approved removing the "${name}" skill (${scope}-scoped) — it is gone from every future build.`
@@ -611,10 +566,7 @@ export function skillEditGone(name: string): AgentMessage {
 
 /** `/skill-edit-access/:requestId/approve` (granted) — a `git`-provenance skill forks to `custom` first, so
  *  the confirmation names the fork it actually granted when one happened. */
-export function skillEditApproved(
-  name: string,
-  forkedTo?: string,
-): AgentMessage {
+export function skillEditApproved(name: string, forkedTo?: string): AgentMessage {
   return agentMessage(
     forkedTo
       ? `The operator approved edit access to "${name}" — since it's installed from git, it was forked ` +

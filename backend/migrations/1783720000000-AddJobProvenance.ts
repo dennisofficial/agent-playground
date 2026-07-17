@@ -16,12 +16,8 @@ export class AddJobProvenance1783720000000 implements MigrationInterface {
 
   public async down(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`DROP INDEX "idx_jobs_created_by_job_id"`);
-    await queryRunner.query(
-      `ALTER TABLE "jobs" DROP CONSTRAINT "fk_jobs_created_by_job_id_jobs"`,
-    );
+    await queryRunner.query(`ALTER TABLE "jobs" DROP CONSTRAINT "fk_jobs_created_by_job_id_jobs"`);
     await queryRunner.query(`ALTER TABLE "jobs" DROP COLUMN "created_by"`);
-    await queryRunner.query(
-      `ALTER TABLE "jobs" DROP COLUMN "created_by_job_id"`,
-    );
+    await queryRunner.query(`ALTER TABLE "jobs" DROP COLUMN "created_by_job_id"`);
   }
 }

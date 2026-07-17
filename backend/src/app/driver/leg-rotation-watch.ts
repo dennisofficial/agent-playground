@@ -25,10 +25,7 @@
  *
  * Pure and dependency-free so it unit-tests without Nest/DB.
  */
-import {
-  ROTATION_REMINDER_DELTA_TOKENS,
-  ROTATION_SOFT_TOKENS,
-} from '@shared/prompt-kit/jit';
+import { ROTATION_REMINDER_DELTA_TOKENS, ROTATION_SOFT_TOKENS } from '@shared/prompt-kit/jit';
 
 /** Which kind of context-pressure signal just fired. */
 export type LegRotationSignalPhase = 'soft' | 'reminder';
@@ -46,8 +43,7 @@ export interface LegRotationThresholds {
  * Sourced from the `leg-rotation` JIT rule (the catalog is now the one place these are declared).
  */
 export const DEFAULT_ROTATION_SOFT_TOKENS = ROTATION_SOFT_TOKENS;
-export const DEFAULT_ROTATION_REMINDER_DELTA_TOKENS =
-  ROTATION_REMINDER_DELTA_TOKENS;
+export const DEFAULT_ROTATION_REMINDER_DELTA_TOKENS = ROTATION_REMINDER_DELTA_TOKENS;
 
 /** What a threshold crossing carries to the (later-stage) nudge injection + visible-row persist. */
 export interface LegRotationSignal {
@@ -134,8 +130,7 @@ export class LegRotationWatch {
     if (tokens < this.thresholds.softTokens) return; // below soft — nothing to do yet
     const contextLimit = evt.contextLimit ?? null;
     const level = Math.floor(
-      (tokens - this.thresholds.softTokens) /
-        this.thresholds.reminderDeltaTokens,
+      (tokens - this.thresholds.softTokens) / this.thresholds.reminderDeltaTokens,
     );
     if (level <= this.firedLevel) return; // already at/above this level — nothing new
     const isFirst = this.firedLevel < 0;

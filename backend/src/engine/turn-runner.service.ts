@@ -1,9 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { EngineCore } from '@shared/engine/engine-core';
-import type {
-  EngineEvent,
-  RunEngineArgs,
-} from '@shared/engine/engine.types';
+import {
+  ATLAS_PROD_BRIDGE_NAME,
+  partitionAtlasProdTools,
+  qualifyAtlasProdToolNames,
+} from '@shared/bridge-names/atlas-prod-bridge-options';
 import {
   BRIDGE_SERVER_NAME,
   buildBridgeClaudeOptions,
@@ -14,19 +14,13 @@ import {
   partitionWorkspaceProfileTools,
   qualifyWorkspaceProfileToolNames,
 } from '@shared/bridge-names/workspace-profile-bridge-options';
-import {
-  ATLAS_PROD_BRIDGE_NAME,
-  partitionAtlasProdTools,
-  qualifyAtlasProdToolNames,
-} from '@shared/bridge-names/atlas-prod-bridge-options';
-import {
-  TOOL_DESCRIPTIONS,
-  TOOL_SHAPES,
-} from '@shared/engine/host-tool-schemas';
+import { EngineCore } from '@shared/engine/engine-core';
+import type { EngineEvent, RunEngineArgs } from '@shared/engine/engine.types';
+import { TOOL_DESCRIPTIONS, TOOL_SHAPES } from '@shared/engine/host-tool-schemas';
+import { EngineEventBus } from './events/engine-events';
 import { buildLspBridgeOptions } from './transport/bridges/lsp-bridge-options';
 import { buildUserMcpBridgeOptions } from './transport/bridges/user-mcp-bridge-options';
 import { TurnTransport } from './transport/turn-transport.service';
-import { EngineEventBus } from './events/engine-events';
 
 /**
  * Orchestrates ONE in-container turn: read the spec, run it to a terminal frame, finalize. This is the
@@ -86,9 +80,7 @@ export class TurnRunner {
           if (!shape) {
             // Fail loud: an empty shape would be wrapped in the SDK's STRICT object and silently strip
             // the whole payload to `{}`. A missing schema is a drift bug — surface it, not data loss.
-            throw new Error(
-              `[turn-runner] no TOOL_SHAPES entry for bridged tool '${toolName}'`,
-            );
+            throw new Error(`[turn-runner] no TOOL_SHAPES entry for bridged tool '${toolName}'`);
           }
           return claudeSdk.tool(
             toolName,
@@ -98,17 +90,14 @@ export class TurnRunner {
             async (input: Record<string, unknown>) => {
               try {
                 const result = await toolBridge.call(toolName, input ?? {});
-                const text =
-                  typeof result === 'string' ? result : JSON.stringify(result);
+                const text = typeof result === 'string' ? result : JSON.stringify(result);
                 return { content: [{ type: 'text' as const, text }] };
               } catch (err) {
                 const message =
                   (err instanceof Error ? err.message : String(err)) ||
                   'host tool error (no message)';
                 return {
-                  content: [
-                    { type: 'text' as const, text: `Error: ${message}` },
-                  ],
+                  content: [{ type: 'text' as const, text: `Error: ${message}` }],
                   isError: true,
                 };
               }
@@ -117,16 +106,16 @@ export class TurnRunner {
         };
         // Split the flat host tool list into the general host bridge, the dedicated Workspace Profile
         // bridge, and the dedicated atlas-prod bridge (only ever non-empty on the Atlas repo).
-        const { host: hostToolNames, profile: profileToolNames } =
-          partitionWorkspaceProfileTools(spec.toolBridgeTools);
+        const { host: hostToolNames, profile: profileToolNames } = partitionWorkspaceProfileTools(
+          spec.toolBridgeTools,
+        );
         const { rest: generalToolNames, atlasProd: atlasProdToolNames } =
           partitionAtlasProdTools(hostToolNames);
         if (generalToolNames.length > 0) {
           const server = claudeSdk.createSdkMcpServer({
             name: BRIDGE_SERVER_NAME,
             version: '1.0.0',
-            instructions:
-              'Atlas host tools. Call these to interact with the host harness.',
+            instructions: 'Atlas host tools. Call these to interact with the host harness.',
             tools: generalToolNames.map(makeProxyTool),
             alwaysLoad: true,
           });
@@ -173,9 +162,7 @@ export class TurnRunner {
 
       // ── Mid-turn steering + cooperative stop (only when the host marked the turn steerable) ─────
       const abortController = new AbortController();
-      let steerInput:
-        | AsyncIterable<{ id?: string; text: string }>
-        | undefined;
+      let steerInput: AsyncIterable<{ id?: string; text: string }> | undefined;
       if (spec.steerable) {
         await this.transport.onAbort(turnId, () => abortController.abort());
         steerInput = this.transport.readSteerInput(turnId).steerInput;
@@ -184,9 +171,7 @@ export class TurnRunner {
       const runArgs: RunEngineArgs = {
         ...spec,
         onEvent: (e: EngineEvent) => this.bus.emit(turnId, e),
-        ...(spec.steerable
-          ? { signal: abortController.signal, steerInput }
-          : {}),
+        ...(spec.steerable ? { signal: abortController.signal, steerInput } : {}),
         ...(bridgeCall ? { bridgeCall } : {}),
       };
       // The host bridge's + LSP bridge's `mcpServers` MUST be merged into ONE object (each is spread
@@ -208,20 +193,14 @@ export class TurnRunner {
       // A Codex execute turn hands the BARE bridge tool names to `runCodex` (rendered into config.toml's
       // `[mcp_servers.atlasbridge]` block); Claude uses the merged Claude options above instead.
       const codexBridgeTools =
-        spec.engine === 'codex' &&
-        spec.toolBridgeTools &&
-        spec.toolBridgeTools.length > 0
+        spec.engine === 'codex' && spec.toolBridgeTools && spec.toolBridgeTools.length > 0
           ? spec.toolBridgeTools
           : undefined;
       const codexExtraMcpServers =
-        spec.engine === 'codex'
-          ? { ...(userMcp?.codexExtraMcpServers ?? {}) }
-          : undefined;
+        spec.engine === 'codex' ? { ...(userMcp?.codexExtraMcpServers ?? {}) } : undefined;
       const result = await core.runWithExtras(
         runArgs,
-        Object.keys(mergedMcpServers).length > 0
-          ? { mcpServers: mergedMcpServers }
-          : undefined,
+        Object.keys(mergedMcpServers).length > 0 ? { mcpServers: mergedMcpServers } : undefined,
         mergedToolNames.length > 0 ? mergedToolNames : undefined,
         codexBridgeTools,
         codexExtraMcpServers,
@@ -235,8 +214,7 @@ export class TurnRunner {
       };
       await this.transport.emitError(turnId, {
         t: 'error',
-        message:
-          err instanceof Error ? (err.stack ?? err.message) : String(err),
+        message: err instanceof Error ? (err.stack ?? err.message) : String(err),
         ...(e?.isAuthError ? { auth: true } : {}),
         ...(typeof e?.sessionId === 'string' ? { sessionId: e.sessionId } : {}),
         ...(typeof e?.engine === 'string' ? { engine: e.engine } : {}),

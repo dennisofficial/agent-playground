@@ -16,23 +16,12 @@
  * out of scope here; the DB effects are what matter).
  */
 
-import { Test, type TestingModule } from '@nestjs/testing';
-import {
-  TypeOrmModule,
-  getDataSourceToken,
-  getRepositoryToken,
-} from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
-import {
-  afterAll,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from 'vitest';
 import { EnvService } from '@core/config/env/env.service';
+import { Test, type TestingModule } from '@nestjs/testing';
+import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
+import type { Message, TurnEnvelope } from '@shared/domain';
+import { DataSource, Repository } from 'typeorm';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CustomNamingStrategy } from '../../../_lib/database/custom-naming.strategy';
 import {
   DB_CONNECTION,
@@ -42,12 +31,11 @@ import {
 import {
   ENTITIES,
   JobEntity,
-  TranscriptMessageEntity,
   ProdMaintenanceWriteEntity,
   ThreadEntity,
+  TranscriptMessageEntity,
 } from '../../persistence/entities';
 import { CHAT_SURFACE } from '../../surface/chat-surface.port';
-import type { Message, TurnEnvelope } from '@shared/domain';
 import { JobBootstrapService } from '../job-bootstrap';
 import { ProdDiagnosticsService } from '../prod-diagnostics.service';
 
@@ -117,12 +105,7 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
         TypeOrmModule.forRoot(readerOpts()),
         TypeOrmModule.forRoot(writerOpts()),
         TypeOrmModule.forFeature(
-          [
-            ProdMaintenanceWriteEntity,
-            TranscriptMessageEntity,
-            JobEntity,
-            ThreadEntity,
-          ],
+          [ProdMaintenanceWriteEntity, TranscriptMessageEntity, JobEntity, ThreadEntity],
           DB_CONNECTION,
         ),
       ],
@@ -144,12 +127,8 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
 
     svc = mod.get(ProdDiagnosticsService);
     ds = mod.get<DataSource>(getDataSourceToken(DB_CONNECTION));
-    ledger = mod.get(
-      getRepositoryToken(ProdMaintenanceWriteEntity, DB_CONNECTION),
-    );
-    messages = mod.get(
-      getRepositoryToken(TranscriptMessageEntity, DB_CONNECTION),
-    );
+    ledger = mod.get(getRepositoryToken(ProdMaintenanceWriteEntity, DB_CONNECTION));
+    messages = mod.get(getRepositoryToken(TranscriptMessageEntity, DB_CONNECTION));
     jobs = mod.get(getRepositoryToken(JobEntity, DB_CONNECTION));
     threads = mod.get(getRepositoryToken(ThreadEntity, DB_CONNECTION));
 
@@ -264,9 +243,7 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
       },
     });
     expect(card).toBeTruthy();
-    expect((card?.card as Record<string, unknown> | undefined)?.kind).toBe(
-      'db_write',
-    );
+    expect((card?.card as Record<string, unknown> | undefined)?.kind).toBe('db_write');
 
     // A live SSE nudge was posted — but NO write ran: the target row is untouched.
     expect(surface.post).toHaveBeenCalledTimes(1);
@@ -305,12 +282,8 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
         kind: 'card',
       },
     });
-    expect((card?.card as Record<string, unknown> | undefined)?.type).toBe(
-      'verdict_card',
-    );
-    expect((card?.card as Record<string, unknown> | undefined)?.verdict).toBe(
-      'approve',
-    );
+    expect((card?.card as Record<string, unknown> | undefined)?.type).toBe('verdict_card');
+    expect((card?.card as Record<string, unknown> | undefined)?.verdict).toBe('approve');
 
     // Idempotent: a duplicate approval click is a no-op (row is no longer `pending`).
     surface.seedSystemNotification.mockClear();
@@ -337,12 +310,8 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
         kind: 'card',
       },
     });
-    expect((card?.card as Record<string, unknown> | undefined)?.type).toBe(
-      'verdict_card',
-    );
-    expect((card?.card as Record<string, unknown> | undefined)?.verdict).toBe(
-      'deny',
-    );
+    expect((card?.card as Record<string, unknown> | undefined)?.type).toBe('verdict_card');
+    expect((card?.card as Record<string, unknown> | undefined)?.verdict).toBe('deny');
 
     // Idempotent: a duplicate deny click is a no-op (row is no longer `pending`).
     surface.seedSystemNotification.mockClear();

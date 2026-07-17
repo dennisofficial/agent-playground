@@ -1,10 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
-import type { CredentialResolver } from '../../onboarding';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { CheckRun, GithubPrService, PullDetail } from '../../git';
 import { RateLimitedError } from '../../git';
-import type { GithubPrService, CheckRun, PullDetail } from '../../git';
-import type { StimulusIntake } from '../../stimulus';
+import type { CredentialResolver } from '../../onboarding';
 import type { JobEntity, RepoEntity } from '../../persistence/entities';
+import type { StimulusIntake } from '../../stimulus';
 import {
   CADENCE_MS,
   GitStateReconciler,
@@ -84,8 +84,7 @@ function detail(over: Partial<PullDetail> = {}): PullDetail {
 /** The single `next_poll_at` re-stamp write `tick()` issues per job after reconcileOne. */
 function nextPollWrite(update: ReturnType<typeof vi.fn>): unknown {
   const call = update.mock.calls.find(
-    (c) =>
-      c[1] && typeof c[1] === 'object' && 'next_poll_at' in (c[1] as object),
+    (c) => c[1] && typeof c[1] === 'object' && 'next_poll_at' in (c[1] as object),
   );
   return call?.[1];
 }
@@ -176,10 +175,7 @@ describe('GitStateReconciler.tick', () => {
     });
     await svc.tick();
     expect(intakeEvent).not.toHaveBeenCalled();
-    expect(update).toHaveBeenCalledWith(
-      { id: 'job-1' },
-      { pr_state: 'merged' },
-    );
+    expect(update).toHaveBeenCalledWith({ id: 'job-1' }, { pr_state: 'merged' });
     expect(pr.listCheckRuns).not.toHaveBeenCalled();
     // terminal → next_poll_at null so the job drops out of the DUE set (teardown owns it now).
     expect(nextPollWrite(update)).toEqual({ next_poll_at: null });
@@ -278,9 +274,7 @@ describe('GitStateReconciler.tick', () => {
 
   it('a throwing reconcile still re-stamps the clock (active) so the job backs off, not hammers', async () => {
     const { svc, update, pr } = make({ detail: detail() });
-    (pr.getPullDetail as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-      new Error('GitHub 500'),
-    );
+    (pr.getPullDetail as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('GitHub 500'));
     const reconciled = await svc.tick();
     expect(reconciled).toBe(0); // the throwing job isn't counted
     expect(nextPollWrite(update)).toEqual({
@@ -375,9 +369,7 @@ describe('GitStateReconciler.markJobDue', () => {
 
   it('falls back to branch when prNumber marks no job', async () => {
     const { svc, update } = make({ detail: detail(), affected: 0 });
-    update
-      .mockResolvedValueOnce({ affected: 0 })
-      .mockResolvedValueOnce({ affected: 1 });
+    update.mockResolvedValueOnce({ affected: 0 }).mockResolvedValueOnce({ affected: 1 });
     const marked = await svc.markJobDue('T1', 'repo-1', {
       prNumber: 7,
       branch: 'feat/a1b2c3d4',
@@ -442,15 +434,11 @@ describe('summarizeChecks', () => {
   });
 
   it('failing + in_progress → failure (failure takes precedence over pending)', () => {
-    expect(
-      summarizeChecks([run('failure'), run(null, 'in_progress')]).status,
-    ).toBe('failure');
+    expect(summarizeChecks([run('failure'), run(null, 'in_progress')]).status).toBe('failure');
   });
 
   it('success + in_progress → pending', () => {
-    expect(
-      summarizeChecks([run('success'), run(null, 'in_progress')]).status,
-    ).toBe('pending');
+    expect(summarizeChecks([run('success'), run(null, 'in_progress')]).status).toBe('pending');
   });
 });
 

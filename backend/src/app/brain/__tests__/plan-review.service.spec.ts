@@ -1,30 +1,23 @@
-import { describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import type { EngineRunnerPort, EngineRunResult } from '@shared/engine/engine.types';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { Repository } from 'typeorm';
+import { describe, expect, it, vi } from 'vitest';
+import type { JobLifecycleService } from '../../driver/job-lifecycle.service';
+import type { JobDependencyService } from '../../job-deps';
+import type { CredentialResolver } from '../../onboarding';
+import type { JobEntity, ThreadEntity, ThreadGroupEntity } from '../../persistence/entities';
+import type { BlockSink, TurnHarnessFactory } from '../../surface';
+import { BrainStoreService } from '../brain-store.service';
+import type { PlanReviewInput } from '../plan-review.service';
 import {
-  PlanReviewService,
-  parsePlanFindings,
-  serializeFindings,
   deserializeFindings,
+  parsePlanFindings,
+  PlanReviewService,
+  serializeFindings,
   summarizeEngineError,
 } from '../plan-review.service';
-import type { PlanReviewInput } from '../plan-review.service';
-import { BrainStoreService } from '../brain-store.service';
-import type {
-  EngineRunnerPort,
-  EngineRunResult,
-} from '@shared/engine/engine.types';
-import type { JobLifecycleService } from '../../driver/job-lifecycle.service';
-import type { CredentialResolver } from '../../onboarding';
-import type { Repository } from 'typeorm';
-import type {
-  JobEntity,
-  ThreadGroupEntity,
-  ThreadEntity,
-} from '../../persistence/entities';
-import type { BlockSink, TurnHarnessFactory } from '../../surface';
-import type { JobDependencyService } from '../../job-deps';
 
 /** Creds stub: no per-org secret → the engine uses its env fallback (these tests stub the engine). */
 const fakeCreds = {
@@ -66,9 +59,7 @@ describe('parsePlanFindings', () => {
 
   it('returns [] on NO_FINDINGS (case-insensitive)', () => {
     expect(parsePlanFindings('no_findings')).toEqual([]);
-    expect(parsePlanFindings('Everything looks good.\nNO_FINDINGS')).toEqual(
-      [],
-    );
+    expect(parsePlanFindings('Everything looks good.\nNO_FINDINGS')).toEqual([]);
   });
 
   it('treats a bare untagged FINDING as BLOCKING (lenient back-compat)', () => {
@@ -91,9 +82,7 @@ describe('parsePlanFindings', () => {
 describe('summarizeEngineError', () => {
   it('pulls the embedded message and takes the first line', () => {
     expect(summarizeEngineError(new Error('boom\nsecond line'))).toBe('boom');
-    expect(
-      summarizeEngineError(new Error('{"error":{"message":"bad token"}}')),
-    ).toBe('bad token');
+    expect(summarizeEngineError(new Error('{"error":{"message":"bad token"}}'))).toBe('bad token');
   });
 });
 
@@ -144,8 +133,7 @@ function fakePlanReviewThreadsRepo(seed: PlanReviewThreadSeed[] = []) {
 
   const matches = (row: ThreadEntity, where: Record<string, unknown>) =>
     Object.entries(where).every(
-      ([k, v]) =>
-        v == null || (row as unknown as Record<string, unknown>)[k] === v,
+      ([k, v]) => v == null || (row as unknown as Record<string, unknown>)[k] === v,
     );
 
   return {
@@ -165,12 +153,10 @@ function fakePlanReviewThreadsRepo(seed: PlanReviewThreadSeed[] = []) {
       rows.push(saved);
       return saved;
     }),
-    update: vi.fn(
-      async (where: { id: string }, patch: Partial<ThreadEntity>) => {
-        const row = rows.find((x) => x.id === where.id);
-        if (row) Object.assign(row, patch, { updated_at: new Date() });
-      },
-    ),
+    update: vi.fn(async (where: { id: string }, patch: Partial<ThreadEntity>) => {
+      const row = rows.find((x) => x.id === where.id);
+      if (row) Object.assign(row, patch, { updated_at: new Date() });
+    }),
     findOne: vi.fn(
       async ({
         where,
@@ -203,14 +189,11 @@ function fakePlanReviewThreadsRepo(seed: PlanReviewThreadSeed[] = []) {
       qb.getMany = async () =>
         rows.filter(
           (r) =>
-            r.role === 'plan_review' &&
-            (r.config as { status?: string })?.status === 'running',
+            r.role === 'plan_review' && (r.config as { status?: string })?.status === 'running',
         );
       qb.getRawOne = async () => {
         const jobId = params['jobId'] as string | undefined;
-        const matching = rows.filter(
-          (r) => jobId == null || r.job_id === jobId,
-        );
+        const matching = rows.filter((r) => jobId == null || r.job_id === jobId);
         return {
           max: matching.reduce((m, r) => Math.max(m, r.ordinal ?? 0), 0),
         };
@@ -227,8 +210,7 @@ function fakeThreadGroupsRepo() {
   return {
     findOne: vi.fn(
       async ({ where }: { where: { job_id: string; kind: string } }) =>
-        rows.find((s) => s.job_id === where.job_id && s.kind === where.kind) ??
-        null,
+        rows.find((s) => s.job_id === where.job_id && s.kind === where.kind) ?? null,
     ),
     create: (r: Partial<ThreadGroupEntity>) => ({ ...r }) as ThreadGroupEntity,
     save: vi.fn(async (r: ThreadGroupEntity) => {
@@ -250,9 +232,7 @@ function fakeThreadGroupsRepo() {
       }
       qb.getRawOne = async () => {
         const jobId = params['jobId'] as string | undefined;
-        const matching = rows.filter(
-          (r) => jobId == null || r.job_id === jobId,
-        );
+        const matching = rows.filter((r) => jobId == null || r.job_id === jobId);
         return {
           max: matching.reduce((m, r) => Math.max(m, r.ordinal ?? 0), 0),
         };
@@ -275,8 +255,7 @@ function makeService(opts: {
   const engine = {
     run: vi.fn(
       opts.engineRun ??
-        (async () =>
-          ({ result: 'NO_FINDINGS', sessionId: 'sess-1' }) as EngineRunResult),
+        (async () => ({ result: 'NO_FINDINGS', sessionId: 'sess-1' }) as EngineRunResult),
     ),
   } as unknown as EngineRunnerPort;
   const lifecycle = {
@@ -348,16 +327,12 @@ describe('PlanReviewService.review', () => {
       threads,
       engineRun: async () =>
         ({
-          result:
-            'FINDING [BLOCKING]: x — breaks build\nFINDING [ADVISORY]: y — nicer',
+          result: 'FINDING [BLOCKING]: x — breaks build\nFINDING [ADVISORY]: y — nicer',
           sessionId: 's',
         }) as EngineRunResult,
     });
     const out = await svc.review(baseInput);
-    expect(out.findings.map((f) => f.severity)).toEqual([
-      'BLOCKING',
-      'ADVISORY',
-    ]);
+    expect(out.findings.map((f) => f.severity)).toEqual(['BLOCKING', 'ADVISORY']);
   });
 
   it('flips the control row complete BEFORE persisting the reply transcript (no re-drive window)', async () => {
@@ -372,10 +347,7 @@ describe('PlanReviewService.review', () => {
     ).update;
     (threads as unknown as { update: unknown }).update = vi.fn(
       async (where: unknown, patch: Partial<ThreadEntity>) => {
-        if (
-          (patch as { config?: { status?: string } }).config?.status ===
-          'complete'
-        ) {
+        if ((patch as { config?: { status?: string } }).config?.status === 'complete') {
           order.push('row:complete');
         }
         return origUpdate(where, patch);
@@ -618,10 +590,7 @@ function fakeThreadsRepoForBrainStore(reviewing: boolean) {
   } as unknown as Repository<ThreadEntity>;
 }
 
-function makeBrainStore(opts: {
-  reviewRunning: boolean;
-  jobs: Repository<JobEntity>;
-}) {
+function makeBrainStore(opts: { reviewRunning: boolean; jobs: Repository<JobEntity> }) {
   const threads = fakeThreadsRepoForBrainStore(opts.reviewRunning);
   const stub = {} as never;
   return new BrainStoreService(
@@ -653,10 +622,7 @@ describe('BrainStoreService activity writers', () => {
     const store = makeBrainStore({ reviewRunning: false, jobs: jobs.repo });
     await store.setHalted('job-1', true);
     await store.setHalted('job-1', false);
-    expect(jobs._patches()).toEqual([
-      { halted: true, activity: 'idle' },
-      { halted: false },
-    ]);
+    expect(jobs._patches()).toEqual([{ halted: true, activity: 'idle' }, { halted: false }]);
   });
 
   it('endTurnActivity → idle when no review is running (turn ended, nothing outlives it)', async () => {

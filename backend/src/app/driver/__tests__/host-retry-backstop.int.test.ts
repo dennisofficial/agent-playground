@@ -14,52 +14,39 @@
  * proves the retry notice actually lands in Postgres and the retry indicator actually fans on the real RxJS
  * subject — not just that fake spies were called.
  */
+import type { EnvService } from '@core/config/env/env.service';
+import { ConsoleLogger, Logger } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
-import {
-  TypeOrmModule,
-  getDataSourceToken,
-  getRepositoryToken,
-} from '@nestjs/typeorm';
+import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
+import type { ToolBridgeOptions } from '@shared/engine';
+import { HOST_RETRY_BACKOFF_MS, MAX_HOST_RETRIES } from '@shared/engine';
 import { DataSource, Repository } from 'typeorm';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { ConsoleLogger, Logger } from '@nestjs/common';
-import type { EnvService } from '@core/config/env/env.service';
 import { CustomNamingStrategy } from '../../../_lib/database/custom-naming.strategy';
+import type { AppVersionService } from '../../cluster/app-version.service';
+import type { FeatureSandbox, GithubPrService, LocalGitService, ProjectRepo } from '../../git';
+import { JobDependencyService } from '../../job-deps';
+import type { CredentialResolver } from '../../onboarding';
+import type { OauthUsageService } from '../../onboarding/oauth-usage.service';
 import { DB_CONNECTION } from '../../persistence/database.module';
 import {
+  DecisionRecordEntity,
   ENTITIES,
   JobEntity,
   ThreadEntity,
-  DecisionRecordEntity,
   TranscriptMessageEntity,
 } from '../../persistence/entities';
-import { JobDependencyService } from '../../job-deps';
-import { StimulusStoreService } from '../../stimulus/stimulus-store.service';
-import { DriverStoreService } from '../driver-store.service';
-import { ThreadDriver } from '../thread-driver.service';
-import { BuildShipService } from '../build-ship.service';
-import type { DriverRepoResolver, ResolvedRepo } from '../repo-resolver';
-import type { PlanVisibilityService } from '../decision-gate';
-import type { AutoFixStage } from '../autofix';
-import type {
-  GithubPrService,
-  LocalGitService,
-  FeatureSandbox,
-  ProjectRepo,
-} from '../../git';
 import type { TurnRunnerService } from '../../runner';
+import { StimulusStoreService } from '../../stimulus/stimulus-store.service';
 import type { ChatSurface, TaskEventSink } from '../../surface';
-import {
-  LiveTurnStore,
-  MessageBlockSink,
-  TurnHarnessFactory,
-} from '../../surface';
-import type { AppVersionService } from '../../cluster/app-version.service';
-import type { ToolBridgeOptions } from '@shared/engine';
-import { HOST_RETRY_BACKOFF_MS, MAX_HOST_RETRIES } from '@shared/engine';
-import type { CredentialResolver } from '../../onboarding';
-import type { OauthUsageService } from '../../onboarding/oauth-usage.service';
+import { LiveTurnStore, MessageBlockSink, TurnHarnessFactory } from '../../surface';
+import type { AutoFixStage } from '../autofix';
+import { BuildShipService } from '../build-ship.service';
 import type { LeaderElectionService } from '../cluster/leader-election.service';
+import type { PlanVisibilityService } from '../decision-gate';
+import { DriverStoreService } from '../driver-store.service';
+import type { ResolvedRepo } from '../repo-resolver';
+import { ThreadDriver } from '../thread-driver.service';
 
 function dbOpts() {
   return {
@@ -184,13 +171,11 @@ function makePr(): { pr: GithubPrService } {
       number: 1,
       existing: false,
     })),
-    findOpenPullByHead: vi.fn(
-      async (_token: string, args: { head: string }) => ({
-        url: 'https://github.com/acme/host-retry-backstop/pull/1',
-        number: 1,
-        head: args.head,
-      }),
-    ),
+    findOpenPullByHead: vi.fn(async (_token: string, args: { head: string }) => ({
+      url: 'https://github.com/acme/host-retry-backstop/pull/1',
+      number: 1,
+      head: args.head,
+    })),
   } as unknown as GithubPrService;
   return { pr };
 }
@@ -202,11 +187,7 @@ function clampHostRetryBackoff(): { restore: () => void } {
   const realSetTimeout = globalThis.setTimeout;
   const spy = vi
     .spyOn(globalThis, 'setTimeout')
-    .mockImplementation(((
-      cb: (...args: unknown[]) => void,
-      delay?: number,
-      ...args: unknown[]
-    ) =>
+    .mockImplementation(((cb: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) =>
       realSetTimeout(
         cb,
         delay === HOST_RETRY_BACKOFF_MS ? 0 : delay,
@@ -226,10 +207,7 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
 
   beforeAll(async () => {
     mod = await Test.createTestingModule({
-      imports: [
-        TypeOrmModule.forRoot(dbOpts()),
-        TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION),
-      ],
+      imports: [TypeOrmModule.forRoot(dbOpts()), TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION)],
       providers: [
         DriverStoreService,
         {
@@ -340,8 +318,7 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
       const { git } = makeGit();
       const { pr } = makePr();
       const env = {
-        get: (k: string) =>
-          k === 'DRIVER_TRANSIENT_RETRY_MS' ? '1' : undefined,
+        get: (k: string) => (k === 'DRIVER_TRANSIENT_RETRY_MS' ? '1' : undefined),
       } as unknown as EnvService;
       // REAL live-turn store — the actual RxJS subject the retry loop fans `turn_retry` frames onto.
       const liveTurns = new LiveTurnStore();
@@ -538,9 +515,7 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
       const execCalls = calls.filter((c) => c.mode === 'execute');
       expect(execCalls.length).toBeGreaterThanOrEqual(4); // 3 transient throws + 1 fresh completing turn
 
-      expect(
-        setJobHaltSpy.mock.calls.some((c) => c[1]?.kind === 'failed'),
-      ).toBe(false);
+      expect(setJobHaltSpy.mock.calls.some((c) => c[1]?.kind === 'failed')).toBe(false);
 
       const finalRow = await jobs.findOneOrFail({ where: { id: job.id } });
       expect(finalRow.status).toBe('done');
@@ -559,35 +534,19 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
       );
       expect(noticeRows.length).toBeGreaterThanOrEqual(3);
       const noticeTexts = noticeRows.map((r) => r.text);
-      expect(
-        noticeTexts.some((t) => t.includes(`auto-retry 1/${MAX_HOST_RETRIES}`)),
-      ).toBe(true);
-      expect(
-        noticeTexts.some((t) => t.includes(`auto-retry 2/${MAX_HOST_RETRIES}`)),
-      ).toBe(true);
-      expect(
-        noticeTexts.some((t) => t.includes(`auto-retry 3/${MAX_HOST_RETRIES}`)),
-      ).toBe(true);
+      expect(noticeTexts.some((t) => t.includes(`auto-retry 1/${MAX_HOST_RETRIES}`))).toBe(true);
+      expect(noticeTexts.some((t) => t.includes(`auto-retry 2/${MAX_HOST_RETRIES}`))).toBe(true);
+      expect(noticeTexts.some((t) => t.includes(`auto-retry 3/${MAX_HOST_RETRIES}`))).toBe(true);
 
       // The best-effort live `turn_retry` indicator — fanned on the REAL `LiveTurnStore` subject.
       expect(retryFrames.length).toBeGreaterThanOrEqual(3);
       expect(retryFrames.slice(0, 3).map((f) => f.attempt)).toEqual([1, 2, 3]);
       expect(retryFrames.every((f) => f.max === MAX_HOST_RETRIES)).toBe(true);
-      expect(
-        retryFrames
-          .slice(0, 3)
-          .every((f) => f.lane === `thread:${threadRow.id}`),
-      ).toBe(true);
+      expect(retryFrames.slice(0, 3).every((f) => f.lane === `thread:${threadRow.id}`)).toBe(true);
 
-      console.log(
-        'OBSERVED system_notice texts (live Postgres `messages`):',
-        noticeTexts,
-      );
+      console.log('OBSERVED system_notice texts (live Postgres `messages`):', noticeTexts);
 
-      console.log(
-        'OBSERVED turn_retry frames (live LiveTurnStore.stream$):',
-        retryFrames,
-      );
+      console.log('OBSERVED turn_retry frames (live LiveTurnStore.stream$):', retryFrames);
     },
     90_000,
   );

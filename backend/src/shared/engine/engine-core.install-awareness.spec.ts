@@ -4,14 +4,14 @@
  * timeout race -> additionalContext), not just the pure `detectInstallCommand` helper (that's covered in
  * `../prompt-kit/jit/install-awareness.spec.ts`).
  */
+import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { rmSync } from 'node:fs';
 import { afterAll, describe, expect, it, vi } from 'vitest';
+import { agentMessage } from '../prompt-kit/message';
 import { EngineCore } from './engine-core';
 import type { EngineHomeKey } from './engine-home';
 import { INTERNAL_PROFILE_AWARENESS_TOOL } from './engine.types';
-import { agentMessage } from '../prompt-kit/message';
 
 const HOME_ROOT = join(tmpdir(), `atlas-install-awareness-spec-${process.pid}`);
 afterAll(() => rmSync(HOME_ROOT, { recursive: true, force: true }));
@@ -27,12 +27,7 @@ const TEST_KEY: EngineHomeKey = {
 function fakeClaudeSdk() {
   const captured: { options?: Record<string, unknown> } = {};
   const sdk = {
-    query: ({
-      options,
-    }: {
-      prompt: string;
-      options: Record<string, unknown>;
-    }) => {
+    query: ({ options }: { prompt: string; options: Record<string, unknown> }) => {
       captured.options = options;
       return (async function* () {
         yield { type: 'system', subtype: 'init', session_id: 'sess-1' };
@@ -55,9 +50,7 @@ function fakeCodexSdk() {
 }
 
 /** Pulls the Bash PostToolUse callbacks array out of the captured options (empty if none registered). */
-function bashHooks(
-  options: Record<string, unknown>,
-): Array<(input: unknown) => Promise<unknown>> {
+function bashHooks(options: Record<string, unknown>): Array<(input: unknown) => Promise<unknown>> {
   const hooks = options.hooks as
     | {
         PostToolUse?: Array<{
@@ -70,10 +63,7 @@ function bashHooks(
 }
 
 async function runWithBridgeCall(
-  bridgeCall?: (
-    name: string,
-    args: Record<string, unknown>,
-  ) => Promise<unknown>,
+  bridgeCall?: (name: string, args: Record<string, unknown>) => Promise<unknown>,
 ) {
   const { sdk, captured } = fakeClaudeSdk();
   const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
@@ -98,14 +88,12 @@ describe('install-awareness PostToolUse hook', () => {
     const hooks = bashHooks(options);
     expect(hooks.length).toBeGreaterThan(0);
     const results = await Promise.all(
-      hooks.map((h) =>
-        h({ tool_name: 'Bash', tool_input: { command: 'pnpm add eslint' } }),
-      ),
+      hooks.map((h) => h({ tool_name: 'Bash', tool_input: { command: 'pnpm add eslint' } })),
     );
     const hit = results.find(
       (r) =>
-        (r as { hookSpecificOutput?: { additionalContext?: string } })
-          ?.hookSpecificOutput?.additionalContext === 'TEXT',
+        (r as { hookSpecificOutput?: { additionalContext?: string } })?.hookSpecificOutput
+          ?.additionalContext === 'TEXT',
     );
     expect(hit).toBeTruthy();
     expect(bridgeCall).toHaveBeenCalledWith(INTERNAL_PROFILE_AWARENESS_TOOL, {
@@ -119,9 +107,7 @@ describe('install-awareness PostToolUse hook', () => {
     const options = await runWithBridgeCall(bridgeCall);
     const hooks = bashHooks(options);
     const results = await Promise.all(
-      hooks.map((h) =>
-        h({ tool_name: 'Bash', tool_input: { command: 'ls -la' } }),
-      ),
+      hooks.map((h) => h({ tool_name: 'Bash', tool_input: { command: 'ls -la' } })),
     );
     for (const r of results) expect(r).toEqual({});
     expect(bridgeCall).not.toHaveBeenCalled();
@@ -132,9 +118,7 @@ describe('install-awareness PostToolUse hook', () => {
     const options = await runWithBridgeCall(bridgeCall);
     const hooks = bashHooks(options);
     const results = await Promise.all(
-      hooks.map((h) =>
-        h({ tool_name: 'Bash', tool_input: { command: 'pnpm add eslint' } }),
-      ),
+      hooks.map((h) => h({ tool_name: 'Bash', tool_input: { command: 'pnpm add eslint' } })),
     );
     for (const r of results) expect(r).toEqual({});
   });
@@ -146,9 +130,7 @@ describe('install-awareness PostToolUse hook', () => {
     const options = await runWithBridgeCall(bridgeCall);
     const hooks = bashHooks(options);
     const results = await Promise.all(
-      hooks.map((h) =>
-        h({ tool_name: 'Bash', tool_input: { command: 'pnpm add eslint' } }),
-      ),
+      hooks.map((h) => h({ tool_name: 'Bash', tool_input: { command: 'pnpm add eslint' } })),
     );
     for (const r of results) expect(r).toEqual({});
   });
@@ -157,9 +139,7 @@ describe('install-awareness PostToolUse hook', () => {
     const options = await runWithBridgeCall(undefined);
     const hooks = bashHooks(options);
     const results = await Promise.all(
-      hooks.map((h) =>
-        h({ tool_name: 'Bash', tool_input: { command: 'pnpm add eslint' } }),
-      ),
+      hooks.map((h) => h({ tool_name: 'Bash', tool_input: { command: 'pnpm add eslint' } })),
     );
     for (const r of results) expect(r).toEqual({});
   });
@@ -171,9 +151,7 @@ describe('install-awareness PostToolUse hook', () => {
       const options = await runWithBridgeCall(bridgeCall);
       const hooks = bashHooks(options);
       const pending = Promise.all(
-        hooks.map((h) =>
-          h({ tool_name: 'Bash', tool_input: { command: 'pnpm add eslint' } }),
-        ),
+        hooks.map((h) => h({ tool_name: 'Bash', tool_input: { command: 'pnpm add eslint' } })),
       );
       await vi.advanceTimersByTimeAsync(5_000);
       const results = await pending;

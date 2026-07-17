@@ -102,18 +102,8 @@ describe('parseSessionTranscriptTail', () => {
     expect(sessionId).toBe('sess-1');
     expect(operatorPromptCount).toBe(1);
     expect(endedClean).toBe(true);
-    expect(blocks.map((b) => b.kind)).toEqual([
-      'thinking',
-      'chat',
-      'tool',
-      'chat',
-    ]);
-    expect(blocks.map((b) => b.meta.sdkUuid)).toEqual([
-      'a-think',
-      'a-text1',
-      'a-tool',
-      'a-final',
-    ]);
+    expect(blocks.map((b) => b.kind)).toEqual(['thinking', 'chat', 'tool', 'chat']);
+    expect(blocks.map((b) => b.meta.sdkUuid)).toEqual(['a-think', 'a-text1', 'a-tool', 'a-final']);
     expect(blocks.every((b) => b.meta.recovered === true)).toBe(true);
     // The operator prompt itself is NOT recovered (already persisted as a user message).
     expect(blocks.some((b) => b.text === 'Do a deep dive review.')).toBe(false);
@@ -156,8 +146,7 @@ describe('parseSessionTranscriptTail', () => {
         },
       }),
     ].join('\n');
-    const { blocks, operatorPromptCount } =
-      parseSessionTranscriptTail(noPrompt);
+    const { blocks, operatorPromptCount } = parseSessionTranscriptTail(noPrompt);
     expect(operatorPromptCount).toBe(0);
     expect(blocks).toEqual([]);
   });
@@ -203,12 +192,7 @@ describe('parseSessionTranscriptTurns', () => {
     expect(turns).toHaveLength(1);
     expect(turns[0].promptText).toBe('Do a deep dive review.');
     expect(turns[0].endedClean).toBe(true);
-    expect(turns[0].blocks.map((b) => b.kind)).toEqual([
-      'thinking',
-      'chat',
-      'tool',
-      'chat',
-    ]);
+    expect(turns[0].blocks.map((b) => b.kind)).toEqual(['thinking', 'chat', 'tool', 'chat']);
   });
 
   it('recovers a MIDDLE turn interrupted before end_turn, then superseded by a completed turn (the incident)', () => {
@@ -261,10 +245,7 @@ describe('parseSessionTranscriptTurns', () => {
     // Turn 1 (the stranded investigation) never reached end_turn; turn 2 did.
     expect(turns[0].endedClean).toBe(false);
     expect(turns[1].endedClean).toBe(true);
-    expect(turns[0].blocks.map((b) => b.meta.sdkUuid)).toEqual([
-      'i-text',
-      'i-ask',
-    ]);
+    expect(turns[0].blocks.map((b) => b.meta.sdkUuid)).toEqual(['i-text', 'i-ask']);
     // The dangling tool_use is unpaired — the caller drops it (the next turn re-issues it).
     const ask = turns[0].blocks.find((b) => b.kind === 'tool')!;
     expect(ask.toolPaired).toBe(false);
@@ -293,9 +274,7 @@ describe('parseSessionTranscriptTurns', () => {
         uuid: 'a-tool',
         message: {
           stop_reason: 'tool_use',
-          content: [
-            { type: 'tool_use', id: 'toolu_int', name: 'Read', input: {} },
-          ],
+          content: [{ type: 'tool_use', id: 'toolu_int', name: 'Read', input: {} }],
         },
       }),
       line({
@@ -332,9 +311,7 @@ describe('parseSessionTranscriptTurns', () => {
         uuid: 'a-tool',
         message: {
           stop_reason: 'tool_use',
-          content: [
-            { type: 'tool_use', id: 'toolu_err', name: 'Read', input: {} },
-          ],
+          content: [{ type: 'tool_use', id: 'toolu_err', name: 'Read', input: {} }],
         },
       }),
       line({
@@ -362,9 +339,7 @@ describe('parseSessionTranscriptTurns', () => {
 
 describe('isInterruptAbortResult', () => {
   it('matches the MCP-prefixed AbortError form', () => {
-    expect(
-      isInterruptAbortResult('MCP error -32001: AbortError: interrupt'),
-    ).toBe(true);
+    expect(isInterruptAbortResult('MCP error -32001: AbortError: interrupt')).toBe(true);
   });
 
   it('matches a bare AbortError: interrupt', () => {

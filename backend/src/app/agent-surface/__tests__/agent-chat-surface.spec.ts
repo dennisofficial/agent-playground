@@ -1,8 +1,8 @@
+import { agentMessage } from '@shared/prompt-kit/message';
 import { firstValueFrom } from 'rxjs';
 import { take, toArray } from 'rxjs/operators';
 import { describe, expect, it } from 'vitest';
 import { decisionApprovalBlocks } from '../../surface';
-import { agentMessage } from '@shared/prompt-kit/message';
 import { AgentChatSurface, parseApprovalMeta } from '../agent-chat-surface';
 
 describe('AgentChatSurface — the in-process programmatic ChatSurface (W6)', () => {
@@ -41,15 +41,10 @@ describe('AgentChatSurface — the in-process programmatic ChatSurface (W6)', ()
     const surface = new AgentChatSurface();
     const next = firstValueFrom(surface.inbound$.pipe(take(1)));
 
-    surface.seedSystemNotification(
-      'C1',
-      'thread-1',
-      agentMessage('answer delivered'),
-      {
-        seedRow: { label: 'Question answered', chunkKey: 'seed:q:thread-1:q1' },
-        deliveredQuestionId: 'q1',
-      },
-    );
+    surface.seedSystemNotification('C1', 'thread-1', agentMessage('answer delivered'), {
+      seedRow: { label: 'Question answered', chunkKey: 'seed:q:thread-1:q1' },
+      deliveredQuestionId: 'q1',
+    });
 
     const msg = await next;
     expect(msg.seed).toBe(true);
@@ -90,9 +85,7 @@ describe('AgentChatSurface — the in-process programmatic ChatSurface (W6)', ()
 
   it('waitForReply rejects on timeout when nothing matches', async () => {
     const surface = new AgentChatSurface();
-    await expect(
-      surface.waitForReply((m) => m.text === 'never', 20),
-    ).rejects.toBeDefined();
+    await expect(surface.waitForReply((m) => m.text === 'never', 20)).rejects.toBeDefined();
   });
 
   it('threaded round-trip: human → reply in thread → human reply continues the SAME thread', async () => {
@@ -187,9 +180,7 @@ describe('AgentChatSurface — the in-process programmatic ChatSurface (W6)', ()
     it('returns undefined for missing/non-approval blocks', () => {
       expect(parseApprovalMeta(undefined)).toBeUndefined();
       expect(
-        parseApprovalMeta([
-          { type: 'thread', text: { type: 'mrkdwn', text: 'x' } },
-        ]),
+        parseApprovalMeta([{ type: 'thread', text: { type: 'mrkdwn', text: 'x' } }]),
       ).toBeUndefined();
     });
   });

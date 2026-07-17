@@ -15,28 +15,24 @@
  */
 
 import { Test, type TestingModule } from '@nestjs/testing';
-import {
-  TypeOrmModule,
-  getDataSourceToken,
-  getRepositoryToken,
-} from '@nestjs/typeorm';
+import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { CustomNamingStrategy } from '../../../_lib/database/custom-naming.strategy';
+import { DriverStoreService } from '../../driver/driver-store.service';
+import { JobDependencyService } from '../../job-deps';
 import { DB_CONNECTION } from '../../persistence/database.module';
 import {
   ENTITIES,
   JobEntity,
-  ThreadGroupEntity,
   TaskEntity,
   ThreadEntity,
+  ThreadGroupEntity,
 } from '../../persistence/entities';
-import { JobDependencyService } from '../../job-deps';
 import { StimulusStoreService } from '../../stimulus/stimulus-store.service';
-import { DriverStoreService } from '../../driver/driver-store.service';
-import { EntityTaskEventSink } from '../turn-harness.service';
 import { makeTaskTools } from '../task-tools';
 import type { TaskScope } from '../thread-registry';
+import { EntityTaskEventSink } from '../turn-harness.service';
 
 const ORG_ID = '5a111111-1111-4111-8111-111111111111';
 const BASE_BRANCH = 'main';
@@ -83,10 +79,7 @@ describe('task_* host-bridge tools — per-stage #N CRUD (live Postgres)', () =>
 
   beforeAll(async () => {
     mod = await Test.createTestingModule({
-      imports: [
-        TypeOrmModule.forRoot(dbOpts()),
-        TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION),
-      ],
+      imports: [TypeOrmModule.forRoot(dbOpts()), TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION)],
       providers: [
         DriverStoreService,
         {
@@ -104,9 +97,7 @@ describe('task_* host-bridge tools — per-stage #N CRUD (live Postgres)', () =>
     ds = mod.get<DataSource>(getDataSourceToken(DB_CONNECTION));
     jobs = mod.get(getRepositoryToken(JobEntity, DB_CONNECTION));
     threads = mod.get(getRepositoryToken(ThreadEntity, DB_CONNECTION));
-    threadGroups = mod.get(
-      getRepositoryToken(ThreadGroupEntity, DB_CONNECTION),
-    );
+    threadGroups = mod.get(getRepositoryToken(ThreadGroupEntity, DB_CONNECTION));
     tasks = mod.get(getRepositoryToken(TaskEntity, DB_CONNECTION));
 
     await ds.query(
@@ -128,9 +119,7 @@ describe('task_* host-bridge tools — per-stage #N CRUD (live Postgres)', () =>
   });
 
   beforeEach(async () => {
-    await ds.query(
-      'TRUNCATE tasks, threads, thread_groups, jobs RESTART IDENTITY CASCADE',
-    );
+    await ds.query('TRUNCATE tasks, threads, thread_groups, jobs RESTART IDENTITY CASCADE');
   });
 
   async function seedThreadScope(): Promise<{
@@ -199,9 +188,7 @@ describe('task_* host-bridge tools — per-stage #N CRUD (live Postgres)', () =>
     });
     expect(updateRes).toEqual({ ok: true });
 
-    const afterUpdate = String(
-      await makeTaskTools(freshSink(), scope).task_list({}),
-    );
+    const afterUpdate = String(await makeTaskTools(freshSink(), scope).task_list({}));
     expect(afterUpdate).toBe('#1 [pending] A\n#2 [completed] B');
 
     // (c) task_get returns A's detail by its #N.
@@ -210,9 +197,7 @@ describe('task_* host-bridge tools — per-stage #N CRUD (live Postgres)', () =>
 
     // (d) A delete removes the row — asserted directly against the table (by the row's ordinal, since #N is
     //     the ordinal, not the uuid PK), not just the tool's return.
-    expect(
-      await rotated.task_update({ taskId: idA, status: 'deleted' }),
-    ).toEqual({
+    expect(await rotated.task_update({ taskId: idA, status: 'deleted' })).toEqual({
       ok: true,
     });
     expect(
@@ -220,9 +205,7 @@ describe('task_* host-bridge tools — per-stage #N CRUD (live Postgres)', () =>
         where: { thread_group_id: threadGroupId, ordinal: Number(idA) },
       }),
     ).toBeNull();
-    expect(
-      await tasks.find({ where: { thread_group_id: threadGroupId } }),
-    ).toHaveLength(1);
+    expect(await tasks.find({ where: { thread_group_id: threadGroupId } })).toHaveLength(1);
   });
 
   it('blocked_by edges are stored + rendered in #N space', async () => {
@@ -230,9 +213,7 @@ describe('task_* host-bridge tools — per-stage #N CRUD (live Postgres)', () =>
     const tools = makeTaskTools(freshSink(), scope);
 
     await tools.task_create({ subject: 'A' }); // #1
-    const idB = createdId(
-      await tools.task_create({ subject: 'B', addBlockedBy: ['1'] }),
-    );
+    const idB = createdId(await tools.task_create({ subject: 'B', addBlockedBy: ['1'] }));
     expect(idB).toBe('2');
 
     // Stored as the #N string, not a uuid.
@@ -248,8 +229,6 @@ describe('task_* host-bridge tools — per-stage #N CRUD (live Postgres)', () =>
 
   it('task_list on an empty thread group returns the exact "No tasks found." string', async () => {
     const { scope } = await seedThreadScope();
-    expect(await makeTaskTools(freshSink(), scope).task_list({})).toBe(
-      'No tasks found.',
-    );
+    expect(await makeTaskTools(freshSink(), scope).task_list({})).toBe('No tasks found.');
   });
 });

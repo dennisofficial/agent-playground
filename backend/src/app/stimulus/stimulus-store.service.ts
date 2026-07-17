@@ -1,6 +1,5 @@
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, IsNull, QueryFailedError, Repository } from 'typeorm';
 import type {
   EventKind,
   EventMessage,
@@ -10,26 +9,23 @@ import type {
   SeedRow,
   TurnEnvelope,
 } from '@shared/domain';
+import type { JobProvenance } from '@shared/domain/job';
+import { chunkKey } from '@shared/prompt-kit/harness/chunk-keys';
+import { fromExternal } from '@shared/prompt-kit/message';
+import { DataSource, In, IsNull, QueryFailedError, Repository } from 'typeorm';
+import { JobBootstrapService } from '../job-bootstrap/job-bootstrap.service';
 import { DB_CONNECTION } from '../persistence/database.module';
+import { InboundMessageEntity, JobEntity, TranscriptMessageEntity } from '../persistence/entities';
+import { writeSystemChunk } from '../persistence/system-chunk-writer';
 import {
-  TranscriptMessageEntity,
-  InboundMessageEntity,
-  JobEntity,
-} from '../persistence/entities';
+  renderBornBlockedProvenanceNote,
+  renderMidFlightBlockedNote,
+} from '../prompt-kit/harness/seed-catalog';
 import { SYSTEM_SEED_AUTHOR } from '../surface/chat-surface.port';
 import {
   MESSAGE_CHANGE_NOTIFIER,
   type MessageChangeNotifier,
 } from '../surface/message-change-notifier.port';
-import { fromExternal } from '@shared/prompt-kit/message';
-import { writeSystemChunk } from '../persistence/system-chunk-writer';
-import type { JobProvenance } from '@shared/domain/job';
-import { JobBootstrapService } from '../job-bootstrap/job-bootstrap.service';
-import {
-  renderBornBlockedProvenanceNote,
-  renderMidFlightBlockedNote,
-} from '../prompt-kit/harness/seed-catalog';
-import { chunkKey } from '@shared/prompt-kit/harness/chunk-keys';
 
 /**
  * `reply_route` jsonb widened LOCALLY with the seed-stamp piggyback keys (mirroring how `priority`
@@ -111,8 +107,7 @@ export class StimulusStoreService {
   /** The job's planning thread group thread id — the anchor a job-level message row is stamped onto
    *  (`messages.thread_id` is NOT NULL). Wired in prod via DI; throws loudly if absent at use. */
   private async planningThreadId(jobId: string): Promise<string> {
-    if (!this.jobBootstrap)
-      throw new Error('stimulus-store: JobBootstrapService not wired');
+    if (!this.jobBootstrap) throw new Error('stimulus-store: JobBootstrapService not wired');
     return this.jobBootstrap.planningThreadId(jobId);
   }
 
@@ -148,12 +143,8 @@ export class StimulusStoreService {
     // commit together. Two separate saves let a crash between them leave a visible event card with NO stimulus
     // row — which the at-least-once sweep (keyed on `stimuli.delivered_at`) can never recover, so the card
     // would render forever with the brain never consuming it. One transaction makes it both-or-neither.
-    await this.jobBootstrap?.ensurePlanningThreadGroup(
-      input.jobId,
-      input.orgId,
-    );
-    const ciThreadId =
-      (await this.jobBootstrap?.ciThreadId(input.jobId)) ?? null;
+    await this.jobBootstrap?.ensurePlanningThreadGroup(input.jobId, input.orgId);
+    const ciThreadId = (await this.jobBootstrap?.ciThreadId(input.jobId)) ?? null;
     const threadId = ciThreadId ?? (await this.planningThreadId(input.jobId));
     const lane = ciThreadId ? `thread:${ciThreadId}` : undefined;
     let row: InboundMessageEntity;
@@ -329,8 +320,7 @@ export class StimulusStoreService {
     // legacy brain-side direct callers (mirrors `recordHostSeed`'s raw `'seed'` write); the intake seam now
     // passes an explicit `input.type` and never falls through to it.
     const type: MessageType | 'seed' =
-      input.type ??
-      (input.author.id === SYSTEM_SEED_AUTHOR.id ? 'seed' : 'user');
+      input.type ?? (input.author.id === SYSTEM_SEED_AUTHOR.id ? 'seed' : 'user');
 
     const replyRoute: ReplyRouteJson = {
       ...input.replyRoute,
@@ -338,16 +328,10 @@ export class StimulusStoreService {
       ...(input.seedQuestionId ? { seedQuestionId: input.seedQuestionId } : {}),
       ...(input.seedSecretId ? { seedSecretId: input.seedSecretId } : {}),
       ...(input.seedFileId ? { seedFileId: input.seedFileId } : {}),
-      ...(input.seedQuestionIds?.length
-        ? { seedQuestionIds: input.seedQuestionIds }
-        : {}),
-      ...(input.seedSecretIds?.length
-        ? { seedSecretIds: input.seedSecretIds }
-        : {}),
+      ...(input.seedQuestionIds?.length ? { seedQuestionIds: input.seedQuestionIds } : {}),
+      ...(input.seedSecretIds?.length ? { seedSecretIds: input.seedSecretIds } : {}),
       ...(input.seedFileIds?.length ? { seedFileIds: input.seedFileIds } : {}),
-      ...(input.bornBlockedSeed
-        ? { bornBlockedSeed: input.bornBlockedSeed }
-        : {}),
+      ...(input.bornBlockedSeed ? { bornBlockedSeed: input.bornBlockedSeed } : {}),
       ...(input.blockNote ? { blockNote: input.blockNote } : {}),
       ...(input.unblockNote ? { unblockNote: input.unblockNote } : {}),
     };
@@ -355,10 +339,7 @@ export class StimulusStoreService {
     // `lane` is the routing coordinate (`'main'` | `'thread:<threadId>'`) — a thread-lane message lands on
     // that thread, everything else (including the brain's default `'main'`) on the job's planning thread.
     if (!input.lane?.startsWith('thread:')) {
-      await this.jobBootstrap?.ensurePlanningThreadGroup(
-        input.jobId,
-        input.orgId,
-      );
+      await this.jobBootstrap?.ensurePlanningThreadGroup(input.jobId, input.orgId);
     }
     const threadId = input.lane?.startsWith('thread:')
       ? input.lane.slice('thread:'.length)
@@ -403,25 +384,20 @@ export class StimulusStoreService {
         // trusted and actually differs from the short curated label (an untrusted row's label already IS the
         // clean fenced report, with the trusted framing in its own block).
         const isUntrusted = (desc.kind ?? 'system_notice') === 'untrusted';
-        const fullBody =
-          !isUntrusted && input.body !== desc.label ? input.body : undefined;
+        const fullBody = !isUntrusted && input.body !== desc.label ? input.body : undefined;
         await writeSystemChunk(m.getRepository(TranscriptMessageEntity), {
           jobId: input.jobId,
           threadId,
           kind: desc.kind ?? 'system_notice',
           text: fromExternal(desc.label),
           chunkKey: desc.chunkKey,
-          ...(desc.untrustedSource
-            ? { untrustedSource: desc.untrustedSource }
-            : {}),
+          ...(desc.untrustedSource ? { untrustedSource: desc.untrustedSource } : {}),
           ...(desc.severity ? { severity: desc.severity } : {}),
           ...(fullBody ? { fullBody: fromExternal(fullBody) } : {}),
           ...(desc.framing ? { framing: desc.framing } : {}),
           // Frontend per-seed-type pill discriminant (mirrors `meta.eventKind`); only for a genuine typed
           // internal-seed row, never a plain operator `'user'` turn or a type-less legacy seed.
-          ...(input.type && input.type !== 'user'
-            ? { seedType: input.type }
-            : {}),
+          ...(input.type && input.type !== 'user' ? { seedType: input.type } : {}),
         });
       }
       // else 'skip': neither the plain bubble nor a pill — the content already has a durable row elsewhere.
@@ -459,18 +435,9 @@ export class StimulusStoreService {
     this.notifier?.emitMessagesChanged(input.repoId, input.jobId);
 
     const resumeThreadId = resumeThreadIdFromLane(input.lane);
-    const deliveredQuestionIds = collapseDeliveredIds(
-      input.seedQuestionId,
-      input.seedQuestionIds,
-    );
-    const deliveredSecretIds = collapseDeliveredIds(
-      input.seedSecretId,
-      input.seedSecretIds,
-    );
-    const deliveredFileIds = collapseDeliveredIds(
-      input.seedFileId,
-      input.seedFileIds,
-    );
+    const deliveredQuestionIds = collapseDeliveredIds(input.seedQuestionId, input.seedQuestionIds);
+    const deliveredSecretIds = collapseDeliveredIds(input.seedSecretId, input.seedSecretIds);
+    const deliveredFileIds = collapseDeliveredIds(input.seedFileId, input.seedFileIds);
     return {
       message: reconstructMessage({
         id: row.id,
@@ -560,9 +527,7 @@ export class StimulusStoreService {
     repoId: string;
     jobId: string;
   }): Promise<void> {
-    if (
-      await this.hasChatStimulusForSeedTarget(input.jobId, { blockNote: true })
-    ) {
+    if (await this.hasChatStimulusForSeedTarget(input.jobId, { blockNote: true })) {
       return;
     }
     await this.recordChatStimulus({
@@ -599,9 +564,7 @@ export class StimulusStoreService {
    * Batched {@link pendingBlockedPreview} for the list DTOs — one query for many jobs (models on
    * `JobDependencyService.blockersOfManyBlocked` to avoid N+1). Returns jobId → its preview (or null).
    */
-  async pendingLockedPreviews(
-    jobIds: string[],
-  ): Promise<Map<string, string | null>> {
+  async pendingLockedPreviews(jobIds: string[]): Promise<Map<string, string | null>> {
     const map = new Map<string, string | null>();
     if (jobIds.length === 0) return map;
     const rows = await this.pendingBlockedRows(jobIds);
@@ -619,9 +582,7 @@ export class StimulusStoreService {
 
   /** The undelivered `main`-lane chat stimuli for the given jobs, oldest-first — the raw rows both preview
    *  lookups pick the born-blocked brief / mid-flight note out of. */
-  private async pendingBlockedRows(
-    jobIds: string[],
-  ): Promise<InboundMessageEntity[]> {
+  private async pendingBlockedRows(jobIds: string[]): Promise<InboundMessageEntity[]> {
     return this.stimuli
       .createQueryBuilder('s')
       .where('s.kind = :k', { k: 'chat' })
@@ -661,9 +622,7 @@ export class StimulusStoreService {
         job_id: input.jobId,
         author_id: HOST_SEED_AUTHOR.id,
         author_name: HOST_SEED_AUTHOR.displayName,
-        reply_route: input.priority
-          ? { ...replyRoute, priority: input.priority }
-          : replyRoute,
+        reply_route: input.priority ? { ...replyRoute, priority: input.priority } : replyRoute,
         source: null,
         dedupe_key: null,
         severity: null,
@@ -779,8 +738,7 @@ export class StimulusStoreService {
       );
       return delivered;
     });
-    if (row)
-      this.notifier?.emitMessagesChanged(row.repo_id, row.job_id as string);
+    if (row) this.notifier?.emitMessagesChanged(row.repo_id, row.job_id as string);
   }
 
   /**
@@ -788,10 +746,7 @@ export class StimulusStoreService {
    * lane teardown, where a leased-but-unacked build-lane seed must not be stranded just because the normal
    * retry window has not expired yet.
    */
-  async undeliveredChatForLane(
-    jobId: string,
-    lane: string,
-  ): Promise<TurnEnvelope[]> {
+  async undeliveredChatForLane(jobId: string, lane: string): Promise<TurnEnvelope[]> {
     const rows = await this.stimuli
       .createQueryBuilder('s')
       .where('s.kind = :k', { k: 'chat' })
@@ -896,16 +851,12 @@ export class StimulusStoreService {
       .where('s.kind = :k', { k: 'chat' })
       .andWhere('s.job_id = :j', { j: jobId })
       .andWhere('s.delivered_at IS NULL')
-      .andWhere(
-        "(s.reply_route ->> 'priority' IS NULL OR s.reply_route ->> 'priority' != 'later')",
-      )
+      .andWhere("(s.reply_route ->> 'priority' IS NULL OR s.reply_route ->> 'priority' != 'later')")
       .getExists();
   }
 
   /** Distinct (thread, org, repo) tuples with at least one undelivered chat stimulus — the sweep worklist. */
-  async undeliveredChatThreads(): Promise<
-    Array<{ jobId: string; orgId: string; repoId: string }>
-  > {
+  async undeliveredChatThreads(): Promise<Array<{ jobId: string; orgId: string; repoId: string }>> {
     const rows = await this.stimuli
       .createQueryBuilder('s')
       .select('s.job_id', 'job_id')
@@ -917,9 +868,7 @@ export class StimulusStoreService {
       .andWhere('s.job_id IS NOT NULL')
       // A thread whose ONLY undelivered rows are `later` must not be swept awake — `later` only rides
       // along a turn that runs for some other reason (d18).
-      .andWhere(
-        "(s.reply_route ->> 'priority' IS NULL OR s.reply_route ->> 'priority' != 'later')",
-      )
+      .andWhere("(s.reply_route ->> 'priority' IS NULL OR s.reply_route ->> 'priority' != 'later')")
       .getRawMany<{ job_id: string; org_id: string; repo_id: string }>();
     return rows.map((r) => ({
       jobId: r.job_id,
@@ -949,9 +898,7 @@ export class StimulusStoreService {
       .andWhere('s.job_id IS NOT NULL')
       // A thread whose ONLY undelivered rows are `later` must not be swept awake — `later` only rides
       // along a turn that runs for some other reason (d18).
-      .andWhere(
-        "(s.reply_route ->> 'priority' IS NULL OR s.reply_route ->> 'priority' != 'later')",
-      )
+      .andWhere("(s.reply_route ->> 'priority' IS NULL OR s.reply_route ->> 'priority' != 'later')")
       .getRawMany<{
         job_id: string;
         org_id: string;
@@ -968,10 +915,7 @@ export class StimulusStoreService {
 
   /** Clear the lease on every undelivered chat row (boot reconcile — re-drive anything mid-attempt at crash). */
   async resetChatLeases(): Promise<void> {
-    await this.stimuli.update(
-      { kind: 'chat', delivered_at: IsNull() },
-      { attempted_at: null },
-    );
+    await this.stimuli.update({ kind: 'chat', delivered_at: IsNull() }, { attempted_at: null });
   }
 
   // ── Durable EVENT delivery: the event-inbox queries (mirror the chat inbox above) ──────────────────
@@ -999,10 +943,7 @@ export class StimulusStoreService {
 
   /** Clear the lease on every undelivered event row (boot reconcile — re-drive anything mid-attempt at crash). */
   async resetEventLeases(): Promise<void> {
-    await this.stimuli.update(
-      { kind: 'event', delivered_at: IsNull() },
-      { attempted_at: null },
-    );
+    await this.stimuli.update({ kind: 'event', delivered_at: IsNull() }, { attempted_at: null });
   }
 
   /** Reconstruct the `EventMessage` a persisted event row carries (for re-drive). Body is the CLEAN text —
@@ -1051,10 +992,7 @@ export class StimulusStoreService {
       replyRoute?.seedSecretId,
       replyRoute?.seedSecretIds,
     );
-    const deliveredFileIds = collapseDeliveredIds(
-      replyRoute?.seedFileId,
-      replyRoute?.seedFileIds,
-    );
+    const deliveredFileIds = collapseDeliveredIds(replyRoute?.seedFileId, replyRoute?.seedFileIds);
     return {
       message: reconstructMessage({
         id: row.id,
@@ -1125,9 +1063,7 @@ function collapseDeliveredIds(
 
 /** The `thread:<id>` routing coordinate a persisted `lane` encodes, or `undefined` for `'main'`/absent —
  *  the single source of truth for reconstructing a stimulus's `resumeThreadId` from its durable lane. */
-function resumeThreadIdFromLane(
-  lane: string | null | undefined,
-): string | undefined {
+function resumeThreadIdFromLane(lane: string | null | undefined): string | undefined {
   return lane?.startsWith('thread:') ? lane.slice('thread:'.length) : undefined;
 }
 
@@ -1141,9 +1077,7 @@ function pickBlockedPreview(rows: InboundMessageEntity[]): string | null {
     r.reply_route as ReplyRouteJson | null;
   const bornBlocked = rows.some((r) => flag(r)?.bornBlockedSeed);
   if (bornBlocked) {
-    const brief = rows.find(
-      (r) => r.type === 'follow_up_job_seed' && !flag(r)?.bornBlockedSeed,
-    );
+    const brief = rows.find((r) => r.type === 'follow_up_job_seed' && !flag(r)?.bornBlockedSeed);
     return brief?.body ?? null;
   }
   const blockNote = rows.find((r) => flag(r)?.blockNote);

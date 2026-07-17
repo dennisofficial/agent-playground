@@ -11,10 +11,7 @@ function effectiveLimit(limit: number | undefined): number {
   if (limit !== undefined && !Number.isFinite(limit)) {
     throw new Error('limit must be a finite number');
   }
-  return Math.min(
-    Math.max(Math.floor(limit ?? DEFAULT_ROWS), 1),
-    HARD_ROW_CEILING,
-  );
+  return Math.min(Math.max(Math.floor(limit ?? DEFAULT_ROWS), 1), HARD_ROW_CEILING);
 }
 
 /**
@@ -31,8 +28,7 @@ export function assertReadOnlySelect(raw: string): string {
   if (trimmed === '') throw new Error('sql is required');
   if (!/^(select|with)\b/i.test(trimmed))
     throw new Error('only single read-only SELECT/WITH queries are allowed');
-  if (trimmed.includes(';'))
-    throw new Error('multiple statements are not allowed');
+  if (trimmed.includes(';')) throw new Error('multiple statements are not allowed');
   return trimmed;
 }
 
@@ -110,10 +106,7 @@ export async function introspectSchema(ds: DataSource): Promise<{
       WHERE table_schema = 'public'
       ORDER BY table_name, ordinal_position`,
   );
-  const byTable = new Map<
-    string,
-    Array<{ name: string; type: string; nullable: boolean }>
-  >();
+  const byTable = new Map<string, Array<{ name: string; type: string; nullable: boolean }>>();
   for (const r of rows) {
     const cols = byTable.get(r.table_name) ?? [];
     cols.push({

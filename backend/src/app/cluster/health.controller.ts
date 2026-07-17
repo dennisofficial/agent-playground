@@ -1,9 +1,9 @@
 import { Controller, Get, Res } from '@nestjs/common';
-import type { Response } from 'express';
 import { Public } from '@workspace/auth/server';
+import { SkipLogger } from '@workspace/nestjs-core';
+import type { Response } from 'express';
 import { AppVersionService } from './app-version.service';
 import { LeaderElectionService } from './leader-election.service';
-import { SkipLogger } from '@workspace/nestjs-core';
 
 /**
  * Health probes for the reverse proxy + deploy script. `@Public()` so the global auth guard doesn't 401

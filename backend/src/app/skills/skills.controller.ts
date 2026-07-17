@@ -10,15 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import {
-  IsArray,
-  IsBoolean,
-  IsIn,
-  IsOptional,
-  IsString,
-  IsUrl,
-  MinLength,
-} from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsOptional, IsString, IsUrl, MinLength } from 'class-validator';
 import { Repository } from 'typeorm';
 import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
 import { OrgMembershipGuard } from '../org/org-membership.guard';
@@ -34,10 +26,7 @@ import { BUNDLED_CLAUDE_CODE_SKILLS } from './bundled-skills';
 import { SkillFileWriter } from './skill-file-writer.service';
 import { SkillInstallerService } from './skill-installer.service';
 import { SkillUpdaterService } from './skill-updater.service';
-import {
-  SystemSkillResolver,
-  type SystemSkillView,
-} from './system-skill-resolver.service';
+import { SystemSkillResolver, type SystemSkillView } from './system-skill-resolver.service';
 import {
   ORG_SCOPE,
   WorkspaceSkillStore,
@@ -173,13 +162,7 @@ export class SkillsController {
     // A create/edit from the console carries the SKILL.md body directly — the row alone would leave a
     // custom skill with no file on the host store to symlink into a turn (see SkillFileWriter's header).
     if (body.body !== undefined) {
-      this.skillFiles.writeSkillMd(
-        org.id,
-        dbScope,
-        name,
-        body.description,
-        body.body,
-      );
+      this.skillFiles.writeSkillMd(org.id, dbScope, name, body.description, body.body);
     }
     return { ok: true };
   }
@@ -210,10 +193,7 @@ export class SkillsController {
   ): Promise<{ skill: SkillView }> {
     const dbScope = await this.resolveScope(org.id, scope);
     const source = await this.store.get(org.id, dbScope, name);
-    if (!source)
-      throw new BadRequestException(
-        `no such skill '${name}' at scope '${scope}'`,
-      );
+    if (!source) throw new BadRequestException(`no such skill '${name}' at scope '${scope}'`);
     let forkName = `${name}-custom`;
     for (let n = 2; await this.store.get(org.id, dbScope, forkName); n++) {
       forkName = `${name}-custom-${n}`;
@@ -257,10 +237,7 @@ export class SkillsController {
     const repo = await this.repos.findOne({
       where: { id: scope, org_id: orgId },
     });
-    if (!repo)
-      throw new BadRequestException(
-        `unknown repo scope '${scope}' for this org`,
-      );
+    if (!repo) throw new BadRequestException(`unknown repo scope '${scope}' for this org`);
     return scope;
   }
 }

@@ -4,10 +4,10 @@
  * the credential resolver / sandbox provider are fake stubs.
  */
 
-import { describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
-import type { JobSandboxEntity } from '../../persistence/entities';
+import { describe, expect, it, vi } from 'vitest';
 import type { CredentialResolver } from '../../onboarding';
+import type { JobSandboxEntity } from '../../persistence/entities';
 import type { SandboxProvider } from '../../sandbox/sandbox-provider.port';
 import { GithubTokenRefreshService } from '../github-token-refresh.service';
 
@@ -49,16 +49,11 @@ describe('GithubTokenRefreshService.tick', () => {
     const row = makeRow({ org_id: 'org-app', job_id: 'job-app' });
     const { service, creds, sandbox } = makeService([row]);
     (creds.githubAuthMode as ReturnType<typeof vi.fn>).mockResolvedValue('app');
-    (creds.githubToken as ReturnType<typeof vi.fn>).mockResolvedValue(
-      'ghs_fresh-token',
-    );
+    (creds.githubToken as ReturnType<typeof vi.fn>).mockResolvedValue('ghs_fresh-token');
 
     await service.tick();
 
-    expect(sandbox.writeGithubTokenFile).toHaveBeenCalledWith(
-      'job-app',
-      'ghs_fresh-token',
-    );
+    expect(sandbox.writeGithubTokenFile).toHaveBeenCalledWith('job-app', 'ghs_fresh-token');
   });
 
   it('skips a pat-mode active sandbox — no file to refresh', async () => {
@@ -80,9 +75,7 @@ describe('GithubTokenRefreshService.tick', () => {
     });
     const { service, creds, sandbox } = makeService([row]);
     (creds.githubAuthMode as ReturnType<typeof vi.fn>).mockResolvedValue('app');
-    (creds.githubToken as ReturnType<typeof vi.fn>).mockResolvedValue(
-      'ghs_fresh-token',
-    );
+    (creds.githubToken as ReturnType<typeof vi.fn>).mockResolvedValue('ghs_fresh-token');
 
     await service.tick();
 
@@ -95,9 +88,7 @@ describe('GithubTokenRefreshService.tick', () => {
     const ok = makeRow({ org_id: 'org-app', job_id: 'job-ok' });
     const { service, creds, sandbox } = makeService([failing, ok]);
     (creds.githubAuthMode as ReturnType<typeof vi.fn>).mockResolvedValue('app');
-    (creds.githubToken as ReturnType<typeof vi.fn>).mockResolvedValue(
-      'ghs_fresh-token',
-    );
+    (creds.githubToken as ReturnType<typeof vi.fn>).mockResolvedValue('ghs_fresh-token');
     (sandbox.writeGithubTokenFile as ReturnType<typeof vi.fn>)
       .mockRejectedValueOnce(new Error('transient mint error'))
       .mockResolvedValueOnce(undefined);
@@ -105,15 +96,7 @@ describe('GithubTokenRefreshService.tick', () => {
     await expect(service.tick()).resolves.toBeUndefined();
 
     expect(sandbox.writeGithubTokenFile).toHaveBeenCalledTimes(2);
-    expect(sandbox.writeGithubTokenFile).toHaveBeenNthCalledWith(
-      1,
-      'job-fail',
-      'ghs_fresh-token',
-    );
-    expect(sandbox.writeGithubTokenFile).toHaveBeenNthCalledWith(
-      2,
-      'job-ok',
-      'ghs_fresh-token',
-    );
+    expect(sandbox.writeGithubTokenFile).toHaveBeenNthCalledWith(1, 'job-fail', 'ghs_fresh-token');
+    expect(sandbox.writeGithubTokenFile).toHaveBeenNthCalledWith(2, 'job-ok', 'ghs_fresh-token');
   });
 });

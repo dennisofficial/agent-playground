@@ -10,15 +10,8 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { CurrentUser } from '@workspace/auth/server';
-import {
-  IsBoolean,
-  IsEmail,
-  IsIn,
-  IsOptional,
-  IsString,
-  MinLength,
-} from 'class-validator';
 import { AUTO_APPROVE_MODES, type AutoApproveMode } from '@workspace/shared';
+import { IsBoolean, IsEmail, IsIn, IsOptional, IsString, MinLength } from 'class-validator';
 import { OnboardingService } from '../onboarding/onboarding.service';
 import type { UserEntity } from '../persistence/entities';
 import { CurrentOrg, type CurrentOrgCtx } from './current-org.decorator';
@@ -86,10 +79,7 @@ export class OrgController {
 
   /** `POST /web/orgs` — create an org; the caller becomes owner. */
   @Post()
-  async create(
-    @CurrentUser() user: UserEntity,
-    @Body() body: CreateOrgDto,
-  ): Promise<OrgSummary> {
+  async create(@CurrentUser() user: UserEntity, @Body() body: CreateOrgDto): Promise<OrgSummary> {
     return this.orgs.create(user.id, body.name);
   }
 
@@ -125,10 +115,7 @@ export class OrgController {
   /** `PATCH /web/orgs/:orgId` — rename / re-slug the org (owner only). */
   @Patch(':orgId')
   @UseGuards(OrgMembershipGuard, OrgOwnerGuard)
-  async update(
-    @CurrentOrg() org: CurrentOrgCtx,
-    @Body() body: UpdateOrgDto,
-  ): Promise<OrgSummary> {
+  async update(@CurrentOrg() org: CurrentOrgCtx, @Body() body: UpdateOrgDto): Promise<OrgSummary> {
     return this.orgs.rename(org.id, body, org.role);
   }
 

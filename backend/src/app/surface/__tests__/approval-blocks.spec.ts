@@ -59,9 +59,7 @@ describe('decisionApprovalBlocks', () => {
     expect(json).toContain('use jose');
     expect(json).toContain('argon2id');
     // No decisions → no Decisions block at all.
-    expect(JSON.stringify(decisionApprovalBlocks(card))).not.toContain(
-      '*Decisions*',
-    );
+    expect(JSON.stringify(decisionApprovalBlocks(card))).not.toContain('*Decisions*');
   });
 
   it('adds a View-plan link button only when planUrl is given', () => {

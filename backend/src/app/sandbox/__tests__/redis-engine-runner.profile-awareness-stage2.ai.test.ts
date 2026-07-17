@@ -13,32 +13,32 @@
  * Real LLM call — runs only under `pnpm test:ai` with `ANTHROPIC_API_KEY` in the env (`describe.skip`
  * otherwise, same gate as `install-awareness-filter.ai.test.ts` / `autofix.stage.ai.test.ts`).
  */
+import type { EnvService } from '@core/config/env/env.service';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { TypeOrmModule, getDataSourceToken } from '@nestjs/typeorm';
+import type { EngineEvent, RunEngineArgs } from '@shared/engine/engine.types';
+import { agentMessage } from '@shared/prompt-kit/message';
 import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { CustomNamingStrategy } from '../../../_lib/database/custom-naming.strategy';
+import { InMemoryRedisStream } from '../../../_lib/redis/in-memory-redis-stream';
+import { WorkspaceConfigStore } from '../../onboarding/workspace-config.store';
 import { DB_CONNECTION } from '../../persistence/database.module';
 import { ENTITIES } from '../../persistence/entities';
-import { WorkspaceConfigStore } from '../../onboarding/workspace-config.store';
+import {
+  AnthropicInstallAwarenessFilter,
+  INSTALL_AWARENESS_FILTER,
+} from '../../workspace-profile/install-awareness-filter';
 import { ProfileAwarenessService } from '../../workspace-profile/profile-awareness.service';
 import {
   WorkspaceProfileService,
   type WorkspaceProfileSnapshot,
 } from '../../workspace-profile/workspace-profile.service';
-import {
-  INSTALL_AWARENESS_FILTER,
-  AnthropicInstallAwarenessFilter,
-} from '../../workspace-profile/install-awareness-filter';
-import { InMemoryRedisStream } from '../../../_lib/redis/in-memory-redis-stream';
+import type { ContainerEngine } from '../container-engine.port';
 import { RedisEngineRunner } from '../redis-engine-runner';
 import { turnKeys } from '../redis-turn-keys';
-import type { EnvService } from '@core/config/env/env.service';
 import type { SandboxActivityRegistry } from '../sandbox-activity.registry';
 import type { TurnRegistry } from '../turn-registry.service';
-import type { ContainerEngine } from '../container-engine.port';
-import type { EngineEvent, RunEngineArgs } from '@shared/engine/engine.types';
-import { agentMessage } from '@shared/prompt-kit/message';
 
 const API_KEY = process.env.ANTHROPIC_API_KEY;
 const describeLive = API_KEY ? describe : describe.skip;
@@ -107,17 +107,10 @@ const BARE_SNAPSHOT: WorkspaceProfileSnapshot = {
 };
 
 /** Mirrors `fakeContainersWithProfileAwarenessCall` from the Stage-1 round-trip test verbatim. */
-function fakeContainersWithProfileAwarenessCall(
-  redis: InMemoryRedisStream,
-  command: string,
-) {
+function fakeContainersWithProfileAwarenessCall(redis: InMemoryRedisStream, command: string) {
   return {
     execDetached: vi.fn(
-      async (
-        _id: string,
-        _argv: string[],
-        opts?: { env?: Record<string, string> },
-      ) => {
+      async (_id: string, _argv: string[], opts?: { env?: Record<string, string> }) => {
         const turnId = opts?.env?.TURN_ID;
         if (!turnId) return {};
         const k = turnKeys(turnId);
@@ -146,10 +139,7 @@ function fakeContainersWithProfileAwarenessCall(
               };
               if (d.id !== callId) continue;
               if (d.t === 'tool_progress') continue;
-              const text =
-                d.t === 'tool_response' && typeof d.result === 'string'
-                  ? d.result
-                  : '';
+              const text = d.t === 'tool_response' && typeof d.result === 'string' ? d.result : '';
               await redis.xadd(k.events, {
                 t: 'event',
                 e: { kind: 'text', text },
@@ -216,20 +206,15 @@ describeLive(
     });
 
     afterAll(async () => {
-      await ds
-        ?.query(`DELETE FROM repos WHERE org_id = $1`, [ORG_ID])
-        .catch(() => undefined);
-      await ds
-        ?.query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID])
-        .catch(() => undefined);
+      await ds?.query(`DELETE FROM repos WHERE org_id = $1`, [ORG_ID]).catch(() => undefined);
+      await ds?.query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID]).catch(() => undefined);
       await mod?.close();
     });
 
     async function ledger(): Promise<Array<{ key: string }>> {
-      const rows = await ds.query(
-        `SELECT profile_seen_tooling AS t FROM repos WHERE id = $1`,
-        [repoId],
-      );
+      const rows = await ds.query(`SELECT profile_seen_tooling AS t FROM repos WHERE id = $1`, [
+        repoId,
+      ]);
       return rows[0].t ?? [];
     }
 
@@ -267,9 +252,9 @@ describeLive(
         toolBridge: makeBridge() as never,
       });
 
-      const replyText = events.find(
-        (e) => (e as { kind?: string }).kind === 'text',
-      ) as { kind: 'text'; text: string } | undefined;
+      const replyText = events.find((e) => (e as { kind?: string }).kind === 'text') as
+        | { kind: 'text'; text: string }
+        | undefined;
       return replyText?.text ?? '';
     }
 
@@ -277,29 +262,21 @@ describeLive(
       const text = await roundTrip('pnpm add stage2-live-eslint');
 
       // eslint-disable-next-line no-console
-      console.log(
-        '[stage2-roundtrip] enrich case reply text:',
-        JSON.stringify(text),
-      );
+      console.log('[stage2-roundtrip] enrich case reply text:', JSON.stringify(text));
       expect(text).toContain('[profile-awareness]');
       expect(text).toContain('pnpm:stage2-live-eslint');
       // The real model must not merely echo Stage 1 — Stage 2 attaches a concrete suggestion when it
       // decides to keep a genuinely-new, uncovered tool (system prompt's "canonical KEEP" case).
       expect(text).toContain('Suggestion:');
 
-      expect((await ledger()).map((t) => t.key)).toContain(
-        'pnpm:stage2-live-eslint',
-      );
+      expect((await ledger()).map((t) => t.key)).toContain('pnpm:stage2-live-eslint');
     });
 
     it('a transient npx ad-hoc run: the REAL Stage-2 filter suppresses the reply over the real transport (ledger still records it)', async () => {
       const text = await roundTrip('npx stage2-live-create-foo');
 
       // eslint-disable-next-line no-console
-      console.log(
-        '[stage2-roundtrip] suppress case reply text:',
-        JSON.stringify(text),
-      );
+      console.log('[stage2-roundtrip] suppress case reply text:', JSON.stringify(text));
       // Suppressed → `service.handle` returns null → the tool-bridge result is null → the fake
       // container's text extraction (only a STRING result becomes text) yields an empty string, exactly
       // like the Stage-1 dedup case in `redis-engine-runner.profile-awareness.int.test.ts`.
@@ -307,9 +284,7 @@ describeLive(
 
       // The ledger transition still committed (record-then-filter, decision d2) even though the text
       // shown to the agent was suppressed.
-      expect((await ledger()).map((t) => t.key)).toContain(
-        'npx:stage2-live-create-foo',
-      );
+      expect((await ledger()).map((t) => t.key)).toContain('npx:stage2-live-create-foo');
     });
   },
 );

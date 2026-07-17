@@ -23,10 +23,7 @@ export function parseClaudeExpiresAt(secret: string): number | null {
  * (both must parse); when either is missing, fall back to "changed at all" so we still persist a genuine
  * refresh but never rewrite an identical blob.
  */
-export function isNewerClaudeCredential(
-  next: string,
-  current: string,
-): boolean {
+export function isNewerClaudeCredential(next: string, current: string): boolean {
   const nw = parseClaudeExpiresAt(next);
   const cur = parseClaudeExpiresAt(current);
   if (nw !== null && cur !== null) return nw > cur;

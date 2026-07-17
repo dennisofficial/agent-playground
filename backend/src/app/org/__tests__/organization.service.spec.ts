@@ -1,14 +1,14 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
-import { describe, expect, it } from 'vitest';
 import type { DataSource, Repository } from 'typeorm';
+import { describe, expect, it } from 'vitest';
 import type { JobTeardownPort } from '../../driver/job-teardown.port';
-import { OrganizationService } from '../organization.service';
 import type {
-  OrgInviteEntity,
-  UserEntity,
   OrganizationEntity,
   OrganizationMemberEntity,
+  OrgInviteEntity,
+  UserEntity,
 } from '../../persistence/entities';
+import { OrganizationService } from '../organization.service';
 
 function makeSvc(
   opts: {
@@ -55,18 +55,11 @@ function makeSvc(
   } as unknown as Repository<OrgInviteEntity>;
 
   const members = {
-    findOne: async ({
-      where,
-    }: {
-      where: { org_id: string; user_id: string };
-    }) =>
-      memberRows.find(
-        (m) => m.org_id === where.org_id && m.user_id === where.user_id,
-      ) ?? null,
+    findOne: async ({ where }: { where: { org_id: string; user_id: string } }) =>
+      memberRows.find((m) => m.org_id === where.org_id && m.user_id === where.user_id) ?? null,
     find: async ({ where }: { where: { user_id: string } }) =>
       memberRows.filter((m) => m.user_id === where.user_id),
-    create: (x: Partial<OrganizationMemberEntity>) =>
-      x as OrganizationMemberEntity,
+    create: (x: Partial<OrganizationMemberEntity>) => x as OrganizationMemberEntity,
     save: async (x: OrganizationMemberEntity) => {
       memberRows.push(x);
       return x;
@@ -84,10 +77,8 @@ function makeSvc(
   const orgDeletes: Array<Record<string, unknown>> = [];
   const orgs = {
     findOne: async ({ where }: { where: { id?: string; slug?: string } }) => {
-      if (where.id !== undefined)
-        return orgRows.find((o) => o.id === where.id) ?? null;
-      if (where.slug !== undefined)
-        return orgRows.find((o) => o.slug === where.slug) ?? null;
+      if (where.id !== undefined) return orgRows.find((o) => o.id === where.id) ?? null;
+      if (where.slug !== undefined) return orgRows.find((o) => o.slug === where.slug) ?? null;
       return null;
     },
     find: async ({ where }: { where: { id: { value: string[] } } }) => {
@@ -118,13 +109,9 @@ function makeSvc(
     },
   };
 
-  const deletes: Array<{ entity: string; criteria: Record<string, unknown> }> =
-    [];
+  const deletes: Array<{ entity: string; criteria: Record<string, unknown> }> = [];
   const manager = {
-    delete: async (
-      entity: { name: string },
-      criteria: Record<string, unknown>,
-    ) => {
+    delete: async (entity: { name: string }, criteria: Record<string, unknown>) => {
       deletes.push({ entity: entity.name, criteria });
       return { affected: 1 };
     },
@@ -137,15 +124,7 @@ function makeSvc(
     },
   } as unknown as DataSource;
 
-  const svc = new OrganizationService(
-    orgs,
-    members,
-    invites,
-    users,
-    dataSource,
-    jobTeardown,
-    env,
-  );
+  const svc = new OrganizationService(orgs, members, invites, users, dataSource, jobTeardown, env);
   return {
     svc,
     inviteRows,
@@ -226,9 +205,7 @@ describe('OrganizationService invites', () => {
     const { svc } = makeSvc({
       invite: { accepted_at: new Date(), accepted_by: 'B' },
     });
-    await expect(svc.acceptInvite('t1', 'C')).rejects.toBeInstanceOf(
-      ConflictException,
-    );
+    await expect(svc.acceptInvite('t1', 'C')).rejects.toBeInstanceOf(ConflictException);
   });
 });
 
@@ -326,9 +303,9 @@ describe('OrganizationService rename', () => {
 
   it('throws NotFound when the org is gone', async () => {
     const { svc } = makeSvc();
-    await expect(
-      svc.rename('NOPE', { name: 'x' }, 'owner'),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.rename('NOPE', { name: 'x' }, 'owner')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 });
 

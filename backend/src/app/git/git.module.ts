@@ -1,8 +1,8 @@
 import { Module } from '@nestjs/common';
-import { LocalGitService } from './local-git.service';
-import { GithubPrService } from './github-pr.service';
 import { GitIdentityService } from './git-identity.service';
 import { GitHubAppTokenService } from './github-app-token.service';
+import { GithubPrService } from './github-pr.service';
+import { LocalGitService } from './local-git.service';
 
 /**
  * The Atlas v2 GIT module — the host-only (daemon-free, Docker-free) local git substrate
@@ -12,17 +12,7 @@ import { GitHubAppTokenService } from './github-app-token.service';
  * ReviewPipelineService ship path. Zero v1 imports.
  */
 @Module({
-  providers: [
-    LocalGitService,
-    GithubPrService,
-    GitIdentityService,
-    GitHubAppTokenService,
-  ],
-  exports: [
-    LocalGitService,
-    GithubPrService,
-    GitIdentityService,
-    GitHubAppTokenService,
-  ],
+  providers: [LocalGitService, GithubPrService, GitIdentityService, GitHubAppTokenService],
+  exports: [LocalGitService, GithubPrService, GitIdentityService, GitHubAppTokenService],
 })
 export class GitModule {}

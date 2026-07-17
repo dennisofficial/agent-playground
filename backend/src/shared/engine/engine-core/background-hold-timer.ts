@@ -81,8 +81,7 @@ export class BackgroundHoldTimer {
   }
 
   private resetHoldTimer(): void {
-    if (this.liveBgTasks.size > 0 && this.liveSubagentTasks.size === 0)
-      this.armHoldTimer();
+    if (this.liveBgTasks.size > 0 && this.liveSubagentTasks.size === 0) this.armHoldTimer();
     else this.clearHold();
   }
 

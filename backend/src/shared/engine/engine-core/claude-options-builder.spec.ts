@@ -1,18 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
 import type { JitInjectionRule } from '@workspace/agent-engine';
-import {
-  buildClaudeOptions,
-  type BuildClaudeOptionsParams,
-} from './claude-options-builder';
-import {
-  PLAN_TOOLS,
-  REVIEW_TOOLS,
-  WORKER_TOOLS,
-  WRITER_SUBAGENTS,
-} from './agents-registry';
+import { describe, expect, it, vi } from 'vitest';
+import { agentMessage } from '../../prompt-kit/message';
 import type { EngineHomeKey } from '../engine-home';
 import type { RunEngineArgs } from '../engine.types';
-import { agentMessage } from '../../prompt-kit/message';
+import { PLAN_TOOLS, REVIEW_TOOLS, WORKER_TOOLS, WRITER_SUBAGENTS } from './agents-registry';
+import { buildClaudeOptions, type BuildClaudeOptionsParams } from './claude-options-builder';
 
 const KEY: EngineHomeKey = {
   orgId: 'acme',
@@ -58,8 +50,7 @@ describe('buildClaudeOptions', () => {
     expect(o.tools).toBe(WORKER_TOOLS);
     expect(o.permissionMode).toBe('default');
     // The writer subagents are only spawnable on an execute turn.
-    for (const name of Object.keys(WRITER_SUBAGENTS))
-      expect(o.agents).toHaveProperty(name);
+    for (const name of Object.keys(WRITER_SUBAGENTS)) expect(o.agents).toHaveProperty(name);
     expect(o.betas).toContain('context-1m-2025-08-07');
     expect((o as { resume?: string }).resume).toBe('sess');
     expect(o.model).toBe('claude-x');
@@ -75,8 +66,7 @@ describe('buildClaudeOptions', () => {
   it('review turn: REVIEW tools, no writer subagents', () => {
     const o = build('review');
     expect(o.tools).toBe(REVIEW_TOOLS);
-    for (const name of Object.keys(WRITER_SUBAGENTS))
-      expect(o.agents).not.toHaveProperty(name);
+    for (const name of Object.keys(WRITER_SUBAGENTS)) expect(o.agents).not.toHaveProperty(name);
   });
 
   it('omits resume/model/hooks when absent; adds rich-stream fields when requested', () => {
@@ -112,9 +102,7 @@ function postToolUseHooks(
       };
     }
   ).hooks;
-  return (
-    hooks?.PostToolUse?.find((g) => g.matcher === matcher)?.hooks ?? []
-  );
+  return hooks?.PostToolUse?.find((g) => g.matcher === matcher)?.hooks ?? [];
 }
 
 describe('onJitInjection (decision d6)', () => {
@@ -132,8 +120,8 @@ describe('onJitInjection (decision d6)', () => {
       tool_input: { command: 'pnpm dev' },
     });
     expect(
-      (out as { hookSpecificOutput?: { additionalContext?: string } })
-        .hookSpecificOutput?.additionalContext,
+      (out as { hookSpecificOutput?: { additionalContext?: string } }).hookSpecificOutput
+        ?.additionalContext,
     ).toBe('nudge this');
     expect(onJitInjection).toHaveBeenCalledTimes(1);
     expect(onJitInjection).toHaveBeenCalledWith({
@@ -172,8 +160,8 @@ describe('onJitInjection (decision d6)', () => {
       tool_input: { command: 'pnpm add eslint' },
     });
     expect(
-      (out as { hookSpecificOutput?: { additionalContext?: string } })
-        .hookSpecificOutput?.additionalContext,
+      (out as { hookSpecificOutput?: { additionalContext?: string } }).hookSpecificOutput
+        ?.additionalContext,
     ).toBe('install-nudge');
     expect(onJitInjection).toHaveBeenCalledTimes(1);
     expect(onJitInjection).toHaveBeenCalledWith({
@@ -208,9 +196,8 @@ describe('onJitInjection (decision d6)', () => {
       tool_name: 'WebFetch',
       tool_input: { url: 'https://github.com/owner/repo/tree/main' },
     });
-    const additionalContext = (
-      out as { hookSpecificOutput?: { additionalContext?: string } }
-    ).hookSpecificOutput?.additionalContext;
+    const additionalContext = (out as { hookSpecificOutput?: { additionalContext?: string } })
+      .hookSpecificOutput?.additionalContext;
     expect(additionalContext).toContain('gh api');
     expect(onJitInjection).toHaveBeenCalledTimes(1);
     expect(onJitInjection).toHaveBeenCalledWith({

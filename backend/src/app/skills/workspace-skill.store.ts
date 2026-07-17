@@ -91,11 +91,7 @@ export class WorkspaceSkillStore {
   }
 
   /** One skill by (org, dbScope, name), or null. */
-  async get(
-    orgId: string,
-    dbScope: string,
-    name: string,
-  ): Promise<SkillView | null> {
+  async get(orgId: string, dbScope: string, name: string): Promise<SkillView | null> {
     const row = await this.skills.findOne({
       where: { org_id: orgId, scope: dbScope, name },
     });
@@ -115,12 +111,8 @@ export class WorkspaceSkillStore {
       update_policy: r.update_policy,
       forked_from: r.forked_from,
       surfaces: r.surfaces,
-      reviewForTypes: Array.isArray(r.review_for_types)
-        ? r.review_for_types
-        : [],
-      reviewForGlobs: Array.isArray(r.review_for_globs)
-        ? r.review_for_globs
-        : [],
+      reviewForTypes: Array.isArray(r.review_for_types) ? r.review_for_types : [],
+      reviewForGlobs: Array.isArray(r.review_for_globs) ? r.review_for_globs : [],
       enabled: r.enabled,
       update_available: r.update_available,
     };
@@ -129,12 +121,7 @@ export class WorkspaceSkillStore {
   // ── writes ─────────────────────────────────────────────────────────────────────────────────
 
   /** Upsert a skill's registry metadata (does NOT touch the on-disk skill dir — see `SkillInput`). */
-  async write(
-    orgId: string,
-    dbScope: string,
-    name: string,
-    input: SkillInput,
-  ): Promise<void> {
+  async write(orgId: string, dbScope: string, name: string, input: SkillInput): Promise<void> {
     const row =
       (await this.skills.findOne({
         where: { org_id: orgId, scope: dbScope, name },
@@ -147,8 +134,7 @@ export class WorkspaceSkillStore {
     row.installed_sha = input.installed_sha ?? null;
     row.update_policy = input.update_policy ?? null;
     row.forked_from = input.forked_from ?? null;
-    row.surfaces =
-      input.surfaces && input.surfaces.length > 0 ? input.surfaces : ['build'];
+    row.surfaces = input.surfaces && input.surfaces.length > 0 ? input.surfaces : ['build'];
     row.review_for_types = input.reviewForTypes ?? [];
     row.review_for_globs = input.reviewForGlobs ?? [];
     row.enabled = input.enabled ?? true;
@@ -164,10 +150,7 @@ export class WorkspaceSkillStore {
   // ── resolution helpers (used by SkillResolver + the Workspace Profile snapshot) ──────────────
 
   /** Raw rows for the org's `'*'` scope plus one repo scope — the input to `SkillResolver`. */
-  async rowsForTurn(
-    orgId: string,
-    repoId: string,
-  ): Promise<WorkspaceSkillEntity[]> {
+  async rowsForTurn(orgId: string, repoId: string): Promise<WorkspaceSkillEntity[]> {
     return this.skills.find({
       where: [
         { org_id: orgId, scope: ORG_SCOPE },

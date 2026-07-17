@@ -1,20 +1,11 @@
-import { getDataSourceToken } from '@nestjs/typeorm';
-import { Test } from '@nestjs/testing';
 import { NestExpressApplication } from '@nestjs/platform-express';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { Test } from '@nestjs/testing';
+import { getDataSourceToken } from '@nestjs/typeorm';
+import { ENGINE_RUNNER, type EngineEvent } from '@shared/engine';
 import { randomUUID } from 'node:crypto';
 import { DataSource } from 'typeorm';
-import { CLASSIFIER_LLM } from '../decision-gate';
-import { ENGINE_RUNNER, type EngineEvent } from '@shared/engine';
-import { GithubPrService, LocalGitService } from '../../git';
-import {
-  BLOCK_SINK,
-  MessageBlockSink,
-  TurnHarnessFactory,
-} from '../../surface/turn-harness.service';
-import { JobBootstrapService } from '../../job-bootstrap';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AppModule } from '../../app.module';
-import { DB_CONNECTION } from '../../persistence/database.module';
 import {
   FakeClassifierLlm,
   FakeEngineRunner,
@@ -22,7 +13,16 @@ import {
   FakeLocalGitService,
   FakeThreadTitler,
 } from '../../e2e/e2e-stubs';
+import { GithubPrService, LocalGitService } from '../../git';
+import { JobBootstrapService } from '../../job-bootstrap';
+import { DB_CONNECTION } from '../../persistence/database.module';
+import {
+  BLOCK_SINK,
+  MessageBlockSink,
+  TurnHarnessFactory,
+} from '../../surface/turn-harness.service';
 import { JobTitler } from '../../titling';
+import { CLASSIFIER_LLM } from '../decision-gate';
 
 /**
  * Int test for the keyed-upsert dedupe on `messages` (Thread 2). Proves at the REAL DB that a repeat write
@@ -103,9 +103,7 @@ describe('keyed-upsert dedupe on messages (live Postgres ON CONFLICT DO NOTHING)
       );
       await dataSource.query(`DELETE FROM jobs WHERE org_id = $1`, [TEAM_ID]);
       await dataSource.query(`DELETE FROM repos WHERE org_id = $1`, [TEAM_ID]);
-      await dataSource.query(`DELETE FROM organizations WHERE id = $1`, [
-        TEAM_ID,
-      ]);
+      await dataSource.query(`DELETE FROM organizations WHERE id = $1`, [TEAM_ID]);
     }
     await app?.close();
     if (prevSurface === undefined) delete process.env.SURFACE;

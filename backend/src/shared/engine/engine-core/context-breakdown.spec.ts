@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
 import type { SDKControlGetContextUsageResponse } from '@anthropic-ai/claude-agent-sdk';
+import { describe, expect, it } from 'vitest';
 import { normalizeContextBreakdown } from './context-breakdown';
 
 /** A realistic-shaped raw fixture, trimmed to the fields the normalizer actually reads (mirrors a real
@@ -27,9 +27,7 @@ function makeRaw(
     gridRows: [],
     model: 'claude-opus-4-...',
     memoryFiles: [{ path: '/some/CLAUDE.md', type: 'project', tokens: 5897 }],
-    mcpTools: [
-      { name: 'some_tool', serverName: 'some-server', tokens: 120, isLoaded: true },
-    ],
+    mcpTools: [{ name: 'some_tool', serverName: 'some-server', tokens: 120, isLoaded: true }],
     agents: [{ agentType: 'general-purpose', source: 'builtin', tokens: 0 }],
     isAutoCompactEnabled: true,
     ...overrides,
@@ -57,9 +55,7 @@ describe('normalizeContextBreakdown', () => {
     // The fixture's `agents` entry is 0 tokens — it must be dropped, leaving `agents` omitted entirely.
     const out = normalizeContextBreakdown(makeRaw());
     expect(out.agents).toBeUndefined();
-    expect(out.mcpTools).toEqual([
-      { name: 'some_tool', serverName: 'some-server', tokens: 120 },
-    ]);
+    expect(out.mcpTools).toEqual([{ name: 'some_tool', serverName: 'some-server', tokens: 120 }]);
     expect(out.memoryFiles).toEqual([{ path: '/some/CLAUDE.md', tokens: 5897 }]);
   });
 
@@ -80,9 +76,7 @@ describe('normalizeContextBreakdown', () => {
   });
 
   it('omits mcpTools/memoryFiles/agents entirely when the filtered list is empty', () => {
-    const out = normalizeContextBreakdown(
-      makeRaw({ mcpTools: [], memoryFiles: [], agents: [] }),
-    );
+    const out = normalizeContextBreakdown(makeRaw({ mcpTools: [], memoryFiles: [], agents: [] }));
     expect(out.mcpTools).toBeUndefined();
     expect(out.memoryFiles).toBeUndefined();
     expect(out.agents).toBeUndefined();

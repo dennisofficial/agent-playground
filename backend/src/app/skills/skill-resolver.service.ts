@@ -1,11 +1,11 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Injectable, Logger } from '@nestjs/common';
+import type { ResolvedSkill } from '@shared/engine/engine.types';
+import type { ThreadType } from '@shared/thread-kind/thread-types';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import picomatch from 'picomatch';
-import type { ResolvedSkill } from '@shared/engine/engine.types';
 import type { McpSurface, WorkspaceSkillEntity } from '../persistence/entities';
-import type { ThreadType } from '@shared/thread-kind/thread-types';
 import { stripSkillFrontmatter } from './skill-frontmatter';
 import {
   managedGitSkillRelativeDir,
@@ -14,10 +14,7 @@ import {
   skillRelativeDir,
 } from './skill-store-paths';
 import { buildSystemSkills } from './system-skill-registry';
-import {
-  managedSkillRelativeDir,
-  managedSkillsRootHost,
-} from './system-skill-store-paths';
+import { managedSkillRelativeDir, managedSkillsRootHost } from './system-skill-store-paths';
 import { WorkspaceSkillStore } from './workspace-skill.store';
 
 /**
@@ -87,8 +84,7 @@ export class SkillResolver {
       if (!r.surfaces.includes(surface)) continue;
       const winner = winners.get(r.name);
       // A repo-scoped row (scope !== '*') always beats an org-scoped one; otherwise first-seen org wins.
-      if (!winner || (winner.scope === '*' && r.scope !== '*'))
-        winners.set(r.name, r);
+      if (!winner || (winner.scope === '*' && r.scope !== '*')) winners.set(r.name, r);
     }
     for (const r of winners.values()) {
       byName.set(r.name, {

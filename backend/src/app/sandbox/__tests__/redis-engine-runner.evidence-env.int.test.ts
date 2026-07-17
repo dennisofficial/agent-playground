@@ -1,13 +1,13 @@
+import type { EnvService } from '@core/config/env/env.service';
+import type { EngineEvent, RunEngineArgs } from '@shared/engine/engine.types';
+import { agentMessage } from '@shared/prompt-kit/message';
 import { execFileSync } from 'node:child_process';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { InMemoryRedisStream } from '../../../_lib/redis/in-memory-redis-stream';
-import { agentMessage } from '@shared/prompt-kit/message';
-import type { EnvService } from '@core/config/env/env.service';
-import type { EngineEvent, RunEngineArgs } from '@shared/engine/engine.types';
 import type { ContainerEngine } from '../container-engine.port';
+import { RedisEngineRunner } from '../redis-engine-runner';
 import type { SandboxActivityRegistry } from '../sandbox-activity.registry';
 import type { TurnRegistry } from '../turn-registry.service';
-import { RedisEngineRunner } from '../redis-engine-runner';
 
 /**
  * LIVE runtime proof for the per-turn `ATLAS_EVIDENCE_DIR` routing: drive the REAL `RedisEngineRunner.run()`
@@ -44,11 +44,7 @@ function realDockerExecContainers(
 ) {
   return {
     execDetached: vi.fn(
-      async (
-        _id: string,
-        _argv: string[],
-        opts?: { env?: Record<string, string> },
-      ) => {
+      async (_id: string, _argv: string[], opts?: { env?: Record<string, string> }) => {
         const env = opts?.env ?? {};
         const dockerArgs = [
           'exec',
@@ -77,10 +73,7 @@ function realDockerExecContainers(
   } as unknown as ContainerEngine;
 }
 
-function baseArgs(
-  onEvent: (e: EngineEvent) => void,
-  evidenceDir?: string,
-): RunEngineArgs {
+function baseArgs(onEvent: (e: EngineEvent) => void, evidenceDir?: string): RunEngineArgs {
   return {
     engine: 'claude',
     task: agentMessage('do the thing'),
@@ -107,18 +100,13 @@ describe('RedisEngineRunner — ATLAS_EVIDENCE_DIR reaches a running container',
 
   beforeAll(() => {
     execFileSync('docker', ['pull', '-q', IMAGE], { stdio: 'ignore' });
-    containerId = execFileSync(
-      'docker',
-      ['run', '-d', '--rm', IMAGE, 'sleep', '180'],
-      {
-        encoding: 'utf8',
-      },
-    ).trim();
+    containerId = execFileSync('docker', ['run', '-d', '--rm', IMAGE, 'sleep', '180'], {
+      encoding: 'utf8',
+    }).trim();
   });
 
   afterAll(() => {
-    if (containerId)
-      execFileSync('docker', ['rm', '-f', containerId], { stdio: 'ignore' });
+    if (containerId) execFileSync('docker', ['rm', '-f', containerId], { stdio: 'ignore' });
   });
 
   it('emits a thread leg evidenceDir as ATLAS_EVIDENCE_DIR visible inside the container', async () => {
@@ -134,9 +122,7 @@ describe('RedisEngineRunner — ATLAS_EVIDENCE_DIR reaches a running container',
       fakeRegistry(),
     );
 
-    const out = await runner.run(
-      baseArgs(() => undefined, '/context/evidence/010-backend'),
-    );
+    const out = await runner.run(baseArgs(() => undefined, '/context/evidence/010-backend'));
 
     expect(out).toMatchObject({ result: 'DONE' });
     // The value the RUNNING container's `printenv` reported — proves the production env reached it.

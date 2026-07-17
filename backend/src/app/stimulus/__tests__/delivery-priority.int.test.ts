@@ -19,11 +19,7 @@
  */
 
 import { Test, type TestingModule } from '@nestjs/testing';
-import {
-  TypeOrmModule,
-  getDataSourceToken,
-  getRepositoryToken,
-} from '@nestjs/typeorm';
+import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { CustomNamingStrategy } from '../../../_lib/database/custom-naming.strategy';
@@ -61,10 +57,7 @@ describe('delivery priority (now|queue|later) — live Postgres DB-query proof',
 
   beforeAll(async () => {
     mod = await Test.createTestingModule({
-      imports: [
-        TypeOrmModule.forRoot(dbOpts()),
-        TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION),
-      ],
+      imports: [TypeOrmModule.forRoot(dbOpts()), TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION)],
       providers: [JobBootstrapService, StimulusStoreService],
     }).compile();
 
@@ -91,9 +84,7 @@ describe('delivery priority (now|queue|later) — live Postgres DB-query proof',
   });
 
   beforeEach(async () => {
-    await ds.query(
-      'TRUNCATE inbound_messages, transcript_messages, jobs RESTART IDENTITY CASCADE',
-    );
+    await ds.query('TRUNCATE inbound_messages, transcript_messages, jobs RESTART IDENTITY CASCADE');
   });
 
   async function makeThread(title: string): Promise<JobEntity> {

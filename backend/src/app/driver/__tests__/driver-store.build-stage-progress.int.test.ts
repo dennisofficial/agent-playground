@@ -14,27 +14,27 @@
  *     the count unchanged at 2/4 and the write is a genuine no-op (`updated_at` untouched).
  */
 
-import { getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
-import { Test } from '@nestjs/testing';
 import type { NestExpressApplication } from '@nestjs/platform-express';
+import { Test } from '@nestjs/testing';
+import { getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
+import { ENGINE_RUNNER } from '@shared/engine';
 import cookieParser from 'cookie-parser';
 import request from 'supertest';
 import { DataSource, Repository } from 'typeorm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { CLASSIFIER_LLM } from '../decision-gate';
-import { ENGINE_RUNNER } from '@shared/engine';
-import { GithubPrService, LocalGitService } from '../../git';
 import { AppModule } from '../../app.module';
-import { DB_CONNECTION } from '../../persistence/database.module';
-import { JobEntity } from '../../persistence/entities';
 import {
   FakeClassifierLlm,
   FakeEngineRunner,
   FakeLocalGitService,
   FakeThreadTitler,
 } from '../../e2e/e2e-stubs';
-import { JobTitler } from '../../titling';
+import { GithubPrService, LocalGitService } from '../../git';
 import { CredentialResolver } from '../../onboarding/credential-resolver.service';
+import { DB_CONNECTION } from '../../persistence/database.module';
+import { JobEntity } from '../../persistence/entities';
+import { JobTitler } from '../../titling';
+import { CLASSIFIER_LLM } from '../decision-gate';
 import { DriverStoreService } from '../driver-store.service';
 
 const fakeCreds = {
@@ -58,35 +58,24 @@ let jobs: Repository<JobEntity>;
 let store: DriverStoreService;
 let ownerCookie: string;
 
-async function register(
-  email: string,
-): Promise<{ cookie: string; id: string }> {
+async function register(email: string): Promise<{ cookie: string; id: string }> {
   const res = await request(server)
     .post('/auth/register')
     .send({ email, password: PASSWORD, name: email.split('@')[0] });
   expect(res.status).toBe(200);
-  const setCookie =
-    (res.headers['set-cookie'] as unknown as string[] | undefined) ?? [];
+  const setCookie = (res.headers['set-cookie'] as unknown as string[] | undefined) ?? [];
   const cookie = setCookie.map((c) => c.split(';')[0]).join('; ');
   return { cookie, id: res.body.user.id as string };
 }
 
 async function purge(): Promise<void> {
-  await ds
-    .query(`DELETE FROM jobs WHERE org_id = $1`, [ORG])
-    .catch(() => undefined);
-  await ds
-    .query(`DELETE FROM repos WHERE org_id = $1`, [ORG])
-    .catch(() => undefined);
+  await ds.query(`DELETE FROM jobs WHERE org_id = $1`, [ORG]).catch(() => undefined);
+  await ds.query(`DELETE FROM repos WHERE org_id = $1`, [ORG]).catch(() => undefined);
   await ds
     .query(`DELETE FROM organization_members WHERE org_id = $1`, [ORG])
     .catch(() => undefined);
-  await ds
-    .query(`DELETE FROM organizations WHERE id = $1`, [ORG])
-    .catch(() => undefined);
-  await ds
-    .query(`DELETE FROM users WHERE email = $1`, [OWNER_EMAIL])
-    .catch(() => undefined);
+  await ds.query(`DELETE FROM organizations WHERE id = $1`, [ORG]).catch(() => undefined);
+  await ds.query(`DELETE FROM users WHERE email = $1`, [OWNER_EMAIL]).catch(() => undefined);
 }
 
 beforeAll(async () => {
@@ -211,13 +200,9 @@ describe('DriverStoreService.recomputeBuildStageProgress (live Postgres + GET /w
     expect(row.build_stages_done).toBe(2);
     expect(row.build_stages_total).toBe(4);
 
-    const res = await request(server)
-      .get('/web/jobs')
-      .set('Cookie', ownerCookie);
+    const res = await request(server).get('/web/jobs').set('Cookie', ownerCookie);
     expect(res.status).toBe(200);
-    const wireRow = (res.body as Array<Record<string, unknown>>).find(
-      (r) => r.jobId === job.id,
-    );
+    const wireRow = (res.body as Array<Record<string, unknown>>).find((r) => r.jobId === job.id);
     expect(wireRow).toMatchObject({ buildStagesDone: 2, buildStagesTotal: 4 });
 
     // Change-gating: flip B's auto_fixing builder to `done` — the DERIVED done/total are unchanged

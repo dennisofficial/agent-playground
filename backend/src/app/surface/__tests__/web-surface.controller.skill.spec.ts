@@ -1,11 +1,5 @@
 import { GUARDS_METADATA } from '@nestjs/common/constants';
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -36,13 +30,11 @@ function makeController(card: unknown, ctxRoot: string) {
     install: vi.fn(async () => [{ name: 'x' }]),
   };
   const threads = {
-    findOne: vi.fn(
-      async ({ where }: { where: { id: string; org_id: string } }) => ({
-        id: where.id,
-        org_id: where.org_id,
-        repo_id: 'repo-1',
-      }),
-    ),
+    findOne: vi.fn(async ({ where }: { where: { id: string; org_id: string } }) => ({
+      id: where.id,
+      org_id: where.org_id,
+      repo_id: 'repo-1',
+    })),
   };
   const controller = new WebSurfaceController(
     { seedSystemNotification: m.seedSystemNotification, name: 'web' } as never, // surface
@@ -118,11 +110,7 @@ describe('WebSurfaceController — skill proposal approve (owner-gated)', () => 
       sourceSubpath: 'skills/nestjs',
     };
     const { controller, m } = makeController(card, ctxRoot);
-    const res = await controller.approveSkillProposal(
-      OWNER,
-      'job-1',
-      'skill-1',
-    );
+    const res = await controller.approveSkillProposal(OWNER, 'job-1', 'skill-1');
 
     expect(res.ok).toBe(true);
     expect(m.install).toHaveBeenCalledWith({
@@ -146,10 +134,7 @@ describe('WebSurfaceController — skill proposal approve (owner-gated)', () => 
       );
       const draftDir = join(ctxRoot, 'skill-drafts', 'house-x');
       mkdirSync(draftDir, { recursive: true });
-      writeFileSync(
-        join(draftDir, 'SKILL.md'),
-        'stale draft the brain kept editing',
-      );
+      writeFileSync(join(draftDir, 'SKILL.md'), 'stale draft the brain kept editing');
 
       const card = {
         type: 'skill_proposal_card',
@@ -164,12 +149,7 @@ describe('WebSurfaceController — skill proposal approve (owner-gated)', () => 
       await controller.approveSkillProposal(OWNER, 'job-1', 'skill-2');
 
       // Vendors from the frozen staging dir, org scope ('*').
-      expect(m.vendorDir).toHaveBeenCalledWith(
-        staging,
-        'org-1',
-        '*',
-        'house-x',
-      );
+      expect(m.vendorDir).toHaveBeenCalledWith(staging, 'org-1', '*', 'house-x');
       expect(m.write).toHaveBeenCalledWith('org-1', '*', 'house-x', {
         description: 'Use when X',
         provenance: 'custom',

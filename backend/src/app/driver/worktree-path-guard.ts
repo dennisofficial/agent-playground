@@ -1,9 +1,6 @@
 import { existsSync, lstatSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, posix, sep } from 'node:path';
-import {
-  isReservedContainerPath,
-  MAX_MOUNT_PATH_LEN,
-} from '../sandbox/container-paths';
+import { isReservedContainerPath, MAX_MOUNT_PATH_LEN } from '../sandbox/container-paths';
 
 /**
  * Path SAFETY for the worktree hydrator + mount wiring. The manifest is attacker-controllable (committed
@@ -26,34 +23,23 @@ export class WorktreePathError extends Error {}
  */
 export function resolveExternalMountTarget(path: string): string {
   if (!path || !posix.isAbsolute(path)) {
-    throw new WorktreePathError(
-      `external mount must be an absolute container path: ${path}`,
-    );
+    throw new WorktreePathError(`external mount must be an absolute container path: ${path}`);
   }
   if (path.length > MAX_MOUNT_PATH_LEN) {
-    throw new WorktreePathError(
-      `external mount path too long (> ${MAX_MOUNT_PATH_LEN}): ${path}`,
-    );
+    throw new WorktreePathError(`external mount path too long (> ${MAX_MOUNT_PATH_LEN}): ${path}`);
   }
   const norm = posix.normalize(path).replace(/\/+$/, '') || '/';
   if (norm.split('/').includes('..')) {
     throw new WorktreePathError(`unsafe external mount (traversal): ${path}`);
   }
   if (isReservedContainerPath(norm)) {
-    throw new WorktreePathError(
-      `external mount targets a reserved container path: ${path}`,
-    );
+    throw new WorktreePathError(`external mount targets a reserved container path: ${path}`);
   }
   return norm;
 }
 
 function rejectLexical(relPath: string): string[] {
-  if (
-    !relPath ||
-    isAbsolute(relPath) ||
-    relPath.startsWith('/') ||
-    relPath.startsWith('\\')
-  ) {
+  if (!relPath || isAbsolute(relPath) || relPath.startsWith('/') || relPath.startsWith('\\')) {
     throw new WorktreePathError(`unsafe path (absolute/empty): ${relPath}`);
   }
   const segs = relPath.split(/[\\/]+/);
@@ -68,10 +54,7 @@ function rejectLexical(relPath: string): string[] {
  * absolute paths, and any symlink in the existing portion of the chain. Returns the absolute path to
  * create/write (its parent dirs may need creating by the caller).
  */
-export function resolveSafeTarget(
-  worktreePath: string,
-  relPath: string,
-): string {
+export function resolveSafeTarget(worktreePath: string, relPath: string): string {
   const segs = rejectLexical(relPath);
   const realRoot = realpathSync(worktreePath);
   let cur = realRoot;
@@ -80,9 +63,7 @@ export function resolveSafeTarget(
     const candidate = join(cur, seg);
     if (stillExists && existsSync(candidate)) {
       if (lstatSync(candidate).isSymbolicLink()) {
-        throw new WorktreePathError(
-          `unsafe path (symlink component): ${candidate}`,
-        );
+        throw new WorktreePathError(`unsafe path (symlink component): ${candidate}`);
       }
       cur = candidate;
     } else {

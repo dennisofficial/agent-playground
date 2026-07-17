@@ -26,13 +26,7 @@ const BUILD_FACING: Agent[] = [
 ];
 
 // Read-only advisory subagents that must NEVER receive the house-style envelope.
-const EXCLUDED: Agent[] = [
-  Agent.EXPLORE,
-  Agent.DOCS,
-  Agent.DEBUG,
-  Agent.TEST,
-  Agent.VALIDATE,
-];
+const EXCLUDED: Agent[] = [Agent.EXPLORE, Agent.DOCS, Agent.DEBUG, Agent.TEST, Agent.VALIDATE];
 
 describe('conventions.group — repo house-style envelope', () => {
   it.each(BUILD_FACING)(
@@ -65,15 +59,12 @@ describe('conventions.group — repo house-style envelope', () => {
     },
   );
 
-  it.each(EXCLUDED)(
-    'never injects the envelope for the advisory subagent %s',
-    (agent) => {
-      const out = renderAgentPrompt(agent, {
-        settings: { repoConventions: PROFILE },
-      });
-      expect(out).not.toContain(MARKER);
-    },
-  );
+  it.each(EXCLUDED)('never injects the envelope for the advisory subagent %s', (agent) => {
+    const out = renderAgentPrompt(agent, {
+      settings: { repoConventions: PROFILE },
+    });
+    expect(out).not.toContain(MARKER);
+  });
 
   it('appends the envelope at the tail (operator-layer), not the head', () => {
     // Use an onboarding ctx so the build-brain-only "notice drift" fragment (order 9110) is absent and the
@@ -96,36 +87,23 @@ describe('conventions.group — notice-house-style-drift affordance', () => {
   const conv = { settings: { repoConventions: PROFILE } };
 
   it('appears for the build brain (feature/bugfix) when a profile is attached', () => {
-    expect(
-      renderAgentPrompt(Agent.PLANNING, { jobKind: 'feature', ...conv }),
-    ).toContain(MARK);
-    expect(
-      renderAgentPrompt(Agent.PLANNING, { jobKind: 'bugfix', ...conv }),
-    ).toContain(MARK);
+    expect(renderAgentPrompt(Agent.PLANNING, { jobKind: 'feature', ...conv })).toContain(MARK);
+    expect(renderAgentPrompt(Agent.PLANNING, { jobKind: 'bugfix', ...conv })).toContain(MARK);
   });
 
   it('is absent when no profile is attached (nothing to notice)', () => {
-    expect(
-      renderAgentPrompt(Agent.PLANNING, { jobKind: 'feature' }),
-    ).not.toContain(MARK);
+    expect(renderAgentPrompt(Agent.PLANNING, { jobKind: 'feature' })).not.toContain(MARK);
   });
 
   it('is absent for onboarding + review turns (only the build brain proposes profile changes)', () => {
-    expect(
-      renderAgentPrompt(Agent.PLANNING, { jobKind: 'onboarding', ...conv }),
-    ).not.toContain(MARK);
-    expect(
-      renderAgentPrompt(Agent.PLANNING, { jobKind: 'review', ...conv }),
-    ).not.toContain(MARK);
+    expect(renderAgentPrompt(Agent.PLANNING, { jobKind: 'onboarding', ...conv })).not.toContain(
+      MARK,
+    );
+    expect(renderAgentPrompt(Agent.PLANNING, { jobKind: 'review', ...conv })).not.toContain(MARK);
   });
 
   it('never reaches workers or advisory subagents', () => {
-    for (const a of [
-      Agent.WORKER,
-      Agent.FAN_OUT,
-      Agent.REVIEW_AGENT,
-      Agent.EXPLORE,
-    ]) {
+    for (const a of [Agent.WORKER, Agent.FAN_OUT, Agent.REVIEW_AGENT, Agent.EXPLORE]) {
       expect(renderAgentPrompt(a, conv)).not.toContain(MARK);
     }
   });

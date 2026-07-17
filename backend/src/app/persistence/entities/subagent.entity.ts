@@ -1,15 +1,8 @@
-import {
-  Column,
-  Entity,
-  Index,
-  JoinColumn,
-  ManyToOne,
-  PrimaryGeneratedColumn,
-} from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
+import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import { numberColumn } from './numeric.transformer';
 import { ThreadEntity } from './thread.entity';
 import { TranscriptMessageEntity } from './transcript-message.entity';
-import { numberColumn } from './numeric.transformer';
 
 /**
  * A SUBAGENT — one Claude Agent SDK `Task` sub-session spawned inside a thread's turn (d4). Subagents

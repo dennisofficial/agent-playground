@@ -19,9 +19,7 @@ import {
  */
 @Injectable()
 export class JobTitler {
-  constructor(
-    @Inject(JOB_TITLE_CHAIN) private readonly chainFor: JobTitleChainFactory,
-  ) {}
+  constructor(@Inject(JOB_TITLE_CHAIN) private readonly chainFor: JobTitleChainFactory) {}
 
   /** Short display title for a thread from any source text. Never throws; never returns empty. */
   async titleFor(text: string, orgId?: string): Promise<string> {

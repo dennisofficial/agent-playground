@@ -18,12 +18,8 @@ export class DropWorktreeSeed1783039100083 implements MigrationInterface {
     await queryRunner.query(
       `ALTER TABLE "org_worktree_seed" DROP CONSTRAINT "fk_org_worktree_seed_org_id_organizations"`,
     );
-    await queryRunner.query(
-      `DROP INDEX "public"."idx_org_worktree_seed_org_id"`,
-    );
-    await queryRunner.query(
-      `DROP INDEX "public"."idx_org_worktree_seed_org_id_repo_id"`,
-    );
+    await queryRunner.query(`DROP INDEX "public"."idx_org_worktree_seed_org_id"`);
+    await queryRunner.query(`DROP INDEX "public"."idx_org_worktree_seed_org_id_repo_id"`);
     await queryRunner.query(`DROP TABLE "org_worktree_seed"`);
   }
 

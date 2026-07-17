@@ -1,6 +1,6 @@
+import type { AgentMessage } from '@shared/prompt-kit/message';
 import type { Repository } from 'typeorm';
 import type { TranscriptMessageEntity } from './entities/transcript-message.entity';
-import type { AgentMessage } from '@shared/prompt-kit/message';
 
 /**
  * Shared shape of a harness-injected chunk (`system_notice` / `system_reminder` / `untrusted`) to persist
@@ -62,14 +62,10 @@ export async function writeSystemChunk(
       kind: 'chat',
       meta: {
         source: input.kind,
-        ...(buildCtx
-          ? { phaseId: buildCtx.phaseId, legOrdinal: buildCtx.legOrdinal }
-          : {}),
+        ...(buildCtx ? { phaseId: buildCtx.phaseId, legOrdinal: buildCtx.legOrdinal } : {}),
         chunkKey: input.chunkKey,
         ...(input.reminderKind ? { reminderKind: input.reminderKind } : {}),
-        ...(input.untrustedSource
-          ? { untrustedSource: input.untrustedSource }
-          : {}),
+        ...(input.untrustedSource ? { untrustedSource: input.untrustedSource } : {}),
         ...(input.severity ? { severity: input.severity } : {}),
         ...(input.fullBody ? { fullBody: input.fullBody } : {}),
         ...(input.framing ? { framing: input.framing } : {}),

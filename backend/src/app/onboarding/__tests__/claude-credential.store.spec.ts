@@ -1,11 +1,8 @@
-import { randomUUID } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
 import type { EnvService } from '@core/config/env/env.service';
+import { randomUUID } from 'node:crypto';
 import { QueryFailedError, type DataSource, type Repository } from 'typeorm';
-import type {
-  OrganizationEntity,
-  OrgClaudeCredentialEntity,
-} from '../../persistence/entities';
+import { describe, expect, it } from 'vitest';
+import type { OrganizationEntity, OrgClaudeCredentialEntity } from '../../persistence/entities';
 import { ClaudeCredentialStore } from '../claude-credential.store';
 
 const KEY = Buffer.alloc(32, 9).toString('base64');
@@ -34,13 +31,8 @@ function fakeDb(): {
   const rows = new Map<string, OrgClaudeCredentialEntity>();
   const orgs = new Map<string, OrganizationEntity>();
 
-  const matches = (
-    row: OrgClaudeCredentialEntity,
-    where: Record<string, unknown>,
-  ): boolean =>
-    Object.entries(where).every(
-      ([k, v]) => (row as unknown as Record<string, unknown>)[k] === v,
-    );
+  const matches = (row: OrgClaudeCredentialEntity, where: Record<string, unknown>): boolean =>
+    Object.entries(where).every(([k, v]) => (row as unknown as Record<string, unknown>)[k] === v);
 
   const findOne = (opts: { where: Record<string, unknown> }) =>
     [...rows.values()].find((r) => matches(r, opts.where)) ?? null;
@@ -88,10 +80,7 @@ function fakeDb(): {
     async findOne(opts: { where: { id: string } }) {
       return orgs.get(opts.where.id) ?? null;
     },
-    async update(
-      criteria: { id: string },
-      partial: Partial<OrganizationEntity>,
-    ) {
+    async update(criteria: { id: string }, partial: Partial<OrganizationEntity>) {
       const org = orgs.get(criteria.id);
       if (org) Object.assign(org, partial);
     },
@@ -118,25 +107,14 @@ function fakeDb(): {
   return { repo, orgRepo, dataSource, orgs };
 }
 
-function makeStore(
-  env: Record<string, string | undefined> = { SECRETS_ENCRYPTION_KEY: KEY },
-) {
+function makeStore(env: Record<string, string | undefined> = { SECRETS_ENCRYPTION_KEY: KEY }) {
   const { repo, orgRepo, dataSource, orgs } = fakeDb();
-  const store = new ClaudeCredentialStore(
-    repo,
-    orgRepo,
-    dataSource,
-    fakeEnv(env),
-  );
+  const store = new ClaudeCredentialStore(repo, orgRepo, dataSource, fakeEnv(env));
   return { store, orgs, repo };
 }
 
 /** A minimal `claudeAiOauth` blob (what `isNewerClaudeCredential` reads via `expiresAt`). */
-function oauthBlob(
-  expiresAt: number,
-  accessToken = 'access',
-  refreshToken = 'refresh',
-): string {
+function oauthBlob(expiresAt: number, accessToken = 'access', refreshToken = 'refresh'): string {
   return JSON.stringify({
     claudeAiOauth: { accessToken, refreshToken, expiresAt },
   });
@@ -433,11 +411,7 @@ describe('ClaudeCredentialStore', () => {
         refreshToken: 'old-refresh',
         expiresAt: 1000,
       });
-      await store.advanceClaudeCredential(
-        'T1',
-        id,
-        oauthBlob(2000, 'new-access', 'new-refresh'),
-      );
+      await store.advanceClaudeCredential('T1', id, oauthBlob(2000, 'new-access', 'new-refresh'));
 
       const sel = await store.getSelectedDecrypted('T1'); // not selected, so read via list/select instead
       expect(sel).toBeNull();
@@ -538,15 +512,9 @@ describe('ClaudeCredentialStore', () => {
         selected_claude_credential_id: null,
       } as OrganizationEntity);
 
-      await expect(
-        store.upsertLegacySetupToken('T1', 'sk-first'),
-      ).resolves.toBe(true);
-      await expect(
-        store.upsertLegacySetupToken('T1', 'sk-first'),
-      ).resolves.toBe(false);
-      await expect(
-        store.upsertLegacySetupToken('T1', 'sk-second'),
-      ).resolves.toBe(true);
+      await expect(store.upsertLegacySetupToken('T1', 'sk-first')).resolves.toBe(true);
+      await expect(store.upsertLegacySetupToken('T1', 'sk-first')).resolves.toBe(false);
+      await expect(store.upsertLegacySetupToken('T1', 'sk-second')).resolves.toBe(true);
     });
   });
 
@@ -556,8 +524,8 @@ describe('ClaudeCredentialStore', () => {
       id: 'T1',
       selected_claude_credential_id: null,
     } as OrganizationEntity);
-    await expect(
-      store.createSetupToken('T1', { label: 'x', token: 'y' }),
-    ).rejects.toThrow(/SECRETS_ENCRYPTION_KEY is not set/);
+    await expect(store.createSetupToken('T1', { label: 'x', token: 'y' })).rejects.toThrow(
+      /SECRETS_ENCRYPTION_KEY is not set/,
+    );
   });
 });

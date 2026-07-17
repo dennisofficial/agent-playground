@@ -9,8 +9,8 @@
  *     re-delivering events.
  */
 import { describe, expect, it } from 'vitest';
-import { buildRedisClient } from './redis.tokens';
 import { InMemoryRedisStream } from './in-memory-redis-stream';
+import { buildRedisClient } from './redis.tokens';
 
 describe('RedisModule resilience (lazy/no-crash connect)', () => {
   it('builds a lazy client without opening a socket (no throw, status not connected)', async () => {
@@ -111,9 +111,7 @@ describe('InMemoryRedisStream pending recovery (XAUTOCLAIM / ack)', () => {
       count: 10,
       blockMs: 0,
     });
-    expect(delivered.map((e) => e.data)).toEqual([
-      { tool: 'submit_plan', id: 'call-1' },
-    ]);
+    expect(delivered.map((e) => e.data)).toEqual([{ tool: 'submit_plan', id: 'call-1' }]);
 
     // A '>' read by the new consumer sees nothing new (cursor already advanced) — it would be STRANDED
     // without pending recovery.
@@ -134,9 +132,7 @@ describe('InMemoryRedisStream pending recovery (XAUTOCLAIM / ack)', () => {
       minIdleMs: 0,
       count: 10,
     });
-    expect(claimed.map((e) => e.data)).toEqual([
-      { tool: 'submit_plan', id: 'call-1' },
-    ]);
+    expect(claimed.map((e) => e.data)).toEqual([{ tool: 'submit_plan', id: 'call-1' }]);
   });
 
   it('an acked entry is NOT reclaimable (no double-processing once handled)', async () => {

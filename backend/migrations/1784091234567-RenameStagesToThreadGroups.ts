@@ -7,27 +7,17 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * Pure rename — no columns added/dropped, no data moved — so a future `migration:generate` stays clean
  * against the renamed entities. RENAME in place everywhere Postgres supports it (cheap, no rebuild).
  */
-export class RenameStagesToThreadGroups1784091234567
-  implements MigrationInterface
-{
+export class RenameStagesToThreadGroups1784091234567 implements MigrationInterface {
   name = 'RenameStagesToThreadGroups1784091234567';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     // Table
-    await queryRunner.query(
-      `ALTER TABLE "stages" RENAME TO "thread_groups"`,
-    );
+    await queryRunner.query(`ALTER TABLE "stages" RENAME TO "thread_groups"`);
     // Columns
-    await queryRunner.query(
-      `ALTER TABLE "threads" RENAME COLUMN "stage_id" TO "thread_group_id"`,
-    );
-    await queryRunner.query(
-      `ALTER TABLE "tasks" RENAME COLUMN "stage_id" TO "thread_group_id"`,
-    );
+    await queryRunner.query(`ALTER TABLE "threads" RENAME COLUMN "stage_id" TO "thread_group_id"`);
+    await queryRunner.query(`ALTER TABLE "tasks" RENAME COLUMN "stage_id" TO "thread_group_id"`);
     // Indexes
-    await queryRunner.query(
-      `ALTER INDEX "idx_stages_job_id" RENAME TO "idx_thread_groups_job_id"`,
-    );
+    await queryRunner.query(`ALTER INDEX "idx_stages_job_id" RENAME TO "idx_thread_groups_job_id"`);
     await queryRunner.query(
       `ALTER INDEX "idx_stages_job_id_ordinal" RENAME TO "idx_thread_groups_job_id_ordinal"`,
     );
@@ -100,19 +90,11 @@ export class RenameStagesToThreadGroups1784091234567
     await queryRunner.query(
       `ALTER INDEX "idx_thread_groups_job_id_ordinal" RENAME TO "idx_stages_job_id_ordinal"`,
     );
-    await queryRunner.query(
-      `ALTER INDEX "idx_thread_groups_job_id" RENAME TO "idx_stages_job_id"`,
-    );
+    await queryRunner.query(`ALTER INDEX "idx_thread_groups_job_id" RENAME TO "idx_stages_job_id"`);
     // Columns
-    await queryRunner.query(
-      `ALTER TABLE "tasks" RENAME COLUMN "thread_group_id" TO "stage_id"`,
-    );
-    await queryRunner.query(
-      `ALTER TABLE "threads" RENAME COLUMN "thread_group_id" TO "stage_id"`,
-    );
+    await queryRunner.query(`ALTER TABLE "tasks" RENAME COLUMN "thread_group_id" TO "stage_id"`);
+    await queryRunner.query(`ALTER TABLE "threads" RENAME COLUMN "thread_group_id" TO "stage_id"`);
     // Table
-    await queryRunner.query(
-      `ALTER TABLE "thread_groups" RENAME TO "stages"`,
-    );
+    await queryRunner.query(`ALTER TABLE "thread_groups" RENAME TO "stages"`);
   }
 }

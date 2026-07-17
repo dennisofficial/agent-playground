@@ -2,11 +2,11 @@ import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
-  TranscriptMessageEntity,
-  ThreadGroupEntity,
   SubagentEntity,
   TaskEntity,
   ThreadEntity,
+  ThreadGroupEntity,
+  TranscriptMessageEntity,
 } from '../persistence/entities';
 import { LiveTurnStore } from './live-turn-store';
 import { ThreadInputService } from './thread-input.service';

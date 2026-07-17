@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { buildFixPrompt, buildReviewPrompt } from '../../prompt-kit';
 import {
   DEFAULT_LENSES,
   dedupeFindings,
@@ -6,7 +7,6 @@ import {
   parseFindings,
   reviewAgentsForThread,
 } from '../autofix-lenses';
-import { buildFixPrompt, buildReviewPrompt } from '../../prompt-kit';
 import type { AutoFixContext, ReviewFinding } from '../autofix.types';
 
 const ctx: AutoFixContext = {
@@ -64,17 +64,11 @@ describe('parseFindings', () => {
       '{ "severity": "weird", "title": "c" },' +
       '{ "title": "d" } ] }\n```';
     const found = parseFindings('x', report);
-    expect(found.map((f) => f.severity)).toEqual([
-      'high',
-      'low',
-      'medium',
-      'medium',
-    ]);
+    expect(found.map((f) => f.severity)).toEqual(['high', 'low', 'medium', 'medium']);
   });
 
   it('drops entries without a title', () => {
-    const report =
-      '```json\n{ "findings": [ { "severity": "high", "detail": "no title" } ] }\n```';
+    const report = '```json\n{ "findings": [ { "severity": "high", "detail": "no title" } ] }\n```';
     expect(parseFindings('x', report)).toEqual([]);
   });
 });
@@ -130,11 +124,7 @@ describe('dedupeFindings', () => {
       { lens: 'a', severity: 'high', file: null, title: 'hi', detail: '' },
       { lens: 'a', severity: 'medium', file: null, title: 'mid', detail: '' },
     ];
-    expect(dedupeFindings(findings).map((f) => f.severity)).toEqual([
-      'high',
-      'medium',
-      'low',
-    ]);
+    expect(dedupeFindings(findings).map((f) => f.severity)).toEqual(['high', 'medium', 'low']);
   });
 });
 
@@ -163,10 +153,7 @@ describe('DEFAULT_LENSES', () => {
 
 describe('reviewAgentsForThread', () => {
   it('backend gets the always-on lenses, in stable order', () => {
-    expect(reviewAgentsForThread('backend').map((l) => l.id)).toEqual([
-      'correctness',
-      'holistic',
-    ]);
+    expect(reviewAgentsForThread('backend').map((l) => l.id)).toEqual(['correctness', 'holistic']);
   });
 
   it('docs drops correctness (pure noise on prose), leaving holistic', () => {
@@ -184,10 +171,7 @@ describe('reviewAgentsForThread', () => {
   });
 
   it('general (and any other type) gets the always-on lenses', () => {
-    expect(reviewAgentsForThread('general').map((l) => l.id)).toEqual([
-      'correctness',
-      'holistic',
-    ]);
+    expect(reviewAgentsForThread('general').map((l) => l.id)).toEqual(['correctness', 'holistic']);
   });
 
   it('is deterministic — same type, same order, every call', () => {
@@ -222,9 +206,7 @@ describe('prompt builders', () => {
     const diffLens = DEFAULT_LENSES.find((l) => l.id === 'correctness')!;
     const p = buildReviewPrompt(diffLens, ctx);
     // strict diff-only scoping (not the holistic exemption)
-    expect(p).toContain(
-      'ONLY report issues introduced by (or directly within) the change set',
-    );
+    expect(p).toContain('ONLY report issues introduced by (or directly within) the change set');
     expect(p).not.toContain('MAY read beyond the diff');
     // shared ship-blocker bar + honest severity rubric render for every scope
     expect(p).toContain('BLOCKS approval');
@@ -236,13 +218,9 @@ describe('prompt builders', () => {
     const holistic = DEFAULT_LENSES.find((l) => l.id === 'holistic')!;
     const p = buildReviewPrompt(holistic, ctx);
     expect(p).toContain('MAY read beyond the diff');
-    expect(p).toContain(
-      'only FLAG problems THIS change introduced or left incomplete',
-    );
+    expect(p).toContain('only FLAG problems THIS change introduced or left incomplete');
     // the strict diff-only clause must NOT be the scope for the holistic lens
-    expect(p).not.toContain(
-      'ONLY report issues introduced by (or directly within) the change set',
-    );
+    expect(p).not.toContain('ONLY report issues introduced by (or directly within) the change set');
     // but the shared ship-blocker bar still applies
     expect(p).toContain('BLOCKS approval');
   });

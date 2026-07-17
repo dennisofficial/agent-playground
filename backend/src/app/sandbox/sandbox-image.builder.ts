@@ -1,23 +1,10 @@
 import { EnvService } from '@core/config/env/env.service';
-import {
-  Inject,
-  Injectable,
-  Logger,
-  type OnApplicationBootstrap,
-} from '@nestjs/common';
+import { Inject, Injectable, Logger, type OnApplicationBootstrap } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import {
-  bundleMcpBridge,
-  bundleMcpHub,
-  ensureEngineApp,
-  sandboxContextDir,
-} from './bundle-engine';
-import {
-  CONTAINER_ENGINE,
-  type ContainerEngine,
-} from './container-engine.port';
+import { bundleMcpBridge, bundleMcpHub, ensureEngineApp, sandboxContextDir } from './bundle-engine';
+import { CONTAINER_ENGINE, type ContainerEngine } from './container-engine.port';
 
 /** The image label that carries the build-context hash — the signal for auto-rebuild-on-change. */
 const CONTEXT_HASH_LABEL = 'atlas.context-hash';
@@ -83,17 +70,13 @@ export class SandboxImageBuilder implements OnApplicationBootstrap {
       const out = await bundleMcpBridge();
       this.logger.log(`refreshed mcp-bridge bundle → ${out}`);
     } catch (err) {
-      this.logger.warn(
-        `mcp-bridge rebundle skipped (using existing bundle): ${err}`,
-      );
+      this.logger.warn(`mcp-bridge rebundle skipped (using existing bundle): ${err}`);
     }
     try {
       const out = await bundleMcpHub();
       this.logger.log(`refreshed mcp-hub bundle → ${out}`);
     } catch (err) {
-      this.logger.warn(
-        `mcp-hub rebundle skipped (using existing bundle): ${err}`,
-      );
+      this.logger.warn(`mcp-hub rebundle skipped (using existing bundle): ${err}`);
     }
     this.logger.log('sandbox image warm-up starting in background');
     void this.ensureImage()
@@ -172,9 +155,7 @@ export class SandboxImageBuilder implements OnApplicationBootstrap {
     const hash = this.contextHash();
     const labels = await this.engine.imageLabels(tag);
     if (labels && labels[CONTEXT_HASH_LABEL] === hash) {
-      this.logger.log(
-        `sandbox image ${tag} up to date (context ${hash}) — skipping build`,
-      );
+      this.logger.log(`sandbox image ${tag} up to date (context ${hash}) — skipping build`);
       return tag;
     }
     if (labels) {
@@ -183,9 +164,7 @@ export class SandboxImageBuilder implements OnApplicationBootstrap {
       );
     }
     onBuildStart?.();
-    this.logger.log(
-      `building sandbox image ${tag} (context ${hash}; slow on first run)…`,
-    );
+    this.logger.log(`building sandbox image ${tag} (context ${hash}; slow on first run)…`);
     await this.engine.buildImage({
       contextDir: this.contextDir(),
       tag,

@@ -20,9 +20,7 @@ import { SECTION_STAMP_DDL } from './section-stamp.constants';
  * dependency, so a failure here logs a warning instead of crashing boot.
  */
 @Injectable()
-export class SectionStampService
-  implements OnApplicationBootstrap, OnApplicationShutdown
-{
+export class SectionStampService implements OnApplicationBootstrap, OnApplicationShutdown {
   private readonly logger = new Logger(SectionStampService.name);
   private promoteSub?: Subscription;
 

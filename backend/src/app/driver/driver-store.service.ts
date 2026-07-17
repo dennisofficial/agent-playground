@@ -1,56 +1,52 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, IsNull, MoreThan, Raw, Repository } from 'typeorm';
-import { randomUUID } from 'node:crypto';
 import type {
   Decision,
   DecisionRecord,
+  Job,
+  JobActivity,
+  JobHalt,
+  JobStatus,
   Step,
   StepStatus,
   Thread,
-  ThreadStatus,
   ThreadCondition,
-  Job,
-  JobActivity,
-  JobStatus,
-  JobHalt,
+  ThreadStatus,
 } from '@shared/domain';
-import { StimulusStoreService } from '../stimulus/stimulus-store.service';
+import type { AgentMessage } from '@shared/prompt-kit/message';
+import { coerceThreadType } from '@shared/thread-kind/thread-types';
+import { randomUUID } from 'node:crypto';
+import { DataSource, In, IsNull, MoreThan, Raw, Repository } from 'typeorm';
+import type { ReviewFinding } from '../autofix/autofix.types';
+import { JobDependencyService } from '../job-deps/job-dependency.service';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { writeSystemChunk } from '../persistence/system-chunk-writer';
-import {
-  DecisionRecordEntity,
-  TranscriptMessageEntity,
-  ThreadGroupEntity,
-  TaskEntity,
-  ThreadEntity,
-  JobEntity,
-} from '../persistence/entities';
 import type {
   DeviationEntry,
   SessionAnchor,
   TaskItem,
   ThreadTerminalRecord,
 } from '../persistence/entities';
-import type { ReviewFinding } from '../autofix/autofix.types';
+import {
+  DecisionRecordEntity,
+  JobEntity,
+  TaskEntity,
+  ThreadEntity,
+  ThreadGroupEntity,
+  TranscriptMessageEntity,
+} from '../persistence/entities';
+import { writeSystemChunk } from '../persistence/system-chunk-writer';
+import type { PlannedStep } from '../prompt-kit/messages/render-plan';
+import { StimulusStoreService } from '../stimulus/stimulus-store.service';
 import { laneFor } from '../surface/thread-registry';
-import type { WebQuestionCard } from '../surface/web-question-card';
 import {
   webAmendProposalCard,
   webMergeReadyCard,
   webVerdictCard,
 } from '../surface/web-approval-card';
-import { prMergeReady } from './auto-merge.service';
-import type { PlannedStep } from '../prompt-kit/messages/render-plan';
-import type { AgentMessage } from '@shared/prompt-kit/message';
-import { JobDependencyService } from '../job-deps/job-dependency.service';
-import {
-  coerceThreadRole,
-  laneDefaultFooter,
-  threadKindSpec,
-} from '../thread-kind/registry';
-import { coerceThreadType } from '@shared/thread-kind/thread-types';
+import type { WebQuestionCard } from '../surface/web-question-card';
 import { ThreadRole } from '../thread-kind/__tests__/spec';
+import { coerceThreadRole, laneDefaultFooter, threadKindSpec } from '../thread-kind/registry';
+import { prMergeReady } from './auto-merge.service';
 
 /** Phases are gap-numbered (10, 20, 30…) so a re-plan can splice without renumbering. */
 const ORDINAL_GAP = 10;
@@ -150,11 +146,7 @@ export class DriverStoreService {
     });
     for (const row of rows) {
       const card = row.card as unknown as WebQuestionCard | undefined;
-      if (
-        card?.type === 'question_card' &&
-        card.origin === 'build' &&
-        card.answer == null
-      ) {
+      if (card?.type === 'question_card' && card.origin === 'build' && card.answer == null) {
         return { questionId: card.questionId, question: card.question };
       }
     }
@@ -163,10 +155,7 @@ export class DriverStoreService {
 
   /** Open a build-origin question card (free-text) + bump `open_question_count` in ONE txn. Returns the
    *  stable `questionId` (the card row's `ts`) the driver then polls for an answer. */
-  async openOperatorInputCard(
-    jobId: string,
-    question: string,
-  ): Promise<{ questionId: string }> {
+  async openOperatorInputCard(jobId: string, question: string): Promise<{ questionId: string }> {
     const questionId = randomUUID();
     const card: WebQuestionCard = {
       type: 'question_card',
@@ -205,10 +194,7 @@ export class DriverStoreService {
   }
 
   /** The operator's answer to a build-origin card, or null while still unanswered. */
-  async readOperatorInputAnswer(
-    jobId: string,
-    questionId: string,
-  ): Promise<string | null> {
+  async readOperatorInputAnswer(jobId: string, questionId: string): Promise<string | null> {
     const row = await this.messages.findOne({
       where: { job_id: jobId, ts: questionId, kind: 'card' },
     });
@@ -219,10 +205,7 @@ export class DriverStoreService {
   /** Stamp a build-origin card `deliveredAt` once the driver has consumed the answer (so the boot
    *  answered-but-undelivered sweep never treats it as stranded). Jsonb-merge, like the brain's card
    *  lifecycle writes — no read-modify-write race. */
-  async markOperatorInputDelivered(
-    jobId: string,
-    questionId: string,
-  ): Promise<void> {
+  async markOperatorInputDelivered(jobId: string, questionId: string): Promise<void> {
     await this.messages
       .createQueryBuilder()
       .update()
@@ -230,10 +213,7 @@ export class DriverStoreService {
       .where('job_id = :jobId', { jobId })
       .andWhere('ts = :questionId', { questionId })
       .andWhere("kind = 'card'")
-      .setParameter(
-        'patch',
-        JSON.stringify({ deliveredAt: new Date().toISOString() }),
-      )
+      .setParameter('patch', JSON.stringify({ deliveredAt: new Date().toISOString() }))
       .execute();
   }
 
@@ -263,9 +243,7 @@ export class DriverStoreService {
       where: {
         status: 'running',
         halt: IsNull(),
-        session_resume_at: Raw(
-          (alias) => `(${alias} IS NULL OR ${alias} <= now())`,
-        ),
+        session_resume_at: Raw((alias) => `(${alias} IS NULL OR ${alias} <= now())`),
       },
     });
     return rows.map(toJob);
@@ -296,9 +274,7 @@ export class DriverStoreService {
     const buildGroups = groups.filter(
       (g) =>
         (g.kind === 'build' || g.kind === 'direct_build') &&
-        (activeRecordId
-          ? g.decision_record_id === activeRecordId
-          : g.decision_record_id == null),
+        (activeRecordId ? g.decision_record_id === activeRecordId : g.decision_record_id == null),
     );
     const total = buildGroups.length;
     const builderFinished = (s: string) => s === 'done' || s === 'auto_fixing';
@@ -308,11 +284,7 @@ export class DriverStoreService {
         where: { thread_group_id: g.id, role: 'builder' },
         select: { id: true, status: true },
       });
-      if (
-        builders.length > 0 &&
-        builders.every((t) => builderFinished(t.status))
-      )
-        done += 1;
+      if (builders.length > 0 && builders.every((t) => builderFinished(t.status))) done += 1;
     }
     await this.jobs
       .createQueryBuilder()
@@ -355,8 +327,7 @@ export class DriverStoreService {
       select: { id: true, meta: true },
     });
     return existing.some(
-      (m) =>
-        (m.meta as { source?: unknown } | null)?.source === 'system_operator',
+      (m) => (m.meta as { source?: unknown } | null)?.source === 'system_operator',
     );
   }
 
@@ -380,10 +351,7 @@ export class DriverStoreService {
   }
 
   /** Clear only a host-backstop retry park for this lane; leave session-limit parks untouched. */
-  async clearRetrySessionResume(
-    jobId: string,
-    lane: 'main' | 'build',
-  ): Promise<void> {
+  async clearRetrySessionResume(jobId: string, lane: 'main' | 'build'): Promise<void> {
     await this.jobs
       .createQueryBuilder()
       .update(JobEntity)
@@ -560,9 +528,7 @@ export class DriverStoreService {
     reason: string,
   ): Promise<'posted' | 'not-parked' | 'already-open'> {
     return this.dataSource.transaction(async (m) => {
-      const job = await m
-        .getRepository(JobEntity)
-        .findOne({ where: { id: jobId } });
+      const job = await m.getRepository(JobEntity).findOne({ where: { id: jobId } });
       if (!job || job.status !== 'awaiting_ship_review') return 'not-parked';
       const messages = m.getRepository(TranscriptMessageEntity);
       const existing = await messages.find({
@@ -572,9 +538,7 @@ export class DriverStoreService {
       // rewritten to a `verdict_card`). If one is live, don't stack a second.
       if (
         existing.some(
-          (row) =>
-            (row.card as Record<string, unknown> | null)?.['type'] ===
-            'approval_card',
+          (row) => (row.card as Record<string, unknown> | null)?.['type'] === 'approval_card',
         )
       ) {
         return 'already-open';
@@ -589,10 +553,7 @@ export class DriverStoreService {
           text: reason || 'Amend build?',
           kind: 'card',
           ts: `amend-proposal:${jobId}`,
-          card: webAmendProposalCard({ jobId, reason }) as unknown as Record<
-            string,
-            unknown
-          >,
+          card: webAmendProposalCard({ jobId, reason }) as unknown as Record<string, unknown>,
         }),
       );
       return 'posted';
@@ -605,10 +566,7 @@ export class DriverStoreService {
    * carrying `verdictLine`. Idempotent: already-neutralized rows (`verdict_card`) are skipped. Does NOT
    * touch job status (the Approve path's retract handles that; Dismiss leaves the gate parked).
    */
-  async neutralizeAmendProposal(
-    jobId: string,
-    verdictLine: string,
-  ): Promise<void> {
+  async neutralizeAmendProposal(jobId: string, verdictLine: string): Promise<void> {
     const rows = await this.messages.find({
       where: { job_id: jobId, ts: `amend-proposal:${jobId}`, kind: 'card' },
     });
@@ -616,15 +574,11 @@ export class DriverStoreService {
       const card = row.card as Record<string, unknown> | null;
       if (card?.['type'] !== 'approval_card') continue;
       const title = String(card?.['title'] ?? 'Amend build?');
-      const verdict = verdictLine.toLowerCase().includes('dismiss')
-        ? 'dismissed'
-        : 'approved';
-      row.card = webVerdictCard(
-        jobId,
-        title,
-        verdict,
-        verdictLine,
-      ) as unknown as Record<string, unknown>;
+      const verdict = verdictLine.toLowerCase().includes('dismiss') ? 'dismissed' : 'approved';
+      row.card = webVerdictCard(jobId, title, verdict, verdictLine) as unknown as Record<
+        string,
+        unknown
+      >;
       await this.messages.save(row);
     }
   }
@@ -681,12 +635,10 @@ export class DriverStoreService {
       outcome === 'merged'
         ? (['merged', '✅ Merged.'] as const)
         : (['expired', 'No longer ready to merge.'] as const);
-    row.card = webVerdictCard(
-      jobId,
-      title,
-      verdict,
-      verdictLine,
-    ) as unknown as Record<string, unknown>;
+    row.card = webVerdictCard(jobId, title, verdict, verdictLine) as unknown as Record<
+      string,
+      unknown
+    >;
     await this.messages.save(row);
   }
 
@@ -697,11 +649,7 @@ export class DriverStoreService {
   }
 
   /** Record the opened PR (url + number) + flip the thread to its terminal `done`. */
-  async setPrReady(
-    jobId: string,
-    prUrl: string,
-    prNumber?: number,
-  ): Promise<void> {
+  async setPrReady(jobId: string, prUrl: string, prNumber?: number): Promise<void> {
     await this.jobs.update(
       { id: jobId },
       {
@@ -719,9 +667,7 @@ export class DriverStoreService {
   // ── decision record ────────────────────────────────────────────────────────────────────────────
 
   /** The locked decision record for a thread — the planner + gate's grounding. Null if none. */
-  async decisionRecord(
-    decisionRecordId: string | null,
-  ): Promise<DecisionRecord | null> {
+  async decisionRecord(decisionRecordId: string | null): Promise<DecisionRecord | null> {
     if (!decisionRecordId) return null;
     const row = await this.records.findOne({ where: { id: decisionRecordId } });
     return row ? toRecord(row) : null;
@@ -748,8 +694,7 @@ export class DriverStoreService {
       .innerJoin(ThreadGroupEntity, 's', 's.id = t.thread_group_id')
       .where('t.job_id = :jobId', { jobId })
       .orderBy('t.ordinal', 'ASC');
-    if (activeRecordId)
-      qb.andWhere('s.decision_record_id = :activeRecordId', { activeRecordId });
+    if (activeRecordId) qb.andWhere('s.decision_record_id = :activeRecordId', { activeRecordId });
     else qb.andWhere('s.decision_record_id IS NULL');
     const rows = await qb.getMany();
     return rows.map(toThread);
@@ -759,10 +704,7 @@ export class DriverStoreService {
     await this.threads.update({ id: threadId }, { status });
   }
 
-  async setThreadCondition(
-    threadId: string,
-    condition: ThreadCondition,
-  ): Promise<void> {
+  async setThreadCondition(threadId: string, condition: ThreadCondition): Promise<void> {
     await this.threads.update({ id: threadId }, { condition });
   }
 
@@ -772,14 +714,8 @@ export class DriverStoreService {
    * read-back then returns whatever actually landed so every drive converges on the same `start_sha..HEAD`
    * review range. Idempotent — a second call with the row already set is a no-op returning the stored sha.
    */
-  async ensureThreadStartSha(
-    threadId: string,
-    candidate: string,
-  ): Promise<string> {
-    await this.threads.update(
-      { id: threadId, start_sha: IsNull() },
-      { start_sha: candidate },
-    );
+  async ensureThreadStartSha(threadId: string, candidate: string): Promise<string> {
+    await this.threads.update({ id: threadId, start_sha: IsNull() }, { start_sha: candidate });
     const row = await this.threads.findOne({ where: { id: threadId } });
     return row?.start_sha ?? candidate;
   }
@@ -818,18 +754,11 @@ export class DriverStoreService {
     if (!thread) return;
     const config = isRecord(thread.config) ? thread.config : {};
     const priorPeak =
-      typeof config.contextTokensPeak === 'number'
-        ? config.contextTokensPeak
-        : null;
-    const nextPeak =
-      contextTokensPeak != null
-        ? Math.max(priorPeak ?? 0, contextTokensPeak)
-        : null;
+      typeof config.contextTokensPeak === 'number' ? config.contextTokensPeak : null;
+    const nextPeak = contextTokensPeak != null ? Math.max(priorPeak ?? 0, contextTokensPeak) : null;
     const patch = {
       ...(sessionId != null ? { session_id: sessionId } : {}),
-      ...(nextPeak != null
-        ? { config: { ...config, contextTokensPeak: nextPeak } }
-        : {}),
+      ...(nextPeak != null ? { config: { ...config, contextTokensPeak: nextPeak } } : {}),
     };
     if (Object.keys(patch).length === 0) return;
     await this.threads.update({ id: anchorStepId }, patch);
@@ -855,10 +784,7 @@ export class DriverStoreService {
    * `foldContextPeak`). Written once per group on the first build leg — including an empty `{skills:[]}` so a
    * group with no relevant skill is not re-selected on every subsequent leg.
    */
-  async persistGroupSkillNudge(
-    threadGroupId: string,
-    nudge: SkillNudge,
-  ): Promise<void> {
+  async persistGroupSkillNudge(threadGroupId: string, nudge: SkillNudge): Promise<void> {
     const g = await this.threadGroups.findOne({
       where: { id: threadGroupId },
       select: { id: true, config: true },
@@ -987,9 +913,7 @@ export class DriverStoreService {
       where: { id: anchorStepId },
       select: { id: true, config: true },
     });
-    const seed = isRecord(thread?.config)
-      ? thread!.config.pendingLegSeed
-      : null;
+    const seed = isRecord(thread?.config) ? thread!.config.pendingLegSeed : null;
     return typeof seed === 'string' ? seed : null;
   }
 
@@ -1035,33 +959,20 @@ export class DriverStoreService {
   }
 
   /** Persist the just-in-time plan prose + the prior thread's handoff onto the thread. */
-  async setThreadPlan(
-    threadId: string,
-    plan: string,
-    handoffIn: string | null,
-  ): Promise<void> {
-    await this.threads.update(
-      { id: threadId },
-      { plan, handoff_in: handoffIn },
-    );
+  async setThreadPlan(threadId: string, plan: string, handoffIn: string | null): Promise<void> {
+    await this.threads.update({ id: threadId }, { plan, handoff_in: handoffIn });
   }
 
   /**
    * Persist the thread's repo-orientation cheat-sheet (captured by the plan turn). Kept separate from
    * {@link setThreadPlan} so a later plan-prose rewrite (the review→revise pass) can't clobber it.
    */
-  async setThreadOrientation(
-    threadId: string,
-    orientation: string,
-  ): Promise<void> {
+  async setThreadOrientation(threadId: string, orientation: string): Promise<void> {
     await this.threads.update({ id: threadId }, { orientation });
   }
 
   /** Record the thread's handoff note for the next thread (set when the thread is done). */
-  async setThreadHandoffOut(
-    threadId: string,
-    handoffOut: string,
-  ): Promise<void> {
+  async setThreadHandoffOut(threadId: string, handoffOut: string): Promise<void> {
     await this.threads.update({ id: threadId }, { handoff_out: handoffOut });
   }
 
@@ -1069,10 +980,7 @@ export class DriverStoreService {
    *  Idempotent on note text so a re-driven turn re-recording the same fix doesn't duplicate it — the durable
    *  source behind the `/context/generated/deviations.md` projection. Single host writer per thread, so a plain
    *  read-modify-write is race-free. */
-  async recordDeviation(
-    threadId: string,
-    entry: DeviationEntry,
-  ): Promise<void> {
+  async recordDeviation(threadId: string, entry: DeviationEntry): Promise<void> {
     const row = await this.threads.findOne({
       where: { id: threadId },
       select: { id: true, deviations: true },
@@ -1080,19 +988,14 @@ export class DriverStoreService {
     if (!row) return;
     const current = Array.isArray(row.deviations) ? row.deviations : [];
     if (current.some((d) => d.note.trim() === entry.note.trim())) return;
-    await this.threads.update(
-      { id: threadId },
-      { deviations: [...current, entry] },
-    );
+    await this.threads.update({ id: threadId }, { deviations: [...current, entry] });
   }
 
   /** Every thread of a job that recorded at least one inline deviation, ordered for the `deviations.md`
    *  projection (which re-renders the whole file from this — never appends). */
   async getJobDeviations(
     jobId: string,
-  ): Promise<
-    { ordinal: number; brief: string; deviations: DeviationEntry[] }[]
-  > {
+  ): Promise<{ ordinal: number; brief: string; deviations: DeviationEntry[] }[]> {
     const rows = await this.threads.find({
       where: { job_id: jobId },
       select: { id: true, ordinal: true, brief: true, deviations: true },
@@ -1110,10 +1013,7 @@ export class DriverStoreService {
   // ── typed terminal record (ADR 0004: the thread ASSERTS its outcome; the driver reads it) ──────────
 
   /** Persist the orchestrator's typed done-report (from `complete_thread`). */
-  async recordThreadTermination(
-    threadId: string,
-    record: ThreadTerminalRecord,
-  ): Promise<void> {
+  async recordThreadTermination(threadId: string, record: ThreadTerminalRecord): Promise<void> {
     await this.threads.update({ id: threadId }, { terminal_record: record });
   }
 
@@ -1125,9 +1025,7 @@ export class DriverStoreService {
 
   /** Read the thread's terminal record FRESH from the DB (the tool wrote it mid-turn; the in-memory thread
    *  object is stale). Null when the turn never asserted an outcome → the driver treats it as `incomplete`. */
-  async getTerminalRecord(
-    threadId: string,
-  ): Promise<ThreadTerminalRecord | null> {
+  async getTerminalRecord(threadId: string): Promise<ThreadTerminalRecord | null> {
     const row = await this.threads.findOne({
       where: { id: threadId },
       select: { id: true, terminal_record: true },
@@ -1162,10 +1060,7 @@ export class DriverStoreService {
    *  `auth_retry_attempts` iff still below `cap`, stamping `retry_last_attempt_at`. Returns `{ok:true, used}`
    *  on success, else `{ok:false, used:cap}` (budget exhausted). Durable so a restart/crash-loop can't
    *  re-grant a fresh budget. */
-  async claimAuthRetryAttempt(
-    jobId: string,
-    cap: number,
-  ): Promise<{ ok: boolean; used: number }> {
+  async claimAuthRetryAttempt(jobId: string, cap: number): Promise<{ ok: boolean; used: number }> {
     const res = await this.jobs
       .createQueryBuilder()
       .update(JobEntity)
@@ -1218,9 +1113,7 @@ export class DriverStoreService {
       .andWhere('session_limit_text_misfires < :cap', { cap })
       .returning('session_limit_text_misfires')
       .execute();
-    const used = res.raw?.[0]?.session_limit_text_misfires as
-      | number
-      | undefined;
+    const used = res.raw?.[0]?.session_limit_text_misfires as number | undefined;
     return used != null ? { ok: true, used } : { ok: false, used: cap };
   }
 
@@ -1321,10 +1214,7 @@ export class DriverStoreService {
 
   /** Persist the FULL `ReviewFinding[]` a `review_lens` produced onto its own row — the post_review child
    *  reads the complete findings off its siblings (dedupe + severity-filter → the fix prompt). */
-  async setThreadReviewFindings(
-    threadId: string,
-    findings: ReviewFinding[],
-  ): Promise<void> {
+  async setThreadReviewFindings(threadId: string, findings: ReviewFinding[]): Promise<void> {
     await this.threads.update({ id: threadId }, { review_findings: findings });
   }
 
@@ -1346,9 +1236,7 @@ export class DriverStoreService {
    * own `session_id` directly (relocated off the old `steps`/`build_legs`), so it works even for an
    * `incomplete` halt whose `terminal_record` is null. `undefined` when the thread never got a session.
    */
-  async resolveSessionAnchor(
-    threadId: string,
-  ): Promise<SessionAnchor | undefined> {
+  async resolveSessionAnchor(threadId: string): Promise<SessionAnchor | undefined> {
     const thread = await this.threads.findOne({
       where: { id: threadId },
       select: { id: true, thread_group_id: true, session_id: true },
@@ -1364,24 +1252,14 @@ export class DriverStoreService {
    * Lock a thread's steps — a no-op now that a thread's single step IS the thread row (the row was created
    * upstream when the thread was materialized). Returns the synthetic step, so callers keep the same shape.
    */
-  async lockSteps(
-    thread: DriverThread,
-    _planned: PlannedStep[],
-  ): Promise<Step[]> {
+  async lockSteps(thread: DriverThread, _planned: PlannedStep[]): Promise<Step[]> {
     return this.stepsForThread(thread.id);
   }
 
   /** Advance the (synthetic) step's cursor — maps the `StepStatus` back to the owning thread's `status`. The
    *  `stage` intra-step cursor has no durable home anymore and is ignored. */
-  async setStepState(
-    stepId: string,
-    _stage: string,
-    status: StepStatus,
-  ): Promise<void> {
-    await this.threads.update(
-      { id: stepId },
-      { status: stepStatusToThreadStatus(status) },
-    );
+  async setStepState(stepId: string, _stage: string, status: StepStatus): Promise<void> {
+    await this.threads.update({ id: stepId }, { status: stepStatusToThreadStatus(status) });
   }
 
   /** Stamp the thread's commit marker (the review-diff head) the instant its batch commits. */
@@ -1440,15 +1318,12 @@ export class DriverStoreService {
       where: { id: jobId, org_id: orgId },
     });
     if (!job) return { status: 'no_job' };
-    const blockedBy =
-      job.status === 'blocked' ? await this.jobDeps.blockersOf(jobId) : [];
+    const blockedBy = job.status === 'blocked' ? await this.jobDeps.blockersOf(jobId) : [];
     // The pending body a born-blocked job will start on when it unblocks (its queued opening BRIEF), or the
     // "blocked" note for a mid-flight block — read from the held `main`-lane seed queue, drained on wake.
     // Surfaced only while blocked so the web can preview it in the blocked overlay.
     const blockedSeedMessage =
-      job.status === 'blocked'
-        ? await this.stimulusStore.pendingBlockedPreview(jobId)
-        : null;
+      job.status === 'blocked' ? await this.stimulusStore.pendingBlockedPreview(jobId) : null;
     // An `open` job (chatting/planning, never entered the build lifecycle) has no pipeline — but its brain can
     // already be keeping a task list on its (always-present) planning thread group, and the navigator's Main row shows
     // it. Ride the no_job payload so the web isn't blind to it before a plan exists.
@@ -1458,9 +1333,7 @@ export class DriverStoreService {
         order: { ordinal: 'ASC' },
       });
       const mainTasks = planningThreadGroup
-        ? (await this.tasksForThreadGroup(planningThreadGroup.id)).map(
-            toTaskItem,
-          )
+        ? (await this.tasksForThreadGroup(planningThreadGroup.id)).map(toTaskItem)
         : [];
       return {
         status: 'no_job',
@@ -1472,9 +1345,7 @@ export class DriverStoreService {
         autoApproveMode: job.auto_approve_mode ?? 'off',
         autoMerge: job.auto_merge ?? false,
         mergeReady: prMergeReady(job),
-        mergeValue: prMergeReady(job)
-          ? JSON.stringify({ jobId: job.id })
-          : null,
+        mergeValue: prMergeReady(job) ? JSON.stringify({ jobId: job.id }) : null,
         blockedBy,
         blockedSeedMessage,
       };
@@ -1535,9 +1406,7 @@ export class DriverStoreService {
 
     const mapThreadGroup = (s: ThreadGroupEntity) => {
       const threadGroupThreads = threadsByThreadGroup.get(s.id) ?? [];
-      const roots = threadGroupThreads.filter(
-        (t) => t.parent_thread_id == null,
-      );
+      const roots = threadGroupThreads.filter((t) => t.parent_thread_id == null);
       return {
         id: s.id,
         kind: s.kind,
@@ -1557,14 +1426,11 @@ export class DriverStoreService {
     // groups are surfaced separately as browsable history.
     const activeRecordId = job.decision_record_id;
     const activeThreadGroups = threadGroups.filter(
-      (s) =>
-        s.decision_record_id == null || s.decision_record_id === activeRecordId,
+      (s) => s.decision_record_id == null || s.decision_record_id === activeRecordId,
     );
     // The PLAN REVIEW as a first-class navigator row (the Codex review dialogue Main communicates with) —
     // derived from the plan_review thread group's single thread's status. Null when no plan_review thread group exists.
-    const planReviewThreadGroup = threadGroups.find(
-      (s) => s.kind === 'plan_review',
-    );
+    const planReviewThreadGroup = threadGroups.find((s) => s.kind === 'plan_review');
     const planReviewThread = planReviewThreadGroup
       ? (threadsByThreadGroup.get(planReviewThreadGroup.id) ?? [])[0]
       : undefined;
@@ -1675,9 +1541,7 @@ export class DriverStoreService {
   /** Every thread of a thread group as the driver's {@link DriverThread} domain shape, in execution order — the
    *  thread-group-driven drive loop reads this LIVE between builder iterations (a leg rotation appends a fresh
    *  builder row mid-drive, so a start-of-thread-group snapshot goes stale). */
-  async driverThreadsForThreadGroup(
-    threadGroupId: string,
-  ): Promise<DriverThread[]> {
+  async driverThreadsForThreadGroup(threadGroupId: string): Promise<DriverThread[]> {
     const rows = await this.threads.find({
       where: { thread_group_id: threadGroupId },
       order: { ordinal: 'ASC' },
@@ -1722,8 +1586,7 @@ export class DriverStoreService {
     decisionRecordId?: string | null;
     config?: Record<string, unknown>;
   }): Promise<ThreadGroupEntity> {
-    const ordinal =
-      (await this.maxThreadGroupOrdinal(input.jobId)) + ORDINAL_GAP;
+    const ordinal = (await this.maxThreadGroupOrdinal(input.jobId)) + ORDINAL_GAP;
     return this.threadGroups.save(
       this.threadGroups.create({
         job_id: input.jobId,
@@ -1758,8 +1621,7 @@ export class DriverStoreService {
     parentThreadId?: string | null;
   }): Promise<ThreadEntity> {
     const ordinal =
-      input.ordinal ??
-      (await this.maxThreadOrdinal(input.threadGroupId)) + ORDINAL_GAP;
+      input.ordinal ?? (await this.maxThreadOrdinal(input.threadGroupId)) + ORDINAL_GAP;
     return this.threads.save(
       this.threads.create({
         thread_group_id: input.threadGroupId,
@@ -1917,8 +1779,7 @@ export class DriverStoreService {
     ordinal?: number;
     blockedBy?: string[];
   }): Promise<TaskEntity> {
-    const ordinal =
-      input.ordinal ?? (await this.maxTaskOrdinal(input.threadGroupId)) + 1;
+    const ordinal = input.ordinal ?? (await this.maxTaskOrdinal(input.threadGroupId)) + 1;
     return this.tasks.save(
       this.tasks.create({
         thread_group_id: input.threadGroupId,
@@ -2129,8 +1990,7 @@ function isSkillNudge(value: unknown): value is SkillNudge {
   if (!isRecord(value) || !Array.isArray(value.skills)) return false;
   if (typeof value.at !== 'string') return false;
   return value.skills.every(
-    (s) =>
-      isRecord(s) && typeof s.name === 'string' && typeof s.reason === 'string',
+    (s) => isRecord(s) && typeof s.name === 'string' && typeof s.reason === 'string',
   );
 }
 
@@ -2143,9 +2003,7 @@ function toReviewChild(row: ThreadEntity): ReviewChildThread {
     config: (row.config as Record<string, unknown>) ?? {},
     status: row.status as ThreadStatus,
     condition: (row.condition as ThreadCondition) ?? 'none',
-    reviewFindings: Array.isArray(row.review_findings)
-      ? row.review_findings
-      : null,
+    reviewFindings: Array.isArray(row.review_findings) ? row.review_findings : null,
   };
 }
 
@@ -2169,10 +2027,7 @@ interface PipelineReviewChild {
  * `autofix:<parentId>:<lensId>` for a lens, `autofix:<parentId>:fix` for the fix pass (the SAME lanes the
  * turns stream on). The web uses these as bare child-thread nodes (no synthetic `rev:`/`fix:` ids).
  */
-function toPipelineChild(
-  c: ThreadEntity,
-  parentId: string,
-): PipelineReviewChild {
+function toPipelineChild(c: ThreadEntity, parentId: string): PipelineReviewChild {
   const lensId = (c.config as { lensId?: string })?.lensId;
   return {
     id: c.id,
@@ -2181,9 +2036,7 @@ function toPipelineChild(
     status: c.status,
     condition: c.condition,
     ...(lensId ? { lensId } : {}),
-    findings: Array.isArray(c.review_findings)
-      ? c.review_findings.length
-      : null,
+    findings: Array.isArray(c.review_findings) ? c.review_findings.length : null,
     lane:
       c.role === 'review_agent'
         ? laneFor('autofix-lens', parentId, lensId ?? 'review')

@@ -125,25 +125,19 @@ describe('GithubPrService.openPullRequest', () => {
   });
 
   it('throws with GitHub status + detail (never the token) on other errors', async () => {
-    const { impl } = fakeFetch([
-      { status: 403, body: { message: 'Resource not accessible' } },
-    ]);
+    const { impl } = fakeFetch([{ status: 403, body: { message: 'Resource not accessible' } }]);
     const svc = new GithubPrService();
     svc.fetchImpl = impl;
     await expect(svc.openPullRequest('SECRET', prArgs)).rejects.toThrow(
       /403.*Resource not accessible/,
     );
-    await expect(svc.openPullRequest('SECRET', prArgs)).rejects.not.toThrow(
-      /SECRET/,
-    );
+    await expect(svc.openPullRequest('SECRET', prArgs)).rejects.not.toThrow(/SECRET/);
   });
 });
 
 describe('GithubPrService.closePullRequest', () => {
   it('PATCHes state=closed with the token only in the Authorization header', async () => {
-    const { impl, calls } = fakeFetch([
-      { status: 200, body: { number: 9, state: 'closed' } },
-    ]);
+    const { impl, calls } = fakeFetch([{ status: 200, body: { number: 9, state: 'closed' } }]);
     const svc = new GithubPrService();
     svc.fetchImpl = impl;
     await svc.closePullRequest('TOK123', {
@@ -163,9 +157,7 @@ describe('GithubPrService.closePullRequest', () => {
   });
 
   it('throws with GitHub status + detail (never the token) on a non-OK response', async () => {
-    const { impl } = fakeFetch([
-      { status: 403, body: { message: 'Resource not accessible' } },
-    ]);
+    const { impl } = fakeFetch([{ status: 403, body: { message: 'Resource not accessible' } }]);
     const svc = new GithubPrService();
     svc.fetchImpl = impl;
     await expect(
@@ -253,9 +245,7 @@ describe('GithubPrService.mergePullRequest', () => {
   });
 
   it("maps a 409 to reason:'sha_mismatch'", async () => {
-    const { impl } = fakeFetch([
-      { status: 409, body: { message: 'sha wonky' } },
-    ]);
+    const { impl } = fakeFetch([{ status: 409, body: { message: 'sha wonky' } }]);
     const svc = new GithubPrService();
     svc.fetchImpl = impl;
     const res = await svc.mergePullRequest('TOK', {
@@ -317,9 +307,7 @@ describe('GithubPrService.deleteBranch', () => {
         branch: 'atlas/feature',
       }),
     ).resolves.toBeUndefined();
-    expect(calls[0].url).toBe(
-      'https://api.github.com/repos/o/r/git/refs/heads/atlas/feature',
-    );
+    expect(calls[0].url).toBe('https://api.github.com/repos/o/r/git/refs/heads/atlas/feature');
     expect(calls[0].init?.method).toBe('DELETE');
   });
 
@@ -414,26 +402,17 @@ describe('GithubPrService.listBranches', () => {
     ]);
     const svc = new GithubPrService();
     svc.fetchImpl = impl;
-    expect(await svc.listBranches('T', 'acme', 'app')).toEqual([
-      'main',
-      'develop',
-    ]);
+    expect(await svc.listBranches('T', 'acme', 'app')).toEqual(['main', 'develop']);
     // A short first page (< 100) means no second request.
     expect(calls).toHaveLength(1);
-    expect(calls[0].url).toContain(
-      '/repos/acme/app/branches?per_page=100&page=1',
-    );
+    expect(calls[0].url).toContain('/repos/acme/app/branches?per_page=100&page=1');
   });
 
   it('throws with the GitHub status (never the token) on a non-OK response', async () => {
-    const { impl } = fakeFetch([
-      { status: 403, body: { message: 'forbidden' } },
-    ]);
+    const { impl } = fakeFetch([{ status: 403, body: { message: 'forbidden' } }]);
     const svc = new GithubPrService();
     svc.fetchImpl = impl;
-    await expect(svc.listBranches('TOK', 'acme', 'app')).rejects.toThrow(
-      /403.*forbidden/,
-    );
+    await expect(svc.listBranches('TOK', 'acme', 'app')).rejects.toThrow(/403.*forbidden/);
   });
 });
 
@@ -475,9 +454,7 @@ describe('GithubPrService.ensureWebhook', () => {
     const { impl, calls } = fakeFetch([
       {
         status: 200,
-        body: [
-          { id: 42, config: { url: 'https://api.example.com/ingress/github' } },
-        ],
+        body: [{ id: 42, config: { url: 'https://api.example.com/ingress/github' } }],
       },
       { status: 200, body: { id: 42 } },
     ]);
@@ -514,9 +491,7 @@ describe('GithubPrService.ensureWebhook', () => {
     const { impl } = fakeFetch([
       {
         status: 200,
-        body: [
-          { id: 42, config: { url: 'https://api.example.com/ingress/github' } },
-        ],
+        body: [{ id: 42, config: { url: 'https://api.example.com/ingress/github' } }],
       },
       { status: 403, body: {} },
     ]);
@@ -554,9 +529,7 @@ describe('GithubPrService.getAuthenticatedUser', () => {
   });
 
   it('returns null on a non-OK (401) response; the token never appears in output', async () => {
-    const { impl } = fakeFetch([
-      { status: 401, body: { message: 'Bad credentials' } },
-    ]);
+    const { impl } = fakeFetch([{ status: 401, body: { message: 'Bad credentials' } }]);
     const svc = new GithubPrService();
     svc.fetchImpl = impl;
     const result = await svc.getAuthenticatedUser('SECRET');
@@ -627,9 +600,7 @@ describe('GithubPrService conditional GET (ETag + rate-limit)', () => {
 
     const before = calls.length;
     // No cache entry exists → a subsequent poll GET throws RateLimitedError without fetching.
-    await expect(svc.getPullState('TOK', pd)).rejects.toBeInstanceOf(
-      RateLimitedError,
-    );
+    await expect(svc.getPullState('TOK', pd)).rejects.toBeInstanceOf(RateLimitedError);
     expect(calls.length).toBe(before);
   });
 
@@ -739,9 +710,7 @@ describe('GithubPrService.listOpenPullMergeability', () => {
           data: {
             repository: {
               pullRequests: {
-                nodes: [
-                  { number: 3, mergeStateStatus: 'BLOCKED', headRefOid: null },
-                ],
+                nodes: [{ number: 3, mergeStateStatus: 'BLOCKED', headRefOid: null }],
                 pageInfo: { endCursor: null, hasNextPage: false },
               },
             },
@@ -815,9 +784,7 @@ describe('GithubPrService.listOpenPullMergeability', () => {
           data: {
             repository: {
               pullRequests: {
-                nodes: [
-                  { number: 1, mergeStateStatus: 'CLEAN', headRefOid: 'sha1' },
-                ],
+                nodes: [{ number: 1, mergeStateStatus: 'CLEAN', headRefOid: 'sha1' }],
                 pageInfo: { endCursor: null, hasNextPage: false },
               },
             },
@@ -867,9 +834,7 @@ describe('GithubPrService.listOpenPullMergeability', () => {
           data: {
             repository: {
               pullRequests: {
-                nodes: [
-                  { number: 1, mergeStateStatus: 'CLEAN', headRefOid: 'sha1' },
-                ],
+                nodes: [{ number: 1, mergeStateStatus: 'CLEAN', headRefOid: 'sha1' }],
                 pageInfo: { endCursor: 'CUR', hasNextPage: true },
               },
             },
@@ -886,9 +851,7 @@ describe('GithubPrService.listOpenPullMergeability', () => {
           data: {
             repository: {
               pullRequests: {
-                nodes: [
-                  { number: 2, mergeStateStatus: 'DIRTY', headRefOid: 'sha2' },
-                ],
+                nodes: [{ number: 2, mergeStateStatus: 'DIRTY', headRefOid: 'sha2' }],
                 pageInfo: { endCursor: null, hasNextPage: false },
               },
             },

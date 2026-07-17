@@ -4,13 +4,10 @@ import { Raw, Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity } from '../persistence/entities';
 // Direct port path (NOT the '../surface' barrel) to stay clear of a SurfaceModule ↔ DriverModule cycle.
+import { retryResumeNudge, sessionLimitResetNudge } from '../prompt-kit/harness/seed-catalog';
 import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
 import { DriverStoreService } from './driver-store.service';
 import { ThreadDriver } from './thread-driver.service';
-import {
-  retryResumeNudge,
-  sessionLimitResetNudge,
-} from '../prompt-kit/harness/seed-catalog';
 
 /**
  * The SESSION-RESUME SWEEP — the auto-resume half of "park a lane on a Claude session limit, then un-park it
@@ -44,9 +41,7 @@ export class SessionResumeSweep {
   async tick(): Promise<number> {
     const due = await this.jobs.find({
       where: {
-        session_resume_at: Raw(
-          (alias) => `${alias} IS NOT NULL AND ${alias} <= now()`,
-        ),
+        session_resume_at: Raw((alias) => `${alias} IS NOT NULL AND ${alias} <= now()`),
       },
     });
     let resumed = 0;

@@ -11,14 +11,9 @@ import { DecisionApprovalService } from '../decision-approval.service';
 class FakeSurface implements ChatSurface {
   readonly name = 'fake';
   readonly inbound$ = new Subject<InboundChatMessage>();
-  readonly posts: Array<{ channel: string; text: string; opts?: PostOptions }> =
-    [];
+  readonly posts: Array<{ channel: string; text: string; opts?: PostOptions }> = [];
   private seq = 0;
-  async post(
-    channel: string,
-    text: string,
-    opts?: PostOptions,
-  ): Promise<string | undefined> {
+  async post(channel: string, text: string, opts?: PostOptions): Promise<string | undefined> {
     this.posts.push({ channel, text, ...(opts ? { opts } : {}) });
     return `card-${++this.seq}`;
   }
@@ -46,10 +41,7 @@ describe('DecisionApprovalService', () => {
   afterEach(() => svc.onModuleDestroy());
 
   it('posts the approval card (with blocks) into the thread', async () => {
-    const handle = await svc.request(
-      { channel: 'C1', threadTs: 'root-1' },
-      CARD,
-    );
+    const handle = await svc.request({ channel: 'C1', threadTs: 'root-1' }, CARD);
     expect(surface.posts).toHaveLength(1);
     expect(surface.posts[0]?.channel).toBe('C1');
     expect(surface.posts[0]?.opts?.threadTs).toBe('root-1');
@@ -59,10 +51,7 @@ describe('DecisionApprovalService', () => {
   });
 
   it('resolves the verdict promise on approve', async () => {
-    const handle = await svc.request(
-      { channel: 'C1', threadTs: 'root-1' },
-      CARD,
-    );
+    const handle = await svc.request({ channel: 'C1', threadTs: 'root-1' }, CARD);
     expect(svc.resolve('job-1', 'approve', 'U-dennis')).toBe(true);
     const resolution = await handle.verdict;
     expect(resolution.verdict).toBe('approve');
@@ -102,9 +91,7 @@ describe('DecisionApprovalService', () => {
 
   it('threads the clicked decisionRecordId (the version pin) into the resolved ApprovalResolution', async () => {
     const handle = await svc.request({ channel: 'C1' }, CARD);
-    expect(
-      svc.resolve('job-1', 'approve', 'U-dennis', undefined, 'dr-clicked'),
-    ).toBe(true);
+    expect(svc.resolve('job-1', 'approve', 'U-dennis', undefined, 'dr-clicked')).toBe(true);
     const resolution = await handle.verdict;
     expect(resolution.clickedDecisionRecordId).toBe('dr-clicked');
   });

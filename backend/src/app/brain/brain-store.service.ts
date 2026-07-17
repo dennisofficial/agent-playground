@@ -1,54 +1,37 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import {
-  DataSource,
-  In,
-  IsNull,
-  MoreThan,
-  Not,
-  type ObjectLiteral,
-  Repository,
-} from 'typeorm';
-import type {
-  Decision,
-  Job,
-  JobActivity,
-  JobKind,
-  JobStatus,
-} from '@shared/domain';
+import type { Decision, Job, JobActivity, JobKind, JobStatus } from '@shared/domain';
 import { nextDecisionId } from '@shared/domain';
-import type { AutoApproveMode } from '@workspace/shared';
-import { nextQuestionId, WebQuestionCard } from '../surface/web-question-card';
-import {
-  nextFileRequestId,
-  WebFileRequestCard,
-} from '../surface/web-file-request-card';
-import { renderPlan } from '../prompt-kit/messages/render-plan';
-import type { PlannedStep } from '../prompt-kit/messages/render-plan';
 import type { AgentMessage } from '@shared/prompt-kit/message';
-import { DB_CONNECTION } from '../persistence/database.module';
-import { writeSystemChunk } from '../persistence/system-chunk-writer';
+import { coerceThreadType } from '@shared/thread-kind/thread-types';
+import type { AutoApproveMode } from '@workspace/shared';
+import { DataSource, In, IsNull, MoreThan, Not, type ObjectLiteral, Repository } from 'typeorm';
 import { JobBootstrapService } from '../job-bootstrap/job-bootstrap.service';
+import { JobDependencyService } from '../job-deps/job-dependency.service';
+import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
-  TranscriptMessageEntity,
-  ThreadGroupEntity,
-  ThreadEntity,
   InboundMessageEntity,
   JobEntity,
   OrganizationEntity,
+  ThreadEntity,
+  ThreadGroupEntity,
+  TranscriptMessageEntity,
 } from '../persistence/entities';
-import type { TranscriptLine } from './brain.types';
-import { WebSecretInputCard } from '../surface/web-secret-input-card';
-import { WebMcpProposalCard } from '../surface/web-mcp-proposal-card';
-import { WebConventionProposalCard } from '../surface/web-convention-proposal-card';
+import { writeSystemChunk } from '../persistence/system-chunk-writer';
+import type { PlannedStep } from '../prompt-kit/messages/render-plan';
+import { renderPlan } from '../prompt-kit/messages/render-plan';
 import { WebConventionEditProposalCard } from '../surface/web-convention-edit-proposal-card';
-import { WebSkillProposalCard } from '../surface/web-skill-proposal-card';
+import { WebConventionProposalCard } from '../surface/web-convention-proposal-card';
+import { nextFileRequestId, WebFileRequestCard } from '../surface/web-file-request-card';
+import { WebMcpProposalCard } from '../surface/web-mcp-proposal-card';
+import { nextQuestionId, WebQuestionCard } from '../surface/web-question-card';
+import { WebSecretInputCard } from '../surface/web-secret-input-card';
 import { WebSkillEditAccessCard } from '../surface/web-skill-edit-access-card';
-import { JobTitler } from '../titling/job-titler.service';
-import { JobDependencyService } from '../job-deps/job-dependency.service';
-import { coerceThreadType } from '@shared/thread-kind/thread-types';
+import { WebSkillProposalCard } from '../surface/web-skill-proposal-card';
 import { isDriverExecutableKind } from '../thread-kind/registry';
+import { JobTitler } from '../titling/job-titler.service';
+import type { TranscriptLine } from './brain.types';
 
 export type CreateJobAutoMode = {
   approveMode?: Exclude<AutoApproveMode, 'both'>;
@@ -133,8 +116,7 @@ export class BrainStoreService {
   /** The job's planning thread group thread id — the anchor every main-lane message row is stamped onto
    *  (`messages.thread_id` is NOT NULL). Wired in prod via DI; throws loudly if absent at use. */
   private async planningThreadId(jobId: string): Promise<string> {
-    if (!this.jobBootstrap)
-      throw new Error('brain-store: JobBootstrapService not wired');
+    if (!this.jobBootstrap) throw new Error('brain-store: JobBootstrapService not wired');
     return this.jobBootstrap.planningThreadId(jobId);
   }
 
@@ -317,11 +299,7 @@ export class BrainStoreService {
    * summary lives on this durable `messages` row (never cleared, unlike `job_sandboxes.pending_compaction_seed`
    * which is consumed by the next fresh turn), so it stays auditable for the life of the job.
    */
-  async appendCompactionSummary(
-    jobId: string,
-    text: string,
-    summary: string,
-  ): Promise<void> {
+  async appendCompactionSummary(jobId: string, text: string, summary: string): Promise<void> {
     await this.messages.save(
       this.messages.create({
         job_id: jobId,
@@ -469,9 +447,7 @@ export class BrainStoreService {
    *  projection re-renders from (the card rows survive sandbox teardown; the file is a pure re-render). */
   async listClearedBlockCards(
     jobId: string,
-  ): Promise<
-    { threadId: string; reason: string; evidence: string; at: Date }[]
-  > {
+  ): Promise<{ threadId: string; reason: string; evidence: string; at: Date }[]> {
     const rows = await this.messages.find({
       where: { job_id: jobId, kind: 'card' },
       order: { created_at: 'ASC' },
@@ -504,9 +480,7 @@ export class BrainStoreService {
   }
 
   /** Load this thread's card rows, newest-first — small helper for the question-card lookups below. */
-  private async questionCards(
-    jobId: string,
-  ): Promise<TranscriptMessageEntity[]> {
+  private async questionCards(jobId: string): Promise<TranscriptMessageEntity[]> {
     const rows = await this.messages.find({
       where: { job_id: jobId, kind: 'card' },
       order: { created_at: 'DESC' },
@@ -532,9 +506,7 @@ export class BrainStoreService {
    * Ordered by the card's own `answeredAt` (NOT `created_at`) so that with multiple open questions an
    * out-of-order answer attaches the card the operator just answered, not the oldest-created one.
    */
-  async latestAnsweredQuestionCard(
-    jobId: string,
-  ): Promise<TranscriptMessageEntity | null> {
+  async latestAnsweredQuestionCard(jobId: string): Promise<TranscriptMessageEntity | null> {
     const cards = await this.questionCards(jobId);
     const answered = cards.filter((m) => {
       const c = m.card as Record<string, unknown>;
@@ -647,10 +619,7 @@ export class BrainStoreService {
     const cards = await this.questionCards(jobId);
     return cards
       .map((m) => m.card as unknown as WebQuestionCard)
-      .filter(
-        (c) =>
-          c.answer == null && c.withdrawnAt == null && c.origin !== 'build',
-      );
+      .filter((c) => c.answer == null && c.withdrawnAt == null && c.origin !== 'build');
   }
 
   /**
@@ -699,10 +668,7 @@ export class BrainStoreService {
   }
 
   /** Fetch one thread's question-card payload by id (the card's `ts`); null if absent / not a question. */
-  async getQuestionCard(
-    jobId: string,
-    questionId: string,
-  ): Promise<WebQuestionCard | null> {
+  async getQuestionCard(jobId: string, questionId: string): Promise<WebQuestionCard | null> {
     const row = await this.messages.findOne({
       where: { job_id: jobId, ts: questionId, kind: 'card' },
     });
@@ -711,10 +677,7 @@ export class BrainStoreService {
   }
 
   /** Stamp a question card delivered (its answer reached the brain in a turn that actually ran). */
-  async markQuestionDelivered(
-    jobId: string,
-    questionId: string,
-  ): Promise<void> {
+  async markQuestionDelivered(jobId: string, questionId: string): Promise<void> {
     await this.updateCardMessage(jobId, questionId, {
       deliveredAt: new Date().toISOString(),
     });
@@ -826,8 +789,7 @@ export class BrainStoreService {
           },
         });
         const card = open?.card as WebSecretInputCard | undefined;
-        if (card && card.provided_at == null)
-          return { ok: false, alreadyOpen: true };
+        if (card && card.provided_at == null) return { ok: false, alreadyOpen: true };
       }
       await messages.save(
         messages.create({
@@ -843,10 +805,7 @@ export class BrainStoreService {
         }),
       );
       if (input.card.ephemeral) {
-        await threads.update(
-          { id: jobId },
-          { awaiting_secret_id: input.requestId },
-        );
+        await threads.update({ id: jobId }, { awaiting_secret_id: input.requestId });
       } else {
         await threads
           .createQueryBuilder()
@@ -866,10 +825,7 @@ export class BrainStoreService {
   }
 
   /** Fetch one thread's secret-input card by id (the card's `ts`); null if absent / not a secret card. */
-  async getSecretCard(
-    jobId: string,
-    requestId: string,
-  ): Promise<WebSecretInputCard | null> {
+  async getSecretCard(jobId: string, requestId: string): Promise<WebSecretInputCard | null> {
     const row = await this.messages.findOne({
       where: { job_id: jobId, ts: requestId, kind: 'card' },
     });
@@ -905,10 +861,7 @@ export class BrainStoreService {
    * Unlike files, durable/mcp secrets carry the `open_secret_count` needs-you counter, so the provide
    * success must decrement it alongside the `provided_at` stamp. No value is stored on the card.
    */
-  async markSecretProvidedPerCard(
-    jobId: string,
-    requestId: string,
-  ): Promise<void> {
+  async markSecretProvidedPerCard(jobId: string, requestId: string): Promise<void> {
     await this.dataSource.transaction(async (m) => {
       const patch = JSON.stringify({ provided_at: new Date().toISOString() });
       // Only the transition from open → provided decrements the counter (a racing double-submit finds the
@@ -1042,11 +995,7 @@ export class BrainStoreService {
     });
     for (const t of pointed) {
       const card = await this.getSecretCard(t.id, t.awaiting_secret_id!);
-      if (
-        card?.ephemeral === true &&
-        card.provided_at != null &&
-        card.delivered_at == null
-      ) {
+      if (card?.ephemeral === true && card.provided_at != null && card.delivered_at == null) {
         out.push({
           jobId: t.id,
           orgId: t.org_id,
@@ -1120,9 +1069,7 @@ export class BrainStoreService {
   // transcript). No migration: all state lives on the card in the `messages` jsonb.
 
   /** Load this job's file-request card rows, newest-first — ALL of them (open, provided, or withdrawn). */
-  private async fileRequestCards(
-    jobId: string,
-  ): Promise<TranscriptMessageEntity[]> {
+  private async fileRequestCards(jobId: string): Promise<TranscriptMessageEntity[]> {
     const rows = await this.messages.find({
       where: { job_id: jobId, kind: 'card' },
       order: { created_at: 'DESC' },
@@ -1166,10 +1113,7 @@ export class BrainStoreService {
   }
 
   /** Fetch one thread's file-request card by id (the card's `ts`); null if absent / not a file card. */
-  async getFileCard(
-    jobId: string,
-    requestId: string,
-  ): Promise<WebFileRequestCard | null> {
+  async getFileCard(jobId: string, requestId: string): Promise<WebFileRequestCard | null> {
     const row = await this.messages.findOne({
       where: { job_id: jobId, ts: requestId, kind: 'card' },
     });
@@ -1178,11 +1122,7 @@ export class BrainStoreService {
   }
 
   /** Stamp a file card PROVIDED (the operator uploaded it → encrypted store + grant). No contents stored. */
-  async markFileProvided(
-    jobId: string,
-    requestId: string,
-    filename: string,
-  ): Promise<void> {
+  async markFileProvided(jobId: string, requestId: string, filename: string): Promise<void> {
     await this.updateCardMessage(jobId, requestId, {
       provided_at: new Date().toISOString(),
       filename,
@@ -1210,10 +1150,7 @@ export class BrainStoreService {
     return rows
       .map((m) => m.card as unknown as WebFileRequestCard)
       .filter(
-        (c) =>
-          c?.type === 'file_request_card' &&
-          c.provided_at == null &&
-          c.withdrawnAt == null,
+        (c) => c?.type === 'file_request_card' && c.provided_at == null && c.withdrawnAt == null,
       );
   }
 
@@ -1316,10 +1253,7 @@ export class BrainStoreService {
   }
 
   /** Fetch one thread's MCP-proposal card by id (the card's `ts`); null if absent / not a proposal card. */
-  async getMcpProposalCard(
-    jobId: string,
-    requestId: string,
-  ): Promise<WebMcpProposalCard | null> {
+  async getMcpProposalCard(jobId: string, requestId: string): Promise<WebMcpProposalCard | null> {
     const row = await this.messages.findOne({
       where: { job_id: jobId, ts: requestId, kind: 'card' },
     });
@@ -1377,10 +1311,7 @@ export class BrainStoreService {
   }
 
   /** Stamp a convention-proposal card APPROVED (the owner attached the profile). */
-  async markConventionProposalApproved(
-    jobId: string,
-    requestId: string,
-  ): Promise<void> {
+  async markConventionProposalApproved(jobId: string, requestId: string): Promise<void> {
     await this.updateCardMessage(jobId, requestId, {
       approved_at: new Date().toISOString(),
     });
@@ -1395,10 +1326,7 @@ export class BrainStoreService {
   ): Promise<{ ok: boolean }> {
     const thread = await this.jobs.findOne({ where: { id: jobId } });
     if (!thread) return { ok: false };
-    const verb =
-      input.card.mode === 'create'
-        ? 'Proposed a new'
-        : 'Proposed changes to the';
+    const verb = input.card.mode === 'create' ? 'Proposed a new' : 'Proposed changes to the';
     await this.messages.save(
       this.messages.create({
         job_id: jobId,
@@ -1428,10 +1356,7 @@ export class BrainStoreService {
   }
 
   /** Stamp a convention-EDIT-proposal card APPROVED (the owner upserted the profile). */
-  async markConventionEditProposalApproved(
-    jobId: string,
-    requestId: string,
-  ): Promise<void> {
+  async markConventionEditProposalApproved(jobId: string, requestId: string): Promise<void> {
     await this.updateCardMessage(jobId, requestId, {
       approved_at: new Date().toISOString(),
     });
@@ -1481,10 +1406,7 @@ export class BrainStoreService {
   }
 
   /** Stamp a skill-proposal card APPROVED (the owner wrote the skill). */
-  async markSkillProposalApproved(
-    jobId: string,
-    requestId: string,
-  ): Promise<void> {
+  async markSkillProposalApproved(jobId: string, requestId: string): Promise<void> {
     await this.updateCardMessage(jobId, requestId, {
       approved_at: new Date().toISOString(),
     });
@@ -1575,12 +1497,7 @@ export class BrainStoreService {
   async updateDecision(
     jobId: string,
     id: string,
-    patch: Partial<
-      Pick<
-        Decision,
-        'ruling' | 'title' | 'decisionClass' | 'confirmedByOperator'
-      >
-    >,
+    patch: Partial<Pick<Decision, 'ruling' | 'title' | 'decisionClass' | 'confirmedByOperator'>>,
   ): Promise<{ decision: Decision; all: Decision[] } | null> {
     const row = await this.jobs.findOneOrFail({ where: { id: jobId } });
     const current = row.pending_decisions ?? [];
@@ -1596,10 +1513,7 @@ export class BrainStoreService {
    * DELETE a decision by id. Returns whether a row was removed + the full remaining array (the caller
    * re-renders from `all`). `removed:false` when the id is unknown.
    */
-  async deleteDecision(
-    jobId: string,
-    id: string,
-  ): Promise<{ removed: boolean; all: Decision[] }> {
+  async deleteDecision(jobId: string, id: string): Promise<{ removed: boolean; all: Decision[] }> {
     const row = await this.jobs.findOneOrFail({ where: { id: jobId } });
     const current = row.pending_decisions ?? [];
     const all = current.filter((d) => d.id !== id);
@@ -1682,10 +1596,7 @@ export class BrainStoreService {
   }
 
   /** Clear only a host-backstop retry park for this lane; leave session-limit parks untouched. */
-  async clearRetrySessionResume(
-    jobId: string,
-    lane: 'main' | 'build',
-  ): Promise<void> {
+  async clearRetrySessionResume(jobId: string, lane: 'main' | 'build'): Promise<void> {
     await this.jobs
       .createQueryBuilder()
       .update(JobEntity)
@@ -1755,9 +1666,7 @@ export class BrainStoreService {
       .andWhere('session_limit_text_misfires < :cap', { cap })
       .returning('session_limit_text_misfires')
       .execute();
-    const used = res.raw?.[0]?.session_limit_text_misfires as
-      | number
-      | undefined;
+    const used = res.raw?.[0]?.session_limit_text_misfires as number | undefined;
     return used != null ? { ok: true, used } : { ok: false, used: cap };
   }
 
@@ -1786,10 +1695,7 @@ export class BrainStoreService {
     jobId: string,
     payload: JobEntity['direct_build_verification'],
   ): Promise<void> {
-    await this.jobs.update(
-      { id: jobId },
-      { direct_build_verification: payload },
-    );
+    await this.jobs.update({ id: jobId }, { direct_build_verification: payload });
   }
 
   /**
@@ -1800,10 +1706,7 @@ export class BrainStoreService {
    * `dispatch_build` re-stamps harmlessly. Best-effort — the caller owns error handling.
    */
   async markDirectBuildStarted(jobId: string): Promise<void> {
-    await this.jobs.update(
-      { id: jobId },
-      { direct_build_started_at: new Date() },
-    );
+    await this.jobs.update({ id: jobId }, { direct_build_started_at: new Date() });
   }
 
   /**
@@ -1826,20 +1729,13 @@ export class BrainStoreService {
    * the "needs you" dot. Returns the number of rows reset.
    */
   async resetAllActivity(): Promise<number> {
-    const res = await this.jobs.update(
-      { activity: Not('idle') },
-      { activity: 'idle' },
-    );
+    const res = await this.jobs.update({ activity: Not('idle') }, { activity: 'idle' });
     return res.affected ?? 0;
   }
 
   /** Resolve where to post into a thread: the repo coordinate + the real thread id. The web/agent
    *  surface keys its conversation by these directly — no channel/surface-ref indirection. */
-  async route(thread: {
-    orgId: string;
-    repoId: string;
-    jobId: string;
-  }): Promise<ThreadRoute> {
+  async route(thread: { orgId: string; repoId: string; jobId: string }): Promise<ThreadRoute> {
     return { channel: thread.repoId, threadTs: thread.jobId };
   }
 
@@ -2003,10 +1899,7 @@ export class BrainStoreService {
       // `decision_record_id` and become immutable history the moment `jobs.decision_record_id` is repointed
       // at the new record below (`threadsForJob` scopes to the active revision, so history is never re-driven).
 
-      await records.update(
-        { job_id: input.jobId, status: 'draft' },
-        { status: 'superseded' },
-      );
+      await records.update({ job_id: input.jobId, status: 'draft' }, { status: 'superseded' });
 
       const record = await records.save(
         records.create({
@@ -2027,18 +1920,13 @@ export class BrainStoreService {
       // the authored plan — then ONE `master_review` thread group after them. Direct build gets its own
       // `direct_build` thread group at dispatch time (a separate seam), so persistPlan skips thread group creation for it.
       if (input.threadTitles.length > 0) {
-        let threadGroupOrdinal =
-          (await maxOrdinal(threadGroups, input.jobId)) + ORDINAL_GAP;
+        let threadGroupOrdinal = (await maxOrdinal(threadGroups, input.jobId)) + ORDINAL_GAP;
         // Top-level threads (parent null) share a job-wide UNIQUE(job_id, parent_thread_id, ordinal) index
         // (d7 dropped decision_record_id from it), so their ordinals must be job-GLOBAL-unique — not
         // thread-group-local. Start after the highest existing top-level ordinal (planning/plan_review, and any
         // preserved prior-revision history) and gap-number from there.
         let threadOrdinal =
-          (await maxOrdinal(
-            threads,
-            input.jobId,
-            't.parent_thread_id IS NULL',
-          )) + ORDINAL_GAP;
+          (await maxOrdinal(threads, input.jobId, 't.parent_thread_id IS NULL')) + ORDINAL_GAP;
 
         for (let i = 0; i < input.threadTitles.length; i++) {
           const brief = input.threadTitles[i];
@@ -2193,9 +2081,7 @@ export class BrainStoreService {
       // Read the flipped row through the TRANSACTION manager (not this.loadJob, which reads on a
       // separate pooled connection and can't see the uncommitted 'running' write) so the returned Job
       // reflects the just-committed status.
-      const row = await m
-        .getRepository(JobEntity)
-        .findOneOrFail({ where: { id: jobId } });
+      const row = await m.getRepository(JobEntity).findOneOrFail({ where: { id: jobId } });
       return toThread(row);
     });
   }
@@ -2206,17 +2092,11 @@ export class BrainStoreService {
    * approve click — exactly one of {withdraw, approve} wins). Returns { withdrawn:false } when there is
    * no pending proposal (job not awaiting_approval).
    */
-  async withdrawPlan(
-    jobId: string,
-    reason?: string,
-  ): Promise<{ withdrawn: boolean }> {
+  async withdrawPlan(jobId: string, reason?: string): Promise<{ withdrawn: boolean }> {
     return this.dataSource.transaction(async (m) => {
       const res = await m
         .getRepository(JobEntity)
-        .update(
-          { id: jobId, status: 'awaiting_approval' },
-          { status: 'planning' },
-        );
+        .update({ id: jobId, status: 'awaiting_approval' }, { status: 'planning' });
       if ((res.affected ?? 0) !== 1) return { withdrawn: false };
       await m
         .getRepository(DecisionRecordEntity)
@@ -2250,9 +2130,7 @@ export class BrainStoreService {
     }
     const threads = await this.threads.find({ where: { job_id: jobId } });
     return threads
-      .filter(
-        (t) => t.parent_thread_id == null && isDriverExecutableKind(t.role),
-      )
+      .filter((t) => t.parent_thread_id == null && isDriverExecutableKind(t.role))
       .every((t) => t.status === 'pending');
   }
 
@@ -2261,11 +2139,7 @@ export class BrainStoreService {
     await this.jobs.update({ id: jobId }, { status: 'cancelled' });
     await this.jobDeps
       .onBlockerResolved(jobId, 'cancelled')
-      .catch((err) =>
-        this.logger.warn(
-          `cancel: wake funnel failed for blocker ${jobId}: ${err}`,
-        ),
-      );
+      .catch((err) => this.logger.warn(`cancel: wake funnel failed for blocker ${jobId}: ${err}`));
   }
 
   /** Load a thread row as the domain `Thread` shape. */
@@ -2310,8 +2184,7 @@ export class BrainStoreService {
       const org = await this.organizations.findOne({
         where: { id: input.orgId },
       });
-      const approveMode =
-        input.autoMode.approveMode ?? org?.default_auto_approve_mode ?? 'off';
+      const approveMode = input.autoMode.approveMode ?? org?.default_auto_approve_mode ?? 'off';
       const merge = input.autoMode.merge ?? org?.default_auto_merge ?? false;
       autoCols = {
         auto_approve_mode: approveMode,

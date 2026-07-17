@@ -54,12 +54,7 @@ export function parseHubConfig(raw: string): McpHubConfig | null {
     if (!v || typeof v !== 'object') return null;
     if (!Array.isArray(v.servers)) return null;
     const spawn = v.spawn;
-    if (
-      !spawn ||
-      typeof spawn.cwd !== 'string' ||
-      typeof spawn.home !== 'string'
-    )
-      return null;
+    if (!spawn || typeof spawn.cwd !== 'string' || typeof spawn.home !== 'string') return null;
     return {
       spawn: { ...spawn, baseEnv: spawn.baseEnv ?? {} },
       servers: v.servers,

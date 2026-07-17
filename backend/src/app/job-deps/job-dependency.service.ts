@@ -6,13 +6,13 @@ import {
   Optional,
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
 import type { UnblockBlockerInfo } from '@shared/domain/message';
+import { DataSource, Repository } from 'typeorm';
+import { BrainGateway } from '../brain-gateway/brain-gateway.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobDependencyEntity, JobEntity } from '../persistence/entities';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
 import { StimulusStoreService } from '../stimulus/stimulus-store.service';
-import { BrainGateway } from '../brain-gateway/brain-gateway.service';
 
 // A job can be BLOCKED only from a pre-build conversational state; 'blocked' is included so a
 // multi-blocker create_job can add its edges one at a time (the first live blocker parks it; adding
@@ -25,8 +25,7 @@ const BLOCKABLE_STATUSES = new Set([
   'blocked',
 ]);
 const TERMINAL_BLOCKER_STATUSES = ['cancelled', 'deleting', 'archived'];
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function assertUuid(value: string): void {
   if (!UUID_RE.test(value)) {
@@ -35,12 +34,7 @@ function assertUuid(value: string): void {
 }
 
 /** How a resolved blocker actually resolved — fed into {@link JobDependencyService.onBlockerResolved}. */
-export type BlockerResolution =
-  | 'merged'
-  | 'closed_unmerged'
-  | 'cancelled'
-  | 'deleted'
-  | 'archived';
+export type BlockerResolution = 'merged' | 'closed_unmerged' | 'cancelled' | 'deleted' | 'archived';
 
 /** A non-terminal-safe classification of a blocker (excludes the in-flight `merged` case). */
 type NonLandedResolution = Exclude<BlockerResolution, 'merged'>;
@@ -118,9 +112,7 @@ export class JobDependencyService {
 
   private isTerminalState(prState: string | null, status: string): boolean {
     return (
-      prState === 'merged' ||
-      prState === 'closed' ||
-      TERMINAL_BLOCKER_STATUSES.includes(status)
+      prState === 'merged' || prState === 'closed' || TERMINAL_BLOCKER_STATUSES.includes(status)
     );
   }
 
@@ -240,9 +232,7 @@ export class JobDependencyService {
       );
     }
 
-    const liveTurn = await this.turnRegistry
-      ?.runningBrainTurn(jobId)
-      .catch(() => null);
+    const liveTurn = await this.turnRegistry?.runningBrainTurn(jobId).catch(() => null);
     if (liveTurn?.turn_id) {
       throw new BadRequestException(
         "can't block a job while its brain is currently running; wait for it to stop before blocking it",
@@ -315,9 +305,7 @@ export class JobDependencyService {
     });
 
     const blockers = await this.blockersOf(jobId);
-    const allTerminal = blockers.every((b) =>
-      this.isTerminalState(b.prState, b.status),
-    );
+    const allTerminal = blockers.every((b) => this.isTerminalState(b.prState, b.status));
     if (allTerminal) {
       const infos: UnblockBlockerInfo[] = [
         ...(removed
@@ -344,9 +332,7 @@ export class JobDependencyService {
    */
   async reconcileBlockedJob(jobId: string): Promise<boolean> {
     const blockers = await this.blockersOf(jobId);
-    const allTerminal = blockers.every((b) =>
-      this.isTerminalState(b.prState, b.status),
-    );
+    const allTerminal = blockers.every((b) => this.isTerminalState(b.prState, b.status));
     if (!allTerminal) return false;
     return this.unblockAndWake(jobId, this.classifiedBlockerInfos(blockers));
   }
@@ -369,19 +355,16 @@ export class JobDependencyService {
   }
 
   /** Blockers for MANY jobs in one query (avoids N+1 in the list DTOs). Returns dependentJobId → its blockers. */
-  async blockersOfManyBlocked(
-    jobIds: string[],
-  ): Promise<Map<string, JobBlockerRow[]>> {
+  async blockersOfManyBlocked(jobIds: string[]): Promise<Map<string, JobBlockerRow[]>> {
     const map = new Map<string, JobBlockerRow[]>();
     if (jobIds.length === 0) return map;
-    const rows: Array<JobBlockerRow & { dependentId: string }> =
-      await this.dataSource.query(
-        `SELECT d.job_id AS "dependentId", j.id AS "jobId", j.title AS title, j.pr_state AS "prState", j.status AS status
+    const rows: Array<JobBlockerRow & { dependentId: string }> = await this.dataSource.query(
+      `SELECT d.job_id AS "dependentId", j.id AS "jobId", j.title AS title, j.pr_state AS "prState", j.status AS status
          FROM job_dependencies d
          JOIN jobs j ON j.id = d.depends_on_job_id
         WHERE d.job_id = ANY($1)`,
-        [jobIds],
-      );
+      [jobIds],
+    );
     for (const r of rows) {
       const { dependentId, ...blocker } = r;
       const list = map.get(dependentId) ?? [];
@@ -408,23 +391,14 @@ export class JobDependencyService {
    * and for each still-`blocked` dependent whose OTHER blockers (if any) are also terminal, conditionally
    * unparks it and wakes its brain. Fail-soft PER dependent — one bad wake must never block the others.
    */
-  async onBlockerResolved(
-    blockerJobId: string,
-    resolution: BlockerResolution,
-  ): Promise<void> {
+  async onBlockerResolved(blockerJobId: string, resolution: BlockerResolution): Promise<void> {
     const dependents = await this.dependentsOf(blockerJobId);
     for (const dependent of dependents) {
       if (dependent.status !== 'blocked') continue;
       try {
-        await this.wakeDependentIfAllTerminal(
-          dependent,
-          blockerJobId,
-          resolution,
-        );
+        await this.wakeDependentIfAllTerminal(dependent, blockerJobId, resolution);
       } catch (err) {
-        this.logger.warn(
-          `onBlockerResolved: wake failed for dependent=${dependent.id}: ${err}`,
-        );
+        this.logger.warn(`onBlockerResolved: wake failed for dependent=${dependent.id}: ${err}`);
       }
     }
   }
@@ -438,16 +412,11 @@ export class JobDependencyService {
     // The blocker resolving RIGHT NOW is treated as terminal unconditionally — required for the
     // `deleted` path, where its row still exists at call time and won't yet look terminal from state.
     const allTerminal = blockers.every(
-      (b) =>
-        b.jobId === blockerJobId || this.isTerminalState(b.prState, b.status),
+      (b) => b.jobId === blockerJobId || this.isTerminalState(b.prState, b.status),
     );
     if (!allTerminal) return; // a still-open sibling blocker keeps it parked.
 
-    const blockerInfos = this.resolvedBlockerInfos(
-      blockers,
-      blockerJobId,
-      resolution,
-    );
+    const blockerInfos = this.resolvedBlockerInfos(blockers, blockerJobId, resolution);
     await this.recordUnblockNoteThenPump(
       dependent.id,
       dependent.org_id,
@@ -514,13 +483,8 @@ export class JobDependencyService {
     } catch (err) {
       // The pump dropped — re-park so the JobUnblockSweep re-drives it (recordUnblockNote dedupes on retry).
       // Guarded on `open` so we never clobber a status the drain already advanced past.
-      this.logger.warn(
-        `pumpUnblockedJob failed for job=${jobId}; re-parking for sweep: ${err}`,
-      );
-      await this.jobs.update(
-        { id: jobId, status: 'open' },
-        { status: 'blocked' },
-      );
+      this.logger.warn(`pumpUnblockedJob failed for job=${jobId}; re-parking for sweep: ${err}`);
+      await this.jobs.update({ id: jobId, status: 'open' }, { status: 'blocked' });
       return false;
     }
   }
@@ -550,17 +514,13 @@ export class JobDependencyService {
       jobId: b.jobId,
       title: b.title,
       how:
-        b.jobId === blockerJobId
-          ? resolution
-          : this.classifyResolvedBlocker(b.prState, b.status),
+        b.jobId === blockerJobId ? resolution : this.classifyResolvedBlocker(b.prState, b.status),
     }));
   }
 
   /** Classify a set of already-terminal blockers from their persisted state (the manual-unblock/sweep paths,
    *  which have no live resolution to report). */
-  private classifiedBlockerInfos(
-    blockers: JobBlockerRow[],
-  ): UnblockBlockerInfo[] {
+  private classifiedBlockerInfos(blockers: JobBlockerRow[]): UnblockBlockerInfo[] {
     return blockers.map((b) => ({
       jobId: b.jobId,
       title: b.title,
@@ -571,20 +531,12 @@ export class JobDependencyService {
   /** Conditional unblock + wake used by the manual-unblock (`removeDependency`) and sweep
    *  (`reconcileBlockedJob`) paths; `blockers` names the jobs that were holding this one so the wake message
    *  can reorient the brain. */
-  private async unblockAndWake(
-    jobId: string,
-    blockers: UnblockBlockerInfo[],
-  ): Promise<boolean> {
+  private async unblockAndWake(jobId: string, blockers: UnblockBlockerInfo[]): Promise<boolean> {
     // Resolve org/repo up front — the JIT unblock note must be recorded while the job is still `blocked`
     // (before the flip), so we need the routing coordinates before touching the status.
     const job = await this.jobs.findOne({ where: { id: jobId } });
     if (!job) return false;
-    return this.recordUnblockNoteThenPump(
-      jobId,
-      job.org_id,
-      job.repo_id,
-      blockers,
-    );
+    return this.recordUnblockNoteThenPump(jobId, job.org_id, job.repo_id, blockers);
   }
 
   /**

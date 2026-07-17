@@ -3,11 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ServiceLivenessProbe } from '../../sandbox/sandbox-provider.port';
-import {
-  derivePortState,
-  readServiceMarkers,
-  type ReadServiceMarker,
-} from '../service-markers';
+import { derivePortState, readServiceMarkers, type ReadServiceMarker } from '../service-markers';
 
 describe('readServiceMarkers', () => {
   let dir: string;
@@ -20,10 +16,7 @@ describe('readServiceMarkers', () => {
   });
 
   const write = (id: string, body: unknown): void => {
-    writeFileSync(
-      join(dir, `${id}.json`),
-      typeof body === 'string' ? body : JSON.stringify(body),
-    );
+    writeFileSync(join(dir, `${id}.json`), typeof body === 'string' ? body : JSON.stringify(body));
   };
 
   it('defaults a marker WITHOUT port/expose to port:null, expose:false (secure-by-default)', () => {
@@ -83,9 +76,7 @@ describe('readServiceMarkers', () => {
 describe('derivePortState', () => {
   const CONTAINER_STARTED_AT = '2026-07-10T00:00:00Z';
 
-  const runningMarker = (
-    overrides: Partial<ReadServiceMarker> = {},
-  ): ReadServiceMarker => ({
+  const runningMarker = (overrides: Partial<ReadServiceMarker> = {}): ReadServiceMarker => ({
     id: 'web',
     name: 'web',
     cmd: 'pnpm dev',

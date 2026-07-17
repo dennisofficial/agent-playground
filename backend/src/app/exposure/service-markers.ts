@@ -59,8 +59,7 @@ export function serviceStatus(
   if (marker.pgid == null || marker.startedAt == null) return 'unknown';
   const started = Date.parse(marker.startedAt);
   const generation = Date.parse(probe.containerStartedAt);
-  if (!Number.isFinite(started) || !Number.isFinite(generation))
-    return 'unknown';
+  if (!Number.isFinite(started) || !Number.isFinite(generation)) return 'unknown';
   if (started < generation - GENERATION_SKEW_MS) return 'stopped'; // previous container — reused pgid must not read as running
   return probe.alive.includes(marker.pgid) ? 'running' : 'stopped';
 }
@@ -86,10 +85,7 @@ export function readServiceMarkers(dir: string): ReadServiceMarker[] {
     if (!SERVICE_ID_RE.test(id)) continue; // defensive — atlas-svc only ever writes validated names
     let parsed: Record<string, unknown>;
     try {
-      parsed = JSON.parse(readFileSync(join(dir, f), 'utf8')) as Record<
-        string,
-        unknown
-      >;
+      parsed = JSON.parse(readFileSync(join(dir, f), 'utf8')) as Record<string, unknown>;
     } catch {
       continue; // a marker mid-write / corrupt — skip rather than fail the whole list
     }
@@ -103,9 +99,7 @@ export function readServiceMarkers(dir: string): ReadServiceMarker[] {
       /* no log yet */
     }
     const name =
-      typeof parsed.name === 'string' && SERVICE_ID_RE.test(parsed.name)
-        ? parsed.name
-        : id;
+      typeof parsed.name === 'string' && SERVICE_ID_RE.test(parsed.name) ? parsed.name : id;
     const port =
       typeof parsed.port === 'number' &&
       Number.isInteger(parsed.port) &&
@@ -146,7 +140,5 @@ export function derivePortState(
 ): PortState {
   const running = markers.filter((m) => serviceStatus(m, probe) === 'running');
   if (running.length === 0) return null;
-  return running.some((m) => m.port != null && m.expose && hasUrl(m))
-    ? 'exposed'
-    : 'internal';
+  return running.some((m) => m.port != null && m.expose && hasUrl(m)) ? 'exposed' : 'internal';
 }

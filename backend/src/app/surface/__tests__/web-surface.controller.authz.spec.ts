@@ -13,25 +13,21 @@ import { WebSurfaceController } from '../web-surface.controller';
  * Pure unit test — the controller is instantiated with mocked repos; `threads.findOne` returns a row only
  * when its `org_id` matches, emulating the scoped query.
  */
-function makeController(
-  threadOrgId: string,
-  thread: Record<string, unknown> = {},
-) {
+function makeController(threadOrgId: string, thread: Record<string, unknown> = {}) {
   const archiveJobDeep = vi.fn(async () => undefined);
   const claimArchiveJob = vi.fn(async () => true);
   const closeJobPullRequest = vi.fn(async () => undefined);
   const threads = {
-    findOne: vi.fn(
-      async ({ where }: { where: { id: string; org_id: string } }) =>
-        where.org_id === threadOrgId
-          ? {
-              id: where.id,
-              org_id: threadOrgId,
-              repo_id: 'repo-1',
-              status: 'running',
-              ...thread,
-            }
-          : null,
+    findOne: vi.fn(async ({ where }: { where: { id: string; org_id: string } }) =>
+      where.org_id === threadOrgId
+        ? {
+            id: where.id,
+            org_id: threadOrgId,
+            repo_id: 'repo-1',
+            status: 'running',
+            ...thread,
+          }
+        : null,
     ),
     delete: vi.fn(async () => ({ affected: 1 })),
   };
@@ -93,11 +89,10 @@ describe('WebSurfaceController — cross-tenant authz', () => {
   const orgB: CurrentOrgCtx = { id: 'orgB', role: 'owner' };
 
   it("deleteThread on another org's thread 404s and never archives it", async () => {
-    const { controller, archiveJobDeep, claimArchiveJob } =
-      makeController('orgA'); // thread belongs to org A
-    await expect(
-      controller.deleteThread(orgB, 'leaked-thread-id'),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    const { controller, archiveJobDeep, claimArchiveJob } = makeController('orgA'); // thread belongs to org A
+    await expect(controller.deleteThread(orgB, 'leaked-thread-id')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
     // 404s at requireThread — never claims nor reclaims.
     expect(claimArchiveJob).not.toHaveBeenCalled();
     expect(archiveJobDeep).not.toHaveBeenCalled();
@@ -105,15 +100,14 @@ describe('WebSurfaceController — cross-tenant authz', () => {
 
   it("messageHistory on another org's thread 404s and never reads messages", async () => {
     const { controller, messages } = makeController('orgA');
-    await expect(
-      controller.messageHistory(orgB, 'leaked-thread-id'),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    await expect(controller.messageHistory(orgB, 'leaked-thread-id')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
     expect(messages.find).not.toHaveBeenCalled();
   });
 
   it("deleteThread on the caller's OWN thread proceeds (org-scoped archive)", async () => {
-    const { controller, archiveJobDeep, claimArchiveJob } =
-      makeController('orgB'); // thread belongs to org B
+    const { controller, archiveJobDeep, claimArchiveJob } = makeController('orgB'); // thread belongs to org B
     await controller.deleteThread(orgB, 'my-thread-id');
     // Claims the archive (durable `archived` state), then backgrounds the org-scoped filesystem reclaim.
     expect(claimArchiveJob).toHaveBeenCalledWith('my-thread-id', 'orgB');
@@ -121,16 +115,18 @@ describe('WebSurfaceController — cross-tenant authz', () => {
   });
 
   it('deleteThread on an archived thread 409s before closing an open PR or reclaiming again', async () => {
-    const { controller, archiveJobDeep, claimArchiveJob, closeJobPullRequest } =
-      makeController('orgB', {
+    const { controller, archiveJobDeep, claimArchiveJob, closeJobPullRequest } = makeController(
+      'orgB',
+      {
         status: 'archived',
         pr_state: 'open',
         pr_number: 123,
-      });
+      },
+    );
 
-    await expect(
-      controller.deleteThread(orgB, 'my-thread-id', 'close'),
-    ).rejects.toBeInstanceOf(ConflictException);
+    await expect(controller.deleteThread(orgB, 'my-thread-id', 'close')).rejects.toBeInstanceOf(
+      ConflictException,
+    );
 
     expect(closeJobPullRequest).not.toHaveBeenCalled();
     expect(claimArchiveJob).not.toHaveBeenCalled();

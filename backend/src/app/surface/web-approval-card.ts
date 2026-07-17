@@ -8,7 +8,7 @@
  * Pure — no I/O, no NestJS. Zero v1 imports.
  */
 
-import type { DecisionApprovalCard, ApprovalDecision } from './approval-blocks';
+import type { ApprovalDecision, DecisionApprovalCard } from './approval-blocks';
 import {
   AMEND_APPROVE_ACTION_ID,
   AMEND_DISMISS_ACTION_ID,
@@ -117,9 +117,7 @@ export interface WebVerdictCard {
 export function webApprovalCard(card: DecisionApprovalCard): WebApprovalCard {
   const value = JSON.stringify({
     jobId: card.jobId,
-    ...(card.decisionRecordId
-      ? { decisionRecordId: card.decisionRecordId }
-      : {}),
+    ...(card.decisionRecordId ? { decisionRecordId: card.decisionRecordId } : {}),
   });
 
   const actions: WebCardAction[] = [];
@@ -152,9 +150,7 @@ export function webApprovalCard(card: DecisionApprovalCard): WebApprovalCard {
   return {
     type: 'approval_card',
     jobId: card.jobId,
-    ...(card.decisionRecordId
-      ? { decisionRecordId: card.decisionRecordId }
-      : {}),
+    ...(card.decisionRecordId ? { decisionRecordId: card.decisionRecordId } : {}),
     ...(card.kind ? { kind: card.kind } : {}),
     title: card.title,
     summary: card.summary,
@@ -186,9 +182,7 @@ export function webShipReviewCard(input: {
     summary: input.summary,
     decisions: [],
     threads: [],
-    ...(input.verifications?.length
-      ? { verifications: input.verifications }
-      : {}),
+    ...(input.verifications?.length ? { verifications: input.verifications } : {}),
     actions: [
       {
         actionId: SHIP_ACTION_ID,
@@ -239,10 +233,7 @@ export function webMergeReadyCard(jobId: string): WebApprovalCard {
  * the gate parked. Reuses the `approval_card` payload (generic `actions` renderer), discriminated by
  * `kind: 'amend'`. Its action values carry only `{ jobId }`.
  */
-export function webAmendProposalCard(input: {
-  jobId: string;
-  reason: string;
-}): WebApprovalCard {
+export function webAmendProposalCard(input: { jobId: string; reason: string }): WebApprovalCard {
   const value = JSON.stringify({ jobId: input.jobId });
   return {
     type: 'approval_card',
@@ -300,9 +291,7 @@ export function webDbWriteApprovalCard(input: {
     decisions: [],
     threads: [],
     sql: input.sql,
-    ...(input.estimatedRows !== undefined
-      ? { estimatedRows: input.estimatedRows }
-      : {}),
+    ...(input.estimatedRows !== undefined ? { estimatedRows: input.estimatedRows } : {}),
     ...(input.estimateLabel ? { estimateLabel: input.estimateLabel } : {}),
     ...(input.error ? { error: input.error } : {}),
     actions: [

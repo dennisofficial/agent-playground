@@ -1,6 +1,6 @@
+import type { EnvService } from '@core/config/env/env.service';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { Repository } from 'typeorm';
-import type { EnvService } from '@core/config/env/env.service';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type {
   ComposerDraftAttachmentEntity,
@@ -18,15 +18,12 @@ import { ComposerDraftService } from '../composer-draft.service';
 function memRepo<T extends object>(keys: (keyof T)[]): Repository<T> {
   let rows: T[] = [];
   const match = (where: Partial<T>) => (r: T) =>
-    (Object.entries(where) as [keyof T, unknown][]).every(
-      ([k, v]) => r[k] === v,
-    );
+    (Object.entries(where) as [keyof T, unknown][]).every(([k, v]) => r[k] === v);
   return {
     create: (v: Partial<T>) => ({ id: randomUUID(), ...v }) as T,
     find: async ({ where }: { where?: Partial<T> } = {}) =>
       where ? rows.filter(match(where)) : rows,
-    findOne: async ({ where }: { where: Partial<T> }) =>
-      rows.find(match(where)) ?? null,
+    findOne: async ({ where }: { where: Partial<T> }) => rows.find(match(where)) ?? null,
     save: async (row: T) => {
       rows = rows.filter((r) => !keys.every((k) => r[k] === row[k]));
       rows.push(row);
@@ -103,9 +100,7 @@ describe('ComposerDraftService', () => {
         { kind: 'question', cardId: 'q1', label: 'DB?', answer: 'Postgres' },
         { kind: 'question', cardId: 'q2', label: 'Cache?', answer: 'Redis' },
       ],
-      comments: [
-        { id: 'r1', file: { node: 'n', label: 'l' }, quote: 'q', note: 'n' },
-      ],
+      comments: [{ id: 'r1', file: { node: 'n', label: 'l' }, quote: 'q', note: 'n' }],
     });
 
     await service.clearOnSend('org-1', 'job-1', 'user-1', ['q1'], {
@@ -124,12 +119,8 @@ describe('ComposerDraftService', () => {
   it('clearOnSend leaves text/comments untouched when the caller says this submit did not carry them', async () => {
     await service.putDraft('org-1', 'job-1', 'user-1', {
       text: 'unrelated in-progress note',
-      stagedAnswers: [
-        { kind: 'question', cardId: 'q1', label: 'DB?', answer: 'Postgres' },
-      ],
-      comments: [
-        { id: 'r1', file: { node: 'n', label: 'l' }, quote: 'q', note: 'n' },
-      ],
+      stagedAnswers: [{ kind: 'question', cardId: 'q1', label: 'DB?', answer: 'Postgres' }],
+      comments: [{ id: 'r1', file: { node: 'n', label: 'l' }, quote: 'q', note: 'n' }],
     });
 
     await service.clearOnSend('org-1', 'job-1', 'user-1', ['q1'], {
@@ -155,11 +146,7 @@ describe('ComposerDraftService', () => {
   });
 
   it('getDraft returns an empty payload without creating a row when none exists', async () => {
-    const { payload, attachments } = await service.getDraft(
-      'org-1',
-      'job-2',
-      'user-1',
-    );
+    const { payload, attachments } = await service.getDraft('org-1', 'job-2', 'user-1');
     expect(payload).toEqual({ text: '', stagedAnswers: [], comments: [] });
     expect(attachments).toEqual([]);
   });

@@ -1,16 +1,7 @@
-import {
-  Controller,
-  Get,
-  NotFoundException,
-  Param,
-  Post,
-} from '@nestjs/common';
+import { Controller, Get, NotFoundException, Param, Post } from '@nestjs/common';
 import { CurrentUser } from '@workspace/auth/server';
 import type { UserEntity } from '../persistence/entities';
-import {
-  OrganizationService,
-  type InvitePreview,
-} from './organization.service';
+import { OrganizationService, type InvitePreview } from './organization.service';
 
 /**
  * `/web/invites/:token` — the invitee side of the copy-paste invite flow. Login-only (the global

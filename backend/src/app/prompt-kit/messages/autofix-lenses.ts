@@ -6,12 +6,8 @@
  * file owns only the agent-facing TEXT.
  */
 import { agentMessage, type AgentMessage } from '@shared/prompt-kit/message';
+import type { AutoFixContext, ReviewFinding, ReviewLens } from '../../autofix/autofix.types';
 import { fence } from '../../prompt-fence';
-import type {
-  AutoFixContext,
-  ReviewFinding,
-  ReviewLens,
-} from '../../autofix/autofix.types';
 
 /** The JSON shape every review pass returns — identical across scopes, so parse + dedupe are untouched. */
 const REVIEW_OUTPUT_FORMAT = `Return your findings as a SINGLE fenced JSON code block and nothing else after it:
@@ -95,10 +91,7 @@ function changeSetBlock(ctx: AutoFixContext): string {
 }
 
 /** Build one read-only review pass's prompt for a given lens + context. */
-export function buildReviewPrompt(
-  lens: ReviewLens,
-  ctx: AutoFixContext,
-): AgentMessage {
+export function buildReviewPrompt(lens: ReviewLens, ctx: AutoFixContext): AgentMessage {
   const scope = lens.scope ?? 'diff';
   const frameworkBlock = scope === 'framework' ? frameworkInjection(ctx) : '';
   return agentMessage(
@@ -115,10 +108,7 @@ export function buildReviewPrompt(
 }
 
 /** Build the single execute-mode FIX turn's prompt from the deduped, severity-filtered findings. */
-export function buildFixPrompt(
-  findings: ReviewFinding[],
-  ctx: AutoFixContext,
-): AgentMessage {
+export function buildFixPrompt(findings: ReviewFinding[], ctx: AutoFixContext): AgentMessage {
   const list = findings
     .map(
       (f, i) =>

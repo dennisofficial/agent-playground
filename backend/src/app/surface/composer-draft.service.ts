@@ -1,42 +1,23 @@
-import { extname, basename, join } from 'node:path';
-import {
-  access,
-  copyFile,
-  mkdir,
-  rename,
-  unlink,
-  writeFile,
-} from 'node:fs/promises';
+import { EnvService } from '@core/config/env/env.service';
 import {
   BadRequestException,
   Injectable,
   NotFoundException,
   PayloadTooLargeException,
 } from '@nestjs/common';
-import { EnvService } from '@core/config/env/env.service';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import {
-  DataSource,
-  EntityManager,
-  QueryFailedError,
-  Repository,
-} from 'typeorm';
-import { DB_CONNECTION } from '../persistence/database.module';
-import {
-  ComposerDraftAttachmentEntity,
-  ComposerDraftEntity,
-} from '../persistence/entities';
-import type {
-  DraftPayload,
-  DraftStagedAnswer,
-  ReviewComment,
-} from '@shared/domain/composer-draft';
-import {
-  decryptSecret,
-  encryptSecret,
-  loadSecretsKey,
-} from '../onboarding/secret-cipher';
+import type { DraftPayload, DraftStagedAnswer, ReviewComment } from '@shared/domain/composer-draft';
+import { access, copyFile, mkdir, rename, unlink, writeFile } from 'node:fs/promises';
+import { basename, extname, join } from 'node:path';
+import { DataSource, EntityManager, QueryFailedError, Repository } from 'typeorm';
 import { JobLifecycleService } from '../driver/job-lifecycle.service';
+import { decryptSecret, encryptSecret, loadSecretsKey } from '../onboarding/secret-cipher';
+import { DB_CONNECTION } from '../persistence/database.module';
+import { ComposerDraftAttachmentEntity, ComposerDraftEntity } from '../persistence/entities';
+import {
+  AttachmentCardItem,
+  renderUploadedFilesXml,
+} from '../prompt-kit/messages/first-turn-seeds';
 import {
   ATTACHMENT_EXTS,
   MAX_ATTACHMENT_BYTES,
@@ -45,10 +26,6 @@ import {
   safeUploadName,
   type UploadedAttachment,
 } from './attachment-upload';
-import {
-  AttachmentCardItem,
-  renderUploadedFilesXml,
-} from '../prompt-kit/messages/first-turn-seeds';
 
 /**
  * The wire (cleartext) counterpart of `DraftStagedAnswer` — the shape returned by GET and accepted by PUT.
@@ -93,8 +70,7 @@ function isUniqueViolation(err: unknown): boolean {
   if (!(err instanceof QueryFailedError)) return false;
   const pgCode =
     (err as QueryFailedError & { code?: unknown }).code ??
-    (err as QueryFailedError & { driverError?: { code?: unknown } }).driverError
-      ?.code;
+    (err as QueryFailedError & { driverError?: { code?: unknown } }).driverError?.code;
   return pgCode === PG_UNIQUE_VIOLATION;
 }
 
@@ -155,9 +131,7 @@ export class ComposerDraftService {
     };
   }
 
-  private toAttachmentDto(
-    row: ComposerDraftAttachmentEntity,
-  ): DraftAttachmentDto {
+  private toAttachmentDto(row: ComposerDraftAttachmentEntity): DraftAttachmentDto {
     return { id: row.id, name: row.filename, kind: row.kind, size: row.size };
   }
 
@@ -287,9 +261,7 @@ export class ComposerDraftService {
   ): Promise<DraftAttachmentDto> {
     const ext = extname(file.originalname).toLowerCase();
     if (!ATTACHMENT_EXTS.has(ext)) {
-      throw new BadRequestException(
-        `unsupported attachment type: ${ext || file.originalname}`,
-      );
+      throw new BadRequestException(`unsupported attachment type: ${ext || file.originalname}`);
     }
     if (file.size > MAX_ATTACHMENT_BYTES) {
       throw new PayloadTooLargeException(
@@ -356,18 +328,14 @@ export class ComposerDraftService {
     if (!row) throw new NotFoundException('attachment not found');
 
     await this.dataSource.transaction(async (manager) => {
-      await manager
-        .getRepository(ComposerDraftAttachmentEntity)
-        .delete({ id: attachmentId });
+      await manager.getRepository(ComposerDraftAttachmentEntity).delete({ id: attachmentId });
       await this.touchDraft(manager, orgId, jobId, userId);
     });
 
     const dir = this.lifecycle.draftUploadsDirHost(jobId, orgId, userId);
-    await unlink(join(dir, row.stored_name)).catch(
-      (err: NodeJS.ErrnoException) => {
-        if (err?.code !== 'ENOENT') throw err;
-      },
-    );
+    await unlink(join(dir, row.stored_name)).catch((err: NodeJS.ErrnoException) => {
+      if (err?.code !== 'ENOENT') throw err;
+    });
   }
 
   /**
@@ -387,10 +355,7 @@ export class ComposerDraftService {
     if (rows.length === 0) return null;
 
     const draftDir = this.lifecycle.draftUploadsDirHost(jobId, orgId, userId);
-    const uploadsDir = join(
-      this.lifecycle.contextDirHost(jobId, orgId),
-      'uploads',
-    );
+    const uploadsDir = join(this.lifecycle.contextDirHost(jobId, orgId), 'uploads');
     await mkdir(uploadsDir, { recursive: true });
 
     const items: AttachmentCardItem[] = [];
@@ -452,9 +417,7 @@ export class ComposerDraftService {
     const applied = new Set(appliedCardIds);
     row.payload = {
       text: opts.clearText ? '' : row.payload.text,
-      stagedAnswers: row.payload.stagedAnswers.filter(
-        (a) => !applied.has(a.cardId),
-      ),
+      stagedAnswers: row.payload.stagedAnswers.filter((a) => !applied.has(a.cardId)),
       comments: opts.clearComments ? [] : row.payload.comments,
     };
     await this.drafts.save(row);

@@ -9,24 +9,20 @@
  * (`assertRepo`) — none of which the pure stores/helpers can prove on their own.
  */
 
-import { getDataSourceToken } from '@nestjs/typeorm';
-import { Test } from '@nestjs/testing';
 import type { NestExpressApplication } from '@nestjs/platform-express';
+import { Test } from '@nestjs/testing';
+import { getDataSourceToken } from '@nestjs/typeorm';
+import { ENGINE_RUNNER } from '@shared/engine';
 import cookieParser from 'cookie-parser';
 import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { CLASSIFIER_LLM } from '../decision-gate';
-import { ENGINE_RUNNER } from '@shared/engine';
-import { GithubPrService, LocalGitService } from '../git';
 import { AppModule } from '../../app.module';
+import { FakeClassifierLlm, FakeEngineRunner, FakeLocalGitService } from '../../e2e/e2e-stubs';
 import { DB_CONNECTION } from '../../persistence/database.module';
-import {
-  FakeClassifierLlm,
-  FakeEngineRunner,
-  FakeLocalGitService,
-} from '../../e2e/e2e-stubs';
 import { CredentialResolver } from '../credential-resolver.service';
+import { CLASSIFIER_LLM } from '../decision-gate';
+import { GithubPrService, LocalGitService } from '../git';
 
 // ── External boundary stubs (mirrors repo.controller.int.test.ts) ──────────────────────────────────
 
@@ -74,15 +70,12 @@ let ownerCookie: string;
 let memberCookie: string;
 let repoId: string;
 
-async function register(
-  email: string,
-): Promise<{ cookie: string; id: string }> {
+async function register(email: string): Promise<{ cookie: string; id: string }> {
   const res = await request(server)
     .post('/auth/register')
     .send({ email, password: PASSWORD, name: email.split('@')[0] });
   expect(res.status).toBe(200);
-  const setCookie =
-    (res.headers['set-cookie'] as unknown as string[] | undefined) ?? [];
+  const setCookie = (res.headers['set-cookie'] as unknown as string[] | undefined) ?? [];
   const cookie = setCookie.map((c) => c.split(';')[0]).join('; ');
   return { cookie, id: res.body.user.id as string };
 }
@@ -95,9 +88,7 @@ async function purge(): Promise<void> {
     .query(`DELETE FROM repos WHERE org_id = ANY($1)`, [[ORG, OTHER_ORG]])
     .catch(() => undefined);
   await ds
-    .query(`DELETE FROM organization_members WHERE org_id = ANY($1)`, [
-      [ORG, OTHER_ORG],
-    ])
+    .query(`DELETE FROM organization_members WHERE org_id = ANY($1)`, [[ORG, OTHER_ORG]])
     .catch(() => undefined);
   await ds
     .query(`DELETE FROM organizations WHERE id = ANY($1)`, [[ORG, OTHER_ORG]])
@@ -109,9 +100,7 @@ async function purge(): Promise<void> {
     )
     .catch(() => undefined);
   await ds
-    .query(`DELETE FROM users WHERE email = ANY($1)`, [
-      [OWNER_EMAIL, MEMBER_EMAIL],
-    ])
+    .query(`DELETE FROM users WHERE email = ANY($1)`, [[OWNER_EMAIL, MEMBER_EMAIL]])
     .catch(() => undefined);
 }
 
@@ -189,12 +178,9 @@ beforeEach(async () => {
   await ds.query(`DELETE FROM jobs WHERE org_id = $1`, [ORG]);
   await ds.query(`DELETE FROM repos WHERE org_id = $1`, [ORG]);
 
-  const created = await request(server)
-    .post(reposPath(ORG))
-    .set('Cookie', ownerCookie)
-    .send({
-      repoUrl: 'https://github.com/atlas-it/workspace-profile-repo.git',
-    });
+  const created = await request(server).post(reposPath(ORG)).set('Cookie', ownerCookie).send({
+    repoUrl: 'https://github.com/atlas-it/workspace-profile-repo.git',
+  });
   expect(created.status).toBe(201);
   repoId = created.body.id as string;
 });
@@ -213,9 +199,7 @@ describe('WorkspaceProfileController HTTP (auth + owner/membership guards, live 
       });
     expect(setFile.status).toBe(200);
 
-    const res = await request(server)
-      .get(profilePath(ORG, repoId))
-      .set('Cookie', memberCookie);
+    const res = await request(server).get(profilePath(ORG, repoId)).set('Cookie', memberCookie);
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({
       mounts: [],
@@ -223,9 +207,7 @@ describe('WorkspaceProfileController HTTP (auth + owner/membership guards, live 
       previewRecipe: null,
       seenManifests: null,
     });
-    expect(res.body.secretFiles).toEqual([
-      { path: '.env.secret', label: 'Env secret' },
-    ]);
+    expect(res.body.secretFiles).toEqual([{ path: '.env.secret', label: 'Env secret' }]);
 
     const raw = JSON.stringify(res.body);
     expect(raw).not.toContain('super-secret-value');
@@ -244,9 +226,7 @@ describe('WorkspaceProfileController HTTP (auth + owner/membership guards, live 
       });
     expect(res.status).toBe(400);
 
-    const get = await request(server)
-      .get(profilePath(ORG, repoId))
-      .set('Cookie', ownerCookie);
+    const get = await request(server).get(profilePath(ORG, repoId)).set('Cookie', ownerCookie);
     expect(get.body.secretFiles).toEqual([]);
   });
 
@@ -283,12 +263,8 @@ describe('WorkspaceProfileController HTTP (auth + owner/membership guards, live 
     expect(put.status).toBe(200);
     expect(put.body).toEqual({ ok: true, restartsSandbox: true });
 
-    const get = await request(server)
-      .get(profilePath(ORG, repoId))
-      .set('Cookie', ownerCookie);
-    expect(get.body.mounts).toEqual([
-      { path: 'some/cache', mode: 'shared-ro' },
-    ]);
+    const get = await request(server).get(profilePath(ORG, repoId)).set('Cookie', ownerCookie);
+    expect(get.body.mounts).toEqual([{ path: 'some/cache', mode: 'shared-ro' }]);
   });
 
   it('owner: PUT mounts with an invalid ".." path is rejected with 400', async () => {
@@ -320,9 +296,7 @@ describe('WorkspaceProfileController HTTP (auth + owner/membership guards, live 
     expect(del.status).toBe(200);
     expect(del.body).toEqual({ ok: true, restartsSandbox: true });
 
-    const get = await request(server)
-      .get(profilePath(ORG, repoId))
-      .set('Cookie', ownerCookie);
+    const get = await request(server).get(profilePath(ORG, repoId)).set('Cookie', ownerCookie);
     expect(get.body.mounts).toEqual([]);
   });
 
@@ -334,9 +308,7 @@ describe('WorkspaceProfileController HTTP (auth + owner/membership guards, live 
     expect(put.status).toBe(200);
     expect(put.body).toEqual({ ok: true });
 
-    let get = await request(server)
-      .get(profilePath(ORG, repoId))
-      .set('Cookie', ownerCookie);
+    let get = await request(server).get(profilePath(ORG, repoId)).set('Cookie', ownerCookie);
     expect(get.body.setupScript).toBe('npm install');
 
     const clear = await request(server)
@@ -345,9 +317,7 @@ describe('WorkspaceProfileController HTTP (auth + owner/membership guards, live 
       .send({ script: '' });
     expect(clear.status).toBe(200);
 
-    get = await request(server)
-      .get(profilePath(ORG, repoId))
-      .set('Cookie', ownerCookie);
+    get = await request(server).get(profilePath(ORG, repoId)).set('Cookie', ownerCookie);
     expect(get.body.setupScript).toBeNull();
   });
 
@@ -359,9 +329,7 @@ describe('WorkspaceProfileController HTTP (auth + owner/membership guards, live 
     expect(put.status).toBe(200);
     expect(put.body).toEqual({ ok: true });
 
-    const get = await request(server)
-      .get(profilePath(ORG, repoId))
-      .set('Cookie', ownerCookie);
+    const get = await request(server).get(profilePath(ORG, repoId)).set('Cookie', ownerCookie);
     expect(get.body.previewRecipe).toBe('npm run preview');
   });
 
@@ -403,11 +371,7 @@ describe('WorkspaceProfileController HTTP (auth + owner/membership guards, live 
   it('GET/PUT for a repoId that does not belong to the org 404s', async () => {
     const bogusRepoId = '00000000-0000-4000-8000-000000000000';
     expect(
-      (
-        await request(server)
-          .get(profilePath(ORG, bogusRepoId))
-          .set('Cookie', ownerCookie)
-      ).status,
+      (await request(server).get(profilePath(ORG, bogusRepoId)).set('Cookie', ownerCookie)).status,
     ).toBe(404);
     expect(
       (

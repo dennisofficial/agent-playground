@@ -1,16 +1,11 @@
-import { describe, expect, it } from 'vitest';
 import type { Repository } from 'typeorm';
+import { describe, expect, it } from 'vitest';
 import type { RepoEntity } from '../../persistence/entities';
-import {
-  ProjectRoutingService,
-  normalizeRepoSlug,
-} from '../project-routing.service';
+import { ProjectRoutingService, normalizeRepoSlug } from '../project-routing.service';
 
 describe('normalizeRepoSlug', () => {
   it('normalizes https / ssh / bare refs to lower-cased owner/repo', () => {
-    expect(normalizeRepoSlug('https://github.com/Acme/Web.git')).toBe(
-      'acme/web',
-    );
+    expect(normalizeRepoSlug('https://github.com/Acme/Web.git')).toBe('acme/web');
     expect(normalizeRepoSlug('git@github.com:Acme/Web.git')).toBe('acme/web');
     expect(normalizeRepoSlug('Acme/Web')).toBe('acme/web');
     expect(normalizeRepoSlug('https://github.com/Acme/Web')).toBe('acme/web');
@@ -27,9 +22,7 @@ function svc(repos: RepoEntity[]): ProjectRoutingService {
   const repoRepo = {
     find: async () => repos,
     findOne: async (opts: { where: { id: string; org_id: string } }) =>
-      repos.find(
-        (r) => r.id === opts.where.id && r.org_id === opts.where.org_id,
-      ) ?? null,
+      repos.find((r) => r.id === opts.where.id && r.org_id === opts.where.org_id) ?? null,
   } as unknown as Repository<RepoEntity>;
   return new ProjectRoutingService(repoRepo);
 }

@@ -75,9 +75,7 @@ export interface JobDispatcher {
    * normal ship-review gate (the human diff review still runs; only the automated Codex whole-diff pass is
    * skipped). Refuses when the job isn't in that hold. Returns promptly.
    */
-  operatorShipWithoutReview(
-    jobId: string,
-  ): Promise<{ ok: boolean; reason?: string }>;
+  operatorShipWithoutReview(jobId: string): Promise<{ ok: boolean; reason?: string }>;
 }
 
 /**
@@ -98,9 +96,7 @@ export class LoggingJobDispatcher implements JobDispatcher {
   }
 
   async retry(jobId: string): Promise<void> {
-    this.logger.log(
-      `[no-op retry] THREAD ${jobId} — W4 ThreadDriver will re-drive this`,
-    );
+    this.logger.log(`[no-op retry] THREAD ${jobId} — W4 ThreadDriver will re-drive this`);
   }
 
   async redriveThread(
@@ -135,9 +131,7 @@ export class LoggingJobDispatcher implements JobDispatcher {
     return { ok: true };
   }
 
-  async operatorShipWithoutReview(
-    jobId: string,
-  ): Promise<{ ok: boolean; reason?: string }> {
+  async operatorShipWithoutReview(jobId: string): Promise<{ ok: boolean; reason?: string }> {
     this.logger.log(
       `[no-op operatorShipWithoutReview] THREAD ${jobId} — W4 ThreadDriver will finalize this`,
     );

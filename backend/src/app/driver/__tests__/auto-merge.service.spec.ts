@@ -5,21 +5,17 @@
  * `DriverStoreService`) are plain mocked objects. No DB, no Nest module boot.
  */
 
-import { describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
+import { describe, expect, it, vi } from 'vitest';
 import type { GithubPrService, PullDetail } from '../../git';
+import type { JobBootstrapService } from '../../job-bootstrap';
 import type { CredentialResolver } from '../../onboarding';
-import type { JobLifecycleService } from '../job-lifecycle.service';
+import type { JobEntity, RepoEntity, TranscriptMessageEntity } from '../../persistence/entities';
 import type { TurnRegistry } from '../../sandbox/turn-registry.service';
 import type { StimulusStoreService } from '../../stimulus/stimulus-store.service';
-import type { DriverStoreService } from '../driver-store.service';
-import type { JobBootstrapService } from '../../job-bootstrap';
-import type {
-  JobEntity,
-  RepoEntity,
-  TranscriptMessageEntity,
-} from '../../persistence/entities';
 import { AutoMergeService, prMergeReady } from '../auto-merge.service';
+import type { DriverStoreService } from '../driver-store.service';
+import type { JobLifecycleService } from '../job-lifecycle.service';
 
 function makeJobEntity(over: Partial<JobEntity> = {}): JobEntity {
   return {
@@ -68,9 +64,7 @@ function make(
 
   const messagesFindOne = vi.fn(async () => over.existingMethodNote ?? null);
   const messagesSave = vi.fn(async (row: unknown) => row);
-  const messagesCreate = vi.fn(
-    (row: unknown) => row as TranscriptMessageEntity,
-  );
+  const messagesCreate = vi.fn((row: unknown) => row as TranscriptMessageEntity);
   const messages = {
     findOne: messagesFindOne,
     save: messagesSave,
@@ -87,9 +81,7 @@ function make(
       headRef: 'atlas/feature',
     }),
   );
-  const mergePullRequest = vi.fn(
-    async () => over.mergeResult ?? { ok: true, sha: 'merged-sha' },
-  );
+  const mergePullRequest = vi.fn(async () => over.mergeResult ?? { ok: true, sha: 'merged-sha' });
   const deleteBranch = vi.fn(async () => undefined);
   const pr = {
     getPullDetail,
@@ -188,12 +180,9 @@ describe('prMergeReady', () => {
     expect(prMergeReady({ ...base, ci_status: 'pending' })).toBe(false);
   });
 
-  it.each(['dirty', 'behind', 'blocked'])(
-    'is false for pr_mergeable %s',
-    (state) => {
-      expect(prMergeReady({ ...base, pr_mergeable: state })).toBe(false);
-    },
-  );
+  it.each(['dirty', 'behind', 'blocked'])('is false for pr_mergeable %s', (state) => {
+    expect(prMergeReady({ ...base, pr_mergeable: state })).toBe(false);
+  });
 
   it.each(['merged', 'closed'])('is false for pr_state %s', (state) => {
     expect(prMergeReady({ ...base, pr_state: state })).toBe(false);
@@ -267,14 +256,8 @@ describe('AutoMergeService.brainSettled (private, cast to any)', () => {
 
 describe('AutoMergeService.mergeNow', () => {
   it('merges, deletes the branch (when configured + a feature branch exists), applies pr_state=merged, neutralizes the card, and returns true', async () => {
-    const {
-      svc,
-      job,
-      applyGithubPrState,
-      deleteBranch,
-      neutralizeMergeCard,
-      mergePullRequest,
-    } = make();
+    const { svc, job, applyGithubPrState, deleteBranch, neutralizeMergeCard, mergePullRequest } =
+      make();
     const ok = await svc.mergeNow(job.id, 'user-1');
     expect(ok).toBe(true);
     expect(mergePullRequest).toHaveBeenCalledWith(
@@ -427,10 +410,9 @@ describe('AutoMergeService.mergeNow', () => {
 
 describe('AutoMergeService.maybeAutoMerge', () => {
   it('neutralizes the card and does not post/merge when the PR is not merge-ready', async () => {
-    const { svc, job, postMergeCard, neutralizeMergeCard, mergePullRequest } =
-      make({
-        job: makeJobEntity({ pr_mergeable: 'dirty' }),
-      });
+    const { svc, job, postMergeCard, neutralizeMergeCard, mergePullRequest } = make({
+      job: makeJobEntity({ pr_mergeable: 'dirty' }),
+    });
     await svc.maybeAutoMerge(job.id);
     expect(neutralizeMergeCard).toHaveBeenCalledWith(job.id, 'not-ready');
     expect(postMergeCard).not.toHaveBeenCalled();

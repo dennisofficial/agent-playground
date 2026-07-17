@@ -1,20 +1,13 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import {
-  atlasAgentHomeBase,
-  engineHomeLeaf,
-  type EngineHomeKey,
-} from './engine-home';
+import { atlasAgentHomeBase, engineHomeLeaf, type EngineHomeKey } from './engine-home';
 
 /**
  * The deterministic CODEX_HOME path for an engine-home key — the ONE place the overlay's location is
  * computed, so the writer ({@link ensureCodexAuthHome}) and the post-run reader ({@link readCodexAuthHome})
  * never drift. Idempotent mkdir (the CLI won't create a deep custom path itself).
  */
-export function codexAuthHomeDir(
-  root: string | undefined,
-  key: EngineHomeKey,
-): string {
+export function codexAuthHomeDir(root: string | undefined, key: EngineHomeKey): string {
   const home = join(engineHomeLeaf(atlasAgentHomeBase(root), key), 'codex-sub');
   mkdirSync(home, { recursive: true });
   return home;
@@ -26,10 +19,7 @@ export function codexAuthHomeDir(
  * at turn start — the caller diffs it against the input secret to detect a refresh worth persisting.
  * Returns `null` when the file is absent/unreadable (nothing to persist).
  */
-export function readCodexAuthHome(
-  root: string | undefined,
-  key: EngineHomeKey,
-): string | null {
+export function readCodexAuthHome(root: string | undefined, key: EngineHomeKey): string | null {
   try {
     return readFileSync(join(codexAuthHomeDir(root, key), 'auth.json'), 'utf8');
   } catch {
@@ -65,26 +55,21 @@ export function assertValidCodexAuthJson(parsed: unknown): void {
     throw new CodexAuthInvalidError('not a JSON object');
   }
   const obj = parsed as { OPENAI_API_KEY?: unknown; tokens?: unknown };
-  const hasApiKey =
-    typeof obj.OPENAI_API_KEY === 'string' && obj.OPENAI_API_KEY.length > 0;
+  const hasApiKey = typeof obj.OPENAI_API_KEY === 'string' && obj.OPENAI_API_KEY.length > 0;
   const tokens = obj.tokens;
 
   // API-key-only blob is a complete auth path on its own.
   if (hasApiKey && (tokens === undefined || tokens === null)) return;
 
   if (typeof tokens !== 'object' || tokens === null) {
-    throw new CodexAuthInvalidError(
-      'missing the "tokens" object (and no OPENAI_API_KEY)',
-    );
+    throw new CodexAuthInvalidError('missing the "tokens" object (and no OPENAI_API_KEY)');
   }
   const t = tokens as Record<string, unknown>;
-  const missing = (
-    ['id_token', 'access_token', 'refresh_token'] as const
-  ).filter((k) => typeof t[k] !== 'string' || (t[k] as string).length === 0);
+  const missing = (['id_token', 'access_token', 'refresh_token'] as const).filter(
+    (k) => typeof t[k] !== 'string' || (t[k] as string).length === 0,
+  );
   if (missing.length > 0) {
-    throw new CodexAuthInvalidError(
-      `tokens is missing required field(s): ${missing.join(', ')}`,
-    );
+    throw new CodexAuthInvalidError(`tokens is missing required field(s): ${missing.join(', ')}`);
   }
 }
 
@@ -179,9 +164,7 @@ export function ensureCodexAuthHome(
   try {
     parsed = JSON.parse(secret);
   } catch {
-    throw new CodexAuthInvalidError(
-      'not valid JSON (expected the full auth.json object)',
-    );
+    throw new CodexAuthInvalidError('not valid JSON (expected the full auth.json object)');
   }
   assertValidCodexAuthJson(parsed);
 
@@ -197,9 +180,7 @@ export function ensureCodexAuthHome(
       ...mcpBridge.env,
       BRIDGE_TOOLS: mcpBridge.toolNames.join(','),
     };
-    blocks.push(
-      ...mcpServerBlock('atlasbridge', 'node', [mcpBridge.serverPath], env),
-    );
+    blocks.push(...mcpServerBlock('atlasbridge', 'node', [mcpBridge.serverPath], env));
   }
   for (const [name, srv] of Object.entries(extraMcpServers ?? {})) {
     blocks.push(...mcpServerBlock(name, srv.command, srv.args ?? [], srv.env));

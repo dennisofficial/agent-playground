@@ -1,16 +1,9 @@
+import type { EnvService } from '@core/config/env/env.service';
 import { execFile } from 'node:child_process';
-import {
-  existsSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import type { EnvService } from '@core/config/env/env.service';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { LocalGitService } from '../local-git.service';
 
@@ -35,8 +28,7 @@ describe('LocalGitService — submodule hydration (real git, linked worktree)', 
   let git: LocalGitService;
   let prevAllowProtocol: string | undefined;
 
-  const g = (args: string[], cwd: string) =>
-    execFileAsync('git', args, { cwd });
+  const g = (args: string[], cwd: string) => execFileAsync('git', args, { cwd });
 
   beforeEach(async () => {
     // Opt into file:// submodule transport for THIS process (prod never does).
@@ -54,10 +46,7 @@ describe('LocalGitService — submodule hydration (real git, linked worktree)', 
     await g(['init', '-q', '-b', 'main'], subRemote);
     await g(['config', 'user.email', 'test@atlas.dev'], subRemote);
     await g(['config', 'user.name', 'Test'], subRemote);
-    writeFileSync(
-      join(subRemote, 'package.json'),
-      '{"name":"@workspace/shared"}',
-    );
+    writeFileSync(join(subRemote, 'package.json'), '{"name":"@workspace/shared"}');
     await g(['add', '-A'], subRemote);
     await g(['commit', '-qm', 'sub'], subRemote);
 
@@ -109,17 +98,7 @@ describe('LocalGitService — submodule hydration (real git, linked worktree)', 
     expect(readFileSync(submodulePkg(), 'utf8')).toContain('@workspace/shared');
     // The per-worktree submodule gitdir is created under the worktree's private gitdir (not the main clone).
     expect(
-      existsSync(
-        join(
-          clone,
-          '.git',
-          'worktrees',
-          'feature',
-          'modules',
-          'packages',
-          'shared',
-        ),
-      ),
+      existsSync(join(clone, '.git', 'worktrees', 'feature', 'modules', 'packages', 'shared')),
     ).toBe(true);
   });
 
@@ -175,8 +154,7 @@ describe('clone-mode provisioning (submodule repos)', () => {
   let git: LocalGitService;
   let prevAllowProtocol: string | undefined;
 
-  const g = (args: string[], cwd: string) =>
-    execFileAsync('git', args, { cwd });
+  const g = (args: string[], cwd: string) => execFileAsync('git', args, { cwd });
 
   beforeEach(async () => {
     // Opt into file:// submodule transport for THIS process (prod never does).
@@ -194,10 +172,7 @@ describe('clone-mode provisioning (submodule repos)', () => {
     await g(['init', '-q', '-b', 'main'], subRemote);
     await g(['config', 'user.email', 'test@atlas.dev'], subRemote);
     await g(['config', 'user.name', 'Test'], subRemote);
-    writeFileSync(
-      join(subRemote, 'package.json'),
-      '{"name":"@workspace/shared"}',
-    );
+    writeFileSync(join(subRemote, 'package.json'), '{"name":"@workspace/shared"}');
     await g(['add', '-A'], subRemote);
     await g(['commit', '-qm', 'sub'], subRemote);
 
@@ -270,9 +245,7 @@ describe('clone-mode provisioning (submodule repos)', () => {
 
   it('createBaseClone provisions a real full clone (.git is a directory, not a gitlink file)', async () => {
     const sandbox = await git.createBaseClone(repo(), 'job-1');
-    expect(statSync(join(sandbox.worktreePath, '.git')).isDirectory()).toBe(
-      true,
-    );
+    expect(statSync(join(sandbox.worktreePath, '.git')).isDirectory()).toBe(true);
   });
 
   it('ensureSubmodules resolves the submodule with a relative gitdir under .git/modules', async () => {
@@ -289,9 +262,7 @@ describe('clone-mode provisioning (submodule repos)', () => {
 
     const gitdirRel = gitlink.replace(/^gitdir:\s*/, '');
     const resolvedGitdir = join(subPath, gitdirRel);
-    expect(
-      resolvedGitdir.startsWith(join(sandbox.worktreePath, '.git', 'modules')),
-    ).toBe(true);
+    expect(resolvedGitdir.startsWith(join(sandbox.worktreePath, '.git', 'modules'))).toBe(true);
   });
 
   it("removeSandbox rm -rf's a clone checkout entirely", async () => {

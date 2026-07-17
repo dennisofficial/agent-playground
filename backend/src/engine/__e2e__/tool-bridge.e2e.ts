@@ -10,6 +10,7 @@
 // SHAPE: `list_skills` routes through the GENERAL host bridge; `read_setup_script` routes through the
 // dedicated WORKSPACE-PROFILE bridge (partitioned in turn-runner) — two distinct MCP servers, one turn.
 import {
+  newTurnId as _uid,
   cleanup,
   finalResult,
   frameKinds,
@@ -17,7 +18,6 @@ import {
   makeSpec,
   newRedis,
   newTurnId,
-  newTurnId as _uid,
   report,
   requireSandboxArg,
   startToolResponder,
@@ -41,7 +41,8 @@ export async function run(sandbox: string): Promise<ScenarioResult> {
         'You have two tools. First call the list_skills tool with empty arguments, then call the ' +
         'read_setup_script tool with empty arguments. Then reply with EXACTLY the two string values they ' +
         'returned, separated by a single space, and nothing else.',
-      systemPrompt: 'You are a terse test assistant. Use the provided tools, then report their outputs verbatim.',
+      systemPrompt:
+        'You are a terse test assistant. Use the provided tools, then report their outputs verbatim.',
     });
     console.log(`[bridge] turn ${turnId} on ${sandbox}; secrets=${secretSkills},${secretSetup}`);
     await xadd(redis, k.spec, spec);
@@ -63,7 +64,8 @@ export async function run(sandbox: string): Promise<ScenarioResult> {
 
     console.log(`[bridge] frames: ${frameKinds(frames)}`);
     console.log(`[bridge] tools the engine called: ${JSON.stringify(responder.called)}`);
-    if (error) return { pass: false, detail: `error frame: ${String(error.message).slice(0, 200)}` };
+    if (error)
+      return { pass: false, detail: `error frame: ${String(error.message).slice(0, 200)}` };
     if (!final) return { pass: false, detail: 'no final frame' };
 
     const result = finalResult(final);

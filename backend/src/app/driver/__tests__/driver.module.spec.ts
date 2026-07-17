@@ -1,17 +1,17 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SchedulerRegistry } from '@nestjs/schedule';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { DriverModule } from '../driver.module';
-import type { ThreadDriver } from '../thread-driver.service';
-import type { JobLifecycleService } from '../job-lifecycle.service';
-import type { GitStateReconciler } from '../git-state-reconciler.service';
-import type { SessionResumeSweep } from '../session-resume-sweep.service';
-import type { JobUnblockSweep } from '../job-unblock-sweep.service';
-import type { LeaderElectionService } from '../cluster/leader-election.service';
 import type { EnvService } from '@core/config/env/env.service';
-import type { ChatSurface } from '../../surface';
-import type { OnboardingService } from '../../onboarding';
 import type { ExposureService } from '../../exposure';
+import type { OnboardingService } from '../../onboarding';
+import type { ChatSurface } from '../../surface';
+import type { LeaderElectionService } from '../cluster/leader-election.service';
+import { DriverModule } from '../driver.module';
+import type { GitStateReconciler } from '../git-state-reconciler.service';
+import type { JobLifecycleService } from '../job-lifecycle.service';
+import type { JobUnblockSweep } from '../job-unblock-sweep.service';
+import type { SessionResumeSweep } from '../session-resume-sweep.service';
+import type { ThreadDriver } from '../thread-driver.service';
 
 /**
  * The promote/demote wiring is the load-bearing pair for the leadership-fenced drive: because a fenced drive
@@ -113,9 +113,9 @@ describe('DriverModule — promote wiring re-drives yielded jobs (leadership fen
     expect(h.driver.resume).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(30 * 60 * 1000); // one reap interval (default)
     // The tick's idempotent resume() ran, re-driving any stranded running job.
-    expect(
-      (h.driver.resume as ReturnType<typeof vi.fn>).mock.calls.length,
-    ).toBeGreaterThanOrEqual(2);
+    expect((h.driver.resume as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(
+      2,
+    );
 
     h.mod.onApplicationShutdown();
   });
@@ -123,8 +123,7 @@ describe('DriverModule — promote wiring re-drives yielded jobs (leadership fen
   it('sweeps orphaned sandbox artifacts ONCE per process on boot BEFORE resuming jobs, and again on each reap tick', async () => {
     vi.useFakeTimers();
     const h = harness();
-    const reapArtifacts = h.lifecycle
-      .reapOrphanedSandboxArtifacts as ReturnType<typeof vi.fn>;
+    const reapArtifacts = h.lifecycle.reapOrphanedSandboxArtifacts as ReturnType<typeof vi.fn>;
     const resume = h.driver.resume as ReturnType<typeof vi.fn>;
     await h.mod.onApplicationBootstrap();
 
@@ -172,16 +171,13 @@ describe('DriverModule — promote wiring re-drives yielded jobs (leadership fen
     await h.promote(); // starts the fast poll timer
 
     await vi.advanceTimersByTimeAsync(15 * 1000); // one heartbeat
-    const afterOne = (h.reconciler.tick as ReturnType<typeof vi.fn>).mock.calls
-      .length;
+    const afterOne = (h.reconciler.tick as ReturnType<typeof vi.fn>).mock.calls.length;
     expect(afterOne).toBeGreaterThanOrEqual(1);
 
     // Demotion stops the heartbeat — no further ticks.
     h.demote();
     await vi.advanceTimersByTimeAsync(60 * 1000);
-    expect(
-      (h.reconciler.tick as ReturnType<typeof vi.fn>).mock.calls.length,
-    ).toBe(afterOne);
+    expect((h.reconciler.tick as ReturnType<typeof vi.fn>).mock.calls.length).toBe(afterOne);
 
     h.mod.onApplicationShutdown();
   });
@@ -215,9 +211,7 @@ describe('DriverModule — promote wiring re-drives yielded jobs (leadership fen
 
     await vi.advanceTimersByTimeAsync(15 * 1000); // first heartbeat starts a tick (still pending)
     await vi.advanceTimersByTimeAsync(15 * 1000); // second heartbeat — guarded, must NOT start another tick
-    expect(
-      (h.reconciler.tick as ReturnType<typeof vi.fn>).mock.calls.length,
-    ).toBe(1);
+    expect((h.reconciler.tick as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
 
     resolveTick?.();
     h.mod.onApplicationShutdown();

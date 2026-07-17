@@ -1,6 +1,6 @@
-import { describe, expect, it, beforeEach } from 'vitest';
 import type { EnvService } from '@core/config/env/env.service';
 import type { Repository } from 'typeorm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import type { McpServerEntity } from '../../persistence/entities';
 import { McpServerStore } from '../mcp-server.store';
 
@@ -15,18 +15,13 @@ class FakeRepo {
   }
   async save(row: McpServerEntity): Promise<McpServerEntity> {
     const i = this.rows.findIndex(
-      (r) =>
-        r.org_id === row.org_id && r.scope === row.scope && r.name === row.name,
+      (r) => r.org_id === row.org_id && r.scope === row.scope && r.name === row.name,
     );
     if (i >= 0) this.rows[i] = row;
     else this.rows.push(row);
     return row;
   }
-  async findOne({
-    where,
-  }: {
-    where: Partial<McpServerEntity>;
-  }): Promise<McpServerEntity | null> {
+  async findOne({ where }: { where: Partial<McpServerEntity> }): Promise<McpServerEntity | null> {
     return this.rows.find((r) => this.match(r, where)) ?? null;
   }
   async find({
@@ -52,10 +47,7 @@ function makeStore(): { store: McpServerStore; repo: FakeRepo } {
   const env = {
     get: (k: string) => (k === 'SECRETS_ENCRYPTION_KEY' ? KEY : undefined),
   } as EnvService;
-  const store = new McpServerStore(
-    repo as unknown as Repository<McpServerEntity>,
-    env,
-  );
+  const store = new McpServerStore(repo as unknown as Repository<McpServerEntity>, env);
   return { store, repo };
 }
 
@@ -77,9 +69,7 @@ describe('McpServerStore', () => {
     await store.write('org1', '*', 'linear', {
       transport: 'http',
       url: 'https://mcp.linear.app',
-      headers: [
-        { name: 'Authorization', value: 'Bearer secret', secret: true },
-      ],
+      headers: [{ name: 'Authorization', value: 'Bearer secret', secret: true }],
     });
     const row = repo.rows[0];
     // The secret value is NEVER in config — only a null placeholder.
@@ -217,14 +207,7 @@ describe('McpServerStore', () => {
         transport: 'stdio',
         command: 'npx',
       });
-      const ok = await store.setSecret(
-        'org1',
-        'repo-1',
-        'svc',
-        'env',
-        'TOKEN',
-        't-1',
-      );
+      const ok = await store.setSecret('org1', 'repo-1', 'svc', 'env', 'TOKEN', 't-1');
       expect(ok).toBe(true);
       expect(repo.rows[0].config.env).toEqual({ TOKEN: null });
       expect(store.decryptSecrets(repo.rows[0])).toEqual({
@@ -248,9 +231,7 @@ describe('McpServerStore', () => {
     });
 
     it('returns false (no throw) when the server row is gone', async () => {
-      expect(
-        await store.setSecret('org1', 'repo-1', 'missing', 'headers', 'X', 'v'),
-      ).toBe(false);
+      expect(await store.setSecret('org1', 'repo-1', 'missing', 'headers', 'X', 'v')).toBe(false);
     });
   });
 
@@ -262,9 +243,7 @@ describe('McpServerStore', () => {
         headers: [{ name: 'Authorization', value: '', secret: true }], // declared, no value
       });
       const gaps = await store.unfilledSecretSlots('org1', 'repo-1');
-      expect(gaps).toEqual([
-        { name: 'github', scope: 'repo-1', slots: ['header:Authorization'] },
-      ]);
+      expect(gaps).toEqual([{ name: 'github', scope: 'repo-1', slots: ['header:Authorization'] }]);
     });
 
     it('does not report a slot once its value is filled', async () => {
@@ -297,9 +276,7 @@ describe('McpServerStore', () => {
       await store.write('org1', 'repo-1', 'github', {
         transport: 'http',
         url: 'https://api.githubcopilot.com/mcp/',
-        headers: [
-          { name: 'Authorization', value: 'Bearer ghp_expired', secret: true },
-        ],
+        headers: [{ name: 'Authorization', value: 'Bearer ghp_expired', secret: true }],
       });
       await store.recordValidation('org1', 'repo-1', 'github', {
         error: '401 Unauthorized',
@@ -338,9 +315,7 @@ describe('McpServerStore', () => {
       await store.write('org1', 'repo-1', 'ok', {
         transport: 'http',
         url: 'https://x',
-        headers: [
-          { name: 'Authorization', value: 'Bearer live', secret: true },
-        ],
+        headers: [{ name: 'Authorization', value: 'Bearer live', secret: true }],
       });
       await store.recordValidation('org1', 'repo-1', 'ok', {
         discoveredTools: ['t'],

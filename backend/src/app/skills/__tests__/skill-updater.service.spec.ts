@@ -1,14 +1,14 @@
+import type { EnvService } from '@core/config/env/env.service';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Repository } from 'typeorm';
-import type { EnvService } from '@core/config/env/env.service';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { LeaderElectionService } from '../../cluster/leader-election.service';
-import type { CredentialResolver } from '../onboarding';
-import type { WorkspaceSkillEntity } from '../../persistence/entities';
 import { LocalGitService } from '../../git/local-git.service';
+import type { WorkspaceSkillEntity } from '../../persistence/entities';
+import type { CredentialResolver } from '../onboarding';
 import { SkillInstallerService } from '../skill-installer.service';
 import { SkillUpdaterService } from '../skill-updater.service';
 import { WorkspaceSkillStore } from '../workspace-skill.store';
@@ -31,8 +31,7 @@ class FakeRepo {
   }
   async save(row: WorkspaceSkillEntity): Promise<WorkspaceSkillEntity> {
     const i = this.rows.findIndex(
-      (r) =>
-        r.org_id === row.org_id && r.scope === row.scope && r.name === row.name,
+      (r) => r.org_id === row.org_id && r.scope === row.scope && r.name === row.name,
     );
     if (i >= 0) this.rows[i] = row;
     else this.rows.push(row);
@@ -45,9 +44,7 @@ class FakeRepo {
   }): Promise<WorkspaceSkillEntity | null> {
     return this.rows.find((r) => this.match(r, where)) ?? null;
   }
-  async find({
-    where,
-  }: { where?: Partial<WorkspaceSkillEntity> } = {}): Promise<
+  async find({ where }: { where?: Partial<WorkspaceSkillEntity> } = {}): Promise<
     WorkspaceSkillEntity[]
   > {
     return where ? this.rows.filter((r) => this.match(r, where)) : this.rows;
@@ -56,14 +53,10 @@ class FakeRepo {
     where: Partial<WorkspaceSkillEntity>,
     patch: Partial<WorkspaceSkillEntity>,
   ): Promise<void> {
-    for (const r of this.rows)
-      if (this.match(r, where)) Object.assign(r, patch);
+    for (const r of this.rows) if (this.match(r, where)) Object.assign(r, patch);
   }
   async delete(): Promise<void> {}
-  private match(
-    r: WorkspaceSkillEntity,
-    where: Partial<WorkspaceSkillEntity>,
-  ): boolean {
+  private match(r: WorkspaceSkillEntity, where: Partial<WorkspaceSkillEntity>): boolean {
     return Object.entries(where).every(
       ([k, v]) => (r as unknown as Record<string, unknown>)[k] === v,
     );
@@ -98,15 +91,11 @@ describe('SkillUpdaterService (real git, local fixture repo)', () => {
     work = join(tmp, 'work');
     sourceUrl = join(tmp, 'origin.git');
     initRepo(work);
-    writeFileSync(
-      join(work, 'SKILL.md'),
-      '---\nname: my-skill\ndescription: v1\n---\nBody v1.\n',
-    );
+    writeFileSync(join(work, 'SKILL.md'), '---\nname: my-skill\ndescription: v1\n---\nBody v1.\n');
     commitAndBare(tmp, work, sourceUrl);
 
     const env = {
-      get: (key: string) =>
-        key === 'SKILLS_ROOT' ? join(tmp, 'store') : undefined,
+      get: (key: string) => (key === 'SKILLS_ROOT' ? join(tmp, 'store') : undefined),
     } as EnvService;
     const git = new LocalGitService({ get: () => undefined } as never);
     const creds = {
@@ -114,9 +103,7 @@ describe('SkillUpdaterService (real git, local fixture repo)', () => {
       hostGithubToken: async () => undefined,
     } as unknown as CredentialResolver;
     repo = new FakeRepo();
-    store = new WorkspaceSkillStore(
-      repo as unknown as Repository<WorkspaceSkillEntity>,
-    );
+    store = new WorkspaceSkillStore(repo as unknown as Repository<WorkspaceSkillEntity>);
     installer = new SkillInstallerService(env, git, creds, store);
     updater = new SkillUpdaterService(
       repo as unknown as Repository<WorkspaceSkillEntity>,
@@ -156,10 +143,7 @@ describe('SkillUpdaterService (real git, local fixture repo)', () => {
       updatePolicy: 'track-ref',
     });
 
-    writeFileSync(
-      join(work, 'SKILL.md'),
-      '---\nname: my-skill\ndescription: v2\n---\nBody v2.\n',
-    );
+    writeFileSync(join(work, 'SKILL.md'), '---\nname: my-skill\ndescription: v2\n---\nBody v2.\n');
     commitAndBare(tmp, work, sourceUrl);
 
     await updater.reconcileAll();
@@ -177,10 +161,7 @@ describe('SkillUpdaterService (real git, local fixture repo)', () => {
       updatePolicy: 'pinned',
     });
 
-    writeFileSync(
-      join(work, 'SKILL.md'),
-      '---\nname: my-skill\ndescription: v2\n---\nBody v2.\n',
-    );
+    writeFileSync(join(work, 'SKILL.md'), '---\nname: my-skill\ndescription: v2\n---\nBody v2.\n');
     commitAndBare(tmp, work, sourceUrl);
 
     await updater.reconcileAll();
@@ -202,10 +183,7 @@ describe('SkillUpdaterService (real git, local fixture repo)', () => {
       sourceUrl,
       updatePolicy: 'pinned',
     });
-    writeFileSync(
-      join(work, 'SKILL.md'),
-      '---\nname: my-skill\ndescription: v2\n---\nBody v2.\n',
-    );
+    writeFileSync(join(work, 'SKILL.md'), '---\nname: my-skill\ndescription: v2\n---\nBody v2.\n');
     commitAndBare(tmp, work, sourceUrl);
 
     updater.reconcileOrgAsync('org1');

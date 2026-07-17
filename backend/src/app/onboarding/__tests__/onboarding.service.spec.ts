@@ -1,23 +1,20 @@
-import { describe, expect, it } from 'vitest';
 import type { EnvService } from '@core/config/env/env.service';
 import type { ModuleRef } from '@nestjs/core';
 import type { Repository } from 'typeorm';
-import type { GithubPrService, RepoInfo } from '../git';
+import { describe, expect, it } from 'vitest';
 import type {
   DecisionRecordEntity,
-  OrganizationEntity,
-  OrgCredentialsEntity,
-  RepoEntity,
   InboundMessageEntity,
   JobEntity,
   JobSandboxEntity,
+  OrganizationEntity,
+  OrgCredentialsEntity,
+  RepoEntity,
 } from '../../persistence/entities';
 import { CredentialResolver } from '../credential-resolver.service';
+import type { GithubPrService, RepoInfo } from '../git';
 import { OnboardingService } from '../onboarding.service';
-import type {
-  CredentialPresence,
-  TenantCredentialStore,
-} from '../tenant-credential.store';
+import type { CredentialPresence, TenantCredentialStore } from '../tenant-credential.store';
 
 // ── in-memory fake repositories ───────────────────────────────────────────────────────────────────
 
@@ -59,28 +56,20 @@ function makeRepos() {
       if (where.id !== undefined) {
         for (const v of map.values()) {
           // Honor the org scope when both are given (so cross-tenant ids resolve to null → 404).
-          if (
-            v.id === where.id &&
-            (where.org_id === undefined || v.org_id === where.org_id)
-          )
+          if (v.id === where.id && (where.org_id === undefined || v.org_id === where.org_id))
             return v;
         }
         return null;
       }
       if (where.access_ok !== undefined) {
         for (const v of map.values()) {
-          if (v.org_id === where.org_id && v.access_ok === where.access_ok)
-            return v;
+          if (v.org_id === where.org_id && v.access_ok === where.access_ok) return v;
         }
         return null;
       }
       return map.get(k(where.org_id as string, where.slug as string)) ?? null;
     },
-    async findOneOrFail({
-      where,
-    }: {
-      where: { id?: string; org_id?: string; slug?: string };
-    }) {
+    async findOneOrFail({ where }: { where: { id?: string; org_id?: string; slug?: string } }) {
       if (where.id !== undefined) {
         for (const v of map.values()) if (v.id === where.id) return v;
         throw new Error('repo not found');
@@ -103,8 +92,7 @@ function makeRepos() {
       patch: Partial<RepoEntity>,
     ) {
       if (where.id !== undefined) {
-        for (const [key, v] of map)
-          if (v.id === where.id) map.set(key, { ...v, ...patch });
+        for (const [key, v] of map) if (v.id === where.id) map.set(key, { ...v, ...patch });
         return;
       }
       const key = k(where.org_id as string, where.slug as string);
@@ -146,17 +134,11 @@ function makeTable<T extends Record<string, unknown>>(seed: T[] = []) {
     async count({ where }: { where: Record<string, unknown> }) {
       return rows.filter((r) => matches(r, where)).length;
     },
-    async find({
-      where,
-    }: {
-      where: Record<string, unknown>;
-      select?: unknown;
-    }) {
+    async find({ where }: { where: Record<string, unknown>; select?: unknown }) {
       return rows.filter((r) => matches(r, where)).map((r) => ({ ...r }));
     },
     async delete(where: Record<string, unknown>) {
-      for (let i = rows.length - 1; i >= 0; i--)
-        if (matches(rows[i], where)) rows.splice(i, 1);
+      for (let i = rows.length - 1; i >= 0; i--) if (matches(rows[i], where)) rows.splice(i, 1);
       return { affected: 0 };
     },
   } as unknown as Repository<T>;
@@ -190,9 +172,7 @@ function makeOrgCreds(llmValidated = false) {
   return { repo, map };
 }
 
-function fakeCreds(
-  over: Partial<Record<'anthropic' | 'github', string>> = {},
-): CredentialResolver {
+function fakeCreds(over: Partial<Record<'anthropic' | 'github', string>> = {}): CredentialResolver {
   return {
     async anthropicKey() {
       return over.anthropic;
@@ -206,9 +186,7 @@ function fakeCreds(
   } as unknown as CredentialResolver;
 }
 
-function fakeStore(
-  presence: Partial<CredentialPresence> = {},
-): TenantCredentialStore {
+function fakeStore(presence: Partial<CredentialPresence> = {}): TenantCredentialStore {
   return {
     async presence() {
       return {
@@ -453,10 +431,7 @@ describe('OnboardingService', () => {
       });
       const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
       // Simulate access having gone stale, then prove revalidate restores it.
-      await repos.repo.update(
-        { id: connected.id },
-        { access_ok: false, access_checked_at: null },
-      );
+      await repos.repo.update({ id: connected.id }, { access_ok: false, access_checked_at: null });
 
       const res = await svc.revalidateRepo('T1', connected.id);
       expect(res.accessOk).toBe(true);
@@ -467,9 +442,7 @@ describe('OnboardingService', () => {
     it('404s on a repo id from another org (cross-tenant)', async () => {
       const { svc } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
       const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
-      await expect(svc.revalidateRepo('OTHER', connected.id)).rejects.toThrow(
-        /not found/i,
-      );
+      await expect(svc.revalidateRepo('OTHER', connected.id)).rejects.toThrow(/not found/i);
     });
   });
 
@@ -519,9 +492,9 @@ describe('OnboardingService', () => {
     it('404s on a repo id from another org (cross-tenant)', async () => {
       const { svc } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
       const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
-      await expect(
-        svc.updateRepo('OTHER', connected.id, { name: 'x' }),
-      ).rejects.toThrow(/not found/i);
+      await expect(svc.updateRepo('OTHER', connected.id, { name: 'x' })).rejects.toThrow(
+        /not found/i,
+      );
     });
 
     it('persists repo-level merge default updates (method + delete-branch)', async () => {
@@ -541,9 +514,7 @@ describe('OnboardingService', () => {
       expect(res.defaultAutoMergeMethod).toBe('rebase');
       expect(res.defaultAutoMergeDeleteBranch).toBe(false);
       expect(repos.map.get('T1:web')?.default_auto_merge_method).toBe('rebase');
-      expect(repos.map.get('T1:web')?.default_auto_merge_delete_branch).toBe(
-        false,
-      );
+      expect(repos.map.get('T1:web')?.default_auto_merge_delete_branch).toBe(false);
     });
   });
 
@@ -556,9 +527,7 @@ describe('OnboardingService', () => {
 
     it('404s when the repo does not exist', async () => {
       const { svc } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
-      await expect(svc.reonboardRepo('T1', 'nope')).rejects.toThrow(
-        /not found/i,
-      );
+      await expect(svc.reonboardRepo('T1', 'nope')).rejects.toThrow(/not found/i);
     });
 
     it('rejects when the repo access is not validated', async () => {
@@ -568,18 +537,14 @@ describe('OnboardingService', () => {
       });
       const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
       await repos.repo.update({ id: connected.id }, { access_ok: false });
-      await expect(svc.reonboardRepo('T1', connected.id)).rejects.toThrow(
-        /validated/i,
-      );
+      await expect(svc.reonboardRepo('T1', connected.id)).rejects.toThrow(/validated/i);
     });
 
     it('rejects when the org cannot run Atlas yet (missing credentials)', async () => {
       // access_ok repo, but the org has no LLM key / engine auth → not runnable.
       const { svc } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
       const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
-      await expect(svc.reonboardRepo('T1', connected.id)).rejects.toThrow(
-        /finish org setup/i,
-      );
+      await expect(svc.reonboardRepo('T1', connected.id)).rejects.toThrow(/finish org setup/i);
     });
   });
 
@@ -652,9 +617,7 @@ describe('OnboardingService', () => {
     it('404s on a repo id from another org (cross-tenant)', async () => {
       const { svc } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
       const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
-      await expect(svc.disconnectRepo('OTHER', connected.id)).rejects.toThrow(
-        /not found/i,
-      );
+      await expect(svc.disconnectRepo('OTHER', connected.id)).rejects.toThrow(/not found/i);
     });
   });
 
@@ -772,9 +735,7 @@ describe('OnboardingService', () => {
       });
       seedActiveRepo(repos);
       await svc.ensureWebhooksForActiveRepos();
-      expect(repos.map.get('T1:web')?.webhook_warning).toContain(
-        'admin:repo_hook',
-      );
+      expect(repos.map.get('T1:web')?.webhook_warning).toContain('admin:repo_hook');
     });
 
     it('clears the warning when both hooks register cleanly', async () => {

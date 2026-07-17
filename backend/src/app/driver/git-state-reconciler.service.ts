@@ -1,10 +1,6 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Not, Raw, Repository } from 'typeorm';
-import { CredentialResolver } from '../onboarding/credential-resolver.service';
-import { DB_CONNECTION } from '../persistence/database.module';
-import { JobEntity, RepoEntity } from '../persistence/entities';
-import { AutoMergeService } from './auto-merge.service';
 import {
   CheckRun,
   CiCounts,
@@ -12,7 +8,11 @@ import {
   GithubPrService,
   parseGithubRepoUrl,
 } from '../git/github-pr.service';
+import { CredentialResolver } from '../onboarding/credential-resolver.service';
+import { DB_CONNECTION } from '../persistence/database.module';
+import { JobEntity, RepoEntity } from '../persistence/entities';
 import { StimulusIntake } from '../stimulus/stimulus-intake.service';
+import { AutoMergeService } from './auto-merge.service';
 
 /**
  * The GIT-STATE RECONCILER — the poll half of "host observes GitHub, Atlas acts". Runs on the driver's
@@ -86,9 +86,7 @@ export class GitStateReconciler {
         tier = await this.reconcileOne(job);
         reconciled++;
       } catch (err) {
-        this.logger.warn(
-          `git-state reconcile failed for job ${job.id}: ${err}`,
-        );
+        this.logger.warn(`git-state reconcile failed for job ${job.id}: ${err}`);
         // Rate-limited mid-pass (e.g. the job tripped it) — leave THIS job DUE rather than re-stamping it,
         // so it re-polls immediately once the pause clears instead of waiting out the backoff.
         if (this.pr.isRateLimited()) continue;
@@ -141,18 +139,12 @@ export class GitStateReconciler {
     let marked = 0;
     if (opts.prNumber != null) {
       target = `pr #${opts.prNumber}`;
-      const res = await this.jobs.update(
-        { ...baseWhere, pr_number: opts.prNumber },
-        stamp,
-      );
+      const res = await this.jobs.update({ ...baseWhere, pr_number: opts.prNumber }, stamp);
       marked = res.affected ?? 0;
     }
     if (marked === 0 && opts.branch) {
       target = `branch ${opts.branch}`;
-      const res = await this.jobs.update(
-        { ...baseWhere, feature_branch: opts.branch },
-        stamp,
-      );
+      const res = await this.jobs.update({ ...baseWhere, feature_branch: opts.branch }, stamp);
       marked = res.affected ?? 0;
     }
     if (!target) {
@@ -166,8 +158,7 @@ export class GitStateReconciler {
 
   /** Re-stamp a job's durable poll clock: `terminal` clears it (stop polling), else now + adaptive cadence. */
   private async setNextPoll(jobId: string, tier: PollTier): Promise<void> {
-    const next =
-      tier === 'terminal' ? null : new Date(Date.now() + CADENCE_MS[tier]);
+    const next = tier === 'terminal' ? null : new Date(Date.now() + CADENCE_MS[tier]);
     await this.jobs.update({ id: jobId }, { next_poll_at: next });
   }
 
@@ -205,9 +196,7 @@ export class GitStateReconciler {
         },
       );
       job.pr_state = 'open';
-      this.logger.log(
-        `discovered PR #${found.number} for job ${job.id} on ${job.feature_branch}`,
-      );
+      this.logger.log(`discovered PR #${found.number} for job ${job.id} on ${job.feature_branch}`);
       prNumber = found.number;
     }
 
@@ -250,8 +239,7 @@ export class GitStateReconciler {
     }
 
     // Persist observed columns only when they changed — avoid needless WAL/realtime deltas.
-    const ciChanged =
-      sum.status !== job.ci_status || !sameCounts(sum.counts, job.ci_counts);
+    const ciChanged = sum.status !== job.ci_status || !sameCounts(sum.counts, job.ci_counts);
     if (ciChanged || detail.mergeableState !== job.pr_mergeable) {
       await this.jobs.update(
         { id: job.id },
@@ -286,14 +274,11 @@ export class GitStateReconciler {
     // check would have skipped.
     void this.autoMerge
       ?.maybeAutoMerge(job.id)
-      .catch((err) =>
-        this.logger.warn(`maybeAutoMerge failed for job ${job.id}: ${err}`),
-      );
+      .catch((err) => this.logger.warn(`maybeAutoMerge failed for job ${job.id}: ${err}`));
 
     // `null` / `unknown` mergeable_state = GitHub is still computing it — poll fast (`computing`) until it
     // resolves to clean/dirty. A settled open PR polls at the relaxed `active` cadence.
-    return detail.mergeableState == null ||
-      detail.mergeableState.toLowerCase() === 'unknown'
+    return detail.mergeableState == null || detail.mergeableState.toLowerCase() === 'unknown'
       ? 'computing'
       : 'active';
   }
@@ -317,13 +302,7 @@ export const CADENCE_MS: Record<Exclude<PollTier, 'terminal'>, number> = {
   discovering: 180_000,
 };
 
-const FAILED = new Set([
-  'failure',
-  'timed_out',
-  'cancelled',
-  'action_required',
-  'stale',
-]);
+const FAILED = new Set(['failure', 'timed_out', 'cancelled', 'action_required', 'stale']);
 
 /** Roll a PR head's check-runs into an overall status + per-category counts. Precedence: any FAILED
  *  conclusion → failure; else any run not completed → pending; else ≥1 success → success; else skipped.

@@ -60,7 +60,8 @@ export async function run(sandbox: string): Promise<ScenarioResult> {
       onFrame,
     });
     console.log(`[steering] frames: ${frameKinds(frames)}`);
-    if (error) return { pass: false, detail: `error frame: ${String(error.message).slice(0, 200)}` };
+    if (error)
+      return { pass: false, detail: `error frame: ${String(error.message).slice(0, 200)}` };
 
     const ackedIds = frames
       .filter((f) => f.t === 'event' && (f.e as { kind?: string })?.kind === 'input_ack')

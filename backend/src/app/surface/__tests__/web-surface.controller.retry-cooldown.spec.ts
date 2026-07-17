@@ -21,9 +21,8 @@ function fakeJobsRepo(row: {
   for (const m of ['update', 'set', 'where', 'andWhere']) qb[m] = () => qb;
   qb.execute = execute;
   return {
-    findOne: vi.fn(
-      async ({ where }: { where: { id: string; org_id: string } }) =>
-        where.id === row.id && where.org_id === row.org_id ? row : null,
+    findOne: vi.fn(async ({ where }: { where: { id: string; org_id: string } }) =>
+      where.id === row.id && where.org_id === row.org_id ? row : null,
     ),
     createQueryBuilder: vi.fn(() => qb),
     execute,
@@ -120,9 +119,7 @@ describe('WebSurfaceController — manual retry cooldown', () => {
         setSessionResume: vi.fn(),
       });
 
-      await expect(controller.retry(ORG, 'job-1')).rejects.toBeInstanceOf(
-        HttpException,
-      );
+      await expect(controller.retry(ORG, 'job-1')).rejects.toBeInstanceOf(HttpException);
       expect(dispatcherRetry).not.toHaveBeenCalled();
     });
 
@@ -231,9 +228,7 @@ describe('WebSurfaceController — manual retry cooldown', () => {
         intakeChat,
       });
 
-      await expect(controller.retryTurn(ORG, 'job-1')).rejects.toBeInstanceOf(
-        HttpException,
-      );
+      await expect(controller.retryTurn(ORG, 'job-1')).rejects.toBeInstanceOf(HttpException);
       expect(intakeChat).not.toHaveBeenCalled();
       expect(setSessionResume).not.toHaveBeenCalled();
     });

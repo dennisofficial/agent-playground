@@ -1,8 +1,8 @@
-import { describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
-import { BrainStoreService } from '../brain-store.service';
-import type { JobEntity, ThreadEntity } from '../../persistence/entities';
+import { describe, expect, it, vi } from 'vitest';
 import type { JobDependencyService } from '../../job-deps';
+import type { JobEntity, ThreadEntity } from '../../persistence/entities';
+import { BrainStoreService } from '../brain-store.service';
 
 /**
  * `BrainStoreService.buildNotStarted` — the durable "the approved build has NOT started yet" gate for
@@ -25,10 +25,7 @@ function fakeThreadsRepo(rows: Array<Partial<ThreadEntity>>) {
   } as unknown as Repository<ThreadEntity>;
 }
 
-function makeStore(opts: {
-  jobs: Repository<JobEntity>;
-  threads: Repository<ThreadEntity>;
-}) {
+function makeStore(opts: { jobs: Repository<JobEntity>; threads: Repository<ThreadEntity> }) {
   const stub = {} as never;
   return new BrainStoreService(
     opts.jobs,

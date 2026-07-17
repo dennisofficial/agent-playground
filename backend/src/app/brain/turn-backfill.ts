@@ -39,15 +39,10 @@ export async function backfillThreadFromTurns(
 
   for (const turn of turns) {
     // A turn already durable — skip it whole (final-reply fingerprint; see doc comment).
-    const finalReply = [...turn.blocks]
-      .reverse()
-      .find((b) => b.kind === 'chat')?.text;
-    if (finalReply && (await finalReplyPersisted(messages, jobId, finalReply)))
-      continue;
+    const finalReply = [...turn.blocks].reverse().find((b) => b.kind === 'chat')?.text;
+    if (finalReply && (await finalReplyPersisted(messages, jobId, finalReply))) continue;
 
-    const fresh = turn.blocks.filter((b) =>
-      isFresh(b, seenSdkUuids, seenToolIds),
-    );
+    const fresh = turn.blocks.filter((b) => isFresh(b, seenSdkUuids, seenToolIds));
     if (fresh.length === 0) continue;
 
     for (const b of fresh) {
@@ -71,11 +66,7 @@ export async function backfillThreadFromTurns(
 }
 
 /** Whether a recovered block should be back-filled: not an interrupted tool call, not already persisted. */
-function isFresh(
-  b: RecoveredBlock,
-  seenSdkUuids: Set<string>,
-  seenToolIds: Set<string>,
-): boolean {
+function isFresh(b: RecoveredBlock, seenSdkUuids: Set<string>, seenToolIds: Set<string>): boolean {
   // Interrupted (unpaired) tool call — the next turn re-issues it; recovering it would duplicate the card.
   if (b.kind === 'tool' && b.toolPaired !== true) return false;
   // Recovery re-run guard: same JSONL line already back-filled.
@@ -140,9 +131,7 @@ async function persistedSdkUuids(
     .where('m.job_id = :jobId', { jobId })
     .andWhere("m.meta ->> 'sdkUuid' IS NOT NULL")
     .getRawMany();
-  return new Set(
-    rows.map((r) => r.u).filter((u): u is string => typeof u === 'string'),
-  );
+  return new Set(rows.map((r) => r.u).filter((u): u is string => typeof u === 'string'));
 }
 
 /** The set of SDK tool_use ids (`meta.id`) already persisted for this thread — dedup vs a normal turn's
@@ -158,7 +147,5 @@ async function persistedToolIds(
     .andWhere("m.kind = 'tool'")
     .andWhere("m.meta ->> 'id' IS NOT NULL")
     .getRawMany();
-  return new Set(
-    rows.map((r) => r.id).filter((id): id is string => typeof id === 'string'),
-  );
+  return new Set(rows.map((r) => r.id).filter((id): id is string => typeof id === 'string'));
 }

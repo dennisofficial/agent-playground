@@ -5,14 +5,11 @@ import {
   type InstallMatch,
 } from '@shared/prompt-kit/jit/install-awareness';
 import { WorkspaceConfigStore } from '../onboarding/workspace-config.store';
+import { INSTALL_AWARENESS_FILTER, type InstallAwarenessFilter } from './install-awareness-filter';
 import {
   WorkspaceProfileService,
   type WorkspaceProfileSnapshot,
 } from './workspace-profile.service';
-import {
-  INSTALL_AWARENESS_FILTER,
-  type InstallAwarenessFilter,
-} from './install-awareness-filter';
 
 /**
  * The host round-trip handler for the install-awareness nudge (decisions d1/d2). Detects a
@@ -52,11 +49,7 @@ export class ProfileAwarenessService {
       const match = detectInstallCommand(input.command);
       if (!match) return null;
 
-      const fired = await this.configStore.applyToolingTransition(
-        input.orgId,
-        input.repoId,
-        match,
-      );
+      const fired = await this.configStore.applyToolingTransition(input.orgId, input.repoId, match);
       if (!fired) return null; // repeat / no transition — deduped (ledger untouched)
 
       // The ledger transition is already committed above — Stage 2 only ever affects whether/how the
@@ -92,9 +85,7 @@ export class ProfileAwarenessService {
       // listing now owns that for the brain), so the filter would otherwise never see which skills are
       // installed and could never satisfy its "already covered by an installed skill" suppression case.
       // Render them separately here as the `catalog` slot instead.
-      const renderSkill = (
-        s: WorkspaceProfileSnapshot['skills'][number],
-      ): string =>
+      const renderSkill = (s: WorkspaceProfileSnapshot['skills'][number]): string =>
         `${s.name} (${s.tier}${s.enabled ? '' : ', disabled'}) — ${s.description}`;
       const catalog = snapshot.skills.length
         ? snapshot.skills.map(renderSkill).join('\n')

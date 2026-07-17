@@ -1,9 +1,9 @@
+import type { DecisionRecord, Step } from '@shared/domain';
 import { agentMessage, type AgentMessage } from '@shared/prompt-kit/message';
 import { COMMIT_AND_PUSH_NOTE, TASK_LIST_NOTE } from '@shared/prompt-kit/system';
-import type { DecisionRecord, Step } from '@shared/domain';
-import type { TaskItem } from '../../persistence/entities';
-import type { ResolvedRepo } from '../../driver/repo-resolver';
 import type { DriverThread } from '../../driver/driver-store.service';
+import type { ResolvedRepo } from '../../driver/repo-resolver';
+import type { TaskItem } from '../../persistence/entities';
 
 /**
  * prompt-kit / messages / batch-task — the driver-run turn bodies: the orchestrator's batch task, the
@@ -16,13 +16,9 @@ import type { DriverThread } from '../../driver/driver-store.service';
  *  keeps its checklist. Returns '' when nothing is open (all done / no list) — the caller then omits the
  *  block. */
 export function renderOpenLegTasks(tasks: TaskItem[]): AgentMessage {
-  const open = tasks.filter(
-    (t) => t.status === 'pending' || t.status === 'in_progress',
-  );
+  const open = tasks.filter((t) => t.status === 'pending' || t.status === 'in_progress');
   if (!open.length) return agentMessage('');
-  const lines = open.map(
-    (t) => `- [${t.status === 'in_progress' ? '~' : ' '}] ${t.subject}`,
-  );
+  const lines = open.map((t) => `- [${t.status === 'in_progress' ? '~' : ' '}] ${t.subject}`);
   return agentMessage(
     [
       '<carried_tasks>',
@@ -39,9 +35,7 @@ export function renderOpenLegTasks(tasks: TaskItem[]): AgentMessage {
  *  items to `dropped` (`dropOpenThreadTasks`). This note just informs the model which items it left open so
  *  it can reconcile them next time. The caller only builds it when `open` is non-empty. */
 export function renderOpenTasksAdvisory(open: TaskItem[]): AgentMessage {
-  const lines = open.map(
-    (t) => `- [${t.status === 'in_progress' ? '~' : ' '}] ${t.subject}`,
-  );
+  const lines = open.map((t) => `- [${t.status === 'in_progress' ? '~' : ' '}] ${t.subject}`);
   return agentMessage(
     [
       `Done recorded. Note: your task list still had ${open.length} open item(s) at completion — they've been`,
@@ -63,9 +57,7 @@ export function renderBatchTask(
   skillNudge: { name: string; reason: string }[] = [],
 ): AgentMessage {
   const decisions = record?.decisions.length
-    ? record.decisions
-        .map((d) => `- [${d.decisionClass}] ${d.title}: ${d.ruling}`)
-        .join('\n')
+    ? record.decisions.map((d) => `- [${d.decisionClass}] ${d.title}: ${d.ruling}`).join('\n')
     : '(none)';
   // JIT skill-relevance nudge (empty by default — keeps existing callers byte-identical). Directs the model
   // to load a directly-relevant skill with the `Skill` tool before implementing, rather than working from
@@ -80,9 +72,7 @@ export function renderBatchTask(
       ].join('\n')
     : '';
   const blocks = steps
-    .map(
-      (p, i) => `### Step ${i + 1}: ${p.title ?? `#${p.ordinal}`}\n${p.brief}`,
-    )
+    .map((p, i) => `### Step ${i + 1}: ${p.title ?? `#${p.ordinal}`}\n${p.brief}`)
     .join('\n\n');
   return agentMessage(
     [
@@ -122,9 +112,7 @@ export function renderBatchTask(
  * newline the surrounding task body splices on. YOU (the writer session) own the commit: the host reads what
  * you leave and does NOT commit for you, so leave a CLEAN tree before you call `complete_thread`.
  */
-export const COMMIT_AND_PUSH_INSTRUCTION: AgentMessage = agentMessage(
-  '\n' + COMMIT_AND_PUSH_NOTE,
-);
+export const COMMIT_AND_PUSH_INSTRUCTION: AgentMessage = agentMessage('\n' + COMMIT_AND_PUSH_NOTE);
 
 /**
  * The task for the MASTER-REVIEW thread — a Codex `execute` turn that reviews the whole merged feature diff
@@ -137,9 +125,7 @@ export function renderMasterReviewTask(
   repo: ResolvedRepo,
 ): AgentMessage {
   const decisions = record?.decisions.length
-    ? record.decisions
-        .map((d) => `- [${d.decisionClass}] ${d.title}: ${d.ruling}`)
-        .join('\n')
+    ? record.decisions.map((d) => `- [${d.decisionClass}] ${d.title}: ${d.ruling}`).join('\n')
     : '(none)';
   return agentMessage(
     [

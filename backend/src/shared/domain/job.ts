@@ -17,18 +17,13 @@
 // The thread lifecycle status is the WIRE CONTRACT with the web console, so it is single-sourced in
 // `@workspace/shared` (see its doc comment for the per-value meanings). Imported for local use below
 // and re-exported as the domain's `JobStatus` so the brain/driver keep importing it from `../domain`.
-import type {
-  JobStatus,
-  JobHalt,
-  JobActivity,
-  AutoApproveMode,
-} from '@workspace/shared';
+import type { AutoApproveMode, JobActivity, JobHalt, JobStatus } from '@workspace/shared';
 import { JOB_ACTIVITIES } from '@workspace/shared';
 // Type-only: `thread-types.ts` imports nothing, so this is cycle-free even though `thread-kind`'s
 // registry imports from `autofix`, which imports domain types.
 import type { ThreadType } from '../thread-kind/thread-types';
 export { JOB_ACTIVITIES };
-export type { JobStatus, JobHalt, JobActivity };
+export type { JobActivity, JobHalt, JobStatus };
 
 /** Why a thread exists — a human-started chat, a notification-seeded thread, or an operator control action. */
 export type ThreadOrigin = 'chat' | 'event' | 'control';
@@ -182,12 +177,7 @@ export type ThreadStatus =
 /** A lightweight denormalized overlay tag on a thread (like job-level `halt.kind`), ORTHOGONAL to the
  *  linear {@link ThreadStatus} step: it records the pause/terminal CONDITION without moving the step.
  *  Detail (stderr, block reason, verification) stays in `terminal_record`/`halt_outcome`. */
-export type ThreadCondition =
-  | 'none'
-  | 'paused'
-  | 'incomplete'
-  | 'failed'
-  | 'skipped';
+export type ThreadCondition = 'none' | 'paused' | 'incomplete' | 'failed' | 'skipped';
 
 /** One thread of a thread's build — a coherent slice (e.g. backend) that becomes a phased plan. */
 export interface Thread {

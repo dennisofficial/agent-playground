@@ -1,6 +1,6 @@
+import type { EnvService } from '@core/config/env/env.service';
 import { createVerify, generateKeyPairSync } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import type { EnvService } from '@core/config/env/env.service';
 import { GitHubAppTokenService } from '../github-app-token.service';
 
 const { publicKey, privateKey } = generateKeyPairSync('rsa', {
@@ -9,9 +9,7 @@ const { publicKey, privateKey } = generateKeyPairSync('rsa', {
   privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
 });
 
-function fakeEnv(
-  overrides: Record<string, string | undefined> = {},
-): EnvService {
+function fakeEnv(overrides: Record<string, string | undefined> = {}): EnvService {
   const map: Record<string, string | undefined> = {
     GITHUB_APP_CLIENT_ID: 'Iv1.testclient',
     GITHUB_APP_ID: '12345',
@@ -58,12 +56,8 @@ function decodeJwt(jwt: string): {
   parts: string[];
 } {
   const parts = jwt.split('.');
-  const header = JSON.parse(
-    Buffer.from(parts[0], 'base64url').toString('utf8'),
-  );
-  const payload = JSON.parse(
-    Buffer.from(parts[1], 'base64url').toString('utf8'),
-  );
+  const header = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'));
+  const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
   return { header, payload, parts };
 }
 
@@ -83,9 +77,7 @@ describe('GitHubAppTokenService.isConfigured', () => {
     const svc = new GitHubAppTokenService(fakeEnv());
     expect(svc.isConfigured()).toBe(true);
 
-    const noKey = new GitHubAppTokenService(
-      fakeEnv({ GITHUB_APP_PRIVATE_KEY: undefined }),
-    );
+    const noKey = new GitHubAppTokenService(fakeEnv({ GITHUB_APP_PRIVATE_KEY: undefined }));
     expect(noKey.isConfigured()).toBe(false);
 
     const noIss = new GitHubAppTokenService(
@@ -101,9 +93,7 @@ describe('GitHubAppTokenService JWT', () => {
     const { impl, calls } = routedFetch([
       {
         match: '/access_tokens',
-        responses: [
-          { status: 201, body: { token: 'ghs_abc', expires_at: inFuture } },
-        ],
+        responses: [{ status: 201, body: { token: 'ghs_abc', expires_at: inFuture } }],
       },
     ]);
     const svc = new GitHubAppTokenService(fakeEnv());
@@ -127,14 +117,10 @@ describe('GitHubAppTokenService JWT', () => {
     const { impl, calls } = routedFetch([
       {
         match: '/access_tokens',
-        responses: [
-          { status: 201, body: { token: 'ghs_abc', expires_at: inFuture } },
-        ],
+        responses: [{ status: 201, body: { token: 'ghs_abc', expires_at: inFuture } }],
       },
     ]);
-    const svc = new GitHubAppTokenService(
-      fakeEnv({ GITHUB_APP_CLIENT_ID: undefined }),
-    );
+    const svc = new GitHubAppTokenService(fakeEnv({ GITHUB_APP_CLIENT_ID: undefined }));
     svc.fetchImpl = impl;
     await svc.getInstallationToken('999');
     const { payload } = decodeJwt(bearerJwt(calls[0]));
@@ -146,9 +132,7 @@ describe('GitHubAppTokenService JWT', () => {
     const { impl, calls } = routedFetch([
       {
         match: '/access_tokens',
-        responses: [
-          { status: 201, body: { token: 'ghs_abc', expires_at: inFuture } },
-        ],
+        responses: [{ status: 201, body: { token: 'ghs_abc', expires_at: inFuture } }],
       },
     ]);
     const svc = new GitHubAppTokenService(
@@ -167,9 +151,7 @@ describe('GitHubAppTokenService.getInstallationToken', () => {
     const { impl, calls } = routedFetch([
       {
         match: '/access_tokens',
-        responses: [
-          { status: 201, body: { token: 'ghs_abc', expires_at: inFuture } },
-        ],
+        responses: [{ status: 201, body: { token: 'ghs_abc', expires_at: inFuture } }],
       },
     ]);
     const svc = new GitHubAppTokenService(fakeEnv());
@@ -178,9 +160,7 @@ describe('GitHubAppTokenService.getInstallationToken', () => {
     const token = await svc.getInstallationToken('999');
     expect(token).toBe('ghs_abc');
     expect(calls).toHaveLength(1);
-    expect(calls[0].url).toBe(
-      'https://api.github.com/app/installations/999/access_tokens',
-    );
+    expect(calls[0].url).toBe('https://api.github.com/app/installations/999/access_tokens');
     expect(calls[0].init?.method).toBe('POST');
     expect(bearerJwt(calls[0])).toBeTruthy();
   });
@@ -190,9 +170,7 @@ describe('GitHubAppTokenService.getInstallationToken', () => {
     const { impl, calls } = routedFetch([
       {
         match: '/access_tokens',
-        responses: [
-          { status: 201, body: { token: 'ghs_abc', expires_at: inFuture } },
-        ],
+        responses: [{ status: 201, body: { token: 'ghs_abc', expires_at: inFuture } }],
       },
     ]);
     const svc = new GitHubAppTokenService(fakeEnv());
@@ -236,9 +214,7 @@ describe('GitHubAppTokenService.getInstallationToken', () => {
     ]);
     const svc = new GitHubAppTokenService(fakeEnv());
     svc.fetchImpl = impl;
-    await expect(svc.getInstallationToken('999')).rejects.toThrow(
-      /404.*Not Found/,
-    );
+    await expect(svc.getInstallationToken('999')).rejects.toThrow(/404.*Not Found/);
   });
 });
 
@@ -275,9 +251,7 @@ describe('GitHubAppTokenService.findInstallationId', () => {
     const svc = new GitHubAppTokenService(fakeEnv());
     svc.fetchImpl = impl;
     expect(await svc.findInstallationId('acme', 'app')).toBe('42');
-    expect(calls[0].url).toBe(
-      'https://api.github.com/repos/acme/app/installation',
-    );
+    expect(calls[0].url).toBe('https://api.github.com/repos/acme/app/installation');
   });
 });
 
@@ -332,16 +306,10 @@ describe('GitHubAppTokenService.appBotIdentity', () => {
       name: 'atlas-bot[bot]',
       email: '42+atlas-bot[bot]@users.noreply.github.com',
     });
-    expect(calls.some((c) => c.url.includes('/users/atlas-bot%5Bbot%5D'))).toBe(
-      true,
-    );
-    const userCall = calls.find((c) =>
-      c.url.includes('/users/atlas-bot%5Bbot%5D'),
-    );
+    expect(calls.some((c) => c.url.includes('/users/atlas-bot%5Bbot%5D'))).toBe(true);
+    const userCall = calls.find((c) => c.url.includes('/users/atlas-bot%5Bbot%5D'));
     expect(userCall).toBeDefined();
-    expect(
-      (userCall!.init?.headers as Record<string, string>).Authorization,
-    ).toBeUndefined();
+    expect((userCall!.init?.headers as Record<string, string>).Authorization).toBeUndefined();
 
     const callsBefore = calls.length;
     await svc.appBotIdentity();

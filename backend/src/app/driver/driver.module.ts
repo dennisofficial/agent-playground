@@ -15,50 +15,47 @@ import { LeaderElectionService } from '../cluster/leader-election.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
-  TranscriptMessageEntity,
-  ThreadGroupEntity,
-  TaskEntity,
-  RepoEntity,
-  ThreadEntity,
   InboundMessageEntity,
   JobEntity,
   JobSandboxEntity,
+  RepoEntity,
+  TaskEntity,
+  ThreadEntity,
+  ThreadGroupEntity,
+  TranscriptMessageEntity,
 } from '../persistence/entities';
 import { TurnReattachRegistry } from '../sandbox/turn-reattach.registry';
 // Direct port path (NOT the '../surface' barrel) to stay clear of a SurfaceModule ↔ DriverModule cycle.
+import { AutoFixModule } from '../autofix/autofix.module';
+import { JOB_DISPATCHER } from '../brain/job-dispatcher';
+import { DecisionGateModule } from '../decision-gate/decision-gate.module';
+import { DriverApprovalGateway } from '../driver-approval-gateway/driver-approval-gateway.service';
+import { ExposureService } from '../exposure/exposure.service';
+import { JobBootstrapModule } from '../job-bootstrap/job-bootstrap.module';
+import { OnboardingService } from '../onboarding/onboarding.service';
+import { RunnerModule } from '../runner/runner.module';
+import { StimulusStoreService } from '../stimulus/stimulus-store.service';
+import { StimulusModule } from '../stimulus/stimulus.module';
 import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
 import { descriptorForLane } from '../surface/thread-registry';
 import { AutoMergeService } from './auto-merge.service';
-import { GitStateReconciler } from './git-state-reconciler.service';
-import { SessionResumeSweep } from './session-resume-sweep.service';
-import { JobUnblockSweep } from './job-unblock-sweep.service';
+import { BaseMoveMergeabilitySync } from './base-move-mergeability-sync.service';
+import { BuildLaneDeliveryService, LANE_SEEDER } from './build-lane-delivery.service';
 import { BuildShipService } from './build-ship.service';
 import { DriverStoreService } from './driver-store.service';
-import {
-  BuildLaneDeliveryService,
-  LANE_SEEDER,
-} from './build-lane-delivery.service';
-import { PipelineAwarenessStore } from './pipeline-awareness.store';
-import { DRIVER_REPO, GitDriverRepoResolver } from './repo-resolver';
-import { ThreadDriver } from './thread-driver.service';
+import { GitStateReconciler } from './git-state-reconciler.service';
+import { GithubCiStateSync } from './github-ci-state-sync.service';
+import { GithubPrStateSync } from './github-pr-state-sync.service';
+import { GithubTokenRefreshService } from './github-token-refresh.service';
 import { JobLifecycleService } from './job-lifecycle.service';
 import { JOB_TEARDOWN } from './job-teardown.port';
-import { GithubPrStateSync } from './github-pr-state-sync.service';
-import { GithubCiStateSync } from './github-ci-state-sync.service';
-import { GithubTokenRefreshService } from './github-token-refresh.service';
-import { BaseMoveMergeabilitySync } from './base-move-mergeability-sync.service';
+import { JobUnblockSweep } from './job-unblock-sweep.service';
+import { PipelineAwarenessStore } from './pipeline-awareness.store';
+import { DRIVER_REPO, GitDriverRepoResolver } from './repo-resolver';
+import { SessionResumeSweep } from './session-resume-sweep.service';
+import { ThreadDriver } from './thread-driver.service';
 import { WorktreeHydrator } from './worktree-hydrator.service';
 import { WorktreeProvisioner } from './worktree-provisioner.service';
-import { DecisionGateModule } from '../decision-gate/decision-gate.module';
-import { RunnerModule } from '../runner/runner.module';
-import { AutoFixModule } from '../autofix/autofix.module';
-import { JobBootstrapModule } from '../job-bootstrap/job-bootstrap.module';
-import { StimulusModule } from '../stimulus/stimulus.module';
-import { JOB_DISPATCHER } from '../brain/job-dispatcher';
-import { OnboardingService } from '../onboarding/onboarding.service';
-import { ExposureService } from '../exposure/exposure.service';
-import { StimulusStoreService } from '../stimulus/stimulus-store.service';
-import { DriverApprovalGateway } from '../driver-approval-gateway/driver-approval-gateway.service';
 
 // SchedulerRegistry interval names (process-unique) for the leader-gated driver timers. Registered on
 // promote, deleted on demote — the leader-only lifecycle is unchanged; only the timer plumbing moved off
@@ -164,9 +161,7 @@ const BUILD_LANE_SWEEP_INTERVAL = 'driver:build-lane-sweep';
     DRIVER_REPO,
   ],
 })
-export class DriverModule
-  implements OnApplicationBootstrap, OnApplicationShutdown
-{
+export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdown {
   private resumeSub?: Subscription;
   private promoteSub?: Subscription;
   private demoteSub?: Subscription;
@@ -238,10 +233,8 @@ export class DriverModule
         resolveShip: async (jobId, ruledBy) => {
           await driver.resolveShipApprovalDurably(jobId, ruledBy);
         },
-        retractShip: (jobId, ruledBy) =>
-          driver.retractShipDurably(jobId, ruledBy),
-        resolveMerge: (jobId, ruledBy) =>
-          driver.resolveMergeApprovalDurably(jobId, ruledBy),
+        retractShip: (jobId, ruledBy) => driver.retractShipDurably(jobId, ruledBy),
+        resolveMerge: (jobId, ruledBy) => driver.resolveMergeApprovalDurably(jobId, ruledBy),
         neutralizeAmendProposal: (jobId, verdictLine) =>
           store.neutralizeAmendProposal(jobId, verdictLine),
       });
@@ -253,9 +246,7 @@ export class DriverModule
     // NOT claimed — the drive loop doesn't re-tail those at an anchor, so a re-drive could start a fresh stage
     // beside the still-live engine; they keep the once-per-boot `resume()` recovery + the watchdog safety-net.
     // Unconditional + idempotent — the watchdog itself is leader-only, so registration need not be gated.
-    this.reattachRegistry?.register('step', (row) =>
-      this.driver.reattachTurnRow(row),
-    );
+    this.reattachRegistry?.register('step', (row) => this.driver.reattachTurnRow(row));
 
     // Operator resume requests (POST /web/resume) → re-drive the paused job. Subscribed unconditionally,
     // independent of leadership (the agent test surface omits resumeRequests$; Caddy routes /resume only
@@ -281,9 +272,7 @@ export class DriverModule
         await this.lifecycle.reconcileDeletingJobs().catch(() => undefined);
         // Self-heal any archived job whose filesystem reclaim was interrupted (status flipped, but the
         // worktree/container teardown never finished) — the archive analog of the `deleting` reconcile.
-        await this.lifecycle
-          .reconcileArchivedSandboxes()
-          .catch(() => undefined);
+        await this.lifecycle.reconcileArchivedSandboxes().catch(() => undefined);
         // Reclaim leaked `-net`/`-dind` artifacts BEFORE resuming jobs — a resumed drive calls `ensureContainer`
         // → `ensureNetwork`, which fails ("all predefined address pools have been fully subnetted") if the pool
         // is still exhausted by networks orphaned across prior restarts. `reconcileOnBoot` above nulled DB
@@ -291,9 +280,7 @@ export class DriverModule
         // is protected. Awaited (bounded, cheap); never blocks promotion on failure.
         await this.lifecycle
           .reapOrphanedSandboxArtifacts()
-          .catch((err) =>
-            this.logger.warn(`boot orphan-artifact sweep failed: ${err}`),
-          );
+          .catch((err) => this.logger.warn(`boot orphan-artifact sweep failed: ${err}`));
       }
       // Best-effort: register the GitHub delivery webhooks for already-connected repos so the fast path is
       // live without a re-connect. Once per process, fire-and-forget — never blocks resume, and skips
@@ -302,9 +289,7 @@ export class DriverModule
         this.webhooksBackfilled = true;
         void this.onboarding
           .ensureWebhooksForActiveRepos()
-          .catch((err) =>
-            this.logger.warn(`webhook backfill sweep failed: ${err}`),
-          );
+          .catch((err) => this.logger.warn(`webhook backfill sweep failed: ${err}`));
       }
       // Re-drive `running` jobs on EVERY promotion — including a mid-life re-promote. Leadership-fenced
       // drives (see ThreadDriver.runJob) YIELD on demotion, so a re-promote must re-pick-up the yielded job or
@@ -615,9 +600,7 @@ export class DriverModule
         repoId: l.repoId,
         threadId,
       }).catch((err) =>
-        this.logger.debug(
-          `build-lane sweep pump failed for thread=${threadId}: ${err}`,
-        ),
+        this.logger.debug(`build-lane sweep pump failed for thread=${threadId}: ${err}`),
       );
     }
   }

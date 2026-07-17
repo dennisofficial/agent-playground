@@ -9,10 +9,7 @@ const skills = [
 describe('AnthropicSkillNudgeSelector', () => {
   it('no key → resolves to [], never invokes the chain factory', async () => {
     const chainFactory = vi.fn();
-    const selector = new AnthropicSkillNudgeSelector(
-      async () => undefined,
-      chainFactory,
-    );
+    const selector = new AnthropicSkillNudgeSelector(async () => undefined, chainFactory);
     const result = await selector.select({ context: 'ctx', skills });
     expect(result).toEqual([]);
     expect(chainFactory).not.toHaveBeenCalled();
@@ -27,10 +24,7 @@ describe('AnthropicSkillNudgeSelector', () => {
         ],
       }),
     });
-    const selector = new AnthropicSkillNudgeSelector(
-      async () => 'fake-key',
-      chainFactory as any,
-    );
+    const selector = new AnthropicSkillNudgeSelector(async () => 'fake-key', chainFactory as any);
     const result = await selector.select({ context: 'ctx', skills });
     expect(result).toEqual([
       { name: 'a', reason: 'r' },
@@ -44,10 +38,7 @@ describe('AnthropicSkillNudgeSelector', () => {
         throw new Error('boom');
       },
     });
-    const selector = new AnthropicSkillNudgeSelector(
-      async () => 'fake-key',
-      chainFactory as any,
-    );
+    const selector = new AnthropicSkillNudgeSelector(async () => 'fake-key', chainFactory as any);
     const result = await selector.select({ context: 'ctx', skills });
     expect(result).toEqual([]);
   });
@@ -61,10 +52,7 @@ describe('AnthropicSkillNudgeSelector', () => {
         ],
       }),
     });
-    const selector = new AnthropicSkillNudgeSelector(
-      async () => 'fake-key',
-      chainFactory as any,
-    );
+    const selector = new AnthropicSkillNudgeSelector(async () => 'fake-key', chainFactory as any);
     const result = await selector.select({ context: 'ctx', skills });
     expect(result).toEqual([{ name: 'a', reason: 'r' }]);
   });
@@ -75,10 +63,7 @@ describe('AnthropicSkillNudgeSelector', () => {
         relevant: [{ name: 'a', reason: 'line one\nline two' }],
       }),
     });
-    const selector = new AnthropicSkillNudgeSelector(
-      async () => 'fake-key',
-      chainFactory as any,
-    );
+    const selector = new AnthropicSkillNudgeSelector(async () => 'fake-key', chainFactory as any);
     const result = await selector.select({ context: 'ctx', skills });
     expect(result).toEqual([{ name: 'a', reason: 'line one line two' }]);
   });

@@ -32,9 +32,7 @@ export class GitHubAppTokenService {
   private loadPrivateKey(): string {
     const raw = this.env.get('GITHUB_APP_PRIVATE_KEY');
     if (!raw) throw new Error('GITHUB_APP_PRIVATE_KEY is not configured');
-    const pem = raw.includes('BEGIN')
-      ? raw
-      : Buffer.from(raw, 'base64').toString('utf8');
+    const pem = raw.includes('BEGIN') ? raw : Buffer.from(raw, 'base64').toString('utf8');
     return pem.replace(/\\n/g, '\n');
   }
 
@@ -51,10 +49,7 @@ export class GitHubAppTokenService {
     const header = { alg: 'RS256', typ: 'JWT' };
     const payload = { iat: nowSec - 60, exp: nowSec + 540, iss };
     const signingInput = `${base64url(JSON.stringify(header))}.${base64url(JSON.stringify(payload))}`;
-    const sig = createSign('RSA-SHA256')
-      .update(signingInput)
-      .end()
-      .sign(this.loadPrivateKey());
+    const sig = createSign('RSA-SHA256').update(signingInput).end().sign(this.loadPrivateKey());
     return `${signingInput}.${base64url(sig)}`;
   }
 
@@ -79,30 +74,24 @@ export class GitHubAppTokenService {
    */
   async getInstallationToken(installationId: string): Promise<string> {
     const cached = this.cache.get(installationId);
-    if (cached && cached.expiresAtMs - Date.now() > 5 * 60_000)
-      return cached.token;
+    if (cached && cached.expiresAtMs - Date.now() > 5 * 60_000) return cached.token;
 
     const MAX_ATTEMPTS = 3;
     let lastError: Error | undefined;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       let res: Response;
       try {
-        res = await this.fetchImpl(
-          `${API}/app/installations/${installationId}/access_tokens`,
-          {
-            method: 'POST',
-            headers: this.appHeaders(this.appJwt()),
-          },
-        );
+        res = await this.fetchImpl(`${API}/app/installations/${installationId}/access_tokens`, {
+          method: 'POST',
+          headers: this.appHeaders(this.appJwt()),
+        });
       } catch (e) {
         lastError = e as Error;
         if (attempt < MAX_ATTEMPTS) {
           await new Promise((r) => setTimeout(r, 250 * attempt));
           continue;
         }
-        throw new Error(
-          `installation-token mint failed: network error (${lastError.message})`,
-        );
+        throw new Error(`installation-token mint failed: network error (${lastError.message})`);
       }
       if (res.ok) {
         const body = (await res.json()) as {
@@ -127,16 +116,11 @@ export class GitHubAppTokenService {
       );
     }
     // Unreachable — the loop above always returns or throws.
-    throw new Error(
-      `installation-token mint failed: ${lastError?.message ?? 'unknown error'}`,
-    );
+    throw new Error(`installation-token mint failed: ${lastError?.message ?? 'unknown error'}`);
   }
 
   /** The installation id for an org (or a specific repo). null on 404 (App not installed there). */
-  async findInstallationId(
-    owner: string,
-    repo?: string,
-  ): Promise<string | null> {
+  async findInstallationId(owner: string, repo?: string): Promise<string | null> {
     const url = repo
       ? `${API}/repos/${owner}/${repo}/installation`
       : `${API}/orgs/${owner}/installation`;
@@ -161,12 +145,9 @@ export class GitHubAppTokenService {
     id: string;
     account: { login: string; id: number; type: string };
   } | null> {
-    const res = await this.fetchImpl(
-      `${API}/app/installations/${installationId}`,
-      {
-        headers: this.appHeaders(this.appJwt()),
-      },
-    );
+    const res = await this.fetchImpl(`${API}/app/installations/${installationId}`, {
+      headers: this.appHeaders(this.appJwt()),
+    });
     if (res.status === 404) return null;
     if (!res.ok) {
       const errBody = (await res.json().catch(() => ({}))) as {
@@ -200,9 +181,7 @@ export class GitHubAppTokenService {
       const errBody = (await appRes.json().catch(() => ({}))) as {
         message?: string;
       };
-      throw new Error(
-        `app lookup failed: ${appRes.status} ${errBody.message ?? 'no detail'}`,
-      );
+      throw new Error(`app lookup failed: ${appRes.status} ${errBody.message ?? 'no detail'}`);
     }
     const { slug } = (await appRes.json()) as { slug: string };
     this.slug = slug;
@@ -214,12 +193,9 @@ export class GitHubAppTokenService {
     if (this.botIdentity) return this.botIdentity;
     const slug = await this.appSlug();
     const botLogin = `${slug}[bot]`;
-    const userRes = await this.fetchImpl(
-      `${API}/users/${encodeURIComponent(botLogin)}`,
-      {
-        headers: this.githubHeaders(),
-      },
-    );
+    const userRes = await this.fetchImpl(`${API}/users/${encodeURIComponent(botLogin)}`, {
+      headers: this.githubHeaders(),
+    });
     if (!userRes.ok) {
       const errBody = (await userRes.json().catch(() => ({}))) as {
         message?: string;
@@ -239,8 +215,6 @@ export class GitHubAppTokenService {
 }
 
 function base64url(input: string | Buffer): string {
-  const b64 = (Buffer.isBuffer(input) ? input : Buffer.from(input)).toString(
-    'base64',
-  );
+  const b64 = (Buffer.isBuffer(input) ? input : Buffer.from(input)).toString('base64');
   return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }

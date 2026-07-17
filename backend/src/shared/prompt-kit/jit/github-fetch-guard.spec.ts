@@ -8,8 +8,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   detectGithubHtmlUrl,
-  renderGithubFetchNudge,
   FETCH_TOOL_MATCHER,
+  renderGithubFetchNudge,
 } from './github-fetch-guard';
 
 describe('detectGithubHtmlUrl', () => {
@@ -46,9 +46,7 @@ describe('detectGithubHtmlUrl', () => {
 
 describe('renderGithubFetchNudge', () => {
   it('names the fetched URL and steers to gh api / git / raw', () => {
-    const text = renderGithubFetchNudge(
-      'https://github.com/owner/repo/tree/main',
-    );
+    const text = renderGithubFetchNudge('https://github.com/owner/repo/tree/main');
     expect(text).toContain('https://github.com/owner/repo/tree/main');
     expect(text).toContain('gh api');
     expect(text).toContain('raw.githubusercontent.com');

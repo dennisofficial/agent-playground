@@ -27,10 +27,7 @@ describe('AuthRefreshSinkService', () => {
       { orgId: 'org1', engine: 'codex' },
       'blob',
     );
-    expect(tenantStore.advanceCodexAuthSecret).toHaveBeenCalledWith(
-      'org1',
-      'blob',
-    );
+    expect(tenantStore.advanceCodexAuthSecret).toHaveBeenCalledWith('org1', 'blob');
     expect(claudeStore.advanceClaudeCredential).not.toHaveBeenCalled();
   });
 
@@ -41,20 +38,14 @@ describe('AuthRefreshSinkService', () => {
       { orgId: 'org1', engine: 'claude', credentialId: 'cred-1' },
       'blob',
     );
-    expect(claudeStore.advanceClaudeCredential).toHaveBeenCalledWith(
-      'org1',
-      'cred-1',
-      'blob',
-    );
+    expect(claudeStore.advanceClaudeCredential).toHaveBeenCalledWith('org1', 'cred-1', 'blob');
     expect(tenantStore.advanceCodexAuthSecret).not.toHaveBeenCalled();
   });
 
   it('swallows a store error so it never fails the turn-completion path', async () => {
     const tenantStore = fakeTenantStore();
     const claudeStore = fakeClaudeStore();
-    tenantStore.advanceCodexAuthSecret.mockRejectedValueOnce(
-      new Error('db down'),
-    );
+    tenantStore.advanceCodexAuthSecret.mockRejectedValueOnce(new Error('db down'));
     await expect(
       new AuthRefreshSinkService(tenantStore, claudeStore).persist(
         { orgId: 'org1', engine: 'codex' },

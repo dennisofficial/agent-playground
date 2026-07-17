@@ -12,8 +12,6 @@ export class AddShipReviewApproval1783485364347 implements MigrationInterface {
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `ALTER TABLE "jobs" DROP COLUMN "ship_review_approved_at"`,
-    );
+    await queryRunner.query(`ALTER TABLE "jobs" DROP COLUMN "ship_review_approved_at"`);
   }
 }

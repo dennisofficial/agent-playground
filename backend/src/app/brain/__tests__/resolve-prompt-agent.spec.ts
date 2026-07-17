@@ -1,8 +1,8 @@
+import type { Message, TurnEnvelope } from '@shared/domain';
 import { describe, expect, it, vi } from 'vitest';
 import { Agent } from '../../prompt-kit';
 import type { ThreadRole } from '../../thread-kind';
 import { AgentSessionManager } from '../agent-session-manager.service';
-import type { Message, TurnEnvelope } from '@shared/domain';
 
 const JOB_ID = 'th-agent-001';
 
@@ -96,9 +96,7 @@ describe('AgentSessionManager.resolvePromptAgent — the turn-seam stage-persona
   });
 
   it('a resumeThreadId pointing at a post_build thread resolves to POST_BUILD', async () => {
-    const threadRole = vi
-      .fn()
-      .mockResolvedValue('post_build' satisfies ThreadRole);
+    const threadRole = vi.fn().mockResolvedValue('post_build' satisfies ThreadRole);
     const manager = makeManager(threadRole);
 
     const agent = await callResolvePromptAgent(
@@ -124,9 +122,7 @@ describe('AgentSessionManager.resolvePromptAgent — the turn-seam stage-persona
   });
 
   it('a resumeThreadId pointing at a planning thread still resolves to PLANNING', async () => {
-    const threadRole = vi
-      .fn()
-      .mockResolvedValue('planning' satisfies ThreadRole);
+    const threadRole = vi.fn().mockResolvedValue('planning' satisfies ThreadRole);
     const manager = makeManager(threadRole);
 
     const agent = await callResolvePromptAgent(

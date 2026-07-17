@@ -14,10 +14,7 @@ export function isValidSessionId(sessionId: string): boolean {
  * `atlas-sbx-…-thread-<jobId>` with the jobId tail possibly truncated to 40 chars by the container-name
  * cap, so we match a dir whose `-thread-` suffix is a PREFIX of the jobId (not equality).
  */
-export function findSandboxDir(
-  agentHomeRoot: string,
-  jobId: string,
-): string | null {
+export function findSandboxDir(agentHomeRoot: string, jobId: string): string | null {
   const sandboxesRoot = join(agentHomeRoot, 'sandboxes');
   let dirs: string[];
   try {
@@ -30,9 +27,7 @@ export function findSandboxDir(
       const i = d.lastIndexOf('-thread-');
       if (i < 0) return null;
       const suffix = d.slice(i + '-thread-'.length);
-      return suffix.length > 0 && jobId.startsWith(suffix)
-        ? { dir: d, suffix }
-        : null;
+      return suffix.length > 0 && jobId.startsWith(suffix) ? { dir: d, suffix } : null;
     })
     .filter((d): d is { dir: string; suffix: string } => d !== null)
     .sort((a, b) => b.suffix.length - a.suffix.length);
@@ -71,10 +66,7 @@ function walkJsonlFiles(dir: string): string[] {
     if (st.isSymbolicLink()) continue;
     if (st.isDirectory()) {
       out.push(...walkJsonlFiles(full));
-    } else if (
-      entry.endsWith('.jsonl') &&
-      full.includes(`${sep}claude${sep}projects${sep}`)
-    ) {
+    } else if (entry.endsWith('.jsonl') && full.includes(`${sep}claude${sep}projects${sep}`)) {
       out.push(full);
     }
   }
@@ -95,14 +87,9 @@ export function listSessionFiles(sandboxDir: string): SessionFile[] {
 }
 
 /** Resolve one session id to its jailed JSONL path, or null if not found / invalid id. */
-export function resolveSessionFile(
-  sandboxDir: string,
-  sessionId: string,
-): string | null {
+export function resolveSessionFile(sandboxDir: string, sessionId: string): string | null {
   if (!isValidSessionId(sessionId)) return null;
-  const match = listSessionFiles(sandboxDir).find(
-    (f) => f.sessionId === sessionId,
-  );
+  const match = listSessionFiles(sandboxDir).find((f) => f.sessionId === sessionId);
   return match?.path ?? null;
 }
 
@@ -145,9 +132,7 @@ function compact(body: string): string {
 
 function flattenToolResultContent(content: unknown): string {
   if (Array.isArray(content)) {
-    return content
-      .map((c: unknown) => (c as { text?: string })?.text ?? String(c))
-      .join(' ');
+    return content.map((c: unknown) => (c as { text?: string })?.text ?? String(c)).join(' ');
   }
   if (typeof content === 'string') return content;
   return String(content ?? '');
@@ -185,22 +170,14 @@ export function renderShow(rawLines: string[], opts: ShowOptions): string[] {
     const role = record.type ?? '';
     for (const block of expandBlocks(record)) {
       if (block.type === 'text' && (wantText || defaultToText)) {
-        rendered.push(
-          `[${ts}] ${role}/text: ${compact(String(block.text ?? ''))}`,
-        );
+        rendered.push(`[${ts}] ${role}/text: ${compact(String(block.text ?? ''))}`);
       } else if (block.type === 'thinking' && wantThinking) {
-        rendered.push(
-          `[${ts}] ${role}/thinking: ${compact(String(block.thinking ?? ''))}`,
-        );
+        rendered.push(`[${ts}] ${role}/thinking: ${compact(String(block.thinking ?? ''))}`);
       } else if (block.type === 'tool_use' && wantTools) {
         rendered.push(
           `[${ts}] ${role}/tool_use: ${compact(`${block.name ?? ''} ${JSON.stringify(block.input)}`)}`,
         );
-      } else if (
-        block.type === 'tool_result' &&
-        wantErrors &&
-        block.is_error === true
-      ) {
+      } else if (block.type === 'tool_result' && wantErrors && block.is_error === true) {
         const body = `${block.tool_use_id ?? ''} ${flattenToolResultContent(block.content)}`;
         rendered.push(`[${ts}] ${role}/tool_result[error]: ${compact(body)}`);
       }
@@ -222,8 +199,7 @@ export function grepFiles(files: SessionFile[], pattern: RegExp): GrepHit[] {
   for (const file of files) {
     for (const line of readRawLines(file.path)) {
       if (!line) continue;
-      if (pattern.test(line))
-        hits.push({ path: file.path, sessionId: file.sessionId, line });
+      if (pattern.test(line)) hits.push({ path: file.path, sessionId: file.sessionId, line });
       pattern.lastIndex = 0; // global-flag regexes carry state across .test() calls — reset every line
     }
   }

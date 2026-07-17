@@ -6,8 +6,8 @@
  * TOPIC bucket: planning & the build paths.
  */
 import { Agent } from '../agent';
-import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isBuildBrain } from '../conditions';
+import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { LIVE_VALIDATION_NOT_OPTIONAL_NOTE } from '../fragments';
 
 @FragmentGroup()

@@ -5,8 +5,8 @@
  * TOPIC bucket: acting safely & finishing.
  */
 import { Agent, SHIP_STAGES } from '../agent';
-import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isBuildBrain, isOnboarding } from '../conditions';
+import { Fragment, FragmentGroup } from '../fragment.decorator';
 
 @FragmentGroup()
 export class SafetyGroup {

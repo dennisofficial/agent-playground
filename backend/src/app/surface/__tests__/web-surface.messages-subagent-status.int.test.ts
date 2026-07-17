@@ -15,11 +15,7 @@ import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { OrgMembershipGuard } from '../../org/org-membership.guard';
 import { DB_CONNECTION } from '../../persistence/database.module';
-import {
-  JobEntity,
-  TranscriptMessageEntity,
-  SubagentEntity,
-} from '../../persistence/entities';
+import { JobEntity, SubagentEntity, TranscriptMessageEntity } from '../../persistence/entities';
 import { WebSurfaceController } from '../web-surface.controller';
 
 const ORG_ID = 'org-1';
@@ -29,9 +25,7 @@ const ANCHOR_ID = 'msg-anchor';
 const ENDED_AT = new Date('2026-07-16T12:00:00.000Z');
 
 let app: import('@nestjs/common').INestApplication;
-let server: ReturnType<
-  import('@nestjs/common').INestApplication['getHttpServer']
->;
+let server: ReturnType<import('@nestjs/common').INestApplication['getHttpServer']>;
 /** Mutable so each test seeds the subagent row it wants (status/ended_at). */
 let subagentRows: Array<{
   parent_message_id: string;
@@ -82,9 +76,7 @@ beforeAll(async () => {
     .useMocker((token) => {
       if (token === getRepositoryToken(JobEntity, DB_CONNECTION))
         return {
-          findOne: vi.fn(() =>
-            Promise.resolve({ id: JOB_ID, org_id: ORG_ID, repo_id: REPO_ID }),
-          ),
+          findOne: vi.fn(() => Promise.resolve({ id: JOB_ID, org_id: ORG_ID, repo_id: REPO_ID })),
         };
       if (token === getRepositoryToken(TranscriptMessageEntity, DB_CONNECTION))
         return { find: vi.fn(() => Promise.resolve([anchorRow, childRow])) };
@@ -105,12 +97,7 @@ beforeAll(async () => {
   await app.init();
   server = app.getHttpServer();
   const probe = await request(server).get('/web/does-not-exist-probe');
-  console.log(
-    'REAL SERVER CHECK — listening:',
-    server.listening,
-    '| probe status:',
-    probe.status,
-  );
+  console.log('REAL SERVER CHECK — listening:', server.listening, '| probe status:', probe.status);
 }, 30_000);
 
 afterAll(async () => {
@@ -132,16 +119,12 @@ describe('GET .../messages — authoritative subagent status on the anchor (LIVE
     const res = await request(server).get(messagesUrl);
     console.log(`OBSERVED GET ${messagesUrl} →`, res.status);
     expect(res.status).toBe(200);
-    const anchor = (res.body as Array<Record<string, unknown>>).find(
-      (m) => m.id === ANCHOR_ID,
-    )!;
+    const anchor = (res.body as Array<Record<string, unknown>>).find((m) => m.id === ANCHOR_ID)!;
     console.log('anchor payload:', JSON.stringify(anchor));
     expect(anchor.subagentStatus).toBe('running');
     expect(anchor.subagentEndedAt).toBeNull();
     // The child (non-anchor) message must NOT carry the field.
-    const child = (res.body as Array<Record<string, unknown>>).find(
-      (m) => m.id === 'msg-child',
-    )!;
+    const child = (res.body as Array<Record<string, unknown>>).find((m) => m.id === 'msg-child')!;
     expect('subagentStatus' in child).toBe(false);
   });
 
@@ -155,9 +138,7 @@ describe('GET .../messages — authoritative subagent status on the anchor (LIVE
       },
     ];
     const res = await request(server).get(messagesUrl);
-    const anchor = (res.body as Array<Record<string, unknown>>).find(
-      (m) => m.id === ANCHOR_ID,
-    )!;
+    const anchor = (res.body as Array<Record<string, unknown>>).find((m) => m.id === ANCHOR_ID)!;
     expect(anchor.subagentStatus).toBe('done');
     expect(anchor.subagentEndedAt).toBe(ENDED_AT.toISOString());
   });
@@ -165,9 +146,7 @@ describe('GET .../messages — authoritative subagent status on the anchor (LIVE
   it('no subagent row → anchor omits the field (legacy fallback path on the web)', async () => {
     subagentRows = [];
     const res = await request(server).get(messagesUrl);
-    const anchor = (res.body as Array<Record<string, unknown>>).find(
-      (m) => m.id === ANCHOR_ID,
-    )!;
+    const anchor = (res.body as Array<Record<string, unknown>>).find((m) => m.id === ANCHOR_ID)!;
     expect('subagentStatus' in anchor).toBe(false);
   });
 });

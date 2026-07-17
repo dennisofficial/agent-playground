@@ -1,11 +1,11 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Injectable, Logger } from '@nestjs/common';
+import { repoStateDir } from '@shared/state-root';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, readdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { repoStateDir } from '@shared/state-root';
 import { gitAuthEnv } from './git-auth';
 import { readForbiddenPaths } from './hydration-sidecar';
 
@@ -15,8 +15,7 @@ const execFileAsync = promisify(execFile);
  *  concurrent external git process (e.g. the sandbox's own engine turn running `git commit`) holding the OS-
  *  level index lock. The in-process `withLock` mutex can't see this: it only serializes calls made by THIS
  *  Node process. A short retry is the standard remedy — the lock is almost always released within seconds. */
-const INDEX_LOCK_RE =
-  /index\.lock['"]?:?\s*file exists|another git process seems to be running/i;
+const INDEX_LOCK_RE = /index\.lock['"]?:?\s*file exists|another git process seems to be running/i;
 
 /**
  * `git diff --numstat` renders a rename either as `old => new` or, for a shared path prefix, the brace
@@ -165,15 +164,11 @@ export class LocalGitService {
     const maxAttempts = 5;
     for (let attempt = 1; ; attempt++) {
       try {
-        const { stdout } = await execFileAsync(
-          'git',
-          [...safetyFlags, ...args],
-          {
-            cwd: opts.cwd,
-            env,
-            maxBuffer: 64 * 1024 * 1024,
-          },
-        );
+        const { stdout } = await execFileAsync('git', [...safetyFlags, ...args], {
+          cwd: opts.cwd,
+          env,
+          maxBuffer: 64 * 1024 * 1024,
+        });
         return opts.trim === false ? stdout : stdout.trim();
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -221,10 +216,7 @@ export class LocalGitService {
    * hard-blocks the ship on a non-empty result. FAILS CLOSED: a git error (can't enumerate the branch)
    * throws rather than returning "clean" — an unprovable branch must not be waved through a security gate.
    */
-  async scanBranchForForbidden(
-    worktreePath: string,
-    baseRef: string,
-  ): Promise<string[]> {
+  async scanBranchForForbidden(worktreePath: string, baseRef: string): Promise<string[]> {
     const forbidden = readForbiddenPaths(worktreePath);
     if (!forbidden.length) return [];
     const forbiddenSet = new Set(forbidden);
@@ -241,10 +233,9 @@ export class LocalGitService {
 
     const leaked = new Set<string>();
     for (const sha of shas) {
-      const out = await this.git(
-        ['diff-tree', '--no-commit-id', '--name-only', '-r', sha],
-        { cwd: worktreePath },
-      );
+      const out = await this.git(['diff-tree', '--no-commit-id', '--name-only', '-r', sha], {
+        cwd: worktreePath,
+      });
       for (const name of out
         .split('\n')
         .map((s) => s.trim())
@@ -302,12 +293,9 @@ export class LocalGitService {
 
     let commonDir: string;
     try {
-      commonDir = await this.git(
-        ['rev-parse', '--path-format=absolute', '--git-common-dir'],
-        {
-          cwd: worktreePath,
-        },
-      );
+      commonDir = await this.git(['rev-parse', '--path-format=absolute', '--git-common-dir'], {
+        cwd: worktreePath,
+      });
     } catch {
       commonDir = worktreePath; // fall back to per-worktree serialization
     }
@@ -354,10 +342,7 @@ export class LocalGitService {
    *  changes (staged/unstaged/already committed within this thread) PLUS brand-new untracked files, since
    *  this runs mid-turn before the writer commits (ADR 0005's judge needs the CURRENT thread's changes, not the
    *  whole job's). Best-effort; never blocks the gate on a git error. */
-  async changedFileNames(
-    worktreePath: string,
-    baseSha: string,
-  ): Promise<string[]> {
+  async changedFileNames(worktreePath: string, baseSha: string): Promise<string[]> {
     try {
       const [diffOut, untrackedOut] = await Promise.all([
         this.git(['diff', '--name-only', baseSha], { cwd: worktreePath }),
@@ -366,9 +351,7 @@ export class LocalGitService {
         }),
       ]);
       const names = new Set(
-        [...diffOut.split('\n'), ...untrackedOut.split('\n')]
-          .map((s) => s.trim())
-          .filter(Boolean),
+        [...diffOut.split('\n'), ...untrackedOut.split('\n')].map((s) => s.trim()).filter(Boolean),
       );
       return [...names];
     } catch {
@@ -420,8 +403,7 @@ export class LocalGitService {
           token,
         });
       }
-      const defaultBranch =
-        input.defaultBranch ?? (await this.detectDefaultBranch(repoPath));
+      const defaultBranch = input.defaultBranch ?? (await this.detectDefaultBranch(repoPath));
       return { repoId: input.repoId, gitUrl, defaultBranch, repoPath, token };
     });
   }
@@ -430,18 +412,11 @@ export class LocalGitService {
    * List the files under `subdir` at a git ref (e.g. `origin/main`) — a READ against the base clone with
    * no working tree needed. Returns repo-relative paths; empty when the dir doesn't exist at that ref.
    */
-  async listFilesAtRef(
-    repoPath: string,
-    ref: string,
-    subdir: string,
-  ): Promise<string[]> {
+  async listFilesAtRef(repoPath: string, ref: string, subdir: string): Promise<string[]> {
     try {
-      const out = await this.git(
-        ['ls-tree', '-r', '--name-only', ref, '--', subdir],
-        {
-          cwd: repoPath,
-        },
-      );
+      const out = await this.git(['ls-tree', '-r', '--name-only', ref, '--', subdir], {
+        cwd: repoPath,
+      });
       return out ? out.split('\n').filter(Boolean) : [];
     } catch {
       return []; // ref or subdir absent — treat as empty
@@ -449,11 +424,7 @@ export class LocalGitService {
   }
 
   /** Read one file's contents at a git ref (`git show <ref>:<path>`); null when the path is absent there. */
-  async readFileAtRef(
-    repoPath: string,
-    ref: string,
-    path: string,
-  ): Promise<string | null> {
+  async readFileAtRef(repoPath: string, ref: string, path: string): Promise<string | null> {
     try {
       return await this.git(['show', `${ref}:${path}`], { cwd: repoPath });
     } catch {
@@ -477,19 +448,14 @@ export class LocalGitService {
    * the accumulated change vs base including uncommitted edits (GitHub-PR-like but live). Empty string
    * when nothing differs or the base ref is unknown. `trim:false` keeps the raw patch byte-exact for parsePatch.
    */
-  async diffFromMergeBase(
-    worktreePath: string,
-    baseRef: string,
-  ): Promise<string> {
+  async diffFromMergeBase(worktreePath: string, baseRef: string): Promise<string> {
     try {
-      return await this.git(
-        ['diff', '--no-color', '--find-renames', '--merge-base', baseRef],
-        { cwd: worktreePath, trim: false },
-      );
+      return await this.git(['diff', '--no-color', '--find-renames', '--merge-base', baseRef], {
+        cwd: worktreePath,
+        trim: false,
+      });
     } catch (err) {
-      this.logger.warn(
-        `diffFromMergeBase(${baseRef}) in ${worktreePath} failed: ${String(err)}`,
-      );
+      this.logger.warn(`diffFromMergeBase(${baseRef}) in ${worktreePath} failed: ${String(err)}`);
       return '';
     }
   }
@@ -507,10 +473,9 @@ export class LocalGitService {
     }>
   > {
     try {
-      const out = await this.git(
-        ['diff', '--numstat', '--find-renames', '--merge-base', baseRef],
-        { cwd: worktreePath },
-      );
+      const out = await this.git(['diff', '--numstat', '--find-renames', '--merge-base', baseRef], {
+        cwd: worktreePath,
+      });
       if (!out) return [];
       return out
         .split('\n')
@@ -538,9 +503,7 @@ export class LocalGitService {
   async diffNameStatusFromMergeBase(
     worktreePath: string,
     baseRef: string,
-  ): Promise<
-    Array<{ path: string; oldPath?: string; status: DiffNameStatus }>
-  > {
+  ): Promise<Array<{ path: string; oldPath?: string; status: DiffNameStatus }>> {
     try {
       const out = await this.git(
         ['diff', '--name-status', '--find-renames', '--merge-base', baseRef],
@@ -585,11 +548,8 @@ export class LocalGitService {
   /** True iff the repo has git submodules at its base branch (drives clone-vs-worktree provisioning). */
   async hasSubmodules(repo: ProjectRepo): Promise<boolean> {
     return (
-      (await this.readFileAtRef(
-        repo.repoPath,
-        `origin/${repo.defaultBranch}`,
-        '.gitmodules',
-      )) !== null
+      (await this.readFileAtRef(repo.repoPath, `origin/${repo.defaultBranch}`, '.gitmodules')) !==
+      null
     );
   }
 
@@ -612,10 +572,7 @@ export class LocalGitService {
    * Idempotent: if the worktree already exists it's reused. The checkout lands at
    * `<repoPath>/.worktrees/<branch-slug>`.
    */
-  async createFeatureSandbox(
-    repo: ProjectRepo,
-    branch: string,
-  ): Promise<FeatureSandbox> {
+  async createFeatureSandbox(repo: ProjectRepo, branch: string): Promise<FeatureSandbox> {
     const slug = branch.replace(/[^a-z0-9_-]/gi, '-');
     const worktreePath = join(repo.repoPath, '.worktrees', slug);
 
@@ -629,10 +586,7 @@ export class LocalGitService {
       });
       const base = `origin/${repo.defaultBranch}`;
       // Reuse an existing branch ref if present (a resume); else create it off the base.
-      const branchExists = await this.refExists(
-        repo.repoPath,
-        `refs/heads/${branch}`,
-      );
+      const branchExists = await this.refExists(repo.repoPath, `refs/heads/${branch}`);
       const addArgs = branchExists
         ? ['worktree', 'add', worktreePath, branch]
         : ['worktree', 'add', '-b', branch, worktreePath, base];
@@ -686,20 +640,16 @@ export class LocalGitService {
    * pushed) or any `origin/<branch>..HEAD` commit ⇒ unsafe. Missing upstream is treated as UNSAFE, never as
    * "0 ahead". Fail-closed: any git error ⇒ unsafe.
    */
-  async worktreeSafeToRecut(
-    worktreePath: string,
-    branch: string,
-  ): Promise<boolean> {
+  async worktreeSafeToRecut(worktreePath: string, branch: string): Promise<boolean> {
     try {
       const dotGit = join(worktreePath, '.git');
       const isClone = existsSync(dotGit) && (await stat(dotGit)).isDirectory();
       if (!isClone) return true; // linked worktree — branch ref + objects live in the shared common dir
       const remoteRef = `refs/remotes/origin/${branch}`;
       if (!(await this.refExists(worktreePath, remoteRef))) return false; // never pushed → would be lost
-      const ahead = await this.git(
-        ['rev-list', '--count', `origin/${branch}..HEAD`],
-        { cwd: worktreePath },
-      );
+      const ahead = await this.git(['rev-list', '--count', `origin/${branch}..HEAD`], {
+        cwd: worktreePath,
+      });
       return parseInt(ahead.trim(), 10) === 0;
     } catch {
       return false; // fail-closed — refuse the destructive reset if we can't prove safety
@@ -725,10 +675,7 @@ export class LocalGitService {
    *
    * Idempotent: if the worktree already exists it is reused (boot recovery).
    */
-  async createBaseWorktree(
-    repo: ProjectRepo,
-    jobId: string,
-  ): Promise<FeatureSandbox> {
+  async createBaseWorktree(repo: ProjectRepo, jobId: string): Promise<FeatureSandbox> {
     const slug = `thread-${jobId.replace(/[^a-z0-9_-]/gi, '-')}`;
     const worktreePath = join(repo.repoPath, '.worktrees', slug);
 
@@ -742,13 +689,7 @@ export class LocalGitService {
       });
       // Check out detached at origin/<defaultBranch> — no new branch ref so it stays read-only.
       await this.git(
-        [
-          'worktree',
-          'add',
-          '--detach',
-          worktreePath,
-          `origin/${repo.defaultBranch}`,
-        ],
+        ['worktree', 'add', '--detach', worktreePath, `origin/${repo.defaultBranch}`],
         { cwd: repo.repoPath },
       );
     });
@@ -773,10 +714,7 @@ export class LocalGitService {
    * Lands at the same per-thread path scheme as `createBaseWorktree` (`<repoPath>/.worktrees/thread-<jobId>`)
    * so both modes are interchangeable to callers. Idempotent: an existing clone is reused (boot recovery).
    */
-  async createBaseClone(
-    repo: ProjectRepo,
-    jobId: string,
-  ): Promise<FeatureSandbox> {
+  async createBaseClone(repo: ProjectRepo, jobId: string): Promise<FeatureSandbox> {
     const slug = `thread-${jobId.replace(/[^a-z0-9_-]/gi, '-')}`;
     const worktreePath = join(repo.repoPath, '.worktrees', slug);
 
@@ -863,18 +801,10 @@ export class LocalGitService {
         } catch {
           // no remote branch (or fetch failed) — fall through to cutting fresh
         }
-        if (
-          await this.refExists(
-            sandbox.worktreePath,
-            `refs/remotes/origin/${featureBranch}`,
-          )
-        ) {
-          await this.git(
-            ['checkout', '-b', featureBranch, `origin/${featureBranch}`],
-            {
-              cwd: sandbox.worktreePath,
-            },
-          );
+        if (await this.refExists(sandbox.worktreePath, `refs/remotes/origin/${featureBranch}`)) {
+          await this.git(['checkout', '-b', featureBranch, `origin/${featureBranch}`], {
+            cwd: sandbox.worktreePath,
+          });
           return;
         }
       }
@@ -914,9 +844,7 @@ export class LocalGitService {
             cwd: repo.repoPath,
           });
         } catch (err) {
-          this.logger.warn(
-            `worktree remove failed for ${worktreePath}: ${err}`,
-          );
+          this.logger.warn(`worktree remove failed for ${worktreePath}: ${err}`);
         }
       }
     });
@@ -933,9 +861,7 @@ export class LocalGitService {
    */
   async currentBranch(worktreePath: string): Promise<string | null> {
     try {
-      const out = (
-        await this.git(['branch', '--show-current'], { cwd: worktreePath })
-      ).trim();
+      const out = (await this.git(['branch', '--show-current'], { cwd: worktreePath })).trim();
       return out.length ? out : null;
     } catch {
       return null;
@@ -974,12 +900,9 @@ export class LocalGitService {
     const symref = /^ref:\s+refs\/heads\/(\S+)\s+HEAD/.exec(lines[0] ?? '');
     // The `ref: refs/heads/<default>\tHEAD` announcement line ALSO ends in `\tHEAD` — skip it explicitly so
     // this finds the actual sha line (`<sha>\tHEAD`), not the symref line itself.
-    const shaLine = lines.find(
-      (l) => l.endsWith('\tHEAD') && !l.startsWith('ref:'),
-    );
+    const shaLine = lines.find((l) => l.endsWith('\tHEAD') && !l.startsWith('ref:'));
     const sha = shaLine?.split('\t')[0];
-    if (!symref || !sha)
-      throw new Error(`could not resolve default branch for ${gitUrl}`);
+    if (!symref || !sha) throw new Error(`could not resolve default branch for ${gitUrl}`);
     return { ref: symref[1], sha };
   }
 
@@ -995,10 +918,7 @@ export class LocalGitService {
     destPath: string,
     token?: string,
   ): Promise<string> {
-    await this.git(
-      ['clone', '--depth', '1', '--branch', ref, gitUrl, destPath],
-      { gitUrl, token },
-    );
+    await this.git(['clone', '--depth', '1', '--branch', ref, gitUrl, destPath], { gitUrl, token });
     return this.git(['rev-parse', 'HEAD'], { cwd: destPath });
   }
 }

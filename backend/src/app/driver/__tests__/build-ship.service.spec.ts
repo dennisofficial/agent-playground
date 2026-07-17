@@ -1,10 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
 import type { Job } from '@shared/domain';
-import type {
-  FeatureSandbox,
-  GithubPrService,
-  LocalGitService,
-} from '../../git';
+import { describe, expect, it, vi } from 'vitest';
+import type { FeatureSandbox, GithubPrService, LocalGitService } from '../../git';
 import type { BrainGateway } from '../brain-gateway';
 import { BuildShipService } from '../build-ship.service';
 import type { DriverStoreService } from '../driver-store.service';
@@ -52,9 +48,7 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
     return { openPrAtShip, brainGateway };
   }
 
-  function baseGit(
-    over: Partial<Record<string, unknown>> = {},
-  ): LocalGitService {
+  function baseGit(over: Partial<Record<string, unknown>> = {}): LocalGitService {
     // No `commitAll` — the host has no commit primitive anymore (Atlas owns every commit).
     return {
       scanBranchForForbidden: vi.fn(async () => []),
@@ -64,9 +58,7 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
     } as unknown as LocalGitService;
   }
 
-  function baseStore(
-    over: Partial<Record<string, unknown>> = {},
-  ): DriverStoreService {
+  function baseStore(over: Partial<Record<string, unknown>> = {}): DriverStoreService {
     return {
       setPrReady: vi.fn(async () => undefined),
       setJobStatus: vi.fn(async () => undefined),
@@ -160,27 +152,17 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
       repo: 'widget',
       head: 'feature/abcd',
     });
-    expect(store.setPrReady).toHaveBeenCalledWith(
-      'j1',
-      'https://github.com/acme/widget/pull/7',
-      7,
-    );
+    expect(store.setPrReady).toHaveBeenCalledWith('j1', 'https://github.com/acme/widget/pull/7', 7);
     expect(store.ensureCiThread).toHaveBeenCalledWith({
       jobId: 'j1',
       orgId: 'o1',
       decisionRecordId: null,
     });
     expect(
-      (store.ensureCiThread as ReturnType<typeof vi.fn>).mock
-        .invocationCallOrder[0],
-    ).toBeLessThan(
-      (store.setPrReady as ReturnType<typeof vi.fn>).mock
-        .invocationCallOrder[0],
-    );
+      (store.ensureCiThread as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0],
+    ).toBeLessThan((store.setPrReady as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]);
     expect(store.setJobStatus).not.toHaveBeenCalled();
-    expect(notify).toHaveBeenCalledWith(
-      ':tada: PR ready: https://github.com/acme/widget/pull/7',
-    );
+    expect(notify).toHaveBeenCalledWith(':tada: PR ready: https://github.com/acme/widget/pull/7');
     expect(result).toEqual({
       opened: true,
       prConfirmed: true,
@@ -286,10 +268,7 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
     const svc = new BuildShipService(git, pr, store, brainGateway);
     const result = await svc.ship({ job, record: null, repo, sandbox });
 
-    expect(scanBranchForForbidden).toHaveBeenCalledWith(
-      '/wt/feat',
-      'origin/main',
-    );
+    expect(scanBranchForForbidden).toHaveBeenCalledWith('/wt/feat', 'origin/main');
     // Blocked before the open-PR turn — the brain was never seeded, nothing latched.
     expect(openPrAtShip).not.toHaveBeenCalled();
     expect(store.setPrReady).not.toHaveBeenCalled();
@@ -330,10 +309,7 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
     const svc = new BuildShipService(git, pr, store, brainGateway);
     const ok = await svc.preShip(job, repo, sandbox);
     // The host NEVER commits — `preShip` only leak-scans the branch (over commits AND the working tree).
-    expect(scanBranchForForbidden).toHaveBeenCalledWith(
-      '/wt/feat',
-      'origin/main',
-    );
+    expect(scanBranchForForbidden).toHaveBeenCalledWith('/wt/feat', 'origin/main');
     expect(ok).toEqual({ ok: true });
   });
 

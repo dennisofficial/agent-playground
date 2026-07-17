@@ -2,10 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
-import type {
-  PipelineMarker,
-  ThreadPipelineAwareness,
-} from '../persistence/entities/job.entity';
+import type { PipelineMarker, ThreadPipelineAwareness } from '../persistence/entities/job.entity';
 
 /**
  * PASSIVE pipeline-milestone awareness — the DURABLE half. Owns the `threads.pipeline_awareness` jsonb
@@ -68,11 +65,9 @@ export class PipelineAwarenessStore {
       if (rows.length === 0) return { markers: [], stateChanged: false };
       const a = normalize(rows[0].a);
       const markers = a.markerQueue;
-      const stateChanged =
-        currentSig != null && currentSig !== a.conveyedStateSig;
+      const stateChanged = currentSig != null && currentSig !== a.conveyedStateSig;
       // Nothing to do — leave the row untouched (no needless write on an idle operator turn).
-      if (markers.length === 0 && !stateChanged)
-        return { markers: [], stateChanged: false };
+      if (markers.length === 0 && !stateChanged) return { markers: [], stateChanged: false };
       const next: ThreadPipelineAwareness = {
         markerQueue: [],
         conveyedStateSig: stateChanged ? currentSig : a.conveyedStateSig,
@@ -88,12 +83,9 @@ export class PipelineAwarenessStore {
 
 /** Coerce a raw jsonb value (possibly null/legacy-shaped) into a well-formed awareness buffer. */
 function normalize(raw: unknown): ThreadPipelineAwareness {
-  const a = (
-    raw && typeof raw === 'object' ? raw : {}
-  ) as Partial<ThreadPipelineAwareness>;
+  const a = (raw && typeof raw === 'object' ? raw : {}) as Partial<ThreadPipelineAwareness>;
   return {
     markerQueue: Array.isArray(a.markerQueue) ? a.markerQueue : [],
-    conveyedStateSig:
-      typeof a.conveyedStateSig === 'string' ? a.conveyedStateSig : null,
+    conveyedStateSig: typeof a.conveyedStateSig === 'string' ? a.conveyedStateSig : null,
   };
 }

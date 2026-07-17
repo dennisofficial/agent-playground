@@ -6,21 +6,17 @@
  *   - `renderGithubFetchNudge` — the reminder appended to the fetch tool result via `additionalContext`.
  */
 import { describe, expect, it } from 'vitest';
-import { detectGithubHtmlUrl, renderGithubFetchNudge } from './engine-core';
 import { githubFetchGuardRule } from '../prompt-kit/jit';
+import { detectGithubHtmlUrl, renderGithubFetchNudge } from './engine-core';
 
 /**
  * Reproduce the engine-core fetch PostToolUse callback body (buildHooks → fetchPostToolUseHooks) against the
  * REAL wired rule object, so we exercise the exact trigger.match + render + hookSpecificOutput shape the SDK
  * receives — the runtime contract, not just the helpers.
  */
-function simulateFetchPostToolUse(input: {
-  tool_name: string;
-  tool_input: { url?: unknown };
-}) {
+function simulateFetchPostToolUse(input: { tool_name: string; tool_input: { url?: unknown } }) {
   const trigger = githubFetchGuardRule.trigger;
-  if (trigger.kind !== 'url-match')
-    throw new Error('expected url-match trigger');
+  if (trigger.kind !== 'url-match') throw new Error('expected url-match trigger');
   const url = input.tool_input?.url;
   const fetched = typeof url === 'string' ? url : '';
   if (!trigger.match(fetched)) return {};
@@ -53,9 +49,7 @@ describe('detectGithubHtmlUrl (engine re-export)', () => {
 
 describe('renderGithubFetchNudge (engine re-export)', () => {
   it('steers to gh api / git and echoes the fetched URL', () => {
-    const text = renderGithubFetchNudge(
-      'https://github.com/owner/repo/tree/main',
-    );
+    const text = renderGithubFetchNudge('https://github.com/owner/repo/tree/main');
     expect(text).toContain('gh api');
     expect(text).toContain('https://github.com/owner/repo/tree/main');
   });
@@ -73,10 +67,7 @@ describe('fetch PostToolUse callback (runtime contract)', () => {
     expect(out.hookSpecificOutput?.additionalContext).toContain('gh api');
     // Visible runtime proof: print the exact string the SDK would yield to the model after the fetch.
     // eslint-disable-next-line no-console
-    console.log(
-      '[runtime] WebFetch github →',
-      out.hookSpecificOutput?.additionalContext,
-    );
+    console.log('[runtime] WebFetch github →', out.hookSpecificOutput?.additionalContext);
   });
 
   it('fires for an MCP fetch tool too (matcher covers mcp__fetch__*)', () => {
@@ -96,9 +87,6 @@ describe('fetch PostToolUse callback (runtime contract)', () => {
     });
     expect(out).toEqual({});
     // eslint-disable-next-line no-console
-    console.log(
-      '[runtime] WebFetch raw.githubusercontent →',
-      JSON.stringify(out),
-    );
+    console.log('[runtime] WebFetch raw.githubusercontent →', JSON.stringify(out));
   });
 });

@@ -17,7 +17,7 @@
  * These tests require no database, no Docker, no LLM key — they are pure source/structural assertions.
  */
 
-import { readFileSync, existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -85,10 +85,7 @@ describe('R6 invariant (b): ScopingInvestigatorService deleted; EngineRunner onl
   });
 
   it('no NON-TEST source file in app/ imports ScopingInvestigatorService', () => {
-    const matches = grepAppSrc(/ScopingInvestigatorService/, [
-      '.spec.ts',
-      '.int.test.ts',
-    ]);
+    const matches = grepAppSrc(/ScopingInvestigatorService/, ['.spec.ts', '.int.test.ts']);
     // Only comments are allowed (the service is mentioned in JSDoc of its successor).
     const nonComment = matches.filter((line) => {
       // The line format is `path: content` — extract just the content part.
@@ -115,11 +112,10 @@ describe('R6 invariant (b): ScopingInvestigatorService deleted; EngineRunner onl
    */
   it('the concrete host EngineRunner class is NOT imported in brain/ service files', () => {
     // Pattern: `EngineRunner` as a named import (but NOT `DockerEngineRunner` / `EngineRunnerPort`)
-    const violations = grepAppDir(
-      'brain',
-      /import[^;]*\bEngineRunner\b(?!Port)/,
-      ['.spec.ts', '.int.test.ts'],
-    ).filter((line) => {
+    const violations = grepAppDir('brain', /import[^;]*\bEngineRunner\b(?!Port)/, [
+      '.spec.ts',
+      '.int.test.ts',
+    ]).filter((line) => {
       // Allow DockerEngineRunner imports — it execs turns inside the sandbox container.
       const content = line.split(': ').slice(1).join(': ');
       return !content.includes('DockerEngineRunner');
@@ -128,11 +124,10 @@ describe('R6 invariant (b): ScopingInvestigatorService deleted; EngineRunner onl
   });
 
   it('the concrete host EngineRunner class is NOT imported in driver/ service files', () => {
-    const violations = grepAppDir(
-      'driver',
-      /import[^;]*\bEngineRunner\b(?!Port)/,
-      ['.spec.ts', '.int.test.ts'],
-    ).filter((line) => {
+    const violations = grepAppDir('driver', /import[^;]*\bEngineRunner\b(?!Port)/, [
+      '.spec.ts',
+      '.int.test.ts',
+    ]).filter((line) => {
       const content = line.split(': ').slice(1).join(': ');
       return !content.includes('DockerEngineRunner');
     });
@@ -142,11 +137,10 @@ describe('R6 invariant (b): ScopingInvestigatorService deleted; EngineRunner onl
   it('runner/ files use EngineRunnerPort (the interface), not the host EngineRunner class directly', () => {
     // runner/ should import EngineRunnerPort (the interface) or ENGINE_RUNNER (the token), never the
     // raw EngineRunner class (which would bypass the sandbox abstraction).
-    const violations = grepAppDir(
-      'runner',
-      /import[^;]*\bEngineRunner\b(?!Port)/,
-      ['.spec.ts', '.int.test.ts'],
-    ).filter((line) => {
+    const violations = grepAppDir('runner', /import[^;]*\bEngineRunner\b(?!Port)/, [
+      '.spec.ts',
+      '.int.test.ts',
+    ]).filter((line) => {
       const content = line.split(': ').slice(1).join(': ');
       return !content.includes('DockerEngineRunner');
     });
@@ -164,10 +158,7 @@ describe('R6 invariant (c): cross-thread tool-scope denial (reference)', () => {
    * at the Redis cutover, ADR 0001; the dispatch + its scope guard remain.)
    */
   it('dispatchToolRequest source enforces per-thread scope before dispatching any tool', () => {
-    const src = readFileSync(
-      join(SHARED_SRC, 'engine', 'tool-bridge-host.ts'),
-      'utf8',
-    );
+    const src = readFileSync(join(SHARED_SRC, 'engine', 'tool-bridge-host.ts'), 'utf8');
     // The guard: for a THREAD-SCOPED tool, if args includes a jobId field it must match the owning thread.
     expect(src).toContain('Thread scope violation');
     expect(src).toContain("args['jobId'] !== bridge.jobId");
@@ -178,10 +169,7 @@ describe('R6 invariant (c): cross-thread tool-scope denial (reference)', () => {
   });
 
   it('RedisEngineRunner dispatches host tools through dispatchToolRequest (scope-enforced path)', () => {
-    const src = readFileSync(
-      join(SRC, 'sandbox', 'redis-engine-runner.ts'),
-      'utf8',
-    );
+    const src = readFileSync(join(SRC, 'sandbox', 'redis-engine-runner.ts'), 'utf8');
     expect(src).toContain('dispatchToolRequest');
   });
 });
@@ -202,11 +190,7 @@ function grepAppSrc(pattern: RegExp, excludeSuffixes: string[] = []): string[] {
   return grepAppDir('', pattern, excludeSuffixes);
 }
 
-function grepAppDir(
-  subdir: string,
-  pattern: RegExp,
-  excludeSuffixes: string[] = [],
-): string[] {
+function grepAppDir(subdir: string, pattern: RegExp, excludeSuffixes: string[] = []): string[] {
   const {
     readdirSync,
     statSync,

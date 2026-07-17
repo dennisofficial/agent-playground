@@ -1,15 +1,12 @@
-import { randomBytes } from 'node:crypto';
-import { getDataSourceToken } from '@nestjs/typeorm';
-import { Test } from '@nestjs/testing';
 import { NestExpressApplication } from '@nestjs/platform-express';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { DataSource } from 'typeorm';
-import { CLASSIFIER_LLM } from '../../decision-gate';
+import { Test } from '@nestjs/testing';
+import { getDataSourceToken } from '@nestjs/typeorm';
 import { ENGINE_RUNNER } from '@shared/engine';
-import { GithubPrService, LocalGitService } from '../../git';
+import { randomBytes } from 'node:crypto';
+import { DataSource } from 'typeorm';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AppModule } from '../../app.module';
-import { WorkspaceSecretFileStore } from '../../onboarding';
-import { DB_CONNECTION } from '../../persistence/database.module';
+import { CLASSIFIER_LLM } from '../../decision-gate';
 import {
   FakeClassifierLlm,
   FakeEngineRunner,
@@ -17,8 +14,11 @@ import {
   FakeLocalGitService,
   FakeThreadTitler,
 } from '../../e2e/e2e-stubs';
-import { JobTitler } from '../../titling';
+import { GithubPrService, LocalGitService } from '../../git';
+import { WorkspaceSecretFileStore } from '../../onboarding';
+import { DB_CONNECTION } from '../../persistence/database.module';
 import { webSecretInputCard } from '../../surface';
+import { JobTitler } from '../../titling';
 import { BrainStoreService } from '../brain-store.service';
 
 /**
@@ -90,9 +90,7 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
 
   afterAll(async () => {
     if (ds)
-      await ds
-        .query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID])
-        .catch(() => undefined);
+      await ds.query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID]).catch(() => undefined);
     await app?.close();
     if (prevSurface === undefined) delete process.env.SURFACE;
     else process.env.SURFACE = prevSurface;
@@ -114,17 +112,13 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
     const opened = await store.openSecretRequest(jobId, { requestId, card });
     expect(opened.ok).toBe(true);
     expect(await store.awaitingSecretId(jobId)).toBeNull();
-    expect(
-      (await store.getSecretCard(jobId, requestId))?.provided_at,
-    ).toBeUndefined();
+    expect((await store.getSecretCard(jobId, requestId))?.provided_at).toBeUndefined();
 
     // (2) The `provide-secret` endpoint's work: value → encrypted secret file at (repo, path) + stamp
     // provided_at (per-card — also decrements `open_secret_count`). The name rides along as the display label.
     await secrets.write(ORG_ID, repoId, SECRET_PATH, SECRET_VALUE, SECRET_NAME);
     await store.markSecretProvidedPerCard(jobId, requestId);
-    expect(
-      (await store.getSecretCard(jobId, requestId))?.provided_at,
-    ).toBeDefined();
+    expect((await store.getSecretCard(jobId, requestId))?.provided_at).toBeDefined();
 
     // (3) THE LEAK ASSERTION — the plaintext value is in NO message row (card text, card jsonb, anything).
     const rows = await ds.query(
@@ -166,9 +160,7 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
     await store.clearAwaitingSecret(jobId, requestId);
     expect(await store.awaitingSecretId(jobId)).toBeNull();
     expect(
-      (await store.findUndeliveredProvidedSecrets()).some(
-        (p) => p.requestId === requestId,
-      ),
+      (await store.findUndeliveredProvidedSecrets()).some((p) => p.requestId === requestId),
     ).toBe(false);
   });
 
@@ -184,10 +176,7 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
 
   /** The live `jobs.open_secret_count` counter for a thread. */
   async function openSecretCount(id: string): Promise<number> {
-    const rows = await ds.query(
-      `SELECT open_secret_count FROM jobs WHERE id = $1`,
-      [id],
-    );
+    const rows = await ds.query(`SELECT open_secret_count FROM jobs WHERE id = $1`, [id]);
     return rows[0].open_secret_count;
   }
 
@@ -225,10 +214,7 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
     expect(openedB.alreadyOpen).toBeUndefined();
 
     const open = await store.openSecretCards(thread);
-    expect(open.map((c) => c.requestId).sort()).toEqual([
-      's-concurrent-a',
-      's-concurrent-b',
-    ]);
+    expect(open.map((c) => c.requestId).sort()).toEqual(['s-concurrent-a', 's-concurrent-b']);
   });
 
   it('(b) an ephemeral open and a durable open on the same thread never block each other, either order', async () => {
@@ -284,8 +270,7 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
       requestId: 's-order-durable-2',
       name: 'DURABLE_SECOND',
       path: '.env',
-      description:
-        'durable opened second, must not be blocked by the ephemeral pointer',
+      description: 'durable opened second, must not be blocked by the ephemeral pointer',
     });
     const openedDurableSecond = await store.openSecretRequest(threadB, {
       requestId: 's-order-durable-2',
@@ -310,11 +295,7 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
     await store.openSecretRequest(thread, { requestId, card });
     expect(await openSecretCount(thread)).toBe(1);
 
-    const withdrawn = await store.withdrawSecretRequest(
-      thread,
-      requestId,
-      'no longer needed',
-    );
+    const withdrawn = await store.withdrawSecretRequest(thread, requestId, 'no longer needed');
     expect(withdrawn).toEqual({ withdrawn: true });
     expect(await openSecretCount(thread)).toBe(0);
     const afterWithdraw = await store.getSecretCard(thread, requestId);
@@ -324,16 +305,10 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
     // A subsequent provide attempt against the withdrawn card is refused: markSecretProvidedPerCard's
     // conditional update only fires on an open card, so it's a no-op here and provided_at stays unset.
     await store.markSecretProvidedPerCard(thread, requestId);
-    expect(
-      (await store.getSecretCard(thread, requestId))?.provided_at,
-    ).toBeUndefined();
+    expect((await store.getSecretCard(thread, requestId))?.provided_at).toBeUndefined();
 
     // Double-withdraw is idempotent — the second call is not the winner and does not double-decrement.
-    const secondWithdraw = await store.withdrawSecretRequest(
-      thread,
-      requestId,
-      'again',
-    );
+    const secondWithdraw = await store.withdrawSecretRequest(thread, requestId, 'again');
     expect(secondWithdraw).toEqual({ withdrawn: false });
     expect(await openSecretCount(thread)).toBe(0);
   });
@@ -370,10 +345,7 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
 
     const pending = await store.findUndeliveredProvidedSecrets();
     const mine = pending.filter((p) => p.jobId === thread);
-    expect(mine.map((p) => p.requestId).sort()).toEqual([
-      's-stuck-1',
-      's-stuck-2',
-    ]);
+    expect(mine.map((p) => p.requestId).sort()).toEqual(['s-stuck-1', 's-stuck-2']);
   });
 
   it('(e) open_secret_count lifecycle: bumped on open, decremented on provide/withdraw, healed by reconcileOpenSecretCounts, unaffected by ephemeral opens', async () => {
@@ -439,9 +411,7 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
       card: openCard,
     });
     expect(await openSecretCount(thread)).toBe(1);
-    await ds.query(`UPDATE jobs SET open_secret_count = 99 WHERE id = $1`, [
-      thread,
-    ]);
+    await ds.query(`UPDATE jobs SET open_secret_count = 99 WHERE id = $1`, [thread]);
     expect(await openSecretCount(thread)).toBe(99);
 
     await store.reconcileOpenSecretCounts();

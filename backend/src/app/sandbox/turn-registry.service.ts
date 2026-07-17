@@ -61,10 +61,7 @@ export class TurnRegistry {
   ) {}
 
   /** The cached reply for an already-executed tool call, or null (idempotency on redelivery). */
-  async getToolReply(
-    turnId: string,
-    toolCallId: string,
-  ): Promise<Record<string, unknown> | null> {
+  async getToolReply(turnId: string, toolCallId: string): Promise<Record<string, unknown> | null> {
     const row = await this.toolExecs.findOne({
       where: { turn_id: turnId, tool_call_id: toolCallId },
     });
@@ -119,8 +116,7 @@ export class TurnRegistry {
       if (
         input.kind === 'brain' &&
         err instanceof QueryFailedError &&
-        (err as QueryFailedError & { code?: string }).code ===
-          PG_UNIQUE_VIOLATION
+        (err as QueryFailedError & { code?: string }).code === PG_UNIQUE_VIOLATION
       ) {
         throw new BrainTurnAlreadyRunningError(input.jobId);
       }
@@ -129,11 +125,7 @@ export class TurnRegistry {
   }
 
   /** Stamp a heartbeat (engine liveness) and, when given, advance the event-tail resume cursor. */
-  async heartbeat(
-    turnId: string,
-    lastEventId?: string,
-    at: Date = new Date(),
-  ): Promise<void> {
+  async heartbeat(turnId: string, lastEventId?: string, at: Date = new Date()): Promise<void> {
     const patch: { last_heartbeat_at: Date; events_last_id?: string } = {
       last_heartbeat_at: at,
     };
@@ -143,10 +135,7 @@ export class TurnRegistry {
 
   /** Advance only the resume cursor (the id of the last `events` entry consumed). */
   async advanceCursor(turnId: string, lastEventId: string): Promise<void> {
-    await this.turns.update(
-      { turn_id: turnId },
-      { events_last_id: lastEventId },
-    );
+    await this.turns.update({ turn_id: turnId }, { events_last_id: lastEventId });
   }
 
   /**
@@ -213,10 +202,7 @@ export class TurnRegistry {
    * Running turns whose last heartbeat is older than `thresholdMs` (or which never beat and were
    * started before the cutoff) — the watchdog's "the engine container died" worklist.
    */
-  async findStale(
-    thresholdMs: number,
-    now: Date = new Date(),
-  ): Promise<ActiveTurnEntity[]> {
+  async findStale(thresholdMs: number, now: Date = new Date()): Promise<ActiveTurnEntity[]> {
     const cutoff = new Date(now.getTime() - thresholdMs);
     // Heartbeat gone stale.
     const beat = await this.turns.find({
@@ -253,10 +239,7 @@ export class TurnRegistry {
    * steerable Claude session; "capped" only means it won't rotate again). The host steer/stop path resolves
    * the live turnId through this — durable, so it survives a host restart mid-turn.
    */
-  async runningSteerableTurn(
-    jobId: string,
-    lane: string,
-  ): Promise<ActiveTurnEntity | null> {
+  async runningSteerableTurn(jobId: string, lane: string): Promise<ActiveTurnEntity | null> {
     return this.turns.findOne({
       where: { job_id: jobId, lane, status: 'running', steerable: true },
     });

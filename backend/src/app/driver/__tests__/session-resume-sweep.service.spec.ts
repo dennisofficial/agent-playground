@@ -1,14 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { JobEntity } from '../../persistence/entities';
+import { retryResumeNudge, sessionLimitResetNudge } from '../../prompt-kit/harness';
+import type { ChatSurface } from '../../surface/chat-surface.port';
+import type { DriverStoreService } from '../driver-store.service';
 import { SessionResumeSweep } from '../session-resume-sweep.service';
 import type { ThreadDriver } from '../thread-driver.service';
-import type { DriverStoreService } from '../driver-store.service';
-import type { ChatSurface } from '../../surface/chat-surface.port';
-import type { JobEntity } from '../../persistence/entities';
-import {
-  retryResumeNudge,
-  sessionLimitResetNudge,
-} from '../../prompt-kit/harness';
 
 /**
  * The sweep un-parks a due `session_resume_at` clock. Two park KINDS now share the clock: the existing
@@ -101,19 +98,14 @@ describe('SessionResumeSweep — retry vs session-limit park routing', () => {
     ];
     await sweep.tick();
     expect(surface.seedSystemNotification).toHaveBeenCalledTimes(1);
-    const [repoId, jobId, nudge, opts] =
-      surface.seedSystemNotification.mock.calls[0];
+    const [repoId, jobId, nudge, opts] = surface.seedSystemNotification.mock.calls[0];
     expect(repoId).toBe('repo-1');
     expect(jobId).toBe('job-1');
     expect(nudge).toEqual(retryResumeNudge('Add retries'));
     // The retry re-drive renders NO operator-facing pill — it still drives the turn, silently.
     expect(opts.seedRow).toBe('skip');
     // Main lane has no halt — the clock is the park marker, so the sweep clears it.
-    expect(driverStore.setSessionResume).toHaveBeenCalledWith(
-      'job-1',
-      null,
-      null,
-    );
+    expect(driverStore.setSessionResume).toHaveBeenCalledWith('job-1', null, null);
   });
 
   it('main + session-limit park → seeds the reset nudge (unchanged behavior)', async () => {
@@ -130,14 +122,8 @@ describe('SessionResumeSweep — retry vs session-limit park routing', () => {
     await sweep.tick();
     const [, , nudge, opts] = surface.seedSystemNotification.mock.calls[0];
     expect(nudge).toEqual(sessionLimitResetNudge('Add retries'));
-    expect(opts.seedRow.label).toBe(
-      'Auto-resuming after the session limit reset.',
-    );
+    expect(opts.seedRow.label).toBe('Auto-resuming after the session limit reset.');
     expect(opts.seedRow.chunkKey).toMatch(/^seed:sessionlimit:/);
-    expect(driverStore.setSessionResume).toHaveBeenCalledWith(
-      'job-1',
-      null,
-      null,
-    );
+    expect(driverStore.setSessionResume).toHaveBeenCalledWith('job-1', null, null);
   });
 });

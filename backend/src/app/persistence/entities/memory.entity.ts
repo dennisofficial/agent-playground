@@ -1,3 +1,4 @@
+import { TimestampedEntity } from '@workspace/shared/schemas';
 import {
   Column,
   DeleteDateColumn,
@@ -7,7 +8,6 @@ import {
   ManyToOne,
   PrimaryGeneratedColumn,
 } from 'typeorm';
-import { TimestampedEntity } from '@workspace/shared/schemas';
 import { OrganizationEntity } from './organization.entity';
 
 /**

@@ -33,9 +33,7 @@ export function buildRedisClient(opts: { url?: string }): Redis {
       // Exponential-ish backoff capped at 5s — reconnect forever, never crash.
       const delay = Math.min(times * 200, 5000);
       if (times === 1 || times % 10 === 0) {
-        logger.warn(
-          `Redis unreachable (attempt ${times}) — retrying in ${delay}ms (${url})`,
-        );
+        logger.warn(`Redis unreachable (attempt ${times}) — retrying in ${delay}ms (${url})`);
       }
       return delay;
     },

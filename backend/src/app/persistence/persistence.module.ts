@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { OrmConnectionModule, DB_CONNECTION } from './database.module';
+import { DB_CONNECTION, OrmConnectionModule } from './database.module';
 import { ENTITIES } from './entities';
 import { MessageGitShaSubscriber } from './message-git-sha.subscriber';
 
@@ -11,10 +11,7 @@ import { MessageGitShaSubscriber } from './message-git-sha.subscriber';
  * land in W1+; W0 just stands the connection + repositories up.
  */
 @Module({
-  imports: [
-    OrmConnectionModule,
-    TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION),
-  ],
+  imports: [OrmConnectionModule, TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION)],
   providers: [MessageGitShaSubscriber],
   exports: [TypeOrmModule],
 })

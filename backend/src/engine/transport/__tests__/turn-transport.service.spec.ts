@@ -1,7 +1,7 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Redis } from 'ioredis';
-import { InMemoryRedisStream } from '../../../_lib/redis/in-memory-redis-stream';
 import { turnKeys } from '@shared/engine/redis-turn-keys';
+import type { Redis } from 'ioredis';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { InMemoryRedisStream } from '../../../_lib/redis/in-memory-redis-stream';
 import { TurnTransport } from '../turn-transport.service';
 
 const TURN = 'T1';
@@ -32,9 +32,7 @@ class FakeRawRedis {
       blockMs,
     });
     if (entries.length === 0) return null;
-    return [
-      [stream, entries.map((e) => [e.id, ['data', JSON.stringify(e.data)]])],
-    ];
+    return [[stream, entries.map((e) => [e.id, ['data', JSON.stringify(e.data)]])]];
   }
 }
 
@@ -81,17 +79,13 @@ describe('TurnTransport', () => {
     transport.emitEvent(TURN, { kind: 'text', text: 'hi' } as never);
     // fire-and-forget, but the in-memory xadd writes synchronously
     await Promise.resolve();
-    expect(await readEvents(store)).toEqual([
-      { t: 'event', e: { kind: 'text', text: 'hi' } },
-    ]);
+    expect(await readEvents(store)).toEqual([{ t: 'event', e: { kind: 'text', text: 'hi' } }]);
   });
 
   it('emitFinal appends the terminal { t:"final", r } frame', async () => {
     const { store, transport } = make();
     await transport.emitFinal(TURN, { result: 'done' } as never);
-    expect(await readEvents(store)).toEqual([
-      { t: 'final', r: { result: 'done' } },
-    ]);
+    expect(await readEvents(store)).toEqual([{ t: 'final', r: { result: 'done' } }]);
   });
 
   it('emitError appends the terminal error frame verbatim', async () => {

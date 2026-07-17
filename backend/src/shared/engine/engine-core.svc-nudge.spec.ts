@@ -62,12 +62,8 @@ describe('detectLongRunningCommand', () => {
   });
 
   it('never nudges a command already using atlas-svc', () => {
-    expect(
-      detectLongRunningCommand('atlas-svc run --name web -- pnpm dev'),
-    ).toBeNull();
-    expect(
-      detectLongRunningCommand('atlas-svc run --name db -- docker compose up'),
-    ).toBeNull();
+    expect(detectLongRunningCommand('atlas-svc run --name web -- pnpm dev')).toBeNull();
+    expect(detectLongRunningCommand('atlas-svc run --name db -- docker compose up')).toBeNull();
   });
 });
 

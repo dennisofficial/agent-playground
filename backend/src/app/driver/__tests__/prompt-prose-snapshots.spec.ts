@@ -1,9 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import {
-  SANDBOX_RESET_NOTICE,
-  BG_TASK_CAP_NOTICE,
-} from '@shared/engine/engine.types';
 import { SVC_NUDGE_TEXT } from '@shared/engine/engine-core';
+import { BG_TASK_CAP_NOTICE, SANDBOX_RESET_NOTICE } from '@shared/engine/engine.types';
+import { describe, expect, it } from 'vitest';
 
 /**
  * Golden-snapshot baseline for the driver/engine PROSE strings NOT relocated to `prompt-kit`. Every
@@ -21,14 +18,10 @@ describe('driver/engine prose golden snapshots', () => {
   });
 
   it('BG_TASK_CAP_NOTICE', async () => {
-    await expect(BG_TASK_CAP_NOTICE).toMatchFileSnapshot(
-      './__snapshots__/bg-task-cap-notice.txt',
-    );
+    await expect(BG_TASK_CAP_NOTICE).toMatchFileSnapshot('./__snapshots__/bg-task-cap-notice.txt');
   });
 
   it('SVC_NUDGE_TEXT', async () => {
-    await expect(SVC_NUDGE_TEXT).toMatchFileSnapshot(
-      './__snapshots__/svc-nudge-text.txt',
-    );
+    await expect(SVC_NUDGE_TEXT).toMatchFileSnapshot('./__snapshots__/svc-nudge-text.txt');
   });
 });

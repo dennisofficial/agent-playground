@@ -9,27 +9,27 @@
  * `agent-session-manager.spec.ts`.
  */
 
-import { getDataSourceToken } from '@nestjs/typeorm';
-import { Test } from '@nestjs/testing';
 import type { NestExpressApplication } from '@nestjs/platform-express';
+import { Test } from '@nestjs/testing';
+import { getDataSourceToken } from '@nestjs/typeorm';
+import type { Message, TurnEnvelope } from '@shared/domain';
+import { ENGINE_RUNNER } from '@shared/engine';
 import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import type { Message, TurnEnvelope } from '@shared/domain';
-import { CLASSIFIER_LLM } from '../../decision-gate';
-import { ENGINE_RUNNER } from '@shared/engine';
-import { GithubPrService, LocalGitService } from '../../git';
 import { AppModule } from '../../app.module';
 import { BrainGateway } from '../../brain-gateway';
-import { DB_CONNECTION } from '../../persistence/database.module';
+import { CLASSIFIER_LLM } from '../../decision-gate';
 import {
   FakeClassifierLlm,
   FakeEngineRunner,
   FakeLocalGitService,
   FakeThreadTitler,
 } from '../../e2e/e2e-stubs';
-import { JobTitler } from '../../titling';
-import { CredentialResolver } from '../../onboarding/credential-resolver.service';
+import { GithubPrService, LocalGitService } from '../../git';
 import { JobBootstrapService } from '../../job-bootstrap';
+import { CredentialResolver } from '../../onboarding/credential-resolver.service';
+import { DB_CONNECTION } from '../../persistence/database.module';
+import { JobTitler } from '../../titling';
 import { AgentSessionManager } from '../agent-session-manager.service';
 
 const fakeCreds = {
@@ -72,25 +72,18 @@ function stimulusFor(id: string): TurnEnvelope {
 }
 
 async function purge(): Promise<void> {
-  await ds
-    .query(`DELETE FROM jobs WHERE org_id = $1`, [ORG])
-    .catch(() => undefined);
-  await ds
-    .query(`DELETE FROM repos WHERE org_id = $1`, [ORG])
-    .catch(() => undefined);
-  await ds
-    .query(`DELETE FROM organizations WHERE id = $1`, [ORG])
-    .catch(() => undefined);
+  await ds.query(`DELETE FROM jobs WHERE org_id = $1`, [ORG]).catch(() => undefined);
+  await ds.query(`DELETE FROM repos WHERE org_id = $1`, [ORG]).catch(() => undefined);
+  await ds.query(`DELETE FROM organizations WHERE id = $1`, [ORG]).catch(() => undefined);
 }
 
 async function autoColsOf(
   jobId: string,
 ): Promise<{ auto_approve_mode: string; auto_merge: boolean }> {
-  const rows: Array<{ auto_approve_mode: string; auto_merge: boolean }> =
-    await ds.query(
-      `SELECT auto_approve_mode, auto_merge FROM jobs WHERE id = $1`,
-      [jobId],
-    );
+  const rows: Array<{ auto_approve_mode: string; auto_merge: boolean }> = await ds.query(
+    `SELECT auto_approve_mode, auto_merge FROM jobs WHERE id = $1`,
+    [jobId],
+  );
   return rows[0];
 }
 

@@ -1,18 +1,18 @@
-import { createHash } from 'node:crypto';
 import { Test } from '@nestjs/testing';
-import { describe, expect, it } from 'vitest';
-import { PromptService } from '../prompt.service';
 import { Agent } from '@shared/prompt-kit/system/agent';
-import {
-  Fragment,
-  FragmentGroup,
-  getFragmentMetaMap,
-} from '@shared/prompt-kit/system/fragment.decorator';
 import {
   loadFragmentsFromInstances,
   renderAgentPrompt,
   validateFragments,
 } from '@shared/prompt-kit/system/assemble';
+import {
+  Fragment,
+  FragmentGroup,
+  getFragmentMetaMap,
+} from '@shared/prompt-kit/system/fragment.decorator';
+import { createHash } from 'node:crypto';
+import { describe, expect, it } from 'vitest';
+import { PromptService } from '../prompt.service';
 
 /**
  * The fragment-library assembler, exercised on the brain (`ATLAS_MAIN`). The brain is now assembled ONLY from
@@ -22,12 +22,7 @@ import {
  */
 describe('renderAgentPrompt — brain assembly (ATLAS_MAIN)', () => {
   it('assembles a substantial brain prompt that opens with the identity for each job kind', () => {
-    for (const jobKind of [
-      'feature',
-      'bugfix',
-      'event',
-      'onboarding',
-    ] as const) {
+    for (const jobKind of ['feature', 'bugfix', 'event', 'onboarding'] as const) {
       const out = renderAgentPrompt(Agent.PLANNING, { jobKind });
       expect(out.length, `jobKind=${jobKind}`).toBeGreaterThan(10_000);
       expect(out.startsWith('You are Atlas'), `jobKind=${jobKind}`).toBe(true);
@@ -61,17 +56,13 @@ describe('renderAgentPrompt — brain assembly (ATLAS_MAIN)', () => {
     expect(feature).toContain('FULL PATH — review_plan then propose_plan');
     expect(feature).toContain('JOB KIND — FEATURE');
     expect(onboarding).not.toContain('WHY YOU GRILL');
-    expect(onboarding).not.toContain(
-      'FULL PATH — review_plan then propose_plan',
-    );
+    expect(onboarding).not.toContain('FULL PATH — review_plan then propose_plan');
     expect(onboarding).not.toContain('JOB KIND —');
 
     // onboarding-only content
     expect(onboarding).toContain('onboarding a newly-connected repository');
     expect(onboarding).toContain('FLEET INVENTORY');
-    expect(onboarding).toContain(
-      'FINISH — only when the FULL fleet inventory is GREEN',
-    );
+    expect(onboarding).toContain('FINISH — only when the FULL fleet inventory is GREEN');
     // the live-accessibility procedure is onboarding-only (build brains carry PUBLIC PREVIEW URLS instead)
     expect(onboarding).toContain('LIVE-SERVICE ACCESSIBILITY');
     expect(feature).not.toContain('onboarding a newly-connected repository');
@@ -79,8 +70,7 @@ describe('renderAgentPrompt — brain assembly (ATLAS_MAIN)', () => {
     expect(feature).not.toContain('LIVE-SERVICE ACCESSIBILITY');
 
     // the behavioral tail is shared (no jobKind condition)
-    for (const out of [feature, onboarding])
-      expect(out).toContain('SPIKE BEFORE YOU COMMIT');
+    for (const out of [feature, onboarding]) expect(out).toContain('SPIKE BEFORE YOU COMMIT');
   });
 
   it('carries the UI-preview + context-link guidance on build brains, not onboarding', () => {
@@ -143,8 +133,7 @@ describe('renderAgentPrompt(Agent.PLANNING) — byte-parity with the monolithic 
   const PRE_SPLIT_SHA256: Record<string, string> = {
     feature: 'c754924a1d8253a599fb792696153b98f61d0d479388596833f25f9a7974c879',
     bugfix: 'c1532a05911e45326e10192cee0cf48c34005be785e8297599dc8524218612de',
-    onboarding:
-      '9b18e9e0ca07866b78e9e1fbe693e44a90fa290e3381f43f8a61ebed25522bf8',
+    onboarding: '9b18e9e0ca07866b78e9e1fbe693e44a90fa290e3381f43f8a61ebed25522bf8',
     review: 'c0d59541f22b0becf75d6b09960307a8c24c2635950421db9a2498cd752da405',
   };
 
@@ -165,9 +154,7 @@ describe('PromptService — DI facade boots + validates', () => {
     }).compile();
     await moduleRef.init(); // fires onModuleInit → primeFragments (boot-loud validation)
     const prompts = moduleRef.get(PromptService);
-    expect(
-      prompts.generate(Agent.PLANNING, { jobKind: 'feature' }).length,
-    ).toBeGreaterThan(10_000);
+    expect(prompts.generate(Agent.PLANNING, { jobKind: 'feature' }).length).toBeGreaterThan(10_000);
   });
 });
 
@@ -187,11 +174,9 @@ describe('validateFragments — fails loudly', () => {
     }
     const instance = new ClashingGroup();
     // sanity: the @Fragment methods were recorded on the prototype
-    expect(
-      Object.keys(getFragmentMetaMap(Object.getPrototypeOf(instance))),
-    ).toEqual(['a', 'b']);
-    expect(() =>
-      validateFragments(loadFragmentsFromInstances([instance])),
-    ).toThrow(/duplicate order 5000 for agent/);
+    expect(Object.keys(getFragmentMetaMap(Object.getPrototypeOf(instance)))).toEqual(['a', 'b']);
+    expect(() => validateFragments(loadFragmentsFromInstances([instance]))).toThrow(
+      /duplicate order 5000 for agent/,
+    );
   });
 });

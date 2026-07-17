@@ -17,50 +17,36 @@
  * turn (read back from Postgres — the retried run resumes the SAME persisted step/thread rows), and the job
  * reaches `done`, all readable from the live `jobs`/`threads`/`steps` tables.
  */
+import type { EnvService } from '@core/config/env/env.service';
+import { ConsoleLogger, Logger } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
-import {
-  TypeOrmModule,
-  getDataSourceToken,
-  getRepositoryToken,
-} from '@nestjs/typeorm';
+import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
+import type { ToolBridgeOptions } from '@shared/engine';
 import { DataSource, Repository } from 'typeorm';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { ConsoleLogger, Logger } from '@nestjs/common';
-import type { EnvService } from '@core/config/env/env.service';
 import { CustomNamingStrategy } from '../../../_lib/database/custom-naming.strategy';
+import type { FeatureSandbox, GithubPrService, LocalGitService, ProjectRepo } from '../../git';
+import { JobDependencyService } from '../../job-deps';
+import type { CredentialResolver } from '../../onboarding';
+import type { OauthUsageService } from '../../onboarding/oauth-usage.service';
 import { DB_CONNECTION } from '../../persistence/database.module';
 import {
+  DecisionRecordEntity,
   ENTITIES,
   JobEntity,
   ThreadEntity,
-  DecisionRecordEntity,
 } from '../../persistence/entities';
-import { JobDependencyService } from '../../job-deps';
-import { StimulusStoreService } from '../../stimulus/stimulus-store.service';
-import { DriverStoreService } from '../driver-store.service';
-import { ThreadDriver } from '../thread-driver.service';
-import { BuildShipService } from '../build-ship.service';
-import type { DriverRepoResolver, ResolvedRepo } from '../repo-resolver';
-import type { PlanVisibilityService } from '../decision-gate';
-import type { AutoFixStage } from '../autofix';
-import type {
-  GithubPrService,
-  LocalGitService,
-  FeatureSandbox,
-  ProjectRepo,
-} from '../../git';
 import type { TurnRunnerService } from '../../runner';
-import type {
-  BlockSink,
-  ChatSurface,
-  LiveTurnStore,
-  TaskEventSink,
-} from '../../surface';
+import { StimulusStoreService } from '../../stimulus/stimulus-store.service';
+import type { BlockSink, ChatSurface, LiveTurnStore, TaskEventSink } from '../../surface';
 import { TurnHarnessFactory } from '../../surface';
-import type { ToolBridgeOptions } from '@shared/engine';
-import type { CredentialResolver } from '../../onboarding';
-import type { OauthUsageService } from '../../onboarding/oauth-usage.service';
+import type { AutoFixStage } from '../autofix';
+import { BuildShipService } from '../build-ship.service';
 import type { LeaderElectionService } from '../cluster/leader-election.service';
+import type { PlanVisibilityService } from '../decision-gate';
+import { DriverStoreService } from '../driver-store.service';
+import type { ResolvedRepo } from '../repo-resolver';
+import { ThreadDriver } from '../thread-driver.service';
 
 function dbOpts() {
   return {
@@ -183,13 +169,11 @@ function makePr(): { pr: GithubPrService } {
       number: 1,
       existing: false,
     })),
-    findOpenPullByHead: vi.fn(
-      async (_token: string, args: { head: string }) => ({
-        url: 'https://github.com/acme/stream-closed/pull/1',
-        number: 1,
-        head: args.head,
-      }),
-    ),
+    findOpenPullByHead: vi.fn(async (_token: string, args: { head: string }) => ({
+      url: 'https://github.com/acme/stream-closed/pull/1',
+      number: 1,
+      head: args.head,
+    })),
   } as unknown as GithubPrService;
   return { pr };
 }
@@ -205,10 +189,7 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
 
   beforeAll(async () => {
     mod = await Test.createTestingModule({
-      imports: [
-        TypeOrmModule.forRoot(dbOpts()),
-        TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION),
-      ],
+      imports: [TypeOrmModule.forRoot(dbOpts()), TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION)],
       providers: [
         DriverStoreService,
         {
@@ -321,8 +302,7 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
       const { git } = makeGit();
       const { pr } = makePr();
       const env = {
-        get: (k: string) =>
-          k === 'DRIVER_TRANSIENT_RETRY_MS' ? '1' : undefined,
+        get: (k: string) => (k === 'DRIVER_TRANSIENT_RETRY_MS' ? '1' : undefined),
       } as unknown as EnvService;
       const liveTurns = {
         push: vi.fn(),
@@ -500,9 +480,7 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
       expect(execCalls.length).toBeGreaterThanOrEqual(2); // turn 1 (stream-closed throw) + turn 2 (fresh, completed)
 
       // Never stamped a `failed` halt at any point in the drive.
-      expect(
-        setJobHaltSpy.mock.calls.some((c) => c[1]?.kind === 'failed'),
-      ).toBe(false);
+      expect(setJobHaltSpy.mock.calls.some((c) => c[1]?.kind === 'failed')).toBe(false);
 
       const finalRow = await jobs.findOneOrFail({ where: { id: job.id } });
       expect(finalRow.status).toBe('done');

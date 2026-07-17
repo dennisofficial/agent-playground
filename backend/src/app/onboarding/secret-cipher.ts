@@ -25,9 +25,7 @@ export function loadSecretsKey(raw: string | undefined): Buffer {
       'SECRETS_ENCRYPTION_KEY is not set — refusing to read or write encrypted tenant credentials.',
     );
   }
-  const key = /^[0-9a-fA-F]{64}$/.test(raw)
-    ? Buffer.from(raw, 'hex')
-    : Buffer.from(raw, 'base64');
+  const key = /^[0-9a-fA-F]{64}$/.test(raw) ? Buffer.from(raw, 'hex') : Buffer.from(raw, 'base64');
   if (key.length !== 32) {
     throw new Error(
       `SECRETS_ENCRYPTION_KEY must decode to 32 bytes (got ${key.length}) — use 64 hex chars or 32-byte base64.`,
@@ -60,7 +58,5 @@ export function decryptSecret(blob: string, key: Buffer): string {
   }
   const decipher = createDecipheriv(ALGO, key, iv);
   decipher.setAuthTag(tag);
-  return Buffer.concat([decipher.update(ct), decipher.final()]).toString(
-    'utf8',
-  );
+  return Buffer.concat([decipher.update(ct), decipher.final()]).toString('utf8');
 }

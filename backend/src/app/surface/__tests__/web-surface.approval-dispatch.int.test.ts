@@ -28,40 +28,32 @@
  * `brain-store.build-not-started.spec.ts`).
  */
 
-import { getDataSourceToken } from '@nestjs/typeorm';
-import { Test } from '@nestjs/testing';
 import type { NestExpressApplication } from '@nestjs/platform-express';
+import { Test } from '@nestjs/testing';
+import { getDataSourceToken } from '@nestjs/typeorm';
+import type { SeedRow } from '@shared/domain/seed-row';
+import { ENGINE_RUNNER } from '@shared/engine';
 import request from 'supertest';
 import { DataSource } from 'typeorm';
-import {
-  afterAll,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from 'vitest';
-import { CLASSIFIER_LLM } from '../../decision-gate';
-import { ENGINE_RUNNER } from '@shared/engine';
-import { GithubPrService, LocalGitService } from '../../git';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppModule } from '../../app.module';
-import { DB_CONNECTION } from '../../persistence/database.module';
+import { AgentSessionManager, JOB_DISPATCHER } from '../../brain';
+import { CLASSIFIER_LLM } from '../../decision-gate';
 import {
   FakeClassifierLlm,
   FakeEngineRunner,
   FakeLocalGitService,
   FakeThreadTitler,
 } from '../../e2e/e2e-stubs';
-import { JobTitler } from '../../titling';
-import { CredentialResolver } from '../../onboarding/credential-resolver.service';
-import { AgentSessionManager, JOB_DISPATCHER } from '../../brain';
+import { GithubPrService, LocalGitService } from '../../git';
 import { JobBootstrapService } from '../../job-bootstrap';
+import { CredentialResolver } from '../../onboarding/credential-resolver.service';
+import { DB_CONNECTION } from '../../persistence/database.module';
 import { ChatStimulusBridge } from '../../stimulus/chat-stimulus.bridge';
-import { WebSurface } from '../web-surface';
-import { SYSTEM_SEED_AUTHOR } from '../chat-surface.port';
+import { JobTitler } from '../../titling';
 import type { InboundChatMessage } from '../chat-surface.port';
-import type { SeedRow } from '@shared/domain/seed-row';
+import { SYSTEM_SEED_AUTHOR } from '../chat-surface.port';
+import { WebSurface } from '../web-surface';
 
 /** The visible-row form of `SeedRow` (excludes the `'skip'` sentinel). */
 type SeedRowObject = Exclude<SeedRow, 'skip'>;
@@ -107,30 +99,18 @@ async function register(email: string): Promise<{ id: string }> {
 
 async function purge(): Promise<void> {
   await ds
-    .query(`DELETE FROM decision_records WHERE id = ANY($1)`, [
-      [PLAN_DR, DIRECT_DR],
-    ])
+    .query(`DELETE FROM decision_records WHERE id = ANY($1)`, [[PLAN_DR, DIRECT_DR]])
     .catch(() => undefined);
   await ds
-    .query(`DELETE FROM transcript_messages WHERE job_id = ANY($1)`, [
-      [PLAN_JOB, DIRECT_JOB],
-    ])
+    .query(`DELETE FROM transcript_messages WHERE job_id = ANY($1)`, [[PLAN_JOB, DIRECT_JOB]])
     .catch(() => undefined);
-  await ds
-    .query(`DELETE FROM jobs WHERE org_id = $1`, [ORG])
-    .catch(() => undefined);
-  await ds
-    .query(`DELETE FROM repos WHERE org_id = $1`, [ORG])
-    .catch(() => undefined);
+  await ds.query(`DELETE FROM jobs WHERE org_id = $1`, [ORG]).catch(() => undefined);
+  await ds.query(`DELETE FROM repos WHERE org_id = $1`, [ORG]).catch(() => undefined);
   await ds
     .query(`DELETE FROM organization_members WHERE org_id = $1`, [ORG])
     .catch(() => undefined);
-  await ds
-    .query(`DELETE FROM organizations WHERE id = $1`, [ORG])
-    .catch(() => undefined);
-  await ds
-    .query(`DELETE FROM users WHERE email = $1`, [OWNER_EMAIL])
-    .catch(() => undefined);
+  await ds.query(`DELETE FROM organizations WHERE id = $1`, [ORG]).catch(() => undefined);
+  await ds.query(`DELETE FROM users WHERE email = $1`, [OWNER_EMAIL]).catch(() => undefined);
 }
 
 /**
@@ -155,19 +135,15 @@ async function seedAwaitingApproval(
      VALUES ($1, $2, $3, $4, 'Add token-bucket rate limiting to the API.', 'draft', $5)`,
     [drId, ORG, REPO, jobId, threadTitles],
   );
-  await ds.query(`UPDATE jobs SET decision_record_id = $1 WHERE id = $2`, [
-    drId,
-    jobId,
-  ]);
+  await ds.query(`UPDATE jobs SET decision_record_id = $1 WHERE id = $2`, [drId, jobId]);
 }
 
 async function jobRow(
   jobId: string,
 ): Promise<{ status: string; activity: string; build_path: string | null }> {
-  const rows = (await ds.query(
-    `SELECT status, activity, build_path FROM jobs WHERE id = $1`,
-    [jobId],
-  )) as Array<{
+  const rows = (await ds.query(`SELECT status, activity, build_path FROM jobs WHERE id = $1`, [
+    jobId,
+  ])) as Array<{
     status: string;
     activity: string;
     build_path: string | null;
@@ -176,9 +152,7 @@ async function jobRow(
 }
 
 /** Collect the seed turns the surface emits during `fn` (the seed fires synchronously off `fireLifecycle`). */
-async function captureSeeds(
-  fn: () => Promise<void>,
-): Promise<InboundChatMessage[]> {
+async function captureSeeds(fn: () => Promise<void>): Promise<InboundChatMessage[]> {
   const seeds: InboundChatMessage[] = [];
   const sub = surface.inbound$.subscribe((m) => {
     if (m.seed) seeds.push(m);
@@ -264,15 +238,11 @@ beforeAll(async () => {
 beforeEach(async () => {
   dispatchSpy.mockClear();
   engineRunSpy.mockClear();
-  await ds.query(`DELETE FROM decision_records WHERE id = ANY($1)`, [
-    [PLAN_DR, DIRECT_DR],
-  ]);
+  await ds.query(`DELETE FROM decision_records WHERE id = ANY($1)`, [[PLAN_DR, DIRECT_DR]]);
   await ds.query(`DELETE FROM transcript_messages WHERE job_id = ANY($1)`, [
     [PLAN_JOB, DIRECT_JOB],
   ]);
-  await ds.query(`DELETE FROM jobs WHERE id = ANY($1)`, [
-    [PLAN_JOB, DIRECT_JOB],
-  ]);
+  await ds.query(`DELETE FROM jobs WHERE id = ANY($1)`, [[PLAN_JOB, DIRECT_JOB]]);
 });
 
 afterAll(async () => {
@@ -285,9 +255,7 @@ function expectPlanApprovedSeed(seed: InboundChatMessage, drId: string): void {
   expect(seed.authorId).toBe(SYSTEM_SEED_AUTHOR.id);
   const seedRow = seed.seedRow as SeedRowObject;
   expect(seedRow.chunkKey).toBe(`seed:plan-approved:${drId}`);
-  expect(seedRow.label).toBe(
-    'Plan approved — checking the base branch before starting',
-  );
+  expect(seedRow.label).toBe('Plan approved — checking the base branch before starting');
   // The rebase-check instruction: mechanical rebase → semantic validity → dispatch_build / hold_build.
   expect(seed.text).toContain('rebase');
   expect(seed.text).toContain('dispatch_build');
@@ -301,13 +269,7 @@ describe('approval-gated dispatch — approval fires the base-check JIT seed, no
 
     let acted!: boolean;
     const seeds = await captureSeeds(async () => {
-      acted = await asm.resolveApprovalDurably(
-        PLAN_JOB,
-        'approve',
-        ownerId,
-        undefined,
-        PLAN_DR,
-      );
+      acted = await asm.resolveApprovalDurably(PLAN_JOB, 'approve', ownerId, undefined, PLAN_DR);
     });
 
     expect(acted).toBe(true);
@@ -373,13 +335,7 @@ describe('approval-gated dispatch — approval fires the base-check JIT seed, no
     let acted!: boolean;
     const seeds = await captureSeeds(async () => {
       // Job is now 'running', no longer 'awaiting_approval' → the durable guard rejects the re-delivery.
-      acted = await asm.resolveApprovalDurably(
-        PLAN_JOB,
-        'approve',
-        ownerId,
-        undefined,
-        PLAN_DR,
-      );
+      acted = await asm.resolveApprovalDurably(PLAN_JOB, 'approve', ownerId, undefined, PLAN_DR);
     });
 
     expect(acted).toBe(false);

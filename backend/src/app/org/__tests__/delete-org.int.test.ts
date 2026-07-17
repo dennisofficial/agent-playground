@@ -17,48 +17,44 @@
  * `JobLifecycleService` via `useExisting`, mirroring the @Global `DriverModule`) exactly as in production.
  */
 
+import { EnvService } from '@core/config/env/env.service';
 import { Test, type TestingModule } from '@nestjs/testing';
-import {
-  TypeOrmModule,
-  getDataSourceToken,
-  getRepositoryToken,
-} from '@nestjs/typeorm';
+import { TypeOrmModule, getDataSourceToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { EnvService } from '@core/config/env/env.service';
 import { CustomNamingStrategy } from '../../../_lib/database/custom-naming.strategy';
-import { BrainGateway } from '../brain-gateway';
-import type { FeatureSandbox, ProjectRepo } from '../git';
-import { GithubPrService, LocalGitService } from '../git';
 import { CredentialResolver, TenantCredentialStore } from '../../onboarding';
 import { DB_CONNECTION } from '../../persistence/database.module';
 import {
   DecisionRecordEntity,
   ENTITIES,
-  TranscriptMessageEntity,
+  InboundMessageEntity,
+  JobEntity,
+  JobSandboxEntity,
   OrgInviteEntity,
   OrganizationEntity,
   OrganizationMemberEntity,
   RepoEntity,
   ThreadEntity,
-  InboundMessageEntity,
-  JobEntity,
-  JobSandboxEntity,
+  TranscriptMessageEntity,
   UserEntity,
 } from '../../persistence/entities';
-import { SANDBOX_PROVIDER, SandboxActivityRegistry } from '../sandbox';
 import { TurnRegistry } from '../../sandbox/turn-registry.service';
+import { SkillUpdaterService } from '../../skills/skill-updater.service';
+import { BrainGateway } from '../brain-gateway';
 import {
   DRIVER_REPO,
+  JOB_TEARDOWN,
+  JobLifecycleService,
+  WorktreeProvisioner,
   type DriverRepoResolver,
   type ResolvedRepo,
-  JobLifecycleService,
-  JOB_TEARDOWN,
-  WorktreeProvisioner,
 } from '../driver';
-import { SkillUpdaterService } from '../../skills/skill-updater.service';
+import type { FeatureSandbox, ProjectRepo } from '../git';
+import { GithubPrService, LocalGitService } from '../git';
 import { JobDependencyService } from '../job-deps';
 import { OrganizationService } from '../organization.service';
+import { SANDBOX_PROVIDER, SandboxActivityRegistry } from '../sandbox';
 
 function dbOpts() {
   return {
@@ -92,10 +88,7 @@ class FakeGitService {
       repoPath: `/tmp/delete-org-fake-repos/${input.repoId}`,
     };
   }
-  async createBaseWorktree(
-    repo: ProjectRepo,
-    jobId: string,
-  ): Promise<FeatureSandbox> {
+  async createBaseWorktree(repo: ProjectRepo, jobId: string): Promise<FeatureSandbox> {
     return {
       repoId: repo.repoId,
       branch: 'main',
@@ -114,10 +107,7 @@ class FakeGitService {
     return { ...sandbox, branch: featureBranch };
   }
   // Provision-path no-ops (no real git/cache/submodules/index in the fake).
-  async createBaseClone(
-    repo: ProjectRepo,
-    jobId: string,
-  ): Promise<FeatureSandbox> {
+  async createBaseClone(repo: ProjectRepo, jobId: string): Promise<FeatureSandbox> {
     return this.createBaseWorktree(repo, jobId);
   }
   async ensureSubmodules(): Promise<void> {}
@@ -176,9 +166,7 @@ async function purge(): Promise<void> {
     );
     const ids = threadIds.map((t) => t.id);
     if (ids.length) {
-      await ds.query(`DELETE FROM transcript_messages WHERE job_id = ANY($1)`, [
-        ids,
-      ]);
+      await ds.query(`DELETE FROM transcript_messages WHERE job_id = ANY($1)`, [ids]);
     }
     for (const table of [
       'threads',
@@ -214,11 +202,7 @@ async function seedOrgWithRepo(orgId: string, slug: string): Promise<string> {
 }
 
 /** Seed one row in every child/org-scoped table for `jobId` under (`orgId`, `repoId`). */
-async function seedThreadChildren(
-  orgId: string,
-  repoIdArg: string,
-  jobId: string,
-): Promise<void> {
+async function seedThreadChildren(orgId: string, repoIdArg: string, jobId: string): Promise<void> {
   const [threadGroup] = await ds.query(
     `INSERT INTO thread_groups (job_id, org_id, ordinal, kind) VALUES ($1, $2, 10, 'build') RETURNING id`,
     [jobId, orgId],
@@ -248,10 +232,7 @@ async function seedOrgDirect(
   inviteToken: string,
   dedupeKey: string,
 ): Promise<void> {
-  await ds.query(
-    `INSERT INTO org_credentials (org_id, scope) VALUES ($1, '*')`,
-    [orgId],
-  );
+  await ds.query(`INSERT INTO org_credentials (org_id, scope) VALUES ($1, '*')`, [orgId]);
   await ds.query(
     `INSERT INTO org_invites (token, org_id, email, role) VALUES ($1, $2, 'x@y.com', 'member')`,
     [inviteToken, orgId],
@@ -271,19 +252,8 @@ async function seedOrgDirect(
   );
 }
 
-const countWhere = async (
-  table: string,
-  col: string,
-  val: string,
-): Promise<number> =>
-  Number(
-    (
-      await ds.query(
-        `SELECT COUNT(*)::int AS c FROM ${table} WHERE ${col} = $1`,
-        [val],
-      )
-    )[0].c,
-  );
+const countWhere = async (table: string, col: string, val: string): Promise<number> =>
+  Number((await ds.query(`SELECT COUNT(*)::int AS c FROM ${table} WHERE ${col} = $1`, [val]))[0].c);
 
 beforeEach(async () => {
   mod = await Test.createTestingModule({
@@ -351,11 +321,10 @@ beforeEach(async () => {
       {
         provide: WorktreeProvisioner,
         useValue: {
-          provisionAndAttach: async ({
+          provisionAndAttach: async ({ sandbox }: { sandbox: FeatureSandbox }) => ({
             sandbox,
-          }: {
-            sandbox: FeatureSandbox;
-          }) => ({ sandbox, hydrationSig: 'sig' }),
+            hydrationSig: 'sig',
+          }),
         },
       },
       {
@@ -391,10 +360,9 @@ beforeEach(async () => {
   ds = mod.get<DataSource>(getDataSourceToken(DB_CONNECTION));
 
   await purge();
-  await ds.query(
-    `INSERT INTO users (id, email, password_hash) VALUES ($1, 'shared@x.com', 'h')`,
-    [SHARED_USER_ID],
-  );
+  await ds.query(`INSERT INTO users (id, email, password_hash) VALUES ($1, 'shared@x.com', 'h')`, [
+    SHARED_USER_ID,
+  ]);
   repoId = await seedOrgWithRepo(ORG_ID, 'delete-org');
   otherRepoId = await seedOrgWithRepo(OTHER_ORG_ID, 'survivor-org');
 });
@@ -473,18 +441,12 @@ describe('deleteOrg cascade (live Postgres + fakes)', () => {
     expect(await countWhere('jobs', 'org_id', OTHER_ORG_ID)).toBe(1);
     expect(await countWhere('threads', 'org_id', OTHER_ORG_ID)).toBe(1);
     expect(await countWhere('thread_groups', 'org_id', OTHER_ORG_ID)).toBe(1);
-    expect(await countWhere('decision_records', 'org_id', OTHER_ORG_ID)).toBe(
-      1,
-    );
-    expect(await countWhere('inbound_messages', 'org_id', OTHER_ORG_ID)).toBe(
-      2,
-    );
+    expect(await countWhere('decision_records', 'org_id', OTHER_ORG_ID)).toBe(1);
+    expect(await countWhere('inbound_messages', 'org_id', OTHER_ORG_ID)).toBe(2);
     expect(await countWhere('job_sandboxes', 'org_id', OTHER_ORG_ID)).toBe(1);
     expect(await countWhere('org_credentials', 'org_id', OTHER_ORG_ID)).toBe(1);
     expect(await countWhere('org_invites', 'org_id', OTHER_ORG_ID)).toBe(1);
-    expect(
-      await countWhere('organization_members', 'org_id', OTHER_ORG_ID),
-    ).toBe(1);
+    expect(await countWhere('organization_members', 'org_id', OTHER_ORG_ID)).toBe(1);
     expect(await countWhere('memory', 'org_id', OTHER_ORG_ID)).toBe(1);
   });
 });

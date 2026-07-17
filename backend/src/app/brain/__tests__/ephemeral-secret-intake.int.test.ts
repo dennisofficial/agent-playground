@@ -1,17 +1,12 @@
-import { randomBytes } from 'node:crypto';
-import { getDataSourceToken } from '@nestjs/typeorm';
-import { Test } from '@nestjs/testing';
 import { NestExpressApplication } from '@nestjs/platform-express';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { DataSource } from 'typeorm';
-import { CLASSIFIER_LLM } from '../../decision-gate';
+import { Test } from '@nestjs/testing';
+import { getDataSourceToken } from '@nestjs/typeorm';
 import { ENGINE_RUNNER } from '@shared/engine';
-import { GithubPrService, LocalGitService } from '../../git';
+import { randomBytes } from 'node:crypto';
+import { DataSource } from 'typeorm';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AppModule } from '../../app.module';
-import { JobBootstrapService } from '../../job-bootstrap';
-import { WorkspaceSecretFileStore } from '../../onboarding';
-import { DB_CONNECTION } from '../../persistence/database.module';
-import { SANDBOX_PROVIDER } from '../../sandbox';
+import { CLASSIFIER_LLM } from '../../decision-gate';
 import {
   FakeClassifierLlm,
   FakeEngineRunner,
@@ -19,9 +14,14 @@ import {
   FakeLocalGitService,
   FakeThreadTitler,
 } from '../../e2e/e2e-stubs';
-import { JobTitler } from '../../titling';
-import { WebSurfaceController } from '../../surface/web-surface.controller';
+import { GithubPrService, LocalGitService } from '../../git';
+import { JobBootstrapService } from '../../job-bootstrap';
+import { WorkspaceSecretFileStore } from '../../onboarding';
+import { DB_CONNECTION } from '../../persistence/database.module';
+import { SANDBOX_PROVIDER } from '../../sandbox';
 import { webSecretInputCard } from '../../surface';
+import { WebSurfaceController } from '../../surface/web-surface.controller';
+import { JobTitler } from '../../titling';
 import { BrainStoreService } from '../brain-store.service';
 
 /**
@@ -40,15 +40,9 @@ const DELIVER_TO = '/tmp/atlas-login-in';
 class FakeSandboxProvider {
   public delivered: { jobId: string; path: string; value: string }[] = [];
   public nextOk = true;
-  async writeToJobContainerPath(input: {
-    jobId: string;
-    path: string;
-    value: string;
-  }) {
+  async writeToJobContainerPath(input: { jobId: string; path: string; value: string }) {
     this.delivered.push(input);
-    return this.nextOk
-      ? { ok: true }
-      : { ok: false, reason: 'the target process is not reading' };
+    return this.nextOk ? { ok: true } : { ok: false, reason: 'the target process is not reading' };
   }
   // Unused by this test — present so the object is a plausible provider.
   contextDirHost() {
@@ -128,9 +122,7 @@ describe('ephemeral secret lane — delivered, never persisted (live Postgres)',
 
   afterAll(async () => {
     if (ds)
-      await ds
-        .query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID])
-        .catch(() => undefined);
+      await ds.query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID]).catch(() => undefined);
     await app?.close();
     if (prevSurface === undefined) delete process.env.SURFACE;
     else process.env.SURFACE = prevSurface;
@@ -203,9 +195,7 @@ describe('ephemeral secret lane — delivered, never persisted (live Postgres)',
       ephemeral: true,
       deliver_to: DELIVER_TO,
     });
-    expect((await store.openSecretRequest(jobId, { requestId, card })).ok).toBe(
-      true,
-    );
+    expect((await store.openSecretRequest(jobId, { requestId, card })).ok).toBe(true);
 
     const res = await controller.provideSecret({ id: ORG_ID } as never, jobId, {
       requestId,

@@ -6,16 +6,13 @@
  * `prompt-kit/jit/install-awareness.spec.ts`; this file is scoped to the filter seam only.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { ProfileAwarenessService } from '../profile-awareness.service';
 import type { WorkspaceConfigStore } from '../../onboarding/workspace-config.store';
+import type { InstallAwarenessFilter, InstallFilterVerdict } from '../install-awareness-filter';
+import { ProfileAwarenessService } from '../profile-awareness.service';
 import type {
   WorkspaceProfileService,
   WorkspaceProfileSnapshot,
 } from '../workspace-profile.service';
-import type {
-  InstallAwarenessFilter,
-  InstallFilterVerdict,
-} from '../install-awareness-filter';
 
 const EMPTY_SNAPSHOT: WorkspaceProfileSnapshot = {
   mounts: [],
@@ -28,18 +25,14 @@ const EMPTY_SNAPSHOT: WorkspaceProfileSnapshot = {
 };
 
 /** A fake `WorkspaceConfigStore` whose ledger transition the test controls. */
-function fakeConfigStore(
-  transition: 'add' | 'remove' | null,
-): WorkspaceConfigStore {
+function fakeConfigStore(transition: 'add' | 'remove' | null): WorkspaceConfigStore {
   return {
     applyToolingTransition: vi.fn().mockResolvedValue(transition),
   } as unknown as WorkspaceConfigStore;
 }
 
 /** A fake `WorkspaceProfileService` — always returns the supplied snapshot and a trivial render. */
-function fakeProfile(
-  snapshot: WorkspaceProfileSnapshot = EMPTY_SNAPSHOT,
-): WorkspaceProfileService {
+function fakeProfile(snapshot: WorkspaceProfileSnapshot = EMPTY_SNAPSHOT): WorkspaceProfileService {
   return {
     describe: vi.fn().mockResolvedValue(snapshot),
     render: vi.fn().mockReturnValue('- Mounts: none'),
@@ -92,11 +85,7 @@ describe('ProfileAwarenessService — Stage-2 filter wiring', () => {
         reason: 'new lint tool',
       },
     });
-    const svc = new ProfileAwarenessService(
-      fakeConfigStore('add'),
-      fakeProfile(),
-      filter,
-    );
+    const svc = new ProfileAwarenessService(fakeConfigStore('add'), fakeProfile(), filter);
 
     const text = await svc.handle(HANDLE_INPUT);
 
@@ -109,11 +98,7 @@ describe('ProfileAwarenessService — Stage-2 filter wiring', () => {
     const filter = fakeFilter({
       verdict: { suppress: false, suggestion: '', reason: 'nothing specific' },
     });
-    const svc = new ProfileAwarenessService(
-      fakeConfigStore('add'),
-      fakeProfile(),
-      filter,
-    );
+    const svc = new ProfileAwarenessService(fakeConfigStore('add'), fakeProfile(), filter);
 
     const text = await svc.handle(HANDLE_INPUT);
 
@@ -123,11 +108,7 @@ describe('ProfileAwarenessService — Stage-2 filter wiring', () => {
 
   it('filter returns undefined (no key / unavailable) → falls back to plain Stage-1 text', async () => {
     const filter = fakeFilter({ verdict: undefined });
-    const svc = new ProfileAwarenessService(
-      fakeConfigStore('add'),
-      fakeProfile(),
-      filter,
-    );
+    const svc = new ProfileAwarenessService(fakeConfigStore('add'), fakeProfile(), filter);
 
     const text = await svc.handle(HANDLE_INPUT);
 
@@ -159,20 +140,14 @@ describe('ProfileAwarenessService — Stage-2 filter wiring', () => {
 
     expect(filter.filter).toHaveBeenCalledWith(
       expect.objectContaining({
-        catalog: expect.stringContaining(
-          'eslint-review (repo) — Reviews eslint violations.',
-        ),
+        catalog: expect.stringContaining('eslint-review (repo) — Reviews eslint violations.'),
       }),
     );
   });
 
   it('filter throws → fail-silent to plain Stage-1 text (never propagates, never suppresses)', async () => {
     const filter = fakeFilter({ throws: true });
-    const svc = new ProfileAwarenessService(
-      fakeConfigStore('add'),
-      fakeProfile(),
-      filter,
-    );
+    const svc = new ProfileAwarenessService(fakeConfigStore('add'), fakeProfile(), filter);
 
     const text = await svc.handle(HANDLE_INPUT);
 
@@ -180,11 +155,7 @@ describe('ProfileAwarenessService — Stage-2 filter wiring', () => {
   });
 
   it('filter provider absent (kill-switch off) → plain Stage-1 text, filter never consulted', async () => {
-    const svc = new ProfileAwarenessService(
-      fakeConfigStore('add'),
-      fakeProfile(),
-      undefined,
-    );
+    const svc = new ProfileAwarenessService(fakeConfigStore('add'), fakeProfile(), undefined);
 
     const text = await svc.handle(HANDLE_INPUT);
 
@@ -195,11 +166,7 @@ describe('ProfileAwarenessService — Stage-2 filter wiring', () => {
     const filter = fakeFilter({
       verdict: { suppress: true, suggestion: '', reason: 'would suppress' },
     });
-    const svc = new ProfileAwarenessService(
-      fakeConfigStore('add'),
-      undefined,
-      filter,
-    );
+    const svc = new ProfileAwarenessService(fakeConfigStore('add'), undefined, filter);
 
     const text = await svc.handle(HANDLE_INPUT);
 
@@ -212,11 +179,7 @@ describe('ProfileAwarenessService — Stage-2 filter wiring', () => {
     const filter = fakeFilter({
       verdict: { suppress: false, suggestion: 'ignored', reason: 'n/a' },
     });
-    const svc = new ProfileAwarenessService(
-      fakeConfigStore(null),
-      fakeProfile(),
-      filter,
-    );
+    const svc = new ProfileAwarenessService(fakeConfigStore(null), fakeProfile(), filter);
 
     const text = await svc.handle(HANDLE_INPUT);
 
@@ -228,11 +191,7 @@ describe('ProfileAwarenessService — Stage-2 filter wiring', () => {
     const filter = fakeFilter({
       verdict: { suppress: false, suggestion: '', reason: 'genuine retire' },
     });
-    const svc = new ProfileAwarenessService(
-      fakeConfigStore('remove'),
-      fakeProfile(),
-      filter,
-    );
+    const svc = new ProfileAwarenessService(fakeConfigStore('remove'), fakeProfile(), filter);
 
     const text = await svc.handle({
       ...HANDLE_INPUT,

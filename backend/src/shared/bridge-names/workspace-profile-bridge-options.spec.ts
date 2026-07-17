@@ -8,12 +8,7 @@ import {
 
 describe('workspace-profile-bridge-options', () => {
   it('qualifies tool names as mcp__workspace-profile__<tool>', () => {
-    expect(
-      qualifyWorkspaceProfileToolNames([
-        'request_secret',
-        'write_workspace_config',
-      ]),
-    ).toEqual([
+    expect(qualifyWorkspaceProfileToolNames(['request_secret', 'write_workspace_config'])).toEqual([
       'mcp__workspace-profile__request_secret',
       'mcp__workspace-profile__write_workspace_config',
     ]);
@@ -32,11 +27,7 @@ describe('workspace-profile-bridge-options', () => {
     const { host, profile } = partitionWorkspaceProfileTools(all);
     // reset_sandbox is generic sandbox control — stays on the host bridge, NOT the profile bridge.
     expect(host).toEqual(['ask_question', 'propose_plan', 'reset_sandbox']);
-    expect(profile).toEqual([
-      'request_secret',
-      'write_workspace_config',
-      'propose_mcp_servers',
-    ]);
+    expect(profile).toEqual(['request_secret', 'write_workspace_config', 'propose_mcp_servers']);
   });
 
   it('routes reset_sandbox to the host bridge (it is not a profile dimension)', () => {
