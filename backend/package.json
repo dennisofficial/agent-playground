@@ -100,7 +100,7 @@
     "@swc/core": "^1.10.0",
     "@types/dockerode": "^3.3.23",
     "@types/express": "^5.0.0",
-    "@types/node": "^22.10.7",
+    "@types/node": "^22.19.20",
     "@types/pg": "^8.11.10",
     "@types/picomatch": "^4.0.0",
     "@types/supertest": "^6.0.2",
