@@ -67,6 +67,8 @@ import {
   DB_WRITE_DENY_ACTION_ID,
   DENY_ACTION_ID,
   MERGE_ACTION_ID,
+  REPLAN_APPROVE_ACTION_ID,
+  REPLAN_DISMISS_ACTION_ID,
   REQUEST_CHANGES_ACTION_ID,
   RETRACT_SHIP_ACTION_ID,
   SHIP_ACTION_ID,
@@ -176,6 +178,10 @@ const VALID_ACTION_IDS = new Set([
   // Dismiss just neutralizes the card. Same endpoint, routed by the `approval$` bridge (see WebSurfaceModule).
   AMEND_APPROVE_ACTION_ID,
   AMEND_DISMISS_ACTION_ID,
+  // The brain's "Re-plan?" proposal buttons (heavy amend) — Approve runs `executeReplan` + wakes the new
+  // planner; Dismiss just neutralizes the card. Same endpoint, routed by the `approval$` bridge (see WebSurfaceModule).
+  REPLAN_APPROVE_ACTION_ID,
+  REPLAN_DISMISS_ACTION_ID,
   // The "Merge PR" gate button — same endpoint, but the `approval$` bridge routes it to the driver's merge
   // resolution instead of a plan verdict (see WebSurfaceModule).
   MERGE_ACTION_ID,
@@ -1708,6 +1714,8 @@ export class WebSurfaceController {
       actionId !== RETRACT_SHIP_ACTION_ID &&
       actionId !== AMEND_APPROVE_ACTION_ID &&
       actionId !== AMEND_DISMISS_ACTION_ID &&
+      actionId !== REPLAN_APPROVE_ACTION_ID &&
+      actionId !== REPLAN_DISMISS_ACTION_ID &&
       actionId !== MERGE_ACTION_ID &&
       actionId !== DB_WRITE_APPROVE_ACTION_ID &&
       actionId !== DB_WRITE_DENY_ACTION_ID
@@ -3448,6 +3456,32 @@ export class WebSurfaceController {
       );
     }
     return { ok: true, autoApproveMode: body.mode };
+  }
+
+  /** `POST …/jobs/:jobId/replan` — the operator directly triggers a full re-plan (no card round-trip; the
+   *  operator IS the human gate already). Appends a fresh Planning thread group on the SAME worktree/branch
+   *  and re-enters the plan → approve → build pipeline; old thread groups/threads are untouched. */
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/replan')
+  @UseGuards(OrgMembershipGuard)
+  async replan(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+    @Body() body: { reason?: string },
+  ): Promise<{ ok: boolean; threadGroupId?: string; threadId?: string }> {
+    await this.requireThread(jobId, org.id); // org-scoped existence check, mirrors setAutoApprove's guard
+    const result = await this.driverStore.executeReplan(jobId, org.id);
+    if (!result) return { ok: false };
+    await this.brain.wakeForReplan(
+      jobId,
+      result.threadId,
+      body?.reason?.trim() || 'Operator requested a full re-plan.',
+    );
+    this.logger.log(`web triggered replan on job ${jobId} (org ${org.id})`);
+    return {
+      ok: true,
+      threadGroupId: result.threadGroupId,
+      threadId: result.threadId,
+    };
   }
 
   /** `PATCH …/jobs/:jobId/auto-merge` — flip the per-job auto-merge toggle. On enable, immediately

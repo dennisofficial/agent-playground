@@ -155,6 +155,9 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
   withdraw_ship: {
     reason: z.string().optional(),
   },
+  propose_replan: {
+    reason: z.string().optional(),
+  },
   set_job_kind: {
     kind: z.enum(['feature', 'bugfix', 'review']),
   },
@@ -449,6 +452,10 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   withdraw_ship:
     'PROPOSE amending the current ship-review build — posts an "Amend build?" card for the operator. Does NOT ' +
     'retract the gate; only the operator can, by approving. Do not keep building while it is pending.',
+  propose_replan:
+    'PROPOSE a full RE-PLAN of the ready-to-ship build — posts a "Re-plan?" card for the operator. Does NOT ' +
+    'act immediately; only the operator can approve. Use when the needed change is substantial enough to ' +
+    'warrant going back through plan review, not a quick fix.',
   set_job_kind: 'Set this job kind (feature, bugfix, or review).',
   create_decision: 'Record a new decision for this job.',
   update_decision: 'Update an existing decision by id.',

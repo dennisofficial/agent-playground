@@ -80,9 +80,9 @@ export class HostToolsGroup {
    *  amend), they don't plan. Mirroring `reviewTools()`/`onboardingTools()`, each gets its own qualification
    *  note + curated list so the `mcp__` calling convention and the ambient capability tools (referenced
    *  bare-name elsewhere, e.g. `cloudSandbox()`, `environmentGaps()`, `atlasSvc()`, `createJob()`) are
-   *  actually documented for them. `withdraw_ship` is POST_BUILD-only: it owns the amend loop; CI does not,
-   *  and does not get the tool registered (see `buildTools` in agent-session-manager.service.ts) — CI owns
-   *  PR creation/maintenance directly via `gh`/git (Bash), not a host tool. */
+   *  actually documented for them. `withdraw_ship`/`propose_replan` are POST_BUILD-only: they own the amend
+   *  loop (quick amend vs full re-plan); CI does not, and does not get them registered (see `buildTools` in
+   *  agent-session-manager.service.ts) — CI owns PR creation/maintenance directly via `gh`/git (Bash). */
   @Fragment({
     usedBy: [Agent.POST_BUILD],
     order: 1042,
@@ -99,6 +99,7 @@ export class HostToolsGroup {
       `  - mcp__${BRIDGE_SERVER_NAME}__recall               — retrieve relevant memory facts (semantic search)`,
       `  - mcp__${BRIDGE_SERVER_NAME}__remember             — store a new memory fact`,
       `  - mcp__${BRIDGE_SERVER_NAME}__withdraw_ship        — PROPOSE amending the READY-TO-SHIP build: posts an "Amend build?" card for the operator. It does NOT retract the gate — only the operator can, by approving. After proposing, STOP and wait; if approved you'll be re-woken to do the work. Frame your reason as YOUR OWN recommendation (never "Operator wants…"). Keeps completed work; the gate re-arms once follow-up work lands.`,
+      `  - mcp__${BRIDGE_SERVER_NAME}__propose_replan       — PROPOSE a full RE-PLAN (going back through plan review) instead of a quick amend: posts a "Re-plan?" card for the operator. Does NOT act immediately — only the operator can approve. After proposing, STOP and wait. Use when the change is substantial or main has drifted enough to warrant a fresh plan, not a quick fix.`,
       `  - mcp__${BRIDGE_SERVER_NAME}__create_job           — spin off a NEW job on this same repo; optionally born blocked with dependsOn (see CREATE_JOB below)`,
       `  - mcp__${BRIDGE_SERVER_NAME}__list_jobs            — list this repo's sibling jobs to discover ids for peer dependencies (see CREATE_JOB below)`,
       `  - mcp__${BRIDGE_SERVER_NAME}__link_job_dependency  — explicitly mark one existing same-repo job as blocked by another`,

@@ -25,6 +25,13 @@ export const RETRACT_SHIP_ACTION_ID = 'atlas_approval:retract_ship';
  *  `RETRACT_SHIP_ACTION_ID`) so the plain ship-card "Amend build" click keeps its existing no-wake behavior. */
 export const AMEND_APPROVE_ACTION_ID = 'atlas_approval:amend_approve';
 export const AMEND_DISMISS_ACTION_ID = 'atlas_approval:amend_dismiss';
+/** The brain's "Re-plan?" PROPOSAL card buttons (heavy amend). The `propose_replan` tool can only PROPOSE;
+ *  it posts a card carrying `{ jobId }`. Approving it runs `DriverStoreService.executeReplan` (append a fresh
+ *  Planning thread group, job.status -> planning) AND wakes the new planner; dismissing just neutralizes the
+ *  card and leaves the gate parked. Dedicated ids (not reused from the amend pair) so the two proposal cards
+ *  route independently. */
+export const REPLAN_APPROVE_ACTION_ID = 'atlas_approval:replan_approve';
+export const REPLAN_DISMISS_ACTION_ID = 'atlas_approval:replan_dismiss';
 /** The "Merge PR" gate — a human clicking it (or auto-merge auto-clicking it) merges the open PR into its
  *  base. A THIRD gate alongside Approve (plan) and Ship it. Button value carries only `{ jobId }`. */
 export const MERGE_ACTION_ID = 'atlas_approval:merge';

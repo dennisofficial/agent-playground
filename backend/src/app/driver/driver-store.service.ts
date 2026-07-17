@@ -42,6 +42,7 @@ import { laneFor } from '../surface/thread-registry';
 import type { WebQuestionCard } from '../surface/web-question-card';
 import {
   webAmendProposalCard,
+  webReplanProposalCard,
   webMergeReadyCard,
   webVerdictCard,
 } from '../surface/web-approval-card';
@@ -615,6 +616,92 @@ export class DriverStoreService {
       const card = row.card as Record<string, unknown> | null;
       if (card?.['type'] !== 'approval_card') continue;
       const title = String(card?.['title'] ?? 'Amend build?');
+      const verdict = verdictLine.toLowerCase().includes('dismiss')
+        ? 'dismissed'
+        : 'approved';
+      row.card = webVerdictCard(
+        jobId,
+        title,
+        verdict,
+        verdictLine,
+      ) as unknown as Record<string, unknown>;
+      await this.messages.save(row);
+    }
+  }
+
+  /**
+   * OPEN the brain's "Re-plan?" proposal — posted by the `propose_replan` tool (heavy amend). Like
+   * `openAmendProposal`, this does NOT flip the job status: post_build stays parked until the operator
+   * approves. It posts a durable `kind:'replan'` proposal card carrying the brain's `reason`. Returns:
+   *  - `'not-parked'`  — the job isn't parked at the ship-review gate (`ready`/`amending`); nothing to propose
+   *  - `'already-open'` — an actionable replan proposal card already exists (don't double-post)
+   *  - `'posted'`       — a fresh proposal card was written
+   * Gated more permissively than light amend (`ready` OR `amending`) because post_build owns both states.
+   * Keyed on a deterministic `ts` (`replan-proposal:${jobId}`) so `neutralizeReplanProposal` can find it.
+   */
+  async openReplanProposal(
+    jobId: string,
+    reason: string,
+  ): Promise<'posted' | 'not-parked' | 'already-open'> {
+    return this.dataSource.transaction(async (m) => {
+      const job = await m
+        .getRepository(JobEntity)
+        .findOne({ where: { id: jobId } });
+      if (!job || (job.status !== 'ready' && job.status !== 'amending')) {
+        return 'not-parked';
+      }
+      const messages = m.getRepository(TranscriptMessageEntity);
+      const existing = await messages.find({
+        where: { job_id: jobId, ts: `replan-proposal:${jobId}`, kind: 'card' },
+      });
+      // A replan proposal is still actionable while its card is an `approval_card` (a resolved one has been
+      // rewritten to a `verdict_card`). If one is live, don't stack a second.
+      if (
+        existing.some(
+          (row) =>
+            (row.card as Record<string, unknown> | null)?.['type'] ===
+            'approval_card',
+        )
+      ) {
+        return 'already-open';
+      }
+      await messages.save(
+        messages.create({
+          job_id: jobId,
+          thread_id: await this.planningThreadId(jobId),
+          author: 'Atlas',
+          author_id: 'atlas',
+          author_bot_id: 'atlas',
+          text: reason || 'Re-plan?',
+          kind: 'card',
+          ts: `replan-proposal:${jobId}`,
+          card: webReplanProposalCard({ jobId, reason }) as unknown as Record<
+            string,
+            unknown
+          >,
+        }),
+      );
+      return 'posted';
+    });
+  }
+
+  /**
+   * NEUTRALIZE the brain's replan proposal card — called on BOTH Approve and Dismiss so its buttons stop
+   * being actionable. Rewrites every still-actionable `replan-proposal:${jobId}` card to a `verdict_card`
+   * carrying `verdictLine`. Idempotent: already-neutralized rows (`verdict_card`) are skipped. Does NOT
+   * touch job status (the Approve path's `executeReplan` handles that; Dismiss leaves the gate parked).
+   */
+  async neutralizeReplanProposal(
+    jobId: string,
+    verdictLine: string,
+  ): Promise<void> {
+    const rows = await this.messages.find({
+      where: { job_id: jobId, ts: `replan-proposal:${jobId}`, kind: 'card' },
+    });
+    for (const row of rows) {
+      const card = row.card as Record<string, unknown> | null;
+      if (card?.['type'] !== 'approval_card') continue;
+      const title = String(card?.['title'] ?? 'Re-plan?');
       const verdict = verdictLine.toLowerCase().includes('dismiss')
         ? 'dismissed'
         : 'approved';
@@ -1832,6 +1919,47 @@ export class DriverStoreService {
       type: 'general',
       ordinal: await this.nextRootThreadOrdinal(input.jobId),
     });
+    return { threadGroupId: group.id, threadId: thread.id };
+  }
+
+  /**
+   * HEAVY amend (d-amend): append a WHOLE new Planning thread group onto the SAME job/worktree and re-enter
+   * the pipeline from planning. Old thread groups/threads are NEVER touched — pure append (d7). Atomically
+   * CAS `jobs.status` from `ready` OR `amending` to `planning` (single-winner vs a racing ship/withdraw
+   * click — mirrors `retractShip`); a stale/double trigger affects 0 rows and returns `null` (no-op, no
+   * throw). On winning: append a `planning` thread group (no decision record yet — mirrors the original
+   * `ensurePlanningThreadGroup` bootstrap), create its single `planner` root thread (job-GLOBAL ordinal, like
+   * `appendDirectBuildSection`), and advance `focused_thread_id` so the console opens on the new planner.
+   */
+  async executeReplan(
+    jobId: string,
+    orgId: string,
+  ): Promise<{ threadGroupId: string; threadId: string } | null> {
+    const res = await this.jobs
+      .createQueryBuilder()
+      .update(JobEntity)
+      .set({ status: 'planning' })
+      .where('id = :jobId', { jobId })
+      .andWhere("status IN ('ready', 'amending')")
+      .execute();
+    if ((res.affected ?? 0) === 0) return null;
+    const group = await this.appendThreadGroup({
+      jobId,
+      orgId,
+      kind: 'planning',
+      title: 'Planning (re-plan)',
+      type: 'general',
+    });
+    const thread = await this.createThreadInThreadGroup({
+      threadGroupId: group.id,
+      jobId,
+      orgId,
+      role: 'planner',
+      brief: 'Planner',
+      type: 'general',
+      ordinal: await this.nextRootThreadOrdinal(jobId),
+    });
+    await this.jobs.update({ id: jobId }, { focused_thread_id: thread.id });
     return { threadGroupId: group.id, threadId: thread.id };
   }
 

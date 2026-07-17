@@ -26,6 +26,8 @@ import {
   DB_WRITE_APPROVE_ACTION_ID,
   DB_WRITE_DENY_ACTION_ID,
   DENY_ACTION_ID,
+  REPLAN_APPROVE_ACTION_ID,
+  REPLAN_DISMISS_ACTION_ID,
   REQUEST_CHANGES_ACTION_ID,
   RETRACT_SHIP_ACTION_ID,
   SHIP_ACTION_ID,
@@ -132,6 +134,30 @@ export class WebSurfaceModule
         // DISMISS the brain's amend proposal: just neutralize the card. The gate stays parked at ship-review.
         if (actionId === AMEND_DISMISS_ACTION_ID) {
           void neutralizeAmendProposal(
+            this.moduleRef,
+            meta.jobId,
+            'Dismissed — staying at ship review.',
+          ).catch(() => undefined);
+          return;
+        }
+
+        // APPROVE the brain's "Re-plan?" proposal (heavy amend): execute the re-plan (append a fresh Planning
+        // group, job.status -> planning), neutralize the proposal card, and — only if the CAS actually fired —
+        // wake the new planner thread. Idempotent throughout (executeReplan's CAS + neutralizeReplanProposal's
+        // row scan).
+        if (actionId === REPLAN_APPROVE_ACTION_ID) {
+          void replanApprove(
+            this.moduleRef,
+            this.asm,
+            meta.jobId,
+            ruledBy,
+          ).catch(() => undefined);
+          return;
+        }
+
+        // DISMISS the brain's re-plan proposal: just neutralize the card. The job stays wherever it was.
+        if (actionId === REPLAN_DISMISS_ACTION_ID) {
+          void neutralizeReplanProposal(
             this.moduleRef,
             meta.jobId,
             'Dismissed — staying at ship review.',
@@ -262,6 +288,50 @@ async function neutralizeAmendProposal(
     await import('../driver/driver-store.service.js');
   const store = moduleRef.get(DriverStoreService, { strict: false });
   await store.neutralizeAmendProposal(jobId, verdictLine);
+}
+
+/**
+ * APPROVE the brain's "Re-plan?" proposal (heavy amend). Resolves the org from the job (this module-bridge
+ * context lacks the org the controller has), runs `executeReplan` (append a fresh Planning thread group,
+ * job.status -> planning), neutralizes the proposal card either way, and wakes the new planner ONLY if the
+ * CAS actually fired (a stale click — already shipped/replanned — returns null, so no spurious wake). Lazy
+ * `DriverStoreService` resolution mirrors {@link amendApprove}.
+ */
+async function replanApprove(
+  moduleRef: ModuleRef,
+  asm: AgentSessionManager,
+  jobId: string,
+  ruledBy: string,
+): Promise<void> {
+  const { DriverStoreService } =
+    await import('../driver/driver-store.service.js');
+  const store = moduleRef.get(DriverStoreService, { strict: false });
+  const job = await store.loadJob(jobId).catch(() => null);
+  if (!job) return;
+  const result = await store.executeReplan(jobId, job.orgId);
+  await store.neutralizeReplanProposal(jobId, 'Approved — re-planning.');
+  if (result) {
+    await asm.wakeForReplan(
+      jobId,
+      result.threadId,
+      'Operator approved the re-plan proposal.',
+    );
+  }
+}
+
+/**
+ * Neutralize the brain's re-plan proposal card without touching the job — the Dismiss path. Lazy
+ * `DriverStoreService` resolution mirrors {@link neutralizeAmendProposal}.
+ */
+async function neutralizeReplanProposal(
+  moduleRef: ModuleRef,
+  jobId: string,
+  verdictLine: string,
+): Promise<void> {
+  const { DriverStoreService } =
+    await import('../driver/driver-store.service.js');
+  const store = moduleRef.get(DriverStoreService, { strict: false });
+  await store.neutralizeReplanProposal(jobId, verdictLine);
 }
 
 /**

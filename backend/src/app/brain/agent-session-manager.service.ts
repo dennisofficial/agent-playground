@@ -98,6 +98,7 @@ import {
   maskedSecretNotice,
   maskedFileNotice,
   wakeForAmendApprovedBody,
+  replanSeedBody,
   retryResumeNudge,
 } from '../prompt-kit/harness';
 import { DRIVER_REPO, type DriverRepoResolver } from '../driver/repo-resolver';
@@ -1038,6 +1039,38 @@ export class AgentSessionManager
       systemChunk: {
         label: 'Amend approved — resuming to make the changes.',
         chunkKey: `seed:amend-approved:${jobId}`,
+      },
+    });
+    await this.enqueueChat(recorded);
+  }
+
+  /**
+   * WAKE the fresh planner thread for a heavy amend (re-plan). Unlike `wakeForAmendApproved`, this does NOT
+   * resume the post_build session: `executeReplan` already appended a new Planning thread group + planner
+   * thread and handed back its `threadId`, so this just seeds that thread directly to re-enter planning.
+   * Durable + non-blocking (recorded then enqueued via the pump) so the trigger's HTTP path returns at once.
+   */
+  async wakeForReplan(
+    jobId: string,
+    threadId: string,
+    reason: string,
+  ): Promise<void> {
+    const job = await this.store.loadJob(jobId).catch(() => null);
+    if (!job) return;
+    const recorded = await this.stimulusStore.recordChatStimulus({
+      orgId: job.orgId,
+      repoId: job.repoId,
+      jobId,
+      author: {
+        id: SYSTEM_SEED_AUTHOR.id,
+        displayName: SYSTEM_SEED_AUTHOR.name,
+      },
+      replyRoute: { surfaceId: 'web', jobRef: jobId },
+      body: replanSeedBody(reason),
+      lane: `thread:${threadId}`,
+      systemChunk: {
+        label: 'Re-plan started.',
+        chunkKey: `seed:replan:${jobId}`,
       },
     });
     await this.enqueueChat(recorded);
@@ -3764,6 +3797,42 @@ export class AgentSessionManager
         };
       },
 
+      // PROPOSE a full RE-PLAN of the ready-to-ship build (heavy amend). Like `withdraw_ship` this does NOT
+      // act — the ship gate is a human control — it just posts a "Re-plan?" proposal card carrying the
+      // brain's `reason`. If the operator approves, a fresh Planning thread group is appended (job.status ->
+      // planning) and the pipeline re-runs from planning. The brain MUST stop and wait after proposing.
+      propose_replan: async (args) => {
+        const reason = String(args['reason'] ?? '').trim();
+        const outcome = await this.driverStore.openReplanProposal(
+          stimulus.jobId,
+          reason,
+        );
+        if (outcome === 'not-parked') {
+          return {
+            ok: false,
+            message:
+              'The job is not currently parked at the ship-review gate — nothing to propose re-planning.',
+          };
+        }
+        if (outcome === 'already-open') {
+          return {
+            ok: false,
+            message:
+              'A re-plan proposal is already awaiting the operator’s decision. Wait for it — do NOT keep building.',
+          };
+        }
+        await this.store.appendAtlasMessage(
+          stimulus.jobId,
+          'Proposed a full re-plan — awaiting the operator’s decision…',
+        );
+        return {
+          ok: true,
+          message:
+            'Re-plan proposal posted. It is PENDING the operator’s approval — do NOT keep building. If ' +
+            'approved, a fresh Planning thread group starts.',
+        };
+      },
+
       // Classify (or re-classify) THIS job's kind — e.g. this is a PR review, not a build. The next turn's
       // system prompt reflects the new kind automatically (it's read fresh each turn). Operator/system kinds
       // ('event'/'onboarding') are NOT settable here. Prefer letting propose_plan/start_direct_build carry
@@ -4601,7 +4670,13 @@ export class AgentSessionManager
         ...intake,
         ...atlasProd,
       };
-      return postBuild ? { ...base, withdraw_ship: tools.withdraw_ship } : base;
+      return postBuild
+        ? {
+            ...base,
+            withdraw_ship: tools.withdraw_ship,
+            propose_replan: tools.propose_replan,
+          }
+        : base;
     }
     // Normal threads get the full toolset above + intake. Onboarding threads get a curated, build-free
     // subset (they don't build/PR; they explore, provision, and finish) — `finish_onboarding` stays

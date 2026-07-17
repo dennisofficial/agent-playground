@@ -17,6 +17,8 @@ import {
   DB_WRITE_DENY_ACTION_ID,
   DENY_ACTION_ID,
   MERGE_ACTION_ID,
+  REPLAN_APPROVE_ACTION_ID,
+  REPLAN_DISMISS_ACTION_ID,
   RETRACT_SHIP_ACTION_ID,
   SHIP_ACTION_ID,
   VIEW_PLAN_ACTION_ID,
@@ -68,14 +70,16 @@ export interface WebApprovalCard {
    * - `ship` — the ship-review gate (`Ship it` + `Amend build`; `threads`/`decisions` empty).
    * - `amend` — the brain's "Amend build?" PROPOSAL at the ship gate (`Approve amend` + `Dismiss`); the
    *   gate stays parked until the operator approves. `threads`/`decisions` empty.
+   * - `replan` — the brain's "Re-plan?" PROPOSAL at the ship gate (heavy amend: `Approve re-plan` +
+   *   `Dismiss`); approving appends a fresh Planning thread group (job.status -> planning). `threads`/`decisions` empty.
    * - `merge` — the merge-ready gate (`Merge PR`); posted once the PR is GitHub-mergeable, regardless of
    *   auto-merge. `threads`/`decisions` empty.
    * - `db_write` — the `atlas-prod` gated-write approval card (Thread 2): `Execute write` + `Deny`;
    *   `threads`/`decisions` empty, the proposed statement rides `sql`/`estimatedRows`/`estimateLabel`.
-   * The web labels the list "Sections" vs "Changes"; a `ship`/`amend`/`merge`/`db_write` card renders its
-   * actions generically.
+   * The web labels the list "Sections" vs "Changes"; a `ship`/`amend`/`replan`/`merge`/`db_write` card renders
+   * its actions generically.
    */
-  kind?: 'plan' | 'direct' | 'ship' | 'amend' | 'merge' | 'db_write';
+  kind?: 'plan' | 'direct' | 'ship' | 'amend' | 'merge' | 'db_write' | 'replan';
   title: string;
   summary: string;
   decisions: ApprovalDecision[];
@@ -261,6 +265,43 @@ export function webAmendProposalCard(input: {
       },
       {
         actionId: AMEND_DISMISS_ACTION_ID,
+        label: 'Dismiss',
+        style: 'default',
+        value,
+      },
+    ],
+  };
+}
+
+/**
+ * Build the brain's "Re-plan?" PROPOSAL card (heavy amend) — posted by `DriverStoreService.openReplanProposal`
+ * when the `propose_replan` tool fires. `Approve re-plan` runs `executeReplan` (append a fresh Planning thread
+ * group, job.status -> planning) + wakes the new planner; `Dismiss` leaves the gate parked. Reuses the
+ * `approval_card` payload (generic `actions` renderer), discriminated by `kind: 'replan'`. Action values carry
+ * only `{ jobId }`.
+ */
+export function webReplanProposalCard(input: {
+  jobId: string;
+  reason: string;
+}): WebApprovalCard {
+  const value = JSON.stringify({ jobId: input.jobId });
+  return {
+    type: 'approval_card',
+    jobId: input.jobId,
+    kind: 'replan',
+    title: 'Re-plan?',
+    summary: input.reason,
+    decisions: [],
+    threads: [],
+    actions: [
+      {
+        actionId: REPLAN_APPROVE_ACTION_ID,
+        label: 'Approve re-plan',
+        style: 'primary',
+        value,
+      },
+      {
+        actionId: REPLAN_DISMISS_ACTION_ID,
         label: 'Dismiss',
         style: 'default',
         value,

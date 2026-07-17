@@ -242,6 +242,29 @@ export function wakeForAmendApprovedBody(): AgentMessage {
   );
 }
 
+// ── Re-plan (heavy amend) wake ──────────────────────────────────────────────────────────────────────────
+
+/**
+ * WAKE body for `AgentSessionManager.wakeForReplan` — a full RE-PLAN was started (heavy amend): a fresh
+ * Planning thread group on the SAME worktree/branch as the existing build, seeding the new planner thread.
+ * Nothing from the prior build is reset or discarded, so it points the planner at the on-disk `/context`
+ * evidence before it re-plans.
+ */
+export function replanSeedBody(reason: string): AgentMessage {
+  return agentMessage(
+    [
+      'A full RE-PLAN was just started for this job — a fresh Planning thread group, on the same worktree/branch',
+      'as the existing build (nothing is reset or discarded).',
+      '',
+      `Reason: ${reason || '(no reason given)'}`,
+      '',
+      'This job already built once. The specs and evidence from that build are still on disk under /context —',
+      'read them before proposing changes so you understand what already exists. Author a REVISED plan the',
+      'normal way: grill the operator on what needs to change, record decisions, then propose_plan when ready.',
+    ].join('\n'),
+  );
+}
+
 // ── Request-changes delivery ────────────────────────────────────────────────────────────────────────────
 
 /**
