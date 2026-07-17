@@ -272,7 +272,11 @@ export class EntityTaskEventSink implements TaskEventSink {
           blocked_by: blockedBy,
         }),
       );
-      await this.applyInverseEdges(threadGroupId, String(created.ordinal), input);
+      await this.applyInverseEdges(
+        threadGroupId,
+        String(created.ordinal),
+        input,
+      );
       return { id: String(created.ordinal) };
     });
   }
@@ -344,7 +348,9 @@ export class EntityTaskEventSink implements TaskEventSink {
         where: { id: scope.id },
         select: { id: true, thread_group_id: true, org_id: true },
       });
-      return thread ? { threadGroupId: thread.thread_group_id, orgId: thread.org_id } : null;
+      return thread
+        ? { threadGroupId: thread.thread_group_id, orgId: thread.org_id }
+        : null;
     }
     // scope.kind === 'main' — the job's planning thread group owns the brain's own checklist.
     const threadGroup = await this.threadGroups.findOne({
@@ -352,7 +358,9 @@ export class EntityTaskEventSink implements TaskEventSink {
       order: { ordinal: 'ASC' },
       select: { id: true, org_id: true },
     });
-    return threadGroup ? { threadGroupId: threadGroup.id, orgId: threadGroup.org_id } : null;
+    return threadGroup
+      ? { threadGroupId: threadGroup.id, orgId: threadGroup.org_id }
+      : null;
   }
 
   /** Apply the INVERSE dependency edges (`addBlocks`/`removeBlocks`: "this task blocks X") onto each named
@@ -778,6 +786,17 @@ export class TurnHarnessFactory {
             );
             blocks.push({
               kind: 'chat',
+              text: e.text,
+              emittedAt: stamp(),
+              ...(meta ? { meta } : {}),
+            });
+            break;
+          }
+          case 'user_text': {
+            if (!e.text.trim()) break;
+            const meta = tagMeta({ parentToolUseId: e.parentToolUseId });
+            blocks.push({
+              kind: 'user',
               text: e.text,
               emittedAt: stamp(),
               ...(meta ? { meta } : {}),

@@ -773,6 +773,71 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     expect(toolResult.structuredPatch).toEqual(hunks);
   });
 
+  it('richStream: forwards a SendMessage injection (`user` message, `text` block, `parent_tool_use_id` set) as `user_text`, but NOT when `parent_tool_use_id` is unset (main-thread operator-steer path)', async () => {
+    const sdk = {
+      query: () =>
+        (async function* () {
+          yield { type: 'system', subtype: 'init', session_id: 's' };
+          yield {
+            type: 'assistant',
+            message: {
+              content: [
+                {
+                  type: 'tool_use',
+                  id: 'sub1',
+                  name: 'Task',
+                  input: { subagent_type: 'test' },
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'user',
+            parent_tool_use_id: 'sub1',
+            message: {
+              content: [{ type: 'text', text: 'injected!' }],
+            },
+          };
+          yield {
+            type: 'user',
+            message: {
+              content: [{ type: 'text', text: 'not injected' }],
+            },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's',
+            result: 'ok',
+            usage: { input_tokens: 1, output_tokens: 1 },
+          };
+        })(),
+    } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, {
+      homeRoot: HOME_ROOT,
+    });
+    const events: EngineEvent[] = [];
+    await core.run({
+      engine: 'claude',
+      task: agentMessage('x'),
+      cwd: '/tmp/wt',
+      systemPrompt: agentMessage('p'),
+      sandboxKey: TEST_KEY,
+      mode: 'execute',
+      auth: { secret: 'tok' },
+      richStream: true,
+      onEvent: (e) => events.push(e),
+    });
+
+    const userTextEvents = events.filter((e) => e.kind === 'user_text');
+    expect(userTextEvents).toHaveLength(1);
+    expect(userTextEvents[0]).toMatchObject({
+      kind: 'user_text',
+      text: 'injected!',
+      parentToolUseId: 'sub1',
+    });
+  });
+
   it('surfaces an SDK-native api_retry system frame as an api_retry EngineEvent (mid-turn, no turn end)', async () => {
     const sdk = {
       query: () =>

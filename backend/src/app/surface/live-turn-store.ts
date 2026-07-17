@@ -13,7 +13,7 @@ import type {
  * (+ `toolId` for pairing a result to its call).
  */
 export interface LiveTurnBlock {
-  kind: 'text' | 'thinking' | 'tool';
+  kind: 'text' | 'thinking' | 'tool' | 'user';
   key: string;
   text?: string;
   name?: string;
@@ -424,6 +424,19 @@ export class LiveTurnStore {
         const emittedAt = this.stamp();
         blocks.push({
           kind: 'text',
+          key: `b${this.blockSeq++}`,
+          text,
+          done: true,
+          emittedAt,
+          parentToolUseId: pid,
+        });
+        return emittedAt;
+      }
+      case 'user_text': {
+        if (!pid || !text.trim()) break;
+        const emittedAt = this.stamp();
+        blocks.push({
+          kind: 'user',
           key: `b${this.blockSeq++}`,
           text,
           done: true,
