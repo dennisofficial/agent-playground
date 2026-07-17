@@ -1,12 +1,31 @@
-import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Inject,
+  type MessageEvent,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Sse,
+} from '@nestjs/common';
 import { CurrentUser } from '@workspace/auth/server';
+import { RealtimeEngine } from '@workspace/pg-realtime';
+import { PG_REALTIME_ENGINE, sseObservable } from '@workspace/pg-realtime/nest';
 import { CreateOrgDto, UpdateOrgDto, type MemberView, type OrgSummary } from '@workspace/shared';
+import type { Observable } from 'rxjs';
 import type { User } from '../auth/entities/user.entity';
+import { sseSnapshotList } from '../realtime/sse-snapshot';
 import { OrgService } from './org.service';
 
 @Controller('orgs')
 export class OrgController {
-  constructor(private readonly orgs: OrgService) {}
+  constructor(
+    private readonly orgs: OrgService,
+    @Inject(PG_REALTIME_ENGINE) private readonly realtime: RealtimeEngine,
+  ) {}
 
   @Post()
   create(@CurrentUser() user: User, @Body() body: CreateOrgDto): Promise<OrgSummary> {
@@ -37,5 +56,46 @@ export class OrgController {
     @Param('orgId', ParseUUIDPipe) orgId: string,
   ): Promise<MemberView[]> {
     return this.orgs.membersOf(user.id, orgId);
+  }
+
+  /**
+   * Realtime org list for the workspace shell (`streamList`). A joined feed (each org tagged with the
+   * caller's role), so it's served as a change-triggered snapshot: any change to the caller's orgs or
+   * memberships re-emits the full `OrgSummary[]`.
+   */
+  @Sse('realtime')
+  streamOrgs(@CurrentUser() user: User): Observable<MessageEvent> {
+    return sseSnapshotList<OrgSummary>(
+      [
+        () => this.realtime.openSubscription({ model: 'organizations', user }),
+        () => this.realtime.openSubscription({ model: 'organization_members', user }),
+      ],
+      () => this.orgs.listForUser(user.id),
+      (o) => o.id,
+    ) as Observable<MessageEvent>;
+  }
+
+  /** Realtime single-org document (`streamDocument`) — live name/status/automation settings. */
+  @Sse(':orgId/realtime')
+  streamOrg(
+    @CurrentUser() user: User,
+    @Param('orgId', ParseUUIDPipe) orgId: string,
+  ): Observable<MessageEvent> {
+    return sseObservable(() =>
+      this.realtime.openSubscription({ model: 'organizations', user, pk: JSON.stringify([orgId]) }),
+    ) as Observable<MessageEvent>;
+  }
+
+  /** Realtime member list (`streamList`) — joined snapshot, re-emitted on any membership change. */
+  @Sse(':orgId/members/realtime')
+  streamMembers(
+    @CurrentUser() user: User,
+    @Param('orgId', ParseUUIDPipe) orgId: string,
+  ): Observable<MessageEvent> {
+    return sseSnapshotList<MemberView>(
+      [() => this.realtime.openSubscription({ model: 'organization_members', user, filter: { orgId } })],
+      () => this.orgs.membersOf(user.id, orgId),
+      (m) => m.userId,
+    ) as Observable<MessageEvent>;
   }
 }

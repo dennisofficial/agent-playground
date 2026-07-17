@@ -1,9 +1,13 @@
+import { env } from "@/lib/env";
 import type { CreateOrgDto, MemberView, OrgSummary, UpdateOrgDto } from "@workspace/shared";
+import { streamList } from "@workspace/pg-realtime/rtk";
 import { baseApi, EBaseApiCacheTags } from "./baseApi";
+import { sseOpener } from "./sse-opener";
 
 /**
  * Org CRUD + members. The org *list* is not a dedicated endpoint — it rides on the
  * session payload (`getSession().orgs`), so create/update/delete invalidate SESSION.
+ * The member list is a realtime feed (`streamList`) — invites/removals arrive as deltas.
  */
 export const orgApi = baseApi.injectEndpoints({
   overrideExisting: true,
@@ -11,6 +15,12 @@ export const orgApi = baseApi.injectEndpoints({
     getOrgMembers: build.query<MemberView[], string>({
       query: (orgId) => ({ url: `/orgs/${orgId}/members`, method: "GET" }),
       providesTags: (_result, _error, orgId) => [{ type: EBaseApiCacheTags.ORG_MEMBER, id: orgId }],
+      onCacheEntryAdded: (orgId, api) =>
+        streamList<MemberView>({
+          url: `${env.NEXT_PUBLIC_BACKEND_URL}/orgs/${orgId}/members/realtime`,
+          open: sseOpener,
+          lifecycle: api,
+        }),
     }),
     createOrg: build.mutation<OrgSummary, CreateOrgDto>({
       query: (body) => ({ url: "/orgs", method: "POST", data: body }),

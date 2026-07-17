@@ -2,6 +2,8 @@
 
 import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "./_tanstack-shim";
+import { adaptQuery } from "./_stub";
+import { useGetOrgReposQuery, useGetRepoBranchesQuery } from "@/redux/query/api/repo.api";
 import { qk } from "./query-keys";
 import { useOrgs } from "./me";
 import { composerStore } from "./composer-store";
@@ -186,24 +188,18 @@ export function useServices(ref: JobRef) {
   });
 }
 
-/** An org's connected repos — the create-job repo picker. */
+/**
+ * An org's connected repos — the create-job + settings repo list. **Realtime**: RTK seeds from the
+ * REST list, then a pg-realtime `streamList` feed keeps it live (connect/update/revalidate/disconnect
+ * arrive as WAL deltas) — no manual invalidation.
+ */
 export function useOrgRepos(orgId: string) {
-  return useQuery({
-    queryKey: qk.orgRepos(orgId),
-    queryFn: () => fetchOrgRepos(orgId),
-    enabled: Boolean(orgId),
-    staleTime: 30_000,
-  });
+  return adaptQuery(useGetOrgReposQuery(orgId, { skip: !orgId }));
 }
 
 /** A repo's branches — the create-job base-branch picker (hits GitHub via the org token). */
 export function useRepoBranches(orgId: string, repoId: string) {
-  return useQuery({
-    queryKey: qk.repoBranches(orgId, repoId),
-    queryFn: () => fetchRepoBranches(orgId, repoId),
-    enabled: Boolean(orgId && repoId),
-    staleTime: 30_000,
-  });
+  return adaptQuery(useGetRepoBranchesQuery({ orgId, repoId }, { skip: !(orgId && repoId) }));
 }
 
 /** Jobs Atlas spawned FROM this one — the job workspace's "Created jobs" panel. */

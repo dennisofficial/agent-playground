@@ -10,3 +10,6 @@
 [submodule "submodules/ai-testing"]
 	path = submodules/ai-testing
 	url = https://github.com/dennisofficial/langchain-testing-framework
+[submodule "submodules/pg-realtime"]
+	path = submodules/pg-realtime
+	url = https://github.com/dennisofficial/pg-realtime.git

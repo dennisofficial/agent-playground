@@ -9,7 +9,13 @@ import {
 import { env } from "@/lib/env";
 import { type AutoMergeMethod, type UpdateOrgDto } from "@workspace/shared";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { adaptMutation, adaptQuery, type MutationResultLike } from "./_stub";
+import { adaptMutation, adaptQuery, stubMutation, type MutationResultLike } from "./_stub";
+import {
+  useConnectRepoMutation,
+  useDisconnectRepoMutation,
+  useRevalidateRepoMutation,
+  useUpdateRepoMutation,
+} from "@/redux/query/api/repo.api";
 import { useMutation, useQuery, useQueryClient } from "./_tanstack-shim";
 import type { OrgSummary } from "./me";
 import { fetchWithRefresh } from "./refresh";
@@ -857,53 +863,32 @@ export interface ConnectRepoBody {
   baseBranch?: string;
 }
 
-/** Connect a GitHub repo to the org. */
-export function useConnectRepo(orgId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: ConnectRepoBody) =>
-      webJson<ConnectedRepo>(`/orgs/${orgId}/repos`, {
-        method: "POST",
-        body: JSON.stringify(body),
-      }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.orgRepos(orgId) });
-      void qc.invalidateQueries({ queryKey: qk.session() });
-    },
-  });
+/**
+ * Connect a GitHub repo to the org. The repo list (`useOrgRepos`) is a realtime feed, so the new repo
+ * appears via a WAL `add` delta — this mutation only invalidates `SESSION` (connect can flip the org
+ * status). GitHub access probing is deferred to the GitHub module; until it lands the repo saves as
+ * `accessOk:false`.
+ */
+export function useConnectRepo(orgId: string): MutationResultLike<ConnectedRepo, ConnectRepoBody> {
+  const [trigger, state] = useConnectRepoMutation();
+  return adaptMutation<ConnectedRepo, ConnectRepoBody>([
+    (body) => trigger({ orgId, body }),
+    state,
+  ]);
 }
 
 /** Re-probe a repo's GitHub access with the org's current token (owner only). */
-export function useRevalidateRepo(orgId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (repoId: string) =>
-      webJson<ConnectedRepo>(`/orgs/${orgId}/repos/${repoId}/revalidate`, {
-        method: "POST",
-      }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.orgRepos(orgId) });
-      void qc.invalidateQueries({ queryKey: qk.session() });
-    },
-  });
+export function useRevalidateRepo(orgId: string): MutationResultLike<ConnectedRepo, string> {
+  const [trigger, state] = useRevalidateRepoMutation();
+  return adaptMutation<ConnectedRepo, string>([(repoId) => trigger({ orgId, repoId }), state]);
 }
 
 /**
- * (Re-)run the Atlas onboarding thread for a repo (owner only). Spawns a fresh onboarding thread even if
- * the repo was onboarded before; returns its id so the caller can deep-link into it. Invalidates the repo
- * list so the onboarding state (`onboardingThreadId`) refreshes.
+ * (Re-)run the Atlas onboarding thread for a repo. Deferred to the threads slice — onboarding spawns a
+ * thread, which doesn't exist yet — so this is a loud stub until then.
  */
-export function useReonboardRepo(orgId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (repoId: string) =>
-      webJson<{ jobId: string }>(`/orgs/${orgId}/repos/${repoId}/onboard`, {
-        method: "POST",
-      }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.orgRepos(orgId) });
-    },
-  });
+export function useReonboardRepo(_orgId: string): MutationResultLike<{ jobId: string }, string> {
+  return stubMutation<{ jobId: string }, string>("re-onboard repo");
 }
 
 /** Body for `PATCH /web/orgs/:orgId/repos/:repoId` — metadata only (no GitHub call). */
@@ -918,43 +903,30 @@ export interface UpdateRepoBody {
   defaultAutoMergeDeleteBranch?: boolean;
 }
 
-/** Update a repo's display name / base branch (owner only). */
-export function useUpdateRepo(orgId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ repoId, body }: { repoId: string; body: UpdateRepoBody }) =>
-      webJson<ConnectedRepo>(`/orgs/${orgId}/repos/${repoId}`, {
-        method: "PATCH",
-        body: JSON.stringify(body),
-      }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.orgRepos(orgId) });
-    },
-  });
+/** Update a repo's display name / base branch (owner only). Realtime reflects the change as a delta. */
+export function useUpdateRepo(
+  orgId: string,
+): MutationResultLike<ConnectedRepo, { repoId: string; body: UpdateRepoBody }> {
+  const [trigger, state] = useUpdateRepoMutation();
+  return adaptMutation<ConnectedRepo, { repoId: string; body: UpdateRepoBody }>([
+    ({ repoId, body }) => trigger({ orgId, repoId, body }),
+    state,
+  ]);
 }
 
 /**
- * Disconnect a repo (owner only). CASCADE-deletes the repo's threads (and their sandboxes / feature
- * branches / messages) server-side, returning how many were torn down — the UI warns first. Invalidates
- * the repo list, the cross-org thread inbox (threads were deleted → `useAllJobs` feeds the sidebar /
- * rail badges / command palette), and the session (disconnect can flip the org `active`↔`onboarding`).
+ * Disconnect a repo (owner only). CASCADE-deletes the repo's threads server-side, returning how many
+ * were torn down — the UI warns first. The repo list is realtime (its removal arrives as a WAL `remove`
+ * delta); this only invalidates `SESSION` (disconnect can flip the org `active`↔`onboarding`).
  */
-export function useDisconnectRepo(orgId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (repoId: string) =>
-      webJson<{ ok: boolean; threadsDeleted: number }>(
-        `/orgs/${orgId}/repos/${repoId}`,
-        {
-          method: "DELETE",
-        },
-      ),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.orgRepos(orgId) });
-      void qc.invalidateQueries({ queryKey: qk.allJobs() });
-      void qc.invalidateQueries({ queryKey: qk.session() });
-    },
-  });
+export function useDisconnectRepo(
+  orgId: string,
+): MutationResultLike<{ ok: boolean; threadsDeleted: number }, string> {
+  const [trigger, state] = useDisconnectRepoMutation();
+  return adaptMutation<{ ok: boolean; threadsDeleted: number }, string>([
+    (repoId) => trigger({ orgId, repoId }),
+    state,
+  ]);
 }
 
 // ── Convention profiles (reusable house-style bundles, opt-in per repo) ─────────────────────────────
