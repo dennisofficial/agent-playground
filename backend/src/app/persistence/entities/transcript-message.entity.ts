@@ -73,4 +73,13 @@ export class TranscriptMessageEntity extends TimestampedEntity {
 
   @Column({ type: 'timestamptz', nullable: true })
   delivered_at!: Date | null;
+
+  /** Effective render-order instant — the moment the brain actually PROCESSED this row in its SDK
+   *  conversation, when that differs from insert time. NULL for the common case (falls back to
+   *  delivered_at, then created_at). Set only where render position must move off insert time — a
+   *  pure-UI system notice posted while a turn was in flight, re-stamped at turn end to sit just after
+   *  that turn's last block. created_at stays the truthful display time; delivered_at keeps its
+   *  delivery-ledger meaning. */
+  @Column({ type: 'timestamptz', nullable: true })
+  order_at!: Date | null;
 }

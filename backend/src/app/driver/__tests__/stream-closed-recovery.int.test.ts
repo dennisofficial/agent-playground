@@ -277,10 +277,12 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
         end: vi.fn(),
         snapshot: vi.fn(() => null),
         retry: vi.fn(),
+        takePendingOrder: vi.fn(() => []),
       } as unknown as LiveTurnStore;
       const blockSink = {
         appendBlock: vi.fn(async () => undefined),
         appendBlockOnce: vi.fn(async () => undefined),
+        stampOrderAt: vi.fn(async () => undefined),
       } as unknown as BlockSink;
       const taskSink = {
         createTask: vi.fn(async () => ({ id: 'noop' })),

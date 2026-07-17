@@ -26,7 +26,7 @@ export async function writeSystemChunk(
   repo: Repository<TranscriptMessageEntity>,
   input: SystemChunkInput,
   buildCtx?: SystemChunkBuildContext,
-): Promise<void> {
+): Promise<string | null> {
   const dup = await repo
     .createQueryBuilder('m')
     .where('m.job_id = :jobId', { jobId: input.jobId })
@@ -34,8 +34,8 @@ export async function writeSystemChunk(
       key: JSON.stringify({ chunkKey: input.chunkKey }),
     })
     .getCount();
-  if (dup > 0) return;
-  await repo.save(
+  if (dup > 0) return null;
+  const row = await repo.save(
     repo.create({
       job_id: input.jobId,
       thread_id: input.threadId,
@@ -58,4 +58,5 @@ export async function writeSystemChunk(
       ...(input.createdAt ? { created_at: input.createdAt } : {}),
     }),
   );
+  return row.id;
 }

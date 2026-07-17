@@ -57,6 +57,32 @@ describe('LiveTurnStore — cumulative in-flight turn', () => {
     expect(store.snapshotsForRepo(REPO)).toHaveLength(0);
   });
 
+  it('closes post-turn row registration once pending order rows are drained', () => {
+    const store = new LiveTurnStore();
+    store.push(REPO, THREAD, { kind: 'text_delta', text: 'working' });
+
+    expect(store.registerPostTurnRow(REPO, THREAD, 'notice-1')).toBe(true);
+    expect(store.takePendingOrder(REPO, THREAD)).toEqual(['notice-1']);
+
+    expect(store.registerPostTurnRow(REPO, THREAD, 'notice-2')).toBe(false);
+    expect(store.snapshot(REPO, THREAD)).not.toBeNull();
+
+    const registeredDuringTurnEnd: boolean[] = [];
+    const sub = store.stream$.subscribe((frame) => {
+      if ((frame.event as { kind?: string }).kind === 'turn_end') {
+        registeredDuringTurnEnd.push(
+          store.registerPostTurnRow(REPO, THREAD, 'notice-during-end'),
+        );
+      }
+    });
+    store.end(REPO, THREAD);
+    sub.unsubscribe();
+    expect(registeredDuringTurnEnd).toEqual([false]);
+
+    store.push(REPO, THREAD, { kind: 'text_delta', text: 'next' });
+    expect(store.registerPostTurnRow(REPO, THREAD, 'notice-3')).toBe(true);
+  });
+
   it('tags an interrupt-aborted tool_result as `superseded` on the block AND the emitted live frame', () => {
     const store = new LiveTurnStore();
     const frames: LiveStreamFrame[] = [];

@@ -17,12 +17,17 @@ function setup() {
       text?: string;
       meta?: Record<string, unknown> | null;
       subagentId?: string;
+      createdAt?: Date;
     };
   }> = [];
+  const orderStamps: Array<{ rowId: string; at: Date }> = [];
   const sink: BlockSink = {
     appendBlock: vi.fn(async (jobId, block) => {
       persisted.push({ jobId, block });
       return `msg-${persisted.length - 1}`;
+    }),
+    stampOrderAt: vi.fn(async (rowId: string, at: Date) => {
+      orderStamps.push({ rowId, at });
     }),
     appendBlockOnce: vi.fn(async (jobId, promptKey, block) => {
       if (
@@ -52,6 +57,7 @@ function setup() {
   return {
     live,
     persisted,
+    orderStamps,
     subagentStore,
     subagentUpserts,
     factory: new TurnHarnessFactory(live, sink, usage, subagentStore),
@@ -583,6 +589,38 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
       expect(subagentUpserts).toHaveLength(1);
       expect(subagentUpserts[0].model).toBe('claude-opus-4-8');
     });
+  });
+
+  it("flushes a pending post-turn row registered on LiveTurnStore, stamping order_at just after the turn's last block", async () => {
+    const { live, persisted, orderStamps, factory } = setup();
+    const h = factory.create({
+      jobId: 'T',
+      threadId: 'th1',
+      channel: 'R',
+      lane: 'main',
+      livePush: true, // mirrors the realtime consumer group so this harness's own onEvent populates LiveTurnStore
+    });
+    // A pure-UI notice lands mid-turn (this is what brain-store.appendSystemNotice does under the hood):
+    // registerPostTurnRow only succeeds while a turn is live on this (channel, jobId, lane).
+    h.onEvent({ kind: 'text', text: 'hi' });
+    const registered = live.registerPostTurnRow('R', 'T', 'notice-row-1');
+    expect(registered).toBe(true);
+
+    await h.finish('hi');
+
+    expect(orderStamps).toHaveLength(1);
+    expect(orderStamps[0].rowId).toBe('notice-row-1');
+    const chat = persisted.find((p) => p.block.kind === 'chat')!;
+    expect(orderStamps[0].at.getTime()).toBeGreaterThan(
+      chat.block.createdAt!.getTime(),
+    );
+  });
+
+  it('registerPostTurnRow is a no-op (returns false) when no turn is live on the lane', () => {
+    const { live } = setup();
+    expect(live.registerPostTurnRow('R', 'nonexistent-job', 'row-x')).toBe(
+      false,
+    );
   });
 });
 

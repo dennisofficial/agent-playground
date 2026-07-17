@@ -49,6 +49,9 @@ export interface BlockSink {
       createdAt?: Date;
     },
   ): Promise<void>;
+  /** Re-stamp a pure-UI notice row's `order_at` once the turn it was deferred behind has flushed — see
+   *  `LiveTurnStore.registerPostTurnRow`. */
+  stampOrderAt(rowId: string, at: Date): Promise<void>;
 }
 
 export const BLOCK_SINK = Symbol('BLOCK_SINK');
@@ -106,6 +109,10 @@ export class MessageBlockSink implements BlockSink {
     }
     const saved = await this.messages.save(this.messages.create(row));
     return saved.id;
+  }
+
+  async stampOrderAt(rowId: string, at: Date): Promise<void> {
+    await this.messages.update(rowId, { order_at: at });
   }
 
   async appendBlockOnce(
@@ -520,6 +527,21 @@ export class TurnHarnessFactory {
             endedAt: pending.endedAt,
           });
         }
+      }
+      // Flush any pure-UI notices deferred behind this turn (LiveTurnStore.registerPostTurnRow) — stamp
+      // each just after the turn's last block so it renders below the reply instead of at its post time.
+      const maxEmit = blocks.length
+        ? Math.max(...blocks.map((b) => b.emittedAt.getTime()))
+        : Date.now();
+      const pending = this.liveTurns.takePendingOrder(channel, jobId, lane);
+      for (let i = 0; i < pending.length; i++) {
+        await this.sink
+          .stampOrderAt(pending[i], new Date(maxEmit + 1 + i))
+          .catch((err) => {
+            this.logger.warn(
+              `stampOrderAt failed for thread=${jobId} lane=${lane}: ${err}`,
+            );
+          });
       }
       this.liveTurns.end(channel, jobId, lane); // fans turn_end + drops the in-flight buffer
     };

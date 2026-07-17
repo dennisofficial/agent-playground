@@ -4502,9 +4502,9 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
 
         const job = await this.store.loadJob(stimulus.jobId);
         const repo = await this.repos.resolve(job);
-        const pre = await this.ship.preShip(job, repo, sandbox, (m) =>
-          this.store.appendSystemEvent(stimulus.jobId, m),
-        );
+        const pre = await this.ship.preShip(job, repo, sandbox, async (m) => {
+          await this.store.appendSystemEvent(stimulus.jobId, m);
+        });
         if (!pre.ok) {
           if (pre.reason === 'leak-scan') {
             return {

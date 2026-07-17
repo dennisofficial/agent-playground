@@ -232,10 +232,12 @@ describe('pipeline (live Postgres) — thread-group-driven drive over a stubbed 
       end: vi.fn(),
       snapshot: vi.fn(() => null),
       retry: vi.fn(),
+      takePendingOrder: vi.fn(() => []),
     } as unknown as LiveTurnStore;
     const blockSink = {
       appendBlock: vi.fn(async () => undefined),
       appendBlockOnce: vi.fn(async () => undefined),
+      stampOrderAt: vi.fn(async () => undefined),
     } as unknown as BlockSink;
     const taskSink = {
       createTask: vi.fn(async () => ({ id: 'noop' })),

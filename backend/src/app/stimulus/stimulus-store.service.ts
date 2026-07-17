@@ -232,6 +232,9 @@ export class StimulusStoreService {
 
     const row = await this.dataSource.transaction(async (m) => {
       let bubbleRow: TranscriptMessageEntity | undefined;
+      // The pill row written on the systemChunk branch below — captured so it can be correlated with the
+      // delivery-ledger row too, just like the operator bubble is.
+      let pillRow: string | null = null;
       if (input.operatorBubbleText !== undefined) {
         const bubbleAuthor = input.bubbleAuthor ?? input.author;
         bubbleRow = await m.save(
@@ -260,19 +263,29 @@ export class StimulusStoreService {
       } else if (input.systemChunk !== 'skip') {
         const desc = input.systemChunk;
         const isUntrusted = (desc.kind ?? 'system_notice') === 'untrusted';
-        const fullBody = !isUntrusted && input.body !== desc.label ? input.body : undefined;
-        await writeSystemChunk(m.getRepository(TranscriptMessageEntity), {
-          jobId: input.jobId,
-          threadId,
-          kind: desc.kind ?? 'system_notice',
-          text: fromExternal(desc.label),
-          chunkKey: desc.chunkKey,
-          ...(desc.untrustedSource ? { untrustedSource: desc.untrustedSource } : {}),
-          ...(desc.severity ? { severity: desc.severity } : {}),
-          ...(fullBody ? { fullBody: fromExternal(fullBody) } : {}),
-          ...(desc.framing ? { framing: desc.framing } : {}),
-          ...(input.type && input.type !== 'user' ? { seedType: input.type } : {}),
-        });
+        const fullBody =
+          !isUntrusted && input.body !== desc.label ? input.body : undefined;
+        pillRow = await writeSystemChunk(
+          m.getRepository(TranscriptMessageEntity),
+          {
+            jobId: input.jobId,
+            threadId,
+            kind: desc.kind ?? 'system_notice',
+            text: fromExternal(desc.label),
+            chunkKey: desc.chunkKey,
+            ...(desc.untrustedSource
+              ? { untrustedSource: desc.untrustedSource }
+              : {}),
+            ...(desc.severity ? { severity: desc.severity } : {}),
+            ...(fullBody ? { fullBody: fromExternal(fullBody) } : {}),
+            ...(desc.framing ? { framing: desc.framing } : {}),
+            // Frontend per-seed-type pill discriminant (mirrors `meta.eventKind`); only for a genuine typed
+            // internal-seed row, never a plain operator `'user'` turn or a type-less legacy seed.
+            ...(input.type && input.type !== 'user'
+              ? { seedType: input.type }
+              : {}),
+          },
+        );
       }
 
       const inbound = await m.save(
@@ -296,6 +309,13 @@ export class StimulusStoreService {
 
       if (bubbleRow && type === 'user') {
         await m.update(TranscriptMessageEntity, bubbleRow.id, {
+          stimulus_id: inbound.id,
+        });
+      }
+      // A queued seed/system-notice pill is a delivered stimulus too — link it so markChatDelivered stamps
+      // its delivered_at at the brain-consume instant (renders in true SDK order, not enqueue time).
+      if (pillRow && type !== 'user') {
+        await m.update(TranscriptMessageEntity, pillRow, {
           stimulus_id: inbound.id,
         });
       }

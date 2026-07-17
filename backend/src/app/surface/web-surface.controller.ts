@@ -833,10 +833,16 @@ export class WebSurfaceController {
     @Param('jobId') jobId: string,
   ): Promise<unknown[]> {
     await this.requireThread(jobId, org.id);
-    const rows = await this.messages.find({
-      where: { job_id: jobId },
-      order: { created_at: 'ASC' },
-    });
+    const rows = await this.messages
+      .createQueryBuilder('m')
+      .where('m.job_id = :jobId', { jobId })
+      .orderBy('COALESCE(m.order_at, m.delivered_at, m.created_at)', 'ASC')
+      .addOrderBy('m.created_at', 'ASC')
+      .addOrderBy('m.id', 'ASC')
+      .getMany();
+    // Join the spawned subagents so each anchor (Task launching) message carries its subagent's AUTHORITATIVE
+    // status — the web keys the durable card's running/done off this instead of the launch-ack heuristic. The
+    // join is `subagents.parent_message_id = messages.id`; scoped by the threads present in this transcript.
     const threadIds = [...new Set(rows.map((m) => m.thread_id))];
     const subs = threadIds.length
       ? await this.subagents.find({ where: { thread_id: In(threadIds) } })
@@ -867,6 +873,9 @@ export class WebSurfaceController {
       postedAt: m.created_at,
       stimulusId: m.stimulus_id,
       deliveredAt: m.delivered_at,
+      // Effective render-order override (mid-turn pure-UI notices only) — see transcript_messages.order_at.
+      // The client falls back to deliveredAt then postedAt when absent.
+      orderAt: m.order_at,
     }));
   }
 

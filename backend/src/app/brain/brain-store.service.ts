@@ -9,6 +9,7 @@ import { DataSource, In, IsNull, MoreThan, Not, type ObjectLiteral, Repository }
 import { JobBootstrapService } from '../job-bootstrap/job-bootstrap.service';
 import { JobDependencyService } from '../job-deps/job-dependency.service';
 import { DB_CONNECTION } from '../persistence/database.module';
+import { LiveTurnStore } from '../surface/live-turn-store';
 import {
   DecisionRecordEntity,
   InboundMessageEntity,
@@ -88,6 +89,10 @@ export class BrainStoreService {
     @InjectRepository(OrganizationEntity, DB_CONNECTION)
     private readonly organizations: Repository<OrganizationEntity>,
     @Optional() private readonly jobBootstrap?: JobBootstrapService,
+    // Lets a pure-UI notice posted mid-turn (appendSystemNotice/Event/OperatorMessage below) register itself
+    // on the live lane so it can be re-ordered to just after that turn's blocks once it flushes (see
+    // `LiveTurnStore.registerPostTurnRow`). @Optional (trailing) for the same reason as `jobBootstrap`.
+    @Optional() private readonly liveTurns?: LiveTurnStore,
   ) {}
 
   private async planningThreadId(jobId: string): Promise<string> {
@@ -95,6 +100,33 @@ export class BrainStoreService {
     return this.jobBootstrap.planningThreadId(jobId);
   }
 
+  /**
+   * Best-effort: if a brain turn is currently streaming on this job's main lane, register `rowId` (a
+   * pure-UI notice's just-saved row) on {@link LiveTurnStore} so its `order_at` gets stamped to just after
+   * that turn's blocks once it flushes — instead of sorting by its own (earlier) post time. A no-op when no
+   * turn is live, or when `liveTurns` wasn't wired (the @Optional direct-construction unit tests). Never
+   * throws into the caller.
+   */
+  private async deferPostTurnRow(jobId: string, rowId: string): Promise<void> {
+    if (!this.liveTurns) return;
+    try {
+      const job = await this.jobs.findOne({
+        where: { id: jobId },
+        select: { repo_id: true },
+      });
+      if (job) this.liveTurns.registerPostTurnRow(job.repo_id, jobId, rowId);
+    } catch (err) {
+      this.logger.debug(
+        `deferPostTurnRow failed for job=${jobId} (ignored): ${err}`,
+      );
+    }
+  }
+
+  /**
+   * Resolve the thread an EVENT stimulus seeded (the intake seam opened it but the in-memory
+   * an `EventMessage` doesn’t carry the delivery id). Reads the `stimuli` row's `job_id`. Null if the
+   * stimulus isn't persisted (shouldn't happen — intake persists before consuming).
+   */
   async eventThreadId(stimulusId: string): Promise<string | null> {
     const row = await this.stimuli.findOne({ where: { id: stimulusId } });
     return row?.job_id ?? null;
@@ -109,10 +141,13 @@ export class BrainStoreService {
   }
 
   async transcript(jobId: string): Promise<TranscriptLine[]> {
-    const rows = await this.messages.find({
-      where: { job_id: jobId },
-      order: { created_at: 'ASC' },
-    });
+    const rows = await this.messages
+      .createQueryBuilder('m')
+      .where('m.job_id = :jobId', { jobId })
+      .orderBy('COALESCE(m.order_at, m.delivered_at, m.created_at)', 'ASC')
+      .addOrderBy('m.created_at', 'ASC')
+      .addOrderBy('m.id', 'ASC')
+      .getMany();
     return rows.map((m) => ({
       author: m.author,
       isAtlas: m.author_bot_id != null,
@@ -137,8 +172,8 @@ export class BrainStoreService {
     jobId: string,
     text: string,
     extraMeta?: Record<string, unknown>,
-  ): Promise<void> {
-    await this.messages.save(
+  ): Promise<string> {
+    const saved = await this.messages.save(
       this.messages.create({
         job_id: jobId,
         thread_id: await this.planningThreadId(jobId),
@@ -150,10 +185,15 @@ export class BrainStoreService {
         meta: { source: 'system_operator', ...extraMeta },
       }),
     );
+    await this.deferPostTurnRow(jobId, saved.id);
+    return saved.id;
   }
 
-  async appendSystemNotice(jobId: string, text: string): Promise<void> {
-    await this.messages.save(
+  /** Append a calm SYSTEM→OPERATOR notice (meta.source='system_notice'). Benign harness status the
+   *  operator sees but Atlas never authored and never sees (its session is resumed separately). Unlike
+   *  appendSystemOperatorMessage this carries NO error semantics (no halt, no Resume). */
+  async appendSystemNotice(jobId: string, text: string): Promise<string> {
+    const saved = await this.messages.save(
       this.messages.create({
         job_id: jobId,
         thread_id: await this.planningThreadId(jobId),
@@ -165,6 +205,8 @@ export class BrainStoreService {
         meta: { source: 'system_notice' },
       }),
     );
+    await this.deferPostTurnRow(jobId, saved.id);
+    return saved.id;
   }
 
   async hasRecentSystemOperatorNotice(
@@ -208,8 +250,13 @@ export class BrainStoreService {
     );
   }
 
-  async appendSystemEvent(jobId: string, text: string): Promise<void> {
-    await this.messages.save(
+  /**
+   * Append a SYSTEM-EVENT line to a thread (kind='build_event') — a calm operator-visible pill, e.g.
+   * "🔍 Codex is reviewing the plan…". Authored by Atlas so it renders on the agent side; the web renders
+   * `build_event` rows as a tinted pill (tone derived from the text).
+   */
+  async appendSystemEvent(jobId: string, text: string): Promise<string> {
+    const saved = await this.messages.save(
       this.messages.create({
         job_id: jobId,
         thread_id: await this.planningThreadId(jobId),
@@ -220,6 +267,8 @@ export class BrainStoreService {
         kind: 'build_event',
       }),
     );
+    await this.deferPostTurnRow(jobId, saved.id);
+    return saved.id;
   }
 
   async appendCompactionSummary(jobId: string, text: string, summary: string): Promise<void> {
@@ -250,7 +299,7 @@ export class BrainStoreService {
     createdAt?: Date;
     seedType?: string;
   }): Promise<void> {
-    return writeSystemChunk(this.messages, {
+    await writeSystemChunk(this.messages, {
       ...input,
       threadId: await this.planningThreadId(input.jobId),
     });

@@ -883,6 +883,7 @@ function assemble(
     end: vi.fn(),
     retry: vi.fn(),
     snapshot: vi.fn(() => null),
+    takePendingOrder: vi.fn(() => []),
   } as unknown as LiveTurnStore;
   const sunk: Array<{
     jobId: string;
@@ -938,6 +939,7 @@ function assemble(
         });
       },
     ),
+    stampOrderAt: vi.fn(async () => undefined),
   } as unknown as BlockSink;
   const taskEvents: Array<{
     method: 'createTask' | 'updateTask' | 'readTasks';

@@ -325,7 +325,9 @@ export function TranscriptView({
   const trailing = useMemo(() => {
     if (!liveWindowActive || !liveTurn) return [];
     const liveItems = buildLiveTurnItems(liveTurn, lane, onSelectNode);
-    const tsByKey = new Map(midTurnRows.map((m) => [m.ts, messagePostedMs(m)]));
+    // Effective-order instant (not raw postedAt) so a mid-turn row settles into the SAME position it will
+    // hold once it crosses into history — see messageOrderMs.
+    const tsByKey = new Map(midTurnRows.map((m) => [m.ts, messageOrderMs(m)]));
     const itemTs = (key: string) =>
       tsByKey.get(key.startsWith("tg-") ? key.slice(3) : key) ??
       Number.POSITIVE_INFINITY;
@@ -626,6 +628,15 @@ function OpenQuestionsChip({
 
 function messagePostedMs(message: JobMessage): number {
   const ms = Date.parse(message.postedAt);
+  return Number.isFinite(ms) ? ms : Number.NEGATIVE_INFINITY;
+}
+
+// The instant the brain PROCESSED this row (its SDK-conversation position) — what the transcript orders
+// by. Falls back to delivered/posted time. Display still uses postedAt.
+export function messageOrderMs(message: JobMessage): number {
+  const ms = Date.parse(
+    message.orderAt ?? message.deliveredAt ?? message.postedAt,
+  );
   return Number.isFinite(ms) ? ms : Number.NEGATIVE_INFINITY;
 }
 
