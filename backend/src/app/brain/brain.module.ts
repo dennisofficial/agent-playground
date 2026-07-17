@@ -16,6 +16,7 @@ import {
   JobSandboxEntity,
 } from '../persistence/entities';
 import { BRAIN_SINK, StimulusModule, type BrainSink } from '../stimulus';
+import { ThreadSessionRunnerService } from '../engine/thread-session-runner.service';
 import { AgentSessionManager } from './agent-session-manager.service';
 import { ChatToolProvider } from './chat-tool-provider.service';
 import { DrainService } from './drain.service';
@@ -72,6 +73,8 @@ import { TurnRecoveryService } from './turn-recovery.service';
   ],
   providers: [
     BrainStoreService,
+    // The shared per-thread session-turn primitive (halt_reason lifecycle) both engines route through.
+    ThreadSessionRunnerService,
     DecisionApprovalService,
     PlanReviewService,
     TurnRecoveryService,

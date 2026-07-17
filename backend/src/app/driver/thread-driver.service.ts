@@ -98,6 +98,10 @@ import type {
 import type { JobDispatcher } from '../brain';
 import { TurnRunnerService } from '../runner';
 import {
+  ThreadSessionRunnerService,
+  type ThreadHaltReason,
+} from '../engine/thread-session-runner.service';
+import {
   COMMIT_AND_PUSH_NOTE,
   renderAgentPrompt,
   renderBatchTask,
@@ -381,6 +385,10 @@ export class ThreadDriver implements JobDispatcher {
     // (@Global BrainModule). @Optional so unit tests construct the driver without it (undefined → those four
     // tools are simply absent from the bridge, matching this constructor's `jit` convention).
     @Optional() private readonly selfSufficiency?: SelfSufficiencyToolsService,
+    // The shared per-thread session-turn primitive — owns the DISPLAY-ONLY `halt_reason` lifecycle (§8/d8)
+    // both engines implemented identically. @Optional so the direct-construction unit tests keep compiling
+    // (undefined → the inline fallback below, byte-identical); the @Global DriverModule supplies it live.
+    @Optional() private readonly sessionRunner?: ThreadSessionRunnerService,
   ) {}
 
   /** The job's planning thread group thread id — the anchor a job-level operator notice (no build-lane thread of
@@ -2787,8 +2795,10 @@ export class ThreadDriver implements JobDispatcher {
    *  its next turn clears it). */
   private async markHaltReason(
     threadId: string,
-    reason: string | null,
+    reason: ThreadHaltReason | null,
   ): Promise<void> {
+    if (this.sessionRunner) return this.sessionRunner.markHalt(threadId, reason);
+    // Fallback for the direct-construction unit tests (no injected runner) — byte-identical inline write.
     try {
       await this.store.setThreadHaltReason(threadId, reason);
     } catch (err) {
@@ -2796,6 +2806,15 @@ export class ThreadDriver implements JobDispatcher {
         `setThreadHaltReason(${reason ?? 'clear'}) failed (display-only): ${shortReason(err)}`,
       );
     }
+  }
+
+  /** Classify a THROWN turn-ending error into its display halt label (§8/d8), routed through the shared
+   *  runner so the session-limit-vs-error decision has ONE home. Inline fallback for the tests. */
+  private classifyThrownHalt(err: unknown): ThreadHaltReason {
+    return (
+      this.sessionRunner?.classifyThrownHalt(err) ??
+      (isSessionLimitError(err) ? 'session_limit' : 'error')
+    );
   }
 
   /** Run the thread's execute turn, labelling an ABNORMAL (thrown) ending onto the thread's DISPLAY-ONLY
@@ -2823,10 +2842,7 @@ export class ThreadDriver implements JobDispatcher {
       );
     } catch (err) {
       if (!isEngineDetachedError(err) && !this.election.isDraining()) {
-        await this.markHaltReason(
-          thread.id,
-          isSessionLimitError(err) ? 'session_limit' : 'error',
-        );
+        await this.markHaltReason(thread.id, this.classifyThrownHalt(err));
       }
       throw err;
     }
@@ -2960,10 +2976,7 @@ export class ThreadDriver implements JobDispatcher {
       // The bonus wake turn hit a session limit / infra error. Label it for DISPLAY, but do NOT re-throw:
       // the original turn already ended cleanly-incomplete, so the job must not park/fail on the nudge.
       if (!this.election.isDraining()) {
-        await this.markHaltReason(
-          thread.id,
-          isSessionLimitError(err) ? 'session_limit' : 'error',
-        );
+        await this.markHaltReason(thread.id, this.classifyThrownHalt(err));
       }
       return { outcome: 'incomplete', reports: [] };
     }

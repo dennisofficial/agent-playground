@@ -29,6 +29,7 @@ import {
   JobSandboxEntity,
 } from '../persistence/entities';
 import { RunnerModule } from '../runner';
+import { ThreadSessionRunnerService } from '../engine/thread-session-runner.service';
 import { TurnReattachRegistry } from '../sandbox/turn-reattach.registry';
 import { StimulusModule, StimulusStoreService } from '../stimulus';
 // Direct port path (NOT the '../surface' barrel) to stay clear of a SurfaceModule ↔ DriverModule cycle.
@@ -108,6 +109,8 @@ const BUILD_LANE_SWEEP_INTERVAL = 'driver:build-lane-sweep';
   ],
   providers: [
     DriverStoreService,
+    // The shared per-thread session-turn primitive (halt_reason lifecycle) both engines route through.
+    ThreadSessionRunnerService,
     BuildShipService,
     BuildLaneDeliveryService,
     // The lane-capable host-seed seam — lets the brain's `JitHostExecutor` route a build-lane target through

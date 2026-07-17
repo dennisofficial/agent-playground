@@ -72,6 +72,10 @@ import {
   JobLifecycleService,
 } from '../driver/job-lifecycle.service';
 import { DriverStoreService } from '../driver/driver-store.service';
+import {
+  ThreadSessionRunnerService,
+  type ThreadHaltReason,
+} from '../engine/thread-session-runner.service';
 import { JobBootstrapService } from '../job-bootstrap/job-bootstrap.service';
 import { BuildShipService } from '../driver/build-ship.service';
 import { AutoMergeService } from '../driver/auto-merge.service';
@@ -468,6 +472,10 @@ export class AgentSessionManager
     // BrainModule supplies it live. When absent (tests), `buildTools` self-builds an equivalent from this
     // manager's own injected deps (same handler bodies, so behavior is identical).
     @Optional() private readonly chatTools?: ChatToolProvider,
+    // The shared per-thread session-turn primitive — owns the DISPLAY-ONLY `halt_reason` lifecycle (§8/d8)
+    // both engines implemented identically. @Optional so the many positional `new AgentSessionManager(...)`
+    // test call sites keep compiling (undefined → the inline fallback below); the @Global BrainModule live.
+    @Optional() private readonly sessionRunner?: ThreadSessionRunnerService,
   ) {}
 
   /** Test-only fallback for the extracted tool surface: the positional-construction unit/int tests never
@@ -506,8 +514,10 @@ export class AgentSessionManager
    *  auto-resume. Swallows any error (display-only; tolerant of a store mock that predates the column). */
   private async markHaltReason(
     threadId: string,
-    reason: string | null,
+    reason: ThreadHaltReason | null,
   ): Promise<void> {
+    if (this.sessionRunner) return this.sessionRunner.markHalt(threadId, reason);
+    // Fallback for the positional-construction unit tests (no injected runner) — byte-identical inline write.
     try {
       await this.driverStore.setThreadHaltReason(threadId, reason);
     } catch (err) {
