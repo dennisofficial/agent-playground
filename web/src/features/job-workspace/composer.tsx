@@ -13,7 +13,6 @@ import {
   type MessageInput,
   type JobRef,
 } from "@/lib/api/job-api";
-import type { PendingAttachment } from "@/lib/api/job-queries";
 import { useConnectivity } from "@/lib/api/connectivity";
 import {
   composerStore,
@@ -196,6 +195,9 @@ export function Composer({
     comments.length === 0 &&
     attachments.length === 0 &&
     stagedAnswers.length === 0;
+  // A still-uploading attachment has only a client temp id — no server row yet for `promoteOnSend` to pick
+  // up, so sending now would land the message without it. Block Send until every upload settles.
+  const hasPendingAttachment = attachments.some((a) => a.pending);
 
   // Auto-grow the textarea to fit its content (capped by the CSS max-height, which then scrolls).
   // Reset to `auto` first so the box can also shrink as lines are removed.
@@ -224,7 +226,7 @@ export function Composer({
   }, [onHeightChange]);
 
   function send() {
-    if (inert) return;
+    if (inert || hasPendingAttachment) return;
     const trimmed = text.trim();
 
     // Offline: don't attempt the POST at all — move the message into the per-Job outbox and clear the
@@ -244,15 +246,16 @@ export function Composer({
       if (stagedAnswers.length > 0) return;
       // The flusher drains each queued item with mutually-exclusive precedence (comments → attachments →
       // text): a single item carrying BOTH comments and attachments would only send its comments and
-      // silently drop the attachments. So when comments are present, enqueue any attachments as their OWN
-      // outbox message (text rides with the comments) so both are delivered on reconnect.
+      // silently drop the attachments. So when comments are present, enqueue the attachments flag as its
+      // OWN outbox message (text rides with the comments) so both are delivered on reconnect. The bytes
+      // themselves already live on the server draft (uploaded on-add) — the reconnect send promotes them.
       const now = Date.now();
       composerStore.enqueue(jobRef, {
         id: crypto.randomUUID(),
         createdAt: now,
         text: trimmed,
         comments,
-        attachments: comments.length > 0 ? [] : attachments,
+        hasAttachments: comments.length > 0 ? false : attachments.length > 0,
       });
       if (comments.length > 0 && attachments.length > 0) {
         composerStore.enqueue(jobRef, {
@@ -260,12 +263,12 @@ export function Composer({
           createdAt: now + 1, // orders after the comments item in the FIFO drain
           text: "",
           comments: [],
-          attachments,
+          hasAttachments: true,
         });
       }
-      // Drop the chips/tray WITHOUT revoking blob URLs — the queued chip still previews them (see
-      // use-attachments' clear()). Only the draft TEXT is cleared here, not the whole draft, so
-      // clearDraft's outbox-preserving re-persist isn't needed on this path.
+      // Drop the local chips/tray — the server draft keeps the attachments staged for the reconnect send
+      // to promote. Only the draft TEXT is cleared here, not the whole draft, so clearDraft's
+      // outbox-preserving re-persist isn't needed on this path.
       clearComments();
       clearAttachments?.();
       composerStore.setText(jobRef, "");
@@ -279,11 +282,7 @@ export function Composer({
     // composer draft.
     const reEnqueueOnNetworkError = (
       e: Error,
-      fields: {
-        text: string;
-        comments: ReviewComment[];
-        attachments: PendingAttachment[];
-      },
+      fields: { text: string; comments: ReviewComment[]; hasAttachments: boolean },
     ): boolean => {
       if (e instanceof ThreadApiError && e.status !== 503) return false;
       composerStore.enqueue(jobRef, {
@@ -295,6 +294,7 @@ export function Composer({
     };
 
     if (comments.length > 0) {
+      const hasAttachments = attachments.length > 0;
       sendReviewComments.mutate(
         {
           items: comments.map((c) => ({
@@ -307,15 +307,53 @@ export function Composer({
           threadId,
         },
         {
+          // `/review-comments` clears the draft's text+comments server-side but never promotes/clears
+          // staged attachments (only `/message`'s `promoteOnSend` does that) — so a tray that ALSO had
+          // attachments needs a follow-up empty-text `/message` send to promote + clear them. Without this
+          // they'd sit staged server-side and silently reattach to whatever unrelated message sends next.
+          onSuccess: hasAttachments
+            ? () =>
+                message.mutate(
+                  { messages: [{ type: "user", text: "" }], threadId },
+                  {
+                    onError: (e) => {
+                      if (e instanceof ThreadApiError && e.status !== 503) return;
+                      // The comments already sent; only the attachment-promote follow-up failed. The local
+                      // tray/draft are already cleared (below), so re-enqueue an attachments-only outbox
+                      // item — otherwise these would sit staged server-side with no in-session recovery
+                      // path until they silently reattach to whatever unrelated message sends next.
+                      composerStore.enqueue(jobRef, {
+                        id: crypto.randomUUID(),
+                        createdAt: Date.now(),
+                        text: "",
+                        comments: [],
+                        hasAttachments: true,
+                      });
+                    },
+                  },
+                )
+            : undefined,
           onError: (e) => {
-            const queued = reEnqueueOnNetworkError(e, {
+            if (e instanceof ThreadApiError && e.status !== 503) return;
+            // Mirrors the offline branch's own split above: the flusher drains comments and attachments as
+            // mutually-exclusive precedence, so a single re-enqueued item can't carry both.
+            const now = Date.now();
+            composerStore.enqueue(jobRef, {
+              id: crypto.randomUUID(),
+              createdAt: now,
               text: trimmed,
               comments,
-              attachments: [],
+              hasAttachments: false,
             });
-            if (queued) return;
-            composerStore.setText(jobRef, trimmed);
-            composerStore.setComments(jobRef, () => comments);
+            if (hasAttachments) {
+              composerStore.enqueue(jobRef, {
+                id: crypto.randomUUID(),
+                createdAt: now + 1,
+                text: "",
+                comments: [],
+                hasAttachments: true,
+              });
+            }
           },
         },
       );
@@ -352,30 +390,30 @@ export function Composer({
       composerStore.setText(jobRef, "");
       if (hasStaged) composerStore.markSubmitting(jobRef, stagedIds, true);
       message.mutate(
-        { messages: items, attachments, threadId },
+        { messages: items, threadId },
         {
+          // The server promoted the staged draft attachments onto the message and cleared the server
+          // draft; this is the optimistic local clear (the realtime delta reconciles the operator's other
+          // devices). Text was eager-cleared above; re-affirm it here.
+          onSuccess: () => {
+            composerStore.setText(jobRef, "");
+            if (hasAttachments) clearAttachments?.();
+          },
           onError: (e) => {
+            // Server-side draft attachments are never consumed on a failed send (only promoted on success),
+            // so the tray stays as-is — restore only the eager-cleared text (unless it was re-queued).
             const queued = hasStaged
               ? false
               : reEnqueueOnNetworkError(e, {
                   text: trimmed,
                   comments: [],
-                  attachments,
+                  hasAttachments,
                 });
-            if (!queued) {
-              composerStore.setText(jobRef, trimmed);
-              if (hasAttachments) {
-                composerStore.setAttachments(jobRef, () => attachments);
-              }
-            }
-            if (hasStaged)
-              composerStore.markSubmitting(jobRef, stagedIds, false);
+            if (!queued) composerStore.setText(jobRef, trimmed);
+            if (hasStaged) composerStore.markSubmitting(jobRef, stagedIds, false);
           },
         },
       );
-      // clear() empties the tray WITHOUT revoking — the optimistic attachments card still renders these blob
-      // URLs; they're freed when the tab closes.
-      if (hasAttachments) clearAttachments?.();
     }
   }
 
@@ -474,6 +512,7 @@ export function Composer({
                   onClick={send}
                   disabled={
                     inert ||
+                    hasPendingAttachment ||
                     (!text.trim() &&
                       comments.length === 0 &&
                       attachments.length === 0 &&

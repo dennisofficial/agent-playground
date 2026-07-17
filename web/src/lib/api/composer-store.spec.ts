@@ -1,6 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { composerStore, type StagedAnswer } from "./composer-store";
-import type { JobMessage, JobRef } from "./job-api";
+import { getDraft, putDraft, type JobMessage, type JobRef } from "./job-api";
+
+// The store now hydrates + autosaves through `job-api`'s `getDraft`/`putDraft` — mock both so these unit
+// tests never make a real network call, and so autosave/hydrate behavior is assertable.
+vi.mock("./job-api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./job-api")>();
+  return {
+    ...actual,
+    getDraft: vi.fn(() =>
+      Promise.resolve({
+        payload: { text: "", stagedAnswers: [], comments: [] },
+        attachments: [],
+        updatedAt: null,
+      }),
+    ),
+    putDraft: vi.fn(() => Promise.resolve({ ok: true })),
+  };
+});
 
 // The store is a module-global singleton, so each test uses a unique jobId to stay isolated.
 const KEY_PREFIX = "atlas.composer.draft.";
@@ -31,6 +48,8 @@ beforeEach(() => {
   storage = makeStorage();
   vi.stubGlobal("window", { sessionStorage: storage });
   vi.useFakeTimers();
+  vi.mocked(getDraft).mockClear();
+  vi.mocked(putDraft).mockClear();
 });
 
 afterEach(() => {
@@ -140,10 +159,16 @@ describe("composerStore", () => {
         createdAt: 1,
         text: "hello",
         comments: [],
-        attachments: [],
+        hasAttachments: false,
       });
       expect(composerStore.getOutbox(a.jobId)).toEqual([
-        { id: "q1", createdAt: 1, text: "hello", comments: [], attachments: [] },
+        {
+          id: "q1",
+          createdAt: 1,
+          text: "hello",
+          comments: [],
+          hasAttachments: false,
+        },
       ]);
       // Job B was never enqueued into — its outbox stays empty.
       expect(composerStore.getOutbox(b.jobId)).toEqual([]);
@@ -157,14 +182,14 @@ describe("composerStore", () => {
         createdAt: 1000,
         text: "from A",
         comments: [],
-        attachments: [],
+        hasAttachments: false,
       });
       composerStore.enqueue(b, {
         id: "earlier",
         createdAt: 500,
         text: "from B",
         comments: [],
-        attachments: [],
+        hasAttachments: false,
       });
       const all = composerStore
         .allQueued()
@@ -179,7 +204,7 @@ describe("composerStore", () => {
         createdAt: 1,
         text: "keep me queued briefly",
         comments: [],
-        attachments: [],
+        hasAttachments: false,
       });
       vi.advanceTimersByTime(300);
       expect(storage.getItem(KEY_PREFIX + ref.jobId)).not.toBeNull();
@@ -190,27 +215,31 @@ describe("composerStore", () => {
       expect(storage.getItem(KEY_PREFIX + ref.jobId)).toBeNull();
     });
 
-    it("persists a text-kind queued message's serializable metadata (no attachments)", () => {
+    it("persists a queued message's serializable metadata including the hasAttachments flag", () => {
       const ref = refFor("job-persist-outbox");
       composerStore.enqueue(ref, {
         id: "q1",
         createdAt: 42,
         text: "queued while offline",
         comments: [],
-        attachments: [{ file: new File(["x"], "x.png"), url: "blob:x", kind: "image" }],
+        hasAttachments: true,
       });
       vi.advanceTimersByTime(300);
       const raw = storage.getItem(KEY_PREFIX + ref.jobId);
       expect(raw).not.toBeNull();
       const persisted = JSON.parse(raw as string);
       expect(persisted.outbox).toEqual([
-        { id: "q1", createdAt: 42, text: "queued while offline", comments: [] },
+        {
+          id: "q1",
+          createdAt: 42,
+          text: "queued while offline",
+          comments: [],
+          hasAttachments: true,
+        },
       ]);
-      // The in-memory attachment never reaches the persisted blob.
-      expect(persisted.outbox[0].attachments).toBeUndefined();
     });
 
-    it("drops an attachments-only queued item on hydrate; keeps a text survivor", () => {
+    it("drops an empty queued item on hydrate; keeps a text survivor", () => {
       const ref = refFor("job-hydrate-outbox");
       storage.setItem(
         KEY_PREFIX + ref.jobId,
@@ -219,8 +248,13 @@ describe("composerStore", () => {
           text: "",
           comments: [],
           outbox: [
-            { id: "attachments-only", createdAt: 1, text: "", comments: [] },
-            { id: "text-survivor", createdAt: 2, text: "keep me", comments: [] },
+            { id: "empty-item", createdAt: 1, text: "", comments: [] },
+            {
+              id: "text-survivor",
+              createdAt: 2,
+              text: "keep me",
+              comments: [],
+            },
           ],
         }),
       );
@@ -228,7 +262,10 @@ describe("composerStore", () => {
       composerStore.ensure(ref);
       const outbox = composerStore.getOutbox(ref.jobId);
       expect(outbox.map((q) => q.id)).toEqual(["text-survivor"]);
-      expect(outbox[0]).toMatchObject({ text: "keep me", attachments: [] });
+      expect(outbox[0]).toMatchObject({
+        text: "keep me",
+        hasAttachments: false,
+      });
     });
 
     it("clearDraft preserves the outbox (text clears, queued item stays)", () => {
@@ -239,19 +276,31 @@ describe("composerStore", () => {
         createdAt: 1,
         text: "queued msg",
         comments: [],
-        attachments: [],
+        hasAttachments: false,
       });
 
       composerStore.clearDraft(ref.jobId);
       expect(composerStore.getDraft(ref.jobId).text).toBe("");
       expect(composerStore.getOutbox(ref.jobId)).toEqual([
-        { id: "q1", createdAt: 1, text: "queued msg", comments: [], attachments: [] },
+        {
+          id: "q1",
+          createdAt: 1,
+          text: "queued msg",
+          comments: [],
+          hasAttachments: false,
+        },
       ]);
 
       const raw = storage.getItem(KEY_PREFIX + ref.jobId);
       expect(raw).not.toBeNull();
       expect(JSON.parse(raw as string).outbox).toEqual([
-        { id: "q1", createdAt: 1, text: "queued msg", comments: [] },
+        {
+          id: "q1",
+          createdAt: 1,
+          text: "queued msg",
+          comments: [],
+          hasAttachments: false,
+        },
       ]);
     });
   });
@@ -456,6 +505,155 @@ describe("composerStore", () => {
         const trayVisible = all.filter((a) => !a.submitting);
         expect(trayVisible).toEqual([fileAnswer]);
       });
+    });
+  });
+
+  describe("server sync", () => {
+    it("hydrateFromServer folds the GET /draft payload in, overriding the sessionStorage paint", async () => {
+      const ref = refFor("job-hydrate-server");
+      storage.setItem(
+        KEY_PREFIX + ref.jobId,
+        JSON.stringify({ ref, text: "stale local", comments: [], outbox: [] }),
+      );
+      vi.mocked(getDraft).mockResolvedValueOnce({
+        payload: { text: "from server", stagedAnswers: [], comments: [] },
+        attachments: [{ id: "a1", name: "f.txt", kind: "file", size: 10 }],
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      composerStore.ensure(ref);
+      // Instant paint is the sessionStorage fallback, read before the GET resolves.
+      expect(composerStore.getDraft(ref.jobId).text).toBe("stale local");
+
+      await vi.advanceTimersByTimeAsync(0); // drain the GET's microtask chain
+      expect(getDraft).toHaveBeenCalledWith(ref);
+      expect(composerStore.getDraft(ref.jobId).text).toBe("from server");
+      expect(composerStore.getDraft(ref.jobId).attachments).toEqual([
+        { id: "a1", name: "f.txt", kind: "file", size: 10 },
+      ]);
+    });
+
+    it("debounces a server autosave PUT after setText, sending the current draft body", async () => {
+      const ref = refFor("job-autosave");
+      composerStore.setText(ref, "autosave me");
+      expect(putDraft).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(500);
+      expect(putDraft).toHaveBeenCalledWith(ref, {
+        text: "autosave me",
+        stagedAnswers: [],
+        comments: [],
+      });
+    });
+
+    it("applyServerPayload discards a delta older than an in-flight local edit (last-write-wins)", () => {
+      const ref = refFor("job-lww-local-wins");
+      composerStore.ensure(ref);
+      const beforeEdit = Date.now();
+      composerStore.setText(ref, "local edit");
+
+      composerStore.applyServerPayload(
+        ref.jobId,
+        { text: "stale server", stagedAnswers: [], comments: [] },
+        [],
+        beforeEdit - 1,
+      );
+      expect(composerStore.getDraft(ref.jobId).text).toBe("local edit");
+    });
+
+    it("applyServerPayload accepts a delta newer than the last local edit", () => {
+      const ref = refFor("job-lww-server-wins");
+      composerStore.ensure(ref);
+
+      composerStore.applyServerPayload(
+        ref.jobId,
+        { text: "from another device", stagedAnswers: [], comments: [] },
+        [],
+        Date.now() + 1000,
+      );
+      expect(composerStore.getDraft(ref.jobId).text).toBe(
+        "from another device",
+      );
+    });
+
+    it("applyServerPayload preserves same-session attachment previews and pending uploads", () => {
+      const ref = refFor("job-attachment-reconcile");
+      composerStore.setAttachments(ref, () => [
+        {
+          id: "server-a",
+          name: "shot.png",
+          kind: "image",
+          size: 12,
+          url: "blob:shot",
+        },
+        {
+          id: "pending-a",
+          name: "large.png",
+          kind: "image",
+          size: 123,
+          url: "blob:large",
+          pending: true,
+        },
+      ]);
+
+      composerStore.applyServerPayload(
+        ref.jobId,
+        { text: "server body", stagedAnswers: [], comments: [] },
+        [{ id: "server-a", name: "shot.png", kind: "image", size: 12 }],
+        Date.now() + 1000,
+      );
+
+      expect(composerStore.getDraft(ref.jobId).attachments).toEqual([
+        {
+          id: "server-a",
+          name: "shot.png",
+          kind: "image",
+          size: 12,
+          url: "blob:shot",
+        },
+        {
+          id: "pending-a",
+          name: "large.png",
+          kind: "image",
+          size: 123,
+          url: "blob:large",
+          pending: true,
+        },
+      ]);
+    });
+
+    it("on reconnect keeps a newer server draft instead of pushing an older dirty local edit", async () => {
+      const ref = refFor("job-reconnect-server-wins");
+      const serverUpdatedAt = new Date(Date.now() + 10_000).toISOString();
+      vi.mocked(getDraft).mockImplementation((r) =>
+        Promise.resolve(
+          r.jobId === ref.jobId
+            ? {
+                payload: {
+                  text: "newer server edit",
+                  stagedAnswers: [],
+                  comments: [],
+                },
+                attachments: [],
+                updatedAt: serverUpdatedAt,
+              }
+            : {
+                payload: { text: "", stagedAnswers: [], comments: [] },
+                attachments: [],
+                updatedAt: null,
+              },
+        ),
+      );
+      composerStore.setText(ref, "older offline edit");
+      vi.mocked(putDraft).mockClear();
+
+      (composerStore as unknown as { onReconnect: () => void }).onReconnect();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(
+        vi.mocked(putDraft).mock.calls.some(([r]) => r.jobId === ref.jobId),
+      ).toBe(false);
+      expect(composerStore.getDraft(ref.jobId).text).toBe("newer server edit");
     });
   });
 });

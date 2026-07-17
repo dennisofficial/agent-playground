@@ -3,6 +3,7 @@ import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { InjectRepository } from '@nestjs/typeorm';
 import { existsSync, rmSync } from 'node:fs';
+import { basename, dirname } from 'node:path';
 import { In, IsNull, Not, Repository } from 'typeorm';
 import type { FeatureSandbox, ProjectRepo } from '../git';
 import { GithubPrService, LocalGitService, parseGithubRepoUrl } from '../git';
@@ -176,6 +177,14 @@ export class JobLifecycleService {
    */
   contextDirHost(jobId: string, orgId: string): string {
     return this.sandboxProvider.contextDirHost(orgId, jobId);
+  }
+
+  /**
+   * The HOST path of the job's per-user draft-attachment staging dir (never bind-mounted into the
+   * sandbox). Pure path derivation — no I/O.
+   */
+  draftUploadsDirHost(jobId: string, orgId: string, userId: string): string {
+    return this.sandboxProvider.draftUploadsDirHost(orgId, jobId, userId);
   }
 
   /**
@@ -669,6 +678,7 @@ export class JobLifecycleService {
     //     these live OUTSIDE the worktree (keyed by jobId), so nothing else deletes them. A hard delete drops
     //     BOTH /playground and /context (unlike archive, which keeps /context — decision d2).
     this.removeJobPlaygroundDir(orgId, jobId);
+    this.removeJobDraftUploadsDir(orgId, jobId);
     this.removeJobContextDir(orgId, jobId);
     this.removeOnDiskSessionJsonl(jobId);
 
@@ -787,6 +797,7 @@ export class JobLifecycleService {
   async archiveJobDeep(jobId: string, orgId: string): Promise<void> {
     await this.reclaimJobArtifacts(jobId, orgId); // container + worktree — gates the reconciler retry
     this.removeJobPlaygroundDir(orgId, jobId); // best-effort, small; NOT /context (kept — decision d2)
+    this.removeJobDraftUploadsDir(orgId, jobId); // staged composer uploads — scratch like /playground
     this.removeOnDiskSessionJsonl(jobId); // best-effort; redundant with transcript_messages (decision d4)
 
     // Release the onboarding-spawn marker so a re-connect can re-onboard (a dangling pointer would block
@@ -1034,6 +1045,37 @@ export class JobLifecycleService {
         `removeJobPlaygroundDir: remove failed for ${dir}: ${err}`,
       );
     }
+  }
+
+  /** Remove a job's durable host-side draft-attachment staging dir (per-user composer uploads staged but not
+   *  yet sent) — same out-of-worktree, keyed-by-jobId nature as `/playground`, and equally reclaimable once
+   *  the job stops taking new messages. Best-effort; never throws. Reclaimed by BOTH hard delete
+   *  ({@link deleteJobDeep}) and archive ({@link archiveJobDeep}). */
+  private removeJobDraftUploadsDir(orgId: string, jobId: string): void {
+    const dir = this.draftUploadsJobDirHost(orgId, jobId);
+    if (!dir) return;
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch (err) {
+      this.logger.warn(
+        `removeJobDraftUploadsDir: remove failed for ${dir}: ${err}`,
+      );
+    }
+  }
+
+  /** Derive the per-job root of the draft-uploads tree (`<root>/<orgId>/<jobId>/<userId>`) from the provider's
+   *  per-user path: probe with a marker userId and walk one level up, so removing the `<jobId>` dir drops every
+   *  user's staged uploads for the job. Null if the provider path shape is unexpected. */
+  private draftUploadsJobDirHost(orgId: string, jobId: string): string | null {
+    const marker = '__job_root__';
+    const probe = this.sandboxProvider.draftUploadsDirHost(
+      orgId,
+      jobId,
+      marker,
+    );
+    if (basename(probe) !== marker) return null;
+    const dir = dirname(probe);
+    return dir === dirname(dir) ? null : dir;
   }
 
   /** Remove a job's durable host-side `/context` dir (specs/artifacts/evidence) — same out-of-worktree,

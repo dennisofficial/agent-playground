@@ -1218,6 +1218,7 @@ function assemble(
       teardownByIdentity: async () => undefined,
       contextDirHost: () => '/ctx',
       playgroundDirHost: () => '/playground',
+      draftUploadsDirHost: () => '/draft-uploads',
       brainTranscriptProjectsDir: () => null,
       supervisorDirHost: () => null,
       probeLiveness: async () => ({ status: 'unknown' as const }),

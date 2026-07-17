@@ -387,6 +387,7 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
           teardownByIdentity: async () => undefined,
           contextDirHost: () => '/ctx',
           playgroundDirHost: () => '/playground',
+          draftUploadsDirHost: () => '/draft-uploads',
           brainTranscriptProjectsDir: () => null,
           supervisorDirHost: () => null,
           probeLiveness: async () => ({ status: 'unknown' as const }),

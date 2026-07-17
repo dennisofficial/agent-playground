@@ -18,6 +18,7 @@ import {
   Patch,
   PayloadTooLargeException,
   Post,
+  Put,
   Query,
   ServiceUnavailableException,
   Sse,
@@ -37,7 +38,7 @@ import {
   statSync,
 } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { basename, extname, join, relative, resolve, sep } from 'node:path';
 import {
   Observable,
@@ -162,6 +163,21 @@ import {
 } from '../prompt-kit/harness';
 import { UsageEventBus } from '../onboarding/usage-event-bus';
 import { WorkspaceConfigStore } from '../onboarding/workspace-config.store';
+import {
+  ATTACHMENT_EXTS,
+  MAX_ATTACHMENT_BYTES,
+  MAX_ATTACHMENTS,
+  MIME_BY_EXT,
+  safeUploadName,
+  type UploadedAttachment,
+} from './attachment-upload';
+import { ComposerDraftService } from './composer-draft.service';
+import type {
+  DraftAttachmentDto,
+  DraftPayloadWire,
+  DraftStagedAnswerWire,
+} from './composer-draft.service';
+import type { ReviewComment } from '@shared/domain/composer-draft';
 
 const VALID_ACTION_IDS = new Set([
   APPROVE_ACTION_ID,
@@ -267,33 +283,6 @@ const LIVENESS_MEMO_TTL_MS = 2_500;
 const MAX_SERVICE_LOG_TAIL_BYTES = 512 * 1024;
 /** How often the SSE log tail polls the file for new bytes — see `serviceLogEvents` doc comment. */
 const SERVICE_LOG_POLL_MS = 750;
-
-/** Best-effort mime + text/binary split by extension. Unknown → text/plain (we still cap the size). */
-const MIME_BY_EXT: Record<string, { mime: string; binary: boolean }> = {
-  '.md': { mime: 'text/markdown', binary: false },
-  '.markdown': { mime: 'text/markdown', binary: false },
-  '.txt': { mime: 'text/plain', binary: false },
-  '.log': { mime: 'text/plain', binary: false },
-  '.json': { mime: 'application/json', binary: false },
-  '.html': { mime: 'text/html', binary: false },
-  '.htm': { mime: 'text/html', binary: false },
-  '.css': { mime: 'text/css', binary: false },
-  '.js': { mime: 'text/javascript', binary: false },
-  '.ts': { mime: 'text/plain', binary: false },
-  '.tsx': { mime: 'text/plain', binary: false },
-  '.yaml': { mime: 'text/plain', binary: false },
-  '.yml': { mime: 'text/plain', binary: false },
-  '.csv': { mime: 'text/csv', binary: false },
-  '.xml': { mime: 'application/xml', binary: false },
-  '.svg': { mime: 'image/svg+xml', binary: false }, // text content, rendered as an image
-  '.png': { mime: 'image/png', binary: true },
-  '.jpg': { mime: 'image/jpeg', binary: true },
-  '.jpeg': { mime: 'image/jpeg', binary: true },
-  '.gif': { mime: 'image/gif', binary: true },
-  '.webp': { mime: 'image/webp', binary: true },
-  '.avif': { mime: 'image/avif', binary: true },
-  '.zip': { mime: 'application/zip', binary: true },
-};
 
 /**
  * Resolve a caller-supplied relative path WITHIN the thread's `/context` root, restricted to the
@@ -432,6 +421,12 @@ interface ReviewCommentsDto {
   /** Optional operator prose accompanying the batch — rendered underneath the card. */
   message?: string;
 }
+/** `PUT …/jobs/:jobId/draft` request body — the wire (cleartext) draft payload. */
+interface DraftPayloadDto {
+  text: string;
+  stagedAnswers: DraftStagedAnswerWire[];
+  comments: ReviewComment[];
+}
 interface RenameThreadDto {
   title: string;
 }
@@ -471,63 +466,9 @@ interface ProvideSecretDto {
 const MAX_FILE_UPLOAD_BYTES = 512 * 1024;
 
 // ── Composer attachments (`say`/`createJob` multipart) ───────────────────────────────────────────────
-/** Per-file cap for composer attachments (images can be large screenshots). Enforced by multer + here. */
-const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
-/** Max attachments per message. */
-const MAX_ATTACHMENTS = 25;
-/**
- * The extensions an operator may attach in the composer. Images (Read renders them visually) + a
- * conservative set of text/doc types the brain's Read tool can parse, plus `.zip` — attachments land in
- * `/context/uploads/` and are Read on demand, so the brain can unzip an archive itself when it needs to.
- * Anything else is rejected. `.pdf` isn't in `MIME_BY_EXT` (added just here).
- */
-const ATTACHMENT_EXTS = new Set([
-  '.png',
-  '.jpg',
-  '.jpeg',
-  '.gif',
-  '.webp',
-  '.avif',
-  '.svg', // images
-  '.txt',
-  '.md',
-  '.markdown',
-  '.log',
-  '.json',
-  '.csv',
-  '.xml',
-  '.yaml',
-  '.yml', // text
-  '.html',
-  '.htm',
-  '.css',
-  '.js',
-  '.ts',
-  '.tsx',
-  '.pdf', // code + pdf
-  '.zip', // archive — Read on demand, extracted by the brain
-]);
-
-/** The multipart file shape multer hands us (subset we use — avoids depending on global Express.Multer types). */
-interface UploadedAttachment {
-  originalname: string;
-  buffer: Buffer;
-  size: number;
-}
-
-/**
- * Sanitize an operator-supplied filename into a flat, collision-resistant name safe as BOTH a disk path
- * and an XML attribute value: basename only (no dirs), `[A-Za-z0-9._-]` only (so no `../` traversal and no
- * forged `</user>`/`<uploaded-files>` tags), a short random prefix to de-collide, length-capped.
- */
-function safeUploadName(original: string): string {
-  const base =
-    basename(original)
-      .replace(/[^A-Za-z0-9._-]/g, '_')
-      .replace(/^\.+/, '')
-      .slice(0, 100) || 'file';
-  return `${randomBytes(4).toString('hex')}-${base}`;
-}
+// `MAX_ATTACHMENT_BYTES`/`MAX_ATTACHMENTS`/`ATTACHMENT_EXTS`/`MIME_BY_EXT`/`UploadedAttachment`/
+// `safeUploadName` live in `./attachment-upload` — shared with `ComposerDraftService` so composer sends
+// and draft uploads can never drift on caps/validation/naming.
 
 /**
  * Resolve a caller-supplied path WITHIN the thread's `/context/uploads/` bucket only (rejects absolute
@@ -817,6 +758,10 @@ export class WebSurfaceController {
     // post_build session through it (durable pump). From the @Global BrainGatewayModule. @Optional (trailing),
     // same reason as `exposure`/`jit` above — keeps the positional-arg unit tests compiling.
     @Optional() private readonly brainGateway?: BrainGateway,
+    // The server-side composer draft (text/staged-answers/comments + upload-on-add attachments), scoped
+    // per (job, user). From this (non-@Global) module's own providers. @Optional (trailing), same reason
+    // as `exposure`/`jit` above — keeps the positional-arg unit tests compiling without a trailing arg.
+    @Optional() private readonly draftService?: ComposerDraftService,
     // The blocked-overlay preview source — the queued born-blocked brief / mid-flight "blocked" note that
     // replaced the `jobs.blocked_seed_message` column (batched via `pendingLockedPreviews` to avoid N+1).
     // From the (non-@Global) StimulusModule already imported for `intake`. @Optional (trailing), same reason
@@ -1416,21 +1361,23 @@ export class WebSurfaceController {
         .catch(() => undefined);
     }
 
-    const attach =
-      userItem && files?.length
-        ? await this.ingestAttachments(org.id, jobId, files)
+    // A `user` message with multipart `files` ingests them straight to `/context/uploads/` (legacy path,
+    // used by the New-job modal); one with NO files instead promotes whatever the caller staged in their
+    // server-side draft (`ComposerDraftService.promoteOnSend`) — the in-job composer's send path. This is
+    // deliberately lazy: lane validation below can still reject the send, and a rejected send must not
+    // consume draft attachment rows.
+    const resolveAttach = async () =>
+      userItem
+        ? files?.length
+          ? await this.ingestAttachments(org.id, jobId, files)
+          : ((await this.draftService?.promoteOnSend(org.id, jobId, user.id)) ??
+            null)
         : null;
 
     // CASE 1 — a `user` message with no delivered cards: the plain operator-chat path (byte-identical to the
     // old `say`). A lane-targeted message routes through the send seam; otherwise it hits the planning brain.
     if (userItem && applied.length === 0) {
       const operatorText = userItem.text ?? '';
-      if (!operatorText && !attach) {
-        throw new BadRequestException('text or an attachment is required');
-      }
-      const bodyText = attach
-        ? `${attach.xml}\n\n${operatorText}`
-        : operatorText;
       const targetLane = userItem.lane;
       if (targetLane && targetLane !== 'main') {
         if (!this.threadInput) {
@@ -1443,6 +1390,13 @@ export class WebSurfaceController {
             `thread "${targetLane}" is not accepting messages right now`,
           );
         }
+        const attach = await resolveAttach();
+        if (!operatorText && !attach) {
+          throw new BadRequestException('text or an attachment is required');
+        }
+        const bodyText = attach
+          ? `${attach.xml}\n\n${operatorText}`
+          : operatorText;
         const author = operatorAuthor(user);
         await this.threadInput.postToThread(
           targetLane,
@@ -1454,8 +1408,18 @@ export class WebSurfaceController {
           },
           bodyText,
         );
+        await this.clearDraftOnSend(org.id, jobId, user.id, results, {
+          clearText: true,
+        });
         return { ok: true, ts: new Date().toISOString(), results };
       }
+      const attach = await resolveAttach();
+      if (!operatorText && !attach) {
+        throw new BadRequestException('text or an attachment is required');
+      }
+      const bodyText = attach
+        ? `${attach.xml}\n\n${operatorText}`
+        : operatorText;
       const ts = this.surface.receiveFromClient(thread.repo_id, bodyText, {
         orgId: org.id,
         threadTs: jobId,
@@ -1469,6 +1433,9 @@ export class WebSurfaceController {
               },
             }
           : {}),
+      });
+      await this.clearDraftOnSend(org.id, jobId, user.id, results, {
+        clearText: true,
       });
       return { ok: true, ts, results };
     }
@@ -1502,6 +1469,12 @@ export class WebSurfaceController {
           },
         },
       );
+      // CASE 2 carries no `user` item — the draft's typed text is unrelated to this card-only submit, so
+      // leave it (and any queued `/review-comments` tray, never touched from `/message`) alone; only prune
+      // the staged answers that were just applied.
+      await this.clearDraftOnSend(org.id, jobId, user.id, results, {
+        clearText: false,
+      });
       return { ok: true, ts, results };
     }
 
@@ -1511,6 +1484,7 @@ export class WebSurfaceController {
     // bubble in the transcript — no "…+ a message" summary pill.
     if (applied.length > 0 && userItem) {
       const operatorText = userItem.text ?? '';
+      const attach = await resolveAttach();
       const userBody = attach
         ? `${attach.xml}\n\n${operatorText}`
         : operatorText;
@@ -1567,12 +1541,38 @@ export class WebSurfaceController {
           replyRoute: { surfaceId: this.surface.name, jobRef: jobId },
         },
       );
+      await this.clearDraftOnSend(org.id, jobId, user.id, results, {
+        clearText: true,
+      });
       return { ok: true, ts: new Date().toISOString(), results };
     }
 
     // No operator message and nothing applied (e.g. a re-submit of already-delivered cards). There is nothing
     // to deliver — surface it rather than silently returning a no-op turn.
     throw new BadRequestException('no valid messages to process');
+  }
+
+  /** Best-effort: prune the caller's server-side draft of whatever this submit just applied, and blank the
+   *  typed text only when `clearText` says this submit actually carried/sent a `user` item. `/message`
+   *  never carries the draft's queued `comments` (those ride `/review-comments`, which clears them inline
+   *  at its own call site), so `comments` is never cleared from this path. Realtime is not load-bearing for
+   *  correctness, so a failure here never fails the send itself. */
+  private async clearDraftOnSend(
+    orgId: string,
+    jobId: string,
+    userId: string,
+    results: Array<{ id: string; status: string }>,
+    opts: { clearText: boolean },
+  ): Promise<void> {
+    await this.draftService
+      ?.clearOnSend(
+        orgId,
+        jobId,
+        userId,
+        results.filter((r) => r.status === 'applied').map((r) => r.id),
+        { clearText: opts.clearText, clearComments: false },
+      )
+      .catch(() => undefined);
   }
 
   /**
@@ -1620,6 +1620,141 @@ export class WebSurfaceController {
     return { xml: renderUploadedFilesXml(items), items };
   }
 
+  // ── composer draft (server-side, per job+user) ──────────────────────────────────────────────────
+
+  /** `GET …/jobs/:jobId/draft` — the caller's in-progress draft (text/staged answers/comments) plus its
+   *  uploaded-on-add attachments. Never creates a row; an absent draft reads as empty. */
+  @Get('orgs/:orgId/repos/:repoId/jobs/:jobId/draft')
+  @UseGuards(OrgMembershipGuard)
+  async getDraft(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @CurrentUser() user: UserEntity,
+    @Param('jobId') jobId: string,
+  ): Promise<{
+    payload: DraftPayloadWire;
+    attachments: DraftAttachmentDto[];
+    updatedAt: string | null;
+  }> {
+    if (!this.draftService) {
+      throw new ServiceUnavailableException('draft service unavailable');
+    }
+    await this.requireThread(jobId, org.id);
+    return this.draftService.getDraft(org.id, jobId, user.id);
+  }
+
+  /** `PUT …/jobs/:jobId/draft` — upsert the caller's draft (debounced autosave from the composer). */
+  @Put('orgs/:orgId/repos/:repoId/jobs/:jobId/draft')
+  @UseGuards(OrgMembershipGuard)
+  async putDraft(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @CurrentUser() user: UserEntity,
+    @Param('jobId') jobId: string,
+    @Body() body: DraftPayloadDto,
+  ): Promise<{ ok: boolean }> {
+    if (!this.draftService) {
+      throw new ServiceUnavailableException('draft service unavailable');
+    }
+    await this.requireThread(jobId, org.id);
+    const totalBytes =
+      Buffer.byteLength(body?.text ?? '', 'utf8') +
+      (body?.stagedAnswers ?? []).reduce(
+        (n, a) =>
+          n +
+          Buffer.byteLength(
+            a.kind === 'question'
+              ? a.answer
+              : a.kind === 'file'
+                ? a.content
+                : a.value,
+            'utf8',
+          ),
+        0,
+      );
+    if (totalBytes > MAX_BATCH_BYTES) {
+      throw new BadRequestException('draft content exceeds size limit');
+    }
+    await this.draftService.putDraft(org.id, jobId, user.id, {
+      text: body?.text ?? '',
+      stagedAnswers: body?.stagedAnswers ?? [],
+      comments: body?.comments ?? [],
+    });
+    return { ok: true };
+  }
+
+  /** `POST …/jobs/:jobId/draft/attachments` — stage an uploaded-on-add draft attachment (multipart). */
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/draft/attachments')
+  @UseGuards(OrgMembershipGuard)
+  @UseInterceptors(
+    FilesInterceptor('files', MAX_ATTACHMENTS, {
+      limits: { fileSize: MAX_ATTACHMENT_BYTES },
+    }),
+  )
+  async addDraftAttachments(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @CurrentUser() user: UserEntity,
+    @Param('jobId') jobId: string,
+    @UploadedFiles() files?: UploadedAttachment[],
+  ): Promise<{ attachments: DraftAttachmentDto[] }> {
+    if (!this.draftService) {
+      throw new ServiceUnavailableException('draft service unavailable');
+    }
+    if (!files?.length) {
+      throw new BadRequestException('at least one file is required');
+    }
+    await this.requireThread(jobId, org.id);
+    const attachments: DraftAttachmentDto[] = [];
+    for (const file of files) {
+      attachments.push(
+        await this.draftService.addAttachment(org.id, jobId, user.id, file),
+      );
+    }
+    return { attachments };
+  }
+
+  /** `DELETE …/jobs/:jobId/draft/attachments/:attachmentId` — drop a staged draft attachment. */
+  @Delete(
+    'orgs/:orgId/repos/:repoId/jobs/:jobId/draft/attachments/:attachmentId',
+  )
+  @UseGuards(OrgMembershipGuard)
+  async deleteDraftAttachment(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @CurrentUser() user: UserEntity,
+    @Param('jobId') jobId: string,
+    @Param('attachmentId') attachmentId: string,
+  ): Promise<{ ok: boolean }> {
+    if (!this.draftService) {
+      throw new ServiceUnavailableException('draft service unavailable');
+    }
+    await this.requireThread(jobId, org.id);
+    await this.draftService.deleteAttachment(
+      org.id,
+      jobId,
+      user.id,
+      attachmentId,
+    );
+    return { ok: true };
+  }
+
+  /**
+   * `GET /web/drafts/realtime` — a single cross-org SSE stream of the caller's own composer-draft row
+   * changes, mirroring `threadsRealtime`. The client routes each delta to the active job by `jobId` and
+   * refetches that job's `/draft`.
+   */
+  @Sse('drafts/realtime')
+  draftsRealtime(@CurrentUser() user: UserEntity): Observable<MessageEvent> {
+    if (!this.realtime.available) return realtimeDisabledStream();
+    return defer(async () => {
+      const orgs = await this.orgService.listForUser(user.id);
+      return this.realtime.openDraftSubscription({
+        userId: user.id,
+        orgIds: orgs.map((o) => o.id),
+      });
+    }).pipe(
+      switchMap((sub) => subscriptionToObservable(sub)),
+      catchError(() => realtimeDisabledStream()),
+    );
+  }
+
   /**
    * `POST …/threads/:jobId/review-comments` — send a batch of inline highlight-and-comment review
    * comments (selected quotes + optional notes, from the right-pane file/spec viewer) as ONE durable
@@ -1659,6 +1794,16 @@ export class WebSurfaceController {
       ...operatorAuthor(user),
       card,
     });
+    // This send just carried the ENTIRE queued-comments tray plus whatever text was typed alongside it (see
+    // composer.tsx's `comments.length > 0` branch), so — unlike `/message`, which never touches `comments`
+    // — clear both fields of the server-side draft here. Best-effort: realtime is not load-bearing for
+    // correctness, so a failure never fails the send itself.
+    await this.draftService
+      ?.clearOnSend(org.id, jobId, user.id, [], {
+        clearText: true,
+        clearComments: true,
+      })
+      .catch(() => undefined);
     return { ts };
   }
 

@@ -1069,6 +1069,9 @@ describe('JobLifecycleService — archive lifecycle', () => {
         teardownByIdentity,
         playgroundDirHost,
         contextDirHost,
+        draftUploadsDirHost: vi.fn(
+          (o: string, j: string, u: string) => `/draft/${o}/${j}/${u}`,
+        ),
         brainTranscriptProjectsDir,
       } as unknown as SandboxProvider,
       { provisionAndAttach: vi.fn() } as unknown as WorktreeProvisioner,
@@ -1114,12 +1117,18 @@ describe('JobLifecycleService — archive lifecycle', () => {
     const { svc, onBlockerResolved } = makeArchiveService();
     const reclaim = vi.fn().mockResolvedValue(true);
     const removePlayground = vi.fn();
+    const removeDraftUploads = vi.fn();
     const removeContext = vi.fn();
     const removeJsonl = vi.fn();
     svc.reclaimJobArtifacts = reclaim;
     (
       svc as unknown as { removeJobPlaygroundDir: (o: string, j: string) => void }
     ).removeJobPlaygroundDir = removePlayground;
+    (
+      svc as unknown as {
+        removeJobDraftUploadsDir: (o: string, j: string) => void;
+      }
+    ).removeJobDraftUploadsDir = removeDraftUploads;
     (
       svc as unknown as { removeJobContextDir: (o: string, j: string) => void }
     ).removeJobContextDir = removeContext;
@@ -1131,6 +1140,7 @@ describe('JobLifecycleService — archive lifecycle', () => {
 
     expect(reclaim).toHaveBeenCalledWith('job-1', 'T1');
     expect(removePlayground).toHaveBeenCalledWith('T1', 'job-1');
+    expect(removeDraftUploads).toHaveBeenCalledWith('T1', 'job-1'); // staged draft uploads reclaimed
     expect(removeContext).not.toHaveBeenCalled(); // /context is RETAINED on archive
     expect(removeJsonl).toHaveBeenCalledWith('job-1');
     expect(onBlockerResolved).toHaveBeenCalledWith('job-1', 'archived');

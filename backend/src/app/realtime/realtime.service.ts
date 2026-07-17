@@ -16,6 +16,7 @@ import type { Subscription } from 'rxjs';
 import { LeaderElectionService } from '../cluster';
 import { pgConnectionString, resolveSsl } from '../persistence/database.module';
 import { THREADS_MODEL, type RealtimePrincipal } from './job-realtime.model';
+import { DRAFTS_MODEL } from './draft-realtime.model';
 
 const PUBLICATION_NAME = 'pg_realtime_pub';
 
@@ -76,6 +77,18 @@ export class RealtimeService
     return this.engine.openSubscription({ model: 'jobs', user: principal });
   }
 
+  /** Open a per-operator subscription over their own composer drafts (cross-device draft sync). */
+  async openDraftSubscription(
+    principal: RealtimePrincipal,
+  ): Promise<SubscriptionImpl> {
+    if (!this.engine)
+      throw new ServiceUnavailableException('realtime unavailable');
+    return this.engine.openSubscription({
+      model: 'composer_drafts',
+      user: principal,
+    });
+  }
+
   // ── leader-gated lifecycle ──────────────────────────────────────────────────────────────────────
 
   /** Serialized entry points — chained on `engineOp` so start/stop never overlap. */
@@ -100,7 +113,7 @@ export class RealtimeService
         connectionString: pgConnectionString(this.env),
         slotName,
         publicationName: PUBLICATION_NAME,
-        models: [THREADS_MODEL],
+        models: [THREADS_MODEL, DRAFTS_MODEL],
         logger: this.engineLogger(),
       });
       await engine.start();

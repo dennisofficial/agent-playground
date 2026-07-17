@@ -422,6 +422,7 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
           teardownByIdentity: async () => undefined,
           contextDirHost: () => '/ctx',
           playgroundDirHost: () => '/playground',
+          draftUploadsDirHost: () => '/draft-uploads',
           brainTranscriptProjectsDir: () => null,
           supervisorDirHost: () => null,
           probeLiveness: async () => ({ status: 'unknown' as const }),

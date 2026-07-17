@@ -1209,6 +1209,21 @@ export class SandboxManager implements SandboxProvider {
   }
 
   /**
+   * The HOST path of a job's per-user draft-attachment staging dir — a SIBLING of `contexts/`/
+   * `playgrounds/` above, deliberately NEVER bind-mounted into the container: draft attachment bytes must
+   * stay invisible to the sandbox/brain until send-time promotion into `/context/uploads/`.
+   */
+  draftUploadsDirHost(orgId: string, jobId: string, userId: string): string {
+    return join(
+      this.agentHomeRootHost(),
+      'draft-uploads',
+      orgId,
+      jobId,
+      userId,
+    );
+  }
+
+  /**
    * Build the bind strings for the per-repo cache mounts AND pre-create their host dirs + in-worktree
    * mountpoints (chowned to the host uid so docker doesn't create them root-owned). The bind target is
    * /workspace/<path>. Host dir by mode:

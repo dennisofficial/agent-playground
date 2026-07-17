@@ -33,6 +33,8 @@ export * from './convention-profile.entity';
 export * from './workspace-skill.entity';
 export * from './host-stats-sample.entity';
 export * from './prod-maintenance-write.entity';
+export * from './composer-draft.entity';
+export * from './composer-draft-attachment.entity';
 
 import { OrganizationEntity } from './organization.entity';
 import { OrganizationMemberEntity } from './organization-member.entity';
@@ -63,6 +65,8 @@ import { ConventionProfileEntity } from './convention-profile.entity';
 import { WorkspaceSkillEntity } from './workspace-skill.entity';
 import { HostStatsSampleEntity } from './host-stats-sample.entity';
 import { ProdMaintenanceWriteEntity } from './prod-maintenance-write.entity';
+import { ComposerDraftEntity } from './composer-draft.entity';
+import { ComposerDraftAttachmentEntity } from './composer-draft-attachment.entity';
 
 /** Every Atlas v2 entity — passed to the Atlas datasource's `entities` (NOT the shared `ENTITIES`). */
 export const ENTITIES = [
@@ -95,4 +99,6 @@ export const ENTITIES = [
   WorkspaceSkillEntity,
   HostStatsSampleEntity,
   ProdMaintenanceWriteEntity,
+  ComposerDraftEntity,
+  ComposerDraftAttachmentEntity,
 ];

@@ -222,6 +222,9 @@ class FakeSandboxProvider {
   playgroundDirHost(orgId: string, jobId: string): string {
     return join(this.stateRoot, 'playgrounds', orgId, jobId);
   }
+  draftUploadsDirHost(orgId: string, jobId: string, userId: string): string {
+    return join(this.stateRoot, 'draft-uploads', orgId, jobId, userId);
+  }
   /** Keyed only by jobId, mirroring the real port's `brainTranscriptProjectsDir` signature. */
   brainTranscriptProjectsDir(jobId: string): string | null {
     return join(this.stateRoot, 'transcripts', jobId);
@@ -585,25 +588,32 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     expect(await count('job_sandboxes')).toBe(0);
   });
 
-  it('deleteJobDeep removes durable host-side scratch dirs and redundant session JSONL', async () => {
+  it('deleteJobDeep removes durable host-side scratch dirs (/playground, /context, draft uploads) and redundant session JSONL', async () => {
     const { jobId } = await create();
 
     // Simulate the durable, out-of-worktree scratch dirs a live job would accumulate.
     const playground = provider.playgroundDirHost(FAKE_TEAM_ID, jobId);
     const context = provider.contextDirHost(FAKE_TEAM_ID, jobId);
+    const draftUpload = provider.draftUploadsDirHost(
+      FAKE_TEAM_ID,
+      jobId,
+      randomUUID(),
+    );
     const transcriptDir = provider.brainTranscriptProjectsDir(jobId)!;
-    for (const dir of [playground, context, transcriptDir]) {
+    for (const dir of [playground, context, draftUpload, transcriptDir]) {
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, 'junk.txt'), 'x');
     }
     expect(existsSync(playground)).toBe(true);
     expect(existsSync(context)).toBe(true);
+    expect(existsSync(draftUpload)).toBe(true);
     expect(existsSync(transcriptDir)).toBe(true);
 
     await threadLifecycle.deleteJobDeep(jobId, FAKE_TEAM_ID);
 
     expect(existsSync(playground)).toBe(false);
     expect(existsSync(context)).toBe(false);
+    expect(existsSync(draftUpload)).toBe(false);
     expect(existsSync(transcriptDir)).toBe(false);
   });
 
@@ -686,14 +696,19 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     );
   });
 
-  it('archiveJobDeep reclaims the container + worktree and drops /playground + the on-disk session JSONL, but KEEPS the jobs row, /context, and transcript', async () => {
+  it('archiveJobDeep reclaims the container + worktree and drops /playground + draft uploads + the on-disk session JSONL, but KEEPS the jobs row, /context, and transcript', async () => {
     const { jobId, worktreePath } = await create();
     await seedTranscriptMessageAt(jobId, new Date());
 
     const playground = provider.playgroundDirHost(FAKE_TEAM_ID, jobId);
     const context = provider.contextDirHost(FAKE_TEAM_ID, jobId);
+    const draftUpload = provider.draftUploadsDirHost(
+      FAKE_TEAM_ID,
+      jobId,
+      randomUUID(),
+    );
     const transcriptDir = provider.brainTranscriptProjectsDir(jobId)!;
-    for (const dir of [playground, context, transcriptDir]) {
+    for (const dir of [playground, context, draftUpload, transcriptDir]) {
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, 'junk.txt'), 'x');
     }
@@ -701,11 +716,12 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     await threadLifecycle.claimArchiveJob(jobId, FAKE_TEAM_ID);
     await threadLifecycle.archiveJobDeep(jobId, FAKE_TEAM_ID);
 
-    // Physical reclaim: container torn down, worktree removed, /playground + the redundant on-disk
-    // session JSONL dropped.
+    // Physical reclaim: container torn down, worktree removed, /playground + staged draft uploads + the
+    // redundant on-disk session JSONL dropped.
     expect(provider.tornDown.length).toBeGreaterThanOrEqual(1);
     expect(fakeGit.removedWorktrees).toContain(worktreePath);
     expect(existsSync(playground)).toBe(false);
+    expect(existsSync(draftUpload)).toBe(false);
     expect(existsSync(transcriptDir)).toBe(false);
     const sandboxRow = await sandboxes.findOneOrFail({
       where: { job_id: jobId },
