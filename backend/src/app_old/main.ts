@@ -9,7 +9,7 @@ import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { installShutdownGuard } from '@workspace/nestjs-core';
 import cookieParser from 'cookie-parser';
-import { AppOldModule } from './app-v1.module';
+import { AppOldModule } from './app-old.module';
 
 async function bootstrap() {
   const logger = setupLogger();

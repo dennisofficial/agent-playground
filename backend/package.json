@@ -11,10 +11,7 @@
     "build:engine": "nest build engine --webpack --webpackPath webpack.engine.config.js",
     "build:engine:watch": "nest build engine --webpack --webpackPath webpack.engine.config.js --watch",
     "dev": "pnpm dev:env -- nest start app --watch",
-    "e2e:engine": "tsx src/engine/__e2e__/run-all.ts",
     "start:prod": "node dist/main",
-    "e2e": "pnpm dev:env -- cross-env TS_NODE_PROJECT=tsconfig.e2e.json node -r tsconfig-paths/register -r ts-node/register src/app_old/e2e/e2e-main.ts",
-    "reap": "cross-env TS_NODE_PROJECT=tsconfig.cli.json node -r ts-node/register cli/reap-sandboxes.ts",
     "typecheck": "tsc --noEmit",
     "typecheck:cli": "tsc --noEmit -p tsconfig.cli.json",
     "format": "prettier --write \"src/**/*.ts\"",
@@ -35,10 +32,7 @@
     "db:migration:check": "git fetch --no-tags origin main:refs/remotes/origin/main && vitest run --mode unit migrations-hygiene",
     "db:schema:drop": "pnpm env:inject -- cross-env TS_NODE_PROJECT=tsconfig.cli.json typeorm-ts-node-commonjs schema:drop -d cli/data-source.ts",
     "db:seed": "dotenvx run -f .env.local.enc -f .env.seed.enc -f .env.personal --ignore=MISSING_ENV_FILE -o --strict -- cross-env NODE_ENV=development ts-node --project tsconfig.cli.json cli/seed-runner.ts",
-    "db:recover-turn": "pnpm env:inject -- ts-node --project tsconfig.cli.json cli/recover-turn.ts",
-    "db:recreate": "pnpm db:schema:drop && pnpm db:migrate && pnpm db:seed",
-    "seed:demo": "pnpm env:inject -- cross-env TS_NODE_PROJECT=tsconfig.cli.json ts-node --project tsconfig.cli.json scripts/seed-demo-jobs.ts",
-    "seed:scroll-fixture": "pnpm seed:demo && pnpm env:inject -- cross-env TS_NODE_PROJECT=tsconfig.cli.json ts-node --project tsconfig.cli.json scripts/load-scroll-fixture.ts"
+    "db:recreate": "pnpm db:schema:drop && pnpm db:migrate && pnpm db:seed"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.204",
