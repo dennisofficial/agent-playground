@@ -70,7 +70,11 @@ function FileBody({ tool }: { tool: ToolItem }) {
     <>
       <FileBodyContent tool={tool} />
       {tool.isError ? (
-        <StructuredPanel result={formatPayload(tool.result)} isError />
+        <StructuredPanel
+          result={formatPayload(tool.result)}
+          isError
+          superseded={tool.superseded}
+        />
       ) : null}
     </>
   );

@@ -133,6 +133,7 @@ function ToolRow({ tool }: { tool: ToolItem }) {
   const [open, setOpen] = useState(false);
   const handler = resolveHandler(tool.name, tool.input);
   const d = handler.describe(tool);
+  const badge = tool.superseded ? ({ kind: "superseded" } as const) : d.badge;
   const Body = handler.Body;
 
   return (
@@ -161,7 +162,7 @@ function ToolRow({ tool }: { tool: ToolItem }) {
         {tool.jitContext?.length ? (
           <JitPill count={tool.jitContext.length} />
         ) : null}
-        <Badge badge={d.badge} />
+        <Badge badge={badge} />
       </DisclosureRow>
       {open ? (
         <>
@@ -172,6 +173,7 @@ function ToolRow({ tool }: { tool: ToolItem }) {
               input={formatPayload(tool.input)}
               result={formatPayload(tool.result)}
               isError={tool.isError}
+              superseded={tool.superseded}
             />
           )}
           {tool.jitContext?.length ? (
@@ -212,7 +214,7 @@ export function ToolGroup({ tools }: { tools: ToolItem[] }) {
   const totalLines = aggregateLines(tools);
   // How many grouped tools failed — a failed tool's own line/diffstat badge is dropped from the
   // rollups above, so without this the collapsed header gives no hint that anything errored.
-  const errorCount = tools.filter((t) => t.isError).length;
+  const errorCount = tools.filter((t) => t.isError && !t.superseded).length;
   const allFiles = tools.every((t) => isFileEditTool(t.name));
   // How many of the grouped files are newly created (their row carries a "NEW" pill) — rolled up onto
   // the collapsed header alongside the diffstat, mirroring the per-row tags.

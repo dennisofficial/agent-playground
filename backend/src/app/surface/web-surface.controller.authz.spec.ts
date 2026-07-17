@@ -66,7 +66,7 @@ function makeController(threadOrgId: string) {
     {} as never, // skillInstaller (SkillInstallerService)
     {} as never, // git (LocalGitService)
     {} as never, // jobDeps (JobDependencyService)
-    {} as never, // moduleRef (ModuleRef)
+    {} as never, // driverApproval (DriverApprovalGateway)
     {} as never, // intake (StimulusIntake)
   );
   return { controller, deleteJobDeep, claimDeleteJob, threads, messages };

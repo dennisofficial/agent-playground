@@ -133,15 +133,20 @@ describe('renderAgentPrompt — brain assembly (ATLAS_MAIN)', () => {
  * ship-persona text (`postBuildTools`/`ciTools`/`postShipContext`/`autonomyPostShip` are gated to
  * POST_BUILD/CI and never leak into PLANNING). A failure here means PLANNING's prompt drifted from the
  * legacy brain; that's either a real regression or an intentional change that needs a fresh snapshot.
+ *
+ * SNAPSHOT REFRESHED AGAIN for the universal DIAGRAMS-ARE-MERMAID rule (`behavioral.group`'s `diagramFormat`,
+ * fragment `DIAGRAM_FORMAT_NOTE`): it is deliberately `usedBy: ENGINEERING_STAGES`, which includes PLANNING,
+ * so PLANNING's prompt legitimately grew by that one ungated behavioral note — an intentional additive
+ * change, refreshed here rather than a regression.
  */
 describe('renderAgentPrompt(Agent.PLANNING) — byte-parity with the monolithic brain prompt', () => {
   const PRE_SPLIT_SHA256: Record<string, string> = {
     feature:
-      'ff6df9eb363e2c18e0840bc3511aa840a8654de67dade2de1c4485ba65f303b9',
-    bugfix: '8ac1c196d8f8fb78ccf29f430a52c405127a01882a054c6dabfb65f09ba16cba',
+      'c754924a1d8253a599fb792696153b98f61d0d479388596833f25f9a7974c879',
+    bugfix: 'c1532a05911e45326e10192cee0cf48c34005be785e8297599dc8524218612de',
     onboarding:
-      '0d8393508147d5c3181d5e38a2ec1a3ae5aad4c2033f68d540c382ca04e956ce',
-    review: 'e974415c5b8c6f07654a657d83e6264244bb54dfcd5f9f1037a21ef758d58780',
+      '9b18e9e0ca07866b78e9e1fbe693e44a90fa290e3381f43f8a61ebed25522bf8',
+    review: 'c0d59541f22b0becf75d6b09960307a8c24c2635950421db9a2498cd752da405',
   };
 
   it.each(['feature', 'bugfix', 'onboarding', 'review'] as const)(

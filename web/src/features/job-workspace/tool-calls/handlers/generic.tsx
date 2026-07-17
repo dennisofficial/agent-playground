@@ -10,6 +10,7 @@ function GenericBody({ tool }: { tool: ToolItem }) {
       input={formatPayload(tool.input)}
       result={formatPayload(tool.result)}
       isError={tool.isError}
+      superseded={tool.superseded}
     />
   );
 }

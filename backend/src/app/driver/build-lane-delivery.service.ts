@@ -62,7 +62,7 @@ export class BuildLaneDeliveryService
     private readonly driverStore: DriverStoreService,
     private readonly threadInput: ThreadInputService,
     // Lazily resolved (avoiding a static module cycle: thread-driver.service.ts pulls in this file
-    // transitively via jit-host-executor) — same pattern as surface/resolve-merge-approval.ts.
+    // transitively via jit-host-executor).
     private readonly moduleRef: ModuleRef,
   ) {}
 
