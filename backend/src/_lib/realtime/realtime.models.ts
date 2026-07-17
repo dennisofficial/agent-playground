@@ -1,10 +1,12 @@
 import type { ModelConfig, Row } from '@workspace/pg-realtime';
 import type { Repository } from 'typeorm';
-import { OrgScopedRealtimeGuard } from '../../_lib/realtime/org-scoped-realtime.guard';
-import type { OrganizationMember } from '../org/entities/organization-member.entity';
+import type { OrganizationMember } from '../../app/org/entities/organization-member.entity';
+import { OrgMembershipGuard } from '../../app/org/org-realtime.guard';
+import { RepoRealtimeGuard } from '../../app/repo/repo.guard';
 
 // ── Defensive coercion: snapshot rows arrive SQL-typed, live WAL rows may be text. ──
-const bool = (v: unknown): boolean => v === true || v === 't' || v === 'true' || v === 1 || v === '1';
+const bool = (v: unknown): boolean =>
+  v === true || v === 't' || v === 'true' || v === 1 || v === '1';
 const int = (v: unknown): number => (v == null ? 0 : Number(v));
 const nstr = (v: unknown): string | null => (v == null ? null : String(v));
 const iso = (v: unknown): string | null => {
@@ -15,9 +17,10 @@ const iso = (v: unknown): string | null => {
 
 /**
  * The realtime models registered with pg-realtime. Every org-owned model keeps its `orgId` (or `id`,
- * for the org itself) on the mapped row so {@link OrgScopedRealtimeGuard} can scope it. `mapRow`
- * produces the exact wire shape the web renders (RepoView / org settings), except for the members
- * model, which is consumed only as a change-trigger (the members list is served as a joined snapshot).
+ * for the org itself) on the mapped row so its guard can scope it. Guards are feature-local
+ * ({@link RepoRealtimeGuard}, {@link OrgMembershipGuard}) and are the single authority for both the SSE
+ * feed and REST (`scopedFindWhere`). `mapRow` produces the exact wire shape the web renders (RepoView /
+ * org settings), except for the members model, consumed only as a change-trigger.
  */
 export function buildRealtimeModels(members: Repository<OrganizationMember>): ModelConfig[] {
   return [
@@ -26,7 +29,7 @@ export function buildRealtimeModels(members: Repository<OrganizationMember>): Mo
       table: 'repos',
       name: 'repos',
       primaryKey: 'id',
-      guard: new OrgScopedRealtimeGuard(members, 'orgId'),
+      guard: new RepoRealtimeGuard(members),
       mapRow: (raw: Row): Row => ({
         id: String(raw.id),
         orgId: String(raw.org_id), // kept for the guard scope
@@ -50,7 +53,7 @@ export function buildRealtimeModels(members: Repository<OrganizationMember>): Mo
       table: 'organizations',
       name: 'organizations',
       primaryKey: 'id',
-      guard: new OrgScopedRealtimeGuard(members, 'id'),
+      guard: new OrgMembershipGuard(members, 'id'),
       mapRow: (raw: Row): Row => ({
         id: String(raw.id),
         name: String(raw.name),
@@ -65,7 +68,7 @@ export function buildRealtimeModels(members: Repository<OrganizationMember>): Mo
       table: 'organization_members',
       name: 'organization_members',
       primaryKey: ['org_id', 'user_id'],
-      guard: new OrgScopedRealtimeGuard(members, 'orgId'),
+      guard: new OrgMembershipGuard(members, 'orgId'),
       mapRow: (raw: Row): Row => ({
         orgId: String(raw.org_id),
         userId: String(raw.user_id),

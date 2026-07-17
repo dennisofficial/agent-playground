@@ -49,18 +49,18 @@ export const GITHUB_ACCESS_PORT = Symbol('GITHUB_ACCESS_PORT');
 @Injectable()
 export class NoopGithubAccess implements GithubAccessPort {
   async hasGithub(): Promise<boolean> {
-    return false;
+    return await Promise.resolve(false);
   }
 
   async probeRepo(): Promise<RepoProbe> {
-    return { accessOk: false, reason: 'GitHub is not configured yet.' };
+    return await Promise.resolve({ accessOk: false, reason: 'GitHub is not configured yet.' });
   }
 
   async listBranches(): Promise<{ branches: string[]; defaultBranch: string } | null> {
-    return null;
+    return await Promise.resolve(null);
   }
 
   async ensureWebhook(): Promise<string | null> {
-    return null;
+    return await Promise.resolve(null);
   }
 }

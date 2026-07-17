@@ -17,7 +17,7 @@ import { PG_REALTIME_ENGINE, sseObservable } from '@workspace/pg-realtime/nest';
 import { CreateOrgDto, UpdateOrgDto, type MemberView, type OrgSummary } from '@workspace/shared';
 import type { Observable } from 'rxjs';
 import type { User } from '../auth/entities/user.entity';
-import { sseSnapshotList } from '../realtime/sse-snapshot';
+import { sseSnapshotList } from '../../_lib/realtime/sse-snapshot';
 import { OrgService } from './org.service';
 
 @Controller('orgs')

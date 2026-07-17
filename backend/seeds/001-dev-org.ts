@@ -1,33 +1,27 @@
 import type { Seeder } from '@workspace/nestjs-core';
-import {
-  OrganizationEntity,
-  OrganizationMemberEntity,
-  UserEntity,
-} from '../src/app_old/persistence/entities';
+import { EOrgRole, EOrgStatus } from '@workspace/shared';
+import { User } from '../src/app/auth/entities/user.entity';
+import { OrganizationMember } from '../src/app/org/entities/organization-member.entity';
+import { Organization } from '../src/app/org/entities/organization.entity';
 import { DEV_SEED_IDS } from './_shared/dev-seed-ids';
 
 /**
- * Dev org fixtures — ensures the single demo organization the dev user OWNS exists so a FRESH database has an
- * org rail + "All organizations" board to render, and so `003-dev-credentials` has an org to attach the
- * seeded credentials to.
+ * Dev org fixture — the single demo organization the dev user OWNS, so a fresh DB renders an org rail +
+ * workspace. New v3 schema: no slug, `status` enum, three boolean automation defaults (left at their
+ * column defaults here).
  *
- * NON-DESTRUCTIVE + ADDITIVE ONLY. This seed NEVER deletes or resets anything: it does not touch repos,
- * jobs, threads, or messages, and it does not create fake jobs. It only creates a demo org when that org
- * id is ABSENT (on a fresh DB), and ensures the owner membership. On a DB that already has these orgs (the
- * normal case — you connect your real repos + run real jobs under them), it is a pure no-op that leaves
- * every repo/job/conversation exactly as-is.
- *
- * (History: an earlier version live-probed GitHub, created placeholder jobs, and `repos.delete`/reset-wiped
- * each org's rows every run — which destroyed real connected repos + job conversations. Removed entirely.)
+ * NON-DESTRUCTIVE + ADDITIVE ONLY: creates the org only when its id is absent, and ensures the owner
+ * membership. On a DB that already has it (you've connected real repos / run real jobs under it) it is a
+ * pure no-op — it never resets repos, jobs, threads, or memberships.
  */
 export default (async (ds) => {
-  const users = ds.getRepository(UserEntity);
+  const users = ds.getRepository(User);
   const ownerEmail =
     process.env.SEED_OWNER_EMAIL ?? process.env.ADMIN_SEED_EMAIL ?? 'dennislysenko@hotmail.com';
 
   let owner = await users.findOne({ where: { email: ownerEmail } });
   if (!owner) {
-    const [first] = await users.find({ order: { created_at: 'ASC' }, take: 1 });
+    const [first] = await users.find({ order: { createdAt: 'ASC' }, take: 1 });
     owner = first ?? null;
   }
   if (!owner) {
@@ -35,27 +29,19 @@ export default (async (ds) => {
     return;
   }
 
-  const orgs = ds.getRepository(OrganizationEntity);
-  const members = ds.getRepository(OrganizationMemberEntity);
+  const orgs = ds.getRepository(Organization);
+  const members = ds.getRepository(OrganizationMember);
+  const id = DEV_SEED_IDS.orgs.atlasTest;
 
-  const SPEC = [{ id: DEV_SEED_IDS.orgs.atlasTest, name: 'Atlas Test', slug: 'atlas-test' }];
+  if (!(await orgs.findOne({ where: { id } }))) {
+    await orgs.save(orgs.create({ id, name: 'Atlas Test', status: EOrgStatus.ACTIVE }));
+    console.log('  001: created demo org "Atlas Test"');
+  } else {
+    console.log('  001: org "Atlas Test" already exists — left untouched');
+  }
 
-  for (const o of SPEC) {
-    const existing = await orgs.findOne({ where: { id: o.id } });
-    if (!existing) {
-      await orgs.save(orgs.create({ id: o.id, name: o.name, slug: o.slug, status: 'active' }));
-      console.log(`  001: created demo org "${o.name}"`);
-    } else {
-      console.log(
-        `  001: org "${existing.name}" already exists — left untouched (repos/jobs preserved)`,
-      );
-    }
-
-    // Ensure the dev user owns it (idempotent; never removes an existing membership).
-    const mem = await members.findOne({
-      where: { org_id: o.id, user_id: owner.id },
-    });
-    if (!mem)
-      await members.save(members.create({ org_id: o.id, user_id: owner.id, role: 'owner' }));
+  // Ensure the dev user owns it (idempotent; never removes an existing membership).
+  if (!(await members.findOne({ where: { orgId: id, userId: owner.id } }))) {
+    await members.save(members.create({ orgId: id, userId: owner.id, role: EOrgRole.OWNER }));
   }
 }) satisfies Seeder;

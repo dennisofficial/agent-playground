@@ -1,6 +1,7 @@
 import { hash } from '@node-rs/argon2';
 import type { Seeder } from '@workspace/nestjs-core';
-import { UserEntity } from '../src/app_old/persistence/entities';
+import { EUserRole, EUserStatus } from '@workspace/shared';
+import { User } from '../src/app/auth/entities/user.entity';
 import { DEV_SEED_IDS } from './_shared/dev-seed-ids';
 
 /**
@@ -18,7 +19,7 @@ export default (async (ds) => {
     return;
   }
 
-  const users = ds.getRepository(UserEntity);
+  const users = ds.getRepository(User);
   if (await users.findOne({ where: { email } })) {
     console.log(`  000: dev user ${email} already exists, skipping`);
     return;
@@ -29,8 +30,9 @@ export default (async (ds) => {
       id: DEV_SEED_IDS.users.dennis,
       email,
       name: 'Admin',
-      password_hash: await hash(password),
-      role: 'admin',
+      passwordHash: await hash(password),
+      role: EUserRole.ADMIN,
+      status: EUserStatus.ACTIVE,
     }),
   );
   console.log(`  000: seeded dev user ${email}`);

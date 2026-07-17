@@ -11,5 +11,6 @@ export const DEV_SEED_IDS = {
   },
   repos: {
     testRepo: '63ad1635-966a-427f-8e52-9cc8a8ecfc8b',
+    fixtures: 'b1d4f0a2-7c3e-4a19-9f6b-2e8c5a1d4f77',
   },
 } as const;

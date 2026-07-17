@@ -198,8 +198,8 @@ export function useOrgRepos(orgId: string) {
 }
 
 /** A repo's branches — the create-job base-branch picker (hits GitHub via the org token). */
-export function useRepoBranches(orgId: string, repoId: string) {
-  return adaptQuery(useGetRepoBranchesQuery({ orgId, repoId }, { skip: !(orgId && repoId) }));
+export function useRepoBranches(_orgId: string, repoId: string) {
+  return adaptQuery(useGetRepoBranchesQuery({ repoId }, { skip: !repoId }));
 }
 
 /** Jobs Atlas spawned FROM this one — the job workspace's "Created jobs" panel. */

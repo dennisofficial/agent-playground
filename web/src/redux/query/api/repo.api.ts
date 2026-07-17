@@ -33,11 +33,10 @@ export const repoApi = baseApi.injectEndpoints({
         }),
     }),
 
-    getRepoBranches: build.query<RepoBranches, { orgId: string; repoId: string }>({
-      query: ({ orgId, repoId }) => ({
-        url: `/orgs/${orgId}/repos/${repoId}/branches`,
-        method: "GET",
-      }),
+    // Item ops are addressed by repoId alone — the backend scopes them to the caller's orgs
+    // (OrgScope), so no orgId is needed in the path.
+    getRepoBranches: build.query<RepoBranches, { repoId: string }>({
+      query: ({ repoId }) => ({ url: `/repos/${repoId}/branches`, method: "GET" }),
     }),
 
     connectRepo: build.mutation<ConnectedRepo, { orgId: string; body: ConnectRepoDto }>({
@@ -45,26 +44,16 @@ export const repoApi = baseApi.injectEndpoints({
       invalidatesTags: [EBaseApiCacheTags.SESSION],
     }),
 
-    updateRepo: build.mutation<
-      ConnectedRepo,
-      { orgId: string; repoId: string; body: UpdateRepoDto }
-    >({
-      query: ({ orgId, repoId, body }) => ({
-        url: `/orgs/${orgId}/repos/${repoId}`,
-        method: "PATCH",
-        data: body,
-      }),
+    updateRepo: build.mutation<ConnectedRepo, { repoId: string; body: UpdateRepoDto }>({
+      query: ({ repoId, body }) => ({ url: `/repos/${repoId}`, method: "PATCH", data: body }),
     }),
 
-    revalidateRepo: build.mutation<ConnectedRepo, { orgId: string; repoId: string }>({
-      query: ({ orgId, repoId }) => ({
-        url: `/orgs/${orgId}/repos/${repoId}/revalidate`,
-        method: "POST",
-      }),
+    revalidateRepo: build.mutation<ConnectedRepo, { repoId: string }>({
+      query: ({ repoId }) => ({ url: `/repos/${repoId}/revalidate`, method: "POST" }),
     }),
 
-    disconnectRepo: build.mutation<DisconnectRepoResult, { orgId: string; repoId: string }>({
-      query: ({ orgId, repoId }) => ({ url: `/orgs/${orgId}/repos/${repoId}`, method: "DELETE" }),
+    disconnectRepo: build.mutation<DisconnectRepoResult, { repoId: string }>({
+      query: ({ repoId }) => ({ url: `/repos/${repoId}`, method: "DELETE" }),
       invalidatesTags: [EBaseApiCacheTags.SESSION],
     }),
   }),
