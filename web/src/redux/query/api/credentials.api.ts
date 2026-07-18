@@ -1,36 +1,72 @@
-import type {
-  CredentialPresence,
-  SaveCredentialsDto,
-  SaveCredentialsResult,
+import {
+  ECredentialKey,
+  type CredentialPresence,
+  type SaveCredentialsResult,
 } from '@workspace/shared';
 import { baseApi, EBaseApiCacheTags } from './baseApi';
 
-/**
- * The org credentials vault. Key-agnostic wire (`@workspace/shared` speaks only
- * `ECredentialKey`) — the settings UI's domain view/body mapping lives in
- * `web/src/lib/api/orgs.ts`, never here or in the backend.
- *
- * GET is member-gated and returns presence booleans only (secret values are never
- * returned). PUT is owner-gated; a first credential can flip the org
- * `onboarding → active`, so the save also invalidates SESSION.
- */
+/** The settings UI's domain view of credential presence — derived from the agnostic wire. */
+export interface CredentialPresenceView {
+  hasAnthropic: boolean;
+  hasOpenai: boolean;
+  hasGithub: boolean;
+  hasCodex: boolean;
+  /** Anthropic key server-probe verdict — not available until the engine module; mirrors presence for now. */
+  llmValidated: boolean;
+  /** GitHub credential mode; the real value comes from github-app status. Defaults to 'pat'. */
+  githubAuthMode: 'pat' | 'app';
+}
+
+/** The settings UI's domain write body — mapped to key-agnostic `entries[]` before it hits the wire. */
+export interface SaveCredentialsBody {
+  anthropicApiKey?: string;
+  openaiApiKey?: string;
+  githubPat?: string;
+  codexAuthSecret?: string;
+}
+
+function toCredentialPresenceView(present: CredentialPresence['present']): CredentialPresenceView {
+  return {
+    hasAnthropic: Boolean(present[ECredentialKey.ANTHROPIC_API_KEY]),
+    hasOpenai: Boolean(present[ECredentialKey.OPENAI_API_KEY]),
+    hasGithub: Boolean(present[ECredentialKey.GITHUB_PAT]),
+    hasCodex: Boolean(present[ECredentialKey.CODEX_AUTH]),
+    llmValidated: Boolean(present[ECredentialKey.ANTHROPIC_API_KEY]),
+    githubAuthMode: 'pat',
+  };
+}
+
+function toEntries(body: SaveCredentialsBody) {
+  const byKey: [ECredentialKey, string | undefined][] = [
+    [ECredentialKey.ANTHROPIC_API_KEY, body.anthropicApiKey],
+    [ECredentialKey.OPENAI_API_KEY, body.openaiApiKey],
+    [ECredentialKey.GITHUB_PAT, body.githubPat],
+    [ECredentialKey.CODEX_AUTH, body.codexAuthSecret],
+  ];
+  // Drop empty values — the backend ignores them too (a blank field is a no-op, not a delete).
+  return byKey
+    .filter(([, v]) => v != null && v !== '')
+    .map(([key, value]) => ({ key, value: value as string }));
+}
+
 export const credentialsApi = baseApi.injectEndpoints({
   overrideExisting: true,
   endpoints: (build) => ({
-    getCredentials: build.query<CredentialPresence, string>({
+    getCredentials: build.query<CredentialPresenceView, string>({
       query: (orgId) => ({ url: `/orgs/${orgId}/credentials`, method: 'GET' }),
+      transformResponse: (res: CredentialPresence) => toCredentialPresenceView(res.present),
       providesTags: (_result, _error, orgId) => [
         { type: EBaseApiCacheTags.CREDENTIALS, id: orgId },
       ],
     }),
     saveCredentials: build.mutation<
       SaveCredentialsResult,
-      { orgId: string; body: SaveCredentialsDto }
+      { orgId: string; body: SaveCredentialsBody }
     >({
       query: ({ orgId, body }) => ({
         url: `/orgs/${orgId}/credentials`,
         method: 'PUT',
-        data: body,
+        data: { entries: toEntries(body) },
       }),
       invalidatesTags: (_result, _error, { orgId }) => [
         { type: EBaseApiCacheTags.CREDENTIALS, id: orgId },

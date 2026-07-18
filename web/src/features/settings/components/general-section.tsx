@@ -2,7 +2,7 @@
 
 import { inputCls } from '@/components/ui/field';
 import type { OrgSummary } from '@/lib/api/me';
-import { useUpdateOrg } from '@/lib/api/orgs';
+import { useUpdateOrgMutation } from '@/redux/query/api/org.api';
 import { orgInitials, orgSwatch } from '@/utils/org-display';
 import { useState } from 'react';
 import { DeleteOrgDialog } from './delete-org-dialog';
@@ -17,17 +17,17 @@ export function GeneralSection({ org }: { org: OrgSummary }) {
   const [showDelete, setShowDelete] = useState(false);
   const active = org.status === 'active';
   const isOwner = org.role === 'owner';
-  const update = useUpdateOrg(org.id);
+  const [update, updateState] = useUpdateOrgMutation();
   const dirty = name.trim() !== org.name;
 
   function onName(v: string) {
     setName(v);
-    update.reset();
+    updateState.reset();
   }
 
   function save() {
-    if (!isOwner || !dirty || update.isPending) return;
-    update.mutate({ name: name.trim() });
+    if (!isOwner || !dirty || updateState.isLoading) return;
+    update({ orgId: org.id, body: { name: name.trim() } });
   }
 
   return (
@@ -78,19 +78,19 @@ export function GeneralSection({ org }: { org: OrgSummary }) {
             <button
               type="button"
               onClick={save}
-              disabled={!isOwner || !dirty || update.isPending}
+              disabled={!isOwner || !dirty || updateState.isLoading}
               title={isOwner ? undefined : 'Only the organization owner can rename it'}
               className="rounded-md px-4 py-2 text-[12.5px] font-semibold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-45"
               style={{ background: 'var(--accent)' }}
             >
-              {update.isPending ? 'Saving…' : 'Save changes'}
+              {updateState.isLoading ? 'Saving…' : 'Save changes'}
             </button>
-            {update.isSuccess && !dirty ? (
+            {updateState.isSuccess && !dirty ? (
               <span className="text-[11.5px] text-green">✓ Saved</span>
             ) : null}
-            {update.isError ? (
+            {updateState.isError ? (
               <span className="text-[11.5px] text-red">
-                {(update.error as Error)?.message ?? 'Could not save changes.'}
+                {(updateState.error as Error)?.message ?? 'Could not save changes.'}
               </span>
             ) : null}
           </div>

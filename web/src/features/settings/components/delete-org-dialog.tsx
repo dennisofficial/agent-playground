@@ -1,8 +1,8 @@
 'use client';
 
 import { inputCls } from '@/components/ui/field';
-import { useDeleteOrg } from '@/lib/api/orgs';
 import { ROUTES } from '@/lib/routes';
+import { useDeleteOrgMutation } from '@/redux/query/api/org.api';
 import { Trash2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
@@ -22,18 +22,21 @@ export function DeleteOrgDialog({
   onClose: () => void;
 }) {
   const router = useRouter();
-  const del = useDeleteOrg(orgId);
+  const [del, delState] = useDeleteOrgMutation();
   const [text, setText] = useState('');
   const armed = text.trim() === orgName;
 
   function confirmDelete() {
-    if (!armed || del.isPending) return;
-    del.mutate(undefined, {
-      onSuccess: () => {
+    if (!armed || delState.isLoading) return;
+    del(orgId)
+      .unwrap()
+      .then(() => {
         onClose();
         router.push(ROUTES.workspace());
-      },
-    });
+      })
+      .catch(() => {
+        /* surfaced via delState.isError */
+      });
   }
 
   return (
@@ -73,7 +76,7 @@ export function DeleteOrgDialog({
             value={text}
             onChange={(e) => {
               setText(e.target.value);
-              del.reset();
+              delState.reset();
             }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') confirmDelete();
@@ -82,9 +85,9 @@ export function DeleteOrgDialog({
             className={inputCls}
             autoFocus
           />
-          {del.isError ? (
+          {delState.isError ? (
             <p className="mt-2.5 text-[11.5px] text-red">
-              {(del.error as Error)?.message ?? 'Could not delete the organization.'}
+              {(delState.error as Error)?.message ?? 'Could not delete the organization.'}
             </p>
           ) : null}
         </div>
@@ -101,12 +104,12 @@ export function DeleteOrgDialog({
           </button>
           <button
             type="button"
-            disabled={!armed || del.isPending}
+            disabled={!armed || delState.isLoading}
             onClick={confirmDelete}
             className="rounded-md px-4 py-2 text-[12.5px] font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-45"
             style={{ background: 'var(--red)' }}
           >
-            {del.isPending ? 'Deleting…' : 'Delete organization'}
+            {delState.isLoading ? 'Deleting…' : 'Delete organization'}
           </button>
         </div>
       </div>

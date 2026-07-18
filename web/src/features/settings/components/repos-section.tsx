@@ -4,16 +4,16 @@ import { BranchPicker } from '@/components/branch-picker';
 import { Spinner } from '@/components/ui/spinner';
 import type { RepoView } from '@/lib/api/job-api';
 import { useOrgRepos } from '@/lib/api/job-queries';
-import {
-  useConnectRepo,
-  useDisconnectRepo,
-  useOrgCredentials,
-  useReonboardRepo,
-  useRevalidateRepo,
-  useUpdateRepo,
-} from '@/lib/api/orgs';
+import { useReonboardRepo } from '@/lib/api/orgs';
 import { cn } from '@/lib/cn';
 import { threadHref, type SettingsSection } from '@/lib/routes';
+import { useGetCredentialsQuery } from '@/redux/query/api/credentials.api';
+import {
+  useConnectRepoMutation,
+  useDisconnectRepoMutation,
+  useRevalidateRepoMutation,
+  useUpdateRepoMutation,
+} from '@/redux/query/api/repo.api';
 import { AUTO_MERGE_METHODS, type AutoMergeMethod } from '@workspace/shared';
 import {
   AlertCircle,
@@ -55,7 +55,7 @@ export function ReposSection({
   onNavigate: (section: SettingsSection) => void;
 }) {
   const { data: repos = [], isLoading, isError, refetch } = useOrgRepos(orgId);
-  const { data: creds } = useOrgCredentials(orgId);
+  const { data: creds } = useGetCredentialsQuery(orgId, { skip: !orgId });
   const hasGithub = !!creds?.hasGithub;
   const canManage = role === 'owner';
   const isMember = !canManage;
@@ -65,7 +65,7 @@ export function ReposSection({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [disconnectTarget, setDisconnectTarget] = useState<RepoView | null>(null);
 
-  const revalidate = useRevalidateRepo(orgId);
+  const [revalidate, revalidateState] = useRevalidateRepoMutation();
   const reonboard = useReonboardRepo(orgId);
   const router = useRouter();
 
@@ -79,14 +79,15 @@ export function ReposSection({
   const isEmpty = !isLoading && !isError && repos.length === 0;
 
   function onRevalidate(repoId: string) {
-    if (revalidate.isPending) return;
-    revalidate.mutate(repoId, {
-      onError: (e) =>
+    if (revalidateState.isLoading) return;
+    revalidate({ repoId })
+      .unwrap()
+      .catch((e) =>
         setFlash({
           tone: 'red',
           text: (e as Error)?.message || 'Re-validation failed.',
         }),
-    });
+      );
   }
 
   function onReonboard(repo: RepoView) {
@@ -206,7 +207,9 @@ export function ReposSection({
                   <RepoRow
                     repo={r}
                     canManage={canManage}
-                    revalidating={revalidate.isPending && revalidate.variables === r.id}
+                    revalidating={
+                      revalidateState.isLoading && revalidateState.originalArgs?.repoId === r.id
+                    }
                     reonboarding={reonboard.isPending && reonboard.variables === r.id}
                     onRevalidate={() => onRevalidate(r.id)}
                     onReonboard={() => onReonboard(r)}
@@ -459,12 +462,12 @@ function ConnectForm({
   onConnected: (flash: Flash) => void;
   onCancel: () => void;
 }) {
-  const connect = useConnectRepo(orgId);
+  const [connect, connectState] = useConnectRepoMutation();
   const [url, setUrl] = useState('');
   const [name, setName] = useState('');
   const [branch, setBranch] = useState('');
   const [error, setError] = useState('');
-  const validating = connect.isPending;
+  const validating = connectState.isLoading;
 
   async function submit() {
     if (validating) return;
@@ -479,11 +482,14 @@ function ConnectForm({
     }
     setError('');
     try {
-      const repo = await connect.mutateAsync({
-        repoUrl: raw,
-        ...(name.trim() ? { displayName: name.trim() } : {}),
-        ...(branch.trim() ? { baseBranch: branch.trim() } : {}),
-      });
+      const repo = await connect({
+        orgId,
+        body: {
+          repoUrl: raw,
+          ...(name.trim() ? { displayName: name.trim() } : {}),
+          ...(branch.trim() ? { baseBranch: branch.trim() } : {}),
+        },
+      }).unwrap();
       onConnected({
         tone: repo.accessOk ? 'green' : 'red',
         text: repo.accessOk
@@ -795,7 +801,7 @@ function RepoEditRow({
   onClose: () => void;
   onError: (text: string) => void;
 }) {
-  const update = useUpdateRepo(orgId);
+  const [update, updateState] = useUpdateRepoMutation();
   const [name, setName] = useState(repo.name);
   const [branch, setBranch] = useState(repo.defaultBranch);
   const [branchPrefix, setBranchPrefix] = useState(repo.branchPrefix ?? '');
@@ -803,9 +809,9 @@ function RepoEditRow({
   const [deleteBranch, setDeleteBranch] = useState(repo.defaultAutoMergeDeleteBranch);
 
   async function save() {
-    if (update.isPending) return;
+    if (updateState.isLoading) return;
     try {
-      await update.mutateAsync({
+      await update({
         repoId: repo.id,
         body: {
           name: name.trim() || repo.name,
@@ -815,7 +821,7 @@ function RepoEditRow({
           defaultAutoMergeMethod: mergeMethod,
           defaultAutoMergeDeleteBranch: deleteBranch,
         },
-      });
+      }).unwrap();
       onClose();
     } catch (e) {
       onError((e as Error)?.message || 'Could not save changes.');
@@ -921,12 +927,12 @@ function RepoEditRow({
         <button
           type="button"
           onClick={save}
-          disabled={update.isPending}
+          disabled={updateState.isLoading}
           className="flex items-center gap-1.5 rounded-md px-3.5 py-2 text-[12px] font-semibold text-white transition hover:brightness-105 disabled:opacity-75"
           style={{ background: 'var(--accent)' }}
         >
-          {update.isPending ? <Spinner className="h-[11px] w-[11px]" /> : null}
-          {update.isPending ? 'Saving…' : 'Save'}
+          {updateState.isLoading ? <Spinner className="h-[11px] w-[11px]" /> : null}
+          {updateState.isLoading ? 'Saving…' : 'Save'}
         </button>
         <button
           type="button"
@@ -952,7 +958,7 @@ function DisconnectDialog({
   repo: RepoView;
   onClose: () => void;
 }) {
-  const disconnect = useDisconnectRepo(orgId);
+  const [disconnect, disconnectState] = useDisconnectRepoMutation();
   const [error, setError] = useState('');
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
@@ -970,9 +976,9 @@ function DisconnectDialog({
   }, []);
 
   async function confirm() {
-    if (disconnect.isPending) return;
+    if (disconnectState.isLoading) return;
     try {
-      await disconnect.mutateAsync(repo.id);
+      await disconnect({ repoId: repo.id }).unwrap();
       onClose();
     } catch (e) {
       setError((e as Error)?.message || 'Could not disconnect the repository.');
@@ -1052,11 +1058,11 @@ function DisconnectDialog({
           <button
             type="button"
             onClick={confirm}
-            disabled={disconnect.isPending}
+            disabled={disconnectState.isLoading}
             className="flex items-center gap-1.5 rounded-md px-4 py-2.5 text-[12.5px] font-semibold text-white transition hover:brightness-105 disabled:opacity-75"
             style={{ background: 'var(--red)' }}
           >
-            {disconnect.isPending ? <Spinner className="h-[11px] w-[11px]" /> : null}
+            {disconnectState.isLoading ? <Spinner className="h-[11px] w-[11px]" /> : null}
             {hasThreads ? `Delete ${threadLabel} & disconnect` : 'Disconnect'}
           </button>
         </div>

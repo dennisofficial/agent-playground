@@ -2,7 +2,7 @@
 
 import { SwitchRow } from '@/features/job-workspace/auto-approve-popover';
 import type { OrgSummary } from '@/lib/api/me';
-import { useUpdateOrg } from '@/lib/api/orgs';
+import { useUpdateOrgMutation } from '@/redux/query/api/org.api';
 import { useState } from 'react';
 
 /**
@@ -12,7 +12,7 @@ import { useState } from 'react';
  */
 export function AutomationSection({ org }: { org: OrgSummary }) {
   const isOwner = org.role === 'owner';
-  const update = useUpdateOrg(org.id);
+  const [update, updateState] = useUpdateOrgMutation();
   const [autoApprove, setAutoApprove] = useState(org.defaultAutoApprove);
   const [autoShip, setAutoShip] = useState(org.defaultAutoShip);
   const [autoMerge, setAutoMerge] = useState(org.defaultAutoMerge);
@@ -24,15 +24,18 @@ export function AutomationSection({ org }: { org: OrgSummary }) {
 
   function toggle(setter: (v: boolean) => void, next: boolean) {
     setter(next);
-    update.reset();
+    updateState.reset();
   }
 
   function save() {
-    if (!isOwner || !dirty || update.isPending) return;
-    update.mutate({
-      defaultAutoApprove: autoApprove,
-      defaultAutoShip: autoShip,
-      defaultAutoMerge: autoMerge,
+    if (!isOwner || !dirty || updateState.isLoading) return;
+    update({
+      orgId: org.id,
+      body: {
+        defaultAutoApprove: autoApprove,
+        defaultAutoShip: autoShip,
+        defaultAutoMerge: autoMerge,
+      },
     });
   }
 
@@ -80,19 +83,19 @@ export function AutomationSection({ org }: { org: OrgSummary }) {
         <button
           type="button"
           onClick={save}
-          disabled={!isOwner || !dirty || update.isPending}
+          disabled={!isOwner || !dirty || updateState.isLoading}
           title={isOwner ? undefined : 'Only the organization owner can change these settings'}
           className="rounded-md px-4 py-2 text-[12.5px] font-semibold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-45"
           style={{ background: 'var(--accent)' }}
         >
-          {update.isPending ? 'Saving…' : 'Save changes'}
+          {updateState.isLoading ? 'Saving…' : 'Save changes'}
         </button>
-        {update.isSuccess && !dirty ? (
+        {updateState.isSuccess && !dirty ? (
           <span className="text-[11.5px] text-green">✓ Saved</span>
         ) : null}
-        {update.isError ? (
+        {updateState.isError ? (
           <span className="text-[11.5px] text-red">
-            {(update.error as Error)?.message ?? 'Could not save changes.'}
+            {(updateState.error as Error)?.message ?? 'Could not save changes.'}
           </span>
         ) : null}
       </div>

@@ -1,7 +1,8 @@
 'use client';
 
-import { useOrgMembers, type Member } from '@/lib/api/orgs';
+import { useGetOrgMembersQuery } from '@/redux/query/api/org.api';
 import { orgColor, orgInitials, roleLabel } from '@/utils/org-display';
+import type { MemberView } from '@workspace/shared';
 import { UserPlus } from 'lucide-react';
 
 /**
@@ -10,7 +11,13 @@ import { UserPlus } from 'lucide-react';
  * matching the design.
  */
 export function MembersSection({ orgId, orgName }: { orgId: string; orgName: string }) {
-  const { data: members, isLoading, isError } = useOrgMembers(orgId);
+  const {
+    data: members,
+    isLoading,
+    isError,
+  } = useGetOrgMembersQuery(orgId, {
+    skip: !orgId,
+  });
 
   return (
     <>
@@ -62,7 +69,7 @@ export function MembersSection({ orgId, orgName }: { orgId: string; orgName: str
   );
 }
 
-function MemberRow({ member }: { member: Member }) {
+function MemberRow({ member }: { member: MemberView }) {
   const display = member.name?.trim() || member.email.split('@')[0] || member.email;
   const isOwner = member.role === 'owner';
   return (

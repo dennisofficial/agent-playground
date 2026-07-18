@@ -1,61 +1,13 @@
 'use client';
 
 import { env } from '@/lib/env';
-import {
-  useGetCredentialsQuery,
-  useSaveCredentialsMutation,
-} from '@/redux/query/api/credentials.api';
-import {
-  useCreateOrgMutation,
-  useDeleteOrgMutation,
-  useGetOrgMembersQuery,
-  useUpdateOrgMutation,
-} from '@/redux/query/api/org.api';
-import {
-  useConnectRepoMutation,
-  useDisconnectRepoMutation,
-  useRevalidateRepoMutation,
-  useUpdateRepoMutation,
-} from '@/redux/query/api/repo.api';
-import {
-  ECredentialKey,
-  type AutoMergeMethod,
-  type CredentialPresence,
-  type SaveCredentialsResult,
-  type UpdateOrgDto,
-} from '@workspace/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { adaptMutation, adaptQuery, stubMutation, type MutationResultLike } from './_stub';
+import { stubMutation, type MutationResultLike } from './_stub';
 import { useMutation, useQuery, useQueryClient } from './_tanstack-shim';
-import type { OrgSummary } from './me';
 import { qk } from './query-keys';
 import { fetchWithRefresh } from './refresh';
 import type { WireOrgUsage } from './types';
 import { readUsageCache, removeUsageCache, usePersistUsage } from './usage-cache';
-
-export type { SaveCredentialsResult };
-
-// The vault wire (@workspace/shared) is key-agnostic — it only speaks ECredentialKey. The settings UI
-// works in domain terms, so we keep a frontend-local domain VIEW + body here and adapt to/from the
-// agnostic wire in the hooks below. Domain naming (hasGithub, anthropicApiKey…) lives here, never in
-// the backend.
-export interface CredentialPresenceView {
-  hasAnthropic: boolean;
-  hasOpenai: boolean;
-  hasGithub: boolean;
-  hasCodex: boolean;
-  /** Anthropic key server-probe verdict — not available until the engine module; mirrors presence for now. */
-  llmValidated: boolean;
-  /** GitHub credential mode; the real value comes from github-app status. Defaults to 'pat'. */
-  githubAuthMode: 'pat' | 'app';
-}
-
-export interface SaveCredentialsBody {
-  anthropicApiKey?: string;
-  openaiApiKey?: string;
-  githubPat?: string;
-  codexAuthSecret?: string;
-}
 
 /**
  * Org-scoped reads + the credentials write for the settings page. All hit the Atlas app directly with the
@@ -92,40 +44,9 @@ async function webJson<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
-// ── Members ──────────────────────────────────────────────────────────────────────────────────────
-export interface Member {
-  userId: string;
-  email: string;
-  name: string | null;
-  role: string;
-}
-
-// WIRED (RTK): GET /orgs/:orgId/members
-export function useOrgMembers(orgId: string) {
-  return adaptQuery(useGetOrgMembersQuery(orgId, { skip: !orgId }));
-}
-
-// ── Credentials (presence only — never the secret values; agnostic wire in @workspace/shared) ───────
-// The backend returns key-agnostic presence; we derive the settings UI's domain view from it here.
-function toCredentialPresenceView(present: CredentialPresence['present']): CredentialPresenceView {
-  return {
-    hasAnthropic: Boolean(present[ECredentialKey.ANTHROPIC_API_KEY]),
-    hasOpenai: Boolean(present[ECredentialKey.OPENAI_API_KEY]),
-    hasGithub: Boolean(present[ECredentialKey.GITHUB_PAT]),
-    hasCodex: Boolean(present[ECredentialKey.CODEX_AUTH]),
-    llmValidated: Boolean(present[ECredentialKey.ANTHROPIC_API_KEY]),
-    githubAuthMode: 'pat',
-  };
-}
-
-// WIRED (RTK): GET /orgs/:orgId/credentials — presence booleans, mapped to the domain view.
-export function useOrgCredentials(orgId: string) {
-  const q = useGetCredentialsQuery(orgId, { skip: !orgId });
-  return adaptQuery({
-    ...q,
-    data: q.data ? toCredentialPresenceView(q.data.present) : undefined,
-  });
-}
+// Org members + credentials vault are now consumed RTK-native straight from the slices
+// (`@/redux/query/api/org.api` → useGetOrgMembersQuery, `@/redux/query/api/credentials.api` →
+// useGetCredentialsQuery / useSaveCredentialsMutation), so no wrappers survive here.
 
 // ── GitHub App (connect the platform Atlas App as host/background auth and optional sandbox auth) ─────
 // One platform-level Atlas GitHub App; an org INSTALLS it and Atlas stores a non-secret installation id
@@ -414,33 +335,6 @@ export function useCredentialUsage(orgId: string, credentialId: string, enabled 
   });
   usePersistUsage(cacheKey, query.data, query.dataUpdatedAt);
   return query;
-}
-
-/**
- * Owner-only credential write. WIRED (RTK): PUT /orgs/:orgId/credentials. Adapts the domain
- * `SaveCredentialsBody` into the key-agnostic wire `entries[]` (dropping empty values, which the
- * backend also ignores). The mutation invalidates the CREDENTIALS tag (presence pills refresh) and
- * SESSION (a first credential can flip the org `onboarding` → `active`) via `saveCredentials`'s tags.
- */
-export function useSaveCredentials(
-  orgId: string,
-): MutationResultLike<SaveCredentialsResult, SaveCredentialsBody> {
-  const [trigger, state] = useSaveCredentialsMutation();
-  return adaptMutation<SaveCredentialsResult, SaveCredentialsBody>([
-    (body: SaveCredentialsBody) => {
-      const byKey: [ECredentialKey, string | undefined][] = [
-        [ECredentialKey.ANTHROPIC_API_KEY, body.anthropicApiKey],
-        [ECredentialKey.OPENAI_API_KEY, body.openaiApiKey],
-        [ECredentialKey.GITHUB_PAT, body.githubPat],
-        [ECredentialKey.CODEX_AUTH, body.codexAuthSecret],
-      ];
-      const entries = byKey
-        .filter(([, v]) => v != null && v !== '')
-        .map(([key, value]) => ({ key, value: value as string }));
-      return trigger({ orgId, body: { entries } });
-    },
-    state,
-  ]);
 }
 
 // ── Workspace profile (Atlas-managed per-repo provisioning: mounts, setup script, preview recipe,
@@ -802,84 +696,11 @@ export function useMcpOAuthConnect(orgId: string) {
   return { connect, busy, result, reset: () => setResult(null) };
 }
 
-// ── Org CRUD (create / rename / delete) ──────────────────────────────────────────────────────────
-// The org rail + settings read orgs off the SESSION (`GET /auth/session`), so every write invalidates
-// `qk.session()`. The cross-org inbox (`/web/threads`, `useAllJobs`) embeds `org.name` per row and
-// feeds the sidebar / workspace / command palette / rail badges, so rename + delete also invalidate it.
-
-/** Create an org — the caller becomes its owner; it starts in `onboarding`.
- *  WIRED (RTK): POST /orgs. Vars stay `string` (name) for existing callers; the mutation
- *  invalidates SESSION so `useCurrentUser`'s org list refetches. */
-export function useCreateOrg(): MutationResultLike<OrgSummary, string> {
-  const [trigger, state] = useCreateOrgMutation();
-  return adaptMutation([(name: string) => trigger({ name }), state]);
-}
-
-/** Owner-only rename / automation-defaults update. WIRED (RTK): PATCH /orgs/:orgId.
- *  Takes the shared `UpdateOrgDto` (name + the three auto-* booleans) directly. */
-export function useUpdateOrg(orgId: string): MutationResultLike<OrgSummary, UpdateOrgDto> {
-  const [trigger, state] = useUpdateOrgMutation();
-  return adaptMutation([(body: UpdateOrgDto) => trigger({ orgId, body }), state]);
-}
-
-/** Owner-only delete — tears down the org's repos, threads, and live agent sessions. Irreversible.
- *  WIRED (RTK): DELETE /orgs/:orgId. */
-export function useDeleteOrg(orgId: string): MutationResultLike<{ ok: boolean }, void> {
-  const [trigger, state] = useDeleteOrgMutation();
-  return adaptMutation([() => trigger(orgId), state]) as unknown as MutationResultLike<
-    { ok: boolean },
-    void
-  >;
-}
-
-// ── Repos (the settings Repos tab — connect / re-validate / edit / disconnect) ─────────────────────
-// The list itself (`GET /web/orgs/:orgId/repos`) is read via `useOrgRepos` (`./job-queries`), which
-// also feeds the create-job picker; it returns the enriched `RepoView` (with `threadCount` +
-// `accessCheckedAt`). These mutations all invalidate `qk.orgRepos(orgId)` so that enriched list refetches
-// — their own responses (`ConnectedRepo`) deliberately do NOT carry those derived fields. Connect /
-// disconnect / re-validate can also flip the org `onboarding`↔`active`, so they invalidate `qk.session()`.
-
-/** The repo as connect / re-validate / update return it — note: no `threadCount` / `accessCheckedAt`. */
-export interface ConnectedRepo {
-  id: string;
-  slug: string;
-  name: string;
-  gitUrl: string;
-  defaultBranch: string;
-  /** Per-repo feature-branch prefix override; null uses the built-in default. */
-  branchPrefix: string | null;
-  /** Repo-level default GitHub merge method used by auto-merge and the manual Merge PR button. */
-  defaultAutoMergeMethod: AutoMergeMethod;
-  /** Repo-level default: delete the head branch after a successful merge. */
-  defaultAutoMergeDeleteBranch: boolean;
-  accessOk: boolean;
-  /** Present on a failed access probe (connect / re-validate); the real GitHub reason. */
-  reason?: string;
-}
-
-/** Body for `POST /web/orgs/:orgId/repos` — connect a GitHub repo (owner only). */
-export interface ConnectRepoBody {
-  repoUrl: string;
-  displayName?: string;
-  baseBranch?: string;
-}
-
-/**
- * Connect a GitHub repo to the org. The repo list (`useOrgRepos`) is a realtime feed, so the new repo
- * appears via a WAL `add` delta — this mutation only invalidates `SESSION` (connect can flip the org
- * status). GitHub access probing is deferred to the GitHub module; until it lands the repo saves as
- * `accessOk:false`.
- */
-export function useConnectRepo(orgId: string): MutationResultLike<ConnectedRepo, ConnectRepoBody> {
-  const [trigger, state] = useConnectRepoMutation();
-  return adaptMutation<ConnectedRepo, ConnectRepoBody>([(body) => trigger({ orgId, body }), state]);
-}
-
-/** Re-probe a repo's GitHub access with the org's current token (owner only). */
-export function useRevalidateRepo(_orgId: string): MutationResultLike<ConnectedRepo, string> {
-  const [trigger, state] = useRevalidateRepoMutation();
-  return adaptMutation<ConnectedRepo, string>([(repoId) => trigger({ repoId }), state]);
-}
+// ── Org CRUD + repo mutations — now consumed RTK-native straight from the slices ────────────────────
+// `@/redux/query/api/org.api` (useCreateOrg/useUpdateOrg/useDeleteOrgMutation) and
+// `@/redux/query/api/repo.api` (useConnect/useRevalidate/useUpdate/useDisconnectRepoMutation) own these.
+// The repo request/response shapes live in `@workspace/shared` (ConnectRepoDto / UpdateRepoDto /
+// ConnectedRepo / DisconnectRepoResult). Only the re-onboard stub remains here (no threads slice yet).
 
 /**
  * (Re-)run the Atlas onboarding thread for a repo. Deferred to the threads slice — onboarding spawns a
@@ -887,44 +708,6 @@ export function useRevalidateRepo(_orgId: string): MutationResultLike<ConnectedR
  */
 export function useReonboardRepo(_orgId: string): MutationResultLike<{ jobId: string }, string> {
   return stubMutation<{ jobId: string }, string>('re-onboard repo');
-}
-
-/** Body for `PATCH /web/orgs/:orgId/repos/:repoId` — metadata only (no GitHub call). */
-export interface UpdateRepoBody {
-  name?: string;
-  defaultBranch?: string;
-  /** Per-repo feature-branch prefix; empty string clears it back to the neutral default. */
-  branchPrefix?: string;
-  /** Repo-level default GitHub merge method for auto-merge / manual Merge PR. */
-  defaultAutoMergeMethod?: AutoMergeMethod;
-  /** Repo-level default: delete the head branch after a successful merge. */
-  defaultAutoMergeDeleteBranch?: boolean;
-}
-
-/** Update a repo's display name / base branch (owner only). Realtime reflects the change as a delta. */
-export function useUpdateRepo(
-  _orgId: string,
-): MutationResultLike<ConnectedRepo, { repoId: string; body: UpdateRepoBody }> {
-  const [trigger, state] = useUpdateRepoMutation();
-  return adaptMutation<ConnectedRepo, { repoId: string; body: UpdateRepoBody }>([
-    ({ repoId, body }) => trigger({ repoId, body }),
-    state,
-  ]);
-}
-
-/**
- * Disconnect a repo (owner only). CASCADE-deletes the repo's threads server-side, returning how many
- * were torn down — the UI warns first. The repo list is realtime (its removal arrives as a WAL `remove`
- * delta); this only invalidates `SESSION` (disconnect can flip the org `active`↔`onboarding`).
- */
-export function useDisconnectRepo(
-  _orgId: string,
-): MutationResultLike<{ ok: boolean; threadsDeleted: number }, string> {
-  const [trigger, state] = useDisconnectRepoMutation();
-  return adaptMutation<{ ok: boolean; threadsDeleted: number }, string>([
-    (repoId) => trigger({ repoId }),
-    state,
-  ]);
 }
 
 // ── Convention profiles (reusable house-style bundles, opt-in per repo) ─────────────────────────────

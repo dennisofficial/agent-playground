@@ -1,8 +1,8 @@
 'use client';
 
 import { inputCls } from '@/components/ui/field';
-import { useCreateOrg } from '@/lib/api/orgs';
 import { ROUTES } from '@/lib/routes';
+import { useCreateOrgMutation } from '@/redux/query/api/org.api';
 import { Building2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
@@ -14,19 +14,22 @@ import { useState } from 'react';
  */
 export function CreateOrgDialog({ onClose }: { onClose: () => void }) {
   const router = useRouter();
-  const create = useCreateOrg();
+  const [create, createState] = useCreateOrgMutation();
   const [name, setName] = useState('');
   const trimmed = name.trim();
   const valid = trimmed.length >= 2;
 
   function submit() {
-    if (!valid || create.isPending) return;
-    create.mutate(trimmed, {
-      onSuccess: (org) => {
+    if (!valid || createState.isLoading) return;
+    create({ name: trimmed })
+      .unwrap()
+      .then((org) => {
         onClose();
         router.push(ROUTES.orgSettings(org.id));
-      },
-    });
+      })
+      .catch(() => {
+        /* surfaced via createState.isError */
+      });
   }
 
   return (
@@ -70,9 +73,9 @@ export function CreateOrgDialog({ onClose }: { onClose: () => void }) {
             className={inputCls}
             autoFocus
           />
-          {create.isError ? (
+          {createState.isError ? (
             <p className="mt-2.5 text-[11.5px] text-red">
-              {(create.error as Error)?.message ?? 'Could not create the organization.'}
+              {(createState.error as Error)?.message ?? 'Could not create the organization.'}
             </p>
           ) : null}
         </div>
@@ -89,12 +92,12 @@ export function CreateOrgDialog({ onClose }: { onClose: () => void }) {
           </button>
           <button
             type="button"
-            disabled={!valid || create.isPending}
+            disabled={!valid || createState.isLoading}
             onClick={submit}
             className="rounded-md px-4 py-2 text-[12.5px] font-semibold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-45"
             style={{ background: 'var(--accent)' }}
           >
-            {create.isPending ? 'Creating…' : 'Create organization'}
+            {createState.isLoading ? 'Creating…' : 'Create organization'}
           </button>
         </div>
       </div>
