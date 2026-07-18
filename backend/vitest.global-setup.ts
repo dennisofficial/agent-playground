@@ -94,7 +94,9 @@ async function provisionMcpRoles(conn: {
     await client.query(`GRANT CONNECT ON DATABASE "${conn.database}" TO mcp_reader`);
     await client.query(`GRANT USAGE ON SCHEMA public TO mcp_reader`);
     await client.query(`GRANT SELECT ON ALL TABLES IN SCHEMA public TO mcp_reader`);
-    await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO mcp_reader`);
+    await client.query(
+      `ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO mcp_reader`,
+    );
     await client.query(`ALTER ROLE mcp_reader SET statement_timeout = '10s'`);
 
     // mcp_writer — DML-only (mirrors infra/mcp-writer-role.sql): no DDL, and REVOKEd on the audit ledger.
@@ -106,17 +108,23 @@ async function provisionMcpRoles(conn: {
     await client.query(`ALTER ROLE mcp_writer WITH LOGIN PASSWORD 'test'`);
     await client.query(`GRANT CONNECT ON DATABASE "${conn.database}" TO mcp_writer`);
     await client.query(`GRANT USAGE ON SCHEMA public TO mcp_writer`);
-    await client.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO mcp_writer`);
+    await client.query(
+      `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO mcp_writer`,
+    );
     await client.query(
       `ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO mcp_writer`,
     );
     await client.query(`GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO mcp_writer`);
-    await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE ON SEQUENCES TO mcp_writer`);
+    await client.query(
+      `ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE ON SEQUENCES TO mcp_writer`,
+    );
     await client.query(
       `REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON prod_maintenance_write FROM mcp_writer`,
     );
     await client.query(`ALTER ROLE mcp_writer SET statement_timeout = '15s'`);
-    console.log('[global-setup] provisioned mcp_reader (SELECT-only) + mcp_writer (DML-only) roles');
+    console.log(
+      '[global-setup] provisioned mcp_reader (SELECT-only) + mcp_writer (DML-only) roles',
+    );
   } finally {
     await client.end();
   }

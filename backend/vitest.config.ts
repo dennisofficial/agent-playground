@@ -97,7 +97,12 @@ export default defineConfig((env) => {
         globals: true,
         environment: 'node',
         include: ['src/**/*.spec.ts', 'cli/**/*.spec.ts'],
-        exclude: ['**/*.int.test.ts', '**/*.e2e-spec.ts', '**/*.ai.test.ts', ...configDefaults.exclude],
+        exclude: [
+          '**/*.int.test.ts',
+          '**/*.e2e-spec.ts',
+          '**/*.ai.test.ts',
+          ...configDefaults.exclude,
+        ],
         testTimeout: 30_000,
       },
     };
@@ -120,7 +125,12 @@ export default defineConfig((env) => {
             environment: 'node',
             setupFiles,
             include: ['src/**/*.spec.ts', 'cli/**/*.spec.ts'],
-            exclude: ['**/*.int.test.ts', '**/*.e2e-spec.ts', '**/*.ai.test.ts', ...configDefaults.exclude],
+            exclude: [
+              '**/*.int.test.ts',
+              '**/*.e2e-spec.ts',
+              '**/*.ai.test.ts',
+              ...configDefaults.exclude,
+            ],
             testTimeout: 30_000,
           },
         },
