@@ -29,13 +29,6 @@ function hardAuthFailure(err: unknown): boolean {
   return status === 400 || status === 401 || status === 403;
 }
 
-/**
- * Proactive OAuth refresh for personal accounts. `ensureFresh` refreshes only when the access token is
- * within `skewMs` of expiry, all under a pessimistic row lock + a re-check: concurrent callers (a real
- * turn + the keepalive sweep, even across instances) contend on the same row, and whoever loses the race
- * sees the freshly-written expiry and returns without hitting the token endpoint — so a rotating refresh
- * token is never spent twice.
- */
 @Injectable()
 export class AgentCredentialRefreshService {
   private readonly logger = new Logger(AgentCredentialRefreshService.name);
@@ -114,7 +107,7 @@ export class AgentCredentialRefreshService {
       tokens?: Partial<CodexTokens & { refresh_token: string }>;
     };
     const tokens = auth.tokens;
-    const refreshToken = (tokens as { refresh_token?: string } | undefined)?.refresh_token;
+    const refreshToken = tokens?.refresh_token;
     if (!refreshToken || !tokens) throw new MissingRefreshTokenError();
     const next = await codexRefresh(refreshToken);
     const merged: CodexTokens = {
