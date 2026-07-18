@@ -4,8 +4,7 @@
     "declaration": false,
     "outDir": "../../dist"
   },
-  "include": ["**/*",
-    "./main.ts", "../_core/**/*", "../_lib/**/*", "../_shared/**/*"],
+  "include": ["**/*", "./main.ts", "../_core/**/*", "../_lib/**/*", "../_shared/**/*"],
   "exclude": [
     "../../node_modules",
     "dist",

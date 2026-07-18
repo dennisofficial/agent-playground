@@ -10,6 +10,9 @@
 import type {
   AutoApproveMode,
   OrgUsage,
+  StepStatus,
+  ThreadCondition,
+  ThreadStatus,
   JobActivity as WireJobActivity,
   JobHalt as WireJobHalt,
   JobStatus as WireJobStatus,
@@ -38,30 +41,12 @@ export type { WireJobActivity };
 
 export type WireJobKind = 'feature' | 'bugfix' | 'onboarding' | 'event' | 'review';
 
-/** The lane (Thread) PURE LINEAR STEP — one build lane within a Job. Pause/failure/skip are NOT steps;
- *  they live on the orthogonal {@link ThreadCondition} overlay. Mirrors backend `ThreadStatus`. */
-export type ThreadStatus =
-  | 'pending'
-  | 'planning'
-  | 'reviewing'
-  | 'executing'
-  | 'auto_fixing'
-  | 'done';
-
 /**
- * The orthogonal condition overlay on a lane (a lightweight denormalized tag, like job-level `halt.kind`),
- * independent of the linear {@link ThreadStatus} step. Detail (stderr, block reason, verification) stays in
- * the backend `terminal_record`/`halt_outcome`. Mirrors backend `ThreadCondition`.
+ * The lane (Thread) linear step, its orthogonal condition overlay, and the per-step leaf status — all
+ * single-sourced in `@workspace/shared` so they can't drift from the backend `threads` table + read
+ * views. Re-exported here so existing web imports keep working.
  */
-export type ThreadCondition =
-  | 'none'
-  | 'paused' // a mid-build pause (request_operator_input / thread-level approval) — the step is preserved
-  | 'incomplete' // halted without asserting completion (ADR 0004)
-  | 'failed' // crashed / errored out
-  | 'skipped'; // a review child that had nothing to do (unknown lens / no diff) — terminal, not a failure
-
-/** Per-step status (the execute folder's leaves). Mirrors backend `StepStatus` in `domain/thread.ts`. */
-export type StepStatus = 'pending' | 'building' | 'reviewing' | 'done';
+export type { StepStatus, ThreadCondition, ThreadStatus };
 
 // ── Approval / verdict cards ───────────────────────────────────────────────────────────────────
 export const APPROVE_ACTION_ID = 'atlas_approval:approve';

@@ -11,8 +11,7 @@ import { sseOpener } from './sse-opener';
 
 // Resolve against the base URL via `new URL` so a trailing slash on NEXT_PUBLIC_BACKEND_URL doesn't
 // produce `//orgs/…` (the SSE URL is used raw, not through axios's baseURL join, and `//orgs` 404s).
-const realtimeUrl = (path: string): string =>
-  new URL(path, env.NEXT_PUBLIC_BACKEND_URL).toString();
+const realtimeUrl = (path: string): string => new URL(path, env.NEXT_PUBLIC_BACKEND_URL).toString();
 const base = (orgId: string): string => `/orgs/${orgId}/agent-credentials`;
 
 /**

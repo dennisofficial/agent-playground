@@ -117,8 +117,10 @@ export function useWorkspaceProfile(_orgId: string, _repoId: string) {
 /** Owner-only: idempotent upsert-by-path of a mount. Server returns `restartsSandbox: true` — the mount SET changed, so in-flight sandboxes recreate on next attach. */
 export function useSaveMount(_orgId: string, _repoId: string) {
   return useMutation({
-    mutationFn: (body: { path: string; mode: string }): Promise<{ ok: true; restartsSandbox: true }> =>
-      notImplemented('useSaveMount'),
+    mutationFn: (body: {
+      path: string;
+      mode: string;
+    }): Promise<{ ok: true; restartsSandbox: true }> => notImplemented('useSaveMount'),
   });
 }
 
@@ -298,8 +300,13 @@ export function useValidateMcpServer(_orgId: string) {
  */
 export function useStartMcpOAuth(_orgId: string) {
   return useMutation({
-    mutationFn: ({ scope, name }: { scope: string; name: string }): Promise<{ authorizeUrl: string }> =>
-      notImplemented('useStartMcpOAuth'),
+    mutationFn: ({
+      scope,
+      name,
+    }: {
+      scope: string;
+      name: string;
+    }): Promise<{ authorizeUrl: string }> => notImplemented('useStartMcpOAuth'),
   });
 }
 

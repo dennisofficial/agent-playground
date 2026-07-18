@@ -38,7 +38,6 @@ import {
   ExternalLink,
   Github,
   KeyRound,
-  Lock,
   MessageSquare,
   Sparkles,
   Terminal,
@@ -556,9 +555,10 @@ function AgentAccountsManager({ orgId, isOwner }: { orgId: string; isOwner: bool
       <ClaudeBlock accounts={claude} {...shared} />
       <CodexBlock accounts={codex} {...shared} />
       <p className="border-t border-border pt-3 text-[11px] leading-relaxed text-faint">
-        <strong className="font-semibold text-dim">Personal logins</strong> are refreshed automatically
-        on the host (including a background keep-alive), so they stay connected without an open tab. One
-        that can’t be refreshed shows <strong className="font-semibold text-dim">Needs re-auth</strong>.{' '}
+        <strong className="font-semibold text-dim">Personal logins</strong> are refreshed
+        automatically on the host (including a background keep-alive), so they stay connected
+        without an open tab. One that can’t be refreshed shows{' '}
+        <strong className="font-semibold text-dim">Needs re-auth</strong>.{' '}
         <strong className="font-semibold text-dim">Setup-tokens</strong> don’t expire and are never
         refreshed — rotate them manually.
       </p>
@@ -991,8 +991,16 @@ function AddClaudePersonalCard({
   login: ClaudeLogin;
   cardRef: React.RefObject<HTMLDivElement | null>;
 }) {
-  const { openLogin, submitCode, pending, code, setCode, error, isOpeningLogin, isAddingCredential } =
-    login;
+  const {
+    openLogin,
+    submitCode,
+    pending,
+    code,
+    setCode,
+    error,
+    isOpeningLogin,
+    isAddingCredential,
+  } = login;
 
   return (
     <div
@@ -1231,9 +1239,8 @@ function AddCodexDeviceCard({ orgId }: { orgId: string }) {
       {device ? (
         <div className="mt-3">
           <p className="text-[12px] text-dim">
-            Open{' '}
-            <HelpLink href={device.verificationUri}>{device.verificationUri}</HelpLink> and enter this
-            code:
+            Open <HelpLink href={device.verificationUri}>{device.verificationUri}</HelpLink> and
+            enter this code:
           </p>
           <div className="mt-2 inline-block rounded-md border border-border-2 bg-surface-2 px-4 py-2 font-mono text-[18px] font-semibold tracking-[0.12em] text-text">
             {device.userCode}
@@ -1247,9 +1254,9 @@ function AddCodexDeviceCard({ orgId }: { orgId: string }) {
         <div className="mt-3">
           <HelpBlock>
             <p>
-              Signs in with your <strong>ChatGPT Plus/Pro</strong> subscription via a one-time device
-              code — no CLI needed. First enable{' '}
-              <strong>“Sign in with device code”</strong> in your ChatGPT security settings.
+              Signs in with your <strong>ChatGPT Plus/Pro</strong> subscription via a one-time
+              device code — no CLI needed. First enable <strong>“Sign in with device code”</strong>{' '}
+              in your ChatGPT security settings.
             </p>
           </HelpBlock>
           <button
@@ -1303,9 +1310,7 @@ function AddCodexPasteCard({ orgId }: { orgId: string }) {
         <span className="text-[13.5px] font-semibold text-text">Paste auth.json (fallback)</span>
       </div>
       <HelpBlock>
-        <p>
-          Or sign in with the Codex CLI locally and paste the file. Run:
-        </p>
+        <p>Or sign in with the Codex CLI locally and paste the file. Run:</p>
         <CommandLine cmd="codex login" />
         <p>
           This writes <Code>~/.codex/auth.json</Code> — paste its full contents below.
@@ -1345,11 +1350,7 @@ function AddCodexPasteCard({ orgId }: { orgId: string }) {
 
 /** Extract a human message from an RTK/axios mutation error. */
 function errMsg(e: unknown, fallback: string): string {
-  return (
-    (e as { data?: { message?: string } })?.data?.message ??
-    (e as Error)?.message ??
-    fallback
-  );
+  return (e as { data?: { message?: string } })?.data?.message ?? (e as Error)?.message ?? fallback;
 }
 
 /** A lightweight group heading separating the credential cards by purpose. */

@@ -4,11 +4,6 @@ import type { CreateOrgDto, MemberView, OrgSummary, UpdateOrgDto } from '@worksp
 import { baseApi, EBaseApiCacheTags } from './baseApi';
 import { sseOpener } from './sse-opener';
 
-/**
- * Org CRUD + members. The org *list* is not a dedicated endpoint — it rides on the
- * session payload (`getSession().orgs`), so create/update/delete invalidate SESSION.
- * The member list is a realtime feed (`streamList`) — invites/removals arrive as deltas.
- */
 export const orgApi = baseApi.injectEndpoints({
   overrideExisting: true,
   endpoints: (build) => ({

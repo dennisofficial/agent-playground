@@ -11,14 +11,6 @@ import type {
 import { baseApi, EBaseApiCacheTags } from './baseApi';
 import { sseOpener } from './sse-opener';
 
-const realtimeUrl = (path: string): string => `${env.NEXT_PUBLIC_BACKEND_URL}${path}`;
-
-/**
- * Repos data layer. Reads are **realtime**: `getOrgRepos` seeds from the REST list, then
- * `streamList` keeps it live off the pg-realtime SSE feed (connect/update/revalidate/disconnect all
- * arrive as WAL deltas). Mutations therefore don't invalidate the list — the feed reconciles it —
- * they only invalidate `SESSION` where an org's status can shift.
- */
 export const repoApi = baseApi.injectEndpoints({
   overrideExisting: true,
   endpoints: (build) => ({
@@ -27,7 +19,7 @@ export const repoApi = baseApi.injectEndpoints({
       providesTags: (_result, _error, orgId) => [{ type: EBaseApiCacheTags.REPO, id: orgId }],
       onCacheEntryAdded: (orgId, api) =>
         streamList<RepoView>({
-          url: realtimeUrl(`/orgs/${orgId}/repos/realtime`),
+          url: new URL(`/orgs/${orgId}/repos/realtime`, env.NEXT_PUBLIC_BACKEND_URL).toString(),
           open: sseOpener,
           lifecycle: api,
         }),
