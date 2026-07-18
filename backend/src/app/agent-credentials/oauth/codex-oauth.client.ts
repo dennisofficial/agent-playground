@@ -1,3 +1,4 @@
+import axios, { type AxiosResponse } from 'axios';
 import { decodeCodexIdentity } from './codex-id-token';
 
 /**
@@ -47,30 +48,29 @@ export type CodexPollResult =
   | { pending: true }
   | { pending: false; authorizationCode: string; codeVerifier: string };
 
-async function timedFetch(url: string, init: RequestInit): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  try {
-    return await fetch(url, { ...init, signal: controller.signal });
-  } finally {
-    clearTimeout(timeout);
-  }
+/** POST with a hard timeout, never throwing on status — callers branch on `res.status` themselves. */
+async function timedPost(
+  url: string,
+  data: unknown,
+  headers: Record<string, string>,
+): Promise<AxiosResponse> {
+  return axios.post(url, data, { headers, timeout: FETCH_TIMEOUT_MS, validateStatus: () => true });
 }
 
 /** Step 1 — request a device/user code. */
 export async function startDeviceAuth(): Promise<CodexDeviceAuth> {
-  const res = await timedFetch(USERCODE_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id: CLIENT_ID }),
-  });
+  const res = await timedPost(
+    USERCODE_URL,
+    { client_id: CLIENT_ID },
+    { 'Content-Type': 'application/json' },
+  );
   if (res.status === 404) {
     throw new Error(
       'Codex device-code login is not enabled for this account. Enable "Sign in with device code" in your ChatGPT security settings, or paste your ~/.codex/auth.json instead.',
     );
   }
-  if (!res.ok) throw new CodexOAuthHttpError(res.status);
-  const body = (await res.json()) as {
+  if (res.status < 200 || res.status >= 300) throw new CodexOAuthHttpError(res.status);
+  const body = res.data as {
     device_auth_id?: unknown;
     user_code?: unknown;
     usercode?: unknown;
@@ -98,14 +98,14 @@ export async function pollDeviceOnce(input: {
   deviceAuthId: string;
   userCode: string;
 }): Promise<CodexPollResult> {
-  const res = await timedFetch(DEVICE_TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ device_auth_id: input.deviceAuthId, user_code: input.userCode }),
-  });
+  const res = await timedPost(
+    DEVICE_TOKEN_URL,
+    { device_auth_id: input.deviceAuthId, user_code: input.userCode },
+    { 'Content-Type': 'application/json' },
+  );
   if (res.status === 403 || res.status === 404) return { pending: true };
-  if (!res.ok) throw new CodexOAuthHttpError(res.status);
-  const body = (await res.json()) as { authorization_code?: unknown; code_verifier?: unknown };
+  if (res.status < 200 || res.status >= 300) throw new CodexOAuthHttpError(res.status);
+  const body = res.data as { authorization_code?: unknown; code_verifier?: unknown };
   if (typeof body.authorization_code !== 'string' || typeof body.code_verifier !== 'string') {
     throw new Error('codex device token response missing authorization_code/code_verifier');
   }
@@ -128,28 +128,22 @@ export async function exchangeDeviceCode(input: {
     client_id: CLIENT_ID,
     code_verifier: input.codeVerifier,
   });
-  const res = await timedFetch(OAUTH_TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: form.toString(),
+  const res = await timedPost(OAUTH_TOKEN_URL, form.toString(), {
+    'Content-Type': 'application/x-www-form-urlencoded',
   });
-  if (!res.ok) throw new CodexOAuthHttpError(res.status);
-  return parseTokens(await res.json());
+  if (res.status < 200 || res.status >= 300) throw new CodexOAuthHttpError(res.status);
+  return parseTokens(res.data);
 }
 
 /** Refresh via the refresh_token grant (JSON body, per codex). Fields are all optional in the response. */
 export async function refresh(refreshToken: string): Promise<Partial<CodexTokens>> {
-  const res = await timedFetch(OAUTH_TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      client_id: CLIENT_ID,
-      grant_type: 'refresh_token',
-      refresh_token: refreshToken,
-    }),
-  });
-  if (!res.ok) throw new CodexOAuthHttpError(res.status);
-  const body = (await res.json()) as {
+  const res = await timedPost(
+    OAUTH_TOKEN_URL,
+    { client_id: CLIENT_ID, grant_type: 'refresh_token', refresh_token: refreshToken },
+    { 'Content-Type': 'application/json' },
+  );
+  if (res.status < 200 || res.status >= 300) throw new CodexOAuthHttpError(res.status);
+  const body = res.data as {
     id_token?: unknown;
     access_token?: unknown;
     refresh_token?: unknown;

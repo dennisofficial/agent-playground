@@ -1,3 +1,4 @@
+import axios from 'axios';
 import { createHash, randomBytes } from 'node:crypto';
 
 /**
@@ -111,21 +112,13 @@ export function tokenSetToBlob(t: ClaudeTokenSet): ClaudeCredentialBlob {
 }
 
 async function postForTokenSet(body: Record<string, string>): Promise<ClaudeTokenSet> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  let res: Response;
-  try {
-    res = await fetch(TOKEN_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'anthropic-beta': OAUTH_BETA_HEADER },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
-  if (!res.ok) throw new ClaudeOAuthHttpError(res.status);
-  return parseTokenSet(await res.json());
+  const res = await axios.post(TOKEN_URL, body, {
+    headers: { 'Content-Type': 'application/json', 'anthropic-beta': OAUTH_BETA_HEADER },
+    timeout: FETCH_TIMEOUT_MS,
+    validateStatus: () => true,
+  });
+  if (res.status < 200 || res.status >= 300) throw new ClaudeOAuthHttpError(res.status);
+  return parseTokenSet(res.data);
 }
 
 export function parseTokenSet(raw: unknown): ClaudeTokenSet {

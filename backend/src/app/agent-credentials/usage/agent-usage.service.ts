@@ -8,6 +8,7 @@ import {
   type ModelUsageWindow,
   type StoredUsageWindow,
 } from '@workspace/shared';
+import axios from 'axios';
 import { AgentCredentialRefreshService } from '../agent-credential-refresh.service';
 import { AgentCredentialService } from '../agent-credential.service';
 import { AgentCredential, AgentCredentialRepo } from '../entities/agent-credential.entity';
@@ -101,28 +102,25 @@ export class AgentUsageService {
   }
 
   private async fetchUsage(accessToken: string): Promise<ParsedUsage | null> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     try {
-      const res = await fetch(USAGE_API_URL, {
+      const res = await axios.get(USAGE_API_URL, {
         headers: {
           Authorization: `Bearer ${accessToken}`,
           'anthropic-beta': OAUTH_BETA_HEADER,
           'User-Agent': `claude-code/${CLAUDE_CODE_VERSION}`,
           'content-type': 'application/json',
         },
-        signal: controller.signal,
+        timeout: FETCH_TIMEOUT_MS,
+        validateStatus: () => true,
       });
-      if (!res.ok) {
+      if (res.status < 200 || res.status >= 300) {
         this.logger.warn(`usage fetch failed: HTTP ${res.status}`);
         return null;
       }
-      return parseUsageResponse(await res.json());
+      return parseUsageResponse(res.data);
     } catch (err) {
       this.logger.warn(`usage fetch error: ${String(err)}`);
       return null;
-    } finally {
-      clearTimeout(timeout);
     }
   }
 
