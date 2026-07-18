@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type { CredentialPresence } from '@workspace/shared';
 import { SecretCipherService } from '../../_lib/crypto/secret-cipher.service';
-import { OrgCredential, OrgCredentialRepo } from './entities/org-credential.entity';
+import { OrgCredentialRepo } from './entities/org-credential.entity';
 
 /** The provided-and-non-empty subset of API keys to write; omitted fields are left untouched. */
 export type SaveCredentialsInput = {
@@ -17,7 +17,7 @@ export type SaveCredentialsInput = {
  * them), so internal callers can resolve a key without a request context.
  */
 @Injectable()
-export class CredentialsService {
+export class OrgCredentialsService {
   constructor(
     private readonly repo: OrgCredentialRepo,
     private readonly cipher: SecretCipherService,

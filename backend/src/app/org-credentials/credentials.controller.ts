@@ -7,7 +7,7 @@ import {
 } from '@workspace/shared';
 import type { User } from '../auth/entities/user.entity';
 import { OrgService } from '../org/org.service';
-import { CredentialsService } from './credentials.service';
+import { OrgCredentialsService } from './credentials.service';
 
 /**
  * The org's API keys (Anthropic / OpenAI / GitHub PAT). Both ops are inherently org-scoped (the keys are
@@ -15,9 +15,9 @@ import { CredentialsService } from './credentials.service';
  * Reads require membership and return presence only; writes require ownership. Values are never returned.
  */
 @Controller('orgs/:orgId/credentials')
-export class CredentialsController {
+export class OrgCredentialsController {
   constructor(
-    private readonly credentials: CredentialsService,
+    private readonly credentials: OrgCredentialsService,
     private readonly orgs: OrgService,
   ) {}
 

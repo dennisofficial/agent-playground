@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { CredentialsService } from '../credentials/credentials.service';
+import { OrgCredentialsService } from '../org-credentials/credentials.service';
 
 /**
  * Resolves the GitHub credential Atlas uses for an org's API/git calls. Today that's the org's stored
@@ -8,7 +8,7 @@ import { CredentialsService } from '../credentials/credentials.service';
  */
 @Injectable()
 export class GithubCredentialsService {
-  constructor(private readonly credentials: CredentialsService) {}
+  constructor(private readonly credentials: OrgCredentialsService) {}
 
   /** The bearer token for the org's GitHub calls, or `null` when the org has no usable credential. */
   resolveToken(orgId: string): Promise<string | null> {
