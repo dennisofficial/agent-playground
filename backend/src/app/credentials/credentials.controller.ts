@@ -2,7 +2,6 @@ import { Body, Controller, Get, Param, ParseUUIDPipe, Put } from '@nestjs/common
 import { CurrentUser } from '@workspace/auth/server';
 import {
   type CredentialPresence,
-  ECredentialKey,
   SaveCredentialsDto,
   type SaveCredentialsResult,
 } from '@workspace/shared';
@@ -11,13 +10,9 @@ import { OrgService } from '../org/org.service';
 import { CredentialsService } from './credentials.service';
 
 /**
- * The org's credential collection. Both ops are inherently in an org's context (there's no per-secret
- * UUID — a secret is keyed by `(orgId, key)`), so the org stays in the path, exactly like the repo
- * module's {@link OrgRepoController} keeps `orgs/:orgId/repos` for its collection ops. Reads require
- * membership, writes require ownership; secrets are never returned.
- *
- * KEY-AGNOSTIC: this surface only ever speaks {@link ECredentialKey} — it has no idea what "anthropic"
- * or "github" mean. Consumers map keys to their own domain view.
+ * The org's API keys (Anthropic / OpenAI / GitHub PAT). Both ops are inherently org-scoped (the keys are
+ * a single row keyed by orgId), so the org stays in the path — like the repo module's collection ops.
+ * Reads require membership and return presence only; writes require ownership. Values are never returned.
  */
 @Controller('orgs/:orgId/credentials')
 export class CredentialsController {
@@ -26,18 +21,17 @@ export class CredentialsController {
     private readonly orgs: OrgService,
   ) {}
 
-  /** Presence of every credential key for the org. Members can read; values are never returned. */
+  /** Presence of each API key. Members can read; values are never returned. */
   @Get()
   async presence(
     @CurrentUser() user: User,
     @Param('orgId', ParseUUIDPipe) orgId: string,
   ): Promise<CredentialPresence> {
     await this.orgs.assertMember(user.id, orgId);
-    const present = await this.credentials.hasMany(orgId, Object.values(ECredentialKey));
-    return { present };
+    return this.credentials.presence(orgId);
   }
 
-  /** Save a batch of secrets. Owner-only. Empty values are skipped. */
+  /** Save API keys. Owner-only. Blank/omitted fields are left untouched. */
   @Put()
   async save(
     @CurrentUser() user: User,
@@ -45,10 +39,11 @@ export class CredentialsController {
     @Body() body: SaveCredentialsDto,
   ): Promise<SaveCredentialsResult> {
     await this.orgs.assertOwner(user.id, orgId);
-    const writes = body.entries
-      .map((e) => ({ key: e.key, plaintext: e.value.trim() }))
-      .filter((e) => e.plaintext);
-    await this.credentials.setMany(orgId, writes);
+    await this.credentials.save(orgId, {
+      anthropicApiKey: body.anthropicApiKey?.trim() || undefined,
+      openaiApiKey: body.openaiApiKey?.trim() || undefined,
+      githubPat: body.githubPat?.trim() || undefined,
+    });
     return { ok: true };
   }
 }

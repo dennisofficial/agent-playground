@@ -1,67 +1,77 @@
 import { Injectable } from '@nestjs/common';
-import { ECredentialKey } from '@workspace/shared';
-import { In } from 'typeorm';
+import type { CredentialPresence } from '@workspace/shared';
 import { SecretCipherService } from '../../_lib/crypto/secret-cipher.service';
-import { OrgSecretRepo } from './entities/org-secret.entity';
+import { OrgCredential, OrgCredentialRepo } from './entities/org-credential.entity';
+
+/** The provided-and-non-empty subset of API keys to write; omitted fields are left untouched. */
+export type SaveCredentialsInput = {
+  anthropicApiKey?: string;
+  openaiApiKey?: string;
+  githubPat?: string;
+};
 
 /**
- * Generic, domain-agnostic org secret vault. Stores one encrypted value per `(orgId, key)`; it
- * attaches no meaning to any {@link ECredentialKey} — consuming modules (GitHub, engine, …) interpret
- * the keys. Pure mechanism: no user/tenancy checks here, so internal callers can resolve a secret
- * without a request context. The user-facing tenancy gate lives in the controller.
+ * The org's API-key store — typed columns on `org_credentials`, one row per org, AES-256-GCM at rest.
+ * Values are write-only; reads expose presence only, except the internal typed getters used by consuming
+ * modules (GitHub today; the engine later). Pure mechanism — no tenancy checks here (the controller gates
+ * them), so internal callers can resolve a key without a request context.
  */
 @Injectable()
 export class CredentialsService {
   constructor(
-    private readonly secrets: OrgSecretRepo,
+    private readonly repo: OrgCredentialRepo,
     private readonly cipher: SecretCipherService,
   ) {}
 
-  /** Store (or replace) a secret for an org. */
-  async set(orgId: string, key: ECredentialKey, plaintext: string): Promise<void> {
-    const ciphertext = this.cipher.encrypt(plaintext);
-    await this.secrets.upsert({ orgId, key, ciphertext }, ['orgId', 'key']);
+  /** Which keys the org has set — presence only, no decryption. */
+  async presence(orgId: string): Promise<CredentialPresence> {
+    const row = await this.repo.findOne({
+      where: { orgId },
+      select: { anthropicApiKeyEnc: true, openaiApiKeyEnc: true, githubPatEnc: true },
+    });
+    return {
+      anthropic: !!row?.anthropicApiKeyEnc,
+      openai: !!row?.openaiApiKeyEnc,
+      github: !!row?.githubPatEnc,
+    };
   }
 
-  /** Store (or replace) several secrets for an org in a single upsert. No-op when empty. */
-  async setMany(
+  /** Write the provided keys (encrypted). Only non-empty fields are set; the rest stay as they are. */
+  async save(orgId: string, input: SaveCredentialsInput): Promise<void> {
+    const row = (await this.repo.findOne({ where: { orgId } })) ?? this.repo.create({ orgId });
+    if (input.anthropicApiKey) row.anthropicApiKeyEnc = this.cipher.encrypt(input.anthropicApiKey);
+    if (input.openaiApiKey) row.openaiApiKeyEnc = this.cipher.encrypt(input.openaiApiKey);
+    if (input.githubPat) row.githubPatEnc = this.cipher.encrypt(input.githubPat);
+    await this.repo.save(row);
+  }
+
+  /** Decrypt and return the org's Anthropic API key, or null when unset. */
+  getAnthropicApiKey(orgId: string): Promise<string | null> {
+    return this.decryptField(orgId, 'anthropicApiKeyEnc');
+  }
+
+  /** Decrypt and return the org's OpenAI API key, or null when unset. */
+  getOpenaiApiKey(orgId: string): Promise<string | null> {
+    return this.decryptField(orgId, 'openaiApiKeyEnc');
+  }
+
+  /** Decrypt and return the org's GitHub PAT, or null when unset. */
+  getGithubPat(orgId: string): Promise<string | null> {
+    return this.decryptField(orgId, 'githubPatEnc');
+  }
+
+  /** Whether the org has a GitHub PAT set (no decryption). */
+  async hasGithubPat(orgId: string): Promise<boolean> {
+    const p = await this.presence(orgId);
+    return p.github;
+  }
+
+  private async decryptField(
     orgId: string,
-    entries: { key: ECredentialKey; plaintext: string }[],
-  ): Promise<void> {
-    if (entries.length === 0) return;
-    const rows = entries.map((e) => ({
-      orgId,
-      key: e.key,
-      ciphertext: this.cipher.encrypt(e.plaintext),
-    }));
-    await this.secrets.upsert(rows, ['orgId', 'key']);
-  }
-
-  /** Decrypt and return a secret, or `null` when the org has no value for this key. */
-  async get(orgId: string, key: ECredentialKey): Promise<string | null> {
-    const row = await this.secrets.findOne({ where: { orgId, key } });
-    return row ? this.cipher.decrypt(row.ciphertext) : null;
-  }
-
-  /** Whether the org has a value for this key (no decryption). */
-  async has(orgId: string, key: ECredentialKey): Promise<boolean> {
-    return (await this.secrets.count({ where: { orgId, key } })) > 0;
-  }
-
-  /** Presence of several keys in one query — `{ [key]: boolean }` for every requested key. */
-  async hasMany(orgId: string, keys: ECredentialKey[]): Promise<Record<ECredentialKey, boolean>> {
-    const rows = keys.length
-      ? await this.secrets.find({ where: { orgId, key: In(keys) }, select: { key: true } })
-      : [];
-    const present = new Set(rows.map((r) => r.key));
-    return Object.fromEntries(keys.map((k) => [k, present.has(k)])) as Record<
-      ECredentialKey,
-      boolean
-    >;
-  }
-
-  /** Remove a secret. No-op when absent. */
-  async delete(orgId: string, key: ECredentialKey): Promise<void> {
-    await this.secrets.delete({ orgId, key });
+    field: 'anthropicApiKeyEnc' | 'openaiApiKeyEnc' | 'githubPatEnc',
+  ): Promise<string | null> {
+    const row = await this.repo.findOne({ where: { orgId } });
+    const ciphertext = row?.[field];
+    return ciphertext ? this.cipher.decrypt(ciphertext) : null;
   }
 }

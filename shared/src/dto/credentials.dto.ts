@@ -1,32 +1,29 @@
 /**
- * Credentials API contract (frontend ⇄ backend). The wire is KEY-AGNOSTIC: it speaks only
- * {@link ECredentialKey}, never domain names like "anthropic" or "github". The generic org secret
- * vault stores/reports secrets by key and attaches no meaning to them; any domain interpretation
- * (which key gates which UI, GitHub App mode, LLM-key validation) lives in the consumer.
+ * Credentials API contract (frontend ⇄ backend) for the org's raw API keys — Anthropic, OpenAI, and the
+ * GitHub PAT. These are typed, single-valued secrets stored as encrypted columns on `org_credentials`;
+ * the wire speaks them by name (no key-agnostic vault indirection). Subscription OAuth accounts are a
+ * separate surface (see the agent-credentials DTOs). Values are write-only — reads return presence only.
  */
-import { Type } from 'class-transformer';
-import { ArrayMaxSize, IsArray, IsEnum, IsString, MaxLength, ValidateNested } from 'class-validator';
-import { ECredentialKey } from '../enums';
+import { IsOptional, IsString, MaxLength } from 'class-validator';
 
 // ── Request ──
 
-/** One secret to write: its key and plaintext value. */
-export class CredentialEntry {
-  @IsEnum(ECredentialKey)
-  key!: ECredentialKey;
-
+/** Save the org's API keys. Only the included, non-empty fields are written; the rest are untouched. */
+export class SaveCredentialsDto {
+  @IsOptional()
   @IsString()
   @MaxLength(20_000)
-  value!: string;
-}
+  anthropicApiKey?: string;
 
-/** Save a batch of secrets. Only the included keys are written; the rest are left untouched. */
-export class SaveCredentialsDto {
-  @IsArray()
-  @ArrayMaxSize(32)
-  @ValidateNested({ each: true })
-  @Type(() => CredentialEntry)
-  entries!: CredentialEntry[];
+  @IsOptional()
+  @IsString()
+  @MaxLength(20_000)
+  openaiApiKey?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20_000)
+  githubPat?: string;
 }
 
 // ── Responses ──
@@ -35,10 +32,9 @@ export interface SaveCredentialsResult {
   ok: boolean;
 }
 
-/**
- * Which secrets the org has, keyed by {@link ECredentialKey}. Presence booleans never expose a value.
- * The consumer maps keys to its own domain view (e.g. `present[GITHUB_PAT]` → "GitHub connected").
- */
+/** Which API keys the org has set. Presence booleans never expose a value. */
 export interface CredentialPresence {
-  present: Partial<Record<ECredentialKey, boolean>>;
+  anthropic: boolean;
+  openai: boolean;
+  github: boolean;
 }

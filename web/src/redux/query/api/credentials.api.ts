@@ -1,11 +1,7 @@
-import {
-  ECredentialKey,
-  type CredentialPresence,
-  type SaveCredentialsResult,
-} from '@workspace/shared';
+import type { CredentialPresence, SaveCredentialsResult } from '@workspace/shared';
 import { baseApi, EBaseApiCacheTags } from './baseApi';
 
-/** The settings UI's domain view of credential presence — derived from the agnostic wire. */
+/** The settings UI's domain view of credential presence. */
 export interface CredentialPresenceView {
   hasAnthropic: boolean;
   hasOpenai: boolean;
@@ -16,33 +12,21 @@ export interface CredentialPresenceView {
   githubAuthMode: 'pat' | 'app';
 }
 
-/** The settings UI's domain write body — mapped to key-agnostic `entries[]` before it hits the wire. */
+/** The settings UI's write body — sent as-is (the wire speaks these keys by name). */
 export interface SaveCredentialsBody {
   anthropicApiKey?: string;
   openaiApiKey?: string;
   githubPat?: string;
 }
 
-function toCredentialPresenceView(present: CredentialPresence['present']): CredentialPresenceView {
+function toCredentialPresenceView(p: CredentialPresence): CredentialPresenceView {
   return {
-    hasAnthropic: Boolean(present[ECredentialKey.ANTHROPIC_API_KEY]),
-    hasOpenai: Boolean(present[ECredentialKey.OPENAI_API_KEY]),
-    hasGithub: Boolean(present[ECredentialKey.GITHUB_PAT]),
-    llmValidated: Boolean(present[ECredentialKey.ANTHROPIC_API_KEY]),
+    hasAnthropic: p.anthropic,
+    hasOpenai: p.openai,
+    hasGithub: p.github,
+    llmValidated: p.anthropic,
     githubAuthMode: 'pat',
   };
-}
-
-function toEntries(body: SaveCredentialsBody) {
-  const byKey: [ECredentialKey, string | undefined][] = [
-    [ECredentialKey.ANTHROPIC_API_KEY, body.anthropicApiKey],
-    [ECredentialKey.OPENAI_API_KEY, body.openaiApiKey],
-    [ECredentialKey.GITHUB_PAT, body.githubPat],
-  ];
-  // Drop empty values — the backend ignores them too (a blank field is a no-op, not a delete).
-  return byKey
-    .filter(([, v]) => v != null && v !== '')
-    .map(([key, value]) => ({ key, value: value as string }));
 }
 
 export const credentialsApi = baseApi.injectEndpoints({
@@ -50,7 +34,7 @@ export const credentialsApi = baseApi.injectEndpoints({
   endpoints: (build) => ({
     getCredentials: build.query<CredentialPresenceView, string>({
       query: (orgId) => ({ url: `/orgs/${orgId}/credentials`, method: 'GET' }),
-      transformResponse: (res: CredentialPresence) => toCredentialPresenceView(res.present),
+      transformResponse: toCredentialPresenceView,
       providesTags: (_result, _error, orgId) => [
         { type: EBaseApiCacheTags.CREDENTIALS, id: orgId },
       ],
@@ -62,7 +46,12 @@ export const credentialsApi = baseApi.injectEndpoints({
       query: ({ orgId, body }) => ({
         url: `/orgs/${orgId}/credentials`,
         method: 'PUT',
-        data: { entries: toEntries(body) },
+        // Drop empty values — the backend leaves omitted/blank fields untouched (a blank field is a no-op).
+        data: {
+          anthropicApiKey: body.anthropicApiKey || undefined,
+          openaiApiKey: body.openaiApiKey || undefined,
+          githubPat: body.githubPat || undefined,
+        },
       }),
       invalidatesTags: (_result, _error, { orgId }) => [
         { type: EBaseApiCacheTags.CREDENTIALS, id: orgId },
