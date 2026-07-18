@@ -4,8 +4,9 @@ import { ValidationPipe } from '@nestjs/common';
 import { APP_PIPE } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
 import { CreateModule, EnvModule, LoggerModule } from '@workspace/nestjs-core';
+import { PgRealtimeModule } from '@workspace/pg-realtime/nest';
 import { DatabaseModule } from '../_lib/database/database.module';
-import { RealtimeModule } from '../_lib/realtime/realtime.module';
+import { atlasRealtimeConfig } from '../_lib/realtime/realtime.config';
 import { RedisModule } from '../_lib/redis/redis.module';
 import { AuthModule } from './auth/auth.module';
 import { CredentialsModule } from './credentials/credentials.module';
@@ -24,8 +25,10 @@ import { RepoModule } from './repo/repo.module';
     }),
     DatabaseModule,
     RedisModule,
-    // Realtime engine — aggregates the models each feature contributes via REALTIME_MODEL.
-    RealtimeModule.forRoot([OrgModule, RepoModule]),
+    // Realtime engine — aggregates every model registered via PgRealtimeModule.forFeature() in the
+    // feature modules below. forRootAsync() must come after them (they're imported first, so their
+    // forFeature() calls have already registered by the time this evaluates).
+    PgRealtimeModule.forRootAsync({ inject: [EnvService], useFactory: atlasRealtimeConfig }),
 
     // App Modules
     OrgModule,

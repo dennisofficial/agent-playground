@@ -56,7 +56,7 @@ export class GithubAccessAdapter implements GithubAccessPort {
     // Webhook registration needs a public backend host + GITHUB_WEBHOOK_SECRET and an inbound webhook
     // route to receive events — none of which exist yet. Real-time PR/CI sync lands with the webhook
     // phase; until then there's nothing to register and no warning to surface.
-    return null;
+    return Promise.resolve(null);
   }
 
   private reasonFor(err: unknown, owner: string, repo: string): string {

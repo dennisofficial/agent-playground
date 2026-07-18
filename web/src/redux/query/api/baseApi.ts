@@ -12,6 +12,7 @@ export enum EBaseApiCacheTags {
   ORG = "ORG",
   ORG_MEMBER = "ORG_MEMBER",
   REPO = "REPO",
+  CREDENTIALS = "CREDENTIALS",
 }
 
 const REFETCH_ON_MOUNT_SECONDS = 30;

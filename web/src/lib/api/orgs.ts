@@ -51,6 +51,10 @@ import {
   useRevalidateRepoMutation,
   useUpdateRepoMutation,
 } from "@/redux/query/api/repo.api";
+import {
+  useGetCredentialsQuery,
+  useSaveCredentialsMutation,
+} from "@/redux/query/api/credentials.api";
 import { useMutation, useQuery, useQueryClient } from "./_tanstack-shim";
 import type { OrgSummary } from "./me";
 import { fetchWithRefresh } from "./refresh";
@@ -112,24 +116,25 @@ export function useOrgMembers(orgId: string) {
 
 // ── Credentials (presence only — never the secret values; agnostic wire in @workspace/shared) ───────
 // The backend returns key-agnostic presence; we derive the settings UI's domain view from it here.
+function toCredentialPresenceView(
+  present: CredentialPresence["present"],
+): CredentialPresenceView {
+  return {
+    hasAnthropic: Boolean(present[ECredentialKey.ANTHROPIC_API_KEY]),
+    hasOpenai: Boolean(present[ECredentialKey.OPENAI_API_KEY]),
+    hasGithub: Boolean(present[ECredentialKey.GITHUB_PAT]),
+    hasCodex: Boolean(present[ECredentialKey.CODEX_AUTH]),
+    llmValidated: Boolean(present[ECredentialKey.ANTHROPIC_API_KEY]),
+    githubAuthMode: "pat",
+  };
+}
+
+// WIRED (RTK): GET /orgs/:orgId/credentials — presence booleans, mapped to the domain view.
 export function useOrgCredentials(orgId: string) {
-  return useQuery({
-    queryKey: qk.orgCredentials(orgId),
-    queryFn: async (): Promise<CredentialPresenceView> => {
-      const { present } = await webJson<CredentialPresence>(
-        `/orgs/${orgId}/credentials`,
-      );
-      return {
-        hasAnthropic: Boolean(present[ECredentialKey.ANTHROPIC_API_KEY]),
-        hasOpenai: Boolean(present[ECredentialKey.OPENAI_API_KEY]),
-        hasGithub: Boolean(present[ECredentialKey.GITHUB_PAT]),
-        hasCodex: Boolean(present[ECredentialKey.CODEX_AUTH]),
-        llmValidated: Boolean(present[ECredentialKey.ANTHROPIC_API_KEY]),
-        githubAuthMode: "pat",
-      };
-    },
-    enabled: Boolean(orgId),
-    staleTime: 15_000,
+  const q = useGetCredentialsQuery(orgId, { skip: !orgId });
+  return adaptQuery({
+    ...q,
+    data: q.data ? toCredentialPresenceView(q.data.present) : undefined,
   });
 }
 
@@ -451,11 +456,18 @@ export function useCredentialUsage(
   return query;
 }
 
-/** Owner-only credential write. Invalidates the presence query so the saved-key pills refresh. */
-export function useSaveCredentials(orgId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: SaveCredentialsBody) => {
+/**
+ * Owner-only credential write. WIRED (RTK): PUT /orgs/:orgId/credentials. Adapts the domain
+ * `SaveCredentialsBody` into the key-agnostic wire `entries[]` (dropping empty values, which the
+ * backend also ignores). The mutation invalidates the CREDENTIALS tag (presence pills refresh) and
+ * SESSION (a first credential can flip the org `onboarding` → `active`) via `saveCredentials`'s tags.
+ */
+export function useSaveCredentials(
+  orgId: string,
+): MutationResultLike<SaveCredentialsResult, SaveCredentialsBody> {
+  const [trigger, state] = useSaveCredentialsMutation();
+  return adaptMutation<SaveCredentialsResult, SaveCredentialsBody>([
+    (body: SaveCredentialsBody) => {
       const byKey: [ECredentialKey, string | undefined][] = [
         [ECredentialKey.ANTHROPIC_API_KEY, body.anthropicApiKey],
         [ECredentialKey.OPENAI_API_KEY, body.openaiApiKey],
@@ -465,19 +477,10 @@ export function useSaveCredentials(orgId: string) {
       const entries = byKey
         .filter(([, v]) => v != null && v !== "")
         .map(([key, value]) => ({ key, value: value as string }));
-      return webJson<SaveCredentialsResult>(`/orgs/${orgId}/credentials`, {
-        method: "PUT",
-        body: JSON.stringify({ entries }),
-      });
+      return trigger({ orgId, body: { entries } });
     },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
-      // A new Codex paste changes the decoded account email — refresh the owner-only Codex query too.
-      void qc.invalidateQueries({ queryKey: qk.orgCodexAccount(orgId) });
-      // Credential changes can flip an org `onboarding` → `active`; refresh the session orgs too.
-      void qc.invalidateQueries({ queryKey: qk.session() });
-    },
-  });
+    state,
+  ]);
 }
 
 // ── Workspace profile (Atlas-managed per-repo provisioning: mounts, setup script, preview recipe,

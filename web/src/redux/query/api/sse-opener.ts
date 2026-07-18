@@ -44,7 +44,8 @@ export const sseOpener: SseOpener = (url, init) => {
 
     onmessage(ev) {
       // A pg-realtime `error` event is a server-signalled fatal condition.
-      if (ev.event === "error") throw new FatalSseError(ev.data || "stream error");
+      if (ev.event === "error")
+        throw new FatalSseError(ev.data || "stream error");
       init.onmessage({ event: ev.event, data: ev.data });
     },
 
@@ -57,7 +58,10 @@ export const sseOpener: SseOpener = (url, init) => {
       if (err instanceof FatalSseError) throw err; // propagate → stop
       init.onerror?.(err);
       attempts += 1;
-      return Math.min(BASE_RETRY_MS * 2 ** (attempts - 1), MAX_RETRY_MS) + Math.random() * JITTER_MS;
+      return (
+        Math.min(BASE_RETRY_MS * 2 ** (attempts - 1), MAX_RETRY_MS) +
+        Math.random() * JITTER_MS
+      );
     },
   });
 };

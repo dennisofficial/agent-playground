@@ -7,7 +7,7 @@ import { OrgMembershipGuard } from './org-realtime.guard';
  * The org read-feeds: `organizations` (streamDocument — live settings/status, scoped by `id`) and
  * `organization_members` (the change-trigger for the joined org-list + members snapshots, scoped by
  * `orgId`). `mapRow` is a plain snake→camel rename — both WAL + snapshot rows are already-typed JS.
- * Contributed to the engine via REALTIME_MODEL in `OrgModule`.
+ * Contributed via `PgRealtimeModule.forFeature(...)` in `OrgModule`.
  */
 export function buildOrgRealtimeModels(members: Repository<OrganizationMember>): ModelConfig[] {
   return [

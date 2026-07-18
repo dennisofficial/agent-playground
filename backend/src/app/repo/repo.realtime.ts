@@ -8,7 +8,7 @@ import { RepoRealtimeGuard } from './repo.guard';
  * is a plain snake→camel rename to the `RepoView` wire shape (the WAL + snapshot paths both deliver
  * already-typed JS values — pg-logical-replication runs the same pg-types parsers as node-postgres — so
  * no coercion is needed; `Date`s serialize to ISO on the SSE JSON encode). It keeps `orgId` so the guard
- * can scope the mapped row. Contributed to the engine via REALTIME_MODEL in `RepoModule`.
+ * can scope the mapped row. Contributed via `PgRealtimeModule.forFeature(...)` in `RepoModule`.
  */
 export function buildRepoRealtimeModel(members: Repository<OrganizationMember>): ModelConfig {
   return {
