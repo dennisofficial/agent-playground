@@ -72,7 +72,10 @@ export class GithubApiService {
     });
     if (!res.ok) {
       const body = await res.text().catch(() => '');
-      throw new GithubApiError(res.status, `GitHub ${res.status} on ${path}: ${body.slice(0, 200)}`);
+      throw new GithubApiError(
+        res.status,
+        `GitHub ${res.status} on ${path}: ${body.slice(0, 200)}`,
+      );
     }
     return (await res.json()) as T;
   }
