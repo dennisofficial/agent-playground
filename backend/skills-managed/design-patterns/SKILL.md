@@ -8,18 +8,18 @@ metadata:
 
 # Design Patterns
 
-A design pattern is the *cure*; a code smell is the *diagnosis*. Applied without a smell, a pattern is just over-engineering — more indirection to read, maintain, and get wrong. This skill rides on top of "write the least code that solves the problem": a pattern is only leaner than the boring alternative when a real smell justifies it. Diagnose first. Reach for a named pattern last.
+A design pattern is the _cure_; a code smell is the _diagnosis_. Applied without a smell, a pattern is just over-engineering — more indirection to read, maintain, and get wrong. This skill rides on top of "write the least code that solves the problem": a pattern is only leaner than the boring alternative when a real smell justifies it. Diagnose first. Reach for a named pattern last.
 
 ## The one rule: diagnose before you pattern
 
-Never reach for a pattern by name first ("let's use a Factory here"). Name the **smell**, then climb the response ladder. If you can't name the smell, you don't need the pattern. The boring moves that resolve a smell *without* a pattern are cataloged in `references/refactorings.md` — reach there first. Depth for each pattern lives in `references/creational.md`, `references/structural.md`, and `references/behavioral.md` — pull one in only once you've named a smell it removes.
+Never reach for a pattern by name first ("let's use a Factory here"). Name the **smell**, then climb the response ladder. If you can't name the smell, you don't need the pattern. The boring moves that resolve a smell _without_ a pattern are cataloged in `references/refactorings.md` — reach there first. Depth for each pattern lives in `references/creational.md`, `references/structural.md`, and `references/behavioral.md` — pull one in only once you've named a smell it removes.
 
 ## The response ladder
 
 1. **Does this complexity need to exist?** Delete it, simplify the requirement, or say no. The best pattern is no code.
 2. **Boring refactoring first.** Extract a named function, rename for intent, inline a needless indirection, replace a magic number with a constant, add a guard clause, introduce a parameter object — see `references/refactorings.md` for the mechanics of each. Most "I need a pattern" moments end here.
 3. **The minimum named pattern** — only if the smell survives step 2, and only the smallest one that fits. Match the intent, not the label.
-4. **Never** a pattern with a single caller or a single implementation. A Strategy with one strategy, a Factory that makes one type, an interface with one implementer — that is a smell you are *adding*, not removing.
+4. **Never** a pattern with a single caller or a single implementation. A Strategy with one strategy, a Factory that makes one type, an interface with one implementer — that is a smell you are _adding_, not removing.
 
 ## The five smell families → what to reach for
 
@@ -28,7 +28,7 @@ This is the smell → response index. Name the family first; the boring refactor
 - **Bloaters** (giant class/function, long parameter list, primitive obsession, data clumps): first extract function/class and introduce a parameter object. If behavior varies by type → **Strategy** / **State**; if construction is complex or has many optional steps → **Builder**. See `references/behavioral.md`, `references/creational.md`.
 - **Object-Orientation Abusers** (`switch` on a type code, refused bequest, temporary field, alternative classes with different interfaces): replace the conditional with polymorphism → **Strategy**, **State**, or **Template Method**; reconcile mismatched interfaces with **Adapter**. See `references/behavioral.md`, `references/structural.md`.
 - **Change Preventers** (Divergent Change — one class changes for many reasons; Shotgun Surgery — one change edits many classes): this is the **refactor-the-pattern** signal, not a conform signal. Separate the axes of change → **Strategy**, **Bridge**, **Observer**, or **Facade**. See "Consistency, not conformance" below.
-- **Dispensables** (duplication, dead code, speculative generality, a comment that restates the code, lazy/data class): delete and dedupe. Usually **NO pattern** — resist adding one. If you already have a single-caller Strategy/Factory/interface here, *collapse* it back to plain code.
+- **Dispensables** (duplication, dead code, speculative generality, a comment that restates the code, lazy/data class): delete and dedupe. Usually **NO pattern** — resist adding one. If you already have a single-caller Strategy/Factory/interface here, _collapse_ it back to plain code.
 - **Couplers** (feature envy, inappropriate intimacy, message chains, middle man): move behavior to the data it envies, or decouple with **Mediator**, **Facade**, or **Adapter**. See `references/structural.md`, `references/behavioral.md`.
 
 ## Consistency, not conformance
@@ -43,21 +43,21 @@ When you migrate:
 
 ## Choosing the pattern (index → references)
 
-| You see… | Try first | Then consider | Reference |
-|---|---|---|---|
-| `switch`/`if` on a type code, behavior varies by kind | polymorphism / a lookup map | Strategy, State | behavioral.md |
-| Complex object built in steps / many optional args | parameter object | Builder | creational.md |
-| Family of related objects made together | a factory function | Abstract Factory, Factory Method | creational.md |
-| Incompatible interface at a boundary | a thin wrapper fn | Adapter, Facade | structural.md |
-| Add behavior without touching the class | composition / a wrapper fn | Decorator, Proxy | structural.md |
-| Nested part/whole tree treated uniformly | recursion over a union | Composite | structural.md |
-| Many objects react to one event | a callback list | Observer, Mediator | behavioral.md |
-| A multi-step algorithm with varying steps | extract functions | Template Method, Strategy | behavioral.md |
-| One change edits many classes | separate the axes | Bridge, Strategy | structural.md, behavioral.md |
+| You see…                                              | Try first                   | Then consider                    | Reference                    |
+| ----------------------------------------------------- | --------------------------- | -------------------------------- | ---------------------------- |
+| `switch`/`if` on a type code, behavior varies by kind | polymorphism / a lookup map | Strategy, State                  | behavioral.md                |
+| Complex object built in steps / many optional args    | parameter object            | Builder                          | creational.md                |
+| Family of related objects made together               | a factory function          | Abstract Factory, Factory Method | creational.md                |
+| Incompatible interface at a boundary                  | a thin wrapper fn           | Adapter, Facade                  | structural.md                |
+| Add behavior without touching the class               | composition / a wrapper fn  | Decorator, Proxy                 | structural.md                |
+| Nested part/whole tree treated uniformly              | recursion over a union      | Composite                        | structural.md                |
+| Many objects react to one event                       | a callback list             | Observer, Mediator               | behavioral.md                |
+| A multi-step algorithm with varying steps             | extract functions           | Template Method, Strategy        | behavioral.md                |
+| One change edits many classes                         | separate the axes           | Bridge, Strategy                 | structural.md, behavioral.md |
 
 ## Reviewing existing code
 
-- [ ] Is there a *nameable* smell, or is the current code already the simplest thing that works?
+- [ ] Is there a _nameable_ smell, or is the current code already the simplest thing that works?
 - [ ] Is every abstraction earning its keep — more than one real caller/implementation?
 - [ ] Is there a single-caller pattern to **collapse** back into plain code?
 - [ ] Is a pattern migration half-done (old and new shapes coexisting)?

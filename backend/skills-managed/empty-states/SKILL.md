@@ -29,7 +29,7 @@ If a component can't tell these four apart, it isn't finished.
 
 1. **Illustration.** Include an icon or illustration. A blank screen reads as "nothing is wrong." Use the entity's icon, or a state icon (a document-X for no-data, a warning glyph for errors).
 2. **Human copy.** Sound like a product, not a log line or a corporate notice. Not "Something went wrong loading your data." Prefer "We couldn't load your tickets." Short, warm, specific.
-3. **Primary action.** Every empty and error state needs the one next step as a real button — "Create ticket," "Invite teammate," "Retry," "Clear filters." A button elsewhere on the page does **not** count; the action belongs *inside* the empty state. Only exception: a passive "select a row to preview" pane.
+3. **Primary action.** Every empty and error state needs the one next step as a real button — "Create ticket," "Invite teammate," "Retry," "Clear filters." A button elsewhere on the page does **not** count; the action belongs _inside_ the empty state. Only exception: a passive "select a row to preview" pane.
 4. **Type distinction.** Render the right one of the four kinds above. One message for all four is the single most common failure.
 5. **Teach.** Use first-run empties to explain what the feature does before the user touches it — one line of value, not just "No X found."
 
