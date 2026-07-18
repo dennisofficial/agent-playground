@@ -13,7 +13,8 @@ import { CustomNamingStrategy } from '../src/_lib/database/custom-naming.strateg
  */
 function resolveSsl(): false | { rejectUnauthorized: boolean } {
   const mode =
-    process.env.POSTGRES_SSL_MODE ?? (process.env.NODE_ENV === 'production' ? 'verify-full' : 'disable');
+    process.env.POSTGRES_SSL_MODE ??
+    (process.env.NODE_ENV === 'production' ? 'verify-full' : 'disable');
   if (mode === 'disable') return false;
   return { rejectUnauthorized: mode === 'verify-full' };
 }

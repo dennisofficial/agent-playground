@@ -1,6 +1,6 @@
-import 'reflect-metadata';
-import { resolve } from 'path';
 import { runSeeds } from '@workspace/nestjs-core';
+import { resolve } from 'path';
+import 'reflect-metadata';
 import { AppDataSource } from './data-source';
 
 /**

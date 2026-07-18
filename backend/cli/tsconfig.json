@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    "paths": {},
+    "paths": {}
   },
-  "extends": ["../tsconfig.cli.json"],
+  "extends": ["../tsconfig.cli.json"]
 }
