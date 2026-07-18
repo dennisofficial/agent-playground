@@ -9,6 +9,7 @@
 // this barrel (and of the root `@workspace/shared` barrel that re-exports it).
 import 'reflect-metadata';
 
+export * from './agent-credentials.dto';
 export * from './auth.dto';
 export * from './credentials.dto';
 export * from './org.dto';

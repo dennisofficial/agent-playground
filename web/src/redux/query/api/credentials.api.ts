@@ -10,7 +10,6 @@ export interface CredentialPresenceView {
   hasAnthropic: boolean;
   hasOpenai: boolean;
   hasGithub: boolean;
-  hasCodex: boolean;
   /** Anthropic key server-probe verdict — not available until the engine module; mirrors presence for now. */
   llmValidated: boolean;
   /** GitHub credential mode; the real value comes from github-app status. Defaults to 'pat'. */
@@ -22,7 +21,6 @@ export interface SaveCredentialsBody {
   anthropicApiKey?: string;
   openaiApiKey?: string;
   githubPat?: string;
-  codexAuthSecret?: string;
 }
 
 function toCredentialPresenceView(present: CredentialPresence['present']): CredentialPresenceView {
@@ -30,7 +28,6 @@ function toCredentialPresenceView(present: CredentialPresence['present']): Crede
     hasAnthropic: Boolean(present[ECredentialKey.ANTHROPIC_API_KEY]),
     hasOpenai: Boolean(present[ECredentialKey.OPENAI_API_KEY]),
     hasGithub: Boolean(present[ECredentialKey.GITHUB_PAT]),
-    hasCodex: Boolean(present[ECredentialKey.CODEX_AUTH]),
     llmValidated: Boolean(present[ECredentialKey.ANTHROPIC_API_KEY]),
     githubAuthMode: 'pat',
   };
@@ -41,7 +38,6 @@ function toEntries(body: SaveCredentialsBody) {
     [ECredentialKey.ANTHROPIC_API_KEY, body.anthropicApiKey],
     [ECredentialKey.OPENAI_API_KEY, body.openaiApiKey],
     [ECredentialKey.GITHUB_PAT, body.githubPat],
-    [ECredentialKey.CODEX_AUTH, body.codexAuthSecret],
   ];
   // Drop empty values — the backend ignores them too (a blank field is a no-op, not a delete).
   return byKey

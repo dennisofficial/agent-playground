@@ -9,7 +9,8 @@ const TAG_LEN = 16;
 /**
  * AES-256-GCM cipher for secrets-at-rest. The key comes from `SECRETS_ENCRYPTION_KEY` (64 hex chars
  * or 32-byte base64) and is loaded once at construction. Ciphertext format is `iv.tag.ct` (base64
- * parts). Internal to the credentials vault — nothing else should encrypt org secrets.
+ * parts). Shared across the credentials vault and the agent-credentials module — the single place
+ * anything encrypts org secrets. Provided globally by {@link CryptoModule}.
  */
 @Injectable()
 export class SecretCipherService {

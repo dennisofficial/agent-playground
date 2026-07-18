@@ -1,6 +1,6 @@
 'use client';
 
-import { useCredentialUsage, useOrgUsage } from '@/lib/api/orgs';
+import { useOrgUsage } from '@/lib/api/orgs';
 import type { WireOrgUsage } from '@/lib/api/types';
 import { formatClockTime } from '@/utils/org-display';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -649,28 +649,6 @@ export function UsageRingView({
 /** The composer footer's ring — the org's Claude subscription usage snapshot. */
 export function UsageRing({ orgId, size = 17 }: { orgId: string; size?: number }) {
   const { data, isLoading, refetch, dataUpdatedAt } = useOrgUsage(orgId);
-  return (
-    <UsageRingView
-      data={data}
-      isLoading={isLoading}
-      size={size}
-      refetch={refetch}
-      dataUpdatedAt={dataUpdatedAt}
-    />
-  );
-}
-
-/** A Settings credential card's ring — that ONE personal credential's own live usage. */
-export function CredentialUsageRing({
-  orgId,
-  credentialId,
-  size = 17,
-}: {
-  orgId: string;
-  credentialId: string;
-  size?: number;
-}) {
-  const { data, isLoading, refetch, dataUpdatedAt } = useCredentialUsage(orgId, credentialId);
   return (
     <UsageRingView
       data={data}

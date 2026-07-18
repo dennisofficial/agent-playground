@@ -1,52 +1,16 @@
 'use client';
 
-import { env } from '@/lib/env';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { stubMutation, type MutationResultLike } from './_stub';
-import { useMutation, useQuery, useQueryClient } from './_tanstack-shim';
-import { qk } from './query-keys';
-import { fetchWithRefresh } from './refresh';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { notImplemented, stubMutation, stubQuery, type MutationResultLike } from './_stub';
+import { useMutation } from './_tanstack-shim';
 import type { WireOrgUsage } from './types';
-import { readUsageCache, removeUsageCache, usePersistUsage } from './usage-cache';
 
 /**
- * Org-scoped reads + the credentials write for the settings page. All hit the Atlas app directly with the
- * session cookie; `/orgs/:orgId/*` is membership-gated server-side (403 for non-members), writes
- * (credentials PUT) are owner-only. Secrets are never returned — credentials GET is presence flags only.
+ * STUBBED for the Atlas rebuild: the old `/orgs/:orgId/...` backend hasn't been rebuilt yet, so every
+ * hook here is an inert placeholder. Reads render empty (`stubQuery`); writes throw "Not Implemented"
+ * on invoke (`notImplemented`) so an unwired action can never look like it succeeded. Types + doc
+ * comments are kept verbatim as the contract for whichever slice eventually replaces this file.
  */
-
-const BASE = env.NEXT_PUBLIC_BACKEND_URL;
-
-const usageCacheKey = (key: readonly string[]) => key.join(':');
-
-async function webJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetchWithRefresh(`${BASE}${path}`, {
-    ...init,
-    headers: {
-      accept: 'application/json',
-      'content-type': 'application/json',
-      ...init?.headers,
-    },
-  });
-  if (!res.ok) {
-    let detail = res.statusText;
-    try {
-      const body = (await res.json()) as { message?: string };
-      if (body?.message) detail = body.message;
-    } catch {
-      /* non-JSON error body */
-    }
-    const err = new Error(detail) as Error & { status?: number };
-    err.status = res.status;
-    throw err;
-  }
-  if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
-}
-
-// Org members + credentials vault are now consumed RTK-native straight from the slices
-// (`@/redux/query/api/org.api` → useGetOrgMembersQuery, `@/redux/query/api/credentials.api` →
-// useGetCredentialsQuery / useSaveCredentialsMutation), so no wrappers survive here.
 
 // ── GitHub App (connect the platform Atlas App as host/background auth and optional sandbox auth) ─────
 // One platform-level Atlas GitHub App; an org INSTALLS it and Atlas stores a non-secret installation id
@@ -71,25 +35,17 @@ export interface GithubAppStatus {
   account: string | null;
 }
 
-export function useGithubAppStatus(orgId: string) {
-  return useQuery({
-    queryKey: qk.orgGithubAppStatus(orgId),
-    queryFn: () => webJson<GithubAppStatus>(`/orgs/${orgId}/github-app/status`),
-    enabled: Boolean(orgId),
-    staleTime: 15_000,
-  });
+export function useGithubAppStatus(_orgId: string) {
+  return stubQuery<GithubAppStatus>();
 }
 
 /**
  * Owner-only: mint the org's single-use GitHub App install URL. Does not persist anything — the install
  * lands on GitHub's redirect back to the settings page, which the backend callback verifies + stores.
  */
-export function useGithubAppInstallUrl(orgId: string) {
+export function useGithubAppInstallUrl(_orgId: string) {
   return useMutation({
-    mutationFn: () =>
-      webJson<{ url: string }>(`/orgs/${orgId}/github-app/install-url`, {
-        method: 'POST',
-      }),
+    mutationFn: (): Promise<{ url: string }> => notImplemented('useGithubAppInstallUrl'),
   });
 }
 
@@ -98,188 +54,20 @@ export function useGithubAppInstallUrl(orgId: string) {
  * installation server-side. Invalidates presence + status (the mode drives which credential authenticates)
  * and the session (mode can flip the onboarding checklist).
  */
-export function useSetGithubAuthMode(orgId: string) {
-  const qc = useQueryClient();
+export function useSetGithubAuthMode(_orgId: string) {
   return useMutation({
-    mutationFn: (mode: 'pat' | 'app') =>
-      webJson<{ ok: true; mode: 'pat' | 'app' }>(`/orgs/${orgId}/github-app/mode`, {
-        method: 'PUT',
-        body: JSON.stringify({ mode }),
-      }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.orgGithubAppStatus(orgId) });
-      void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
-      void qc.invalidateQueries({ queryKey: qk.session() });
-    },
+    mutationFn: (mode: 'pat' | 'app'): Promise<{ ok: true; mode: 'pat' | 'app' }> =>
+      notImplemented('useSetGithubAuthMode'),
   });
 }
 
 /**
- * Owner-only: disconnect the App — clears the installation and falls back to `pat` mode. Invalidates
- * presence + status + session (the org may fall back onto its PAT, or lose GitHub access if it had none).
+ * Owner-only: disconnect the org's GitHub App installation. Invalidates status + presence/session (the
+ * resolved credential and onboarding checklist can shift when the App goes away).
  */
-export function useDisconnectGithubApp(orgId: string) {
-  const qc = useQueryClient();
+export function useDisconnectGithubApp(_orgId: string) {
   return useMutation({
-    mutationFn: () => webJson<{ ok: true }>(`/orgs/${orgId}/github-app`, { method: 'DELETE' }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.orgGithubAppStatus(orgId) });
-      void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
-      void qc.invalidateQueries({ queryKey: qk.session() });
-    },
-  });
-}
-
-// ── Claude credentials (multi-credential manager — the primary coding-engine auth surface) ─────────
-// The org keeps a LIST of Claude credentials; ONE is selected and funds all of the org's turns. Rows are
-// summaries only — token values are never returned. Owner-only server-side (list included; it exposes
-// account emails). Two kinds: `setup_token` (long-lived, never refreshed) and `personal` (OAuth login,
-// short-lived access token auto-refreshed in-container). Adding a personal login is a two-step flow:
-// `POST /authorize-url` mints the login URL, the operator logs in + pastes the returned `code#state`,
-// then `POST /` exchanges it. Adding a setup-token is a single `POST /` with the `sk-ant-oat…` value.
-
-export type ClaudeCredentialKind = 'setup_token' | 'personal';
-export type ClaudeCredentialStatus = 'active' | 'needs_reauth' | 'error';
-
-/** A Claude credential row — a summary only; secret VALUES are never returned by the API. */
-export interface ClaudeCredential {
-  id: string;
-  label: string;
-  kind: ClaudeCredentialKind;
-  status: ClaudeCredentialStatus | string;
-  /** Personal-login access-token expiry (epoch ms); null for setup-tokens. */
-  expiresAt: number | null;
-  /** Personal-login account email (display only); null for setup-tokens. */
-  accountEmail: string | null;
-  /** Whether this credential is the org's active (selected) one. */
-  isSelected: boolean;
-}
-
-/**
- * The org's Claude credential list. The endpoint is owner-only server-side (rows expose account emails),
- * so pass `enabled: false` for non-owners to skip a guaranteed 403 — they get a banner, not the list.
- */
-export function useClaudeCredentials(orgId: string, enabled = true) {
-  return useQuery({
-    queryKey: qk.orgClaudeCredentials(orgId),
-    queryFn: () => webJson<ClaudeCredential[]>(`/orgs/${orgId}/claude-credentials`),
-    enabled: Boolean(orgId) && enabled,
-    staleTime: 15_000,
-  });
-}
-
-/** The server response for `POST /authorize-url`: the Claude login URL + the PKCE `state` to echo back. */
-export interface ClaudeAuthorizeUrl {
-  url: string;
-  state: string;
-}
-
-/**
- * Owner-only: step 1 of adding a personal login. Mints a PKCE-backed Claude login URL; the operator opens
- * it, logs in with their subscription, and pastes the returned code. Takes no body — a personal credential
- * is named by the account email captured from the token exchange, not by an operator-supplied label. Does
- * not invalidate the list (nothing is stored yet — the credential lands on the follow-up
- * `useAddClaudeCredential` exchange).
- */
-export function useCreateClaudeAuthorizeUrl(orgId: string) {
-  return useMutation({
-    mutationFn: () =>
-      webJson<ClaudeAuthorizeUrl>(`/orgs/${orgId}/claude-credentials/authorize-url`, {
-        method: 'POST',
-      }),
-  });
-}
-
-/** Body for `POST /claude-credentials` — a personal login (`code`+`state`) OR a setup-token (`setupToken`). */
-export type AddClaudeCredentialBody =
-  | { code: string; state: string }
-  | { label: string; setupToken: string };
-
-/**
- * Owner-only: create a credential — the personal-login exchange (`{code, state}`, named by account email) or
- * a setup-token (`{setupToken, label}`). The server auto-selects it when it's the org's first. Invalidates
- * the list + the presence/session queries (a first credential flips the onboarding checklist).
- */
-export function useAddClaudeCredential(orgId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: AddClaudeCredentialBody) =>
-      webJson<ClaudeCredential>(`/orgs/${orgId}/claude-credentials`, {
-        method: 'POST',
-        body: JSON.stringify(body),
-      }),
-    onSuccess: (credential) => {
-      removeUsageCache(usageCacheKey(qk.orgCredentialUsage(orgId, credential.id)));
-      if (credential.isSelected) removeUsageCache(usageCacheKey(qk.orgUsage(orgId)));
-      void qc.invalidateQueries({ queryKey: qk.orgClaudeCredentials(orgId) });
-      void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
-      void qc.invalidateQueries({ queryKey: qk.session() });
-      void qc.invalidateQueries({ queryKey: qk.orgUsage(orgId) });
-    },
-  });
-}
-
-/** Owner-only: set the org's active credential. Invalidates the list + presence/session (selection drives auth). */
-export function useSelectClaudeCredential(orgId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (credentialId: string) =>
-      webJson<{ ok: true }>(`/orgs/${orgId}/claude-credentials/selected`, {
-        method: 'PUT',
-        body: JSON.stringify({ credentialId }),
-      }),
-    onSuccess: () => {
-      removeUsageCache(usageCacheKey(qk.orgUsage(orgId)));
-      void qc.invalidateQueries({ queryKey: qk.orgClaudeCredentials(orgId) });
-      void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
-      void qc.invalidateQueries({ queryKey: qk.session() });
-      void qc.invalidateQueries({ queryKey: qk.orgUsage(orgId) });
-      void qc.invalidateQueries({ queryKey: ['org-credential-usage', orgId] });
-    },
-  });
-}
-
-/** Owner-only: delete a credential. Deleting the selected one clears the org pointer (FK ON DELETE SET NULL). */
-export function useDeleteClaudeCredential(orgId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (credentialId: string) =>
-      webJson<{ ok: true }>(`/orgs/${orgId}/claude-credentials/${credentialId}`, {
-        method: 'DELETE',
-      }),
-    onSuccess: (_result, credentialId) => {
-      removeUsageCache(usageCacheKey(qk.orgUsage(orgId)));
-      removeUsageCache(usageCacheKey(qk.orgCredentialUsage(orgId, credentialId)));
-      void qc.invalidateQueries({ queryKey: qk.orgClaudeCredentials(orgId) });
-      void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
-      void qc.invalidateQueries({ queryKey: qk.session() });
-      void qc.invalidateQueries({ queryKey: qk.orgUsage(orgId) });
-    },
-  });
-}
-
-// ── Codex account (owner-only — the decoded account email of the pasted auth.json) ─────────────────
-// The Codex secret's account email is decoded on-read from the stored auth.json's `id_token` (display-only,
-// no signature check) and is Administer-tier info, so it lives on its own OWNER-gated endpoint rather than
-// the member-visible presence flags. `present` mirrors `hasCodex`; `accountEmail` is omitted for an
-// API-key-only auth.json (no `id_token` to decode).
-
-/** The owner-only `GET /credentials/codex` response — presence + the decoded account email, when present. */
-export interface CodexAccount {
-  present: boolean;
-  accountEmail?: string;
-}
-
-/**
- * Owner-only: the connected Codex subscription's account email (decoded from the stored auth.json). Pass
- * `enabled: false` for non-owners to skip a guaranteed 403 — the display is separately gated on ownership.
- */
-export function useCodexAccount(orgId: string, enabled = true) {
-  return useQuery({
-    queryKey: qk.orgCodexAccount(orgId),
-    queryFn: () => webJson<CodexAccount>(`/orgs/${orgId}/credentials/codex`),
-    enabled: Boolean(orgId) && enabled,
-    staleTime: 15_000,
+    mutationFn: (): Promise<{ ok: true }> => notImplemented('useDisconnectGithubApp'),
   });
 }
 
@@ -292,49 +80,8 @@ export function useCodexAccount(orgId: string, enabled = true) {
  * re-add a `refetchInterval`. Always returns 200 (never throws on a degraded snapshot); `ok:false` just
  * means "unknown right now".
  */
-export function useOrgUsage(orgId: string) {
-  const cacheKey = useMemo(() => usageCacheKey(qk.orgUsage(orgId)), [orgId]);
-  const seed = useMemo(() => readUsageCache<WireOrgUsage>(cacheKey), [cacheKey]);
-  const query = useQuery({
-    queryKey: qk.orgUsage(orgId),
-    queryFn: () => webJson<WireOrgUsage>(`/orgs/${orgId}/usage`),
-    enabled: Boolean(orgId),
-    staleTime: 30_000,
-    // Seed the last-known value from localStorage so the ring paints instantly on mount; its known age still
-    // lets `staleTime` fire a refetch when it's stale.
-    initialData: seed?.data,
-    initialDataUpdatedAt: seed?.at,
-    // Re-enable focus refetch (the app disables it globally) so the documented
-    // backstop is real: with the poll dropped, this is how a client on an instance
-    // that missed the single-process SSE push recovers a stale ring.
-    refetchOnWindowFocus: true,
-  });
-  usePersistUsage(cacheKey, query.data, query.dataUpdatedAt);
-  return query;
-}
-
-/**
- * One PERSONAL credential's own Claude subscription usage (the ring on its Settings card). Live-fetched
- * per-credential (never the org snapshot), server-cached ~3 min; same best-effort/degraded contract as
- * {@link useOrgUsage} — always 200, `ok:false` just means "unknown right now". Do NOT call for setup tokens.
- */
-export function useCredentialUsage(orgId: string, credentialId: string, enabled = true) {
-  const cacheKey = useMemo(
-    () => usageCacheKey(qk.orgCredentialUsage(orgId, credentialId)),
-    [orgId, credentialId],
-  );
-  const seed = useMemo(() => readUsageCache<WireOrgUsage>(cacheKey), [cacheKey]);
-  const query = useQuery({
-    queryKey: qk.orgCredentialUsage(orgId, credentialId),
-    queryFn: () => webJson<WireOrgUsage>(`/orgs/${orgId}/claude-credentials/${credentialId}/usage`),
-    enabled: Boolean(orgId) && Boolean(credentialId) && enabled,
-    staleTime: 180_000,
-    refetchInterval: 180_000,
-    initialData: seed?.data,
-    initialDataUpdatedAt: seed?.at,
-  });
-  usePersistUsage(cacheKey, query.data, query.dataUpdatedAt);
-  return query;
+export function useOrgUsage(_orgId: string) {
+  return stubQuery<WireOrgUsage>();
 }
 
 // ── Workspace profile (Atlas-managed per-repo provisioning: mounts, setup script, preview recipe,
@@ -363,109 +110,55 @@ export interface WorkspaceProfileView {
 }
 
 /** One repo's Atlas-managed provisioning (GET /web/orgs/:orgId/repos/:repoId/workspace-profile). Member-readable. */
-export function useWorkspaceProfile(orgId: string, repoId: string) {
-  return useQuery({
-    queryKey: qk.orgWorkspaceProfile(orgId, repoId),
-    queryFn: () =>
-      webJson<WorkspaceProfileView>(`/orgs/${orgId}/repos/${repoId}/workspace-profile`),
-    enabled: Boolean(orgId && repoId),
-    staleTime: 15_000,
-  });
+export function useWorkspaceProfile(_orgId: string, _repoId: string) {
+  return stubQuery<WorkspaceProfileView>();
 }
 
 /** Owner-only: idempotent upsert-by-path of a mount. Server returns `restartsSandbox: true` — the mount SET changed, so in-flight sandboxes recreate on next attach. */
-export function useSaveMount(orgId: string, repoId: string) {
-  const qc = useQueryClient();
+export function useSaveMount(_orgId: string, _repoId: string) {
   return useMutation({
-    mutationFn: (body: { path: string; mode: string }) =>
-      webJson<{ ok: true; restartsSandbox: true }>(
-        `/orgs/${orgId}/repos/${repoId}/workspace-profile/mounts`,
-        { method: 'PUT', body: JSON.stringify(body) },
-      ),
-    onSuccess: () =>
-      void qc.invalidateQueries({
-        queryKey: qk.orgWorkspaceProfile(orgId, repoId),
-      }),
+    mutationFn: (body: { path: string; mode: string }): Promise<{ ok: true; restartsSandbox: true }> =>
+      notImplemented('useSaveMount'),
   });
 }
 
 /** Owner-only: remove a mount by path. Also restarts sandboxes on next attach. */
-export function useDeleteMount(orgId: string, repoId: string) {
-  const qc = useQueryClient();
+export function useDeleteMount(_orgId: string, _repoId: string) {
   return useMutation({
-    mutationFn: (body: { path: string }) =>
-      webJson<{ ok: true; restartsSandbox: true }>(
-        `/orgs/${orgId}/repos/${repoId}/workspace-profile/mounts`,
-        { method: 'DELETE', body: JSON.stringify(body) },
-      ),
-    onSuccess: () =>
-      void qc.invalidateQueries({
-        queryKey: qk.orgWorkspaceProfile(orgId, repoId),
-      }),
+    mutationFn: (body: { path: string }): Promise<{ ok: true; restartsSandbox: true }> =>
+      notImplemented('useDeleteMount'),
   });
 }
 
 /** Owner-only: set (or, with `script: null`, clear) the repo's setup script. Runs on every cold sandbox bring-up. */
-export function useSaveSetupScript(orgId: string, repoId: string) {
-  const qc = useQueryClient();
+export function useSaveSetupScript(_orgId: string, _repoId: string) {
   return useMutation({
-    mutationFn: (body: { script: string | null }) =>
-      webJson<{ ok: true }>(`/orgs/${orgId}/repos/${repoId}/workspace-profile/setup-script`, {
-        method: 'PUT',
-        body: JSON.stringify(body),
-      }),
-    onSuccess: () =>
-      void qc.invalidateQueries({
-        queryKey: qk.orgWorkspaceProfile(orgId, repoId),
-      }),
+    mutationFn: (body: { script: string | null }): Promise<{ ok: true }> =>
+      notImplemented('useSaveSetupScript'),
   });
 }
 
 /** Owner-only: set (or, with `instructions: null`, clear) the repo's preview recipe. */
-export function useSavePreviewRecipe(orgId: string, repoId: string) {
-  const qc = useQueryClient();
+export function useSavePreviewRecipe(_orgId: string, _repoId: string) {
   return useMutation({
-    mutationFn: (body: { instructions: string | null }) =>
-      webJson<{ ok: true }>(`/orgs/${orgId}/repos/${repoId}/workspace-profile/preview-recipe`, {
-        method: 'PUT',
-        body: JSON.stringify(body),
-      }),
-    onSuccess: () =>
-      void qc.invalidateQueries({
-        queryKey: qk.orgWorkspaceProfile(orgId, repoId),
-      }),
+    mutationFn: (body: { instructions: string | null }): Promise<{ ok: true }> =>
+      notImplemented('useSavePreviewRecipe'),
   });
 }
 
 /** Owner-only: create/replace a repo's secret file at a destination path. Reuses the existing (unretired) secret-files endpoint — repoId goes in the body, not the path. */
-export function useSaveRepoSecretFile(orgId: string, repoId: string) {
-  const qc = useQueryClient();
+export function useSaveRepoSecretFile(_orgId: string, _repoId: string) {
   return useMutation({
-    mutationFn: (body: { path: string; value: string; label?: string }) =>
-      webJson<{ ok: boolean }>(`/orgs/${orgId}/workspace-secrets/files`, {
-        method: 'PUT',
-        body: JSON.stringify({ ...body, repoId }),
-      }),
-    onSuccess: () =>
-      void qc.invalidateQueries({
-        queryKey: qk.orgWorkspaceProfile(orgId, repoId),
-      }),
+    mutationFn: (body: { path: string; value: string; label?: string }): Promise<{ ok: boolean }> =>
+      notImplemented('useSaveRepoSecretFile'),
   });
 }
 
 /** Owner-only: delete a repo's secret file. */
-export function useDeleteRepoSecretFile(orgId: string, repoId: string) {
-  const qc = useQueryClient();
+export function useDeleteRepoSecretFile(_orgId: string, _repoId: string) {
   return useMutation({
-    mutationFn: (body: { path: string }) =>
-      webJson<{ ok: boolean }>(`/orgs/${orgId}/workspace-secrets/files`, {
-        method: 'DELETE',
-        body: JSON.stringify({ ...body, repoId }),
-      }),
-    onSuccess: () =>
-      void qc.invalidateQueries({
-        queryKey: qk.orgWorkspaceProfile(orgId, repoId),
-      }),
+    mutationFn: (body: { path: string }): Promise<{ ok: boolean }> =>
+      notImplemented('useDeleteRepoSecretFile'),
   });
 }
 
@@ -474,7 +167,7 @@ export function useDeleteRepoSecretFile(orgId: string, repoId: string) {
 // value redacted (secret slots come back `null` in `config`, and are listed in `secretKeys`). Writes
 // (PUT/DELETE/validate) are owner-only server-side. A secret field follows the credentials UX: presence
 // is shown, and re-entering a value changes it — submitting a secret entry with an EMPTY value preserves
-// the stored one. The URL scope is `'org'` (org-wide) or a repo id (repo-scoped).
+// the stored one. The URL scope is `'org'` (org-wide) or a repo id.
 
 export type McpTransport = 'http' | 'sse' | 'stdio';
 export type McpSurface = 'brain' | 'build' | 'review';
@@ -563,51 +256,38 @@ export interface McpValidateResult {
   error?: string;
 }
 
-export function useMcpServers(orgId: string) {
-  return useQuery({
-    queryKey: qk.orgMcpServers(orgId),
-    queryFn: () => webJson<McpServersView>(`/orgs/${orgId}/mcp-servers`),
-    enabled: Boolean(orgId),
-    staleTime: 15_000,
-  });
+export function useMcpServers(_orgId: string) {
+  return stubQuery<McpServersView>();
 }
 
 /** Owner-only: create/replace a server at a scope (`'org'` or a repo id). */
-export function useSaveMcpServer(orgId: string) {
-  const qc = useQueryClient();
+export function useSaveMcpServer(_orgId: string) {
   return useMutation({
-    mutationFn: ({ scope, name, body }: { scope: string; name: string; body: SaveMcpServerBody }) =>
-      webJson<{ ok: boolean }>(
-        `/orgs/${orgId}/mcp-servers/${encodeURIComponent(scope)}/${encodeURIComponent(name)}`,
-        { method: 'PUT', body: JSON.stringify(body) },
-      ),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.orgMcpServers(orgId) }),
+    mutationFn: ({
+      scope,
+      name,
+      body,
+    }: {
+      scope: string;
+      name: string;
+      body: SaveMcpServerBody;
+    }): Promise<{ ok: boolean }> => notImplemented('useSaveMcpServer'),
   });
 }
 
 /** Owner-only: delete a server at a scope. */
-export function useDeleteMcpServer(orgId: string) {
-  const qc = useQueryClient();
+export function useDeleteMcpServer(_orgId: string) {
   return useMutation({
-    mutationFn: ({ scope, name }: { scope: string; name: string }) =>
-      webJson<{ ok: boolean }>(
-        `/orgs/${orgId}/mcp-servers/${encodeURIComponent(scope)}/${encodeURIComponent(name)}`,
-        { method: 'DELETE' },
-      ),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.orgMcpServers(orgId) }),
+    mutationFn: ({ scope, name }: { scope: string; name: string }): Promise<{ ok: boolean }> =>
+      notImplemented('useDeleteMcpServer'),
   });
 }
 
 /** Owner-only: best-effort probe (remote handshake / stdio structural). Persists the discovered tools. */
-export function useValidateMcpServer(orgId: string) {
-  const qc = useQueryClient();
+export function useValidateMcpServer(_orgId: string) {
   return useMutation({
-    mutationFn: ({ scope, name }: { scope: string; name: string }) =>
-      webJson<McpValidateResult>(
-        `/orgs/${orgId}/mcp-servers/${encodeURIComponent(scope)}/${encodeURIComponent(name)}/validate`,
-        { method: 'POST' },
-      ),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.orgMcpServers(orgId) }),
+    mutationFn: ({ scope, name }: { scope: string; name: string }): Promise<McpValidateResult> =>
+      notImplemented('useValidateMcpServer'),
   });
 }
 
@@ -616,13 +296,10 @@ export function useValidateMcpServer(orgId: string) {
  * URL; the caller opens it (a popup) and the provider redirects the browser back to the backend callback, which
  * completes the token exchange. The console refetches the server list when the popup posts back / closes.
  */
-export function useStartMcpOAuth(orgId: string) {
+export function useStartMcpOAuth(_orgId: string) {
   return useMutation({
-    mutationFn: ({ scope, name }: { scope: string; name: string }) =>
-      webJson<{ authorizeUrl: string }>(
-        `/orgs/${orgId}/mcp-servers/${encodeURIComponent(scope)}/${encodeURIComponent(name)}/oauth/start`,
-        { method: 'POST' },
-      ),
+    mutationFn: ({ scope, name }: { scope: string; name: string }): Promise<{ authorizeUrl: string }> =>
+      notImplemented('useStartMcpOAuth'),
   });
 }
 
@@ -633,7 +310,6 @@ export function useStartMcpOAuth(orgId: string) {
  * persist the server itself; callers pass a scope+name that's already been saved.
  */
 export function useMcpOAuthConnect(orgId: string) {
-  const qc = useQueryClient();
   const startOAuth = useStartMcpOAuth(orgId);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
@@ -650,14 +326,12 @@ export function useMcpOAuthConnect(orgId: string) {
           ? { ok: true, text: 'Connected.' }
           : { ok: false, text: 'Authorization did not complete.' },
       );
-      void qc.invalidateQueries({ queryKey: qk.orgMcpServers(orgId) });
     };
     const onFocus = () => {
       if (popupRef.current && popupRef.current.closed) {
         popupRef.current = null;
         setBusy(false);
       }
-      void qc.invalidateQueries({ queryKey: qk.orgMcpServers(orgId) });
     };
     window.addEventListener('message', onMessage);
     window.addEventListener('focus', onFocus);
@@ -665,7 +339,7 @@ export function useMcpOAuthConnect(orgId: string) {
       window.removeEventListener('message', onMessage);
       window.removeEventListener('focus', onFocus);
     };
-  }, [busy, orgId, qc]);
+  }, [busy]);
 
   const connect = useCallback(
     async ({ scope, name }: { scope: string; name: string }) => {
@@ -737,64 +411,47 @@ export interface SaveConventionProfileBody {
 }
 
 /** Every house-style profile for the org (with body) — the settings editor's data. */
-export function useConventionProfiles(orgId: string) {
-  return useQuery({
-    queryKey: qk.orgConventionProfiles(orgId),
-    queryFn: () => webJson<ConventionProfilesView>(`/orgs/${orgId}/convention-profiles`),
-    enabled: Boolean(orgId),
-    staleTime: 15_000,
-  });
+export function useConventionProfiles(_orgId: string) {
+  return stubQuery<ConventionProfilesView>();
 }
 
 /** Owner-only: create/replace a profile by slug. */
-export function useSaveConventionProfile(orgId: string) {
-  const qc = useQueryClient();
+export function useSaveConventionProfile(_orgId: string) {
   return useMutation({
-    mutationFn: ({ slug, body }: { slug: string; body: SaveConventionProfileBody }) =>
-      webJson<{ ok: boolean }>(`/orgs/${orgId}/convention-profiles/${encodeURIComponent(slug)}`, {
-        method: 'PUT',
-        body: JSON.stringify(body),
-      }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.orgConventionProfiles(orgId) }),
+    mutationFn: ({
+      slug,
+      body,
+    }: {
+      slug: string;
+      body: SaveConventionProfileBody;
+    }): Promise<{ ok: boolean }> => notImplemented('useSaveConventionProfile'),
   });
 }
 
 /** Owner-only: delete a profile. Repos still pointing at it fall back to "no house style". */
-export function useDeleteConventionProfile(orgId: string) {
-  const qc = useQueryClient();
+export function useDeleteConventionProfile(_orgId: string) {
   return useMutation({
-    mutationFn: (slug: string) =>
-      webJson<{ ok: boolean }>(`/orgs/${orgId}/convention-profiles/${encodeURIComponent(slug)}`, {
-        method: 'DELETE',
-      }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.orgConventionProfiles(orgId) }),
+    mutationFn: (slug: string): Promise<{ ok: boolean }> =>
+      notImplemented('useDeleteConventionProfile'),
   });
 }
 
 /** The slug currently attached to a repo (or null) — the repo-attach control's initial state. */
-export function useRepoConventionProfile(orgId: string, repoId: string) {
-  return useQuery({
-    queryKey: qk.repoConventionProfile(orgId, repoId),
-    queryFn: () =>
-      webJson<{ slug: string | null }>(`/orgs/${orgId}/convention-profiles/repo/${repoId}`),
-    enabled: Boolean(orgId && repoId),
-    staleTime: 15_000,
-  });
+export function useRepoConventionProfile(_orgId: string, _repoId: string) {
+  return stubQuery<{ slug: string | null }>();
 }
 
 /** Owner-only: attach a profile to a repo, or clear it with `slug: null`. */
-export function useAttachConventionProfile(orgId: string) {
-  const qc = useQueryClient();
+export function useAttachConventionProfile(_orgId: string) {
   return useMutation({
-    mutationFn: ({ repoId, slug }: { repoId: string; slug: string | null }) =>
-      webJson<{ ok: boolean; slug: string | null }>(
-        `/orgs/${orgId}/convention-profiles/repo/${repoId}`,
-        { method: 'PUT', body: JSON.stringify({ slug }) },
-      ),
-    onSuccess: (_res, { repoId }) =>
-      void qc.invalidateQueries({
-        queryKey: qk.repoConventionProfile(orgId, repoId),
-      }),
+    mutationFn: ({
+      repoId,
+      slug,
+    }: {
+      repoId: string;
+      slug: string | null;
+    }): Promise<{ ok: boolean; slug: string | null }> =>
+      notImplemented('useAttachConventionProfile'),
   });
 }
 
@@ -860,26 +517,6 @@ interface SkillWire {
   update_available: boolean;
 }
 
-function fromWire(s: SkillWire): Skill {
-  return {
-    scope: s.scope,
-    name: s.name,
-    description: s.description,
-    provenance: s.provenance,
-    sourceUrl: s.source_url,
-    sourceRef: s.source_ref,
-    sourceSubpath: s.source_subpath,
-    installedSha: s.installed_sha,
-    updatePolicy: s.update_policy,
-    forkedFrom: s.forked_from,
-    surfaces: s.surfaces,
-    reviewForTypes: s.reviewForTypes ?? [],
-    reviewForGlobs: s.reviewForGlobs ?? [],
-    enabled: s.enabled,
-    updateAvailable: s.update_available,
-  };
-}
-
 /** The `GET /skills` response: the read-only System tiers (Atlas-managed + Claude Code bundled) alongside
  *  this org's writable Organization/Repository skills. */
 export interface SkillsView {
@@ -889,24 +526,8 @@ export interface SkillsView {
 }
 
 /** Every skill for the org — the System tiers plus org-wide + every repo scope. */
-export function useSkills(orgId: string) {
-  return useQuery({
-    queryKey: qk.orgSkills(orgId),
-    queryFn: async () => {
-      const { system, bundled, skills } = await webJson<{
-        system: SystemSkill[];
-        bundled: string[];
-        skills: SkillWire[];
-      }>(`/orgs/${orgId}/skills`);
-      return {
-        system,
-        bundled,
-        skills: skills.map(fromWire),
-      } satisfies SkillsView;
-    },
-    enabled: Boolean(orgId),
-    staleTime: 15_000,
-  });
+export function useSkills(_orgId: string) {
+  return stubQuery<SkillsView>();
 }
 
 /** Body for `POST /web/orgs/:orgId/skills/install` — install (or re-install) from a git repo, or expand
@@ -921,15 +542,10 @@ export interface InstallSkillBody {
 }
 
 /** Owner-only: install from GitHub. */
-export function useInstallSkill(orgId: string) {
-  const qc = useQueryClient();
+export function useInstallSkill(_orgId: string) {
   return useMutation({
-    mutationFn: (body: InstallSkillBody) =>
-      webJson<{ skills: SkillWire[] }>(`/orgs/${orgId}/skills/install`, {
-        method: 'POST',
-        body: JSON.stringify(body),
-      }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.orgSkills(orgId) }),
+    mutationFn: (body: InstallSkillBody): Promise<{ skills: SkillWire[] }> =>
+      notImplemented('useInstallSkill'),
   });
 }
 
@@ -949,79 +565,46 @@ export interface SaveSkillBody {
 
 /** Owner-only: create a custom skill, or edit one (registry fields, and — for a custom skill — its
  *  `SKILL.md` body). */
-export function useSaveSkill(orgId: string) {
-  const qc = useQueryClient();
+export function useSaveSkill(_orgId: string) {
   return useMutation({
-    mutationFn: ({ scope, name, body }: { scope: string; name: string; body: SaveSkillBody }) =>
-      webJson<{ ok: boolean }>(
-        `/orgs/${orgId}/skills/${encodeURIComponent(scope)}/${encodeURIComponent(name)}`,
-        {
-          method: 'PUT',
-          body: JSON.stringify({
-            description: body.description,
-            provenance: body.provenance,
-            surfaces: body.surfaces,
-            reviewForTypes: body.reviewForTypes,
-            reviewForGlobs: body.reviewForGlobs,
-            enabled: body.enabled,
-            update_policy: body.updatePolicy,
-            body: body.body,
-          }),
-        },
-      ),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.orgSkills(orgId) }),
+    mutationFn: ({
+      scope,
+      name,
+      body,
+    }: {
+      scope: string;
+      name: string;
+      body: SaveSkillBody;
+    }): Promise<{ ok: boolean }> => notImplemented('useSaveSkill'),
   });
 }
 
 /** Owner-only: apply-now — re-vendor a `git` skill from its recorded source, regardless of `updatePolicy`. */
-export function useUpdateSkill(orgId: string) {
-  const qc = useQueryClient();
+export function useUpdateSkill(_orgId: string) {
   return useMutation({
-    mutationFn: ({ scope, name }: { scope: string; name: string }) =>
-      webJson<{ ok: boolean }>(
-        `/orgs/${orgId}/skills/${encodeURIComponent(scope)}/${encodeURIComponent(name)}/update`,
-        { method: 'POST' },
-      ),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.orgSkills(orgId) }),
+    mutationFn: ({ scope, name }: { scope: string; name: string }): Promise<{ ok: boolean }> =>
+      notImplemented('useUpdateSkill'),
   });
 }
 
 /** Owner-only: fork a `git` skill to a fresh, freely-editable `custom` copy in the same scope. */
-export function useForkSkill(orgId: string) {
-  const qc = useQueryClient();
+export function useForkSkill(_orgId: string) {
   return useMutation({
-    mutationFn: ({ scope, name }: { scope: string; name: string }) =>
-      webJson<{ skill: SkillWire }>(
-        `/orgs/${orgId}/skills/${encodeURIComponent(scope)}/${encodeURIComponent(name)}/fork`,
-        { method: 'POST' },
-      ).then((res) => fromWire(res.skill)),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.orgSkills(orgId) }),
+    mutationFn: ({ scope, name }: { scope: string; name: string }): Promise<Skill> =>
+      notImplemented('useForkSkill'),
   });
 }
 
 /** Owner-only: delete a skill (registry row + its on-disk dir). */
-export function useDeleteSkill(orgId: string) {
-  const qc = useQueryClient();
+export function useDeleteSkill(_orgId: string) {
   return useMutation({
-    mutationFn: ({ scope, name }: { scope: string; name: string }) =>
-      webJson<{ ok: boolean }>(
-        `/orgs/${orgId}/skills/${encodeURIComponent(scope)}/${encodeURIComponent(name)}`,
-        { method: 'DELETE' },
-      ),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.orgSkills(orgId) }),
+    mutationFn: ({ scope, name }: { scope: string; name: string }): Promise<{ ok: boolean }> =>
+      notImplemented('useDeleteSkill'),
   });
 }
 
 /** A skill's read-only file tree + `SKILL.md` content — the console viewer's data (any member; not cached
  *  under `qk.orgSkills` since it's fetched on demand per open viewer). */
-export function useSkillFiles(orgId: string, scope: string, name: string, enabled: boolean) {
-  return useQuery({
-    queryKey: [...qk.orgSkills(orgId), 'files', scope, name] as const,
-    queryFn: () =>
-      webJson<{ files: string[]; skillMd: string | null }>(
-        `/orgs/${orgId}/skills/${encodeURIComponent(scope)}/${encodeURIComponent(name)}/files`,
-      ),
-    enabled: Boolean(orgId && scope && name) && enabled,
-    staleTime: 15_000,
-  });
+export function useSkillFiles(_orgId: string, _scope: string, _name: string, _enabled: boolean) {
+  return stubQuery<{ files: string[]; skillMd: string | null }>();
 }

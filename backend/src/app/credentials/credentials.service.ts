@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { ECredentialKey } from '@workspace/shared';
 import { In } from 'typeorm';
+import { SecretCipherService } from '../../_lib/crypto/secret-cipher.service';
 import { OrgSecretRepo } from './entities/org-secret.entity';
-import { SecretCipherService } from './secret-cipher.service';
 
 /**
  * Generic, domain-agnostic org secret vault. Stores one encrypted value per `(orgId, key)`; it

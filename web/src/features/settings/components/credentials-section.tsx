@@ -1,28 +1,36 @@
 'use client';
 
-import { CredentialUsageRing } from '@/features/job-workspace/usage-ring';
+import { UsageRingView } from '@/features/job-workspace/usage-ring';
 import { useQueryClient } from '@/lib/api/_tanstack-shim';
 import {
-  useAddClaudeCredential,
-  useClaudeCredentials,
-  useCodexAccount,
-  useCreateClaudeAuthorizeUrl,
-  useDeleteClaudeCredential,
   useDisconnectGithubApp,
   useGithubAppInstallUrl,
   useGithubAppStatus,
-  useSelectClaudeCredential,
   useSetGithubAuthMode,
-  type ClaudeCredential,
-  type ClaudeCredentialKind,
-  type ClaudeCredentialStatus,
 } from '@/lib/api/orgs';
 import { qk } from '@/lib/api/query-keys';
+import {
+  useCreateClaudePersonalMutation,
+  useCreateClaudeSetupTokenMutation,
+  useGetAgentCredentialsQuery,
+  usePasteCodexAuthMutation,
+  usePollCodexDeviceMutation,
+  useRemoveAgentCredentialMutation,
+  useSetSelectedAgentCredentialMutation,
+  useStartClaudeAuthorizeMutation,
+  useStartCodexDeviceMutation,
+} from '@/redux/query/api/agent-credentials.api';
 import {
   useGetCredentialsQuery,
   useSaveCredentialsMutation,
   type SaveCredentialsBody,
 } from '@/redux/query/api/credentials.api';
+import {
+  EAgentProvider,
+  type AgentCredentialView,
+  type CodexDeviceStartResult,
+  type OrgUsage,
+} from '@workspace/shared';
 import {
   AlertCircle,
   Check,
@@ -40,6 +48,11 @@ import { useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { CredentialCard } from './CredentialCard';
 import { StatusChip } from './StatusChip';
+
+/** Visual tone for a status pill / chip. */
+export type Tone = 'green' | 'dim' | 'faint';
+/** Client-side validation status shown by {@link EditPill} for a credential field. */
+export type Status = 'idle' | 'testing' | 'valid' | 'invalid';
 
 /**
  * Credentials — the org-wide encrypted secrets every thread uses. The list is presence-only (the API never
@@ -67,7 +80,6 @@ export function CredentialsSection({ orgId, role }: { orgId: string; role: strin
   const [save] = useSaveCredentialsMutation();
   const onSave = (body: SaveCredentialsBody) => save({ orgId, body }).unwrap();
   const isOwner = role === 'owner';
-  const { data: codex } = useCodexAccount(orgId, isOwner);
 
   if (isLoading) {
     return <p className="text-[13px] text-faint">Loading credentials…</p>;
@@ -201,49 +213,7 @@ export function CredentialsSection({ orgId, role }: { orgId: string; role: strin
         hint="Subscription tokens for the agents that drive the build. The engine runs subscription-only — an API key won’t authorize it."
       />
 
-      <ClaudeCredentialsManager orgId={orgId} isOwner={isOwner} />
-
-      <CredentialCard
-        icon={<Terminal size={15} />}
-        title="Codex subscription"
-        sub={
-          isOwner && presence.hasCodex && codex?.accountEmail
-            ? codex.accountEmail
-            : 'Optional second coding engine'
-        }
-        present={presence.hasCodex}
-        pill={
-          presence.hasCodex ? { label: 'set', tone: 'dim' } : { label: 'optional', tone: 'faint' }
-        }
-        modes={[
-          {
-            id: 'codex-sub',
-            fieldLabel: 'New Codex auth token',
-            placeholder: 'Paste ~/.codex/auth.json…',
-            maskedPrefix: '',
-            tag: 'subscription · optional',
-            help: (
-              <HelpBlock>
-                <p>
-                  Sign in to the OpenAI Codex CLI with your <strong>ChatGPT Plus/Pro</strong>{' '}
-                  account. With the Codex CLI installed, run:
-                </p>
-                <CommandLine cmd="codex login" />
-                <p>
-                  This writes <Code>~/.codex/auth.json</Code> — paste the full contents of that file
-                  here.
-                </p>
-              </HelpBlock>
-            ),
-            validate: (v) => {
-              if (v.length < 10) return { ok: false, reason: 'That token looks too short.' };
-              return { ok: true, reason: 'Format looks valid.' };
-            },
-            buildBody: (v) => ({ codexAuthSecret: v }),
-          },
-        ]}
-        onSave={onSave}
-      />
+      <AgentAccountsManager orgId={orgId} isOwner={isOwner} />
 
       <SectionLabel
         title="Source control"
@@ -536,107 +506,214 @@ function GithubAppConnect({
   );
 }
 
-// ── Claude credentials manager ───────────────────────────────────────────────────────────────────
+// ── Agent accounts (coding-engine subscriptions) ──────────────────────────────────────────────────
 /**
- * The Claude coding-engine auth surface — unlike the other cards here, this manages a LIST of
- * credentials (personal logins + setup-tokens) with one selected to fund the org's turns. Owner-gated:
- * non-owners see the list read-only with no add/select/delete affordances.
+ * The coding-engine auth surface — a multi-account manager for Claude AND Codex subscription logins.
+ * The list is realtime (streamed from `agent_credentials`) and carries each account's per-account usage
+ * windows. Reads are member-visible; add / select / delete are owner-only.
  */
-function ClaudeCredentialsManager({ orgId, isOwner }: { orgId: string; isOwner: boolean }) {
-  const { data: credentials, isLoading, isError } = useClaudeCredentials(orgId, isOwner);
-  const select = useSelectClaudeCredential(orgId);
-  const del = useDeleteClaudeCredential(orgId);
+function AgentAccountsManager({ orgId, isOwner }: { orgId: string; isOwner: boolean }) {
+  const { data, isLoading, isError } = useGetAgentCredentialsQuery(orgId, { skip: !orgId });
+  const [select, selectState] = useSetSelectedAgentCredentialMutation();
+  const [remove, removeState] = useRemoveAgentCredentialMutation();
   const [deleteErrors, setDeleteErrors] = useState<Record<string, string>>({});
-  const login = useClaudePersonalLogin(orgId);
-  const addPersonalCardRef = useRef<HTMLDivElement>(null);
 
-  // Reconnect drives the same login as the add-card: start it (synchronously, to keep the popup gesture)
-  // and bring the card's paste step into view so the returning user lands on step 2.
-  function handleReconnect() {
-    login.openLogin();
-    addPersonalCardRef.current?.scrollIntoView({
-      behavior: 'smooth',
-      block: 'center',
-    });
-  }
-
-  async function handleDelete(id: string) {
-    setDeleteErrors((prev) => {
-      const { [id]: _drop, ...rest } = prev;
+  const onSelect = (id: string) => {
+    void select({ orgId, credentialId: id })
+      .unwrap()
+      .catch(() => {});
+  };
+  async function onDelete(id: string) {
+    setDeleteErrors((p) => {
+      const { [id]: _drop, ...rest } = p;
       return rest;
     });
     try {
-      await del.mutateAsync(id);
+      await remove({ orgId, id }).unwrap();
     } catch (e) {
-      setDeleteErrors((prev) => ({
-        ...prev,
-        [id]: (e as Error)?.message || 'Could not delete credential.',
-      }));
+      setDeleteErrors((p) => ({ ...p, [id]: errMsg(e, 'Could not delete account.') }));
     }
   }
 
-  // The list endpoint is owner-only server-side (rows carry account emails), so a member can't view it —
-  // show a banner explaining that rather than an empty/errored list.
-  if (!isOwner) {
-    return (
-      <div className="mb-3.5">
-        <div className="flex items-center gap-2 rounded-md border border-border bg-surface-2 px-3 py-2.5 text-[11.5px] text-faint">
-          <Lock size={13} />
-          Only organization owners can view and manage Claude credentials.
-        </div>
-      </div>
-    );
-  }
+  if (isLoading) return <p className="mb-3.5 text-[13px] text-faint">Loading agent accounts…</p>;
+  if (isError || !data)
+    return <p className="mb-3.5 text-[13px] text-red">Couldn’t load agent accounts.</p>;
+
+  const claude = data.filter((c) => c.provider === EAgentProvider.CLAUDE);
+  const codex = data.filter((c) => c.provider === EAgentProvider.CODEX);
+  const shared = {
+    orgId,
+    isOwner,
+    onSelect,
+    onDelete,
+    selectPending: selectState.isLoading,
+    deletePending: removeState.isLoading,
+    deleteErrors,
+  };
 
   return (
-    <div className="mb-3.5">
-      {isLoading ? (
-        <p className="text-[13px] text-faint">Loading Claude credentials…</p>
-      ) : isError || !credentials ? (
-        <p className="text-[13px] text-red">Couldn’t load Claude credentials.</p>
-      ) : credentials.length === 0 ? (
-        <p className="rounded-lg border border-border bg-surface-2 px-3.5 py-3 text-[12px] text-faint">
-          No Claude credentials yet — add one below.
-        </p>
-      ) : (
-        <div className="flex flex-col gap-2.5">
-          {credentials.map((cred) => (
-            <ClaudeCredentialRow
-              key={cred.id}
-              orgId={orgId}
-              cred={cred}
-              isOwner={isOwner}
-              onSelect={() => select.mutate(cred.id)}
-              selectPending={select.isPending}
-              onDelete={() => handleDelete(cred.id)}
-              deletePending={del.isPending}
-              deleteError={deleteErrors[cred.id]}
-              onReconnect={handleReconnect}
-            />
-          ))}
-        </div>
-      )}
-
-      <div className="mt-3 flex flex-col gap-3">
-        <AddClaudePersonalCard login={login} cardRef={addPersonalCardRef} />
-        <AddClaudeSetupTokenCard orgId={orgId} />
-      </div>
-
-      <p className="mt-4 border-t border-border pt-3 text-[11px] leading-relaxed text-faint">
+    <div className="mb-3.5 flex flex-col gap-6">
+      <ClaudeBlock accounts={claude} {...shared} />
+      <CodexBlock accounts={codex} {...shared} />
+      <p className="border-t border-border pt-3 text-[11px] leading-relaxed text-faint">
+        <strong className="font-semibold text-dim">Personal logins</strong> are refreshed automatically
+        on the host (including a background keep-alive), so they stay connected without an open tab. One
+        that can’t be refreshed shows <strong className="font-semibold text-dim">Needs re-auth</strong>.{' '}
         <strong className="font-semibold text-dim">Setup-tokens</strong> don’t expire and are never
-        refreshed — rotate them manually when needed.{' '}
-        <strong className="font-semibold text-dim">Personal logins</strong> are refreshed
-        automatically on the host, including a background keep-alive, so they stay connected without
-        an open tab. If one ever can’t be refreshed it’ll show{' '}
-        <strong className="font-semibold text-dim">Needs re-auth</strong> with a Reconnect button.
+        refreshed — rotate them manually.
       </p>
     </div>
   );
 }
 
-/** One credential row: selected radio, label/badge/status, meta line, and (owner-only) delete. */
-function ClaudeCredentialRow({
+type BlockProps = {
+  accounts: AgentCredentialView[];
+  orgId: string;
+  isOwner: boolean;
+  onSelect: (id: string) => void;
+  onDelete: (id: string) => void | Promise<void>;
+  selectPending: boolean;
+  deletePending: boolean;
+  deleteErrors: Record<string, string>;
+};
+
+/** Claude sub-block: account list + the two add affordances (personal OAuth login, setup-token). */
+function ClaudeBlock({
+  accounts,
   orgId,
+  isOwner,
+  onSelect,
+  onDelete,
+  selectPending,
+  deletePending,
+  deleteErrors,
+}: BlockProps) {
+  const login = useClaudeLogin(orgId);
+  const cardRef = useRef<HTMLDivElement>(null);
+  function handleReconnect() {
+    login.openLogin();
+    cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+  return (
+    <div>
+      <ProviderHeading
+        icon={<Sparkles size={14} />}
+        title="Claude"
+        sub="Anthropic subscription — powers Claude Code turns"
+      />
+      <AccountList
+        accounts={accounts}
+        orgId={orgId}
+        isOwner={isOwner}
+        onSelect={onSelect}
+        onDelete={onDelete}
+        selectPending={selectPending}
+        deletePending={deletePending}
+        deleteErrors={deleteErrors}
+        onReconnect={handleReconnect}
+        emptyHint="No Claude accounts yet — add one below."
+      />
+      {isOwner ? (
+        <div className="mt-3 flex flex-col gap-3">
+          <AddClaudePersonalCard login={login} cardRef={cardRef} />
+          <AddClaudeSetupTokenCard orgId={orgId} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Codex sub-block: account list + device-code login and the paste-auth.json fallback. */
+function CodexBlock({
+  accounts,
+  orgId,
+  isOwner,
+  onSelect,
+  onDelete,
+  selectPending,
+  deletePending,
+  deleteErrors,
+}: BlockProps) {
+  return (
+    <div>
+      <ProviderHeading
+        icon={<Terminal size={14} />}
+        title="Codex"
+        sub="OpenAI ChatGPT subscription — optional second engine"
+      />
+      <AccountList
+        accounts={accounts}
+        orgId={orgId}
+        isOwner={isOwner}
+        onSelect={onSelect}
+        onDelete={onDelete}
+        selectPending={selectPending}
+        deletePending={deletePending}
+        deleteErrors={deleteErrors}
+        emptyHint="No Codex accounts yet — optional."
+      />
+      {isOwner ? (
+        <div className="mt-3 flex flex-col gap-3">
+          <AddCodexDeviceCard orgId={orgId} />
+          <AddCodexPasteCard orgId={orgId} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ProviderHeading({ icon, title, sub }: { icon: ReactNode; title: string; sub: string }) {
+  return (
+    <div className="mb-2.5 flex items-center gap-2">
+      <span className="flex h-6.5 w-6.5 items-center justify-center rounded-md border border-border-2 bg-surface-3 text-dim">
+        {icon}
+      </span>
+      <div>
+        <div className="text-[13px] font-semibold text-text">{title}</div>
+        <div className="text-[11px] text-faint">{sub}</div>
+      </div>
+    </div>
+  );
+}
+
+function AccountList({
+  accounts,
+  isOwner,
+  onSelect,
+  onDelete,
+  selectPending,
+  deletePending,
+  deleteErrors,
+  onReconnect,
+  emptyHint,
+}: BlockProps & { onReconnect?: () => void; emptyHint: string }) {
+  if (accounts.length === 0)
+    return (
+      <p className="rounded-lg border border-border bg-surface-2 px-3.5 py-3 text-[12px] text-faint">
+        {emptyHint}
+      </p>
+    );
+  return (
+    <div className="flex flex-col gap-2.5">
+      {accounts.map((cred) => (
+        <AgentAccountRow
+          key={cred.id}
+          cred={cred}
+          isOwner={isOwner}
+          onSelect={() => onSelect(cred.id)}
+          selectPending={selectPending}
+          onDelete={() => onDelete(cred.id)}
+          deletePending={deletePending}
+          deleteError={deleteErrors[cred.id]}
+          onReconnect={onReconnect}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** One account row: selected radio, label/badge/status, meta, per-account usage bars, owner delete. */
+function AgentAccountRow({
   cred,
   isOwner,
   onSelect,
@@ -646,18 +723,16 @@ function ClaudeCredentialRow({
   deleteError,
   onReconnect,
 }: {
-  orgId: string;
-  cred: ClaudeCredential;
+  cred: AgentCredentialView;
   isOwner: boolean;
   onSelect: () => void;
   selectPending: boolean;
   onDelete: () => void;
   deletePending: boolean;
   deleteError?: string;
-  onReconnect: () => void;
+  onReconnect?: () => void;
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
-
   function handleDeleteClick() {
     if (!confirmDelete) {
       setConfirmDelete(true);
@@ -671,7 +746,7 @@ function ClaudeCredentialRow({
     <div
       className="flex items-start gap-3.5 rounded-lg border p-3.5"
       style={
-        cred.isSelected
+        cred.selected
           ? {
               background: 'var(--accent-soft)',
               borderColor: 'var(--accent-line)',
@@ -681,10 +756,10 @@ function ClaudeCredentialRow({
       }
     >
       <div className="flex shrink-0 flex-col items-center gap-1 pt-0.5">
-        {isOwner && !cred.isSelected ? (
+        {isOwner && !cred.selected ? (
           <button
             type="button"
-            aria-label="Select credential"
+            aria-label="Select account"
             onClick={onSelect}
             disabled={selectPending}
             className="flex h-4 w-4 items-center justify-center rounded-full border-[1.6px] border-border-2 bg-surface transition disabled:opacity-60"
@@ -693,16 +768,16 @@ function ClaudeCredentialRow({
           <span
             className="flex h-4 w-4 items-center justify-center rounded-full border-[1.6px]"
             style={{
-              borderColor: cred.isSelected ? 'var(--accent)' : 'var(--border-2)',
+              borderColor: cred.selected ? 'var(--accent)' : 'var(--border-2)',
               background: 'var(--surface)',
             }}
           >
-            {cred.isSelected ? (
+            {cred.selected ? (
               <span className="h-2 w-2 rounded-full" style={{ background: 'var(--accent)' }} />
             ) : null}
           </span>
         )}
-        {cred.isSelected ? (
+        {cred.selected ? (
           <span className="whitespace-nowrap font-mono text-[8.5px] uppercase tracking-[0.04em] text-accent">
             selected
           </span>
@@ -712,20 +787,20 @@ function ClaudeCredentialRow({
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[13.5px] font-semibold text-text">{cred.label}</span>
-          <ClaudeKindBadge kind={cred.kind} />
-          <ClaudeStatusChip status={cred.status} />
+          <AgentKindBadge kind={cred.kind} />
+          <AgentStatusChip status={cred.status} />
         </div>
-        <div className="mt-1 text-[11.5px] text-faint">{claudeCredentialMeta(cred)}</div>
+        <div className="mt-1 text-[11.5px] text-faint">{agentMeta(cred)}</div>
         {deleteError ? <p className="mt-1.5 text-[11px] text-red">{deleteError}</p> : null}
       </div>
 
       {cred.kind === 'personal' ? (
-        <div className="flex shrink-0 items-center pt-0.5">
-          <CredentialUsageRing orgId={orgId} credentialId={cred.id} />
+        <div className="shrink-0 pt-0.5">
+          <UsageRingView data={toRingData(cred)} isLoading={false} />
         </div>
       ) : null}
 
-      {isOwner && cred.kind === 'personal' && cred.status === 'needs_reauth' ? (
+      {isOwner && onReconnect && cred.kind === 'personal' && cred.status === 'needs_reauth' ? (
         <button
           type="button"
           onClick={onReconnect}
@@ -740,7 +815,7 @@ function ClaudeCredentialRow({
       {isOwner ? (
         <button
           type="button"
-          aria-label="Delete credential"
+          aria-label="Delete account"
           onClick={handleDeleteClick}
           disabled={deletePending}
           className="flex h-7.5 shrink-0 items-center justify-center rounded-md border border-border-2 px-2 text-faint transition hover:border-red hover:bg-red-soft hover:text-red disabled:opacity-60"
@@ -757,7 +832,7 @@ function ClaudeCredentialRow({
 }
 
 /** Badge distinguishing a personal OAuth login from a long-lived setup-token. */
-function ClaudeKindBadge({ kind }: { kind: ClaudeCredentialKind }) {
+function AgentKindBadge({ kind }: { kind: AgentCredentialView['kind'] }) {
   const isPersonal = kind === 'personal';
   return (
     <span
@@ -781,8 +856,8 @@ function ClaudeKindBadge({ kind }: { kind: ClaudeCredentialKind }) {
   );
 }
 
-/** Status chip: active (green), needs re-auth (red, warns to reconnect), or error (red). */
-function ClaudeStatusChip({ status }: { status: ClaudeCredentialStatus | string }) {
+/** Status chip: active (green), needs re-auth (red), or error (red). */
+function AgentStatusChip({ status }: { status: AgentCredentialView['status'] }) {
   if (status === 'active') {
     return (
       <span
@@ -813,33 +888,18 @@ function ClaudeStatusChip({ status }: { status: ClaudeCredentialStatus | string 
   );
 }
 
-/** The row's secondary line: expiry + account for a personal login, or a masked placeholder for a token. */
-function claudeCredentialMeta(cred: ClaudeCredential): string {
-  if (cred.kind === 'setup_token') {
-    return 'sk-ant-oat01-••••••••••••';
-  }
+/** The row's secondary line: expiry + account for a personal login, or a masked token placeholder. */
+function agentMeta(cred: AgentCredentialView): string {
+  if (cred.kind === 'setup_token') return 'sk-ant-oat01-••••••••••••';
   const emailSuffix = cred.accountEmail ? ` · ${cred.accountEmail}` : '';
-  const isExpired =
-    cred.status === 'needs_reauth' || (cred.expiresAt !== null && cred.expiresAt <= Date.now());
-  if (isExpired) {
-    const when = cred.expiresAt !== null ? formatClaudeDate(cred.expiresAt) : null;
-    return `expired${when ? ` ${when}` : ''}${emailSuffix}`;
-  }
-  if (cred.expiresAt === null) {
-    return `access token${emailSuffix}`;
-  }
-  return `access token expires in ${formatClaudeDuration(cred.expiresAt - Date.now())}${emailSuffix}`;
+  if (cred.status === 'needs_reauth') return `needs re-auth${emailSuffix}`;
+  if (cred.expiresAt === null) return `active${emailSuffix}`;
+  const ms = new Date(cred.expiresAt).getTime() - Date.now();
+  if (ms <= 0) return `expired${emailSuffix}`;
+  return `token expires in ${formatDuration(ms)}${emailSuffix}`;
 }
 
-function formatClaudeDate(epochMs: number): string {
-  return new Date(epochMs).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
-}
-
-function formatClaudeDuration(ms: number): string {
+function formatDuration(ms: number): string {
   const minutes = Math.max(Math.round(ms / 60_000), 1);
   if (minutes < 60) return `${minutes}m`;
   const hours = Math.round(minutes / 60);
@@ -847,17 +907,29 @@ function formatClaudeDuration(ms: number): string {
   return `${Math.round(hours / 24)}d`;
 }
 
-type ClaudePersonalLogin = ReturnType<typeof useClaudePersonalLogin>;
+/**
+ * Feed the shared usage ring ({@link UsageRingView}) from a streamed account — its per-account 5h/weekly
+ * windows plus the account/plan header. Returns undefined when there's no snapshot yet, so the ring shows
+ * its own "unknown" state (Codex accounts stay there until the engine harvests their rate limits).
+ */
+function toRingData(cred: AgentCredentialView): OrgUsage | undefined {
+  if (!cred.usage) return undefined;
+  return {
+    ...cred.usage,
+    accountLabel: cred.accountEmail ?? undefined,
+    plan: cred.plan ?? undefined,
+  };
+}
 
 /**
- * The two-step personal-login flow, lifted into a hook so both the add-card and a row's Reconnect button
+ * The two-step Claude personal-login flow as a hook, so both the add-card and a row's Reconnect button
  * drive ONE shared login: step 1 mints a Claude login URL and opens it; step 2 exchanges the pasted
- * `code#state` for a credential (`upsertPersonal` re-keys by account email, so reconnecting revives the
- * same row back to `active`).
+ * `code#state` for a credential (the backend re-keys by account email, so reconnecting revives the
+ * same row to `active`).
  */
-function useClaudePersonalLogin(orgId: string) {
-  const createAuthorizeUrl = useCreateClaudeAuthorizeUrl(orgId);
-  const addCredential = useAddClaudeCredential(orgId);
+function useClaudeLogin(orgId: string) {
+  const [startAuth, startState] = useStartClaudeAuthorizeMutation();
+  const [createPersonal, createState] = useCreateClaudePersonalMutation();
   const [pending, setPending] = useState<{ state: string } | null>(null);
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
@@ -865,22 +937,18 @@ function useClaudePersonalLogin(orgId: string) {
   async function openLogin() {
     setError('');
     // Open the window synchronously within the click handler so popup blockers don't block it after the
-    // mutation's network round-trip loses the user gesture. It must open WITHOUT the "noopener" feature —
-    // that makes window.open() return null, leaving no handle to navigate and forcing a post-await open()
-    // the popup blocker rejects. We sever the back-reference ourselves via `opener = null` instead.
+    // mutation's network round-trip loses the user gesture. Open WITHOUT "noopener" (which returns null),
+    // then sever the back-reference via `opener = null`.
     const loginWindow = window.open('about:blank', '_blank');
     if (loginWindow) loginWindow.opener = null;
     try {
-      const result = await createAuthorizeUrl.mutateAsync();
-      if (loginWindow) {
-        loginWindow.location.href = result.url;
-      } else {
-        window.open(result.url, '_blank', 'noopener,noreferrer');
-      }
+      const result = await startAuth({ orgId }).unwrap();
+      if (loginWindow) loginWindow.location.href = result.url;
+      else window.open(result.url, '_blank', 'noopener,noreferrer');
       setPending({ state: result.state });
     } catch (e) {
       loginWindow?.close();
-      setError((e as Error)?.message || 'Could not start Claude login.');
+      setError(errMsg(e, 'Could not start Claude login.'));
     }
   }
 
@@ -893,14 +961,11 @@ function useClaudePersonalLogin(orgId: string) {
     }
     setError('');
     try {
-      await addCredential.mutateAsync({
-        code: trimmedCode,
-        state: pending.state,
-      });
+      await createPersonal({ orgId, code: trimmedCode, state: pending.state }).unwrap();
       setPending(null);
       setCode('');
     } catch (e) {
-      setError((e as Error)?.message || 'That code looks expired or invalid.');
+      setError(errMsg(e, 'That code looks expired or invalid.'));
     }
   }
 
@@ -911,38 +976,29 @@ function useClaudePersonalLogin(orgId: string) {
     code,
     setCode,
     error,
-    isOpeningLogin: createAuthorizeUrl.isPending,
-    isAddingCredential: addCredential.isPending,
+    isOpeningLogin: startState.isLoading,
+    isAddingCredential: createState.isLoading,
   };
 }
+
+type ClaudeLogin = ReturnType<typeof useClaudeLogin>;
 
 /** Renders the shared personal-login flow as a card; owns no login state (the hook does). */
 function AddClaudePersonalCard({
   login,
   cardRef,
 }: {
-  login: ClaudePersonalLogin;
+  login: ClaudeLogin;
   cardRef: React.RefObject<HTMLDivElement | null>;
 }) {
-  const {
-    openLogin,
-    submitCode,
-    pending,
-    code,
-    setCode,
-    error,
-    isOpeningLogin,
-    isAddingCredential,
-  } = login;
+  const { openLogin, submitCode, pending, code, setCode, error, isOpeningLogin, isAddingCredential } =
+    login;
 
   return (
     <div
       ref={cardRef}
       className="rounded-lg border p-4.5"
-      style={{
-        borderColor: 'var(--accent-line)',
-        boxShadow: '0 6px 22px var(--accent-soft)',
-      }}
+      style={{ borderColor: 'var(--accent-line)', boxShadow: '0 6px 22px var(--accent-soft)' }}
     >
       <div className="mb-1 flex items-center gap-2">
         <span
@@ -1006,7 +1062,7 @@ function AddClaudePersonalCard({
               className="rounded-md px-4 py-2 text-[12px] font-semibold text-white transition hover:brightness-105 disabled:opacity-60"
               style={{ background: 'var(--accent)' }}
             >
-              {isAddingCredential ? 'Adding…' : 'Add credential'}
+              {isAddingCredential ? 'Adding…' : 'Add account'}
             </button>
           </div>
         </div>
@@ -1026,9 +1082,9 @@ function StepNumber({ n }: { n: number }) {
   );
 }
 
-/** Compact inline form for a long-lived setup-token, generated via `claude setup-token`. */
+/** Compact inline form for a long-lived Claude setup-token, generated via `claude setup-token`. */
 function AddClaudeSetupTokenCard({ orgId }: { orgId: string }) {
-  const addCredential = useAddClaudeCredential(orgId);
+  const [add, { isLoading }] = useCreateClaudeSetupTokenMutation();
   const [label, setLabel] = useState('');
   const [token, setToken] = useState('');
   const [error, setError] = useState('');
@@ -1036,24 +1092,17 @@ function AddClaudeSetupTokenCard({ orgId }: { orgId: string }) {
   async function submit() {
     const trimmedLabel = label.trim();
     const trimmedToken = token.trim();
-    if (!trimmedLabel) {
-      setError('Enter a label.');
-      return;
-    }
     if (!trimmedToken.startsWith('sk-ant-oat')) {
       setError('Subscription tokens start with sk-ant-oat.');
       return;
     }
     setError('');
     try {
-      await addCredential.mutateAsync({
-        label: trimmedLabel,
-        setupToken: trimmedToken,
-      });
+      await add({ orgId, setupToken: trimmedToken, label: trimmedLabel || undefined }).unwrap();
       setLabel('');
       setToken('');
     } catch (e) {
-      setError((e as Error)?.message || 'Could not add credential.');
+      setError(errMsg(e, 'Could not add setup-token.'));
     }
   }
 
@@ -1089,11 +1138,11 @@ function AddClaudeSetupTokenCard({ orgId }: { orgId: string }) {
         <button
           type="button"
           onClick={submit}
-          disabled={addCredential.isPending}
+          disabled={isLoading}
           className="shrink-0 rounded-md px-4 py-2 text-[12px] font-semibold text-white transition hover:brightness-105 disabled:opacity-60"
           style={{ background: 'var(--accent)' }}
         >
-          {addCredential.isPending ? 'Adding…' : 'Add'}
+          {isLoading ? 'Adding…' : 'Add'}
         </button>
       </div>
       {error ? <p className="mt-2.5 text-[11.5px] text-red">{error}</p> : null}
@@ -1101,6 +1150,205 @@ function AddClaudeSetupTokenCard({ orgId }: { orgId: string }) {
         Generate with <Code>claude setup-token</Code> on a Pro or Max plan.
       </p>
     </div>
+  );
+}
+
+/** Codex device-code login: start → show the code + link → poll until the account connects. */
+function AddCodexDeviceCard({ orgId }: { orgId: string }) {
+  const [start, { isLoading: starting }] = useStartCodexDeviceMutation();
+  const [poll] = usePollCodexDeviceMutation();
+  const [device, setDevice] = useState<CodexDeviceStartResult | null>(null);
+  const [error, setError] = useState('');
+  const [note, setNote] = useState('');
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    [],
+  );
+
+  function schedulePoll(d: CodexDeviceStartResult) {
+    const delayMs = Math.max(d.interval, 3) * 1000;
+    timer.current = setTimeout(async () => {
+      try {
+        const r = await poll({ orgId, handle: d.handle }).unwrap();
+        if (r.status === 'complete') {
+          setDevice(null);
+          setNote('Codex account connected.');
+          return;
+        }
+        if (r.status === 'expired') {
+          setDevice(null);
+          setError('The code expired — start again.');
+          return;
+        }
+        if (r.status === 'denied') {
+          setDevice(null);
+          setError('Sign-in was denied.');
+          return;
+        }
+        schedulePoll(d); // pending / slow_down
+      } catch (e) {
+        setDevice(null);
+        setError(errMsg(e, 'Codex login failed.'));
+      }
+    }, delayMs);
+  }
+
+  async function begin() {
+    setError('');
+    setNote('');
+    try {
+      const d = await start({ orgId }).unwrap();
+      setDevice(d);
+      schedulePoll(d);
+    } catch (e) {
+      setError(errMsg(e, 'Could not start Codex login.'));
+    }
+  }
+
+  return (
+    <div
+      className="rounded-lg border p-4.5"
+      style={{ borderColor: 'var(--accent-line)', boxShadow: '0 6px 22px var(--accent-soft)' }}
+    >
+      <div className="mb-1 flex items-center gap-2">
+        <span
+          className="flex h-6.5 w-6.5 items-center justify-center rounded-md border"
+          style={{
+            background: 'var(--accent-soft)',
+            borderColor: 'var(--accent-line)',
+            color: 'var(--accent)',
+          }}
+        >
+          <Terminal size={14} />
+        </span>
+        <span className="text-[13.5px] font-semibold text-text">Sign in with ChatGPT</span>
+      </div>
+
+      {device ? (
+        <div className="mt-3">
+          <p className="text-[12px] text-dim">
+            Open{' '}
+            <HelpLink href={device.verificationUri}>{device.verificationUri}</HelpLink> and enter this
+            code:
+          </p>
+          <div className="mt-2 inline-block rounded-md border border-border-2 bg-surface-2 px-4 py-2 font-mono text-[18px] font-semibold tracking-[0.12em] text-text">
+            {device.userCode}
+          </div>
+          <p className="mt-2 flex items-center gap-2 text-[11.5px] text-faint">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
+            Waiting for you to approve in ChatGPT…
+          </p>
+        </div>
+      ) : (
+        <div className="mt-3">
+          <HelpBlock>
+            <p>
+              Signs in with your <strong>ChatGPT Plus/Pro</strong> subscription via a one-time device
+              code — no CLI needed. First enable{' '}
+              <strong>“Sign in with device code”</strong> in your ChatGPT security settings.
+            </p>
+          </HelpBlock>
+          <button
+            type="button"
+            onClick={begin}
+            disabled={starting}
+            className="mt-3 inline-flex items-center gap-1.5 rounded-md border px-3.5 py-2 text-[12px] font-semibold text-accent transition hover:bg-accent-soft disabled:opacity-60"
+            style={{ borderColor: 'var(--accent-line)' }}
+          >
+            {starting ? 'Starting…' : 'Sign in with ChatGPT'}
+            <ExternalLink size={12} />
+          </button>
+        </div>
+      )}
+
+      {error ? <p className="mt-3 text-[11.5px] text-red">{error}</p> : null}
+      {note ? <p className="mt-3 text-[11.5px] text-green">{note}</p> : null}
+    </div>
+  );
+}
+
+/** Fallback: paste the full `~/.codex/auth.json` from a local `codex login`. */
+function AddCodexPasteCard({ orgId }: { orgId: string }) {
+  const [paste, { isLoading }] = usePasteCodexAuthMutation();
+  const [label, setLabel] = useState('');
+  const [authJson, setAuthJson] = useState('');
+  const [error, setError] = useState('');
+
+  async function submit() {
+    const trimmed = authJson.trim();
+    if (trimmed.length < 10) {
+      setError('Paste the full contents of ~/.codex/auth.json.');
+      return;
+    }
+    setError('');
+    try {
+      await paste({ orgId, authJson: trimmed, label: label.trim() || undefined }).unwrap();
+      setLabel('');
+      setAuthJson('');
+    } catch (e) {
+      setError(errMsg(e, 'Could not add Codex account.'));
+    }
+  }
+
+  return (
+    <div className="rounded-lg border border-border p-4.5">
+      <div className="mb-1 flex items-center gap-2">
+        <span className="flex h-6.5 w-6.5 items-center justify-center rounded-md border border-border-2 bg-surface-3 text-dim">
+          <KeyRound size={13} />
+        </span>
+        <span className="text-[13.5px] font-semibold text-text">Paste auth.json (fallback)</span>
+      </div>
+      <HelpBlock>
+        <p>
+          Or sign in with the Codex CLI locally and paste the file. Run:
+        </p>
+        <CommandLine cmd="codex login" />
+        <p>
+          This writes <Code>~/.codex/auth.json</Code> — paste its full contents below.
+        </p>
+      </HelpBlock>
+      <div className="mt-3">
+        <label className="mb-1.5 block text-[12px] font-medium text-dim">Label (optional)</label>
+        <input
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          type="text"
+          placeholder="e.g. work ChatGPT"
+          className="mb-2.5 w-full rounded-md border border-border-2 bg-surface-2 px-3 py-2 text-[12.5px] text-text outline-none placeholder:text-faint"
+        />
+        <label className="mb-1.5 block text-[12px] font-medium text-dim">auth.json</label>
+        <textarea
+          value={authJson}
+          onChange={(e) => setAuthJson(e.target.value)}
+          rows={3}
+          placeholder='{"tokens":{"id_token":"…","access_token":"…","refresh_token":"…"}}'
+          className="w-full resize-y rounded-md border border-border-2 bg-surface-2 px-3 py-2 font-mono text-[11px] text-text outline-none placeholder:text-faint"
+        />
+      </div>
+      <button
+        type="button"
+        onClick={submit}
+        disabled={isLoading}
+        className="mt-2.5 rounded-md px-4 py-2 text-[12px] font-semibold text-white transition hover:brightness-105 disabled:opacity-60"
+        style={{ background: 'var(--accent)' }}
+      >
+        {isLoading ? 'Adding…' : 'Add Codex account'}
+      </button>
+      {error ? <p className="mt-2.5 text-[11.5px] text-red">{error}</p> : null}
+    </div>
+  );
+}
+
+/** Extract a human message from an RTK/axios mutation error. */
+function errMsg(e: unknown, fallback: string): string {
+  return (
+    (e as { data?: { message?: string } })?.data?.message ??
+    (e as Error)?.message ??
+    fallback
   );
 }
 

@@ -3,13 +3,11 @@ import { OrgModule } from '../org/org.module';
 import { CredentialsController } from './credentials.controller';
 import { CredentialsService } from './credentials.service';
 import { OrgSecret, OrgSecretRepo } from './entities/org-secret.entity';
-import { SecretCipherService } from './secret-cipher.service';
 
 @CreateModule({
   imports: [OrgModule], // OrgService for the membership/owner tenancy gate in the controller
   entities: [{ entity: OrgSecret, repoClass: OrgSecretRepo }],
   services: [CredentialsService], // exported — consumed directly by the GitHub module et al.
-  providers: [SecretCipherService], // internal to the vault
   controllers: [CredentialsController],
 })
 export class CredentialsModule {}
