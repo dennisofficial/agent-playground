@@ -3,7 +3,7 @@
 import type { ReviewComment } from '@/features/job-workspace/review-comments';
 import { env } from '@/lib/env';
 import type { AutoApproveMode, AutoMergeMethod } from '@workspace/shared';
-import { fetchWithRefresh } from './refresh';
+import { notImplemented } from './_stub';
 import type {
   ApprovalActionId,
   ContextFileContent,
@@ -20,10 +20,11 @@ import type {
 } from './types';
 
 /**
- * The org → repo → thread web API (`/web/orgs/:orgId/repos/:repoId/threads/:jobId/...`). Every call
- * is credentialed (the session cookie authorizes the membership-gated routes) and goes through
- * `fetchWithRefresh` so an expired access cookie is re-upped + retried once. This is the real, current
- * contract — it replaces the dead channel client (`client.ts`).
+ * STUB (Atlas rebuild): the org → repo → thread web API (`/web/orgs/:orgId/repos/:repoId/jobs/:jobId/...`)
+ * isn't rebuilt yet. The single `webJson` helper below is gutted to throw "Not Implemented", which
+ * neutralizes every function here — they keep their real path/return-TYPE signatures (so the hooks that
+ * wrap them still infer correctly and render/throw as stubs) but make no network call. This file is kept
+ * as the endpoint contract to re-wire against; the types below are the wire shapes.
  */
 
 const BASE = `${env.NEXT_PUBLIC_BACKEND_URL}/web`;
@@ -55,41 +56,12 @@ export function mutationErrorMessage(err: unknown, fallback: string): string {
   return err instanceof ThreadApiError ? err.message : fallback;
 }
 
-async function webJson<T>(path: string, init?: RequestInit): Promise<T> {
-  // A FormData body must NOT get a hardcoded content-type — the browser sets `multipart/form-data` with the
-  // boundary itself. Only JSON string bodies carry the json content-type. (Used by the attachment uploads.)
-  const isForm = init?.body instanceof FormData;
-  const res = await fetchWithRefresh(`${BASE}${path}`, {
-    ...init,
-    headers: {
-      accept: 'application/json',
-      ...(isForm ? {} : { 'content-type': 'application/json' }),
-      ...init?.headers,
-    },
-  });
-  if (!res.ok) {
-    let detail = res.statusText;
-    let retryAfterMs: number | undefined;
-    try {
-      const body = (await res.json()) as {
-        message?: string;
-        status?: string;
-        retryAfterMs?: number;
-      };
-      if (body?.message) detail = body.message;
-      // The manual-retry re-slam guard's 429 body carries no `message`, just `{status:'cooling_down',
-      // retryAfterMs}` — surface a caller-friendly detail and the wait hint together.
-      if (res.status === 429 && body?.status === 'cooling_down') {
-        detail = 'Retrying too soon — cooling down.';
-        retryAfterMs = body.retryAfterMs;
-      }
-    } catch {
-      /* non-JSON error body */
-    }
-    throw new ThreadApiError(res.status, detail, retryAfterMs);
-  }
-  if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
+// STUB (Atlas rebuild): the `/web/orgs/:o/repos/:r/jobs/:j/...` thread backend isn't rebuilt yet, so every
+// call funnels through here and throws "Not Implemented" instead of hitting the network. This one choke
+// point neutralizes all 16 webJson-backed functions below; their path/body plumbing is kept as the live
+// contract to re-wire against. Callers pass a `path`; it's echoed into the throw so failures are greppable.
+function webJson<T>(path: string, _init?: RequestInit): Promise<T> {
+  return notImplemented(`job-api ${path}`);
 }
 
 function threadPath(ref: JobRef, suffix = ''): string {
@@ -278,12 +250,9 @@ export function postMessage(
  * credentialed fetch of the STREAMING raw endpoint — never a base64 data URL — so large images don't
  * bloat memory or block. The caller MUST `URL.revokeObjectURL` the result when done.
  */
-export async function fetchAttachmentUrl(ref: JobRef, path: string): Promise<string> {
-  const res = await fetchWithRefresh(
-    `${BASE}${threadPath(ref, '/context/file/raw')}?path=${encodeURIComponent(path)}`,
-  );
-  if (!res.ok) throw new ThreadApiError(res.status, res.statusText);
-  return URL.createObjectURL(await res.blob());
+export function fetchAttachmentUrl(ref: JobRef, path: string): Promise<string> {
+  // STUB (Atlas rebuild): the raw-stream endpoint doesn't flow through `webJson`, so it's gutted here too.
+  return notImplemented(`job-api fetchAttachmentUrl ${ref.jobId}:${path}`);
 }
 
 // ── Composer draft (server-backed per-job composer) ──────────────────────────────────────────────

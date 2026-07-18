@@ -4,10 +4,11 @@
  * Drop-in, inert replacements for the TanStack Query hooks. A legacy data-hook module whose backend
  * endpoints aren't wired yet swaps ONLY its import line
  *   from "@tanstack/react-query"  →  from "./_tanstack-shim"
- * and compiles unchanged: reads resolve empty, writes are loud (throw on invoke), and the cache client
- * is a no-op. The generics mirror TanStack's positional type params so both inference (from `queryFn` /
- * `mutationFn`) and explicit `useMutation<TData, TError, TVars>()` call sites type-check identically.
- * Grep `_tanstack-shim` to find every module still awaiting real RTK Query endpoints.
+ * and compiles unchanged: reads resolve EMPTY (so the page still renders while the slice is unbuilt),
+ * writes are LOUD (throw "Not Implemented" on invoke — an unwired action can never look like it
+ * succeeded), and the cache client is a no-op. The generics mirror TanStack's positional type params
+ * so both inference (from `queryFn` / `mutationFn`) and explicit `useMutation<TData, TError, TVars>()`
+ * call sites type-check identically. Grep `_tanstack-shim` to find modules still awaiting RTK endpoints.
  */
 import { stubMutation, stubQuery, type MutationResultLike, type QueryResultLike } from './_stub';
 

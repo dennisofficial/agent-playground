@@ -36,7 +36,7 @@ export type HostStatsHistoryPoint = {
 
 export type HostStatsHistory = { points: HostStatsHistoryPoint[] };
 
-// TODO(rtk): backend host-stats endpoints not wired yet — widgets render their empty state.
+// STUB (Atlas rebuild): backend host-stats endpoints aren't rebuilt yet — widgets render their empty state.
 export function useHostStats(): QueryResultLike<HostStats> {
   return stubQuery<HostStats>();
 }

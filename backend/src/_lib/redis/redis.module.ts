@@ -6,7 +6,7 @@ import { REDIS_CLIENT } from './redis.tokens';
 
 @Global()
 @CreateModule({
-  providers: [
+  services: [
     {
       provide: REDIS_CLIENT,
       useFactory: (env: EnvService): Redis => {

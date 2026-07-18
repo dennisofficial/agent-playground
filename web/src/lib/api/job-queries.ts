@@ -3,8 +3,7 @@
 import { useGetOrgReposQuery, useGetRepoBranchesQuery } from '@/redux/query/api/repo.api';
 import type { AutoApproveMode } from '@workspace/shared';
 import { adaptQuery } from './_stub';
-import { useMutation, useQuery, useQueryClient } from './_tanstack-shim';
-import { composerStore } from './composer-store';
+import { useMutation, useQuery } from './_tanstack-shim';
 import {
   addJobDependency,
   approveMcpProposal,
@@ -38,21 +37,24 @@ import {
   stopJob,
   type ApproveBody,
   type CreateThreadBody,
-  type JobMessage,
   type JobRef,
   type MessageInput,
   type ProvideSecretBody,
   type RepoView,
   type ReviewCommentItemBody,
 } from './job-api';
-import { useOrgs } from './me';
-import { qk } from './query-keys';
-import type { JobBlocker, WebAttachmentsCard, WebReviewCommentsCard } from './types';
-import { MERGE_ACTION_ID } from './types';
+import type { JobBlocker } from './types';
 
-/** Tanstack Query hooks over the org → repo → thread API. */
-
-const hasRef = (ref: JobRef) => Boolean(ref.orgId && ref.repoId && ref.jobId);
+/**
+ * Tanstack Query hooks over the org → repo → thread API.
+ *
+ * STUBBED for the Atlas rebuild: the `/web/orgs/:o/repos/:r/jobs/:j/...` thread backend isn't rebuilt
+ * yet, so this module's hooks are slimmed down to bare `queryFn`/`mutationFn` wrappers (kept only so
+ * their return types keep inferring from the underlying `job-api` functions). The `_tanstack-shim`
+ * ignores queryFn/mutationFn: reads render empty, writes throw "Not Implemented" on invoke. All the
+ * cache-invalidation/optimistic-update logic that used to live here is gone — re-add it once the
+ * backend exists. The two RTK-wired repo hooks (`useOrgRepos`, `useRepoBranches`) are live.
+ */
 
 /** A repo in a flat cross-org picker — its org context + the connected-repo view. */
 export interface RepoChoice {
@@ -66,20 +68,14 @@ export interface RepoChoice {
  * `GET /orgs/:id/repos` per org (parallel). Only `accessOk` repos are conversation containers, but we
  * return all connected repos and let the caller reflect emptiness.
  */
-// TODO(rtk): per-org `GET /orgs/:id/repos` not wired yet — no repos to choose from.
+// STUB (Atlas rebuild): the cross-org `GET /orgs/:id/repos` aggregate isn't rebuilt yet — renders empty.
 export function useAllRepos(): { repos: RepoChoice[]; isLoading: boolean } {
-  const { isLoading } = useOrgs();
-  return { repos: [], isLoading };
+  return { repos: [], isLoading: false };
 }
 
 /** A thread's durable message log. SSE keeps it fresh via `useJobEvents` (refetch on any frame). */
 export function useJobMessages(ref: JobRef) {
-  return useQuery({
-    queryKey: qk.threadMessages(ref),
-    queryFn: () => fetchMessages(ref),
-    enabled: hasRef(ref),
-    staleTime: 5_000,
-  });
+  return useQuery({ queryFn: () => fetchMessages(ref) });
 }
 
 /**
@@ -89,82 +85,45 @@ export function useJobMessages(ref: JobRef) {
  * that wants it. The store does its own `getDraft` fetch on hydrate, so this is not the store's paint path.
  */
 export function useDraft(ref: JobRef) {
-  return useQuery({
-    queryKey: qk.draft(ref.jobId),
-    queryFn: () => getDraft(ref),
-    enabled: hasRef(ref),
-  });
+  return useQuery({ queryFn: () => getDraft(ref) });
 }
 
 /** A thread's pipeline (job + threads), or `{ status: 'no_job' }` before a plan is approved. */
 export function usePipeline(ref: JobRef) {
-  return useQuery({
-    queryKey: qk.threadPipeline(ref),
-    queryFn: () => fetchPipeline(ref),
-    enabled: hasRef(ref),
-    staleTime: 5_000,
-  });
+  return useQuery({ queryFn: () => fetchPipeline(ref) });
 }
 
 /** A thread's `/context` files (specs + artifacts). SSE keeps it fresh via `useJobEvents`. */
 export function useJobContext(ref: JobRef) {
-  return useQuery({
-    queryKey: qk.threadContext(ref),
-    queryFn: () => fetchThreadContext(ref),
-    enabled: hasRef(ref),
-    staleTime: 5_000,
-  });
+  return useQuery({ queryFn: () => fetchThreadContext(ref) });
 }
 
 /** One `/context` file's content (`path` bucket-relative, e.g. `specs/plan.md`). Lazy — only when opened. */
 export function useContextFile(ref: JobRef, path: string | null) {
-  return useQuery({
-    queryKey: qk.threadContextFile(ref, path ?? ''),
-    queryFn: () => fetchContextFile(ref, path!),
-    enabled: hasRef(ref) && Boolean(path),
-    staleTime: 5_000,
-  });
+  return useQuery({ queryFn: () => fetchContextFile(ref, path!) });
 }
 
 /** The job's accumulated multi-file diff. Lazy — only fetched while the Changes pane is open (`enabled`).
  *  SSE invalidates it on repo-file writes + turn end (`useJobEvents`), so it refreshes live as the build edits. */
 export function useJobDiff(ref: JobRef, enabled: boolean) {
-  return useQuery({
-    queryKey: qk.jobDiff(ref),
-    queryFn: () => fetchJobDiff(ref),
-    enabled: enabled && hasRef(ref),
-  });
+  return useQuery({ queryFn: () => fetchJobDiff(ref) });
 }
 
 /** The job's cheap numstat-only diff summary (no hunks) — for the always-mounted sidebar's +/- totals.
  *  SSE invalidates it alongside the full diff, so the counts stay live without holding the heavy query open. */
 export function useJobDiffSummary(ref: JobRef, enabled: boolean) {
-  return useQuery({
-    queryKey: qk.jobDiffSummary(ref),
-    queryFn: () => fetchJobDiffSummary(ref),
-    enabled: enabled && hasRef(ref),
-  });
+  return useQuery({ queryFn: () => fetchJobDiffSummary(ref) });
 }
 
 /** The job worktree's tracked-file manifest — fetched once per viewing session to verify file-path spans.
  *  The tree rarely changes while viewing, so keep it fresh for the whole session. */
 export function useRepoTree(ref: JobRef) {
-  return useQuery({
-    queryKey: qk.repoTree(ref),
-    queryFn: () => fetchRepoTree(ref),
-    enabled: hasRef(ref),
-    staleTime: Infinity,
-  });
+  return useQuery({ queryFn: () => fetchRepoTree(ref) });
 }
 
 /** One repo file's content (LIVE worktree). Lazy — only when a path is set (a file view is open). */
 export function useRepoFile(ref: JobRef, path: string | null) {
-  return useQuery({
-    queryKey: qk.repoFile(ref, path ?? ''),
-    queryFn: () => fetchRepoFile(ref, path!),
-    enabled: hasRef(ref) && Boolean(path),
-    staleTime: 5_000,
-  });
+  return useQuery({ queryFn: () => fetchRepoFile(ref, path!) });
 }
 
 /**
@@ -172,13 +131,7 @@ export function useRepoFile(ref: JobRef, path: string | null) {
  * check, so poll modestly while a workspace tab is open to catch state the agent just changed.
  */
 export function useServices(ref: JobRef) {
-  return useQuery({
-    queryKey: qk.threadServices(ref),
-    queryFn: () => fetchServices(ref),
-    enabled: hasRef(ref),
-    staleTime: 4_000,
-    refetchInterval: 5_000,
-  });
+  return useQuery({ queryFn: () => fetchServices(ref) });
 }
 
 /**
@@ -197,16 +150,7 @@ export function useRepoBranches(_orgId: string, repoId: string) {
 
 /** Jobs Atlas spawned FROM this one — the job workspace's "Created jobs" panel. */
 export function useJobCreatedJobs(ref: JobRef) {
-  return useQuery({
-    queryKey: qk.jobCreated(ref.orgId, ref.repoId, ref.jobId),
-    queryFn: () => fetchCreatedJobs(ref),
-    enabled: hasRef(ref),
-    staleTime: 10_000,
-  });
-}
-
-interface SayContext {
-  prev?: JobMessage[];
+  return useQuery({ queryFn: () => fetchCreatedJobs(ref) });
 }
 
 /** One pending composer attachment: the `File` to upload + its local blob preview URL + image/file kind.
@@ -259,80 +203,7 @@ export interface MessageSendInput {
  * stamped ≈ send time), landing in the right chronological spot.
  */
 export function useMessage(ref: JobRef) {
-  const qc = useQueryClient();
-  return useMutation<
-    { ok: boolean; ts: string; results: Array<{ id: string; status: string }> },
-    Error,
-    MessageSendInput,
-    SayContext
-  >({
-    mutationFn: (input) => postMessage(ref, input.messages),
-    onMutate: async (input) => {
-      const userItem = input.messages.find(
-        (m): m is Extract<MessageInput, { type: 'user' }> => m.type === 'user',
-      );
-      if (!userItem) return {};
-      const key = qk.threadMessages(ref);
-      await qc.cancelQueries({ queryKey: key });
-      const prev = qc.getQueryData<JobMessage[]>(key);
-      // The attachments the server will promote onto this message are the caller's CURRENT staged draft
-      // attachments (uploaded on-add) — read them from the store for the optimistic thumbnail preview.
-      const draftAttachments = composerStore.getDraft(ref.jobId).attachments;
-      const card: WebAttachmentsCard | undefined = draftAttachments.length
-        ? {
-            type: 'attachments_card',
-            items: draftAttachments.map((a) => ({
-              name: a.name,
-              path: '',
-              kind: a.kind,
-              size: a.size,
-              localUrl: a.url ?? '',
-            })),
-            ...(userItem.text ? { message: userItem.text } : {}),
-          }
-        : undefined;
-      const optimistic: JobMessage = {
-        ts: `local-${Date.now()}`,
-        threadId: input.threadId ?? ref.jobId,
-        subagentId: null,
-        author: 'user',
-        authorId: 'me',
-        authorName: 'You',
-        text: userItem.text,
-        kind: 'chat',
-        source: 'operator',
-        ...(card ? { card } : {}),
-        postedAt: new Date().toISOString(),
-        local: true,
-      };
-      qc.setQueryData<JobMessage[]>(key, [...(prev ?? []), optimistic]);
-      return { prev };
-    },
-    onError: (_e, _input, ctx) => {
-      if (ctx?.prev) qc.setQueryData(qk.threadMessages(ref), ctx.prev);
-    },
-    onSuccess: (data) => {
-      // Don't drop applied items here — the query cache hasn't refetched yet (that happens in
-      // `onSettled` below), so the card still reads as unanswered for a brief window. Removing the
-      // staged entry now would drop it out of both the "staged" and "sending" card states and briefly
-      // fall back to the raw ask/upload/provide UI. Instead, leave applied items staged with
-      // `submitting: true` (hidden from the tray, rendered as "sending" by the card itself) and let
-      // `pruneStagedAnswers` remove them once the refetched messages actually confirm the answer.
-      //
-      // Every item the backend did NOT apply (a `stale`/`withdrawn`/`noop`/`notfound` result) reverts
-      // `submitting` to false so it doesn't get stuck showing "sending…" forever.
-      const appliedIds = new Set(
-        data.results.filter((r) => r.status === 'applied').map((r) => r.id),
-      );
-      composerStore.setStagedAnswers(ref, (prev) =>
-        prev.map((a) => (appliedIds.has(a.cardId) ? a : { ...a, submitting: false })),
-      );
-    },
-    onSettled: () => {
-      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
-      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
-    },
-  });
+  return useMutation({ mutationFn: (input: MessageSendInput) => postMessage(ref, input.messages) });
 }
 
 /**
@@ -341,13 +212,7 @@ export function useMessage(ref: JobRef) {
  * indicator). Refreshes the message log so any partial output the stop persisted settles.
  */
 export function useStop(ref: JobRef) {
-  const qc = useQueryClient();
-  return useMutation<{ stopped: boolean }, Error, void>({
-    mutationFn: () => stopJob(ref),
-    onSettled: () => {
-      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
-    },
-  });
+  return useMutation({ mutationFn: () => stopJob(ref) });
 }
 
 interface ReviewCommentsSendInput {
@@ -362,41 +227,8 @@ interface ReviewCommentsSendInput {
  * plain bubble) while the durable echo settles. A send mid-turn steers server-side (no client queue).
  */
 export function useSendReviewComments(ref: JobRef) {
-  const qc = useQueryClient();
-  return useMutation<{ ts: string }, Error, ReviewCommentsSendInput, SayContext>({
-    mutationFn: (input) => postReviewComments(ref, input),
-    onMutate: async (input) => {
-      const key = qk.threadMessages(ref);
-      await qc.cancelQueries({ queryKey: key });
-      const prev = qc.getQueryData<JobMessage[]>(key);
-      const card: WebReviewCommentsCard = {
-        type: 'review_comments_card',
-        items: input.items,
-        ...(input.message ? { message: input.message } : {}),
-      };
-      const optimistic: JobMessage = {
-        ts: `local-${Date.now()}`,
-        threadId: input.threadId ?? ref.jobId,
-        subagentId: null,
-        author: 'user',
-        authorId: 'me',
-        authorName: 'You',
-        text: input.message ?? '',
-        kind: 'chat',
-        source: 'operator',
-        card,
-        postedAt: new Date().toISOString(),
-        local: true,
-      };
-      qc.setQueryData<JobMessage[]>(key, [...(prev ?? []), optimistic]);
-      return { prev };
-    },
-    onError: (_e, _input, ctx) => {
-      if (ctx?.prev) qc.setQueryData(qk.threadMessages(ref), ctx.prev);
-    },
-    onSettled: () => {
-      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
-    },
+  return useMutation({
+    mutationFn: (input: ReviewCommentsSendInput) => postReviewComments(ref, input),
   });
 }
 
@@ -416,81 +248,41 @@ export function useSendReviewComments(ref: JobRef) {
  * which is exactly what the WAL-driven realtime refetch above is there to avoid.
  */
 export function useApprove(ref: JobRef) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: ApproveBody) => approveThread(ref, body),
-    onSettled: (_data, _err, variables) => {
-      if (variables.actionId === MERGE_ACTION_ID) {
-        void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
-      }
-    },
-  });
+  return useMutation({ mutationFn: (body: ApproveBody) => approveThread(ref, body) });
 }
 
 /** Re-drive a halted (failed/paused) build — the navigator "Retry"/"Re-ping" buttons. Refreshes the
  *  pipeline + conversation + inbox so the thread flips back to running. */
 export function useRetryJob(ref: JobRef) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (opts?: { force?: boolean }) => retryJob(ref, opts),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
-      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
-      void qc.invalidateQueries({ queryKey: qk.allJobs() });
-    },
-  });
+  return useMutation({ mutationFn: (opts?: { force?: boolean }) => retryJob(ref, opts) });
 }
 
 /** "Ship without review" on a `codex_review_unavailable`-held job — skip the unreachable Codex
  *  master_review and land at the normal ship-review gate. Refreshes the pipeline (the banner clears in
  *  favor of the ship-review card) + messages + the job list. */
 export function useShipWithoutReview(ref: JobRef) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: () => shipWithoutReview(ref),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
-      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
-      void qc.invalidateQueries({ queryKey: qk.allJobs() });
-    },
-  });
+  return useMutation({ mutationFn: () => shipWithoutReview(ref) });
 }
 
 /** The "Resume" button on a `retryable` system→operator error box — re-pokes the same engine session
  *  with no new operator message. Refreshes messages (+ the live stream picks up the resumed turn). */
 export function useRetryTurn(ref: JobRef) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (opts?: { force?: boolean }) => retryTurn(ref, opts),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
-    },
-  });
+  return useMutation({ mutationFn: (opts?: { force?: boolean }) => retryTurn(ref, opts) });
 }
 
 /** Manually block this job on another (the kebab "Block on another job…"). Refreshes the pipeline (the
  *  status flips to `blocked` + the "Blocked by" row appears) and the inbox. */
 export function useAddJobDependency(ref: JobRef) {
-  const qc = useQueryClient();
   return useMutation({
     mutationFn: (dependsOnJobId: string) => addJobDependency(ref, dependsOnJobId),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
-      void qc.invalidateQueries({ queryKey: qk.allJobs() });
-    },
   });
 }
 
 /** Remove one blocker edge (the kebab "Unblock" calls this once per current blocker). Refreshes the
  *  pipeline + inbox so a fully-cleared job flips back off `blocked`. */
 export function useRemoveJobDependency(ref: JobRef) {
-  const qc = useQueryClient();
   return useMutation({
     mutationFn: (dependsOnJobId: string) => removeJobDependency(ref, dependsOnJobId),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
-      void qc.invalidateQueries({ queryKey: qk.allJobs() });
-    },
   });
 }
 
@@ -498,13 +290,8 @@ export function useRemoveJobDependency(ref: JobRef) {
  *  overlay share this) — the backend has no batch endpoint, so it fires one `DELETE …/dependencies/:id`
  *  per blocker. Once the last edge is gone the backend flips the job off `blocked` and wakes its brain. */
 export function useUnblockJob(ref: JobRef, blockedBy: JobBlocker[]) {
-  const qc = useQueryClient();
   return useMutation({
     mutationFn: () => Promise.all(blockedBy.map((b) => removeJobDependency(ref, b.jobId))),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
-      void qc.invalidateQueries({ queryKey: qk.allJobs() });
-    },
   });
 }
 
@@ -512,51 +299,28 @@ export function useUnblockJob(ref: JobRef, blockedBy: JobBlocker[]) {
  *  which injects the full preview procedure server-side and stamps the ship card `previewRequestedAt`.
  *  Refreshes the conversation + pipeline so the stamped card or an off-gate no-op hides stale buttons. */
 export function useSpinUpPreview(ref: JobRef) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: () => spinUpPreview(ref),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
-      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
-    },
-  });
+  return useMutation({ mutationFn: () => spinUpPreview(ref) });
 }
 
 /** Provide a secret value for a `request_secret` card (repo onboarding). The value goes straight to the
  *  encrypted store; the card flips to "provided" and the brain continues. */
 export function useProvideSecret(ref: JobRef) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: ProvideSecretBody) => provideSecret(ref, body),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
-    },
-  });
+  return useMutation({ mutationFn: (body: ProvideSecretBody) => provideSecret(ref, body) });
 }
 
 /** Approve an `propose_mcp_servers` proposal (repo onboarding; owner-only). Registers each server on the
  *  repo; the card flips to "registered" and the brain continues. Refreshes the org MCP-servers list too. */
 export function useApproveMcpProposal(ref: JobRef) {
-  const qc = useQueryClient();
   return useMutation({
     mutationFn: (requestId: string) => approveMcpProposal(ref, requestId),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
-      void qc.invalidateQueries({ queryKey: qk.orgMcpServers(ref.orgId) });
-    },
   });
 }
 
 /** Approve a skill proposal (owner-only). Installs/vendors/removes per the card's mode; the card flips to
  *  "approved" and the brain continues. Refreshes the org skills list too. */
 export function useApproveSkillProposal(ref: JobRef) {
-  const qc = useQueryClient();
   return useMutation({
     mutationFn: (requestId: string) => approveSkillProposal(ref, requestId),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
-      void qc.invalidateQueries({ queryKey: qk.orgSkills(ref.orgId) });
-    },
   });
 }
 
@@ -565,7 +329,6 @@ export function useApproveSkillProposal(ref: JobRef) {
  * cross-org inbox on success. When `files` are present the request goes multipart (`createJobWithFiles`).
  */
 export function useCreateThread(orgId: string, repoId: string) {
-  const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: CreateThreadBody & { files?: File[] }) => {
       const { files, ...rest } = body;
@@ -573,39 +336,24 @@ export function useCreateThread(orgId: string, repoId: string) {
         ? createJobWithFiles(orgId, repoId, rest, files)
         : createJob(orgId, repoId, rest);
     },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.allJobs() });
-    },
   });
 }
 
 /** Rename a thread (the only thread Update op). Refreshes the inbox so the new title shows everywhere. */
 export function useRenameJob(ref: JobRef) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (title: string) => renameJob(ref, title),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.allJobs() });
-    },
-  });
+  return useMutation({ mutationFn: (title: string) => renameJob(ref, title) });
 }
 
 /** Flip the job's auto-approve flag. Invalidate the pipeline so the toggle reflects immediately (the flag
  *  lives on the pipeline job); the realtime stream may also refresh it, but the explicit invalidate wins. */
 export function useSetAutoApprove(ref: JobRef) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (mode: AutoApproveMode) => setAutoApprove(ref, mode),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) }),
-  });
+  return useMutation({ mutationFn: (mode: AutoApproveMode) => setAutoApprove(ref, mode) });
 }
 
 /** Flip the job's auto-merge settings. Invalidate the pipeline so the popover reflects immediately. */
 export function useSetAutoMerge(ref: JobRef) {
-  const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: { autoMerge: boolean }) => setAutoMerge(ref, body),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) }),
   });
 }
 
@@ -614,13 +362,5 @@ export function useSetAutoMerge(ref: JobRef) {
  *  recomputes to `archived` and the open workspace page goes read-only without a manual reload), and the
  *  collapsed Archived sidebar group (so it picks up the job next time it's expanded/refetched). */
 export function useDeleteJob(ref: JobRef) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (prAction?: 'close' | 'leave') => deleteThread(ref, prAction),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.allJobs() });
-      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
-      void qc.invalidateQueries({ queryKey: qk.archivedJobs() });
-    },
-  });
+  return useMutation({ mutationFn: (prAction?: 'close' | 'leave') => deleteThread(ref, prAction) });
 }

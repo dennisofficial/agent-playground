@@ -3,9 +3,10 @@
 /**
  * Migration shims. While the new backend is built out slice by slice, hooks whose endpoints
  * don't exist yet return these instead of hitting the network. Two rules:
- *   - QUERY stubs render empty (a typed `[]` / `undefined`) — an empty state on purpose.
- *   - MUTATION stubs are LOUD: invoking one throws, so an unwired action can never look like
- *     it succeeded. Every stub is greppable (`stubQuery` / `stubMutation` / `notImplemented`).
+ *   - QUERY stubs render EMPTY (a typed `[]` / `undefined`) so the page still renders while the slice
+ *     is unbuilt — you can look at a surface before its endpoints exist.
+ *   - MUTATION stubs are LOUD: invoking one throws "Not Implemented", so an unwired action can never
+ *     look like it succeeded. Every stub is greppable (`stubQuery` / `stubMutation` / `notImplemented`).
  *
  * `adaptQuery` / `adaptMutation` map a real RTK Query result onto the same TanStack-shaped
  * surface the existing consumers destructure, so wiring an endpoint is a one-line swap.
@@ -66,9 +67,9 @@ export function stubQuery<T>(value?: T): QueryResultLike<T> {
   };
 }
 
-/** Throws — an action the backend doesn't support yet must never look like it succeeded. */
+/** Throws — an endpoint the (rebuilt) backend doesn't serve yet must never look like it works. */
 export function notImplemented(feature: string): never {
-  throw new Error(`[not wired] "${feature}" is not supported by the backend yet.`);
+  throw new Error(`Not Implemented: "${feature}" is not served by the backend yet.`);
 }
 
 /** A mutation whose invocation is loud (throws) — for unwired write endpoints. */
@@ -78,7 +79,7 @@ export function stubMutation<TData = unknown, TVars = void>(
   return {
     mutate: () => notImplemented(feature),
     mutateAsync: () =>
-      Promise.reject(new Error(`[not wired] "${feature}" is not supported by the backend yet.`)),
+      Promise.reject(new Error(`Not Implemented: "${feature}" is not served by the backend yet.`)),
     isPending: false,
     isError: false,
     isSuccess: false,

@@ -172,12 +172,12 @@ export function normalize(r: RawInboxThread): InboxThread {
   };
 }
 
-// TODO(rtk): backend `GET /web/jobs` not wired yet — inbox renders empty on purpose.
+// STUB (Atlas rebuild): backend `GET /web/jobs` isn't rebuilt yet — inbox renders empty on purpose.
 export function useAllJobs(): QueryResultLike<InboxThread[]> {
   return stubQuery<InboxThread[]>([]);
 }
 
-// TODO(rtk): backend `GET /web/jobs/archived` not wired yet — empty archived group.
+// STUB (Atlas rebuild): backend `GET /web/jobs/archived` isn't rebuilt yet — empty archived group.
 export function useArchivedJobs(_enabled: boolean): QueryResultLike<InboxThread[]> {
   return stubQuery<InboxThread[]>([]);
 }
