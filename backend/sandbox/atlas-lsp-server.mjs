@@ -19,8 +19,8 @@
  */
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, resolve, join, isAbsolute, extname } from 'node:path';
-import { pathToFileURL, fileURLToPath } from 'node:url';
+import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 // ── argv: --workspace <root> --lsp <cmd> -- <lsp args...> ───────────────────────────────────────────
 const argv = process.argv.slice(2);
@@ -37,7 +37,8 @@ const log = (...a) => process.stderr.write('[atlas-lsp] ' + a.join(' ') + '\n');
 function nearestTsconfigDir(absFile) {
   let dir = dirname(absFile);
   for (;;) {
-    if (existsSync(join(dir, 'tsconfig.json')) || existsSync(join(dir, 'jsconfig.json'))) return dir;
+    if (existsSync(join(dir, 'tsconfig.json')) || existsSync(join(dir, 'jsconfig.json')))
+      return dir;
     if (dir === repoRoot) break;
     const parent = dirname(dir);
     if (parent === dir) break;
@@ -50,12 +51,21 @@ function toAbs(fp) {
 }
 function languageId(file) {
   switch (extname(file)) {
-    case '.ts': return 'typescript';
-    case '.tsx': return 'typescriptreact';
-    case '.mts': case '.cts': return 'typescript';
-    case '.js': case '.mjs': case '.cjs': return 'javascript';
-    case '.jsx': return 'javascriptreact';
-    default: return 'typescript';
+    case '.ts':
+      return 'typescript';
+    case '.tsx':
+      return 'typescriptreact';
+    case '.mts':
+    case '.cts':
+      return 'typescript';
+    case '.js':
+    case '.mjs':
+    case '.cjs':
+      return 'javascript';
+    case '.jsx':
+      return 'javascriptreact';
+    default:
+      return 'typescript';
   }
 }
 const uriOf = (absFile) => pathToFileURL(absFile).href;
@@ -72,7 +82,9 @@ const diagWaiters = new Map(); // uri -> [resolve,...]
 
 function killChild() {
   if (child) {
-    try { child.kill('SIGKILL'); } catch {}
+    try {
+      child.kill('SIGKILL');
+    } catch {}
   }
   child = null;
   childRoot = null;
@@ -119,7 +131,10 @@ function handleLspMessage(msg) {
     if (uri) {
       diagnostics.set(uri, { items: items ?? [] });
       const list = diagWaiters.get(uri);
-      if (list) { diagWaiters.delete(uri); for (const r of list) r(); }
+      if (list) {
+        diagWaiters.delete(uri);
+        for (const r of list) r();
+      }
     }
   }
   // window/logMessage, $/progress, etc. → ignore
@@ -129,7 +144,9 @@ async function startChild(root) {
   const c = spawn(LSP_CMD, LSP_ARGS, { stdio: ['pipe', 'pipe', 'inherit'] });
   child = c;
   childRoot = root;
-  c.on('exit', () => { if (child === c) killChild(); });
+  c.on('exit', () => {
+    if (child === c) killChild();
+  });
   // LSP Content-Length frame reader.
   let buf = Buffer.alloc(0);
   c.stdout.on('data', (d) => {
@@ -139,14 +156,21 @@ async function startChild(root) {
       if (headerEnd < 0) return;
       const header = buf.slice(0, headerEnd).toString('utf8');
       const m = /content-length:\s*(\d+)/i.exec(header);
-      if (!m) { buf = buf.slice(headerEnd + 4); continue; }
+      if (!m) {
+        buf = buf.slice(headerEnd + 4);
+        continue;
+      }
       const len = Number(m[1]);
       const start = headerEnd + 4;
       if (buf.length < start + len) return; // wait for full body
       const body = buf.slice(start, start + len).toString('utf8');
       buf = buf.slice(start + len);
       let msg;
-      try { msg = JSON.parse(body); } catch { continue; }
+      try {
+        msg = JSON.parse(body);
+      } catch {
+        continue;
+      }
       handleLspMessage(msg);
     }
   });
@@ -180,11 +204,19 @@ async function startChild(root) {
 
 async function ensureChild(absFile) {
   const root = absFile ? nearestTsconfigDir(absFile) : (childRoot ?? repoRoot);
-  if (!child) { await startChild(root); return; }
-  if (root !== childRoot) { killChild(); await startChild(root); }
+  if (!child) {
+    await startChild(root);
+    return;
+  }
+  if (root !== childRoot) {
+    killChild();
+    await startChild(root);
+  }
 }
 
-function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
 
 /** Open a doc if not already open, then wait (bounded) for tsserver to publish diagnostics for it —
  *  a reliable "the project is loaded and this file is analyzed" readiness signal before position queries. */
@@ -192,7 +224,9 @@ async function openAndSettle(absFile, { waitDiag = true, timeoutMs = 15000 } = {
   const uri = uriOf(absFile);
   if (!openDocs.has(uri)) {
     let text = '';
-    try { text = readFileSync(absFile, 'utf8'); } catch {}
+    try {
+      text = readFileSync(absFile, 'utf8');
+    } catch {}
     lspNotify('textDocument/didOpen', {
       textDocument: { uri, languageId: languageId(absFile), version: 1, text },
     });
@@ -206,7 +240,10 @@ async function openAndSettle(absFile, { waitDiag = true, timeoutMs = 15000 } = {
     diagWaiters.set(uri, list);
     setTimeout(() => {
       const l = diagWaiters.get(uri);
-      if (l) { const i = l.indexOf(resolve); if (i >= 0) l.splice(i, 1); }
+      if (l) {
+        const i = l.indexOf(resolve);
+        if (i >= 0) l.splice(i, 1);
+      }
       resolve();
     }, timeoutMs);
   });
@@ -260,7 +297,11 @@ function applyWorkspaceEdit(edit) {
   for (const [uri, edits] of byUri) {
     const file = pathOf(uri);
     let content = '';
-    try { content = readFileSync(file, 'utf8'); } catch { continue; }
+    try {
+      content = readFileSync(file, 'utf8');
+    } catch {
+      continue;
+    }
     const updated = applyTextEdits(content, edits);
     if (updated !== content) writeFileSync(file, updated, 'utf8');
     files.push({ file, count: edits.length });
@@ -290,7 +331,8 @@ async function toolRename({ filePath, line, column, newName }) {
     newName,
   });
   if (res.error) return `rename failed: ${res.error.message}`;
-  if (!res.result) return `No rename produced (is the cursor on a renameable symbol at ${line}:${column}?)`;
+  if (!res.result)
+    return `No rename produced (is the cursor on a renameable symbol at ${line}:${column}?)`;
   const files = applyWorkspaceEdit(res.result);
   if (!files.length) return `Rename produced no on-disk changes.`;
   const total = files.reduce((n, f) => n + f.count, 0);
@@ -366,12 +408,15 @@ const TOOLS = {
     schema: {
       description:
         'Rename a symbol project-wide via the language server and APPLY the edits to disk. Give the ' +
-        "position of the symbol (from a Read/grep). Returns a summary of changed files — do NOT re-read " +
-        'or re-write them. Scoped to the target file\'s package.',
+        'position of the symbol (from a Read/grep). Returns a summary of changed files — do NOT re-read ' +
+        "or re-write them. Scoped to the target file's package.",
       inputSchema: {
         type: 'object',
         properties: {
-          filePath: { type: 'string', description: 'File containing the symbol (absolute or repo-relative).' },
+          filePath: {
+            type: 'string',
+            description: 'File containing the symbol (absolute or repo-relative).',
+          },
           line: { type: 'number', description: '1-indexed line of the symbol.' },
           column: { type: 'number', description: '1-indexed column of the symbol identifier.' },
           newName: { type: 'string', description: 'New name.' },
@@ -400,7 +445,8 @@ const TOOLS = {
   definition: {
     handler: toolDefinition,
     schema: {
-      description: 'Go to the definition of the symbol at the given POSITION. Returns file:line:col.',
+      description:
+        'Go to the definition of the symbol at the given POSITION. Returns file:line:col.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -459,7 +505,10 @@ async function handleMcp(msg) {
     return;
   }
   if (method === 'notifications/initialized' || method === 'initialized') return;
-  if (method === 'ping') { mcpReply(id, {}); return; }
+  if (method === 'ping') {
+    mcpReply(id, {});
+    return;
+  }
   if (method === 'tools/list') {
     mcpReply(id, {
       tools: Object.entries(TOOLS).map(([name, t]) => ({
@@ -474,12 +523,18 @@ async function handleMcp(msg) {
     const name = params?.name;
     const args = params?.arguments ?? {};
     const tool = TOOLS[name];
-    if (!tool) { mcpError(id, -32601, `Unknown tool: ${name}`); return; }
+    if (!tool) {
+      mcpError(id, -32601, `Unknown tool: ${name}`);
+      return;
+    }
     try {
       const text = await tool.handler(args);
       mcpReply(id, { content: [{ type: 'text', text: String(text) }] });
     } catch (err) {
-      mcpReply(id, { content: [{ type: 'text', text: `Error: ${err?.message ?? err}` }], isError: true });
+      mcpReply(id, {
+        content: [{ type: 'text', text: `Error: ${err?.message ?? err}` }],
+        isError: true,
+      });
     }
     return;
   }
@@ -497,8 +552,14 @@ process.stdin.on('data', (d) => {
     inBuf = inBuf.slice(i + 1);
     if (!line) continue;
     let msg;
-    try { msg = JSON.parse(line); } catch { continue; }
-    mcpQueue = mcpQueue.then(() => handleMcp(msg)).catch((e) => log('handler error', e?.message ?? e));
+    try {
+      msg = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    mcpQueue = mcpQueue
+      .then(() => handleMcp(msg))
+      .catch((e) => log('handler error', e?.message ?? e));
   }
 });
 process.stdin.on('end', () => killChild());

@@ -20,7 +20,8 @@ const PROBE_LIB = process.env.ATLAS_PROBE_LIB || '/usr/local/lib/atlas-probe';
 // baking it would hijack a connected repo's OWN Playwright — so atlas-probe points its own process at the
 // baked browsers dir here, before requiring playwright, leaving repo builds on the default user cache.
 if (!process.env.PLAYWRIGHT_BROWSERS_PATH) {
-  process.env.PLAYWRIGHT_BROWSERS_PATH = process.env.ATLAS_PROBE_BROWSERS_PATH || '/usr/lib/playwright';
+  process.env.PLAYWRIGHT_BROWSERS_PATH =
+    process.env.ATLAS_PROBE_BROWSERS_PATH || '/usr/lib/playwright';
 }
 let playwright;
 try {
@@ -50,7 +51,14 @@ function usage() {
 }
 
 function parseArgs(argv) {
-  const args = { url: null, storageState: null, apiOrigin: null, json: false, timeout: 30000, help: false };
+  const args = {
+    url: null,
+    storageState: null,
+    apiOrigin: null,
+    json: false,
+    timeout: 30000,
+    help: false,
+  };
   const positionals = [];
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -111,7 +119,13 @@ function parseSetCookie(raw) {
   const eqIndex = parts[0].indexOf('=');
   const name = eqIndex === -1 ? parts[0] : parts[0].slice(0, eqIndex);
   if (!name) return null;
-  const cookie = { name: name.trim(), secure: false, sameSite: null, domain: null, httpOnly: false };
+  const cookie = {
+    name: name.trim(),
+    secure: false,
+    sameSite: null,
+    domain: null,
+    httpOnly: false,
+  };
   for (const part of parts.slice(1)) {
     const eq = part.indexOf('=');
     const attrName = (eq === -1 ? part : part.slice(0, eq)).trim().toLowerCase();
@@ -160,7 +174,8 @@ const CDN_ALLOWLIST = /\.(googleapis|gstatic|jsdelivr|unpkg|cloudflare|fontshare
 const DEV_ORIGIN_SIGNAL =
   /blocked request|invalid host header|allowedHosts|allowedDevOrigins|host .*not allowed|origin .*not allowed|cross-origin request blocked/i;
 const ERROR_PAGE_TEXT = /application error|this page could not be found/i;
-const ERROR_OVERLAY_SELECTOR = 'nextjs-portal, [data-nextjs-dialog], #webpack-dev-server-client-overlay, vite-error-overlay';
+const ERROR_OVERLAY_SELECTOR =
+  'nextjs-portal, [data-nextjs-dialog], #webpack-dev-server-client-overlay, vite-error-overlay';
 
 async function checkBrowser(args, pageUrl, verdict, pushBlocker, cookiesByName, remaining) {
   let browser = null;
@@ -173,7 +188,9 @@ async function checkBrowser(args, pageUrl, verdict, pushBlocker, cookiesByName, 
     // --no-sandbox: chromium refuses to start its setuid sandbox when the probe runs as root in the
     // container, and this only ever loads the operator's own preview URL, not untrusted content.
     browser = await playwright.chromium.launch({ headless: true, args: ['--no-sandbox'] });
-    context = await browser.newContext(args.storageState ? { storageState: args.storageState } : {});
+    context = await browser.newContext(
+      args.storageState ? { storageState: args.storageState } : {},
+    );
     const page = await context.newPage();
 
     page.on('console', (msg) => {
@@ -182,7 +199,9 @@ async function checkBrowser(args, pageUrl, verdict, pushBlocker, cookiesByName, 
 
     page.on('requestfailed', (request) => {
       const failure = request.failure();
-      verdict.failedRequests.push(`${request.url()} — ${failure ? failure.errorText : 'unknown error'}`);
+      verdict.failedRequests.push(
+        `${request.url()} — ${failure ? failure.errorText : 'unknown error'}`,
+      );
       try {
         const resourceType = request.resourceType();
         if (resourceType !== 'fetch' && resourceType !== 'xhr') return;
@@ -249,7 +268,8 @@ async function checkBrowser(args, pageUrl, verdict, pushBlocker, cookiesByName, 
       .catch(() => ({ bodyText: '', hasErrorOverlay: false }));
 
     const trimmedText = pageState.bodyText.trim();
-    const isBlank = trimmedText.length < 20 || pageState.hasErrorOverlay || ERROR_PAGE_TEXT.test(trimmedText);
+    const isBlank =
+      trimmedText.length < 20 || pageState.hasErrorOverlay || ERROR_PAGE_TEXT.test(trimmedText);
     verdict.hydrated = !isBlank;
     if (isBlank) {
       pushBlocker(
@@ -288,10 +308,15 @@ async function checkBrowser(args, pageUrl, verdict, pushBlocker, cookiesByName, 
       if (responseUrl.origin === pageUrl.origin) {
         continue;
       }
-      const isLocalApi = responseUrl.hostname === 'localhost' || responseUrl.hostname === '127.0.0.1';
+      const isLocalApi =
+        responseUrl.hostname === 'localhost' || responseUrl.hostname === '127.0.0.1';
       if (isLocalApi) {
         offendingApiOrigins.add(responseUrl.origin);
-      } else if (apiOrigin && responseUrl.origin !== apiOrigin && !CDN_ALLOWLIST.test(responseUrl.hostname)) {
+      } else if (
+        apiOrigin &&
+        responseUrl.origin !== apiOrigin &&
+        !CDN_ALLOWLIST.test(responseUrl.hostname)
+      ) {
         offendingApiOrigins.add(responseUrl.origin);
       }
     }
@@ -321,7 +346,8 @@ async function checkBrowser(args, pageUrl, verdict, pushBlocker, cookiesByName, 
       const bareDomain = cookie.domain.replace(/^\./, '');
       const isForeignHost = bareDomain !== pageUrl.hostname;
       const isLocalDomain =
-        isForeignHost && (bareDomain === 'localhost' || bareDomain === '127.0.0.1' || !bareDomain.includes('.'));
+        isForeignHost &&
+        (bareDomain === 'localhost' || bareDomain === '127.0.0.1' || !bareDomain.includes('.'));
       if (isHttps && !cookie.secure) {
         pushBlocker(
           'cookie',
@@ -398,7 +424,11 @@ async function probe(args) {
     try {
       pageUrl = new URL(args.url);
     } catch (err) {
-      pushBlocker('dns', `invalid URL: ${err.message}`, 'the given URL could not be parsed — check the value passed to atlas-probe.');
+      pushBlocker(
+        'dns',
+        `invalid URL: ${err.message}`,
+        'the given URL could not be parsed — check the value passed to atlas-probe.',
+      );
       return verdict;
     }
 
@@ -422,7 +452,11 @@ async function probe(args) {
         if (parsed) cookiesByName.set(parsed.name, parsed);
       }
       if (res.status === 502 || res.status === 503) {
-        pushBlocker('bind_ip', `HTTP ${res.status}`, 'listening on 127.0.0.1 — bind 0.0.0.0 so the preview proxy can reach it.');
+        pushBlocker(
+          'bind_ip',
+          `HTTP ${res.status}`,
+          'listening on 127.0.0.1 — bind 0.0.0.0 so the preview proxy can reach it.',
+        );
         return verdict;
       }
       initialHtml = await res.text();
@@ -434,7 +468,11 @@ async function probe(args) {
         );
       }
     } catch (err) {
-      pushBlocker('port', err.message, 'service not listening / wrong --port — start it on the expected port.');
+      pushBlocker(
+        'port',
+        err.message,
+        'service not listening / wrong --port — start it on the expected port.',
+      );
       return verdict;
     }
 
@@ -448,7 +486,8 @@ async function probe(args) {
 
     // A final non-2xx/3xx status is never "accessible", even if the error page itself renders real text
     // (a custom 500/404 hydrates fine but is not a working surface). 502/503 already short-circuited above.
-    const statusOk = verdict.httpStatus !== null && verdict.httpStatus >= 200 && verdict.httpStatus < 400;
+    const statusOk =
+      verdict.httpStatus !== null && verdict.httpStatus >= 200 && verdict.httpStatus < 400;
     verdict.ok = statusOk && verdict.hydrated && verdict.blockers.length === 0;
     return verdict;
   } finally {
@@ -466,7 +505,9 @@ function printSummary(verdict) {
   console.log(`ok: false — ${verdict.url} (HTTP ${status})`);
   if (verdict.title) console.log(`title: ${verdict.title}`);
   if (verdict.blockers.length === 0) {
-    console.log('no blockers recorded, but the page did not verify as ok (see consoleErrors/failedRequests with --json)');
+    console.log(
+      'no blockers recorded, but the page did not verify as ok (see consoleErrors/failedRequests with --json)',
+    );
   }
   for (const blocker of verdict.blockers) {
     console.log(`✗ ${blocker.class}: ${blocker.hint}`);
