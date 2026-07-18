@@ -1,6 +1,6 @@
-import type { SerializedError } from "@reduxjs/toolkit";
-import type { BaseQueryFn } from "@reduxjs/toolkit/query";
-import { type AxiosInstance, type AxiosRequestConfig, isAxiosError } from "axios";
+import type { SerializedError } from '@reduxjs/toolkit';
+import type { BaseQueryFn } from '@reduxjs/toolkit/query';
+import { type AxiosInstance, type AxiosRequestConfig, isAxiosError } from 'axios';
 
 type ApiErrorResponse = {
   statusCode: number;
@@ -36,7 +36,7 @@ export const axiosQuery = (
         const status = error.response?.status ?? -1;
         const rawMessage = responseData?.message;
         const message = Array.isArray(rawMessage)
-          ? rawMessage.join(", ")
+          ? rawMessage.join(', ')
           : (rawMessage ?? error.message);
         return {
           error: {
@@ -56,11 +56,15 @@ export const axiosQuery = (
           } satisfies SerializedError,
         };
       }
-      return { error: { message: "An unexpected error occurred" } satisfies SerializedError };
+      return {
+        error: {
+          message: 'An unexpected error occurred',
+        } satisfies SerializedError,
+      };
     }
   };
 };
 
 export const isNormalizedError = (
   obj: NormalizedError | SerializedError | undefined,
-): obj is NormalizedError => !!obj && "status" in obj;
+): obj is NormalizedError => !!obj && 'status' in obj;

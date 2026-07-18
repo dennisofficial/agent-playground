@@ -6,19 +6,19 @@
  * threads still show their title instead of JSON.
  */
 export function threadTitle(brief: string): string {
-  const t = (brief ?? "").trim();
-  if (t.startsWith("{")) {
+  const t = (brief ?? '').trim();
+  if (t.startsWith('{')) {
     try {
       const o = JSON.parse(t) as Record<string, unknown>;
-      const title = typeof o.title === "string" ? o.title.trim() : "";
+      const title = typeof o.title === 'string' ? o.title.trim() : '';
       const detail =
-        typeof o.details === "string"
+        typeof o.details === 'string'
           ? o.details.trim()
-          : typeof o.detail === "string"
+          : typeof o.detail === 'string'
             ? o.detail.trim()
-            : typeof o.description === "string"
+            : typeof o.description === 'string'
               ? o.description.trim()
-              : "";
+              : '';
       return title || detail || t;
     } catch {
       return t;

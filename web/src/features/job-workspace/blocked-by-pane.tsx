@@ -1,17 +1,12 @@
-"use client";
+'use client';
 
-import { useRouter } from "next/navigation";
-import {
-  GitMerge,
-  GitPullRequest,
-  GitPullRequestClosed,
-  Lock,
-} from "lucide-react";
-import { threadHref } from "@/lib/routes";
-import { resolveJob, ThreadApiError, type JobRef } from "@/lib/api/job-api";
-import { STATUS_META, toJobStatus } from "@/lib/api/status";
-import type { JobBlocker, WireJobStatus } from "@/lib/api/types";
-import { EphemeralToast, useEphemeralToast } from "./ephemeral-toast";
+import { resolveJob, ThreadApiError, type JobRef } from '@/lib/api/job-api';
+import { STATUS_META, toJobStatus } from '@/lib/api/status';
+import type { JobBlocker, WireJobStatus } from '@/lib/api/types';
+import { threadHref } from '@/lib/routes';
+import { GitMerge, GitPullRequest, GitPullRequestClosed, Lock } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { EphemeralToast, useEphemeralToast } from './ephemeral-toast';
 
 /**
  * The "Blocked by" detail pane — the live blockers holding this job in `blocked` (`PipelineJob.blockedBy`).
@@ -39,22 +34,16 @@ export function useOpenBlocker(jobRef: JobRef) {
       );
     } catch (err) {
       if (err instanceof ThreadApiError && err.status === 404) {
-        show("This job was deleted.");
+        show('This job was deleted.');
       } else {
-        console.error("Failed to resolve blocker job", err);
+        console.error('Failed to resolve blocker job', err);
       }
     }
   };
   return { openBlocker, toast };
 }
 
-export function BlockedByPane({
-  jobRef,
-  blockedBy,
-}: {
-  jobRef: JobRef;
-  blockedBy: JobBlocker[];
-}) {
+export function BlockedByPane({ jobRef, blockedBy }: { jobRef: JobRef; blockedBy: JobBlocker[] }) {
   const { openBlocker, toast } = useOpenBlocker(jobRef);
 
   if (blockedBy.length === 0) {
@@ -75,28 +64,18 @@ export function BlockedByPane({
         {blockedBy.length} blocking this job
       </p>
       {blockedBy.map((b) => (
-        <BlockerRow
-          key={b.jobId}
-          blocker={b}
-          onClick={() => openBlocker(b.jobId)}
-        />
+        <BlockerRow key={b.jobId} blocker={b} onClick={() => openBlocker(b.jobId)} />
       ))}
       <p className="mt-1 text-[10.5px] italic leading-relaxed text-faint">
-        This job is parked until its blockers resolve — it wakes automatically
-        when they merge (or otherwise finish).
+        This job is parked until its blockers resolve — it wakes automatically when they merge (or
+        otherwise finish).
       </p>
       <EphemeralToast message={toast} />
     </div>
   );
 }
 
-export function BlockerRow({
-  blocker,
-  onClick,
-}: {
-  blocker: JobBlocker;
-  onClick: () => void;
-}) {
+export function BlockerRow({ blocker, onClick }: { blocker: JobBlocker; onClick: () => void }) {
   const status = toJobStatus(blocker.status as WireJobStatus);
   const meta = STATUS_META[status];
   return (
@@ -105,18 +84,12 @@ export function BlockerRow({
       onClick={onClick}
       className="flex items-center gap-2.5 rounded-lg border border-border bg-surface px-4 py-3 text-left transition hover:bg-surface-2"
     >
-      <span
-        className="h-[7px] w-[7px] shrink-0 rounded-full"
-        style={{ background: meta.color }}
-      />
+      <span className="h-[7px] w-[7px] shrink-0 rounded-full" style={{ background: meta.color }} />
       <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-text">
-        {blocker.title || "Untitled job"}
+        {blocker.title || 'Untitled job'}
       </span>
       {blocker.prState ? <PrStateChip state={blocker.prState} /> : null}
-      <span
-        className="shrink-0 font-mono text-[9.5px] uppercase"
-        style={{ color: meta.color }}
-      >
+      <span className="shrink-0 font-mono text-[9.5px] uppercase" style={{ color: meta.color }}>
         {meta.label}
       </span>
     </button>
@@ -126,11 +99,11 @@ export function BlockerRow({
 /** A compact PR-state chip (icon + word) — same GitHub color convention as `created-jobs-pane.tsx`. */
 function PrStateChip({ state }: { state: string }) {
   const { Icon, color, label } =
-    state === "merged"
-      ? { Icon: GitMerge, color: "var(--purple)", label: "merged" }
-      : state === "closed"
-        ? { Icon: GitPullRequestClosed, color: "var(--red)", label: "closed" }
-        : { Icon: GitPullRequest, color: "var(--green)", label: "open" };
+    state === 'merged'
+      ? { Icon: GitMerge, color: 'var(--purple)', label: 'merged' }
+      : state === 'closed'
+        ? { Icon: GitPullRequestClosed, color: 'var(--red)', label: 'closed' }
+        : { Icon: GitPullRequest, color: 'var(--green)', label: 'open' };
   return (
     <span
       className="flex shrink-0 items-center gap-1 font-mono text-[9.5px] uppercase"

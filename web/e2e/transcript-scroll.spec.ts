@@ -1,6 +1,13 @@
-import path from "node:path";
-import { mkdir } from "node:fs/promises";
-import { test, expect, type Page, type BrowserContext, type Locator, type ElementHandle } from "@playwright/test";
+import {
+  expect,
+  test,
+  type BrowserContext,
+  type ElementHandle,
+  type Locator,
+  type Page,
+} from '@playwright/test';
+import { mkdir } from 'node:fs/promises';
+import path from 'node:path';
 
 /**
  * Regression for the job-workspace transcript fighting the user's scroll (Thread 1).
@@ -23,33 +30,39 @@ import { test, expect, type Page, type BrowserContext, type Locator, type Elemen
  * Data: the curated real-transcript fixture in the rich job (loaded by `seed:scroll-fixture`).
  */
 
-const DEV_EMAIL = process.env.ADMIN_SEED_EMAIL ?? "admin@atlas.dev";
+const DEV_EMAIL = process.env.ADMIN_SEED_EMAIL ?? 'admin@atlas.dev';
 const DEV_PASSWORD = process.env.ADMIN_SEED_PASSWORD;
 
-const ORG_ID = "e9af869c-309a-466e-ba1b-51b870106b3f";
-const REPO_ID = "63ad1635-966a-427f-8e52-9cc8a8ecfc8b";
-const RICH_JOB_ID = "da700000-0000-4000-8000-000000000104";
+const ORG_ID = 'e9af869c-309a-466e-ba1b-51b870106b3f';
+const REPO_ID = '63ad1635-966a-427f-8e52-9cc8a8ecfc8b';
+const RICH_JOB_ID = 'da700000-0000-4000-8000-000000000104';
 const RICH_PATH = `/workspace/${ORG_ID}~${REPO_ID}~${RICH_JOB_ID}`;
 
-const AUTH_FILE = path.join(__dirname, ".auth", "scroll-user.json");
+const AUTH_FILE = path.join(__dirname, '.auth', 'scroll-user.json');
 
 test.beforeAll(async ({ browser, baseURL }) => {
-  if (!DEV_PASSWORD) throw new Error("ADMIN_SEED_PASSWORD is required for auth.");
-  const context: BrowserContext = await browser.newContext({ baseURL, storageState: undefined });
+  if (!DEV_PASSWORD) throw new Error('ADMIN_SEED_PASSWORD is required for auth.');
+  const context: BrowserContext = await browser.newContext({
+    baseURL,
+    storageState: undefined,
+  });
   const page: Page = await context.newPage();
-  await page.goto("/auth/login");
-  await page.getByLabel("Email").fill(DEV_EMAIL);
-  await page.getByLabel("Password", { exact: true }).fill(DEV_PASSWORD);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL((url) => !url.pathname.startsWith("/auth/login"));
+  await page.goto('/auth/login');
+  await page.getByLabel('Email').fill(DEV_EMAIL);
+  await page.getByLabel('Password', { exact: true }).fill(DEV_PASSWORD);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await page.waitForURL((url) => !url.pathname.startsWith('/auth/login'));
   await mkdir(path.dirname(AUTH_FILE), { recursive: true });
   await context.storageState({ path: AUTH_FILE });
   await context.close();
 });
 
 async function shot(page: Page, name: string) {
-  await mkdir("/context/artifacts", { recursive: true });
-  await page.screenshot({ path: `/context/artifacts/${name}.png`, fullPage: false });
+  await mkdir('/context/artifacts', { recursive: true });
+  await page.screenshot({
+    path: `/context/artifacts/${name}.png`,
+    fullPage: false,
+  });
 }
 
 type Box = { top: number; left: number; width: number; height: number };
@@ -59,9 +72,9 @@ async function findScrollContainer(page: Page): Promise<{ handle: Locator; box: 
   await page.evaluate(() => {
     let best: Element | null = null;
     let bestDelta = 0;
-    for (const el of Array.from(document.querySelectorAll("*"))) {
+    for (const el of Array.from(document.querySelectorAll('*'))) {
       const cs = getComputedStyle(el);
-      if (cs.overflowY === "auto" || cs.overflowY === "scroll") {
+      if (cs.overflowY === 'auto' || cs.overflowY === 'scroll') {
         const delta = el.scrollHeight - el.clientHeight;
         if (delta > bestDelta) {
           bestDelta = delta;
@@ -69,7 +82,7 @@ async function findScrollContainer(page: Page): Promise<{ handle: Locator; box: 
         }
       }
     }
-    if (best) best.setAttribute("data-scroll-container", "1");
+    if (best) best.setAttribute('data-scroll-container', '1');
   });
   const handle = page.locator('[data-scroll-container="1"]').first();
   await expect(handle).toHaveCount(1);
@@ -157,21 +170,26 @@ async function anchorAtMidViewport(page: Page, box: Box): Promise<Locator> {
       while (node && (!node.textContent || node.textContent.trim().length < 3)) {
         node = node.parentElement;
       }
-      (node ?? el)?.setAttribute("data-anchor", "1");
+      (node ?? el)?.setAttribute('data-anchor', '1');
     },
     { x, y },
   );
   return page.locator('[data-anchor="1"]').first();
 }
 
-test.describe("desktop transcript scroll (1440x900, wheel)", () => {
-  test.use({ viewport: { width: 1440, height: 900 }, hasTouch: false, isMobile: false, storageState: AUTH_FILE });
+test.describe('desktop transcript scroll (1440x900, wheel)', () => {
+  test.use({
+    viewport: { width: 1440, height: 900 },
+    hasTouch: false,
+    isMobile: false,
+    storageState: AUTH_FILE,
+  });
 
-  test("smoke: the real transcript renders long/virtualized and its rows churn during an upward scroll", async ({
+  test('smoke: the real transcript renders long/virtualized and its rows churn during an upward scroll', async ({
     page,
   }) => {
     test.setTimeout(150_000); // dense high-frequency sampling over many increments is slow
-    await page.goto(RICH_PATH, { waitUntil: "domcontentloaded" });
+    await page.goto(RICH_PATH, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(4000); // let the long transcript hydrate
 
     const { handle: container, box } = await findScrollContainer(page);
@@ -203,8 +221,10 @@ test.describe("desktop transcript scroll (1440x900, wheel)", () => {
       90,
     );
 
-    await shot(page, "fixed-desktop-anchor-stable");
-    console.log(`[cause-b desktop smoke] maxJump=${Math.round(maxJump)} scrollHeightDelta=${scrollHeightDelta}`);
+    await shot(page, 'fixed-desktop-anchor-stable');
+    console.log(
+      `[cause-b desktop smoke] maxJump=${Math.round(maxJump)} scrollHeightDelta=${scrollHeightDelta}`,
+    );
     // Witness that the fix's code path is actually exercised on real data: the transcript is scrolled
     // upward (scrollDirection==='backward') and its rows genuinely re-measure (scrollHeight churns).
     // The Cause-B compensation itself is asserted deterministically in scroll-compensation.spec.ts —
@@ -214,8 +234,13 @@ test.describe("desktop transcript scroll (1440x900, wheel)", () => {
   });
 });
 
-test.describe("mobile transcript scroll (390x844, touch)", () => {
-  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, storageState: AUTH_FILE });
+test.describe('mobile transcript scroll (390x844, touch)', () => {
+  test.use({
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+    isMobile: true,
+    storageState: AUTH_FILE,
+  });
 
   // NOTE — Cause B (above-viewport re-measure compensation) is proven RED->GREEN deterministically by
   // the vitest unit test `scroll-compensation.spec.ts`, not in the browser: the single-frame-jump
@@ -227,11 +252,11 @@ test.describe("mobile transcript scroll (390x844, touch)", () => {
   // `shouldAdjustScrollPositionOnItemSizeChange` predicate runs at every width. Mobile coverage here is
   // the Cause-A park/jump guard, the mobile-critical UX.
 
-  test("Cause A guard: scrolling up parks and surfaces Jump to latest, then the pill returns to tail", async ({
+  test('Cause A guard: scrolling up parks and surfaces Jump to latest, then the pill returns to tail', async ({
     page,
     context,
   }) => {
-    await page.goto(RICH_PATH, { waitUntil: "domcontentloaded" });
+    await page.goto(RICH_PATH, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(3000);
 
     const { handle: container, box } = await findScrollContainer(page);
@@ -243,33 +268,45 @@ test.describe("mobile transcript scroll (390x844, touch)", () => {
     const cx = box.left + box.width / 2;
     const startY = box.top + box.height * 0.35;
     // Touch-drag DOWN => scroll content UP off the tail.
-    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: cx, y: startY }] });
+    await cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [{ x: cx, y: startY }],
+    });
     for (let i = 1; i <= 12; i++) {
-      await cdp.send("Input.dispatchTouchEvent", {
-        type: "touchMove",
+      await cdp.send('Input.dispatchTouchEvent', {
+        type: 'touchMove',
         touchPoints: [{ x: cx, y: startY + (300 * i) / 12 }],
       });
       await page.waitForTimeout(16);
     }
-    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchEnd',
+      touchPoints: [],
+    });
 
-    const pill = page.getByRole("button", { name: /Jump to latest/i });
+    const pill = page.getByRole('button', { name: /Jump to latest/i });
     await expect(pill).toBeVisible();
 
     // The view must NOT auto-snap back to the tail while parked. (We assert only "not at bottom",
     // not scrollTop stability: the Cause-B fix deliberately adjusts scrollTop to compensate for
     // above-viewport re-measures, so scrollTop legitimately shifts even when the user is parked.)
-    const atBottomInitially = await container.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight < 80);
+    const atBottomInitially = await container.evaluate(
+      (el) => el.scrollHeight - el.scrollTop - el.clientHeight < 80,
+    );
     expect(atBottomInitially).toBe(false);
     await page.waitForTimeout(700);
-    const atBottom = await container.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight < 80);
+    const atBottom = await container.evaluate(
+      (el) => el.scrollHeight - el.scrollTop - el.clientHeight < 80,
+    );
     expect(atBottom).toBe(false);
-    await shot(page, "fixed-mobile-parked-jump-pill");
+    await shot(page, 'fixed-mobile-parked-jump-pill');
 
     // Clicking the pill returns to the tail and hides the pill.
     await pill.click();
     await page.waitForTimeout(800);
-    const backAtBottom = await container.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight < 80);
+    const backAtBottom = await container.evaluate(
+      (el) => el.scrollHeight - el.scrollTop - el.clientHeight < 80,
+    );
     expect(backAtBottom).toBe(true);
     await expect(pill).toBeHidden();
   });

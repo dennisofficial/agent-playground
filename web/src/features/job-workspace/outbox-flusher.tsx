@@ -1,15 +1,11 @@
-"use client";
+'use client';
 
-import { useCallback, useEffect, useRef } from "react";
-import { useQueryClient } from "@/lib/api/_tanstack-shim";
-import {
-  connectivity,
-  useConnectivity,
-  type ConnectivityStatus,
-} from "@/lib/api/connectivity";
-import { composerStore } from "@/lib/api/composer-store";
-import { postMessage, postReviewComments, ThreadApiError } from "@/lib/api/job-api";
-import { qk } from "@/lib/api/query-keys";
+import { useQueryClient } from '@/lib/api/_tanstack-shim';
+import { composerStore } from '@/lib/api/composer-store';
+import { connectivity, useConnectivity, type ConnectivityStatus } from '@/lib/api/connectivity';
+import { postMessage, postReviewComments, ThreadApiError } from '@/lib/api/job-api';
+import { qk } from '@/lib/api/query-keys';
+import { useCallback, useEffect, useRef } from 'react';
 
 /**
  * App-level auto-send flusher for the offline-send outbox — mounted once in `<AppChrome>` (renders
@@ -34,7 +30,7 @@ export function OutboxFlusher(): null {
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const flush = useCallback(async () => {
-    if (connectivity.getSnapshot() !== "online") return;
+    if (connectivity.getSnapshot() !== 'online') return;
     if (isFlushing.current) return;
     if (retryTimer.current) {
       clearTimeout(retryTimer.current);
@@ -44,7 +40,7 @@ export function OutboxFlusher(): null {
     try {
       for (const { ref, msg } of composerStore.allQueued()) {
         // Dropped again mid-flush — stop and leave the rest queued for the next reconnect.
-        if (connectivity.getSnapshot() !== "online") break;
+        if (connectivity.getSnapshot() !== 'online') break;
         try {
           if (msg.comments.length > 0) {
             await postReviewComments(ref, {
@@ -59,9 +55,9 @@ export function OutboxFlusher(): null {
           } else if (msg.hasAttachments) {
             // No `files` part — the attachments already live on the server draft (uploaded on-add); the
             // server promotes whatever is still staged onto this message.
-            await postMessage(ref, [{ type: "user", text: msg.text }]);
+            await postMessage(ref, [{ type: 'user', text: msg.text }]);
           } else if (msg.text) {
-            await postMessage(ref, [{ type: "user", text: msg.text }]);
+            await postMessage(ref, [{ type: 'user', text: msg.text }]);
           } else {
             // Empty (shouldn't happen post-hydrate filter) — nothing to send, discard.
             composerStore.removeQueued(ref.jobId, msg.id);
@@ -95,9 +91,9 @@ export function OutboxFlusher(): null {
 
   // Trigger 1 + 2: a live reconnect (status transition into "online"), and once on mount if already online.
   useEffect(() => {
-    const wasOnline = prevStatus.current === "online";
+    const wasOnline = prevStatus.current === 'online';
     prevStatus.current = status;
-    if (status !== "online" || wasOnline) return;
+    if (status !== 'online' || wasOnline) return;
     void flush();
   }, [status, flush]);
 
@@ -105,7 +101,7 @@ export function OutboxFlusher(): null {
   useEffect(
     () =>
       composerStore.subscribeGlobal(() => {
-        if (connectivity.getSnapshot() === "online") void flush();
+        if (connectivity.getSnapshot() === 'online') void flush();
       }),
     [flush],
   );

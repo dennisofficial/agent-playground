@@ -1,9 +1,9 @@
-"use client";
+'use client';
 
-import { AuthInitializer } from "@/features/auth/components/auth-initializer";
-import { ReduxProvider } from "@/redux/provider";
-import { ThemeProvider } from "next-themes";
-import type { ReactNode } from "react";
+import { AuthInitializer } from '@/features/auth/components/auth-initializer';
+import { ReduxProvider } from '@/redux/provider';
+import { ThemeProvider } from 'next-themes';
+import type { ReactNode } from 'react';
 
 /**
  * Client provider composition for the whole app:
@@ -16,7 +16,7 @@ export function Providers({ children }: { children: ReactNode }) {
       attribute="data-theme"
       defaultTheme="system"
       enableSystem
-      value={{ light: "daylight", dark: "night" }}
+      value={{ light: 'daylight', dark: 'night' }}
       disableTransitionOnChange
     >
       <ReduxProvider>

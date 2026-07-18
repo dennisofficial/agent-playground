@@ -11,9 +11,6 @@ export function isOutputGroupHidden(group: {
   hasChildren: boolean;
 }): boolean {
   return (
-    Boolean(group.hideWhenEmpty) &&
-    group.fileCount === 0 &&
-    !group.loading &&
-    !group.hasChildren
+    Boolean(group.hideWhenEmpty) && group.fileCount === 0 && !group.loading && !group.hasChildren
   );
 }

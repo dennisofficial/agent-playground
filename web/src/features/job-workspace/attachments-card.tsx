@@ -1,11 +1,11 @@
-"use client";
+'use client';
 
-import { useContext, useEffect, useState } from "react";
-import { FileText } from "lucide-react";
-import { MessageTime, UserBubble } from "./bubbles";
-import { PremeasureContext } from "./idle-premeasure";
-import { fetchAttachmentUrl, type JobRef } from "@/lib/api/job-api";
-import type { WebAttachmentItem, WebAttachmentsCard } from "@/lib/api/types";
+import { fetchAttachmentUrl, type JobRef } from '@/lib/api/job-api';
+import type { WebAttachmentItem, WebAttachmentsCard } from '@/lib/api/types';
+import { FileText } from 'lucide-react';
+import { useContext, useEffect, useState } from 'react';
+import { MessageTime, UserBubble } from './bubbles';
+import { PremeasureContext } from './idle-premeasure';
 
 /** Human file size (1 decimal for KB+). */
 function fmtSize(bytes: number): string {
@@ -20,13 +20,7 @@ function fmtSize(bytes: number): string {
  * revokes it on unmount. `path === ""` means the durable row hasn't reconciled yet (no local preview) — we
  * simply wait for the refetch to replace this row.
  */
-function ImageThumb({
-  jobRef,
-  item,
-}: {
-  jobRef: JobRef;
-  item: WebAttachmentItem;
-}) {
+function ImageThumb({ jobRef, item }: { jobRef: JobRef; item: WebAttachmentItem }) {
   const [url, setUrl] = useState<string | null>(item.localUrl ?? null);
   // The idle off-screen pre-measurement pass mounts this same component to read its (fixed) box height —
   // it never needs the real image, so skip the network fetch there entirely.
@@ -73,9 +67,7 @@ function FileChip({ item }: { item: WebAttachmentItem }) {
       title={item.name}
     >
       <FileText size={13} strokeWidth={2} className="shrink-0 text-accent-2" />
-      <span className="max-w-[140px] truncate text-[11px] text-text">
-        {item.name}
-      </span>
+      <span className="max-w-[140px] truncate text-[11px] text-text">{item.name}</span>
       <span className="font-mono text-[9px] text-dim">{fmtSize(item.size)}</span>
     </div>
   );
@@ -98,7 +90,7 @@ export function AttachmentsCardView({
     <div className="flex flex-col items-end gap-1">
       <div className="flex max-w-[80%] flex-wrap justify-end gap-1.5">
         {card.items.map((item, i) =>
-          item.kind === "image" ? (
+          item.kind === 'image' ? (
             <ImageThumb key={i} jobRef={jobRef} item={item} />
           ) : (
             <FileChip key={i} item={item} />

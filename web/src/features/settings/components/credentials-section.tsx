@@ -1,23 +1,8 @@
-"use client";
+'use client';
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { useQueryClient } from "@/lib/api/_tanstack-shim";
-import { useSearchParams } from "next/navigation";
-import {
-  AlertCircle,
-  Check,
-  Copy,
-  ExternalLink,
-  Github,
-  KeyRound,
-  Lock,
-  MessageSquare,
-  Sparkles,
-  Terminal,
-  Trash2,
-} from "lucide-react";
-import { Spinner } from "@/components/ui/spinner";
-import { CredentialUsageRing } from "@/features/job-workspace/usage-ring";
+import { Spinner } from '@/components/ui/spinner';
+import { CredentialUsageRing } from '@/features/job-workspace/usage-ring';
+import { useQueryClient } from '@/lib/api/_tanstack-shim';
 import {
   useAddClaudeCredential,
   useClaudeCredentials,
@@ -36,8 +21,23 @@ import {
   type ClaudeCredentialStatus,
   type SaveCredentialsBody,
   type SaveCredentialsResult,
-} from "@/lib/api/orgs";
-import { qk } from "@/lib/api/query-keys";
+} from '@/lib/api/orgs';
+import { qk } from '@/lib/api/query-keys';
+import {
+  AlertCircle,
+  Check,
+  Copy,
+  ExternalLink,
+  Github,
+  KeyRound,
+  Lock,
+  MessageSquare,
+  Sparkles,
+  Terminal,
+  Trash2,
+} from 'lucide-react';
+import { useSearchParams } from 'next/navigation';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 /**
  * Credentials — the org-wide encrypted secrets every thread uses. The list is presence-only (the API never
@@ -54,17 +54,11 @@ import { qk } from "@/lib/api/query-keys";
  * Claude is the one exception to the presence-only cards above: it manages a full LIST of credentials
  * (see `ClaudeCredentialsManager`) and is owner-gated, since the list surfaces account emails.
  */
-export function CredentialsSection({
-  orgId,
-  role,
-}: {
-  orgId: string;
-  role: string;
-}) {
+export function CredentialsSection({ orgId, role }: { orgId: string; role: string }) {
   const { data: presence, isLoading, isError } = useOrgCredentials(orgId);
   const save = useSaveCredentials(orgId);
   const onSave = (body: SaveCredentialsBody) => save.mutateAsync(body);
-  const isOwner = role === "owner";
+  const isOwner = role === 'owner';
   const { data: codex } = useCodexAccount(orgId, isOwner);
 
   if (isLoading) {
@@ -80,8 +74,7 @@ export function CredentialsSection({
         Credentials
       </h1>
       <p className="mb-7 mt-1.5 text-[13px] leading-relaxed text-dim">
-        Org-wide secrets used by every thread. Encrypted at rest — secret values
-        are never shown.
+        Org-wide secrets used by every thread. Encrypted at rest — secret values are never shown.
       </p>
 
       <SectionLabel
@@ -100,31 +93,30 @@ export function CredentialsSection({
         pill={
           presence.hasAnthropic
             ? presence.llmValidated
-              ? { label: "valid", tone: "green" }
-              : { label: "set", tone: "dim" }
-            : { label: "not set", tone: "faint" }
+              ? { label: 'valid', tone: 'green' }
+              : { label: 'set', tone: 'dim' }
+            : { label: 'not set', tone: 'faint' }
         }
         modes={[
           {
-            id: "anthropic",
-            fieldLabel: "New Anthropic API key",
-            placeholder: "sk-ant-api03-…",
-            maskedPrefix: "sk-ant-api03-",
-            tag: "API key · prompts",
+            id: 'anthropic',
+            fieldLabel: 'New Anthropic API key',
+            placeholder: 'sk-ant-api03-…',
+            maskedPrefix: 'sk-ant-api03-',
+            tag: 'API key · prompts',
             serverValidated: true,
             help: (
               <HelpBlock>
                 <p>
-                  Create a key in the{" "}
+                  Create a key in the{' '}
                   <HelpLink href="https://console.anthropic.com/settings/keys">
                     Anthropic Console
-                  </HelpLink>{" "}
-                  under <strong>Settings → API keys</strong>. This powers
-                  one-shot prompts (job titles, triage) — not the coding engine.
+                  </HelpLink>{' '}
+                  under <strong>Settings → API keys</strong>. This powers one-shot prompts (job
+                  titles, triage) — not the coding engine.
                 </p>
                 <p>
-                  Paste the <Code>sk-ant-api03-…</Code> key it shows (revealed
-                  only once).
+                  Paste the <Code>sk-ant-api03-…</Code> key it shows (revealed only once).
                 </p>
               </HelpBlock>
             ),
@@ -132,19 +124,17 @@ export function CredentialsSection({
               if (/^sk-ant-oat/.test(v))
                 return {
                   ok: false,
-                  reason:
-                    "That’s a subscription token — add it under “Coding engine” below.",
+                  reason: 'That’s a subscription token — add it under “Coding engine” below.',
                 };
-              if (!v.startsWith("sk-ant-"))
+              if (!v.startsWith('sk-ant-'))
                 return {
                   ok: false,
-                  reason: "Anthropic keys start with sk-ant-.",
+                  reason: 'Anthropic keys start with sk-ant-.',
                 };
-              if (v.length < 25)
-                return { ok: false, reason: "That key looks too short." };
+              if (v.length < 25) return { ok: false, reason: 'That key looks too short.' };
               return {
                 ok: true,
-                reason: "Format looks valid — verifying on save.",
+                reason: 'Format looks valid — verifying on save.',
               };
             },
             buildBody: (v) => ({ anthropicApiKey: v }),
@@ -160,25 +150,22 @@ export function CredentialsSection({
         present={presence.hasOpenai}
         pill={
           presence.hasOpenai
-            ? { label: "saved", tone: "green" }
-            : { label: "required", tone: "faint" }
+            ? { label: 'saved', tone: 'green' }
+            : { label: 'required', tone: 'faint' }
         }
         modes={[
           {
-            id: "openai",
-            fieldLabel: "New OpenAI key",
-            placeholder: "sk-…",
-            maskedPrefix: "sk-proj-",
-            tag: "embeddings",
+            id: 'openai',
+            fieldLabel: 'New OpenAI key',
+            placeholder: 'sk-…',
+            maskedPrefix: 'sk-proj-',
+            tag: 'embeddings',
             help: (
               <HelpBlock>
                 <p>
-                  Create a key on the{" "}
-                  <HelpLink href="https://platform.openai.com/api-keys">
-                    OpenAI API keys
-                  </HelpLink>{" "}
-                  page. It powers semantic-memory embeddings — required to
-                  activate the org.
+                  Create a key on the{' '}
+                  <HelpLink href="https://platform.openai.com/api-keys">OpenAI API keys</HelpLink>{' '}
+                  page. It powers semantic-memory embeddings — required to activate the org.
                 </p>
                 <p>
                   Paste the <Code>sk-…</Code> key it shows.
@@ -189,14 +176,11 @@ export function CredentialsSection({
               if (/^sk-ant-/.test(v))
                 return {
                   ok: false,
-                  reason:
-                    "That’s an Anthropic key — paste your OpenAI key here.",
+                  reason: 'That’s an Anthropic key — paste your OpenAI key here.',
                 };
-              if (!/^sk-/.test(v))
-                return { ok: false, reason: "OpenAI keys start with sk-." };
-              if (v.length < 20)
-                return { ok: false, reason: "That key looks too short." };
-              return { ok: true, reason: "Format looks valid." };
+              if (!/^sk-/.test(v)) return { ok: false, reason: 'OpenAI keys start with sk-.' };
+              if (v.length < 20) return { ok: false, reason: 'That key looks too short.' };
+              return { ok: true, reason: 'Format looks valid.' };
             },
             buildBody: (v) => ({ openaiApiKey: v }),
           },
@@ -217,39 +201,35 @@ export function CredentialsSection({
         sub={
           isOwner && presence.hasCodex && codex?.accountEmail
             ? codex.accountEmail
-            : "Optional second coding engine"
+            : 'Optional second coding engine'
         }
         present={presence.hasCodex}
         pill={
-          presence.hasCodex
-            ? { label: "set", tone: "dim" }
-            : { label: "optional", tone: "faint" }
+          presence.hasCodex ? { label: 'set', tone: 'dim' } : { label: 'optional', tone: 'faint' }
         }
         modes={[
           {
-            id: "codex-sub",
-            fieldLabel: "New Codex auth token",
-            placeholder: "Paste ~/.codex/auth.json…",
-            maskedPrefix: "",
-            tag: "subscription · optional",
+            id: 'codex-sub',
+            fieldLabel: 'New Codex auth token',
+            placeholder: 'Paste ~/.codex/auth.json…',
+            maskedPrefix: '',
+            tag: 'subscription · optional',
             help: (
               <HelpBlock>
                 <p>
-                  Sign in to the OpenAI Codex CLI with your{" "}
-                  <strong>ChatGPT Plus/Pro</strong> account. With the Codex CLI
-                  installed, run:
+                  Sign in to the OpenAI Codex CLI with your <strong>ChatGPT Plus/Pro</strong>{' '}
+                  account. With the Codex CLI installed, run:
                 </p>
                 <CommandLine cmd="codex login" />
                 <p>
-                  This writes <Code>~/.codex/auth.json</Code> — paste the full
-                  contents of that file here.
+                  This writes <Code>~/.codex/auth.json</Code> — paste the full contents of that file
+                  here.
                 </p>
               </HelpBlock>
             ),
             validate: (v) => {
-              if (v.length < 10)
-                return { ok: false, reason: "That token looks too short." };
-              return { ok: true, reason: "Format looks valid." };
+              if (v.length < 10) return { ok: false, reason: 'That token looks too short.' };
+              return { ok: true, reason: 'Format looks valid.' };
             },
             buildBody: (v) => ({ codexAuthSecret: v }),
           },
@@ -269,58 +249,52 @@ export function CredentialsSection({
         present={presence.hasGithub}
         pill={
           presence.hasGithub
-            ? presence.githubAuthMode === "app"
-              ? { label: "PAT (inactive)", tone: "dim" }
-              : { label: "saved", tone: "green" }
-            : { label: "not set", tone: "faint" }
+            ? presence.githubAuthMode === 'app'
+              ? { label: 'PAT (inactive)', tone: 'dim' }
+              : { label: 'saved', tone: 'green' }
+            : { label: 'not set', tone: 'faint' }
         }
         modes={[
           {
-            id: "github",
-            fieldLabel: "New GitHub token",
-            placeholder: "ghp_ or github_pat_…",
-            maskedPrefix: "ghp_",
-            tag: "repo · read:org",
+            id: 'github',
+            fieldLabel: 'New GitHub token',
+            placeholder: 'ghp_ or github_pat_…',
+            maskedPrefix: 'ghp_',
+            tag: 'repo · read:org',
             help: (
               <HelpBlock>
                 <p>
-                  Atlas works the repo end-to-end: clone, push branches, and
-                  manage pull requests (open, update, comment, merge). It also
-                  reads CI / check results and PR comments so it can react to
-                  activity on a thread. Create a token at{" "}
+                  Atlas works the repo end-to-end: clone, push branches, and manage pull requests
+                  (open, update, comment, merge). It also reads CI / check results and PR comments
+                  so it can react to activity on a thread. Create a token at{' '}
                   <HelpLink href="https://github.com/settings/tokens/new">
                     github.com/settings/tokens
                   </HelpLink>
                   :
                 </p>
                 <p>
-                  <strong>Classic</strong> — tick the single <Code>repo</Code>{" "}
-                  scope; it covers contents, pull requests, commit statuses,
-                  checks and comments. For org repos behind SSO, click{" "}
-                  <em>Configure SSO</em> to authorize the token.
+                  <strong>Classic</strong> — tick the single <Code>repo</Code> scope; it covers
+                  contents, pull requests, commit statuses, checks and comments. For org repos
+                  behind SSO, click <em>Configure SSO</em> to authorize the token.
                 </p>
                 <p>
-                  <strong>Fine-grained</strong> — grant the repos{" "}
-                  <Code>Contents: Read and write</Code>,{" "}
-                  <Code>Pull requests: Read and write</Code>,{" "}
-                  <Code>Commit statuses: Read</Code>,{" "}
-                  <Code>Checks: Read</Code> and{" "}
-                  <Code>Webhooks: Read and write</Code> (the last enables
-                  real-time PR / CI sync).
+                  <strong>Fine-grained</strong> — grant the repos{' '}
+                  <Code>Contents: Read and write</Code>, <Code>Pull requests: Read and write</Code>,{' '}
+                  <Code>Commit statuses: Read</Code>, <Code>Checks: Read</Code> and{' '}
+                  <Code>Webhooks: Read and write</Code> (the last enables real-time PR / CI sync).
                 </p>
                 <p>
-                  Paste the <Code>ghp_…</Code> or <Code>github_pat_…</Code>{" "}
-                  token. Live event delivery (webhooks that wake a thread on a
-                  comment or CI result) is configured separately.
+                  Paste the <Code>ghp_…</Code> or <Code>github_pat_…</Code> token. Live event
+                  delivery (webhooks that wake a thread on a comment or CI result) is configured
+                  separately.
                 </p>
               </HelpBlock>
             ),
             validate: (v) => {
               if (!/^(ghp_|github_pat_)/.test(v))
-                return { ok: false, reason: "Expected ghp_ or github_pat_." };
-              if (v.length < 20)
-                return { ok: false, reason: "That token looks too short." };
-              return { ok: true, reason: "Format looks valid." };
+                return { ok: false, reason: 'Expected ghp_ or github_pat_.' };
+              if (v.length < 20) return { ok: false, reason: 'That token looks too short.' };
+              return { ok: true, reason: 'Format looks valid.' };
             },
             buildBody: (v) => ({ githubPat: v }),
           },
@@ -328,11 +302,7 @@ export function CredentialsSection({
         onSave={onSave}
       />
 
-      <GithubAppConnect
-        orgId={orgId}
-        isOwner={isOwner}
-        hasPat={presence.hasGithub}
-      />
+      <GithubAppConnect orgId={orgId} isOwner={isOwner} hasPat={presence.hasGithub} />
     </>
   );
 }
@@ -340,11 +310,11 @@ export function CredentialsSection({
 // ── GitHub App connect ───────────────────────────────────────────────────────────────────────────
 /** Friendly copy for the `?githubApp=error&reason=…` redirect the install callback lands on. */
 function githubAppErrorMessage(reason: string | null): string {
-  if (reason === "already_connected")
-    return "That installation is already connected to another organization.";
-  if (reason === "verification_failed")
-    return "Couldn’t verify the installation — try connecting again.";
-  return "The connect request expired or was invalid — try again.";
+  if (reason === 'already_connected')
+    return 'That installation is already connected to another organization.';
+  if (reason === 'verification_failed')
+    return 'Couldn’t verify the installation — try connecting again.';
+  return 'The connect request expired or was invalid — try again.';
 }
 
 /**
@@ -367,56 +337,56 @@ function GithubAppConnect({
   const installUrl = useGithubAppInstallUrl(orgId);
   const setMode = useSetGithubAuthMode(orgId);
   const disconnect = useDisconnectGithubApp(orgId);
-  const [error, setError] = useState("");
-  const [note, setNote] = useState("");
+  const [error, setError] = useState('');
+  const [note, setNote] = useState('');
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
 
   const qc = useQueryClient();
   const searchParams = useSearchParams();
 
   useEffect(() => {
-    const result = searchParams.get("githubApp");
-    if (result === "connected") {
+    const result = searchParams.get('githubApp');
+    if (result === 'connected') {
       void qc.invalidateQueries({ queryKey: qk.orgGithubAppStatus(orgId) });
       void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
-      setNote("GitHub App connected.");
-    } else if (result === "error") {
-      setError(githubAppErrorMessage(searchParams.get("reason")));
+      setNote('GitHub App connected.');
+    } else if (result === 'error') {
+      setError(githubAppErrorMessage(searchParams.get('reason')));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function connect() {
-    setError("");
-    setNote("");
+    setError('');
+    setNote('');
     // Open the window synchronously within the click handler so popup blockers
     // don't block it after the mutation's network round-trip loses the user gesture.
     // Note: passing `noopener`/`noreferrer` here makes window.open return null,
     // which would defeat the synchronous pre-open. Open the blank window without
     // those features and null out `opener` after navigating instead.
-    const installWindow = window.open("", "_blank");
+    const installWindow = window.open('', '_blank');
     try {
       const result = await installUrl.mutateAsync();
       if (installWindow) {
         installWindow.opener = null;
         installWindow.location.href = result.url;
       } else {
-        window.open(result.url, "_blank", "noopener,noreferrer");
+        window.open(result.url, '_blank', 'noopener,noreferrer');
       }
     } catch (e) {
       installWindow?.close();
-      setError((e as Error)?.message || "Could not start the GitHub App install.");
+      setError((e as Error)?.message || 'Could not start the GitHub App install.');
     }
   }
 
-  async function switchMode(mode: "pat" | "app") {
+  async function switchMode(mode: 'pat' | 'app') {
     if (!status || status.mode === mode) return;
-    setError("");
-    setNote("");
+    setError('');
+    setNote('');
     try {
       await setMode.mutateAsync(mode);
     } catch (e) {
-      setError((e as Error)?.message || "Could not switch auth mode.");
+      setError((e as Error)?.message || 'Could not switch auth mode.');
     }
   }
 
@@ -426,23 +396,23 @@ function GithubAppConnect({
       return;
     }
     setConfirmDisconnect(false);
-    setError("");
-    setNote("");
+    setError('');
+    setNote('');
     try {
       await disconnect.mutateAsync();
     } catch (e) {
-      setError((e as Error)?.message || "Could not disconnect the GitHub App.");
+      setError((e as Error)?.message || 'Could not disconnect the GitHub App.');
     }
   }
 
   const pill =
     !status || isLoading
-      ? { label: "…", tone: "faint" as const }
+      ? { label: '…', tone: 'faint' as const }
       : !status.configured
-        ? { label: "App unavailable", tone: "faint" as const }
+        ? { label: 'App unavailable', tone: 'faint' as const }
         : status.connected
-          ? { label: "App: connected", tone: "green" as const }
-          : { label: "not connected", tone: "faint" as const };
+          ? { label: 'App: connected', tone: 'green' as const }
+          : { label: 'not connected', tone: 'faint' as const };
 
   return (
     <div className="mb-3.5 rounded-lg border border-border bg-surface p-[18px]">
@@ -450,17 +420,15 @@ function GithubAppConnect({
         <span
           className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-lg border"
           style={{
-            background: "var(--surface-3)",
-            borderColor: "var(--border-2)",
-            color: "var(--dim)",
+            background: 'var(--surface-3)',
+            borderColor: 'var(--border-2)',
+            color: 'var(--dim)',
           }}
         >
           <Github size={16} />
         </span>
         <div className="flex-1">
-          <div className="text-[13.5px] font-semibold text-text">
-            GitHub App
-          </div>
+          <div className="text-[13.5px] font-semibold text-text">GitHub App</div>
           <div className="mt-0.5 text-[11px] text-faint">
             Its own rate-limit pool — no personal 5k/hr throttling
           </div>
@@ -476,13 +444,13 @@ function GithubAppConnect({
         <div className="mt-3.5">
           <HelpBlock>
             <p>
-              App auth routes host and background GitHub traffic through a
-              GitHub App installation token, which has its own rate-limit pool
-              separate from any human’s personal 5,000/hr budget.
+              App auth routes host and background GitHub traffic through a GitHub App installation
+              token, which has its own rate-limit pool separate from any human’s personal 5,000/hr
+              budget.
             </p>
             <p>
-              After connecting, choose whether sandbox commits, pushes, and PRs
-              use the PAT or the App.
+              After connecting, choose whether sandbox commits, pushes, and PRs use the PAT or the
+              App.
             </p>
           </HelpBlock>
           {isOwner ? (
@@ -491,38 +459,31 @@ function GithubAppConnect({
               onClick={connect}
               disabled={installUrl.isPending}
               className="mt-3 inline-flex items-center gap-1.5 rounded-md border px-3.5 py-2 text-[12px] font-semibold text-accent transition hover:bg-accent-soft disabled:opacity-60"
-              style={{ borderColor: "var(--accent-line)" }}
+              style={{ borderColor: 'var(--accent-line)' }}
             >
-              {installUrl.isPending ? "Opening…" : "Connect GitHub App"}
+              {installUrl.isPending ? 'Opening…' : 'Connect GitHub App'}
               <ExternalLink size={12} />
             </button>
           ) : (
-            <p className="mt-3 text-[11.5px] text-faint">
-              Ask an owner to connect the GitHub App.
-            </p>
+            <p className="mt-3 text-[11.5px] text-faint">Ask an owner to connect the GitHub App.</p>
           )}
         </div>
       ) : (
         <div className="mt-3.5">
           <p className="text-[11.5px] text-dim">
-            Connected to{" "}
-            <Code>
-              {status.account ?? `installation #${status.installationId}`}
-            </Code>
+            Connected to <Code>{status.account ?? `installation #${status.installationId}`}</Code>
           </p>
 
           <div className="mt-3 flex items-center gap-3">
             <div className="flex gap-1 rounded-md border border-border-2 bg-surface-2 p-1">
-              {(
-                [
-                  { id: "pat" as const, label: "PAT", disabled: !hasPat },
-                  {
-                    id: "app" as const,
-                    label: "App",
-                    disabled: !status.connected,
-                  },
-                ]
-              ).map((opt) => {
+              {[
+                { id: 'pat' as const, label: 'PAT', disabled: !hasPat },
+                {
+                  id: 'app' as const,
+                  label: 'App',
+                  disabled: !status.connected,
+                },
+              ].map((opt) => {
                 const on = status.mode === opt.id;
                 return (
                   <button
@@ -532,8 +493,8 @@ function GithubAppConnect({
                     disabled={!isOwner || opt.disabled || setMode.isPending}
                     className="rounded-sm px-3 py-1.5 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50"
                     style={{
-                      background: on ? "var(--surface)" : "transparent",
-                      color: on ? "var(--accent)" : "var(--dim)",
+                      background: on ? 'var(--surface)' : 'transparent',
+                      color: on ? 'var(--accent)' : 'var(--dim)',
                     }}
                   >
                     {opt.label}
@@ -549,27 +510,20 @@ function GithubAppConnect({
                 disabled={disconnect.isPending}
                 className="flex h-[30px] shrink-0 items-center justify-center rounded-md border border-border-2 px-2.5 text-[11.5px] font-semibold text-faint transition hover:border-red hover:bg-red-soft hover:text-red disabled:opacity-60"
               >
-                {confirmDisconnect ? (
-                  <span className="text-red">Confirm?</span>
-                ) : (
-                  "Disconnect"
-                )}
+                {confirmDisconnect ? <span className="text-red">Confirm?</span> : 'Disconnect'}
               </button>
             ) : null}
           </div>
 
           <div className="mt-2.5 text-[11px] text-faint">
-            Sets the identity Atlas commits, pushes, and opens PRs as inside the
-            sandbox. Host and background traffic (webhooks, CI, PR checks) always
-            uses the App.
+            Sets the identity Atlas commits, pushes, and opens PRs as inside the sandbox. Host and
+            background traffic (webhooks, CI, PR checks) always uses the App.
           </div>
         </div>
       )}
 
       {error ? <p className="mt-3 text-[11.5px] text-red">{error}</p> : null}
-      {note ? (
-        <p className="mt-3 text-[11.5px] text-green">{note}</p>
-      ) : null}
+      {note ? <p className="mt-3 text-[11.5px] text-green">{note}</p> : null}
     </div>
   );
 }
@@ -580,18 +534,8 @@ function GithubAppConnect({
  * credentials (personal logins + setup-tokens) with one selected to fund the org's turns. Owner-gated:
  * non-owners see the list read-only with no add/select/delete affordances.
  */
-function ClaudeCredentialsManager({
-  orgId,
-  isOwner,
-}: {
-  orgId: string;
-  isOwner: boolean;
-}) {
-  const {
-    data: credentials,
-    isLoading,
-    isError,
-  } = useClaudeCredentials(orgId, isOwner);
+function ClaudeCredentialsManager({ orgId, isOwner }: { orgId: string; isOwner: boolean }) {
+  const { data: credentials, isLoading, isError } = useClaudeCredentials(orgId, isOwner);
   const select = useSelectClaudeCredential(orgId);
   const del = useDeleteClaudeCredential(orgId);
   const [deleteErrors, setDeleteErrors] = useState<Record<string, string>>({});
@@ -603,8 +547,8 @@ function ClaudeCredentialsManager({
   function handleReconnect() {
     login.openLogin();
     addPersonalCardRef.current?.scrollIntoView({
-      behavior: "smooth",
-      block: "center",
+      behavior: 'smooth',
+      block: 'center',
     });
   }
 
@@ -618,7 +562,7 @@ function ClaudeCredentialsManager({
     } catch (e) {
       setDeleteErrors((prev) => ({
         ...prev,
-        [id]: (e as Error)?.message || "Could not delete credential.",
+        [id]: (e as Error)?.message || 'Could not delete credential.',
       }));
     }
   }
@@ -641,9 +585,7 @@ function ClaudeCredentialsManager({
       {isLoading ? (
         <p className="text-[13px] text-faint">Loading Claude credentials…</p>
       ) : isError || !credentials ? (
-        <p className="text-[13px] text-red">
-          Couldn’t load Claude credentials.
-        </p>
+        <p className="text-[13px] text-red">Couldn’t load Claude credentials.</p>
       ) : credentials.length === 0 ? (
         <p className="rounded-lg border border-border bg-surface-2 px-3.5 py-3 text-[12px] text-faint">
           No Claude credentials yet — add one below.
@@ -673,13 +615,12 @@ function ClaudeCredentialsManager({
       </div>
 
       <p className="mt-4 border-t border-border pt-3 text-[11px] leading-relaxed text-faint">
-        <strong className="font-semibold text-dim">Setup-tokens</strong> don’t
-        expire and are never refreshed — rotate them manually when needed.{" "}
-        <strong className="font-semibold text-dim">Personal logins</strong>{" "}
-        are refreshed automatically on the host, including a background
-        keep-alive, so they stay connected without an open tab. If one ever
-        can’t be refreshed it’ll show <strong className="font-semibold text-dim">Needs re-auth</strong>{" "}
-        with a Reconnect button.
+        <strong className="font-semibold text-dim">Setup-tokens</strong> don’t expire and are never
+        refreshed — rotate them manually when needed.{' '}
+        <strong className="font-semibold text-dim">Personal logins</strong> are refreshed
+        automatically on the host, including a background keep-alive, so they stay connected without
+        an open tab. If one ever can’t be refreshed it’ll show{' '}
+        <strong className="font-semibold text-dim">Needs re-auth</strong> with a Reconnect button.
       </p>
     </div>
   );
@@ -724,11 +665,11 @@ function ClaudeCredentialRow({
       style={
         cred.isSelected
           ? {
-              background: "var(--accent-soft)",
-              borderColor: "var(--accent-line)",
-              boxShadow: "inset 0 0 0 1px var(--accent-line)",
+              background: 'var(--accent-soft)',
+              borderColor: 'var(--accent-line)',
+              boxShadow: 'inset 0 0 0 1px var(--accent-line)',
             }
-          : { background: "var(--surface)", borderColor: "var(--border)" }
+          : { background: 'var(--surface)', borderColor: 'var(--border)' }
       }
     >
       <div className="flex shrink-0 flex-col items-center gap-1 pt-0.5">
@@ -744,15 +685,12 @@ function ClaudeCredentialRow({
           <span
             className="flex h-4 w-4 items-center justify-center rounded-full border-[1.6px]"
             style={{
-              borderColor: cred.isSelected ? "var(--accent)" : "var(--border-2)",
-              background: "var(--surface)",
+              borderColor: cred.isSelected ? 'var(--accent)' : 'var(--border-2)',
+              background: 'var(--surface)',
             }}
           >
             {cred.isSelected ? (
-              <span
-                className="h-2 w-2 rounded-full"
-                style={{ background: "var(--accent)" }}
-              />
+              <span className="h-2 w-2 rounded-full" style={{ background: 'var(--accent)' }} />
             ) : null}
           </span>
         )}
@@ -765,34 +703,26 @@ function ClaudeCredentialRow({
 
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[13.5px] font-semibold text-text">
-            {cred.label}
-          </span>
+          <span className="text-[13.5px] font-semibold text-text">{cred.label}</span>
           <ClaudeKindBadge kind={cred.kind} />
           <ClaudeStatusChip status={cred.status} />
         </div>
-        <div className="mt-1 text-[11.5px] text-faint">
-          {claudeCredentialMeta(cred)}
-        </div>
-        {deleteError ? (
-          <p className="mt-1.5 text-[11px] text-red">{deleteError}</p>
-        ) : null}
+        <div className="mt-1 text-[11.5px] text-faint">{claudeCredentialMeta(cred)}</div>
+        {deleteError ? <p className="mt-1.5 text-[11px] text-red">{deleteError}</p> : null}
       </div>
 
-      {cred.kind === "personal" ? (
+      {cred.kind === 'personal' ? (
         <div className="flex shrink-0 items-center pt-0.5">
           <CredentialUsageRing orgId={orgId} credentialId={cred.id} />
         </div>
       ) : null}
 
-      {isOwner &&
-      cred.kind === "personal" &&
-      cred.status === "needs_reauth" ? (
+      {isOwner && cred.kind === 'personal' && cred.status === 'needs_reauth' ? (
         <button
           type="button"
           onClick={onReconnect}
           className="flex h-[30px] shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-[11.5px] font-semibold text-accent transition hover:bg-accent-soft"
-          style={{ borderColor: "var(--accent-line)" }}
+          style={{ borderColor: 'var(--accent-line)' }}
         >
           Reconnect
           <ExternalLink size={12} />
@@ -808,9 +738,7 @@ function ClaudeCredentialRow({
           className="flex h-[30px] shrink-0 items-center justify-center rounded-md border border-border-2 px-2 text-faint transition hover:border-red hover:bg-red-soft hover:text-red disabled:opacity-60"
         >
           {confirmDelete ? (
-            <span className="text-[10.5px] font-semibold text-red">
-              Confirm?
-            </span>
+            <span className="text-[10.5px] font-semibold text-red">Confirm?</span>
           ) : (
             <Trash2 size={14} />
           )}
@@ -822,49 +750,42 @@ function ClaudeCredentialRow({
 
 /** Badge distinguishing a personal OAuth login from a long-lived setup-token. */
 function ClaudeKindBadge({ kind }: { kind: ClaudeCredentialKind }) {
-  const isPersonal = kind === "personal";
+  const isPersonal = kind === 'personal';
   return (
     <span
       className="inline-flex items-center rounded-[4px] border px-1.5 py-0.5 font-mono text-[9.5px] font-semibold uppercase tracking-[0.03em]"
       style={
         isPersonal
           ? {
-              color: "var(--blue)",
-              background: "var(--blue-soft)",
-              borderColor: "color-mix(in srgb, var(--blue) 30%, transparent)",
+              color: 'var(--blue)',
+              background: 'var(--blue-soft)',
+              borderColor: 'color-mix(in srgb, var(--blue) 30%, transparent)',
             }
           : {
-              color: "var(--slate)",
-              background: "var(--slate-soft)",
-              borderColor: "var(--slate-line)",
+              color: 'var(--slate)',
+              background: 'var(--slate-soft)',
+              borderColor: 'var(--slate-line)',
             }
       }
     >
-      {isPersonal ? "Personal" : "Setup-token"}
+      {isPersonal ? 'Personal' : 'Setup-token'}
     </span>
   );
 }
 
 /** Status chip: active (green), needs re-auth (red, warns to reconnect), or error (red). */
-function ClaudeStatusChip({
-  status,
-}: {
-  status: ClaudeCredentialStatus | string;
-}) {
-  if (status === "active") {
+function ClaudeStatusChip({ status }: { status: ClaudeCredentialStatus | string }) {
+  if (status === 'active') {
     return (
       <span
         className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10.5px] font-medium"
         style={{
-          color: "var(--green)",
-          background: "var(--green-soft)",
-          borderColor: "color-mix(in srgb, var(--green) 32%, transparent)",
+          color: 'var(--green)',
+          background: 'var(--green-soft)',
+          borderColor: 'color-mix(in srgb, var(--green) 32%, transparent)',
         }}
       >
-        <span
-          className="h-1.5 w-1.5 rounded-full"
-          style={{ background: "var(--green)" }}
-        />
+        <span className="h-1.5 w-1.5 rounded-full" style={{ background: 'var(--green)' }} />
         Active
       </span>
     );
@@ -873,29 +794,28 @@ function ClaudeStatusChip({
     <span
       className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10.5px] font-medium"
       style={{
-        color: "var(--red)",
-        background: "var(--red-soft)",
-        borderColor: "color-mix(in srgb, var(--red) 35%, transparent)",
+        color: 'var(--red)',
+        background: 'var(--red-soft)',
+        borderColor: 'color-mix(in srgb, var(--red) 35%, transparent)',
       }}
     >
-      {status === "needs_reauth" ? <AlertCircle size={11} /> : null}
-      {status === "needs_reauth" ? "Needs re-auth" : "Error"}
+      {status === 'needs_reauth' ? <AlertCircle size={11} /> : null}
+      {status === 'needs_reauth' ? 'Needs re-auth' : 'Error'}
     </span>
   );
 }
 
 /** The row's secondary line: expiry + account for a personal login, or a masked placeholder for a token. */
 function claudeCredentialMeta(cred: ClaudeCredential): string {
-  if (cred.kind === "setup_token") {
-    return "sk-ant-oat01-••••••••••••";
+  if (cred.kind === 'setup_token') {
+    return 'sk-ant-oat01-••••••••••••';
   }
-  const emailSuffix = cred.accountEmail ? ` · ${cred.accountEmail}` : "";
+  const emailSuffix = cred.accountEmail ? ` · ${cred.accountEmail}` : '';
   const isExpired =
-    cred.status === "needs_reauth" ||
-    (cred.expiresAt !== null && cred.expiresAt <= Date.now());
+    cred.status === 'needs_reauth' || (cred.expiresAt !== null && cred.expiresAt <= Date.now());
   if (isExpired) {
     const when = cred.expiresAt !== null ? formatClaudeDate(cred.expiresAt) : null;
-    return `expired${when ? ` ${when}` : ""}${emailSuffix}`;
+    return `expired${when ? ` ${when}` : ''}${emailSuffix}`;
   }
   if (cred.expiresAt === null) {
     return `access token${emailSuffix}`;
@@ -904,10 +824,10 @@ function claudeCredentialMeta(cred: ClaudeCredential): string {
 }
 
 function formatClaudeDate(epochMs: number): string {
-  return new Date(epochMs).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
+  return new Date(epochMs).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
   });
 }
 
@@ -931,28 +851,28 @@ function useClaudePersonalLogin(orgId: string) {
   const createAuthorizeUrl = useCreateClaudeAuthorizeUrl(orgId);
   const addCredential = useAddClaudeCredential(orgId);
   const [pending, setPending] = useState<{ state: string } | null>(null);
-  const [code, setCode] = useState("");
-  const [error, setError] = useState("");
+  const [code, setCode] = useState('');
+  const [error, setError] = useState('');
 
   async function openLogin() {
-    setError("");
+    setError('');
     // Open the window synchronously within the click handler so popup blockers don't block it after the
     // mutation's network round-trip loses the user gesture. It must open WITHOUT the "noopener" feature —
     // that makes window.open() return null, leaving no handle to navigate and forcing a post-await open()
     // the popup blocker rejects. We sever the back-reference ourselves via `opener = null` instead.
-    const loginWindow = window.open("about:blank", "_blank");
+    const loginWindow = window.open('about:blank', '_blank');
     if (loginWindow) loginWindow.opener = null;
     try {
       const result = await createAuthorizeUrl.mutateAsync();
       if (loginWindow) {
         loginWindow.location.href = result.url;
       } else {
-        window.open(result.url, "_blank", "noopener,noreferrer");
+        window.open(result.url, '_blank', 'noopener,noreferrer');
       }
       setPending({ state: result.state });
     } catch (e) {
       loginWindow?.close();
-      setError((e as Error)?.message || "Could not start Claude login.");
+      setError((e as Error)?.message || 'Could not start Claude login.');
     }
   }
 
@@ -960,19 +880,19 @@ function useClaudePersonalLogin(orgId: string) {
     if (!pending) return;
     const trimmedCode = code.trim();
     if (!trimmedCode) {
-      setError("Paste the code from Claude.");
+      setError('Paste the code from Claude.');
       return;
     }
-    setError("");
+    setError('');
     try {
       await addCredential.mutateAsync({
         code: trimmedCode,
         state: pending.state,
       });
       setPending(null);
-      setCode("");
+      setCode('');
     } catch (e) {
-      setError((e as Error)?.message || "That code looks expired or invalid.");
+      setError((e as Error)?.message || 'That code looks expired or invalid.');
     }
   }
 
@@ -1012,24 +932,22 @@ function AddClaudePersonalCard({
       ref={cardRef}
       className="rounded-lg border p-[18px]"
       style={{
-        borderColor: "var(--accent-line)",
-        boxShadow: "0 6px 22px var(--accent-soft)",
+        borderColor: 'var(--accent-line)',
+        boxShadow: '0 6px 22px var(--accent-soft)',
       }}
     >
       <div className="mb-1 flex items-center gap-2">
         <span
           className="flex h-[26px] w-[26px] items-center justify-center rounded-md border"
           style={{
-            background: "var(--accent-soft)",
-            borderColor: "var(--accent-line)",
-            color: "var(--accent)",
+            background: 'var(--accent-soft)',
+            borderColor: 'var(--accent-line)',
+            color: 'var(--accent)',
           }}
         >
           <Sparkles size={14} />
         </span>
-        <span className="text-[13.5px] font-semibold text-text">
-          Add personal login
-        </span>
+        <span className="text-[13.5px] font-semibold text-text">Add personal login</span>
       </div>
 
       <div className="mt-4 flex gap-3">
@@ -1043,9 +961,9 @@ function AddClaudePersonalCard({
             onClick={openLogin}
             disabled={isOpeningLogin || Boolean(pending)}
             className="inline-flex items-center gap-1.5 rounded-md border px-3.5 py-2 text-[12px] font-semibold text-accent transition hover:bg-accent-soft disabled:opacity-60"
-            style={{ borderColor: "var(--accent-line)" }}
+            style={{ borderColor: 'var(--accent-line)' }}
           >
-            {isOpeningLogin ? "Opening…" : "Open Claude login"}
+            {isOpeningLogin ? 'Opening…' : 'Open Claude login'}
             <ExternalLink size={12} />
           </button>
           <p className="mt-2 text-[11px] leading-relaxed text-faint">
@@ -1078,9 +996,9 @@ function AddClaudePersonalCard({
               onClick={submitCode}
               disabled={isAddingCredential}
               className="rounded-md px-4 py-2 text-[12px] font-semibold text-white transition hover:brightness-105 disabled:opacity-60"
-              style={{ background: "var(--accent)" }}
+              style={{ background: 'var(--accent)' }}
             >
-              {isAddingCredential ? "Adding…" : "Add credential"}
+              {isAddingCredential ? 'Adding…' : 'Add credential'}
             </button>
           </div>
         </div>
@@ -1103,31 +1021,31 @@ function StepNumber({ n }: { n: number }) {
 /** Compact inline form for a long-lived setup-token, generated via `claude setup-token`. */
 function AddClaudeSetupTokenCard({ orgId }: { orgId: string }) {
   const addCredential = useAddClaudeCredential(orgId);
-  const [label, setLabel] = useState("");
-  const [token, setToken] = useState("");
-  const [error, setError] = useState("");
+  const [label, setLabel] = useState('');
+  const [token, setToken] = useState('');
+  const [error, setError] = useState('');
 
   async function submit() {
     const trimmedLabel = label.trim();
     const trimmedToken = token.trim();
     if (!trimmedLabel) {
-      setError("Enter a label.");
+      setError('Enter a label.');
       return;
     }
-    if (!trimmedToken.startsWith("sk-ant-oat")) {
-      setError("Subscription tokens start with sk-ant-oat.");
+    if (!trimmedToken.startsWith('sk-ant-oat')) {
+      setError('Subscription tokens start with sk-ant-oat.');
       return;
     }
-    setError("");
+    setError('');
     try {
       await addCredential.mutateAsync({
         label: trimmedLabel,
         setupToken: trimmedToken,
       });
-      setLabel("");
-      setToken("");
+      setLabel('');
+      setToken('');
     } catch (e) {
-      setError((e as Error)?.message || "Could not add credential.");
+      setError((e as Error)?.message || 'Could not add credential.');
     }
   }
 
@@ -1137,15 +1055,11 @@ function AddClaudeSetupTokenCard({ orgId }: { orgId: string }) {
         <span className="flex h-[26px] w-[26px] items-center justify-center rounded-md border border-border-2 bg-surface-3 text-dim">
           <KeyRound size={13} />
         </span>
-        <span className="text-[13.5px] font-semibold text-text">
-          Add setup-token
-        </span>
+        <span className="text-[13.5px] font-semibold text-text">Add setup-token</span>
       </div>
       <div className="mt-3 flex items-end gap-2.5">
         <div className="w-[150px] shrink-0">
-          <label className="mb-1.5 block text-[12px] font-medium text-dim">
-            Label
-          </label>
+          <label className="mb-1.5 block text-[12px] font-medium text-dim">Label</label>
           <input
             value={label}
             onChange={(e) => setLabel(e.target.value)}
@@ -1155,9 +1069,7 @@ function AddClaudeSetupTokenCard({ orgId }: { orgId: string }) {
           />
         </div>
         <div className="min-w-0 flex-1">
-          <label className="mb-1.5 block text-[12px] font-medium text-dim">
-            Token
-          </label>
+          <label className="mb-1.5 block text-[12px] font-medium text-dim">Token</label>
           <input
             value={token}
             onChange={(e) => setToken(e.target.value)}
@@ -1171,14 +1083,12 @@ function AddClaudeSetupTokenCard({ orgId }: { orgId: string }) {
           onClick={submit}
           disabled={addCredential.isPending}
           className="shrink-0 rounded-md px-4 py-2 text-[12px] font-semibold text-white transition hover:brightness-105 disabled:opacity-60"
-          style={{ background: "var(--accent)" }}
+          style={{ background: 'var(--accent)' }}
         >
-          {addCredential.isPending ? "Adding…" : "Add"}
+          {addCredential.isPending ? 'Adding…' : 'Add'}
         </button>
       </div>
-      {error ? (
-        <p className="mt-2.5 text-[11.5px] text-red">{error}</p>
-      ) : null}
+      {error ? <p className="mt-2.5 text-[11.5px] text-red">{error}</p> : null}
       <p className="mt-2.5 text-[11px] leading-relaxed text-faint">
         Generate with <Code>claude setup-token</Code> on a Pro or Max plan.
       </p>
@@ -1190,9 +1100,7 @@ function AddClaudeSetupTokenCard({ orgId }: { orgId: string }) {
 function SectionLabel({ title, hint }: { title: string; hint: string }) {
   return (
     <div className="mb-2.5 mt-6 first:mt-0">
-      <h2 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-dim">
-        {title}
-      </h2>
+      <h2 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-dim">{title}</h2>
       <p className="mt-1 text-[11.5px] leading-relaxed text-faint">{hint}</p>
     </div>
   );
@@ -1244,22 +1152,17 @@ function CommandLine({ cmd }: { cmd: string }) {
   }
   return (
     <div className="flex items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-1.5">
-      <span
-        aria-hidden
-        className="select-none font-mono text-[11px] text-faint"
-      >
+      <span aria-hidden className="select-none font-mono text-[11px] text-faint">
         $
       </span>
-      <code className="flex-1 select-all font-mono text-[12px] text-text">
-        {cmd}
-      </code>
+      <code className="flex-1 select-all font-mono text-[12px] text-text">{cmd}</code>
       <button
         type="button"
         onClick={copy}
         className="flex items-center gap-1 rounded-sm border border-border-2 px-1.5 py-1 text-[10.5px] font-semibold text-dim transition hover:bg-surface-3"
       >
         {copied ? <Check size={11} /> : <Copy size={11} />}
-        {copied ? "copied" : "copy"}
+        {copied ? 'copied' : 'copy'}
       </button>
     </div>
   );
@@ -1280,8 +1183,8 @@ interface Mode {
   buildBody: (v: string) => SaveCredentialsBody;
 }
 
-type Tone = "green" | "dim" | "faint";
-type Status = "idle" | "testing" | "valid" | "invalid";
+type Tone = 'green' | 'dim' | 'faint';
+type Status = 'idle' | 'testing' | 'valid' | 'invalid';
 
 function CredentialCard({
   icon,
@@ -1304,15 +1207,15 @@ function CredentialCard({
 }) {
   const [editing, setEditing] = useState(false);
   const [modeIdx, setModeIdx] = useState(0);
-  const [value, setValue] = useState("");
-  const [status, setStatus] = useState<Status>("idle");
-  const [reason, setReason] = useState("");
+  const [value, setValue] = useState('');
+  const [status, setStatus] = useState<Status>('idle');
+  const [reason, setReason] = useState('');
   const mode = modes[modeIdx];
 
   function reset() {
-    setValue("");
-    setStatus("idle");
-    setReason("");
+    setValue('');
+    setStatus('idle');
+    setReason('');
   }
   function startEdit() {
     reset();
@@ -1328,24 +1231,24 @@ function CredentialCard({
   }
   function test() {
     const r = mode.validate(value.trim());
-    setStatus(r.ok ? "valid" : "invalid");
+    setStatus(r.ok ? 'valid' : 'invalid');
     setReason(r.reason);
   }
   async function submit() {
     const v = value.trim();
     if (!v) {
-      setStatus("invalid");
-      setReason("Enter a value.");
+      setStatus('invalid');
+      setReason('Enter a value.');
       return;
     }
     const r = mode.validate(v);
     if (!r.ok) {
-      setStatus("invalid");
+      setStatus('invalid');
       setReason(r.reason);
       return;
     }
-    setStatus("testing");
-    setReason("");
+    setStatus('testing');
+    setReason('');
     try {
       // The vault stores the secret but does not probe it (LLM-key validation is the future engine
       // module's job) — a successful save is success. Client-side format checks ran above.
@@ -1353,8 +1256,8 @@ function CredentialCard({
       setEditing(false);
       reset();
     } catch (e) {
-      setStatus("invalid");
-      setReason((e as Error)?.message || "Could not save.");
+      setStatus('invalid');
+      setReason((e as Error)?.message || 'Could not save.');
     }
   }
 
@@ -1366,14 +1269,14 @@ function CredentialCard({
           style={
             iconAccent
               ? {
-                  background: "var(--accent-soft)",
-                  borderColor: "var(--accent-line)",
-                  color: "var(--accent)",
+                  background: 'var(--accent-soft)',
+                  borderColor: 'var(--accent-line)',
+                  color: 'var(--accent)',
                 }
               : {
-                  background: "var(--surface-3)",
-                  borderColor: "var(--border-2)",
-                  color: "var(--dim)",
+                  background: 'var(--surface-3)',
+                  borderColor: 'var(--border-2)',
+                  color: 'var(--dim)',
                 }
           }
         >
@@ -1393,29 +1296,25 @@ function CredentialCard({
               <>
                 <span className="flex-1 font-mono text-[12.5px] text-dim">
                   {mode.maskedPrefix}
-                  {"•".repeat(14)}
+                  {'•'.repeat(14)}
                 </span>
                 <span className="rounded-[3px] bg-surface-3 px-1.5 py-0.5 font-mono text-[9px] text-dim">
                   {mode.tag}
                 </span>
               </>
             ) : (
-              <span className="flex-1 font-mono text-[12px] text-faint">
-                No key set.
-              </span>
+              <span className="flex-1 font-mono text-[12px] text-faint">No key set.</span>
             )}
             <button
               type="button"
               onClick={startEdit}
               className="rounded-sm border border-accent-line px-3 py-1.5 text-[11.5px] font-semibold text-accent transition hover:bg-accent-soft"
             >
-              {present ? "Rotate" : "Add key"}
+              {present ? 'Rotate' : 'Add key'}
             </button>
           </div>
           {/* When no key is set yet, surface the "how to get this" guidance up front — that's when it's needed. */}
-          {!present && mode.help ? (
-            <div className="mt-3">{mode.help}</div>
-          ) : null}
+          {!present && mode.help ? <div className="mt-3">{mode.help}</div> : null}
         </>
       ) : (
         <div className="mt-3.5">
@@ -1430,8 +1329,8 @@ function CredentialCard({
                     onClick={() => switchMode(i)}
                     className="flex-1 rounded-sm py-1.5 text-[12px] font-semibold transition"
                     style={{
-                      background: on ? "var(--surface)" : "transparent",
-                      color: on ? "var(--accent)" : "var(--dim)",
+                      background: on ? 'var(--surface)' : 'transparent',
+                      color: on ? 'var(--accent)' : 'var(--dim)',
                     }}
                   >
                     {m.toggleLabel}
@@ -1444,9 +1343,7 @@ function CredentialCard({
           {mode.help ? <div className="mb-3">{mode.help}</div> : null}
 
           <div className="mb-2 flex items-center gap-2">
-            <label className="flex-1 text-[12px] font-medium text-dim">
-              {mode.fieldLabel}
-            </label>
+            <label className="flex-1 text-[12px] font-medium text-dim">{mode.fieldLabel}</label>
             <EditPill status={status} />
           </div>
           <div
@@ -1457,11 +1354,11 @@ function CredentialCard({
               value={value}
               onChange={(e) => {
                 setValue(e.target.value);
-                setStatus("idle");
-                setReason("");
+                setStatus('idle');
+                setReason('');
               }}
               onBlur={() => {
-                if (value.trim() && status === "idle") test();
+                if (value.trim() && status === 'idle') test();
               }}
               type="password"
               placeholder={mode.placeholder}
@@ -1479,7 +1376,7 @@ function CredentialCard({
             <p
               className="mt-2 text-[11.5px]"
               style={{
-                color: status === "valid" ? "var(--green)" : "var(--red)",
+                color: status === 'valid' ? 'var(--green)' : 'var(--red)',
               }}
             >
               {reason}
@@ -1489,11 +1386,11 @@ function CredentialCard({
             <button
               type="button"
               onClick={submit}
-              disabled={status === "testing"}
+              disabled={status === 'testing'}
               className="rounded-md px-4 py-2 text-[12px] font-semibold text-white transition hover:brightness-105 disabled:opacity-60"
-              style={{ background: "var(--accent)" }}
+              style={{ background: 'var(--accent)' }}
             >
-              {status === "testing" ? "Saving…" : "Save new key"}
+              {status === 'testing' ? 'Saving…' : 'Save new key'}
             </button>
             <button
               type="button"
@@ -1510,35 +1407,23 @@ function CredentialCard({
 }
 
 function borderForStatus(status: Status): string {
-  if (status === "valid")
-    return "color-mix(in srgb, var(--green) 50%, transparent)";
-  if (status === "invalid")
-    return "color-mix(in srgb, var(--red) 55%, transparent)";
-  return "var(--border-2)";
+  if (status === 'valid') return 'color-mix(in srgb, var(--green) 50%, transparent)';
+  if (status === 'invalid') return 'color-mix(in srgb, var(--red) 55%, transparent)';
+  return 'var(--border-2)';
 }
 
 function StatusChip({ label, tone }: { label: string; tone: Tone }) {
-  const color =
-    tone === "green"
-      ? "var(--green)"
-      : tone === "dim"
-        ? "var(--dim)"
-        : "var(--faint)";
-  const bg = tone === "green" ? "var(--green-soft)" : "var(--surface-2)";
+  const color = tone === 'green' ? 'var(--green)' : tone === 'dim' ? 'var(--dim)' : 'var(--faint)';
+  const bg = tone === 'green' ? 'var(--green-soft)' : 'var(--surface-2)';
   const border =
-    tone === "green"
-      ? "color-mix(in srgb, var(--green) 32%, transparent)"
-      : "var(--border-2)";
+    tone === 'green' ? 'color-mix(in srgb, var(--green) 32%, transparent)' : 'var(--border-2)';
   return (
     <span
       className="flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px]"
       style={{ color, background: bg, borderColor: border }}
     >
-      {tone === "green" ? (
-        <span
-          className="h-1.5 w-1.5 rounded-full"
-          style={{ background: "var(--green)" }}
-        />
+      {tone === 'green' ? (
+        <span className="h-1.5 w-1.5 rounded-full" style={{ background: 'var(--green)' }} />
       ) : null}
       {label}
     </span>
@@ -1547,32 +1432,32 @@ function StatusChip({ label, tone }: { label: string; tone: Tone }) {
 
 function EditPill({ status }: { status: Status }) {
   const meta =
-    status === "testing"
+    status === 'testing'
       ? {
-          text: "testing…",
-          color: "var(--accent)",
-          bg: "var(--accent-soft)",
-          border: "var(--accent-line)",
+          text: 'testing…',
+          color: 'var(--accent)',
+          bg: 'var(--accent-soft)',
+          border: 'var(--accent-line)',
         }
-      : status === "valid"
+      : status === 'valid'
         ? {
-            text: "valid",
-            color: "var(--green)",
-            bg: "var(--green-soft)",
-            border: "color-mix(in srgb, var(--green) 35%, transparent)",
+            text: 'valid',
+            color: 'var(--green)',
+            bg: 'var(--green-soft)',
+            border: 'color-mix(in srgb, var(--green) 35%, transparent)',
           }
-        : status === "invalid"
+        : status === 'invalid'
           ? {
-              text: "invalid",
-              color: "var(--red)",
-              bg: "color-mix(in srgb, var(--red) 8%, transparent)",
-              border: "color-mix(in srgb, var(--red) 40%, transparent)",
+              text: 'invalid',
+              color: 'var(--red)',
+              bg: 'color-mix(in srgb, var(--red) 8%, transparent)',
+              border: 'color-mix(in srgb, var(--red) 40%, transparent)',
             }
           : {
-              text: "not tested",
-              color: "var(--faint)",
-              bg: "var(--surface-2)",
-              border: "var(--border)",
+              text: 'not tested',
+              color: 'var(--faint)',
+              bg: 'var(--surface-2)',
+              border: 'var(--border)',
             };
   return (
     <span
@@ -1583,7 +1468,7 @@ function EditPill({ status }: { status: Status }) {
         border: `1px solid ${meta.border}`,
       }}
     >
-      {status === "testing" ? <Spinner className="h-2.5 w-2.5" /> : null}
+      {status === 'testing' ? <Spinner className="h-2.5 w-2.5" /> : null}
       {meta.text}
     </span>
   );

@@ -1,12 +1,12 @@
-"use client";
+'use client';
 
-import { Lock, Unlock } from "lucide-react";
-import { useUnblockJob } from "@/lib/api/job-queries";
-import { mutationErrorMessage, type JobRef } from "@/lib/api/job-api";
-import type { JobBlocker } from "@/lib/api/types";
-import { BlockerRow, useOpenBlocker } from "./blocked-by-pane";
-import { StreamTextBubble } from "./bubbles";
-import { EphemeralToast, useEphemeralToast } from "./ephemeral-toast";
+import { mutationErrorMessage, type JobRef } from '@/lib/api/job-api';
+import { useUnblockJob } from '@/lib/api/job-queries';
+import type { JobBlocker } from '@/lib/api/types';
+import { Lock, Unlock } from 'lucide-react';
+import { BlockerRow, useOpenBlocker } from './blocked-by-pane';
+import { StreamTextBubble } from './bubbles';
+import { EphemeralToast, useEphemeralToast } from './ephemeral-toast';
 
 /**
  * The always-visible blocked banner, pinned at the TOP of the conversation pane (below the top bar, above
@@ -38,32 +38,27 @@ export function BlockedOverlay({
     <div
       className="max-h-[70vh] shrink-0 overflow-y-auto border-b border-border"
       style={{
-        borderLeft: "3px solid var(--amber)",
-        background: "color-mix(in srgb, var(--amber) 5%, var(--surface))",
+        borderLeft: '3px solid var(--amber)',
+        background: 'color-mix(in srgb, var(--amber) 5%, var(--surface))',
       }}
     >
       <div className="mx-auto flex max-w-[880px] items-start gap-3 px-6 py-4">
         <span
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
-          style={{ background: "color-mix(in srgb, var(--amber) 14%, transparent)" }}
+          style={{
+            background: 'color-mix(in srgb, var(--amber) 14%, transparent)',
+          }}
         >
           <Lock size={16} className="text-amber" />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-[14px] font-semibold text-text">
-            This job is blocked
-          </p>
+          <p className="text-[14px] font-semibold text-text">This job is blocked</p>
           <p className="mt-0.5 text-[12.5px] leading-snug text-dim">
-            Waiting on {n} job{n === 1 ? "" : "s"} to finish before Atlas can
-            start.
+            Waiting on {n} job{n === 1 ? '' : 's'} to finish before Atlas can start.
           </p>
           <div className="mt-3 flex flex-col gap-2">
             {blockedBy.map((b) => (
-              <BlockerRow
-                key={b.jobId}
-                blocker={b}
-                onClick={() => openBlocker(b.jobId)}
-              />
+              <BlockerRow key={b.jobId} blocker={b} onClick={() => openBlocker(b.jobId)} />
             ))}
           </div>
           {seed ? (
@@ -83,15 +78,13 @@ export function BlockedOverlay({
               onClick={() =>
                 unblock.mutate(undefined, {
                   onError: (err) =>
-                    showUnblockError(
-                      mutationErrorMessage(err, "Couldn't unblock this job."),
-                    ),
+                    showUnblockError(mutationErrorMessage(err, "Couldn't unblock this job.")),
                 })
               }
               className="flex items-center gap-1.5 rounded-lg bg-amber px-3 py-1.5 text-[12px] font-semibold text-white transition hover:brightness-105 disabled:opacity-50"
             >
               <Unlock size={13} strokeWidth={2.4} />
-              {unblock.isPending ? "Unblocking…" : "Unblock now"}
+              {unblock.isPending ? 'Unblocking…' : 'Unblock now'}
             </button>
             <span className="text-[11px] text-faint">
               Removes the blockers so this job can start.

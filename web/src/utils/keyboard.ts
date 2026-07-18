@@ -1,4 +1,4 @@
-import type { KeyboardEvent } from "react";
+import type { KeyboardEvent } from 'react';
 
 /**
  * The "submit this form" chord: ⌘+Enter on macOS, Ctrl+Enter on Windows/Linux. Used on multi-line
@@ -6,5 +6,5 @@ import type { KeyboardEvent } from "react";
  * Matches the ⌘/Ctrl+K convention used for the command palette.
  */
 export function isSubmitCombo(e: KeyboardEvent): boolean {
-  return (e.metaKey || e.ctrlKey) && e.key === "Enter";
+  return (e.metaKey || e.ctrlKey) && e.key === 'Enter';
 }

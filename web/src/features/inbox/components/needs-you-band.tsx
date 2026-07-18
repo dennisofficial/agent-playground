@@ -1,11 +1,11 @@
-"use client";
+'use client';
 
-import Link from "next/link";
-import { StatusPie } from "@/components/ui/badges";
-import { orgSwatch } from "@/utils/org-display";
-import { threadHref } from "@/lib/routes";
-import { STATUS_META } from "@/lib/api/status";
-import type { InboxThread } from "@/lib/api/inbox";
+import { StatusPie } from '@/components/ui/badges';
+import type { InboxThread } from '@/lib/api/inbox';
+import { STATUS_META } from '@/lib/api/status';
+import { threadHref } from '@/lib/routes';
+import { orgSwatch } from '@/utils/org-display';
+import Link from 'next/link';
 
 /**
  * The cross-org "Needs you" band — every thread whose status is yours to act on (approvals routed to you,
@@ -20,21 +20,18 @@ export function NeedsYouBand({ threads }: { threads: InboxThread[] }) {
     <div
       className="mb-6 rounded-lg border p-4"
       style={{
-        borderColor: "var(--accent-line)",
-        background: "var(--accent-soft)",
+        borderColor: 'var(--accent-line)',
+        background: 'var(--accent-soft)',
       }}
     >
       <div className="mb-3 flex items-center gap-2.5">
         <span
           className="pulse-dot h-1.5 w-1.5 rounded-full"
-          style={{ background: "var(--accent)" }}
+          style={{ background: 'var(--accent)' }}
         />
-        <span className="font-disp text-[13px] font-semibold text-accent">
-          Needs you
-        </span>
+        <span className="font-disp text-[13px] font-semibold text-accent">Needs you</span>
         <span className="font-mono text-[10px] text-dim">
-          {attention.length} yours to act on · approvals, triage &amp; paused
-          threads
+          {attention.length} yours to act on · approvals, triage &amp; paused threads
         </span>
       </div>
       <div className="grid grid-cols-[repeat(auto-fill,minmax(238px,1fr))] gap-3">
@@ -58,9 +55,7 @@ export function NeedsYouBand({ threads }: { threads: InboxThread[] }) {
               </span>
               <StatusPie status={t.status} halted={t.halted} size={14} />
             </div>
-            <div className="text-[13px] font-semibold leading-tight text-text">
-              {t.title}
-            </div>
+            <div className="text-[13px] font-semibold leading-tight text-text">{t.title}</div>
             <div className="mt-2 font-mono text-[9px] text-accent">
               {STATUS_META[t.status].label} ↗
             </div>

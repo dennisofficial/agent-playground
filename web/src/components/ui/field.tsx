@@ -1,17 +1,11 @@
-"use client";
+'use client';
 
-import {
-  forwardRef,
-  useId,
-  useState,
-  type InputHTMLAttributes,
-  type ReactNode,
-} from "react";
-import { Eye, EyeOff } from "lucide-react";
-import { cn } from "@/lib/cn";
+import { cn } from '@/lib/cn';
+import { Eye, EyeOff } from 'lucide-react';
+import { forwardRef, useId, useState, type InputHTMLAttributes, type ReactNode } from 'react';
 
 export const inputCls =
-  "w-full h-11 rounded-md border bg-surface px-3 text-[13px] text-text placeholder:text-faint outline-none transition focus:border-accent focus:ring-2 focus:ring-[var(--accent-soft)] data-[err=true]:border-red data-[err=true]:focus:ring-[color-mix(in_srgb,var(--red)_30%,transparent)]";
+  'w-full h-11 rounded-md border bg-surface px-3 text-[13px] text-text placeholder:text-faint outline-none transition focus:border-accent focus:ring-2 focus:ring-[var(--accent-soft)] data-[err=true]:border-red data-[err=true]:focus:ring-[color-mix(in_srgb,var(--red)_30%,transparent)]';
 
 interface FieldProps extends InputHTMLAttributes<HTMLInputElement> {
   label: string;
@@ -38,7 +32,7 @@ export const Field = forwardRef<HTMLInputElement, FieldProps>(function Field(
       <input
         ref={ref}
         id={fieldId}
-        data-err={error ? "true" : "false"}
+        data-err={error ? 'true' : 'false'}
         className={cn(inputCls, className)}
         {...rest}
       />
@@ -47,14 +41,11 @@ export const Field = forwardRef<HTMLInputElement, FieldProps>(function Field(
   );
 });
 
-interface PasswordFieldProps extends Omit<FieldProps, "type"> {}
+interface PasswordFieldProps extends Omit<FieldProps, 'type'> {}
 
 /** Password input with an in-field show/hide toggle (mono, right-aligned). */
 export const PasswordField = forwardRef<HTMLInputElement, PasswordFieldProps>(
-  function PasswordField(
-    { label, error, labelAside, className, id, ...rest },
-    ref,
-  ) {
+  function PasswordField({ label, error, labelAside, className, id, ...rest }, ref) {
     const autoId = useId();
     const fieldId = id ?? autoId;
     const [show, setShow] = useState(false);
@@ -70,9 +61,9 @@ export const PasswordField = forwardRef<HTMLInputElement, PasswordFieldProps>(
           <input
             ref={ref}
             id={fieldId}
-            type={show ? "text" : "password"}
-            data-err={error ? "true" : "false"}
-            className={cn(inputCls, "pr-16", className)}
+            type={show ? 'text' : 'password'}
+            data-err={error ? 'true' : 'false'}
+            className={cn(inputCls, 'pr-16', className)}
             {...rest}
           />
           <button
@@ -80,10 +71,10 @@ export const PasswordField = forwardRef<HTMLInputElement, PasswordFieldProps>(
             onClick={() => setShow((s) => !s)}
             className="absolute right-2.5 top-1/2 flex -translate-y-1/2 items-center gap-1 font-mono text-[10px] uppercase tracking-wider text-faint hover:text-dim"
             tabIndex={-1}
-            aria-label={show ? "Hide password" : "Show password"}
+            aria-label={show ? 'Hide password' : 'Show password'}
           >
             {show ? <EyeOff size={12} /> : <Eye size={12} />}
-            {show ? "hide" : "show"}
+            {show ? 'hide' : 'show'}
           </button>
         </div>
         {error ? <p className="text-[11.5px] text-red">{error}</p> : null}
@@ -96,11 +87,11 @@ export const PasswordField = forwardRef<HTMLInputElement, PasswordFieldProps>(
 export function StrengthMeter({ password }: { password: string }) {
   const score = strength(password);
   const meta = [
-    { label: "", color: "var(--border-2)" },
-    { label: "Weak", color: "var(--red)" },
-    { label: "Fair", color: "var(--accent)" },
-    { label: "Good", color: "var(--blue)" },
-    { label: "Strong", color: "var(--green)" },
+    { label: '', color: 'var(--border-2)' },
+    { label: 'Weak', color: 'var(--red)' },
+    { label: 'Fair', color: 'var(--accent)' },
+    { label: 'Good', color: 'var(--blue)' },
+    { label: 'Strong', color: 'var(--green)' },
   ][score];
 
   return (
@@ -110,14 +101,11 @@ export function StrengthMeter({ password }: { password: string }) {
           <span
             key={i}
             className="h-1 flex-1 rounded-full transition-colors"
-            style={{ background: i < score ? meta.color : "var(--border-2)" }}
+            style={{ background: i < score ? meta.color : 'var(--border-2)' }}
           />
         ))}
       </div>
-      <span
-        className="w-12 text-right font-mono text-[10px]"
-        style={{ color: meta.color }}
-      >
+      <span className="w-12 text-right font-mono text-[10px]" style={{ color: meta.color }}>
         {meta.label}
       </span>
     </div>

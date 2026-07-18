@@ -1,4 +1,4 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 @plugin "@tailwindcss/typography";
 
 /* ============================================================================================
@@ -96,8 +96,8 @@
    Matches BOTH "night" (the mapped value next-themes' runtime effect applies post-hydration) and "dark"
    (the raw, unmapped value its pre-paint anti-flash script writes for non-"class" attributes before
    hydration runs) so the two transient attribute states render identically — no light flash between them. */
-[data-theme="night"],
-[data-theme="dark"] {
+[data-theme='night'],
+[data-theme='dark'] {
   /* surfaces */
   --bg: #14171d;
   --bg-grid: rgba(255, 255, 255, 0.02);
@@ -191,7 +191,7 @@
    enabled interactive control (handoff designs assume it everywhere). Disabled controls stay default. */
 @layer base {
   button:not(:disabled),
-  [role="button"]:not([aria-disabled="true"]),
+  [role='button']:not([aria-disabled='true']),
   label[for],
   summary,
   select:not(:disabled) {

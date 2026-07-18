@@ -1,24 +1,21 @@
-"use client";
+'use client';
 
-import { useState } from "react";
-import { formatTokens } from "@/utils/org-display";
-import type {
-  ContextBreakdown,
-  ContextBreakdownCategory,
-} from "@/lib/api/job-stream";
+import type { ContextBreakdown, ContextBreakdownCategory } from '@/lib/api/job-stream';
+import { formatTokens } from '@/utils/org-display';
+import { useState } from 'react';
 
 /** Name literally reported by the SDK for the synthetic free-space category — pinned last, per the mockup. */
-const FREE_SPACE_NAME = "Free space";
+const FREE_SPACE_NAME = 'Free space';
 
 /** Fixed name→theme-token swatch colors (case-sensitive, matches the SDK's exact category names). */
 const SWATCH_COLOR: Record<string, string> = {
-  Messages: "var(--accent)",
-  "Memory files": "var(--blue)",
-  "System tools": "var(--purple)",
-  Skills: "var(--green)",
-  "System prompt": "var(--red)",
-  "MCP tools": "var(--accent-2)",
-  "Custom agents": "var(--blue)",
+  Messages: 'var(--accent)',
+  'Memory files': 'var(--blue)',
+  'System tools': 'var(--purple)',
+  Skills: 'var(--green)',
+  'System prompt': 'var(--red)',
+  'MCP tools': 'var(--accent-2)',
+  'Custom agents': 'var(--blue)',
 };
 
 /** A CSS color the SDK's own `category.color` field can plausibly be used as (hex, rgb()/hsl(), or a `var(--…)`). */
@@ -28,11 +25,8 @@ function looksLikeCssColor(color: string | undefined): color is string {
 }
 
 function swatchColor(cat: ContextBreakdownCategory): string {
-  if (cat.name === FREE_SPACE_NAME) return "transparent";
-  return (
-    SWATCH_COLOR[cat.name] ??
-    (looksLikeCssColor(cat.color) ? cat.color : "var(--faint)")
-  );
+  if (cat.name === FREE_SPACE_NAME) return 'transparent';
+  return SWATCH_COLOR[cat.name] ?? (looksLikeCssColor(cat.color) ? cat.color : 'var(--faint)');
 }
 
 /** One category row, sorted-and-placed by the caller; free space is a synthetic row with no detail data. */
@@ -45,9 +39,7 @@ type Row = {
 
 /** Partition + sort the SDK categories into display rows, always ending on exactly one Free-space row. */
 function buildRows(breakdown: ContextBreakdown): Row[] {
-  const sdkFreeSpace = breakdown.categories.find(
-    (c) => c.name === FREE_SPACE_NAME,
-  );
+  const sdkFreeSpace = breakdown.categories.find((c) => c.name === FREE_SPACE_NAME);
   const rest = breakdown.categories
     .filter((c) => c.name !== FREE_SPACE_NAME)
     .slice()
@@ -66,37 +58,30 @@ function buildRows(breakdown: ContextBreakdown): Row[] {
     {
       name: FREE_SPACE_NAME,
       tokens: freeSpaceTokens,
-      color: "transparent",
+      color: 'transparent',
       isFreeSpace: true,
     },
   ];
 }
 
 function pctOf(tokens: number, maxTokens: number): string {
-  return maxTokens > 0 ? ((tokens / maxTokens) * 100).toFixed(1) : "0.0";
+  return maxTokens > 0 ? ((tokens / maxTokens) * 100).toFixed(1) : '0.0';
 }
 
 function finitePositive(value: number | undefined): value is number {
-  return typeof value === "number" && Number.isFinite(value) && value > 0;
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
 }
 
-function pctLabel(
-  value: number,
-  fallbackTokens: number,
-  fallbackLimit: number,
-): string {
-  return Number.isFinite(value)
-    ? value.toFixed(1)
-    : pctOf(fallbackTokens, fallbackLimit);
+function pctLabel(value: number, fallbackTokens: number, fallbackLimit: number): string {
+  return Number.isFinite(value) ? value.toFixed(1) : pctOf(fallbackTokens, fallbackLimit);
 }
 
 function Chevron({ open, hasDetail }: { open: boolean; hasDetail: boolean }) {
-  if (!hasDetail)
-    return <span className="w-2 shrink-0 text-[8px] invisible">▸</span>;
+  if (!hasDetail) return <span className="w-2 shrink-0 text-[8px] invisible">▸</span>;
   return (
     <span
       className="w-2 shrink-0 text-[8px] text-faint transition-transform"
-      style={{ transform: open ? "rotate(90deg)" : undefined }}
+      style={{ transform: open ? 'rotate(90deg)' : undefined }}
     >
       ▸
     </span>
@@ -108,11 +93,9 @@ function SubRow({ name, tokens }: { name: string; tokens: number }) {
     <div className="flex items-center gap-1.5 px-0.5 py-0.5">
       <span
         className="h-[3px] w-[3px] shrink-0 rounded-full"
-        style={{ background: "var(--border-2)" }}
+        style={{ background: 'var(--border-2)' }}
       />
-      <span className="min-w-0 flex-1 truncate text-[10.5px] text-faint">
-        {name}
-      </span>
+      <span className="min-w-0 flex-1 truncate text-[10.5px] text-faint">{name}</span>
       <span className="whitespace-nowrap font-mono text-[9.5px] tabular-nums text-faint opacity-85">
         {formatTokens(tokens)}
       </span>
@@ -128,9 +111,9 @@ function detailFor(
   key: string;
   subRows: { id: string; name: string; tokens: number }[];
 } | null {
-  if (row.name === "Memory files" && breakdown.memoryFiles?.length) {
+  if (row.name === 'Memory files' && breakdown.memoryFiles?.length) {
     return {
-      key: "memoryFiles",
+      key: 'memoryFiles',
       // Keyed on the full path (not just the basename) — this repo alone has three same-named
       // `CLAUDE.md` files at different directories, which would otherwise collide.
       subRows: breakdown.memoryFiles.map((f) => ({
@@ -140,9 +123,9 @@ function detailFor(
       })),
     };
   }
-  if (row.name === "MCP tools" && breakdown.mcpTools?.length) {
+  if (row.name === 'MCP tools' && breakdown.mcpTools?.length) {
     return {
-      key: "mcpTools",
+      key: 'mcpTools',
       // Keyed/labeled with the server name — two servers can expose a same-named tool.
       subRows: breakdown.mcpTools.map((t) => ({
         id: `${t.serverName}/${t.name}`,
@@ -151,9 +134,9 @@ function detailFor(
       })),
     };
   }
-  if (row.name === "Custom agents" && breakdown.agents?.length) {
+  if (row.name === 'Custom agents' && breakdown.agents?.length) {
     return {
-      key: "agents",
+      key: 'agents',
       subRows: breakdown.agents.map((a) => ({
         id: a.agentType,
         name: a.agentType,
@@ -187,14 +170,14 @@ function CategoryRow({
         style={
           row.isFreeSpace
             ? {
-                background: "transparent",
-                border: "1.3px solid var(--border-2)",
+                background: 'transparent',
+                border: '1.3px solid var(--border-2)',
               }
             : { background: row.color }
         }
       />
       <span
-        className={`min-w-0 flex-1 truncate text-[11px] ${row.isFreeSpace ? "text-faint" : "text-dim"}`}
+        className={`min-w-0 flex-1 truncate text-[11px] ${row.isFreeSpace ? 'text-faint' : 'text-dim'}`}
       >
         {row.name}
       </span>
@@ -216,7 +199,7 @@ function CategoryRow({
           aria-expanded={expanded}
           onClick={onToggle}
           onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
+            if (e.key === 'Enter' || e.key === ' ') {
               e.preventDefault();
               onToggle();
             }
@@ -226,9 +209,7 @@ function CategoryRow({
           {rowContent}
         </div>
       ) : (
-        <div className="flex items-center gap-1.5 px-0.5 py-1">
-          {rowContent}
-        </div>
+        <div className="flex items-center gap-1.5 px-0.5 py-1">{rowContent}</div>
       )}
       {clickable && expanded ? (
         <div className="flex flex-col gap-px py-0.5 pl-[22px]">
@@ -260,12 +241,8 @@ export function ContextBreakdownPanel({
 }) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const rows = buildRows(breakdown);
-  const displayTokens = Number.isFinite(breakdown.totalTokens)
-    ? breakdown.totalTokens
-    : tokens;
-  const displayLimit = finitePositive(breakdown.maxTokens)
-    ? breakdown.maxTokens
-    : limit;
+  const displayTokens = Number.isFinite(breakdown.totalTokens) ? breakdown.totalTokens : tokens;
+  const displayLimit = finitePositive(breakdown.maxTokens) ? breakdown.maxTokens : limit;
   const pct = pctLabel(breakdown.percentage, displayTokens, displayLimit);
   const headerModel = breakdown.model || model;
 
@@ -274,16 +251,14 @@ export function ContextBreakdownPanel({
       <div className="mb-2 flex items-baseline justify-between gap-2">
         <span className="text-[11px] font-medium text-dim">{headerModel}</span>
         <span className="whitespace-nowrap font-mono text-[10px] tabular-nums text-faint">
-          <b className="font-semibold text-dim">
-            {formatTokens(displayTokens)}
-          </b>{" "}
-          / {formatTokens(displayLimit)} ({pct}%)
+          <b className="font-semibold text-dim">{formatTokens(displayTokens)}</b> /{' '}
+          {formatTokens(displayLimit)} ({pct}%)
         </span>
       </div>
 
       <div
         className="mb-2.5 flex h-[5px] w-full overflow-hidden rounded-full"
-        style={{ background: "var(--border)" }}
+        style={{ background: 'var(--border)' }}
         aria-hidden
       >
         {rows
@@ -309,9 +284,7 @@ export function ContextBreakdownPanel({
               row={row}
               breakdown={breakdown}
               expanded={!!expanded[key]}
-              onToggle={() =>
-                setExpanded((cur) => ({ ...cur, [key]: !cur[key] }))
-              }
+              onToggle={() => setExpanded((cur) => ({ ...cur, [key]: !cur[key] }))}
             />
           );
         })}
@@ -319,15 +292,13 @@ export function ContextBreakdownPanel({
 
       <div
         className="mt-2 flex items-center gap-1.5 border-t pt-2"
-        style={{ borderColor: "var(--border)" }}
+        style={{ borderColor: 'var(--border)' }}
       >
         <span
           className="h-1.5 w-1.5 shrink-0 rounded-full"
-          style={{ background: "var(--green)" }}
+          style={{ background: 'var(--green)' }}
         />
-        <span className="font-mono text-[10px] text-faint">
-          Updated just now
-        </span>
+        <span className="font-mono text-[10px] text-faint">Updated just now</span>
       </div>
     </div>
   );

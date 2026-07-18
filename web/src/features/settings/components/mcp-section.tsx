@@ -1,6 +1,23 @@
-"use client";
+'use client';
 
-import { useMemo, useState } from "react";
+import { Spinner } from '@/components/ui/spinner';
+import { useOrgRepos } from '@/lib/api/job-queries';
+import { useOrg } from '@/lib/api/me';
+import {
+  useDeleteMcpServer,
+  useMcpOAuthConnect,
+  useMcpServers,
+  useSaveMcpServer,
+  useValidateMcpServer,
+  type McpAuthKind,
+  type McpServer,
+  type McpSurface,
+  type McpTransport,
+  type McpValidateResult,
+  type SaveMcpServerBody,
+  type StoredMcpConfig,
+  type SystemMcpServer,
+} from '@/lib/api/orgs';
 import {
   AlertCircle,
   Check,
@@ -16,25 +33,8 @@ import {
   Terminal,
   Trash2,
   X,
-} from "lucide-react";
-import { Spinner } from "@/components/ui/spinner";
-import { useOrg } from "@/lib/api/me";
-import {
-  useDeleteMcpServer,
-  useMcpOAuthConnect,
-  useMcpServers,
-  useSaveMcpServer,
-  useValidateMcpServer,
-  type McpAuthKind,
-  type McpServer,
-  type McpSurface,
-  type McpTransport,
-  type McpValidateResult,
-  type SaveMcpServerBody,
-  type StoredMcpConfig,
-  type SystemMcpServer,
-} from "@/lib/api/orgs";
-import { useOrgRepos } from "@/lib/api/job-queries";
+} from 'lucide-react';
+import { useMemo, useState } from 'react';
 
 /**
  * MCP servers — extra tool servers the agent can call, resolved in three layers:
@@ -49,7 +49,7 @@ import { useOrgRepos } from "@/lib/api/job-queries";
 export function McpSection({ orgId, role }: { orgId: string; role: string }) {
   const { data, isLoading, isError, refetch } = useMcpServers(orgId);
   const org = useOrg(orgId);
-  const isOwner = role === "owner";
+  const isOwner = role === 'owner';
 
   return (
     <>
@@ -57,19 +57,17 @@ export function McpSection({ orgId, role }: { orgId: string; role: string }) {
         MCP Servers
       </h1>
       <p className="mb-4 mt-1.5 max-w-[640px] text-[13px] leading-relaxed text-dim">
-        Tool servers the agent can call. They resolve in three layers:{" "}
-        <b className="font-semibold text-text">System</b> servers are built in
-        and always on; <b className="font-semibold text-text">Organization</b>{" "}
-        servers are shared across every repo &amp; job;{" "}
-        <b className="font-semibold text-text">Repository</b> servers add to a
-        single repo and override an org server of the same name.
+        Tool servers the agent can call. They resolve in three layers:{' '}
+        <b className="font-semibold text-text">System</b> servers are built in and always on;{' '}
+        <b className="font-semibold text-text">Organization</b> servers are shared across every repo
+        &amp; job; <b className="font-semibold text-text">Repository</b> servers add to a single
+        repo and override an org server of the same name.
       </p>
 
       {!isOwner ? (
         <div className="mb-4 flex items-center gap-2 rounded-md border border-border bg-surface-2 px-3 py-2.5 text-[11.5px] text-faint">
           <Lock size={13} />
-          Read-only — only owners can add, edit, validate, or delete MCP
-          servers.
+          Read-only — only owners can add, edit, validate, or delete MCP servers.
         </div>
       ) : null}
 
@@ -81,9 +79,7 @@ export function McpSection({ orgId, role }: { orgId: string; role: string }) {
         <div className="mt-7 flex items-start gap-3 rounded-lg border border-red-line bg-red-soft p-5">
           <AlertCircle size={17} className="mt-0.5 shrink-0 text-red" />
           <div className="flex-1">
-            <div className="text-[13.5px] font-semibold text-red">
-              Couldn’t load MCP servers.
-            </div>
+            <div className="text-[13.5px] font-semibold text-red">Couldn’t load MCP servers.</div>
             <div className="mt-0.5 text-[12px] leading-relaxed text-dim">
               The server didn’t respond. Check your connection and try again.
             </div>
@@ -106,10 +102,10 @@ export function McpSection({ orgId, role }: { orgId: string; role: string }) {
             orgId={orgId}
             scope="org"
             title="Organization MCPs"
-            count={data.servers.filter((s) => s.scope === "org").length}
-            description={`Available to every repo and job${org?.name ? ` in ${org.name}` : ""}.`}
-            servers={data.servers.filter((s) => s.scope === "org")}
-            orgServers={data.servers.filter((s) => s.scope === "org")}
+            count={data.servers.filter((s) => s.scope === 'org').length}
+            description={`Available to every repo and job${org?.name ? ` in ${org.name}` : ''}.`}
+            servers={data.servers.filter((s) => s.scope === 'org')}
+            orgServers={data.servers.filter((s) => s.scope === 'org')}
             canManage={isOwner}
             emptyIcon={<LayoutGrid size={20} />}
             emptyTitle="No MCP servers yet"
@@ -118,11 +114,7 @@ export function McpSection({ orgId, role }: { orgId: string; role: string }) {
 
           <div className="h-[34px]" />
 
-          <RepoTier
-            orgId={orgId}
-            allServers={data.servers}
-            canManage={isOwner}
-          />
+          <RepoTier orgId={orgId} allServers={data.servers} canManage={isOwner} />
         </>
       )}
     </>
@@ -134,14 +126,12 @@ function SystemTier({ system }: { system: SystemMcpServer[] }) {
   return (
     <>
       <div className="mb-3 flex items-center gap-2.5">
-        <div className="font-disp text-[15px] font-semibold text-text">
-          System
-        </div>
+        <div className="font-disp text-[15px] font-semibold text-text">System</div>
         <span
           className="flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 font-mono text-[9px] text-green"
           style={{
-            background: "var(--green-soft)",
-            borderColor: "color-mix(in srgb, var(--green) 30%, transparent)",
+            background: 'var(--green-soft)',
+            borderColor: 'color-mix(in srgb, var(--green) 30%, transparent)',
           }}
         >
           <span className="h-[5px] w-[5px] rounded-full bg-green" />
@@ -159,18 +149,15 @@ function SystemTier({ system }: { system: SystemMcpServer[] }) {
             style={{ opacity: s.active ? 1 : 0.72 }}
           >
             <div className="flex items-center gap-2.5">
-              <span className="font-mono text-[13px] font-semibold text-text">
-                {s.name}
-              </span>
+              <span className="font-mono text-[13px] font-semibold text-text">{s.name}</span>
               <TransportBadge transport={s.transport} />
               <div className="flex-1" />
               {s.active ? (
                 <span
                   className="flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[10px] font-medium text-green"
                   style={{
-                    background: "var(--green-soft)",
-                    borderColor:
-                      "color-mix(in srgb, var(--green) 30%, transparent)",
+                    background: 'var(--green-soft)',
+                    borderColor: 'color-mix(in srgb, var(--green) 30%, transparent)',
                   }}
                 >
                   <span className="h-1.5 w-1.5 rounded-full bg-green" />
@@ -186,13 +173,9 @@ function SystemTier({ system }: { system: SystemMcpServer[] }) {
                 </span>
               )}
             </div>
-            <div className="mt-1.5 text-[12px] leading-relaxed text-dim">
-              {s.description}
-            </div>
+            <div className="mt-1.5 text-[12px] leading-relaxed text-dim">{s.description}</div>
             {!s.active && s.inactiveReason ? (
-              <div className="mt-1.5 text-[11px] text-faint">
-                {s.inactiveReason}
-              </div>
+              <div className="mt-1.5 text-[11px] text-faint">{s.inactiveReason}</div>
             ) : null}
             {s.tools.length > 0 ? (
               <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
@@ -227,25 +210,20 @@ function RepoTier({
   canManage: boolean;
 }) {
   const { data: repos } = useOrgRepos(orgId);
-  const [repoId, setRepoId] = useState("");
+  const [repoId, setRepoId] = useState('');
   const repo = repos?.find((r) => r.id === repoId);
   const repoServers = useMemo(
     () => allServers.filter((s) => s.scope === repoId),
     [allServers, repoId],
   );
-  const orgServers = useMemo(
-    () => allServers.filter((s) => s.scope === "org"),
-    [allServers],
-  );
+  const orgServers = useMemo(() => allServers.filter((s) => s.scope === 'org'), [allServers]);
 
   return (
     <>
       <div className="mb-1.5 flex items-center gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2.5">
-            <div className="font-disp text-[15px] font-semibold text-text">
-              Repository MCPs
-            </div>
+            <div className="font-disp text-[15px] font-semibold text-text">Repository MCPs</div>
             <CountPill n={repoServers.length} />
           </div>
           <div className="mt-1 text-[12px] text-dim">
@@ -255,9 +233,7 @@ function RepoTier({
       </div>
 
       <div className="my-3.5 flex items-center gap-2.5">
-        <span className="font-mono text-[9px] tracking-[0.1em] text-faint">
-          REPO
-        </span>
+        <span className="font-mono text-[9px] tracking-[0.1em] text-faint">REPO</span>
         <select
           value={repoId}
           onChange={(e) => setRepoId(e.target.value)}
@@ -271,16 +247,12 @@ function RepoTier({
           ))}
         </select>
         {repo?.gitUrl ? (
-          <span className="truncate text-[11.5px] text-faint">
-            {repo.gitUrl}
-          </span>
+          <span className="truncate text-[11.5px] text-faint">{repo.gitUrl}</span>
         ) : null}
       </div>
 
       {!repoId ? (
-        <p className="text-[12px] text-faint">
-          Pick a repo to manage servers scoped to it.
-        </p>
+        <p className="text-[12px] text-faint">Pick a repo to manage servers scoped to it.</p>
       ) : (
         <McpTier
           key={repoId}
@@ -294,7 +266,7 @@ function RepoTier({
           orgServers={orgServers}
           canManage={canManage}
           emptyIcon={<Share2 size={20} />}
-          emptyTitle={`No MCP servers for ${repo?.name ?? "this repo"}`}
+          emptyTitle={`No MCP servers for ${repo?.name ?? 'this repo'}`}
           emptyBody="This repo uses only system and org servers. Add a repo-scoped server to give just this repo extra tools."
         />
       )}
@@ -332,10 +304,7 @@ function McpTier({
 }) {
   const [form, setForm] = useState<{ server: McpServer | null } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<McpServer | null>(null);
-  const orgNames = useMemo(
-    () => new Set(orgServers.map((s) => s.name)),
-    [orgServers],
-  );
+  const orgNames = useMemo(() => new Set(orgServers.map((s) => s.name)), [orgServers]);
 
   const addBtn =
     canManage && !form ? (
@@ -344,8 +313,8 @@ function McpTier({
         onClick={() => setForm({ server: null })}
         className="flex shrink-0 items-center gap-1.5 rounded-md px-3.5 py-2 text-[12.5px] font-semibold text-white transition hover:brightness-105"
         style={{
-          background: "var(--accent)",
-          boxShadow: "0 4px 14px var(--accent-soft)",
+          background: 'var(--accent)',
+          boxShadow: '0 4px 14px var(--accent-soft)',
         }}
       >
         <Plus size={14} /> Add server
@@ -358,14 +327,10 @@ function McpTier({
         <div className="mb-3.5 flex items-center gap-3">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2.5">
-              <div className="font-disp text-[15px] font-semibold text-text">
-                {title}
-              </div>
+              <div className="font-disp text-[15px] font-semibold text-text">{title}</div>
               <CountPill n={count} />
             </div>
-            {description ? (
-              <div className="mt-1 text-[12px] text-dim">{description}</div>
-            ) : null}
+            {description ? <div className="mt-1 text-[12px] text-dim">{description}</div> : null}
           </div>
           {addBtn}
         </div>
@@ -398,7 +363,7 @@ function McpTier({
               orgId={orgId}
               scope={scope}
               server={s}
-              isOverride={scope !== "org" && orgNames.has(s.name)}
+              isOverride={scope !== 'org' && orgNames.has(s.name)}
               canManage={canManage}
               onEdit={() => setForm({ server: s })}
               onDelete={() => setDeleteTarget(s)}
@@ -443,20 +408,16 @@ function EmptyState({
       <div className="mb-3.5 flex h-11 w-11 items-center justify-center rounded-xl border border-border-2 bg-surface text-faint">
         {icon}
       </div>
-      <div className="font-disp text-[15px] font-semibold text-text">
-        {title}
-      </div>
-      <div className="mt-1.5 max-w-[360px] text-[12.5px] leading-relaxed text-dim">
-        {body}
-      </div>
+      <div className="font-disp text-[15px] font-semibold text-text">{title}</div>
+      <div className="mt-1.5 max-w-[360px] text-[12.5px] leading-relaxed text-dim">{body}</div>
       {onAdd ? (
         <button
           type="button"
           onClick={onAdd}
           className="mt-4 flex items-center gap-1.5 rounded-md px-3.5 py-2 text-[12.5px] font-semibold text-white transition hover:brightness-105"
           style={{
-            background: "var(--accent)",
-            boxShadow: "0 4px 14px var(--accent-soft)",
+            background: 'var(--accent)',
+            boxShadow: '0 4px 14px var(--accent-soft)',
           }}
         >
           <Plus size={14} /> Add server
@@ -497,17 +458,15 @@ function ServerRow({
         {/* left: identity */}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-mono text-[13px] font-semibold text-text">
-              {server.name}
-            </span>
+            <span className="font-mono text-[13px] font-semibold text-text">{server.name}</span>
             <TransportBadge transport={server.transport} />
-            {server.authKind === "oauth" ? <OAuthBadge server={server} /> : null}
+            {server.authKind === 'oauth' ? <OAuthBadge server={server} /> : null}
             {isOverride ? (
               <span
                 className="flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[9px] text-accent"
                 style={{
-                  background: "var(--accent-soft)",
-                  borderColor: "var(--accent-line)",
+                  background: 'var(--accent-soft)',
+                  borderColor: 'var(--accent-line)',
                 }}
               >
                 <Repeat size={10} /> overrides org
@@ -521,7 +480,7 @@ function ServerRow({
           </div>
 
           <div className="mt-1.5 flex min-w-0 items-center gap-1.5 font-mono text-[11px] text-faint">
-            {server.transport === "stdio" ? (
+            {server.transport === 'stdio' ? (
               <Terminal size={11} className="shrink-0" />
             ) : (
               <Link2 size={11} className="shrink-0" />
@@ -530,9 +489,7 @@ function ServerRow({
           </div>
 
           <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-            <span className="font-mono text-[8.5px] tracking-[0.08em] text-faint">
-              APPLIES TO
-            </span>
+            <span className="font-mono text-[8.5px] tracking-[0.08em] text-faint">APPLIES TO</span>
             {server.surfaces.map((s) => (
               <span
                 key={s}
@@ -554,10 +511,7 @@ function ServerRow({
             {v.spin ? (
               <Spinner className="h-2.5 w-2.5" />
             ) : (
-              <span
-                className="h-1.5 w-1.5 rounded-full"
-                style={{ background: v.color }}
-              />
+              <span className="h-1.5 w-1.5 rounded-full" style={{ background: v.color }} />
             )}
             {v.text}
           </span>
@@ -566,9 +520,7 @@ function ServerRow({
             <div className="flex items-center gap-1.5">
               <button
                 type="button"
-                onClick={() =>
-                  validate.mutate({ scope, name: server.name })
-                }
+                onClick={() => validate.mutate({ scope, name: server.name })}
                 disabled={validate.isPending}
                 className="flex items-center gap-1.5 rounded-sm border border-border-2 px-2.5 py-1.5 text-[11px] font-semibold text-dim transition hover:bg-surface-2 disabled:opacity-60"
               >
@@ -609,7 +561,7 @@ function DeleteModal({
   onClose: () => void;
 }) {
   const del = useDeleteMcpServer(orgId);
-  const scopeLabel = scope === "org" ? "this organization" : "this repo";
+  const scopeLabel = scope === 'org' ? 'this organization' : 'this repo';
 
   async function confirm() {
     try {
@@ -624,21 +576,20 @@ function DeleteModal({
     <div
       onClick={onClose}
       className="fixed inset-0 z-50 flex items-start justify-center pt-[150px]"
-      style={{ background: "rgba(10,12,16,.5)", backdropFilter: "blur(3px)" }}
+      style={{ background: 'rgba(10,12,16,.5)', backdropFilter: 'blur(3px)' }}
     >
       <div
         onClick={(e) => e.stopPropagation()}
         className="w-[430px] max-w-[90%] overflow-hidden rounded-lg border border-border-2 bg-panel"
-        style={{ boxShadow: "0 30px 80px rgba(0,0,0,.4)" }}
+        style={{ boxShadow: '0 30px 80px rgba(0,0,0,.4)' }}
       >
         <div className="p-5 pb-4">
           <div className="mb-3 flex items-center gap-3">
             <div
               className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-lg text-red"
               style={{
-                background: "var(--red-soft)",
-                border:
-                  "1px solid color-mix(in srgb, var(--red) 40%, transparent)",
+                background: 'var(--red-soft)',
+                border: '1px solid color-mix(in srgb, var(--red) 40%, transparent)',
               }}
             >
               <Trash2 size={17} />
@@ -648,8 +599,8 @@ function DeleteModal({
             </div>
           </div>
           <div className="text-[12.5px] leading-relaxed text-dim">
-            Removes this MCP server from {scopeLabel}. Agent sessions will no
-            longer see its tools. This can’t be undone.
+            Removes this MCP server from {scopeLabel}. Agent sessions will no longer see its tools.
+            This can’t be undone.
           </div>
           <div className="mt-3 rounded-md border border-border bg-surface-2 px-3 py-2 font-mono text-[11px] text-dim">
             mcp__{server.name}__*
@@ -668,7 +619,7 @@ function DeleteModal({
             onClick={confirm}
             disabled={del.isPending}
             className="flex items-center gap-2 rounded-md px-4 py-2 text-[12.5px] font-semibold text-white transition hover:brightness-105 disabled:opacity-60"
-            style={{ background: "var(--red)" }}
+            style={{ background: 'var(--red)' }}
           >
             {del.isPending ? <Spinner className="h-3 w-3" /> : null}
             Delete server
@@ -691,9 +642,9 @@ interface PairRow {
 }
 
 const SURFACE_META: { key: McpSurface; label: string; sub: string }[] = [
-  { key: "brain", label: "Brain", sub: "operator chat" },
-  { key: "build", label: "Build turns", sub: "coding sessions" },
-  { key: "review", label: "Review", sub: "review passes" },
+  { key: 'brain', label: 'Brain', sub: 'operator chat' },
+  { key: 'build', label: 'Build turns', sub: 'coding sessions' },
+  { key: 'review', label: 'Review', sub: 'review passes' },
 ];
 
 function ServerForm({
@@ -717,33 +668,25 @@ function ServerForm({
   const isEdit = existing !== null;
   const nameLocked = isEdit || committed;
 
-  const [name, setName] = useState(existing?.name ?? "");
-  const [transport, setTransport] = useState<McpTransport>(
-    existing?.transport ?? "http",
-  );
-  const [url, setUrl] = useState(existing?.config.url ?? "");
-  const [command, setCommand] = useState(existing?.config.command ?? "");
+  const [name, setName] = useState(existing?.name ?? '');
+  const [transport, setTransport] = useState<McpTransport>(existing?.transport ?? 'http');
+  const [url, setUrl] = useState(existing?.config.url ?? '');
+  const [command, setCommand] = useState(existing?.config.command ?? '');
   const [args, setArgs] = useState<string[]>(existing?.config.args ?? []);
-  const [headers, setHeaders] = useState<PairRow[]>(
-    configToRows(existing?.config.headers),
-  );
+  const [headers, setHeaders] = useState<PairRow[]>(configToRows(existing?.config.headers));
   const [env, setEnv] = useState<PairRow[]>(configToRows(existing?.config.env));
-  const [surfaces, setSurfaces] = useState<McpSurface[]>(
-    existing?.surfaces ?? ["brain", "build"],
-  );
+  const [surfaces, setSurfaces] = useState<McpSurface[]>(existing?.surfaces ?? ['brain', 'build']);
   const [enabled, setEnabled] = useState(existing?.enabled ?? true);
-  const [authKind, setAuthKind] = useState<McpAuthKind>(
-    existing?.authKind ?? "static",
-  );
-  const [oauthScope, setOauthScope] = useState(existing?.config.oauth?.scope ?? "");
-  const [nameErr, setNameErr] = useState("");
-  const [formErr, setFormErr] = useState("");
+  const [authKind, setAuthKind] = useState<McpAuthKind>(existing?.authKind ?? 'static');
+  const [oauthScope, setOauthScope] = useState(existing?.config.oauth?.scope ?? '');
+  const [nameErr, setNameErr] = useState('');
+  const [formErr, setFormErr] = useState('');
   const [valResult, setValResult] = useState<McpValidateResult | null>(null);
   // Live consent state for the OAuth Connect flow (the popup posts back here on completion).
   const { connect: connectOAuth, busy: oauthBusy, result: oauthMsg } = useMcpOAuthConnect(orgId);
 
-  const isRemote = transport === "http" || transport === "sse";
-  const isOAuth = isRemote && authKind === "oauth";
+  const isRemote = transport === 'http' || transport === 'sse';
+  const isOAuth = isRemote && authKind === 'oauth';
 
   const canSave =
     name.trim().length > 0 &&
@@ -751,57 +694,55 @@ function ServerForm({
     (isRemote ? url.trim().length > 0 : command.trim().length > 0);
 
   function toggleSurface(s: McpSurface) {
-    setSurfaces((cur) =>
-      cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s],
-    );
+    setSurfaces((cur) => (cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]));
   }
 
   /** Validate the form and build the write payload, or set an error and return null. */
   function buildBody(): { name: string; body: SaveMcpServerBody } | null {
     const n = name.trim();
     if (!n) {
-      setNameErr("Enter a server name.");
+      setNameErr('Enter a server name.');
       return null;
     }
     if (!/^[a-zA-Z0-9_-]+$/.test(n)) {
-      setNameErr("Letters, numbers, dashes and underscores only.");
+      setNameErr('Letters, numbers, dashes and underscores only.');
       return null;
     }
     if (!nameLocked && existingNames.includes(n)) {
-      setNameErr("A server with that name already exists at this scope.");
+      setNameErr('A server with that name already exists at this scope.');
       return null;
     }
-    setNameErr("");
+    setNameErr('');
     if (surfaces.length === 0) {
-      setFormErr("Pick at least one surface it applies to.");
+      setFormErr('Pick at least one surface it applies to.');
       return null;
     }
     const body: SaveMcpServerBody = { transport, surfaces, enabled };
     if (isRemote) {
       if (!url.trim()) {
-        setFormErr("Enter the server URL.");
+        setFormErr('Enter the server URL.');
         return null;
       }
       body.url = url.trim();
-      if (authKind === "oauth") {
-        body.authKind = "oauth";
+      if (authKind === 'oauth') {
+        body.authKind = 'oauth';
         const s = oauthScope.trim();
         if (s) body.oauth = { scope: s };
       } else {
-        body.authKind = "static";
+        body.authKind = 'static';
         body.headers = rowsToInput(headers);
       }
     } else {
       if (!command.trim()) {
-        setFormErr("Enter the command to run.");
+        setFormErr('Enter the command to run.');
         return null;
       }
-      body.authKind = "static";
+      body.authKind = 'static';
       body.command = command.trim();
       body.args = args.map((a) => a.trim()).filter(Boolean);
       body.env = rowsToInput(env);
     }
-    setFormErr("");
+    setFormErr('');
     return { name: n, body };
   }
 
@@ -820,7 +761,7 @@ function ServerForm({
       setCommitted(true);
       return built.name;
     } catch (e) {
-      setFormErr((e as Error)?.message || "Could not save.");
+      setFormErr((e as Error)?.message || 'Could not save.');
       return null;
     }
   }
@@ -837,7 +778,10 @@ function ServerForm({
       const res = await validate.mutateAsync({ scope, name: saved });
       setValResult(res);
     } catch (e) {
-      setValResult({ ok: false, error: (e as Error)?.message || "Validation failed." });
+      setValResult({
+        ok: false,
+        error: (e as Error)?.message || 'Validation failed.',
+      });
     }
   }
 
@@ -845,23 +789,23 @@ function ServerForm({
     <div
       className="mb-3.5 rounded-lg border p-[18px]"
       style={{
-        borderColor: "var(--accent-line)",
-        background: "var(--surface)",
-        boxShadow: "0 6px 22px var(--accent-soft)",
+        borderColor: 'var(--accent-line)',
+        background: 'var(--surface)',
+        boxShadow: '0 6px 22px var(--accent-soft)',
       }}
     >
       <div className="mb-4 flex items-center gap-2.5">
         <div
           className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-md text-accent"
           style={{
-            background: "var(--accent-soft)",
-            border: "1px solid var(--accent-line)",
+            background: 'var(--accent-soft)',
+            border: '1px solid var(--accent-line)',
           }}
         >
           <LayoutGrid size={14} />
         </div>
         <div className="text-[13.5px] font-semibold text-text">
-          {isEdit ? `Edit ${existing.name}` : "New MCP server"}
+          {isEdit ? `Edit ${existing.name}` : 'New MCP server'}
         </div>
       </div>
 
@@ -876,12 +820,9 @@ function ServerForm({
         placeholder="linear"
         className="w-full rounded-md border border-border-2 bg-surface-2 px-3 py-2.5 font-mono text-[13px] font-semibold text-text outline-none placeholder:text-faint disabled:opacity-60"
       />
-      {nameErr ? (
-        <div className="mt-1.5 text-[11px] text-red">{nameErr}</div>
-      ) : null}
+      {nameErr ? <div className="mt-1.5 text-[11px] text-red">{nameErr}</div> : null}
       <div className="mt-1.5 font-mono text-[10.5px] text-faint">
-        Namespaces tools as{" "}
-        <span className="text-dim">mcp__{name || "<name>"}__&lt;tool&gt;</span>
+        Namespaces tools as <span className="text-dim">mcp__{name || '<name>'}__&lt;tool&gt;</span>
       </div>
 
       {/* Transport */}
@@ -889,9 +830,9 @@ function ServerForm({
       <div className="flex gap-1 rounded-md border border-border-2 bg-surface-2 p-1">
         {(
           [
-            ["http", "HTTP"],
-            ["sse", "SSE"],
-            ["stdio", "stdio (command)"],
+            ['http', 'HTTP'],
+            ['sse', 'SSE'],
+            ['stdio', 'stdio (command)'],
           ] as [McpTransport, string][]
         ).map(([t, label]) => {
           const on = transport === t;
@@ -902,9 +843,9 @@ function ServerForm({
               onClick={() => setTransport(t)}
               className="flex-1 rounded-sm py-2 text-center text-[12px] font-semibold transition"
               style={{
-                background: on ? "var(--surface)" : "transparent",
-                color: on ? "var(--accent)" : "var(--dim)",
-                boxShadow: on ? "0 1px 3px rgba(0,0,0,.08)" : undefined,
+                background: on ? 'var(--surface)' : 'transparent',
+                color: on ? 'var(--accent)' : 'var(--dim)',
+                boxShadow: on ? '0 1px 3px rgba(0,0,0,.08)' : undefined,
               }}
             >
               {label}
@@ -917,8 +858,7 @@ function ServerForm({
       {isRemote ? (
         <>
           <FormLabel className="mt-4">
-            {transport === "sse" ? "SSE URL" : "URL"}{" "}
-            <span className="text-accent">*</span>
+            {transport === 'sse' ? 'SSE URL' : 'URL'} <span className="text-accent">*</span>
           </FormLabel>
           <input
             value={url}
@@ -931,8 +871,8 @@ function ServerForm({
           <div className="flex gap-1 rounded-md border border-border-2 bg-surface-2 p-1">
             {(
               [
-                ["static", "Static headers"],
-                ["oauth", "OAuth"],
+                ['static', 'Static headers'],
+                ['oauth', 'OAuth'],
               ] as [McpAuthKind, string][]
             ).map(([k, label]) => {
               const on = authKind === k;
@@ -943,9 +883,9 @@ function ServerForm({
                   onClick={() => setAuthKind(k)}
                   className="flex-1 rounded-sm py-2 text-center text-[12px] font-semibold transition"
                   style={{
-                    background: on ? "var(--surface)" : "transparent",
-                    color: on ? "var(--accent)" : "var(--dim)",
-                    boxShadow: on ? "0 1px 3px rgba(0,0,0,.08)" : undefined,
+                    background: on ? 'var(--surface)' : 'transparent',
+                    color: on ? 'var(--accent)' : 'var(--dim)',
+                    boxShadow: on ? '0 1px 3px rgba(0,0,0,.08)' : undefined,
                   }}
                 >
                   {label}
@@ -1011,16 +951,14 @@ function ServerForm({
               <span
                 className="flex h-[17px] w-[17px] shrink-0 items-center justify-center rounded-[5px] border"
                 style={{
-                  background: on ? "var(--accent)" : "transparent",
-                  borderColor: on ? "var(--accent)" : "var(--border-2)",
+                  background: on ? 'var(--accent)' : 'transparent',
+                  borderColor: on ? 'var(--accent)' : 'var(--border-2)',
                 }}
               >
                 {on ? <Check size={11} strokeWidth={3.2} color="#fff" /> : null}
               </span>
               <span>
-                <span className="block text-[12px] font-semibold text-text">
-                  {label}
-                </span>
+                <span className="block text-[12px] font-semibold text-text">{label}</span>
                 <span className="block text-[10px] text-faint">{sub}</span>
               </span>
             </button>
@@ -1034,21 +972,19 @@ function ServerForm({
           type="button"
           onClick={() => setEnabled((e) => !e)}
           className="relative h-[19px] w-[34px] shrink-0 rounded-full transition-colors"
-          style={{ background: enabled ? "var(--accent)" : "var(--border-2)" }}
+          style={{ background: enabled ? 'var(--accent)' : 'var(--border-2)' }}
           aria-pressed={enabled}
         >
           <span
             className="absolute top-0.5 h-[15px] w-[15px] rounded-full bg-white transition-all"
             style={{
-              left: enabled ? "17px" : "2px",
-              boxShadow: "0 1px 3px rgba(0,0,0,.3)",
+              left: enabled ? '17px' : '2px',
+              boxShadow: '0 1px 3px rgba(0,0,0,.3)',
             }}
           />
         </button>
         <span className="text-[12.5px] font-semibold text-text">Enabled</span>
-        <span className="text-[11px] text-faint">
-          Agent sessions can call this server’s tools.
-        </span>
+        <span className="text-[11px] text-faint">Agent sessions can call this server’s tools.</span>
       </div>
 
       {/* In-form validation result */}
@@ -1056,24 +992,22 @@ function ServerForm({
         <div
           className="mt-4 rounded-md border p-3.5"
           style={{
-            background: "var(--green-soft)",
-            borderColor: "color-mix(in srgb, var(--green) 32%, transparent)",
+            background: 'var(--green-soft)',
+            borderColor: 'color-mix(in srgb, var(--green) 32%, transparent)',
           }}
         >
           <div className="flex items-center gap-1.5 text-[12px] font-semibold text-green">
             <CheckCircle2 size={14} />
             Validated — discovered {valResult.discoveredTools?.length ?? 0} tools
           </div>
-          {valResult.discoveredTools &&
-          valResult.discoveredTools.length > 0 ? (
+          {valResult.discoveredTools && valResult.discoveredTools.length > 0 ? (
             <div className="mt-2.5 flex flex-wrap gap-1.5">
               {valResult.discoveredTools.map((t) => (
                 <span
                   key={t}
                   className="rounded-sm border bg-surface px-1.5 py-0.5 font-mono text-[10px] text-dim"
                   style={{
-                    borderColor:
-                      "color-mix(in srgb, var(--green) 25%, transparent)",
+                    borderColor: 'color-mix(in srgb, var(--green) 25%, transparent)',
                   }}
                 >
                   {t}
@@ -1086,20 +1020,18 @@ function ServerForm({
         <div
           className="mt-4 flex items-start gap-2 rounded-md border p-3.5"
           style={{
-            background: "var(--red-soft)",
-            borderColor: "color-mix(in srgb, var(--red) 35%, transparent)",
+            background: 'var(--red-soft)',
+            borderColor: 'color-mix(in srgb, var(--red) 35%, transparent)',
           }}
         >
           <AlertCircle size={14} className="mt-0.5 shrink-0 text-red" />
           <div className="text-[12px] leading-relaxed text-red">
-            {valResult.error ?? "Validation failed."}
+            {valResult.error ?? 'Validation failed.'}
           </div>
         </div>
       ) : null}
 
-      {formErr ? (
-        <div className="mt-3 text-[11.5px] text-red">{formErr}</div>
-      ) : null}
+      {formErr ? <div className="mt-3 text-[11.5px] text-red">{formErr}</div> : null}
 
       {/* Footer */}
       <div className="mt-[18px] flex items-center gap-2.5">
@@ -1108,9 +1040,9 @@ function ServerForm({
           onClick={onSave}
           disabled={save.isPending || !canSave}
           className="rounded-md px-4 py-2.5 text-[12px] font-semibold text-white transition hover:brightness-105 disabled:opacity-50"
-          style={{ background: "var(--accent)" }}
+          style={{ background: 'var(--accent)' }}
         >
-          {save.isPending && !validate.isPending ? "Saving…" : "Save server"}
+          {save.isPending && !validate.isPending ? 'Saving…' : 'Save server'}
         </button>
         <button
           type="button"
@@ -1126,11 +1058,7 @@ function ServerForm({
           disabled={validate.isPending || save.isPending || !canSave}
           className="flex items-center gap-1.5 rounded-md border border-border-2 px-3.5 py-2.5 text-[12px] font-semibold text-dim transition hover:bg-surface-2 disabled:opacity-60"
         >
-          {validate.isPending ? (
-            <Spinner className="h-3 w-3" />
-          ) : (
-            <RefreshCw size={13} />
-          )}
+          {validate.isPending ? <Spinner className="h-3 w-3" /> : <RefreshCw size={13} />}
           Validate
         </button>
       </div>
@@ -1178,16 +1106,12 @@ function OAuthConnect({
           onClick={onConnect}
           disabled={busy}
           className="flex items-center gap-1.5 rounded-md px-3.5 py-2.5 text-[12px] font-semibold text-white transition hover:brightness-105 disabled:opacity-60"
-          style={{ background: "var(--accent)" }}
+          style={{ background: 'var(--accent)' }}
         >
           {busy ? <Spinner className="h-3 w-3" /> : <KeyRound size={13} />}
-          {connected || needsReauth ? "Reconnect" : "Connect"}
+          {connected || needsReauth ? 'Reconnect' : 'Connect'}
         </button>
-        <OAuthStatus
-          connected={connected}
-          needsReauth={needsReauth}
-          message={message}
-        />
+        <OAuthStatus connected={connected} needsReauth={needsReauth} message={message} />
       </div>
       {!isEdit ? (
         <div className="mt-2 text-[11px] text-faint">
@@ -1211,7 +1135,7 @@ function OAuthStatus({
   if (message) {
     return (
       <span
-        className={`flex items-center gap-1.5 text-[11.5px] font-semibold ${message.ok ? "text-green" : "text-red"}`}
+        className={`flex items-center gap-1.5 text-[11.5px] font-semibold ${message.ok ? 'text-green' : 'text-red'}`}
       >
         {message.ok ? <CheckCircle2 size={13} /> : <AlertCircle size={13} />}
         {message.text}
@@ -1240,35 +1164,25 @@ function OAuthStatus({
 // ── Form building blocks ──────────────────────────────────────────────────────────────────────────
 function FormLabel({
   children,
-  className = "",
+  className = '',
 }: {
   children: React.ReactNode;
   className?: string;
 }) {
   return (
-    <label
-      className={`mb-2 block text-[12px] font-medium text-dim ${className}`}
-    >
-      {children}
-    </label>
+    <label className={`mb-2 block text-[12px] font-medium text-dim ${className}`}>{children}</label>
   );
 }
 
 /** stdio args — one input per positional arg, with an index gutter. */
-function ArgsEditor({
-  rows,
-  onChange,
-}: {
-  rows: string[];
-  onChange: (rows: string[]) => void;
-}) {
+function ArgsEditor({ rows, onChange }: { rows: string[]; onChange: (rows: string[]) => void }) {
   return (
     <>
       <div className="mb-2 mt-4 flex items-center gap-2">
         <span className="flex-1 text-[12px] font-medium text-dim">Args</span>
         <button
           type="button"
-          onClick={() => onChange([...rows, ""])}
+          onClick={() => onChange([...rows, ''])}
           className="rounded-sm border border-accent-line px-2.5 py-1 text-[11px] font-semibold text-accent transition hover:bg-accent-soft"
         >
           + Add arg
@@ -1283,9 +1197,7 @@ function ArgsEditor({
               </span>
               <input
                 value={a}
-                onChange={(e) =>
-                  onChange(rows.map((r, idx) => (idx === i ? e.target.value : r)))
-                }
+                onChange={(e) => onChange(rows.map((r, idx) => (idx === i ? e.target.value : r)))}
                 placeholder="--flag or value"
                 className="flex-1 rounded-md border border-border-2 bg-surface-2 px-2.5 py-2 font-mono text-[12px] text-text outline-none placeholder:text-faint"
               />
@@ -1329,10 +1241,7 @@ function PairEditor({
         <button
           type="button"
           onClick={() =>
-            onChange([
-              ...rows,
-              { k: "", v: "", secret: false, stored: false, revealed: false },
-            ])
+            onChange([...rows, { k: '', v: '', secret: false, stored: false, revealed: false }])
           }
           className="rounded-sm border border-accent-line px-2.5 py-1 text-[11px] font-semibold text-accent transition hover:bg-accent-soft"
         >
@@ -1353,12 +1262,10 @@ function PairEditor({
                 />
                 {masked ? (
                   <div className="flex flex-1 items-center gap-2 rounded-md border border-border-2 bg-surface-2 px-2.5 py-1.5">
-                    <span className="flex-1 font-mono text-[12px] text-dim">
-                      •••• (set)
-                    </span>
+                    <span className="flex-1 font-mono text-[12px] text-dim">•••• (set)</span>
                     <button
                       type="button"
-                      onClick={() => patch(i, { revealed: true, v: "" })}
+                      onClick={() => patch(i, { revealed: true, v: '' })}
                       className="rounded-sm border border-accent-line px-2 py-1 text-[10.5px] font-semibold text-accent transition hover:bg-accent-soft"
                     >
                       Replace
@@ -1368,7 +1275,7 @@ function PairEditor({
                   <input
                     value={r.v}
                     onChange={(e) => patch(i, { v: e.target.value })}
-                    type={r.secret ? "password" : "text"}
+                    type={r.secret ? 'password' : 'text'}
                     placeholder="value"
                     className="flex-1 rounded-md border border-border-2 bg-surface-2 px-2.5 py-2 font-mono text-[12px] text-text outline-none placeholder:text-faint"
                   />
@@ -1381,13 +1288,13 @@ function PairEditor({
                   style={
                     r.secret
                       ? {
-                          color: "var(--accent)",
-                          borderColor: "var(--accent-line)",
-                          background: "var(--accent-soft)",
+                          color: 'var(--accent)',
+                          borderColor: 'var(--accent-line)',
+                          background: 'var(--accent-soft)',
                         }
                       : {
-                          color: "var(--faint)",
-                          borderColor: "var(--border-2)",
+                          color: 'var(--faint)',
+                          borderColor: 'var(--border-2)',
                         }
                   }
                 >
@@ -1407,8 +1314,8 @@ function PairEditor({
         </div>
       ) : null}
       <div className="mt-2 text-[10.5px] leading-relaxed text-faint">
-        Toggle the lock to store a value as a secret — it renders masked and is
-        write-only, like a password.
+        Toggle the lock to store a value as a secret — it renders masked and is write-only, like a
+        password.
       </div>
     </>
   );
@@ -1416,9 +1323,9 @@ function PairEditor({
 
 // ── Bits ──────────────────────────────────────────────────────────────────────────────────────────
 const TRANSPORT_HUE: Record<McpTransport, string> = {
-  http: "blue",
-  sse: "purple",
-  stdio: "green",
+  http: 'blue',
+  sse: 'purple',
+  stdio: 'green',
 };
 
 function TransportBadge({ transport }: { transport: McpTransport }) {
@@ -1440,10 +1347,10 @@ function TransportBadge({ transport }: { transport: McpTransport }) {
 /** A compact OAuth auth badge for a server row: shows the auth type + connection state at a glance. */
 function OAuthBadge({ server }: { server: McpServer }) {
   const state = server.needsReauth
-    ? { hue: "red", label: "needs re-auth" }
+    ? { hue: 'red', label: 'needs re-auth' }
     : server.oauthConnected
-      ? { hue: "green", label: "connected" }
-      : { hue: "amber", label: "not connected" };
+      ? { hue: 'green', label: 'connected' }
+      : { hue: 'amber', label: 'not connected' };
   return (
     <span
       className="flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[9px]"
@@ -1459,7 +1366,7 @@ function OAuthBadge({ server }: { server: McpServer }) {
 }
 
 function surfaceLabel(s: McpSurface): string {
-  return s === "build" ? "build" : s;
+  return s === 'build' ? 'build' : s;
 }
 
 /** Derive a row's validation pill (color/text/spinner) from its stored state + any live probe. */
@@ -1467,15 +1374,22 @@ function validationState(
   server: McpServer,
   pending: boolean,
   live: McpValidateResult | undefined,
-): { text: string; color: string; bg: string; border: string; spin: boolean; title: string } {
+): {
+  text: string;
+  color: string;
+  bg: string;
+  border: string;
+  spin: boolean;
+  title: string;
+} {
   if (pending)
     return {
-      text: "validating…",
-      color: "var(--accent)",
-      bg: "var(--accent-soft)",
-      border: "var(--accent-line)",
+      text: 'validating…',
+      color: 'var(--accent)',
+      bg: 'var(--accent-soft)',
+      border: 'var(--accent-line)',
       spin: true,
-      title: "Validating…",
+      title: 'Validating…',
     };
   const error = live ? live.error : server.validationError;
   const tools = live ? live.discoveredTools : server.discoveredTools;
@@ -1483,29 +1397,29 @@ function validationState(
 
   if (error)
     return {
-      text: "failed",
-      color: "var(--red)",
-      bg: "var(--red-soft)",
-      border: "color-mix(in srgb, var(--red) 35%, transparent)",
+      text: 'failed',
+      color: 'var(--red)',
+      bg: 'var(--red-soft)',
+      border: 'color-mix(in srgb, var(--red) 35%, transparent)',
       spin: false,
       title: error,
     };
   if (validated)
     return {
-      text: tools && tools.length > 0 ? `${tools.length} tools` : "validated",
-      color: "var(--green)",
-      bg: "var(--green-soft)",
-      border: "color-mix(in srgb, var(--green) 32%, transparent)",
+      text: tools && tools.length > 0 ? `${tools.length} tools` : 'validated',
+      color: 'var(--green)',
+      bg: 'var(--green-soft)',
+      border: 'color-mix(in srgb, var(--green) 32%, transparent)',
       spin: false,
-      title: "Last validation succeeded",
+      title: 'Last validation succeeded',
     };
   return {
-    text: "not validated",
-    color: "var(--faint)",
-    bg: "var(--surface-2)",
-    border: "var(--border-2)",
+    text: 'not validated',
+    color: 'var(--faint)',
+    bg: 'var(--surface-2)',
+    border: 'var(--border-2)',
     spin: false,
-    title: "Never validated",
+    title: 'Never validated',
   };
 }
 
@@ -1514,7 +1428,7 @@ function configToRows(bag?: Record<string, string | null>): PairRow[] {
   if (!bag) return [];
   return Object.entries(bag).map(([k, v]) => ({
     k,
-    v: v === null ? "" : v,
+    v: v === null ? '' : v,
     secret: v === null,
     stored: v === null,
     revealed: false,
@@ -1530,8 +1444,8 @@ function rowsToInput(rows: PairRow[]) {
 
 /** A one-line endpoint summary for a server row. */
 function endpointLabel(config: StoredMcpConfig, transport: McpTransport): string {
-  if (transport === "stdio") {
-    return [config.command, ...(config.args ?? [])].filter(Boolean).join(" ");
+  if (transport === 'stdio') {
+    return [config.command, ...(config.args ?? [])].filter(Boolean).join(' ');
   }
-  return config.url ?? "";
+  return config.url ?? '';
 }

@@ -2,10 +2,10 @@ import {
   ATLAS_HOST_BRIDGE_TOOLS,
   BRIDGE_SERVER_NAME,
   type AtlasHostBridgeTool,
-} from "@workspace/shared";
+} from '@workspace/shared';
 
 /** The in-process MCP server the Atlas host-bridge tools are registered under (mirrors the backend). */
-export { BRIDGE_SERVER_NAME, ATLAS_HOST_BRIDGE_TOOLS };
+export { ATLAS_HOST_BRIDGE_TOOLS, BRIDGE_SERVER_NAME };
 export type { AtlasHostBridgeTool };
 
 /**
@@ -14,36 +14,36 @@ export type { AtlasHostBridgeTool };
  * isn't reflected here is a compile error — no more silent drift.
  */
 export const BRIDGE_TOOL_LABELS: Record<AtlasHostBridgeTool, string> = {
-  task_create: "Add task",
-  task_update: "Update task",
-  task_list: "Tasks",
-  task_get: "Task",
-  report_verification: "Report verification",
-  get_pipeline_state: "Pipeline state",
-  get_decision_record: "Decision record",
-  recall: "Recall memory",
-  remember: "Remember",
-  forget: "Forget memory",
-  update_memory: "Update memory",
-  ask_question: "Ask question",
-  create_decision: "Lock decision",
-  withdraw_question: "Withdraw question",
-  withdraw_plan: "Withdraw plan",
-  withdraw_ship: "Withdraw ship review",
-  set_job_kind: "Set job kind",
-  update_decision: "Update decision",
-  delete_decision: "Delete decision",
-  review_plan: "Codex review",
-  propose_plan: "Propose plan",
-  dispatch_build: "Dispatch build",
-  hold_build: "Hold build",
-  start_direct_build: "Direct build",
-  finalize_build: "Finalize build",
-  create_job: "Create job",
-  list_jobs: "List jobs",
-  link_job_dependency: "Link job dependency",
-  reset_sandbox: "Reset sandbox",
-  finish_onboarding: "Finish onboarding",
+  task_create: 'Add task',
+  task_update: 'Update task',
+  task_list: 'Tasks',
+  task_get: 'Task',
+  report_verification: 'Report verification',
+  get_pipeline_state: 'Pipeline state',
+  get_decision_record: 'Decision record',
+  recall: 'Recall memory',
+  remember: 'Remember',
+  forget: 'Forget memory',
+  update_memory: 'Update memory',
+  ask_question: 'Ask question',
+  create_decision: 'Lock decision',
+  withdraw_question: 'Withdraw question',
+  withdraw_plan: 'Withdraw plan',
+  withdraw_ship: 'Withdraw ship review',
+  set_job_kind: 'Set job kind',
+  update_decision: 'Update decision',
+  delete_decision: 'Delete decision',
+  review_plan: 'Codex review',
+  propose_plan: 'Propose plan',
+  dispatch_build: 'Dispatch build',
+  hold_build: 'Hold build',
+  start_direct_build: 'Direct build',
+  finalize_build: 'Finalize build',
+  create_job: 'Create job',
+  list_jobs: 'List jobs',
+  link_job_dependency: 'Link job dependency',
+  reset_sandbox: 'Reset sandbox',
+  finish_onboarding: 'Finish onboarding',
 };
 
 /**

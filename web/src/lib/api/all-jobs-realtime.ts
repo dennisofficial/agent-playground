@@ -1,21 +1,21 @@
-"use client";
+'use client';
 
-import { useQueryClient } from "@/lib/api/_tanstack-shim";
-import { useEffect } from "react";
-import { env } from "@/lib/env";
-import { qk } from "./query-keys";
-import { subscribeSse, type SseHandle } from "./sse-manager";
-import { uiStatus, type InboxThread } from "./inbox";
-import { toJobKind } from "./status";
+import { useQueryClient } from '@/lib/api/_tanstack-shim';
+import { env } from '@/lib/env';
+import { useEffect } from 'react';
+import { uiStatus, type InboxThread } from './inbox';
+import { qk } from './query-keys';
+import { subscribeSse, type SseHandle } from './sse-manager';
+import { toJobKind } from './status';
 import type {
-  WireJobStatus,
-  WireJobKind,
-  WireJobHalt,
-  WireJobActivity,
-  PrState,
-  CiStatus,
   CiCounts,
-} from "./types";
+  CiStatus,
+  PrState,
+  WireJobActivity,
+  WireJobHalt,
+  WireJobKind,
+  WireJobStatus,
+} from './types';
 
 /**
  * The flat realtime `threads` row pushed by the backend engine (`GET /web/jobs/realtime`). Mirrors the
@@ -51,7 +51,7 @@ interface RealtimeRow {
   /** Per-category CI check counts (`jobs.ci_counts`) — parallel to `ciStatus`; null when no checks. */
   ciCounts?: CiCounts | null;
   /** Sidebar port badge tri-state (`jobs.port_state`) — a pure display field on the WAL row. */
-  portState?: "exposed" | "internal" | null;
+  portState?: 'exposed' | 'internal' | null;
   /** Count of build/direct_build thread groups whose builder work has finished (`jobs.build_stages_done`). */
   buildStagesDone?: number | null;
   /** Total build/direct_build thread groups in the job's plan (`jobs.build_stages_total`). */
@@ -67,17 +67,14 @@ interface RealtimeRow {
 
 /** A pg-realtime delta (mirrors the backend `RowDelta`), plus the `disabled` control frame. */
 type RowDelta =
-  | { kind: "data"; rows: Array<{ pk: string; row: RealtimeRow }> }
-  | { kind: "add"; pk: string; row: RealtimeRow }
-  | { kind: "update"; pk: string; row: RealtimeRow }
-  | { kind: "remove"; pk: string }
+  | { kind: 'data'; rows: Array<{ pk: string; row: RealtimeRow }> }
+  | { kind: 'add'; pk: string; row: RealtimeRow }
+  | { kind: 'update'; pk: string; row: RealtimeRow }
+  | { kind: 'remove'; pk: string }
   // Sent by the backend when realtime is unavailable — we close and rely on polling (no reconnect storm).
-  | { kind: "disabled" };
+  | { kind: 'disabled' };
 
-function sameHalt(
-  a: WireJobHalt | null,
-  b: WireJobHalt | null,
-): boolean {
+function sameHalt(a: WireJobHalt | null, b: WireJobHalt | null): boolean {
   return a?.kind === b?.kind && a?.reason === b?.reason && a?.at === b?.at;
 }
 
@@ -107,8 +104,7 @@ export function useAllJobsRealtime(): void {
   const qc = useQueryClient();
 
   useEffect(() => {
-    const invalidate = () =>
-      void qc.invalidateQueries({ queryKey: qk.allJobs() });
+    const invalidate = () => void qc.invalidateQueries({ queryKey: qk.allJobs() });
 
     // Per-job last-seen observed branch — lets us detect a live `git checkout` (a `current_branch` write
     // fires a WAL update with no status flip) and refresh the open thread's pipeline for the drift badge.
@@ -129,7 +125,7 @@ export function useAllJobsRealtime(): void {
       const nextPrMergeable = row.prMergeable ?? null;
       const nextCi = (row.ciStatus ?? null) as CiStatus | null;
       const nextCounts = row.ciCounts ?? null;
-      const nextHalt = "halt" in row ? (row.halt ?? null) : undefined;
+      const nextHalt = 'halt' in row ? (row.halt ?? null) : undefined;
       qc.setQueryData<InboxThread[]>(qk.allJobs(), (prev) => {
         if (!prev) return prev;
         const idx = prev.findIndex((t) => t.id === row.jobId);
@@ -213,15 +209,15 @@ export function useAllJobsRealtime(): void {
         return;
       }
       if (!delta) return;
-      if (delta.kind === "disabled") {
+      if (delta.kind === 'disabled') {
         // Realtime is off on the server — stop this stream for good (no reconnect storm) and let the
         // query's normal polling keep the dots fresh.
         handle.closePermanently();
         return;
       }
-      if (delta.kind === "update") {
+      if (delta.kind === 'update') {
         patchUpdate(delta.row);
-      } else if (delta.kind === "remove") {
+      } else if (delta.kind === 'remove') {
         // Archiving is a status UPDATE on the row, but the row-level realtime guard filters
         // `status != 'archived'`, so an archived row leaves the live result set as a plain `remove` — never
         // an `update`. A `remove` delta carries only the row's pk, not its org/repo, so look those up from

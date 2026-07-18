@@ -1,13 +1,10 @@
-"use client";
+'use client';
 
-import { Loader2, Pencil } from "lucide-react";
-import { MessageTime, UserBubble } from "./bubbles";
-import { Markdown } from "./markdown";
-import { anchorLabel } from "./diff-anchor";
-import type {
-  WebReviewCommentItem,
-  WebReviewCommentsCard,
-} from "@/lib/api/types";
+import type { WebReviewCommentItem, WebReviewCommentsCard } from '@/lib/api/types';
+import { Loader2, Pencil } from 'lucide-react';
+import { MessageTime, UserBubble } from './bubbles';
+import { anchorLabel } from './diff-anchor';
+import { Markdown } from './markdown';
 
 /**
  * A sent review-comment bundle ("Atlas Workspace HiFi") — the styled card an operator's queued
@@ -31,17 +28,16 @@ export function ReviewCommentsCardView({
     if (list) list.push(item);
     else byFile.set(item.file, [item]);
   }
-  const fileLabel =
-    byFile.size === 1 ? [...byFile.keys()][0] : `${byFile.size} files`;
-  const countLabel = `${card.items.length} comment${card.items.length === 1 ? "" : "s"}`;
+  const fileLabel = byFile.size === 1 ? [...byFile.keys()][0] : `${byFile.size} files`;
+  const countLabel = `${card.items.length} comment${card.items.length === 1 ? '' : 's'}`;
 
   return (
     <div className="flex flex-col items-end gap-1">
       <div
         className="flex max-w-[80%] min-w-0 flex-col gap-[9px] rounded-[13px] rounded-br-[4px] px-[13px] py-[11px] sm:min-w-[250px]"
         style={{
-          background: "var(--accent-soft)",
-          border: "1px solid var(--accent-line)",
+          background: 'var(--accent-soft)',
+          border: '1px solid var(--accent-line)',
           opacity: pending ? 0.7 : 1,
         }}
       >
@@ -61,7 +57,7 @@ export function ReviewCommentsCardView({
                 <div
                   key={i}
                   className="border-l-2 pl-[9px]"
-                  style={{ borderColor: "var(--accent-line)" }}
+                  style={{ borderColor: 'var(--accent-line)' }}
                 >
                   {it.lines ? (
                     <>
@@ -70,7 +66,7 @@ export function ReviewCommentsCardView({
                       </div>
                       <pre
                         className="mt-1 overflow-x-auto rounded px-2 py-1 font-mono text-[10px] leading-relaxed whitespace-pre-wrap text-text"
-                        style={{ background: "rgba(0,0,0,0.05)" }}
+                        style={{ background: 'rgba(0,0,0,0.05)' }}
                       >
                         {it.quote}
                       </pre>

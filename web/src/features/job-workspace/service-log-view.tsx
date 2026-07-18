@@ -1,36 +1,29 @@
-"use client";
+'use client';
 
-import Anser from "anser";
-import { useMemo, useRef } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
-import { useServiceLogStream } from "@/lib/api/service-log-store";
-import type { JobRef } from "@/lib/api/job-api";
-import type { ServiceInfo } from "@/lib/api/types";
-import { compensateAboveViewportResize } from "./scroll-compensation";
-import { JumpToLatestButton, useTailFollow } from "./tail-follow";
+import type { JobRef } from '@/lib/api/job-api';
+import { useServiceLogStream } from '@/lib/api/service-log-store';
+import type { ServiceInfo } from '@/lib/api/types';
+import { useVirtualizer } from '@tanstack/react-virtual';
+import Anser from 'anser';
+import { useMemo, useRef } from 'react';
+import { compensateAboveViewportResize } from './scroll-compensation';
+import { JumpToLatestButton, useTailFollow } from './tail-follow';
 
 /** The service pane's header subtitle — live status + cmd + pid/start/log-update facts, or why there's
  *  no marker. The leading status word mirrors the sidebar dot (running / stopped; unknown is omitted
  *  rather than shown as a confident claim). */
 export function serviceHeaderSubtitle(service: ServiceInfo | null): string {
   if (!service)
-    return "no marker on disk — this process may have been stopped or the sandbox reset";
+    return 'no marker on disk — this process may have been stopped or the sandbox reset';
   const parts: string[] = [];
-  if (service.status === "running") parts.push("running");
-  else if (service.status === "stopped") parts.push("stopped");
-  parts.push(
-    service.cmd
-      ? `atlas-svc · ${service.cmd}`
-      : "atlas-svc · supervised process",
-  );
+  if (service.status === 'running') parts.push('running');
+  else if (service.status === 'stopped') parts.push('stopped');
+  parts.push(service.cmd ? `atlas-svc · ${service.cmd}` : 'atlas-svc · supervised process');
   if (service.pid != null) parts.push(`pid ${service.pid}`);
-  if (service.startedAt)
-    parts.push(`started ${new Date(service.startedAt).toLocaleTimeString()}`);
+  if (service.startedAt) parts.push(`started ${new Date(service.startedAt).toLocaleTimeString()}`);
   if (service.logUpdatedAt)
-    parts.push(
-      `log updated ${new Date(service.logUpdatedAt).toLocaleTimeString()}`,
-    );
-  return parts.join(" · ");
+    parts.push(`log updated ${new Date(service.logUpdatedAt).toLocaleTimeString()}`);
+  return parts.join(' · ');
 }
 
 const LINE_HEIGHT_PX = 19; // 11.5px mono at leading-relaxed (1.625) ≈ 18.7px, rounded
@@ -47,10 +40,7 @@ const LINE_HEIGHT_PX = 19; // 11.5px mono at leading-relaxed (1.625) ≈ 18.7px,
  */
 export function ServiceLogView({ jobRef, id }: { jobRef: JobRef; id: string }) {
   const log = useServiceLogStream(jobRef, id);
-  const lines = useMemo(
-    () => (log?.content ? log.content.split("\n") : []),
-    [log?.content],
-  );
+  const lines = useMemo(() => (log?.content ? log.content.split('\n') : []), [log?.content]);
 
   // `pin` snaps the view to the bottom for the virtualized case (see useTailFollow's doc comment) —
   // assigned into a ref so the callback stays stable while still reaching the freshly-built `virtualizer`.
@@ -72,8 +62,7 @@ export function ServiceLogView({ jobRef, id }: { jobRef: JobRef; id: string }) {
   pinRef.current = () => {
     const el = tail.scrollRef.current;
     if (!el) return;
-    if (lines.length > 0)
-      virtualizer.scrollToIndex(lines.length - 1, { align: "end" });
+    if (lines.length > 0) virtualizer.scrollToIndex(lines.length - 1, { align: 'end' });
     requestAnimationFrame(() => {
       const e = tail.scrollRef.current;
       if (e) e.scrollTop = e.scrollHeight;
@@ -90,20 +79,14 @@ export function ServiceLogView({ jobRef, id }: { jobRef: JobRef; id: string }) {
         onPointerOver={tail.onPointerOver}
         onPointerLeave={tail.onPointerLeave}
         className="h-full overflow-y-auto overscroll-contain [overflow-anchor:none] px-4 py-3"
-        style={{ background: "var(--term)" }}
+        style={{ background: 'var(--term)' }}
       >
         {log === undefined ? (
-          <p
-            className="font-mono text-[11.5px]"
-            style={{ color: "var(--term-dim)" }}
-          >
+          <p className="font-mono text-[11.5px]" style={{ color: 'var(--term-dim)' }}>
             Loading…
           </p>
         ) : !log.content ? (
-          <p
-            className="font-mono text-[11.5px] italic"
-            style={{ color: "var(--term-dim)" }}
-          >
+          <p className="font-mono text-[11.5px] italic" style={{ color: 'var(--term-dim)' }}>
             (no log output yet)
           </p>
         ) : (
@@ -127,10 +110,7 @@ export function ServiceLogView({ jobRef, id }: { jobRef: JobRef; id: string }) {
         <div ref={tail.endRef} />
       </div>
       {tail.showJump ? (
-        <JumpToLatestButton
-          onClick={tail.jumpToLatest}
-          style={{ bottom: 14 }}
-        />
+        <JumpToLatestButton onClick={tail.jumpToLatest} style={{ bottom: 14 }} />
       ) : null}
     </div>
   );
@@ -145,7 +125,7 @@ export function ServiceLogView({ jobRef, id }: { jobRef: JobRef; id: string }) {
  */
 export function LogFileView({ content }: { content: string }) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const lines = useMemo(() => content.split("\n"), [content]);
+  const lines = useMemo(() => content.split('\n'), [content]);
 
   const virtualizer = useVirtualizer({
     count: lines.length,
@@ -163,7 +143,7 @@ export function LogFileView({ content }: { content: string }) {
     <div
       ref={scrollRef}
       className="h-full overflow-y-auto px-4 py-3"
-      style={{ background: "var(--term)" }}
+      style={{ background: 'var(--term)' }}
     >
       <div
         className="relative w-full font-mono text-[11.5px] leading-relaxed"
@@ -202,12 +182,12 @@ function AnsiLine({ line }: { line: string }) {
         <span
           key={i}
           style={{
-            color: cssColor(seg.fg) ?? "var(--term-fg)",
+            color: cssColor(seg.fg) ?? 'var(--term-fg)',
             background: cssColor(seg.bg),
             // SGR "dim"/"faint" (code 2) carries no color of its own — anser reports it as a decoration,
             // not a `fg`, so without this a de-emphasized line (e.g. Nest's pid/timestamp prefix) would
             // render at full brightness instead of faded.
-            opacity: seg.decoration === "dim" ? 0.6 : undefined,
+            opacity: seg.decoration === 'dim' ? 0.6 : undefined,
           }}
         >
           {seg.content}

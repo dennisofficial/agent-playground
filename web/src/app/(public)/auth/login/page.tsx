@@ -1,25 +1,20 @@
-"use client";
+'use client';
 
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
-import {
-  AuthCard,
-  AuthHeader,
-  ErrorBanner,
-  OrDivider,
-} from "@/features/auth/components/auth-ui";
-import { GoogleButton } from "@/features/auth/components/google-button";
-import { Button } from "@/components/ui/button";
-import { Field, PasswordField } from "@/components/ui/field";
-import { auth } from "@/lib/auth";
-import { ROUTES, safeNext } from "@/lib/routes";
-import { validateEmail, validatePasswordRequired } from "@/utils/validation";
+import { Button } from '@/components/ui/button';
+import { Field, PasswordField } from '@/components/ui/field';
+import { AuthCard, AuthHeader, ErrorBanner, OrDivider } from '@/features/auth/components/auth-ui';
+import { GoogleButton } from '@/features/auth/components/google-button';
+import { auth } from '@/lib/auth';
+import { ROUTES, safeNext } from '@/lib/routes';
+import { validateEmail, validatePasswordRequired } from '@/utils/validation';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { useState } from 'react';
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [emailErr, setEmailErr] = useState<string | null>(null);
   const [pwErr, setPwErr] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
@@ -38,12 +33,12 @@ export default function LoginPage() {
     try {
       await auth.signIn(email.trim(), password);
       const next =
-        typeof window !== "undefined"
-          ? new URLSearchParams(window.location.search).get("next")
+        typeof window !== 'undefined'
+          ? new URLSearchParams(window.location.search).get('next')
           : null;
       router.replace(safeNext(next));
     } catch (err) {
-      setBanner(err instanceof Error ? err.message : "Sign in failed.");
+      setBanner(err instanceof Error ? err.message : 'Sign in failed.');
       setPending(false);
     }
   }
@@ -56,10 +51,7 @@ export default function LoginPage() {
       />
       <ErrorBanner message={banner} />
 
-      <GoogleButton
-        label="Continue with Google"
-        onError={(m) => setBanner(m || null)}
-      />
+      <GoogleButton label="Continue with Google" onError={(m) => setBanner(m || null)} />
       <OrDivider />
 
       <form onSubmit={onSubmit} className="flex flex-col gap-3.5" noValidate>
@@ -80,31 +72,19 @@ export default function LoginPage() {
           onChange={(e) => setPassword(e.target.value)}
           error={pwErr}
           labelAside={
-            <Link
-              href={ROUTES.auth.forgot()}
-              className="text-[11.5px] text-accent hover:underline"
-            >
+            <Link href={ROUTES.auth.forgot()} className="text-[11.5px] text-accent hover:underline">
               Forgot?
             </Link>
           }
         />
-        <Button
-          type="submit"
-          size="lg"
-          block
-          loading={pending}
-          loadingText="Signing in…"
-        >
+        <Button type="submit" size="lg" block loading={pending} loadingText="Signing in…">
           Sign in
         </Button>
       </form>
 
       <p className="mt-5 text-center text-[12.5px] text-dim">
-        New to Atlas?{" "}
-        <Link
-          href={ROUTES.auth.signup()}
-          className="font-medium text-accent hover:underline"
-        >
+        New to Atlas?{' '}
+        <Link href={ROUTES.auth.signup()} className="font-medium text-accent hover:underline">
           Create an account
         </Link>
       </p>

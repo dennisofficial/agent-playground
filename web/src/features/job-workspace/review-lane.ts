@@ -1,4 +1,4 @@
-import type { JobMessage } from "@/lib/api/job-api";
+import type { JobMessage } from '@/lib/api/job-api';
 
 /**
  * A review-agent LENS (best_practices/correctness/consistency/…) is one parallel self-review pass over a
@@ -18,11 +18,10 @@ export const autofixLensLane = (autofixId: string, lensId: string): string =>
 /** The auto-fix FIX turn's sub-lane (fix · apply · verify) — byte-identical to the backend `autofixFixLane`
  *  (see `backend/.../thread-registry.ts` / `autofix.stage.ts`). The fix turn tags its blocks `meta.fixTurn`
  *  (NOT `meta.lensId`), so `TranscriptView` filters this lane on `fixTurn` — see `conversation.tsx`. */
-export const autofixFixLane = (autofixId: string): string =>
-  `autofix:${autofixId}:fix`;
+export const autofixFixLane = (autofixId: string): string => `autofix:${autofixId}:fix`;
 
 /** The `?node=` sentinel used in place of a thread id to mean "the job-level PR-tail pass". */
-export const REVIEW_JOB_SCOPE = "job";
+export const REVIEW_JOB_SCOPE = 'job';
 
 export interface AutofixIndex {
   /** `message.ts` of every block belonging to any review lens or the fix turn (skip these in Main). */
@@ -36,11 +35,11 @@ export function indexAutofixBlocks(messages: JobMessage[]): AutofixIndex {
   const childKeys = new Set<string>();
   const anchorKeys = new Set<string>();
   for (const m of messages) {
-    if (m.kind === "autofix_anchor") {
+    if (m.kind === 'autofix_anchor') {
       anchorKeys.add(m.ts);
       continue;
     }
-    if (typeof m.meta?.autofixId === "string") childKeys.add(m.ts);
+    if (typeof m.meta?.autofixId === 'string') childKeys.add(m.ts);
   }
   return { childKeys, anchorKeys };
 }

@@ -1,6 +1,6 @@
-"use client";
+'use client';
 
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 
 /**
  * A context-window occupancy breakdown by category (Claude-Desktop-style), reported alongside the scalar
@@ -48,7 +48,7 @@ export type LiveBlock =
   // `parentToolUseId` (set only for SUBAGENT blocks) lets the live view peel a subagent's activity out of
   // the main turn into its own card / sub-page — mirrors the durable `meta.parentToolUseId`.
   | {
-      kind: "text";
+      kind: 'text';
       key: string;
       text: string;
       done: boolean;
@@ -58,7 +58,7 @@ export type LiveBlock =
   | {
       /** A parent→sub-agent SendMessage injection (`user_text` event) — always a completed discrete turn
        *  (`done: true`), never coalesced with adjacent blocks. Sub-agent-only (`parentToolUseId` set). */
-      kind: "user";
+      kind: 'user';
       key: string;
       text: string;
       done: boolean;
@@ -66,7 +66,7 @@ export type LiveBlock =
       emittedAt: number;
     }
   | {
-      kind: "thinking";
+      kind: 'thinking';
       key: string;
       text: string;
       done: boolean;
@@ -74,7 +74,7 @@ export type LiveBlock =
       emittedAt: number;
     }
   | {
-      kind: "tool";
+      kind: 'tool';
       key: string;
       toolId?: string;
       name: string;
@@ -136,10 +136,7 @@ export interface LiveTurn {
    * subagent reports its OWN context ring separately from the main-agent ring above — a `usage` frame that
    * carries `parentToolUseId` lands here instead of the top-level fields. Consumed by `SubagentCard`.
    */
-  subUsage?: Record<
-    string,
-    { contextTokens: number; contextModel?: string; contextLimit: number }
-  >;
+  subUsage?: Record<string, { contextTokens: number; contextModel?: string; contextLimit: number }>;
   /**
    * Set while a retry is in flight — either the SDK's native `api_retry` mid-turn (overloaded/5xx) or the
    * host's 10×/10s auth/transport backstop between turns. Drives the `LiveIndicator`'s "Reconnecting to
@@ -197,13 +194,13 @@ type StreamPayload = {
   /** `turn_retry`: a short reason tag (e.g. `overloaded`, `auth`, `econnreset`) for the retry. */
   reason?: string;
   /** present on `kind:'snapshot'` — the retry state to restore so a reconnect mid-backoff still shows it. */
-  retrying?: LiveTurn["retrying"];
+  retrying?: LiveTurn['retrying'];
 };
 
 let blockSeq = 0;
 
 /** The default lane — the thread brain's conversational turn (vs `phase:<stepId>` for a build turn). */
-export const MAIN_LANE = "main";
+export const MAIN_LANE = 'main';
 /** The store keys an in-flight turn by thread AND lane, so a brain turn and a build turn coexist. */
 const laneKey = (jobId: string, lane: string): string => `${jobId}::${lane}`;
 
@@ -229,12 +226,7 @@ class ThreadStreamStore {
   private readonly keyListeners = new Map<string, Set<() => void>>();
 
   /** Apply a `{type:'stream'}` frame's event (snapshot or delta) for a turn lane, deduped by `seq`. */
-  apply(
-    jobId: string,
-    lane: string,
-    seq: number,
-    ev: StreamPayload | null | undefined,
-  ): void {
+  apply(jobId: string, lane: string, seq: number, ev: StreamPayload | null | undefined): void {
     if (!jobId || !ev?.kind) return;
     const key = laneKey(jobId, lane);
     // Any frame for this key proves the server still knows the turn — re-confirms it for the sweep.
@@ -248,7 +240,7 @@ class ThreadStreamStore {
     // STALE leftovers — a previous turn not yet cleared, or a re-attach's stranded open blocks. Drop them
     // so a reattach's replay rebuilds the lane cleanly; a genuinely new turn has none to drop. `startedAt`
     // stays (elapsed continuity).
-    if (ev.kind === "turn_start") {
+    if (ev.kind === 'turn_start') {
       if (cur && seq <= cur.lastSeq) return;
       this.map.set(key, {
         blocks: [],
@@ -261,7 +253,7 @@ class ThreadStreamStore {
     }
 
     // Snapshot: the authoritative full state at `seq`. Replace, unless we already have newer deltas.
-    if (ev.kind === "snapshot") {
+    if (ev.kind === 'snapshot') {
       if (cur && seq < cur.lastSeq) return;
       this.map.set(key, {
         blocks: (ev.blocks ?? []).map((b) => ({ ...b })),
@@ -288,11 +280,10 @@ class ThreadStreamStore {
     // indicator mounted through the backoff) and stamp `retrying` for the label + countdown. Blocks and
     // `startedAt` are untouched. The absolute `nextAttemptAt` is resolved ONCE here so the countdown has a
     // stable target: host frames already carry it; SDK `api_retry` frames carry a relative `retryDelayMs`.
-    if (ev.kind === "turn_retry") {
+    if (ev.kind === 'turn_retry') {
       if (cur && seq <= cur.lastSeq) return;
       const nextAttemptAt =
-        ev.nextAttemptAt ??
-        (ev.retryDelayMs != null ? Date.now() + ev.retryDelayMs : undefined);
+        ev.nextAttemptAt ?? (ev.retryDelayMs != null ? Date.now() + ev.retryDelayMs : undefined);
       this.map.set(key, {
         blocks: cur?.blocks ?? [],
         active: true,
@@ -319,17 +310,16 @@ class ThreadStreamStore {
 
     const blocks = cur ? [...cur.blocks] : [];
     const last = blocks[blocks.length - 1];
-    const text = typeof ev.text === "string" ? ev.text : "";
+    const text = typeof ev.text === 'string' ? ev.text : '';
     // Only merge into the open block when it belongs to the SAME author (brain vs a given subagent), so a
     // subagent's forwarded text never appends onto the brain's open text block (or another subagent's).
     const pid = ev.parentToolUseId;
-    const sameAuthor = (b: LiveBlock | undefined): boolean =>
-      !!b && b.parentToolUseId === pid;
+    const sameAuthor = (b: LiveBlock | undefined): boolean => !!b && b.parentToolUseId === pid;
     // Finalize the most-recent still-open block of this kind+author. Interleaved thinking (auto-enabled by
     // adaptive thinking) means a turn can have TWO open delta blocks at once — an open `thinking` and an open
     // `text` — so the authoritative block we're closing is NOT necessarily `last`. Checking only `last` here
     // pushed a duplicate instead of merging (the "double stream" bug). Scan back for the matching open block.
-    const finalizeOpen = (kind: "text" | "thinking"): boolean => {
+    const finalizeOpen = (kind: 'text' | 'thinking'): boolean => {
       for (let i = blocks.length - 1; i >= 0; i--) {
         const b = blocks[i];
         if (b.kind === kind && !b.done && b.parentToolUseId === pid) {
@@ -341,12 +331,12 @@ class ThreadStreamStore {
     };
 
     switch (ev.kind) {
-      case "text_delta":
-        if (last && last.kind === "text" && !last.done && sameAuthor(last))
+      case 'text_delta':
+        if (last && last.kind === 'text' && !last.done && sameAuthor(last))
           blocks[blocks.length - 1] = { ...last, text: last.text + text };
         else
           blocks.push({
-            kind: "text",
+            kind: 'text',
             key: `c${blockSeq++}`,
             text,
             done: false,
@@ -354,10 +344,10 @@ class ThreadStreamStore {
             emittedAt: ev.emittedAt ?? Date.now(),
           });
         break;
-      case "text":
-        if (!finalizeOpen("text"))
+      case 'text':
+        if (!finalizeOpen('text'))
           blocks.push({
-            kind: "text",
+            kind: 'text',
             key: `c${blockSeq++}`,
             text,
             done: true,
@@ -365,12 +355,12 @@ class ThreadStreamStore {
             emittedAt: ev.emittedAt ?? Date.now(),
           });
         break;
-      case "user_text":
+      case 'user_text':
         // Always a standalone completed turn — never merged/coalesced with adjacent narration (unlike
         // "text", which may finalize an open delta block).
         if (!pid || !text.trim()) break;
         blocks.push({
-          kind: "user",
+          kind: 'user',
           key: `c${blockSeq++}`,
           text,
           done: true,
@@ -378,12 +368,12 @@ class ThreadStreamStore {
           emittedAt: ev.emittedAt ?? Date.now(),
         });
         break;
-      case "thinking_delta":
-        if (last && last.kind === "thinking" && !last.done && sameAuthor(last))
+      case 'thinking_delta':
+        if (last && last.kind === 'thinking' && !last.done && sameAuthor(last))
           blocks[blocks.length - 1] = { ...last, text: last.text + text };
         else
           blocks.push({
-            kind: "thinking",
+            kind: 'thinking',
             key: `c${blockSeq++}`,
             text,
             done: false,
@@ -391,10 +381,10 @@ class ThreadStreamStore {
             emittedAt: ev.emittedAt ?? Date.now(),
           });
         break;
-      case "thinking":
-        if (!finalizeOpen("thinking"))
+      case 'thinking':
+        if (!finalizeOpen('thinking'))
           blocks.push({
-            kind: "thinking",
+            kind: 'thinking',
             key: `c${blockSeq++}`,
             text,
             done: true,
@@ -402,31 +392,29 @@ class ThreadStreamStore {
             emittedAt: ev.emittedAt ?? Date.now(),
           });
         break;
-      case "tool_use":
+      case 'tool_use':
         blocks.push({
-          kind: "tool",
+          kind: 'tool',
           key: `c${blockSeq++}`,
-          toolId: typeof ev.id === "string" ? ev.id : "",
-          name: typeof ev.name === "string" ? ev.name : "tool",
+          toolId: typeof ev.id === 'string' ? ev.id : '',
+          name: typeof ev.name === 'string' ? ev.name : 'tool',
           input: ev.input,
           done: false,
           parentToolUseId: pid,
           emittedAt: ev.emittedAt ?? Date.now(),
         });
         break;
-      case "tool_result": {
-        const id = typeof ev.id === "string" ? ev.id : "";
+      case 'tool_result': {
+        const id = typeof ev.id === 'string' ? ev.id : '';
         for (let i = blocks.length - 1; i >= 0; i--) {
           const b = blocks[i];
-          if (b.kind === "tool" && !b.done && (b.toolId === id || id === "")) {
+          if (b.kind === 'tool' && !b.done && (b.toolId === id || id === '')) {
             blocks[i] = {
               ...b,
               result: ev.result,
               isError: Boolean(ev.isError),
               superseded: Boolean(ev.superseded),
-              ...(ev.structuredPatch !== undefined
-                ? { structuredPatch: ev.structuredPatch }
-                : {}),
+              ...(ev.structuredPatch !== undefined ? { structuredPatch: ev.structuredPatch } : {}),
               done: true,
             };
             break;
@@ -434,17 +422,20 @@ class ThreadStreamStore {
         }
         break;
       }
-      case "jit_injection": {
-        const id = typeof ev.id === "string" ? ev.id : "";
+      case 'jit_injection': {
+        const id = typeof ev.id === 'string' ? ev.id : '';
         for (let i = blocks.length - 1; i >= 0; i--) {
           const b = blocks[i];
-          if (b.kind === "tool" && b.toolId === id) {
+          if (b.kind === 'tool' && b.toolId === id) {
             const prior = b.jitContext ?? [];
             blocks[i] = {
               ...b,
               jitContext: [
                 ...prior,
-                { rule: String(ev.rule ?? ""), text: typeof ev.text === "string" ? ev.text : "" },
+                {
+                  rule: String(ev.rule ?? ''),
+                  text: typeof ev.text === 'string' ? ev.text : '',
+                },
               ],
             };
             break;
@@ -452,22 +443,21 @@ class ThreadStreamStore {
         }
         break;
       }
-      case "bg_task": {
+      case 'bg_task': {
         // Lifecycle of a backgrounded Task subagent, tagged with `parentToolUseId` == the spawning Task id ==
         // the anchor block's `toolId`. `'started'` marks the anchor backgrounded (so the card tracks
         // settlement rather than the launch-ack `done` — the launch-ack flips `done:true` immediately even
         // though the subagent is still streaming). `completed|failed|stopped` marks it settled so the card
         // stops showing "running". A bare bg-Bash task carries no `parentToolUseId` → no-op.
         const st = ev.status;
-        const settled =
-          st === "completed" || st === "failed" || st === "stopped";
-        if (pid && (st === "started" || settled)) {
+        const settled = st === 'completed' || st === 'failed' || st === 'stopped';
+        if (pid && (st === 'started' || settled)) {
           for (let i = blocks.length - 1; i >= 0; i--) {
             const b = blocks[i];
-            if (b.kind === "tool" && b.toolId === pid) {
+            if (b.kind === 'tool' && b.toolId === pid) {
               blocks[i] = {
                 ...b,
-                ...(st === "started" ? { bgStarted: true } : {}),
+                ...(st === 'started' ? { bgStarted: true } : {}),
                 ...(settled ? { bgSettled: true } : {}),
               };
               break;
@@ -476,13 +466,13 @@ class ThreadStreamStore {
         }
         break;
       }
-      case "usage": {
+      case 'usage': {
         // LIVE context occupancy — update the ring values, keep blocks untouched. Preferred over the durable
         // turn_meta by the composer footer while the turn is active. A `usage` frame tagged with
         // `parentToolUseId` is a SUBAGENT's own occupancy → route it into `subUsage[parentId]` and leave the
         // main-agent ring untouched; an untagged frame updates the main-agent ring.
         const subPid = ev.parentToolUseId;
-        if (typeof subPid === "string") {
+        if (typeof subPid === 'string') {
           this.map.set(key, {
             blocks,
             active: true,
@@ -495,15 +485,15 @@ class ThreadStreamStore {
               ...cur?.subUsage,
               [subPid]: {
                 contextTokens:
-                  typeof ev.contextTokens === "number"
+                  typeof ev.contextTokens === 'number'
                     ? ev.contextTokens
                     : (cur?.subUsage?.[subPid]?.contextTokens ?? 0),
                 contextModel:
-                  typeof ev.contextModel === "string"
+                  typeof ev.contextModel === 'string'
                     ? ev.contextModel
                     : cur?.subUsage?.[subPid]?.contextModel,
                 contextLimit:
-                  typeof ev.contextLimit === "number"
+                  typeof ev.contextLimit === 'number'
                     ? ev.contextLimit
                     : (cur?.subUsage?.[subPid]?.contextLimit ?? 0),
               },
@@ -519,18 +509,16 @@ class ThreadStreamStore {
           lastSeq: seq,
           startedAt: cur?.startedAt,
           contextTokens:
-            typeof ev.contextTokens === "number" ? ev.contextTokens : cur?.contextTokens,
-          contextModel:
-            typeof ev.contextModel === "string" ? ev.contextModel : cur?.contextModel,
-          contextLimit:
-            typeof ev.contextLimit === "number" ? ev.contextLimit : cur?.contextLimit,
+            typeof ev.contextTokens === 'number' ? ev.contextTokens : cur?.contextTokens,
+          contextModel: typeof ev.contextModel === 'string' ? ev.contextModel : cur?.contextModel,
+          contextLimit: typeof ev.contextLimit === 'number' ? ev.contextLimit : cur?.contextLimit,
           subUsage: cur?.subUsage,
           contextBreakdown: cur?.contextBreakdown,
         });
         this.notify(key);
         return;
       }
-      case "context_breakdown": {
+      case 'context_breakdown': {
         // LIVE context-window breakdown by category — mirrors the `usage` case above. A frame tagged with
         // `parentToolUseId` is a SUBAGENT's own breakdown; subagent rings stay tooltip-only (no panel), so
         // just advance seq and leave the main-agent breakdown untouched.
@@ -669,12 +657,7 @@ class ThreadStreamStore {
 const store = new ThreadStreamStore();
 
 /** Feed one `{type:'stream'}` frame (snapshot or delta) into a thread's live turn lane. */
-export function applyStreamFrame(
-  jobId: string,
-  lane: string,
-  seq: number,
-  event: unknown,
-): void {
+export function applyStreamFrame(jobId: string, lane: string, seq: number, event: unknown): void {
   store.apply(jobId, lane, seq, event as StreamPayload);
 }
 
@@ -683,11 +666,7 @@ export function applyStreamFrame(
  * Pass the `turn_end` frame's `endSeq` so a stale `turn_end` can't delete a turn a later `turn_retry`
  * re-activated (the host backstop fans `turn_retry` at a higher seq after `turn_end`).
  */
-export function endLiveTurn(
-  jobId: string,
-  lane: string = MAIN_LANE,
-  endSeq?: number,
-): void {
+export function endLiveTurn(jobId: string, lane: string = MAIN_LANE, endSeq?: number): void {
   store.end(jobId, lane, endSeq);
 }
 
@@ -695,10 +674,7 @@ export function endLiveTurn(
  * Non-React read of a lane's current live turn (mirrors the private `store.get`). For tests/diagnostics
  * that need to inspect the store without mounting the `useLiveTurn` hook.
  */
-export function peekLiveTurn(
-  jobId: string,
-  lane: string = MAIN_LANE,
-): LiveTurn | undefined {
+export function peekLiveTurn(jobId: string, lane: string = MAIN_LANE): LiveTurn | undefined {
   return store.get(jobId, lane);
 }
 
@@ -715,21 +691,15 @@ export function sweepLiveTurnsAfterReconnect(): void {
  * Subscribe to one thread's in-flight live turn for a lane (default the brain's `main` turn). The
  * conversation reads `main`; a step sub-page reads its `phase:<stepId>` lane.
  */
-export function useLiveTurn(
-  jobId: string,
-  lane: string = MAIN_LANE,
-): LiveTurn | undefined {
+export function useLiveTurn(jobId: string, lane: string = MAIN_LANE): LiveTurn | undefined {
   const key = laneKey(jobId, lane);
-  const subscribe = useCallback(
-    (cb: () => void) => store.subscribeKey(key, cb),
-    [key],
-  );
+  const subscribe = useCallback((cb: () => void) => store.subscribeKey(key, cb), [key]);
   const getByKey = useCallback(() => store.getByKey(key), [key]);
   return useSyncExternalStore(subscribe, getByKey, () => undefined);
 }
 
 /** The short status word for the working indicator, derived from the LAST live block's kind. */
-export type LiveStatusWord = "still thinking" | "using tools" | "responding";
+export type LiveStatusWord = 'still thinking' | 'using tools' | 'responding';
 
 /**
  * A compact summary of a live turn for the "Atlas is working…" indicator (Claude-Code style):
@@ -745,14 +715,14 @@ export function summarizeLiveTurn(turn: LiveTurn | undefined): {
 } {
   const blocks = turn?.blocks ?? [];
   let openTools = 0;
-  for (const b of blocks) if (b.kind === "tool" && !b.done) openTools += 1;
+  for (const b of blocks) if (b.kind === 'tool' && !b.done) openTools += 1;
   const last = blocks[blocks.length - 1];
   const statusWord: LiveStatusWord =
-    last?.kind === "thinking"
-      ? "still thinking"
-      : last?.kind === "tool"
-        ? "using tools"
-        : "responding";
+    last?.kind === 'thinking'
+      ? 'still thinking'
+      : last?.kind === 'tool'
+        ? 'using tools'
+        : 'responding';
   return { openTools, statusWord };
 }
 
@@ -784,8 +754,8 @@ export function formatElapsed(totalSeconds: number): string {
   const minutes = Math.floor((s % 3_600) / 60);
   const seconds = s % 60;
   if (hours > 0)
-    return `${hours}h ${String(minutes).padStart(2, "0")}m ${String(seconds).padStart(2, "0")}s`;
-  if (minutes > 0) return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
+    return `${hours}h ${String(minutes).padStart(2, '0')}m ${String(seconds).padStart(2, '0')}s`;
+  if (minutes > 0) return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
   return `${seconds}s`;
 }
 
@@ -795,10 +765,7 @@ export function formatElapsed(totalSeconds: number): string {
  * the target has passed (or is undefined), so the label drops the countdown clause and shows a bare
  * ellipsis while the next attempt fires. Kept pure (no React) so it's unit-testable in the node test env.
  */
-export function retryCountdownSeconds(
-  targetMs: number | undefined,
-  now: number,
-): number | null {
+export function retryCountdownSeconds(targetMs: number | undefined, now: number): number | null {
   if (targetMs == null) return null;
   const remainingMs = targetMs - now;
   if (remainingMs <= 0) return null;
@@ -809,10 +776,7 @@ export function retryCountdownSeconds(
 // a SCRIPTED frame (e.g. a `turn_retry`) into the REAL store + the REAL `LiveIndicator` without a real
 // engine event — the sanctioned way to exercise the retry indicator's UX (the trigger isn't on-demand
 // inducible). Statically stripped from production bundles by the `NODE_ENV` guard, so it never ships.
-if (
-  typeof window !== "undefined" &&
-  process.env.NODE_ENV !== "production"
-) {
+if (typeof window !== 'undefined' && process.env.NODE_ENV !== 'production') {
   (window as unknown as Record<string, unknown>).__atlasLiveStream = {
     applyStreamFrame,
     endLiveTurn,

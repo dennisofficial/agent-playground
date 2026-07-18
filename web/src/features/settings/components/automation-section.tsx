@@ -1,9 +1,9 @@
-"use client";
+'use client';
 
-import { SwitchRow } from "@/features/job-workspace/auto-approve-popover";
-import type { OrgSummary } from "@/lib/api/me";
-import { useUpdateOrg } from "@/lib/api/orgs";
-import { useState } from "react";
+import { SwitchRow } from '@/features/job-workspace/auto-approve-popover';
+import type { OrgSummary } from '@/lib/api/me';
+import { useUpdateOrg } from '@/lib/api/orgs';
+import { useState } from 'react';
 
 /**
  * Automation settings — the org-level defaults a new job inherits at creation (the create-job form seeds
@@ -11,7 +11,7 @@ import { useState } from "react";
  * three toggles maps 1:1 to a backend boolean default.
  */
 export function AutomationSection({ org }: { org: OrgSummary }) {
-  const isOwner = org.role === "owner";
+  const isOwner = org.role === 'owner';
   const update = useUpdateOrg(org.id);
   const [autoApprove, setAutoApprove] = useState(org.defaultAutoApprove);
   const [autoShip, setAutoShip] = useState(org.defaultAutoShip);
@@ -48,8 +48,8 @@ export function AutomationSection({ org }: { org: OrgSummary }) {
       <div
         className={
           isOwner
-            ? "rounded-md border border-border-2 px-3 pt-1.5 pb-1"
-            : "pointer-events-none rounded-md border border-border-2 px-3 pt-1.5 pb-1 opacity-60"
+            ? 'rounded-md border border-border-2 px-3 pt-1.5 pb-1'
+            : 'pointer-events-none rounded-md border border-border-2 px-3 pt-1.5 pb-1 opacity-60'
         }
       >
         <SwitchRow
@@ -81,22 +81,18 @@ export function AutomationSection({ org }: { org: OrgSummary }) {
           type="button"
           onClick={save}
           disabled={!isOwner || !dirty || update.isPending}
-          title={
-            isOwner
-              ? undefined
-              : "Only the organization owner can change these settings"
-          }
+          title={isOwner ? undefined : 'Only the organization owner can change these settings'}
           className="rounded-md px-4 py-2 text-[12.5px] font-semibold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-45"
-          style={{ background: "var(--accent)" }}
+          style={{ background: 'var(--accent)' }}
         >
-          {update.isPending ? "Saving…" : "Save changes"}
+          {update.isPending ? 'Saving…' : 'Save changes'}
         </button>
         {update.isSuccess && !dirty ? (
           <span className="text-[11.5px] text-green">✓ Saved</span>
         ) : null}
         {update.isError ? (
           <span className="text-[11.5px] text-red">
-            {(update.error as Error)?.message ?? "Could not save changes."}
+            {(update.error as Error)?.message ?? 'Could not save changes.'}
           </span>
         ) : null}
       </div>

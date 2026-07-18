@@ -1,4 +1,4 @@
-"use client";
+'use client';
 
 /**
  * Drop-in, inert replacements for the TanStack Query hooks. A legacy data-hook module whose backend
@@ -9,12 +9,7 @@
  * `mutationFn`) and explicit `useMutation<TData, TError, TVars>()` call sites type-check identically.
  * Grep `_tanstack-shim` to find every module still awaiting real RTK Query endpoints.
  */
-import {
-  stubMutation,
-  stubQuery,
-  type MutationResultLike,
-  type QueryResultLike,
-} from "./_stub";
+import { stubMutation, stubQuery, type MutationResultLike, type QueryResultLike } from './_stub';
 
 // TanStack: useQuery<TQueryFnData, TError, TData, TQueryKey>
 export function useQuery<
@@ -49,7 +44,7 @@ export function useMutation<
   ) => unknown;
   [key: string]: unknown;
 }): MutationResultLike<TData, TVariables> {
-  return stubMutation<TData, TVariables>("mutation");
+  return stubMutation<TData, TVariables>('mutation');
 }
 
 /** Inert fan-out — returns no results; the one consumer (`useAllRepos`) folds it to an empty list. */
@@ -65,12 +60,12 @@ export function useQueries<TResult = unknown>(_options: {
 export function useQueryClient() {
   return {
     invalidateQueries: (_filters?: unknown): Promise<void> => Promise.resolve(),
-    setQueryData: <TData,>(
+    setQueryData: <TData>(
       _key?: unknown,
       _updater?: TData | ((old: TData | undefined) => TData | undefined),
     ): undefined => undefined,
-    getQueryData: <TData,>(_key?: unknown): TData | undefined => undefined,
-    getQueriesData: <TData,>(_filters?: unknown): [unknown, TData | undefined][] => [],
+    getQueryData: <TData>(_key?: unknown): TData | undefined => undefined,
+    getQueriesData: <TData>(_filters?: unknown): [unknown, TData | undefined][] => [],
     removeQueries: (_filters?: unknown): void => {},
     cancelQueries: (_filters?: unknown): Promise<void> => Promise.resolve(),
     refetchQueries: (_filters?: unknown): Promise<void> => Promise.resolve(),

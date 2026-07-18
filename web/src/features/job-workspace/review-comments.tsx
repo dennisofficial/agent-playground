@@ -1,5 +1,7 @@
-"use client";
+'use client';
 
+import { composerStore, useComposerComments } from '@/lib/api/composer-store';
+import type { JobRef } from '@/lib/api/job-api';
 import {
   createContext,
   useCallback,
@@ -9,9 +11,7 @@ import {
   useRef,
   useState,
   type ReactNode,
-} from "react";
-import type { JobRef } from "@/lib/api/job-api";
-import { composerStore, useComposerComments } from "@/lib/api/composer-store";
+} from 'react';
 
 /**
  * The inline review-comment feature ("Atlas Workspace HiFi" — select text in the detail pane → comment →
@@ -80,18 +80,17 @@ const ReviewCommentsContext = createContext<ReviewCommentsApi | null>(null);
 
 /** Feature-detect the CSS Custom Highlight API once — degrades gracefully (chips + send still work, just
  *  no visual underline) on browsers that lack it (older Firefox/Safari). */
-const HL_SUPPORTED =
-  typeof CSS !== "undefined" && typeof CSS.highlights !== "undefined";
+const HL_SUPPORTED = typeof CSS !== 'undefined' && typeof CSS.highlights !== 'undefined';
 
-const COMMITTED_NAME = "atlas-comment";
-const PENDING_NAME = "atlas-comment-pending";
+const COMMITTED_NAME = 'atlas-comment';
+const PENDING_NAME = 'atlas-comment-pending';
 
 // Styling for the two named highlights. Injected at runtime rather than living in globals.css because the
 // build's CSS parser (Turbopack, re-parsing Tailwind v4's Lightning-CSS output) doesn't recognize the
 // `::highlight()` pseudo-element and warns on every rebuild. Injecting here keeps the paint next to its
 // registration and never routes the rule through the PostCSS pipeline. `var(--accent)` still resolves at
 // runtime against the document's theme variables.
-const HIGHLIGHT_STYLE_ID = "atlas-review-highlight-styles";
+const HIGHLIGHT_STYLE_ID = 'atlas-review-highlight-styles';
 const HIGHLIGHT_CSS = `
 ::highlight(${COMMITTED_NAME}) {
   background-color: color-mix(in srgb, var(--accent) 15%, transparent);
@@ -106,12 +105,12 @@ const HIGHLIGHT_CSS = `
 `;
 
 function newId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function")
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
     return crypto.randomUUID();
   return `c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-const basename = (p: string): string => p.split("/").pop() ?? p;
+const basename = (p: string): string => p.split('/').pop() ?? p;
 
 export function ReviewCommentsProvider({
   jobRef,
@@ -124,9 +123,7 @@ export function ReviewCommentsProvider({
   // serializable metadata survives reload. The DOM `Range`/highlight machinery below stays per-mount.
   const comments = useComposerComments(jobRef);
   const [pending, setPending] = useState<PendingSelection | null>(null);
-  const [activeTarget, setActiveTargetState] = useState<CommentTarget | null>(
-    null,
-  );
+  const [activeTarget, setActiveTargetState] = useState<CommentTarget | null>(null);
 
   // Every mutator below is wrapped in `useCallback(fn, [])` so its identity is STABLE across renders —
   // consumers (like `PhaseView`'s `setActiveTarget` effect) can safely depend on it without re-firing every
@@ -135,9 +132,7 @@ export function ReviewCommentsProvider({
   // with an empty dep array) — so `pending`/`activeTarget` are mirrored into refs alongside their state.
   const committedHl = useRef<Highlight | null>(null);
   const pendingHl = useRef<Highlight | null>(null);
-  const rangesRef = useRef<Map<string, { range: Range; file: CommentTarget }>>(
-    new Map(),
-  );
+  const rangesRef = useRef<Map<string, { range: Range; file: CommentTarget }>>(new Map());
   const activeTargetRef = useRef<CommentTarget | null>(null);
   const pendingRef = useRef<PendingSelection | null>(null);
 
@@ -149,7 +144,7 @@ export function ReviewCommentsProvider({
     if (!HL_SUPPORTED) return;
     // Inject the highlight paint once (idempotent by id — survives StrictMode double-mount).
     if (!document.getElementById(HIGHLIGHT_STYLE_ID)) {
-      const style = document.createElement("style");
+      const style = document.createElement('style');
       style.id = HIGHLIGHT_STYLE_ID;
       style.textContent = HIGHLIGHT_CSS;
       document.head.appendChild(style);
@@ -201,20 +196,17 @@ export function ReviewCommentsProvider({
     [rebuildCommittedHighlight],
   );
 
-  const beginPending = useCallback(
-    (sel: { quote: string; rect: DOMRect; range: Range }) => {
-      const file = activeTargetRef.current;
-      if (!file) return;
-      if (HL_SUPPORTED && pendingHl.current) {
-        pendingHl.current.clear();
-        pendingHl.current.add(sel.range);
-      }
-      const next: PendingSelection = { ...sel, file };
-      pendingRef.current = next;
-      setPending(next);
-    },
-    [],
-  );
+  const beginPending = useCallback((sel: { quote: string; rect: DOMRect; range: Range }) => {
+    const file = activeTargetRef.current;
+    if (!file) return;
+    if (HL_SUPPORTED && pendingHl.current) {
+      pendingHl.current.clear();
+      pendingHl.current.add(sel.range);
+    }
+    const next: PendingSelection = { ...sel, file };
+    pendingRef.current = next;
+    setPending(next);
+  }, []);
 
   const cancelPending = useCallback(() => {
     pendingHl.current?.clear();
@@ -248,7 +240,7 @@ export function ReviewCommentsProvider({
         ...cs,
         {
           id,
-          file: { node: "diff", label: basename(a.path) },
+          file: { node: 'diff', label: basename(a.path) },
           quote: a.fragment,
           note: note.trim(),
           lines,
@@ -300,19 +292,12 @@ export function ReviewCommentsProvider({
     ],
   );
 
-  return (
-    <ReviewCommentsContext.Provider value={api}>
-      {children}
-    </ReviewCommentsContext.Provider>
-  );
+  return <ReviewCommentsContext.Provider value={api}>{children}</ReviewCommentsContext.Provider>;
 }
 
 export function useReviewComments(): ReviewCommentsApi {
   const ctx = useContext(ReviewCommentsContext);
-  if (!ctx)
-    throw new Error(
-      "useReviewComments must be used within a ReviewCommentsProvider",
-    );
+  if (!ctx) throw new Error('useReviewComments must be used within a ReviewCommentsProvider');
   return ctx;
 }
 

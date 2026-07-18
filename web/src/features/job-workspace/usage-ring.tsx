@@ -1,24 +1,29 @@
-"use client";
+'use client';
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { useCredentialUsage, useOrgUsage } from "@/lib/api/orgs";
-import { formatClockTime } from "@/utils/org-display";
-import type { WireOrgUsage } from "@/lib/api/types";
+import { useCredentialUsage, useOrgUsage } from '@/lib/api/orgs';
+import type { WireOrgUsage } from '@/lib/api/types';
+import { formatClockTime } from '@/utils/org-display';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
-type UsageWindow = WireOrgUsage["fiveHour"];
+type UsageWindow = WireOrgUsage['fiveHour'];
 /** A panel row's window data — the fixed windows plus the per-model ones (whose `resetsAt` may be null). */
 type PanelWindow = { utilization: number; resetsAt: string | null };
-type RingVisualState = "active" | "pending" | "degraded";
+type RingVisualState = 'active' | 'pending' | 'degraded';
 /**
  * Why an always-on row (Session/Weekly) has no data: `waiting` = the endpoint responded but that window
  * hasn't started this cycle (its 5h/7d clock only ticks once a message is sent); `unavailable` = the
  * endpoint itself gave no usable response. The two read differently so a real outage isn't mistaken for
  * an idle account. Dynamic rows (Opus/Sonnet/per-model) are simply omitted when absent, never "unknown".
  */
-type UnknownReason = "waiting" | "unavailable";
+type UnknownReason = 'waiting' | 'unavailable';
 /** One panel row: a known window, or an always-on row with no data yet (Session/Weekly only).
  *  `windowMs` is the window's nominal length, used only to place the pace marker. */
-type PanelRow = { label: string; window: PanelWindow | null; unknown: UnknownReason | null; windowMs: number };
+type PanelRow = {
+  label: string;
+  window: PanelWindow | null;
+  unknown: UnknownReason | null;
+  windowMs: number;
+};
 
 const RING_R = 7;
 const RING_CIRC = 2 * Math.PI * RING_R;
@@ -53,9 +58,9 @@ function clampPct(fraction: number): number {
 
 /** Accent → accent-2 → red by the shared usage thresholds. Drives BOTH the session arc and every panel row. */
 function thresholdColor(pct: number): string {
-  if (pct >= SESSION_LIMIT_THRESHOLD) return "var(--red)";
-  if (pct >= SESSION_WARNING_THRESHOLD) return "var(--accent-2)";
-  return "var(--accent)";
+  if (pct >= SESSION_LIMIT_THRESHOLD) return 'var(--red)';
+  if (pct >= SESSION_WARNING_THRESHOLD) return 'var(--accent-2)';
+  return 'var(--accent)';
 }
 
 /**
@@ -69,7 +74,7 @@ function weeklyGreyMix(pct: number): number {
 }
 
 function weeklyArcColor(pct: number): string {
-  if (pct >= WEEKLY_CAPPED_THRESHOLD) return "var(--red)";
+  if (pct >= WEEKLY_CAPPED_THRESHOLD) return 'var(--red)';
   return `color-mix(in srgb, var(--dim) ${weeklyGreyMix(pct)}%, transparent)`;
 }
 
@@ -86,7 +91,7 @@ function timeAgo(iso: string | undefined, now: number = Date.now()): string | nu
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return null;
   const secs = Math.max(0, Math.round((now - then) / 1000));
-  if (secs < 45) return "just now";
+  if (secs < 45) return 'just now';
   const mins = Math.round(secs / 60);
   if (mins < 60) return `${mins}m ago`;
   const hours = Math.round(mins / 60);
@@ -109,7 +114,7 @@ function formatCountdown(resetsAt: string | undefined, now: number = Date.now())
   const hours = Math.floor(remainingMs / MS_PER_HOUR);
   if (hours >= 1) {
     const minutes = Math.floor((remainingMs % MS_PER_HOUR) / MS_PER_MINUTE);
-    return `${hours}h ${String(minutes).padStart(2, "0")}m`;
+    return `${hours}h ${String(minutes).padStart(2, '0')}m`;
   }
   const minutes = Math.floor(remainingMs / MS_PER_MINUTE);
   return `${minutes}m`;
@@ -147,14 +152,20 @@ function formatResetHuman(resetsAt: string | undefined, now: number = Date.now()
     target.getMonth() === today.getMonth() &&
     target.getDate() === today.getDate();
   if (sameDay) return `${formatClockTime(resetsAt)} today`;
-  const weekday = target.toLocaleDateString(undefined, { weekday: "short" });
-  const monthDay = target.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  const time = target.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const weekday = target.toLocaleDateString(undefined, { weekday: 'short' });
+  const monthDay = target.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+  });
+  const time = target.toLocaleTimeString(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
   return `${weekday}, ${monthDay} · ${time}`;
 }
 
 function firstLetter(label: string): string {
-  return label.trim().charAt(0).toUpperCase() || "?";
+  return label.trim().charAt(0).toUpperCase() || '?';
 }
 
 /**
@@ -177,7 +188,7 @@ function Ring({
   maxed: boolean;
   size: number;
 }) {
-  if (state === "degraded") {
+  if (state === 'degraded') {
     return (
       <svg width={size} height={size} viewBox="0 0 18 18" aria-hidden>
         <circle
@@ -194,10 +205,17 @@ function Ring({
     );
   }
 
-  if (state === "pending") {
+  if (state === 'pending') {
     return (
       <svg width={size} height={size} viewBox="0 0 18 18" aria-hidden>
-        <circle cx="9" cy="9" r={RING_R} fill="none" stroke="var(--border)" strokeWidth={RING_STROKE} />
+        <circle
+          cx="9"
+          cy="9"
+          r={RING_R}
+          fill="none"
+          stroke="var(--border)"
+          strokeWidth={RING_STROKE}
+        />
         <circle cx="9" cy="9" r={1.4} fill="var(--faint)" opacity={0.45} />
       </svg>
     );
@@ -250,7 +268,7 @@ function PanelHeader({ accountLabel, plan }: { accountLabel?: string; plan?: str
       <div className="flex min-w-0 items-center gap-1.5">
         <span
           className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full font-mono text-[9px] font-semibold"
-          style={{ background: "var(--accent-soft)", color: "var(--accent)" }}
+          style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}
         >
           {firstLetter(accountLabel)}
         </span>
@@ -262,7 +280,7 @@ function PanelHeader({ accountLabel, plan }: { accountLabel?: string; plan?: str
       {plan ? (
         <span
           className="shrink-0 rounded-[4px] border px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.05em] text-faint"
-          style={{ borderColor: "var(--border)" }}
+          style={{ borderColor: 'var(--border)' }}
         >
           {plan}
         </span>
@@ -276,9 +294,9 @@ function PanelHeader({ accountLabel, plan }: { accountLabel?: string; plan?: str
  *  row so the panel never jumps: label + dot, a dashed/hollow bar instead of a fill, and the reason in
  *  place of a reset line. */
 function UnknownRow({ label, reason }: { label: string; reason: UnknownReason }) {
-  const unavailable = reason === "unavailable";
-  const accent = unavailable ? "var(--accent-2)" : "var(--faint)";
-  const text = unavailable ? "Usage unavailable" : "Waiting for next turn";
+  const unavailable = reason === 'unavailable';
+  const accent = unavailable ? 'var(--accent-2)' : 'var(--faint)';
+  const text = unavailable ? 'Usage unavailable' : 'Waiting for next turn';
   return (
     <div className="flex flex-col gap-1 opacity-80">
       <div className="flex items-center justify-between gap-3">
@@ -325,14 +343,14 @@ function WindowRow({
   // marker is over budget (burning faster than the clock). Hidden when there's no reset time to anchor it.
   const pace = paceFraction(window.resetsAt, windowMs);
   return (
-    <div className={`flex flex-col gap-1 ${dimmed ? "opacity-70" : ""}`}>
+    <div className={`flex flex-col gap-1 ${dimmed ? 'opacity-70' : ''}`}>
       <div className="flex items-center justify-between gap-3">
         <span className="flex items-center gap-1.5 text-[11px] text-dim">
           <span className="h-1.5 w-1.5 shrink-0 rounded-[2px]" style={{ background: color }} />
           {label}
         </span>
         <span className="font-mono text-[10px] tabular-nums text-faint">
-          {Math.round(window.utilization)}%{countdown ? ` · ${countdown}` : ""}
+          {Math.round(window.utilization)}%{countdown ? ` · ${countdown}` : ''}
         </span>
       </div>
       <div className="relative h-[3px] w-full rounded-full bg-border">
@@ -344,7 +362,11 @@ function WindowRow({
           <div
             aria-hidden
             className="absolute top-1/2 h-[7px] w-px -translate-x-1/2 -translate-y-1/2 rounded-full"
-            style={{ left: `${pace * 100}%`, background: "var(--red)", boxShadow: "0 0 0 1px var(--surface-2)" }}
+            style={{
+              left: `${pace * 100}%`,
+              background: 'var(--red)',
+              boxShadow: '0 0 0 1px var(--surface-2)',
+            }}
           />
         ) : null}
       </div>
@@ -355,19 +377,28 @@ function WindowRow({
 
 /** Panel footer — a freshness dot + status. When the endpoint gave no response (`unavailable`) it says
  *  so in amber; otherwise the last-fetched relative time (green when fresh, amber when stale). */
-function PanelFooter({ fetchedAt, unavailable }: { fetchedAt: string | undefined; unavailable: boolean }) {
+function PanelFooter({
+  fetchedAt,
+  unavailable,
+}: {
+  fetchedAt: string | undefined;
+  unavailable: boolean;
+}) {
   const fresh = !unavailable && isFresh(fetchedAt);
   return (
-    <div className="mt-2.5 flex items-center gap-1.5 border-t pt-1.5" style={{ borderColor: "var(--border)" }}>
+    <div
+      className="mt-2.5 flex items-center gap-1.5 border-t pt-1.5"
+      style={{ borderColor: 'var(--border)' }}
+    >
       <span
         className="h-1.5 w-1.5 shrink-0 rounded-full"
-        style={{ background: fresh ? "var(--green)" : "var(--accent-2)" }}
+        style={{ background: fresh ? 'var(--green)' : 'var(--accent-2)' }}
       />
       <span
         className="font-mono text-[10px]"
-        style={{ color: fresh ? "var(--faint)" : "var(--accent-2)" }}
+        style={{ color: fresh ? 'var(--faint)' : 'var(--accent-2)' }}
       >
-        {unavailable ? "Usage unavailable" : `Updated ${timeAgo(fetchedAt) ?? "recently"}`}
+        {unavailable ? 'Usage unavailable' : `Updated ${timeAgo(fetchedAt) ?? 'recently'}`}
       </span>
     </div>
   );
@@ -421,13 +452,13 @@ export function UsageRingView({
       if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === 'Escape') setOpen(false);
     };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
     return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
     };
   }, [open]);
 
@@ -447,12 +478,13 @@ export function UsageRingView({
       const naturalRight = rect.right - shiftX;
       let next = 0;
       if (naturalLeft < margin) next = margin - naturalLeft;
-      else if (naturalRight > window.innerWidth - margin) next = window.innerWidth - margin - naturalRight;
+      else if (naturalRight > window.innerWidth - margin)
+        next = window.innerWidth - margin - naturalRight;
       setShiftX(next);
     };
     measure();
-    window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
     // `shiftX` is intentionally omitted: it's derived here, and re-running on it would loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -465,15 +497,20 @@ export function UsageRingView({
   // reads "Usage unavailable". A first load with no cache yet (no data, still fetching) is treated as
   // pending too, so it doesn't flash "unavailable" before the response lands.
   const responded = data ? data.ok !== false : isLoading;
-  const unknownReason: UnknownReason = responded ? "waiting" : "unavailable";
+  const unknownReason: UnknownReason = responded ? 'waiting' : 'unavailable';
 
   // Session (5h) and Weekly (7d) are ALWAYS shown; when their window is absent they render as an unknown
   // row rather than being hidden. Opus/Sonnet and the per-model weekly caps (e.g. Fable) stay dynamic —
   // present only when the endpoint reports them.
   const alwaysOnRows: PanelRow[] = [
-    { label: "Session · 5h", window: session, unknown: session ? null : unknownReason, windowMs: SESSION_WINDOW_MS },
     {
-      label: "Weekly · all models · 7d",
+      label: 'Session · 5h',
+      window: session,
+      unknown: session ? null : unknownReason,
+      windowMs: SESSION_WINDOW_MS,
+    },
+    {
+      label: 'Weekly · all models · 7d',
       window: weekly,
       unknown: weekly ? null : unknownReason,
       windowMs: WEEKLY_WINDOW_MS,
@@ -481,12 +518,20 @@ export function UsageRingView({
   ];
   const dynamicRows: PanelRow[] = (
     [
-      ["Opus · 7d", data?.sevenDayOpus ?? null],
-      ["Sonnet · 7d", data?.sevenDaySonnet ?? null],
+      ['Opus · 7d', data?.sevenDayOpus ?? null],
+      ['Sonnet · 7d', data?.sevenDaySonnet ?? null],
     ] as [string, UsageWindow][]
   )
     .filter((row): row is [string, NonNullable<UsageWindow>] => row[1] !== null)
-    .map(([label, w]) => ({ label, window: w, unknown: null, windowMs: WEEKLY_WINDOW_MS }) satisfies PanelRow);
+    .map(
+      ([label, w]) =>
+        ({
+          label,
+          window: w,
+          unknown: null,
+          windowMs: WEEKLY_WINDOW_MS,
+        }) satisfies PanelRow,
+    );
   const modelRows: PanelRow[] = (data?.modelWindows ?? []).map((w) => ({
     label: `${w.label} · 7d`,
     window: { utilization: w.utilization, resetsAt: w.resetsAt },
@@ -499,7 +544,8 @@ export function UsageRingView({
   const weeklyPct = weekly ? clampPct(weekly.utilization / 100) : 0;
   // The ring draws real arcs whenever session OR weekly has data; `pending` (fresh, not started) shows a
   // clean outline; `degraded` (unavailable) shows a dashed one.
-  const visualState: RingVisualState = session || weekly ? "active" : responded ? "pending" : "degraded";
+  const visualState: RingVisualState =
+    session || weekly ? 'active' : responded ? 'pending' : 'degraded';
 
   // `maxed` (100%) lights the limit-hit dot for EITHER window — a capped weekly blocks you just as hard as
   // a capped session. When maxed, the ring's label becomes a countdown to the soonest reset among the
@@ -527,10 +573,10 @@ export function UsageRingView({
     : session
       ? `${Math.round(sessionPct * 100)}%`
       : responded
-        ? "0%"
-        : "–";
-  const labelClassName = critical ? "" : session || responded ? "text-dim" : "text-faint";
-  const labelStyle = critical ? { color: "var(--red)" } : undefined;
+        ? '0%'
+        : '–';
+  const labelClassName = critical ? '' : session || responded ? 'text-dim' : 'text-faint';
+  const labelStyle = critical ? { color: 'var(--red)' } : undefined;
 
   const title = maxedCountdown
     ? `Claude usage · limit reached — resets in ${maxedCountdown} — click for details`
@@ -539,8 +585,8 @@ export function UsageRingView({
           session.resetsAt,
         )}) — click for details`
       : responded
-        ? "Session usage · 0% — waiting for next turn — click for details"
-        : "Claude usage · unavailable right now — click for details";
+        ? 'Session usage · 0% — waiting for next turn — click for details'
+        : 'Claude usage · unavailable right now — click for details';
 
   return (
     <div ref={rootRef} className="relative flex items-center">
@@ -552,7 +598,13 @@ export function UsageRingView({
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
-        <Ring state={visualState} sessionPct={sessionPct} weeklyPct={weeklyPct} maxed={maxed} size={size} />
+        <Ring
+          state={visualState}
+          sessionPct={sessionPct}
+          weeklyPct={weeklyPct}
+          maxed={maxed}
+          size={size}
+        />
         <span className={`font-mono text-[10px] tabular-nums ${labelClassName}`} style={labelStyle}>
           {labelText}
         </span>
@@ -562,8 +614,8 @@ export function UsageRingView({
           ref={panelRef}
           className="absolute bottom-full right-0 z-30 mb-2 w-60 max-w-[calc(100vw-1rem)] rounded-[9px] border p-2.5 shadow-lg"
           style={{
-            borderColor: "var(--border)",
-            background: "var(--surface-2)",
+            borderColor: 'var(--border)',
+            background: 'var(--surface-2)',
             transform: shiftX ? `translateX(${shiftX}px)` : undefined,
           }}
         >
@@ -579,7 +631,11 @@ export function UsageRingView({
                   dimmed={!isFresh(data?.fetchedAt)}
                 />
               ) : (
-                <UnknownRow key={row.label} label={row.label} reason={row.unknown ?? unknownReason} />
+                <UnknownRow
+                  key={row.label}
+                  label={row.label}
+                  reason={row.unknown ?? unknownReason}
+                />
               ),
             )}
           </div>

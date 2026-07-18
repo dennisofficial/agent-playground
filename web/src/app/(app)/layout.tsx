@@ -1,7 +1,7 @@
-import type { ReactNode } from "react";
-import { PrivateGuard } from "@/features/auth/components/guards";
-import { ConnectivityGate } from "@/components/error/connectivity-gate";
-import { AppChrome } from "@/features/shell/components/app-chrome";
+import { ConnectivityGate } from '@/components/error/connectivity-gate';
+import { PrivateGuard } from '@/features/auth/components/guards';
+import { AppChrome } from '@/features/shell/components/app-chrome';
+import type { ReactNode } from 'react';
 
 /**
  * Protected app shell. `PrivateGuard` gates on auth; `ConnectivityGate` surfaces a mid-session backend

@@ -1,18 +1,14 @@
-import {
-  type AutoApproveMode,
-  modeApprovesPlan,
-  modeApprovesShip,
-} from "@workspace/shared";
+import { type AutoApproveMode, modeApprovesPlan, modeApprovesShip } from '@workspace/shared';
 
 /** Composes the wire `AutoApproveMode` from the two independent Plan/Ship switches. */
 export function composeMode(plan: boolean, ship: boolean): AutoApproveMode {
-  if (plan && ship) return "both";
-  if (plan) return "plan";
-  if (ship) return "ship";
-  return "off";
+  if (plan && ship) return 'both';
+  if (plan) return 'plan';
+  if (ship) return 'ship';
+  return 'off';
 }
 
-export type AutoPillTone = "off" | "partial" | "full";
+export type AutoPillTone = 'off' | 'partial' | 'full';
 
 /** How the header pill reads a mode: quiet grey (off), amber naming the single active gate (partial), or
  *  solid green "Auto" (both gates armed). */
@@ -22,8 +18,8 @@ export function autoPillView(mode: AutoApproveMode): {
 } {
   const plan = modeApprovesPlan(mode);
   const ship = modeApprovesShip(mode);
-  if (plan && ship) return { tone: "full", label: "Auto" };
-  if (plan) return { tone: "partial", label: "Plan" };
-  if (ship) return { tone: "partial", label: "Ship" };
-  return { tone: "off", label: "Auto" };
+  if (plan && ship) return { tone: 'full', label: 'Auto' };
+  if (plan) return { tone: 'partial', label: 'Plan' };
+  if (ship) return { tone: 'partial', label: 'Ship' };
+  return { tone: 'off', label: 'Auto' };
 }

@@ -1,16 +1,16 @@
-"use client";
+'use client';
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { usePathname } from "next/navigation";
-import { Sidebar } from "./sidebar";
-import { TopBar } from "./top-bar";
-import { CommandPalette } from "./command-palette";
-import { useAllJobsRealtime } from "@/lib/api/all-jobs-realtime";
-import { useDraftsRealtime } from "@/lib/api/draft-realtime";
-import { useBreakpoint } from "@/hooks/use-breakpoint";
-import { Drawer } from "@/components/ui/drawer";
-import { LeftNavProvider } from "@/features/shell/left-nav";
-import { OutboxFlusher } from "@/features/job-workspace/outbox-flusher";
+import { Drawer } from '@/components/ui/drawer';
+import { OutboxFlusher } from '@/features/job-workspace/outbox-flusher';
+import { LeftNavProvider } from '@/features/shell/left-nav';
+import { useBreakpoint } from '@/hooks/use-breakpoint';
+import { useAllJobsRealtime } from '@/lib/api/all-jobs-realtime';
+import { useDraftsRealtime } from '@/lib/api/draft-realtime';
+import { usePathname } from 'next/navigation';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { CommandPalette } from './command-palette';
+import { Sidebar } from './sidebar';
+import { TopBar } from './top-bar';
 
 /**
  * The persistent app chrome (client). The app-wide TOP BAR (ATLAS lockup + Jobs nav + avatar) spans
@@ -18,13 +18,7 @@ import { OutboxFlusher } from "@/features/job-workspace/outbox-flusher";
  * breakpoint (<768px) the workspace sidebar becomes an off-canvas drawer, opened from the top bar's
  * hamburger. Owns the ⌘K palette; `dialog` is the `@dialog` parallel slot (the create-job modal).
  */
-export function AppChrome({
-  children,
-  dialog,
-}: {
-  children: ReactNode;
-  dialog: ReactNode;
-}) {
+export function AppChrome({ children, dialog }: { children: ReactNode; dialog: ReactNode }) {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const pathname = usePathname();
@@ -40,15 +34,15 @@ export function AppChrome({
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setPaletteOpen((o) => !o);
-      } else if (e.key === "Escape") {
+      } else if (e.key === 'Escape') {
         setPaletteOpen(false);
       }
     }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, []);
 
   useEffect(() => setSidebarOpen(false), [pathname]);

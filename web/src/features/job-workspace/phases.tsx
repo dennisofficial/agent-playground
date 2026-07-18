@@ -1,8 +1,8 @@
-"use client";
+'use client';
 
-import { useState } from "react";
-import { ChevronRight, Hammer, MessageSquareText } from "lucide-react";
-import { Markdown } from "./markdown";
+import { ChevronRight, Hammer, MessageSquareText } from 'lucide-react';
+import { useState } from 'react';
+import { Markdown } from './markdown';
 
 /**
  * The live-stream lane a build THREAD streams on — STABLE per thread (like the brain's `main`), so the web
@@ -24,8 +24,8 @@ export function BuildInstruction({ text }: { text: string }) {
     <div
       className="anim-fadeUp rounded-[9px] border"
       style={{
-        borderColor: "var(--border-2)",
-        background: "color-mix(in srgb, var(--surface-2) 60%, transparent)",
+        borderColor: 'var(--border-2)',
+        background: 'color-mix(in srgb, var(--surface-2) 60%, transparent)',
       }}
     >
       <button
@@ -33,14 +33,14 @@ export function BuildInstruction({ text }: { text: string }) {
         onClick={() => setOpen((o) => !o)}
         className="flex w-full items-center gap-2 rounded-t-[8px] px-3.5 py-2 text-left"
         style={{
-          borderBottom: open ? "1px solid var(--border)" : "none",
-          background: "color-mix(in srgb, var(--surface-3) 70%, transparent)",
+          borderBottom: open ? '1px solid var(--border)' : 'none',
+          background: 'color-mix(in srgb, var(--surface-3) 70%, transparent)',
         }}
       >
         <ChevronRight
           size={11}
           strokeWidth={2.6}
-          className={`shrink-0 text-faint transition-transform ${open ? "rotate-90" : ""}`}
+          className={`shrink-0 text-faint transition-transform ${open ? 'rotate-90' : ''}`}
         />
         <Hammer size={12} className="shrink-0 text-dim" />
         <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-dim">
@@ -78,8 +78,8 @@ export function AgentPromptBlock({
     <div
       className="anim-fadeUp rounded-[9px] border"
       style={{
-        borderColor: "var(--border-2)",
-        background: "color-mix(in srgb, var(--surface-2) 60%, transparent)",
+        borderColor: 'var(--border-2)',
+        background: 'color-mix(in srgb, var(--surface-2) 60%, transparent)',
       }}
     >
       <button
@@ -87,22 +87,20 @@ export function AgentPromptBlock({
         onClick={() => setOpen((o) => !o)}
         className="flex w-full items-center gap-2 rounded-t-[8px] px-3.5 py-2 text-left"
         style={{
-          borderBottom: open ? "1px solid var(--border)" : "none",
-          background: "color-mix(in srgb, var(--surface-3) 70%, transparent)",
+          borderBottom: open ? '1px solid var(--border)' : 'none',
+          background: 'color-mix(in srgb, var(--surface-3) 70%, transparent)',
         }}
       >
         <ChevronRight
           size={11}
           strokeWidth={2.6}
-          className={`shrink-0 text-faint transition-transform ${open ? "rotate-90" : ""}`}
+          className={`shrink-0 text-faint transition-transform ${open ? 'rotate-90' : ''}`}
         />
         <MessageSquareText size={12} className="shrink-0 text-dim" />
         <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-dim">
           Prompt
         </span>
-        <span className="truncate font-mono text-[10px] text-faint">
-          what the agent was asked
-        </span>
+        <span className="truncate font-mono text-[10px] text-faint">what the agent was asked</span>
       </button>
       {open ? (
         <div className="px-3.5 py-3">

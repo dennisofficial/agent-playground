@@ -1,8 +1,8 @@
-"use client";
+'use client';
 
-import { use } from "react";
-import { useOrg } from "@/lib/api/me";
-import { ConventionProfilesSection } from "@/features/settings/components/convention-profiles-section";
+import { ConventionProfilesSection } from '@/features/settings/components/convention-profiles-section';
+import { useOrg } from '@/lib/api/me';
+import { use } from 'react';
 
 export default function ConventionProfilesSettingsPage({
   params,

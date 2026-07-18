@@ -1,19 +1,9 @@
-"use client";
+'use client';
 
-import { useMemo, useState } from "react";
-import {
-  AlertCircle,
-  Layers,
-  Lock,
-  Pencil,
-  Plus,
-  Trash2,
-  X,
-} from "lucide-react";
-import { Spinner } from "@/components/ui/spinner";
-import { Button } from "@/components/ui/button";
-import { inputCls } from "@/components/ui/field";
-import { cn } from "@/lib/cn";
+import { Button } from '@/components/ui/button';
+import { inputCls } from '@/components/ui/field';
+import { Spinner } from '@/components/ui/spinner';
+import { useOrgRepos } from '@/lib/api/job-queries';
 import {
   useAttachConventionProfile,
   useConventionProfiles,
@@ -21,8 +11,10 @@ import {
   useRepoConventionProfile,
   useSaveConventionProfile,
   type ConventionProfile,
-} from "@/lib/api/orgs";
-import { useOrgRepos } from "@/lib/api/job-queries";
+} from '@/lib/api/orgs';
+import { cn } from '@/lib/cn';
+import { AlertCircle, Layers, Lock, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { useState } from 'react';
 
 /**
  * Convention profiles — reusable "house-style" bundles (folder structure, stack idioms, a shared-contract
@@ -32,16 +24,10 @@ import { useOrgRepos } from "@/lib/api/job-queries";
  * auto-detect a matching profile and propose it (owner-approved); this screen is the manual counterpart.
  * Owner-only writes (the server enforces it).
  */
-export function ConventionProfilesSection({
-  orgId,
-  role,
-}: {
-  orgId: string;
-  role: string;
-}) {
+export function ConventionProfilesSection({ orgId, role }: { orgId: string; role: string }) {
   const { data, isLoading, isError, refetch } = useConventionProfiles(orgId);
-  const isOwner = role === "owner";
-  const [editing, setEditing] = useState<ConventionProfile | "new" | null>(null);
+  const isOwner = role === 'owner';
+  const [editing, setEditing] = useState<ConventionProfile | 'new' | null>(null);
 
   const profiles = data?.profiles ?? [];
 
@@ -51,11 +37,10 @@ export function ConventionProfilesSection({
         Convention Profiles
       </h1>
       <p className="mb-4 mt-1.5 max-w-[640px] text-[13px] leading-relaxed text-dim">
-        Reusable <b className="font-semibold text-text">house-style</b> bundles —
-        folder structure, stack idioms, a shared-contract layout. Define one
-        once, then attach it to any repo that follows that style. A repo with{" "}
-        <b className="font-semibold text-text">none</b> attached builds exactly
-        as before, so a profile never misfires on a repo it doesn’t fit.
+        Reusable <b className="font-semibold text-text">house-style</b> bundles — folder structure,
+        stack idioms, a shared-contract layout. Define one once, then attach it to any repo that
+        follows that style. A repo with <b className="font-semibold text-text">none</b> attached
+        builds exactly as before, so a profile never misfires on a repo it doesn’t fit.
       </p>
 
       {!isOwner ? (
@@ -92,14 +77,14 @@ export function ConventionProfilesSection({
         <>
           <div className="mb-3 flex items-center justify-between">
             <div className="text-[12px] font-semibold uppercase tracking-wide text-faint">
-              {profiles.length} profile{profiles.length === 1 ? "" : "s"}
+              {profiles.length} profile{profiles.length === 1 ? '' : 's'}
             </div>
             {isOwner ? (
               <Button
                 size="sm"
                 variant="soft"
                 icon={<Plus size={14} />}
-                onClick={() => setEditing("new")}
+                onClick={() => setEditing('new')}
               >
                 New profile
               </Button>
@@ -109,13 +94,10 @@ export function ConventionProfilesSection({
           {profiles.length === 0 ? (
             <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border bg-surface-2 px-6 py-10 text-center">
               <Layers size={20} className="text-faint" />
-              <div className="text-[13px] font-semibold text-text">
-                No convention profiles yet
-              </div>
+              <div className="text-[13px] font-semibold text-text">No convention profiles yet</div>
               <div className="max-w-[420px] text-[12px] leading-relaxed text-dim">
-                Create one (e.g. “NestJS + Next.js + shared contract”) to encode
-                how new code should be structured, then attach it to matching
-                repos below.
+                Create one (e.g. “NestJS + Next.js + shared contract”) to encode how new code should
+                be structured, then attach it to matching repos below.
               </div>
             </div>
           ) : (
@@ -141,7 +123,7 @@ export function ConventionProfilesSection({
       {editing ? (
         <ProfileEditor
           orgId={orgId}
-          existing={editing === "new" ? null : editing}
+          existing={editing === 'new' ? null : editing}
           takenSlugs={profiles.map((p) => p.slug)}
           onClose={() => setEditing(null)}
         />
@@ -170,9 +152,7 @@ function ProfileCard({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-[13.5px] font-semibold text-text">
-              {profile.name}
-            </span>
+            <span className="text-[13.5px] font-semibold text-text">{profile.name}</span>
             <code className="rounded bg-surface-2 px-1.5 py-0.5 text-[11px] text-dim">
               {profile.slug}
             </code>
@@ -223,8 +203,8 @@ function slugify(name: string): string {
   return name
     .toLowerCase()
     .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
     .slice(0, 64);
 }
 
@@ -240,16 +220,18 @@ function ProfileEditor({
   onClose: () => void;
 }) {
   const save = useSaveConventionProfile(orgId);
-  const [name, setName] = useState(existing?.name ?? "");
-  const [slug, setSlug] = useState(existing?.slug ?? "");
+  const [name, setName] = useState(existing?.name ?? '');
+  const [slug, setSlug] = useState(existing?.slug ?? '');
   const [slugTouched, setSlugTouched] = useState(Boolean(existing));
-  const [body, setBody] = useState(existing?.body ?? "");
-  const [detectHint, setDetectHint] = useState(existing?.detectHint ?? "");
+  const [body, setBody] = useState(existing?.body ?? '');
+  const [detectHint, setDetectHint] = useState(existing?.detectHint ?? '');
 
   const effectiveSlug = existing ? existing.slug : slugTouched ? slug : slugify(name);
   const slugValid = /^[a-z0-9][a-z0-9_-]{0,63}$/.test(effectiveSlug);
   const collision =
-    !existing && takenSlugs.includes(effectiveSlug) ? "A profile with this slug already exists." : null;
+    !existing && takenSlugs.includes(effectiveSlug)
+      ? 'A profile with this slug already exists.'
+      : null;
   const canSave =
     name.trim().length > 0 && body.trim().length > 0 && slugValid && !collision && !save.isPending;
 
@@ -258,7 +240,11 @@ function ProfileEditor({
     save.mutate(
       {
         slug: effectiveSlug,
-        body: { name: name.trim(), body, detectHint: detectHint.trim() || undefined },
+        body: {
+          name: name.trim(),
+          body,
+          detectHint: detectHint.trim() || undefined,
+        },
       },
       { onSuccess: onClose },
     );
@@ -277,7 +263,7 @@ function ProfileEditor({
       >
         <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
           <div className="text-[14px] font-semibold text-text">
-            {existing ? `Edit “${existing.name}”` : "New convention profile"}
+            {existing ? `Edit “${existing.name}”` : 'New convention profile'}
           </div>
           <button
             type="button"
@@ -301,7 +287,7 @@ function ProfileEditor({
             Slug {existing ? <span className="text-faint">(fixed)</span> : null}
           </label>
           <input
-            className={cn(inputCls, "font-mono text-[12px]")}
+            className={cn(inputCls, 'font-mono text-[12px]')}
             value={effectiveSlug}
             disabled={Boolean(existing)}
             placeholder="nestjs-next-shared"
@@ -323,10 +309,13 @@ function ProfileEditor({
             House style (markdown)
           </label>
           <textarea
-            className={cn(inputCls, "h-[220px] resize-y py-2.5 font-mono text-[12px] leading-relaxed")}
+            className={cn(
+              inputCls,
+              'h-[220px] resize-y py-2.5 font-mono text-[12px] leading-relaxed',
+            )}
             value={body}
             placeholder={
-              "# House style\n\n## Backend (NestJS)\n- one feature = one module; thin controllers…\n\n## Frontend (Next.js)\n- apps/ views, feature folders, atomic components/, libs/…\n\n## Shared contract\n- shared/ holds DTOs + types imported by both ends."
+              '# House style\n\n## Backend (NestJS)\n- one feature = one module; thin controllers…\n\n## Frontend (Next.js)\n- apps/ views, feature folders, atomic components/, libs/…\n\n## Shared contract\n- shared/ holds DTOs + types imported by both ends.'
             }
             onChange={(e) => setBody(e.target.value)}
           />
@@ -335,11 +324,11 @@ function ProfileEditor({
             Detect hint <span className="text-faint">(optional)</span>
           </label>
           <p className="mb-1.5 text-[11px] leading-relaxed text-faint">
-            What stack this matches — the onboarding agent reads this to auto-propose the profile on a
-            matching repo.
+            What stack this matches — the onboarding agent reads this to auto-propose the profile on
+            a matching repo.
           </p>
           <textarea
-            className={cn(inputCls, "h-[80px] resize-y py-2.5 text-[12px] leading-relaxed")}
+            className={cn(inputCls, 'h-[80px] resize-y py-2.5 text-[12px] leading-relaxed')}
             value={detectHint}
             placeholder="A NestJS backend + Next.js frontend wired through a shared/ contract dir."
             onChange={(e) => setDetectHint(e.target.value)}
@@ -363,7 +352,7 @@ function ProfileEditor({
             loadingText="Saving…"
             onClick={submit}
           >
-            {existing ? "Save changes" : "Create profile"}
+            {existing ? 'Save changes' : 'Create profile'}
           </Button>
         </div>
       </div>
@@ -389,7 +378,7 @@ function RepoAttachments({
         Repo attachments
       </div>
       <p className="mb-3 max-w-[560px] text-[12px] leading-relaxed text-dim">
-        Attach a profile to a repo to build its code in that house style. Leave a repo on{" "}
+        Attach a profile to a repo to build its code in that house style. Leave a repo on{' '}
         <b className="font-semibold text-text">None</b> to keep it convention-free.
       </p>
       {!repos || repos.length === 0 ? (
@@ -432,7 +421,7 @@ function RepoAttachmentRow({
 }) {
   const { data, isLoading } = useRepoConventionProfile(orgId, repoId);
   const attach = useAttachConventionProfile(orgId);
-  const current = data?.slug ?? "";
+  const current = data?.slug ?? '';
 
   return (
     <div className="flex items-center justify-between gap-3 bg-surface px-4 py-3">
@@ -443,11 +432,14 @@ function RepoAttachmentRow({
       <div className="flex shrink-0 items-center gap-2">
         {attach.isPending ? <Spinner className="h-3 w-3" /> : null}
         <select
-          className={cn(inputCls, "h-9 w-[220px] cursor-pointer text-[12px]")}
+          className={cn(inputCls, 'h-9 w-[220px] cursor-pointer text-[12px]')}
           value={current}
           disabled={!canManage || isLoading || attach.isPending}
           onChange={(e) =>
-            attach.mutate({ repoId, slug: e.target.value === "" ? null : e.target.value })
+            attach.mutate({
+              repoId,
+              slug: e.target.value === '' ? null : e.target.value,
+            })
           }
         >
           <option value="">None (convention-free)</option>

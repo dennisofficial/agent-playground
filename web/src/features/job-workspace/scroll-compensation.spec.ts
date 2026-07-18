@@ -1,6 +1,6 @@
-import { Virtualizer } from "@tanstack/react-virtual";
-import { describe, expect, it } from "vitest";
-import { compensateAboveViewportResize } from "./scroll-compensation";
+import { Virtualizer } from '@tanstack/react-virtual';
+import { describe, expect, it } from 'vitest';
+import { compensateAboveViewportResize } from './scroll-compensation';
 
 /**
  * Deterministic RED→GREEN for Cause B: an already-measured row ABOVE the viewport
@@ -58,7 +58,7 @@ function measureBackwardResize(withFix: boolean) {
   v.resizeItem(idx, 250);
 
   // Now re-measure the SAME (already-cached) row +150 during an upward scroll — the skipped case.
-  v.scrollDirection = "backward";
+  v.scrollDirection = 'backward';
   const offsetBefore = v.scrollOffset;
   adjustmentsPassed.length = 0;
   v.resizeItem(idx, 400);
@@ -66,14 +66,14 @@ function measureBackwardResize(withFix: boolean) {
   return { offsetDelta: v.scrollOffset - offsetBefore, adjustmentsPassed };
 }
 
-describe("compensateAboveViewportResize (Cause B)", () => {
-  it("RED: virtual-core default does NOT compensate an above-viewport re-measure during upward scroll", () => {
+describe('compensateAboveViewportResize (Cause B)', () => {
+  it('RED: virtual-core default does NOT compensate an above-viewport re-measure during upward scroll', () => {
     const broken = measureBackwardResize(false);
     expect(broken.offsetDelta).toBe(0);
     expect(broken.adjustmentsPassed).toEqual([]);
   });
 
-  it("GREEN: the predicate compensates scrollOffset by the full size delta", () => {
+  it('GREEN: the predicate compensates scrollOffset by the full size delta', () => {
     const fixed = measureBackwardResize(true);
     expect(fixed.offsetDelta).toBe(150);
     expect(fixed.adjustmentsPassed).toEqual([150]);

@@ -1,8 +1,12 @@
-"use client";
+'use client';
 
-import { use, useEffect, useRef, useState, type ReactNode } from "react";
-import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { Drawer } from '@/components/ui/drawer';
+import { TopBar } from '@/features/shell/components/top-bar';
+import { useBreakpoint } from '@/hooks/use-breakpoint';
+import { useOrg, useOrgs, type OrgSummary } from '@/lib/api/me';
+import { cn } from '@/lib/cn';
+import { ROUTES, type SettingsSection } from '@/lib/routes';
+import { orgSwatch, roleLabel } from '@/utils/org-display';
 import {
   Check,
   ChevronDown,
@@ -15,36 +19,29 @@ import {
   Sparkles,
   Users,
   Zap,
-} from "lucide-react";
-import { cn } from "@/lib/cn";
-import { ROUTES, type SettingsSection } from "@/lib/routes";
-import { TopBar } from "@/features/shell/components/top-bar";
-import { useOrg, useOrgs, type OrgSummary } from "@/lib/api/me";
-import { orgSwatch, roleLabel } from "@/utils/org-display";
-import { useBreakpoint } from "@/hooks/use-breakpoint";
-import { Drawer } from "@/components/ui/drawer";
+} from 'lucide-react';
+import Link from 'next/link';
+import { usePathname, useRouter } from 'next/navigation';
+import { use, useEffect, useRef, useState, type ReactNode } from 'react';
 
-const NAV: { id: SettingsSection; label: string; icon: typeof SettingsIcon }[] =
-  [
-    { id: "general", label: "General", icon: SettingsIcon },
-    { id: "automation", label: "Automation", icon: Zap },
-    { id: "credentials", label: "Credentials", icon: KeyRound },
-    { id: "workspace-profile", label: "Workspace profile", icon: FolderCog },
-    { id: "mcp-servers", label: "MCP servers", icon: Plug },
-    { id: "convention-profiles", label: "Convention profiles", icon: Layers },
-    { id: "skills", label: "Skills", icon: Sparkles },
-    { id: "members", label: "Members", icon: Users },
-    { id: "repos", label: "Repos", icon: GitBranch },
-  ];
+const NAV: { id: SettingsSection; label: string; icon: typeof SettingsIcon }[] = [
+  { id: 'general', label: 'General', icon: SettingsIcon },
+  { id: 'automation', label: 'Automation', icon: Zap },
+  { id: 'credentials', label: 'Credentials', icon: KeyRound },
+  { id: 'workspace-profile', label: 'Workspace profile', icon: FolderCog },
+  { id: 'mcp-servers', label: 'MCP servers', icon: Plug },
+  { id: 'convention-profiles', label: 'Convention profiles', icon: Layers },
+  { id: 'skills', label: 'Skills', icon: Sparkles },
+  { id: 'members', label: 'Members', icon: Users },
+  { id: 'repos', label: 'Repos', icon: GitBranch },
+];
 
 const NAV_IDS = new Set<SettingsSection>(NAV.map((n) => n.id));
 
 /** The active section is the last path segment (`…/settings/<section>`); the bare path falls back. */
 function sectionFromPath(pathname: string): SettingsSection {
-  const last = pathname.split("/").pop() ?? "";
-  return NAV_IDS.has(last as SettingsSection)
-    ? (last as SettingsSection)
-    : "general";
+  const last = pathname.split('/').pop() ?? '';
+  return NAV_IDS.has(last as SettingsSection) ? (last as SettingsSection) : 'general';
 }
 
 /**
@@ -119,9 +116,7 @@ export default function OrgSettingsLayout({
               <p className="text-[13px] text-faint">Loading…</p>
             ) : !org ? (
               <div className="rounded-lg border border-dashed border-border-2 px-6 py-14 text-center">
-                <h2 className="text-[15px] font-semibold text-text">
-                  Organization not found
-                </h2>
+                <h2 className="text-[15px] font-semibold text-text">Organization not found</h2>
                 <p className="mx-auto mt-1.5 max-w-sm text-[13px] text-dim">
                   This organization doesn’t exist or you don’t have access to it.
                 </p>
@@ -164,11 +159,11 @@ function OrgSettingsNav({
   return (
     <nav
       className={cn(
-        "flex flex-col gap-0.5 px-3 py-4",
-        inDrawer ? "w-full" : "w-[228px] shrink-0 border-r border-border",
+        'flex flex-col gap-0.5 px-3 py-4',
+        inDrawer ? 'w-full' : 'w-[228px] shrink-0 border-r border-border',
       )}
       style={{
-        background: "color-mix(in srgb, var(--panel) 60%, transparent)",
+        background: 'color-mix(in srgb, var(--panel) 60%, transparent)',
       }}
     >
       <div className="px-1 pb-3 pt-0.5">
@@ -193,14 +188,14 @@ function OrgSettingsNav({
             href={ROUTES.orgSettings(orgId, id)}
             onClick={() => setNavOpen(false)}
             className={cn(
-              "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[12.5px] font-medium transition",
-              on ? "text-accent" : "text-dim hover:bg-surface-2",
+              'flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[12.5px] font-medium transition',
+              on ? 'text-accent' : 'text-dim hover:bg-surface-2',
             )}
             style={
               on
                 ? {
-                    background: "var(--accent-soft)",
-                    boxShadow: "inset 0 0 0 1px var(--accent-line)",
+                    background: 'var(--accent-soft)',
+                    boxShadow: 'inset 0 0 0 1px var(--accent-line)',
                   }
                 : undefined
             }
@@ -235,11 +230,10 @@ function OrgSwitcher({
 
   useEffect(() => {
     function onDoc(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node))
-        setOpen(false);
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     }
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
   }, []);
 
   return (
@@ -251,45 +245,42 @@ function OrgSwitcher({
         style={
           open
             ? {
-                background: "var(--accent-soft)",
-                borderColor: "var(--accent-line)",
+                background: 'var(--accent-soft)',
+                borderColor: 'var(--accent-line)',
               }
-            : { background: "var(--surface)", borderColor: "var(--border)" }
+            : { background: 'var(--surface)', borderColor: 'var(--border)' }
         }
         aria-haspopup="listbox"
         aria-expanded={open}
       >
         <span
           className="h-2.5 w-2.5 shrink-0 rounded-[3px]"
-          style={{ background: org ? orgSwatch() : "var(--faint)" }}
+          style={{ background: org ? orgSwatch() : 'var(--faint)' }}
         />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[12.5px] font-semibold text-text">
-            {org?.name ?? "Organization"}
+            {org?.name ?? 'Organization'}
           </span>
           <span
             className="block font-mono text-[8.5px]"
             style={{
-              color: org?.status === "active" ? "var(--green)" : "var(--faint)",
+              color: org?.status === 'active' ? 'var(--green)' : 'var(--faint)',
             }}
           >
-            {org?.status ?? "—"}
+            {org?.status ?? '—'}
           </span>
         </span>
         <ChevronDown
           size={13}
-          className={cn(
-            "shrink-0 transition",
-            open ? "text-accent" : "text-faint",
-          )}
-          style={open ? { transform: "rotate(180deg)" } : undefined}
+          className={cn('shrink-0 transition', open ? 'text-accent' : 'text-faint')}
+          style={open ? { transform: 'rotate(180deg)' } : undefined}
         />
       </button>
 
       {open ? (
         <div
           className="absolute left-0 right-0 top-[calc(100%+6px)] z-50 overflow-hidden rounded-md border border-border bg-panel py-1"
-          style={{ boxShadow: "var(--shadow-menu)" }}
+          style={{ boxShadow: 'var(--shadow-menu)' }}
         >
           <div className="px-3 pb-1 pt-1.5 font-mono text-[8.5px] tracking-[0.12em] text-faint">
             SWITCH ORG SETTINGS
@@ -305,8 +296,8 @@ function OrgSwitcher({
                   onSwitch(o.id);
                 }}
                 className={cn(
-                  "flex w-full items-center gap-2.5 px-3 py-1.5 text-left transition",
-                  on ? "bg-surface-2" : "hover:bg-surface-2",
+                  'flex w-full items-center gap-2.5 px-3 py-1.5 text-left transition',
+                  on ? 'bg-surface-2' : 'hover:bg-surface-2',
                 )}
               >
                 <span
@@ -316,8 +307,8 @@ function OrgSwitcher({
                 <span className="flex min-w-0 flex-1 flex-col leading-tight">
                   <span
                     className={cn(
-                      "truncate text-[12px] text-text",
-                      on ? "font-semibold" : "font-medium",
+                      'truncate text-[12px] text-text',
+                      on ? 'font-semibold' : 'font-medium',
                     )}
                   >
                     {o.name}
@@ -326,9 +317,7 @@ function OrgSwitcher({
                     {roleLabel(o.role)} · {o.status}
                   </span>
                 </span>
-                {on ? (
-                  <Check size={13} className="shrink-0 text-accent" />
-                ) : null}
+                {on ? <Check size={13} className="shrink-0 text-accent" /> : null}
               </button>
             );
           })}

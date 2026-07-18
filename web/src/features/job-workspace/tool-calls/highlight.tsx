@@ -9,18 +9,18 @@
  * zero layout shift and swap in colors once tokens resolve.
  */
 
-"use client";
+'use client';
 
+import type { ReactNode } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   createHighlighterCore,
   type HighlighterCore,
   type LanguageRegistration,
   type ThemeRegistration,
   type ThemedToken,
-} from "shiki/core";
-import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
-import { useEffect, useMemo, useState } from "react";
-import type { ReactNode } from "react";
+} from 'shiki/core';
+import { createJavaScriptRegexEngine } from 'shiki/engine/javascript';
 
 export type { ThemedToken };
 /** One `ThemedToken[]` per source line. */
@@ -32,73 +32,69 @@ export type LineTokens = ThemedToken[][];
  * the migration spike (`/playground/shiki-spike/spike.mjs`).
  */
 const TERM = {
-  bg: "#0e1622",
-  fg: "#c5cdd9",
-  comment: "#6b7686",
-  amber: "#e8983f",
-  teal: "#6fb3c9",
-  tan: "#d89a5c",
-  lavender: "#b89cf0",
+  bg: '#0e1622',
+  fg: '#c5cdd9',
+  comment: '#6b7686',
+  amber: '#e8983f',
+  teal: '#6fb3c9',
+  tan: '#d89a5c',
+  lavender: '#b89cf0',
 } as const;
 
 const atlasTerm = {
-  name: "atlas-term",
-  type: "dark",
-  colors: { "editor.background": TERM.bg, "editor.foreground": TERM.fg },
+  name: 'atlas-term',
+  type: 'dark',
+  colors: { 'editor.background': TERM.bg, 'editor.foreground': TERM.fg },
   tokenColors: [
     {
-      scope: [
-        "comment",
-        "punctuation.definition.comment",
-        "string.quoted.docstring",
-      ],
-      settings: { foreground: TERM.comment, fontStyle: "italic" },
+      scope: ['comment', 'punctuation.definition.comment', 'string.quoted.docstring'],
+      settings: { foreground: TERM.comment, fontStyle: 'italic' },
     },
     {
       scope: [
-        "keyword",
-        "storage",
-        "storage.type",
-        "keyword.control",
-        "constant.language",
-        "variable.language",
-        "keyword.operator.new",
-        "entity.name.tag",
-        "meta.tag",
+        'keyword',
+        'storage',
+        'storage.type',
+        'keyword.control',
+        'constant.language',
+        'variable.language',
+        'keyword.operator.new',
+        'entity.name.tag',
+        'meta.tag',
       ],
       settings: { foreground: TERM.amber },
     },
     {
       scope: [
-        "string",
-        "string.template",
-        "punctuation.definition.string",
-        "constant.other.symbol",
-        "entity.other.attribute-name",
-        "string.regexp",
+        'string',
+        'string.template',
+        'punctuation.definition.string',
+        'constant.other.symbol',
+        'entity.other.attribute-name',
+        'string.regexp',
       ],
       settings: { foreground: TERM.teal },
     },
     {
       scope: [
-        "constant.numeric",
-        "constant.language.boolean",
-        "support.type",
-        "support.class",
-        "entity.name.type",
-        "meta.type",
-        "support.function",
-        "variable.parameter",
+        'constant.numeric',
+        'constant.language.boolean',
+        'support.type',
+        'support.class',
+        'entity.name.type',
+        'meta.type',
+        'support.function',
+        'variable.parameter',
       ],
       settings: { foreground: TERM.tan },
     },
     {
       scope: [
-        "entity.name.function",
-        "meta.function-call entity.name.function",
-        "entity.name.class",
-        "support.constant",
-        "meta.definition.function entity.name.function",
+        'entity.name.function',
+        'meta.function-call entity.name.function',
+        'entity.name.class',
+        'support.constant',
+        'meta.definition.function entity.name.function',
       ],
       settings: { foreground: TERM.lavender },
     },
@@ -113,27 +109,27 @@ type LanguageModule = { default: LanguageRegistration[] };
  * `EXT_LANG` maps to MUST be a key here.
  */
 const LANG_LOADERS: Record<string, () => Promise<LanguageModule>> = {
-  typescript: () => import("@shikijs/langs/typescript"),
-  tsx: () => import("@shikijs/langs/tsx"),
-  javascript: () => import("@shikijs/langs/javascript"),
-  jsx: () => import("@shikijs/langs/jsx"),
-  json: () => import("@shikijs/langs/json"),
-  bash: () => import("@shikijs/langs/bash"),
-  css: () => import("@shikijs/langs/css"),
-  html: () => import("@shikijs/langs/html"),
-  xml: () => import("@shikijs/langs/xml"),
-  markdown: () => import("@shikijs/langs/markdown"),
-  python: () => import("@shikijs/langs/python"),
-  yaml: () => import("@shikijs/langs/yaml"),
-  sql: () => import("@shikijs/langs/sql"),
-  go: () => import("@shikijs/langs/go"),
-  rust: () => import("@shikijs/langs/rust"),
-  docker: () => import("@shikijs/langs/docker"),
-  diff: () => import("@shikijs/langs/diff"),
-  toml: () => import("@shikijs/langs/toml"),
-  terraform: () => import("@shikijs/langs/terraform"),
-  ini: () => import("@shikijs/langs/ini"),
-  vue: () => import("@shikijs/langs/vue"),
+  typescript: () => import('@shikijs/langs/typescript'),
+  tsx: () => import('@shikijs/langs/tsx'),
+  javascript: () => import('@shikijs/langs/javascript'),
+  jsx: () => import('@shikijs/langs/jsx'),
+  json: () => import('@shikijs/langs/json'),
+  bash: () => import('@shikijs/langs/bash'),
+  css: () => import('@shikijs/langs/css'),
+  html: () => import('@shikijs/langs/html'),
+  xml: () => import('@shikijs/langs/xml'),
+  markdown: () => import('@shikijs/langs/markdown'),
+  python: () => import('@shikijs/langs/python'),
+  yaml: () => import('@shikijs/langs/yaml'),
+  sql: () => import('@shikijs/langs/sql'),
+  go: () => import('@shikijs/langs/go'),
+  rust: () => import('@shikijs/langs/rust'),
+  docker: () => import('@shikijs/langs/docker'),
+  diff: () => import('@shikijs/langs/diff'),
+  toml: () => import('@shikijs/langs/toml'),
+  terraform: () => import('@shikijs/langs/terraform'),
+  ini: () => import('@shikijs/langs/ini'),
+  vue: () => import('@shikijs/langs/vue'),
 };
 
 /**
@@ -142,24 +138,24 @@ const LANG_LOADERS: Record<string, () => Promise<LanguageModule>> = {
  * already matching a `LANG_LOADERS` key (js's `javascript`, `tsx`, …) pass through untouched.
  */
 const LANG_ALIAS: Record<string, string> = {
-  cjs: "javascript",
-  dockerfile: "docker",
-  js: "javascript",
-  json5: "json",
-  jsonc: "json",
-  mjs: "javascript",
-  ts: "typescript",
-  py: "python",
-  shell: "bash",
-  shellscript: "bash",
-  yml: "yaml",
-  sh: "bash",
-  zsh: "bash",
-  md: "markdown",
-  rs: "rust",
-  tf: "terraform",
-  tfvars: "terraform",
-  hcl: "terraform",
+  cjs: 'javascript',
+  dockerfile: 'docker',
+  js: 'javascript',
+  json5: 'json',
+  jsonc: 'json',
+  mjs: 'javascript',
+  ts: 'typescript',
+  py: 'python',
+  shell: 'bash',
+  shellscript: 'bash',
+  yml: 'yaml',
+  sh: 'bash',
+  zsh: 'bash',
+  md: 'markdown',
+  rs: 'rust',
+  tf: 'terraform',
+  tfvars: 'terraform',
+  hcl: 'terraform',
 };
 
 /** Resolve a raw language id (file-derived or a markdown fence info string) to a canonical Shiki id. */
@@ -202,7 +198,10 @@ async function ensureLang(hi: HighlighterCore, lang: string): Promise<boolean> {
   if (!loader || failedLangs.has(lang)) return false;
   if (hi.getLoadedLanguages().includes(lang)) return true;
   if (!langPromises.has(lang)) {
-    langPromises.set(lang, hi.loadLanguage(loader).then(() => {}));
+    langPromises.set(
+      lang,
+      hi.loadLanguage(loader).then(() => {}),
+    );
   }
   try {
     await langPromises.get(lang);
@@ -215,75 +214,65 @@ async function ensureLang(hi: HighlighterCore, lang: string): Promise<boolean> {
 }
 
 /** Whole-file tokenization — one pass, cross-line context preserved. Caller guarantees hi + lang ready. */
-function tokenizeWhole(
-  hi: HighlighterCore,
-  code: string,
-  lang: string,
-): LineTokens {
-  return hi.codeToTokens(code, { lang, theme: "atlas-term" }).tokens;
+function tokenizeWhole(hi: HighlighterCore, code: string, lang: string): LineTokens {
+  return hi.codeToTokens(code, { lang, theme: 'atlas-term' }).tokens;
 }
 
 /** Per-line tokenization — each line highlighted in isolation, for non-contiguous rows (grep/diff). */
-function tokenizeLines(
-  hi: HighlighterCore,
-  lines: string[],
-  lang: string,
-): LineTokens {
+function tokenizeLines(hi: HighlighterCore, lines: string[], lang: string): LineTokens {
   return lines.map(
-    (l) =>
-      hi.codeToTokens(l.length ? l : " ", { lang, theme: "atlas-term" })
-        .tokens[0] ?? [],
+    (l) => hi.codeToTokens(l.length ? l : ' ', { lang, theme: 'atlas-term' }).tokens[0] ?? [],
   );
 }
 
 /** Map a file extension (or basename, for e.g. Dockerfile) to a Shiki language id, or `null`. */
 const EXT_LANG: Record<string, string> = {
-  ts: "typescript",
-  tsx: "tsx",
-  mts: "typescript",
-  cts: "typescript",
-  js: "javascript",
-  jsx: "jsx",
-  mjs: "javascript",
-  cjs: "javascript",
-  json: "json",
-  jsonc: "json",
-  sh: "bash",
-  bash: "bash",
-  zsh: "bash",
-  css: "css",
-  scss: "css",
-  less: "css",
-  html: "html",
-  htm: "html",
-  xml: "xml",
-  svg: "xml",
-  vue: "vue",
-  md: "markdown",
-  mdx: "markdown",
-  markdown: "markdown",
-  py: "python",
-  yml: "yaml",
-  yaml: "yaml",
-  sql: "sql",
-  diff: "diff",
-  patch: "diff",
-  go: "go",
-  rs: "rust",
-  toml: "toml",
-  ini: "ini",
-  env: "ini",
-  tf: "terraform",
-  tfvars: "terraform",
-  hcl: "terraform",
+  ts: 'typescript',
+  tsx: 'tsx',
+  mts: 'typescript',
+  cts: 'typescript',
+  js: 'javascript',
+  jsx: 'jsx',
+  mjs: 'javascript',
+  cjs: 'javascript',
+  json: 'json',
+  jsonc: 'json',
+  sh: 'bash',
+  bash: 'bash',
+  zsh: 'bash',
+  css: 'css',
+  scss: 'css',
+  less: 'css',
+  html: 'html',
+  htm: 'html',
+  xml: 'xml',
+  svg: 'xml',
+  vue: 'vue',
+  md: 'markdown',
+  mdx: 'markdown',
+  markdown: 'markdown',
+  py: 'python',
+  yml: 'yaml',
+  yaml: 'yaml',
+  sql: 'sql',
+  diff: 'diff',
+  patch: 'diff',
+  go: 'go',
+  rs: 'rust',
+  toml: 'toml',
+  ini: 'ini',
+  env: 'ini',
+  tf: 'terraform',
+  tfvars: 'terraform',
+  hcl: 'terraform',
 };
 
 /** The Shiki language id for a path, or `null` when unknown (caller renders plain escaped text). */
 export function langFromPath(path: string): string | null {
   if (!path) return null;
-  const base = path.split("/").pop() ?? path;
-  if (/^dockerfile/i.test(base)) return "docker";
-  const ext = base.includes(".") ? base.split(".").pop()!.toLowerCase() : "";
+  const base = path.split('/').pop() ?? path;
+  if (/^dockerfile/i.test(base)) return 'docker';
+  const ext = base.includes('.') ? base.split('.').pop()!.toLowerCase() : '';
   return EXT_LANG[ext] ?? null;
 }
 
@@ -314,7 +303,7 @@ export function useHighlightTokens(
     try {
       return whole
         ? tokenizeWhole(readyHighlighter, code, canonical)
-        : tokenizeLines(readyHighlighter, code.split("\n"), canonical);
+        : tokenizeLines(readyHighlighter, code.split('\n'), canonical);
     } catch {
       return null;
     }
@@ -351,7 +340,7 @@ export function useHighlightTokens(
   return tokens;
 }
 
-const NBSP = " ";
+const NBSP = ' ';
 
 /**
  * Ensure the highlighter singleton + each distinct language grammar in `langs` is loaded. Returns a
@@ -374,7 +363,7 @@ export function useEnsureHighlightLangs(langs: (string | null)[]): number {
     [langs],
   );
   // Only re-run when the distinct set's membership actually changes (a new file's language appears).
-  const key = distinct.join(",");
+  const key = distinct.join(',');
 
   useEffect(() => {
     if (distinct.length === 0) return;
@@ -382,9 +371,7 @@ export function useEnsureHighlightLangs(langs: (string | null)[]): number {
     (async () => {
       try {
         const hi = await getHighlighter();
-        const results = await Promise.all(
-          distinct.map((lang) => ensureLang(hi, lang)),
-        );
+        const results = await Promise.all(distinct.map((lang) => ensureLang(hi, lang)));
         if (!cancelled && results.some(Boolean)) setReady((v) => v + 1);
       } catch {
         highlighterFailed = true;
@@ -406,10 +393,7 @@ export function useEnsureHighlightLangs(langs: (string | null)[]): number {
  * Mirrors the per-line path `useHighlightTokens` takes with `whole: false`, but for a single on-screen row
  * instead of a whole-file pass — the primitive the virtualized diff renderer calls per mounted row.
  */
-export function tokenizeLineSync(
-  code: string,
-  lang: string | null,
-): ThemedToken[] | null {
+export function tokenizeLineSync(code: string, lang: string | null): ThemedToken[] | null {
   const canonical = lang ? canonicalLang(lang) : null;
   if (
     !canonical ||
@@ -420,9 +404,9 @@ export function tokenizeLineSync(
     return null;
   try {
     return (
-      readyHighlighter.codeToTokens(code.length ? code : " ", {
+      readyHighlighter.codeToTokens(code.length ? code : ' ', {
         lang: canonical,
-        theme: "atlas-term",
+        theme: 'atlas-term',
       }).tokens[0] ?? []
     );
   } catch {
@@ -438,10 +422,7 @@ const FONT_STYLE_BOLD = 2;
  * (still loading / unknown lang). A blank line keeps its row height via a non-breaking space. Shared by
  * every renderer so span styling never drifts.
  */
-export function renderTokenLine(
-  tokens: ThemedToken[] | null | undefined,
-  code: string,
-): ReactNode {
+export function renderTokenLine(tokens: ThemedToken[] | null | undefined, code: string): ReactNode {
   if (!tokens) return code.length ? code : NBSP;
   if (tokens.length === 0) return NBSP;
   return tokens.map((t, i) => (
@@ -449,7 +430,7 @@ export function renderTokenLine(
       key={i}
       style={{
         color: t.color,
-        fontStyle: (t.fontStyle ?? 0) & FONT_STYLE_ITALIC ? "italic" : undefined,
+        fontStyle: (t.fontStyle ?? 0) & FONT_STYLE_ITALIC ? 'italic' : undefined,
         fontWeight: (t.fontStyle ?? 0) & FONT_STYLE_BOLD ? 600 : undefined,
       }}
     >

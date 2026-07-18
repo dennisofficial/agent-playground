@@ -1,8 +1,8 @@
-"use client";
+'use client';
 
-import type React from "react";
-import { ChevronLeft, Menu, PanelRight } from "lucide-react";
-import { cn } from "@/lib/cn";
+import { cn } from '@/lib/cn';
+import { ChevronLeft, Menu, PanelRight } from 'lucide-react';
+import type React from 'react';
 
 /**
  * The single top bar shared by the main conversation AND every lane/detail pane (build thread/step, subagent
@@ -159,8 +159,8 @@ function LeadingIconButton({
       aria-label={title}
       onClick={onClick}
       className={cn(
-        "grid h-9 w-9 flex-none place-items-center rounded-md text-dim transition hover:bg-surface-2 hover:text-text",
-        leading && "-ml-1",
+        'grid h-9 w-9 flex-none place-items-center rounded-md text-dim transition hover:bg-surface-2 hover:text-text',
+        leading && '-ml-1',
       )}
     >
       {children}
@@ -186,7 +186,7 @@ export function TopBarButton({
       aria-label={title}
       onClick={onClick}
       className={cn(
-        "flex h-[29px] w-[29px] items-center justify-center rounded-sm text-dim transition hover:bg-surface-2 hover:text-text",
+        'flex h-[29px] w-[29px] items-center justify-center rounded-sm text-dim transition hover:bg-surface-2 hover:text-text',
         className,
       )}
     >

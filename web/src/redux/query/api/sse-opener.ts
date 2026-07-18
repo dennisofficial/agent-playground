@@ -1,6 +1,6 @@
-import { refreshSession } from "@/lib/api/refresh";
-import { fetchEventSource } from "@microsoft/fetch-event-source";
-import type { SseOpener } from "@workspace/pg-realtime/rtk";
+import { refreshSession } from '@/lib/api/refresh';
+import { fetchEventSource } from '@microsoft/fetch-event-source';
+import type { SseOpener } from '@workspace/pg-realtime/rtk';
 
 /**
  * Auth-aware SSE opener for pg-realtime's `streamList`/`streamDocument`. Credentialed (cookie
@@ -22,19 +22,19 @@ export const sseOpener: SseOpener = (url, init) => {
   return fetchEventSource(url, {
     signal: init.signal,
     openWhenHidden: init.openWhenHidden ?? true,
-    credentials: "include",
+    credentials: 'include',
 
     async onopen(res) {
-      const contentType = res.headers.get("content-type") ?? "";
-      if (res.ok && contentType.includes("text/event-stream")) {
+      const contentType = res.headers.get('content-type') ?? '';
+      if (res.ok && contentType.includes('text/event-stream')) {
         attempts = 0; // healthy connection — reset backoff
         return;
       }
       if (res.status === 401) {
         const refreshed = await refreshSession();
         throw refreshed
-          ? new RetriableSseError("reauthenticated")
-          : new FatalSseError("unauthorized");
+          ? new RetriableSseError('reauthenticated')
+          : new FatalSseError('unauthorized');
       }
       if (res.status >= 400 && res.status < 500 && res.status !== 429) {
         throw new FatalSseError(`SSE rejected (${res.status})`);
@@ -44,14 +44,13 @@ export const sseOpener: SseOpener = (url, init) => {
 
     onmessage(ev) {
       // A pg-realtime `error` event is a server-signalled fatal condition.
-      if (ev.event === "error")
-        throw new FatalSseError(ev.data || "stream error");
+      if (ev.event === 'error') throw new FatalSseError(ev.data || 'stream error');
       init.onmessage({ event: ev.event, data: ev.data });
     },
 
     onclose() {
       // The server closed the stream (e.g. deploy/rollover) — reconnect.
-      throw new RetriableSseError("stream closed");
+      throw new RetriableSseError('stream closed');
     },
 
     onerror(err) {
@@ -59,8 +58,7 @@ export const sseOpener: SseOpener = (url, init) => {
       init.onerror?.(err);
       attempts += 1;
       return (
-        Math.min(BASE_RETRY_MS * 2 ** (attempts - 1), MAX_RETRY_MS) +
-        Math.random() * JITTER_MS
+        Math.min(BASE_RETRY_MS * 2 ** (attempts - 1), MAX_RETRY_MS) + Math.random() * JITTER_MS
       );
     },
   });

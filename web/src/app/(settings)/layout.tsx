@@ -1,5 +1,5 @@
-import type { ReactNode } from "react";
-import { PrivateGuard } from "@/features/auth/components/guards";
+import { PrivateGuard } from '@/features/auth/components/guards';
+import type { ReactNode } from 'react';
 
 /**
  * Settings shell — a full-screen, authed surface that stands apart from the app chrome (no jobs sidebar),

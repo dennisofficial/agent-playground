@@ -17,13 +17,11 @@ export interface ThreadRefParts {
 // `~` is never present in a UUID (org/thread ids) or a repo slug, so it's a safe separator that keeps the
 // key a single path segment — unlike `/`, which `encodeURIComponent` turns into `%2F` (encoded slashes are
 // normalized inconsistently by servers/Next and can break single-segment matching).
-const REF_SEP = "~";
+const REF_SEP = '~';
 
 /** Encode `{ orgId, repoId, jobId }` into one URL path segment. */
 export function encodeJobRef(ref: ThreadRefParts): string {
-  return [ref.orgId, ref.repoId, ref.jobId]
-    .map(encodeURIComponent)
-    .join(REF_SEP);
+  return [ref.orgId, ref.repoId, ref.jobId].map(encodeURIComponent).join(REF_SEP);
 }
 
 /** Decode a `[jobKey]` segment back to its ids; `null` if it isn't a well-formed triple. */
@@ -45,53 +43,43 @@ export function threadHref(ref: ThreadRefParts): string {
 }
 
 export const ROUTES = {
-  home: () => "/",
+  home: () => '/',
   auth: {
     login: (next?: string) =>
-      next ? `/auth/login?next=${encodeURIComponent(next)}` : "/auth/login",
-    signup: () => "/auth/signup",
-    forgot: () => "/auth/forgot",
-    signedOut: () => "/auth/signed-out",
+      next ? `/auth/login?next=${encodeURIComponent(next)}` : '/auth/login',
+    signup: () => '/auth/signup',
+    forgot: () => '/auth/forgot',
+    signedOut: () => '/auth/signed-out',
   },
-  workspace: () => "/workspace",
+  workspace: () => '/workspace',
   thread: (jobKey: string) => `/workspace/${jobKey}`,
   /** Create-thread route. Optionally pre-select an org (and repo) — used by the sidebar's per-org/repo ＋. */
   newThread: (opts?: { orgId?: string; repoId?: string }) => {
     const p = new URLSearchParams();
-    if (opts?.orgId) p.set("org", opts.orgId);
-    if (opts?.repoId) p.set("repo", opts.repoId);
+    if (opts?.orgId) p.set('org', opts.orgId);
+    if (opts?.repoId) p.set('repo', opts.repoId);
     const qs = p.toString();
-    return qs ? `/new?${qs}` : "/new";
+    return qs ? `/new?${qs}` : '/new';
   },
   /** Org settings (General / Credentials / Members / Repos). Each section is its own route segment. */
   orgSettings: (orgId: string, section?: SettingsSection) =>
-    section
-      ? `/orgs/${orgId}/settings/${section}`
-      : `/orgs/${orgId}/settings`,
+    section ? `/orgs/${orgId}/settings/${section}` : `/orgs/${orgId}/settings`,
 } as const;
 
 export type SettingsSection =
-  | "general"
-  | "automation"
-  | "credentials"
-  | "workspace-profile"
-  | "mcp-servers"
-  | "convention-profiles"
-  | "skills"
-  | "members"
-  | "repos";
+  | 'general'
+  | 'automation'
+  | 'credentials'
+  | 'workspace-profile'
+  | 'mcp-servers'
+  | 'convention-profiles'
+  | 'skills'
+  | 'members'
+  | 'repos';
 
 /** Only honor a same-origin relative `?next=` target (no open-redirect). */
-export function safeNext(
-  next: string | null | undefined,
-  fallback = ROUTES.workspace(),
-): string {
-  if (
-    next &&
-    next.startsWith("/") &&
-    !next.startsWith("//") &&
-    !next.includes("://")
-  ) {
+export function safeNext(next: string | null | undefined, fallback = ROUTES.workspace()): string {
+  if (next && next.startsWith('/') && !next.startsWith('//') && !next.includes('://')) {
     return next;
   }
   return fallback;

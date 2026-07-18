@@ -1,11 +1,11 @@
-"use client";
+'use client';
 
-import { useState } from "react";
-import { ChevronRight, Sparkles } from "lucide-react";
-import type { JobMessage } from "@/lib/api/job-api";
-import type { LiveBlock } from "@/lib/api/job-stream";
-import { formatModelLabel } from "@/utils/format";
-import { ContextMeter } from "./context-meter";
+import type { JobMessage } from '@/lib/api/job-api';
+import type { LiveBlock } from '@/lib/api/job-stream';
+import { formatModelLabel } from '@/utils/format';
+import { ChevronRight, Sparkles } from 'lucide-react';
+import { useState } from 'react';
+import { ContextMeter } from './context-meter';
 
 /**
  * Subagent (Task) activity is peeled OUT of the main conversation and rendered as its own node/sub-page.
@@ -19,7 +19,7 @@ import { ContextMeter } from "./context-meter";
  * transcript renderer (which needs the bubble/tool-call components) lives in `step-view.tsx`.
  */
 
-export const SUBAGENT_NODE_PREFIX = "subagent:";
+export const SUBAGENT_NODE_PREFIX = 'subagent:';
 /** Encodes the ORIGIN lane alongside the parent tool-use id (`<lane>::<parentId>`) — the pane needs the
  *  lane to subscribe to the right live turn; a subagent spawned inside a build thread runs on THAT
  *  thread's lane, not Main, and its blocks are invisible to a lane-unaware subscriber. */
@@ -30,35 +30,33 @@ export const subagentNode = (lane: string, parentId: string): string =>
  *  in engine-core.ts). The writer subagents fan out on execute turns: `implement` (Sonnet) is the default
  *  writer for substantial slices, `implement-deep` (Opus) the escalation for judgment-heavy ones. */
 const SUBAGENT_MODELS: Record<string, string> = {
-  explore: "Sonnet",
-  implement: "Sonnet",
-  "implement-deep": "Opus",
+  explore: 'Sonnet',
+  implement: 'Sonnet',
+  'implement-deep': 'Opus',
 };
-export const subagentModel = (type: string): string | undefined =>
-  SUBAGENT_MODELS[type];
+export const subagentModel = (type: string): string | undefined => SUBAGENT_MODELS[type];
 
 /** Known subagent types → pinned reasoning effort (mirrors the `effort:` values in `SUBAGENTS` /
  *  `WRITER_SUBAGENTS` / `VALIDATE_SUBAGENT` / `PROTOTYPE_SUBAGENT` in engine-core.ts). Effort is pinned
  *  per type at spawn, so this is the effort a given subagent runs at. Unknown types return undefined. */
 const SUBAGENT_EFFORTS: Record<string, string> = {
-  explore: "medium",
-  docs: "low",
-  review: "high",
-  debug: "high",
-  test: "low",
-  implement: "high",
-  "implement-deep": "high",
-  validate: "medium",
-  prototype: "medium",
+  explore: 'medium',
+  docs: 'low',
+  review: 'high',
+  debug: 'high',
+  test: 'low',
+  implement: 'high',
+  'implement-deep': 'high',
+  validate: 'medium',
+  prototype: 'medium',
 };
-export const subagentEffort = (type: string): string | undefined =>
-  SUBAGENT_EFFORTS[type];
+export const subagentEffort = (type: string): string | undefined => SUBAGENT_EFFORTS[type];
 
 /** A normalized transcript block — produced from a durable message OR a live block. `postedAt` is set only
  *  on durable blocks (live blocks have no emission time yet). */
 export type SubBlock =
   | {
-      kind: "text";
+      kind: 'text';
       key: string;
       text: string;
       running?: boolean;
@@ -67,21 +65,21 @@ export type SubBlock =
   | {
       /** A parent→sub-agent SendMessage injection, captured as `user_text` — rendered as a `UserBubble`
        *  interleaved chronologically. A completed discrete turn, never streaming. */
-      kind: "user";
+      kind: 'user';
       key: string;
       text: string;
       running?: boolean;
       postedAt?: string;
     }
   | {
-      kind: "thinking";
+      kind: 'thinking';
       key: string;
       text: string;
       running?: boolean;
       postedAt?: string;
     }
   | {
-      kind: "tool";
+      kind: 'tool';
       key: string;
       name: string;
       input?: unknown;
@@ -114,8 +112,7 @@ export interface SubagentSummary {
   contextModel?: string;
 }
 
-const firstLine = (v: unknown): string =>
-  typeof v === "string" ? v.split("\n")[0]!.trim() : "";
+const firstLine = (v: unknown): string => (typeof v === 'string' ? v.split('\n')[0]!.trim() : '');
 export const subagentLabel = (type: string): string =>
   `${type.charAt(0).toUpperCase()}${type.slice(1)} agent`;
 
@@ -132,16 +129,11 @@ export interface DurableSubagentIndex {
   childrenById: Map<string, JobMessage[]>;
 }
 
-export function indexDurableSubagents(
-  messages: JobMessage[],
-): DurableSubagentIndex {
+export function indexDurableSubagents(messages: JobMessage[]): DurableSubagentIndex {
   const childrenById = new Map<string, JobMessage[]>();
   const childKeys = new Set<string>();
   for (const m of messages) {
-    const p =
-      typeof m.meta?.parentToolUseId === "string"
-        ? m.meta.parentToolUseId
-        : null;
+    const p = typeof m.meta?.parentToolUseId === 'string' ? m.meta.parentToolUseId : null;
     if (!p) continue;
     childKeys.add(m.ts);
     const arr = childrenById.get(p);
@@ -152,8 +144,8 @@ export function indexDurableSubagents(
   const summaryById = new Map<string, SubagentSummary>();
   const anchorKeys = new Set<string>();
   for (const m of messages) {
-    const id = typeof m.meta?.id === "string" ? m.meta.id : null;
-    if (m.kind !== "tool" || !id || !childrenById.has(id)) continue;
+    const id = typeof m.meta?.id === 'string' ? m.meta.id : null;
+    if (m.kind !== 'tool' || !id || !childrenById.has(id)) continue;
     anchorKeys.add(m.ts);
     const input = (m.meta?.input ?? {}) as Record<string, unknown>;
     const kids = childrenById.get(id) ?? [];
@@ -162,63 +154,55 @@ export function indexDurableSubagents(
     const meta = (m.meta ?? {}) as Record<string, unknown>;
     summaryById.set(id, {
       parentId: id,
-      type: String(input.subagent_type ?? "agent"),
+      type: String(input.subagent_type ?? 'agent'),
       background: Boolean(input.run_in_background),
       // Prefer the subagent's AUTHORITATIVE persisted status (joined onto the anchor by the backend) over the
       // launch-ack cue: `meta.result` is set the moment a backgrounded Task's launch ack lands, NOT on real
       // completion, so it would read "done" while the subagent is still working. Fall back to the legacy cue
       // only for anchors with no subagent row (pre-join / backfilled rows).
       running:
-        typeof m.subagentStatus === "string"
-          ? m.subagentStatus === "running"
+        typeof m.subagentStatus === 'string'
+          ? m.subagentStatus === 'running'
           : m.meta?.result == null,
-      toolCount: kids.filter((k) => k.kind === "tool").length,
+      toolCount: kids.filter((k) => k.kind === 'tool').length,
       summary: String(input.description || firstLine(input.prompt)),
-      ...(typeof meta.subContextTokens === "number"
+      ...(typeof meta.subContextTokens === 'number'
         ? { contextTokens: meta.subContextTokens }
         : {}),
-      ...(typeof meta.subContextLimit === "number"
-        ? { contextLimit: meta.subContextLimit }
-        : {}),
-      ...(typeof meta.subContextModel === "string"
-        ? { contextModel: meta.subContextModel }
-        : {}),
+      ...(typeof meta.subContextLimit === 'number' ? { contextLimit: meta.subContextLimit } : {}),
+      ...(typeof meta.subContextModel === 'string' ? { contextModel: meta.subContextModel } : {}),
     });
   }
   return { childKeys, anchorKeys, summaryById, childrenById };
 }
 
 /** The Task anchor's prompt (full) — for the detail pane's collapsible "Task prompt". */
-export function durableSubagentPrompt(
-  messages: JobMessage[],
-  parentId: string,
-): string {
+export function durableSubagentPrompt(messages: JobMessage[], parentId: string): string {
   for (const m of messages) {
-    if (m.kind === "tool" && m.meta?.id === parentId) {
+    if (m.kind === 'tool' && m.meta?.id === parentId) {
       const input = (m.meta?.input ?? {}) as Record<string, unknown>;
-      return typeof input.prompt === "string" ? input.prompt : "";
+      return typeof input.prompt === 'string' ? input.prompt : '';
     }
   }
-  return "";
+  return '';
 }
 
 export function durableSubBlocks(children: JobMessage[]): SubBlock[] {
   return children.map((m): SubBlock => {
-    if (m.kind === "user")
-      return { kind: "user", key: m.ts, text: m.text, postedAt: m.postedAt };
-    if (m.kind === "thinking")
+    if (m.kind === 'user') return { kind: 'user', key: m.ts, text: m.text, postedAt: m.postedAt };
+    if (m.kind === 'thinking')
       return {
-        kind: "thinking",
+        kind: 'thinking',
         key: m.ts,
         text: m.text,
         postedAt: m.postedAt,
       };
-    if (m.kind === "tool") {
+    if (m.kind === 'tool') {
       const mm = m.meta ?? {};
       return {
-        kind: "tool",
+        kind: 'tool',
         key: m.ts,
-        name: String(mm.name ?? "tool"),
+        name: String(mm.name ?? 'tool'),
         input: mm.input,
         result: mm.result,
         isError: Boolean(mm.isError),
@@ -227,7 +211,7 @@ export function durableSubBlocks(children: JobMessage[]): SubBlock[] {
         postedAt: m.postedAt,
       };
     }
-    return { kind: "text", key: m.ts, text: m.text, postedAt: m.postedAt };
+    return { kind: 'text', key: m.ts, text: m.text, postedAt: m.postedAt };
   });
 }
 
@@ -246,8 +230,7 @@ export function indexLiveSubagents(blocks: LiveBlock[]): LiveSubagentIndex {
     const p = b.parentToolUseId;
     if (!p) continue;
     childParentIds.add(p);
-    if (b.kind === "tool")
-      childCountById.set(p, (childCountById.get(p) ?? 0) + 1);
+    if (b.kind === 'tool') childCountById.set(p, (childCountById.get(p) ?? 0) + 1);
   }
 
   const childKeys = new Set<string>();
@@ -255,7 +238,7 @@ export function indexLiveSubagents(blocks: LiveBlock[]): LiveSubagentIndex {
   const summaryById = new Map<string, SubagentSummary>();
   for (const b of blocks) {
     if (b.parentToolUseId) childKeys.add(b.key);
-    if (b.kind === "tool" && b.toolId && childParentIds.has(b.toolId)) {
+    if (b.kind === 'tool' && b.toolId && childParentIds.has(b.toolId)) {
       anchorKeys.add(b.key);
       const input = (b.input ?? {}) as Record<string, unknown>;
       // A Task subagent runs in the background BY DEFAULT, so a caller that relies on that omits
@@ -265,7 +248,7 @@ export function indexLiveSubagents(blocks: LiveBlock[]): LiveSubagentIndex {
       const background = Boolean(input.run_in_background) || Boolean(b.bgStarted);
       summaryById.set(b.toolId, {
         parentId: b.toolId,
-        type: String(input.subagent_type ?? "agent"),
+        type: String(input.subagent_type ?? 'agent'),
         background,
         // A backgrounded Task's `done` flips on its immediate launch-ack `tool_result`, NOT on real
         // completion — so it would read "done" while the subagent is still streaming. For a background run,
@@ -283,29 +266,23 @@ export function indexLiveSubagents(blocks: LiveBlock[]): LiveSubagentIndex {
 /** The spawning Task block's full prompt from the LIVE turn — the durable anchor isn't persisted until the
  *  turn ends, so during streaming the prompt has to come off the live blocks (else the run's "first
  *  message" is blank until it finishes). */
-export function liveSubagentPrompt(
-  blocks: LiveBlock[],
-  parentId: string,
-): string {
+export function liveSubagentPrompt(blocks: LiveBlock[], parentId: string): string {
   for (const b of blocks) {
-    if (b.kind === "tool" && b.toolId === parentId) {
+    if (b.kind === 'tool' && b.toolId === parentId) {
       const input = (b.input ?? {}) as Record<string, unknown>;
-      return typeof input.prompt === "string" ? input.prompt : "";
+      return typeof input.prompt === 'string' ? input.prompt : '';
     }
   }
-  return "";
+  return '';
 }
 
-export function liveSubBlocksForParent(
-  blocks: LiveBlock[],
-  parentId: string,
-): SubBlock[] {
+export function liveSubBlocksForParent(blocks: LiveBlock[], parentId: string): SubBlock[] {
   const out: SubBlock[] = [];
   for (const b of blocks) {
     if (b.parentToolUseId !== parentId) continue;
-    if (b.kind === "tool")
+    if (b.kind === 'tool')
       out.push({
-        kind: "tool",
+        kind: 'tool',
         key: b.key,
         name: b.name,
         input: b.input,
@@ -337,25 +314,24 @@ export function SubagentCard({
   // Prefer the subagent's REAL model (from its own `usage` frame) over the static type→model guess.
   const model = formatModelLabel(summary.contextModel) ?? subagentModel(summary.type);
   const hasRing =
-    typeof summary.contextTokens === "number" &&
-    typeof summary.contextLimit === "number" &&
+    typeof summary.contextTokens === 'number' &&
+    typeof summary.contextLimit === 'number' &&
     summary.contextLimit > 0;
   return (
     <div
       className="anim-fadeUp my-px rounded-[10px] border"
       style={{
-        borderColor: summary.running ? "var(--accent-line)" : "var(--border)",
+        borderColor: summary.running ? 'var(--accent-line)' : 'var(--border)',
         background: summary.running
-          ? "var(--accent-soft)"
-          : "color-mix(in srgb, var(--surface-2) 55%, transparent)",
+          ? 'var(--accent-soft)'
+          : 'color-mix(in srgb, var(--surface-2) 55%, transparent)',
       }}
     >
       <div className="flex items-center gap-2.5 px-3 py-2.5">
         <span
           className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md"
           style={{
-            background:
-              "linear-gradient(145deg, var(--accent), var(--accent-2))",
+            background: 'linear-gradient(145deg, var(--accent), var(--accent-2))',
           }}
           aria-hidden
         >
@@ -375,20 +351,18 @@ export function SubagentCard({
               {summary.running ? (
                 <span
                   className="pulse-dot h-1.5 w-1.5 rounded-full"
-                  style={{ background: "var(--accent)" }}
+                  style={{ background: 'var(--accent)' }}
                 />
               ) : null}
-              {summary.running ? "running" : "done"}
+              {summary.running ? 'running' : 'done'}
             </span>
           </div>
           {summary.summary ? (
-            <span className="mt-0.5 truncate text-[11.5px] text-dim">
-              {summary.summary}
-            </span>
+            <span className="mt-0.5 truncate text-[11.5px] text-dim">{summary.summary}</span>
           ) : null}
           <span className="mt-0.5 font-mono text-[10px] text-faint">
-            {summary.toolCount} tool{summary.toolCount === 1 ? "" : "s"}
-            {model ? ` · ${model}` : ""}
+            {summary.toolCount} tool{summary.toolCount === 1 ? '' : 's'}
+            {model ? ` · ${model}` : ''}
           </span>
         </div>
         {hasRing ? (
@@ -404,8 +378,8 @@ export function SubagentCard({
           onClick={onOpen}
           className="flex shrink-0 items-center gap-1 rounded-md px-2.5 py-1.5 text-[11.5px] font-medium text-accent transition hover:bg-surface-3"
           style={{
-            background: "var(--accent-soft)",
-            border: "1px solid var(--accent-line)",
+            background: 'var(--accent-soft)',
+            border: '1px solid var(--accent-line)',
           }}
         >
           Viewing run →
@@ -415,12 +389,12 @@ export function SubagentCard({
         type="button"
         onClick={() => setOpen((o) => !o)}
         className="flex w-full items-center gap-1.5 border-t px-3 py-1.5 text-left font-mono text-[10px] text-faint transition hover:text-dim"
-        style={{ borderColor: "var(--hair)" }}
+        style={{ borderColor: 'var(--hair)' }}
       >
         <ChevronRight
           size={10}
           strokeWidth={2.6}
-          className={`shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
+          className={`shrink-0 transition-transform ${open ? 'rotate-90' : ''}`}
         />
         raw tool payload
       </button>
@@ -429,11 +403,10 @@ export function SubagentCard({
           subagent_type: <span className="text-text">{summary.type}</span>
           {model ? (
             <>
-              {" · "}model: <span className="text-text">{model}</span>
+              {' · '}model: <span className="text-text">{model}</span>
             </>
           ) : null}
-          {" · "}id:{" "}
-          <span className="text-text">{summary.parentId.slice(0, 12)}…</span>
+          {' · '}id: <span className="text-text">{summary.parentId.slice(0, 12)}…</span>
         </p>
       ) : null}
     </div>

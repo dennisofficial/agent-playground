@@ -1,4 +1,5 @@
-import { env } from "@/lib/env";
+import { env } from '@/lib/env';
+import { streamList } from '@workspace/pg-realtime/rtk';
 import type {
   ConnectedRepo,
   ConnectRepoDto,
@@ -6,10 +7,9 @@ import type {
   RepoBranches,
   RepoView,
   UpdateRepoDto,
-} from "@workspace/shared";
-import { streamList } from "@workspace/pg-realtime/rtk";
-import { baseApi, EBaseApiCacheTags } from "./baseApi";
-import { sseOpener } from "./sse-opener";
+} from '@workspace/shared';
+import { baseApi, EBaseApiCacheTags } from './baseApi';
+import { sseOpener } from './sse-opener';
 
 const realtimeUrl = (path: string): string => `${env.NEXT_PUBLIC_BACKEND_URL}${path}`;
 
@@ -23,7 +23,7 @@ export const repoApi = baseApi.injectEndpoints({
   overrideExisting: true,
   endpoints: (build) => ({
     getOrgRepos: build.query<RepoView[], string>({
-      query: (orgId) => ({ url: `/orgs/${orgId}/repos`, method: "GET" }),
+      query: (orgId) => ({ url: `/orgs/${orgId}/repos`, method: 'GET' }),
       providesTags: (_result, _error, orgId) => [{ type: EBaseApiCacheTags.REPO, id: orgId }],
       onCacheEntryAdded: (orgId, api) =>
         streamList<RepoView>({
@@ -36,24 +36,38 @@ export const repoApi = baseApi.injectEndpoints({
     // Item ops are addressed by repoId alone — the backend scopes them to the caller's orgs
     // (OrgScope), so no orgId is needed in the path.
     getRepoBranches: build.query<RepoBranches, { repoId: string }>({
-      query: ({ repoId }) => ({ url: `/repos/${repoId}/branches`, method: "GET" }),
+      query: ({ repoId }) => ({
+        url: `/repos/${repoId}/branches`,
+        method: 'GET',
+      }),
     }),
 
     connectRepo: build.mutation<ConnectedRepo, { orgId: string; body: ConnectRepoDto }>({
-      query: ({ orgId, body }) => ({ url: `/orgs/${orgId}/repos`, method: "POST", data: body }),
+      query: ({ orgId, body }) => ({
+        url: `/orgs/${orgId}/repos`,
+        method: 'POST',
+        data: body,
+      }),
       invalidatesTags: [EBaseApiCacheTags.SESSION],
     }),
 
     updateRepo: build.mutation<ConnectedRepo, { repoId: string; body: UpdateRepoDto }>({
-      query: ({ repoId, body }) => ({ url: `/repos/${repoId}`, method: "PATCH", data: body }),
+      query: ({ repoId, body }) => ({
+        url: `/repos/${repoId}`,
+        method: 'PATCH',
+        data: body,
+      }),
     }),
 
     revalidateRepo: build.mutation<ConnectedRepo, { repoId: string }>({
-      query: ({ repoId }) => ({ url: `/repos/${repoId}/revalidate`, method: "POST" }),
+      query: ({ repoId }) => ({
+        url: `/repos/${repoId}/revalidate`,
+        method: 'POST',
+      }),
     }),
 
     disconnectRepo: build.mutation<DisconnectRepoResult, { repoId: string }>({
-      query: ({ repoId }) => ({ url: `/repos/${repoId}`, method: "DELETE" }),
+      query: ({ repoId }) => ({ url: `/repos/${repoId}`, method: 'DELETE' }),
       invalidatesTags: [EBaseApiCacheTags.SESSION],
     }),
   }),

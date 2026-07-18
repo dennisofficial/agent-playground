@@ -1,30 +1,21 @@
-"use client";
+'use client';
 
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
-import {
-  AuthCard,
-  AuthHeader,
-  ErrorBanner,
-  OrDivider,
-} from "@/features/auth/components/auth-ui";
-import { GoogleButton } from "@/features/auth/components/google-button";
-import { Button } from "@/components/ui/button";
-import { Field, PasswordField, StrengthMeter } from "@/components/ui/field";
-import { auth } from "@/lib/auth";
-import { ROUTES } from "@/lib/routes";
-import {
-  validateEmail,
-  validateNameRequired,
-  validatePasswordMin,
-} from "@/utils/validation";
+import { Button } from '@/components/ui/button';
+import { Field, PasswordField, StrengthMeter } from '@/components/ui/field';
+import { AuthCard, AuthHeader, ErrorBanner, OrDivider } from '@/features/auth/components/auth-ui';
+import { GoogleButton } from '@/features/auth/components/google-button';
+import { auth } from '@/lib/auth';
+import { ROUTES } from '@/lib/routes';
+import { validateEmail, validateNameRequired, validatePasswordMin } from '@/utils/validation';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { useState } from 'react';
 
 export default function SignupPage() {
   const router = useRouter();
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [nameErr, setNameErr] = useState<string | null>(null);
   const [emailErr, setEmailErr] = useState<string | null>(null);
   const [pwErr, setPwErr] = useState<string | null>(null);
@@ -47,9 +38,7 @@ export default function SignupPage() {
       await auth.register(email.trim(), password, name);
       router.replace(ROUTES.workspace());
     } catch (err) {
-      setBanner(
-        err instanceof Error ? err.message : "Could not create your account.",
-      );
+      setBanner(err instanceof Error ? err.message : 'Could not create your account.');
       setPending(false);
     }
   }
@@ -62,10 +51,7 @@ export default function SignupPage() {
       />
       <ErrorBanner message={banner} />
 
-      <GoogleButton
-        label="Sign up with Google"
-        onError={(m) => setBanner(m || null)}
-      />
+      <GoogleButton label="Sign up with Google" onError={(m) => setBanner(m || null)} />
       <OrDivider />
 
       <form onSubmit={onSubmit} className="flex flex-col gap-3.5" noValidate>
@@ -97,13 +83,7 @@ export default function SignupPage() {
           />
           <StrengthMeter password={password} />
         </div>
-        <Button
-          type="submit"
-          size="lg"
-          block
-          loading={pending}
-          loadingText="Creating account…"
-        >
+        <Button type="submit" size="lg" block loading={pending} loadingText="Creating account…">
           Create account
         </Button>
       </form>
@@ -112,11 +92,8 @@ export default function SignupPage() {
         By creating an account you agree to the Terms and Privacy Policy.
       </p>
       <p className="mt-3 text-center text-[12.5px] text-dim">
-        Already have an account?{" "}
-        <Link
-          href={ROUTES.auth.login()}
-          className="font-medium text-accent hover:underline"
-        >
+        Already have an account?{' '}
+        <Link href={ROUTES.auth.login()} className="font-medium text-accent hover:underline">
           Sign in
         </Link>
       </p>

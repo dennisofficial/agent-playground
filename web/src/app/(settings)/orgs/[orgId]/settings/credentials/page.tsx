@@ -1,8 +1,8 @@
-"use client";
+'use client';
 
-import { use } from "react";
-import { useOrg } from "@/lib/api/me";
-import { CredentialsSection } from "@/features/settings/components/credentials-section";
+import { CredentialsSection } from '@/features/settings/components/credentials-section';
+import { useOrg } from '@/lib/api/me';
+import { use } from 'react';
 
 export default function CredentialsSettingsPage({
   params,

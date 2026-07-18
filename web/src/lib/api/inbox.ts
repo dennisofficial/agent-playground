@@ -1,20 +1,20 @@
-"use client";
+'use client';
 
-import { stubQuery, type QueryResultLike } from "./_stub";
-import { toJobStatus, toJobKind } from "./status";
+import { stubQuery, type QueryResultLike } from './_stub';
+import { toJobKind, toJobStatus } from './status';
 import type {
-  WireJobStatus,
-  WireJobKind,
-  WireJobHalt,
-  WireJobActivity,
-  JobStatus,
-  JobKind,
-  JobBlocker,
-  JobProvenance,
-  InboxPr,
-  CiStatus,
   CiCounts,
-} from "./types";
+  CiStatus,
+  InboxPr,
+  JobBlocker,
+  JobKind,
+  JobProvenance,
+  JobStatus,
+  WireJobActivity,
+  WireJobHalt,
+  WireJobKind,
+  WireJobStatus,
+} from './types';
 
 /**
  * The unified cross-org inbox — every thread across ALL the operator's orgs (`GET /web/jobs`), the
@@ -52,7 +52,7 @@ export interface RawInboxThread {
   ciCounts?: CiCounts | null;
   /** Sidebar port badge tri-state (`jobs.port_state`): a live service exposed via a public preview URL,
    *  a live but unexposed service, or null when nothing is running. */
-  portState?: "exposed" | "internal" | null;
+  portState?: 'exposed' | 'internal' | null;
   /** Count of build/direct_build thread groups whose builder work has finished (`jobs.build_stages_done`).
    *  null = not applicable / never computed. */
   buildStagesDone?: number | null;
@@ -104,7 +104,7 @@ export interface InboxThread {
   ciCounts: CiCounts | null;
   /** Sidebar port badge tri-state: a live service exposed via a public preview URL, a live but
    *  unexposed service, or null when nothing is running. Exposed-wins is resolved server-side. */
-  portState: "exposed" | "internal" | null;
+  portState: 'exposed' | 'internal' | null;
   /** Count of build/direct_build thread groups whose builder work has finished. null = not applicable. */
   buildStagesDone: number | null;
   /** Total build/direct_build thread groups in the job's plan. */
@@ -131,24 +131,24 @@ export interface InboxThread {
  */
 function deriveInboxKind(r: RawInboxThread): JobKind {
   if (r.kind) return toJobKind(r.kind as WireJobKind);
-  return r.origin === "event" ? "event" : "feat";
+  return r.origin === 'event' ? 'event' : 'feat';
 }
 
 /** Backend status (incl. `open`, which `toJobStatus` doesn't cover) → UI status for the pie. */
 export function uiStatus(backend: string, origin: string): JobStatus {
-  if (backend === "open") return origin === "event" ? "triaging" : "planning";
+  if (backend === 'open') return origin === 'event' ? 'triaging' : 'planning';
   return toJobStatus(backend as WireJobStatus);
 }
 
 export function normalize(r: RawInboxThread): InboxThread {
   return {
     id: r.jobId,
-    title: r.title?.trim() || "Untitled thread",
+    title: r.title?.trim() || 'Untitled thread',
     kind: deriveInboxKind(r),
     status: uiStatus(r.status, r.origin),
     rawStatus: r.status,
     sectionFirstEntered: r.sectionFirstEntered ?? null,
-    activity: r.activity ?? "idle",
+    activity: r.activity ?? 'idle',
     needsYou: r.needsYou,
     halted: r.halted ?? false,
     createdAt: r.createdAt,
@@ -166,7 +166,7 @@ export function normalize(r: RawInboxThread): InboxThread {
     org: {
       id: r.org.id,
       slug: r.org.slug ?? r.org.id,
-      name: r.org.name ?? "Organization",
+      name: r.org.name ?? 'Organization',
     },
     repo: { id: r.repo.id, name: r.repo.name ?? r.repo.id },
   };

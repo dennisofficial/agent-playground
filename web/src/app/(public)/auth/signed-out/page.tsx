@@ -1,10 +1,10 @@
-"use client";
+'use client';
 
-import { useRouter } from "next/navigation";
-import { LogOut } from "lucide-react";
-import { AuthCard } from "@/features/auth/components/auth-ui";
-import { Button } from "@/components/ui/button";
-import { ROUTES } from "@/lib/routes";
+import { Button } from '@/components/ui/button';
+import { AuthCard } from '@/features/auth/components/auth-ui';
+import { ROUTES } from '@/lib/routes';
+import { LogOut } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 
 export default function SignedOutPage() {
   const router = useRouter();
@@ -13,7 +13,7 @@ export default function SignedOutPage() {
       <div className="flex flex-col items-center text-center">
         <span
           className="flex h-12 w-12 items-center justify-center rounded-full"
-          style={{ background: "var(--surface-2)", color: "var(--dim)" }}
+          style={{ background: 'var(--surface-2)', color: 'var(--dim)' }}
         >
           <LogOut size={20} />
         </span>
@@ -21,8 +21,7 @@ export default function SignedOutPage() {
           You&apos;ve been signed out
         </h1>
         <p className="mt-1.5 text-[13px] text-dim">
-          Your session on this device has ended. Active threads keep running on
-          the harness.
+          Your session on this device has ended. Active threads keep running on the harness.
         </p>
         <Button
           className="mt-5"

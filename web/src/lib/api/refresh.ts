@@ -1,6 +1,6 @@
-import { auth } from "@/lib/auth";
-import { env } from "@/lib/env";
-import { connectivity } from "./connectivity";
+import { auth } from '@/lib/auth';
+import { env } from '@/lib/env';
+import { connectivity } from './connectivity';
 
 /**
  * Single-flight session refresh for the NATIVE fetch (`/web/*`, `/auth/session`) and SSE paths. Unlike
@@ -22,18 +22,18 @@ const CONFIRM_401_DELAY_MS = 1_500;
 
 let inflight: Promise<boolean> | null = null;
 
-type RefreshOutcome = "ok" | "unauthorized" | "transient";
+type RefreshOutcome = 'ok' | 'unauthorized' | 'transient';
 
 async function postRefresh(): Promise<RefreshOutcome> {
   try {
     const res = await fetch(`${env.NEXT_PUBLIC_BACKEND_URL}/auth/refresh`, {
-      method: "POST",
-      credentials: "include",
+      method: 'POST',
+      credentials: 'include',
     });
-    if (res.ok) return "ok";
-    return res.status === 401 ? "unauthorized" : "transient";
+    if (res.ok) return 'ok';
+    return res.status === 401 ? 'unauthorized' : 'transient';
   } catch {
-    return "transient"; // network / server down — keep the session; let the caller retry later
+    return 'transient'; // network / server down — keep the session; let the caller retry later
   }
 }
 
@@ -41,12 +41,12 @@ export function refreshSession(): Promise<boolean> {
   inflight ??= (async (): Promise<boolean> => {
     try {
       const first = await postRefresh();
-      if (first !== "unauthorized") return first === "ok";
+      if (first !== 'unauthorized') return first === 'ok';
       await new Promise((r) => setTimeout(r, CONFIRM_401_DELAY_MS));
       const second = await postRefresh();
-      if (second === "ok") return true;
+      if (second === 'ok') return true;
       // Two 401s in a row → the session is truly gone → flip AuthState → redirect to login.
-      if (second === "unauthorized") auth.signOut();
+      if (second === 'unauthorized') auth.signOut();
       return false;
     } finally {
       inflight = null;
@@ -60,11 +60,8 @@ export function refreshSession(): Promise<boolean> {
  * (the httpOnly session cookie). Returns the final `Response` — the retried one when a refresh succeeded,
  * otherwise the original 401.
  */
-export async function fetchWithRefresh(
-  input: string,
-  init?: RequestInit,
-): Promise<Response> {
-  const opts: RequestInit = { ...init, credentials: "include" };
+export async function fetchWithRefresh(input: string, init?: RequestInit): Promise<Response> {
+  const opts: RequestInit = { ...init, credentials: 'include' };
   let res: Response;
   try {
     res = await fetch(input, opts);

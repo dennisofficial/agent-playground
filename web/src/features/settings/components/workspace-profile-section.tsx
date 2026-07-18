@@ -1,19 +1,10 @@
-"use client";
+'use client';
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import {
-  AlertCircle,
-  Check,
-  FileKey,
-  Package,
-  Plus,
-  Trash2,
-} from "lucide-react";
-import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
-import { inputCls } from "@/components/ui/field";
-import { useOrgRepos } from "@/lib/api/job-queries";
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { inputCls } from '@/components/ui/field';
+import { Spinner } from '@/components/ui/spinner';
+import { useOrgRepos } from '@/lib/api/job-queries';
 import {
   useDeleteMount,
   useDeleteRepoSecretFile,
@@ -24,13 +15,15 @@ import {
   useWorkspaceProfile,
   type WorkspaceProfileMount,
   type WorkspaceProfileView,
-} from "@/lib/api/orgs";
+} from '@/lib/api/orgs';
+import { AlertCircle, Check, FileKey, Package, Plus, Trash2 } from 'lucide-react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 
-type Flash = { tone: "green" | "red"; text: string };
+type Flash = { tone: 'green' | 'red'; text: string };
 
-const RED_SOFT = "color-mix(in srgb, var(--red) 8%, transparent)";
-const RED_BORDER = "color-mix(in srgb, var(--red) 40%, transparent)";
-const GREEN_BORDER = "color-mix(in srgb, var(--green) 32%, transparent)";
+const RED_SOFT = 'color-mix(in srgb, var(--red) 8%, transparent)';
+const RED_BORDER = 'color-mix(in srgb, var(--red) 40%, transparent)';
+const GREEN_BORDER = 'color-mix(in srgb, var(--green) 32%, transparent)';
 
 /**
  * Workspace profile — the Atlas-managed per-repo provisioning surface: encrypted secret files, extra
@@ -39,16 +32,10 @@ const GREEN_BORDER = "color-mix(in srgb, var(--green) 32%, transparent)";
  * manifests Atlas has acknowledged for this repo. Repo-scoped (one profile per repo), so the section
  * opens on a repo picker; reads are member-visible, every write is owner-only.
  */
-export function WorkspaceProfileSection({
-  orgId,
-  role,
-}: {
-  orgId: string;
-  role: string;
-}) {
+export function WorkspaceProfileSection({ orgId, role }: { orgId: string; role: string }) {
   const { data: repos } = useOrgRepos(orgId);
-  const [repoId, setRepoId] = useState("");
-  const canManage = role === "owner";
+  const [repoId, setRepoId] = useState('');
+  const canManage = role === 'owner';
 
   return (
     <>
@@ -56,9 +43,9 @@ export function WorkspaceProfileSection({
         Workspace profile
       </h1>
       <p className="mb-7 mt-1.5 max-w-[640px] text-[13px] leading-relaxed text-dim">
-        The Atlas-managed provisioning a repo’s sandboxes are built from —
-        secret files, mounts, a setup script, and a preview recipe — plus the
-        dependency manifests Atlas has detected. Pick a repo below.
+        The Atlas-managed provisioning a repo’s sandboxes are built from — secret files, mounts, a
+        setup script, and a preview recipe — plus the dependency manifests Atlas has detected. Pick
+        a repo below.
       </p>
 
       {!canManage ? (
@@ -68,9 +55,7 @@ export function WorkspaceProfileSection({
       ) : null}
 
       <div className="mb-5 flex items-center gap-2.5">
-        <span className="font-mono text-[9px] tracking-[0.1em] text-faint">
-          REPO
-        </span>
+        <span className="font-mono text-[9px] tracking-[0.1em] text-faint">REPO</span>
         <select
           value={repoId}
           onChange={(e) => setRepoId(e.target.value)}
@@ -90,12 +75,7 @@ export function WorkspaceProfileSection({
           Pick a repo to view and edit its workspace profile.
         </p>
       ) : (
-        <RepoProfile
-          key={repoId}
-          orgId={orgId}
-          repoId={repoId}
-          canManage={canManage}
-        />
+        <RepoProfile key={repoId} orgId={orgId} repoId={repoId} canManage={canManage} />
       )}
     </>
   );
@@ -117,33 +97,33 @@ type ProfileSection = {
 
 const SECTIONS: ProfileSection[] = [
   {
-    id: "secret-files",
-    title: "Secret files",
-    subtitle: "Encrypted — rendered to this repo at a destination path",
+    id: 'secret-files',
+    title: 'Secret files',
+    subtitle: 'Encrypted — rendered to this repo at a destination path',
     render: (c) => <SecretFilesSection {...c} />,
   },
   {
-    id: "mounts",
-    title: "Mounts",
-    subtitle: "Extra host directories bound into this repo’s sandboxes",
+    id: 'mounts',
+    title: 'Mounts',
+    subtitle: 'Extra host directories bound into this repo’s sandboxes',
     render: (c) => <MountsSection {...c} />,
   },
   {
-    id: "setup-script",
-    title: "Setup script",
-    subtitle: "Runs on every cold sandbox bring-up; must be idempotent",
+    id: 'setup-script',
+    title: 'Setup script',
+    subtitle: 'Runs on every cold sandbox bring-up; must be idempotent',
     render: (c) => <SetupScriptSection {...c} />,
   },
   {
-    id: "preview-recipe",
-    title: "Preview recipe",
-    subtitle: "How Atlas stands up this repo’s preview stack",
+    id: 'preview-recipe',
+    title: 'Preview recipe',
+    subtitle: 'How Atlas stands up this repo’s preview stack',
     render: (c) => <PreviewRecipeSection {...c} />,
   },
   {
-    id: "detected-stack",
-    title: "Detected stack",
-    subtitle: "Dependency manifests this profile has acknowledged",
+    id: 'detected-stack',
+    title: 'Detected stack',
+    subtitle: 'Dependency manifests this profile has acknowledged',
     render: (c) => <DetectedStackSection {...c} />,
   },
 ];
@@ -157,10 +137,7 @@ function RepoProfile({
   repoId: string;
   canManage: boolean;
 }) {
-  const { data, isLoading, isError, refetch } = useWorkspaceProfile(
-    orgId,
-    repoId,
-  );
+  const { data, isLoading, isError, refetch } = useWorkspaceProfile(orgId, repoId);
 
   if (isLoading) {
     return (
@@ -204,12 +181,8 @@ function RepoProfile({
       {SECTIONS.map((s) => (
         <Card key={s.id} className="p-[18px]">
           <div className="mb-3.5">
-            <div className="text-[13.5px] font-semibold text-text">
-              {s.title}
-            </div>
-            {s.subtitle ? (
-              <div className="mt-0.5 text-[11px] text-faint">{s.subtitle}</div>
-            ) : null}
+            <div className="text-[13.5px] font-semibold text-text">{s.title}</div>
+            {s.subtitle ? <div className="mt-0.5 text-[11px] text-faint">{s.subtitle}</div> : null}
           </div>
           {s.render(ctx)}
         </Card>
@@ -231,27 +204,23 @@ function useFlash() {
 
 function Flasher({ flash }: { flash: Flash | null }) {
   if (!flash) return null;
-  const ok = flash.tone === "green";
+  const ok = flash.tone === 'green';
   return (
     <div
       className="mb-3.5 flex items-center gap-2.5 rounded-md px-3.5 py-2.5"
       style={{
-        background: ok ? "var(--green-soft)" : RED_SOFT,
+        background: ok ? 'var(--green-soft)' : RED_SOFT,
         border: `1px solid ${ok ? GREEN_BORDER : RED_BORDER}`,
       }}
     >
       {ok ? (
-        <Check size={14} strokeWidth={2.2} style={{ color: "var(--green)" }} />
+        <Check size={14} strokeWidth={2.2} style={{ color: 'var(--green)' }} />
       ) : (
-        <AlertCircle
-          size={14}
-          strokeWidth={2}
-          style={{ color: "var(--red)" }}
-        />
+        <AlertCircle size={14} strokeWidth={2} style={{ color: 'var(--red)' }} />
       )}
       <span
         className="text-[12px] font-medium"
-        style={{ color: ok ? "var(--green)" : "var(--red)" }}
+        style={{ color: ok ? 'var(--green)' : 'var(--red)' }}
       >
         {flash.text}
       </span>
@@ -264,28 +233,26 @@ function SecretFilesSection({ orgId, repoId, data, canManage }: ProfileCtx) {
   const save = useSaveRepoSecretFile(orgId, repoId);
   const del = useDeleteRepoSecretFile(orgId, repoId);
   const [adding, setAdding] = useState(false);
-  const [path, setPath] = useState("");
-  const [label, setLabel] = useState("");
-  const [value, setValue] = useState("");
-  const [error, setError] = useState("");
+  const [path, setPath] = useState('');
+  const [label, setLabel] = useState('');
+  const [value, setValue] = useState('');
+  const [error, setError] = useState('');
 
-  const files = [...data.secretFiles].sort((a, b) =>
-    a.path.localeCompare(b.path),
-  );
+  const files = [...data.secretFiles].sort((a, b) => a.path.localeCompare(b.path));
 
   function resetForm() {
     setAdding(false);
-    setPath("");
-    setLabel("");
-    setValue("");
-    setError("");
+    setPath('');
+    setLabel('');
+    setValue('');
+    setError('');
   }
 
   async function submit() {
     const p = path.trim();
-    if (!p) return setError("Enter a destination path.");
-    if (!value) return setError("Enter a value.");
-    setError("");
+    if (!p) return setError('Enter a destination path.');
+    if (!value) return setError('Enter a value.');
+    setError('');
     try {
       await save.mutateAsync({
         path: p,
@@ -294,7 +261,7 @@ function SecretFilesSection({ orgId, repoId, data, canManage }: ProfileCtx) {
       });
       resetForm();
     } catch (e) {
-      setError((e as Error)?.message || "Could not save.");
+      setError((e as Error)?.message || 'Could not save.');
     }
   }
 
@@ -311,9 +278,7 @@ function SecretFilesSection({ orgId, repoId, data, canManage }: ProfileCtx) {
       ) : null}
 
       {files.length === 0 && !adding ? (
-        <p className="font-mono text-[12px] text-faint">
-          No secret files for this repo yet.
-        </p>
+        <p className="font-mono text-[12px] text-faint">No secret files for this repo yet.</p>
       ) : (
         <ul className="flex flex-col gap-2">
           {files.map((f) => (
@@ -323,10 +288,8 @@ function SecretFilesSection({ orgId, repoId, data, canManage }: ProfileCtx) {
             >
               <FileKey size={13} className="shrink-0 text-faint" />
               <span className="truncate text-text">{f.path}</span>
-              {f.label ? (
-                <span className="truncate text-faint">({f.label})</span>
-              ) : null}
-              <span className="ml-auto text-faint">{"•".repeat(10)}</span>
+              {f.label ? <span className="truncate text-faint">({f.label})</span> : null}
+              <span className="ml-auto text-faint">{'•'.repeat(10)}</span>
               {canManage ? (
                 <button
                   type="button"
@@ -367,12 +330,7 @@ function SecretFilesSection({ orgId, repoId, data, canManage }: ProfileCtx) {
           />
           {error ? <p className="text-[11.5px] text-red">{error}</p> : null}
           <div className="flex gap-2.5">
-            <Button
-              size="sm"
-              onClick={submit}
-              loading={save.isPending}
-              loadingText="Saving…"
-            >
+            <Button size="sm" onClick={submit} loading={save.isPending} loadingText="Saving…">
               Save file
             </Button>
             <Button size="sm" variant="ghost" onClick={resetForm}>
@@ -386,24 +344,19 @@ function SecretFilesSection({ orgId, repoId, data, canManage }: ProfileCtx) {
 }
 
 // ── Mounts ────────────────────────────────────────────────────────────────────────────────────────
-const MOUNT_MODES: WorkspaceProfileMount["mode"][] = [
-  "per-thread",
-  "shared-ro",
-  "shared-rw",
-];
+const MOUNT_MODES: WorkspaceProfileMount['mode'][] = ['per-thread', 'shared-ro', 'shared-rw'];
 
 function MountsSection({ orgId, repoId, data, canManage }: ProfileCtx) {
   const save = useSaveMount(orgId, repoId);
   const del = useDeleteMount(orgId, repoId);
   const [flash, setFlash] = useFlash();
   const [adding, setAdding] = useState(false);
-  const [path, setPath] = useState("");
-  const [mode, setMode] = useState<WorkspaceProfileMount["mode"]>("per-thread");
-  const [error, setError] = useState("");
+  const [path, setPath] = useState('');
+  const [mode, setMode] = useState<WorkspaceProfileMount['mode']>('per-thread');
+  const [error, setError] = useState('');
 
   const mounts = [...data.mounts].sort((a, b) => a.path.localeCompare(b.path));
-  const RESTART_NOTE =
-    "sandboxes recreate on their next attach to pick this up.";
+  const RESTART_NOTE = 'sandboxes recreate on their next attach to pick this up.';
 
   function onDelete(p: string) {
     del.mutate(
@@ -411,13 +364,13 @@ function MountsSection({ orgId, repoId, data, canManage }: ProfileCtx) {
       {
         onSuccess: () =>
           setFlash({
-            tone: "green",
+            tone: 'green',
             text: `Removed mount ${p} — ${RESTART_NOTE}`,
           }),
         onError: (e) =>
           setFlash({
-            tone: "red",
-            text: (e as Error)?.message || "Could not remove the mount.",
+            tone: 'red',
+            text: (e as Error)?.message || 'Could not remove the mount.',
           }),
       },
     );
@@ -425,24 +378,24 @@ function MountsSection({ orgId, repoId, data, canManage }: ProfileCtx) {
 
   async function submit() {
     const p = path.trim();
-    if (!p) return setError("Enter a mount path.");
-    setError("");
+    if (!p) return setError('Enter a mount path.');
+    setError('');
     try {
       await save.mutateAsync(
         { path: p, mode },
         {
           onSuccess: () =>
             setFlash({
-              tone: "green",
+              tone: 'green',
               text: `Saved mount ${p} — ${RESTART_NOTE}`,
             }),
         },
       );
       setAdding(false);
-      setPath("");
-      setMode("per-thread");
+      setPath('');
+      setMode('per-thread');
     } catch (e) {
-      setError((e as Error)?.message || "Could not save.");
+      setError((e as Error)?.message || 'Could not save.');
     }
   }
 
@@ -465,9 +418,7 @@ function MountsSection({ orgId, repoId, data, canManage }: ProfileCtx) {
       ) : null}
 
       {mounts.length === 0 && !adding ? (
-        <p className="font-mono text-[12px] text-faint">
-          No extra mounts for this repo.
-        </p>
+        <p className="font-mono text-[12px] text-faint">No extra mounts for this repo.</p>
       ) : (
         <ul className="flex flex-col gap-2">
           {mounts.map((m) => (
@@ -505,9 +456,7 @@ function MountsSection({ orgId, repoId, data, canManage }: ProfileCtx) {
             />
             <select
               value={mode}
-              onChange={(e) =>
-                setMode(e.target.value as WorkspaceProfileMount["mode"])
-              }
+              onChange={(e) => setMode(e.target.value as WorkspaceProfileMount['mode'])}
               className="rounded-md border border-border-2 bg-surface px-3 py-2 font-mono text-[12px] text-text outline-none"
             >
               {MOUNT_MODES.map((m) => (
@@ -519,12 +468,7 @@ function MountsSection({ orgId, repoId, data, canManage }: ProfileCtx) {
           </div>
           {error ? <p className="text-[11.5px] text-red">{error}</p> : null}
           <div className="flex gap-2.5">
-            <Button
-              size="sm"
-              onClick={submit}
-              loading={save.isPending}
-              loadingText="Saving…"
-            >
+            <Button size="sm" onClick={submit} loading={save.isPending} loadingText="Saving…">
               Save mount
             </Button>
             <Button
@@ -532,9 +476,9 @@ function MountsSection({ orgId, repoId, data, canManage }: ProfileCtx) {
               variant="ghost"
               onClick={() => {
                 setAdding(false);
-                setPath("");
-                setMode("per-thread");
-                setError("");
+                setPath('');
+                setMode('per-thread');
+                setError('');
               }}
             >
               Cancel
@@ -564,13 +508,13 @@ function ScriptEditor({
   placeholder: string;
   helper: string;
 }) {
-  const [value, setValue] = useState(seeded ?? "");
-  const savedRef = useRef(seeded ?? "");
+  const [value, setValue] = useState(seeded ?? '');
+  const savedRef = useRef(seeded ?? '');
   const dirty = value !== savedRef.current;
-  const [error, setError] = useState("");
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    const next = seeded ?? "";
+    const next = seeded ?? '';
     // Re-sync from a refetch/reload, but never clobber an in-progress edit.
     if (value === savedRef.current) setValue(next);
     savedRef.current = next;
@@ -578,23 +522,23 @@ function ScriptEditor({
   }, [seeded]);
 
   async function save() {
-    setError("");
+    setError('');
     try {
       await onSave(value);
       savedRef.current = value;
     } catch (e) {
-      setError((e as Error)?.message || "Could not save.");
+      setError((e as Error)?.message || 'Could not save.');
     }
   }
 
   async function clear() {
-    setError("");
+    setError('');
     try {
       await onClear();
-      savedRef.current = "";
-      setValue("");
+      savedRef.current = '';
+      setValue('');
     } catch (e) {
-      setError((e as Error)?.message || "Could not clear.");
+      setError((e as Error)?.message || 'Could not clear.');
     }
   }
 
@@ -612,21 +556,10 @@ function ScriptEditor({
       {error ? <p className="mt-1.5 text-[11.5px] text-red">{error}</p> : null}
       {canManage ? (
         <div className="mt-3 flex gap-2.5">
-          <Button
-            size="sm"
-            onClick={save}
-            disabled={!dirty}
-            loading={saving}
-            loadingText="Saving…"
-          >
+          <Button size="sm" onClick={save} disabled={!dirty} loading={saving} loadingText="Saving…">
             Save
           </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={clear}
-            disabled={saving || value.length === 0}
-          >
+          <Button size="sm" variant="ghost" onClick={clear} disabled={saving || value.length === 0}>
             Clear
           </Button>
         </div>
@@ -644,7 +577,7 @@ function SetupScriptSection({ orgId, repoId, data, canManage }: ProfileCtx) {
       onClear={() => save.mutateAsync({ script: null })}
       saving={save.isPending}
       canManage={canManage}
-      placeholder={"#!/usr/bin/env bash\nset -euo pipefail\n\npnpm install"}
+      placeholder={'#!/usr/bin/env bash\nset -euo pipefail\n\npnpm install'}
       helper="Runs on every cold sandbox bring-up; must be idempotent."
     />
   );
@@ -686,8 +619,8 @@ function DetectedStackSection({ data }: ProfileCtx) {
         </div>
       )}
       <p className="mt-3 text-[11px] leading-relaxed text-faint">
-        Live drift needs a running sandbox, so it isn’t computed here — this is
-        the acknowledged manifest set.
+        Live drift needs a running sandbox, so it isn’t computed here — this is the acknowledged
+        manifest set.
       </p>
     </>
   );

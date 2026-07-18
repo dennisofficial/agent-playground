@@ -1,9 +1,8 @@
-"use client";
+'use client';
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { createContext } from "react";
-import type { Virtualizer } from "@tanstack/react-virtual";
-import { warmMermaidDiagrams } from "./markdown";
+import type { Virtualizer } from '@tanstack/react-virtual';
+import { createContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { warmMermaidDiagrams } from './markdown';
 
 /** True inside the hidden off-screen pre-measurement layer below — rows rendered there are read for
  *  `offsetHeight` only and never actually seen, so components with mount-time side effects (attachment
@@ -19,10 +18,7 @@ export const PREMEASURE_MIN_ROWS = 60;
  *  iOS/touch-only (desktop already compensates for above-viewport resizes immediately), so callers should
  *  compute this once after hydration, not during SSR and not on every render. */
 export function isTouchCapableDevice(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    window.matchMedia("(pointer: coarse)").matches
-  );
+  return typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches;
 }
 
 const DEFAULT_CHUNK_SIZE = 24;
@@ -45,11 +41,7 @@ export function premeasureChunkIndexes(
   isMeasured: (key: string) => boolean,
 ): number[] {
   const indexes: number[] = [];
-  for (
-    let i = Math.min(cursor, items.length) - 1;
-    i >= 0 && indexes.length < chunkSize;
-    i--
-  ) {
+  for (let i = Math.min(cursor, items.length) - 1; i >= 0 && indexes.length < chunkSize; i--) {
     if (!isMeasured(items[i].key)) indexes.push(i);
   }
   indexes.reverse();
@@ -59,11 +51,11 @@ export function premeasureChunkIndexes(
 /** Schedule `cb` during idle time — `requestIdleCallback` where available (desktop), else a MessageChannel
  *  yielder (iOS Safari has no default `requestIdleCallback`). Returns a cancel function. */
 function scheduleIdle(cb: () => void): () => void {
-  if (typeof requestIdleCallback === "function") {
+  if (typeof requestIdleCallback === 'function') {
     const handle = requestIdleCallback(cb, { timeout: IDLE_TIMEOUT_MS });
     return () => cancelIdleCallback(handle);
   }
-  if (typeof MessageChannel === "undefined") {
+  if (typeof MessageChannel === 'undefined') {
     const handle = setTimeout(cb, 0);
     return () => clearTimeout(handle);
   }
@@ -137,7 +129,7 @@ export function useIdlePremeasure(opts: {
   // above keys the re-arm off content, not array identity), and read the live list from a ref.
   const warmSourcesRef = useRef(warmSources);
   warmSourcesRef.current = warmSources;
-  const warmKey = (warmSources ?? []).join("\u0000");
+  const warmKey = (warmSources ?? []).join('\u0000');
 
   // WARM phase: render every not-yet-cached diagram off-screen (idle-scheduled) before MEASURE reads any
   // row's offsetHeight. Runs once per arming; a transcript with no diagrams warms trivially (empty list).
@@ -179,8 +171,8 @@ export function useIdlePremeasure(opts: {
       // virtualizer's total size and the scroll position are untouched and nothing is visible).
       const layer = layerRef.current;
       if (layer) {
-        layer.querySelectorAll<HTMLElement>("[data-pindex]").forEach((el) => {
-          const idx = Number(el.getAttribute("data-pindex"));
+        layer.querySelectorAll<HTMLElement>('[data-pindex]').forEach((el) => {
+          const idx = Number(el.getAttribute('data-pindex'));
           const item = items[idx];
           if (item) measuredRef.current.set(item.key, el.offsetHeight);
         });
@@ -196,8 +188,7 @@ export function useIdlePremeasure(opts: {
     // a single paint (one barely-perceptible settle) rather than the hundreds of separate frames that read as
     // "jumping on load".
     const el = virtualizer.scrollElement;
-    const wasAtBottom =
-      !!el && el.scrollHeight - el.scrollTop - el.clientHeight < AT_BOTTOM_PX;
+    const wasAtBottom = !!el && el.scrollHeight - el.scrollTop - el.clientHeight < AT_BOTTOM_PX;
     for (let i = 0; i < items.length; i++) {
       const h = measuredRef.current.get(items[i].key);
       if (h != null) virtualizer.resizeItem(i, h);
@@ -223,11 +214,11 @@ export function useIdlePremeasure(opts: {
       ref={layerRef}
       aria-hidden
       style={{
-        position: "absolute",
-        visibility: "hidden",
+        position: 'absolute',
+        visibility: 'hidden',
         left: -99999,
         top: 0,
-        width: "100%",
+        width: '100%',
       }}
     >
       <PremeasureContext.Provider value={true}>

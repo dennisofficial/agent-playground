@@ -1,12 +1,18 @@
-"use client";
+'use client';
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { HelpCircle, Upload } from "lucide-react";
-import { useVirtualizer } from "@tanstack/react-virtual";
-import { classifyMessage } from "./classify";
-import { isTouchCapableDevice, PREMEASURE_MIN_ROWS, useIdlePremeasure } from "./idle-premeasure";
-import { compensateAboveViewportResize } from "./scroll-compensation";
-import { JumpToLatestButton, useTailFollow } from "./tail-follow";
+import { useComposerStagedAnswers } from '@/lib/api/composer-store';
+import { useAllJobs } from '@/lib/api/inbox';
+import type { JobMessage, JobRef } from '@/lib/api/job-api';
+import { MAIN_LANE, useLiveTurn, type ContextBreakdown } from '@/lib/api/job-stream';
+import type { JobBlocker, LaneDefaultFooter, WireJobActivity } from '@/lib/api/types';
+import { assertNever } from '@/utils/assert';
+import { useVirtualizer } from '@tanstack/react-virtual';
+import { HelpCircle, Upload } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ApprovalCardView, VerdictCardView } from './approval-card';
+import { ArchivedOverlay } from './archived-overlay';
+import { AttachmentsCardView } from './attachments-card';
+import { BlockedOverlay } from './blocked-overlay';
 import {
   buildLiveTurnItems,
   ClaudeBubble,
@@ -16,43 +22,33 @@ import {
   LiveIndicator,
   SystemEventPill,
   SystemNoticeRow,
-  UntrustedBlock,
   SystemOperatorNotice,
   SystemReminderChip,
   ThinkingBlock,
   TurnMetaDivider,
+  UntrustedBlock,
   UserBubble,
-} from "./bubbles";
-import { ToolGroup, segmentToolRun, type ToolItem } from "./tool-calls";
-import { assertNever } from "@/utils/assert";
-import { ApprovalCardView, VerdictCardView } from "./approval-card";
-import { QuestionCardView } from "./question-card";
-import { SecretCardView } from "./secret-card";
-import { McpProposalCard } from "./mcp-proposal-card";
-import { SkillProposalCard } from "./skill-proposal-card";
-import { FileCardView } from "./file-card";
-import { ReviewCommentsCardView } from "./review-comments-card";
-import { messageSendState } from "./send-state";
-import { AttachmentsCardView } from "./attachments-card";
-import { SubagentCard, indexDurableSubagents, subagentNode } from "./subagents";
-import { AgentPromptBlock } from "./phases";
-import { indexCodexReviewBlocks } from "./codex-review";
-import { Composer, type ComposerFooter } from "./composer";
-import { BlockedOverlay } from "./blocked-overlay";
-import { ArchivedOverlay } from "./archived-overlay";
-import { useAttachments } from "./use-attachments";
-import { useFileDrop } from "./use-file-drop";
-import { DetailTopBar } from "./detail-top-bar";
-import { extractMermaidSources, mermaidReservePx } from "./markdown";
-import type { JobMessage, JobRef } from "@/lib/api/job-api";
-import type {
-  JobBlocker,
-  LaneDefaultFooter,
-  WireJobActivity,
-} from "@/lib/api/types";
-import { MAIN_LANE, useLiveTurn, type ContextBreakdown } from "@/lib/api/job-stream";
-import { useComposerStagedAnswers } from "@/lib/api/composer-store";
-import { useAllJobs } from "@/lib/api/inbox";
+} from './bubbles';
+import { classifyMessage } from './classify';
+import { indexCodexReviewBlocks } from './codex-review';
+import { Composer, type ComposerFooter } from './composer';
+import { DetailTopBar } from './detail-top-bar';
+import { FileCardView } from './file-card';
+import { isTouchCapableDevice, PREMEASURE_MIN_ROWS, useIdlePremeasure } from './idle-premeasure';
+import { extractMermaidSources, mermaidReservePx } from './markdown';
+import { McpProposalCard } from './mcp-proposal-card';
+import { AgentPromptBlock } from './phases';
+import { QuestionCardView } from './question-card';
+import { ReviewCommentsCardView } from './review-comments-card';
+import { compensateAboveViewportResize } from './scroll-compensation';
+import { SecretCardView } from './secret-card';
+import { messageSendState } from './send-state';
+import { SkillProposalCard } from './skill-proposal-card';
+import { indexDurableSubagents, SubagentCard, subagentNode } from './subagents';
+import { JumpToLatestButton, useTailFollow } from './tail-follow';
+import { segmentToolRun, ToolGroup, type ToolItem } from './tool-calls';
+import { useAttachments } from './use-attachments';
+import { useFileDrop } from './use-file-drop';
 
 /**
  * Conversation mode — the Main lane (the thread's brain). Just the shared {@link TranscriptView} with the
@@ -210,8 +206,7 @@ export function TranscriptView({
   // subagents ride the same threadId and stay in, to be peeled into cards below). Undefined threadId (the
   // Codex review lane, or a pre-plan Main) leaves the already-single-thread log unfiltered.
   const scoped = useMemo(
-    () =>
-      threadId ? messages.filter((m) => m.threadId === threadId) : messages,
+    () => (threadId ? messages.filter((m) => m.threadId === threadId) : messages),
     [messages, threadId],
   );
 
@@ -233,12 +228,12 @@ export function TranscriptView({
   // "Atlas is working…" for work a build lane is actually doing. Only consulted on the interactive Main lane
   // (same gate as `realtimeIdle`); a build lane's own view drives its own indicator off its own live turn.
   const activity = useRealtimeActivity(composer && !readOnly ? jobRef.jobId : null);
-  const driverOwnsWork = activity === "build" || activity === "master_review";
+  const driverOwnsWork = activity === 'build' || activity === 'master_review';
 
   // Stream signature — grows with streaming text/thinking so the tail follows token-by-token, not just on
   // block boundaries.
   const liveStreamSig = (liveTurn?.blocks ?? []).reduce(
-    (n, b) => n + (b.kind === "tool" ? 1 : b.text.length),
+    (n, b) => n + (b.kind === 'tool' ? 1 : b.text.length),
     0,
   );
 
@@ -250,17 +245,11 @@ export function TranscriptView({
   const startedAt = liveTurn?.startedAt;
   const liveWindowActive = !!liveTurn?.active && startedAt != null;
   const midTurnRows = useMemo(
-    () =>
-      liveWindowActive
-        ? scoped.filter((m) => messagePostedMs(m) >= startedAt!)
-        : [],
+    () => (liveWindowActive ? scoped.filter((m) => messagePostedMs(m) >= startedAt!) : []),
     [scoped, liveWindowActive, startedAt],
   );
   const log = useMemo(
-    () =>
-      liveWindowActive
-        ? scoped.filter((m) => messagePostedMs(m) < startedAt!)
-        : scoped,
+    () => (liveWindowActive ? scoped.filter((m) => messagePostedMs(m) < startedAt!) : scoped),
     [scoped, liveWindowActive, startedAt],
   );
 
@@ -274,7 +263,7 @@ export function TranscriptView({
     if (openThreadHalted === false) return null;
     let ts: string | null = null;
     for (const m of scoped) {
-      if (m.source === "system_operator" && m.meta?.retryable === true) ts = m.ts;
+      if (m.source === 'system_operator' && m.meta?.retryable === true) ts = m.ts;
     }
     return ts;
   }, [scoped, openThreadHalted]);
@@ -286,10 +275,9 @@ export function TranscriptView({
   // at turn end; it falls back to the durable `turn_meta` occupancy between turns.
   const footer = useMemo(() => {
     if (!composer) return null;
-    const base =
-      laneFooterMeta(scoped, lane) ?? defaultFooterAsComposer(defaultFooter);
+    const base = laneFooterMeta(scoped, lane) ?? defaultFooterAsComposer(defaultFooter);
     const liveContext =
-      turnActive && typeof liveTurn?.contextTokens === "number" && liveTurn.contextLimit
+      turnActive && typeof liveTurn?.contextTokens === 'number' && liveTurn.contextLimit
         ? {
             tokens: liveTurn.contextTokens,
             limit: liveTurn.contextLimit,
@@ -315,7 +303,12 @@ export function TranscriptView({
   // cards, bubbles), SCOPED to this lane. Windowed: on a long thread only the on-screen rows render.
   const items = useMemo(
     () =>
-      buildLogItems(log, jobRef, { lane, outstandingRetryTs, onOpenPlan, onSelectNode }),
+      buildLogItems(log, jobRef, {
+        lane,
+        outstandingRetryTs,
+        onOpenPlan,
+        onSelectNode,
+      }),
     [log, jobRef, lane, outstandingRetryTs, onOpenPlan, onSelectNode],
   );
 
@@ -329,8 +322,7 @@ export function TranscriptView({
     // hold once it crosses into history — see messageOrderMs.
     const tsByKey = new Map(midTurnRows.map((m) => [m.ts, messageOrderMs(m)]));
     const itemTs = (key: string) =>
-      tsByKey.get(key.startsWith("tg-") ? key.slice(3) : key) ??
-      Number.POSITIVE_INFINITY;
+      tsByKey.get(key.startsWith('tg-') ? key.slice(3) : key) ?? Number.POSITIVE_INFINITY;
     const midItems = buildLogItems(midTurnRows, jobRef, {
       lane,
       outstandingRetryTs,
@@ -357,12 +349,12 @@ export function TranscriptView({
   const openQuestions = useMemo(() => {
     if (!composer || readOnly) return [] as JobMessage[];
     const stagedQuestionIds = new Set(
-      stagedAnswers.filter((a) => a.kind === "question").map((a) => a.cardId),
+      stagedAnswers.filter((a) => a.kind === 'question').map((a) => a.cardId),
     );
     return scoped.filter((m) => {
       const c = m.card;
       return (
-        c?.type === "question_card" &&
+        c?.type === 'question_card' &&
         !c.answer &&
         !c.withdrawnAt &&
         !stagedQuestionIds.has(c.questionId)
@@ -374,27 +366,20 @@ export function TranscriptView({
   // the callback passed to useTailFollow stays stable while still reaching the freshly-built `virtualizer`
   // (which itself depends on the scrollRef useTailFollow returns — the ref breaks that render-order cycle).
   const pinRef = useRef<() => void>(() => {});
-  const {
-    scrollRef,
-    endRef,
-    showJump,
-    jumpToLatest,
-    onScroll,
-    onPointerOver,
-    onPointerLeave,
-  } = useTailFollow(
-    [
-      messages.length,
-      live,
-      driverOwnsWork,
-      liveBlockCount,
-      liveStreamSig,
-      turnActive,
-      composerHeight,
-      trailing.length,
-    ],
-    () => pinRef.current(),
-  );
+  const { scrollRef, endRef, showJump, jumpToLatest, onScroll, onPointerOver, onPointerLeave } =
+    useTailFollow(
+      [
+        messages.length,
+        live,
+        driverOwnsWork,
+        liveBlockCount,
+        liveStreamSig,
+        turnActive,
+        composerHeight,
+        trailing.length,
+      ],
+      () => pinRef.current(),
+    );
 
   const virtualizer = useVirtualizer({
     count: items.length,
@@ -408,7 +393,7 @@ export function TranscriptView({
     // the adjustment rides the built-in deferred-scrollTop path (held through touch/momentum, flushed once on
     // settle) so it never lands as a mid-gesture jump. `scrollEndThreshold` matches useTailFollow's 80px
     // "stuck to bottom" band so the two agree on what counts as "at the end".
-    anchorTo: "end",
+    anchorTo: 'end',
     scrollEndThreshold: 80,
   });
 
@@ -433,8 +418,7 @@ export function TranscriptView({
     }
     // Big "jump to latest" from far up: the tail rows may be windowed out, so drive the virtualizer to
     // render them first (accounts for estimated off-screen heights)…
-    if (items.length > 0)
-      virtualizer.scrollToIndex(items.length - 1, { align: "end" });
+    if (items.length > 0) virtualizer.scrollToIndex(items.length - 1, { align: 'end' });
     // …then, once layout settles, pin to the true bottom to include the trailing live turn / composer spacer.
     requestAnimationFrame(() => {
       const e = scrollRef.current;
@@ -456,9 +440,7 @@ export function TranscriptView({
   const warmSources = useMemo(
     () =>
       premeasureEnabled
-        ? log.flatMap((m) =>
-            extractMermaidSources(typeof m.text === "string" ? m.text : ""),
-          )
+        ? log.flatMap((m) => extractMermaidSources(typeof m.text === 'string' ? m.text : ''))
         : [],
     [log, premeasureEnabled],
   );
@@ -476,7 +458,7 @@ export function TranscriptView({
     cycleRef.current = i + 1;
     const ts = openQuestions[i].ts;
     const idx = items.findIndex((it) => it.key === ts);
-    if (idx >= 0) virtualizer.scrollToIndex(idx, { align: "center" });
+    if (idx >= 0) virtualizer.scrollToIndex(idx, { align: 'center' });
     setFlashKey(ts);
     if (flashTimer.current) clearTimeout(flashTimer.current);
     flashTimer.current = setTimeout(() => setFlashKey(null), 2200);
@@ -494,21 +476,16 @@ export function TranscriptView({
         <div className="relative mx-auto flex max-w-[880px] flex-col gap-[9px]">
           {premeasureLayer}
           {isLoading && messages.length === 0 ? (
-            <p className="py-10 text-center text-[13px] text-faint">
-              Loading conversation…
-            </p>
+            <p className="py-10 text-center text-[13px] text-faint">Loading conversation…</p>
           ) : items.length === 0 && trailing.length === 0 && liveBlockCount === 0 ? (
             <p className="py-10 text-center text-[13px] text-faint">
-              {emptyText ?? "No messages yet — say something to Atlas below."}
+              {emptyText ?? 'No messages yet — say something to Atlas below.'}
             </p>
           ) : (
             // Windowed durable log: a single spacer sized to the full transcript, with only the on-screen
             // rows rendered and absolutely positioned. `measureElement` re-measures async height changes
             // (mermaid diagrams, code highlighting) so rows never overlap once they finish rendering.
-            <div
-              className="relative w-full"
-              style={{ height: virtualizer.getTotalSize() }}
-            >
+            <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
               {virtualItems.map((vi) => (
                 <div
                   key={vi.key}
@@ -516,8 +493,8 @@ export function TranscriptView({
                   ref={virtualizer.measureElement}
                   className={`absolute left-0 top-0 w-full${
                     items[vi.index].key === flashKey
-                      ? " rounded-lg ring-2 ring-accent ring-offset-2 ring-offset-surface transition"
-                      : ""
+                      ? ' rounded-lg ring-2 ring-accent ring-offset-2 ring-offset-surface transition'
+                      : ''
                   }`}
                   style={{
                     transform: `translateY(${vi.start}px)`,
@@ -541,10 +518,7 @@ export function TranscriptView({
         </div>
       </div>
       {showJump ? (
-        <JumpToLatestButton
-          onClick={jumpToLatest}
-          style={{ bottom: bottomPad + 8 }}
-        />
+        <JumpToLatestButton onClick={jumpToLatest} style={{ bottom: bottomPad + 8 }} />
       ) : null}
       {openQuestions.length > 0 ? (
         <OpenQuestionsChip
@@ -602,13 +576,13 @@ function OpenQuestionsChip({
       title={
         count > 1
           ? `Jump to the next of ${count} unanswered questions`
-          : "Jump to the unanswered question"
+          : 'Jump to the unanswered question'
       }
       style={style}
       className="absolute left-4 z-10 flex items-center gap-1.5 rounded-full border border-accent bg-surface-2 py-1.5 pl-2.5 pr-3.5 text-[12px] font-medium text-accent shadow-md transition hover:bg-surface"
     >
       <HelpCircle size={14} />
-      {count > 1 ? `${count} awaiting you` : "Awaiting you"}
+      {count > 1 ? `${count} awaiting you` : 'Awaiting you'}
       <svg
         width="13"
         height="13"
@@ -634,9 +608,7 @@ function messagePostedMs(message: JobMessage): number {
 // The instant the brain PROCESSED this row (its SDK-conversation position) — what the transcript orders
 // by. Falls back to delivered/posted time. Display still uses postedAt.
 export function messageOrderMs(message: JobMessage): number {
-  const ms = Date.parse(
-    message.orderAt ?? message.deliveredAt ?? message.postedAt,
-  );
+  const ms = Date.parse(message.orderAt ?? message.deliveredAt ?? message.postedAt);
   return Number.isFinite(ms) ? ms : Number.NEGATIVE_INFINITY;
 }
 
@@ -704,12 +676,12 @@ function toolGroupEstimate(_toolCount: number): number {
  *  per-kind guess is a poor estimate — a one-line reply and a page of markdown share the same `kind`. For
  *  these we estimate from the actual content instead (see {@link estimateForMessage}). */
 const TEXT_KINDS = new Set([
-  "claude",
-  "user",
-  "untrusted",
-  "system_shared",
-  "compaction",
-  "system_operator",
+  'claude',
+  'user',
+  'untrusted',
+  'system_shared',
+  'compaction',
+  'system_operator',
 ]);
 
 const MERMAID_FENCE = /```mermaid\n([\s\S]*?)```/g;
@@ -738,8 +710,8 @@ const LINE_PX = 22;
  */
 function estimateForMessage(message: JobMessage, kind: string): number {
   const base = estimateForKind(kind);
-  const text = typeof message.text === "string" ? message.text : "";
-  if (!TEXT_KINDS.has(kind) || text === "") return base;
+  const text = typeof message.text === 'string' ? message.text : '';
+  if (!TEXT_KINDS.has(kind) || text === '') return base;
 
   let diagrams = 0;
   MERMAID_FENCE.lastIndex = 0;
@@ -747,18 +719,19 @@ function estimateForMessage(message: JobMessage, kind: string): number {
     diagrams += mermaidReservePx(m[1]) + MERMAID_CHROME_PX;
   }
 
-  let prose = text.replace(MERMAID_FENCE, "");
+  let prose = text.replace(MERMAID_FENCE, '');
 
   let code = 0;
   CODE_FENCE.lastIndex = 0;
   for (let m = CODE_FENCE.exec(prose); m !== null; m = CODE_FENCE.exec(prose)) {
-    const lineCount = m[2].split("\n").length;
+    const lineCount = m[2].split('\n').length;
     code += lineCount * CODE_LINE_PX + CODE_CHROME_PX;
   }
-  prose = prose.replace(CODE_FENCE, "");
+  prose = prose.replace(CODE_FENCE, '');
 
   let lines = 0;
-  for (const line of prose.split("\n")) lines += Math.max(1, Math.ceil(line.length / CHARS_PER_LINE));
+  for (const line of prose.split('\n'))
+    lines += Math.max(1, Math.ceil(line.length / CHARS_PER_LINE));
   const prosePx = 40 + lines * LINE_PX;
 
   return Math.max(base, Math.round(prosePx + diagrams + code));
@@ -834,14 +807,12 @@ function buildLogItems(
     // ── the initial-prompt block: THIS turn's "first message" (the exact task the engine received) ──
     // Rendered INLINE at its chronological position on every agent lane (a build thread, a review child).
     // Handled here, before `classifyMessage`, else an atlas-authored row falls through as a normal bubble.
-    if (message.kind === "agent_prompt") {
+    if (message.kind === 'agent_prompt') {
       // The brain's Main transcript mirrors the agent's turns via typed durable rows (operator bubble,
       // system_notice/system_reminder/untrusted pills) — so the raw serialized prompt snapshot is pure
       // duplication there and is NOT rendered. On the out-of-scope Codex lane it belongs only when tagged.
       const cid =
-        typeof message.meta?.codexReviewId === "string"
-          ? message.meta.codexReviewId
-          : null;
+        typeof message.meta?.codexReviewId === 'string' ? message.meta.codexReviewId : null;
       const show = isMain ? false : isCodexLane ? cid != null : true;
       if (show) {
         flush();
@@ -872,7 +843,7 @@ function buildLogItems(
     // A per-turn accounting block (token usage + context occupancy) — rendered as a turn-end divider.
     // Handled raw, BEFORE classifyMessage (which would otherwise fall this unknown kind through to a
     // plain Claude bubble). Flush any open tool run first so the divider lands after the turn's tools.
-    if (message.kind === "turn_meta") {
+    if (message.kind === 'turn_meta') {
       flush();
       nodes.push({
         key: message.ts,
@@ -883,19 +854,19 @@ function buildLogItems(
     }
 
     const c = classifyMessage(message);
-    if (c.kind === "tool") {
+    if (c.kind === 'tool') {
       const m = message.meta ?? {};
       pending.push({
         key: message.ts,
         tool: {
           key: message.ts,
-          name: String(m.name ?? "tool"),
+          name: String(m.name ?? 'tool'),
           input: m.input,
           result: m.result,
           isError: Boolean(m.isError),
           superseded: Boolean(m.superseded),
-          structuredPatch: m.structuredPatch as ToolItem["structuredPatch"],
-          jitContext: m.jitContext as ToolItem["jitContext"],
+          structuredPatch: m.structuredPatch as ToolItem['structuredPatch'],
+          jitContext: m.jitContext as ToolItem['jitContext'],
         },
       });
       continue;
@@ -903,33 +874,30 @@ function buildLogItems(
     flush();
 
     const push = (node: React.ReactNode) =>
-      nodes.push({ key: message.ts, node, estimate: estimateForMessage(message, c.kind) });
+      nodes.push({
+        key: message.ts,
+        node,
+        estimate: estimateForMessage(message, c.kind),
+      });
     // Interactive cards (buttons/inputs the operator clicks) are wrapped in `data-tailpause` so hovering
     // ANYWHERE on the card — not just its controls — suspends tail-follow (see useTailFollow), keeping the
     // target still under the cursor while tokens stream in.
-    const pushCard = (node: React.ReactNode) =>
-      push(<div data-tailpause>{node}</div>);
+    const pushCard = (node: React.ReactNode) => push(<div data-tailpause>{node}</div>);
     switch (c.kind) {
-      case "user":
+      case 'user':
         push(
           <UserBubble
             key={message.ts}
             text={message.text}
             time={message.postedAt}
-            pending={messageSendState(message) === "sending"}
+            pending={messageSendState(message) === 'sending'}
           />,
         );
         break;
-      case "thinking":
-        push(
-          <ThinkingBlock
-            key={message.ts}
-            text={message.text}
-            time={message.postedAt}
-          />,
-        );
+      case 'thinking':
+        push(<ThinkingBlock key={message.ts} text={message.text} time={message.postedAt} />);
         break;
-      case "approval":
+      case 'approval':
         pushCard(
           <ApprovalCardView
             key={message.ts}
@@ -940,45 +908,35 @@ function buildLogItems(
           />,
         );
         break;
-      case "verdict":
+      case 'verdict':
         pushCard(<VerdictCardView key={message.ts} card={c.card} />);
         break;
-      case "question":
-        pushCard(
-          <QuestionCardView key={message.ts} card={c.card} jobRef={jobRef} />,
-        );
+      case 'question':
+        pushCard(<QuestionCardView key={message.ts} card={c.card} jobRef={jobRef} />);
         break;
-      case "secret":
-        pushCard(
-          <SecretCardView key={message.ts} card={c.card} jobRef={jobRef} />,
-        );
+      case 'secret':
+        pushCard(<SecretCardView key={message.ts} card={c.card} jobRef={jobRef} />);
         break;
-      case "mcp_proposal":
-        pushCard(
-          <McpProposalCard key={message.ts} card={c.card} jobRef={jobRef} />,
-        );
+      case 'mcp_proposal':
+        pushCard(<McpProposalCard key={message.ts} card={c.card} jobRef={jobRef} />);
         break;
-      case "skill_proposal":
-        pushCard(
-          <SkillProposalCard key={message.ts} card={c.card} jobRef={jobRef} />,
-        );
+      case 'skill_proposal':
+        pushCard(<SkillProposalCard key={message.ts} card={c.card} jobRef={jobRef} />);
         break;
-      case "file":
-        pushCard(
-          <FileCardView key={message.ts} card={c.card} jobRef={jobRef} />,
-        );
+      case 'file':
+        pushCard(<FileCardView key={message.ts} card={c.card} jobRef={jobRef} />);
         break;
-      case "review_comments":
+      case 'review_comments':
         pushCard(
           <ReviewCommentsCardView
             key={message.ts}
             card={c.card}
             time={message.postedAt}
-            pending={messageSendState(message) === "sending"}
+            pending={messageSendState(message) === 'sending'}
           />,
         );
         break;
-      case "attachments":
+      case 'attachments':
         pushCard(
           <AttachmentsCardView
             key={message.ts}
@@ -988,12 +946,10 @@ function buildLogItems(
           />,
         );
         break;
-      case "event":
-        push(
-          <SystemEventPill key={message.ts} message={message} tone={c.tone} />,
-        );
+      case 'event':
+        push(<SystemEventPill key={message.ts} message={message} tone={c.tone} />);
         break;
-      case "compaction":
+      case 'compaction':
         push(
           <CompactionSummaryPill
             key={message.ts}
@@ -1003,13 +959,13 @@ function buildLogItems(
           />,
         );
         break;
-      case "system_shared":
+      case 'system_shared':
         push(<HarnessBubble key={message.ts} message={message} />);
         break;
-      case "system_event":
+      case 'system_event':
         push(<EventBubble key={message.ts} message={message} />);
         break;
-      case "system_operator":
+      case 'system_operator':
         push(
           <SystemOperatorNotice
             key={message.ts}
@@ -1020,26 +976,20 @@ function buildLogItems(
           />,
         );
         break;
-      case "system_notice":
+      case 'system_notice':
         push(<SystemNoticeRow key={message.ts} message={message} />);
         break;
-      case "system_reminder":
+      case 'system_reminder':
         push(<SystemReminderChip key={message.ts} message={message} />);
         break;
-      case "untrusted":
+      case 'untrusted':
         push(<UntrustedBlock key={message.ts} message={message} />);
         break;
-      case "build_anchor":
+      case 'build_anchor':
         // Driver bookkeeping row — no operator-facing content, explicitly not rendered.
         break;
-      case "claude":
-        push(
-          <ClaudeBubble
-            key={message.ts}
-            message={message}
-            onSelectNode={onSelectNode}
-          />,
-        );
+      case 'claude':
+        push(<ClaudeBubble key={message.ts} message={message} onSelectNode={onSelectNode} />);
         break;
       default:
         return assertNever(c);
@@ -1101,7 +1051,7 @@ interface ParsedLane {
 function parseLane(lane: string): ParsedLane {
   return {
     isMain: lane === MAIN_LANE,
-    isCodexLane: lane.startsWith("codex-review:"),
+    isCodexLane: lane.startsWith('codex-review:'),
   };
 }
 
@@ -1129,18 +1079,15 @@ function laneMetaBelongs(meta: LaneMeta, p: ParsedLane): boolean {
  *    OLDER block than the model one — matches "last reported occupancy", Claude-Code style, so the ring
  *    doesn't flicker out on a turn whose result lacked a usage block).
  */
-function laneFooterMeta(
-  messages: JobMessage[],
-  lane: string,
-): ComposerFooter | null {
+function laneFooterMeta(messages: JobMessage[], lane: string): ComposerFooter | null {
   const p = parseLane(lane);
   let model: string | undefined;
   let effort: string | undefined;
   let engine: string | undefined;
-  let context: ComposerFooter["context"] = null;
+  let context: ComposerFooter['context'] = null;
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
-    if (m.kind !== "turn_meta") continue;
+    if (m.kind !== 'turn_meta') continue;
     const meta = (m.meta ?? {}) as LaneMeta & {
       contextTokens?: number | null;
       contextLimit?: number | null;
@@ -1164,8 +1111,8 @@ function laneFooterMeta(
     }
     if (
       !context &&
-      typeof meta.contextTokens === "number" &&
-      typeof meta.contextLimit === "number" &&
+      typeof meta.contextTokens === 'number' &&
+      typeof meta.contextLimit === 'number' &&
       meta.contextLimit > 0
     ) {
       context = {
@@ -1186,8 +1133,7 @@ function laneFooterMeta(
     }
     if ((model !== undefined || engine !== undefined) && context) break;
   }
-  if (model === undefined && effort === undefined && engine === undefined && !context)
-    return null;
+  if (model === undefined && effort === undefined && engine === undefined && !context) return null;
   return { model, effort, engine, context };
 }
 

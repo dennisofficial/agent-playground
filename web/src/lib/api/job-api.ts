@@ -1,23 +1,23 @@
-"use client";
+'use client';
 
-import type { AutoApproveMode, AutoMergeMethod } from "@workspace/shared";
-import { env } from "@/lib/env";
-import { fetchWithRefresh } from "./refresh";
+import type { ReviewComment } from '@/features/job-workspace/review-comments';
+import { env } from '@/lib/env';
+import type { AutoApproveMode, AutoMergeMethod } from '@workspace/shared';
+import { fetchWithRefresh } from './refresh';
 import type {
   ApprovalActionId,
   ContextFileContent,
   InboxPr,
   JobBlocker,
+  JobContext,
   JobDiff,
   JobDiffSummary,
   JobProvenance,
   PipelineJob,
   PipelineState,
-  JobContext,
   ServiceInfo,
   WebCard,
-} from "./types";
-import type { ReviewComment } from "@/features/job-workspace/review-comments";
+} from './types';
 
 /**
  * The org → repo → thread web API (`/web/orgs/:orgId/repos/:repoId/threads/:jobId/...`). Every call
@@ -45,7 +45,7 @@ export class ThreadApiError extends Error {
     public readonly retryAfterMs?: number,
   ) {
     super(message);
-    this.name = "ThreadApiError";
+    this.name = 'ThreadApiError';
   }
 }
 
@@ -62,8 +62,8 @@ async function webJson<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetchWithRefresh(`${BASE}${path}`, {
     ...init,
     headers: {
-      accept: "application/json",
-      ...(isForm ? {} : { "content-type": "application/json" }),
+      accept: 'application/json',
+      ...(isForm ? {} : { 'content-type': 'application/json' }),
       ...init?.headers,
     },
   });
@@ -79,8 +79,8 @@ async function webJson<T>(path: string, init?: RequestInit): Promise<T> {
       if (body?.message) detail = body.message;
       // The manual-retry re-slam guard's 429 body carries no `message`, just `{status:'cooling_down',
       // retryAfterMs}` — surface a caller-friendly detail and the wait hint together.
-      if (res.status === 429 && body?.status === "cooling_down") {
-        detail = "Retrying too soon — cooling down.";
+      if (res.status === 429 && body?.status === 'cooling_down') {
+        detail = 'Retrying too soon — cooling down.';
         retryAfterMs = body.retryAfterMs;
       }
     } catch {
@@ -92,7 +92,7 @@ async function webJson<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
-function threadPath(ref: JobRef, suffix = ""): string {
+function threadPath(ref: JobRef, suffix = ''): string {
   return `/orgs/${ref.orgId}/repos/${ref.repoId}/jobs/${ref.jobId}${suffix}`;
 }
 
@@ -126,14 +126,14 @@ export interface RawThreadMessage {
    * `'system_event'` = an automated notification that opened this thread (Atlas got a harness delivery).
    */
   source:
-    | "operator"
-    | "atlas"
-    | "system_operator"
-    | "system_shared"
-    | "system_event"
-    | "system_notice"
-    | "system_reminder"
-    | "untrusted";
+    | 'operator'
+    | 'atlas'
+    | 'system_operator'
+    | 'system_shared'
+    | 'system_event'
+    | 'system_notice'
+    | 'system_reminder'
+    | 'untrusted';
   card?: WebCard | null;
   /**
    * Untyped per-message extras. On a `system_operator` failure notice: `retryable` (bool, shows the Resume
@@ -170,7 +170,7 @@ export interface JobMessage {
   /** ISO end time of the spawned subagent, or null while running; present only on the anchor message. */
   subagentEndedAt?: string | null;
   /** `atlas` (the agent) or `user` (a human — the operator). Drives bubble alignment. */
-  author: "atlas" | "user";
+  author: 'atlas' | 'user';
   authorId: string;
   authorName: string;
   text: string;
@@ -183,14 +183,14 @@ export interface JobMessage {
    * `'system_event'`    = an automated notification that opened this thread (a harness delivery to Atlas).
    */
   source:
-    | "operator"
-    | "atlas"
-    | "system_operator"
-    | "system_shared"
-    | "system_event"
-    | "system_notice"
-    | "system_reminder"
-    | "untrusted";
+    | 'operator'
+    | 'atlas'
+    | 'system_operator'
+    | 'system_shared'
+    | 'system_event'
+    | 'system_notice'
+    | 'system_reminder'
+    | 'untrusted';
   card?: WebCard;
   /** See {@link RawThreadMessage.meta} — same shape, carried through `normalizeMessage` unchanged. */
   meta?: Record<string, unknown>;
@@ -212,10 +212,10 @@ export function normalizeMessage(r: RawThreadMessage): JobMessage {
     subagentId: r.subagentId,
     subagentStatus: r.subagentStatus ?? null,
     subagentEndedAt: r.subagentEndedAt ?? null,
-    author: r.isAtlas ? "atlas" : "user",
+    author: r.isAtlas ? 'atlas' : 'user',
     authorId: r.authorId,
     authorName: r.author,
-    text: r.text ?? "",
+    text: r.text ?? '',
     kind: r.kind,
     source: r.source,
     card: r.card ?? undefined,
@@ -228,8 +228,8 @@ export function normalizeMessage(r: RawThreadMessage): JobMessage {
 }
 
 export function fetchMessages(ref: JobRef): Promise<JobMessage[]> {
-  return webJson<RawThreadMessage[]>(threadPath(ref, "/messages")).then(
-    (rows) => rows.map(normalizeMessage),
+  return webJson<RawThreadMessage[]>(threadPath(ref, '/messages')).then((rows) =>
+    rows.map(normalizeMessage),
   );
 }
 
@@ -237,10 +237,15 @@ export function fetchMessages(ref: JobRef): Promise<JobMessage[]> {
  *  `Message` union variants; see `web-surface.controller.ts`'s `MessageInput`). `secret_provided` carries no
  *  kind discriminant — the durable-vs-mcp destination is derived server-side from the card. */
 export type MessageInput =
-  | { type: "user"; text: string; lane?: string }
-  | { type: "answer_question"; questionId: string; answer: string }
-  | { type: "file_answered"; requestId: string; filename: string; content: string }
-  | { type: "secret_provided"; requestId: string; value: string };
+  | { type: 'user'; text: string; lane?: string }
+  | { type: 'answer_question'; questionId: string; answer: string }
+  | {
+      type: 'file_answered';
+      requestId: string;
+      filename: string;
+      content: string;
+    }
+  | { type: 'secret_provided'; requestId: string; value: string };
 
 /**
  * Send a batch of typed messages in ONE request — replaces the old `say`/`answer-question`/`provide-file`/
@@ -251,15 +256,19 @@ export function postMessage(
   ref: JobRef,
   messages: MessageInput[],
   files?: File[],
-): Promise<{ ok: boolean; ts: string; results: Array<{ id: string; status: string }> }> {
+): Promise<{
+  ok: boolean;
+  ts: string;
+  results: Array<{ id: string; status: string }>;
+}> {
   if (files?.length) {
     const form = new FormData();
-    form.append("messages", JSON.stringify(messages));
-    for (const f of files) form.append("files", f, f.name);
-    return webJson(threadPath(ref, "/message"), { method: "POST", body: form });
+    form.append('messages', JSON.stringify(messages));
+    for (const f of files) form.append('files', f, f.name);
+    return webJson(threadPath(ref, '/message'), { method: 'POST', body: form });
   }
-  return webJson(threadPath(ref, "/message"), {
-    method: "POST",
+  return webJson(threadPath(ref, '/message'), {
+    method: 'POST',
     body: JSON.stringify({ messages }),
   });
 }
@@ -269,12 +278,9 @@ export function postMessage(
  * credentialed fetch of the STREAMING raw endpoint — never a base64 data URL — so large images don't
  * bloat memory or block. The caller MUST `URL.revokeObjectURL` the result when done.
  */
-export async function fetchAttachmentUrl(
-  ref: JobRef,
-  path: string,
-): Promise<string> {
+export async function fetchAttachmentUrl(ref: JobRef, path: string): Promise<string> {
   const res = await fetchWithRefresh(
-    `${BASE}${threadPath(ref, "/context/file/raw")}?path=${encodeURIComponent(path)}`,
+    `${BASE}${threadPath(ref, '/context/file/raw')}?path=${encodeURIComponent(path)}`,
   );
   if (!res.ok) throw new ThreadApiError(res.status, res.statusText);
   return URL.createObjectURL(await res.blob());
@@ -288,9 +294,15 @@ export async function fetchAttachmentUrl(
  *  secret variant's `value` is cleartext on the wire; the server encrypts on PUT and decrypts on GET for
  *  the owner's own devices. */
 export type DraftStagedAnswerWire =
-  | { kind: "question"; cardId: string; label: string; answer: string }
-  | { kind: "file"; cardId: string; label: string; filename: string; content: string }
-  | { kind: "secret"; cardId: string; label: string; value: string };
+  | { kind: 'question'; cardId: string; label: string; answer: string }
+  | {
+      kind: 'file';
+      cardId: string;
+      label: string;
+      filename: string;
+      content: string;
+    }
+  | { kind: 'secret'; cardId: string; label: string; value: string };
 
 /** The serializable draft body — `PUT .../draft` sends it, `GET .../draft` returns it under `payload`. */
 export interface DraftPayloadWire {
@@ -303,7 +315,7 @@ export interface DraftPayloadWire {
 export interface DraftAttachmentDto {
   id: string;
   name: string;
-  kind: "image" | "file";
+  kind: 'image' | 'file';
   size: number;
 }
 
@@ -313,40 +325,31 @@ export function getDraft(ref: JobRef): Promise<{
   attachments: DraftAttachmentDto[];
   updatedAt: string | null;
 }> {
-  return webJson(threadPath(ref, "/draft"));
+  return webJson(threadPath(ref, '/draft'));
 }
 
 /** Debounced autosave — replace the caller's whole draft body (attachments are managed separately). */
-export function putDraft(
-  ref: JobRef,
-  payload: DraftPayloadWire,
-): Promise<{ ok: boolean }> {
-  return webJson(threadPath(ref, "/draft"), {
-    method: "PUT",
+export function putDraft(ref: JobRef, payload: DraftPayloadWire): Promise<{ ok: boolean }> {
+  return webJson(threadPath(ref, '/draft'), {
+    method: 'PUT',
     body: JSON.stringify(payload),
   });
 }
 
 /** Upload one draft attachment (multipart `files`, same caps as a normal attachment). Returns its row. */
-export function addDraftAttachment(
-  ref: JobRef,
-  file: File,
-): Promise<DraftAttachmentDto> {
+export function addDraftAttachment(ref: JobRef, file: File): Promise<DraftAttachmentDto> {
   const form = new FormData();
-  form.append("files", file, file.name);
-  return webJson<{ attachments: DraftAttachmentDto[] }>(
-    threadPath(ref, "/draft/attachments"),
-    { method: "POST", body: form },
-  ).then((r) => r.attachments[0]);
+  form.append('files', file, file.name);
+  return webJson<{ attachments: DraftAttachmentDto[] }>(threadPath(ref, '/draft/attachments'), {
+    method: 'POST',
+    body: form,
+  }).then((r) => r.attachments[0]);
 }
 
 /** Remove one uploaded draft attachment by id. */
-export function deleteDraftAttachment(
-  ref: JobRef,
-  attachmentId: string,
-): Promise<{ ok: boolean }> {
+export function deleteDraftAttachment(ref: JobRef, attachmentId: string): Promise<{ ok: boolean }> {
   return webJson(threadPath(ref, `/draft/attachments/${attachmentId}`), {
-    method: "DELETE",
+    method: 'DELETE',
   });
 }
 
@@ -361,10 +364,10 @@ export function deleteDraftAttachment(
  */
 export function contextRawUrl(ref: JobRef, path: string): string {
   const encoded = path
-    .split("/")
+    .split('/')
     .filter((seg) => seg.length > 0)
     .map(encodeURIComponent)
-    .join("/");
+    .join('/');
   return `${BASE}${threadPath(ref, `/context/raw/${encoded}`)}`;
 }
 
@@ -374,7 +377,7 @@ export function contextRawUrl(ref: JobRef, path: string): string {
  * frame), so the live indicator clears through the usual reconcile path.
  */
 export function stopJob(ref: JobRef): Promise<{ stopped: boolean }> {
-  return webJson(threadPath(ref, "/stop"), { method: "POST" });
+  return webJson(threadPath(ref, '/stop'), { method: 'POST' });
 }
 
 /** One inline highlight-and-comment item, as sent to `…/jobs/:jobId/review-comments`. */
@@ -402,8 +405,8 @@ export function postReviewComments(
   ref: JobRef,
   body: { items: ReviewCommentItemBody[]; message?: string },
 ): Promise<{ ts: string }> {
-  return webJson(threadPath(ref, "/review-comments"), {
-    method: "POST",
+  return webJson(threadPath(ref, '/review-comments'), {
+    method: 'POST',
     body: JSON.stringify(body),
   });
 }
@@ -422,8 +425,8 @@ export function approveThread(
   ref: JobRef,
   body: ApproveBody,
 ): Promise<{ ok: boolean; jobId?: string }> {
-  return webJson(threadPath(ref, "/approve"), {
-    method: "POST",
+  return webJson(threadPath(ref, '/approve'), {
+    method: 'POST',
     body: JSON.stringify(body),
   });
 }
@@ -432,10 +435,8 @@ export function approveThread(
 /** Ask the build brain to stand up a demo-ready live preview at the ship gate. Injects the full preview
  *  procedure as a server-side seed turn (not the generic /message path) and stamps the ship card so the button
  *  hides. Gated server-side on `awaiting_ship_review`; a no-op `ok:false` off-gate. */
-export function spinUpPreview(
-  ref: JobRef,
-): Promise<{ ok: boolean; ts: string }> {
-  return webJson(threadPath(ref, "/spin-up-preview"), { method: "POST" });
+export function spinUpPreview(ref: JobRef): Promise<{ ok: boolean; ts: string }> {
+  return webJson(threadPath(ref, '/spin-up-preview'), { method: 'POST' });
 }
 
 // ── Secure secret intake (repo onboarding) ─────────────────────────────────────────────────────────
@@ -450,8 +451,8 @@ export function provideSecret(
   ref: JobRef,
   body: ProvideSecretBody,
 ): Promise<{ ok: boolean; ts: string }> {
-  return webJson(threadPath(ref, "/provide-secret"), {
-    method: "POST",
+  return webJson(threadPath(ref, '/provide-secret'), {
+    method: 'POST',
     body: JSON.stringify(body),
   });
 }
@@ -463,7 +464,7 @@ export function approveMcpProposal(
   requestId: string,
 ): Promise<{ ok: boolean; committed: string[]; ts?: string }> {
   return webJson(threadPath(ref, `/mcp-proposals/${requestId}/approve`), {
-    method: "POST",
+    method: 'POST',
   });
 }
 
@@ -475,7 +476,7 @@ export function approveSkillProposal(
   requestId: string,
 ): Promise<{ ok: boolean; name: string; ts?: string }> {
   return webJson(threadPath(ref, `/skill-proposals/${requestId}/approve`), {
-    method: "POST",
+    method: 'POST',
   });
 }
 
@@ -486,18 +487,16 @@ export function retryJob(
   ref: JobRef,
   opts?: { force?: boolean },
 ): Promise<{ ok: boolean; status: string }> {
-  const q = opts?.force ? "?force=true" : "";
-  return webJson(threadPath(ref, `/retry${q}`), { method: "POST" });
+  const q = opts?.force ? '?force=true' : '';
+  return webJson(threadPath(ref, `/retry${q}`), { method: 'POST' });
 }
 
 /** "Ship without review" escape hatch on a `codex_review_unavailable` job hold — marks the ship-time
  *  master_review thread skipped/done and lands the job at the normal ship-review gate (the human PR gate
  *  still applies). Refused server-side unless the job is actually held on a Codex outage. */
-export function shipWithoutReview(
-  ref: JobRef,
-): Promise<{ ok: boolean; reason?: string }> {
-  return webJson(threadPath(ref, "/ship-without-review"), {
-    method: "POST",
+export function shipWithoutReview(ref: JobRef): Promise<{ ok: boolean; reason?: string }> {
+  return webJson(threadPath(ref, '/ship-without-review'), {
+    method: 'POST',
   });
 }
 
@@ -507,24 +506,19 @@ export function shipWithoutReview(
  * message, rather than re-driving a halted BUILD track. `force: true` (the session-limit "Force resume
  * now" affordance) skips the server's short manual-retry re-slam cooldown — sent as `?force=true`.
  */
-export function retryTurn(
-  ref: JobRef,
-  opts?: { force?: boolean },
-): Promise<{ ok: boolean }> {
-  const q = opts?.force ? "?force=true" : "";
-  return webJson(threadPath(ref, `/retry-turn${q}`), { method: "POST" });
+export function retryTurn(ref: JobRef, opts?: { force?: boolean }): Promise<{ ok: boolean }> {
+  const q = opts?.force ? '?force=true' : '';
+  return webJson(threadPath(ref, `/retry-turn${q}`), { method: 'POST' });
 }
 
 // ── Pipeline ───────────────────────────────────────────────────────────────────────────────────
 export function fetchPipeline(ref: JobRef): Promise<PipelineState> {
-  return webJson<PipelineState>(threadPath(ref, "/pipeline"));
+  return webJson<PipelineState>(threadPath(ref, '/pipeline'));
 }
 
 // ── Supervised services (atlas-svc) ───────────────────────────────────────────────────────────
-export function fetchServices(
-  ref: JobRef,
-): Promise<{ services: ServiceInfo[] }> {
-  return webJson<{ services: ServiceInfo[] }>(threadPath(ref, "/services"));
+export function fetchServices(ref: JobRef): Promise<{ services: ServiceInfo[] }> {
+  return webJson<{ services: ServiceInfo[] }>(threadPath(ref, '/services'));
 }
 
 /** The last-N-lines tail of one supervised process's log — the same content the SSE `snapshot` frame carries. */
@@ -538,24 +532,19 @@ export function fetchServiceLogTail(
 }
 
 /** Narrow a pipeline read to its job, or `null` before a plan is approved (`{ status: 'no_job' }`). */
-export function pipelineJob(
-  state: PipelineState | undefined,
-): PipelineJob | null {
-  if (!state || state.status === "no_job") return null;
+export function pipelineJob(state: PipelineState | undefined): PipelineJob | null {
+  if (!state || state.status === 'no_job') return null;
   return state;
 }
 
 // ── Context (specs + artifacts files) ────────────────────────────────────────────────────────────
 /** List the thread's `/context` files, grouped into `specs` (plan) + `artifacts` (outputs). */
 export function fetchThreadContext(ref: JobRef): Promise<JobContext> {
-  return webJson<JobContext>(threadPath(ref, "/context"));
+  return webJson<JobContext>(threadPath(ref, '/context'));
 }
 
 /** Read one `/context` file's content (`path` is bucket-relative, e.g. `specs/plan.md`). */
-export function fetchContextFile(
-  ref: JobRef,
-  path: string,
-): Promise<ContextFileContent> {
+export function fetchContextFile(ref: JobRef, path: string): Promise<ContextFileContent> {
   return webJson<ContextFileContent>(
     threadPath(ref, `/context/file?path=${encodeURIComponent(path)}`),
   );
@@ -564,40 +553,34 @@ export function fetchContextFile(
 // ── Job diff (accumulated worktree change across all threads) ─────────────────────────────────────
 /** The job's accumulated multi-file diff (`GET …/jobs/:jobId/diff`) — the Changes pane's data. */
 export function fetchJobDiff(ref: JobRef): Promise<JobDiff> {
-  return webJson<JobDiff>(threadPath(ref, "/diff"));
+  return webJson<JobDiff>(threadPath(ref, '/diff'));
 }
 
 /** The job's cheap numstat-only diff summary (`GET …/jobs/:jobId/diff/summary`) — no hunks, just per-file
  *  path/additions/deletions/status/binary. Used by the always-mounted sidebar for its +/- totals so it
  *  never has to hold the heavy full-diff query open. */
 export function fetchJobDiffSummary(ref: JobRef): Promise<JobDiffSummary> {
-  return webJson<JobDiffSummary>(threadPath(ref, "/diff/summary"));
+  return webJson<JobDiffSummary>(threadPath(ref, '/diff/summary'));
 }
 
 // ── Repo files (live job worktree — for spec/plan file-path links) ────────────────────────────────
 /** The job worktree's TRACKED-file manifest (git ls-files) — used to verify which inline-code spans name a
  *  real repo file before linkifying them. Empty when the worktree is gone (closed/reset). */
 export function fetchRepoTree(ref: JobRef): Promise<{ files: string[] }> {
-  return webJson<{ files: string[] }>(threadPath(ref, "/repo/tree"));
+  return webJson<{ files: string[] }>(threadPath(ref, '/repo/tree'));
 }
 
 /** Read one repo file from the LIVE job worktree by git-relative path (tracked files only; 404 otherwise). */
-export function fetchRepoFile(
-  ref: JobRef,
-  path: string,
-): Promise<ContextFileContent> {
+export function fetchRepoFile(ref: JobRef, path: string): Promise<ContextFileContent> {
   return webJson<ContextFileContent>(
     threadPath(ref, `/repo/file?path=${encodeURIComponent(path)}`),
   );
 }
 
 // ── Rename (the only thread Update op) ───────────────────────────────────────────────────────────
-export function renameJob(
-  ref: JobRef,
-  title: string,
-): Promise<{ ok: boolean; title: string }> {
+export function renameJob(ref: JobRef, title: string): Promise<{ ok: boolean; title: string }> {
   return webJson(threadPath(ref), {
-    method: "PATCH",
+    method: 'PATCH',
     body: JSON.stringify({ title }),
   });
 }
@@ -609,8 +592,8 @@ export function setAutoApprove(
   ref: JobRef,
   mode: AutoApproveMode,
 ): Promise<{ ok: boolean; autoApproveMode: AutoApproveMode }> {
-  return webJson(threadPath(ref, "/auto-approve"), {
-    method: "PATCH",
+  return webJson(threadPath(ref, '/auto-approve'), {
+    method: 'PATCH',
     body: JSON.stringify({ mode }),
   });
 }
@@ -621,8 +604,8 @@ export function setAutoMerge(
   ref: JobRef,
   body: { autoMerge: boolean },
 ): Promise<{ ok: boolean; autoMerge: boolean }> {
-  return webJson(threadPath(ref, "/auto-merge"), {
-    method: "PATCH",
+  return webJson(threadPath(ref, '/auto-merge'), {
+    method: 'PATCH',
     body: JSON.stringify(body),
   });
 }
@@ -641,7 +624,7 @@ export interface CreatedJobRow {
 }
 
 export function fetchCreatedJobs(ref: JobRef): Promise<CreatedJobRow[]> {
-  return webJson<CreatedJobRow[]>(threadPath(ref, "/created"));
+  return webJson<CreatedJobRow[]>(threadPath(ref, '/created'));
 }
 
 /** The single-job detail read — used to resolve a `createdBy`/blocker link before navigating to it. A
@@ -676,8 +659,8 @@ export function addJobDependency(
   ref: JobRef,
   dependsOnJobId: string,
 ): Promise<JobDependencyResult> {
-  return webJson(threadPath(ref, "/dependencies"), {
-    method: "POST",
+  return webJson(threadPath(ref, '/dependencies'), {
+    method: 'POST',
     body: JSON.stringify({ dependsOnJobId }),
   });
 }
@@ -688,19 +671,15 @@ export function removeJobDependency(
   ref: JobRef,
   dependsOnJobId: string,
 ): Promise<{ ok: boolean; blockers: JobBlocker[] }> {
-  return webJson(
-    threadPath(ref, `/dependencies/${encodeURIComponent(dependsOnJobId)}`),
-    { method: "DELETE" },
-  );
+  return webJson(threadPath(ref, `/dependencies/${encodeURIComponent(dependsOnJobId)}`), {
+    method: 'DELETE',
+  });
 }
 
 // ── Delete ─────────────────────────────────────────────────────────────────────────────────────
-export function deleteThread(
-  ref: JobRef,
-  prAction?: "close" | "leave",
-): Promise<{ ok: boolean }> {
-  const q = prAction ? `?prAction=${prAction}` : "";
-  return webJson(`${threadPath(ref)}${q}`, { method: "DELETE" });
+export function deleteThread(ref: JobRef, prAction?: 'close' | 'leave'): Promise<{ ok: boolean }> {
+  const q = prAction ? `?prAction=${prAction}` : '';
+  return webJson(`${threadPath(ref)}${q}`, { method: 'DELETE' });
 }
 
 // ── Repos (create-job picker + the settings Repos tab) ────────────────────────────────────────
@@ -739,15 +718,12 @@ export interface RepoBranches {
 }
 
 /** A repo's branches (default first) for the create-job base-branch picker. */
-export function fetchRepoBranches(
-  orgId: string,
-  repoId: string,
-): Promise<RepoBranches> {
+export function fetchRepoBranches(orgId: string, repoId: string): Promise<RepoBranches> {
   return webJson<RepoBranches>(`/orgs/${orgId}/repos/${repoId}/branches`);
 }
 
 /** Operator-selectable job kinds (mirrors the backend allowlist; system kinds event/onboarding excluded). */
-export type OperatorJobKind = "feature" | "bugfix" | "review";
+export type OperatorJobKind = 'feature' | 'bugfix' | 'review';
 
 export interface CreateThreadBody {
   firstMessage: string;
@@ -772,12 +748,12 @@ export function createJob(
   body: CreateThreadBody,
 ): Promise<{ jobId: string }> {
   return webJson(`/orgs/${orgId}/repos/${repoId}/jobs`, {
-    method: "POST",
+    method: 'POST',
     body: JSON.stringify(body),
   });
 }
 
-function dependsOnList(dependsOn: CreateThreadBody["dependsOn"]): string[] {
+function dependsOnList(dependsOn: CreateThreadBody['dependsOn']): string[] {
   if (dependsOn == null) return [];
   return Array.isArray(dependsOn) ? dependsOn : [dependsOn];
 }
@@ -790,17 +766,17 @@ export function createJobWithFiles(
   files: File[],
 ): Promise<{ jobId: string }> {
   const form = new FormData();
-  form.append("firstMessage", body.firstMessage);
-  if (body.title) form.append("title", body.title);
-  if (body.baseBranch) form.append("baseBranch", body.baseBranch);
-  if (body.kind) form.append("kind", body.kind);
-  if (body.prNumber) form.append("prNumber", body.prNumber);
-  form.append("autoApproveMode", body.autoApproveMode ?? "off");
-  form.append("autoMerge", String(body.autoMerge ?? false));
-  for (const id of dependsOnList(body.dependsOn)) form.append("dependsOn", id);
-  for (const f of files) form.append("files", f, f.name);
+  form.append('firstMessage', body.firstMessage);
+  if (body.title) form.append('title', body.title);
+  if (body.baseBranch) form.append('baseBranch', body.baseBranch);
+  if (body.kind) form.append('kind', body.kind);
+  if (body.prNumber) form.append('prNumber', body.prNumber);
+  form.append('autoApproveMode', body.autoApproveMode ?? 'off');
+  form.append('autoMerge', String(body.autoMerge ?? false));
+  for (const id of dependsOnList(body.dependsOn)) form.append('dependsOn', id);
+  for (const f of files) form.append('files', f, f.name);
   return webJson(`/orgs/${orgId}/repos/${repoId}/jobs`, {
-    method: "POST",
+    method: 'POST',
     body: form,
   });
 }

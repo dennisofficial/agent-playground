@@ -1,21 +1,11 @@
-"use client";
+'use client';
 
-import {
-  type RefObject,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
-import { createPortal } from "react-dom";
-import { ShieldCheck, X } from "lucide-react";
-import {
-  type AutoApproveMode,
-  modeApprovesPlan,
-  modeApprovesShip,
-} from "@workspace/shared";
-import { cn } from "@/lib/cn";
-import { composeMode } from "./auto-approve-mode";
+import { cn } from '@/lib/cn';
+import { type AutoApproveMode, modeApprovesPlan, modeApprovesShip } from '@workspace/shared';
+import { ShieldCheck, X } from 'lucide-react';
+import { type RefObject, useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { composeMode } from './auto-approve-mode';
 
 const MARGIN = 8;
 const WIDTH = 258;
@@ -94,36 +84,32 @@ export function AutoApprovePopover({
   useEffect(() => {
     function onPointerDown(e: PointerEvent) {
       const t = e.target as Node;
-      if (popRef.current?.contains(t) || triggerRef.current?.contains(t))
-        return;
+      if (popRef.current?.contains(t) || triggerRef.current?.contains(t)) return;
       onClose();
     }
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
+      if (e.key === 'Escape') onClose();
     }
     // Capture phase: the anchor rect was measured at click time, so any scroll/resize invalidates it —
     // dismiss rather than show a popover pinned to a stale position.
     function onStale() {
       onClose();
     }
-    document.addEventListener("pointerdown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    window.addEventListener("scroll", onStale, true);
-    window.addEventListener("resize", onStale);
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    window.addEventListener('scroll', onStale, true);
+    window.addEventListener('resize', onStale);
     return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("scroll", onStale, true);
-      window.removeEventListener("resize", onStale);
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('scroll', onStale, true);
+      window.removeEventListener('resize', onStale);
     };
   }, [onClose, triggerRef]);
 
-  if (typeof document === "undefined") return null;
+  if (typeof document === 'undefined') return null;
 
-  const width = Math.min(
-    WIDTH,
-    Math.max(MIN_WIDTH, window.innerWidth - MARGIN * 2),
-  );
+  const width = Math.min(WIDTH, Math.max(MIN_WIDTH, window.innerWidth - MARGIN * 2));
   const left = Math.min(
     Math.max(MARGIN, anchorRect.right - width),
     Math.max(MARGIN, window.innerWidth - width - MARGIN),
@@ -144,7 +130,7 @@ export function AutoApprovePopover({
         left,
         top,
         width,
-        boxShadow: "var(--shadow-menu)",
+        boxShadow: 'var(--shadow-menu)',
       }}
     >
       <div className="mb-0.5 flex items-center gap-1.5">
@@ -194,8 +180,7 @@ export function AutoApprovePopover({
       </div>
 
       <div className="mt-2.5 border-t border-border pt-2.5 text-[10px] leading-relaxed text-faint">
-        Applies to this job only — you can flip any gate back at any time before
-        it fires.
+        Applies to this job only — you can flip any gate back at any time before it fires.
       </div>
     </div>,
     document.body,
@@ -220,8 +205,8 @@ export function SwitchRow({
   return (
     <div
       className={cn(
-        "flex items-start gap-2.5 border-border py-2.5",
-        first ? "border-t-0 pt-0.5" : "border-t",
+        'flex items-start gap-2.5 border-border py-2.5',
+        first ? 'border-t-0 pt-0.5' : 'border-t',
       )}
     >
       <div className="min-w-0 flex-1">
@@ -237,15 +222,15 @@ export function SwitchRow({
         onClick={() => onChange(!checked)}
         className="relative mt-px h-[17px] w-[30px] shrink-0 rounded-full border transition-colors"
         style={{
-          background: checked ? "var(--green)" : "var(--surface-3)",
-          borderColor: checked ? "var(--green)" : "var(--border-2)",
+          background: checked ? 'var(--green)' : 'var(--surface-3)',
+          borderColor: checked ? 'var(--green)' : 'var(--border-2)',
         }}
       >
         <span
           className="absolute top-[1px] left-[1px] h-[13px] w-[13px] rounded-full bg-white transition-transform"
           style={{
-            transform: checked ? "translateX(13px)" : "translateX(0)",
-            boxShadow: "0 1px 2px rgba(0, 0, 0, 0.25)",
+            transform: checked ? 'translateX(13px)' : 'translateX(0)',
+            boxShadow: '0 1px 2px rgba(0, 0, 0, 0.25)',
           }}
         />
       </button>

@@ -1,8 +1,8 @@
-"use client";
+'use client';
 
-import { use } from "react";
-import { useOrg } from "@/lib/api/me";
-import { WorkspaceProfileSection } from "@/features/settings/components/workspace-profile-section";
+import { WorkspaceProfileSection } from '@/features/settings/components/workspace-profile-section';
+import { useOrg } from '@/lib/api/me';
+import { use } from 'react';
 
 export default function WorkspaceProfileSettingsPage({
   params,

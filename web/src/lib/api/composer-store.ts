@@ -1,18 +1,18 @@
-"use client";
+'use client';
 
-import { useCallback, useSyncExternalStore } from "react";
+import type { ReviewComment } from '@/features/job-workspace/review-comments';
+import { useCallback, useSyncExternalStore } from 'react';
+import { connectivity } from './connectivity';
 import {
+  deleteDraftAttachment,
   getDraft,
   putDraft,
-  deleteDraftAttachment,
+  type DraftAttachmentDto,
+  type DraftPayloadWire,
   type JobMessage,
   type JobRef,
-  type DraftPayloadWire,
-  type DraftAttachmentDto,
-} from "./job-api";
-import type { DraftAttachment } from "./job-queries";
-import { connectivity } from "./connectivity";
-import type { ReviewComment } from "@/features/job-workspace/review-comments";
+} from './job-api';
+import type { DraftAttachment } from './job-queries';
 
 /**
  * Per-Job Composer draft store — a module singleton keyed by `jobId`, modeled on `service-log-store.ts`
@@ -54,9 +54,15 @@ export interface QueuedMessage {
  * serialized to sessionStorage), and question answers are cheap to re-enter after a reload.
  */
 export type StagedAnswer = (
-  | { kind: "question"; cardId: string; label: string; answer: string }
-  | { kind: "file"; cardId: string; label: string; filename: string; content: string }
-  | { kind: "secret"; cardId: string; label: string; value: string }
+  | { kind: 'question'; cardId: string; label: string; answer: string }
+  | {
+      kind: 'file';
+      cardId: string;
+      label: string;
+      filename: string;
+      content: string;
+    }
+  | { kind: 'secret'; cardId: string; label: string; value: string }
 ) & {
   /** Set true the instant Send is hit — the tray filters these out and the card shows a "sending…" shell
    *  instead of reverting to its open/staged state, until the batch settles (success removes it via
@@ -95,15 +101,15 @@ interface Entry {
 
 /** Shared snapshot for an unknown jobId / SSR — a stable identity keeps `useSyncExternalStore` quiet. */
 const EMPTY: ComposerDraft = Object.freeze({
-  ref: { orgId: "", repoId: "", jobId: "" },
-  text: "",
+  ref: { orgId: '', repoId: '', jobId: '' },
+  text: '',
   attachments: [],
   comments: [],
   outbox: [],
   stagedAnswers: [],
 }) as ComposerDraft;
 
-const KEY_PREFIX = "atlas.composer.draft.";
+const KEY_PREFIX = 'atlas.composer.draft.';
 const storageKey = (jobId: string): string => `${KEY_PREFIX}${jobId}`;
 
 /** Debounce window for a sessionStorage write — long enough to skip per-keystroke writes, short enough
@@ -119,16 +125,11 @@ interface PersistedDraft {
   ref: JobRef;
   text: string;
   comments: ReviewComment[];
-  outbox: Array<
-    Pick<
-      QueuedMessage,
-      "id" | "text" | "comments" | "createdAt" | "hasAttachments"
-    >
-  >;
+  outbox: Array<Pick<QueuedMessage, 'id' | 'text' | 'comments' | 'createdAt' | 'hasAttachments'>>;
 }
 
 function hasWindow(): boolean {
-  return typeof window !== "undefined";
+  return typeof window !== 'undefined';
 }
 
 function readPersisted(jobId: string): PersistedDraft | null {
@@ -144,27 +145,21 @@ function readPersisted(jobId: string): PersistedDraft | null {
 
 class ComposerStore {
   private readonly entries = new Map<string, Entry>();
-  private readonly persistTimers = new Map<
-    string,
-    ReturnType<typeof setTimeout>
-  >();
+  private readonly persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** Debounced server-autosave timers (`PUT .../draft`), parallel to `persistTimers`. */
-  private readonly autosaveTimers = new Map<
-    string,
-    ReturnType<typeof setTimeout>
-  >();
+  private readonly autosaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** Jobs whose one-time hydrate-from-server has already been kicked off (guards `ensure`'s per-render call). */
   private readonly hydrated = new Set<string>();
   /** Global (not jobId-keyed) listeners fired on any outbox change — see `subscribeGlobal`. */
   private readonly globalListeners = new Set<() => void>();
 
   constructor() {
-    if (hasWindow() && typeof window.addEventListener === "function") {
-      window.addEventListener("pagehide", () => this.flushAll());
+    if (hasWindow() && typeof window.addEventListener === 'function') {
+      window.addEventListener('pagehide', () => this.flushAll());
       // Reconnect reconciliation: on an offline→online transition re-send every dirty draft (idempotent
       // last-write-wins) and re-pull each open job to fold in edits from other devices missed while offline.
       connectivity.subscribe(() => {
-        if (connectivity.getSnapshot() === "online") this.onReconnect();
+        if (connectivity.getSnapshot() === 'online') this.onReconnect();
       });
     }
   }
@@ -201,7 +196,7 @@ class ComposerStore {
     const persisted = readPersisted(ref.jobId);
     const state: ComposerDraft = {
       ref,
-      text: persisted?.text ?? "",
+      text: persisted?.text ?? '',
       attachments: [],
       comments: persisted?.comments ?? [],
       stagedAnswers: [],
@@ -269,10 +264,7 @@ class ComposerStore {
     this.markEdited(ref.jobId);
   }
 
-  setComments(
-    ref: JobRef,
-    updater: (prev: ReviewComment[]) => ReviewComment[],
-  ): void {
+  setComments(ref: JobRef, updater: (prev: ReviewComment[]) => ReviewComment[]): void {
     this.ensure(ref);
     const prev = this.getDraft(ref.jobId).comments;
     this.replace(ref, { comments: updater(prev) });
@@ -280,10 +272,7 @@ class ComposerStore {
     this.markEdited(ref.jobId);
   }
 
-  setAttachments(
-    ref: JobRef,
-    updater: (prev: DraftAttachment[]) => DraftAttachment[],
-  ): void {
+  setAttachments(ref: JobRef, updater: (prev: DraftAttachment[]) => DraftAttachment[]): void {
     this.ensure(ref);
     const prev = this.getDraft(ref.jobId).attachments;
     // Attachments upload on-add to the server (not via the debounced draft autosave), so no persist/
@@ -301,7 +290,7 @@ class ComposerStore {
   }
 
   private tryDeleteAttachment(ref: JobRef, attachmentId: string): void {
-    if (connectivity.getSnapshot() !== "online") return; // left pending — reconnect retries it
+    if (connectivity.getSnapshot() !== 'online') return; // left pending — reconnect retries it
     void deleteDraftAttachment(ref, attachmentId)
       .then(() => {
         this.entries.get(ref.jobId)?.pendingDeletes.delete(attachmentId);
@@ -311,10 +300,7 @@ class ComposerStore {
       });
   }
 
-  setStagedAnswers(
-    ref: JobRef,
-    updater: (prev: StagedAnswer[]) => StagedAnswer[],
-  ): void {
+  setStagedAnswers(ref: JobRef, updater: (prev: StagedAnswer[]) => StagedAnswer[]): void {
     this.ensure(ref);
     const prev = this.getDraft(ref.jobId).stagedAnswers;
     this.replace(ref, { stagedAnswers: updater(prev) });
@@ -332,9 +318,7 @@ class ComposerStore {
 
   /** Drop one staged answer (the tray's remove `X`, or a card's own "Remove" reverting it to answerable). */
   removeStagedAnswer(ref: JobRef, cardId: string): void {
-    this.setStagedAnswers(ref, (prev) =>
-      prev.filter((a) => a.cardId !== cardId),
-    );
+    this.setStagedAnswers(ref, (prev) => prev.filter((a) => a.cardId !== cardId));
   }
 
   /** Flip `submitting` on the staged answers matching `cardIds` — set true the instant Send is hit (so the
@@ -363,10 +347,7 @@ class ComposerStore {
     this.markEdited(ref.jobId);
   }
 
-  setOutbox(
-    ref: JobRef,
-    updater: (prev: QueuedMessage[]) => QueuedMessage[],
-  ): void {
+  setOutbox(ref: JobRef, updater: (prev: QueuedMessage[]) => QueuedMessage[]): void {
     this.ensure(ref);
     const prev = this.getDraft(ref.jobId).outbox;
     this.replace(ref, { outbox: updater(prev) });
@@ -406,8 +387,7 @@ class ComposerStore {
   allQueued(): { ref: JobRef; msg: QueuedMessage }[] {
     const all: { ref: JobRef; msg: QueuedMessage }[] = [];
     for (const entry of this.entries.values()) {
-      for (const msg of entry.state.outbox)
-        all.push({ ref: entry.state.ref, msg });
+      for (const msg of entry.state.outbox) all.push({ ref: entry.state.ref, msg });
     }
     return all.sort((a, b) => a.msg.createdAt - b.msg.createdAt);
   }
@@ -432,7 +412,7 @@ class ComposerStore {
     }
     entry.state = {
       ...entry.state,
-      text: "",
+      text: '',
       attachments: [],
       comments: [],
     };
@@ -474,7 +454,7 @@ class ComposerStore {
   private pushDraft(jobId: string): Promise<void> {
     const entry = this.entries.get(jobId);
     if (!entry) return Promise.resolve();
-    if (connectivity.getSnapshot() !== "online") return Promise.resolve();
+    if (connectivity.getSnapshot() !== 'online') return Promise.resolve();
     const { ref, text, stagedAnswers, comments } = entry.state;
     const stamp = entry.lastLocalEditAt;
     return putDraft(ref, { text, stagedAnswers, comments })
@@ -558,9 +538,7 @@ class ComposerStore {
         };
       });
     const nextIds = new Set(nextAttachments.map((a) => a.id));
-    const stillUploading = entry.state.attachments.filter(
-      (a) => a.pending && !nextIds.has(a.id),
-    );
+    const stillUploading = entry.state.attachments.filter((a) => a.pending && !nextIds.has(a.id));
     entry.state = {
       ...entry.state,
       text: payload.text,
@@ -580,8 +558,7 @@ class ComposerStore {
   private onReconnect(): void {
     for (const [jobId, entry] of this.entries) {
       if (!jobId) continue;
-      for (const id of entry.pendingDeletes)
-        this.tryDeleteAttachment(entry.state.ref, id);
+      for (const id of entry.pendingDeletes) this.tryDeleteAttachment(entry.state.ref, id);
       if (entry.dirty) {
         // Reconnect conflict check: server wins if it changed after our last local edit; otherwise push the
         // dirty local body, then refetch so this device carries the server's canonical timestamps/attachments.
@@ -596,9 +573,7 @@ class ComposerStore {
               this.applyPayload(jobId, payload, attachments);
               return;
             }
-            void this.pushDraft(jobId).then(() =>
-              this.fetchAndReconcile(cur.state.ref),
-            );
+            void this.pushDraft(jobId).then(() => this.fetchAndReconcile(cur.state.ref));
           })
           .catch(() => {
             void this.pushDraft(jobId);
@@ -629,10 +604,7 @@ class ComposerStore {
 
   /** Synchronously persist every touched Job. Used on `pagehide` so a recent keystroke survives reload. */
   flushAll(): void {
-    const jobIds = new Set([
-      ...this.entries.keys(),
-      ...this.persistTimers.keys(),
-    ]);
+    const jobIds = new Set([...this.entries.keys(), ...this.persistTimers.keys()]);
     for (const jobId of jobIds) this.flushDraft(jobId);
   }
 
@@ -647,7 +619,7 @@ class ComposerStore {
     if (!hasWindow()) return;
 
     const outbox = state?.outbox ?? readPersisted(jobId)?.outbox ?? [];
-    const text = state?.text ?? "";
+    const text = state?.text ?? '';
     const comments = state?.comments ?? [];
     const ref = state?.ref ?? readPersisted(jobId)?.ref;
 
@@ -669,10 +641,7 @@ class ComposerStore {
           hasAttachments: q.hasAttachments,
         })),
       };
-      window.sessionStorage.setItem(
-        storageKey(jobId),
-        JSON.stringify(persisted),
-      );
+      window.sessionStorage.setItem(storageKey(jobId), JSON.stringify(persisted));
     } catch {
       // Storage full / disabled — the in-memory draft still works; persistence is best-effort.
     }
@@ -689,8 +658,7 @@ class ComposerStore {
       const jobIds: string[] = [];
       for (let i = 0; i < window.sessionStorage.length; i++) {
         const key = window.sessionStorage.key(i);
-        if (key?.startsWith(KEY_PREFIX))
-          jobIds.push(key.slice(KEY_PREFIX.length));
+        if (key?.startsWith(KEY_PREFIX)) jobIds.push(key.slice(KEY_PREFIX.length));
       }
       for (const jobId of jobIds) {
         const persisted = readPersisted(jobId);
@@ -709,30 +677,27 @@ class ComposerStore {
  * since it was staged. Matches by the card's own kind + id (`questionId`/`requestId`) against `cardId`; a
  * card that isn't found at all in `messages` is NOT stale — the list may be paginated/incomplete.
  */
-function isStagedAnswerStale(
-  answer: StagedAnswer,
-  messages: JobMessage[],
-): boolean {
+function isStagedAnswerStale(answer: StagedAnswer, messages: JobMessage[]): boolean {
   for (const m of messages) {
     const card = m.card;
     if (!card) continue;
     if (
-      answer.kind === "question" &&
-      card.type === "question_card" &&
+      answer.kind === 'question' &&
+      card.type === 'question_card' &&
       card.questionId === answer.cardId
     ) {
       return card.withdrawnAt != null || card.answer != null;
     }
     if (
-      answer.kind === "file" &&
-      card.type === "file_request_card" &&
+      answer.kind === 'file' &&
+      card.type === 'file_request_card' &&
       card.requestId === answer.cardId
     ) {
       return card.withdrawnAt != null || card.provided_at != null;
     }
     if (
-      answer.kind === "secret" &&
-      card.type === "secret_input_card" &&
+      answer.kind === 'secret' &&
+      card.type === 'secret_input_card' &&
       card.requestId === answer.cardId
     ) {
       return card.withdrawnAt != null || card.provided_at != null;
@@ -756,10 +721,7 @@ export function useComposerDraft(ref: JobRef): ComposerDraft {
     (cb: () => void) => composerStore.subscribe(ref.jobId, cb),
     [ref.jobId],
   );
-  const getSnapshot = useCallback(
-    () => composerStore.getDraft(ref.jobId),
-    [ref.jobId],
-  );
+  const getSnapshot = useCallback(() => composerStore.getDraft(ref.jobId), [ref.jobId]);
   return useSyncExternalStore(subscribe, getSnapshot, () => EMPTY);
 }
 
@@ -776,10 +738,7 @@ export function useComposerAttachments(ref: JobRef): DraftAttachment[] {
     (cb: () => void) => composerStore.subscribe(ref.jobId, cb),
     [ref.jobId],
   );
-  const getSnapshot = useCallback(
-    () => composerStore.getDraft(ref.jobId).attachments,
-    [ref.jobId],
-  );
+  const getSnapshot = useCallback(() => composerStore.getDraft(ref.jobId).attachments, [ref.jobId]);
   return useSyncExternalStore(subscribe, getSnapshot, () => EMPTY.attachments);
 }
 
@@ -789,10 +748,7 @@ export function useComposerComments(ref: JobRef): ReviewComment[] {
     (cb: () => void) => composerStore.subscribe(ref.jobId, cb),
     [ref.jobId],
   );
-  const getSnapshot = useCallback(
-    () => composerStore.getDraft(ref.jobId).comments,
-    [ref.jobId],
-  );
+  const getSnapshot = useCallback(() => composerStore.getDraft(ref.jobId).comments, [ref.jobId]);
   return useSyncExternalStore(subscribe, getSnapshot, () => EMPTY.comments);
 }
 
@@ -808,11 +764,7 @@ export function useComposerStagedAnswers(ref: JobRef): StagedAnswer[] {
     () => composerStore.getDraft(ref.jobId).stagedAnswers,
     [ref.jobId],
   );
-  return useSyncExternalStore(
-    subscribe,
-    getSnapshot,
-    () => EMPTY.stagedAnswers,
-  );
+  return useSyncExternalStore(subscribe, getSnapshot, () => EMPTY.stagedAnswers);
 }
 
 /** Slice-aware subscription — a Job's offline-send outbox only, so `<QueuedTray>` re-renders on enqueue/
@@ -823,9 +775,6 @@ export function useOutbox(ref: JobRef): QueuedMessage[] {
     (cb: () => void) => composerStore.subscribe(ref.jobId, cb),
     [ref.jobId],
   );
-  const getSnapshot = useCallback(
-    () => composerStore.getDraft(ref.jobId).outbox,
-    [ref.jobId],
-  );
+  const getSnapshot = useCallback(() => composerStore.getDraft(ref.jobId).outbox, [ref.jobId]);
   return useSyncExternalStore(subscribe, getSnapshot, () => EMPTY.outbox);
 }

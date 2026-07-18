@@ -1,10 +1,10 @@
-"use client";
+'use client';
 
-import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
-import { ServerUnreachable } from "@/components/error/server-unreachable";
-import { auth, type AuthState } from "@/lib/auth";
-import { ROUTES } from "@/lib/routes";
+import { ServerUnreachable } from '@/components/error/server-unreachable';
+import { auth, type AuthState } from '@/lib/auth';
+import { ROUTES } from '@/lib/routes';
+import { useRouter } from 'next/navigation';
+import { useEffect, useState } from 'react';
 
 /** Redirect hub — sends the operator to the workspace (authed) or the login screen. */
 export default function Home() {
@@ -15,9 +15,7 @@ export default function Home() {
 
   useEffect(() => {
     if (!state || state.backendUnreachable) return;
-    router.replace(
-      state.authenticated ? ROUTES.workspace() : ROUTES.auth.login(),
-    );
+    router.replace(state.authenticated ? ROUTES.workspace() : ROUTES.auth.login());
   }, [state, router]);
 
   if (state?.backendUnreachable) return <ServerUnreachable />;

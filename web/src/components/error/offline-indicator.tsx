@@ -1,6 +1,6 @@
-"use client";
+'use client';
 
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner } from '@/components/ui/spinner';
 
 /**
  * Persistent "disconnected" pill — shown by <ConnectivityGate> while the backend has been unreachable
@@ -19,9 +19,9 @@ export function OfflineIndicator() {
       <div
         className="font-mono flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-[11.5px] font-medium tracking-wide shadow-[var(--shadow-card)] backdrop-blur"
         style={{
-          color: "var(--red)",
-          borderColor: "var(--red-line)",
-          background: "color-mix(in srgb, var(--red) 9%, var(--surface))",
+          color: 'var(--red)',
+          borderColor: 'var(--red-line)',
+          background: 'color-mix(in srgb, var(--red) 9%, var(--surface))',
         }}
       >
         <Spinner className="h-3 w-3" />

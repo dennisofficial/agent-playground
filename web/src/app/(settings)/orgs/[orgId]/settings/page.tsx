@@ -1,5 +1,5 @@
-import { redirect } from "next/navigation";
-import { ROUTES } from "@/lib/routes";
+import { ROUTES } from '@/lib/routes';
+import { redirect } from 'next/navigation';
 
 /**
  * `/orgs/:orgId/settings` — the bare path has no content of its own; redirect to the General section.
@@ -18,10 +18,10 @@ export default async function OrgSettingsIndexPage({
   if (sp.githubApp !== undefined) {
     const qs = new URLSearchParams();
     for (const [key, value] of Object.entries(sp)) {
-      if (typeof value === "string") qs.set(key, value);
+      if (typeof value === 'string') qs.set(key, value);
       else if (Array.isArray(value) && value[0] !== undefined) qs.set(key, value[0]);
     }
-    redirect(`${ROUTES.orgSettings(orgId, "credentials")}?${qs.toString()}`);
+    redirect(`${ROUTES.orgSettings(orgId, 'credentials')}?${qs.toString()}`);
   }
-  redirect(ROUTES.orgSettings(orgId, "general"));
+  redirect(ROUTES.orgSettings(orgId, 'general'));
 }

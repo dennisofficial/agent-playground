@@ -1,7 +1,7 @@
-"use client";
+'use client';
 
-import { useEffect, useState } from "react";
-import { Command, CornerDownLeft } from "lucide-react";
+import { Command, CornerDownLeft } from 'lucide-react';
+import { useEffect, useState } from 'react';
 
 /**
  * The ⌘↵ / Ctrl↵ key-cap hint shown inside a submit button — it advertises the ⌘/Ctrl+Enter shortcut
@@ -14,16 +14,14 @@ export function ShortcutHint() {
   const [isMac, setIsMac] = useState<boolean | null>(null);
   useEffect(() => {
     const platform =
-      typeof navigator !== "undefined"
-        ? navigator.platform || navigator.userAgent
-        : "";
+      typeof navigator !== 'undefined' ? navigator.platform || navigator.userAgent : '';
     setIsMac(/mac|iphone|ipad|ipod/i.test(platform));
   }, []);
   if (isMac === null) return null;
 
   return (
     <span aria-hidden="true" className="inline-flex items-center gap-[3px]">
-      <Cap>{isMac ? <Command size={11} strokeWidth={2.25} /> : "Ctrl"}</Cap>
+      <Cap>{isMac ? <Command size={11} strokeWidth={2.25} /> : 'Ctrl'}</Cap>
       <Cap>
         <CornerDownLeft size={11} strokeWidth={2.25} />
       </Cap>
@@ -36,8 +34,7 @@ function Cap({ children }: { children: React.ReactNode }) {
     <kbd
       className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-[5px] bg-white/15 px-1 font-mono text-[12px] font-medium leading-none text-white/95"
       style={{
-        boxShadow:
-          "inset 0 1px 0 0 rgba(255,255,255,0.28), inset 0 -1px 0 0 rgba(0,0,0,0.14)",
+        boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.28), inset 0 -1px 0 0 rgba(0,0,0,0.14)',
       }}
     >
       {children}

@@ -1,31 +1,27 @@
-"use client";
+'use client';
 
-import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
-import { Check, Paperclip, Plug, Upload, X } from "lucide-react";
-import { cn } from "@/lib/cn";
-import { Button } from "@/components/ui/button";
-import { ShortcutHint } from "@/components/ui/shortcut-hint";
-import { BranchPicker, Dropdown } from "@/components/branch-picker";
-import { useOrgs } from "@/lib/api/me";
-import { useOrgRepos, useCreateThread } from "@/lib/api/job-queries";
-import type { OperatorJobKind } from "@/lib/api/job-api";
-import { useAllJobs, type InboxThread } from "@/lib/api/inbox";
-import { groupThreadsBySection, SECTION_LABEL } from "@/lib/api/job-section";
-import {
-  type AutoApproveMode,
-  modeApprovesPlan,
-  modeApprovesShip,
-} from "@workspace/shared";
-import { composeMode } from "@/features/job-workspace/auto-approve-mode";
-import { SwitchRow } from "@/features/job-workspace/auto-approve-popover";
-import { useAttachments } from "@/features/job-workspace/use-attachments";
-import { useFileDrop } from "@/features/job-workspace/use-file-drop";
-import { AttachmentTray } from "@/features/job-workspace/attachment-tray";
-import { orgSwatch, orgInitials } from "@/utils/org-display";
-import { ROUTES, threadHref } from "@/lib/routes";
-import { isSubmitCombo } from "@/utils/keyboard";
+import { BranchPicker, Dropdown } from '@/components/branch-picker';
+import { Button } from '@/components/ui/button';
+import { ShortcutHint } from '@/components/ui/shortcut-hint';
+import { AttachmentTray } from '@/features/job-workspace/attachment-tray';
+import { composeMode } from '@/features/job-workspace/auto-approve-mode';
+import { SwitchRow } from '@/features/job-workspace/auto-approve-popover';
+import { useAttachments } from '@/features/job-workspace/use-attachments';
+import { useFileDrop } from '@/features/job-workspace/use-file-drop';
+import { useAllJobs, type InboxThread } from '@/lib/api/inbox';
+import type { OperatorJobKind } from '@/lib/api/job-api';
+import { useCreateThread, useOrgRepos } from '@/lib/api/job-queries';
+import { groupThreadsBySection, SECTION_LABEL } from '@/lib/api/job-section';
+import { useOrgs } from '@/lib/api/me';
+import { cn } from '@/lib/cn';
+import { ROUTES, threadHref } from '@/lib/routes';
+import { isSubmitCombo } from '@/utils/keyboard';
+import { orgInitials, orgSwatch } from '@/utils/org-display';
+import { modeApprovesPlan, modeApprovesShip, type AutoApproveMode } from '@workspace/shared';
+import { Check, Paperclip, Plug, Upload, X } from 'lucide-react';
+import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 /**
  * Create-thread form — shared by the `@dialog` modal and the `/new` full-page fallback (single source).
@@ -44,21 +40,20 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
   // navigated-to route correctly; both call sites wrap this component in a `<Suspense>` boundary for it.
   const search = useSearchParams();
   const [preselect] = useState(() => ({
-    org: search.get("org") ?? "",
-    repo: search.get("repo") ?? "",
+    org: search.get('org') ?? '',
+    repo: search.get('repo') ?? '',
   }));
 
   const [orgId, setOrgId] = useState<string>(preselect.org);
   const [repoId, setRepoId] = useState<string>(preselect.repo);
-  const [branch, setBranch] = useState("");
-  const [message, setMessage] = useState("");
+  const [branch, setBranch] = useState('');
+  const [message, setMessage] = useState('');
   // Job kind — "" = auto (brain scopes it, the default). "review" reveals a PR-number field.
-  const [kind, setKind] = useState<OperatorJobKind | "">("");
-  const [prNumber, setPrNumber] = useState("");
+  const [kind, setKind] = useState<OperatorJobKind | ''>('');
+  const [prNumber, setPrNumber] = useState('');
   // Per-job auto-approve armed at creation — two independent gates (Plan / Ship) composing one mode.
   // Default "off": both gates wait for a human, unchanged from before this control existed.
-  const [autoApproveMode, setAutoApproveMode] =
-    useState<AutoApproveMode>("off");
+  const [autoApproveMode, setAutoApproveMode] = useState<AutoApproveMode>('off');
   // Per-job auto-merge armed at creation — a separate boolean, orthogonal to autoApproveMode.
   const [autoMerge, setAutoMerge] = useState(false);
   // Sibling jobs (same org+repo) this new job should start blocked on.
@@ -87,9 +82,7 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
   const selectedOrg = orgs.find((o) => o.id === orgId);
   useEffect(() => {
     if (!selectedOrg) return;
-    setAutoApproveMode(
-      composeMode(selectedOrg.defaultAutoApprove, selectedOrg.defaultAutoShip),
-    );
+    setAutoApproveMode(composeMode(selectedOrg.defaultAutoApprove, selectedOrg.defaultAutoShip));
     setAutoMerge(selectedOrg.defaultAutoMerge ?? false);
   }, [selectedOrg?.id]);
 
@@ -102,29 +95,24 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
     // defaults to `[]` mid-fetch, which would otherwise reset `repoId` to '' before the real list lands.
     if (reposLoading) return;
     if (repos.length === 0) {
-      setRepoId("");
+      setRepoId('');
       return;
     }
     const stillValid = repos.some((r) => r.id === repoId);
     const next = stillValid ? repos.find((r) => r.id === repoId)! : repos[0];
     if (!stillValid) setRepoId(next.id);
-    setBranch((b) => b || next.defaultBranch || "main");
+    setBranch((b) => b || next.defaultBranch || 'main');
   }, [repos, repoId, reposLoading]);
 
-  const selectedRepo = useMemo(
-    () => repos.find((r) => r.id === repoId),
-    [repos, repoId],
-  );
+  const selectedRepo = useMemo(() => repos.find((r) => r.id === repoId), [repos, repoId]);
 
   // Sibling jobs on the same org+repo this new job can start blocked on (mirrors job-menu.tsx's
   // "Block on another job…" picker — no current job to exclude since this one doesn't exist yet).
   const { data: allJobs = [] } = useAllJobs();
   const dependableSections = useMemo(() => {
     if (!orgId || !repoId) return [];
-    const pickable = allJobs.filter(
-      (t) => t.org.id === orgId && t.repo.id === repoId,
-    );
-    return groupThreadsBySection(pickable).filter((g) => g.section !== "merged");
+    const pickable = allJobs.filter((t) => t.org.id === orgId && t.repo.id === repoId);
+    return groupThreadsBySection(pickable).filter((g) => g.section !== 'merged');
   }, [allJobs, orgId, repoId]);
   const selectedJobs = useMemo(
     () =>
@@ -148,25 +136,23 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
 
   function submit() {
     let text = message.trim();
-    if (!orgId) return setError("Pick an organization.");
-    if (!repoId) return setError("Pick a repo to start a job.");
-    const isReview = kind === "review";
+    if (!orgId) return setError('Pick an organization.');
+    if (!repoId) return setError('Pick a repo to start a job.');
+    const isReview = kind === 'review';
     const pr = prNumber.trim();
     if (isReview && !/^\d+$/.test(pr)) {
-      return setError("Enter the PR number to review.");
+      return setError('Enter the PR number to review.');
     }
     // A review job needs no typed message — the <review> block carries the task. Synthesize a natural
     // first message so the brain has an instruction and the backend's "firstMessage or attachment" gate passes.
     if (isReview && !text) text = `Review PR #${pr}.`;
     if (!text && attachments.length === 0) {
-      return setError(
-        "Add a first message or an attachment — it starts the job.",
-      );
+      return setError('Add a first message or an attachment — it starts the job.');
     }
     setError(null);
     // Seed a title from the first line of the message so the thread isn't "Untitled" before the
     // brain renames it (the create endpoint takes an optional title).
-    const title = text.split("\n")[0].trim().slice(0, 80) || undefined;
+    const title = text.split('\n')[0].trim().slice(0, 80) || undefined;
     create.mutate(
       {
         firstMessage: text,
@@ -177,23 +163,21 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
         autoApproveMode,
         autoMerge,
         ...(dependsOn.length ? { dependsOn } : {}),
-        ...(attachments.length
-          ? { files: attachments.map((a) => a.file) }
-          : {}),
+        ...(attachments.length ? { files: attachments.map((a) => a.file) } : {}),
       },
       {
         onSuccess: ({ jobId }) => {
           router.replace(threadHref({ orgId, repoId, jobId }));
           onDone?.();
         },
-        onError: () => setError("Could not start the job. Try again."),
+        onError: () => setError('Could not start the job. Try again.'),
       },
     );
   }
 
   function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     if (e.target.files) addFiles(Array.from(e.target.files));
-    e.target.value = "";
+    e.target.value = '';
   }
 
   return (
@@ -215,8 +199,8 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
             value={orgId}
             onChange={(id) => {
               setOrgId(id);
-              setRepoId("");
-              setBranch("");
+              setRepoId('');
+              setBranch('');
               setDependsOn([]);
             }}
           />
@@ -237,7 +221,7 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
                 value={repoId}
                 onChange={(id) => {
                   setRepoId(id);
-                  setBranch(""); // re-default to the new repo's base branch (effect picks it up)
+                  setBranch(''); // re-default to the new repo's base branch (effect picks it up)
                   setDependsOn([]);
                 }}
               />
@@ -260,7 +244,7 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
               repoId={repoId}
               value={branch}
               onChange={setBranch}
-              fallback={selectedRepo?.defaultBranch ?? "main"}
+              fallback={selectedRepo?.defaultBranch ?? 'main'}
             />
           </div>
         </div>
@@ -272,41 +256,38 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
           <div className="mt-1.5 flex flex-wrap gap-1.5">
             {(
               [
-                ["", "Auto"],
-                ["feature", "Feature"],
-                ["bugfix", "Bugfix"],
-                ["review", "Review"],
-              ] as [OperatorJobKind | "", string][]
+                ['', 'Auto'],
+                ['feature', 'Feature'],
+                ['bugfix', 'Bugfix'],
+                ['review', 'Review'],
+              ] as [OperatorJobKind | '', string][]
             ).map(([value, label]) => (
               <button
-                key={value || "auto"}
+                key={value || 'auto'}
                 type="button"
                 onClick={() => setKind(value)}
                 className={cn(
-                  "rounded-md border px-2.5 py-1.5 text-[12px] transition",
+                  'rounded-md border px-2.5 py-1.5 text-[12px] transition',
                   kind === value
-                    ? "border-accent bg-[var(--accent-soft)] text-accent"
-                    : "border-border-2 text-dim hover:bg-surface-2 hover:text-text",
+                    ? 'border-accent bg-[var(--accent-soft)] text-accent'
+                    : 'border-border-2 text-dim hover:bg-surface-2 hover:text-text',
                 )}
               >
                 {label}
               </button>
             ))}
           </div>
-          {kind === "review" ? (
+          {kind === 'review' ? (
             <div className="mt-2">
               <input
                 value={prNumber}
-                onChange={(e) =>
-                  setPrNumber(e.target.value.replace(/[^\d]/g, ""))
-                }
+                onChange={(e) => setPrNumber(e.target.value.replace(/[^\d]/g, ''))}
                 inputMode="numeric"
                 placeholder="PR number (e.g. 116)"
                 className="w-full rounded-md border border-border-2 bg-surface px-3 py-2 text-[13px] text-text outline-none placeholder:text-faint focus:border-accent focus:ring-2 focus:ring-[var(--accent-soft)]"
               />
               <p className="mt-1 text-[11px] text-faint">
-                Atlas fetches this PR and reviews the diff — no build, no PR of
-                its own.
+                Atlas fetches this PR and reviews the diff — no build, no PR of its own.
               </p>
             </div>
           ) : null}
@@ -330,9 +311,7 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
                     <span className="max-w-[180px] truncate">{t.title}</span>
                     <button
                       type="button"
-                      onClick={() =>
-                        setDependsOn((ids) => ids.filter((x) => x !== t.id))
-                      }
+                      onClick={() => setDependsOn((ids) => ids.filter((x) => x !== t.id))}
                       className="rounded p-0.5 text-faint transition hover:bg-surface-2 hover:text-text"
                       aria-label={`Remove ${t.title}`}
                     >
@@ -347,7 +326,7 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
               onClick={() => setPickerOpen((o) => !o)}
               className="flex items-center gap-1.5 rounded-md border border-border-2 px-2.5 py-1.5 text-[12px] text-dim transition hover:bg-surface-2 hover:text-text"
             >
-              {pickerOpen ? "Hide jobs" : "Add a job…"}
+              {pickerOpen ? 'Hide jobs' : 'Add a job…'}
             </button>
             {pickerOpen ? (
               <div className="mt-1.5 max-h-60 overflow-y-auto rounded-md border border-border-2 py-1">
@@ -369,17 +348,12 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
                             type="button"
                             onClick={() =>
                               setDependsOn((ids) =>
-                                selected
-                                  ? ids.filter((x) => x !== t.id)
-                                  : [...ids, t.id],
+                                selected ? ids.filter((x) => x !== t.id) : [...ids, t.id],
                               )
                             }
                             className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11.5px] text-dim transition hover:bg-surface-2 hover:text-text"
                           >
-                            <Check
-                              size={12}
-                              className={selected ? "text-accent" : "opacity-0"}
-                            />
+                            <Check size={12} className={selected ? 'text-accent' : 'opacity-0'} />
                             <span className="truncate">{t.title}</span>
                           </button>
                         );
@@ -392,8 +366,7 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
           </div>
           {dependsOn.length > 0 ? (
             <p className="mt-1.5 text-[11px] text-faint">
-              This job will start blocked and begin once the selected job(s)
-              merge.
+              This job will start blocked and begin once the selected job(s) merge.
             </p>
           ) : null}
         </div>
@@ -413,9 +386,7 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
               first
               testId="create-auto-approve-plan"
               onChange={(next) =>
-                setAutoApproveMode(
-                  composeMode(next, modeApprovesShip(autoApproveMode)),
-                )
+                setAutoApproveMode(composeMode(next, modeApprovesShip(autoApproveMode)))
               }
             />
             <SwitchRow
@@ -424,9 +395,7 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
               checked={modeApprovesShip(autoApproveMode)}
               testId="create-auto-approve-ship"
               onChange={(next) =>
-                setAutoApproveMode(
-                  composeMode(modeApprovesPlan(autoApproveMode), next),
-                )
+                setAutoApproveMode(composeMode(modeApprovesPlan(autoApproveMode), next))
               }
             />
             <SwitchRow
@@ -443,10 +412,8 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
       <div>
         <p className="text-[12px] font-medium text-dim">
           First message
-          {kind === "review" ? (
-            <span className="ml-1 font-normal text-faint">
-              (optional — the PR is already set)
-            </span>
+          {kind === 'review' ? (
+            <span className="ml-1 font-normal text-faint">(optional — the PR is already set)</span>
           ) : null}
         </p>
         <textarea
@@ -494,9 +461,7 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
           onRemove={removeAttachment}
           className="mt-2"
         />
-        {attachError ? (
-          <p className="mt-1.5 text-[12px] text-red">{attachError}</p>
-        ) : null}
+        {attachError ? <p className="mt-1.5 text-[12px] text-red">{attachError}</p> : null}
       </div>
 
       {error ? <p className="text-[12px] text-red">{error}</p> : null}
@@ -539,7 +504,7 @@ function OrgPicker({
             </span>
           ) : null}
           <span className="flex-1 truncate text-left text-[12.5px] text-text">
-            {selected?.name ?? "Select an org"}
+            {selected?.name ?? 'Select an org'}
           </span>
         </>
       }
@@ -554,8 +519,8 @@ function OrgPicker({
               close();
             }}
             className={cn(
-              "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] hover:bg-surface-2",
-              o.id === value ? "text-text" : "text-dim",
+              'flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] hover:bg-surface-2',
+              o.id === value ? 'text-text' : 'text-dim',
             )}
           >
             <span
@@ -565,10 +530,7 @@ function OrgPicker({
               {orgInitials(o.name)}
             </span>
             <span className="flex-1 truncate">{o.name}</span>
-            <Check
-              size={12}
-              className={o.id === value ? "text-accent" : "opacity-0"}
-            />
+            <Check size={12} className={o.id === value ? 'text-accent' : 'opacity-0'} />
           </button>
         ))
       }
@@ -591,7 +553,7 @@ function RepoPicker({
       <Dropdown
         trigger={
           <span className="flex-1 truncate text-left font-mono text-[11.5px] text-text">
-            {selected?.name ?? "Select a repo"}
+            {selected?.name ?? 'Select a repo'}
           </span>
         }
       >
@@ -605,14 +567,11 @@ function RepoPicker({
                 close();
               }}
               className={cn(
-                "flex w-full items-center gap-2 px-3 py-1.5 text-left font-mono text-[11.5px] hover:bg-surface-2",
-                r.id === value ? "text-text" : "text-dim",
+                'flex w-full items-center gap-2 px-3 py-1.5 text-left font-mono text-[11.5px] hover:bg-surface-2',
+                r.id === value ? 'text-text' : 'text-dim',
               )}
             >
-              <Check
-                size={12}
-                className={r.id === value ? "text-accent" : "opacity-0"}
-              />
+              <Check size={12} className={r.id === value ? 'text-accent' : 'opacity-0'} />
               <span className="truncate">{r.name}</span>
             </button>
           ))
@@ -627,24 +586,22 @@ function NoRepos({ orgId, onDone }: { orgId: string; onDone?: () => void }) {
     <div className="mt-1.5 flex flex-col items-center rounded-md border border-dashed border-border-2 px-5 py-8 text-center">
       <span
         className="flex h-10 w-10 items-center justify-center rounded-full"
-        style={{ background: "var(--surface-2)" }}
+        style={{ background: 'var(--surface-2)' }}
       >
         <Plug size={17} className="text-dim" />
       </span>
-      <h3 className="mt-2.5 text-[13.5px] font-semibold text-text">
-        Connect a repo first
-      </h3>
+      <h3 className="mt-2.5 text-[13.5px] font-semibold text-text">Connect a repo first</h3>
       <p className="mt-1 max-w-xs text-[12px] text-dim">
-        This organization has no connected repository yet. Connect one in
-        settings, then start a thread.
+        This organization has no connected repository yet. Connect one in settings, then start a
+        thread.
       </p>
       <Link
-        href={ROUTES.orgSettings(orgId, "repos")}
+        href={ROUTES.orgSettings(orgId, 'repos')}
         onClick={onDone}
         className="mt-3 rounded-md border px-3 py-1.5 text-[12px] font-medium text-accent"
         style={{
-          background: "var(--accent-soft)",
-          borderColor: "var(--accent-line)",
+          background: 'var(--accent-soft)',
+          borderColor: 'var(--accent-line)',
         }}
       >
         Open Repos settings

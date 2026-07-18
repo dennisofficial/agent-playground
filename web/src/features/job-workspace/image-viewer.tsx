@@ -1,12 +1,8 @@
-"use client";
+'use client';
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
-import {
-  TransformWrapper,
-  TransformComponent,
-  useControls,
-} from "react-zoom-pan-pinch";
-import { Maximize2, Minimize2, RotateCcw, X, ZoomIn, ZoomOut } from "lucide-react";
+import { Maximize2, Minimize2, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { TransformComponent, TransformWrapper, useControls } from 'react-zoom-pan-pinch';
 
 const MIN_SCALE = 0.5;
 const MAX_SCALE = 8;
@@ -23,10 +19,10 @@ export function ImageViewer({ src, alt }: { src: string; alt: string }) {
   useEffect(() => {
     if (!fullscreen) return;
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setFullscreen(false);
+      if (e.key === 'Escape') setFullscreen(false);
     }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, [fullscreen]);
 
   if (fullscreen) {
@@ -41,12 +37,7 @@ export function ImageViewer({ src, alt }: { src: string; alt: string }) {
           <X size={18} />
         </button>
         <div className="h-full w-full p-6">
-          <Viewer
-            src={src}
-            alt={alt}
-            fullscreen
-            onToggleFullscreen={toggleFullscreen}
-          />
+          <Viewer src={src} alt={alt} fullscreen onToggleFullscreen={toggleFullscreen} />
         </div>
       </div>
     );
@@ -54,12 +45,7 @@ export function ImageViewer({ src, alt }: { src: string; alt: string }) {
 
   return (
     <div className="relative h-full w-full flex-1 overflow-hidden bg-surface-2">
-      <Viewer
-        src={src}
-        alt={alt}
-        fullscreen={false}
-        onToggleFullscreen={toggleFullscreen}
-      />
+      <Viewer src={src} alt={alt} fullscreen={false} onToggleFullscreen={toggleFullscreen} />
     </div>
   );
 }
@@ -81,7 +67,7 @@ function Viewer({
       maxScale={MAX_SCALE}
       centerOnInit
       wheel={{ step: 0.015 }}
-      doubleClick={{ mode: "toggle", step: 1.2 }}
+      doubleClick={{ mode: 'toggle', step: 1.2 }}
     >
       <Toolbar fullscreen={fullscreen} onToggleFullscreen={onToggleFullscreen} />
       <TransformComponent
@@ -120,7 +106,7 @@ function Toolbar({
         <RotateCcw size={15} />
       </ToolbarButton>
       <ToolbarButton
-        title={fullscreen ? "Exit fullscreen" : "Fullscreen"}
+        title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
         onClick={onToggleFullscreen}
       >
         {fullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}

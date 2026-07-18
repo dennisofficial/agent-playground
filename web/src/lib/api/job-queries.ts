@@ -1,16 +1,12 @@
-"use client";
+'use client';
 
-import { useMemo } from "react";
-import { useMutation, useQuery, useQueryClient } from "./_tanstack-shim";
-import { adaptQuery } from "./_stub";
-import { useGetOrgReposQuery, useGetRepoBranchesQuery } from "@/redux/query/api/repo.api";
-import { qk } from "./query-keys";
-import { useOrgs } from "./me";
-import { composerStore } from "./composer-store";
+import { useGetOrgReposQuery, useGetRepoBranchesQuery } from '@/redux/query/api/repo.api';
+import type { AutoApproveMode } from '@workspace/shared';
+import { adaptQuery } from './_stub';
+import { useMutation, useQuery, useQueryClient } from './_tanstack-shim';
+import { composerStore } from './composer-store';
 import {
   addJobDependency,
-  postMessage,
-  provideSecret,
   approveMcpProposal,
   approveSkillProposal,
   approveThread,
@@ -19,43 +15,40 @@ import {
   deleteThread,
   fetchContextFile,
   fetchCreatedJobs,
-  getDraft,
   fetchJobDiff,
   fetchJobDiffSummary,
   fetchMessages,
-  fetchOrgRepos,
-  fetchRepoBranches,
-  fetchRepoTree,
-  fetchRepoFile,
   fetchPipeline,
+  fetchRepoFile,
+  fetchRepoTree,
   fetchServices,
   fetchThreadContext,
+  getDraft,
+  postMessage,
   postReviewComments,
+  provideSecret,
   removeJobDependency,
   renameJob,
-  setAutoApprove,
-  setAutoMerge,
   retryJob,
   retryTurn,
+  setAutoApprove,
+  setAutoMerge,
   shipWithoutReview,
   spinUpPreview,
   stopJob,
-  type MessageInput,
-  type ProvideSecretBody,
   type ApproveBody,
   type CreateThreadBody,
   type JobMessage,
   type JobRef,
+  type MessageInput,
+  type ProvideSecretBody,
   type RepoView,
   type ReviewCommentItemBody,
-} from "./job-api";
-import type { AutoApproveMode } from "@workspace/shared";
-import { MERGE_ACTION_ID } from "./types";
-import type {
-  JobBlocker,
-  WebAttachmentsCard,
-  WebReviewCommentsCard,
-} from "./types";
+} from './job-api';
+import { useOrgs } from './me';
+import { qk } from './query-keys';
+import type { JobBlocker, WebAttachmentsCard, WebReviewCommentsCard } from './types';
+import { MERGE_ACTION_ID } from './types';
 
 /** Tanstack Query hooks over the org → repo → thread API. */
 
@@ -126,7 +119,7 @@ export function useJobContext(ref: JobRef) {
 /** One `/context` file's content (`path` bucket-relative, e.g. `specs/plan.md`). Lazy — only when opened. */
 export function useContextFile(ref: JobRef, path: string | null) {
   return useQuery({
-    queryKey: qk.threadContextFile(ref, path ?? ""),
+    queryKey: qk.threadContextFile(ref, path ?? ''),
     queryFn: () => fetchContextFile(ref, path!),
     enabled: hasRef(ref) && Boolean(path),
     staleTime: 5_000,
@@ -167,7 +160,7 @@ export function useRepoTree(ref: JobRef) {
 /** One repo file's content (LIVE worktree). Lazy — only when a path is set (a file view is open). */
 export function useRepoFile(ref: JobRef, path: string | null) {
   return useQuery({
-    queryKey: qk.repoFile(ref, path ?? ""),
+    queryKey: qk.repoFile(ref, path ?? ''),
     queryFn: () => fetchRepoFile(ref, path!),
     enabled: hasRef(ref) && Boolean(path),
     staleTime: 5_000,
@@ -222,7 +215,7 @@ export interface PendingAttachment {
   file: File;
   /** `URL.createObjectURL(file)` — the instant local preview (revoked by the composer on send/remove). */
   url: string;
-  kind: "image" | "file";
+  kind: 'image' | 'file';
 }
 
 /**
@@ -237,7 +230,7 @@ export interface PendingAttachment {
 export interface DraftAttachment {
   id: string;
   name: string;
-  kind: "image" | "file";
+  kind: 'image' | 'file';
   size: number;
   url?: string;
   pending?: boolean;
@@ -276,7 +269,7 @@ export function useMessage(ref: JobRef) {
     mutationFn: (input) => postMessage(ref, input.messages),
     onMutate: async (input) => {
       const userItem = input.messages.find(
-        (m): m is Extract<MessageInput, { type: "user" }> => m.type === "user",
+        (m): m is Extract<MessageInput, { type: 'user' }> => m.type === 'user',
       );
       if (!userItem) return {};
       const key = qk.threadMessages(ref);
@@ -287,13 +280,13 @@ export function useMessage(ref: JobRef) {
       const draftAttachments = composerStore.getDraft(ref.jobId).attachments;
       const card: WebAttachmentsCard | undefined = draftAttachments.length
         ? {
-            type: "attachments_card",
+            type: 'attachments_card',
             items: draftAttachments.map((a) => ({
               name: a.name,
-              path: "",
+              path: '',
               kind: a.kind,
               size: a.size,
-              localUrl: a.url ?? "",
+              localUrl: a.url ?? '',
             })),
             ...(userItem.text ? { message: userItem.text } : {}),
           }
@@ -302,12 +295,12 @@ export function useMessage(ref: JobRef) {
         ts: `local-${Date.now()}`,
         threadId: input.threadId ?? ref.jobId,
         subagentId: null,
-        author: "user",
-        authorId: "me",
-        authorName: "You",
+        author: 'user',
+        authorId: 'me',
+        authorName: 'You',
         text: userItem.text,
-        kind: "chat",
-        source: "operator",
+        kind: 'chat',
+        source: 'operator',
         ...(card ? { card } : {}),
         postedAt: new Date().toISOString(),
         local: true,
@@ -329,7 +322,7 @@ export function useMessage(ref: JobRef) {
       // Every item the backend did NOT apply (a `stale`/`withdrawn`/`noop`/`notfound` result) reverts
       // `submitting` to false so it doesn't get stuck showing "sending…" forever.
       const appliedIds = new Set(
-        data.results.filter((r) => r.status === "applied").map((r) => r.id),
+        data.results.filter((r) => r.status === 'applied').map((r) => r.id),
       );
       composerStore.setStagedAnswers(ref, (prev) =>
         prev.map((a) => (appliedIds.has(a.cardId) ? a : { ...a, submitting: false })),
@@ -370,19 +363,14 @@ interface ReviewCommentsSendInput {
  */
 export function useSendReviewComments(ref: JobRef) {
   const qc = useQueryClient();
-  return useMutation<
-    { ts: string },
-    Error,
-    ReviewCommentsSendInput,
-    SayContext
-  >({
+  return useMutation<{ ts: string }, Error, ReviewCommentsSendInput, SayContext>({
     mutationFn: (input) => postReviewComments(ref, input),
     onMutate: async (input) => {
       const key = qk.threadMessages(ref);
       await qc.cancelQueries({ queryKey: key });
       const prev = qc.getQueryData<JobMessage[]>(key);
       const card: WebReviewCommentsCard = {
-        type: "review_comments_card",
+        type: 'review_comments_card',
         items: input.items,
         ...(input.message ? { message: input.message } : {}),
       };
@@ -390,12 +378,12 @@ export function useSendReviewComments(ref: JobRef) {
         ts: `local-${Date.now()}`,
         threadId: input.threadId ?? ref.jobId,
         subagentId: null,
-        author: "user",
-        authorId: "me",
-        authorName: "You",
-        text: input.message ?? "",
-        kind: "chat",
-        source: "operator",
+        author: 'user',
+        authorId: 'me',
+        authorName: 'You',
+        text: input.message ?? '',
+        kind: 'chat',
+        source: 'operator',
         card,
         postedAt: new Date().toISOString(),
         local: true,
@@ -485,8 +473,7 @@ export function useRetryTurn(ref: JobRef) {
 export function useAddJobDependency(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (dependsOnJobId: string) =>
-      addJobDependency(ref, dependsOnJobId),
+    mutationFn: (dependsOnJobId: string) => addJobDependency(ref, dependsOnJobId),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
       void qc.invalidateQueries({ queryKey: qk.allJobs() });
@@ -499,8 +486,7 @@ export function useAddJobDependency(ref: JobRef) {
 export function useRemoveJobDependency(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (dependsOnJobId: string) =>
-      removeJobDependency(ref, dependsOnJobId),
+    mutationFn: (dependsOnJobId: string) => removeJobDependency(ref, dependsOnJobId),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
       void qc.invalidateQueries({ queryKey: qk.allJobs() });
@@ -514,8 +500,7 @@ export function useRemoveJobDependency(ref: JobRef) {
 export function useUnblockJob(ref: JobRef, blockedBy: JobBlocker[]) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () =>
-      Promise.all(blockedBy.map((b) => removeJobDependency(ref, b.jobId))),
+    mutationFn: () => Promise.all(blockedBy.map((b) => removeJobDependency(ref, b.jobId))),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
       void qc.invalidateQueries({ queryKey: qk.allJobs() });
@@ -611,8 +596,7 @@ export function useSetAutoApprove(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (mode: AutoApproveMode) => setAutoApprove(ref, mode),
-    onSuccess: () =>
-      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) }),
   });
 }
 
@@ -621,8 +605,7 @@ export function useSetAutoMerge(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: { autoMerge: boolean }) => setAutoMerge(ref, body),
-    onSuccess: () =>
-      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) }),
   });
 }
 
@@ -633,7 +616,7 @@ export function useSetAutoMerge(ref: JobRef) {
 export function useDeleteJob(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (prAction?: "close" | "leave") => deleteThread(ref, prAction),
+    mutationFn: (prAction?: 'close' | 'leave') => deleteThread(ref, prAction),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.allJobs() });
       void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });

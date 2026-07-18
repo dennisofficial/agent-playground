@@ -1,6 +1,6 @@
-"use client";
+'use client';
 
-import { stubQuery, type QueryResultLike } from "./_stub";
+import { stubQuery, type QueryResultLike } from './_stub';
 
 /**
  * The host box's live machine-stats snapshot (`GET /web/host-stats`). Login-gated but NOT org-scoped —

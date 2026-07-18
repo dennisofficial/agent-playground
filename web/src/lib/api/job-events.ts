@@ -1,19 +1,15 @@
-"use client";
+'use client';
 
-import { useQueryClient } from "@/lib/api/_tanstack-shim";
-import { useEffect, useRef } from "react";
-import { env } from "@/lib/env";
-import { qk } from "./query-keys";
-import { subscribeSse } from "./sse-manager";
-import type { InboxThread } from "./inbox";
-import type { JobRef } from "./job-api";
-import type { WireOrgUsage } from "./types";
-import { writeUsageCache } from "./usage-cache";
-import {
-  applyStreamFrame,
-  endLiveTurn,
-  sweepLiveTurnsAfterReconnect,
-} from "./job-stream";
+import { useQueryClient } from '@/lib/api/_tanstack-shim';
+import { env } from '@/lib/env';
+import { useEffect, useRef } from 'react';
+import type { InboxThread } from './inbox';
+import type { JobRef } from './job-api';
+import { applyStreamFrame, endLiveTurn, sweepLiveTurnsAfterReconnect } from './job-stream';
+import { qk } from './query-keys';
+import { subscribeSse } from './sse-manager';
+import type { WireOrgUsage } from './types';
+import { writeUsageCache } from './usage-cache';
 
 /** A frame off the repo SSE: a durable-post change-signal, a live engine-stream frame, or a meta update. */
 interface SseFrame {
@@ -43,12 +39,7 @@ interface SseFrame {
  * moment a context file is touched. (Bash-based writes — echo/sed — don't surface as a Write tool_use and
  * are not covered here; they settle on the next `message`/`turn_end` reconcile.)
  */
-const FILE_WRITE_TOOLS = new Set([
-  "Write",
-  "Edit",
-  "MultiEdit",
-  "NotebookEdit",
-]);
+const FILE_WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 const CONTEXT_WRITE_RE = /\/context\/(specs|generated|artifacts|evidence)\//;
 
 /**
@@ -95,8 +86,7 @@ export function useJobEvents(ref: JobRef): void {
       jobId: openThreadRef.current,
     });
     // The 4-element prefix matches every open `/context` file for a thread (the 5th element is the path).
-    const contextFilesKey = (r: JobRef) =>
-      qk.threadContextFile(r, "").slice(0, 4);
+    const contextFilesKey = (r: JobRef) => qk.threadContextFile(r, '').slice(0, 4);
 
     const refetch = () => {
       if (debounce) clearTimeout(debounce);
@@ -140,7 +130,7 @@ export function useJobEvents(ref: JobRef): void {
         refetch(); // unparseable → fall back to a change-signal refetch
         return;
       }
-      if (frame?.type === "stream") {
+      if (frame?.type === 'stream') {
         // The repo stream carries the live turn for EVERY thread in the repo. We feed them ALL into the
         // (thread-keyed) live-turn store — NOT just the open thread — so switching to a sibling thread that
         // is mid-stream is instant, with its already-streamed output present. (Before, this connection
@@ -149,8 +139,8 @@ export function useJobEvents(ref: JobRef): void {
         if (!fThread) return;
         // Which lane (the brain `main` turn, or a `phase:<stepId>` build turn). Lanes are independent
         // in-flight turns on the same thread; the conversation reads `main`, the step sub-page reads its phase.
-        const lane = frame.lane ?? "main";
-        if (frame.event?.kind === "turn_end") {
+        const lane = frame.lane ?? 'main';
+        if (frame.event?.kind === 'turn_end') {
           // Reconcile: refetch durable messages, THEN clear THIS lane's live buffer (so no gap/flicker).
           // A Stop produces a graceful `turn_end` (there's no separate abort frame), so the same path clears
           // the indicator after a stop. For a non-open thread the invalidations just mark its (unobserved)
@@ -168,20 +158,16 @@ export function useJobEvents(ref: JobRef): void {
           // opens each lane, a build phase's `build_anchor`) land via a plain DB insert — no `message`
           // frame — so without this they'd only surface on the `turn_end` reconcile, mid-turn invisible.
           // Refetch the open thread's messages now so the prompt shows while the agent is still working.
-          if (
-            frame.event?.kind === "turn_start" &&
-            fThread === openThreadRef.current
-          ) {
+          if (frame.event?.kind === 'turn_start' && fThread === openThreadRef.current) {
             refetch();
           }
           // In-turn freshness for the OPEN thread only: the brain just wrote a `/context` file via Write/Edit
           // → refresh the SPECS/GENERATED/ARTIFACTS listing now, instead of waiting for the durable reconcile.
           const ev = frame.event;
-          const writePath =
-            ev?.input?.file_path ?? ev?.input?.path ?? ev?.input?.notebook_path;
+          const writePath = ev?.input?.file_path ?? ev?.input?.path ?? ev?.input?.notebook_path;
           if (
             fThread === openThreadRef.current &&
-            ev?.kind === "tool_use" &&
+            ev?.kind === 'tool_use' &&
             ev.name != null &&
             FILE_WRITE_TOOLS.has(ev.name) &&
             writePath != null
@@ -201,7 +187,7 @@ export function useJobEvents(ref: JobRef): void {
         }
         return;
       }
-      if (frame?.type === "thread_meta" && frame.jobId && frame.title) {
+      if (frame?.type === 'thread_meta' && frame.jobId && frame.title) {
         // A thread title changed (e.g. the auto-generated one). Patch the inbox cache in place — the
         // sidebar AND the navigator header both read the title from `allJobs` — then invalidate as a
         // backstop. (The navigator/sidebar update live; no message frame is involved in titling.)
@@ -212,17 +198,17 @@ export function useJobEvents(ref: JobRef): void {
         void qc.invalidateQueries({ queryKey: qk.allJobs() });
         return;
       }
-      if (frame?.type === "usage" && frame.usage) {
+      if (frame?.type === 'usage' && frame.usage) {
         // Subscription-usage push (distinct from the per-turn `stream`/`usage` context-window frame): the
         // backend recomputed this org's usage snapshot (a harvested-window burn during a turn, or an account
         // switch). The stream is already server-filtered to this connection's org, so patch the ring's cache
         // in place — no refetch, no poll. Mirror it to localStorage too; a pushed snapshot is as real as a
         // REST-fetched one, and the next reload should seed from it even if no ring component is mounted now.
-        writeUsageCache(qk.orgUsage(orgId).join(":"), frame.usage, Date.now());
+        writeUsageCache(qk.orgUsage(orgId).join(':'), frame.usage, Date.now());
         qc.setQueryData(qk.orgUsage(orgId), frame.usage);
         return;
       }
-      if (frame?.type === "messages_changed") {
+      if (frame?.type === 'messages_changed') {
         // A message row's delivery state changed (e.g. `delivered_at` stamped) without a new row being
         // posted — the same scoped refetch `{ type: 'message' }` triggers, since a message-level patch
         // can't reach the nested `card.deliveredAt`/`delivered_at` on question/file/secret cards.
@@ -240,9 +226,9 @@ export function useJobEvents(ref: JobRef): void {
     // were down would otherwise show "working…" until a manual reload). On a late-join to an already-open
     // stream nothing was missed (mounting queries fetch for themselves), so just refresh `allJobs` to
     // catch a title generated before this subscriber attached.
-    const onOpen = (_handle: unknown, kind: "connect" | "late-join") => {
+    const onOpen = (_handle: unknown, kind: 'connect' | 'late-join') => {
       void qc.invalidateQueries({ queryKey: qk.allJobs() });
-      if (kind !== "connect") return;
+      if (kind !== 'connect') return;
       void reconcileNow(liveRef());
       sweepLiveTurnsAfterReconnect();
     };

@@ -1,24 +1,24 @@
-"use client";
+'use client';
 
-import { useEffect, useRef, useState } from "react";
-import { Boxes, Server } from "lucide-react";
-import { cn } from "@/lib/cn";
 import {
   useHostStats,
   useHostStatsHistory,
   useHostStatsRealtime,
-  type HostStats as HostStatsSnapshot,
   type HostStatsHistoryPoint,
-} from "@/lib/api/host-stats";
-import { MetricChart } from "./host-stats-chart";
+  type HostStats as HostStatsSnapshot,
+} from '@/lib/api/host-stats';
+import { cn } from '@/lib/cn';
+import { Boxes, Server } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { MetricChart } from './host-stats-chart';
 
 const FRESHNESS_STALE_MS = 15_000;
-const BYTE_UNITS = ["B", "KB", "MB", "GB", "TB"] as const;
+const BYTE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB'] as const;
 
 function thresholdColor(pct: number): string {
-  if (pct >= 90) return "var(--red)";
-  if (pct >= 70) return "var(--amber)";
-  return "var(--green)";
+  if (pct >= 90) return 'var(--red)';
+  if (pct >= 70) return 'var(--amber)';
+  return 'var(--green)';
 }
 
 /** Friendly size scaling up to TB (1024 base). GB/TB keep one decimal unless the value is a whole number. */
@@ -30,11 +30,9 @@ function humanizeBytes(bytes: number): string {
     unitIndex++;
   }
   const unit = BYTE_UNITS[unitIndex];
-  if (unit === "GB" || unit === "TB") {
+  if (unit === 'GB' || unit === 'TB') {
     const rounded = Math.round(value * 10) / 10;
-    const display = Number.isInteger(rounded)
-      ? String(rounded)
-      : rounded.toFixed(1);
+    const display = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
     return `${display} ${unit}`;
   }
   return `${Math.round(value)} ${unit}`;
@@ -56,15 +54,12 @@ function humanizeUptime(seconds: number): string {
   return `${minutes}m`;
 }
 
-function timeAgo(
-  iso: string | undefined,
-  now: number = Date.now(),
-): string | null {
+function timeAgo(iso: string | undefined, now: number = Date.now()): string | null {
   if (!iso) return null;
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return null;
   const secs = Math.max(0, Math.round((now - then) / 1000));
-  if (secs < 45) return "just now";
+  if (secs < 45) return 'just now';
   const mins = Math.round(secs / 60);
   if (mins < 60) return `${mins}m ago`;
   const hours = Math.round(mins / 60);
@@ -83,25 +78,12 @@ function Divider() {
   return <span className="h-4 w-px bg-hair" />;
 }
 
-function Chip({
-  label,
-  value,
-  color,
-}: {
-  label: string;
-  value: string;
-  color?: string;
-}) {
+function Chip({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
     <span className="flex flex-col items-start justify-center px-2 leading-tight">
-      <span className="text-[8.5px] font-bold uppercase tracking-[0.07em] text-faint">
-        {label}
-      </span>
+      <span className="text-[8.5px] font-bold uppercase tracking-[0.07em] text-faint">{label}</span>
       <span
-        className={cn(
-          "font-mono text-[11px] font-semibold tabular-nums",
-          !color && "text-faint",
-        )}
+        className={cn('font-mono text-[11px] font-semibold tabular-nums', !color && 'text-faint')}
         style={color ? { color } : undefined}
       >
         {value}
@@ -116,8 +98,8 @@ function ContainerChip({ value, color }: { value: string; color?: string }) {
       <Boxes className="h-[11px] w-[11px] text-faint" />
       <span
         className={cn(
-          "font-mono text-[11px] font-semibold tabular-nums",
-          color ? undefined : "text-faint",
+          'font-mono text-[11px] font-semibold tabular-nums',
+          color ? undefined : 'text-faint',
         )}
         style={color ? { color } : undefined}
       >
@@ -145,33 +127,33 @@ function ChipsTrigger({
       onClick={onToggle}
       disabled={!data}
       className={cn(
-        "hidden h-8 items-center rounded-[4px] border border-transparent px-1 transition md:flex",
-        data && "hover:bg-surface-2",
-        !data && "opacity-60",
-        open && "border-border bg-surface-2",
+        'hidden h-8 items-center rounded-[4px] border border-transparent px-1 transition md:flex',
+        data && 'hover:bg-surface-2',
+        !data && 'opacity-60',
+        open && 'border-border bg-surface-2',
       )}
     >
       <Chip
         label="CPU"
-        value={data ? `${Math.round(data.cpu.usagePct)}%` : "—"}
+        value={data ? `${Math.round(data.cpu.usagePct)}%` : '—'}
         color={data ? thresholdColor(data.cpu.usagePct) : undefined}
       />
       <Divider />
       <Chip
         label="RAM"
-        value={data ? `${Math.round(data.memory.usagePct)}%` : "—"}
+        value={data ? `${Math.round(data.memory.usagePct)}%` : '—'}
         color={data ? thresholdColor(data.memory.usagePct) : undefined}
       />
       <Divider />
       <Chip
         label="Disk"
-        value={data ? `${Math.round(data.disk.usagePct)}%` : "—"}
+        value={data ? `${Math.round(data.disk.usagePct)}%` : '—'}
         color={data ? thresholdColor(data.disk.usagePct) : undefined}
       />
       <Divider />
       <ContainerChip
-        value={data ? String(data.containers.running) : "—"}
-        color={data ? "var(--dim)" : undefined}
+        value={data ? String(data.containers.running) : '—'}
+        color={data ? 'var(--dim)' : undefined}
       />
     </button>
   );
@@ -186,7 +168,7 @@ function MiniTrigger({
   open: boolean;
   onToggle: () => void;
 }) {
-  const color = data ? thresholdColor(data.cpu.usagePct) : "var(--faint)";
+  const color = data ? thresholdColor(data.cpu.usagePct) : 'var(--faint)';
   return (
     <button
       type="button"
@@ -196,26 +178,24 @@ function MiniTrigger({
       onClick={onToggle}
       disabled={!data}
       className={cn(
-        "flex h-8 items-center gap-[7px] rounded-full border border-border bg-surface-2 px-2.5 md:hidden",
-        !data && "opacity-60",
+        'flex h-8 items-center gap-[7px] rounded-full border border-border bg-surface-2 px-2.5 md:hidden',
+        !data && 'opacity-60',
       )}
     >
       <span
         className="h-2 w-2 rounded-full"
         style={{
           background: color,
-          boxShadow: data
-            ? `0 0 0 3px color-mix(in srgb, ${color} 22%, transparent)`
-            : undefined,
+          boxShadow: data ? `0 0 0 3px color-mix(in srgb, ${color} 22%, transparent)` : undefined,
         }}
       />
       <span
         className={cn(
-          "font-mono text-[10.5px] font-semibold tabular-nums",
-          data ? "text-dim" : "text-faint",
+          'font-mono text-[10.5px] font-semibold tabular-nums',
+          data ? 'text-dim' : 'text-faint',
         )}
       >
-        {data ? `${Math.round(data.cpu.usagePct)}%` : "—"}
+        {data ? `${Math.round(data.cpu.usagePct)}%` : '—'}
       </span>
     </button>
   );
@@ -237,8 +217,8 @@ function MetricBlock({
   value: string;
   color: string;
   history: HostStatsHistoryPoint[];
-  dataKey: "cpuPct" | "memPct" | "diskPct" | "containersRunning";
-  yMax: number | "dataMax+1";
+  dataKey: 'cpuPct' | 'memPct' | 'diskPct' | 'containersRunning';
+  yMax: number | 'dataMax+1';
   valueSuffix?: string;
   stepped?: boolean;
   caption?: string;
@@ -247,13 +227,8 @@ function MetricBlock({
   return (
     <div className="flex flex-col">
       <div className="flex items-baseline justify-between">
-        <span className="text-[9px] font-bold uppercase tracking-[0.08em] text-faint">
-          {label}
-        </span>
-        <span
-          className="font-mono text-[15px] font-semibold tabular-nums"
-          style={{ color }}
-        >
+        <span className="text-[9px] font-bold uppercase tracking-[0.08em] text-faint">{label}</span>
+        <span className="font-mono text-[15px] font-semibold tabular-nums" style={{ color }}>
           {value}
         </span>
       </div>
@@ -273,9 +248,7 @@ function MetricBlock({
           <span>now</span>
         </div>
       ) : null}
-      {caption ? (
-        <div className="mt-[5px] text-[10px] text-faint">{caption}</div>
-      ) : null}
+      {caption ? <div className="mt-[5px] text-[10px] text-faint">{caption}</div> : null}
     </div>
   );
 }
@@ -284,9 +257,7 @@ function SecondaryRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between">
       <span className="text-[11px] text-dim">{label}</span>
-      <span className="font-mono text-[10px] tabular-nums text-faint">
-        {value}
-      </span>
+      <span className="font-mono text-[10px] tabular-nums text-faint">{value}</span>
     </div>
   );
 }
@@ -352,27 +323,22 @@ function HostStatsPanel({ data }: { data: HostStatsSnapshot }) {
       <div className="mt-[11px] flex flex-col gap-[7px] border-t border-border pt-2.5">
         <SecondaryRow
           label="Load avg"
-          value={data.cpu.loadAvg.map((n) => n.toFixed(2)).join(" / ")}
+          value={data.cpu.loadAvg.map((n) => n.toFixed(2)).join(' / ')}
         />
-        <SecondaryRow
-          label="Uptime"
-          value={humanizeUptime(data.host.uptimeSeconds)}
-        />
+        <SecondaryRow label="Uptime" value={humanizeUptime(data.host.uptimeSeconds)} />
         <SecondaryRow
           label="Docker disk"
-          value={
-            data.dockerDisk ? humanizeBytes(data.dockerDisk.usedBytes) : "—"
-          }
+          value={data.dockerDisk ? humanizeBytes(data.dockerDisk.usedBytes) : '—'}
         />
       </div>
 
       <div className="mt-3 flex items-center gap-[7px] border-t border-border pt-2.5">
         <span
           className="h-1.5 w-1.5 rounded-full"
-          style={{ background: fresh ? "var(--green)" : "var(--amber)" }}
+          style={{ background: fresh ? 'var(--green)' : 'var(--amber)' }}
         />
         <span className="font-mono text-[10px] text-faint">
-          Updated {timeAgo(data.sampledAt) ?? "recently"}
+          Updated {timeAgo(data.sampledAt) ?? 'recently'}
         </span>
       </div>
     </div>
@@ -396,13 +362,13 @@ export function HostStats() {
       if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === 'Escape') setOpen(false);
     };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
     return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
     };
   }, [open]);
 

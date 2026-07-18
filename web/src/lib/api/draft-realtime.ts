@@ -1,11 +1,11 @@
-"use client";
+'use client';
 
-import { useQueryClient } from "@/lib/api/_tanstack-shim";
-import { useEffect } from "react";
-import { env } from "@/lib/env";
-import { composerStore } from "./composer-store";
-import { qk } from "./query-keys";
-import { subscribeSse, type SseHandle } from "./sse-manager";
+import { useQueryClient } from '@/lib/api/_tanstack-shim';
+import { env } from '@/lib/env';
+import { useEffect } from 'react';
+import { composerStore } from './composer-store';
+import { qk } from './query-keys';
+import { subscribeSse, type SseHandle } from './sse-manager';
 
 /**
  * The flat drafts-realtime row (`GET /web/drafts/realtime`) — mirrors the backend `DraftRow`. It NEVER
@@ -21,12 +21,12 @@ interface DraftRow {
 }
 
 type DraftRowDelta =
-  | { kind: "data"; rows: Array<{ pk: string; row: DraftRow }> }
-  | { kind: "add"; pk: string; row: DraftRow }
-  | { kind: "update"; pk: string; row: DraftRow }
-  | { kind: "remove"; pk: string }
+  | { kind: 'data'; rows: Array<{ pk: string; row: DraftRow }> }
+  | { kind: 'add'; pk: string; row: DraftRow }
+  | { kind: 'update'; pk: string; row: DraftRow }
+  | { kind: 'remove'; pk: string }
   // Sent by the backend when realtime is unavailable — close and rely on the store's own resync paths.
-  | { kind: "disabled" };
+  | { kind: 'disabled' };
 
 /**
  * ONE cross-device subscription to the operator's own composer drafts — mounted once (in `AppChrome`).
@@ -47,13 +47,13 @@ export function useDraftsRealtime(): void {
         return;
       }
       if (!delta) return;
-      if (delta.kind === "disabled") {
+      if (delta.kind === 'disabled') {
         handle.closePermanently();
         return;
       }
       // A clear is an UPDATE-to-empty, never a real `remove` — nothing to reconcile on a remove.
-      if (delta.kind === "remove") return;
-      const rows = delta.kind === "data" ? delta.rows.map((r) => r.row) : [delta.row];
+      if (delta.kind === 'remove') return;
+      const rows = delta.kind === 'data' ? delta.rows.map((r) => r.row) : [delta.row];
       for (const row of rows) {
         void qc.invalidateQueries({ queryKey: qk.draft(row.jobId) });
         composerStore.pullServerDraft(row.jobId, Date.parse(row.updatedAt));

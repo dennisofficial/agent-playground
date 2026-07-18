@@ -1,7 +1,19 @@
-"use client";
+'use client';
 
-import { useEffect, useMemo, useState } from "react";
-import { usePathname } from "next/navigation";
+import { Button } from '@/components/ui/button';
+import { ThreadApiError, type JobMessage, type JobRef } from '@/lib/api/job-api';
+import { useRetryJob, useRetryTurn } from '@/lib/api/job-queries';
+import {
+  MAIN_LANE,
+  formatElapsed,
+  retryCountdownSeconds,
+  summarizeLiveTurn,
+  useElapsedSeconds,
+  type LiveBlock,
+  type LiveTurn,
+} from '@/lib/api/job-stream';
+import { assertNever } from '@/utils/assert';
+import { formatClockTime, formatTokens } from '@/utils/org-display';
 import {
   AlertTriangle,
   Check,
@@ -20,42 +32,25 @@ import {
   Wrench,
   XCircle,
   type LucideIcon,
-} from "lucide-react";
-import {
-  toneOf,
-  type EventKind,
-  type SeedType,
-  type SystemTone,
-} from "./classify";
-import { Markdown } from "./markdown";
-import { contextConvoNodeForHref } from "./node-registry";
-import { ToolGroup, segmentToolRun, type ToolItem } from "./tool-calls";
-import { SubagentCard, indexLiveSubagents, subagentNode } from "./subagents";
-import { streamingBlockKeys } from "./streaming-caret";
-import { Button } from "@/components/ui/button";
-import { useRetryJob, useRetryTurn } from "@/lib/api/job-queries";
-import { ThreadApiError, type JobMessage, type JobRef } from "@/lib/api/job-api";
-import {
-  formatElapsed,
-  MAIN_LANE,
-  retryCountdownSeconds,
-  summarizeLiveTurn,
-  useElapsedSeconds,
-  type LiveBlock,
-  type LiveTurn,
-} from "@/lib/api/job-stream";
-import { formatClockTime, formatTokens } from "@/utils/org-display";
-import { assertNever } from "@/utils/assert";
+} from 'lucide-react';
+import { usePathname } from 'next/navigation';
+import { useEffect, useMemo, useState } from 'react';
+import { toneOf, type EventKind, type SeedType, type SystemTone } from './classify';
+import { Markdown } from './markdown';
+import { contextConvoNodeForHref } from './node-registry';
+import { streamingBlockKeys } from './streaming-caret';
+import { SubagentCard, indexLiveSubagents, subagentNode } from './subagents';
+import { ToolGroup, segmentToolRun, type ToolItem } from './tool-calls';
 
 /** Per-type tone for {@link MessageTime} — distinct colors so the operator can tell turn boundaries from
  *  in-turn blocks at a glance (the user wants to eyeball density/color before we tune it down). */
-export type TimeTone = "muted" | "user" | "thinking" | "turn";
+export type TimeTone = 'muted' | 'user' | 'thinking' | 'turn';
 
 const TIME_TONE_COLOR: Record<TimeTone, string> = {
-  muted: "var(--faint)",
-  user: "var(--accent)",
-  thinking: "var(--faint)",
-  turn: "var(--accent-2)",
+  muted: 'var(--faint)',
+  user: 'var(--accent)',
+  thinking: 'var(--faint)',
+  turn: 'var(--accent-2)',
 };
 
 /**
@@ -65,13 +60,13 @@ const TIME_TONE_COLOR: Record<TimeTone, string> = {
  */
 export function MessageTime({
   iso,
-  tone = "muted",
-  align = "left",
+  tone = 'muted',
+  align = 'left',
   hoverOnly = false,
 }: {
   iso?: string;
   tone?: TimeTone;
-  align?: "left" | "right";
+  align?: 'left' | 'right';
   hoverOnly?: boolean;
 }) {
   if (!iso) return null;
@@ -79,7 +74,7 @@ export function MessageTime({
   if (!label) return null;
   return (
     <span
-      className={`select-none font-mono text-[9.5px] tabular-nums tracking-[0.04em] ${align === "right" ? "self-end pr-0.5" : "pl-0.5"} ${hoverOnly ? "opacity-0 transition-opacity group-hover:opacity-100" : "opacity-70"}`}
+      className={`select-none font-mono text-[9.5px] tabular-nums tracking-[0.04em] ${align === 'right' ? 'self-end pr-0.5' : 'pl-0.5'} ${hoverOnly ? 'opacity-0 transition-opacity group-hover:opacity-100' : 'opacity-70'}`}
       style={{ color: TIME_TONE_COLOR[tone] }}
       title={new Date(iso).toLocaleString()}
     >
@@ -97,7 +92,7 @@ export function ClaudeAvatar({ size = 24 }: { size?: number }) {
       style={{
         width: size,
         height: size,
-        background: "linear-gradient(145deg, var(--accent), var(--accent-2))",
+        background: 'linear-gradient(145deg, var(--accent), var(--accent-2))',
       }}
       aria-hidden
     >
@@ -105,8 +100,8 @@ export function ClaudeAvatar({ size = 24 }: { size?: number }) {
         style={{
           width: inner,
           height: inner,
-          transform: "rotate(45deg)",
-          border: "1.5px solid rgba(255,255,255,0.92)",
+          transform: 'rotate(45deg)',
+          border: '1.5px solid rgba(255,255,255,0.92)',
           borderRadius: 2,
         }}
       />
@@ -135,9 +130,9 @@ export function UserBubble({
       <div
         className="max-w-[92%] [overflow-wrap:anywhere] px-[13px] py-2 text-text transition-opacity"
         style={{
-          background: "var(--accent-soft)",
-          border: "1px solid var(--accent-line)",
-          borderRadius: "13px 13px 4px 13px",
+          background: 'var(--accent-soft)',
+          border: '1px solid var(--accent-line)',
+          borderRadius: '13px 13px 4px 13px',
           opacity: pending ? 0.6 : 1,
         }}
       >
@@ -200,7 +195,7 @@ export function StreamTextBubble({
       {streaming ? (
         <span
           className="ml-0.5 inline-block h-[1.05em] w-[2px] translate-y-[2px] animate-pulse"
-          style={{ background: "var(--accent)" }}
+          style={{ background: 'var(--accent)' }}
           aria-hidden
         />
       ) : null}
@@ -234,16 +229,16 @@ export function ThinkingBlock({
           <ChevronRight
             size={11}
             strokeWidth={2.6}
-            className={`shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
+            className={`shrink-0 transition-transform ${open ? 'rotate-90' : ''}`}
           />
-          {streaming ? "thinking…" : "thought"}
+          {streaming ? 'thinking…' : 'thought'}
         </button>
         <MessageTime iso={time} tone="thinking" />
       </div>
       {open ? (
         <p
           className="mt-1.5 whitespace-pre-wrap pl-[18px] text-[12.5px] italic leading-relaxed text-dim"
-          style={{ borderLeft: "2px solid var(--border)" }}
+          style={{ borderLeft: '2px solid var(--border)' }}
         >
           {/* trim: summarized thinking arrives with leading/trailing newlines that whitespace-pre-wrap
               would otherwise render as blank-line padding above the text; internal formatting is preserved. */}
@@ -272,12 +267,14 @@ export function buildLiveTurnItems(
   let pendingEmittedAt: number[] = [];
   const flush = () => {
     if (pending.length === 0) return;
-    const emittedAtByKey = new Map(
-      pending.map((t, i) => [t.key, pendingEmittedAt[i]]),
-    );
+    const emittedAtByKey = new Map(pending.map((t, i) => [t.key, pendingEmittedAt[i]]));
     for (const seg of segmentToolRun(pending)) {
       const ts = Math.min(...seg.map((t) => emittedAtByKey.get(t.key)!));
-      items.push({ key: `tg-${seg[0].key}`, node: <ToolGroup tools={seg} />, ts });
+      items.push({
+        key: `tg-${seg[0].key}`,
+        node: <ToolGroup tools={seg} />,
+        ts,
+      });
     }
     pending = [];
     pendingEmittedAt = [];
@@ -292,7 +289,7 @@ export function buildLiveTurnItems(
 
   for (const b of turn.blocks as LiveBlock[]) {
     if (sub.childKeys.has(b.key)) continue;
-    if (b.kind === "tool" && b.toolId && sub.anchorKeys.has(b.key)) {
+    if (b.kind === 'tool' && b.toolId && sub.anchorKeys.has(b.key)) {
       flush();
       const base = sub.summaryById.get(b.toolId);
       if (base) {
@@ -321,7 +318,7 @@ export function buildLiveTurnItems(
       }
       continue;
     }
-    if (b.kind === "tool") {
+    if (b.kind === 'tool') {
       pending.push({
         key: b.key,
         name: b.name,
@@ -329,7 +326,7 @@ export function buildLiveTurnItems(
         result: b.result,
         isError: b.isError,
         superseded: b.superseded,
-        structuredPatch: b.structuredPatch as ToolItem["structuredPatch"],
+        structuredPatch: b.structuredPatch as ToolItem['structuredPatch'],
         jitContext: b.jitContext,
         running: !b.done,
       });
@@ -337,7 +334,7 @@ export function buildLiveTurnItems(
       continue;
     }
     flush();
-    if (b.kind === "text") {
+    if (b.kind === 'text') {
       items.push({
         key: b.key,
         node: (
@@ -352,9 +349,7 @@ export function buildLiveTurnItems(
     } else {
       items.push({
         key: b.key,
-        node: (
-          <ThinkingBlock text={b.text} streaming={streamingKeys.has(b.key)} />
-        ),
+        node: <ThinkingBlock text={b.text} streaming={streamingKeys.has(b.key)} />,
         ts: b.emittedAt,
       });
     }
@@ -386,25 +381,19 @@ export function LiveTurnView({
 }
 
 const TONE_COLOR: Record<SystemTone, string> = {
-  ok: "var(--green)",
-  warn: "var(--red)",
-  accent: "var(--accent)",
-  neutral: "var(--faint)",
+  ok: 'var(--green)',
+  warn: 'var(--red)',
+  accent: 'var(--accent)',
+  neutral: 'var(--faint)',
 };
 
-export function SystemEventPill({
-  message,
-  tone,
-}: {
-  message: JobMessage;
-  tone: SystemTone;
-}) {
+export function SystemEventPill({ message, tone }: { message: JobMessage; tone: SystemTone }) {
   return (
     <div
       className="anim-fadeUp flex items-center gap-2.5 self-stretch rounded-md border px-3.5 py-1.5 font-mono text-[10px] text-dim"
       style={{
-        borderColor: "var(--hair)",
-        background: "color-mix(in srgb, var(--surface-2) 70%, transparent)",
+        borderColor: 'var(--hair)',
+        background: 'color-mix(in srgb, var(--surface-2) 70%, transparent)',
       }}
     >
       <span
@@ -435,8 +424,8 @@ export function CompactionSummaryPill({
     <div
       className="anim-fadeUp flex flex-col self-stretch rounded-md border"
       style={{
-        borderColor: "var(--hair)",
-        background: "color-mix(in srgb, var(--surface-2) 70%, transparent)",
+        borderColor: 'var(--hair)',
+        background: 'color-mix(in srgb, var(--surface-2) 70%, transparent)',
       }}
     >
       <button
@@ -450,17 +439,14 @@ export function CompactionSummaryPill({
           style={{ background: TONE_COLOR[tone] }}
         />
         <span className="min-w-0 flex-1 truncate">{message.text}</span>
-        <span className="shrink-0 text-faint">{open ? "hide" : "inspect"}</span>
+        <span className="shrink-0 text-faint">{open ? 'hide' : 'inspect'}</span>
         <ChevronRight
           size={11}
-          className={`shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
+          className={`shrink-0 transition-transform ${open ? 'rotate-90' : ''}`}
         />
       </button>
       {open ? (
-        <div
-          className="border-t px-3.5 py-2.5 text-[12px]"
-          style={{ borderColor: "var(--hair)" }}
-        >
+        <div className="border-t px-3.5 py-2.5 text-[12px]" style={{ borderColor: 'var(--hair)' }}>
           <Markdown>{summary}</Markdown>
         </div>
       ) : null}
@@ -473,66 +459,76 @@ export function CompactionSummaryPill({
  *  exhaustive switch below (`assertNever` there is a compile-time guard, never a runtime one). Mirrors
  *  {@link KNOWN_EVENT_KINDS}. */
 const KNOWN_SEED_TYPES = [
-  "reset_verify",
-  "compaction",
-  "work_owed_nudge",
-  "amend_approved_wake",
-  "ship_open_pr",
-  "request_changes",
-  "unblocked_job_wake",
-  "follow_up_job_seed",
-  "retry_resume_nudge",
-  "session_limit_reset_nudge",
-  "mcp_approved",
-  "mcp_removed",
-  "convention_attached",
-  "convention_edited",
-  "skill_approved",
-  "skill_edit_approved",
-  "skill_edit_gone",
+  'reset_verify',
+  'compaction',
+  'work_owed_nudge',
+  'amend_approved_wake',
+  'ship_open_pr',
+  'request_changes',
+  'unblocked_job_wake',
+  'follow_up_job_seed',
+  'retry_resume_nudge',
+  'session_limit_reset_nudge',
+  'mcp_approved',
+  'mcp_removed',
+  'convention_attached',
+  'convention_edited',
+  'skill_approved',
+  'skill_edit_approved',
+  'skill_edit_gone',
 ] as const;
 
 /** Per-{@link SeedType} icon/label/tone for {@link SystemNoticeRow}'s header pill — exhaustive, so a new
  *  internal-seed type fails the build until it's given a presentation here. Mirrors
  *  {@link eventKindPresentation}. */
-function seedTypePresentation(
-  seedType: SeedType,
-): { icon: LucideIcon; label: string; tone: SystemTone } {
+function seedTypePresentation(seedType: SeedType): {
+  icon: LucideIcon;
+  label: string;
+  tone: SystemTone;
+} {
   switch (seedType) {
-    case "reset_verify":
-      return { icon: RotateCw, label: "Sandbox verified", tone: "neutral" };
-    case "compaction":
-      return { icon: Sparkles, label: "Compaction", tone: "accent" };
-    case "work_owed_nudge":
-      return { icon: AlertTriangle, label: "Work owed", tone: "accent" };
-    case "amend_approved_wake":
-      return { icon: UserCheck, label: "Amend approved", tone: "ok" };
-    case "ship_open_pr":
-      return { icon: GitPullRequest, label: "PR opened", tone: "accent" };
-    case "request_changes":
-      return { icon: MessageSquare, label: "Changes requested", tone: "accent" };
-    case "unblocked_job_wake":
-      return { icon: RefreshCw, label: "Unblocked", tone: "accent" };
-    case "follow_up_job_seed":
-      return { icon: CornerDownRight, label: "Follow-up job", tone: "accent" };
-    case "retry_resume_nudge":
-      return { icon: Loader2, label: "Retry resumed", tone: "accent" };
-    case "session_limit_reset_nudge":
-      return { icon: RotateCw, label: "Session limit reset", tone: "accent" };
-    case "mcp_approved":
-      return { icon: CheckCircle2, label: "MCP approved", tone: "ok" };
-    case "mcp_removed":
-      return { icon: CircleSlash, label: "MCP removed", tone: "neutral" };
-    case "convention_attached":
-      return { icon: Puzzle, label: "Convention attached", tone: "ok" };
-    case "convention_edited":
-      return { icon: Wrench, label: "Convention edited", tone: "accent" };
-    case "skill_approved":
-      return { icon: CheckCircle2, label: "Skill approved", tone: "ok" };
-    case "skill_edit_approved":
-      return { icon: CheckCircle2, label: "Skill edit approved", tone: "ok" };
-    case "skill_edit_gone":
-      return { icon: CircleSlash, label: "Skill edit discarded", tone: "neutral" };
+    case 'reset_verify':
+      return { icon: RotateCw, label: 'Sandbox verified', tone: 'neutral' };
+    case 'compaction':
+      return { icon: Sparkles, label: 'Compaction', tone: 'accent' };
+    case 'work_owed_nudge':
+      return { icon: AlertTriangle, label: 'Work owed', tone: 'accent' };
+    case 'amend_approved_wake':
+      return { icon: UserCheck, label: 'Amend approved', tone: 'ok' };
+    case 'ship_open_pr':
+      return { icon: GitPullRequest, label: 'PR opened', tone: 'accent' };
+    case 'request_changes':
+      return {
+        icon: MessageSquare,
+        label: 'Changes requested',
+        tone: 'accent',
+      };
+    case 'unblocked_job_wake':
+      return { icon: RefreshCw, label: 'Unblocked', tone: 'accent' };
+    case 'follow_up_job_seed':
+      return { icon: CornerDownRight, label: 'Follow-up job', tone: 'accent' };
+    case 'retry_resume_nudge':
+      return { icon: Loader2, label: 'Retry resumed', tone: 'accent' };
+    case 'session_limit_reset_nudge':
+      return { icon: RotateCw, label: 'Session limit reset', tone: 'accent' };
+    case 'mcp_approved':
+      return { icon: CheckCircle2, label: 'MCP approved', tone: 'ok' };
+    case 'mcp_removed':
+      return { icon: CircleSlash, label: 'MCP removed', tone: 'neutral' };
+    case 'convention_attached':
+      return { icon: Puzzle, label: 'Convention attached', tone: 'ok' };
+    case 'convention_edited':
+      return { icon: Wrench, label: 'Convention edited', tone: 'accent' };
+    case 'skill_approved':
+      return { icon: CheckCircle2, label: 'Skill approved', tone: 'ok' };
+    case 'skill_edit_approved':
+      return { icon: CheckCircle2, label: 'Skill edit approved', tone: 'ok' };
+    case 'skill_edit_gone':
+      return {
+        icon: CircleSlash,
+        label: 'Skill edit discarded',
+        tone: 'neutral',
+      };
     default:
       return assertNever(seedType);
   }
@@ -550,12 +546,12 @@ export function SystemNoticeRow({ message }: { message: JobMessage }) {
   const [open, setOpen] = useState(false);
   const meta = message.meta ?? {};
   const seedType =
-    typeof meta.seedType === "string" &&
+    typeof meta.seedType === 'string' &&
     (KNOWN_SEED_TYPES as readonly string[]).includes(meta.seedType)
       ? (meta.seedType as SeedType)
       : null;
   const presentation = seedType ? seedTypePresentation(seedType) : null;
-  const tone = presentation?.tone ?? toneOf(message.text ?? "");
+  const tone = presentation?.tone ?? toneOf(message.text ?? '');
   // The full raw payload delivered to Atlas, when the row stored one that differs from the label.
   const fullBody = (meta.fullBody as string | undefined) ?? message.text;
   const Icon = presentation?.icon ?? null;
@@ -563,8 +559,8 @@ export function SystemNoticeRow({ message }: { message: JobMessage }) {
     <div
       className="anim-fadeUp flex flex-col self-stretch rounded-md border"
       style={{
-        borderColor: "var(--hair)",
-        background: "color-mix(in srgb, var(--surface-2) 70%, transparent)",
+        borderColor: 'var(--hair)',
+        background: 'color-mix(in srgb, var(--surface-2) 70%, transparent)',
       }}
     >
       <button
@@ -582,19 +578,16 @@ export function SystemNoticeRow({ message }: { message: JobMessage }) {
           />
         )}
         <span className="shrink-0 uppercase tracking-wide text-faint">
-          {presentation?.label ?? "system"}
+          {presentation?.label ?? 'system'}
         </span>
         <span className="min-w-0 flex-1 truncate">{message.text}</span>
         <ChevronRight
           size={11}
-          className={`shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
+          className={`shrink-0 transition-transform ${open ? 'rotate-90' : ''}`}
         />
       </button>
       {open ? (
-        <div
-          className="border-t px-3.5 py-2.5 text-[12px]"
-          style={{ borderColor: "var(--hair)" }}
-        >
+        <div className="border-t px-3.5 py-2.5 text-[12px]" style={{ borderColor: 'var(--hair)' }}>
           <Markdown>{fullBody}</Markdown>
         </div>
       ) : null}
@@ -605,20 +598,20 @@ export function SystemNoticeRow({ message }: { message: JobMessage }) {
 /** Human-readable label for a `system_reminder`'s `meta.reminderKind`. */
 function reminderLabel(kind: string | undefined): string {
   switch (kind) {
-    case "open_questions":
-      return "open questions";
-    case "awareness":
-      return "pipeline update";
-    case "memory":
-      return "memory";
-    case "context_pressure":
-      return "context pressure";
-    case "leg_handoff":
-      return "session handoff";
-    case "leg_seed":
-      return "session resumed";
+    case 'open_questions':
+      return 'open questions';
+    case 'awareness':
+      return 'pipeline update';
+    case 'memory':
+      return 'memory';
+    case 'context_pressure':
+      return 'context pressure';
+    case 'leg_handoff':
+      return 'session handoff';
+    case 'leg_seed':
+      return 'session resumed';
     default:
-      return "context added";
+      return 'context added';
   }
 }
 
@@ -629,9 +622,7 @@ function reminderLabel(kind: string | undefined): string {
  */
 export function SystemReminderChip({ message }: { message: JobMessage }) {
   const [open, setOpen] = useState(false);
-  const label = reminderLabel(
-    message.meta?.reminderKind as string | undefined,
-  );
+  const label = reminderLabel(message.meta?.reminderKind as string | undefined);
   const fullBody = (message.meta?.fullBody as string | undefined) ?? message.text;
   return (
     <div className="anim-fadeUp flex flex-col items-end gap-1 self-stretch">
@@ -641,22 +632,19 @@ export function SystemReminderChip({ message }: { message: JobMessage }) {
         aria-expanded={open}
         className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 font-mono text-[9px] uppercase tracking-wide text-dim"
         style={{
-          borderColor: "var(--hair)",
-          background: "color-mix(in srgb, var(--surface-2) 60%, transparent)",
+          borderColor: 'var(--hair)',
+          background: 'color-mix(in srgb, var(--surface-2) 60%, transparent)',
         }}
       >
-        <span
-          className="h-1 w-1 rounded-full"
-          style={{ background: "var(--dim)" }}
-        />
+        <span className="h-1 w-1 rounded-full" style={{ background: 'var(--dim)' }} />
         harness · {label}
       </button>
       {open ? (
         <div
           className="max-w-[92%] rounded-md border px-3 py-2 text-[12px] text-dim"
           style={{
-            borderColor: "var(--hair)",
-            background: "color-mix(in srgb, var(--surface-2) 60%, transparent)",
+            borderColor: 'var(--hair)',
+            background: 'color-mix(in srgb, var(--surface-2) 60%, transparent)',
           }}
         >
           <Markdown>{fullBody}</Markdown>
@@ -678,17 +666,17 @@ export function UntrustedBlock({ message }: { message: JobMessage }) {
   // The TRUSTED harness wake framing that rode with the fenced lane report. When present it renders as
   // its own neutral block ABOVE the amber fence, so our own instruction never reads as untrusted data.
   const framing = message.meta?.framing as string | undefined;
-  const body = message.text ?? "";
+  const body = message.text ?? '';
   const fullBody = (message.meta?.fullBody as string | undefined) ?? body;
-  const label = source ? `untrusted · ${source}` : "untrusted";
+  const label = source ? `untrusted · ${source}` : 'untrusted';
   return (
     <div className="anim-fadeUp flex flex-col self-stretch gap-1.5">
       {framing ? (
         <div
           className="rounded-md border px-3.5 py-2 text-[12px]"
           style={{
-            borderColor: "var(--hair)",
-            background: "color-mix(in srgb, var(--surface-2) 70%, transparent)",
+            borderColor: 'var(--hair)',
+            background: 'color-mix(in srgb, var(--surface-2) 70%, transparent)',
           }}
         >
           <div className="mb-1 font-mono text-[10px] uppercase tracking-wide text-faint">
@@ -700,8 +688,8 @@ export function UntrustedBlock({ message }: { message: JobMessage }) {
       <div
         className="flex flex-col rounded-md border"
         style={{
-          borderColor: "color-mix(in srgb, var(--amber) 34%, transparent)",
-          background: "color-mix(in srgb, var(--amber) 10%, transparent)",
+          borderColor: 'color-mix(in srgb, var(--amber) 34%, transparent)',
+          background: 'color-mix(in srgb, var(--amber) 10%, transparent)',
         }}
       >
         <button
@@ -712,24 +700,20 @@ export function UntrustedBlock({ message }: { message: JobMessage }) {
         >
           <span
             className="h-1.5 w-1.5 shrink-0 rounded-full"
-            style={{ background: "var(--amber)" }}
+            style={{ background: 'var(--amber)' }}
           />
-          <span className="shrink-0 uppercase tracking-wide text-faint">
-            {label}
-          </span>
-          {severity ? (
-            <span className="shrink-0 text-faint">· {severity}</span>
-          ) : null}
+          <span className="shrink-0 uppercase tracking-wide text-faint">{label}</span>
+          {severity ? <span className="shrink-0 text-faint">· {severity}</span> : null}
           <span className="min-w-0 flex-1 truncate">{body}</span>
           <ChevronRight
             size={11}
-            className={`shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
+            className={`shrink-0 transition-transform ${open ? 'rotate-90' : ''}`}
           />
         </button>
         {open ? (
           <div
             className="border-t px-3.5 py-2.5 text-[12px]"
-            style={{ borderColor: "var(--hair)" }}
+            style={{ borderColor: 'var(--hair)' }}
           >
             <Markdown>{fullBody}</Markdown>
           </div>
@@ -773,14 +757,14 @@ export function TurnMetaDivider({ message }: { message: JobMessage }) {
   if (u.outputTokens != null) parts.push(`${formatTokens(u.outputTokens)} out`);
   if (u.cacheReadTokens) parts.push(`${formatTokens(u.cacheReadTokens)} cache`);
   if (u.costUsd != null) parts.push(formatCost(u.costUsd));
-  if (typeof meta.workedMs === "number" && meta.workedMs > 0)
+  if (typeof meta.workedMs === 'number' && meta.workedMs > 0)
     parts.push(`worked ${formatElapsed(Math.round(meta.workedMs / 1000))}`);
   return (
     <div className="anim-fadeUp flex items-center gap-1.5 pl-0.5">
       <MessageTime iso={message.postedAt} tone="turn" />
       {parts.length ? (
         <span className="font-mono text-[9.5px] tabular-nums text-faint">
-          · {parts.join(" · ")}
+          · {parts.join(' · ')}
         </span>
       ) : null}
     </div>
@@ -789,7 +773,7 @@ export function TurnMetaDivider({ message }: { message: JobMessage }) {
 
 // `ContextMeter` moved to ./context-meter (so `subagents.tsx` can reuse it without a bubbles↔subagents
 // import cycle). Re-exported here for existing consumers (e.g. composer.tsx imports it from ./bubbles).
-export { ContextMeter } from "./context-meter";
+export { ContextMeter } from './context-meter';
 
 /**
  * The "Atlas is working…" indicator. When a live `turn` is supplied it renders a rich, Claude-Code-style
@@ -804,7 +788,7 @@ export { ContextMeter } from "./context-meter";
  */
 export function LiveIndicator({
   turn,
-  text = "Atlas is working…",
+  text = 'Atlas is working…',
 }: {
   turn?: LiveTurn;
   text?: string;
@@ -816,26 +800,24 @@ export function LiveIndicator({
   const retrying = turn?.retrying;
   const label = retrying
     ? `Reconnecting to Claude — auto-retry ${retrying.attempt}/${retrying.max}${
-        retrySecs != null ? ` · retrying in ${retrySecs}s` : "…"
+        retrySecs != null ? ` · retrying in ${retrySecs}s` : '…'
       }`
     : !turn
       ? text
       : [
           formatElapsed(elapsed),
-          openTools > 0
-            ? `${openTools} running task${openTools === 1 ? "" : "s"}`
-            : null,
+          openTools > 0 ? `${openTools} running task${openTools === 1 ? '' : 's'}` : null,
           `${statusWord}…`,
         ]
           .filter(Boolean)
-          .join(" · ");
+          .join(' · ');
   return (
     <div className="anim-fadeUp flex items-center gap-2.5 text-[11.5px] text-accent">
       <span
         className="pulse-dot h-1.5 w-1.5 shrink-0 rounded-full"
         style={{
-          background: "var(--accent)",
-          boxShadow: "0 0 9px var(--accent)",
+          background: 'var(--accent)',
+          boxShadow: '0 0 9px var(--accent)',
         }}
       />
       <span className="tabular-nums">{label}</span>
@@ -880,11 +862,11 @@ function useResumeCountdown(resumeAt: string | undefined): string {
     return () => clearInterval(id);
   }, [resumeAt]);
 
-  if (!resumeAt) return "auto-resumes at reset";
+  if (!resumeAt) return 'auto-resumes at reset';
   const resetMs = new Date(resumeAt).getTime();
-  if (!Number.isFinite(resetMs)) return "auto-resumes at reset";
+  if (!Number.isFinite(resetMs)) return 'auto-resumes at reset';
   const remaining = resetMs - now;
-  if (remaining <= 0) return "auto-resuming…";
+  if (remaining <= 0) return 'auto-resuming…';
   return `auto-resumes in ${formatRemaining(remaining)}`;
 }
 
@@ -892,18 +874,18 @@ function useResumeCountdown(resumeAt: string | undefined): string {
  *  `undefined`/`'unknown'` renders no badge — an unclassified category isn't informative on its own. */
 function humanizeFailureCategory(category: string | undefined): string | undefined {
   switch (category) {
-    case "session_limit":
-      return "Session limit";
-    case "auth":
-      return "Login";
-    case "transient":
-      return "Reconnecting";
-    case "api_overloaded":
-      return "Overloaded";
-    case "sandbox_lost":
-      return "Sandbox lost";
-    case "unresumable":
-      return "Unresumable";
+    case 'session_limit':
+      return 'Session limit';
+    case 'auth':
+      return 'Login';
+    case 'transient':
+      return 'Reconnecting';
+    case 'api_overloaded':
+      return 'Overloaded';
+    case 'sandbox_lost':
+      return 'Sandbox lost';
+    case 'unresumable':
+      return 'Unresumable';
     default:
       return undefined;
   }
@@ -931,7 +913,7 @@ function SessionLimitActions({
   return (
     <div
       className="flex items-center gap-2 border-t px-3.5 py-2.5"
-      style={{ borderColor: "var(--red-line)" }}
+      style={{ borderColor: 'var(--red-line)' }}
     >
       <Button
         size="sm"
@@ -941,13 +923,11 @@ function SessionLimitActions({
         onClick={() => resume.mutate({ force: true })}
       >
         <RotateCw size={12} className="mr-1" />
-        {resume.isSuccess ? "Resumed" : "Force resume now"}
+        {resume.isSuccess ? 'Resumed' : 'Force resume now'}
       </Button>
       <span className="text-dim text-[11.5px]">{countdown}</span>
       {resume.isError ? (
-        <span className="text-[11.5px] text-red">
-          Couldn&apos;t resume. Try again.
-        </span>
+        <span className="text-[11.5px] text-red">Couldn&apos;t resume. Try again.</span>
       ) : null}
     </div>
   );
@@ -977,14 +957,12 @@ export function SystemOperatorNotice({
 }) {
   const retryable = message.meta?.retryable === true;
   const sessionLimit = message.meta?.sessionLimit === true;
-  const resumeAt =
-    typeof message.meta?.resumeAt === "string" ? message.meta.resumeAt : undefined;
+  const resumeAt = typeof message.meta?.resumeAt === 'string' ? message.meta.resumeAt : undefined;
   // The friendly, classified one-liner (`summarizeTurnFailure`) — when present, it's the headline and the
   // raw `message.text` moves behind a "Details" disclosure instead of always showing verbatim.
-  const summary =
-    typeof message.meta?.summary === "string" ? message.meta.summary : undefined;
+  const summary = typeof message.meta?.summary === 'string' ? message.meta.summary : undefined;
   const categoryLabel = humanizeFailureCategory(
-    typeof message.meta?.category === "string" ? message.meta.category : undefined,
+    typeof message.meta?.category === 'string' ? message.meta.category : undefined,
   );
   const [detailsOpen, setDetailsOpen] = useState(false);
   const isMain = (lane ?? MAIN_LANE) === MAIN_LANE;
@@ -1013,25 +991,22 @@ export function SystemOperatorNotice({
   return (
     <div
       className="anim-fadeUp rounded-[9px] border"
-      style={{ borderColor: "var(--red-line)", background: "var(--red-soft)" }}
+      style={{ borderColor: 'var(--red-line)', background: 'var(--red-soft)' }}
     >
       {/* Header strip */}
       <div
         className="flex items-center gap-2 rounded-t-[8px] px-3.5 py-2"
         style={{
-          borderBottom: "1px solid var(--red-line)",
-          background: "color-mix(in srgb, var(--red) 10%, transparent)",
+          borderBottom: '1px solid var(--red-line)',
+          background: 'color-mix(in srgb, var(--red) 10%, transparent)',
         }}
       >
-        <span
-          aria-hidden
-          style={{ color: "var(--red)", fontSize: 11, lineHeight: 1 }}
-        >
+        <span aria-hidden style={{ color: 'var(--red)', fontSize: 11, lineHeight: 1 }}>
           ⚠
         </span>
         <span
           className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em]"
-          style={{ color: "var(--red)" }}
+          style={{ color: 'var(--red)' }}
         >
           System
         </span>
@@ -1039,8 +1014,8 @@ export function SystemOperatorNotice({
           <span
             className="rounded-full px-1.5 py-[1px] font-mono text-[9.5px] font-medium uppercase tracking-wide"
             style={{
-              color: "var(--red)",
-              background: "color-mix(in srgb, var(--red) 14%, transparent)",
+              color: 'var(--red)',
+              background: 'color-mix(in srgb, var(--red) 14%, transparent)',
             }}
           >
             {categoryLabel}
@@ -1064,15 +1039,12 @@ export function SystemOperatorNotice({
               <ChevronRight
                 size={10}
                 strokeWidth={2.6}
-                className={`shrink-0 transition-transform ${detailsOpen ? "rotate-90" : ""}`}
+                className={`shrink-0 transition-transform ${detailsOpen ? 'rotate-90' : ''}`}
               />
               Details
             </button>
             {detailsOpen ? (
-              <div
-                className="mt-2 border-t pt-2.5"
-                style={{ borderColor: "var(--red-line)" }}
-              >
+              <div className="mt-2 border-t pt-2.5" style={{ borderColor: 'var(--red-line)' }}>
                 <Markdown>{message.text}</Markdown>
               </div>
             ) : null}
@@ -1086,7 +1058,7 @@ export function SystemOperatorNotice({
       ) : retryable ? (
         <div
           className="flex items-center gap-2 border-t px-3.5 py-2.5"
-          style={{ borderColor: "var(--red-line)" }}
+          style={{ borderColor: 'var(--red-line)' }}
         >
           {isOutstanding ? (
             <>
@@ -1098,16 +1070,14 @@ export function SystemOperatorNotice({
                 onClick={() => retry.mutate(undefined)}
               >
                 <RotateCw size={12} className="mr-1" />
-                {retry.isSuccess ? "Resumed" : "Resume"}
+                {retry.isSuccess ? 'Resumed' : 'Resume'}
               </Button>
               {isCoolingDown ? (
                 <span className="text-[11.5px] text-faint">
                   Cooling down — try again in {coolingSecs}s.
                 </span>
               ) : retry.isError ? (
-                <span className="text-[11.5px] text-red">
-                  Couldn&apos;t resume. Try again.
-                </span>
+                <span className="text-[11.5px] text-red">Couldn&apos;t resume. Try again.</span>
               ) : null}
             </>
           ) : (
@@ -1132,31 +1102,31 @@ export function HarnessBubble({ message }: { message: JobMessage }) {
     <div
       className="anim-fadeUp rounded-[9px] border"
       style={{
-        borderColor: "var(--border-2)",
-        background: "color-mix(in srgb, var(--surface-2) 60%, transparent)",
+        borderColor: 'var(--border-2)',
+        background: 'color-mix(in srgb, var(--surface-2) 60%, transparent)',
       }}
     >
       {/* Header strip */}
       <div
         className="flex items-center gap-2 rounded-t-[8px] px-3.5 py-2"
         style={{
-          borderBottom: "1px solid var(--border)",
-          background: "color-mix(in srgb, var(--surface-3) 70%, transparent)",
+          borderBottom: '1px solid var(--border)',
+          background: 'color-mix(in srgb, var(--surface-3) 70%, transparent)',
         }}
       >
         {/* Small "codex" logo — a diamond/square rotated 45°, echoing the ClaudeAvatar shape */}
         <span
           className="flex h-4 w-4 shrink-0 items-center justify-center rounded-[3px]"
-          style={{ background: "var(--dim)" }}
+          style={{ background: 'var(--dim)' }}
           aria-hidden
         >
           <span
             style={{
-              display: "block",
+              display: 'block',
               width: 6,
               height: 6,
-              transform: "rotate(45deg)",
-              border: "1.5px solid rgba(255,255,255,0.85)",
+              transform: 'rotate(45deg)',
+              border: '1.5px solid rgba(255,255,255,0.85)',
               borderRadius: 1,
             }}
           />
@@ -1165,9 +1135,7 @@ export function HarnessBubble({ message }: { message: JobMessage }) {
           Codex review
         </span>
         <span className="flex-1" />
-        <span className="font-mono text-[10px] text-faint">
-          {message.authorName}
-        </span>
+        <span className="font-mono text-[10px] text-faint">{message.authorName}</span>
       </div>
       {/* Markdown body */}
       <div className="px-3.5 py-3">
@@ -1181,26 +1149,28 @@ export function HarnessBubble({ message }: { message: JobMessage }) {
  *  untrusted/future value on the wire falls back to the generic panel instead of ever reaching the
  *  exhaustive switch below (`assertNever` there is a compile-time guard, never a runtime one). */
 const KNOWN_EVENT_KINDS = [
-  "ci_failure",
-  "review_changes_requested",
-  "review_approved",
-  "review_comment",
+  'ci_failure',
+  'review_changes_requested',
+  'review_approved',
+  'review_comment',
 ] as const;
 
 /** Per-{@link EventKind} icon/label/tone for {@link EventBubble}'s header — exhaustive, so a new event kind
  *  fails the build until it's given a presentation here. */
-function eventKindPresentation(
-  eventKind: EventKind,
-): { icon: LucideIcon; label: string; tone: SystemTone } {
+function eventKindPresentation(eventKind: EventKind): {
+  icon: LucideIcon;
+  label: string;
+  tone: SystemTone;
+} {
   switch (eventKind) {
-    case "ci_failure":
-      return { icon: XCircle, label: "CI failed", tone: "warn" };
-    case "review_changes_requested":
-      return { icon: AlertTriangle, label: "Changes requested", tone: "warn" };
-    case "review_approved":
-      return { icon: CheckCircle2, label: "Review approved", tone: "ok" };
-    case "review_comment":
-      return { icon: MessageSquare, label: "Review comment", tone: "accent" };
+    case 'ci_failure':
+      return { icon: XCircle, label: 'CI failed', tone: 'warn' };
+    case 'review_changes_requested':
+      return { icon: AlertTriangle, label: 'Changes requested', tone: 'warn' };
+    case 'review_approved':
+      return { icon: CheckCircle2, label: 'Review approved', tone: 'ok' };
+    case 'review_comment':
+      return { icon: MessageSquare, label: 'Review comment', tone: 'accent' };
     default:
       return assertNever(eventKind);
   }
@@ -1216,48 +1186,42 @@ function eventKindPresentation(
 export function EventBubble({ message }: { message: JobMessage }) {
   const meta = message.meta ?? {};
   const eventKind =
-    typeof meta.eventKind === "string" &&
+    typeof meta.eventKind === 'string' &&
     (KNOWN_EVENT_KINDS as readonly string[]).includes(meta.eventKind)
       ? (meta.eventKind as EventKind)
       : null;
 
   if (eventKind === null) {
     // Generic fallback — unstamped legacy rows (and any future/unrecognized eventKind), unchanged.
-    const source =
-      typeof meta.eventSource === "string" ? meta.eventSource : "event";
-    const severity = typeof meta.severity === "string" ? meta.severity : null;
+    const source = typeof meta.eventSource === 'string' ? meta.eventSource : 'event';
+    const severity = typeof meta.severity === 'string' ? meta.severity : null;
     return (
       <div
         className="anim-fadeUp rounded-[9px] border"
         style={{
-          borderColor: "var(--accent-line)",
-          background: "var(--accent-soft)",
+          borderColor: 'var(--accent-line)',
+          background: 'var(--accent-soft)',
         }}
       >
         {/* Header strip */}
         <div
           className="flex items-center gap-2 rounded-t-[8px] px-3.5 py-2"
           style={{
-            borderBottom: "1px solid var(--accent-line)",
-            background: "color-mix(in srgb, var(--accent) 10%, transparent)",
+            borderBottom: '1px solid var(--accent-line)',
+            background: 'color-mix(in srgb, var(--accent) 10%, transparent)',
           }}
         >
-          <span
-            aria-hidden
-            style={{ color: "var(--accent)", fontSize: 11, lineHeight: 1 }}
-          >
+          <span aria-hidden style={{ color: 'var(--accent)', fontSize: 11, lineHeight: 1 }}>
             ◈
           </span>
           <span
             className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em]"
-            style={{ color: "var(--accent)" }}
+            style={{ color: 'var(--accent)' }}
           >
             Event · {source}
           </span>
           <span className="flex-1" />
-          {severity ? (
-            <span className="font-mono text-[10px] text-faint">{severity}</span>
-          ) : null}
+          {severity ? <span className="font-mono text-[10px] text-faint">{severity}</span> : null}
         </div>
         {/* Markdown body */}
         <div className="px-3.5 py-3">
@@ -1273,16 +1237,16 @@ export function EventBubble({ message }: { message: JobMessage }) {
     <div
       className="anim-fadeUp rounded-[9px] border"
       style={{
-        borderColor: "var(--accent-line)",
-        background: "var(--accent-soft)",
+        borderColor: 'var(--accent-line)',
+        background: 'var(--accent-soft)',
       }}
     >
       {/* Header strip */}
       <div
         className="flex items-center gap-2 rounded-t-[8px] px-3.5 py-2"
         style={{
-          borderBottom: "1px solid var(--accent-line)",
-          background: "color-mix(in srgb, var(--accent) 10%, transparent)",
+          borderBottom: '1px solid var(--accent-line)',
+          background: 'color-mix(in srgb, var(--accent) 10%, transparent)',
         }}
       >
         <Icon size={12} style={{ color }} />

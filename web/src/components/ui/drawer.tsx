@@ -1,30 +1,30 @@
-"use client";
+'use client';
 
-import { useEffect, useRef, type ReactNode } from "react";
-import { cn } from "@/lib/cn";
+import { cn } from '@/lib/cn';
+import { useEffect, useRef, type ReactNode } from 'react';
 
-type Side = "left" | "right" | "bottom";
+type Side = 'left' | 'right' | 'bottom';
 
 const PANEL_SIDE_CLASS: Record<Side, string> = {
-  left: "left-0 top-0 h-full border-r anim-drawer-left",
-  right: "right-0 top-0 h-full border-l anim-drawer-right",
-  bottom: "bottom-0 left-0 right-0 max-h-[85vh] border-t anim-drawer-bottom",
+  left: 'left-0 top-0 h-full border-r anim-drawer-left',
+  right: 'right-0 top-0 h-full border-l anim-drawer-right',
+  bottom: 'bottom-0 left-0 right-0 max-h-[85vh] border-t anim-drawer-bottom',
 };
 
 /** Default width for side-anchored panels; overridable via the `widthClass` prop (e.g. a full-width Detail
  * sheet on mobile). The bottom sheet spans the full width, so it opts out. */
-const DEFAULT_SIDE_WIDTH_CLASS = "w-[85vw] max-w-[360px]";
+const DEFAULT_SIDE_WIDTH_CLASS = 'w-[85vw] max-w-[360px]';
 
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])';
 
 let bodyScrollLockCount = 0;
-let previousBodyOverflow = "";
+let previousBodyOverflow = '';
 
 function lockBodyScroll() {
   if (bodyScrollLockCount === 0) {
     previousBodyOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    document.body.style.overflow = 'hidden';
   }
   bodyScrollLockCount += 1;
 }
@@ -33,7 +33,7 @@ function unlockBodyScroll(): boolean {
   bodyScrollLockCount = Math.max(0, bodyScrollLockCount - 1);
   if (bodyScrollLockCount !== 0) return false;
   document.body.style.overflow = previousBodyOverflow;
-  previousBodyOverflow = "";
+  previousBodyOverflow = '';
   return true;
 }
 
@@ -44,7 +44,7 @@ function unlockBodyScroll(): boolean {
 export function Drawer({
   open,
   onClose,
-  side = "left",
+  side = 'left',
   children,
   label,
   widthClass,
@@ -71,11 +71,11 @@ export function Drawer({
     lockBodyScroll();
 
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") {
+      if (e.key === 'Escape') {
         onCloseRef.current();
         return;
       }
-      if (e.key !== "Tab" || !panelRef.current) return;
+      if (e.key !== 'Tab' || !panelRef.current) return;
       const focusable = Array.from(
         panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
       );
@@ -93,10 +93,10 @@ export function Drawer({
         first.focus();
       }
     }
-    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener('keydown', onKeyDown);
 
     return () => {
-      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener('keydown', onKeyDown);
       if (unlockBodyScroll()) lastFocused.current?.focus();
     };
   }, [open]);
@@ -105,10 +105,7 @@ export function Drawer({
 
   return (
     <div className="fixed inset-0 z-40" onClick={onClose}>
-      <div
-        className="absolute inset-0"
-        style={{ background: "rgba(0,0,0,0.3)" }}
-      />
+      <div className="absolute inset-0" style={{ background: 'rgba(0,0,0,0.3)' }} />
       <div
         ref={panelRef}
         role="dialog"
@@ -117,11 +114,11 @@ export function Drawer({
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
         className={cn(
-          "fixed z-50 flex flex-col border-border bg-panel outline-none",
+          'fixed z-50 flex flex-col border-border bg-panel outline-none',
           PANEL_SIDE_CLASS[side],
-          side !== "bottom" && (widthClass ?? DEFAULT_SIDE_WIDTH_CLASS),
+          side !== 'bottom' && (widthClass ?? DEFAULT_SIDE_WIDTH_CLASS),
         )}
-        style={{ background: "var(--surface-2)" }}
+        style={{ background: 'var(--surface-2)' }}
       >
         {children}
       </div>

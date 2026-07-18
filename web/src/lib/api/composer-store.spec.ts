@@ -1,16 +1,16 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { composerStore, type StagedAnswer } from "./composer-store";
-import { getDraft, putDraft, type JobMessage, type JobRef } from "./job-api";
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { composerStore, type StagedAnswer } from './composer-store';
+import { getDraft, putDraft, type JobMessage, type JobRef } from './job-api';
 
 // The store now hydrates + autosaves through `job-api`'s `getDraft`/`putDraft` — mock both so these unit
 // tests never make a real network call, and so autosave/hydrate behavior is assertable.
-vi.mock("./job-api", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./job-api")>();
+vi.mock('./job-api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./job-api')>();
   return {
     ...actual,
     getDraft: vi.fn(() =>
       Promise.resolve({
-        payload: { text: "", stagedAnswers: [], comments: [] },
+        payload: { text: '', stagedAnswers: [], comments: [] },
         attachments: [],
         updatedAt: null,
       }),
@@ -20,10 +20,10 @@ vi.mock("./job-api", async (importOriginal) => {
 });
 
 // The store is a module-global singleton, so each test uses a unique jobId to stay isolated.
-const KEY_PREFIX = "atlas.composer.draft.";
+const KEY_PREFIX = 'atlas.composer.draft.';
 const refFor = (jobId: string): JobRef => ({
-  orgId: "org1",
-  repoId: "repo1",
+  orgId: 'org1',
+  repoId: 'repo1',
   jobId,
 });
 
@@ -46,7 +46,7 @@ let storage: Storage;
 
 beforeEach(() => {
   storage = makeStorage();
-  vi.stubGlobal("window", { sessionStorage: storage });
+  vi.stubGlobal('window', { sessionStorage: storage });
   vi.useFakeTimers();
   vi.mocked(getDraft).mockClear();
   vi.mocked(putDraft).mockClear();
@@ -57,36 +57,36 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("composerStore", () => {
-  it("setText is reflected by getDraft", () => {
-    const ref = refFor("job-set-text");
-    composerStore.setText(ref, "hello world");
-    expect(composerStore.getDraft(ref.jobId).text).toBe("hello world");
+describe('composerStore', () => {
+  it('setText is reflected by getDraft', () => {
+    const ref = refFor('job-set-text');
+    composerStore.setText(ref, 'hello world');
+    expect(composerStore.getDraft(ref.jobId).text).toBe('hello world');
   });
 
-  it("isolates drafts per jobId (no bleed between Jobs)", () => {
-    const a = refFor("job-iso-a");
-    const b = refFor("job-iso-b");
-    composerStore.setText(a, "draft for A");
-    expect(composerStore.getDraft(a.jobId).text).toBe("draft for A");
+  it('isolates drafts per jobId (no bleed between Jobs)', () => {
+    const a = refFor('job-iso-a');
+    const b = refFor('job-iso-b');
+    composerStore.setText(a, 'draft for A');
+    expect(composerStore.getDraft(a.jobId).text).toBe('draft for A');
     // Job B was never written — its draft stays empty.
-    expect(composerStore.getDraft(b.jobId).text).toBe("");
+    expect(composerStore.getDraft(b.jobId).text).toBe('');
   });
 
-  it("debounces a sessionStorage write after setText", () => {
-    const ref = refFor("job-persist");
-    composerStore.setText(ref, "persist me");
+  it('debounces a sessionStorage write after setText', () => {
+    const ref = refFor('job-persist');
+    composerStore.setText(ref, 'persist me');
     // Nothing written yet — the write is debounced.
     expect(storage.getItem(KEY_PREFIX + ref.jobId)).toBeNull();
     vi.advanceTimersByTime(300);
     const raw = storage.getItem(KEY_PREFIX + ref.jobId);
     expect(raw).not.toBeNull();
-    expect(JSON.parse(raw as string)).toMatchObject({ text: "persist me" });
+    expect(JSON.parse(raw as string)).toMatchObject({ text: 'persist me' });
   });
 
-  it("flushDraft writes immediately inside the debounce window", () => {
-    const ref = refFor("job-flush");
-    composerStore.setText(ref, "save before switch");
+  it('flushDraft writes immediately inside the debounce window', () => {
+    const ref = refFor('job-flush');
+    composerStore.setText(ref, 'save before switch');
     expect(storage.getItem(KEY_PREFIX + ref.jobId)).toBeNull();
 
     composerStore.flushDraft(ref.jobId);
@@ -94,34 +94,34 @@ describe("composerStore", () => {
     const raw = storage.getItem(KEY_PREFIX + ref.jobId);
     expect(raw).not.toBeNull();
     expect(JSON.parse(raw as string)).toMatchObject({
-      text: "save before switch",
+      text: 'save before switch',
     });
   });
 
-  it("clearDraft removes the persisted entry and empties the draft", () => {
-    const ref = refFor("job-clear");
-    composerStore.setText(ref, "to be cleared");
+  it('clearDraft removes the persisted entry and empties the draft', () => {
+    const ref = refFor('job-clear');
+    composerStore.setText(ref, 'to be cleared');
     vi.advanceTimersByTime(300);
     expect(storage.getItem(KEY_PREFIX + ref.jobId)).not.toBeNull();
 
     composerStore.clearDraft(ref.jobId);
-    expect(composerStore.getDraft(ref.jobId).text).toBe("");
+    expect(composerStore.getDraft(ref.jobId).text).toBe('');
     expect(storage.getItem(KEY_PREFIX + ref.jobId)).toBeNull();
   });
 
-  it("hydrates text + comments from a pre-seeded sessionStorage key", () => {
-    const ref = refFor("job-hydrate");
+  it('hydrates text + comments from a pre-seeded sessionStorage key', () => {
+    const ref = refFor('job-hydrate');
     const comment = {
-      id: "c1",
-      file: { node: "n1", label: "file.ts" },
-      quote: "some code",
-      note: "fix this",
+      id: 'c1',
+      file: { node: 'n1', label: 'file.ts' },
+      quote: 'some code',
+      note: 'fix this',
     };
     storage.setItem(
       KEY_PREFIX + ref.jobId,
       JSON.stringify({
         ref,
-        text: "restored draft",
+        text: 'restored draft',
         comments: [comment],
         outbox: [],
       }),
@@ -129,19 +129,19 @@ describe("composerStore", () => {
 
     composerStore.ensure(ref);
     const draft = composerStore.getDraft(ref.jobId);
-    expect(draft.text).toBe("restored draft");
+    expect(draft.text).toBe('restored draft');
     expect(draft.comments).toEqual([comment]);
     // Attachments never persist — they come back empty.
     expect(draft.attachments).toEqual([]);
   });
 
-  it("setComments persists comment metadata (debounced)", () => {
-    const ref = refFor("job-comments");
+  it('setComments persists comment metadata (debounced)', () => {
+    const ref = refFor('job-comments');
     const comment = {
-      id: "c9",
-      file: { node: "n9", label: "a.ts" },
-      quote: "q",
-      note: "",
+      id: 'c9',
+      file: { node: 'n9', label: 'a.ts' },
+      quote: 'q',
+      note: '',
     };
     composerStore.setComments(ref, () => [comment]);
     expect(composerStore.getDraft(ref.jobId).comments).toEqual([comment]);
@@ -150,22 +150,22 @@ describe("composerStore", () => {
     expect(JSON.parse(raw as string).comments).toEqual([comment]);
   });
 
-  describe("offline-send outbox", () => {
-    it("enqueue then getOutbox returns the item; isolated per jobId", () => {
-      const a = refFor("job-outbox-a");
-      const b = refFor("job-outbox-b");
+  describe('offline-send outbox', () => {
+    it('enqueue then getOutbox returns the item; isolated per jobId', () => {
+      const a = refFor('job-outbox-a');
+      const b = refFor('job-outbox-b');
       composerStore.enqueue(a, {
-        id: "q1",
+        id: 'q1',
         createdAt: 1,
-        text: "hello",
+        text: 'hello',
         comments: [],
         hasAttachments: false,
       });
       expect(composerStore.getOutbox(a.jobId)).toEqual([
         {
-          id: "q1",
+          id: 'q1',
           createdAt: 1,
-          text: "hello",
+          text: 'hello',
           comments: [],
           hasAttachments: false,
         },
@@ -175,52 +175,52 @@ describe("composerStore", () => {
     });
 
     it("allQueued() returns every Job's items sorted by createdAt (global FIFO)", () => {
-      const a = refFor("job-fifo-a");
-      const b = refFor("job-fifo-b");
+      const a = refFor('job-fifo-a');
+      const b = refFor('job-fifo-b');
       composerStore.enqueue(a, {
-        id: "later",
+        id: 'later',
         createdAt: 1000,
-        text: "from A",
+        text: 'from A',
         comments: [],
         hasAttachments: false,
       });
       composerStore.enqueue(b, {
-        id: "earlier",
+        id: 'earlier',
         createdAt: 500,
-        text: "from B",
+        text: 'from B',
         comments: [],
         hasAttachments: false,
       });
       const all = composerStore
         .allQueued()
         .filter((q) => q.ref.jobId === a.jobId || q.ref.jobId === b.jobId);
-      expect(all.map((q) => q.msg.id)).toEqual(["earlier", "later"]);
+      expect(all.map((q) => q.msg.id)).toEqual(['earlier', 'later']);
     });
 
-    it("removeQueued drops the item and persists the removal immediately", () => {
-      const ref = refFor("job-remove");
+    it('removeQueued drops the item and persists the removal immediately', () => {
+      const ref = refFor('job-remove');
       composerStore.enqueue(ref, {
-        id: "q1",
+        id: 'q1',
         createdAt: 1,
-        text: "keep me queued briefly",
+        text: 'keep me queued briefly',
         comments: [],
         hasAttachments: false,
       });
       vi.advanceTimersByTime(300);
       expect(storage.getItem(KEY_PREFIX + ref.jobId)).not.toBeNull();
 
-      composerStore.removeQueued(ref.jobId, "q1");
+      composerStore.removeQueued(ref.jobId, 'q1');
       expect(composerStore.getOutbox(ref.jobId)).toEqual([]);
       // Nothing left in the draft (no text/comments/outbox) — the persisted blob is removed.
       expect(storage.getItem(KEY_PREFIX + ref.jobId)).toBeNull();
     });
 
     it("persists a queued message's serializable metadata including the hasAttachments flag", () => {
-      const ref = refFor("job-persist-outbox");
+      const ref = refFor('job-persist-outbox');
       composerStore.enqueue(ref, {
-        id: "q1",
+        id: 'q1',
         createdAt: 42,
-        text: "queued while offline",
+        text: 'queued while offline',
         comments: [],
         hasAttachments: true,
       });
@@ -230,29 +230,29 @@ describe("composerStore", () => {
       const persisted = JSON.parse(raw as string);
       expect(persisted.outbox).toEqual([
         {
-          id: "q1",
+          id: 'q1',
           createdAt: 42,
-          text: "queued while offline",
+          text: 'queued while offline',
           comments: [],
           hasAttachments: true,
         },
       ]);
     });
 
-    it("drops an empty queued item on hydrate; keeps a text survivor", () => {
-      const ref = refFor("job-hydrate-outbox");
+    it('drops an empty queued item on hydrate; keeps a text survivor', () => {
+      const ref = refFor('job-hydrate-outbox');
       storage.setItem(
         KEY_PREFIX + ref.jobId,
         JSON.stringify({
           ref,
-          text: "",
+          text: '',
           comments: [],
           outbox: [
-            { id: "empty-item", createdAt: 1, text: "", comments: [] },
+            { id: 'empty-item', createdAt: 1, text: '', comments: [] },
             {
-              id: "text-survivor",
+              id: 'text-survivor',
               createdAt: 2,
-              text: "keep me",
+              text: 'keep me',
               comments: [],
             },
           ],
@@ -261,31 +261,31 @@ describe("composerStore", () => {
 
       composerStore.ensure(ref);
       const outbox = composerStore.getOutbox(ref.jobId);
-      expect(outbox.map((q) => q.id)).toEqual(["text-survivor"]);
+      expect(outbox.map((q) => q.id)).toEqual(['text-survivor']);
       expect(outbox[0]).toMatchObject({
-        text: "keep me",
+        text: 'keep me',
         hasAttachments: false,
       });
     });
 
-    it("clearDraft preserves the outbox (text clears, queued item stays)", () => {
-      const ref = refFor("job-clear-preserves-outbox");
-      composerStore.setText(ref, "draft text");
+    it('clearDraft preserves the outbox (text clears, queued item stays)', () => {
+      const ref = refFor('job-clear-preserves-outbox');
+      composerStore.setText(ref, 'draft text');
       composerStore.enqueue(ref, {
-        id: "q1",
+        id: 'q1',
         createdAt: 1,
-        text: "queued msg",
+        text: 'queued msg',
         comments: [],
         hasAttachments: false,
       });
 
       composerStore.clearDraft(ref.jobId);
-      expect(composerStore.getDraft(ref.jobId).text).toBe("");
+      expect(composerStore.getDraft(ref.jobId).text).toBe('');
       expect(composerStore.getOutbox(ref.jobId)).toEqual([
         {
-          id: "q1",
+          id: 'q1',
           createdAt: 1,
-          text: "queued msg",
+          text: 'queued msg',
           comments: [],
           hasAttachments: false,
         },
@@ -295,9 +295,9 @@ describe("composerStore", () => {
       expect(raw).not.toBeNull();
       expect(JSON.parse(raw as string).outbox).toEqual([
         {
-          id: "q1",
+          id: 'q1',
           createdAt: 1,
-          text: "queued msg",
+          text: 'queued msg',
           comments: [],
           hasAttachments: false,
         },
@@ -305,86 +305,84 @@ describe("composerStore", () => {
     });
   });
 
-  describe("stagedAnswers", () => {
+  describe('stagedAnswers', () => {
     const questionAnswer: StagedAnswer = {
-      kind: "question",
-      cardId: "q1",
-      label: "Pick a color",
-      answer: "blue",
+      kind: 'question',
+      cardId: 'q1',
+      label: 'Pick a color',
+      answer: 'blue',
     };
     const fileAnswer: StagedAnswer = {
-      kind: "file",
-      cardId: "f1",
-      label: "config/key.json",
-      filename: "key.json",
+      kind: 'file',
+      cardId: 'f1',
+      label: 'config/key.json',
+      filename: 'key.json',
       content: '{"k":"v"}',
     };
     const secretAnswer: StagedAnswer = {
-      kind: "secret",
-      cardId: "s1",
-      label: "API_KEY",
-      value: "sekret",
+      kind: 'secret',
+      cardId: 's1',
+      label: 'API_KEY',
+      value: 'sekret',
     };
 
-    function messageFor(card: JobMessage["card"]): JobMessage {
+    function messageFor(card: JobMessage['card']): JobMessage {
       return {
-        ts: "ts1",
-        threadId: "t1",
+        ts: 'ts1',
+        threadId: 't1',
         subagentId: null,
-        author: "atlas",
-        authorId: "atlas",
-        authorName: "Atlas",
-        text: "",
-        kind: "card",
-        source: "atlas",
+        author: 'atlas',
+        authorId: 'atlas',
+        authorName: 'Atlas',
+        text: '',
+        kind: 'card',
+        source: 'atlas',
         card,
         postedAt: new Date().toISOString(),
       };
     }
 
-    it("stageAnswer upserts by cardId (re-staging replaces, not duplicates)", () => {
-      const ref = refFor("job-stage-upsert");
+    it('stageAnswer upserts by cardId (re-staging replaces, not duplicates)', () => {
+      const ref = refFor('job-stage-upsert');
       composerStore.stageAnswer(ref, questionAnswer);
-      composerStore.stageAnswer(ref, { ...questionAnswer, answer: "red" });
+      composerStore.stageAnswer(ref, { ...questionAnswer, answer: 'red' });
       expect(composerStore.getDraft(ref.jobId).stagedAnswers).toEqual([
-        { ...questionAnswer, answer: "red" },
+        { ...questionAnswer, answer: 'red' },
       ]);
     });
 
-    it("stageAnswer never persists to sessionStorage", () => {
-      const ref = refFor("job-stage-no-persist");
+    it('stageAnswer never persists to sessionStorage', () => {
+      const ref = refFor('job-stage-no-persist');
       composerStore.stageAnswer(ref, fileAnswer);
       vi.advanceTimersByTime(300);
       expect(storage.getItem(KEY_PREFIX + ref.jobId)).toBeNull();
     });
 
-    it("removeStagedAnswer drops just the matching cardId", () => {
-      const ref = refFor("job-stage-remove");
+    it('removeStagedAnswer drops just the matching cardId', () => {
+      const ref = refFor('job-stage-remove');
       composerStore.stageAnswer(ref, questionAnswer);
       composerStore.stageAnswer(ref, fileAnswer);
       composerStore.removeStagedAnswer(ref, questionAnswer.cardId);
-      expect(composerStore.getDraft(ref.jobId).stagedAnswers).toEqual([
-        fileAnswer,
-      ]);
+      expect(composerStore.getDraft(ref.jobId).stagedAnswers).toEqual([fileAnswer]);
     });
 
-    it("setStagedAnswers(() => []) clears the tray (Clear all)", () => {
-      const ref = refFor("job-stage-clear-all");
+    it('setStagedAnswers(() => []) clears the tray (Clear all)', () => {
+      const ref = refFor('job-stage-clear-all');
       composerStore.stageAnswer(ref, questionAnswer);
       composerStore.stageAnswer(ref, secretAnswer);
       composerStore.setStagedAnswers(ref, () => []);
       expect(composerStore.getDraft(ref.jobId).stagedAnswers).toEqual([]);
     });
 
-    it("pruneStagedAnswers drops a question staged answer once its card is withdrawn", () => {
-      const ref = refFor("job-prune-question-withdrawn");
+    it('pruneStagedAnswers drops a question staged answer once its card is withdrawn', () => {
+      const ref = refFor('job-prune-question-withdrawn');
       composerStore.stageAnswer(ref, questionAnswer);
       const messages = [
         messageFor({
-          type: "question_card",
+          type: 'question_card',
           jobId: ref.jobId,
-          questionId: "q1",
-          question: "Pick a color",
+          questionId: 'q1',
+          question: 'Pick a color',
           options: [],
           allowOther: false,
           withdrawnAt: new Date().toISOString(),
@@ -394,16 +392,16 @@ describe("composerStore", () => {
       expect(composerStore.getDraft(ref.jobId).stagedAnswers).toEqual([]);
     });
 
-    it("pruneStagedAnswers drops a file staged answer once its card is provided", () => {
-      const ref = refFor("job-prune-file-provided");
+    it('pruneStagedAnswers drops a file staged answer once its card is provided', () => {
+      const ref = refFor('job-prune-file-provided');
       composerStore.stageAnswer(ref, fileAnswer);
       const messages = [
         messageFor({
-          type: "file_request_card",
+          type: 'file_request_card',
           jobId: ref.jobId,
-          requestId: "f1",
-          path: "config/key.json",
-          description: "",
+          requestId: 'f1',
+          path: 'config/key.json',
+          description: '',
           provided_at: new Date().toISOString(),
         }),
       ];
@@ -411,16 +409,16 @@ describe("composerStore", () => {
       expect(composerStore.getDraft(ref.jobId).stagedAnswers).toEqual([]);
     });
 
-    it("pruneStagedAnswers drops a secret staged answer once its card is provided", () => {
-      const ref = refFor("job-prune-secret-provided");
+    it('pruneStagedAnswers drops a secret staged answer once its card is provided', () => {
+      const ref = refFor('job-prune-secret-provided');
       composerStore.stageAnswer(ref, secretAnswer);
       const messages = [
         messageFor({
-          type: "secret_input_card",
+          type: 'secret_input_card',
           jobId: ref.jobId,
-          requestId: "s1",
-          name: "API_KEY",
-          description: "",
+          requestId: 's1',
+          name: 'API_KEY',
+          description: '',
           provided_at: new Date().toISOString(),
         }),
       ];
@@ -428,37 +426,33 @@ describe("composerStore", () => {
       expect(composerStore.getDraft(ref.jobId).stagedAnswers).toEqual([]);
     });
 
-    it("pruneStagedAnswers keeps a staged answer whose card has no match in messages", () => {
-      const ref = refFor("job-prune-no-match");
+    it('pruneStagedAnswers keeps a staged answer whose card has no match in messages', () => {
+      const ref = refFor('job-prune-no-match');
       composerStore.stageAnswer(ref, questionAnswer);
       composerStore.pruneStagedAnswers(ref, []);
-      expect(composerStore.getDraft(ref.jobId).stagedAnswers).toEqual([
-        questionAnswer,
-      ]);
+      expect(composerStore.getDraft(ref.jobId).stagedAnswers).toEqual([questionAnswer]);
     });
 
-    it("pruneStagedAnswers keeps a staged answer whose card is still open", () => {
-      const ref = refFor("job-prune-still-open");
+    it('pruneStagedAnswers keeps a staged answer whose card is still open', () => {
+      const ref = refFor('job-prune-still-open');
       composerStore.stageAnswer(ref, questionAnswer);
       const messages = [
         messageFor({
-          type: "question_card",
+          type: 'question_card',
           jobId: ref.jobId,
-          questionId: "q1",
-          question: "Pick a color",
+          questionId: 'q1',
+          question: 'Pick a color',
           options: [],
           allowOther: false,
         }),
       ];
       composerStore.pruneStagedAnswers(ref, messages);
-      expect(composerStore.getDraft(ref.jobId).stagedAnswers).toEqual([
-        questionAnswer,
-      ]);
+      expect(composerStore.getDraft(ref.jobId).stagedAnswers).toEqual([questionAnswer]);
     });
 
-    describe("markSubmitting", () => {
-      it("sets submitting=true on just the matching cardIds", () => {
-        const ref = refFor("job-mark-submitting");
+    describe('markSubmitting', () => {
+      it('sets submitting=true on just the matching cardIds', () => {
+        const ref = refFor('job-mark-submitting');
         composerStore.stageAnswer(ref, questionAnswer);
         composerStore.stageAnswer(ref, fileAnswer);
         composerStore.markSubmitting(ref, [questionAnswer.cardId], true);
@@ -468,8 +462,8 @@ describe("composerStore", () => {
         ]);
       });
 
-      it("reverts submitting back to false (the onError restore path)", () => {
-        const ref = refFor("job-mark-submitting-revert");
+      it('reverts submitting back to false (the onError restore path)', () => {
+        const ref = refFor('job-mark-submitting-revert');
         composerStore.stageAnswer(ref, secretAnswer);
         composerStore.markSubmitting(ref, [secretAnswer.cardId], true);
         expect(composerStore.getDraft(ref.jobId).stagedAnswers).toEqual([
@@ -481,20 +475,18 @@ describe("composerStore", () => {
         ]);
       });
 
-      it("is a no-op for a cardId with no matching staged answer", () => {
-        const ref = refFor("job-mark-submitting-no-match");
+      it('is a no-op for a cardId with no matching staged answer', () => {
+        const ref = refFor('job-mark-submitting-no-match');
         composerStore.stageAnswer(ref, questionAnswer);
-        composerStore.markSubmitting(ref, ["not-a-real-card"], true);
-        expect(composerStore.getDraft(ref.jobId).stagedAnswers).toEqual([
-          questionAnswer,
-        ]);
+        composerStore.markSubmitting(ref, ['not-a-real-card'], true);
+        expect(composerStore.getDraft(ref.jobId).stagedAnswers).toEqual([questionAnswer]);
       });
 
-      it("leaves a submitting entry in stagedAnswers — StagedAnswersTray filters it out itself, not the store", () => {
+      it('leaves a submitting entry in stagedAnswers — StagedAnswersTray filters it out itself, not the store', () => {
         // `StagedAnswersTray` renders `useComposerStagedAnswers(ref).filter((a) => !a.submitting)` — the
         // store keeps the entry (so `pruneStagedAnswers` can still find it once the card lands) and only
         // its `submitting` flag flips.
-        const ref = refFor("job-tray-filters-submitting");
+        const ref = refFor('job-tray-filters-submitting');
         composerStore.stageAnswer(ref, questionAnswer);
         composerStore.stageAnswer(ref, fileAnswer);
         composerStore.markSubmitting(ref, [questionAnswer.cardId], true);
@@ -508,129 +500,127 @@ describe("composerStore", () => {
     });
   });
 
-  describe("server sync", () => {
-    it("hydrateFromServer folds the GET /draft payload in, overriding the sessionStorage paint", async () => {
-      const ref = refFor("job-hydrate-server");
+  describe('server sync', () => {
+    it('hydrateFromServer folds the GET /draft payload in, overriding the sessionStorage paint', async () => {
+      const ref = refFor('job-hydrate-server');
       storage.setItem(
         KEY_PREFIX + ref.jobId,
-        JSON.stringify({ ref, text: "stale local", comments: [], outbox: [] }),
+        JSON.stringify({ ref, text: 'stale local', comments: [], outbox: [] }),
       );
       vi.mocked(getDraft).mockResolvedValueOnce({
-        payload: { text: "from server", stagedAnswers: [], comments: [] },
-        attachments: [{ id: "a1", name: "f.txt", kind: "file", size: 10 }],
-        updatedAt: "2026-01-01T00:00:00.000Z",
+        payload: { text: 'from server', stagedAnswers: [], comments: [] },
+        attachments: [{ id: 'a1', name: 'f.txt', kind: 'file', size: 10 }],
+        updatedAt: '2026-01-01T00:00:00.000Z',
       });
 
       composerStore.ensure(ref);
       // Instant paint is the sessionStorage fallback, read before the GET resolves.
-      expect(composerStore.getDraft(ref.jobId).text).toBe("stale local");
+      expect(composerStore.getDraft(ref.jobId).text).toBe('stale local');
 
       await vi.advanceTimersByTimeAsync(0); // drain the GET's microtask chain
       expect(getDraft).toHaveBeenCalledWith(ref);
-      expect(composerStore.getDraft(ref.jobId).text).toBe("from server");
+      expect(composerStore.getDraft(ref.jobId).text).toBe('from server');
       expect(composerStore.getDraft(ref.jobId).attachments).toEqual([
-        { id: "a1", name: "f.txt", kind: "file", size: 10 },
+        { id: 'a1', name: 'f.txt', kind: 'file', size: 10 },
       ]);
     });
 
-    it("debounces a server autosave PUT after setText, sending the current draft body", async () => {
-      const ref = refFor("job-autosave");
-      composerStore.setText(ref, "autosave me");
+    it('debounces a server autosave PUT after setText, sending the current draft body', async () => {
+      const ref = refFor('job-autosave');
+      composerStore.setText(ref, 'autosave me');
       expect(putDraft).not.toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(500);
       expect(putDraft).toHaveBeenCalledWith(ref, {
-        text: "autosave me",
+        text: 'autosave me',
         stagedAnswers: [],
         comments: [],
       });
     });
 
-    it("applyServerPayload discards a delta older than an in-flight local edit (last-write-wins)", () => {
-      const ref = refFor("job-lww-local-wins");
+    it('applyServerPayload discards a delta older than an in-flight local edit (last-write-wins)', () => {
+      const ref = refFor('job-lww-local-wins');
       composerStore.ensure(ref);
       const beforeEdit = Date.now();
-      composerStore.setText(ref, "local edit");
+      composerStore.setText(ref, 'local edit');
 
       composerStore.applyServerPayload(
         ref.jobId,
-        { text: "stale server", stagedAnswers: [], comments: [] },
+        { text: 'stale server', stagedAnswers: [], comments: [] },
         [],
         beforeEdit - 1,
       );
-      expect(composerStore.getDraft(ref.jobId).text).toBe("local edit");
+      expect(composerStore.getDraft(ref.jobId).text).toBe('local edit');
     });
 
-    it("applyServerPayload accepts a delta newer than the last local edit", () => {
-      const ref = refFor("job-lww-server-wins");
+    it('applyServerPayload accepts a delta newer than the last local edit', () => {
+      const ref = refFor('job-lww-server-wins');
       composerStore.ensure(ref);
 
       composerStore.applyServerPayload(
         ref.jobId,
-        { text: "from another device", stagedAnswers: [], comments: [] },
+        { text: 'from another device', stagedAnswers: [], comments: [] },
         [],
         Date.now() + 1000,
       );
-      expect(composerStore.getDraft(ref.jobId).text).toBe(
-        "from another device",
-      );
+      expect(composerStore.getDraft(ref.jobId).text).toBe('from another device');
     });
 
-    it("applyServerPayload preserves same-session attachment previews and pending uploads", () => {
-      const ref = refFor("job-attachment-reconcile");
+    it('applyServerPayload preserves same-session attachment previews and pending uploads', () => {
+      const ref = refFor('job-attachment-reconcile');
       composerStore.setAttachments(ref, () => [
         {
-          id: "server-a",
-          name: "shot.png",
-          kind: "image",
+          id: 'server-a',
+          name: 'shot.png',
+          kind: 'image',
           size: 12,
-          url: "blob:shot",
+          url: 'blob:shot',
         },
         {
-          id: "pending-a",
-          name: "large.png",
-          kind: "image",
+          id: 'pending-a',
+          name: 'large.png',
+          kind: 'image',
           size: 123,
-          url: "blob:large",
+          url: 'blob:large',
           pending: true,
         },
       ]);
 
       composerStore.applyServerPayload(
         ref.jobId,
-        { text: "server body", stagedAnswers: [], comments: [] },
-        [{ id: "server-a", name: "shot.png", kind: "image", size: 12 }],
+        { text: 'server body', stagedAnswers: [], comments: [] },
+        [{ id: 'server-a', name: 'shot.png', kind: 'image', size: 12 }],
         Date.now() + 1000,
       );
 
       expect(composerStore.getDraft(ref.jobId).attachments).toEqual([
         {
-          id: "server-a",
-          name: "shot.png",
-          kind: "image",
+          id: 'server-a',
+          name: 'shot.png',
+          kind: 'image',
           size: 12,
-          url: "blob:shot",
+          url: 'blob:shot',
         },
         {
-          id: "pending-a",
-          name: "large.png",
-          kind: "image",
+          id: 'pending-a',
+          name: 'large.png',
+          kind: 'image',
           size: 123,
-          url: "blob:large",
+          url: 'blob:large',
           pending: true,
         },
       ]);
     });
 
-    it("on reconnect keeps a newer server draft instead of pushing an older dirty local edit", async () => {
-      const ref = refFor("job-reconnect-server-wins");
+    it('on reconnect keeps a newer server draft instead of pushing an older dirty local edit', async () => {
+      const ref = refFor('job-reconnect-server-wins');
       const serverUpdatedAt = new Date(Date.now() + 10_000).toISOString();
       vi.mocked(getDraft).mockImplementation((r) =>
         Promise.resolve(
           r.jobId === ref.jobId
             ? {
                 payload: {
-                  text: "newer server edit",
+                  text: 'newer server edit',
                   stagedAnswers: [],
                   comments: [],
                 },
@@ -638,22 +628,20 @@ describe("composerStore", () => {
                 updatedAt: serverUpdatedAt,
               }
             : {
-                payload: { text: "", stagedAnswers: [], comments: [] },
+                payload: { text: '', stagedAnswers: [], comments: [] },
                 attachments: [],
                 updatedAt: null,
               },
         ),
       );
-      composerStore.setText(ref, "older offline edit");
+      composerStore.setText(ref, 'older offline edit');
       vi.mocked(putDraft).mockClear();
 
       (composerStore as unknown as { onReconnect: () => void }).onReconnect();
       await vi.advanceTimersByTimeAsync(0);
 
-      expect(
-        vi.mocked(putDraft).mock.calls.some(([r]) => r.jobId === ref.jobId),
-      ).toBe(false);
-      expect(composerStore.getDraft(ref.jobId).text).toBe("newer server edit");
+      expect(vi.mocked(putDraft).mock.calls.some(([r]) => r.jobId === ref.jobId)).toBe(false);
+      expect(composerStore.getDraft(ref.jobId).text).toBe('newer server edit');
     });
   });
 });

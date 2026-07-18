@@ -6,11 +6,11 @@
 
 /** The avatar palette (theme tokens). Used for member/user avatars (keyed by user id). */
 const ORG_COLORS = [
-  "var(--accent)",
-  "var(--blue)",
-  "var(--purple)",
-  "var(--green)",
-  "var(--rose)",
+  'var(--accent)',
+  'var(--blue)',
+  'var(--purple)',
+  'var(--green)',
+  'var(--rose)',
 ] as const;
 
 /**
@@ -26,28 +26,28 @@ export function orgColor(orgId: string): string {
 
 /** Org swatch fill — NEUTRAL grey (handoff: do not reintroduce per-org color). */
 export function orgSwatch(): string {
-  return "var(--faint)";
+  return 'var(--faint)';
 }
 
 /** 1–2 letter avatar initials from an org name (first letters of the first two words, else first two chars). */
 export function orgInitials(name: string): string {
-  const parts = (name || "").trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
+  const parts = (name || '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[1][0]).toUpperCase();
 }
 
 /** A short, lowercase role label for chips (`owner` / `member`). */
 export function roleLabel(role: string): string {
-  return (role || "member").toLowerCase();
+  return (role || 'member').toLowerCase();
 }
 
 /** Compact relative time ("just now", "5m", "3h", "2d", "Apr 9") from an ISO timestamp. */
 export function timeAgo(iso: string): string {
   const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return "";
+  if (Number.isNaN(then)) return '';
   const s = Math.max(0, Math.floor((Date.now() - then) / 1000));
-  if (s < 45) return "just now";
+  if (s < 45) return 'just now';
   const m = Math.floor(s / 60);
   if (m < 60) return `${m}m`;
   const h = Math.floor(m / 60);
@@ -55,8 +55,8 @@ export function timeAgo(iso: string): string {
   const d = Math.floor(h / 24);
   if (d < 7) return `${d}d`;
   return new Date(then).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
+    month: 'short',
+    day: 'numeric',
   });
 }
 
@@ -66,7 +66,7 @@ export function timeAgo(iso: string): string {
  */
 export function formatClockTime(iso: string): string {
   const t = new Date(iso).getTime();
-  if (Number.isNaN(t)) return "";
+  if (Number.isNaN(t)) return '';
   const d = new Date(t);
   const now = new Date();
   const sameDay =
@@ -74,16 +74,16 @@ export function formatClockTime(iso: string): string {
     d.getMonth() === now.getMonth() &&
     d.getDate() === now.getDate();
   const time = d.toLocaleTimeString(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
+    hour: 'numeric',
+    minute: '2-digit',
   });
   if (sameDay) return time;
-  return `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}, ${time}`;
+  return `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}, ${time}`;
 }
 
 /** Format a token count compactly ("340", "1.2k", "1.3M") for the per-turn counter + context ring. */
 export function formatTokens(n: number): string {
-  if (!Number.isFinite(n) || n < 0) return "0";
+  if (!Number.isFinite(n) || n < 0) return '0';
   if (n < 1000) return String(Math.round(n));
   if (n < 1_000_000) {
     const k = n / 1000;
@@ -96,11 +96,11 @@ export function formatTokens(n: number): string {
 /** Slugify an org name into a URL-safe handle (mirrors the backend's `slugifyName`). */
 export function slugify(name: string): string {
   return (
-    (name || "")
+    (name || '')
       .toLowerCase()
       .trim()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 48) || "org"
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 48) || 'org'
   );
 }

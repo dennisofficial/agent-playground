@@ -1,6 +1,6 @@
-"use client";
+'use client';
 
-import { useEffect, useState } from "react";
+import { useEffect, useState } from 'react';
 
 /**
  * Shared px thresholds for the app shell's responsive tiers (wide/desktop/tablet/mobile). Single source
@@ -16,8 +16,8 @@ export function useMediaQuery(query: string): boolean {
     const m = window.matchMedia(query);
     const on = () => setMatch(m.matches);
     on();
-    m.addEventListener("change", on);
-    return () => m.removeEventListener("change", on);
+    m.addEventListener('change', on);
+    return () => m.removeEventListener('change', on);
   }, [query]);
   return match;
 }

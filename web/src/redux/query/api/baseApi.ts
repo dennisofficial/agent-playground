@@ -1,18 +1,18 @@
-"use client";
+'use client';
 
-import { auth } from "@/lib/auth";
-import { env } from "@/lib/env";
-import { axiosQuery } from "@/redux/query/axiosQuery";
-import { createApi } from "@reduxjs/toolkit/query/react";
-import axios from "axios";
+import { auth } from '@/lib/auth';
+import { env } from '@/lib/env';
+import { axiosQuery } from '@/redux/query/axiosQuery';
+import { createApi } from '@reduxjs/toolkit/query/react';
+import axios from 'axios';
 
 /** Cache tags for RTK Query invalidation. Case-sensitive. */
 export enum EBaseApiCacheTags {
-  SESSION = "SESSION",
-  ORG = "ORG",
-  ORG_MEMBER = "ORG_MEMBER",
-  REPO = "REPO",
-  CREDENTIALS = "CREDENTIALS",
+  SESSION = 'SESSION',
+  ORG = 'ORG',
+  ORG_MEMBER = 'ORG_MEMBER',
+  REPO = 'REPO',
+  CREDENTIALS = 'CREDENTIALS',
 }
 
 const REFETCH_ON_MOUNT_SECONDS = 30;
@@ -20,8 +20,8 @@ const REFETCH_ON_MOUNT_SECONDS = 30;
 const axiosInstance = axios.create({
   baseURL: env.NEXT_PUBLIC_BACKEND_URL,
   headers: {
-    Accept: "application/json",
-    "Content-Type": "application/json",
+    Accept: 'application/json',
+    'Content-Type': 'application/json',
   },
   withCredentials: true, // cookie session rides on credentialed CORS
 });
@@ -30,7 +30,7 @@ const axiosInstance = axios.create({
 auth.attachInterceptors(axiosInstance);
 
 export const baseApi = createApi({
-  reducerPath: "baseApi",
+  reducerPath: 'baseApi',
   baseQuery: axiosQuery(axiosInstance),
   tagTypes: Object.values(EBaseApiCacheTags),
   endpoints: () => ({}),

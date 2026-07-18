@@ -1,18 +1,5 @@
-"use client";
+'use client';
 
-import {
-  createContext,
-  memo,
-  useContext,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-  type ReactNode,
-} from "react";
-import { createPortal } from "react-dom";
 import {
   AlertTriangle,
   Ban,
@@ -24,7 +11,6 @@ import {
   Hourglass,
   Info,
   Lock,
-  type LucideIcon,
   Maximize2,
   RefreshCw,
   Rocket,
@@ -38,18 +24,27 @@ import {
   XCircle,
   ZoomIn,
   ZoomOut,
-} from "lucide-react";
-import ReactMarkdown, { type Components } from "react-markdown";
-import remarkGfm from "remark-gfm";
-import { JsonView, allExpanded, darkStyles } from "react-json-view-lite";
-import "react-json-view-lite/dist/index.css";
+  type LucideIcon,
+} from 'lucide-react';
 import {
-  CopyButton,
-  TerminalChromeBar,
-  WrapButton,
-  useCopied,
-} from "./terminal-chrome";
-import { renderTokenLine, useHighlightTokens } from "./tool-calls/highlight";
+  createContext,
+  memo,
+  useContext,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react';
+import { createPortal } from 'react-dom';
+import { JsonView, allExpanded, darkStyles } from 'react-json-view-lite';
+import 'react-json-view-lite/dist/index.css';
+import ReactMarkdown, { type Components } from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { CopyButton, TerminalChromeBar, WrapButton, useCopied } from './terminal-chrome';
+import { renderTokenLine, useHighlightTokens } from './tool-calls/highlight';
 
 /**
  * Markdown renderer for assistant prose in the conversation — ported from the "Atlas Conversation View"
@@ -73,34 +68,31 @@ function CodeBlock({ lang, code }: { lang?: string; code: string }) {
   // Whole-block tokenization — a fence is contiguous, so cross-line context (multi-line strings,
   // block comments, JSX) is preserved. `null` until the highlighter + language resolve → plain text.
   const lineTokens = useHighlightTokens(code, lang ?? null, true);
-  const lines = useMemo(() => code.split("\n"), [code]);
+  const lines = useMemo(() => code.split('\n'), [code]);
   return (
     <div
       className="my-3 overflow-hidden rounded-[9px] border border-border"
-      style={{ background: "var(--term)" }}
+      style={{ background: 'var(--term)' }}
     >
       <TerminalChromeBar
         label={lang}
         actions={
           <>
-            <WrapButton
-              wrapped={wrapped}
-              onToggle={() => setWrapped((w) => !w)}
-            />
+            <WrapButton wrapped={wrapped} onToggle={() => setWrapped((w) => !w)} />
             <CopyButton text={code} />
           </>
         }
       />
       <pre
         className={`m-0 px-[14px] py-3 font-mono text-[11.5px] leading-[1.7] ${
-          wrapped ? "whitespace-pre-wrap break-words" : "overflow-x-auto"
+          wrapped ? 'whitespace-pre-wrap break-words' : 'overflow-x-auto'
         }`}
-        style={{ color: "var(--term-fg)" }}
+        style={{ color: 'var(--term-fg)' }}
       >
         {lineTokens
           ? lines.map((ln, i) => (
               <span key={i}>
-                {i > 0 ? "\n" : null}
+                {i > 0 ? '\n' : null}
                 {renderTokenLine(lineTokens[i], ln)}
               </span>
             ))
@@ -134,7 +126,7 @@ const JSON_VIEW_STYLES = {
 function parseJsonContainer(raw: string): object | null {
   try {
     const value: unknown = JSON.parse(raw);
-    return value !== null && typeof value === "object" ? value : null;
+    return value !== null && typeof value === 'object' ? value : null;
   } catch {
     return null;
   }
@@ -144,7 +136,7 @@ function JsonBlock({ value }: { value: object }) {
   return (
     <div
       className="my-3 overflow-hidden rounded-[9px] border border-border"
-      style={{ background: "var(--term)" }}
+      style={{ background: 'var(--term)' }}
     >
       <TerminalChromeBar
         label="json"
@@ -152,7 +144,7 @@ function JsonBlock({ value }: { value: object }) {
       />
       <div
         className="overflow-x-auto px-[14px] py-3 font-mono text-[11.5px] leading-[1.7]"
-        style={{ color: "var(--term-fg)" }}
+        style={{ color: 'var(--term-fg)' }}
       >
         <JsonView
           data={value}
@@ -171,11 +163,10 @@ function JsonBlock({ value }: { value: object }) {
 // diagrams match the design system (and re-match it live on a theme switch — see the theme store below).
 // securityLevel 'strict' DOMPurify-sanitizes the SVG (diagrams are agent-authored), which makes the
 // dangerouslySetInnerHTML below safe.
-let mermaidReady: Promise<typeof import("mermaid").default> | null = null;
+let mermaidReady: Promise<typeof import('mermaid').default> | null = null;
 /** Import-only — memoized so the heavy module is fetched once regardless of theme. */
 function loadMermaid() {
-  if (!mermaidReady)
-    mermaidReady = import("mermaid").then((mod) => mod.default);
+  if (!mermaidReady) mermaidReady = import('mermaid').then((mod) => mod.default);
   return mermaidReady;
 }
 
@@ -183,25 +174,24 @@ function loadMermaid() {
  *  whichever theme is active at call time rather than whatever was live the first time mermaid loaded. */
 function applyMermaidTheme(mermaid: Awaited<ReturnType<typeof loadMermaid>>) {
   const css = getComputedStyle(document.documentElement);
-  const v = (name: string, fallback: string) =>
-    css.getPropertyValue(name).trim() || fallback;
+  const v = (name: string, fallback: string) => css.getPropertyValue(name).trim() || fallback;
   mermaid.initialize({
     startOnLoad: false,
-    securityLevel: "strict",
+    securityLevel: 'strict',
     // We catch render errors and show our own inline fallback; without this, mermaid ALSO
     // injects its default "bomb" error SVG into the DOM. Suppress it so only our UI shows.
     suppressErrorRendering: true,
-    theme: "base",
-    fontFamily: v("--f-mono", "ui-monospace, monospace"),
+    theme: 'base',
+    fontFamily: v('--f-mono', 'ui-monospace, monospace'),
     themeVariables: {
-      background: "transparent",
-      primaryColor: v("--surface-2", "#f6f6f3"),
-      primaryTextColor: v("--text", "#1a1d23"),
-      primaryBorderColor: v("--border-2", "#d3d3cc"),
-      secondaryColor: v("--surface-3", "#eeeee9"),
-      tertiaryColor: v("--surface", "#ffffff"),
-      lineColor: v("--dim", "#5c6573"),
-      textColor: v("--text", "#1a1d23"),
+      background: 'transparent',
+      primaryColor: v('--surface-2', '#f6f6f3'),
+      primaryTextColor: v('--text', '#1a1d23'),
+      primaryBorderColor: v('--border-2', '#d3d3cc'),
+      secondaryColor: v('--surface-3', '#eeeee9'),
+      tertiaryColor: v('--surface', '#ffffff'),
+      lineColor: v('--dim', '#5c6573'),
+      textColor: v('--text', '#1a1d23'),
     },
   });
 }
@@ -218,15 +208,15 @@ const themeListeners = new Set<() => void>();
 let themeObserver: MutationObserver | null = null;
 
 function currentThemeKey() {
-  if (typeof document === "undefined") return "daylight";
-  const key = document.documentElement.getAttribute("data-theme");
+  if (typeof document === 'undefined') return 'daylight';
+  const key = document.documentElement.getAttribute('data-theme');
   // next-themes' pre-paint script writes raw light/dark before the runtime value map writes daylight/night.
-  if (key === "dark") return "night";
-  if (key === "light" || !key) return "daylight";
+  if (key === 'dark') return 'night';
+  if (key === 'light' || !key) return 'daylight';
   return key;
 }
 function ensureThemeObserver() {
-  if (themeObserver || typeof document === "undefined") return;
+  if (themeObserver || typeof document === 'undefined') return;
   themeObserver = new MutationObserver(() => {
     if (currentThemeKey() === appliedMermaidTheme) return; // unrelated attribute write
     appliedMermaidTheme = null; // force re-init (with now-live CSS vars) on next ensureMermaid
@@ -236,7 +226,7 @@ function ensureThemeObserver() {
   });
   themeObserver.observe(document.documentElement, {
     attributes: true,
-    attributeFilter: ["data-theme"],
+    attributeFilter: ['data-theme'],
   });
 }
 function subscribeTheme(cb: () => void) {
@@ -262,15 +252,13 @@ async function ensureMermaid() {
 
 /** Flatten code-block children to plain text (string, number, or nested markdown nodes). */
 function nodeText(node: ReactNode): string {
-  if (node == null || typeof node === "boolean") return "";
-  if (typeof node === "string" || typeof node === "number") return String(node);
-  if (Array.isArray(node)) return node.map(nodeText).join("");
-  if (typeof node === "object" && "props" in node) {
-    return nodeText(
-      (node as { props?: { children?: ReactNode } }).props?.children,
-    );
+  if (node == null || typeof node === 'boolean') return '';
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(nodeText).join('');
+  if (typeof node === 'object' && 'props' in node) {
+    return nodeText((node as { props?: { children?: ReactNode } }).props?.children);
   }
-  return "";
+  return '';
 }
 
 /**
@@ -280,7 +268,7 @@ function nodeText(node: ReactNode): string {
 function parseSvg(raw: string): { svg: string; w: number; h: number } {
   const vb = /viewBox="[\d.\-]+ [\d.\-]+ ([\d.\-]+) ([\d.\-]+)"/.exec(raw);
   return {
-    svg: raw.replace(/max-width:\s*[\d.]+px;?/g, ""),
+    svg: raw.replace(/max-width:\s*[\d.]+px;?/g, ''),
     w: vb ? Math.round(parseFloat(vb[1])) : 0,
     h: vb ? Math.round(parseFloat(vb[2])) : 0,
   };
@@ -292,10 +280,7 @@ function parseSvg(raw: string): { svg: string; w: number; h: number } {
  *  theme flip mid-flight (e.g. `warmMermaidDiagrams` still looping when the operator switches theme) can
  *  otherwise write a stale-palette SVG back into a freshly-cleared cache with nothing to invalidate it
  *  afterward — see {@link getCachedMermaid}. */
-const mermaidCache = new Map<
-  string,
-  { theme: string; svg: string; w: number; h: number }
->();
+const mermaidCache = new Map<string, { theme: string; svg: string; w: number; h: number }>();
 
 /** Cache lookup that also validates the entry was rendered under the CURRENTLY live theme — a hit tagged
  *  with a stale theme (see above) is treated as a miss so callers re-render instead of showing the wrong
@@ -309,8 +294,7 @@ function getCachedMermaid(chart: string) {
 export function extractMermaidSources(text: string): string[] {
   const out: string[] = [];
   const re = /```mermaid\n([\s\S]*?)```/g; // same shape as conversation.tsx MERMAID_FENCE
-  for (let m = re.exec(text); m; m = re.exec(text))
-    out.push(m[1].replace(/\n$/, "").trim());
+  for (let m = re.exec(text); m; m = re.exec(text)) out.push(m[1].replace(/\n$/, '').trim());
   return out;
 }
 
@@ -385,9 +369,7 @@ function MermaidFrame({
   return (
     <div className="my-3 overflow-hidden rounded-[9px] border border-border bg-surface">
       <div className="flex items-center gap-2 border-b border-border px-3 py-[7px]">
-        <span className="font-mono text-[10px] lowercase text-faint">
-          {label}
-        </span>
+        <span className="font-mono text-[10px] lowercase text-faint">{label}</span>
         <span className="flex-1" />
         {actions}
       </div>
@@ -402,10 +384,7 @@ const MERMAID_RESERVE_MIN = 200;
 const MERMAID_RESERVE_MAX = 1600;
 
 function clampMermaidReserve(px: number): number {
-  return Math.min(
-    Math.max(Math.round(px), MERMAID_RESERVE_MIN),
-    MERMAID_RESERVE_MAX,
-  );
+  return Math.min(Math.max(Math.round(px), MERMAID_RESERVE_MIN), MERMAID_RESERVE_MAX);
 }
 
 /**
@@ -420,24 +399,24 @@ function clampMermaidReserve(px: number): number {
  */
 export function mermaidReservePx(source: string): number {
   const lines = source
-    .split("\n")
+    .split('\n')
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
-  const header = lines[0]?.toLowerCase() ?? "";
+  const header = lines[0]?.toLowerCase() ?? '';
   // Sequence diagrams: height ≈ header chrome + one row per message arrow; participants add width, not height.
-  if (header.startsWith("sequencediagram")) {
+  if (header.startsWith('sequencediagram')) {
     const messages = lines.filter((line) => /--?>>?/.test(line)).length;
     return clampMermaidReserve(120 + messages * 44);
   }
   // Flowchart / graph / stateDiagram (the vertical, dominant kinds): height tracks the number of ranks,
   // proxied by edge count (`-->`/`->`), which avoids double-counting standalone node-label lines.
-  const edges = lines.filter((line) => line.includes("->")).length;
+  const edges = lines.filter((line) => line.includes('->')).length;
   return clampMermaidReserve(Math.max(edges, 1) * 84);
 }
 
 function Mermaid({ chart }: { chart: string }) {
   // useId is colon-bearing; mermaid's render id must be a valid DOM/CSS id, so strip non-word chars.
-  const renderId = `mmd-${useId().replace(/[^a-zA-Z0-9]/g, "")}`;
+  const renderId = `mmd-${useId().replace(/[^a-zA-Z0-9]/g, '')}`;
   const [result, setResult] = useState<{
     svg: string;
     w: number;
@@ -451,11 +430,7 @@ function Mermaid({ chart }: { chart: string }) {
   // Re-runs the render effect below on a live theme switch (see the MutationObserver-driven store
   // above `Mermaid`) — independent of next-themes/useTheme, and of React 19's child-before-parent
   // passive-effect ordering, since it only fires once the new data-theme attribute is truly live.
-  const themeVersion = useSyncExternalStore(
-    subscribeTheme,
-    getThemeVersion,
-    () => 0,
-  );
+  const themeVersion = useSyncExternalStore(subscribeTheme, getThemeVersion, () => 0);
 
   useEffect(() => {
     let cancelled = false;
@@ -494,8 +469,7 @@ function Mermaid({ chart }: { chart: string }) {
         }
       })
       .catch((err: unknown) => {
-        if (!cancelled)
-          setError(err instanceof Error ? err.message : String(err));
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
       });
     return () => {
       cancelled = true;
@@ -505,7 +479,7 @@ function Mermaid({ chart }: { chart: string }) {
   const copyButton = (
     <FrameBtn title="Copy mermaid source" onClick={() => copy(chart)}>
       {copied ? <Check size={10} /> : <Copy size={10} />}
-      {copied ? "copied" : "copy"}
+      {copied ? 'copied' : 'copy'}
     </FrameBtn>
   );
 
@@ -528,15 +502,15 @@ function Mermaid({ chart }: { chart: string }) {
                   actions.sendToThread(
                     `This mermaid diagram failed to render. Please fix the syntax.\n\n` +
                       `Parse error: ${error}\n\n` +
-                      "```\n" +
+                      '```\n' +
                       chart +
-                      "\n```",
+                      '\n```',
                   );
                   setSent(true);
                 }}
               >
                 <Send size={10} />
-                {sent ? "sent to Atlas" : "fix with Atlas"}
+                {sent ? 'sent to Atlas' : 'fix with Atlas'}
               </FrameBtn>
             ) : null}
           </>
@@ -597,10 +571,7 @@ function Mermaid({ chart }: { chart: string }) {
             // Lock the box's aspect ratio so its height is a synchronous function of column width the
             // instant `result` is known — one deterministic swap instead of waiting for the SVG (forced to
             // width:100%/height:auto above) to reflow internally.
-            aspectRatio:
-              result.w > 0 && result.h > 0
-                ? `${result.w} / ${result.h}`
-                : undefined,
+            aspectRatio: result.w > 0 && result.h > 0 ? `${result.w} / ${result.h}` : undefined,
           }}
           // eslint-disable-next-line react/no-danger -- mermaid SVG; securityLevel 'strict' sanitizes it
           dangerouslySetInnerHTML={{ __html: result.svg }}
@@ -631,16 +602,11 @@ function MermaidLightbox({
   onClose: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ x: number; y: number; l: number; t: number } | null>(
-    null,
-  );
+  const drag = useRef<{ x: number; y: number; l: number; t: number } | null>(null);
   // Start at fit-to-viewport (capped at 2× so a small diagram doesn't blow up), then zoom/pan from there.
   const fit = () => {
-    if (typeof window === "undefined" || !w || !h) return 1;
-    const s = Math.min(
-      (window.innerWidth - 96) / w,
-      (window.innerHeight - 150) / h,
-    );
+    if (typeof window === 'undefined' || !w || !h) return 1;
+    const s = Math.min((window.innerWidth - 96) / w, (window.innerHeight - 150) / h);
     return Math.max(0.25, Math.min(2, Number(s.toFixed(2))));
   };
   const [scale, setScale] = useState(fit);
@@ -649,26 +615,17 @@ function MermaidLightbox({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === 'Escape') onClose();
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
   return createPortal(
-    <div
-      className="fixed inset-0 z-[90] flex flex-col"
-      role="dialog"
-      aria-modal
-    >
-      <div
-        className="absolute inset-0"
-        style={{ background: "rgba(0,0,0,0.55)" }}
-      />
+    <div className="fixed inset-0 z-[90] flex flex-col" role="dialog" aria-modal>
+      <div className="absolute inset-0" style={{ background: 'rgba(0,0,0,0.55)' }} />
       <div className="relative z-10 flex items-center justify-between border-b border-border bg-panel px-3 py-2">
-        <span className="font-mono text-[9px] tracking-[0.16em] text-faint">
-          DIAGRAM
-        </span>
+        <span className="font-mono text-[9px] tracking-[0.16em] text-faint">DIAGRAM</span>
         <div className="flex items-center gap-0.5">
           <ToolBtn onClick={() => zoom(1 / 1.25)} title="Zoom out">
             <ZoomOut size={14} />
@@ -693,7 +650,7 @@ function MermaidLightbox({
         className="relative z-10 flex-1 overflow-auto"
         // Clicking the grayed-out area (anything that isn't the diagram card) closes the lightbox.
         onClick={(e) => {
-          if (!(e.target as HTMLElement).closest("[data-mmd-card]")) onClose();
+          if (!(e.target as HTMLElement).closest('[data-mmd-card]')) onClose();
         }}
       >
         {/* min-h/w-full + flex centering keeps the diagram centered when it fits, and scrollable when it
@@ -772,31 +729,22 @@ function renderCode({
 }: {
   className?: string;
   children?: ReactNode;
-  resolveFileLink?: (
-    raw: string,
-  ) => { url: string; onSelect: () => void } | null;
+  resolveFileLink?: (raw: string) => { url: string; onSelect: () => void } | null;
 }) {
-  const cls = className ?? "";
+  const cls = className ?? '';
   const match = /language-(\w+)/.exec(cls);
   // A ```mermaid fence becomes a rendered diagram instead of a code frame.
-  if (match?.[1] === "mermaid")
-    return <Mermaid chart={nodeText(children).replace(/\n$/, "")} />;
+  if (match?.[1] === 'mermaid') return <Mermaid chart={nodeText(children).replace(/\n$/, '')} />;
   // A ```json fence whose content is an object/array renders as an interactive collapsible tree;
   // invalid or scalar JSON falls through to the normal code frame below.
-  if (match?.[1] === "json") {
-    const parsed = parseJsonContainer(nodeText(children).replace(/\n$/, ""));
+  if (match?.[1] === 'json') {
+    const parsed = parseJsonContainer(nodeText(children).replace(/\n$/, ''));
     if (parsed) return <JsonBlock value={parsed} />;
   }
   // A fence carries a `language-*` class (react-markdown tags it independently of any highlighter);
   // fall back to a newline sniff for the rare un-highlighted block.
-  const isBlock = Boolean(match) || String(children ?? "").includes("\n");
-  if (isBlock)
-    return (
-      <CodeBlock
-        lang={match?.[1]}
-        code={nodeText(children).replace(/\n$/, "")}
-      />
-    );
+  const isBlock = Boolean(match) || String(children ?? '').includes('\n');
+  if (isBlock) return <CodeBlock lang={match?.[1]} code={nodeText(children).replace(/\n$/, '')} />;
   // Inline span: linkify a manifest-verified file path into a pill (spec/plan panes only).
   if (resolveFileLink) {
     const link = resolveFileLink(nodeText(children));
@@ -810,7 +758,7 @@ function renderCode({
   return (
     <code
       className="rounded-[3px] px-[5px] py-px font-mono text-[12px]"
-      style={{ background: "var(--surface-3)" }}
+      style={{ background: 'var(--surface-3)' }}
     >
       {children}
     </code>
@@ -824,21 +772,21 @@ function renderCode({
 // of the text stream into a custom `shortcode-icon` node (mdast `data.hName`/`hProperties`), which the
 // COMPONENTS entry below renders as the toned icon. Unknown `:tokens:` are left untouched.
 const SHORTCODE_ICONS: Record<string, { Icon: LucideIcon; tone: string }> = {
-  rocket: { Icon: Rocket, tone: "text-accent" },
-  white_check_mark: { Icon: CheckCircle2, tone: "text-green" },
-  x: { Icon: XCircle, tone: "text-red" },
-  no_entry: { Icon: Ban, tone: "text-red" },
-  warning: { Icon: AlertTriangle, tone: "text-amber" },
-  rotating_light: { Icon: Siren, tone: "text-red" },
-  information_source: { Icon: Info, tone: "text-blue" },
-  lock: { Icon: Lock, tone: "text-red" },
-  mag: { Icon: Search, tone: "text-dim" },
-  hourglass_flowing_sand: { Icon: Hourglass, tone: "text-amber" },
-  raising_hand: { Icon: Hand, tone: "text-amber" },
-  hammer_and_wrench: { Icon: Wrench, tone: "text-dim" },
-  gear: { Icon: Settings, tone: "text-dim" },
-  recycle: { Icon: RefreshCw, tone: "text-dim" },
-  clipboard: { Icon: ClipboardList, tone: "text-dim" },
+  rocket: { Icon: Rocket, tone: 'text-accent' },
+  white_check_mark: { Icon: CheckCircle2, tone: 'text-green' },
+  x: { Icon: XCircle, tone: 'text-red' },
+  no_entry: { Icon: Ban, tone: 'text-red' },
+  warning: { Icon: AlertTriangle, tone: 'text-amber' },
+  rotating_light: { Icon: Siren, tone: 'text-red' },
+  information_source: { Icon: Info, tone: 'text-blue' },
+  lock: { Icon: Lock, tone: 'text-red' },
+  mag: { Icon: Search, tone: 'text-dim' },
+  hourglass_flowing_sand: { Icon: Hourglass, tone: 'text-amber' },
+  raising_hand: { Icon: Hand, tone: 'text-amber' },
+  hammer_and_wrench: { Icon: Wrench, tone: 'text-dim' },
+  gear: { Icon: Settings, tone: 'text-dim' },
+  recycle: { Icon: RefreshCw, tone: 'text-dim' },
+  clipboard: { Icon: ClipboardList, tone: 'text-dim' },
 };
 
 const SHORTCODE_RE = /:([a-z0-9_+]+):/g;
@@ -859,17 +807,15 @@ function splitShortcodes(value: string): MdNode[] {
   SHORTCODE_RE.lastIndex = 0;
   for (let m = SHORTCODE_RE.exec(value); m; m = SHORTCODE_RE.exec(value)) {
     if (!(m[1] in SHORTCODE_ICONS)) continue;
-    if (m.index > last)
-      parts.push({ type: "text", value: value.slice(last, m.index) });
+    if (m.index > last) parts.push({ type: 'text', value: value.slice(last, m.index) });
     parts.push({
-      type: "shortcodeIcon",
-      data: { hName: "shortcode-icon", hProperties: { name: m[1] } },
+      type: 'shortcodeIcon',
+      data: { hName: 'shortcode-icon', hProperties: { name: m[1] } },
     });
     last = m.index + m[0].length;
   }
-  if (parts.length === 0) return [{ type: "text", value }];
-  if (last < value.length)
-    parts.push({ type: "text", value: value.slice(last) });
+  if (parts.length === 0) return [{ type: 'text', value }];
+  if (last < value.length) parts.push({ type: 'text', value: value.slice(last) });
   return parts;
 }
 
@@ -881,11 +827,7 @@ function remarkShortcodeIcons() {
     if (!node.children) return;
     const next: MdNode[] = [];
     for (const child of node.children) {
-      if (
-        child.type === "text" &&
-        typeof child.value === "string" &&
-        child.value.includes(":")
-      ) {
+      if (child.type === 'text' && typeof child.value === 'string' && child.value.includes(':')) {
         next.push(...splitShortcodes(child.value));
       } else {
         walk(child);
@@ -910,7 +852,7 @@ function ShortcodeIcon({ name }: { name?: string }) {
       strokeWidth={2}
       aria-hidden
       className={`inline-block shrink-0 ${tone}`}
-      style={{ verticalAlign: "-0.18em" }}
+      style={{ verticalAlign: '-0.18em' }}
     />
   );
 }
@@ -918,7 +860,7 @@ function ShortcodeIcon({ name }: { name?: string }) {
 const COMPONENTS: Components = {
   // Custom inline element emitted by remarkShortcodeIcons. Its tag name isn't in JSX.IntrinsicElements,
   // so the entry is attached via a cast (react-markdown maps the hast tag name → this component).
-  ...({ "shortcode-icon": ShortcodeIcon } as unknown as Components),
+  ...({ 'shortcode-icon': ShortcodeIcon } as unknown as Components),
   h1: ({ children }) => (
     <h1 className="mb-1 mt-1 font-disp text-[21px] font-bold leading-tight tracking-[-0.02em] text-text">
       {children}
@@ -935,17 +877,11 @@ const COMPONENTS: Components = {
     </h3>
   ),
   p: ({ children }) => (
-    <p className="my-2 text-[14px] leading-[1.62] text-text first:mt-0 last:mb-0">
-      {children}
-    </p>
+    <p className="my-2 text-[14px] leading-[1.62] text-text first:mt-0 last:mb-0">{children}</p>
   ),
-  strong: ({ children }) => (
-    <strong className="font-semibold text-text">{children}</strong>
-  ),
+  strong: ({ children }) => <strong className="font-semibold text-text">{children}</strong>,
   em: ({ children }) => <em className="italic">{children}</em>,
-  a: ({ href, children }) => (
-    <ExternalAnchor href={href}>{children}</ExternalAnchor>
-  ),
+  a: ({ href, children }) => <ExternalAnchor href={href}>{children}</ExternalAnchor>,
   ul: ({ children }) => (
     <ul className="my-2 flex list-disc flex-col gap-1.5 pl-5 text-[14px] leading-[1.5]">
       {children}
@@ -961,16 +897,14 @@ const COMPONENTS: Components = {
     <blockquote
       className="my-3 rounded-r-[7px] px-3.5 py-2 text-[13px] italic leading-[1.55] text-dim"
       style={{
-        borderLeft: "3px solid var(--accent-line)",
-        background: "var(--accent-soft)",
+        borderLeft: '3px solid var(--accent-line)',
+        background: 'var(--accent-soft)',
       }}
     >
       {children}
     </blockquote>
   ),
-  hr: () => (
-    <div className="my-4 h-px" style={{ background: "var(--border)" }} />
-  ),
+  hr: () => <div className="my-4 h-px" style={{ background: 'var(--border)' }} />,
   table: ({ children }) => (
     <div className="my-3 overflow-x-auto">
       <table className="w-full border-collapse text-[12.5px]">{children}</table>
@@ -980,7 +914,7 @@ const COMPONENTS: Components = {
   th: ({ children }) => (
     <th
       className="px-3 py-1.5 text-left font-mono text-[10px] font-semibold uppercase tracking-[0.04em] text-faint"
-      style={{ borderBottom: "1.5px solid var(--border-2)" }}
+      style={{ borderBottom: '1.5px solid var(--border-2)' }}
     >
       {children}
     </th>
@@ -988,7 +922,7 @@ const COMPONENTS: Components = {
   td: ({ children }) => (
     <td
       className="px-3 py-2 align-top text-dim"
-      style={{ borderBottom: "1px solid var(--border)" }}
+      style={{ borderBottom: '1px solid var(--border)' }}
     >
       {children}
     </td>
@@ -1012,15 +946,14 @@ function FilePill({
     <a
       href={url}
       onClick={(e) => {
-        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0)
-          return;
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
         e.preventDefault();
         onSelect();
       }}
       className="cursor-pointer rounded-[3px] px-[5px] py-px font-mono text-[12px] text-accent hover:underline"
       style={{
-        background: "var(--surface-3)",
-        borderBottom: "1px solid var(--accent-line)",
+        background: 'var(--surface-3)',
+        borderBottom: '1px solid var(--accent-line)',
       }}
     >
       {children}
@@ -1029,13 +962,7 @@ function FilePill({
 }
 
 /** The default external link (new tab) — used for absolute/scheme/anchor hrefs. */
-function ExternalAnchor({
-  href,
-  children,
-}: {
-  href?: string;
-  children: ReactNode;
-}) {
+function ExternalAnchor({ href, children }: { href?: string; children: ReactNode }) {
   return (
     <a
       href={href}
@@ -1043,8 +970,8 @@ function ExternalAnchor({
       rel="noreferrer"
       className="text-accent"
       style={{
-        textDecoration: "none",
-        borderBottom: "1px solid var(--accent-line)",
+        textDecoration: 'none',
+        borderBottom: '1px solid var(--accent-line)',
       }}
     >
       {children}
@@ -1057,9 +984,9 @@ function isRelativeHref(href: string | undefined): href is string {
   return (
     !!href &&
     !/^[a-z][a-z0-9+.-]*:/i.test(href) && // scheme: http:, mailto:, …
-    !href.startsWith("#") &&
-    !href.startsWith("/") &&
-    !href.startsWith("//")
+    !href.startsWith('#') &&
+    !href.startsWith('/') &&
+    !href.startsWith('//')
   );
 }
 
@@ -1067,9 +994,7 @@ function isRelativeHref(href: string | undefined): href is string {
  *  rejected by {@link isRelativeHref} (leading `/`) but must still reach the resolver so a conversation link
  *  to a spec/generated/artifact file opens it in the detail pane. */
 function isContextHref(href: string | undefined): href is string {
-  return (
-    !!href && /^\/context\/(specs|generated|artifacts|evidence)\//.test(href)
-  );
+  return !!href && /^\/context\/(specs|generated|artifacts|evidence)\//.test(href);
 }
 
 export const Markdown = memo(function Markdown({
@@ -1082,25 +1007,18 @@ export const Markdown = memo(function Markdown({
    *  link + a select action. The anchor's `href` becomes `url` (so cmd/middle-click opens the right thing
    *  in a new tab), and a plain left-click is intercepted to `onSelect()` (SPA nav, no reload). Return null
    *  to leave a link as a normal external anchor. Absent → all links render as external anchors. */
-  resolveRelativeLink?: (
-    href: string,
-  ) => { url: string; onSelect: () => void } | null;
+  resolveRelativeLink?: (href: string) => { url: string; onSelect: () => void } | null;
   /** Linkify an inline-code span that names a REAL repo file into a clickable pill. Given the raw span text
    *  (e.g. `web/src/…/markdown.tsx:18-24`), return `{ url, onSelect }` to render a pill, or null to keep it a
    *  plain code chip. Absent → all inline code stays plain (used only in the spec/plan panes). */
-  resolveFileLink?: (
-    raw: string,
-  ) => { url: string; onSelect: () => void } | null;
+  resolveFileLink?: (raw: string) => { url: string; onSelect: () => void } | null;
 }) {
   const components = useMemo<Components>(() => {
     if (!resolveRelativeLink && !resolveFileLink) return COMPONENTS;
     const next: Components = { ...COMPONENTS };
     if (resolveRelativeLink) {
       next.a = ({ href, children }) => {
-        const r =
-          isRelativeHref(href) || isContextHref(href)
-            ? resolveRelativeLink(href)
-            : null;
+        const r = isRelativeHref(href) || isContextHref(href) ? resolveRelativeLink(href) : null;
         if (!r) return <ExternalAnchor href={href}>{children}</ExternalAnchor>;
         return (
           <a
@@ -1108,21 +1026,14 @@ export const Markdown = memo(function Markdown({
             onClick={(e) => {
               // Let the browser handle modified / non-left clicks (new tab/window) — they open `r.url`,
               // a real deep link. Intercept only a plain left-click for in-app SPA navigation.
-              if (
-                e.metaKey ||
-                e.ctrlKey ||
-                e.shiftKey ||
-                e.altKey ||
-                e.button !== 0
-              )
-                return;
+              if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
               e.preventDefault();
               r.onSelect();
             }}
             className="cursor-pointer text-accent"
             style={{
-              textDecoration: "none",
-              borderBottom: "1px solid var(--accent-line)",
+              textDecoration: 'none',
+              borderBottom: '1px solid var(--accent-line)',
             }}
           >
             {children}
@@ -1131,17 +1042,13 @@ export const Markdown = memo(function Markdown({
       };
     }
     if (resolveFileLink) {
-      next.code = ({ className, children }) =>
-        renderCode({ className, children, resolveFileLink });
+      next.code = ({ className, children }) => renderCode({ className, children, resolveFileLink });
     }
     return next;
   }, [resolveRelativeLink, resolveFileLink]);
   return (
     <div className="text-[14px] leading-[1.62] text-text [overflow-wrap:anywhere]">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkShortcodeIcons]}
-        components={components}
-      >
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkShortcodeIcons]} components={components}>
         {children}
       </ReactMarkdown>
     </div>

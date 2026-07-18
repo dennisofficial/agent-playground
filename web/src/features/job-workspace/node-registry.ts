@@ -1,6 +1,6 @@
-import type { PipelineJob } from "@/lib/api/types";
-import { threadLane } from "./phases";
-import { codexReviewLane } from "./codex-review";
+import type { PipelineJob } from '@/lib/api/types';
+import { codexReviewLane } from './codex-review';
+import { threadLane } from './phases';
 
 /**
  * THE NODE REGISTRY — the single source of truth for how a navigator `?node=`/`?lane=` token is
@@ -15,7 +15,7 @@ import { codexReviewLane } from "./codex-review";
  * `pipeline-tree`).
  */
 
-export type NodeResolution = "loading" | "found" | "not_found";
+export type NodeResolution = 'loading' | 'found' | 'not_found';
 
 // ── node-id builders ─────────────────────────────────────────────────────────────────────────────
 /** Every conversational thread — a build/leg thread AND a review CHILD thread (a `review_agent` or the
@@ -27,15 +27,13 @@ export const threadNode = (threadId: string): string => threadId;
 // ── stacked repo-file view id (rides its own `?file=` param, like `subagent:` rides `?sub=`) ─────────
 /** A stacked repo-file view id: `file:<path>` with an optional `::L<a>[-<b>]` line target. */
 export const fileNode = (path: string, lines?: string): string =>
-  `file:${path}${lines ? `::L${lines}` : ""}`;
+  `file:${path}${lines ? `::L${lines}` : ''}`;
 
 /** Parse a `file:<path>[::L<lines>]` token back to its parts, or null if it isn't a file node. */
-export function parseFileNode(
-  token: string,
-): { path: string; lines: string | null } | null {
-  if (!token.startsWith("file:")) return null;
-  const rest = token.slice("file:".length);
-  const i = rest.indexOf("::L");
+export function parseFileNode(token: string): { path: string; lines: string | null } | null {
+  if (!token.startsWith('file:')) return null;
+  const rest = token.slice('file:'.length);
+  const i = rest.indexOf('::L');
   return i >= 0
     ? { path: rest.slice(0, i), lines: rest.slice(i + 3) }
     : { path: rest, lines: null };
@@ -43,13 +41,7 @@ export function parseFileNode(
 
 // ── placement: which pane a node opens in ───────────────────────────────────────────────────────
 /** Literals that render from card/derived data in the RIGHT detail pane. */
-const DETAIL_LITERALS = new Set([
-  "plan",
-  "decision",
-  "diff",
-  "created",
-  "blocked-by",
-]);
+const DETAIL_LITERALS = new Set(['plan', 'decision', 'diff', 'created', 'blocked-by']);
 /** Prefixed detail-pane nodes (files, ports, services, section plans). Review lenses (`rev:`) and the
  *  post-review fix turn (`fix:`) are THREADS, not detail nodes — they open in the LEFT lane pane like the
  *  build/Codex-review threads (the RIGHT pane is reserved for tool-called sub-agents + outputs/docs). */
@@ -63,13 +55,7 @@ export function isDetailNode(node: string): boolean {
 
 // ── resolution (a stale `?node=`/`?lane=` → not-found) ──────────────────────────────────────────
 /** Literals that render from card / derived data — no live-id dependency, always resolvable. */
-const ID_FREE_NODES = new Set([
-  "plan",
-  "decision",
-  "diff",
-  "created",
-  "blocked-by",
-]);
+const ID_FREE_NODES = new Set(['plan', 'decision', 'diff', 'created', 'blocked-by']);
 
 /**
  * Classify a node token against the live job. Job-derived tokens (`secplan:` carries a thread id; a bare
@@ -87,48 +73,41 @@ export function resolveNode(
   job: PipelineJob | null,
   loading: boolean,
 ): NodeResolution {
-  if (ID_FREE_NODES.has(node)) return "found";
+  if (ID_FREE_NODES.has(node)) return 'found';
   if (
-    node.startsWith("spec:") ||
-    node.startsWith("gen:") ||
-    node.startsWith("artifact:") ||
-    node.startsWith("evidence:")
+    node.startsWith('spec:') ||
+    node.startsWith('gen:') ||
+    node.startsWith('artifact:') ||
+    node.startsWith('evidence:')
   )
-    return "found";
+    return 'found';
   // Subagent runs self-handle a missing run inside SubagentView. Always resolvable.
-  if (node.startsWith("subagent:")) return "found";
+  if (node.startsWith('subagent:')) return 'found';
   // A stacked repo-file view self-handles a missing/deleted file inside FilePane. Always resolvable.
-  if (node.startsWith("file:")) return "found";
+  if (node.startsWith('file:')) return 'found';
   // The Codex review lane self-handles an empty transcript inside TranscriptView. Always resolvable.
-  if (node.startsWith("codex-review:")) return "found";
+  if (node.startsWith('codex-review:')) return 'found';
   // Supervised services self-handle a missing marker inside ServiceLogView — always resolvable, like ports.
-  if (node.startsWith("service:")) return "found";
+  if (node.startsWith('service:')) return 'found';
 
   // A background refetch can flip React Query to `error` (or briefly `loading`) while it STILL holds the
   // last-good pipeline; resolve against that cached `job` rather than blanking a node that still exists. Only
   // when there is genuinely no job do loading/error decide the fallback (loading → spinner; else not_found).
-  if (!job) return loading ? "loading" : "not_found";
+  if (!job) return loading ? 'loading' : 'not_found';
 
-  if (node.startsWith("secplan:"))
-    return hasThread(job, node.slice("secplan:".length))
-      ? "found"
-      : "not_found";
+  if (node.startsWith('secplan:'))
+    return hasThread(job, node.slice('secplan:'.length)) ? 'found' : 'not_found';
   // Bare token — a thread (a builder leg is just an ordinary thread row) or a review CHILD thread (a
   // `review_agent` / `review_fix` row). A review child legitimately exists even before its lens has run (an
   // empty transcript is a TranscriptView empty-state, not a not-found).
   const matches = job.threadGroups.some((st) =>
-    st.threads.some(
-      (t) => t.id === node || (t.children ?? []).some((c) => c.id === node),
-    ),
+    st.threads.some((t) => t.id === node || (t.children ?? []).some((c) => c.id === node)),
   );
-  return matches ? "found" : "not_found";
+  return matches ? 'found' : 'not_found';
 }
 
 function hasThread(job: PipelineJob, id: string): boolean {
-  return (
-    id.length > 0 &&
-    job.threadGroups.some((st) => st.threads.some((t) => t.id === id))
-  );
+  return id.length > 0 && job.threadGroups.some((st) => st.threads.some((t) => t.id === id));
 }
 
 // ── conversation /context link → node id ────────────────────────────────────────────────────────
@@ -144,22 +123,21 @@ function hasThread(job: PipelineJob, id: string): boolean {
 export function contextConvoNodeForHref(href: string): string | null {
   const clean = href
     .split(/[?#]/)[0]
-    .replace(/^\/context\//, "")
-    .replace(/^\//, "");
-  const [bucket, ...rest] = clean.split("/");
+    .replace(/^\/context\//, '')
+    .replace(/^\//, '');
+  const [bucket, ...rest] = clean.split('/');
   const prefix =
-    bucket === "specs"
-      ? "spec:"
-      : bucket === "generated"
-        ? "gen:"
-        : bucket === "artifacts"
-          ? "artifact:"
-          : bucket === "evidence"
-            ? "evidence:"
+    bucket === 'specs'
+      ? 'spec:'
+      : bucket === 'generated'
+        ? 'gen:'
+        : bucket === 'artifacts'
+          ? 'artifact:'
+          : bucket === 'evidence'
+            ? 'evidence:'
             : null;
-  if (!prefix || rest.length === 0 || rest.some((s) => s === "" || s === ".."))
-    return null;
-  return prefix + rest.join("/");
+  if (!prefix || rest.length === 0 || rest.some((s) => s === '' || s === '..')) return null;
+  return prefix + rest.join('/');
 }
 
 // ── transcript lane for a node (null = not a transcript-backed node) ────────────────────────────
@@ -169,12 +147,8 @@ export function contextConvoNodeForHref(href: string): string | null {
  * their own view components. `jobId` is needed for the job-scoped Codex/fix lanes; `job` locates a step's
  * owning thread.
  */
-export function nodeLane(
-  node: string,
-  jobId: string,
-  job: PipelineJob | null,
-): string | null {
-  if (node.startsWith("codex-review:")) return codexReviewLane(jobId);
+export function nodeLane(node: string, jobId: string, job: PipelineJob | null): string | null {
+  if (node.startsWith('codex-review:')) return codexReviewLane(jobId);
   if (!job) return null;
   const threads = job.threadGroups.flatMap((s) => s.threads);
   // A review CHILD thread (review_agent / review_fix) → the lane the backend already computed for it

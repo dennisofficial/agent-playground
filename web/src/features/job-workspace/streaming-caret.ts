@@ -17,7 +17,7 @@ export function streamingBlockKeys(
 ): Set<string> {
   if (!active) return new Set();
   const keys = new Set<string>();
-  for (const kind of ["text", "thinking"] as const) {
+  for (const kind of ['text', 'thinking'] as const) {
     for (let i = blocks.length - 1; i >= 0; i--) {
       const b = blocks[i];
       if (b.parentToolUseId != null) continue; // subagent block — not rendered here

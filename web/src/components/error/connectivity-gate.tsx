@@ -1,9 +1,9 @@
-"use client";
+'use client';
 
-import type { ReactNode } from "react";
-import { OfflineIndicator } from "@/components/error/offline-indicator";
-import { ReconnectingBanner } from "@/components/error/reconnecting-banner";
-import { useConnectivity } from "@/lib/api/connectivity";
+import { OfflineIndicator } from '@/components/error/offline-indicator';
+import { ReconnectingBanner } from '@/components/error/reconnecting-banner';
+import { useConnectivity } from '@/lib/api/connectivity';
+import type { ReactNode } from 'react';
 
 /**
  * Surfaces global backend-connectivity loss while the operator is mid-session. The shell + Composer
@@ -21,8 +21,8 @@ export function ConnectivityGate({ children }: { children: ReactNode }) {
   return (
     <>
       {children}
-      {status === "reconnecting" ? <ReconnectingBanner /> : null}
-      {status === "offline" ? <OfflineIndicator /> : null}
+      {status === 'reconnecting' ? <ReconnectingBanner /> : null}
+      {status === 'offline' ? <OfflineIndicator /> : null}
     </>
   );
 }

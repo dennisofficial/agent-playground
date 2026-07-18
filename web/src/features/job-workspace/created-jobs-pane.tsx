@@ -1,18 +1,13 @@
-"use client";
+'use client';
 
-import Link from "next/link";
-import {
-  GitFork,
-  GitMerge,
-  GitPullRequest,
-  GitPullRequestClosed,
-} from "lucide-react";
-import { threadHref } from "@/lib/routes";
-import type { CreatedJobRow, JobRef } from "@/lib/api/job-api";
-import { useJobCreatedJobs } from "@/lib/api/job-queries";
-import { STATUS_META, toJobStatus } from "@/lib/api/status";
-import type { WireJobStatus } from "@/lib/api/types";
-import { StatusPie } from "@/components/ui/badges";
+import { StatusPie } from '@/components/ui/badges';
+import type { CreatedJobRow, JobRef } from '@/lib/api/job-api';
+import { useJobCreatedJobs } from '@/lib/api/job-queries';
+import { STATUS_META, toJobStatus } from '@/lib/api/status';
+import type { WireJobStatus } from '@/lib/api/types';
+import { threadHref } from '@/lib/routes';
+import { GitFork, GitMerge, GitPullRequest, GitPullRequestClosed } from 'lucide-react';
+import Link from 'next/link';
 
 /**
  * The "Created jobs" detail pane — every job Atlas spawned FROM this one (`GET …/jobs/:jobId/created`), so
@@ -30,9 +25,7 @@ export function CreatedJobsPane({ jobRef }: { jobRef: JobRef }) {
     return (
       <div className="flex flex-col items-center gap-2 px-6 py-12 text-center">
         <GitFork size={22} className="text-faint" />
-        <p className="text-[13px] font-medium text-text">
-          No jobs spawned yet
-        </p>
+        <p className="text-[13px] font-medium text-text">No jobs spawned yet</p>
         <p className="max-w-xs text-[12px] leading-snug text-dim">
           When this job kicks off follow-up work, the new jobs show up here.
         </p>
@@ -52,13 +45,7 @@ export function CreatedJobsPane({ jobRef }: { jobRef: JobRef }) {
   );
 }
 
-function CreatedJobItem({
-  job,
-  jobRef,
-}: {
-  job: CreatedJobRow;
-  jobRef: JobRef;
-}) {
+function CreatedJobItem({ job, jobRef }: { job: CreatedJobRow; jobRef: JobRef }) {
   const status = toJobStatus(job.status as WireJobStatus);
   const meta = STATUS_META[status];
   const href = threadHref({
@@ -74,7 +61,7 @@ function CreatedJobItem({
       <div className="flex items-center gap-2">
         <StatusPie status={status} size={13} />
         <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-text">
-          {job.title || "Untitled job"}
+          {job.title || 'Untitled job'}
         </span>
       </div>
       <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
@@ -94,16 +81,13 @@ function CreatedJobItem({
  *  navigator header and sidebar already follow — see `prGlyph` in `badges.tsx`. */
 function PrStateChip({ state }: { state: string }) {
   const { Icon, color, label } =
-    state === "merged"
-      ? { Icon: GitMerge, color: "var(--purple)", label: "merged" }
-      : state === "closed"
-        ? { Icon: GitPullRequestClosed, color: "var(--red)", label: "closed" }
-        : { Icon: GitPullRequest, color: "var(--green)", label: "open" };
+    state === 'merged'
+      ? { Icon: GitMerge, color: 'var(--purple)', label: 'merged' }
+      : state === 'closed'
+        ? { Icon: GitPullRequestClosed, color: 'var(--red)', label: 'closed' }
+        : { Icon: GitPullRequest, color: 'var(--green)', label: 'open' };
   return (
-    <span
-      className="flex items-center gap-1 font-mono text-[9.5px] uppercase"
-      style={{ color }}
-    >
+    <span className="flex items-center gap-1 font-mono text-[9.5px] uppercase" style={{ color }}>
       <Icon size={10} />
       {label}
     </span>

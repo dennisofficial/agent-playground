@@ -14,24 +14,24 @@ export function formatBytes(n: number): string {
  * echoing raw ids like `claude-opus-4-8`.
  */
 export function formatModelLabel(model?: string, engine?: string): string | null {
-  const id = model?.toLowerCase() ?? "";
-  if (id.includes("opus")) return "Opus 4.8";
-  if (id.includes("sonnet")) return "Sonnet";
-  if (id.includes("haiku")) return "Haiku";
-  if (id.includes("gpt") || id.includes("codex") || id.includes("o3") || id.includes("o4"))
-    return "Codex";
-  if (engine === "codex") return "Codex";
-  if (engine === "claude") return "Claude";
+  const id = model?.toLowerCase() ?? '';
+  if (id.includes('opus')) return 'Opus 4.8';
+  if (id.includes('sonnet')) return 'Sonnet';
+  if (id.includes('haiku')) return 'Haiku';
+  if (id.includes('gpt') || id.includes('codex') || id.includes('o3') || id.includes('o4'))
+    return 'Codex';
+  if (engine === 'codex') return 'Codex';
+  if (engine === 'claude') return 'Claude';
   return null;
 }
 
 const EFFORT_LABELS: Record<string, string> = {
-  minimal: "Minimal",
-  low: "Low",
-  medium: "Medium",
-  high: "High",
-  xhigh: "xHigh",
-  max: "Max",
+  minimal: 'Minimal',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'xHigh',
+  max: 'Max',
 };
 
 /** A friendly display label for a reasoning-effort value (`xhigh` → `xHigh`). Null when unset. */

@@ -1,31 +1,22 @@
-"use client";
+'use client';
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Drawer } from '@/components/ui/drawer';
+import { useBreakpoint } from '@/hooks/use-breakpoint';
+import { useAllJobs } from '@/lib/api/inbox';
+import { pipelineJob, type JobRef } from '@/lib/api/job-api';
+import { useJobEvents } from '@/lib/api/job-events';
 import {
-  Group,
-  Panel,
-  Separator,
-  useDefaultLayout,
-  useGroupRef,
-} from "react-resizable-panels";
-import { useBreakpoint } from "@/hooks/use-breakpoint";
-import { Drawer } from "@/components/ui/drawer";
-import { useAllJobs } from "@/lib/api/inbox";
-import {
-  useJobMessages,
-  usePipeline,
-  useJobContext,
   useDeleteJob,
+  useJobContext,
+  useJobMessages,
+  useMessage,
+  usePipeline,
   useRenameJob,
   useSetAutoApprove,
   useSetAutoMerge,
-  useMessage,
-} from "@/lib/api/job-queries";
-import { useJobEvents } from "@/lib/api/job-events";
-import { MAIN_LANE } from "@/lib/api/job-stream";
-import { toJobKind, toJobStatus } from "@/lib/api/status";
-import { orgSwatch } from "@/utils/org-display";
-import { pipelineJob, type JobRef } from "@/lib/api/job-api";
+} from '@/lib/api/job-queries';
+import { MAIN_LANE } from '@/lib/api/job-stream';
+import { toJobKind, toJobStatus } from '@/lib/api/status';
 import {
   APPROVE_ACTION_ID,
   SHIP_ACTION_ID,
@@ -33,16 +24,19 @@ import {
   type JobKind,
   type JobStatus,
   type WebApprovalCard,
-} from "@/lib/api/types";
-import { Navigator, type JobMeta } from "./navigator";
-import { Conversation } from "./conversation";
-import { MarkdownActionsProvider } from "./markdown";
-import { PhaseView, EmptyPane, SubagentPane, FilePane } from "./step-view";
-import { PersistentApprovalBar, PersistentShipBar } from "./spec-approval";
-import { useSelectedNode } from "./use-selected-node";
-import { ReviewCommentsProvider } from "./review-comments";
-import { SelectionCommentPopover } from "./selection-comment-popover";
-import { DeleteJobPrDialog } from "./delete-job-pr-dialog";
+} from '@/lib/api/types';
+import { orgSwatch } from '@/utils/org-display';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Group, Panel, Separator, useDefaultLayout, useGroupRef } from 'react-resizable-panels';
+import { Conversation } from './conversation';
+import { DeleteJobPrDialog } from './delete-job-pr-dialog';
+import { MarkdownActionsProvider } from './markdown';
+import { Navigator, type JobMeta } from './navigator';
+import { ReviewCommentsProvider } from './review-comments';
+import { SelectionCommentPopover } from './selection-comment-popover';
+import { PersistentApprovalBar, PersistentShipBar } from './spec-approval';
+import { EmptyPane, FilePane, PhaseView, SubagentPane } from './step-view';
+import { useSelectedNode } from './use-selected-node';
 
 /**
  * The thread workspace — the navigator (pipeline / state panels) + the work column (Conversation or
@@ -50,14 +44,10 @@ import { DeleteJobPrDialog } from "./delete-job-pr-dialog";
  * the server-owned thread-list fields (no longer fed from here); this just renders the open thread.
  */
 export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
-  const ref = useMemo<JobRef>(
-    () => ({ orgId, repoId, jobId }),
-    [orgId, repoId, jobId],
-  );
+  const ref = useMemo<JobRef>(() => ({ orgId, repoId, jobId }), [orgId, repoId, jobId]);
 
   const { data: inbox } = useAllJobs();
-  const { data: messages = [], isLoading: messagesLoading } =
-    useJobMessages(ref);
+  const { data: messages = [], isLoading: messagesLoading } = useJobMessages(ref);
   const { data: pipeline, isLoading: pipelineLoading } = usePipeline(ref);
   const { data: context, isLoading: contextLoading } = useJobContext(ref);
   const del = useDeleteJob(ref);
@@ -72,8 +62,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   const sendMessage = useMessage(ref).mutate;
   const markdownActions = useMemo(
     () => ({
-      sendToThread: (text: string) =>
-        sendMessage({ messages: [{ type: "user", text }] }),
+      sendToThread: (text: string) => sendMessage({ messages: [{ type: 'user', text }] }),
     }),
     [sendMessage],
   );
@@ -98,9 +87,9 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   // Persist the conversation/detail split ratio across reloads (per-browser). `panelIds` lets the
   // library remember the layout even though the detail panel is only conditionally mounted.
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
-    id: "thread-work-split",
-    panelIds: ["conversation", "detail"],
-    storage: typeof window === "undefined" ? undefined : window.localStorage,
+    id: 'thread-work-split',
+    panelIds: ['conversation', 'detail'],
+    storage: typeof window === 'undefined' ? undefined : window.localStorage,
   });
   const groupRef = useGroupRef();
 
@@ -131,30 +120,27 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   }, [laneNode, detailNode]);
 
   const openNav = () => setNavOpen(true);
-  const openDetail = () => selectNode(lastDetail.current ?? "plan");
+  const openDetail = () => selectNode(lastDetail.current ?? 'plan');
 
-  const inboxThread = useMemo(
-    () => inbox?.find((t) => t.id === jobId),
-    [inbox, jobId],
-  );
+  const inboxThread = useMemo(() => inbox?.find((t) => t.id === jobId), [inbox, jobId]);
   const job = pipelineJob(pipeline);
 
   // Prefer the pipeline job; fall back to the sidebar feed (resolves earlier). null = genuinely unknown.
   const prState = job?.prState ?? inboxThread?.pr?.state ?? null;
   const prUrl = job?.prUrl ?? inboxThread?.pr?.url ?? null;
   const prNumber = job?.prNumber ?? null;
-  const hasOpenPr = prState === "open" && Boolean(prUrl);
+  const hasOpenPr = prState === 'open' && Boolean(prUrl);
   // PR state is "known" once EITHER source has resolved; until then, block delete (don't leave-orphan).
   const prStateKnown = job != null || inboxThread != null;
   const [prDialogOpen, setPrDialogOpen] = useState(false);
 
   const pipelineKind = job ? toJobKind(job.kind) : null;
-  const kind: JobKind = inboxThread?.kind ?? pipelineKind ?? "feat";
+  const kind: JobKind = inboxThread?.kind ?? pipelineKind ?? 'feat';
   const status: JobStatus = job
     ? toJobStatus(job.status)
-    : kind === "event"
-      ? "triaging"
-      : "planning";
+    : kind === 'event'
+      ? 'triaging'
+      : 'planning';
 
   // The LAST plan-approval card in the log (kind `plan`/`direct`/undefined — never the ship-review card
   // or the brain's `amend` proposal, which are distinct gates with their own inline rendering). A POSITIVE
@@ -163,8 +149,8 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
       const card = messages[i].card;
       if (
-        card?.type === "approval_card" &&
-        (card.kind === "plan" || card.kind === "direct" || card.kind == null)
+        card?.type === 'approval_card' &&
+        (card.kind === 'plan' || card.kind === 'direct' || card.kind == null)
       )
         return card;
     }
@@ -175,7 +161,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   const shipCard = useMemo<WebApprovalCard | null>(() => {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
       const card = messages[i].card;
-      if (card?.type === "approval_card" && card.kind === "ship") return card;
+      if (card?.type === 'approval_card' && card.kind === 'ship') return card;
     }
     return null;
   }, [messages]);
@@ -187,39 +173,34 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   // always carries its job + decision record on the pipeline even when no `approval_card` message exists.
   const approveValue = useMemo<string>(() => {
     const fromCard =
-      approvalCard?.actions.find((a) => a.actionId === APPROVE_ACTION_ID)
-        ?.value ?? approvalCard?.actions[0]?.value;
+      approvalCard?.actions.find((a) => a.actionId === APPROVE_ACTION_ID)?.value ??
+      approvalCard?.actions[0]?.value;
     if (fromCard) return fromCard;
-    if (job && status === "awaiting_approval") {
+    if (job && status === 'awaiting_approval') {
       return JSON.stringify({
         jobId: job.jobId,
-        ...(job.decisionRecordId
-          ? { decisionRecordId: job.decisionRecordId }
-          : {}),
+        ...(job.decisionRecordId ? { decisionRecordId: job.decisionRecordId } : {}),
       });
     }
-    return "";
+    return '';
   }, [approvalCard, job, status]);
-  const awaitingApproval =
-    status === "awaiting_approval" && Boolean(approveValue);
+  const awaitingApproval = status === 'awaiting_approval' && Boolean(approveValue);
   // A direct build (fast path) parks at the same gate but carries `kind: 'direct'` — flip the approve CTA
   // copy to "Approve Direct Build" so the operator can tell the fast path from a full plan at a glance.
-  const isDirectApproval = approvalCard?.kind === "direct";
+  const isDirectApproval = approvalCard?.kind === 'direct';
 
   // The ship-review gate's surfaces render the same way, off the ship card's own `{ jobId }` value —
   // reconstructed from the job alone when no `approval_card` message is in the log yet (a job can reach
   // `awaiting_ship_review` before that durable card lands).
   const shipValue = useMemo<string>(() => {
-    const fromCard = shipCard?.actions.find(
-      (a) => a.actionId === SHIP_ACTION_ID,
-    )?.value;
+    const fromCard = shipCard?.actions.find((a) => a.actionId === SHIP_ACTION_ID)?.value;
     if (fromCard) return fromCard;
-    if (job && status === "awaiting_ship_review") {
+    if (job && status === 'awaiting_ship_review') {
       return JSON.stringify({ jobId: job.jobId });
     }
-    return "";
+    return '';
   }, [shipCard, job, status]);
-  const awaitingShip = status === "awaiting_ship_review" && Boolean(shipValue);
+  const awaitingShip = status === 'awaiting_ship_review' && Boolean(shipValue);
   const specCount = context?.specs?.length ?? 0;
   // Plan-time size preview: a build thread group's `tasks` fold from the SDK's TaskCreate/TaskUpdate calls
   // made DURING execution, so they're always empty at the pre-build approval gate — count the plan's
@@ -228,14 +209,13 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   const stepCount = approvalCard?.threads.length ?? 0;
   // Main's transcript is the planning thread group's own thread (undefined pre-plan, where the single brain
   // thread needs no scoping) — see `Conversation`'s `mainThreadId`.
-  const mainThreadId = job?.threadGroups.find((s) => s.kind === "planning")
-    ?.threads[0]?.id;
+  const mainThreadId = job?.threadGroups.find((s) => s.kind === 'planning')?.threads[0]?.id;
 
   const meta: JobMeta = {
-    title: inboxThread?.title ?? job?.title ?? "Thread",
+    title: inboxThread?.title ?? job?.title ?? 'Thread',
     kind,
     status,
-    orgName: inboxThread?.org.name ?? "Organization",
+    orgName: inboxThread?.org.name ?? 'Organization',
     orgColor: orgSwatch(),
     repoName: inboxThread?.repo.name ?? repoId,
     // Prefer the full pipeline (fresher, and the only source once threads/builds exist); fall back to the
@@ -251,11 +231,11 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
 
   const onConversation = openConversation;
   const onSelectNode = selectNode;
-  const onOpenPlan = () => selectNode("plan");
+  const onOpenPlan = () => selectNode('plan');
   const onRename = (title: string) => rename.mutate(title);
   // Archiving is terminal but the job stays put — the operator remains on this (now read-only) page rather
   // than being navigated away, so there's no `router.push` here.
-  const runDelete = (prAction: "close" | "leave") =>
+  const runDelete = (prAction: 'close' | 'leave') =>
     del.mutate(prAction, {
       onSuccess: () => setPrDialogOpen(false),
     });
@@ -263,7 +243,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   const onDelete = () => {
     if (!prStateKnown) return; // safety: never delete before we know whether a PR is open (button is disabled too)
     if (hasOpenPr) setPrDialogOpen(true);
-    else runDelete("leave"); // confirmed no open PR → today's behavior
+    else runDelete('leave'); // confirmed no open PR → today's behavior
   };
 
   // The navigator, authored once and rendered either inline (xl/lg rail) or inside the left drawer (md/below).
@@ -276,8 +256,8 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
       laneNode={laneNode}
       detailNode={detailNode}
       jobRef={ref}
-      approveValue={awaitingApproval ? approveValue : ""}
-      shipValue={awaitingShip ? shipValue : ""}
+      approveValue={awaitingApproval ? approveValue : ''}
+      shipValue={awaitingShip ? shipValue : ''}
       previewRequestedAt={shipCard?.previewRequestedAt ?? null}
       directBuild={isDirectApproval}
       onConversation={onConversation}
@@ -316,9 +296,9 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
         jobRef={ref}
         messages={messages}
         isLoading={messagesLoading}
-        live={status === "running" || status === "plan_review"}
-        blocked={status === "blocked"}
-        archived={status === "archived"}
+        live={status === 'running' || status === 'plan_review'}
+        blocked={status === 'blocked'}
+        archived={status === 'archived'}
         blockedBy={meta.blockedBy}
         blockedSeedMessage={meta.blockedSeedMessage}
         mainThreadId={mainThreadId}
@@ -332,10 +312,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
 
   // The detail-pane content — the same node body whether it fills the desktop Panel or the right drawer.
   const detailBody = (onBack?: () => void) => (
-    <div
-      data-testid="detail-pane"
-      className="relative flex min-h-0 flex-1 flex-col"
-    >
+    <div data-testid="detail-pane" className="relative flex min-h-0 flex-1 flex-col">
       {subNode ? (
         // A sub-agent stacked on top of the right pane — a second-level page with a breadcrumb back to
         // the base detail node (which stays selected in the navigator underneath).
@@ -412,11 +389,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
               onLayoutChanged={onLayoutChanged}
               className="min-w-0 flex-1 bg-surface"
             >
-              <Panel
-                id="conversation"
-                minSize="28%"
-                className="flex min-w-0 flex-col"
-              >
+              <Panel id="conversation" minSize="28%" className="flex min-w-0 flex-col">
                 {workPane(undefined, undefined)}
               </Panel>
               {/* A 1px divider line, NOT a 6px reserved strip — so both panes (and the detail-pane footers like
@@ -428,18 +401,11 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
               <Separator
                 id="pane-resize-handle"
                 disableDoubleClick
-                onDoubleClick={() =>
-                  groupRef.current?.setLayout({ conversation: 50, detail: 50 })
-                }
+                onDoubleClick={() => groupRef.current?.setLayout({ conversation: 50, detail: 50 })}
                 title="Drag to resize · double-click to center"
                 className="relative w-px bg-border outline-none transition-colors hover:bg-border-2 active:bg-text/50"
               />
-              <Panel
-                id="detail"
-                defaultSize="50%"
-                minSize="32%"
-                className="flex min-w-0 flex-col"
-              >
+              <Panel id="detail" defaultSize="50%" minSize="32%" className="flex min-w-0 flex-col">
                 {detailBody()}
                 {footerBar}
               </Panel>
@@ -456,12 +422,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
             </div>
           )}
           {navAsDrawer ? (
-            <Drawer
-              side="left"
-              open={navOpen}
-              onClose={() => setNavOpen(false)}
-              label="Navigator"
-            >
+            <Drawer side="left" open={navOpen} onClose={() => setNavOpen(false)} label="Navigator">
               {navigatorPane(true)}
             </Drawer>
           ) : null}
@@ -471,9 +432,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
               open={detailDrawerOpen}
               onClose={closeDetail}
               label="Detail"
-              widthClass={
-                isMobile ? "w-full max-w-none" : "w-[min(720px,85vw)]"
-              }
+              widthClass={isMobile ? 'w-full max-w-none' : 'w-[min(720px,85vw)]'}
             >
               <div className="flex h-full min-h-0 flex-col bg-surface">
                 {detailBody(closeDetail)}
@@ -504,12 +463,12 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
  *  Detail nodes are files/docs/ports (never bare thread ids — those open in the left pane), so no job lookup
  *  is needed. */
 function baseCrumbLabel(node: string): string {
-  if (node === "diff") return "Diff";
-  if (node === "plan") return "Plan";
-  if (node === "decision") return "Decision record";
-  if (node === "created") return "Created jobs";
-  if (node === "blocked-by") return "Blocked by";
+  if (node === 'diff') return 'Diff';
+  if (node === 'plan') return 'Plan';
+  if (node === 'decision') return 'Decision record';
+  if (node === 'created') return 'Created jobs';
+  if (node === 'blocked-by') return 'Blocked by';
   const file = /^(?:spec|gen|artifact):(.+)$/.exec(node);
-  if (file) return file[1].split("/").pop() ?? file[1];
+  if (file) return file[1].split('/').pop() ?? file[1];
   return node;
 }

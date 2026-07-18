@@ -1,6 +1,6 @@
-"use client";
+'use client';
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useState } from 'react';
 
 /**
  * File drag-and-drop intake for a region. Returns `isDragging` (true while a FILE drag hovers the region)
@@ -20,8 +20,7 @@ export function useFileDrop(onFiles: (files: File[]) => void, enabled = true) {
   const [isDragging, setIsDragging] = useState(false);
   const depth = useRef(0);
 
-  const hasFiles = (e: React.DragEvent) =>
-    Array.from(e.dataTransfer.types).includes("Files");
+  const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes('Files');
 
   const onDragEnter = useCallback(
     (e: React.DragEvent) => {
@@ -37,7 +36,7 @@ export function useFileDrop(onFiles: (files: File[]) => void, enabled = true) {
     (e: React.DragEvent) => {
       if (!enabled || !hasFiles(e)) return;
       e.preventDefault(); // required — without this the drop is rejected
-      e.dataTransfer.dropEffect = "copy";
+      e.dataTransfer.dropEffect = 'copy';
     },
     [enabled],
   );

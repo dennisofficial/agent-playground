@@ -1,8 +1,8 @@
-"use client";
+'use client';
 
-import { Clock, KeyRound, X } from "lucide-react";
-import type { JobRef } from "@/lib/api/job-api";
-import { composerStore, useComposerStagedAnswers } from "@/lib/api/composer-store";
+import { composerStore, useComposerStagedAnswers } from '@/lib/api/composer-store';
+import type { JobRef } from '@/lib/api/job-api';
+import { Clock, KeyRound, X } from 'lucide-react';
 
 /**
  * The staged-answers tray above the composer ("Web: staged-answers tray" spec) — one chip per staged
@@ -12,15 +12,13 @@ import { composerStore, useComposerStagedAnswers } from "@/lib/api/composer-stor
  */
 export function StagedAnswersTray({ jobRef }: { jobRef: JobRef }) {
   // Submitting entries have left the tray — they're mid-send, rendered by their card's own "sending" shell.
-  const stagedAnswers = useComposerStagedAnswers(jobRef).filter(
-    (a) => !a.submitting,
-  );
+  const stagedAnswers = useComposerStagedAnswers(jobRef).filter((a) => !a.submitting);
   if (stagedAnswers.length === 0) return null;
 
   return (
     <div
       className="mb-2 overflow-hidden rounded-[14px] border border-border bg-surface"
-      style={{ boxShadow: "0 1px 2px rgba(20,18,12,.05)" }}
+      style={{ boxShadow: '0 1px 2px rgba(20,18,12,.05)' }}
     >
       <div className="flex items-center gap-2 px-3 py-[9px] pl-[13px]">
         <span className="grid h-[19px] w-[19px] flex-none place-items-center rounded-[5px] bg-accent-soft text-accent">
@@ -28,11 +26,9 @@ export function StagedAnswersTray({ jobRef }: { jobRef: JobRef }) {
         </span>
         <span className="text-[12px] font-semibold text-text">
           {stagedAnswers.length} staged answer
-          {stagedAnswers.length === 1 ? "" : "s"}
+          {stagedAnswers.length === 1 ? '' : 's'}
         </span>
-        <span className="text-[11px] italic text-faint">
-          sent together when you hit Send
-        </span>
+        <span className="text-[11px] italic text-faint">sent together when you hit Send</span>
         <span className="flex-1" />
         <button
           type="button"
@@ -53,23 +49,19 @@ export function StagedAnswersTray({ jobRef }: { jobRef: JobRef }) {
         >
           <span className="w-0.5 flex-none self-stretch rounded-full bg-accent-line" />
           <div className="min-w-0 flex-1">
-            {a.kind === "question" ? (
+            {a.kind === 'question' ? (
               <>
                 <div className="truncate text-[12.5px] italic leading-snug text-dim">
                   &ldquo;{a.label}&rdquo;
                 </div>
-                <div className="truncate text-[12.5px] leading-snug text-text">
-                  {a.answer}
-                </div>
+                <div className="truncate text-[12.5px] leading-snug text-text">{a.answer}</div>
               </>
-            ) : a.kind === "file" ? (
+            ) : a.kind === 'file' ? (
               <>
                 <div className="truncate font-mono text-[12px] leading-snug text-dim">
                   {a.label}
                 </div>
-                <div className="truncate text-[12.5px] leading-snug text-text">
-                  {a.filename}
-                </div>
+                <div className="truncate text-[12.5px] leading-snug text-text">{a.filename}</div>
               </>
             ) : (
               <div className="flex items-center gap-1.5 text-[12.5px] leading-snug text-text">

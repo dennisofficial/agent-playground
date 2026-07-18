@@ -1,11 +1,6 @@
-import path from "node:path";
-import { mkdir } from "node:fs/promises";
-import {
-  test,
-  expect,
-  type Page,
-  type BrowserContext,
-} from "@playwright/test";
+import { expect, test, type BrowserContext, type Page } from '@playwright/test';
+import { mkdir } from 'node:fs/promises';
+import path from 'node:path';
 
 /**
  * Live end-to-end proof for the retry-recovery UX (Thread 2): while a retry is in flight the working
@@ -21,31 +16,31 @@ import {
  * Data: the seeded rich demo job (`seed:scroll-fixture`).
  */
 
-const DEV_EMAIL = process.env.ADMIN_SEED_EMAIL ?? "admin@atlas.dev";
+const DEV_EMAIL = process.env.ADMIN_SEED_EMAIL ?? 'admin@atlas.dev';
 const DEV_PASSWORD = process.env.ADMIN_SEED_PASSWORD;
 
-const ORG_ID = "e9af869c-309a-466e-ba1b-51b870106b3f";
-const REPO_ID = "63ad1635-966a-427f-8e52-9cc8a8ecfc8b";
-const RICH_JOB_ID = "da700000-0000-4000-8000-000000000104";
-const RICH_BUILDER_THREAD_ID = "da700000-0000-4000-8000-000000002002";
+const ORG_ID = 'e9af869c-309a-466e-ba1b-51b870106b3f';
+const REPO_ID = '63ad1635-966a-427f-8e52-9cc8a8ecfc8b';
+const RICH_JOB_ID = 'da700000-0000-4000-8000-000000000104';
+const RICH_BUILDER_THREAD_ID = 'da700000-0000-4000-8000-000000002002';
 const RICH_BUILDER_LANE = `thread:${RICH_BUILDER_THREAD_ID}`;
 const RICH_PATH = `/workspace/${ORG_ID}~${REPO_ID}~${RICH_JOB_ID}?lane=${RICH_BUILDER_THREAD_ID}`;
 
-const EVIDENCE_DIR = process.env.ATLAS_EVIDENCE_DIR ?? "/context/evidence";
-const AUTH_FILE = path.join(__dirname, ".auth", "retry-user.json");
+const EVIDENCE_DIR = process.env.ATLAS_EVIDENCE_DIR ?? '/context/evidence';
+const AUTH_FILE = path.join(__dirname, '.auth', 'retry-user.json');
 
 test.beforeAll(async ({ browser, baseURL }) => {
-  if (!DEV_PASSWORD) throw new Error("ADMIN_SEED_PASSWORD is required for auth.");
+  if (!DEV_PASSWORD) throw new Error('ADMIN_SEED_PASSWORD is required for auth.');
   const context: BrowserContext = await browser.newContext({
     baseURL,
     storageState: undefined,
   });
   const page: Page = await context.newPage();
-  await page.goto("/auth/login");
-  await page.getByLabel("Email").fill(DEV_EMAIL);
-  await page.getByLabel("Password", { exact: true }).fill(DEV_PASSWORD);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL((url) => !url.pathname.startsWith("/auth/login"));
+  await page.goto('/auth/login');
+  await page.getByLabel('Email').fill(DEV_EMAIL);
+  await page.getByLabel('Password', { exact: true }).fill(DEV_PASSWORD);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await page.waitForURL((url) => !url.pathname.startsWith('/auth/login'));
   await mkdir(path.dirname(AUTH_FILE), { recursive: true });
   await context.storageState({ path: AUTH_FILE });
   await context.close();
@@ -53,7 +48,10 @@ test.beforeAll(async ({ browser, baseURL }) => {
 
 async function shot(page: Page, name: string) {
   await mkdir(EVIDENCE_DIR, { recursive: true });
-  await page.screenshot({ path: `${EVIDENCE_DIR}/${name}.png`, fullPage: false });
+  await page.screenshot({
+    path: `${EVIDENCE_DIR}/${name}.png`,
+    fullPage: false,
+  });
 }
 
 /** Inject a scripted stream frame into the REAL client live-turn store via the dev hook. */
@@ -69,62 +67,57 @@ async function injectFrame(
       const hook = (
         window as unknown as {
           __atlasLiveStream?: {
-            applyStreamFrame: (
-              j: string,
-              lane: string,
-              s: number,
-              e: unknown,
-            ) => void;
+            applyStreamFrame: (j: string, lane: string, s: number, e: unknown) => void;
           };
         }
       ).__atlasLiveStream;
-      if (!hook) throw new Error("__atlasLiveStream dev hook not present");
+      if (!hook) throw new Error('__atlasLiveStream dev hook not present');
       hook.applyStreamFrame(jobId, lane, seq, event);
     },
     { jobId, lane, seq, event },
   );
 }
 
-test.describe("live retry indicator (1440x900)", () => {
+test.describe('live retry indicator (1440x900)', () => {
   test.use({ viewport: { width: 1440, height: 900 }, storageState: AUTH_FILE });
 
   test("turn_retry shows 'Reconnecting to Claude' with a ticking countdown, then reverts on a real turn event", async ({
     page,
   }) => {
     test.setTimeout(90_000);
-    await page.goto(RICH_PATH, { waitUntil: "domcontentloaded" });
+    await page.goto(RICH_PATH, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(3000); // let the workspace hydrate + realtime cache warm
 
     // A high seq base so the injected frames always beat anything already applied for this lane.
     const base = 5_000_000;
     // Open a live build-thread turn so the indicator mounts on the selected builder transcript.
     await injectFrame(page, RICH_JOB_ID, RICH_BUILDER_LANE, base, {
-      kind: "turn_start",
+      kind: 'turn_start',
       startedAt: Date.now(),
     });
     await injectFrame(page, RICH_JOB_ID, RICH_BUILDER_LANE, base + 1, {
-      kind: "text_delta",
-      text: "working…",
+      kind: 'text_delta',
+      text: 'working…',
     });
 
     // Now a host-backstop retry: attempt 3/10, next attempt ~9s out.
     await injectFrame(page, RICH_JOB_ID, RICH_BUILDER_LANE, base + 2, {
-      kind: "turn_retry",
+      kind: 'turn_retry',
       attempt: 3,
       max: 10,
       nextAttemptAt: Date.now() + 9_000,
-      reason: "econnreset",
+      reason: 'econnreset',
     });
 
     const reconnecting = page.getByText(/Reconnecting to Claude — auto-retry 3\/10/);
     await expect(reconnecting).toBeVisible();
     // The countdown clause is present with a whole-second value.
     await expect(page.getByText(/retrying in \d+s/)).toBeVisible();
-    await shot(page, "retry-indicator-reconnecting");
+    await shot(page, 'retry-indicator-reconnecting');
 
     // Countdown ticks DOWN and the indicator stays mounted across the backoff wait.
     const readSecs = async (): Promise<number> => {
-      const txt = (await reconnecting.textContent()) ?? "";
+      const txt = (await reconnecting.textContent()) ?? '';
       const m = txt.match(/retrying in (\d+)s/);
       return m ? Number(m[1]) : NaN;
     };
@@ -136,12 +129,10 @@ test.describe("live retry indicator (1440x900)", () => {
 
     // A real turn event (the retry succeeded) clears `retrying` → back to the normal working indicator.
     await injectFrame(page, RICH_JOB_ID, RICH_BUILDER_LANE, base + 3, {
-      kind: "text_delta",
-      text: "resumed",
+      kind: 'text_delta',
+      text: 'resumed',
     });
-    await expect(
-      page.getByText(/Reconnecting to Claude/),
-    ).toHaveCount(0);
-    await shot(page, "retry-indicator-reverted");
+    await expect(page.getByText(/Reconnecting to Claude/)).toHaveCount(0);
+    await shot(page, 'retry-indicator-reverted');
   });
 });

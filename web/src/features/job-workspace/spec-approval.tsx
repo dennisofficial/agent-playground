@@ -1,22 +1,18 @@
-"use client";
+'use client';
 
-import { Check, ClipboardCheck, Globe, Lock, Undo2 } from "lucide-react";
-import { Spinner } from "@/components/ui/spinner";
-import { Button } from "@/components/ui/button";
-import {
-  useApprove,
-  usePipeline,
-  useSpinUpPreview,
-} from "@/lib/api/job-queries";
-import type { JobRef } from "@/lib/api/job-api";
+import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
+import type { JobRef } from '@/lib/api/job-api';
+import { useApprove, usePipeline, useSpinUpPreview } from '@/lib/api/job-queries';
 import {
   APPROVE_ACTION_ID,
   MERGE_ACTION_ID,
   REQUEST_CHANGES_ACTION_ID,
   RETRACT_SHIP_ACTION_ID,
   SHIP_ACTION_ID,
-} from "@/lib/api/types";
-import { shouldShowSpinUpPreview } from "./spin-up-preview-visibility";
+} from '@/lib/api/types';
+import { Check, ClipboardCheck, Globe, Lock, Undo2 } from 'lucide-react';
+import { shouldShowSpinUpPreview } from './spin-up-preview-visibility';
 
 /**
  * The async spec-approval surfaces (handoff: "Async Spec / Plan Approval Components") — mirrored for
@@ -44,7 +40,7 @@ import { shouldShowSpinUpPreview } from "./spin-up-preview-visibility";
  * the job sits at the matching status, so a successful verdict naturally unmounts them once the refetch
  * lands; a brief in-place "done" state covers the gap.
  */
-const RULED_BY = "U-OPERATOR";
+const RULED_BY = 'U-OPERATOR';
 
 /** Shared verdict action — POSTs a single-button verdict (approve / ship) for the given action id
  *  (idempotent: a second click while pending/succeeded is a no-op). */
@@ -105,22 +101,19 @@ export function NavigatorApprovalCallout({
     <div
       className="mx-1.5 mb-3 rounded-lg border"
       style={{
-        borderColor: "var(--accent-line)",
-        background: "var(--accent-soft)",
-        padding: "10px 11px",
+        borderColor: 'var(--accent-line)',
+        background: 'var(--accent-soft)',
+        padding: '10px 11px',
       }}
     >
       <div className="flex items-center gap-1.5">
         <ClipboardCheck
           size={11}
           strokeWidth={2}
-          style={{ color: "var(--accent)" }}
+          style={{ color: 'var(--accent)' }}
           className="shrink-0"
         />
-        <span
-          className="text-[11px] font-bold"
-          style={{ color: "var(--accent)" }}
-        >
+        <span className="text-[11px] font-bold" style={{ color: 'var(--accent)' }}>
           Plan ready for review
         </span>
       </div>
@@ -131,7 +124,7 @@ export function NavigatorApprovalCallout({
         blocked={retract.pending || retract.approved}
         directBuild={directBuild}
         className="mt-[9px] w-full justify-center text-[11px]"
-        style={{ borderRadius: "7px", padding: "7px 0" }}
+        style={{ borderRadius: '7px', padding: '7px 0' }}
         iconSize={12}
       />
       <RetractButton
@@ -142,14 +135,10 @@ export function NavigatorApprovalCallout({
         idleLabel="Back to planning"
         doneLabel="Back to planning"
         className="mt-1.5 w-full text-[10.5px]"
-        style={{ borderRadius: "7px", padding: "6px 0" }}
+        style={{ borderRadius: '7px', padding: '6px 0' }}
         iconSize={11}
       />
-      {error ? (
-        <p className="mt-1.5 text-[10px] text-red">
-          Couldn’t approve — try again.
-        </p>
-      ) : null}
+      {error ? <p className="mt-1.5 text-[10px] text-red">Couldn’t approve — try again.</p> : null}
     </div>
   );
 }
@@ -177,7 +166,7 @@ export function NavigatorApproveButton({
         blocked={retract.pending || retract.approved}
         directBuild={directBuild}
         className="w-full justify-center text-[11px]"
-        style={{ borderRadius: "7px", padding: "7px 0" }}
+        style={{ borderRadius: '7px', padding: '7px 0' }}
         iconSize={12}
       />
       <RetractButton
@@ -188,14 +177,10 @@ export function NavigatorApproveButton({
         idleLabel="Back to planning"
         doneLabel="Back to planning"
         className="mt-1.5 w-full text-[10.5px]"
-        style={{ borderRadius: "7px", padding: "6px 0" }}
+        style={{ borderRadius: '7px', padding: '6px 0' }}
         iconSize={11}
       />
-      {error ? (
-        <p className="mt-1 text-[10px] text-red">
-          Couldn’t approve — try again.
-        </p>
-      ) : null}
+      {error ? <p className="mt-1 text-[10px] text-red">Couldn’t approve — try again.</p> : null}
     </>
   );
 }
@@ -225,32 +210,32 @@ export function PersistentApprovalBar({
     <div
       className="flex shrink-0 flex-col gap-[11px] border-t sm:flex-row sm:items-center"
       style={{
-        borderColor: "var(--accent-line)",
-        background: "var(--accent-soft)",
-        padding: "10px 16px",
+        borderColor: 'var(--accent-line)',
+        background: 'var(--accent-soft)',
+        padding: '10px 16px',
       }}
     >
       <div className="flex min-w-0 flex-1 items-center gap-[11px]">
         <div
           className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg border"
           style={{
-            background: "var(--panel)",
-            borderColor: "var(--accent-line)",
+            background: 'var(--panel)',
+            borderColor: 'var(--accent-line)',
           }}
         >
-          <Lock size={14} strokeWidth={2} style={{ color: "var(--accent)" }} />
+          <Lock size={14} strokeWidth={2} style={{ color: 'var(--accent)' }} />
         </div>
         <div className="min-w-0 flex-1">
           <div className="text-[11.5px] font-bold text-text">
             {error
-              ? "Couldn’t approve — try again"
+              ? 'Couldn’t approve — try again'
               : approved
-                ? "Plan approved"
-                : "Plan awaiting your approval"}
+                ? 'Plan approved'
+                : 'Plan awaiting your approval'}
           </div>
           <div className="mt-px text-[10px] text-dim">
-            {specCount} spec{specCount === 1 ? "" : "s"} · {stepCount} step
-            {stepCount === 1 ? "" : "s"} · approve from anywhere in this pane
+            {specCount} spec{specCount === 1 ? '' : 's'} · {stepCount} step
+            {stepCount === 1 ? '' : 's'} · approve from anywhere in this pane
           </div>
         </div>
       </div>
@@ -263,7 +248,7 @@ export function PersistentApprovalBar({
           idleLabel="Back to planning"
           doneLabel="Back to planning"
           className="flex-1 justify-center text-[11.5px] sm:flex-none"
-          style={{ borderRadius: "8px", padding: "8px 14px" }}
+          style={{ borderRadius: '8px', padding: '8px 14px' }}
           iconSize={13}
         />
         <ApproveButton
@@ -274,9 +259,9 @@ export function PersistentApprovalBar({
           directBuild={directBuild}
           className="flex-1 justify-center text-[11.5px] sm:flex-none"
           style={{
-            borderRadius: "8px",
-            padding: "8px 15px",
-            border: "1px solid var(--green)",
+            borderRadius: '8px',
+            padding: '8px 15px',
+            border: '1px solid var(--green)',
           }}
           iconSize={13}
         />
@@ -309,7 +294,7 @@ export function NavigatorShipButton({
         approved={approved}
         blocked={retract.pending || retract.approved}
         className="w-full justify-center text-[11px]"
-        style={{ borderRadius: "7px", padding: "7px 0" }}
+        style={{ borderRadius: '7px', padding: '7px 0' }}
         iconSize={12}
       />
       <RetractButton
@@ -320,19 +305,17 @@ export function NavigatorShipButton({
         idleLabel="Amend build"
         doneLabel="Amend build"
         className="mt-1.5 w-full text-[10.5px]"
-        style={{ borderRadius: "7px", padding: "6px 0" }}
+        style={{ borderRadius: '7px', padding: '6px 0' }}
         iconSize={11}
       />
       <SpinUpPreviewButton
         jobRef={jobRef}
         previewRequestedAt={previewRequestedAt}
         className="mt-1.5 w-full text-[10.5px]"
-        style={{ borderRadius: "7px", padding: "6px 0" }}
+        style={{ borderRadius: '7px', padding: '6px 0' }}
         iconSize={11}
       />
-      {error ? (
-        <p className="mt-1 text-[10px] text-red">Couldn’t ship — try again.</p>
-      ) : null}
+      {error ? <p className="mt-1 text-[10px] text-red">Couldn’t ship — try again.</p> : null}
     </>
   );
 }
@@ -342,13 +325,7 @@ export function NavigatorShipButton({
  *  header once the PR is GitHub-mergeable (the THIRD human gate, after Approve/Ship). POSTs the merge
  *  gate's {@link MERGE_ACTION_ID} verdict via the SAME `useApprove` mutation the merge approval card
  *  uses (`ShipActionButton` in approval-card.tsx). */
-export function NavigatorMergeButton({
-  jobRef,
-  value,
-}: {
-  jobRef: JobRef;
-  value: string;
-}) {
+export function NavigatorMergeButton({ jobRef, value }: { jobRef: JobRef; value: string }) {
   const approve = useApprove(jobRef);
   return (
     <>
@@ -364,7 +341,7 @@ export function NavigatorMergeButton({
           })
         }
         className="w-full justify-center text-[11px]"
-        style={{ borderRadius: "7px", padding: "7px 0" }}
+        style={{ borderRadius: '7px', padding: '7px 0' }}
       >
         Merge PR
       </Button>
@@ -389,7 +366,7 @@ export function NavigatorAutoMergingButton() {
       loading
       loadingText="Auto merging…"
       className="w-full justify-center text-[11px]"
-      style={{ borderRadius: "7px", padding: "7px 0" }}
+      style={{ borderRadius: '7px', padding: '7px 0' }}
     >
       Auto merging…
     </Button>
@@ -405,7 +382,7 @@ export function NavigatorAutoMergingButton() {
 function SpinUpPreviewButton({
   jobRef,
   previewRequestedAt,
-  className = "",
+  className = '',
   style,
   iconSize,
 }: {
@@ -429,9 +406,9 @@ function SpinUpPreviewButton({
       disabled={preview.isPending}
       className={`inline-flex items-center justify-center gap-1.5 font-semibold transition hover:brightness-95 disabled:cursor-default disabled:opacity-70 ${className}`}
       style={{
-        color: "var(--blue)",
-        background: "color-mix(in srgb, var(--blue) 12%, transparent)",
-        border: "1px solid color-mix(in srgb, var(--blue) 30%, transparent)",
+        color: 'var(--blue)',
+        background: 'color-mix(in srgb, var(--blue) 12%, transparent)',
+        border: '1px solid color-mix(in srgb, var(--blue) 30%, transparent)',
         ...style,
       }}
     >
@@ -455,41 +432,35 @@ function SpinUpPreviewButton({
  * The ship-review counterpart of {@link PersistentApprovalBar} — a `flex:none` footer pinned to the
  * bottom of the detail pane, so the build can be shipped from anywhere in that column.
  */
-export function PersistentShipBar({
-  jobRef,
-  value,
-}: {
-  jobRef: JobRef;
-  value: string;
-}) {
+export function PersistentShipBar({ jobRef, value }: { jobRef: JobRef; value: string }) {
   const { submit, pending, approved, error } = useApproveShip(jobRef, value);
   const retract = useRetractShip(jobRef, value);
   return (
     <div
       className="flex shrink-0 flex-col gap-[11px] border-t sm:flex-row sm:items-center"
       style={{
-        borderColor: "var(--accent-line)",
-        background: "var(--accent-soft)",
-        padding: "10px 16px",
+        borderColor: 'var(--accent-line)',
+        background: 'var(--accent-soft)',
+        padding: '10px 16px',
       }}
     >
       <div className="flex min-w-0 flex-1 items-center gap-[11px]">
         <div
           className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg border"
           style={{
-            background: "var(--panel)",
-            borderColor: "var(--accent-line)",
+            background: 'var(--panel)',
+            borderColor: 'var(--accent-line)',
           }}
         >
-          <Lock size={14} strokeWidth={2} style={{ color: "var(--accent)" }} />
+          <Lock size={14} strokeWidth={2} style={{ color: 'var(--accent)' }} />
         </div>
         <div className="min-w-0 flex-1">
           <div className="text-[11.5px] font-bold text-text">
             {error
-              ? "Couldn’t ship — try again"
+              ? 'Couldn’t ship — try again'
               : approved
-                ? "Shipped"
-                : "Build reviewed — ready to ship"}
+                ? 'Shipped'
+                : 'Build reviewed — ready to ship'}
           </div>
           <div className="mt-px text-[10px] text-dim">
             Master review passed. Review the diff, then ship when you’re happy.
@@ -505,7 +476,7 @@ export function PersistentShipBar({
           idleLabel="Amend build"
           doneLabel="Amend build"
           className="flex-1 justify-center text-[11.5px] sm:flex-none"
-          style={{ borderRadius: "8px", padding: "8px 14px" }}
+          style={{ borderRadius: '8px', padding: '8px 14px' }}
           iconSize={13}
         />
         <ShipButton
@@ -515,9 +486,9 @@ export function PersistentShipBar({
           blocked={retract.pending || retract.approved}
           className="flex-1 justify-center text-[11.5px] sm:flex-none"
           style={{
-            borderRadius: "8px",
-            padding: "8px 15px",
-            border: "1px solid var(--accent)",
+            borderRadius: '8px',
+            padding: '8px 15px',
+            border: '1px solid var(--accent)',
           }}
           iconSize={13}
         />
@@ -538,8 +509,8 @@ function VerdictButton({
   idleLabel,
   pendingLabel,
   doneLabel,
-  tone = "green",
-  className = "",
+  tone = 'green',
+  className = '',
   style,
   iconSize,
 }: {
@@ -554,7 +525,7 @@ function VerdictButton({
   doneLabel: string;
   /** Fill tone — the shared default is `green`; the ship verdict uses `accent` so "Ship it" matches the
    *  accent-solid primary on the ship card. */
-  tone?: "green" | "accent";
+  tone?: 'green' | 'accent';
   className?: string;
   style?: React.CSSProperties;
   iconSize: number;
@@ -567,13 +538,11 @@ function VerdictButton({
       className={`inline-flex items-center gap-1.5 font-bold text-white transition hover:brightness-95 disabled:cursor-default disabled:opacity-90 ${className}`}
       style={{
         background:
-          tone === "accent"
-            ? "linear-gradient(145deg, var(--accent), var(--accent-2))"
-            : "var(--green)",
+          tone === 'accent'
+            ? 'linear-gradient(145deg, var(--accent), var(--accent-2))'
+            : 'var(--green)',
         boxShadow:
-          tone === "accent"
-            ? "0 5px 16px var(--accent-soft)"
-            : "0 2px 8px var(--green-soft)",
+          tone === 'accent' ? '0 5px 16px var(--accent-soft)' : '0 2px 8px var(--green-soft)',
         ...style,
       }}
     >
@@ -611,7 +580,7 @@ function RetractButton({
   blocked = false,
   idleLabel,
   doneLabel,
-  className = "",
+  className = '',
   style,
   iconSize,
 }: {
@@ -634,8 +603,8 @@ function RetractButton({
       disabled={pending || done || blocked}
       className={`inline-flex items-center justify-center gap-1.5 font-semibold text-dim transition hover:brightness-95 disabled:cursor-default disabled:opacity-70 ${className}`}
       style={{
-        background: "var(--panel)",
-        border: "1px solid var(--border-2)",
+        background: 'var(--panel)',
+        border: '1px solid var(--border-2)',
         ...style,
       }}
     >
@@ -659,14 +628,13 @@ function RetractButton({
 function ApproveButton({
   directBuild,
   ...props
-}: Omit<
-  React.ComponentProps<typeof VerdictButton>,
-  "idleLabel" | "pendingLabel" | "doneLabel"
-> & { directBuild?: boolean }) {
+}: Omit<React.ComponentProps<typeof VerdictButton>, 'idleLabel' | 'pendingLabel' | 'doneLabel'> & {
+  directBuild?: boolean;
+}) {
   return (
     <VerdictButton
       {...props}
-      idleLabel={directBuild ? "Approve Direct Build" : "Approve plan"}
+      idleLabel={directBuild ? 'Approve Direct Build' : 'Approve plan'}
       pendingLabel="Approving…"
       doneLabel="Approved"
     />
@@ -677,7 +645,7 @@ function ApproveButton({
 function ShipButton(
   props: Omit<
     React.ComponentProps<typeof VerdictButton>,
-    "idleLabel" | "pendingLabel" | "doneLabel"
+    'idleLabel' | 'pendingLabel' | 'doneLabel'
   >,
 ) {
   return (

@@ -1,31 +1,24 @@
-"use client";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+'use client';
+import type { JobRef } from '@/lib/api/job-api';
+import { useJobDiff, useJobMessages } from '@/lib/api/job-queries';
+import type { JobDiffFile } from '@/lib/api/types';
 import {
   defaultRangeExtractor,
   useVirtualizer,
   type Range as VirtualRange,
-} from "@tanstack/react-virtual";
-import {
-  Check,
-  ChevronDown,
-  ChevronRight,
-  MessageSquarePlus,
-  Plus,
-  X,
-} from "lucide-react";
-import { useJobDiff, useJobMessages } from "@/lib/api/job-queries";
-import type { JobRef } from "@/lib/api/job-api";
-import type { JobDiffFile } from "@/lib/api/types";
-import { rowsFromHunk, type DiffRow } from "./tool-calls/diff-rows";
-import { anchorEnd, anchorLabel, deriveLineAnchor } from "./diff-anchor";
+} from '@tanstack/react-virtual';
+import { Check, ChevronDown, ChevronRight, MessageSquarePlus, Plus, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { anchorEnd, anchorLabel, deriveLineAnchor } from './diff-anchor';
+import { useReviewComments } from './review-comments';
+import { rowsFromHunk, type DiffRow } from './tool-calls/diff-rows';
 import {
   langFromPath,
   renderTokenLine,
   tokenizeLineSync,
   useEnsureHighlightLangs,
   type ThemedToken,
-} from "./tool-calls/highlight";
-import { useReviewComments } from "./review-comments";
+} from './tool-calls/highlight';
 
 /**
  * The Changes pane — a full-bleed, GitHub-style unified diff of the job's accumulated worktree change.
@@ -40,7 +33,7 @@ import { useReviewComments } from "./review-comments";
  * rows — instead of mounting and syntax-highlighting every file at once.
  */
 
-const NBSP = " ";
+const NBSP = ' ';
 const SIGN = 16;
 /** `fileIdx * HUNK_KEY_STRIDE + hunkIdx` — a per-file-namespaced hunk id that doubles as the same-hunk
  *  contiguity guard: because it encodes `fileIdx`, comparing it also prevents a selection crossing files. */
@@ -49,7 +42,7 @@ const HUNK_KEY_STRIDE = 100_000;
 const MIN_CODE_LEN = 40;
 
 /** First-pass estimates; `measureElement` corrects each once it renders, so these need only be close. */
-const ESTIMATE: Record<DiffItem["kind"], number> = {
+const ESTIMATE: Record<DiffItem['kind'], number> = {
   row: 19,
   hunk: 22,
   file: 40,
@@ -62,19 +55,19 @@ type FileRow = DiffRow & { gIdx: number; fileIdx: number; hunkKey: number };
 
 /** One entry in the flattened, windowed diff list spanning every file. */
 type DiffItem =
-  | { kind: "file"; key: string; file: JobDiffFile; fileIdx: number }
-  | { kind: "note"; key: string; text: string }
-  | { kind: "hunk"; key: string; label: string }
-  | { kind: "row"; key: string; row: FileRow; fileIdx: number; hunkKey: number }
-  | { kind: "comment"; key: string; thread: InlineThread }
-  | { kind: "composer"; key: string };
+  | { kind: 'file'; key: string; file: JobDiffFile; fileIdx: number }
+  | { kind: 'note'; key: string; text: string }
+  | { kind: 'hunk'; key: string; label: string }
+  | { kind: 'row'; key: string; row: FileRow; fileIdx: number; hunkKey: number }
+  | { kind: 'comment'; key: string; thread: InlineThread }
+  | { kind: 'composer'; key: string };
 
 /** A comment rendered inline on the diff, in one of its two persisted states (the third — `composing` —
  *  is the live `InlineComposer`). `queued` lives in the composer store until sent; `sent` is read back
  *  from the job's `review_comments_card` messages so it stays anchored after the batch goes out. */
 type InlineThread = {
   key: string;
-  state: "queued" | "sent";
+  state: 'queued' | 'sent';
   label: string;
   note: string;
   /** Only queued comments can be removed (they haven't left the composer yet). */
@@ -111,9 +104,7 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
   const [hoveredThreadKey, setHoveredThreadKey] = useState<string | null>(null);
   // File keys whose body (hunks/rows/comments) is collapsed; the sticky header stays. In-memory for the
   // session, keyed by `fileKey`. Empty = every file expanded (the default).
-  const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(
-    () => new Set(),
-  );
+  const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(() => new Set());
   const toggleFile = useCallback((key: string) => {
     setCollapsedFiles((prev) => {
       const next = new Set(prev);
@@ -138,22 +129,26 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
     let gIdx = 0;
 
     files.forEach((file, fileIdx) => {
-      structural.push({ kind: "file", key: fileKey(file), file, fileIdx });
+      structural.push({ kind: 'file', key: fileKey(file), file, fileIdx });
       const fileRows: FileRow[] = [];
       const lineMap = new Map<string, number>();
       if (file.binary) {
-        structural.push({ kind: "note", key: `note:${fileIdx}`, text: "Binary file" });
+        structural.push({
+          kind: 'note',
+          key: `note:${fileIdx}`,
+          text: 'Binary file',
+        });
       } else if (file.hunks.length === 0) {
         structural.push({
-          kind: "note",
+          kind: 'note',
           key: `note:${fileIdx}`,
-          text: "Diff hidden — file too large",
+          text: 'Diff hidden — file too large',
         });
       } else {
         file.hunks.forEach((hunk, hi) => {
           const hunkKey = fileIdx * HUNK_KEY_STRIDE + hi;
           structural.push({
-            kind: "hunk",
+            kind: 'hunk',
             key: `hunk:${fileIdx}:${hi}`,
             label: `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`,
           });
@@ -170,16 +165,20 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
             if (row.code.length > maxCodeLen) maxCodeLen = row.code.length;
             rowsByGIdx[gIdx] = row;
             fileRows.push(row);
-            structural.push({ kind: "row", key: `row:${gIdx}`, row, fileIdx, hunkKey });
+            structural.push({
+              kind: 'row',
+              key: `row:${gIdx}`,
+              row,
+              fileIdx,
+              hunkKey,
+            });
             gIdx++;
           }
         });
       }
       rowsByFile[fileIdx] = fileRows;
       lineMapByFile[fileIdx] = lineMap;
-      lastIdxByFile[fileIdx] = fileRows.length
-        ? fileRows[fileRows.length - 1].gIdx
-        : -1;
+      lastIdxByFile[fileIdx] = fileRows.length ? fileRows[fileRows.length - 1].gIdx : -1;
     });
 
     return {
@@ -222,10 +221,7 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
     // Map a stored line anchor (side + end line) back to the file-local row it docks under, so a queued/sent
     // comment re-attaches exactly where it was made. Falls back across sides, then to the file's last row,
     // so a comment never disappears even if its exact line isn't present.
-    const anchorIdxFor = (
-      fileIdx: number,
-      a: { oldEnd?: number; newEnd?: number },
-    ): number => {
+    const anchorIdxFor = (fileIdx: number, a: { oldEnd?: number; newEnd?: number }): number => {
       const lastIdx = built.lastIdxByFile[fileIdx] ?? -1;
       const end = anchorEnd(a);
       if (!end) return lastIdx;
@@ -239,20 +235,19 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
     };
     const rowsForAnchor = (
       fileIdx: number,
-      a: { oldStart?: number; oldEnd?: number; newStart?: number; newEnd?: number },
+      a: {
+        oldStart?: number;
+        oldEnd?: number;
+        newStart?: number;
+        newEnd?: number;
+      },
     ): number[] => {
       const out: number[] = [];
       for (const r of built.rowsByFile[fileIdx] ?? []) {
         const inOld =
-          a.oldStart != null &&
-          r.oldNo != null &&
-          r.oldNo >= a.oldStart &&
-          r.oldNo <= a.oldEnd!;
+          a.oldStart != null && r.oldNo != null && r.oldNo >= a.oldStart && r.oldNo <= a.oldEnd!;
         const inNew =
-          a.newStart != null &&
-          r.newNo != null &&
-          r.newNo >= a.newStart &&
-          r.newNo <= a.newEnd!;
+          a.newStart != null && r.newNo != null && r.newNo >= a.newStart && r.newNo <= a.newEnd!;
         if (inOld || inNew) out.push(r.gIdx);
       }
       return out;
@@ -260,7 +255,12 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
     const add = (
       fileIdx: number,
       thread: InlineThread,
-      lines: { oldStart?: number; oldEnd?: number; newStart?: number; newEnd?: number },
+      lines: {
+        oldStart?: number;
+        oldEnd?: number;
+        newStart?: number;
+        newEnd?: number;
+      },
     ) => {
       const rows = rowsForAnchor(fileIdx, lines);
       rowsByKey.set(thread.key, rows);
@@ -272,7 +272,7 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
     };
 
     for (const m of messages ?? []) {
-      if (m.card?.type !== "review_comments_card") continue;
+      if (m.card?.type !== 'review_comments_card') continue;
       m.card.items.forEach((it, i) => {
         if (!it.lines) return;
         const fileIdx = fileIdxByPath.get(it.lines.path);
@@ -281,9 +281,9 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
           fileIdx,
           {
             key: `sent:${m.ts}:${i}`,
-            state: "sent",
+            state: 'sent',
             label: anchorLabel(it.lines),
-            note: it.note ?? "",
+            note: it.note ?? '',
           },
           it.lines,
         );
@@ -297,7 +297,7 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
         fileIdx,
         {
           key: `queued:${c.id}`,
-          state: "queued",
+          state: 'queued',
           label: anchorLabel(c.lines),
           note: c.note,
           onRemove: () => removeComment(c.id),
@@ -319,26 +319,25 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
   // skeleton or comment set changes — NOT while dragging (the composer, which does depend on selection, is
   // spliced separately below).
   const baseItems = useMemo(() => {
-    if (threadsByGIdx.size === 0 && collapsedFiles.size === 0)
-      return built.structural;
+    if (threadsByGIdx.size === 0 && collapsedFiles.size === 0) return built.structural;
     const out: DiffItem[] = [];
     // Structural items run in file order: a `file` item, then that file's note/hunk/row items, then the
     // next file. Flip `collapsed` at each header and skip the collapsed file's body (and its docked
     // comments), keeping only the header itself.
     let collapsed = false;
     for (const item of built.structural) {
-      if (item.kind === "file") {
+      if (item.kind === 'file') {
         collapsed = collapsedFiles.has(item.key);
         out.push(item);
         continue;
       }
       if (collapsed) continue;
       out.push(item);
-      if (item.kind === "row") {
+      if (item.kind === 'row') {
         const threads = threadsByGIdx.get(item.row.gIdx);
         if (threads)
           for (const t of threads)
-            out.push({ kind: "comment", key: `comment:${t.key}`, thread: t });
+            out.push({ kind: 'comment', key: `comment:${t.key}`, thread: t });
       }
     }
     return out;
@@ -356,15 +355,14 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
   // The single composer docks right after the tail row of the active selection — only once the drag is
   // released (`!dragging`) and the selection yields a valid anchor. Keyed by the primitive `gIdx` so the
   // splice memo stays stable across renders that don't move the composer.
-  const composerHi =
-    !dragging && selection && anchor && range ? range.hi : null;
+  const composerHi = !dragging && selection && anchor && range ? range.hi : null;
   const items = useMemo(() => {
     if (composerHi == null) return baseItems;
     const out: DiffItem[] = [];
     for (const item of baseItems) {
       out.push(item);
-      if (item.kind === "row" && item.row.gIdx === composerHi)
-        out.push({ kind: "composer", key: "composer" });
+      if (item.kind === 'row' && item.row.gIdx === composerHi)
+        out.push({ kind: 'composer', key: 'composer' });
     }
     return out;
   }, [baseItems, composerHi]);
@@ -372,7 +370,7 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
   const fileItemIndices = useMemo(() => {
     const out: number[] = [];
     items.forEach((it, i) => {
-      if (it.kind === "file") out.push(i);
+      if (it.kind === 'file') out.push(i);
     });
     return out;
   }, [items]);
@@ -385,9 +383,7 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
   const rangeExtractor = useCallback(
     (vr: VirtualRange) => {
       const active =
-        [...fileItemIndices].reverse().find((i) => i <= vr.startIndex) ??
-        fileItemIndices[0] ??
-        0;
+        [...fileItemIndices].reverse().find((i) => i <= vr.startIndex) ?? fileItemIndices[0] ?? 0;
       stickyFileIdxRef.current = active;
       const next = new Set([active, ...defaultRangeExtractor(vr)]);
       return [...next].sort((a, b) => a - b);
@@ -408,17 +404,16 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
   useEffect(() => {
     if (!selection) return;
     const onPointerDown = (e: PointerEvent) => {
-      if (scrollRef.current && !scrollRef.current.contains(e.target as Node))
-        setSelection(null);
+      if (scrollRef.current && !scrollRef.current.contains(e.target as Node)) setSelection(null);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setSelection(null);
+      if (e.key === 'Escape') setSelection(null);
     };
-    document.addEventListener("pointerdown", onPointerDown);
-    document.addEventListener("keydown", onKey);
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKey);
     return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      document.removeEventListener("keydown", onKey);
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKey);
     };
   }, [selection]);
 
@@ -426,9 +421,7 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
     (gi: number, shift: boolean) => {
       setSelection((prev) => {
         if (!shift || !prev) return { anchorIdx: gi, headIdx: gi };
-        if (
-          built.rowsByGIdx[gi]?.hunkKey !== built.rowsByGIdx[prev.anchorIdx]?.hunkKey
-        )
+        if (built.rowsByGIdx[gi]?.hunkKey !== built.rowsByGIdx[prev.anchorIdx]?.hunkKey)
           return prev;
         return { anchorIdx: prev.anchorIdx, headIdx: gi };
       });
@@ -440,9 +433,9 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
       const onUp = () => {
         draggingRef.current = false;
         setDragging(false);
-        document.removeEventListener("mouseup", onUp);
+        document.removeEventListener('mouseup', onUp);
       };
-      document.addEventListener("mouseup", onUp);
+      document.addEventListener('mouseup', onUp);
     },
     [built],
   );
@@ -455,10 +448,7 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
           if (!prev) return prev;
           // Keep the drag-selection contiguous within a single hunk: `hunkKey` encodes `fileIdx`, so this
           // also blocks a drag from crossing a hunk-header divider OR into another file.
-          if (
-            built.rowsByGIdx[gi]?.hunkKey !==
-            built.rowsByGIdx[prev.anchorIdx]?.hunkKey
-          )
+          if (built.rowsByGIdx[gi]?.hunkKey !== built.rowsByGIdx[prev.anchorIdx]?.hunkKey)
             return prev;
           return { ...prev, headIdx: gi };
         });
@@ -480,7 +470,7 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
   const renderItem = useCallback(
     (item: DiffItem) => {
       switch (item.kind) {
-        case "file":
+        case 'file':
           return (
             <FileHeader
               file={item.file}
@@ -489,25 +479,25 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
               onToggle={() => toggleFile(item.key)}
             />
           );
-        case "note":
+        case 'note':
           return (
             <div
               className="px-5 py-1"
-              style={{ background: "var(--term)", color: "var(--term-dim)" }}
+              style={{ background: 'var(--term)', color: 'var(--term-dim)' }}
             >
               {item.text}
             </div>
           );
-        case "hunk":
+        case 'hunk':
           return (
             <div
               className="flex items-center px-3 py-1 text-[10px]"
-              style={{ background: "var(--term)", color: "var(--term-purple)" }}
+              style={{ background: 'var(--term)', color: 'var(--term-purple)' }}
             >
               {item.label}
             </div>
           );
-        case "row": {
+        case 'row': {
           const gi = item.row.gIdx;
           const inActiveSel = range != null && gi >= range.lo && gi <= range.hi;
           // Full wash only for the ACTIVE drag selection or the HOVERED comment's lines; every other
@@ -524,26 +514,22 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
               hovered={hoveredIdx === gi && !selected}
               onMouseDownRow={(shift) => beginSelect(gi, shift)}
               onMouseEnterRow={() => onRowEnter(gi)}
-              onMouseLeaveRow={() =>
-                setHoveredIdx((h) => (h === gi ? null : h))
-              }
+              onMouseLeaveRow={() => setHoveredIdx((h) => (h === gi ? null : h))}
               onAdd={() => beginSelect(gi, false)}
             />
           );
         }
-        case "comment":
+        case 'comment':
           return (
             <InlineCommentThread
               state={item.thread.state}
               label={item.thread.label}
               note={item.thread.note}
               onRemove={item.thread.onRemove}
-              onHoverChange={(h) =>
-                setHoveredThreadKey(h ? item.thread.key : null)
-              }
+              onHoverChange={(h) => setHoveredThreadKey(h ? item.thread.key : null)}
             />
           );
-        case "composer":
+        case 'composer':
           return anchor ? (
             <InlineComposer
               label={anchorLabel(anchor)}
@@ -587,7 +573,7 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
     <div
       ref={scrollRef}
       className="h-full overflow-y-auto overflow-x-auto"
-      style={{ background: "var(--term)" }}
+      style={{ background: 'var(--term)' }}
     >
       {data.truncated ? (
         <div className="border-b border-border bg-surface-2 px-5 py-2 font-mono text-[11px] text-dim">
@@ -599,7 +585,7 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
         style={{
           height: virtualizer.getTotalSize(),
           width: contentWidth,
-          minWidth: "100%",
+          minWidth: '100%',
           lineHeight: 1.75,
         }}
       >
@@ -614,17 +600,17 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
               style={
                 sticky
                   ? {
-                      position: "sticky",
+                      position: 'sticky',
                       top: 0,
                       zIndex: 11,
                       width: contentWidth,
-                      minWidth: "100%",
+                      minWidth: '100%',
                     }
                   : {
-                      position: "absolute",
+                      position: 'absolute',
                       transform: `translateY(${vi.start}px)`,
                       width: contentWidth,
-                      minWidth: "100%",
+                      minWidth: '100%',
                     }
               }
             >
@@ -652,9 +638,7 @@ function FileHeader({
   onToggle: () => void;
 }) {
   const headerPath =
-    file.status === "renamed" && file.oldPath
-      ? `${file.oldPath} → ${file.path}`
-      : file.path;
+    file.status === 'renamed' && file.oldPath ? `${file.oldPath} → ${file.path}` : file.path;
   const Chevron = collapsed ? ChevronRight : ChevronDown;
   return (
     <div
@@ -663,33 +647,26 @@ function FileHeader({
       aria-expanded={!collapsed}
       onClick={onToggle}
       onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
+        if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
           onToggle();
         }
       }}
       className="flex w-full cursor-pointer items-center gap-2 px-5 py-2.5"
       style={{
-        position: "sticky",
+        position: 'sticky',
         left: 0,
-        background: "var(--surface-2)",
-        borderBottom: "1px solid var(--border)",
-        borderTop: first ? undefined : "1px solid var(--term-border)",
+        background: 'var(--surface-2)',
+        borderBottom: '1px solid var(--border)',
+        borderTop: first ? undefined : '1px solid var(--term-border)',
       }}
     >
-      <Chevron
-        size={13}
-        strokeWidth={2.4}
-        className="flex-none"
-        style={{ color: "var(--dim)" }}
-      />
-      <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-text">
-        {headerPath}
-      </span>
+      <Chevron size={13} strokeWidth={2.4} className="flex-none" style={{ color: 'var(--dim)' }} />
+      <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-text">{headerPath}</span>
       {file.additions > 0 ? (
         <span
           className="flex-none rounded-[4px] px-1.5 py-[1.5px] font-mono text-[10px] font-semibold"
-          style={{ color: "var(--add)", background: "var(--add-bg)" }}
+          style={{ color: 'var(--add)', background: 'var(--add-bg)' }}
         >
           +{file.additions}
         </span>
@@ -697,14 +674,14 @@ function FileHeader({
       {file.deletions > 0 ? (
         <span
           className="flex-none rounded-[4px] px-1.5 py-[1.5px] font-mono text-[10px] font-semibold"
-          style={{ color: "var(--del)", background: "var(--del-bg)" }}
+          style={{ color: 'var(--del)', background: 'var(--del-bg)' }}
         >
           −{file.deletions}
         </span>
       ) : null}
       <span
         className="flex-none rounded-[4px] px-1.5 py-[1.5px] font-mono text-[9px] font-semibold tracking-[0.04em] uppercase"
-        style={{ color: "var(--dim)", background: "var(--surface-3)" }}
+        style={{ color: 'var(--dim)', background: 'var(--surface-3)' }}
       >
         {file.status}
       </span>
@@ -740,32 +717,24 @@ function DiffRowLine({
   // The add-comment `+` shows only while the pointer is over the line-number gutter (not the whole row),
   // matching GitHub. Row-level hover (the wash) and drag-select stay on the outer row handlers.
   const [gutterHovered, setGutterHovered] = useState(false);
-  const isAdd = row.type === "add";
-  const isDel = row.type === "del";
-  const baseBg = isAdd
-    ? "var(--term-add-bg)"
-    : isDel
-      ? "var(--term-del-bg)"
-      : "transparent";
-  const gutBg = isAdd
-    ? "var(--term-add-gut)"
-    : isDel
-      ? "var(--term-del-gut)"
-      : "transparent";
+  const isAdd = row.type === 'add';
+  const isDel = row.type === 'del';
+  const baseBg = isAdd ? 'var(--term-add-bg)' : isDel ? 'var(--term-del-bg)' : 'transparent';
+  const gutBg = isAdd ? 'var(--term-add-gut)' : isDel ? 'var(--term-del-gut)' : 'transparent';
   const rowStyle = selected
     ? {
         // Active selection OR the hovered comment's lines — the BRIGHT accent wash.
-        background: "color-mix(in srgb, var(--accent) 26%, var(--term))",
-        boxShadow: "inset 3px 0 0 var(--accent)",
+        background: 'color-mix(in srgb, var(--accent) 26%, var(--term))',
+        boxShadow: 'inset 3px 0 0 var(--accent)',
       }
     : marked
       ? {
           // A commented line at rest: the SAME full accent wash, just dimmer — so it's clearly visible,
           // and hovering its comment brightens it (which is how overlapping comments stay distinguishable).
-          background: "color-mix(in srgb, var(--accent) 12%, var(--term))",
-          boxShadow: "inset 3px 0 0 color-mix(in srgb, var(--accent) 60%, transparent)",
+          background: 'color-mix(in srgb, var(--accent) 12%, var(--term))',
+          boxShadow: 'inset 3px 0 0 color-mix(in srgb, var(--accent) 60%, transparent)',
         }
-      : { background: hovered ? "rgba(255,255,255,0.035)" : baseBg };
+      : { background: hovered ? 'rgba(255,255,255,0.035)' : baseBg };
   return (
     <div
       data-diff-row
@@ -793,12 +762,12 @@ function DiffRowLine({
           className="absolute z-[3] flex items-center justify-center rounded-full text-white"
           style={{
             left: 4,
-            top: "50%",
-            transform: "translateY(-50%)",
+            top: '50%',
+            transform: 'translateY(-50%)',
             width: 16,
             height: 16,
-            background: "var(--accent)",
-            boxShadow: "0 2px 6px rgba(0,0,0,.35)",
+            background: 'var(--accent)',
+            boxShadow: '0 2px 6px rgba(0,0,0,.35)',
           }}
         >
           <Plus size={10} strokeWidth={3} />
@@ -813,9 +782,9 @@ function DiffRowLine({
           className="shrink-0 text-right tabular-nums"
           style={{
             width: gutterWidth,
-            padding: "0 7px",
+            padding: '0 7px',
             background: gutBg,
-            color: isDel ? "var(--term-del)" : "var(--term-dim)",
+            color: isDel ? 'var(--term-del)' : 'var(--term-dim)',
             opacity: isDel ? 0.95 : 0.6,
           }}
         >
@@ -825,9 +794,9 @@ function DiffRowLine({
           className="shrink-0 text-right tabular-nums"
           style={{
             width: gutterWidth,
-            padding: "0 7px",
+            padding: '0 7px',
             background: gutBg,
-            color: isAdd ? "var(--term-add)" : "var(--term-dim)",
+            color: isAdd ? 'var(--term-add)' : 'var(--term-dim)',
             opacity: isAdd ? 0.95 : 0.6,
           }}
         >
@@ -838,20 +807,16 @@ function DiffRowLine({
         className="shrink-0 text-center font-bold"
         style={{
           width: SIGN,
-          color: isAdd
-            ? "var(--term-add)"
-            : isDel
-              ? "var(--term-del)"
-              : "var(--term-dim)",
+          color: isAdd ? 'var(--term-add)' : isDel ? 'var(--term-del)' : 'var(--term-dim)',
         }}
       >
-        {isAdd ? "+" : isDel ? "−" : NBSP}
+        {isAdd ? '+' : isDel ? '−' : NBSP}
       </span>
       <span
         className="whitespace-pre pr-3"
         style={{
-          color: "var(--term-fg)",
-          opacity: row.type === "context" ? 0.72 : 1,
+          color: 'var(--term-fg)',
+          opacity: row.type === 'context' ? 0.72 : 1,
         }}
       >
         {renderTokenLine(tokens, row.code)}
@@ -871,29 +836,29 @@ function InlineCommentThread({
   onRemove,
   onHoverChange,
 }: {
-  state: "queued" | "sent";
+  state: 'queued' | 'sent';
   label: string;
   note: string;
   onRemove?: () => void;
   /** Hovering the thread lights up its exact lines on the diff (so overlapping comments stay legible). */
   onHoverChange?: (hovered: boolean) => void;
 }) {
-  const sent = state === "sent";
+  const sent = state === 'sent';
   return (
     <div
       className="group my-2 rounded-[9px]"
       style={{
         // Pinned to the scroller's left edge + width-capped so the thread stays readable and doesn't
         // stretch to the widest code line inside the horizontal scroller.
-        position: "sticky",
+        position: 'sticky',
         left: 0,
-        margin: "8px 14px",
+        margin: '8px 14px',
         maxWidth: 640,
         background: sent
-          ? "var(--surface-2)"
-          : "color-mix(in srgb, var(--amber) 5%, var(--surface-2))",
-        border: `1px solid ${sent ? "transparent" : "var(--border)"}`,
-        padding: "9px 11px 10px",
+          ? 'var(--surface-2)'
+          : 'color-mix(in srgb, var(--amber) 5%, var(--surface-2))',
+        border: `1px solid ${sent ? 'transparent' : 'var(--border)'}`,
+        padding: '9px 11px 10px',
       }}
       onMouseDown={(e) => e.stopPropagation()}
       onMouseEnter={() => onHoverChange?.(true)}
@@ -905,24 +870,24 @@ function InlineCommentThread({
             size={11}
             strokeWidth={2.6}
             className="flex-none"
-            style={{ color: "var(--green)" }}
+            style={{ color: 'var(--green)' }}
           />
         ) : (
           <span
             className="h-1.5 w-1.5 flex-none rounded-full"
-            style={{ background: "var(--amber)" }}
+            style={{ background: 'var(--amber)' }}
           />
         )}
         <span
           className="font-mono text-[9.5px] font-semibold tracking-[0.04em]"
-          style={{ color: sent ? "var(--faint)" : "var(--accent-2)" }}
+          style={{ color: sent ? 'var(--faint)' : 'var(--accent-2)' }}
         >
-          {sent ? "Sent" : "Pending"}
+          {sent ? 'Sent' : 'Pending'}
         </span>
-        <span className="font-mono text-[9px]" style={{ color: "var(--border-2)" }}>
+        <span className="font-mono text-[9px]" style={{ color: 'var(--border-2)' }}>
           ·
         </span>
-        <span className="font-mono text-[9.5px]" style={{ color: "var(--faint)" }}>
+        <span className="font-mono text-[9.5px]" style={{ color: 'var(--faint)' }}>
           {label}
         </span>
         <span className="flex-1" />
@@ -939,7 +904,7 @@ function InlineCommentThread({
       </div>
       <div
         className="text-[12.5px] leading-[1.5]"
-        style={{ color: sent ? "var(--dim)" : "var(--text)" }}
+        style={{ color: sent ? 'var(--dim)' : 'var(--text)' }}
       >
         {note || <span className="text-faint">No note added</span>}
       </div>
@@ -956,7 +921,7 @@ function InlineComposer({
   onAdd: (note: string) => void;
   onCancel: () => void;
 }) {
-  const [note, setNote] = useState("");
+  const [note, setNote] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     textareaRef.current?.focus();
@@ -965,11 +930,11 @@ function InlineComposer({
     <div
       className="rounded-[13px] border border-border-2 bg-panel p-3"
       style={{
-        position: "sticky",
+        position: 'sticky',
         left: 0,
-        margin: "6px 14px",
+        margin: '6px 14px',
         maxWidth: 640,
-        boxShadow: "var(--shadow-menu)",
+        boxShadow: 'var(--shadow-menu)',
       }}
       onMouseDown={(e) => e.stopPropagation()}
     >
@@ -979,12 +944,7 @@ function InlineComposer({
           Comment on selection
         </span>
         <span className="flex-1" />
-        <button
-          type="button"
-          onClick={onCancel}
-          aria-label="Cancel"
-          className="p-0.5 text-faint"
-        >
+        <button type="button" onClick={onCancel} aria-label="Cancel" className="p-0.5 text-faint">
           <X size={13} />
         </button>
       </div>
@@ -996,10 +956,10 @@ function InlineComposer({
         value={note}
         onChange={(e) => setNote(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
+          if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             onAdd(note);
-          } else if (e.key === "Escape") {
+          } else if (e.key === 'Escape') {
             onCancel();
           }
         }}

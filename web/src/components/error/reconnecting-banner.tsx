@@ -1,6 +1,6 @@
-"use client";
+'use client';
 
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner } from '@/components/ui/spinner';
 
 /**
  * Non-intrusive "reconnecting" banner — shown by <ConnectivityGate> while the backend is briefly
@@ -19,9 +19,9 @@ export function ReconnectingBanner() {
       <div
         className="font-mono flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-[11.5px] font-medium tracking-wide shadow-[var(--shadow-card)] backdrop-blur"
         style={{
-          color: "var(--accent-2)",
-          borderColor: "color-mix(in srgb, var(--accent) 38%, transparent)",
-          background: "color-mix(in srgb, var(--accent) 9%, var(--surface))",
+          color: 'var(--accent-2)',
+          borderColor: 'color-mix(in srgb, var(--accent) 38%, transparent)',
+          background: 'color-mix(in srgb, var(--accent) 9%, var(--surface))',
         }}
       >
         <Spinner className="h-3 w-3" />

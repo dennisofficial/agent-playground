@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
-import { isOutputGroupHidden } from "./output-group";
+import { describe, expect, it } from 'vitest';
+import { isOutputGroupHidden } from './output-group';
 
-describe("isOutputGroupHidden (EVIDENCE hidden-when-empty region)", () => {
-  it("hides a hideWhenEmpty group with no files, nothing loading, and no children", () => {
+describe('isOutputGroupHidden (EVIDENCE hidden-when-empty region)', () => {
+  it('hides a hideWhenEmpty group with no files, nothing loading, and no children', () => {
     expect(
       isOutputGroupHidden({
         hideWhenEmpty: true,
@@ -13,7 +13,7 @@ describe("isOutputGroupHidden (EVIDENCE hidden-when-empty region)", () => {
     ).toBe(true);
   });
 
-  it("shows the group once it has at least one file", () => {
+  it('shows the group once it has at least one file', () => {
     expect(
       isOutputGroupHidden({
         hideWhenEmpty: true,
@@ -24,7 +24,7 @@ describe("isOutputGroupHidden (EVIDENCE hidden-when-empty region)", () => {
     ).toBe(false);
   });
 
-  it("shows the group while it is still loading", () => {
+  it('shows the group while it is still loading', () => {
     expect(
       isOutputGroupHidden({
         hideWhenEmpty: true,
@@ -35,7 +35,7 @@ describe("isOutputGroupHidden (EVIDENCE hidden-when-empty region)", () => {
     ).toBe(false);
   });
 
-  it("shows the group when it has children even with no files", () => {
+  it('shows the group when it has children even with no files', () => {
     expect(
       isOutputGroupHidden({
         hideWhenEmpty: true,
@@ -46,7 +46,7 @@ describe("isOutputGroupHidden (EVIDENCE hidden-when-empty region)", () => {
     ).toBe(false);
   });
 
-  it("never hides a group that did not opt into hideWhenEmpty (SPECS/ARTIFACTS/GENERATED)", () => {
+  it('never hides a group that did not opt into hideWhenEmpty (SPECS/ARTIFACTS/GENERATED)', () => {
     expect(
       isOutputGroupHidden({
         hideWhenEmpty: false,
@@ -55,8 +55,6 @@ describe("isOutputGroupHidden (EVIDENCE hidden-when-empty region)", () => {
         hasChildren: false,
       }),
     ).toBe(false);
-    expect(
-      isOutputGroupHidden({ fileCount: 0, hasChildren: false }),
-    ).toBe(false);
+    expect(isOutputGroupHidden({ fileCount: 0, hasChildren: false })).toBe(false);
   });
 });

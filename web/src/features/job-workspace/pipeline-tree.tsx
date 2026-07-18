@@ -1,22 +1,22 @@
-"use client";
+'use client';
 
-import { useState, type ReactNode } from "react";
-import { ChevronRight } from "lucide-react";
-import { cn } from "@/lib/cn";
-import { useLiveTurn } from "@/lib/api/job-stream";
-import { threadLane } from "./phases";
-import { overlayLiveTasks } from "./live-tasks";
+import { useLiveTurn } from '@/lib/api/job-stream';
 import type {
-  PipelineJob,
-  PipelineThreadGroup,
-  PipelineThread,
-  PipelineReviewChild,
-  ThreadGroupKind,
-  TaskItem,
   JobStatus,
-  ThreadStatus,
+  PipelineJob,
+  PipelineReviewChild,
+  PipelineThread,
+  PipelineThreadGroup,
+  TaskItem,
   ThreadCondition,
-} from "@/lib/api/types";
+  ThreadGroupKind,
+  ThreadStatus,
+} from '@/lib/api/types';
+import { cn } from '@/lib/cn';
+import { ChevronRight } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
+import { overlayLiveTasks } from './live-tasks';
+import { threadLane } from './phases';
 
 /**
  * The Thread Navigator's THREADS region — design handoff "thread navigation": an ACCORDION. Selecting a
@@ -31,22 +31,12 @@ import type {
 // ── shared nav primitives (also used by the navigator skeleton) ──────────────────────────────────
 
 /** A divider header (SPECS / ARTIFACTS / PORTS) — mono label, hairline rule, optional right count. */
-export function Divider({
-  label,
-  count,
-}: {
-  label: string;
-  count?: ReactNode;
-}) {
+export function Divider({ label, count }: { label: string; count?: ReactNode }) {
   return (
     <div className="flex items-center gap-2 px-2 pb-1.5 pt-3">
-      <span className="font-mono text-[9px] tracking-[0.16em] text-faint">
-        {label}
-      </span>
-      <div className="h-px flex-1" style={{ background: "var(--border)" }} />
-      {count != null ? (
-        <span className="font-mono text-[9px] text-faint">{count}</span>
-      ) : null}
+      <span className="font-mono text-[9px] tracking-[0.16em] text-faint">{label}</span>
+      <div className="h-px flex-1" style={{ background: 'var(--border)' }} />
+      {count != null ? <span className="font-mono text-[9px] text-faint">{count}</span> : null}
     </div>
   );
 }
@@ -60,15 +50,15 @@ export function haltThreadIdx(
 ): number {
   // A halted/paused/failed lane carries a non-none condition — that's the row that owns the job halt.
   for (let i = threads.length - 1; i >= 0; i -= 1) {
-    if (threads[i].condition !== "none") return i;
+    if (threads[i].condition !== 'none') return i;
   }
   // Fallbacks (no lane flagged a condition): the furthest in-flight, else the last non-done step.
   for (let i = threads.length - 1; i >= 0; i -= 1) {
     const st = threads[i].status;
-    if (st !== "done" && st !== "pending") return i;
+    if (st !== 'done' && st !== 'pending') return i;
   }
   for (let i = threads.length - 1; i >= 0; i -= 1) {
-    if (threads[i].status !== "done") return i;
+    if (threads[i].status !== 'done') return i;
   }
   return -1;
 }
@@ -76,18 +66,14 @@ export function haltThreadIdx(
 /** The design's thread states — every wire `ThreadStatus` folds onto one of these. `blocked` is a RESTING
  *  state (the thread halted awaiting the operator), visually distinct from `in_progress` (actively running)
  *  so a thread parked on `block_thread`/a question doesn't masquerade as a live turn. */
-type LaneState = "draft" | "in_progress" | "blocked" | "done" | "failed";
+type LaneState = 'draft' | 'in_progress' | 'blocked' | 'done' | 'failed';
 
-function laneState(
-  s: ThreadStatus,
-  condition: ThreadCondition,
-  drafted: boolean,
-): LaneState {
-  if (drafted || s === "pending") return "draft";
-  if (condition === "failed" || condition === "incomplete") return "failed"; // terminal halts (nothing shipped)
-  if (condition === "paused") return "blocked"; // halted, waiting on the operator — NOT a running turn
-  if (s === "done") return "done";
-  return "in_progress"; // planning / reviewing / executing / auto_fixing
+function laneState(s: ThreadStatus, condition: ThreadCondition, drafted: boolean): LaneState {
+  if (drafted || s === 'pending') return 'draft';
+  if (condition === 'failed' || condition === 'incomplete') return 'failed'; // terminal halts (nothing shipped)
+  if (condition === 'paused') return 'blocked'; // halted, waiting on the operator — NOT a running turn
+  if (s === 'done') return 'done';
+  return 'in_progress'; // planning / reviewing / executing / auto_fixing
 }
 
 /** The open accordion's state-colored left rail + soft wash (handoff §State colors). */
@@ -95,33 +81,32 @@ function railStyle(
   state: LaneState,
   open: boolean,
 ): { borderLeftColor: string; background: string } {
-  if (!open)
-    return { borderLeftColor: "transparent", background: "transparent" };
+  if (!open) return { borderLeftColor: 'transparent', background: 'transparent' };
   switch (state) {
-    case "in_progress":
+    case 'in_progress':
       return {
-        borderLeftColor: "var(--accent)",
-        background: "color-mix(in srgb, var(--accent) 4.5%, transparent)",
+        borderLeftColor: 'var(--accent)',
+        background: 'color-mix(in srgb, var(--accent) 4.5%, transparent)',
       };
-    case "done":
+    case 'done':
       return {
-        borderLeftColor: "var(--green)",
-        background: "color-mix(in srgb, var(--green) 6%, transparent)",
+        borderLeftColor: 'var(--green)',
+        background: 'color-mix(in srgb, var(--green) 6%, transparent)',
       };
-    case "failed":
+    case 'failed':
       return {
-        borderLeftColor: "var(--red)",
-        background: "color-mix(in srgb, var(--red) 5%, transparent)",
+        borderLeftColor: 'var(--red)',
+        background: 'color-mix(in srgb, var(--red) 5%, transparent)',
       };
-    case "blocked":
+    case 'blocked':
       return {
-        borderLeftColor: "var(--slate)",
-        background: "color-mix(in srgb, var(--slate) 6%, transparent)",
+        borderLeftColor: 'var(--slate)',
+        background: 'color-mix(in srgb, var(--slate) 6%, transparent)',
       };
     default:
       return {
-        borderLeftColor: "var(--border-2)",
-        background: "color-mix(in srgb, var(--slate) 5%, transparent)",
+        borderLeftColor: 'var(--border-2)',
+        background: 'color-mix(in srgb, var(--slate) 5%, transparent)',
       };
   }
 }
@@ -131,8 +116,8 @@ function railStyle(
 /** A spinning progress ring — faint track + rotating colored arc (`.status-spin` = the design's 1.05s). */
 function SpinRing({
   size = 13,
-  color = "var(--accent)",
-  track = "var(--border-2)",
+  color = 'var(--accent)',
+  track = 'var(--border-2)',
   trackOpacity = 0.5,
 }: {
   size?: number;
@@ -141,13 +126,7 @@ function SpinRing({
   trackOpacity?: number;
 }) {
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 20 20"
-      className="block"
-      aria-hidden
-    >
+    <svg width={size} height={size} viewBox="0 0 20 20" className="block" aria-hidden>
       <circle
         cx="10"
         cy="10"
@@ -176,13 +155,7 @@ function SpinRing({
 /** The solid green disc with a white check — a `done` thread / `completed` task. */
 function DoneDisc({ size = 13 }: { size?: number }) {
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 20 20"
-      className="block"
-      aria-hidden
-    >
+    <svg width={size} height={size} viewBox="0 0 20 20" className="block" aria-hidden>
       <circle cx="10" cy="10" r="8" fill="var(--green)" />
       <path
         d="M6.2 10.3l2.4 2.4 5-5.4"
@@ -197,21 +170,9 @@ function DoneDisc({ size = 13 }: { size?: number }) {
 }
 
 /** The dashed pending/draft ring. */
-function DashedRing({
-  size = 13,
-  color = "var(--border-2)",
-}: {
-  size?: number;
-  color?: string;
-}) {
+function DashedRing({ size = 13, color = 'var(--border-2)' }: { size?: number; color?: string }) {
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 20 20"
-      className="block"
-      aria-hidden
-    >
+    <svg width={size} height={size} viewBox="0 0 20 20" className="block" aria-hidden>
       <circle
         cx="10"
         cy="10"
@@ -226,35 +187,25 @@ function DashedRing({
 }
 
 /** The 13px status glyph slot on a thread header row. */
-function ThreadStatusGlyph({
-  state,
-  isHalt,
-}: {
-  state: LaneState;
-  isHalt: boolean;
-}) {
+function ThreadStatusGlyph({ state, isHalt }: { state: LaneState; isHalt: boolean }) {
   // The lane's OWN state owns its glyph: a `blocked` (paused) or `done` lane keeps its glyph even when it
   // is the job's halt row, so it never masquerades as a red failure. `isHalt` only paints red as a fallback
   // for a halt whose lane state doesn't already show it (e.g. a job-level halt on an in-flight lane).
-  const haltRed =
-    state === "failed" || (isHalt && state !== "blocked" && state !== "done");
+  const haltRed = state === 'failed' || (isHalt && state !== 'blocked' && state !== 'done');
   return (
     <span className="grid h-[13px] w-[13px] shrink-0 place-items-center">
       {haltRed ? (
-        <span
-          className="h-[9px] w-[9px] rounded-full"
-          style={{ background: "var(--red)" }}
-        />
-      ) : state === "done" ? (
+        <span className="h-[9px] w-[9px] rounded-full" style={{ background: 'var(--red)' }} />
+      ) : state === 'done' ? (
         <DoneDisc />
-      ) : state === "blocked" ? (
+      ) : state === 'blocked' ? (
         <BlockedRing />
-      ) : state === "in_progress" ? (
+      ) : state === 'in_progress' ? (
         <SpinRing />
       ) : (
         <span
           className="h-[9px] w-[9px] rounded-full"
-          style={{ border: "1.5px dashed var(--border-2)" }}
+          style={{ border: '1.5px dashed var(--border-2)' }}
         />
       )}
     </span>
@@ -277,13 +228,13 @@ export interface TreeProps {
 
 /** The thread-group-kind → sidebar label, used when a thread group carries no explicit `title`. */
 const THREAD_GROUP_LABELS: Record<ThreadGroupKind, string> = {
-  planning: "Planning",
-  plan_review: "Plan Review",
-  build: "Build",
-  direct_build: "Direct Build",
-  master_review: "Master Review",
-  post_build: "Post Build",
-  ci: "CI",
+  planning: 'Planning',
+  plan_review: 'Plan Review',
+  build: 'Build',
+  direct_build: 'Direct Build',
+  master_review: 'Master Review',
+  post_build: 'Post Build',
+  ci: 'CI',
 };
 
 /** A thread group's sidebar label — its explicit `title` (a build slice name, or a "Re-plan #N" round) when
@@ -300,30 +251,20 @@ function threadGroupLabel(threadGroup: PipelineThreadGroup): string {
  * (planning) row and the plan-review row are pinned above the tree by the navigator, so they are skipped
  * here.
  */
-export function PipelineTree({
-  job,
-  status,
-  jobId,
-  laneNode,
-  onSelectNode,
-}: TreeProps) {
+export function PipelineTree({ job, status, jobId, laneNode, onSelectNode }: TreeProps) {
   const threadGroups = job.threadGroups.filter(
-    (s) => s.kind !== "planning" && s.kind !== "plan_review",
+    (s) => s.kind !== 'planning' && s.kind !== 'plan_review',
   );
   // Pre-approval every thread is a draft (dashed dot, no tasks — the plan shows only the threads).
   const drafted =
-    status === "planning" ||
-    status === "plan_review" ||
-    status === "awaiting_approval";
+    status === 'planning' || status === 'plan_review' || status === 'awaiting_approval';
   // Halted: threads aren't persisted with the halt (only the job carries it), so derive the halt point over
   // the whole flattened thread list — the in-flight thread (furthest non-`done`/non-`pending`) is where the
   // run stopped; later ones never ran. Identify it by id so it maps across the thread group grouping.
   const allThreads = job.threadGroups.flatMap((s) => s.threads);
   const haltIdx = job.halt != null ? haltThreadIdx(allThreads) : -1;
   const haltThreadId = haltIdx >= 0 ? (allThreads[haltIdx]?.id ?? null) : null;
-  const notReached = new Set(
-    haltIdx >= 0 ? allThreads.slice(haltIdx + 1).map((t) => t.id) : [],
-  );
+  const notReached = new Set(haltIdx >= 0 ? allThreads.slice(haltIdx + 1).map((t) => t.id) : []);
 
   return (
     <>
@@ -381,7 +322,7 @@ function ThreadGroupFold({
   // Hook must run unconditionally (Rules of Hooks) — threadGroup.threads can be empty on some renders of the
   // same component instance (e.g. a freshly materialized thread group), so the early-return below must come
   // after.
-  const liveTurn = useLiveTurn(jobId, threadLane(primary?.id ?? ""));
+  const liveTurn = useLiveTurn(jobId, threadLane(primary?.id ?? ''));
   if (!primary) return null;
 
   const state = laneState(primary.status, primary.condition, drafted);
@@ -389,22 +330,17 @@ function ThreadGroupFold({
   const threadGroupNotReached = roots.every((t) => notReached.has(t.id));
 
   const reviewChildren = roots.flatMap((t) => t.children ?? []);
-  const reviewLenses = reviewChildren.filter((c) => c.role === "review_agent");
-  const postReview = reviewChildren.find((c) => c.role === "review_fix") ?? null;
+  const reviewLenses = reviewChildren.filter((c) => c.role === 'review_agent');
+  const postReview = reviewChildren.find((c) => c.role === 'review_fix') ?? null;
 
   const open =
     laneNode != null &&
-    (roots.some((t) => t.id === laneNode) ||
-      reviewChildren.some((c) => c.id === laneNode));
+    (roots.some((t) => t.id === laneNode) || reviewChildren.some((c) => c.id === laneNode));
 
   const tasks = overlayLiveTasks(threadGroup.tasks, liveTurn);
-  const done = tasks.filter((t) => t.status === "completed").length;
-  const isDraft = state === "draft";
-  const count = isDraft
-    ? "draft"
-    : tasks.length > 0
-      ? `${done}/${tasks.length}`
-      : "";
+  const done = tasks.filter((t) => t.status === 'completed').length;
+  const isDraft = state === 'draft';
+  const count = isDraft ? 'draft' : tasks.length > 0 ? `${done}/${tasks.length}` : '';
 
   return (
     <div className="border-l-[3px]" style={railStyle(state, open)}>
@@ -412,27 +348,25 @@ function ThreadGroupFold({
         type="button"
         onClick={() => onSelectNode(primary.id)}
         className={cn(
-          "flex w-full items-center gap-2 py-1.5 pl-1.5 pr-2 text-left transition hover:bg-surface-2",
-          threadGroupNotReached && "opacity-60",
+          'flex w-full items-center gap-2 py-1.5 pl-1.5 pr-2 text-left transition hover:bg-surface-2',
+          threadGroupNotReached && 'opacity-60',
         )}
       >
         <ThreadStatusGlyph state={state} isHalt={isHalt} />
         <span
           className={cn(
-            "flex-1 truncate text-[12px]",
+            'flex-1 truncate text-[12px]',
             open
-              ? "font-semibold text-text"
+              ? 'font-semibold text-text'
               : threadGroupNotReached
-                ? "font-medium text-faint"
-                : "font-medium text-dim",
+                ? 'font-medium text-faint'
+                : 'font-medium text-dim',
           )}
         >
           {threadGroupLabel(threadGroup)}
         </span>
         {count ? (
-          <span className="shrink-0 text-right font-mono text-[8px] text-faint">
-            {count}
-          </span>
+          <span className="shrink-0 text-right font-mono text-[8px] text-faint">{count}</span>
         ) : null}
       </button>
 
@@ -469,9 +403,7 @@ function ThreadGroupFold({
 function BodyHeader({ label, right }: { label: string; right: string }) {
   return (
     <div className="flex items-center gap-2 px-1.5 pb-1 pt-px">
-      <span className="font-mono text-[8px] tracking-[0.12em] text-faint">
-        {label}
-      </span>
+      <span className="font-mono text-[8px] tracking-[0.12em] text-faint">{label}</span>
       <span className="flex-1" />
       <span className="font-mono text-[8px] text-border-2">{right}</span>
     </div>
@@ -523,10 +455,10 @@ export function TasksBody({
   // sibling. Completing (or deleting — it's gone from the list) a blocker clears the block by itself.
   const byId = new Map(ordered.map((t) => [t.id, t]));
   const openBlockers = (t: TaskItem): string[] =>
-    t.status === "pending"
+    t.status === 'pending'
       ? (t.blockedBy ?? []).filter((id) => {
           const b = byId.get(id);
-          return b != null && b.status !== "completed";
+          return b != null && b.status !== 'completed';
         })
       : [];
 
@@ -535,15 +467,15 @@ export function TasksBody({
   // (pending/in_progress/blocked/dropped) is always visible. Only the OLDER completed tasks hide, and
   // only once enough of them pile up to earn the disclosure — otherwise the pure id-ordered list renders.
   const [showDone, setShowDone] = useState(false);
-  const completed = ordered.filter((t) => t.status === "completed");
-  const active = ordered.filter((t) => t.status !== "completed");
+  const completed = ordered.filter((t) => t.status === 'completed');
+  const active = ordered.filter((t) => t.status !== 'completed');
   const hidden = completed.slice(0, Math.max(0, completed.length - DONE_TAIL));
   const tail = completed.slice(hidden.length);
   const fold = hidden.length >= DONE_FOLD_MIN;
 
   return (
     <div className="nav-expand mb-1.5 ml-[9px] flex flex-col gap-px">
-      <BodyHeader label="TASKS" right={total > 0 ? `${done}/${total}` : "—"} />
+      <BodyHeader label="TASKS" right={total > 0 ? `${done}/${total}` : '—'} />
       {ordered.length === 0 ? (
         <p className="px-1.5 pb-1.5 text-[11px] italic leading-relaxed text-faint">
           No tasks yet — Atlas creates them once this thread starts.
@@ -563,10 +495,7 @@ export function TasksBody({
             <ChevronRight
               size={9}
               strokeWidth={3}
-              className={cn(
-                "mt-px flex-none transition-transform",
-                showDone && "rotate-90",
-              )}
+              className={cn('mt-px flex-none transition-transform', showDone && 'rotate-90')}
             />
           </button>
           {showDone ? hidden.map((t) => <TaskRow key={t.id} task={t} />) : null}
@@ -578,9 +507,7 @@ export function TasksBody({
           ))}
         </>
       ) : (
-        ordered.map((t) => (
-          <TaskRow key={t.id} task={t} blockers={openBlockers(t)} />
-        ))
+        ordered.map((t) => <TaskRow key={t.id} task={t} blockers={openBlockers(t)} />)
       )}
     </div>
   );
@@ -592,30 +519,21 @@ export function TasksBody({
  * BLOCKED (a pending task with open `blockers`) gets the slate ring-and-dot glyph + a "blocked by #N"
  * note. A legacy `dropped` row stays struck through.
  */
-function TaskRow({
-  task: t,
-  blockers = [],
-}: {
-  task: TaskItem;
-  blockers?: string[];
-}) {
-  const struck = t.status === "completed" || t.status === "dropped";
-  const inProgress = t.status === "in_progress";
+function TaskRow({ task: t, blockers = [] }: { task: TaskItem; blockers?: string[] }) {
+  const struck = t.status === 'completed' || t.status === 'dropped';
+  const inProgress = t.status === 'in_progress';
   const blocked = blockers.length > 0;
   const expanded = inProgress || blocked; // the rows that earn a second line
   return (
-    <div
-      className="flex items-start gap-1.5 py-1 pl-1.5 pr-1"
-      title={t.description || t.subject}
-    >
+    <div className="flex items-start gap-1.5 py-1 pl-1.5 pr-1" title={t.description || t.subject}>
       <span className="mt-px h-[13px] w-[13px] shrink-0">
-        {t.status === "completed" ? (
+        {t.status === 'completed' ? (
           <DoneDisc />
         ) : inProgress ? (
           <SpinRing />
         ) : blocked ? (
           <BlockedRing />
-        ) : t.status === "dropped" ? (
+        ) : t.status === 'dropped' ? (
           <DashedRing color="var(--faint)" />
         ) : (
           <DashedRing />
@@ -624,37 +542,29 @@ function TaskRow({
       <span className="min-w-0 flex-1">
         <span
           className={cn(
-            "block text-[11.5px] leading-[1.35]",
-            inProgress
-              ? "text-text"
-              : struck
-                ? "text-faint line-through"
-                : "text-dim",
+            'block text-[11.5px] leading-[1.35]',
+            inProgress ? 'text-text' : struck ? 'text-faint line-through' : 'text-dim',
           )}
         >
           {t.subject}
         </span>
         {inProgress ? (
           <span className="mt-px block font-mono text-[8px] tracking-[0.02em] text-accent">
-            {(t.activeForm || t.subject) + "…"}
+            {(t.activeForm || t.subject) + '…'}
           </span>
         ) : blocked ? (
           <span
             className="mt-px block font-mono text-[8px] tracking-[0.02em]"
-            style={{ color: "var(--slate)" }}
+            style={{ color: 'var(--slate)' }}
           >
-            blocked by {blockers.map((b) => `#${b}`).join(" · ")}
+            blocked by {blockers.map((b) => `#${b}`).join(' · ')}
           </span>
         ) : null}
         {expanded && t.description ? (
-          <span className="mt-0.5 block text-[10px] leading-[1.4] text-faint">
-            {t.description}
-          </span>
+          <span className="mt-0.5 block text-[10px] leading-[1.4] text-faint">{t.description}</span>
         ) : null}
       </span>
-      <span className="mt-px shrink-0 font-mono text-[8px] text-faint">
-        #{t.id}
-      </span>
+      <span className="mt-px shrink-0 font-mono text-[8px] text-faint">#{t.id}</span>
     </div>
   );
 }
@@ -662,21 +572,8 @@ function TaskRow({
 /** The blocked glyph — slate ring with a center dot (handoff §Task row). */
 function BlockedRing({ size = 13 }: { size?: number }) {
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 20 20"
-      className="block"
-      aria-hidden
-    >
-      <circle
-        cx="10"
-        cy="10"
-        r="7.5"
-        fill="none"
-        stroke="var(--slate)"
-        strokeWidth="2"
-      />
+    <svg width={size} height={size} viewBox="0 0 20 20" className="block" aria-hidden>
+      <circle cx="10" cy="10" r="7.5" fill="none" stroke="var(--slate)" strokeWidth="2" />
       <circle cx="10" cy="10" r="2.7" fill="var(--slate)" />
     </svg>
   );
@@ -685,18 +582,15 @@ function BlockedRing({ size = 13 }: { size?: number }) {
 // ── REVIEW children — each review lens + the post-review fix are first-class child threads ─────────
 
 /** The design's agent states — a review child's wire `ThreadStatus` folds onto these. */
-type AgentDisplay = "pending" | "in_progress" | "done" | "skipped" | "failed";
+type AgentDisplay = 'pending' | 'in_progress' | 'done' | 'skipped' | 'failed';
 
 /** Map a review CHILD thread's step + condition to its navigator display state. */
-function childDisplay(
-  status: ThreadStatus,
-  condition: ThreadCondition,
-): AgentDisplay {
-  if (condition === "failed") return "failed"; // the lens did NOT run (e.g. engine/auth error) — surface it
-  if (condition === "skipped") return "skipped"; // nothing to do (unknown lens / no diff) — terminal, not a failure
-  if (status === "done") return "done"; // terminal — the lens ran clean
-  if (status === "pending") return "pending";
-  return "in_progress"; // planning / reviewing / executing / auto_fixing
+function childDisplay(status: ThreadStatus, condition: ThreadCondition): AgentDisplay {
+  if (condition === 'failed') return 'failed'; // the lens did NOT run (e.g. engine/auth error) — surface it
+  if (condition === 'skipped') return 'skipped'; // nothing to do (unknown lens / no diff) — terminal, not a failure
+  if (status === 'done') return 'done'; // terminal — the lens ran clean
+  if (status === 'pending') return 'pending';
+  return 'in_progress'; // planning / reviewing / executing / auto_fixing
 }
 
 function ReviewAgentsBody({
@@ -779,30 +673,30 @@ function LegRow({
   onOpen: () => void;
 }) {
   const word =
-    state === "in_progress"
-      ? "live"
-      : state === "done"
-        ? "done"
-        : state === "failed"
-          ? "failed"
-          : state === "blocked"
-            ? "blocked"
-            : "draft";
+    state === 'in_progress'
+      ? 'live'
+      : state === 'done'
+        ? 'done'
+        : state === 'failed'
+          ? 'failed'
+          : state === 'blocked'
+            ? 'blocked'
+            : 'draft';
   const wordColor =
-    state === "in_progress"
-      ? "var(--blue)"
-      : state === "done"
-        ? "var(--green)"
-        : state === "failed"
-          ? "var(--red)"
-          : "var(--faint)";
+    state === 'in_progress'
+      ? 'var(--blue)'
+      : state === 'done'
+        ? 'var(--green)'
+        : state === 'failed'
+          ? 'var(--red)'
+          : 'var(--faint)';
   return (
     <button
       type="button"
       onClick={onOpen}
       className={cn(
-        "flex w-full items-center gap-2 px-1.5 py-[3px] text-left transition hover:bg-surface-2",
-        selected && "bg-surface-2",
+        'flex w-full items-center gap-2 px-1.5 py-[3px] text-left transition hover:bg-surface-2',
+        selected && 'bg-surface-2',
       )}
     >
       <span
@@ -811,8 +705,8 @@ function LegRow({
       />
       <span
         className={cn(
-          "min-w-0 flex-1 truncate text-[11.5px]",
-          selected ? "font-semibold text-text" : "font-medium text-dim",
+          'min-w-0 flex-1 truncate text-[11.5px]',
+          selected ? 'font-semibold text-text' : 'font-medium text-dim',
         )}
       >
         Leg {index + 1}
@@ -828,17 +722,17 @@ function LegRow({
 function postReviewState(
   status: ThreadStatus,
   condition: ThreadCondition,
-): "queued" | "running" | "done" | "failed" {
-  if (condition === "failed") return "failed"; // the fix turn errored out — don't paint it done
-  if (status === "pending") return "queued";
+): 'queued' | 'running' | 'done' | 'failed' {
+  if (condition === 'failed') return 'failed'; // the fix turn errored out — don't paint it done
+  if (status === 'pending') return 'queued';
   if (
-    status === "executing" ||
-    status === "auto_fixing" ||
-    status === "planning" ||
-    status === "reviewing"
+    status === 'executing' ||
+    status === 'auto_fixing' ||
+    status === 'planning' ||
+    status === 'reviewing'
   )
-    return "running";
-  return "done";
+    return 'running';
+  return 'done';
 }
 
 /** One review lens — a single-line navigable child thread: status tile · name · status word · chevron.
@@ -855,47 +749,42 @@ function AgentRow({
 }) {
   const d = childDisplay(c.status, c.condition);
   const word =
-    d === "failed"
-      ? "failed"
-      : d === "done"
-        ? "done"
-        : d === "in_progress"
-          ? "reviewing"
-          : d === "skipped"
-            ? "skipped"
-            : "pending";
+    d === 'failed'
+      ? 'failed'
+      : d === 'done'
+        ? 'done'
+        : d === 'in_progress'
+          ? 'reviewing'
+          : d === 'skipped'
+            ? 'skipped'
+            : 'pending';
   const wordColor =
-    d === "failed"
-      ? "var(--red)"
-      : d === "done"
-        ? "var(--green)"
-        : d === "in_progress"
-          ? "var(--blue)"
-          : "var(--faint)";
+    d === 'failed'
+      ? 'var(--red)'
+      : d === 'done'
+        ? 'var(--green)'
+        : d === 'in_progress'
+          ? 'var(--blue)'
+          : 'var(--faint)';
   return (
     <button
       type="button"
       onClick={onOpen}
       className={cn(
-        "flex w-full items-center gap-2 px-1.5 py-[3px] text-left transition",
-        selected
-          ? "bg-panel shadow-[0_1px_3px_rgba(0,0,0,0.06)]"
-          : "hover:bg-surface-2",
+        'flex w-full items-center gap-2 px-1.5 py-[3px] text-left transition',
+        selected ? 'bg-panel shadow-[0_1px_3px_rgba(0,0,0,0.06)]' : 'hover:bg-surface-2',
       )}
     >
       <AgentStatusTile display={d} />
       <span
         className={cn(
-          "min-w-0 flex-1 truncate text-[11.5px] font-semibold",
-          d === "pending" || d === "skipped" ? "text-dim" : "text-text",
+          'min-w-0 flex-1 truncate text-[11.5px] font-semibold',
+          d === 'pending' || d === 'skipped' ? 'text-dim' : 'text-text',
         )}
       >
         {c.brief}
       </span>
-      <span
-        className="shrink-0 font-mono text-[8px]"
-        style={{ color: wordColor }}
-      >
+      <span className="shrink-0 font-mono text-[8px]" style={{ color: wordColor }}>
         {word}
       </span>
       <svg
@@ -903,7 +792,7 @@ function AgentRow({
         height="9"
         viewBox="0 0 24 24"
         fill="none"
-        stroke={selected ? "var(--accent)" : "var(--border-2)"}
+        stroke={selected ? 'var(--accent)' : 'var(--border-2)'}
         strokeWidth="3"
         className="shrink-0"
         aria-hidden
@@ -915,32 +804,28 @@ function AgentRow({
 }
 
 /** The 16px status icon tile on an agent-style row (blue spinner / green check / dashed pending). */
-function AgentStatusTile({
-  display,
-}: {
-  display: AgentDisplay | "queued" | "running";
-}) {
-  const done = display === "done";
-  const failed = display === "failed";
-  const spinning = display === "in_progress" || display === "running";
+function AgentStatusTile({ display }: { display: AgentDisplay | 'queued' | 'running' }) {
+  const done = display === 'done';
+  const failed = display === 'failed';
+  const spinning = display === 'in_progress' || display === 'running';
   return (
     <span
       className="grid h-4 w-4 shrink-0 place-items-center rounded"
       style={{
         color: done
-          ? "var(--green)"
+          ? 'var(--green)'
           : failed
-            ? "var(--red)"
+            ? 'var(--red)'
             : spinning
-              ? "var(--blue)"
-              : "var(--faint)",
+              ? 'var(--blue)'
+              : 'var(--faint)',
         background: done
-          ? "var(--green-soft)"
+          ? 'var(--green-soft)'
           : failed
-            ? "var(--red-soft)"
+            ? 'var(--red-soft)'
             : spinning
-              ? "var(--blue-soft)"
-              : "var(--surface-3)",
+              ? 'var(--blue-soft)'
+              : 'var(--surface-3)',
       }}
     >
       {done ? (
@@ -972,20 +857,9 @@ function AgentStatusTile({
           <path d="M18 6L6 18M6 6l12 12" />
         </svg>
       ) : spinning ? (
-        <SpinRing
-          size={11}
-          color="currentColor"
-          track="currentColor"
-          trackOpacity={0.28}
-        />
+        <SpinRing size={11} color="currentColor" track="currentColor" trackOpacity={0.28} />
       ) : (
-        <svg
-          width="11"
-          height="11"
-          viewBox="0 0 20 20"
-          className="block"
-          aria-hidden
-        >
+        <svg width="11" height="11" viewBox="0 0 20 20" className="block" aria-hidden>
           <circle
             cx="10"
             cy="10"
@@ -1009,7 +883,7 @@ function PostReviewFixesRow({
   selected,
   onOpen,
 }: {
-  state: "queued" | "running" | "done" | "failed";
+  state: 'queued' | 'running' | 'done' | 'failed';
   selected: boolean;
   onOpen: () => void;
 }) {
@@ -1019,18 +893,16 @@ function PostReviewFixesRow({
       onClick={onOpen}
       title="Runs after the review agents finish — applies fixes and verifies. Open its transcript."
       className={cn(
-        "mt-[2px] flex w-full items-center gap-2 border-t border-dashed px-1.5 pb-[3px] pt-1.5 text-left transition",
-        selected
-          ? "bg-panel shadow-[0_1px_3px_rgba(0,0,0,0.06)]"
-          : "hover:bg-surface-2",
+        'mt-[2px] flex w-full items-center gap-2 border-t border-dashed px-1.5 pb-[3px] pt-1.5 text-left transition',
+        selected ? 'bg-panel shadow-[0_1px_3px_rgba(0,0,0,0.06)]' : 'hover:bg-surface-2',
       )}
-      style={{ borderColor: "var(--border-2)" }}
+      style={{ borderColor: 'var(--border-2)' }}
     >
-      <AgentStatusTile display={state === "queued" ? "pending" : state} />
+      <AgentStatusTile display={state === 'queued' ? 'pending' : state} />
       <span
         className={cn(
-          "min-w-0 flex-1 text-[11.5px] font-semibold",
-          state === "done" ? "text-text" : "text-dim",
+          'min-w-0 flex-1 text-[11.5px] font-semibold',
+          state === 'done' ? 'text-text' : 'text-dim',
         )}
       >
         Post-review fixes
@@ -1040,7 +912,7 @@ function PostReviewFixesRow({
         height="9"
         viewBox="0 0 24 24"
         fill="none"
-        stroke={selected ? "var(--accent)" : "var(--border-2)"}
+        stroke={selected ? 'var(--accent)' : 'var(--border-2)'}
         strokeWidth="3"
         className="shrink-0"
         aria-hidden

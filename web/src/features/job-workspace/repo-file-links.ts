@@ -1,4 +1,4 @@
-import { fileNode } from "./node-registry";
+import { fileNode } from './node-registry';
 
 export type FileLinkResolution = { url: string; onSelect: () => void };
 
@@ -17,7 +17,7 @@ export function makeResolveFileLink(
     if (!fileSet.has(path)) return null;
     const node = fileNode(path, lines);
     const qs = new URLSearchParams(searchParams);
-    qs.set("file", node.slice("file:".length));
+    qs.set('file', node.slice('file:'.length));
     return {
       url: `${pathname}?${qs.toString()}`,
       onSelect: () => onSelectNode(node),

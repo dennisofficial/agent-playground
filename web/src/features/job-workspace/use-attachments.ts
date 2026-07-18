@@ -1,12 +1,9 @@
-"use client";
+'use client';
 
-import { useEffect, useRef, useState } from "react";
-import { addDraftAttachment, type JobRef } from "@/lib/api/job-api";
-import type { DraftAttachment, PendingAttachment } from "@/lib/api/job-queries";
-import {
-  composerStore,
-  useComposerAttachments,
-} from "@/lib/api/composer-store";
+import { composerStore, useComposerAttachments } from '@/lib/api/composer-store';
+import { addDraftAttachment, type JobRef } from '@/lib/api/job-api';
+import type { DraftAttachment, PendingAttachment } from '@/lib/api/job-queries';
+import { useEffect, useRef, useState } from 'react';
 
 /** Attachment caps — mirror the backend (`MAX_ATTACHMENTS` / `MAX_ATTACHMENT_BYTES`). */
 export const MAX_ATTACHMENTS = 25;
@@ -25,7 +22,7 @@ export interface AttachmentsApi {
 
 /** The local-mode variant (New-job modal) — identical API, but the tray still carries raw `File`s so the
  *  modal can upload them at create time (`createJobWithFiles`). */
-export interface LocalAttachmentsApi extends Omit<AttachmentsApi, "attachments"> {
+export interface LocalAttachmentsApi extends Omit<AttachmentsApi, 'attachments'> {
   attachments: PendingAttachment[];
 }
 
@@ -49,15 +46,11 @@ export interface LocalAttachmentsApi extends Omit<AttachmentsApi, "attachments">
  */
 export function useAttachments(ref: JobRef): AttachmentsApi;
 export function useAttachments(): LocalAttachmentsApi;
-export function useAttachments(
-  ref?: JobRef,
-): AttachmentsApi | LocalAttachmentsApi {
+export function useAttachments(ref?: JobRef): AttachmentsApi | LocalAttachmentsApi {
   const storeMode = !!ref?.jobId;
   // Always call both hooks (rules of hooks); only one drives the tray. The store hook ignores a blank ref.
   const storeAttachments = useComposerAttachments(ref ?? EMPTY_REF);
-  const [localAttachments, setLocalAttachments] = useState<PendingAttachment[]>(
-    [],
-  );
+  const [localAttachments, setLocalAttachments] = useState<PendingAttachment[]>([]);
 
   const [error, setError] = useState<string | null>(null);
   const createdUrlsRef = useRef<string[]>([]);
@@ -74,10 +67,7 @@ export function useAttachments(
 
   /** Apply the caps + build blob previews for a batch, returning the next tray. Sets `error` as a side
    *  effect (safe — this runs synchronously inside an event handler / store updater). LOCAL mode only. */
-  function applyAdd(
-    prev: PendingAttachment[],
-    files: File[],
-  ): PendingAttachment[] {
+  function applyAdd(prev: PendingAttachment[], files: File[]): PendingAttachment[] {
     const next = [...prev];
     for (const file of files) {
       if (next.length >= MAX_ATTACHMENTS) {
@@ -93,7 +83,7 @@ export function useAttachments(
       next.push({
         file,
         url,
-        kind: file.type.startsWith("image/") ? "image" : "file",
+        kind: file.type.startsWith('image/') ? 'image' : 'file',
       });
     }
     return next;
@@ -105,10 +95,17 @@ export function useAttachments(
     const tempId = `pending-${crypto.randomUUID()}`;
     const url = URL.createObjectURL(file);
     createdUrlsRef.current.push(url);
-    const kind = file.type.startsWith("image/") ? "image" : "file";
+    const kind = file.type.startsWith('image/') ? 'image' : 'file';
     composerStore.setAttachments(jobRef, (prev) => [
       ...prev,
-      { id: tempId, name: file.name, kind, size: file.size, url, pending: true },
+      {
+        id: tempId,
+        name: file.name,
+        kind,
+        size: file.size,
+        url,
+        pending: true,
+      },
     ]);
     void addDraftAttachment(jobRef, file)
       .then((dto) => {
@@ -122,15 +119,19 @@ export function useAttachments(
         composerStore.setAttachments(jobRef, (prev) =>
           prev.map((a) =>
             a.id === tempId
-              ? { id: dto.id, name: dto.name, kind: dto.kind, size: dto.size, url }
+              ? {
+                  id: dto.id,
+                  name: dto.name,
+                  kind: dto.kind,
+                  size: dto.size,
+                  url,
+                }
               : a,
           ),
         );
       })
       .catch(() => {
-        composerStore.setAttachments(jobRef, (prev) =>
-          prev.filter((a) => a.id !== tempId),
-        );
+        composerStore.setAttachments(jobRef, (prev) => prev.filter((a) => a.id !== tempId));
         URL.revokeObjectURL(url);
         setError(`Couldn't upload "${file.name}" — try again.`);
       });
@@ -191,18 +192,16 @@ export function useAttachments(
   /** Extract pasted images from a clipboard event. Returns true if any were added (caller should preventDefault). */
   function addPastedImages(e: React.ClipboardEvent): boolean {
     const imgs = Array.from(e.clipboardData.items)
-      .filter((it) => it.kind === "file" && it.type.startsWith("image/"))
+      .filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
       .map((it) => it.getAsFile())
       .filter((f): f is File => f != null)
       // Pasted screenshots have no name — synthesize one from the MIME subtype.
       .map((f) =>
         f.name
           ? f
-          : new File(
-              [f],
-              `pasted-${Date.now()}.${f.type.split("/")[1] || "png"}`,
-              { type: f.type },
-            ),
+          : new File([f], `pasted-${Date.now()}.${f.type.split('/')[1] || 'png'}`, {
+              type: f.type,
+            }),
       );
     if (imgs.length === 0) return false;
     add(imgs);
@@ -216,4 +215,4 @@ export function useAttachments(
 }
 
 /** The ref-less sentinel — the store treats a blank jobId as "no draft" (create-job modal). */
-const EMPTY_REF: JobRef = { orgId: "", repoId: "", jobId: "" };
+const EMPTY_REF: JobRef = { orgId: '', repoId: '', jobId: '' };

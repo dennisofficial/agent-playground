@@ -1,15 +1,43 @@
-"use client";
+'use client';
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { useRouter } from "next/navigation";
+import { CiHeaderGlyph, Dot, KindBadge, StatusPie } from '@/components/ui/badges';
+import { FolderRow } from '@/features/job-workspace/folder-row';
+import { JobMenu } from '@/features/job-workspace/job-menu';
+import { PlanReviewRow } from '@/features/job-workspace/plan-review-row';
+import type { JobRef } from '@/lib/api/job-api';
+import { pipelineJob, resolveJob, ThreadApiError } from '@/lib/api/job-api';
+import {
+  useJobCreatedJobs,
+  useJobDiffSummary,
+  useRetryJob,
+  useServices,
+  useShipWithoutReview,
+} from '@/lib/api/job-queries';
+import { useLiveTurn } from '@/lib/api/job-stream';
+import { STATUS_META } from '@/lib/api/status';
+import type {
+  ContextFile,
+  JobBlocker,
+  JobContext,
+  JobKind,
+  JobProvenance,
+  JobStatus,
+  PipelineJob,
+  PipelineState,
+  ServiceInfo,
+  TaskItem,
+} from '@/lib/api/types';
+import { pipelineAutoApproveMode, pipelineAutoMerge, pipelineMainTasks } from '@/lib/api/types';
+import { cn } from '@/lib/cn';
+import { threadHref } from '@/lib/routes';
+import { formatBytes } from '@/utils/format';
+import type { AutoApproveMode } from '@workspace/shared';
 import {
   AlertTriangle,
   ArrowUpRight,
-  ChevronRight,
   CornerUpLeft,
   FileText,
   FlaskConical,
-  Folder,
   GitBranch,
   GitFork,
   GitMerge,
@@ -19,69 +47,26 @@ import {
   Hourglass,
   Image as ImageIcon,
   Lock,
-  MoreHorizontal,
   Pause,
-  Pencil,
   RotateCw,
   Server,
   ShieldCheck,
   SquareTerminal,
-  Trash2,
-} from "lucide-react";
-import {
-  CiHeaderGlyph,
-  Dot,
-  KindBadge,
-  StatusPie,
-} from "@/components/ui/badges";
-import { STATUS_META } from "@/lib/api/status";
-import { formatBytes } from "@/utils/format";
-import { cn } from "@/lib/cn";
-import { pipelineJob, resolveJob, ThreadApiError } from "@/lib/api/job-api";
-import { isOutputGroupHidden } from "./output-group";
-import {
-  useJobCreatedJobs,
-  useJobDiffSummary,
-  useRetryJob,
-  useServices,
-  useShipWithoutReview,
-} from "@/lib/api/job-queries";
-import { threadHref } from "@/lib/routes";
-import { Divider, PipelineTree, TasksBody } from "./pipeline-tree";
-import { codexReviewNode } from "./codex-review";
+} from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { autoPillView } from './auto-approve-mode';
+import { AutoApprovePopover } from './auto-approve-popover';
+import { EphemeralToast, useEphemeralToast } from './ephemeral-toast';
+import { overlayLiveTasks } from './live-tasks';
+import { isOutputGroupHidden } from './output-group';
+import { Divider, PipelineTree, TasksBody } from './pipeline-tree';
 import {
   NavigatorApproveButton,
   NavigatorAutoMergingButton,
   NavigatorMergeButton,
   NavigatorShipButton,
-} from "./spec-approval";
-import {
-  pipelineAutoApproveMode,
-  pipelineAutoMerge,
-  pipelineMainTasks,
-} from "@/lib/api/types";
-import type { AutoApproveMode } from "@workspace/shared";
-import { autoPillView } from "./auto-approve-mode";
-import { AutoApprovePopover } from "./auto-approve-popover";
-import { useLiveTurn } from "@/lib/api/job-stream";
-import { overlayLiveTasks } from "./live-tasks";
-import type {
-  ContextFile,
-  JobBlocker,
-  JobProvenance,
-  PipelineJob,
-  PipelineState,
-  JobContext,
-  JobKind,
-  JobStatus,
-  ServiceInfo,
-  TaskItem,
-} from "@/lib/api/types";
-import type { JobRef } from "@/lib/api/job-api";
-import { PlanReviewRow } from "@/features/job-workspace/plan-review-row";
-import { JobMenu } from "@/features/job-workspace/job-menu";
-import { FolderRow } from "@/features/job-workspace/folder-row";
-import { EphemeralToast, useEphemeralToast } from "./ephemeral-toast";
+} from './spec-approval';
 
 /**
  * PR-row glyph for the navigator header — mirrors the sidebar's `prGlyph` (GitHub color convention) so the
@@ -89,23 +74,22 @@ import { EphemeralToast, useEphemeralToast } from "./ephemeral-toast";
  * `pr_state` / `pr_mergeable` columns the sidebar does. `label` is the short word after `PR #NN · `.
  */
 function prNavGlyph(
-  state: PipelineJob["prState"],
-  mergeable: PipelineJob["prMergeable"],
+  state: PipelineJob['prState'],
+  mergeable: PipelineJob['prMergeable'],
 ): { Icon: typeof GitPullRequest; color: string; label: string } {
-  if (state === "merged")
-    return { Icon: GitMerge, color: "var(--purple)", label: "merged" };
-  if (state === "closed")
-    return { Icon: GitPullRequestClosed, color: "var(--red)", label: "closed" };
-  if (mergeable === "dirty")
-    return { Icon: GitPullRequest, color: "var(--amber)", label: "conflict" };
-  return { Icon: GitPullRequest, color: "var(--green)", label: "open" };
+  if (state === 'merged') return { Icon: GitMerge, color: 'var(--purple)', label: 'merged' };
+  if (state === 'closed')
+    return { Icon: GitPullRequestClosed, color: 'var(--red)', label: 'closed' };
+  if (mergeable === 'dirty')
+    return { Icon: GitPullRequest, color: 'var(--amber)', label: 'conflict' };
+  return { Icon: GitPullRequest, color: 'var(--green)', label: 'open' };
 }
 
 const AUTO_APPROVE_TITLES: Record<AutoApproveMode, string> = {
-  off: "Auto-approve off — you approve plan & ship gates",
-  both: "Auto-approve on — plan & ship gates advance without you",
-  plan: "Auto-approve: plan gate only",
-  ship: "Auto-approve: ship gate only",
+  off: 'Auto-approve off — you approve plan & ship gates',
+  both: 'Auto-approve on — plan & ship gates advance without you',
+  plan: 'Auto-approve: plan gate only',
+  ship: 'Auto-approve: ship gate only',
 };
 
 /** Compact header pill for the per-job AUTO-APPROVE mode. Opens a popover with independent Plan/Ship
@@ -150,12 +134,11 @@ function AutoApproveToggle({
         }}
         data-testid="auto-approve-toggle"
         className={cn(
-          "flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.05em] transition",
-          disabled && "cursor-not-allowed opacity-40",
-          view.tone === "full" && "border-green bg-green-soft text-green",
-          view.tone === "partial" && "border-amber bg-amber-soft text-amber",
-          view.tone === "off" &&
-            "border-border-2 bg-surface text-faint hover:text-dim",
+          'flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.05em] transition',
+          disabled && 'cursor-not-allowed opacity-40',
+          view.tone === 'full' && 'border-green bg-green-soft text-green',
+          view.tone === 'partial' && 'border-amber bg-amber-soft text-amber',
+          view.tone === 'off' && 'border-border-2 bg-surface text-faint hover:text-dim',
         )}
       >
         <ShieldCheck className="h-3 w-3" strokeWidth={2.25} />
@@ -280,7 +263,7 @@ export function Navigator({
   // Gates on the persisted field, NOT the `directBuild` approval-CTA hint (which is derived from message
   // history and only meaningful at the approval gate). Null while still awaiting approval ⇒ false ⇒ a
   // requested-but-unapproved direct build keeps its placeholders (it can still convert to a full plan).
-  const isDirectBuild = job?.buildPath === "direct";
+  const isDirectBuild = job?.buildPath === 'direct';
   // AUTO-APPROVE mode — read from the RAW pipeline (not `job`), so it works for an open/pre-plan job whose
   // pipeline is the `no_job` shape (`pipelineJob()` is null there but the mode still rides along).
   const autoApproveMode = pipelineAutoApproveMode(pipeline);
@@ -292,9 +275,7 @@ export function Navigator({
   // DRIFT: the agent switched the sandbox HEAD to a branch other than the host-named featureBranch. Surfaced
   // (never blocked) — the live branch is what actually ships. Null when there's no divergence to show.
   const drift =
-    job?.currentBranch && job.currentBranch !== job.featureBranch
-      ? job.currentBranch
-      : null;
+    job?.currentBranch && job.currentBranch !== job.featureBranch ? job.currentBranch : null;
   // "Has a PR" mirrors the sidebar's signal — the observed PR lifecycle (`prState`), NOT `prUrl`. A closed
   // PR (or a partially-recorded row) can carry `prState`/`prNumber` with a null `prUrl`; gating on `prUrl`
   // would then say "No PR yet" while the sidebar shows the closed glyph. The URL only gates the link-out.
@@ -303,10 +284,10 @@ export function Navigator({
   // muted "—" on the Changes row then, and skip the diff fetch below.
   const noChanges =
     !hasPr &&
-    meta.status !== "done" &&
-    meta.status !== "running" &&
-    meta.status !== "awaiting_ship_review" &&
-    meta.status !== "amending";
+    meta.status !== 'done' &&
+    meta.status !== 'running' &&
+    meta.status !== 'awaiting_ship_review' &&
+    meta.status !== 'amending';
   const [editing, setEditing] = useState(false);
 
   // Jobs Atlas spawned FROM this job — the header "Created jobs" entry appears only once there's ≥1.
@@ -314,18 +295,15 @@ export function Navigator({
 
   // Supervised services drive BOTH the SERVICES and PORTS regions — fetched once here and passed down so
   // the two regions share a single poll (PORTS is a filtered view of the same services).
-  const { data: servicesData, isLoading: servicesLoading } =
-    useServices(jobRef);
+  const { data: servicesData, isLoading: servicesLoading } = useServices(jobRef);
   const services = servicesData?.services ?? [];
 
   // Real +/− line totals for the "Changes" row — summed from the cheap numstat-only summary endpoint (NOT
   // the heavy full-diff query the Changes pane uses; fetched only when the job could actually have changes).
   // Mirrors the per-file badges in the diff pane.
   const { data: diffData } = useJobDiffSummary(jobRef, !noChanges);
-  const diffAdditions =
-    diffData?.files.reduce((n, f) => n + f.additions, 0) ?? 0;
-  const diffDeletions =
-    diffData?.files.reduce((n, f) => n + f.deletions, 0) ?? 0;
+  const diffAdditions = diffData?.files.reduce((n, f) => n + f.additions, 0) ?? 0;
+  const diffDeletions = diffData?.files.reduce((n, f) => n + f.deletions, 0) ?? 0;
 
   const st = meta.status;
   const router = useRouter();
@@ -346,9 +324,9 @@ export function Navigator({
       );
     } catch (err) {
       if (err instanceof ThreadApiError && err.status === 404) {
-        showToast("This job was deleted.");
+        showToast('This job was deleted.');
       } else {
-        console.error("Failed to resolve job", err);
+        console.error('Failed to resolve job', err);
       }
     }
   };
@@ -357,11 +335,11 @@ export function Navigator({
     <div
       data-testid="job-navigator"
       className={cn(
-        "flex flex-col overflow-hidden border-r border-border",
-        inDrawer ? "h-full w-full" : "w-72 shrink-0",
+        'flex flex-col overflow-hidden border-r border-border',
+        inDrawer ? 'h-full w-full' : 'w-72 shrink-0',
       )}
       style={{
-        background: "color-mix(in srgb, var(--panel) 35%, transparent)",
+        background: 'color-mix(in srgb, var(--panel) 35%, transparent)',
       }}
     >
       {/* ── STICKY header (compact) ─────────────────────────────────────────────────────────── */}
@@ -380,10 +358,7 @@ export function Navigator({
             <AutoApproveToggle
               mode={autoApproveMode}
               disabled={
-                st === "done" ||
-                st === "cancelled" ||
-                st === "deleting" ||
-                st === "archived"
+                st === 'done' || st === 'cancelled' || st === 'deleting' || st === 'archived'
               }
               onChange={onSetAutoApprove}
               autoMerge={autoMerge}
@@ -408,11 +383,11 @@ export function Navigator({
             autoFocus
             defaultValue={meta.title}
             onKeyDown={(e) => {
-              if (e.key === "Enter") {
+              if (e.key === 'Enter') {
                 const v = e.currentTarget.value.trim();
                 if (v && v !== meta.title) onRename(v);
                 setEditing(false);
-              } else if (e.key === "Escape") {
+              } else if (e.key === 'Escape') {
                 setEditing(false);
               }
             }}
@@ -430,13 +405,9 @@ export function Navigator({
             className="h-[7px] w-[7px] shrink-0 rounded-sm"
             style={{ background: meta.orgColor }}
           />
-          <span className="font-mono text-[9.5px] text-dim">
-            {meta.orgName}
-          </span>
+          <span className="font-mono text-[9.5px] text-dim">{meta.orgName}</span>
           <span className="text-[9px] text-border-2">/</span>
-          <span className="font-mono text-[9.5px] font-semibold">
-            {meta.repoName}
-          </span>
+          <span className="font-mono text-[9.5px] font-semibold">{meta.repoName}</span>
         </div>
         {/* Created by — the job that spawned this one (immutable snapshot). Resolve-then-navigate: a
             deleted parent 404s and toasts instead of opening a dead workspace. */}
@@ -448,7 +419,7 @@ export function Navigator({
           >
             <CornerUpLeft size={13} className="w-3.5 shrink-0 text-accent" />
             <span className="flex-1 truncate text-[11px] font-semibold text-dim">
-              Created by {meta.createdBy.title || "a job"}
+              Created by {meta.createdBy.title || 'a job'}
             </span>
           </button>
         ) : null}
@@ -457,7 +428,7 @@ export function Navigator({
             <GitBranch
               size={10}
               className="shrink-0"
-              style={drift ? { color: "var(--amber)" } : undefined}
+              style={drift ? { color: 'var(--amber)' } : undefined}
             />
             <span
               className="flex-1 truncate font-mono text-[9.5px] text-dim"
@@ -467,32 +438,25 @@ export function Navigator({
                 <>
                   <span className="text-faint line-through">{branch}</span>
                   <span className="px-1 text-faint">→</span>
-                  <span style={{ color: "var(--amber)" }}>{drift}</span>
+                  <span style={{ color: 'var(--amber)' }}>{drift}</span>
                 </>
               ) : (
                 branch
               )}
             </span>
             {meta.tracker ? (
-              <span className="shrink-0 font-mono text-[9px] text-blue">
-                {meta.tracker} ↗
-              </span>
+              <span className="shrink-0 font-mono text-[9px] text-blue">{meta.tracker} ↗</span>
             ) : null}
           </div>
         ) : meta.tracker ? (
-          <div className="mt-1.5 font-mono text-[9.5px] text-blue">
-            {meta.tracker} ↗
-          </div>
+          <div className="mt-1.5 font-mono text-[9.5px] text-blue">{meta.tracker} ↗</div>
         ) : null}
         {/* PR — links out once opened, muted resting state until then. */}
         <div className="mt-1 flex items-center gap-1.5 px-1">
           {hasPr ? (
             (() => {
-              const { Icon, color, label } = prNavGlyph(
-                job!.prState,
-                job!.prMergeable,
-              );
-              const text = `${job!.prNumber != null ? `PR #${job!.prNumber}` : "pull request"} · ${label}`;
+              const { Icon, color, label } = prNavGlyph(job!.prState, job!.prMergeable);
+              const text = `${job!.prNumber != null ? `PR #${job!.prNumber}` : 'pull request'} · ${label}`;
               const showCi = job!.prNumber != null;
               // Link out only when we actually have the PR url; otherwise show the same status inline.
               return job!.prUrl ? (
@@ -502,74 +466,50 @@ export function Navigator({
                   rel="noreferrer"
                   className="flex flex-1 items-center gap-1.5 rounded py-0.5 hover:bg-surface-2"
                 >
-                  <Icon
-                    size={11}
-                    strokeWidth={2}
-                    style={{ color }}
-                    className="shrink-0"
-                  />
-                  <span
-                    className="flex-1 font-mono text-[9.5px] font-semibold"
-                    style={{ color }}
-                  >
+                  <Icon size={11} strokeWidth={2} style={{ color }} className="shrink-0" />
+                  <span className="flex-1 font-mono text-[9.5px] font-semibold" style={{ color }}>
                     {text}
                   </span>
-                  {showCi ? (
-                    <CiHeaderGlyph ci={job!.ciStatus} counts={job!.ciCounts} />
-                  ) : null}
+                  {showCi ? <CiHeaderGlyph ci={job!.ciStatus} counts={job!.ciCounts} /> : null}
                   <ArrowUpRight size={11} className="text-faint" />
                 </a>
               ) : (
                 <div className="flex flex-1 items-center gap-1.5 py-0.5">
-                  <Icon
-                    size={11}
-                    strokeWidth={2}
-                    style={{ color }}
-                    className="shrink-0"
-                  />
-                  <span
-                    className="flex-1 font-mono text-[9.5px] font-semibold"
-                    style={{ color }}
-                  >
+                  <Icon size={11} strokeWidth={2} style={{ color }} className="shrink-0" />
+                  <span className="flex-1 font-mono text-[9.5px] font-semibold" style={{ color }}>
                     {text}
                   </span>
-                  {showCi ? (
-                    <CiHeaderGlyph ci={job!.ciStatus} counts={job!.ciCounts} />
-                  ) : null}
+                  {showCi ? <CiHeaderGlyph ci={job!.ciStatus} counts={job!.ciCounts} /> : null}
                 </div>
               );
             })()
           ) : (
             <div className="flex flex-1 items-center gap-1.5 py-0.5">
               <GitPullRequest size={11} className="shrink-0 text-faint" />
-              <span className="flex-1 font-mono text-[9.5px] text-faint">
-                No PR yet
-              </span>
+              <span className="flex-1 font-mono text-[9.5px] text-faint">No PR yet</span>
             </div>
           )}
         </div>
         {/* Changes — always available; opens the accumulated diff in the detail pane. */}
         <button
           type="button"
-          onClick={() => onSelectNode("diff")}
+          onClick={() => onSelectNode('diff')}
           className={cn(
-            "-mx-4 mt-1 flex w-[calc(100%+2rem)] items-center gap-2.5 px-4 py-1.5 text-left transition hover:bg-surface-2",
-            detailNode === "diff" && "nav-selected-blue",
+            '-mx-4 mt-1 flex w-[calc(100%+2rem)] items-center gap-2.5 px-4 py-1.5 text-left transition hover:bg-surface-2',
+            detailNode === 'diff' && 'nav-selected-blue',
           )}
         >
           <span className="w-3.5 shrink-0 text-center font-mono text-[13px] font-bold text-blue">
             ±
           </span>
-          <span className="flex-1 text-[11px] font-semibold text-dim">
-            Changes
-          </span>
+          <span className="flex-1 text-[11px] font-semibold text-dim">Changes</span>
           {diffAdditions > 0 || diffDeletions > 0 ? (
             <span className="flex items-center gap-1.5 font-mono text-[9px] font-semibold tabular-nums">
               {diffAdditions > 0 ? (
-                <span style={{ color: "var(--add)" }}>+{diffAdditions}</span>
+                <span style={{ color: 'var(--add)' }}>+{diffAdditions}</span>
               ) : null}
               {diffDeletions > 0 ? (
-                <span style={{ color: "var(--del)" }}>−{diffDeletions}</span>
+                <span style={{ color: 'var(--del)' }}>−{diffDeletions}</span>
               ) : null}
             </span>
           ) : noChanges ? (
@@ -581,47 +521,35 @@ export function Navigator({
         {createdJobs.length > 0 ? (
           <button
             type="button"
-            onClick={() => onSelectNode("created")}
+            onClick={() => onSelectNode('created')}
             className={cn(
-              "-mx-4 flex w-[calc(100%+2rem)] items-center gap-2.5 px-4 py-1.5 text-left transition hover:bg-surface-2",
-              detailNode === "created" && "nav-selected-blue",
+              '-mx-4 flex w-[calc(100%+2rem)] items-center gap-2.5 px-4 py-1.5 text-left transition hover:bg-surface-2',
+              detailNode === 'created' && 'nav-selected-blue',
             )}
           >
             <GitFork size={13} className="w-3.5 shrink-0 text-accent" />
-            <span className="flex-1 text-[11px] font-semibold text-dim">
-              Created jobs
-            </span>
-            <span className="font-mono text-[9px] text-faint">
-              {createdJobs.length}
-            </span>
+            <span className="flex-1 text-[11px] font-semibold text-dim">Created jobs</span>
+            <span className="font-mono text-[9px] text-faint">{createdJobs.length}</span>
           </button>
         ) : null}
         {/* Blocked by — a REAL gate (the brain doesn't run while it's up); appears whenever the job is
             parked or still carries live blockers. */}
-        {st === "blocked" || (meta.blockedBy?.length ?? 0) > 0 ? (
+        {st === 'blocked' || (meta.blockedBy?.length ?? 0) > 0 ? (
           <button
             type="button"
-            onClick={() => onSelectNode("blocked-by")}
+            onClick={() => onSelectNode('blocked-by')}
             className={cn(
-              "-mx-4 flex w-[calc(100%+2rem)] items-center gap-2.5 px-4 py-1.5 text-left transition hover:bg-surface-2",
-              detailNode === "blocked-by" && "nav-selected-blue",
+              '-mx-4 flex w-[calc(100%+2rem)] items-center gap-2.5 px-4 py-1.5 text-left transition hover:bg-surface-2',
+              detailNode === 'blocked-by' && 'nav-selected-blue',
             )}
           >
-            <Lock
-              size={13}
-              className="w-3.5 shrink-0"
-              style={{ color: "var(--amber)" }}
-            />
-            <span className="flex-1 text-[11px] font-semibold text-dim">
-              Blocked by
-            </span>
-            <span className="font-mono text-[9px] text-faint">
-              {meta.blockedBy?.length ?? 0}
-            </span>
+            <Lock size={13} className="w-3.5 shrink-0" style={{ color: 'var(--amber)' }} />
+            <span className="flex-1 text-[11px] font-semibold text-dim">Blocked by</span>
+            <span className="font-mono text-[9px] text-faint">{meta.blockedBy?.length ?? 0}</span>
           </button>
         ) : null}
         {/* Approve — pinned as the last header item while the plan is awaiting approval. */}
-        {st === "awaiting_approval" && approveValue ? (
+        {st === 'awaiting_approval' && approveValue ? (
           <div className="mt-2">
             <NavigatorApproveButton
               jobRef={jobRef}
@@ -631,7 +559,7 @@ export function Navigator({
           </div>
         ) : null}
         {/* Ship it — the SECOND human gate, pinned the same way once the build + master review finish. */}
-        {st === "awaiting_ship_review" && shipValue ? (
+        {st === 'awaiting_ship_review' && shipValue ? (
           <div className="mt-2">
             <NavigatorShipButton
               jobRef={jobRef}
@@ -644,7 +572,7 @@ export function Navigator({
             armed on an open PR the host clicks it for us (from outside the sandbox) the moment CI goes
             green, so we show a disabled "Auto merging…" indicator instead of a live button — otherwise
             the header sits empty during the CI wait and the job looks stalled. */}
-        {autoMerge && job?.prState === "open" ? (
+        {autoMerge && job?.prState === 'open' ? (
           <div className="mt-2">
             <NavigatorAutoMergingButton />
           </div>
@@ -671,7 +599,7 @@ export function Navigator({
             collapses whichever was open. Selecting opens it in the LEFT pane. */}
         <MainLaneRow
           active={laneNode === null}
-          running={st === "running" || st === "planning"}
+          running={st === 'running' || st === 'planning'}
           jobId={jobRef.jobId}
           durableTasks={pipelineMainTasks(pipeline)}
           onClick={onConversation}
@@ -747,17 +675,17 @@ function MainLaneRow({
 }) {
   const liveTurn = useLiveTurn(jobId);
   const tasks = overlayLiveTasks(durableTasks, liveTurn);
-  const done = tasks.filter((t) => t.status === "completed").length;
+  const done = tasks.filter((t) => t.status === 'completed').length;
   return (
     <div
       className="border-l-[3px]"
       style={
         active
           ? {
-              borderLeftColor: "var(--green)",
-              background: "color-mix(in srgb, var(--green) 6%, transparent)",
+              borderLeftColor: 'var(--green)',
+              background: 'color-mix(in srgb, var(--green) 6%, transparent)',
             }
-          : { borderLeftColor: "transparent", background: "transparent" }
+          : { borderLeftColor: 'transparent', background: 'transparent' }
       }
     >
       <button
@@ -770,14 +698,14 @@ function MainLaneRow({
         </span>
         <span
           className={cn(
-            "flex-1 truncate text-[12px]",
-            active ? "font-semibold text-text" : "font-medium text-dim",
+            'flex-1 truncate text-[12px]',
+            active ? 'font-semibold text-text' : 'font-medium text-dim',
           )}
         >
           Main
         </span>
         <span className="shrink-0 font-mono text-[8px] text-faint">
-          {tasks.length > 0 ? `[${done}/${tasks.length}]` : "planning"}
+          {tasks.length > 0 ? `[${done}/${tasks.length}]` : 'planning'}
         </span>
       </button>
       {active && tasks.length > 0 ? (
@@ -808,26 +736,19 @@ function ThreadRows({
   isDirectBuild?: boolean;
 }) {
   // Triaging — the autonomous lane: triage findings, not a build tree.
-  if (status === "triaging") {
+  if (status === 'triaging') {
     return (
       <>
         <div className="flex items-center gap-2.5 px-2 py-1.5">
-          <span
-            className="h-2 w-2 shrink-0 rounded-full"
-            style={{ background: "var(--green)" }}
-          />
-          <span className="flex-1 text-[11.5px] text-dim">
-            Verified &amp; classified
-          </span>
+          <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: 'var(--green)' }} />
+          <span className="flex-1 text-[11.5px] text-dim">Verified &amp; classified</span>
         </div>
         <div className="flex items-center gap-2.5 px-2 py-1.5">
           <span
             className="pulse-dot h-2 w-2 shrink-0 rounded-full"
-            style={{ background: "var(--slate)" }}
+            style={{ background: 'var(--slate)' }}
           />
-          <span className="flex-1 text-[11.5px] text-text">
-            1 decision parked for you
-          </span>
+          <span className="flex-1 text-[11.5px] text-text">1 decision parked for you</span>
         </div>
       </>
     );
@@ -843,10 +764,7 @@ function ThreadRows({
   // The tree renders every thread group EXCEPT planning/plan_review (those are pinned above), so "no lanes
   // yet" is the absence of any buildable thread group — not just an empty thread group list.
   const hasBuildThreadGroups =
-    job != null &&
-    job.threadGroups.some(
-      (s) => s.kind !== "planning" && s.kind !== "plan_review",
-    );
+    job != null && job.threadGroups.some((s) => s.kind !== 'planning' && s.kind !== 'plan_review');
   if (!job || (!hasBuildThreadGroups && prior.length === 0)) {
     return isDirectBuild ? null : <BuildLanesEmpty />;
   }
@@ -889,7 +807,7 @@ function PriorRevisionSection({
   onSelectNode,
 }: {
   job: PipelineJob;
-  revision: NonNullable<PipelineJob["priorRevisions"]>[number];
+  revision: NonNullable<PipelineJob['priorRevisions']>[number];
   jobId: string;
   laneNode: string | null;
   onSelectNode: (node: string) => void;
@@ -940,7 +858,7 @@ function OutputsRegion({
   const generated = context?.generated ?? [];
   const artifacts = context?.artifacts ?? [];
   const evidence = context?.evidence ?? [];
-  const triaging = status === "triaging";
+  const triaging = status === 'triaging';
 
   return (
     <>
@@ -957,8 +875,7 @@ function OutputsRegion({
         emptyIcon={<FileText size={13} />}
         emptyText={
           <>
-            Waiting for{" "}
-            <span className="font-mono text-[10px] text-dim">plan.md</span>
+            Waiting for <span className="font-mono text-[10px] text-dim">plan.md</span>
           </>
         }
         detailNode={detailNode}
@@ -968,9 +885,9 @@ function OutputsRegion({
           <div
             className="mx-1.5 mb-1 rounded-md border border-l-2 px-3 py-2.5"
             style={{
-              borderColor: "var(--border)",
-              borderLeftColor: "var(--slate)",
-              background: "var(--surface-2)",
+              borderColor: 'var(--border)',
+              borderLeftColor: 'var(--slate)',
+              background: 'var(--surface-2)',
             }}
           >
             <div className="mb-1.5 flex items-center gap-2">
@@ -981,9 +898,9 @@ function OutputsRegion({
               <span
                 className="rounded border px-1.5 py-px font-mono text-[8px] font-semibold"
                 style={{
-                  color: "var(--slate)",
-                  background: "var(--slate-soft)",
-                  borderColor: "var(--slate-line)",
+                  color: 'var(--slate)',
+                  background: 'var(--slate-soft)',
+                  borderColor: 'var(--slate-line)',
                 }}
               >
                 UNTRUSTED
@@ -1058,7 +975,7 @@ function OutputGroup({
 }: {
   label: string;
   files: ContextFile[];
-  prefix: "spec" | "artifact" | "gen" | "evidence";
+  prefix: 'spec' | 'artifact' | 'gen' | 'evidence';
   generated?: boolean;
   loading?: boolean;
   /** Drop the whole group (divider + empty row) when it has no files and nothing is loading/pending —
@@ -1100,15 +1017,12 @@ function OutputGroup({
     return null;
   return (
     <>
-      <Divider
-        label={label}
-        count={files.length > 0 ? files.length : <ZeroCount />}
-      />
+      <Divider label={label} count={files.length > 0 ? files.length : <ZeroCount />} />
       {children}
       {files.length > 0 ? (
         renderFileTree({
           node: buildFileTree(files),
-          path: "",
+          path: '',
           depth: 0,
           prefix,
           generated,
@@ -1144,51 +1058,43 @@ function ServicesRegion({
 }) {
   return (
     <>
-      <Divider
-        label="SERVICES"
-        count={services.length > 0 ? services.length : <ZeroCount />}
-      />
+      <Divider label="SERVICES" count={services.length > 0 ? services.length : <ZeroCount />} />
       {services.length > 0 ? (
         services.map((s) => {
           const node = `service:${s.id}`;
           const active = detailNode === node;
           const recentlyActive =
-            s.logUpdatedAt != null &&
-            Date.now() - Date.parse(s.logUpdatedAt) < 15_000;
+            s.logUpdatedAt != null && Date.now() - Date.parse(s.logUpdatedAt) < 15_000;
           // Live liveness drives the dot: accent = running (pulse only while its log is actively writing),
           // faint = stopped, slate = unknown/indeterminate. A stopped row also dims its label.
           const dotColor =
-            s.status === "running"
-              ? "var(--accent)"
-              : s.status === "stopped"
-                ? "var(--faint)"
-                : "var(--slate)";
+            s.status === 'running'
+              ? 'var(--accent)'
+              : s.status === 'stopped'
+                ? 'var(--faint)'
+                : 'var(--slate)';
           return (
             <button
               key={s.id}
               type="button"
               onClick={() => onSelectNode(node)}
               className={cn(
-                "flex w-full items-center gap-2.5 rounded-sm px-2 py-1.5 text-left transition hover:bg-surface-2",
-                active && "nav-selected-blue",
+                'flex w-full items-center gap-2.5 rounded-sm px-2 py-1.5 text-left transition hover:bg-surface-2',
+                active && 'nav-selected-blue',
               )}
             >
-              <Dot
-                color={dotColor}
-                pulse={s.status === "running" && recentlyActive}
-                size={9}
-              />
+              <Dot color={dotColor} pulse={s.status === 'running' && recentlyActive} size={9} />
               <span className="min-w-0 flex-1">
                 <span
                   className={cn(
-                    "block truncate text-[11px] font-semibold",
-                    s.status === "stopped" ? "text-faint" : "text-text",
+                    'block truncate text-[11px] font-semibold',
+                    s.status === 'stopped' ? 'text-faint' : 'text-text',
                   )}
                 >
                   {s.name}
                 </span>
                 <span className="block truncate font-mono text-[8px] text-faint">
-                  {s.cmd || "atlas-svc"}
+                  {s.cmd || 'atlas-svc'}
                 </span>
               </span>
             </button>
@@ -1197,9 +1103,7 @@ function ServicesRegion({
       ) : isLoading ? (
         <LoadingRow label="Loading…" />
       ) : (
-        <EmptyRow icon={<SquareTerminal size={13} />}>
-          No services running yet
-        </EmptyRow>
+        <EmptyRow icon={<SquareTerminal size={13} />}>No services running yet</EmptyRow>
       )}
     </>
   );
@@ -1211,9 +1115,7 @@ function ServicesRegion({
  *  declared a port and haven't stopped. Each exposed row (`url` present) links out to its public preview
  *  URL. When exposure is off (backend sends `url: null`), rows still render as a read-only port list. */
 function PortsRegion({ services }: { services: ServiceInfo[] }) {
-  const ports = services.filter(
-    (s) => s.port != null && s.status !== "stopped",
-  );
+  const ports = services.filter((s) => s.port != null && s.status !== 'stopped');
   return (
     <>
       {/* PORTS — the sandbox's live dev servers. Same inline-divider style as the OUTPUTS sub-groups; the
@@ -1225,7 +1127,7 @@ function PortsRegion({ services }: { services: ServiceInfo[] }) {
             <span className="flex items-center gap-1 font-mono text-[8px] font-semibold text-green">
               <span
                 className="pulse-dot h-[5px] w-[5px] rounded-full"
-                style={{ background: "var(--green)" }}
+                style={{ background: 'var(--green)' }}
               />
               {ports.length} live
             </span>
@@ -1239,22 +1141,22 @@ function PortsRegion({ services }: { services: ServiceInfo[] }) {
       ) : null}
       {ports.map((s) => {
         const linked = s.url != null;
-        const running = s.status === "running";
+        const running = s.status === 'running';
         // The whole row is the same band whether it's a link-out or an inert port entry; the anchor form is
         // only used when there's a public URL to open.
         const rowClass = cn(
-          "flex w-full items-center gap-2.5 rounded-sm px-2 py-1.5 text-left transition",
-          linked ? "hover:bg-surface-2" : "cursor-default",
+          'flex w-full items-center gap-2.5 rounded-sm px-2 py-1.5 text-left transition',
+          linked ? 'hover:bg-surface-2' : 'cursor-default',
         );
         const inner = (
           <>
             <span
               className="grid h-[19px] w-[19px] shrink-0 place-items-center rounded-[5px]"
               style={{
-                color: linked ? "var(--blue)" : "var(--faint)",
+                color: linked ? 'var(--blue)' : 'var(--faint)',
                 background: linked
-                  ? "color-mix(in srgb, var(--blue) 13%, transparent)"
-                  : "var(--surface-2)",
+                  ? 'color-mix(in srgb, var(--blue) 13%, transparent)'
+                  : 'var(--surface-2)',
               }}
             >
               {linked ? <Globe size={11} /> : <Server size={11} />}
@@ -1262,26 +1164,23 @@ function PortsRegion({ services }: { services: ServiceInfo[] }) {
             <span className="min-w-0 flex-1">
               <span
                 className={cn(
-                  "block truncate text-[11px] font-semibold",
-                  running ? "text-text" : "text-faint",
+                  'block truncate text-[11px] font-semibold',
+                  running ? 'text-text' : 'text-faint',
                 )}
               >
                 {s.name}
               </span>
-              <span className="block truncate font-mono text-[8px] text-faint">
-                :{s.port}
-              </span>
+              <span className="block truncate font-mono text-[8px] text-faint">:{s.port}</span>
             </span>
             <span
               className="h-1.5 w-1.5 shrink-0 rounded-full"
               style={
                 running
                   ? {
-                      background: "var(--green)",
-                      boxShadow:
-                        "0 0 0 3px color-mix(in srgb, var(--green) 16%, transparent)",
+                      background: 'var(--green)',
+                      boxShadow: '0 0 0 3px color-mix(in srgb, var(--green) 16%, transparent)',
                     }
-                  : { background: "var(--faint)" }
+                  : { background: 'var(--faint)' }
               }
             />
           </>
@@ -1331,22 +1230,20 @@ function StateBanner({
   // The Codex-outage hold on the ship-time master_review: a transient infra hold, not a terminal
   // failure — the job auto-retries on the resume clock, or the operator can jump straight to the
   // ship-review gate without the automated whole-diff pass.
-  if (job?.halt?.kind === "codex_review_unavailable") {
+  if (job?.halt?.kind === 'codex_review_unavailable') {
     const pending = retry.isPending || shipWithoutReview.isPending;
     const onShipWithoutReview = () =>
       shipWithoutReview.mutate(undefined, {
         onSuccess: (res) =>
-          res.ok
-            ? onConversation()
-            : onNotice(res.reason ?? "Ship without review was refused."),
+          res.ok ? onConversation() : onNotice(res.reason ?? 'Ship without review was refused.'),
       });
     return (
       <div
         className="mx-1.5 my-1 rounded-md border border-l-2 px-3 py-2.5"
         style={{
-          borderColor: "var(--border)",
-          borderLeftColor: "var(--accent-line)",
-          background: "var(--surface-2)",
+          borderColor: 'var(--border)',
+          borderLeftColor: 'var(--accent-line)',
+          background: 'var(--surface-2)',
         }}
       >
         <div className="mb-1 flex items-center gap-1.5">
@@ -1356,25 +1253,20 @@ function StateBanner({
           </span>
         </div>
         <p className="text-[10.5px] leading-snug text-dim">
-          Codex is unreachable — it&apos;s retrying automatically. You can
-          retry now, or ship without the automated review and review the diff
-          yourself.
+          Codex is unreachable — it&apos;s retrying automatically. You can retry now, or ship
+          without the automated review and review the diff yourself.
         </p>
         <div className="mt-2 flex gap-1.5">
           <BannerBtn
             tone="accent"
             icon={<RotateCw size={10} />}
-            label={retry.isPending ? "Retrying…" : "Retry now"}
+            label={retry.isPending ? 'Retrying…' : 'Retry now'}
             onClick={onRetry}
             disabled={pending}
           />
           <BannerBtn
             tone="neutral"
-            label={
-              shipWithoutReview.isPending
-                ? "Shipping…"
-                : "Ship without review"
-            }
+            label={shipWithoutReview.isPending ? 'Shipping…' : 'Ship without review'}
             onClick={onShipWithoutReview}
             disabled={pending}
           />
@@ -1383,16 +1275,13 @@ function StateBanner({
     );
   }
 
-  if (
-    job?.halt &&
-    (job.halt.kind === "failed" || job.halt.kind === "incomplete")
-  ) {
+  if (job?.halt && (job.halt.kind === 'failed' || job.halt.kind === 'incomplete')) {
     return (
       <div
         className="mx-1.5 my-1 rounded-md border px-3 py-2.5"
         style={{
-          borderColor: "var(--red-line)",
-          background: "var(--red-soft)",
+          borderColor: 'var(--red-line)',
+          background: 'var(--red-soft)',
         }}
       >
         <div className="mb-1 flex items-center gap-1.5">
@@ -1402,14 +1291,13 @@ function StateBanner({
           </span>
         </div>
         <p className="text-[10.5px] leading-snug text-dim">
-          This build didn&apos;t reach a clean finish — it needs you. Steer it
-          via chat, or retry.
+          This build didn&apos;t reach a clean finish — it needs you. Steer it via chat, or retry.
         </p>
         <div className="mt-2 flex gap-1.5">
           <BannerBtn
             tone="red"
             icon={<RotateCw size={10} />}
-            label={retry.isPending ? "Retrying…" : "Retry"}
+            label={retry.isPending ? 'Retrying…' : 'Retry'}
             onClick={onRetry}
             disabled={retry.isPending}
           />
@@ -1418,14 +1306,14 @@ function StateBanner({
       </div>
     );
   }
-  if (job?.halt?.kind === "blocked_credentials") {
+  if (job?.halt?.kind === 'blocked_credentials') {
     return (
       <div
         className="mx-1.5 my-1 rounded-md border border-l-2 px-3 py-2.5"
         style={{
-          borderColor: "var(--border)",
-          borderLeftColor: "var(--faint)",
-          background: "var(--surface-2)",
+          borderColor: 'var(--border)',
+          borderLeftColor: 'var(--faint)',
+          background: 'var(--surface-2)',
         }}
       >
         <div className="mb-1 flex items-center gap-1.5">
@@ -1441,7 +1329,7 @@ function StateBanner({
           <BannerBtn
             tone="accent"
             icon={<RotateCw size={10} />}
-            label={retry.isPending ? "Resuming…" : "Re-ping"}
+            label={retry.isPending ? 'Resuming…' : 'Re-ping'}
             onClick={onRetry}
             disabled={retry.isPending}
           />
@@ -1459,29 +1347,29 @@ function BannerBtn({
   onClick,
   disabled,
 }: {
-  tone: "red" | "accent" | "neutral";
+  tone: 'red' | 'accent' | 'neutral';
   icon?: ReactNode;
   label: string;
   onClick: () => void;
   disabled?: boolean;
 }) {
   const style =
-    tone === "red"
+    tone === 'red'
       ? {
-          color: "var(--red)",
-          background: "var(--red-soft)",
-          borderColor: "var(--red-line)",
+          color: 'var(--red)',
+          background: 'var(--red-soft)',
+          borderColor: 'var(--red-line)',
         }
-      : tone === "accent"
+      : tone === 'accent'
         ? {
-            color: "var(--accent)",
-            background: "var(--accent-soft)",
-            borderColor: "var(--accent-line)",
+            color: 'var(--accent)',
+            background: 'var(--accent-soft)',
+            borderColor: 'var(--accent-line)',
           }
         : {
-            color: "var(--dim)",
-            background: "transparent",
-            borderColor: "var(--border-2)",
+            color: 'var(--dim)',
+            background: 'transparent',
+            borderColor: 'var(--border-2)',
           };
   return (
     <button
@@ -1502,19 +1390,11 @@ function BannerBtn({
 /** A section's dashed empty-placeholder row — 13px faint icon + short muted copy, deliberately
  *  NON-interactive (no hover, no click; the handoff's "2a" treatment). Each section renders its own,
  *  independently of its siblings. */
-function EmptyRow({
-  icon,
-  children,
-}: {
-  icon: ReactNode;
-  children: ReactNode;
-}) {
+function EmptyRow({ icon, children }: { icon: ReactNode; children: ReactNode }) {
   return (
     <div className="mx-2 flex items-center gap-2 rounded-[9px] border border-dashed border-border-2 px-2.5 py-[7px]">
       <span className="shrink-0 text-faint">{icon}</span>
-      <span className="min-w-0 flex-1 text-[11px] leading-snug text-muted">
-        {children}
-      </span>
+      <span className="min-w-0 flex-1 text-[11px] leading-snug text-muted">{children}</span>
     </div>
   );
 }
@@ -1532,7 +1412,7 @@ function BuildLanesEmpty() {
       <div
         className="flex items-center gap-2 rounded-[9px] border border-dashed border-border-2 px-2.5 py-[7px]"
         style={{
-          background: "color-mix(in srgb, var(--surface-2) 60%, transparent)",
+          background: 'color-mix(in srgb, var(--surface-2) 60%, transparent)',
         }}
       >
         <span className="h-2.5 w-2.5 shrink-0 rounded-full border-[1.5px] border-dashed border-border-2" />
@@ -1540,8 +1420,7 @@ function BuildLanesEmpty() {
         <span className="h-2 w-6 shrink-0 rounded bg-surface-3" />
       </div>
       <p className="px-1 text-[11px] leading-relaxed text-dim">
-        No build lanes yet — approve the plan and Atlas splits the work into
-        lanes here.
+        No build lanes yet — approve the plan and Atlas splits the work into lanes here.
       </p>
     </div>
   );
@@ -1569,14 +1448,12 @@ function FileRow({
   const body = (
     <>
       <span className="shrink-0">{icon}</span>
-      <span
-        className={`flex-1 truncate font-mono text-[11px] ${dim ? "text-dim" : ""}`}
-      >
+      <span className={`flex-1 truncate font-mono text-[11px] ${dim ? 'text-dim' : ''}`}>
         {name}
       </span>
       {note ? (
         <span
-          className={`font-mono text-[8px] ${note.pulse ? "pulse-dot text-accent" : "text-faint"}`}
+          className={`font-mono text-[8px] ${note.pulse ? 'pulse-dot text-accent' : 'text-faint'}`}
         >
           {note.text}
         </span>
@@ -1590,7 +1467,7 @@ function FileRow({
       onClick={onClick}
       style={style}
       className={`flex w-full items-center gap-1.5 rounded-sm px-2 py-1.5 text-left hover:bg-surface-2 ${
-        active ? "nav-selected-blue" : ""
+        active ? 'nav-selected-blue' : ''
       }`}
     >
       {body}
@@ -1605,15 +1482,11 @@ function FileRow({
 const IMAGE_EXT = /\.(png|jpe?g|gif|svg|webp|avif)$/i;
 /** Pick a file-row icon from the extension (images get the image glyph; everything else a doc). */
 function fileIcon(name: string): ReactNode {
-  return IMAGE_EXT.test(name) ? (
-    <ImageIcon size={12} />
-  ) : (
-    <FileText size={12} />
-  );
+  return IMAGE_EXT.test(name) ? <ImageIcon size={12} /> : <FileText size={12} />;
 }
 
 function fileBaseName(path: string): string {
-  const idx = path.lastIndexOf("/");
+  const idx = path.lastIndexOf('/');
   return idx === -1 ? path : path.slice(idx + 1);
 }
 
@@ -1626,7 +1499,7 @@ interface FileTreeNode {
 function buildFileTree(files: ContextFile[]): FileTreeNode {
   const root: FileTreeNode = { folders: new Map(), files: [] };
   for (const f of files) {
-    const parts = f.name.split("/");
+    const parts = f.name.split('/');
     let node = root;
     for (let i = 0; i < parts.length - 1; i++) {
       const seg = parts[i];
@@ -1643,7 +1516,7 @@ function buildFileTree(files: ContextFile[]): FileTreeNode {
 }
 
 /** Every folder path in a tree, at any depth — used to seed a group's initial "all collapsed" state. */
-function allFolderPaths(node: FileTreeNode, path = ""): Set<string> {
+function allFolderPaths(node: FileTreeNode, path = ''): Set<string> {
   const paths = new Set<string>();
   for (const [folderName, child] of node.folders) {
     const folderPath = path ? `${path}/${folderName}` : folderName;
@@ -1668,7 +1541,7 @@ function renderFileTree({
   node: FileTreeNode;
   path: string;
   depth: number;
-  prefix: "spec" | "artifact" | "gen" | "evidence";
+  prefix: 'spec' | 'artifact' | 'gen' | 'evidence';
   generated?: boolean;
   detailNode: string | null;
   onSelectNode: (node: string) => void;
@@ -1676,9 +1549,7 @@ function renderFileTree({
   toggleFolder: (path: string) => void;
 }): ReactNode[] {
   const rows: ReactNode[] = [];
-  const folderNames = [...node.folders.keys()].sort((a, b) =>
-    a.localeCompare(b),
-  );
+  const folderNames = [...node.folders.keys()].sort((a, b) => a.localeCompare(b));
   for (const folderName of folderNames) {
     const folderPath = path ? `${path}/${folderName}` : folderName;
     const isOpen = !collapsed.has(folderPath);
@@ -1709,7 +1580,7 @@ function renderFileTree({
               nested files/folders are easy to trace back to the folder they belong to. */}
           <div
             className="absolute bottom-0 top-0 w-px"
-            style={{ left: 14 + depth * 14, background: "var(--border)" }}
+            style={{ left: 14 + depth * 14, background: 'var(--border)' }}
           />
           {childRows}
         </div>,
@@ -1725,11 +1596,7 @@ function renderFileTree({
         key={f.name}
         icon={
           generated ? (
-            <Lock
-              size={12}
-              className="shrink-0"
-              style={{ color: "var(--slate)" }}
-            />
+            <Lock size={12} className="shrink-0" style={{ color: 'var(--slate)' }} />
           ) : (
             fileIcon(f.name)
           )
@@ -1751,7 +1618,7 @@ function LoadingRow({ label }: { label: string }) {
     <div className="flex items-center gap-2.5 px-2 py-1.5">
       <span
         className="h-[7px] w-[7px] shrink-0 animate-pulse rounded-full"
-        style={{ background: "var(--border-2)" }}
+        style={{ background: 'var(--border-2)' }}
       />
       <span className="flex-1 font-mono text-[10.5px] text-faint">{label}</span>
     </div>

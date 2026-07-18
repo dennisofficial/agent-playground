@@ -1,9 +1,9 @@
-"use client";
+'use client';
 
-import { useGetSessionQuery } from "@/redux/query/api/auth.api";
-import { type CurrentUserResponse, type OrgSummary } from "@workspace/shared";
-import { useMemo } from "react";
-import { adaptQuery, type QueryResultLike } from "./_stub";
+import { useGetSessionQuery } from '@/redux/query/api/auth.api';
+import { type CurrentUserResponse, type OrgSummary } from '@workspace/shared';
+import { useMemo } from 'react';
+import { adaptQuery, type QueryResultLike } from './_stub';
 
 // The org + session wire shapes now come straight from @workspace/shared (no web-local mirror).
 export type { OrgSummary };
@@ -18,8 +18,8 @@ export function useCurrentUser(): QueryResultLike<CurrentUser> {
 export function useOrgs() {
   const { data, isLoading, isError } = useCurrentUser();
   const orgs = useMemo(() => data?.orgs ?? [], [data]);
-  const owned = useMemo(() => orgs.filter((o) => o.role === "owner"), [orgs]);
-  const joined = useMemo(() => orgs.filter((o) => o.role !== "owner"), [orgs]);
+  const owned = useMemo(() => orgs.filter((o) => o.role === 'owner'), [orgs]);
+  const joined = useMemo(() => orgs.filter((o) => o.role !== 'owner'), [orgs]);
   return { orgs, owned, joined, isLoading, isError };
 }
 

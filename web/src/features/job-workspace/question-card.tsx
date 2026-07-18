@@ -1,20 +1,20 @@
-"use client";
+'use client';
 
-import { useState } from "react";
-import { CheckCircle2, Clock, HelpCircle, Loader2, XCircle } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { ShortcutHint } from "@/components/ui/shortcut-hint";
-import { Markdown } from "./markdown";
-import { useMessage } from "@/lib/api/job-queries";
-import type { JobRef } from "@/lib/api/job-api";
-import type { WebQuestionCard } from "@/lib/api/types";
-import { isSubmitCombo } from "@/utils/keyboard";
+import { Button } from '@/components/ui/button';
+import { ShortcutHint } from '@/components/ui/shortcut-hint';
 import {
   composerStore,
   useComposerStagedAnswers,
   type StagedAnswer,
-} from "@/lib/api/composer-store";
-import { cardSendState } from "./send-state";
+} from '@/lib/api/composer-store';
+import type { JobRef } from '@/lib/api/job-api';
+import { useMessage } from '@/lib/api/job-queries';
+import type { WebQuestionCard } from '@/lib/api/types';
+import { isSubmitCombo } from '@/utils/keyboard';
+import { CheckCircle2, Clock, HelpCircle, Loader2, XCircle } from 'lucide-react';
+import { useState } from 'react';
+import { Markdown } from './markdown';
+import { cardSendState } from './send-state';
 
 /**
  * A formal question the brain posed via `ask_question`. Renders one button per option (+ optional
@@ -24,35 +24,33 @@ import { cardSendState } from "./send-state";
  * `card.answer` is set, renders the compact answered state (so a reload still shows what was asked +
  * chosen); that fires either immediately (build-origin) or after the batch send settles.
  */
-export function QuestionCardView({
-  card,
-  jobRef,
-}: {
-  card: WebQuestionCard;
-  jobRef: JobRef;
-}) {
+export function QuestionCardView({ card, jobRef }: { card: WebQuestionCard; jobRef: JobRef }) {
   const answer = useMessage(jobRef);
-  const [other, setOther] = useState("");
+  const [other, setOther] = useState('');
   const [showOther, setShowOther] = useState(false);
   const pending = answer.isPending;
   const staged = useComposerStagedAnswers(jobRef).find(
-    (a): a is Extract<StagedAnswer, { kind: "question" }> =>
-      a.kind === "question" && a.cardId === card.questionId,
+    (a): a is Extract<StagedAnswer, { kind: 'question' }> =>
+      a.kind === 'question' && a.cardId === card.questionId,
   );
 
   function submit(text: string) {
     const trimmed = text.trim();
     if (!trimmed) return;
-    if (card.origin === "build") {
+    if (card.origin === 'build') {
       answer.mutate({
         messages: [
-          { type: "answer_question", questionId: card.questionId, answer: trimmed },
+          {
+            type: 'answer_question',
+            questionId: card.questionId,
+            answer: trimmed,
+          },
         ],
       });
       return;
     }
     composerStore.stageAnswer(jobRef, {
-      kind: "question",
+      kind: 'question',
       cardId: card.questionId,
       label: card.question,
       answer: trimmed,
@@ -66,16 +64,12 @@ export function QuestionCardView({
           <Clock size={15} className="text-accent" />
           <div className="min-w-0 flex-1">
             <p className="truncate text-[12.5px] text-dim">{card.question}</p>
-            <p className="text-[13px] font-medium text-text">
-              {staged.answer}
-            </p>
+            <p className="text-[13px] font-medium text-text">{staged.answer}</p>
             <p className="text-[11px] text-faint">Staged — not yet sent</p>
           </div>
           <button
             type="button"
-            onClick={() =>
-              composerStore.removeStagedAnswer(jobRef, card.questionId)
-            }
+            onClick={() => composerStore.removeStagedAnswer(jobRef, card.questionId)}
             className="rounded-md px-2 py-1 text-[11.5px] font-medium text-dim hover:text-text"
           >
             Remove
@@ -91,12 +85,10 @@ export function QuestionCardView({
         <div className="flex items-center gap-2.5 px-4 py-3">
           <XCircle size={15} className="text-faint" />
           <div className="min-w-0">
-            <p className="truncate text-[12.5px] text-dim line-through">
-              {card.question}
-            </p>
+            <p className="truncate text-[12.5px] text-dim line-through">{card.question}</p>
             <p className="text-[12px] text-faint">
               Withdrawn
-              {card.withdrawnReason ? ` — ${card.withdrawnReason}` : ""}
+              {card.withdrawnReason ? ` — ${card.withdrawnReason}` : ''}
             </p>
           </div>
         </div>
@@ -104,7 +96,7 @@ export function QuestionCardView({
     );
   }
 
-  if (staged?.submitting || cardSendState(card.answer != null, card.deliveredAt) === "sending") {
+  if (staged?.submitting || cardSendState(card.answer != null, card.deliveredAt) === 'sending') {
     return (
       <div
         className="anim-pop self-stretch overflow-hidden rounded-lg border border-border bg-surface"
@@ -114,9 +106,7 @@ export function QuestionCardView({
           <Loader2 size={15} className="animate-spin text-faint" />
           <div className="min-w-0">
             <p className="truncate text-[12.5px] text-dim">{card.question}</p>
-            <p className="text-[13px] font-medium text-text">
-              {card.answer ?? staged?.answer}
-            </p>
+            <p className="text-[13px] font-medium text-text">{card.answer ?? staged?.answer}</p>
             <p className="mt-0.5 flex items-center gap-1 text-[10px] font-mono text-faint">
               <Loader2 size={9} className="animate-spin" />
               sending…
@@ -131,7 +121,7 @@ export function QuestionCardView({
     return (
       <div className="anim-pop self-stretch overflow-hidden rounded-lg border border-border bg-surface">
         <div className="flex items-center gap-2.5 px-4 py-3">
-          <CheckCircle2 size={15} style={{ color: "var(--green)" }} />
+          <CheckCircle2 size={15} style={{ color: 'var(--green)' }} />
           <div className="min-w-0">
             <p className="truncate text-[12.5px] text-dim">{card.question}</p>
             <p className="text-[13px] font-medium text-text">{card.answer}</p>
@@ -145,9 +135,7 @@ export function QuestionCardView({
     <div className="anim-pop self-stretch overflow-hidden rounded-lg border border-border bg-surface">
       <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
         <HelpCircle size={15} className="text-accent" />
-        <span className="text-[13px] font-semibold text-text">
-          {card.header ?? "Question"}
-        </span>
+        <span className="text-[13px] font-semibold text-text">{card.header ?? 'Question'}</span>
         <div className="flex-1" />
         {card.decisionClass ? (
           <span className="rounded-full border border-border px-2 py-0.5 font-mono text-[9.5px] text-dim">
@@ -169,9 +157,7 @@ export function QuestionCardView({
             onClick={() => submit(opt.label)}
             className="rounded-md border border-border bg-surface px-3 py-2 text-left hover:border-accent disabled:opacity-60"
           >
-            <span className="text-[12.5px] font-medium text-text">
-              {opt.label}
-            </span>
+            <span className="text-[12.5px] font-medium text-text">{opt.label}</span>
             {opt.description ? (
               <span className="mt-0.5 block text-[11.5px] leading-snug text-dim">
                 {opt.description}
@@ -231,9 +217,7 @@ export function QuestionCardView({
         ) : null}
 
         {answer.isError ? (
-          <p className="text-[11.5px] text-red">
-            Could not submit your answer. Try again.
-          </p>
+          <p className="text-[11.5px] text-red">Could not submit your answer. Try again.</p>
         ) : null}
       </div>
     </div>

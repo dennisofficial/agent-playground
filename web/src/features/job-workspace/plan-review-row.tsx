@@ -1,6 +1,6 @@
-import { codexReviewNode } from "@/features/job-workspace/codex-review";
-import { ShieldCheck } from "lucide-react";
-import { cn } from "@/lib/cn";
+import { codexReviewNode } from '@/features/job-workspace/codex-review';
+import { cn } from '@/lib/cn';
+import { ShieldCheck } from 'lucide-react';
 
 /** The CODEX REVIEW lane — the plan-review dialogue as its own navigator row (the review Main talks to).
  *  Clicking opens the `codex-review:<jobId>` transcript in the LEFT pane; the row highlights while it's the
@@ -18,14 +18,10 @@ export function PlanReviewRow({
 }) {
   const node = codexReviewNode(jobId);
   const active = laneNode === node;
-  const running = status === "running" || status === "reviewing";
-  const failed = status === "failed";
-  const word = failed ? "failed" : running ? "reviewing" : "done";
-  const color = failed
-    ? "var(--red)"
-    : running
-      ? "var(--blue)"
-      : "var(--green)";
+  const running = status === 'running' || status === 'reviewing';
+  const failed = status === 'failed';
+  const word = failed ? 'failed' : running ? 'reviewing' : 'done';
+  const color = failed ? 'var(--red)' : running ? 'var(--blue)' : 'var(--green)';
   return (
     <div
       className="border-l-[3px]"
@@ -35,7 +31,7 @@ export function PlanReviewRow({
               borderLeftColor: color,
               background: `color-mix(in srgb, ${color} 5%, transparent)`,
             }
-          : { borderLeftColor: "transparent", background: "transparent" }
+          : { borderLeftColor: 'transparent', background: 'transparent' }
       }
     >
       <button
@@ -48,8 +44,8 @@ export function PlanReviewRow({
         </span>
         <span
           className={cn(
-            "flex-1 truncate text-[12px]",
-            active ? "font-semibold text-text" : "font-medium text-dim",
+            'flex-1 truncate text-[12px]',
+            active ? 'font-semibold text-text' : 'font-medium text-dim',
           )}
         >
           Codex review

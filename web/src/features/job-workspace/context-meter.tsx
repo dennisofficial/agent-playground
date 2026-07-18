@@ -1,9 +1,9 @@
-"use client";
+'use client';
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { formatTokens } from "@/utils/org-display";
-import type { ContextBreakdown } from "@/lib/api/job-stream";
-import { ContextBreakdownPanel } from "./context-breakdown-panel";
+import type { ContextBreakdown } from '@/lib/api/job-stream';
+import { formatTokens } from '@/utils/org-display';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { ContextBreakdownPanel } from './context-breakdown-panel';
 
 /**
  * A context-window occupancy ring (Claude-Code style) — a small SVG arc + center %. `tokens` is the last
@@ -32,24 +32,12 @@ export function ContextMeter({
   const pct = limit > 0 ? Math.min(1, Math.max(0, tokens / limit)) : 0;
   const r = 7;
   const circ = 2 * Math.PI * r;
-  const stroke =
-    pct >= 0.9
-      ? "var(--red)"
-      : pct >= 0.7
-        ? "var(--accent-2)"
-        : "var(--accent)";
-  const title = `Context · ${formatTokens(tokens)} / ${formatTokens(limit)} (${Math.round(pct * 100)}%)${model ? ` · ${model}` : ""}`;
+  const stroke = pct >= 0.9 ? 'var(--red)' : pct >= 0.7 ? 'var(--accent-2)' : 'var(--accent)';
+  const title = `Context · ${formatTokens(tokens)} / ${formatTokens(limit)} (${Math.round(pct * 100)}%)${model ? ` · ${model}` : ''}`;
 
   const ring = (
     <svg width={size} height={size} viewBox="0 0 18 18" className="-rotate-90">
-      <circle
-        cx="9"
-        cy="9"
-        r={r}
-        fill="none"
-        stroke="var(--border)"
-        strokeWidth="2.2"
-      />
+      <circle cx="9" cy="9" r={r} fill="none" stroke="var(--border)" strokeWidth="2.2" />
       <circle
         cx="9"
         cy="9"
@@ -63,9 +51,7 @@ export function ContextMeter({
     </svg>
   );
   const label = (
-    <span className="font-mono text-[10px] tabular-nums text-dim">
-      {Math.round(pct * 100)}%
-    </span>
+    <span className="font-mono text-[10px] tabular-nums text-dim">{Math.round(pct * 100)}%</span>
   );
 
   if (!breakdown) {
@@ -119,13 +105,13 @@ function ClickableContextMeter({
       if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === 'Escape') setOpen(false);
     };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
     return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
     };
   }, [open]);
 
@@ -149,8 +135,8 @@ function ClickableContextMeter({
       setShiftX(next);
     };
     measure();
-    window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
     // `shiftX` is intentionally omitted: it's derived here, and re-running on it would loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -173,8 +159,8 @@ function ClickableContextMeter({
           ref={panelRef}
           className="absolute bottom-full right-0 z-30 mb-2 w-80 max-w-[calc(100vw-1rem)] rounded-[9px] border p-2.5 shadow-lg"
           style={{
-            borderColor: "var(--border)",
-            background: "var(--surface-2)",
+            borderColor: 'var(--border)',
+            background: 'var(--surface-2)',
             transform: shiftX ? `translateX(${shiftX}px)` : undefined,
           }}
         >

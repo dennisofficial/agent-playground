@@ -1,6 +1,6 @@
-import type { LiveTurn } from "@/lib/api/job-stream";
-import type { TaskItem } from "@/lib/api/types";
-import { isBridgeTool, mcpName } from "./tool-calls/util";
+import type { LiveTurn } from '@/lib/api/job-stream';
+import type { TaskItem } from '@/lib/api/types';
+import { isBridgeTool, mcpName } from './tool-calls/util';
 
 /**
  * REALTIME task overlay — the client-side twin of the backend's `task_create`/`task_update` host-bridge
@@ -13,9 +13,9 @@ import { isBridgeTool, mcpName } from "./tool-calls/util";
  * same state). The durable refetch reconciles at turn end.
  */
 
-const isStr = (v: unknown): v is string => typeof v === "string";
+const isStr = (v: unknown): v is string => typeof v === 'string';
 const asRecord = (v: unknown): Record<string, unknown> =>
-  v && typeof v === "object" ? (v as Record<string, unknown>) : {};
+  v && typeof v === 'object' ? (v as Record<string, unknown>) : {};
 
 /** The created task's id from a `task_create` result — it returns a STRING ("Task #8 created…"); a
  *  structured `{ task: { id } }` shape is kept as a fallback. Mirrors the backend `createdTaskId`. */
@@ -28,10 +28,8 @@ function createdTaskId(result: unknown): string | null {
   return isStr(id) ? id : null;
 }
 
-function mapStatus(raw: unknown): TaskItem["status"] | null {
-  return raw === "pending" || raw === "in_progress" || raw === "completed"
-    ? raw
-    : null;
+function mapStatus(raw: unknown): TaskItem['status'] | null {
+  return raw === 'pending' || raw === 'in_progress' || raw === 'completed' ? raw : null;
 }
 
 /** Apply one task-tool call to the map — same semantics as the backend fold (deleted REMOVES). */
@@ -41,11 +39,8 @@ function applyCall(
   input: Record<string, unknown>,
   result: unknown,
 ): void {
-  const strArr = (v: unknown): string[] =>
-    Array.isArray(v) ? v.filter(isStr) : [];
-  const extras = (
-    prev?: TaskItem,
-  ): Pick<TaskItem, "description" | "activeForm"> => ({
+  const strArr = (v: unknown): string[] => (Array.isArray(v) ? v.filter(isStr) : []);
+  const extras = (prev?: TaskItem): Pick<TaskItem, 'description' | 'activeForm'> => ({
     ...(isStr(input.description)
       ? { description: input.description }
       : prev?.description
@@ -59,7 +54,7 @@ function applyCall(
   });
   // Dependency edges: prev ∪ addBlockedBy ∖ removeBlockedBy; `addBlocks`/`removeBlocks` fold the inverse
   // onto the target's blockedBy (mirrors the backend fold exactly).
-  const blockedEdges = (prev?: TaskItem): Pick<TaskItem, "blockedBy"> => {
+  const blockedEdges = (prev?: TaskItem): Pick<TaskItem, 'blockedBy'> => {
     const remove = new Set(strArr(input.removeBlockedBy));
     const merged = [
       ...new Set([
@@ -87,7 +82,7 @@ function applyCall(
       byId.set(target, rest.length > 0 ? { ...bare, blockedBy: rest } : bare);
     }
   };
-  if (name === "task_create") {
+  if (name === 'task_create') {
     const id = createdTaskId(result);
     if (!id) return; // result not streamed yet — the row appears the moment it lands
     const subject = isStr(input.subject)
@@ -98,23 +93,21 @@ function applyCall(
     byId.set(id, {
       id,
       subject,
-      status: "pending",
+      status: 'pending',
       ...extras(),
       ...blockedEdges(),
     });
     applyInverseEdges(id);
-  } else if (name === "task_update") {
+  } else if (name === 'task_update') {
     const id = isStr(input.taskId) ? input.taskId : null;
     if (!id) return;
-    if (input.status === "deleted") {
+    if (input.status === 'deleted') {
       byId.delete(id);
       return;
     }
     const existing = byId.get(id);
-    const status = mapStatus(input.status) ?? existing?.status ?? "pending";
-    const subject = isStr(input.subject)
-      ? input.subject
-      : (existing?.subject ?? id);
+    const status = mapStatus(input.status) ?? existing?.status ?? 'pending';
+    const subject = isStr(input.subject) ? input.subject : (existing?.subject ?? id);
     byId.set(id, {
       id,
       subject,
@@ -131,17 +124,12 @@ function applyCall(
  * (`parentToolUseId` set) — only the orchestrating session's list is tracked, same as the backend.
  * Legacy `dropped` rows (persisted before deletes removed tasks) are filtered out of the result.
  */
-export function overlayLiveTasks(
-  durable: TaskItem[],
-  live: LiveTurn | undefined,
-): TaskItem[] {
-  const byId = new Map(
-    durable.filter((t) => t.status !== "dropped").map((t) => [t.id, { ...t }]),
-  );
+export function overlayLiveTasks(durable: TaskItem[], live: LiveTurn | undefined): TaskItem[] {
+  const byId = new Map(durable.filter((t) => t.status !== 'dropped').map((t) => [t.id, { ...t }]));
   for (const b of live?.blocks ?? []) {
-    if (b.kind !== "tool" || b.parentToolUseId) continue;
+    if (b.kind !== 'tool' || b.parentToolUseId) continue;
     const name = (isBridgeTool(b.name) ? mcpName(b.name) : b.name).toLowerCase();
-    if (name !== "task_create" && name !== "task_update") continue;
+    if (name !== 'task_create' && name !== 'task_update') continue;
     applyCall(byId, name, asRecord(b.input as unknown), b.result as unknown);
   }
   return [...byId.values()];

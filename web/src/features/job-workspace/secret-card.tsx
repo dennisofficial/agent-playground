@@ -1,18 +1,18 @@
-"use client";
+'use client';
 
-import { useState } from "react";
-import { CheckCircle2, Clock, ExternalLink, KeyRound, Loader2, XCircle } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Markdown } from "./markdown";
-import { useProvideSecret } from "@/lib/api/job-queries";
-import type { JobRef } from "@/lib/api/job-api";
-import type { WebSecretInputCard } from "@/lib/api/types";
+import { Button } from '@/components/ui/button';
 import {
   composerStore,
   useComposerStagedAnswers,
   type StagedAnswer,
-} from "@/lib/api/composer-store";
-import { cardSendState } from "./send-state";
+} from '@/lib/api/composer-store';
+import type { JobRef } from '@/lib/api/job-api';
+import { useProvideSecret } from '@/lib/api/job-queries';
+import type { WebSecretInputCard } from '@/lib/api/types';
+import { CheckCircle2, Clock, ExternalLink, KeyRound, Loader2, XCircle } from 'lucide-react';
+import { useState } from 'react';
+import { Markdown } from './markdown';
+import { cardSendState } from './send-state';
 
 /**
  * A secure secret request the onboarding brain posed via `request_secret`. Renders a MASKED input.
@@ -22,35 +22,29 @@ import { cardSendState } from "./send-state";
  * it's already stored). The value is never echoed back or kept in the card. Once `provided_at` is set,
  * renders the compact "provided" state.
  */
-export function SecretCardView({
-  card,
-  jobRef,
-}: {
-  card: WebSecretInputCard;
-  jobRef: JobRef;
-}) {
+export function SecretCardView({ card, jobRef }: { card: WebSecretInputCard; jobRef: JobRef }) {
   const provide = useProvideSecret(jobRef);
-  const [value, setValue] = useState("");
+  const [value, setValue] = useState('');
   const pending = provide.isPending;
   const staged = useComposerStagedAnswers(jobRef).find(
-    (a): a is Extract<StagedAnswer, { kind: "secret" }> =>
-      a.kind === "secret" && a.cardId === card.requestId,
+    (a): a is Extract<StagedAnswer, { kind: 'secret' }> =>
+      a.kind === 'secret' && a.cardId === card.requestId,
   );
 
   function submit() {
     if (!value) return;
     if (card.ephemeral) {
       provide.mutate({ requestId: card.requestId, value });
-      setValue(""); // never keep the plaintext in component state after sending
+      setValue(''); // never keep the plaintext in component state after sending
       return;
     }
     composerStore.stageAnswer(jobRef, {
-      kind: "secret",
+      kind: 'secret',
       cardId: card.requestId,
       label: card.path ?? card.mcp?.key ?? card.name,
       value,
     });
-    setValue(""); // never keep the plaintext in component state after staging
+    setValue(''); // never keep the plaintext in component state after staging
   }
 
   if (staged && !staged.submitting) {
@@ -67,9 +61,7 @@ export function SecretCardView({
           </div>
           <button
             type="button"
-            onClick={() =>
-              composerStore.removeStagedAnswer(jobRef, card.requestId)
-            }
+            onClick={() => composerStore.removeStagedAnswer(jobRef, card.requestId)}
             className="rounded-md px-2 py-1 text-[11.5px] font-medium text-dim hover:text-text"
           >
             Remove
@@ -90,7 +82,7 @@ export function SecretCardView({
             </p>
             <p className="text-[12px] text-faint">
               Withdrawn
-              {card.withdrawnReason ? ` — ${card.withdrawnReason}` : ""}
+              {card.withdrawnReason ? ` — ${card.withdrawnReason}` : ''}
             </p>
           </div>
         </div>
@@ -98,7 +90,10 @@ export function SecretCardView({
     );
   }
 
-  if (staged?.submitting || cardSendState(card.provided_at != null, card.delivered_at) === "sending") {
+  if (
+    staged?.submitting ||
+    cardSendState(card.provided_at != null, card.delivered_at) === 'sending'
+  ) {
     return (
       <div
         className="anim-pop self-stretch overflow-hidden rounded-lg border border-border bg-surface"
@@ -125,23 +120,21 @@ export function SecretCardView({
     return (
       <div className="anim-pop self-stretch overflow-hidden rounded-lg border border-border bg-surface">
         <div className="flex items-center gap-2.5 px-4 py-3">
-          <CheckCircle2 size={15} style={{ color: "var(--green)" }} />
+          <CheckCircle2 size={15} style={{ color: 'var(--green)' }} />
           <div className="min-w-0">
             <p className="text-[13px] font-medium text-text">
               <span className="font-mono">{card.name}</span> provided
             </p>
             <p className="truncate text-[12.5px] text-dim">
               {card.ephemeral ? (
-                "delivered to the session · not stored"
+                'delivered to the session · not stored'
               ) : card.mcp ? (
                 <>
-                  stored encrypted · MCP server{" "}
-                  <span className="font-mono">{card.mcp.server}</span>
+                  stored encrypted · MCP server <span className="font-mono">{card.mcp.server}</span>
                 </>
               ) : (
                 <>
-                  stored encrypted · granted to{" "}
-                  <span className="font-mono">{card.path}</span>
+                  stored encrypted · granted to <span className="font-mono">{card.path}</span>
                 </>
               )}
             </p>
@@ -160,7 +153,7 @@ export function SecretCardView({
         </span>
         <div className="flex-1" />
         <span className="rounded-full border border-border px-2 py-0.5 font-mono text-[9.5px] text-dim">
-          {card.ephemeral ? "one-time" : card.mcp ? `mcp:${card.mcp.server}` : card.path}
+          {card.ephemeral ? 'one-time' : card.mcp ? `mcp:${card.mcp.server}` : card.path}
         </span>
       </div>
 
@@ -179,8 +172,8 @@ export function SecretCardView({
         ) : null}
         <p className="mt-1.5 text-[11.5px] leading-snug text-dim">
           {card.ephemeral
-            ? "One-time code — delivered straight to the running session and never stored. It never appears in the conversation or is shown back to Atlas."
-            : "Sent once, encrypted at rest — it never appears in the conversation or is shown back to Atlas."}
+            ? 'One-time code — delivered straight to the running session and never stored. It never appears in the conversation or is shown back to Atlas.'
+            : 'Sent once, encrypted at rest — it never appears in the conversation or is shown back to Atlas.'}
         </p>
       </div>
 
@@ -191,13 +184,9 @@ export function SecretCardView({
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter") submit();
+            if (e.key === 'Enter') submit();
           }}
-          placeholder={
-            card.url
-              ? "Paste the code from the login page…"
-              : `Value for ${card.name}…`
-          }
+          placeholder={card.url ? 'Paste the code from the login page…' : `Value for ${card.name}…`}
           className="w-full rounded-md border border-border bg-surface px-2.5 py-1.5 font-mono text-[12.5px] text-text outline-none placeholder:text-faint focus:border-accent"
         />
         <div className="flex flex-wrap items-center gap-2">
@@ -208,7 +197,7 @@ export function SecretCardView({
             disabled={!value}
             onClick={submit}
           >
-            {card.ephemeral ? "Send code" : "Stage value"}
+            {card.ephemeral ? 'Send code' : 'Stage value'}
           </Button>
           {card.ephemeral && provide.isError ? (
             <span className="text-[11.5px] text-red">

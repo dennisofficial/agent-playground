@@ -1,21 +1,17 @@
-"use client";
+'use client';
 
-import Link from "next/link";
-import { useState } from "react";
-import { ArrowLeft, CheckCircle2 } from "lucide-react";
-import {
-  AuthCard,
-  AuthHeader,
-  ErrorBanner,
-} from "@/features/auth/components/auth-ui";
-import { Button } from "@/components/ui/button";
-import { Field } from "@/components/ui/field";
-import { auth } from "@/lib/auth";
-import { ROUTES } from "@/lib/routes";
-import { validateEmail } from "@/utils/validation";
+import { Button } from '@/components/ui/button';
+import { Field } from '@/components/ui/field';
+import { AuthCard, AuthHeader, ErrorBanner } from '@/features/auth/components/auth-ui';
+import { auth } from '@/lib/auth';
+import { ROUTES } from '@/lib/routes';
+import { validateEmail } from '@/utils/validation';
+import { ArrowLeft, CheckCircle2 } from 'lucide-react';
+import Link from 'next/link';
+import { useState } from 'react';
 
 export default function ForgotPage() {
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState('');
   const [emailErr, setEmailErr] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -33,9 +29,7 @@ export default function ForgotPage() {
       await auth.requestPasswordReset(email.trim());
       setSent(true);
     } catch (err) {
-      setBanner(
-        err instanceof Error ? err.message : "Could not send the reset link.",
-      );
+      setBanner(err instanceof Error ? err.message : 'Could not send the reset link.');
     } finally {
       setPending(false);
     }
@@ -50,20 +44,15 @@ export default function ForgotPage() {
     return (
       <AuthCard>
         <div className="flex flex-col items-center text-center">
-          <CheckCircle2 size={36} style={{ color: "var(--green)" }} />
-          <h1 className="mt-3 font-disp text-[20px] font-semibold text-text">
-            Check your inbox
-          </h1>
+          <CheckCircle2 size={36} style={{ color: 'var(--green)' }} />
+          <h1 className="mt-3 font-disp text-[20px] font-semibold text-text">Check your inbox</h1>
           <p className="mt-1 text-[13px] text-dim">
-            We sent a reset link to{" "}
-            <span className="font-medium text-text">{email.trim()}</span>.
+            We sent a reset link to <span className="font-medium text-text">{email.trim()}</span>.
           </p>
-          <p className="mt-2 font-mono text-[10px] text-faint">
-            link expires in 30 minutes
-          </p>
+          <p className="mt-2 font-mono text-[10px] text-faint">link expires in 30 minutes</p>
           <div className="mt-5 flex w-full flex-col gap-2">
             <Button variant="ghost" block onClick={resend}>
-              {resent ? "✓ Sent again just now" : "Resend email"}
+              {resent ? '✓ Sent again just now' : 'Resend email'}
             </Button>
             <Link
               href={ROUTES.auth.login()}
@@ -94,13 +83,7 @@ export default function ForgotPage() {
           onChange={(e) => setEmail(e.target.value)}
           error={emailErr}
         />
-        <Button
-          type="submit"
-          size="lg"
-          block
-          loading={pending}
-          loadingText="Sending…"
-        >
+        <Button type="submit" size="lg" block loading={pending} loadingText="Sending…">
           Send reset link
         </Button>
       </form>

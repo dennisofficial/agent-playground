@@ -1,10 +1,10 @@
-"use client";
+'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { Check, ChevronDown, GitBranch, Search } from "lucide-react";
-import { cn } from "@/lib/cn";
-import { useRepoBranches } from "@/lib/api/job-queries";
+import { useRepoBranches } from '@/lib/api/job-queries';
+import { cn } from '@/lib/cn';
+import { Check, ChevronDown, GitBranch, Search } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 /**
  * A click-away dropdown (trigger button + a render-prop menu). Shared by the create-job pickers and
@@ -46,18 +46,17 @@ export function Dropdown({
     place();
     function onDoc(e: MouseEvent) {
       const t = e.target as Node;
-      if (triggerRef.current?.contains(t) || menuRef.current?.contains(t))
-        return;
+      if (triggerRef.current?.contains(t) || menuRef.current?.contains(t)) return;
       setOpen(false);
     }
     // Re-anchor on scroll (capture: catches scrolling in any ancestor) + resize.
-    document.addEventListener("mousedown", onDoc);
-    window.addEventListener("scroll", place, true);
-    window.addEventListener("resize", place);
+    document.addEventListener('mousedown', onDoc);
+    window.addEventListener('scroll', place, true);
+    window.addEventListener('resize', place);
     return () => {
-      document.removeEventListener("mousedown", onDoc);
-      window.removeEventListener("scroll", place, true);
-      window.removeEventListener("resize", place);
+      document.removeEventListener('mousedown', onDoc);
+      window.removeEventListener('scroll', place, true);
+      window.removeEventListener('resize', place);
     };
   }, [open, place]);
 
@@ -71,7 +70,7 @@ export function Dropdown({
         {trigger}
         <ChevronDown size={13} className="shrink-0 text-faint" />
       </button>
-      {open && pos && typeof document !== "undefined"
+      {open && pos && typeof document !== 'undefined'
         ? createPortal(
             <div
               ref={menuRef}
@@ -80,13 +79,11 @@ export function Dropdown({
                 top: pos.top,
                 left: pos.left,
                 width: pos.width,
-                boxShadow: "var(--shadow-menu)",
+                boxShadow: 'var(--shadow-menu)',
               }}
             >
               {header ? <div className="shrink-0">{header}</div> : null}
-              <div className="overflow-y-auto py-1">
-                {children(() => setOpen(false))}
-              </div>
+              <div className="overflow-y-auto py-1">{children(() => setOpen(false))}</div>
             </div>,
             document.body,
           )
@@ -117,7 +114,7 @@ export function BranchPicker({
   const { data, isLoading, isError } = useRepoBranches(orgId, repoId);
   const branches = data?.branches ?? [];
   const current = value || fallback;
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState('');
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return q ? branches.filter((b) => b.toLowerCase().includes(q)) : branches;
@@ -132,9 +129,7 @@ export function BranchPicker({
           <span className="flex-1 truncate text-left font-mono text-[11.5px] text-text">
             {current}
           </span>
-          {isLoading ? (
-            <span className="font-mono text-[10px] text-faint">loading…</span>
-          ) : null}
+          {isLoading ? <span className="font-mono text-[10px] text-faint">loading…</span> : null}
         </>
       }
       header={
@@ -156,17 +151,14 @@ export function BranchPicker({
       {(close) =>
         isError ? (
           <p className="px-3 py-2 text-[11.5px] text-faint">
-            Couldn&apos;t load branches — using{" "}
-            <span className="font-mono">{fallback}</span>.
+            Couldn&apos;t load branches — using <span className="font-mono">{fallback}</span>.
           </p>
         ) : branches.length === 0 ? (
           <p className="px-3 py-2 text-[11.5px] text-faint">
-            {isLoading ? "Loading branches…" : "No branches found"}
+            {isLoading ? 'Loading branches…' : 'No branches found'}
           </p>
         ) : filtered.length === 0 ? (
-          <p className="px-3 py-2 text-[11.5px] text-faint">
-            No branches match “{query.trim()}”.
-          </p>
+          <p className="px-3 py-2 text-[11.5px] text-faint">No branches match “{query.trim()}”.</p>
         ) : (
           filtered.map((b) => (
             <button
@@ -174,18 +166,15 @@ export function BranchPicker({
               type="button"
               onClick={() => {
                 onChange(b);
-                setQuery("");
+                setQuery('');
                 close();
               }}
               className={cn(
-                "flex w-full items-center gap-2 px-3 py-1.5 text-left font-mono text-[11.5px] hover:bg-surface-2",
-                b === current ? "text-text" : "text-dim",
+                'flex w-full items-center gap-2 px-3 py-1.5 text-left font-mono text-[11.5px] hover:bg-surface-2',
+                b === current ? 'text-text' : 'text-dim',
               )}
             >
-              <Check
-                size={12}
-                className={b === current ? "text-accent" : "opacity-0"}
-              />
+              <Check size={12} className={b === current ? 'text-accent' : 'opacity-0'} />
               <span className="truncate">{b}</span>
             </button>
           ))

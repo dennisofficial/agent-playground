@@ -1,4 +1,4 @@
-"use client";
+'use client';
 
 /**
  * Migration shims. While the new backend is built out slice by slice, hooks whose endpoints
@@ -21,17 +21,23 @@ export interface QueryResultLike<T> {
   error: unknown;
   refetch: () => Promise<unknown>;
   dataUpdatedAt: number;
-  status: "pending" | "error" | "success";
+  status: 'pending' | 'error' | 'success';
 }
 
 export interface MutationResultLike<TData, TVars> {
   mutate: (
     vars: TVars,
-    opts?: { onSuccess?: (data: TData) => void; onError?: (err: Error) => void },
+    opts?: {
+      onSuccess?: (data: TData) => void;
+      onError?: (err: Error) => void;
+    },
   ) => void;
   mutateAsync: (
     vars: TVars,
-    opts?: { onSuccess?: (data: TData) => void; onError?: (err: Error) => void },
+    opts?: {
+      onSuccess?: (data: TData) => void;
+      onError?: (err: Error) => void;
+    },
   ) => Promise<TData>;
   isPending: boolean;
   isError: boolean;
@@ -56,7 +62,7 @@ export function stubQuery<T>(value?: T): QueryResultLike<T> {
     error: null,
     refetch: noopRefetch,
     dataUpdatedAt: 0,
-    status: "success",
+    status: 'success',
   };
 }
 
@@ -106,11 +112,13 @@ export function adaptQuery<T>(r: RtkQueryResult<T>): QueryResultLike<T> {
     error: r.error ?? null,
     refetch: () => Promise.resolve(r.refetch()),
     dataUpdatedAt: 0,
-    status: r.isError ? "error" : r.isSuccess ? "success" : "pending",
+    status: r.isError ? 'error' : r.isSuccess ? 'success' : 'pending',
   };
 }
 
-type RtkTrigger<TData, TVars> = (vars: TVars) => { unwrap: () => Promise<TData> };
+type RtkTrigger<TData, TVars> = (vars: TVars) => {
+  unwrap: () => Promise<TData>;
+};
 type RtkMutationState<TData> = {
   isLoading: boolean;
   isError: boolean;

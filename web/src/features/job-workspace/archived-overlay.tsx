@@ -1,6 +1,6 @@
-"use client";
+'use client';
 
-import { Archive } from "lucide-react";
+import { Archive } from 'lucide-react';
 
 /**
  * The always-visible archived banner, pinned at the TOP of the conversation pane whenever the job is
@@ -12,14 +12,16 @@ export function ArchivedOverlay() {
     <div
       className="shrink-0 border-b border-border"
       style={{
-        borderLeft: "3px solid var(--faint)",
-        background: "color-mix(in srgb, var(--faint) 5%, var(--surface))",
+        borderLeft: '3px solid var(--faint)',
+        background: 'color-mix(in srgb, var(--faint) 5%, var(--surface))',
       }}
     >
       <div className="mx-auto flex max-w-[880px] items-start gap-3 px-6 py-4">
         <span
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
-          style={{ background: "color-mix(in srgb, var(--faint) 14%, transparent)" }}
+          style={{
+            background: 'color-mix(in srgb, var(--faint) 14%, transparent)',
+          }}
         >
           <Archive size={16} className="text-faint" />
         </span>

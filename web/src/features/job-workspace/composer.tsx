@@ -1,51 +1,42 @@
-"use client";
+'use client';
 
-import { useEffect, useLayoutEffect, useRef } from "react";
-import { ArrowUp, ChevronDown, Plus, Square } from "lucide-react";
-import {
-  useJobMessages,
-  useMessage,
-  useSendReviewComments,
-  useStop,
-} from "@/lib/api/job-queries";
-import {
-  ThreadApiError,
-  type MessageInput,
-  type JobRef,
-} from "@/lib/api/job-api";
-import { useConnectivity } from "@/lib/api/connectivity";
 import {
   composerStore,
   useComposerDraft,
   useComposerStagedAnswers,
   type StagedAnswer,
-} from "@/lib/api/composer-store";
-import type { AttachmentsApi } from "./use-attachments";
-import { AttachmentTray } from "./attachment-tray";
-import { MAIN_LANE, useLiveTurn, type ContextBreakdown } from "@/lib/api/job-stream";
-import { useAllJobs } from "@/lib/api/inbox";
-import { ContextMeter } from "./bubbles";
-import { UsageRing } from "./usage-ring";
-import { CommentTray } from "./comment-tray";
-import { QueuedTray } from "./queued-tray";
-import { StagedAnswersTray } from "./staged-answers-tray";
-import { useReviewComments, type ReviewComment } from "./review-comments";
-import { formatEffort, formatModelLabel } from "@/utils/format";
+} from '@/lib/api/composer-store';
+import { useConnectivity } from '@/lib/api/connectivity';
+import { useAllJobs } from '@/lib/api/inbox';
+import { ThreadApiError, type JobRef, type MessageInput } from '@/lib/api/job-api';
+import { useJobMessages, useMessage, useSendReviewComments, useStop } from '@/lib/api/job-queries';
+import { MAIN_LANE, useLiveTurn, type ContextBreakdown } from '@/lib/api/job-stream';
+import { formatEffort, formatModelLabel } from '@/utils/format';
+import { ArrowUp, ChevronDown, Plus, Square } from 'lucide-react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
+import { AttachmentTray } from './attachment-tray';
+import { ContextMeter } from './bubbles';
+import { CommentTray } from './comment-tray';
+import { QueuedTray } from './queued-tray';
+import { useReviewComments, type ReviewComment } from './review-comments';
+import { StagedAnswersTray } from './staged-answers-tray';
+import { UsageRing } from './usage-ring';
+import type { AttachmentsApi } from './use-attachments';
 
 /** Map one staged answer to the wire shape `/message` expects (drops the chip-only `label`). */
 function toMessageItem(a: StagedAnswer): MessageInput {
-  if (a.kind === "question") {
-    return { type: "answer_question", questionId: a.cardId, answer: a.answer };
+  if (a.kind === 'question') {
+    return { type: 'answer_question', questionId: a.cardId, answer: a.answer };
   }
-  if (a.kind === "file") {
+  if (a.kind === 'file') {
     return {
-      type: "file_answered",
+      type: 'file_answered',
       requestId: a.cardId,
       filename: a.filename,
       content: a.content,
     };
   }
-  return { type: "secret_provided", requestId: a.cardId, value: a.value };
+  return { type: 'secret_provided', requestId: a.cardId, value: a.value };
 }
 
 /** The lane's live footer data — the model/effort/engine that ran + its context occupancy. */
@@ -88,13 +79,13 @@ export function Composer({
   attach,
   lane,
   threadId,
-  placeholder = "Message Atlas — ask, plan, or steer…",
+  placeholder = 'Message Atlas — ask, plan, or steer…',
   onHeightChange,
   footer,
   readOnly = false,
   blocked = false,
   archived = false,
-  variant = "composer",
+  variant = 'composer',
 }: {
   jobRef: JobRef;
   /** The attachment tray API, owned by {@link TranscriptView} so a pane-wide file drop feeds the same tray.
@@ -129,10 +120,10 @@ export function Composer({
    * a FOOTER-ONLY bar for a subagent's read-only detail pane: no input, no Send/attach; the left shows a
    * static "read-only sub-agent" label instead of the Plan pill + ＋, the right keeps model + context ring.
    */
-  variant?: "composer" | "subagent";
+  variant?: 'composer' | 'subagent';
 }) {
   // Footer-only mode for a subagent's read-only detail pane (no input/attach/send).
-  const isSubagent = variant === "subagent";
+  const isSubagent = variant === 'subagent';
   // A blocked/archived job's composer is inert for the same reasons a read-only lane's is: no input, no
   // Send, no attach/paste — the only difference is the placeholder copy (and that the operator unblocks
   // above for a blocked job; an archived job has no way out).
@@ -170,7 +161,7 @@ export function Composer({
 
   function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     if (e.target.files) addFiles?.(Array.from(e.target.files));
-    e.target.value = ""; // allow re-picking the same file
+    e.target.value = ''; // allow re-picking the same file
   }
 
   function onPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
@@ -183,8 +174,7 @@ export function Composer({
   // Read-only lanes never steer, so the Stop/live logic is irrelevant there (hooks stay unconditional).
   const liveActive = useLiveTurn(jobRef.jobId, MAIN_LANE)?.active ?? false;
   const { data: threads } = useAllJobs();
-  const realtimeIdle =
-    threads?.find((t) => t.id === jobRef.jobId)?.needsYou ?? false;
+  const realtimeIdle = threads?.find((t) => t.id === jobRef.jobId)?.needsYou ?? false;
   const turnActive = !inert && liveActive && !realtimeIdle;
   // Stop replaces Send only when a turn is running AND the composer is empty (no pending text/comments to
   // send). With text present, the button is Send — which now STEERS the running turn server-side. Never on
@@ -204,7 +194,7 @@ export function Composer({
   useLayoutEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
-    el.style.height = "auto";
+    el.style.height = 'auto';
     el.style.height = `${el.scrollHeight}px`;
   }, [text]);
 
@@ -231,7 +221,7 @@ export function Composer({
 
     // Offline: don't attempt the POST at all — move the message into the per-Job outbox and clear the
     // composer so the operator can keep composing. The <OutboxFlusher> drains it FIFO on reconnect.
-    const offline = connectivity !== "online";
+    const offline = connectivity !== 'online';
     if (offline) {
       if (
         comments.length === 0 &&
@@ -261,7 +251,7 @@ export function Composer({
         composerStore.enqueue(jobRef, {
           id: crypto.randomUUID(),
           createdAt: now + 1, // orders after the comments item in the FIFO drain
-          text: "",
+          text: '',
           comments: [],
           hasAttachments: true,
         });
@@ -271,7 +261,7 @@ export function Composer({
       // outbox-preserving re-persist isn't needed on this path.
       clearComments();
       clearAttachments?.();
-      composerStore.setText(jobRef, "");
+      composerStore.setText(jobRef, '');
       return;
     }
 
@@ -282,7 +272,11 @@ export function Composer({
     // composer draft.
     const reEnqueueOnNetworkError = (
       e: Error,
-      fields: { text: string; comments: ReviewComment[]; hasAttachments: boolean },
+      fields: {
+        text: string;
+        comments: ReviewComment[];
+        hasAttachments: boolean;
+      },
     ): boolean => {
       if (e instanceof ThreadApiError && e.status !== 503) return false;
       composerStore.enqueue(jobRef, {
@@ -314,7 +308,7 @@ export function Composer({
           onSuccess: hasAttachments
             ? () =>
                 message.mutate(
-                  { messages: [{ type: "user", text: "" }], threadId },
+                  { messages: [{ type: 'user', text: '' }], threadId },
                   {
                     onError: (e) => {
                       if (e instanceof ThreadApiError && e.status !== 503) return;
@@ -325,7 +319,7 @@ export function Composer({
                       composerStore.enqueue(jobRef, {
                         id: crypto.randomUUID(),
                         createdAt: Date.now(),
-                        text: "",
+                        text: '',
                         comments: [],
                         hasAttachments: true,
                       });
@@ -349,7 +343,7 @@ export function Composer({
               composerStore.enqueue(jobRef, {
                 id: crypto.randomUUID(),
                 createdAt: now + 1,
-                text: "",
+                text: '',
                 comments: [],
                 hasAttachments: true,
               });
@@ -380,14 +374,14 @@ export function Composer({
         ...(hasText || hasAttachments
           ? [
               {
-                type: "user" as const,
+                type: 'user' as const,
                 text: trimmed,
                 ...(lane ? { lane } : {}),
               },
             ]
           : []),
       ];
-      composerStore.setText(jobRef, "");
+      composerStore.setText(jobRef, '');
       if (hasStaged) composerStore.markSubmitting(jobRef, stagedIds, true);
       message.mutate(
         { messages: items, threadId },
@@ -396,7 +390,7 @@ export function Composer({
           // draft; this is the optimistic local clear (the realtime delta reconciles the operator's other
           // devices). Text was eager-cleared above; re-affirm it here.
           onSuccess: () => {
-            composerStore.setText(jobRef, "");
+            composerStore.setText(jobRef, '');
             if (hasAttachments) clearAttachments?.();
           },
           onError: (e) => {
@@ -418,7 +412,7 @@ export function Composer({
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       send();
     }
@@ -429,14 +423,14 @@ export function Composer({
   // Sustained mid-session outage: glow the Composer red so the operator sees the box is still theirs
   // (the message is preserved) while the connectivity store keeps reconnecting. Display-only — typing
   // and Send stay enabled (offline SEND behavior is handled separately).
-  const showOffline = connectivity === "offline" && !readOnly && !isSubagent;
+  const showOffline = connectivity === 'offline' && !readOnly && !isSubagent;
 
   return (
     <div
       ref={rootRef}
       className="pointer-events-none absolute bottom-0 left-0 right-2 px-6 pb-5 pt-[22px]"
       style={{
-        background: "linear-gradient(to top, var(--panel) 58%, transparent)",
+        background: 'linear-gradient(to top, var(--panel) 58%, transparent)',
       }}
     >
       <div className="pointer-events-auto mx-auto max-w-[880px]">
@@ -448,16 +442,14 @@ export function Composer({
           </>
         )}
         {!inert && !isSubagent && message.isError ? (
-          <div className="mb-2 text-[11px] text-red">
-            Could not send — try again.
-          </div>
+          <div className="mb-2 text-[11px] text-red">Could not send — try again.</div>
         ) : null}
         <div
           className="rounded-2xl border border-border-2 bg-surface px-3 py-2.5"
           style={{
             boxShadow: showOffline
-              ? "0 8px 30px rgba(20,18,12,.14), 0 2px 8px rgba(20,18,12,.06), 0 0 0 1.5px var(--red-line), 0 0 18px color-mix(in srgb, var(--red) 22%, transparent)"
-              : "0 8px 30px rgba(20,18,12,.14), 0 2px 8px rgba(20,18,12,.06)",
+              ? '0 8px 30px rgba(20,18,12,.14), 0 2px 8px rgba(20,18,12,.06), 0 0 0 1.5px var(--red-line), 0 0 18px color-mix(in srgb, var(--red) 22%, transparent)'
+              : '0 8px 30px rgba(20,18,12,.14), 0 2px 8px rgba(20,18,12,.06)',
           }}
         >
           {!inert && !isSubagent ? (
@@ -471,12 +463,10 @@ export function Composer({
             <div className="mb-2 text-[11px] text-red">{attachError}</div>
           ) : null}
           {isSubagent ? null : (
-            <div
-              className={`flex items-start gap-2.5${inert ? " opacity-60" : ""}`}
-            >
+            <div className={`flex items-start gap-2.5${inert ? ' opacity-60' : ''}`}>
               <textarea
                 ref={textareaRef}
-                value={inert ? "" : text}
+                value={inert ? '' : text}
                 onChange={(e) => setText(e.target.value)}
                 onKeyDown={onKeyDown}
                 onPaste={onPaste}
@@ -484,13 +474,13 @@ export function Composer({
                 disabled={inert}
                 placeholder={
                   archived
-                    ? "This job is archived — read-only."
+                    ? 'This job is archived — read-only.'
                     : blocked
-                      ? "This job is blocked — unblock it above to continue"
+                      ? 'This job is blocked — unblock it above to continue'
                       : readOnly
-                        ? "Read-only — steer Atlas from the Conversation"
+                        ? 'Read-only — steer Atlas from the Conversation'
                         : comments.length > 0
-                          ? "Add a message with your comments (optional)…"
+                          ? 'Add a message with your comments (optional)…'
                           : placeholder
                 }
                 className="max-h-44 min-h-[24px] flex-1 resize-none overflow-y-auto bg-transparent pt-0.5 text-[13.5px] leading-relaxed text-text outline-none placeholder:text-faint disabled:cursor-default"
@@ -516,8 +506,7 @@ export function Composer({
                     (!text.trim() &&
                       comments.length === 0 &&
                       attachments.length === 0 &&
-                      stagedAnswers.filter((a) => !a.submitting).length ===
-                        0) ||
+                      stagedAnswers.filter((a) => !a.submitting).length === 0) ||
                     message.isPending ||
                     sendReviewComments.isPending
                   }
@@ -525,11 +514,11 @@ export function Composer({
                   aria-label="Send"
                   title={
                     archived
-                      ? "This job is archived"
+                      ? 'This job is archived'
                       : blocked
-                        ? "This job is blocked"
+                        ? 'This job is blocked'
                         : readOnly
-                          ? "Read-only lane"
+                          ? 'Read-only lane'
                           : undefined
                   }
                 >
@@ -539,19 +528,15 @@ export function Composer({
             </div>
           )}
 
-          <div
-            className={`${isSubagent ? "" : "mt-2.5 "}flex items-center gap-2`}
-          >
+          <div className={`${isSubagent ? '' : 'mt-2.5 '}flex items-center gap-2`}>
             {isSubagent ? (
               // Subagent read-only pane: a static label where the Plan pill + ＋ normally sit.
-              <span className="font-mono text-[11px] text-faint">
-                read-only sub-agent
-              </span>
+              <span className="font-mono text-[11px] text-faint">read-only sub-agent</span>
             ) : (
               <>
                 {/* Plan pill: static design affordance (not wired). The ＋ beside it IS wired (attach/paste). */}
                 <span
-                  className={`flex items-center gap-1.5 rounded-lg border border-border-2 px-2.5 py-1 text-[12px] font-semibold text-text${inert ? " opacity-60" : ""}`}
+                  className={`flex items-center gap-1.5 rounded-lg border border-border-2 px-2.5 py-1 text-[12px] font-semibold text-text${inert ? ' opacity-60' : ''}`}
                 >
                   Plan <ChevronDown size={11} strokeWidth={2.6} />
                 </span>
@@ -559,7 +544,7 @@ export function Composer({
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={inert}
-                  className={`flex h-7 w-7 items-center justify-center rounded-lg text-dim transition hover:bg-surface-2 hover:text-text${inert ? " opacity-60" : ""}`}
+                  className={`flex h-7 w-7 items-center justify-center rounded-lg text-dim transition hover:bg-surface-2 hover:text-text${inert ? ' opacity-60' : ''}`}
                   aria-label="Attach files"
                   title="Attach files or images"
                 >
@@ -576,22 +561,17 @@ export function Composer({
               </>
             )}
             {showOffline ? (
-              <span
-                className="font-mono text-[11px]"
-                style={{ color: "var(--red)" }}
-              >
+              <span className="font-mono text-[11px]" style={{ color: 'var(--red)' }}>
                 reconnecting…
               </span>
             ) : null}
             <div className="flex-1" />
-            {!isSubagent && jobRef.orgId ? (
-              <UsageRing orgId={jobRef.orgId} />
-            ) : null}
+            {!isSubagent && jobRef.orgId ? <UsageRing orgId={jobRef.orgId} /> : null}
             {/* Live: the model · effort the lane's latest turn ran on (threads `turn_meta.usage`). */}
             {modelLabel ? (
               <span className="font-mono text-[11px] text-dim">
                 {modelLabel}
-                {effortLabel ? ` · ${effortLabel}` : ""}
+                {effortLabel ? ` · ${effortLabel}` : ''}
               </span>
             ) : null}
             {footer?.context ? (

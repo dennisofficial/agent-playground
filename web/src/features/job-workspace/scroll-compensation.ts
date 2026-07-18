@@ -1,4 +1,4 @@
-import type { VirtualItem, Virtualizer } from "@tanstack/react-virtual";
+import type { VirtualItem, Virtualizer } from '@tanstack/react-virtual';
 
 /**
  * `shouldAdjustScrollPositionOnItemSizeChange` predicate for `useVirtualizer`.
@@ -20,11 +20,7 @@ import type { VirtualItem, Virtualizer } from "@tanstack/react-virtual";
 export function compensateAboveViewportResize<
   TScrollElement extends Element | Window,
   TItemElement extends Element,
->(
-  item: VirtualItem,
-  _delta: number,
-  instance: Virtualizer<TScrollElement, TItemElement>,
-): boolean {
+>(item: VirtualItem, _delta: number, instance: Virtualizer<TScrollElement, TItemElement>): boolean {
   const inst = instance as unknown as {
     getScrollOffset: () => number;
     scrollAdjustments: number;

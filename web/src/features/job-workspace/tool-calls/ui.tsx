@@ -1,19 +1,10 @@
-"use client";
+'use client';
 
-import { useMemo, useState } from "react";
-import type { DiffHunk, IconKind, ToolBadge } from "./types";
-import {
-  useHighlightTokens,
-  renderTokenLine,
-  type ThemedToken,
-} from "./highlight";
-import {
-  computeDiffRows,
-  rowsFromHunk,
-  splitLines,
-  type DiffRow,
-} from "./diff-rows";
-import { CopyButton, TerminalChromeBar, WrapButton } from "../terminal-chrome";
+import { useMemo, useState } from 'react';
+import { CopyButton, TerminalChromeBar, WrapButton } from '../terminal-chrome';
+import { computeDiffRows, rowsFromHunk, splitLines, type DiffRow } from './diff-rows';
+import { renderTokenLine, useHighlightTokens, type ThemedToken } from './highlight';
+import type { DiffHunk, IconKind, ToolBadge } from './types';
 
 // Re-exported so existing importers keep resolving these from `./ui` after the move to `./diff-rows`.
 export { rowsFromHunk };
@@ -24,13 +15,7 @@ export type { DiffRow };
 /** Every code/diff body scrolls inside this fixed window (~14 lines) instead of growing unbounded. */
 const CODE_MAX_HEIGHT = 280;
 
-export const Chevron = ({
-  size = 11,
-  className = "",
-}: {
-  size?: number;
-  className?: string;
-}) => (
+export const Chevron = ({ size = 11, className = '' }: { size?: number; className?: string }) => (
   <svg
     width={size}
     height={size}
@@ -50,37 +35,37 @@ export function ToolIcon({ kind, color }: { kind: IconKind; color: string }) {
   const common = {
     width: 13,
     height: 13,
-    viewBox: "0 0 24 24",
-    fill: "none",
+    viewBox: '0 0 24 24',
+    fill: 'none',
     stroke: color,
     strokeWidth: 2,
-    strokeLinecap: "round" as const,
-    strokeLinejoin: "round" as const,
-    style: { flex: "none" as const },
+    strokeLinecap: 'round' as const,
+    strokeLinejoin: 'round' as const,
+    style: { flex: 'none' as const },
   };
   switch (kind) {
-    case "bash":
+    case 'bash':
       return (
         <svg {...common}>
           <path d="M4 17l6-5-6-5" />
           <path d="M13 19h7" />
         </svg>
       );
-    case "read":
+    case 'read':
       return (
         <svg {...common}>
           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
           <path d="M14 2v6h6" />
         </svg>
       );
-    case "edit":
+    case 'edit':
       return (
         <svg {...common}>
           <path d="M12 20h9" />
           <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
         </svg>
       );
-    case "write":
+    case 'write':
       // file-plus — a freshly created file (green stroke, set by the handler's color)
       return (
         <svg {...common}>
@@ -90,14 +75,14 @@ export function ToolIcon({ kind, color }: { kind: IconKind; color: string }) {
           <path d="M9.5 15.5h5" />
         </svg>
       );
-    case "grep":
+    case 'grep':
       return (
         <svg {...common}>
           <circle cx="11" cy="11" r="7" />
           <path d="M21 21l-4.3-4.3" />
         </svg>
       );
-    case "todo":
+    case 'todo':
       // checklist with ticks
       return (
         <svg {...common}>
@@ -109,7 +94,7 @@ export function ToolIcon({ kind, color }: { kind: IconKind; color: string }) {
           <path d="M3.5 18.5l1.2 1.2L7 17.5" />
         </svg>
       );
-    case "web":
+    case 'web':
       return (
         <svg {...common}>
           <circle cx="12" cy="12" r="9" />
@@ -117,14 +102,14 @@ export function ToolIcon({ kind, color }: { kind: IconKind; color: string }) {
           <path d="M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18" />
         </svg>
       );
-    case "task":
+    case 'task':
       // sparkle — a spawned sub-agent
       return (
         <svg {...common}>
           <path d="M12 3l1.7 4.8L18.5 9.5l-4.8 1.7L12 16l-1.7-4.8L5.5 9.5l4.8-1.7L12 3z" />
         </svg>
       );
-    case "plan":
+    case 'plan':
       // clipboard-check
       return (
         <svg {...common}>
@@ -133,7 +118,7 @@ export function ToolIcon({ kind, color }: { kind: IconKind; color: string }) {
           <path d="M9 14l2 2 3.5-3.5" />
         </svg>
       );
-    case "mcp":
+    case 'mcp':
     default:
       return (
         <svg {...common}>
@@ -147,24 +132,18 @@ export function ToolIcon({ kind, color }: { kind: IconKind; color: string }) {
 }
 
 /** An add-toned pill before the badge — e.g. "NEW" on a Write row, or "N NEW" rolled up on a group. */
-export function NewPill({
-  text,
-  size = "row",
-}: {
-  text: string;
-  size?: "group" | "row";
-}) {
+export function NewPill({ text, size = 'row' }: { text: string; size?: 'group' | 'row' }) {
   const dims =
-    size === "group"
-      ? "text-[10.5px] px-[7px] py-[1.5px] rounded-[5px]"
-      : "text-[9px] px-1.5 py-px rounded-[4px]";
+    size === 'group'
+      ? 'text-[10.5px] px-[7px] py-[1.5px] rounded-[5px]'
+      : 'text-[9px] px-1.5 py-px rounded-[4px]';
   return (
     <span
       className={`shrink-0 font-mono font-bold ${dims}`}
       style={{
-        color: "var(--add)",
-        background: "var(--add-bg)",
-        border: "1px solid var(--add-gut)",
+        color: 'var(--add)',
+        background: 'var(--add-bg)',
+        border: '1px solid var(--add-gut)',
       }}
     >
       {text}
@@ -179,9 +158,9 @@ export function JitPill({ count }: { count: number }) {
     <span
       className="shrink-0 font-mono font-bold text-[9px] px-1.5 py-px rounded-[4px]"
       style={{
-        color: "var(--blue)",
-        background: "var(--blue-soft)",
-        border: "1px solid var(--blue)",
+        color: 'var(--blue)',
+        background: 'var(--blue-soft)',
+        border: '1px solid var(--blue)',
       }}
     >
       {count}
@@ -192,19 +171,15 @@ export function JitPill({ count }: { count: number }) {
 /** Expanded-body panel listing each JIT injection that fired on this tool call: a rule label + the
  * verbatim injected text in a monospace block. Rendered AFTER the tool's own input/result body, so the
  * tool card (e.g. the Bash terminal chrome) reads first and the injected context follows it. */
-export function JitContextPanel({
-  items,
-}: {
-  items: Array<{ rule: string; text: string }>;
-}) {
+export function JitContextPanel({ items }: { items: Array<{ rule: string; text: string }> }) {
   return (
     <div
       className="my-[3px] space-y-2 rounded-[7px] border px-[11px] py-[9px] font-mono text-[11px] leading-relaxed"
-      style={{ background: "var(--blue-soft)", borderColor: "var(--blue)" }}
+      style={{ background: 'var(--blue-soft)', borderColor: 'var(--blue)' }}
     >
       {items.map((it, i) => (
         <div key={i}>
-          <span className="font-bold" style={{ color: "var(--blue)" }}>
+          <span className="font-bold" style={{ color: 'var(--blue)' }}>
             {it.rule}
           </span>
           <pre className="mt-0.5 overflow-x-auto whitespace-pre-wrap break-words text-dim">
@@ -220,43 +195,38 @@ export function JitContextPanel({
  * Right-aligned row badge: a `+N −N` diffstat (rendered as chip pills), an "N ln" count, or "error".
  * `size` scales the diffstat chips — `group` for the file-change group header, `row` per file.
  */
-export function Badge({
-  badge,
-  size = "row",
-}: {
-  badge: ToolBadge;
-  size?: "group" | "row";
-}) {
+export function Badge({ badge, size = 'row' }: { badge: ToolBadge; size?: 'group' | 'row' }) {
   if (!badge) return null;
-  if (badge.kind === "error") {
+  if (badge.kind === 'error') {
     return (
-      <span
-        className="shrink-0 font-mono text-[10px]"
-        style={{ color: "var(--red)" }}
-      >
+      <span className="shrink-0 font-mono text-[10px]" style={{ color: 'var(--red)' }}>
         error
       </span>
     );
   }
-  if (badge.kind === "superseded") {
+  if (badge.kind === 'superseded') {
     return (
       <span
         className="shrink-0 rounded-[4px] px-[6px] py-[0.5px] font-mono text-[9.5px] font-semibold"
-        style={{ color: "var(--dim)", background: "var(--surface-3)", border: "1px solid var(--border)" }}
+        style={{
+          color: 'var(--dim)',
+          background: 'var(--surface-3)',
+          border: '1px solid var(--border)',
+        }}
       >
         superseded
       </span>
     );
   }
-  if (badge.kind === "lines") {
+  if (badge.kind === 'lines') {
     // Neutral gray pill — e.g. the line count read off a Read row.
     return (
       <span
         className="shrink-0 rounded-[4px] px-[6px] py-[0.5px] font-mono text-[9.5px] font-semibold tabular-nums"
         style={{
-          color: "var(--dim)",
-          background: "var(--surface-3)",
-          border: "1px solid var(--border)",
+          color: 'var(--dim)',
+          background: 'var(--surface-3)',
+          border: '1px solid var(--border)',
         }}
       >
         {badge.n} ln
@@ -265,9 +235,9 @@ export function Badge({
   }
   // diffstat — chip pills; the minus glyph is U+2212, not a hyphen.
   const chip =
-    size === "group"
-      ? "text-[10.5px] px-[7px] py-[1.5px] rounded-[5px]"
-      : "text-[9.5px] px-[5px] py-[0.5px] rounded-[4px]";
+    size === 'group'
+      ? 'text-[10.5px] px-[7px] py-[1.5px] rounded-[5px]'
+      : 'text-[9.5px] px-[5px] py-[0.5px] rounded-[4px]';
   // Suppress a zero-count chip (a pure insertion shows just `+N`, a pure deletion just `−N`), but
   // keep `+0` as a fallback for a genuine no-op edit so the badge is never empty.
   const showDel = badge.removed != null && badge.removed > 0;
@@ -278,9 +248,9 @@ export function Badge({
         <span
           className={chip}
           style={{
-            color: "var(--add)",
-            background: "var(--add-bg)",
-            border: "1px solid var(--add-gut)",
+            color: 'var(--add)',
+            background: 'var(--add-bg)',
+            border: '1px solid var(--add-gut)',
           }}
         >
           +{badge.added}
@@ -290,9 +260,9 @@ export function Badge({
         <span
           className={chip}
           style={{
-            color: "var(--del)",
-            background: "var(--del-bg)",
-            border: "1px solid var(--del-gut)",
+            color: 'var(--del)',
+            background: 'var(--del-bg)',
+            border: '1px solid var(--del-gut)',
           }}
         >
           −{badge.removed}
@@ -304,17 +274,14 @@ export function Badge({
 
 /** A shell prompt line (bash-highlighted) above terminal output — the command as if we'd typed it. */
 function CommandPrompt({ command }: { command: string }) {
-  const lines = command.replace(/\n$/, "").split("\n");
-  const lineTokens = useHighlightTokens(lines.join("\n"), "bash", true);
+  const lines = command.replace(/\n$/, '').split('\n');
+  const lineTokens = useHighlightTokens(lines.join('\n'), 'bash', true);
   return (
     <div className="mb-1.5">
       {lines.map((line, i) => (
         <div key={i} className="flex">
-          <span
-            className="shrink-0 select-none pr-2"
-            style={{ color: "var(--term-add)" }}
-          >
-            {i === 0 ? "$" : NBSP}
+          <span className="shrink-0 select-none pr-2" style={{ color: 'var(--term-add)' }}>
+            {i === 0 ? '$' : NBSP}
           </span>
           <CodeText tokens={lineTokens?.[i]} code={line} />
         </div>
@@ -345,8 +312,8 @@ export function TerminalBlock({
     <div
       className="my-[3px] overflow-hidden rounded-[7px]"
       style={{
-        background: "var(--term)",
-        border: "1px solid var(--term-border)",
+        background: 'var(--term)',
+        border: '1px solid var(--term-border)',
       }}
     >
       {chrome ? (
@@ -354,10 +321,7 @@ export function TerminalBlock({
           label={label}
           actions={
             <>
-              <WrapButton
-                wrapped={wrapped}
-                onToggle={() => setWrapped((w) => !w)}
-              />
+              <WrapButton wrapped={wrapped} onToggle={() => setWrapped((w) => !w)} />
               <CopyButton text={body} />
             </>
           }
@@ -369,8 +333,8 @@ export function TerminalBlock({
       >
         {command ? <CommandPrompt command={command} /> : null}
         <pre
-          className={`m-0 ${wrapped ? "whitespace-pre-wrap break-words" : "whitespace-pre"}`}
-          style={{ color: "var(--term-dim)" }}
+          className={`m-0 ${wrapped ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'}`}
+          style={{ color: 'var(--term-dim)' }}
         >
           {body}
         </pre>
@@ -391,12 +355,12 @@ export function StructuredPanel({
   isError?: boolean;
   superseded?: boolean;
 }) {
-  const body = result || (isError ? "(error)" : "(no output)");
+  const body = result || (isError ? '(error)' : '(no output)');
   const red = isError && !superseded;
   return (
     <div
       className="my-[3px] space-y-1.5 rounded-[7px] border border-border px-[11px] py-[9px] font-mono text-[11px] leading-relaxed text-dim"
-      style={{ background: "var(--panel)" }}
+      style={{ background: 'var(--panel)' }}
     >
       {superseded ? (
         <div className="text-faint text-[10.5px]">Cancelled to deliver your newer message</div>
@@ -404,16 +368,14 @@ export function StructuredPanel({
       {input ? (
         <div>
           <span className="text-faint">input</span>
-          <pre className="mt-0.5 overflow-x-auto whitespace-pre-wrap break-words">
-            {input}
-          </pre>
+          <pre className="mt-0.5 overflow-x-auto whitespace-pre-wrap break-words">{input}</pre>
         </div>
       ) : null}
       <div>
-        <span className="text-faint">{red ? "error" : "result"}</span>
+        <span className="text-faint">{red ? 'error' : 'result'}</span>
         <pre
           className="mt-0.5 overflow-x-auto whitespace-pre-wrap break-words"
-          style={red ? { color: "var(--red)" } : undefined}
+          style={red ? { color: 'var(--red)' } : undefined}
         >
           {body}
         </pre>
@@ -422,7 +384,7 @@ export function StructuredPanel({
   );
 }
 
-const NBSP = " ";
+const NBSP = ' ';
 
 /** A renderable diff block: a hunk header line + its numbered rows. */
 type DiffBlock = { header: string; rows: DiffRow[] };
@@ -445,7 +407,7 @@ function CodeText({
   return (
     <span
       className="whitespace-pre pr-3"
-      style={{ color: "var(--term-fg)", opacity: dim ? 0.72 : 1 }}
+      style={{ color: 'var(--term-fg)', opacity: dim ? 0.72 : 1 }}
     >
       {renderTokenLine(tokens, code)}
     </span>
@@ -453,34 +415,20 @@ function CodeText({
 }
 
 /** One diff line: old-no gutter · new-no gutter · sign · highlighted code, tinted by row type (dark). */
-function DiffLine({
-  row,
-  tokens,
-}: {
-  row: DiffRow;
-  tokens: ThemedToken[] | null | undefined;
-}) {
-  const isAdd = row.type === "add";
-  const isDel = row.type === "del";
-  const rowBg = isAdd
-    ? "var(--term-add-bg)"
-    : isDel
-      ? "var(--term-del-bg)"
-      : "transparent";
-  const gutBg = isAdd
-    ? "var(--term-add-gut)"
-    : isDel
-      ? "var(--term-del-gut)"
-      : "transparent";
+function DiffLine({ row, tokens }: { row: DiffRow; tokens: ThemedToken[] | null | undefined }) {
+  const isAdd = row.type === 'add';
+  const isDel = row.type === 'del';
+  const rowBg = isAdd ? 'var(--term-add-bg)' : isDel ? 'var(--term-del-bg)' : 'transparent';
+  const gutBg = isAdd ? 'var(--term-add-gut)' : isDel ? 'var(--term-del-gut)' : 'transparent';
   return (
     <div className="flex" style={{ background: rowBg }}>
       <span
         className="shrink-0 text-right tabular-nums"
         style={{
           width: 28,
-          padding: "0 7px",
+          padding: '0 7px',
           background: gutBg,
-          color: isDel ? "var(--term-del)" : "var(--term-dim)",
+          color: isDel ? 'var(--term-del)' : 'var(--term-dim)',
           opacity: isDel ? 0.95 : 0.6,
         }}
       >
@@ -490,9 +438,9 @@ function DiffLine({
         className="shrink-0 text-right tabular-nums"
         style={{
           width: 28,
-          padding: "0 7px",
+          padding: '0 7px',
           background: gutBg,
-          color: isAdd ? "var(--term-add)" : "var(--term-dim)",
+          color: isAdd ? 'var(--term-add)' : 'var(--term-dim)',
           opacity: isAdd ? 0.95 : 0.6,
         }}
       >
@@ -502,16 +450,12 @@ function DiffLine({
         className="shrink-0 text-center font-bold"
         style={{
           width: 16,
-          color: isAdd
-            ? "var(--term-add)"
-            : isDel
-              ? "var(--term-del)"
-              : "var(--term-dim)",
+          color: isAdd ? 'var(--term-add)' : isDel ? 'var(--term-del)' : 'var(--term-dim)',
         }}
       >
-        {isAdd ? "+" : isDel ? "−" : NBSP}
+        {isAdd ? '+' : isDel ? '−' : NBSP}
       </span>
-      <CodeText tokens={tokens} code={row.code} dim={row.type === "context"} />
+      <CodeText tokens={tokens} code={row.code} dim={row.type === 'context'} />
     </div>
   );
 }
@@ -543,27 +487,20 @@ export function DiffView({
           rows: rowsFromHunk(h, i * 100_000),
         }))
       : (() => {
-          const { rows, oldCount, newCount } = computeDiffRows(
-            before ?? "",
-            after ?? "",
-          );
+          const { rows, oldCount, newCount } = computeDiffRows(before ?? '', after ?? '');
           return [{ header: `@@ -1,${oldCount} +1,${newCount} @@`, rows }];
         })();
   // Diff rows are non-contiguous (interleaved add/del across hunks) → tokenize each line in isolation
   // and index by flat position across all blocks (header rows aren't in `allRows`, so they don't count).
   const allRows = blocks.flatMap((b) => b.rows);
-  const lineTokens = useHighlightTokens(
-    allRows.map((r) => r.code).join("\n"),
-    lang,
-    false,
-  );
+  const lineTokens = useHighlightTokens(allRows.map((r) => r.code).join('\n'), lang, false);
   let flatIndex = 0;
   return (
     <div
       className="my-[3px] overflow-hidden rounded-[7px]"
       style={{
-        background: "var(--term)",
-        border: "1px solid var(--term-border)",
+        background: 'var(--term)',
+        border: '1px solid var(--term-border)',
       }}
     >
       <div
@@ -574,7 +511,7 @@ export function DiffView({
           <div key={bi}>
             <div
               className="flex items-center gap-[7px] px-[11px] py-[3px] font-mono text-[10px]"
-              style={{ color: "var(--term-purple)" }}
+              style={{ color: 'var(--term-purple)' }}
             >
               {block.header}
             </div>
@@ -612,31 +549,26 @@ export function CodeListing({
 }) {
   // Rows are 1:1 with source lines (each `r.code` is one line, no embedded `\n`), so `lineTokens[i]`
   // aligns to `rows[i]` for both whole-file and per-line tokenization.
-  const text = useMemo(() => rows.map((r) => r.code).join("\n"), [rows]);
+  const text = useMemo(() => rows.map((r) => r.code).join('\n'), [rows]);
   const lineTokens = useHighlightTokens(text, lang, whole);
   // Size the gutter to the widest line number so big-file numbers don't wrap or clip.
   const widest = rows.reduce((m, r) => Math.max(m, String(r.no).length), 0);
   const gutter = Math.max(30, widest * 7 + 16);
   return (
     <div
-      className={
-        flush ? "h-full overflow-hidden" : "my-[3px] overflow-hidden rounded-[7px]"
-      }
+      className={flush ? 'h-full overflow-hidden' : 'my-[3px] overflow-hidden rounded-[7px]'}
       style={{
-        background: "var(--term)",
-        ...(flush ? {} : { border: "1px solid var(--term-border)" }),
-        ...(leftAccent ? { borderLeft: "3px solid var(--term-add)" } : {}),
+        background: 'var(--term)',
+        ...(flush ? {} : { border: '1px solid var(--term-border)' }),
+        ...(leftAccent ? { borderLeft: '3px solid var(--term-add)' } : {}),
       }}
     >
       <div
-        className={`overflow-auto py-2 font-mono text-[11px]${flush ? " h-full" : ""}`}
+        className={`overflow-auto py-2 font-mono text-[11px]${flush ? ' h-full' : ''}`}
         style={{ lineHeight: 1.75, maxHeight }}
       >
         {rows.map((r, i) => {
-          const active =
-            activeNos != null &&
-            typeof r.no === "number" &&
-            activeNos.has(r.no);
+          const active = activeNos != null && typeof r.no === 'number' && activeNos.has(r.no);
           return (
             <div
               key={i}
@@ -645,8 +577,7 @@ export function CodeListing({
               style={
                 active
                   ? {
-                      background:
-                        "color-mix(in srgb, var(--blue) 13%, transparent)",
+                      background: 'color-mix(in srgb, var(--blue) 13%, transparent)',
                     }
                   : undefined
               }
@@ -655,12 +586,12 @@ export function CodeListing({
                 className="shrink-0 text-right tabular-nums"
                 style={{
                   width: gutter,
-                  padding: "0 8px",
-                  color: "var(--term-dim)",
+                  padding: '0 8px',
+                  color: 'var(--term-dim)',
                   opacity: 0.7,
                 }}
               >
-                {r.no === "" ? NBSP : r.no}
+                {r.no === '' ? NBSP : r.no}
               </span>
               <CodeText tokens={lineTokens?.[i]} code={r.code} />
             </div>
@@ -676,13 +607,7 @@ export function CodeListing({
  * `+/−` signs (the green left border conveys "new"), syntax highlighting via `lang`, same scroll window
  * as {@link DiffView}.
  */
-export function WriteFileView({
-  content,
-  lang = null,
-}: {
-  content: string;
-  lang?: string | null;
-}) {
+export function WriteFileView({ content, lang = null }: { content: string; lang?: string | null }) {
   const rows = splitLines(content).map((code, i) => ({ no: i + 1, code }));
   return <CodeListing rows={rows} lang={lang} leftAccent whole />;
 }
@@ -692,18 +617,12 @@ export function WriteFileView({
  * lines; we split off that gutter so the code can be syntax-highlighted and the real (file) line
  * numbers are preserved. Non-numbered lines (e.g. a trailing truncation note) keep a blank gutter.
  */
-export function ReadFileView({
-  result,
-  lang = null,
-}: {
-  result: string;
-  lang?: string | null;
-}) {
+export function ReadFileView({ result, lang = null }: { result: string; lang?: string | null }) {
   const rows = splitLines(result).map((line) => {
-    const tab = line.indexOf("\t");
+    const tab = line.indexOf('\t');
     if (tab > 0 && /^\d+$/.test(line.slice(0, tab)))
       return { no: line.slice(0, tab), code: line.slice(tab + 1) };
-    return { no: "" as const, code: line };
+    return { no: '' as const, code: line };
   });
   return <CodeListing rows={rows} lang={lang} whole />;
 }
@@ -714,16 +633,10 @@ export function ReadFileView({
  * with the file's `lang`. Only used for the single-file numbered case (the handler detects it);
  * multi-file / files-with-matches output stays a plain terminal block.
  */
-export function GrepView({
-  result,
-  lang = null,
-}: {
-  result: string;
-  lang?: string | null;
-}) {
+export function GrepView({ result, lang = null }: { result: string; lang?: string | null }) {
   const rows = splitLines(result).map((line) => {
     const m = /^(\d+)[:-](.*)$/.exec(line);
-    return m ? { no: m[1], code: m[2] } : { no: "" as const, code: line };
+    return m ? { no: m[1], code: m[2] } : { no: '' as const, code: line };
   });
   return <CodeListing rows={rows} lang={lang} />;
 }
@@ -738,8 +651,8 @@ export function PathListView({ result }: { result: string }) {
     <div
       className="my-[3px] overflow-hidden rounded-[7px]"
       style={{
-        background: "var(--term)",
-        border: "1px solid var(--term-border)",
+        background: 'var(--term)',
+        border: '1px solid var(--term-border)',
       }}
     >
       <div
@@ -747,15 +660,13 @@ export function PathListView({ result }: { result: string }) {
         style={{ lineHeight: 1.75, maxHeight: CODE_MAX_HEIGHT }}
       >
         {lines.map((line, i) => {
-          const cut = line.lastIndexOf("/");
-          const dir = cut >= 0 ? line.slice(0, cut + 1) : "";
+          const cut = line.lastIndexOf('/');
+          const dir = cut >= 0 ? line.slice(0, cut + 1) : '';
           const base = cut >= 0 ? line.slice(cut + 1) : line;
           return (
             <div key={i} className="whitespace-pre">
-              {dir ? (
-                <span style={{ color: "var(--term-dim)" }}>{dir}</span>
-              ) : null}
-              <span style={{ color: "var(--term-fg)" }}>{base || NBSP}</span>
+              {dir ? <span style={{ color: 'var(--term-dim)' }}>{dir}</span> : null}
+              <span style={{ color: 'var(--term-fg)' }}>{base || NBSP}</span>
             </div>
           );
         })}

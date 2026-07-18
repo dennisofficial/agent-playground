@@ -1,8 +1,8 @@
-"use client";
+'use client';
 
-import { Suspense } from "react";
-import { Modal } from "@/features/create/components/modal";
-import { CreateThread } from "@/features/create/components/create-job";
+import { CreateThread } from '@/features/create/components/create-job';
+import { Modal } from '@/features/create/components/modal';
+import { Suspense } from 'react';
 
 /**
  * Intercepted `/new` — the create-job modal over the current view (the org rail / board stay behind

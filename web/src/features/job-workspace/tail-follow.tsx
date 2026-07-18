@@ -1,6 +1,6 @@
-"use client";
+'use client';
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from 'react';
 
 /**
  * Tail-following for a streaming scroll container — the "pin to bottom while reading the tail, but don't
@@ -98,7 +98,7 @@ export function useTailFollow(deps: React.DependencyList, pin?: () => void) {
     stuckToBottom.current = true;
     setShowJump(false);
     if (pin) pin();
-    else endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+    else endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
   };
 
   // Suspend/release the pointer hold. On RELEASE we re-run `onScroll` to refresh `stuckToBottom` from the
@@ -131,19 +131,19 @@ export function useTailFollow(deps: React.DependencyList, pin?: () => void) {
     const onTouchStartMove = () => markUserScroll();
     const onTouchEnd = () => armSettle();
     const onScrollEnd = () => settle();
-    el.addEventListener("wheel", onWheel, { passive: true });
-    el.addEventListener("touchstart", onTouchStartMove, { passive: true });
-    el.addEventListener("touchmove", onTouchStartMove, { passive: true });
-    el.addEventListener("touchend", onTouchEnd, { passive: true });
-    el.addEventListener("touchcancel", onTouchEnd, { passive: true });
-    el.addEventListener("scrollend", onScrollEnd);
+    el.addEventListener('wheel', onWheel, { passive: true });
+    el.addEventListener('touchstart', onTouchStartMove, { passive: true });
+    el.addEventListener('touchmove', onTouchStartMove, { passive: true });
+    el.addEventListener('touchend', onTouchEnd, { passive: true });
+    el.addEventListener('touchcancel', onTouchEnd, { passive: true });
+    el.addEventListener('scrollend', onScrollEnd);
     return () => {
-      el.removeEventListener("wheel", onWheel);
-      el.removeEventListener("touchstart", onTouchStartMove);
-      el.removeEventListener("touchmove", onTouchStartMove);
-      el.removeEventListener("touchend", onTouchEnd);
-      el.removeEventListener("touchcancel", onTouchEnd);
-      el.removeEventListener("scrollend", onScrollEnd);
+      el.removeEventListener('wheel', onWheel);
+      el.removeEventListener('touchstart', onTouchStartMove);
+      el.removeEventListener('touchmove', onTouchStartMove);
+      el.removeEventListener('touchend', onTouchEnd);
+      el.removeEventListener('touchcancel', onTouchEnd);
+      el.removeEventListener('scrollend', onScrollEnd);
       if (settleTimer.current) clearTimeout(settleTimer.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- handlers use only refs + stable setState; attach once
@@ -152,11 +152,19 @@ export function useTailFollow(deps: React.DependencyList, pin?: () => void) {
   useEffect(() => {
     if (!stuckToBottom.current || pointerHold.current || userScrolling.current) return;
     if (pin) pin();
-    else endRef.current?.scrollIntoView({ block: "end" });
+    else endRef.current?.scrollIntoView({ block: 'end' });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- deps are supplied by the caller (content signal)
   }, deps);
 
-  return { scrollRef, endRef, showJump, jumpToLatest, onScroll, onPointerOver, onPointerLeave };
+  return {
+    scrollRef,
+    endRef,
+    showJump,
+    jumpToLatest,
+    onScroll,
+    onPointerOver,
+    onPointerLeave,
+  };
 }
 
 /**
@@ -166,7 +174,7 @@ export function useTailFollow(deps: React.DependencyList, pin?: () => void) {
 export function JumpToLatestButton({
   onClick,
   style,
-  className = "",
+  className = '',
 }: {
   onClick: () => void;
   style?: React.CSSProperties;

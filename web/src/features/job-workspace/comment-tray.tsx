@@ -1,8 +1,8 @@
-"use client";
+'use client';
 
-import { MessageSquarePlus, X } from "lucide-react";
-import { useReviewComments } from "./review-comments";
-import { anchorLabel } from "./diff-anchor";
+import { MessageSquarePlus, X } from 'lucide-react';
+import { anchorLabel } from './diff-anchor';
+import { useReviewComments } from './review-comments';
 
 /**
  * The queued-comments tray above the composer ("Atlas Workspace HiFi") — one chip per pending review
@@ -25,14 +25,14 @@ export function CommentTray() {
   return (
     <div
       className="mb-2 overflow-hidden rounded-[14px] border border-border bg-surface"
-      style={{ boxShadow: "0 1px 2px rgba(20,18,12,.05)" }}
+      style={{ boxShadow: '0 1px 2px rgba(20,18,12,.05)' }}
     >
       <div className="flex items-center gap-2 px-3 py-[9px] pl-[13px]">
         <span className="grid h-[19px] w-[19px] flex-none place-items-center rounded-[5px] bg-accent-soft text-accent">
           <MessageSquarePlus size={11} strokeWidth={2} />
         </span>
         <span className="text-[12px] font-semibold text-text">
-          {comments.length} comment{comments.length === 1 ? "" : "s"}
+          {comments.length} comment{comments.length === 1 ? '' : 's'}
         </span>
         {!multiFile ? (
           <span className="text-[11px] text-faint">
@@ -72,9 +72,9 @@ export function CommentTray() {
                   </div>
                 )}
                 <div
-                  className={`truncate text-[12.5px] leading-snug ${c.note ? "text-dim" : "text-faint"}`}
+                  className={`truncate text-[12.5px] leading-snug ${c.note ? 'text-dim' : 'text-faint'}`}
                 >
-                  {c.note || "No note added"}
+                  {c.note || 'No note added'}
                 </div>
               </div>
               <button

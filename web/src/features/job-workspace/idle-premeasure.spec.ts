@@ -1,6 +1,6 @@
-import { Virtualizer } from "@tanstack/react-virtual";
-import { describe, expect, it } from "vitest";
-import { premeasureChunkIndexes } from "./idle-premeasure";
+import { Virtualizer } from '@tanstack/react-virtual';
+import { describe, expect, it } from 'vitest';
+import { premeasureChunkIndexes } from './idle-premeasure';
 
 /**
  * Deterministic RED→GREEN for the pre-measurement seeding mechanism `useIdlePremeasure` relies on:
@@ -51,7 +51,7 @@ function buildVirtualizer() {
   return { v, adjustmentsPassed };
 }
 
-describe("useIdlePremeasure seeding mechanism", () => {
+describe('useIdlePremeasure seeding mechanism', () => {
   it("RED: an unseeded row's first real measure produces a delta and a scroll adjustment", () => {
     const { v, adjustmentsPassed } = buildVirtualizer();
     const idx = 95;
@@ -82,8 +82,8 @@ describe("useIdlePremeasure seeding mechanism", () => {
   });
 });
 
-describe("warm-then-measure seeding (Mermaid rows)", () => {
-  it("GREEN: a row seeded at its cache-warmed real height settles with zero adjustment, same as any other row", () => {
+describe('warm-then-measure seeding (Mermaid rows)', () => {
+  it('GREEN: a row seeded at its cache-warmed real height settles with zero adjustment, same as any other row', () => {
     // The mechanism `useIdlePremeasure` relies on (resizeItem's zero-delta no-op) doesn't distinguish a
     // Mermaid row from a text row — it only cares whether the seeded height matches the later real measure.
     // The `warmed` gate exists purely to make that true for Mermaid rows too: once mermaidCache is warm, the
@@ -103,7 +103,7 @@ describe("warm-then-measure seeding (Mermaid rows)", () => {
     expect(adjustmentsPassed).toEqual([]);
   });
 
-  it("RED (what the fix removes): seeding a cold-placeholder height still causes a shift once the real SVG lands", () => {
+  it('RED (what the fix removes): seeding a cold-placeholder height still causes a shift once the real SVG lands', () => {
     // Before warming, a Mermaid row's offsetHeight at seed time is the SOURCE-heuristic placeholder, not the
     // real rendered height — so the later real measurement (once mermaid.render resolves) is a non-zero
     // delta, exactly like an unseeded row. This is the bug the WARM phase eliminates by making the seeded
@@ -121,8 +121,8 @@ describe("warm-then-measure seeding (Mermaid rows)", () => {
   });
 });
 
-describe("premeasure chunk planning", () => {
-  it("measures tail appends without skipping the older unmeasured backlog", () => {
+describe('premeasure chunk planning', () => {
+  it('measures tail appends without skipping the older unmeasured backlog', () => {
     const items = Array.from({ length: 7 }, (_, i) => ({ key: String(i) }));
     const measured = new Set<string>();
     const isMeasured = (key: string) => measured.has(key);
@@ -131,18 +131,11 @@ describe("premeasure chunk planning", () => {
     expect(tail).toEqual([4, 5, 6]);
     for (const idx of tail) measured.add(items[idx].key);
 
-    const appended = [...items, { key: "7" }];
-    const appendedChunk = premeasureChunkIndexes(
-      appended,
-      appended.length,
-      3,
-      isMeasured,
-    );
+    const appended = [...items, { key: '7' }];
+    const appendedChunk = premeasureChunkIndexes(appended, appended.length, 3, isMeasured);
     expect(appendedChunk).toEqual([2, 3, 7]);
     for (const idx of appendedChunk) measured.add(appended[idx].key);
 
-    expect(
-      premeasureChunkIndexes(appended, appendedChunk[0], 3, isMeasured),
-    ).toEqual([0, 1]);
+    expect(premeasureChunkIndexes(appended, appendedChunk[0], 3, isMeasured)).toEqual([0, 1]);
   });
 });

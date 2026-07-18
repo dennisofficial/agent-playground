@@ -9,11 +9,11 @@
 
 import type {
   AutoApproveMode,
+  OrgUsage,
   JobActivity as WireJobActivity,
   JobHalt as WireJobHalt,
   JobStatus as WireJobStatus,
-  OrgUsage,
-} from "@workspace/shared";
+} from '@workspace/shared';
 
 // ── Backend (wire) enums ─────────────────────────────────────────────────────────────────────────
 /**
@@ -36,22 +36,17 @@ export type WireOrgUsage = OrgUsage;
  */
 export type { WireJobActivity };
 
-export type WireJobKind =
-  | "feature"
-  | "bugfix"
-  | "onboarding"
-  | "event"
-  | "review";
+export type WireJobKind = 'feature' | 'bugfix' | 'onboarding' | 'event' | 'review';
 
 /** The lane (Thread) PURE LINEAR STEP — one build lane within a Job. Pause/failure/skip are NOT steps;
  *  they live on the orthogonal {@link ThreadCondition} overlay. Mirrors backend `ThreadStatus`. */
 export type ThreadStatus =
-  | "pending"
-  | "planning"
-  | "reviewing"
-  | "executing"
-  | "auto_fixing"
-  | "done";
+  | 'pending'
+  | 'planning'
+  | 'reviewing'
+  | 'executing'
+  | 'auto_fixing'
+  | 'done';
 
 /**
  * The orthogonal condition overlay on a lane (a lightweight denormalized tag, like job-level `halt.kind`),
@@ -59,43 +54,43 @@ export type ThreadStatus =
  * the backend `terminal_record`/`halt_outcome`. Mirrors backend `ThreadCondition`.
  */
 export type ThreadCondition =
-  | "none"
-  | "paused" // a mid-build pause (request_operator_input / thread-level approval) — the step is preserved
-  | "incomplete" // halted without asserting completion (ADR 0004)
-  | "failed" // crashed / errored out
-  | "skipped"; // a review child that had nothing to do (unknown lens / no diff) — terminal, not a failure
+  | 'none'
+  | 'paused' // a mid-build pause (request_operator_input / thread-level approval) — the step is preserved
+  | 'incomplete' // halted without asserting completion (ADR 0004)
+  | 'failed' // crashed / errored out
+  | 'skipped'; // a review child that had nothing to do (unknown lens / no diff) — terminal, not a failure
 
 /** Per-step status (the execute folder's leaves). Mirrors backend `StepStatus` in `domain/thread.ts`. */
-export type StepStatus = "pending" | "building" | "reviewing" | "done";
+export type StepStatus = 'pending' | 'building' | 'reviewing' | 'done';
 
 // ── Approval / verdict cards ───────────────────────────────────────────────────────────────────
-export const APPROVE_ACTION_ID = "atlas_approval:approve";
-export const REQUEST_CHANGES_ACTION_ID = "atlas_approval:request_changes";
-export const DENY_ACTION_ID = "atlas_approval:deny";
-export const VIEW_PLAN_ACTION_ID = "atlas_approval:view_plan";
+export const APPROVE_ACTION_ID = 'atlas_approval:approve';
+export const REQUEST_CHANGES_ACTION_ID = 'atlas_approval:request_changes';
+export const DENY_ACTION_ID = 'atlas_approval:deny';
+export const VIEW_PLAN_ACTION_ID = 'atlas_approval:view_plan';
 /** The SHIP-REVIEW gate's "Ship it" button — the SECOND human gate (after {@link APPROVE_ACTION_ID} at the
  *  plan stage), clicked while the job is `awaiting_ship_review`. POSTs to the SAME `/approve` endpoint with
  *  a `value` of just `{ jobId }` (no decision record — nothing to re-rule, just resume the build). */
-export const SHIP_ACTION_ID = "atlas_approval:ship";
+export const SHIP_ACTION_ID = 'atlas_approval:ship';
 /** The ship-review gate's manual "Amend build" retract — sends `awaiting_ship_review → amending`
  *  without discarding completed work (mirrors the Atlas `withdraw_ship` tool). POSTs to the SAME
  *  `/approve` endpoint with the ship card's `{ jobId }` value. Must match the backend string in
  *  `approval-blocks.ts`. */
-export const RETRACT_SHIP_ACTION_ID = "atlas_approval:retract_ship";
+export const RETRACT_SHIP_ACTION_ID = 'atlas_approval:retract_ship';
 /** The brain's "Amend build?" PROPOSAL buttons (the `withdraw_ship` tool's card). Unlike the plain
  *  ship-card retract, the gate stays parked until the operator approves: `Approve amend` runs the operator
  *  retract AND wakes the brain; `Dismiss` just clears the card. Must match `approval-blocks.ts`. */
-export const AMEND_APPROVE_ACTION_ID = "atlas_approval:amend_approve";
-export const AMEND_DISMISS_ACTION_ID = "atlas_approval:amend_dismiss";
+export const AMEND_APPROVE_ACTION_ID = 'atlas_approval:amend_approve';
+export const AMEND_DISMISS_ACTION_ID = 'atlas_approval:amend_dismiss';
 /** The MERGE gate's "Merge PR" button — the THIRD human gate (after Approve/Ship). Auto-merge auto-clicks
  *  the same gate. POSTs to the SAME `/approve` endpoint with a `value` of just `{ jobId }`. */
-export const MERGE_ACTION_ID = "atlas_approval:merge";
+export const MERGE_ACTION_ID = 'atlas_approval:merge';
 /** The `atlas-prod` gated-write approval card's buttons — `Execute write` runs the operator's approved
  *  single SQL statement on the DML-only `mcp_writer` role; `Deny` marks the ledger row rejected. Its button
  *  `value` carries `{ jobId, writeId }` (the `prod_maintenance_write` row id). Must match the backend
  *  strings in `approval-blocks.ts` exactly. */
-export const DB_WRITE_APPROVE_ACTION_ID = "atlas_approval:db_write_approve";
-export const DB_WRITE_DENY_ACTION_ID = "atlas_approval:db_write_deny";
+export const DB_WRITE_APPROVE_ACTION_ID = 'atlas_approval:db_write_approve';
+export const DB_WRITE_DENY_ACTION_ID = 'atlas_approval:db_write_deny';
 
 export type ApprovalActionId =
   | typeof APPROVE_ACTION_ID
@@ -120,7 +115,7 @@ export interface ApprovalDecision {
 export interface WebCardAction {
   actionId: string;
   label: string;
-  style: "primary" | "danger" | "default";
+  style: 'primary' | 'danger' | 'default';
   /** Link buttons (e.g. "View full plan") carry a URL; otherwise the click POSTs a verdict. */
   url?: string;
   /** Serialized `ApprovalActionMeta` (jobId + decisionRecordId) — sent back verbatim on /web/approve. */
@@ -134,7 +129,7 @@ export interface ShipThreadVerification {
   /** The build thread's title/brief. */
   title: string;
   /** Whether this thread asserted completion; `not_done` is advisory on the ship card. */
-  status: "done" | "not_done";
+  status: 'done' | 'not_done';
   /** The thread's captured verification evidence (command + exit code + output tail). */
   verification: {
     kind: string;
@@ -147,7 +142,7 @@ export interface ShipThreadVerification {
 }
 
 export interface WebApprovalCard {
-  type: "approval_card";
+  type: 'approval_card';
   jobId: string;
   decisionRecordId?: string;
   /**
@@ -159,7 +154,7 @@ export interface WebApprovalCard {
    * `atlas-prod` gated-write approval card (`Execute write` + `Deny`; `threads`/`decisions` empty); the
    * proposed statement rides `sql`/`estimatedRows`/`estimateLabel`/`error`.
    */
-  kind?: "plan" | "direct" | "ship" | "amend" | "merge" | "db_write";
+  kind?: 'plan' | 'direct' | 'ship' | 'amend' | 'merge' | 'db_write';
   title: string;
   summary: string;
   decisions: ApprovalDecision[];
@@ -178,14 +173,14 @@ export interface WebApprovalCard {
   /** `db_write` card only — whether {@link estimatedRows} is a real planner `estimate`, `unavailable`
    *  (the SELECT-only role can't EXPLAIN this statement — expected/benign for DML), or the EXPLAIN
    *  surfaced a genuine statement `error`. Kept in sync with backend `webDbWriteApprovalCard`. */
-  estimateLabel?: "estimate" | "unavailable" | "error";
+  estimateLabel?: 'estimate' | 'unavailable' | 'error';
   /** `db_write` card only — a genuine EXPLAIN-time failure (syntax/bad column) so the operator sees the
    *  statement will fail BEFORE approving. Absent for a benign permission-denied preview. */
   error?: string;
 }
 
 export interface WebVerdictCard {
-  type: "verdict_card";
+  type: 'verdict_card';
   jobId: string;
   title: string;
   verdict: string;
@@ -205,7 +200,7 @@ export interface WebQuestionOption {
  * When `answer` is set the card renders the compact answered state. Mirrors the backend `WebQuestionCard`.
  */
 export interface WebQuestionCard {
-  type: "question_card";
+  type: 'question_card';
   jobId: string;
   questionId: string;
   header?: string;
@@ -225,7 +220,7 @@ export interface WebQuestionCard {
   withdrawnReason?: string;
   /** `'build'` cards (the driver's onboarding/build-flow questions) keep the immediate answer-question POST;
    *  `'brain'` (or absent, for older rows) cards stage in the composer tray for batched Send. */
-  origin?: "brain" | "build";
+  origin?: 'brain' | 'build';
 }
 
 /**
@@ -235,7 +230,7 @@ export interface WebQuestionCard {
  * state. Mirrors the backend `WebSecretInputCard` (deliberately value-free).
  */
 export interface WebSecretInputCard {
-  type: "secret_input_card";
+  type: 'secret_input_card';
   jobId: string;
   requestId: string;
   /** Secret name, or a display LABEL only when {@link ephemeral}. */
@@ -251,7 +246,7 @@ export interface WebSecretInputCard {
   deliver_to?: string;
   /** MCP-target: the value is a credential slot for a user-defined MCP server (written to the encrypted MCP
    *  store, not the worktree). `path` is absent for an MCP target. */
-  mcp?: { server: string; slot: "header" | "env"; key: string };
+  mcp?: { server: string; slot: 'header' | 'env'; key: string };
   provided_at?: string;
   delivered_at?: string;
   /** Set when the brain RETRACTED this still-unprovided request (`withdraw_secret_request`) — renders a
@@ -267,7 +262,7 @@ export interface WebSecretInputCard {
  * card renders a compact "uploaded" state. Mirrors the backend `WebFileRequestCard` (deliberately value-free).
  */
 export interface WebFileRequestCard {
-  type: "file_request_card";
+  type: 'file_request_card';
   jobId: string;
   requestId: string;
   path: string;
@@ -306,7 +301,7 @@ export interface WebReviewCommentItem {
  * operator's typed prose, rendered as a normal bubble underneath. Mirrors the backend `review_comments_card`.
  */
 export interface WebReviewCommentsCard {
-  type: "review_comments_card";
+  type: 'review_comments_card';
   items: WebReviewCommentItem[];
   message?: string;
 }
@@ -317,7 +312,7 @@ export interface WebAttachmentItem {
   name: string;
   /** Bucket-relative `/context` path (`uploads/<name>`) — fetched from the streaming raw endpoint. */
   path: string;
-  kind: "image" | "file";
+  kind: 'image' | 'file';
   size: number;
   /**
    * OPTIMISTIC-ONLY local preview URL (`URL.createObjectURL`), set on the client's own optimistic row so
@@ -332,7 +327,7 @@ export interface WebAttachmentItem {
  * of the operator's optional caption bubble. Mirrors the backend `attachments_card`.
  */
 export interface WebAttachmentsCard {
-  type: "attachments_card";
+  type: 'attachments_card';
   items: WebAttachmentItem[];
   /** The operator's optional typed caption, rendered as a normal bubble beneath the attachments. */
   message?: string;
@@ -341,7 +336,7 @@ export interface WebAttachmentsCard {
 /** One proposed server in an MCP-proposal card — the non-secret definition only (mirrors the backend). */
 export interface WebMcpProposalServer {
   name: string;
-  transport: "http" | "sse" | "stdio";
+  transport: 'http' | 'sse' | 'stdio';
   url?: string;
   command?: string;
   args?: string[];
@@ -352,11 +347,11 @@ export interface WebMcpProposalServer {
    * `"static"` (default when absent) = header/env credential slots. `"oauth"` = interactive OAuth 2.1 the
    * owner completes after approving by clicking Connect on the proposal card or in MCP settings (no secret slot to fill).
    */
-  authKind?: "static" | "oauth";
+  authKind?: 'static' | 'oauth';
   /** Non-secret OAuth knobs; only meaningful when `authKind==="oauth"`. */
   oauth?: {
     scope?: string;
-    tokenAuthMethod?: "none" | "client_secret_post" | "client_secret_basic";
+    tokenAuthMethod?: 'none' | 'client_secret_post' | 'client_secret_basic';
   };
   /** The brain's one-line rationale for why this server suits the repo. */
   reason?: string;
@@ -369,14 +364,14 @@ export interface WebMcpProposalServer {
  * set the card renders a compact "registered" state. Value-free (server defs only, never a secret value).
  */
 export interface WebMcpProposalCard {
-  type: "mcp_proposal_card";
+  type: 'mcp_proposal_card';
   jobId: string;
   requestId: string;
   repoId: string;
   /** Registration scope: `'org'` (every repo) or `'repo'` (this repo only). Absent on legacy cards ⇒ `'repo'`. */
-  scope?: "org" | "repo";
+  scope?: 'org' | 'repo';
   /** `register` new servers (default) or `remove` existing ones. Absent on legacy cards ⇒ `register`. */
-  mode?: "register" | "remove";
+  mode?: 'register' | 'remove';
   servers: WebMcpProposalServer[];
   approved_at?: string;
   committed?: string[];
@@ -389,15 +384,15 @@ export interface WebMcpProposalCard {
  * The OWNER approves at `…/jobs/:jobId/skill-proposals/:requestId/approve`. Mirrors the backend card.
  */
 export interface WebSkillProposalCard {
-  type: "skill_proposal_card";
+  type: 'skill_proposal_card';
   jobId: string;
   requestId: string;
   repoId: string;
-  scope: "org" | "repo";
+  scope: 'org' | 'repo';
   name: string;
   description: string;
-  surfaces: ("brain" | "build" | "review")[];
-  mode: "create" | "install" | "remove";
+  surfaces: ('brain' | 'build' | 'review')[];
+  mode: 'create' | 'install' | 'remove';
   rationale: string;
   stagingPath?: string;
   preview?: { skillMd: string; files: string[] };
@@ -449,7 +444,7 @@ export interface LaneDefaultFooter {
  */
 export interface PipelineReviewChild {
   id: string;
-  role: "review_agent" | "review_fix";
+  role: 'review_agent' | 'review_fix';
   brief: string;
   status: ThreadStatus;
   /** The orthogonal condition overlay (skipped/failed/…) — independent of the linear {@link status} step. */
@@ -473,7 +468,7 @@ export interface PipelineReviewChild {
 export interface TaskItem {
   id: string;
   subject: string;
-  status: "pending" | "in_progress" | "completed" | "dropped";
+  status: 'pending' | 'in_progress' | 'completed' | 'dropped';
   /** The SDK task's longer description — shown under an in_progress task + as the row tooltip. */
   description?: string;
   /** Present-continuous label ("Resolving the router chain") shown while in_progress; falls back to subject. */
@@ -488,14 +483,14 @@ export interface TaskItem {
  *  conversational session machinery; `builder`/`master_review` are top-level executable; `review_agent`/
  *  `review_fix` are thread-group-scoped children of a builder; `plan_review` is the Codex plan-review dialogue. */
 export type ThreadRole =
-  | "planning"
-  | "plan_review"
-  | "builder"
-  | "review_agent"
-  | "review_fix"
-  | "master_review"
-  | "post_build"
-  | "ci";
+  | 'planning'
+  | 'plan_review'
+  | 'builder'
+  | 'review_agent'
+  | 'review_fix'
+  | 'master_review'
+  | 'post_build'
+  | 'ci';
 
 /**
  * One THREAD — a first-class row differentiated by {@link ThreadRole}, grouped under a {@link PipelineThreadGroup}.
@@ -542,13 +537,13 @@ export interface PipelineThread {
  *  (`thread-group-kind/spec.ts`). Only `build`/`direct_build` hold multiple threads (sequential builder legs +
  *  review children); every other kind is a singleton thread group (exactly one thread). */
 export type ThreadGroupKind =
-  | "planning"
-  | "plan_review"
-  | "build"
-  | "direct_build"
-  | "master_review"
-  | "post_build"
-  | "ci";
+  | 'planning'
+  | 'plan_review'
+  | 'build'
+  | 'direct_build'
+  | 'master_review'
+  | 'post_build'
+  | 'ci';
 
 /**
  * A THREAD GROUP — the first-class §N pipeline grouping. A job's pipeline is the ordinal-ordered sequence of
@@ -611,7 +606,7 @@ export interface PipelineJob {
    * either). The navigator reads this to suppress the plan-oriented empty-state placeholders (build lanes,
    * `plan.md`, generated docs) for a direct build, where they never apply. Absent on very old payloads.
    */
-  buildPath?: "direct" | "plan" | null;
+  buildPath?: 'direct' | 'plan' | null;
   /** Per-job AUTO-APPROVE MODE: which gates auto-advance with no operator click (`off`/`plan`/`ship`/`both`;
    *  the card is still posted for audit, then immediately resolved). Settable any time from job creation
    *  onward — so the `no_job` (open) shape carries it too. */
@@ -673,7 +668,7 @@ export interface PipelineJob {
 export type PipelineState =
   | PipelineJob
   | {
-      status: "no_job";
+      status: 'no_job';
       mainTasks?: TaskItem[];
       mainDefaultFooter?: LaneDefaultFooter;
       /** Carried on the open/pre-plan shape too, so the auto-approve toggle works from job creation onward. */
@@ -691,12 +686,10 @@ export type PipelineState =
  * (folded from its planning thread group). An active job has NO top-level `mainTasks` any more — it's the
  * planning thread group's own `tasks` (planning is always exactly one singleton thread group).
  */
-export function pipelineMainTasks(
-  pipeline: PipelineState | undefined,
-): TaskItem[] {
+export function pipelineMainTasks(pipeline: PipelineState | undefined): TaskItem[] {
   if (!pipeline) return [];
-  if (pipeline.status === "no_job") return pipeline.mainTasks ?? [];
-  return pipeline.threadGroups.find((s) => s.kind === "planning")?.tasks ?? [];
+  if (pipeline.status === 'no_job') return pipeline.mainTasks ?? [];
+  return pipeline.threadGroups.find((s) => s.kind === 'planning')?.tasks ?? [];
 }
 
 /**
@@ -707,19 +700,15 @@ export function pipelineMainDefaultFooter(
   pipeline: PipelineState | undefined,
 ): LaneDefaultFooter | undefined {
   if (!pipeline) return undefined;
-  if (pipeline.status === "no_job") return pipeline.mainDefaultFooter;
-  return pipeline.threadGroups.find((s) => s.kind === "planning")?.threads[0]
-    ?.defaultFooter;
+  if (pipeline.status === 'no_job') return pipeline.mainDefaultFooter;
+  return pipeline.threadGroups.find((s) => s.kind === 'planning')?.threads[0]?.defaultFooter;
 }
 
 /** The job's per-job auto-approve mode, from either pipeline shape (`no_job` carries the mode too). */
-export function pipelineAutoApproveMode(
-  pipeline: PipelineState | undefined,
-): AutoApproveMode {
-  if (!pipeline) return "off";
-  const mode =
-    "autoApproveMode" in pipeline ? pipeline.autoApproveMode : undefined;
-  return mode ?? "off";
+export function pipelineAutoApproveMode(pipeline: PipelineState | undefined): AutoApproveMode {
+  if (!pipeline) return 'off';
+  const mode = 'autoApproveMode' in pipeline ? pipeline.autoApproveMode : undefined;
+  return mode ?? 'off';
 }
 
 /** The job's auto-merge settings + manual-merge gate, from either pipeline shape (`no_job` carries them too,
@@ -731,9 +720,7 @@ export function pipelineAutoMerge(pipeline: PipelineState | undefined): {
   mergeReady: boolean;
   mergeValue: string | null;
 } {
-  const p = pipeline as
-    | { [K in keyof PipelineJob]?: PipelineJob[K] }
-    | undefined;
+  const p = pipeline as { [K in keyof PipelineJob]?: PipelineJob[K] } | undefined;
   return {
     autoMerge: p?.autoMerge ?? false,
     mergeReady: p?.mergeReady ?? false,
@@ -771,7 +758,7 @@ export interface ContextFileContent {
   size: number;
   mtime: string;
   /** `text` → utf-8 in `content`; `base64` → binary (images) in `content`. */
-  encoding: "text" | "base64";
+  encoding: 'text' | 'base64';
   /** Best-effort mime by extension (e.g. `text/markdown`, `image/png`). */
   mime: string;
   content: string;
@@ -793,7 +780,7 @@ export interface JobDiffFile {
   path: string;
   /** Prior path for a rename; absent otherwise. */
   oldPath?: string;
-  status: "added" | "modified" | "deleted" | "renamed";
+  status: 'added' | 'modified' | 'deleted' | 'renamed';
   binary: boolean;
   additions: number;
   deletions: number;
@@ -811,7 +798,7 @@ export interface JobDiff {
 export interface JobDiffSummaryFile {
   path: string;
   oldPath?: string;
-  status: "added" | "modified" | "deleted" | "renamed";
+  status: 'added' | 'modified' | 'deleted' | 'renamed';
   additions: number;
   deletions: number;
   binary: boolean;
@@ -842,7 +829,7 @@ export interface ServiceInfo {
    * present but the process is gone — crash, `atlas-svc stop`, or a previous/absent container),
    * `unknown` (couldn't probe: no running container, null pgid/startedAt, or a transient exec failure).
    */
-  status: "running" | "stopped" | "unknown";
+  status: 'running' | 'stopped' | 'unknown';
   /** The port the service declared via `atlas-svc run --port` (null = not an HTTP service). */
   port: number | null;
   /**
@@ -855,29 +842,29 @@ export interface ServiceInfo {
 // ── UI job model ───────────────────────────────────────────────────────────────────────────────
 /** The Job UI-presentation status set from handoff §7 (semantic dot colors). */
 export type JobStatus =
-  | "running"
-  | "planning"
-  | "plan_review"
-  | "awaiting_approval"
-  | "awaiting_ship_review"
-  | "amending"
-  | "blocked"
-  | "done"
-  | "triaging"
-  | "cancelled"
-  | "deleting"
-  | "archived";
+  | 'running'
+  | 'planning'
+  | 'plan_review'
+  | 'awaiting_approval'
+  | 'awaiting_ship_review'
+  | 'amending'
+  | 'blocked'
+  | 'done'
+  | 'triaging'
+  | 'cancelled'
+  | 'deleting'
+  | 'archived';
 
 /** UI kind badge — `feat`/`fix` from WireJobKind; `event` denotes a notification-seeded job;
  *  `onboard` is the Atlas-run repo-init (onboarding) job; `review` is an external-PR review job. */
-export type JobKind = "feat" | "fix" | "event" | "onboard" | "review";
+export type JobKind = 'feat' | 'fix' | 'event' | 'onboard' | 'review';
 
 /** Observed PR lifecycle — the backend `jobs.pr_state`. Null (no `pr`) means no PR yet. */
-export type PrState = "open" | "merged" | "closed";
+export type PrState = 'open' | 'merged' | 'closed';
 
 /** Aggregate CI outcome for the PR head — backend `jobs.ci_status`. null = no checks reported ("no-CI").
  *  `skipped` = checks ran but all were skipped/neutral (never a failure). */
-export type CiStatus = "success" | "failure" | "pending" | "skipped"; // null handled at the field level
+export type CiStatus = 'success' | 'failure' | 'pending' | 'skipped'; // null handled at the field level
 
 /** Per-category CI check counts for the PR head — backend `jobs.ci_counts`. Parallel to {@link CiStatus};
  *  null exactly when the status is null (no checks reported). The four category counts sum to `total`. */

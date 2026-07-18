@@ -2,8 +2,8 @@ import type {
   CredentialPresence,
   SaveCredentialsDto,
   SaveCredentialsResult,
-} from "@workspace/shared";
-import { baseApi, EBaseApiCacheTags } from "./baseApi";
+} from '@workspace/shared';
+import { baseApi, EBaseApiCacheTags } from './baseApi';
 
 /**
  * The org credentials vault. Key-agnostic wire (`@workspace/shared` speaks only
@@ -18,7 +18,7 @@ export const credentialsApi = baseApi.injectEndpoints({
   overrideExisting: true,
   endpoints: (build) => ({
     getCredentials: build.query<CredentialPresence, string>({
-      query: (orgId) => ({ url: `/orgs/${orgId}/credentials`, method: "GET" }),
+      query: (orgId) => ({ url: `/orgs/${orgId}/credentials`, method: 'GET' }),
       providesTags: (_result, _error, orgId) => [
         { type: EBaseApiCacheTags.CREDENTIALS, id: orgId },
       ],
@@ -29,7 +29,7 @@ export const credentialsApi = baseApi.injectEndpoints({
     >({
       query: ({ orgId, body }) => ({
         url: `/orgs/${orgId}/credentials`,
-        method: "PUT",
+        method: 'PUT',
         data: body,
       }),
       invalidatesTags: (_result, _error, { orgId }) => [
@@ -40,5 +40,4 @@ export const credentialsApi = baseApi.injectEndpoints({
   }),
 });
 
-export const { useGetCredentialsQuery, useSaveCredentialsMutation } =
-  credentialsApi;
+export const { useGetCredentialsQuery, useSaveCredentialsMutation } = credentialsApi;

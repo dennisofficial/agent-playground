@@ -1,6 +1,6 @@
-"use client";
+'use client';
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from 'react';
 
 const TOAST_DURATION_MS = 5000;
 
@@ -37,14 +37,12 @@ export function useEphemeralToast() {
 export function EphemeralToast({ message }: { message: string | null }) {
   if (!message) return null;
   return (
-    <div
-      className="pointer-events-none fixed bottom-5 left-1/2 z-50 -translate-x-1/2"
-    >
+    <div className="pointer-events-none fixed bottom-5 left-1/2 z-50 -translate-x-1/2">
       <div
         role="status"
         aria-live="polite"
         className="anim-pop rounded-md border border-border bg-panel px-3.5 py-2 text-[12px] font-medium text-text"
-        style={{ boxShadow: "var(--shadow-menu)" }}
+        style={{ boxShadow: 'var(--shadow-menu)' }}
       >
         {message}
       </div>

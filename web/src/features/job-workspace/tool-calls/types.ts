@@ -1,4 +1,4 @@
-import type { ComponentType } from "react";
+import type { ComponentType } from 'react';
 
 /**
  * Tool-call rendering — shared types for the pluggable renderer registry.
@@ -38,23 +38,23 @@ export interface ToolItem {
 }
 
 export type IconKind =
-  | "bash"
-  | "read"
-  | "edit"
-  | "write"
-  | "grep"
-  | "mcp"
-  | "todo"
-  | "web"
-  | "task"
-  | "plan";
+  | 'bash'
+  | 'read'
+  | 'edit'
+  | 'write'
+  | 'grep'
+  | 'mcp'
+  | 'todo'
+  | 'web'
+  | 'task'
+  | 'plan';
 
 /** Right-aligned badge on a tool row. */
 export type ToolBadge =
-  | { kind: "diffstat"; added: number; removed: number | null }
-  | { kind: "lines"; n: number }
-  | { kind: "error" }
-  | { kind: "superseded" }
+  | { kind: 'diffstat'; added: number; removed: number | null }
+  | { kind: 'lines'; n: number }
+  | { kind: 'error' }
+  | { kind: 'superseded' }
   | null;
 
 /** The collapsed one-line treatment for a tool row + its group-preview token. */

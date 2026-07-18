@@ -8,16 +8,17 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
+    "format": "prettier --write .",
     "test": "vitest run",
     "test:e2e": "dotenvx run -f ../backend/.env.local.enc -f ../backend/.env.seed.enc -f ../backend/.env.personal --ignore=MISSING_ENV_FILE -o -- playwright test",
     "test:e2e:ui": "dotenvx run -f ../backend/.env.local.enc -f ../backend/.env.seed.enc -f ../backend/.env.personal --ignore=MISSING_ENV_FILE -o -- playwright test --ui"
   },
   "dependencies": {
+    "@microsoft/fetch-event-source": "^2.0.1",
     "@reduxjs/toolkit": "^2.9.0",
+    "@shikijs/langs": "^4.3.1",
     "@t3-oss/env-nextjs": "^0.13.11",
     "@tanstack/react-virtual": "^3.14.6",
-    "react-redux": "^9.2.0",
-    "@microsoft/fetch-event-source": "^2.0.1",
     "@workspace/auth": "workspace:*",
     "@workspace/pg-realtime": "workspace:*",
     "@workspace/shared": "workspace:*",
@@ -33,13 +34,13 @@
     "react-hook-form": "^7.66.0",
     "react-json-view-lite": "^2.5.0",
     "react-markdown": "^10.1.0",
+    "react-redux": "^9.2.0",
     "react-resizable-panels": "^4.11.2",
     "react-zoom-pan-pinch": "^4.0.3",
     "recharts": "^3.9.2",
     "remark-gfm": "^4.0.1",
     "server-only": "^0.0.1",
     "shiki": "^4.3.1",
-    "@shikijs/langs": "^4.3.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -51,6 +52,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "babel-plugin-react-compiler": "1.0.0",
+    "prettier-plugin-organize-imports": "^4.3.0",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^3.0.0"

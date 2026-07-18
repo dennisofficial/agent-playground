@@ -1,10 +1,6 @@
-import type { JobMessage } from "@/lib/api/job-api";
-import type { LiveBlock } from "@/lib/api/job-stream";
-import {
-  indexDurableSubagents,
-  indexLiveSubagents,
-  type SubagentSummary,
-} from "./subagents";
+import type { JobMessage } from '@/lib/api/job-api';
+import type { LiveBlock } from '@/lib/api/job-stream';
+import { indexDurableSubagents, indexLiveSubagents, type SubagentSummary } from './subagents';
 
 /**
  * DATA GAP — which writer-subagent runs (`implement` / `implement-deep`) executed inside each thread's
@@ -33,9 +29,7 @@ import {
  * Subagents spawned on the brain's main turn (e.g. an `explore` during planning) carry no `phaseId`, so
  * they belong to no build session and are correctly omitted — only the per-thread execute fan-out appears.
  */
-export function durableSubagentRunsByPhase(
-  messages: JobMessage[],
-): Map<string, SubagentSummary[]> {
+export function durableSubagentRunsByPhase(messages: JobMessage[]): Map<string, SubagentSummary[]> {
   const { summaryById } = indexDurableSubagents(messages);
   if (summaryById.size === 0) return new Map();
 
@@ -44,14 +38,11 @@ export function durableSubagentRunsByPhase(
   // turn's `phaseId`, so either resolves it.
   const phaseByParent = new Map<string, string>();
   for (const m of messages) {
-    const phaseId = typeof m.meta?.phaseId === "string" ? m.meta.phaseId : null;
+    const phaseId = typeof m.meta?.phaseId === 'string' ? m.meta.phaseId : null;
     if (!phaseId) continue;
-    const parent =
-      typeof m.meta?.parentToolUseId === "string"
-        ? m.meta.parentToolUseId
-        : null;
+    const parent = typeof m.meta?.parentToolUseId === 'string' ? m.meta.parentToolUseId : null;
     if (parent && summaryById.has(parent)) phaseByParent.set(parent, phaseId);
-    const id = typeof m.meta?.id === "string" ? m.meta.id : null;
+    const id = typeof m.meta?.id === 'string' ? m.meta.id : null;
     if (id && summaryById.has(id)) phaseByParent.set(id, phaseId);
   }
 
@@ -72,9 +63,7 @@ export function durableSubagentRunsByPhase(
  * is already phase-scoped — every run on it belongs to that session — so no `phaseId` filtering is needed.
  * Only one thread executes at a time, so the tree subscribes to just the active thread's lane.
  */
-export function liveSubagentRunsForPhase(
-  laneBlocks: LiveBlock[],
-): SubagentSummary[] {
+export function liveSubagentRunsForPhase(laneBlocks: LiveBlock[]): SubagentSummary[] {
   return [...indexLiveSubagents(laneBlocks).summaryById.values()];
 }
 
@@ -83,15 +72,13 @@ export function liveSubagentRunsForPhase(
  * tool blocks tagged to the phase but NOT belonging to a writer subagent — the subagents carry their own
  * tool counts on each run row, so excluding them keeps the session total from double-counting the fan-out.
  */
-export function durableSessionToolCounts(
-  messages: JobMessage[],
-): Map<string, number> {
+export function durableSessionToolCounts(messages: JobMessage[]): Map<string, number> {
   const counts = new Map<string, number>();
   for (const m of messages) {
-    if (m.kind !== "tool") continue;
-    const phaseId = typeof m.meta?.phaseId === "string" ? m.meta.phaseId : null;
+    if (m.kind !== 'tool') continue;
+    const phaseId = typeof m.meta?.phaseId === 'string' ? m.meta.phaseId : null;
     if (!phaseId) continue;
-    if (typeof m.meta?.parentToolUseId === "string") continue; // a writer subagent's tool, not the session's
+    if (typeof m.meta?.parentToolUseId === 'string') continue; // a writer subagent's tool, not the session's
     counts.set(phaseId, (counts.get(phaseId) ?? 0) + 1);
   }
   return counts;

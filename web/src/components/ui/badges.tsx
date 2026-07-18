@@ -1,7 +1,8 @@
-"use client";
+'use client';
 
-import { useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { KIND_META, STATUS_META } from '@/lib/api/status';
+import type { CiCounts, CiStatus, InboxPr, JobKind, JobStatus } from '@/lib/api/types';
+import { cn } from '@/lib/cn';
 import {
   CheckCircle2,
   CircleDashed,
@@ -10,16 +11,9 @@ import {
   GitPullRequestClosed,
   LoaderCircle,
   XCircle,
-} from "lucide-react";
-import { cn } from "@/lib/cn";
-import { KIND_META, STATUS_META } from "@/lib/api/status";
-import type {
-  CiCounts,
-  CiStatus,
-  InboxPr,
-  JobKind,
-  JobStatus,
-} from "@/lib/api/types";
+} from 'lucide-react';
+import { useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 /** A status dot — colored by status, optionally pulsing (running/triaging) with a soft glow. */
 export function StatusDot({
@@ -34,11 +28,7 @@ export function StatusDot({
   const meta = STATUS_META[status];
   return (
     <span
-      className={cn(
-        "inline-block shrink-0 rounded-full",
-        meta.pulse && "pulse-dot",
-        className,
-      )}
+      className={cn('inline-block shrink-0 rounded-full', meta.pulse && 'pulse-dot', className)}
       style={{
         width: size,
         height: size,
@@ -66,11 +56,7 @@ export function Dot({
 }) {
   return (
     <span
-      className={cn(
-        "inline-block shrink-0 rounded-full",
-        pulse && "pulse-dot",
-        className,
-      )}
+      className={cn('inline-block shrink-0 rounded-full', pulse && 'pulse-dot', className)}
       style={{ width: size, height: size, background: color }}
       aria-hidden
     />
@@ -78,18 +64,12 @@ export function Dot({
 }
 
 /** FEAT / FIX / EVENT mono badge — NEUTRAL grey + hairline border (handoff: no per-kind color). */
-export function KindBadge({
-  kind,
-  className,
-}: {
-  kind: JobKind;
-  className?: string;
-}) {
+export function KindBadge({ kind, className }: { kind: JobKind; className?: string }) {
   const meta = KIND_META[kind];
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-[3px] border border-border-2 px-[5px] py-0.5 font-mono text-[8px] font-semibold uppercase tracking-[0.06em] text-dim",
+        'inline-flex items-center rounded-[3px] border border-border-2 px-[5px] py-0.5 font-mono text-[8px] font-semibold uppercase tracking-[0.06em] text-dim',
         className,
       )}
     >
@@ -118,34 +98,27 @@ export function KindBadge({
  */
 const STATUS_SHAPE: Record<
   JobStatus,
-  | "forming"
-  | "reviewing"
-  | "working"
-  | "waiting"
-  | "parked"
-  | "paused"
-  | "failed"
-  | "done"
+  'forming' | 'reviewing' | 'working' | 'waiting' | 'parked' | 'paused' | 'failed' | 'done'
 > = {
-  planning: "forming",
-  triaging: "forming",
-  plan_review: "reviewing",
-  running: "working",
-  awaiting_approval: "waiting",
+  planning: 'forming',
+  triaging: 'forming',
+  plan_review: 'reviewing',
+  running: 'working',
+  awaiting_approval: 'waiting',
   // The ship-review gate — the second "your move" bullseye, same shape as the plan-approval gate.
-  awaiting_ship_review: "waiting",
+  awaiting_ship_review: 'waiting',
   // Ship review retracted — the built work is being amended; another "your move" gate, same shape.
-  amending: "waiting",
+  amending: 'waiting',
   // Parked on a blocker job's PR — system-owned (NOT a "your move" gate, unlike the bullseye shapes
   // above), so it gets its own single-bar "gate" glyph rather than the two-bar pause icon.
-  blocked: "parked",
-  done: "done",
+  blocked: 'parked',
+  done: 'done',
   // A genuine operator-chosen terminal state (plan denied) — same muted static ring as deleting.
-  cancelled: "paused",
+  cancelled: 'paused',
   // Winding down — a muted static ring; the faint color (STATUS_META) carries the "Deleting…" meaning.
-  deleting: "paused",
+  deleting: 'paused',
   // Terminal, read-only archive — same muted static ring as cancelled/deleting.
-  archived: "paused",
+  archived: 'paused',
 };
 
 export function StatusPie({
@@ -159,45 +132,30 @@ export function StatusPie({
   halted?: boolean;
   size?: number;
 }) {
-  const shape = halted ? "failed" : status ? STATUS_SHAPE[status] : null;
-  const color = halted
-    ? "var(--red)"
-    : status
-      ? STATUS_META[status].color
-      : "var(--border-2)";
+  const shape = halted ? 'failed' : status ? STATUS_SHAPE[status] : null;
+  const color = halted ? 'var(--red)' : status ? STATUS_META[status].color : 'var(--border-2)';
   const r = 7.5;
   const circ = 2 * Math.PI * r;
-  const ring = (
-    stroke: string,
-    extra?: Omit<React.SVGProps<SVGCircleElement>, "ref">,
-  ) => (
-    <circle
-      cx={10}
-      cy={10}
-      r={r}
-      fill="none"
-      stroke={stroke}
-      strokeWidth={2}
-      {...extra}
-    />
+  const ring = (stroke: string, extra?: Omit<React.SVGProps<SVGCircleElement>, 'ref'>) => (
+    <circle cx={10} cy={10} r={r} fill="none" stroke={stroke} strokeWidth={2} {...extra} />
   );
 
   let kids: React.ReactNode;
-  if (shape === "forming") {
+  if (shape === 'forming') {
     // Dashed ring — pre-approval "forming". Planning is static, waiting on you to talk; triaging
     // breathes (the model is actively triaging an untrusted event).
     kids = ring(color, {
-      strokeDasharray: "2 2.8",
-      strokeLinecap: "round",
-      className: status === "triaging" ? "status-breathe" : undefined,
+      strokeDasharray: '2 2.8',
+      strokeLinecap: 'round',
+      className: status === 'triaging' ? 'status-breathe' : undefined,
     });
-  } else if (shape === "reviewing") {
+  } else if (shape === 'reviewing') {
     // Faint dashed base (still "forming") + a solid arc scanning around it — Codex reviewing the plan.
     kids = (
       <>
         {ring(color, {
-          strokeDasharray: "2 2.8",
-          strokeLinecap: "round",
+          strokeDasharray: '2 2.8',
+          strokeLinecap: 'round',
           opacity: 0.4,
         })}
         <g className="status-spin">
@@ -214,11 +172,11 @@ export function StatusPie({
         </g>
       </>
     );
-  } else if (shape === "working") {
+  } else if (shape === 'working') {
     // Faint thread + a rotating accent arc — a true spinner for "AI is working".
     kids = (
       <>
-        {ring("var(--border-2)", { opacity: 0.5 })}
+        {ring('var(--border-2)', { opacity: 0.5 })}
         <g className="status-spin">
           <circle
             cx={10}
@@ -233,7 +191,7 @@ export function StatusPie({
         </g>
       </>
     );
-  } else if (shape === "waiting") {
+  } else if (shape === 'waiting') {
     // Bullseye — solid ring with a filled center: parked, waiting on you.
     kids = (
       <>
@@ -241,7 +199,7 @@ export function StatusPie({
         <circle cx={10} cy={10} r={2.7} fill={color} />
       </>
     );
-  } else if (shape === "parked") {
+  } else if (shape === 'parked') {
     // A single horizontal bar through a solid ring — a gate, distinct from both the bullseye
     // ("waiting" on you) and the two-bar pause ("paused"/terminal) shapes.
     kids = (
@@ -250,7 +208,7 @@ export function StatusPie({
         <rect x={6} y={9.3} width={8} height={1.4} rx={0.6} fill={color} />
       </>
     );
-  } else if (shape === "paused") {
+  } else if (shape === 'paused') {
     kids = (
       <>
         {ring(color)}
@@ -258,7 +216,7 @@ export function StatusPie({
         <rect x={10.5} y={7} width={1.4} height={6} rx={0.6} fill={color} />
       </>
     );
-  } else if (shape === "failed") {
+  } else if (shape === 'failed') {
     kids = (
       <>
         {ring(color)}
@@ -270,7 +228,7 @@ export function StatusPie({
         />
       </>
     );
-  } else if (shape === "done") {
+  } else if (shape === 'done') {
     // Filled disc + a checkmark knocked out in the panel color.
     kids = (
       <>
@@ -286,16 +244,10 @@ export function StatusPie({
       </>
     );
   } else {
-    kids = ring("var(--border-2)");
+    kids = ring('var(--border-2)');
   }
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 20 20"
-      className="block shrink-0"
-      aria-hidden
-    >
+    <svg width={size} height={size} viewBox="0 0 20 20" className="block shrink-0" aria-hidden>
       {kids}
     </svg>
   );
@@ -309,13 +261,7 @@ export function StatusPie({
  *   merged → purple git-merge     · closed (unmerged) → red pull-request-closed
  * The job row itself never disappears on merge (the sandbox is torn down but the job stays "truly done").
  */
-export function PrStatusIcon({
-  pr,
-  size = 14,
-}: {
-  pr: InboxPr;
-  size?: number;
-}) {
+export function PrStatusIcon({ pr, size = 14 }: { pr: InboxPr; size?: number }) {
   const { Icon, color, title } = prGlyph(pr);
   return (
     <Icon
@@ -335,23 +281,22 @@ function prGlyph(pr: InboxPr): {
   color: string;
   title: string;
 } {
-  if (pr.state === "merged")
-    return { Icon: GitMerge, color: "var(--purple)", title: "PR merged" };
-  if (pr.state === "closed")
+  if (pr.state === 'merged') return { Icon: GitMerge, color: 'var(--purple)', title: 'PR merged' };
+  if (pr.state === 'closed')
     return {
       Icon: GitPullRequestClosed,
-      color: "var(--red)",
-      title: "PR closed",
+      color: 'var(--red)',
+      title: 'PR closed',
     };
   // open — conflict refines the ready state.
-  if (pr.mergeable === "dirty") {
+  if (pr.mergeable === 'dirty') {
     return {
       Icon: GitPullRequest,
-      color: "var(--amber)",
-      title: "PR has a merge conflict",
+      color: 'var(--amber)',
+      title: 'PR has a merge conflict',
     };
   }
-  return { Icon: GitPullRequest, color: "var(--green)", title: "PR open" };
+  return { Icon: GitPullRequest, color: 'var(--green)', title: 'PR open' };
 }
 
 /**
@@ -369,38 +314,38 @@ export function ciGlyph(ci: CiStatus | null): {
   title: string;
   spin: boolean;
 } {
-  if (ci === "success")
+  if (ci === 'success')
     return {
       Icon: CheckCircle2,
-      color: "var(--green)",
-      title: "CI passed",
+      color: 'var(--green)',
+      title: 'CI passed',
       spin: false,
     };
-  if (ci === "failure")
+  if (ci === 'failure')
     return {
       Icon: XCircle,
-      color: "var(--red)",
-      title: "CI failed",
+      color: 'var(--red)',
+      title: 'CI failed',
       spin: false,
     };
-  if (ci === "pending")
+  if (ci === 'pending')
     return {
       Icon: LoaderCircle,
-      color: "var(--amber)",
-      title: "CI running",
+      color: 'var(--amber)',
+      title: 'CI running',
       spin: true,
     };
-  if (ci === "skipped")
+  if (ci === 'skipped')
     return {
       Icon: CircleDashed,
-      color: "var(--muted)",
-      title: "CI skipped",
+      color: 'var(--muted)',
+      title: 'CI skipped',
       spin: false,
     };
   return {
     Icon: CircleDashed,
-    color: "var(--faint)",
-    title: "No CI",
+    color: 'var(--faint)',
+    title: 'No CI',
     spin: false,
   };
 }
@@ -412,14 +357,18 @@ type CiCountSegment = { label: string; color: string };
  *  the per-category counts, omitting any zero category. Returns [] when there's nothing to show. */
 function ciCountSegments(counts: CiCounts): CiCountSegment[] {
   const segments: CiCountSegment[] = [];
-  if (counts.failing > 0)
-    segments.push({ label: `${counts.failing} failed`, color: "var(--red)" });
+  if (counts.failing > 0) segments.push({ label: `${counts.failing} failed`, color: 'var(--red)' });
   if (counts.skipped > 0)
-    segments.push({ label: `${counts.skipped} skipped`, color: "var(--muted)" });
-  if (counts.passed > 0)
-    segments.push({ label: `${counts.passed} passed`, color: "var(--green)" });
+    segments.push({
+      label: `${counts.skipped} skipped`,
+      color: 'var(--muted)',
+    });
+  if (counts.passed > 0) segments.push({ label: `${counts.passed} passed`, color: 'var(--green)' });
   if (counts.pending > 0)
-    segments.push({ label: `${counts.pending} pending`, color: "var(--amber)" });
+    segments.push({
+      label: `${counts.pending} pending`,
+      color: 'var(--amber)',
+    });
   return segments;
 }
 
@@ -427,13 +376,7 @@ function ciCountSegments(counts: CiCounts): CiCountSegment[] {
  *  {@link ciGlyph} icon (a steady spin while running). On hover it shows a small popover with the
  *  per-category counts ("X failed · Y skipped · Z passed", Variant A); falls back to the plain title when
  *  no counts are available. Shared by both PR header branches so the two can't drift. */
-export function CiHeaderGlyph({
-  ci,
-  counts,
-}: {
-  ci: CiStatus | null;
-  counts?: CiCounts | null;
-}) {
+export function CiHeaderGlyph({ ci, counts }: { ci: CiStatus | null; counts?: CiCounts | null }) {
   const ref = useRef<HTMLSpanElement>(null);
   const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null);
   // No CI reported → render nothing (no glyph, no separator). Keeps "no CI" visually distinct from the
@@ -468,7 +411,7 @@ export function CiHeaderGlyph({
             size={11}
             strokeWidth={2}
             style={{ color }}
-            className={cn("shrink-0", spin && "animate-spin")}
+            className={cn('shrink-0', spin && 'animate-spin')}
             aria-label={title}
           />
         </span>
@@ -478,10 +421,10 @@ export function CiHeaderGlyph({
             <span
               role="tooltip"
               style={{
-                position: "fixed",
+                position: 'fixed',
                 left: Math.round(anchor.x),
                 top: Math.round(anchor.y - 6),
-                transform: "translate(-50%, -100%)",
+                transform: 'translate(-50%, -100%)',
               }}
               className="pointer-events-none z-50 whitespace-nowrap rounded-md bg-[var(--text)] px-1.5 py-1 text-[10px] font-medium text-[var(--panel)] shadow-md"
             >
@@ -511,23 +454,17 @@ export function CiHeaderGlyph({
 
 /** A subtle CI dot for the sidebar job row — a small colored corner dot mirroring the halt dot. Keep it
  *  ≤7px so it reads at a glance without crowding the PR glyph. */
-export function CiStatusDot({
-  ci,
-  size = 7,
-}: {
-  ci: CiStatus | null;
-  size?: number;
-}) {
+export function CiStatusDot({ ci, size = 7 }: { ci: CiStatus | null; size?: number }) {
   // No CI reported → no dot (mirrors CiHeaderGlyph; "no CI" shows nothing, not a faint ring).
   if (ci == null) return null;
   const g = ciGlyph(ci);
   return (
     <span
       className={cn(
-        "absolute -bottom-px -left-0.5 rounded-full border-[1.5px] border-panel",
+        'absolute -bottom-px -left-0.5 rounded-full border-[1.5px] border-panel',
         // A solid dot can't visibly rotate — an opacity-only pulse conveys "running" without scaling
         // (the shared `pulse-dot` scale-pulse is intentionally left untouched for StatusDot).
-        g.spin && "ci-dot-pulse",
+        g.spin && 'ci-dot-pulse',
       )}
       style={{ width: size, height: size, background: g.color }}
       title={g.title}
@@ -537,18 +474,12 @@ export function CiStatusDot({
 }
 
 /** Status pill: a dot + label, tinted by status. */
-export function StatusPill({
-  status,
-  className,
-}: {
-  status: JobStatus;
-  className?: string;
-}) {
+export function StatusPill({ status, className }: { status: JobStatus; className?: string }) {
   const meta = STATUS_META[status];
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium",
+        'inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium',
         className,
       )}
       style={{
