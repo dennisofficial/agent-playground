@@ -267,7 +267,7 @@ function PanelHeader({ accountLabel, plan }: { accountLabel?: string; plan?: str
     <div className="mb-2 flex items-center justify-between gap-2">
       <div className="flex min-w-0 items-center gap-1.5">
         <span
-          className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full font-mono text-[9px] font-semibold"
+          className="flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded-full font-mono text-[9px] font-semibold"
           style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}
         >
           {firstLetter(accountLabel)}
@@ -279,7 +279,7 @@ function PanelHeader({ accountLabel, plan }: { accountLabel?: string; plan?: str
       </div>
       {plan ? (
         <span
-          className="shrink-0 rounded-[4px] border px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.05em] text-faint"
+          className="shrink-0 rounded-[4px] border px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wider text-faint"
           style={{ borderColor: 'var(--border)' }}
         >
           {plan}
@@ -301,7 +301,7 @@ function UnknownRow({ label, reason }: { label: string; reason: UnknownReason })
     <div className="flex flex-col gap-1 opacity-80">
       <div className="flex items-center justify-between gap-3">
         <span className="flex items-center gap-1.5 text-[11px] text-dim">
-          <span className="h-1.5 w-1.5 shrink-0 rounded-[2px]" style={{ background: accent }} />
+          <span className="h-1.5 w-1.5 shrink-0 rounded-xs" style={{ background: accent }} />
           {label}
         </span>
         <span className="font-mono text-[10px] tabular-nums" style={{ color: accent }}>
@@ -309,7 +309,7 @@ function UnknownRow({ label, reason }: { label: string; reason: UnknownReason })
         </span>
       </div>
       <div
-        className="h-[3px] w-full rounded-full"
+        className="h-0.75 w-full rounded-full"
         style={{
           backgroundImage: `repeating-linear-gradient(90deg, ${accent} 0 4px, transparent 4px 8px)`,
           opacity: unavailable ? 0.8 : 0.45,
@@ -346,14 +346,14 @@ function WindowRow({
     <div className={`flex flex-col gap-1 ${dimmed ? 'opacity-70' : ''}`}>
       <div className="flex items-center justify-between gap-3">
         <span className="flex items-center gap-1.5 text-[11px] text-dim">
-          <span className="h-1.5 w-1.5 shrink-0 rounded-[2px]" style={{ background: color }} />
+          <span className="h-1.5 w-1.5 shrink-0 rounded-xs" style={{ background: color }} />
           {label}
         </span>
         <span className="font-mono text-[10px] tabular-nums text-faint">
           {Math.round(window.utilization)}%{countdown ? ` · ${countdown}` : ''}
         </span>
       </div>
-      <div className="relative h-[3px] w-full rounded-full bg-border">
+      <div className="relative h-0.75 w-full rounded-full bg-border">
         <div
           className="h-full overflow-hidden rounded-full"
           style={{ width: `${pct * 100}%`, background: color }}
@@ -361,7 +361,7 @@ function WindowRow({
         {pace != null ? (
           <div
             aria-hidden
-            className="absolute top-1/2 h-[7px] w-px -translate-x-1/2 -translate-y-1/2 rounded-full"
+            className="absolute top-1/2 h-1.75 w-px -translate-x-1/2 -translate-y-1/2 rounded-full"
             style={{
               left: `${pace * 100}%`,
               background: 'var(--red)',

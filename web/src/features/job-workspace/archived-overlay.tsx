@@ -16,7 +16,7 @@ export function ArchivedOverlay() {
         background: 'color-mix(in srgb, var(--faint) 5%, var(--surface))',
       }}
     >
-      <div className="mx-auto flex max-w-[880px] items-start gap-3 px-6 py-4">
+      <div className="mx-auto flex max-w-220 items-start gap-3 px-6 py-4">
         <span
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
           style={{

@@ -134,7 +134,7 @@ function AutoApproveToggle({
         }}
         data-testid="auto-approve-toggle"
         className={cn(
-          'flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.05em] transition',
+          'flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wider transition',
           disabled && 'cursor-not-allowed opacity-40',
           view.tone === 'full' && 'border-green bg-green-soft text-green',
           view.tone === 'partial' && 'border-amber bg-amber-soft text-amber',
@@ -315,13 +315,7 @@ export function Navigator({
   const openJob = async (targetJobId: string) => {
     try {
       await resolveJob({ ...jobRef, jobId: targetJobId });
-      router.push(
-        threadHref({
-          orgId: jobRef.orgId,
-          repoId: jobRef.repoId,
-          jobId: targetJobId,
-        }),
-      );
+      router.push(threadHref(targetJobId));
     } catch (err) {
       if (err instanceof ThreadApiError && err.status === 404) {
         showToast('This job was deleted.');
@@ -347,7 +341,7 @@ export function Navigator({
         <div className="mb-1.5 flex items-center gap-2">
           <KindBadge kind={meta.kind} />
           <span
-            className="flex items-center gap-1.5 font-mono text-[9px] font-semibold uppercase tracking-[0.05em]"
+            className="flex items-center gap-1.5 font-mono text-[9px] font-semibold uppercase tracking-wider"
             style={{ color: STATUS_META[st].color }}
           >
             <StatusPie status={st} size={13} />
@@ -402,7 +396,7 @@ export function Navigator({
         )}
         <div className="mt-1.5 flex items-center gap-2">
           <span
-            className="h-[7px] w-[7px] shrink-0 rounded-sm"
+            className="h-1.75 w-1.75 shrink-0 rounded-sm"
             style={{ background: meta.orgColor }}
           />
           <span className="font-mono text-[9.5px] text-dim">{meta.orgName}</span>
@@ -693,7 +687,7 @@ function MainLaneRow({
         onClick={onClick}
         className="flex w-full items-center gap-2 py-1.5 pl-1.5 pr-2 text-left transition hover:bg-surface-2"
       >
-        <span className="grid h-[13px] w-[13px] shrink-0 place-items-center">
+        <span className="grid h-3.25 w-3.25 shrink-0 place-items-center">
           <Dot color="var(--green)" pulse={running} size={9} />
         </span>
         <span
@@ -1126,7 +1120,7 @@ function PortsRegion({ services }: { services: ServiceInfo[] }) {
           ports.length > 0 ? (
             <span className="flex items-center gap-1 font-mono text-[8px] font-semibold text-green">
               <span
-                className="pulse-dot h-[5px] w-[5px] rounded-full"
+                className="pulse-dot h-1.25 w-1.25 rounded-full"
                 style={{ background: 'var(--green)' }}
               />
               {ports.length} live
@@ -1151,7 +1145,7 @@ function PortsRegion({ services }: { services: ServiceInfo[] }) {
         const inner = (
           <>
             <span
-              className="grid h-[19px] w-[19px] shrink-0 place-items-center rounded-[5px]"
+              className="grid h-4.75 w-4.75 shrink-0 place-items-center rounded-[5px]"
               style={{
                 color: linked ? 'var(--blue)' : 'var(--faint)',
                 background: linked
@@ -1392,7 +1386,7 @@ function BannerBtn({
  *  independently of its siblings. */
 function EmptyRow({ icon, children }: { icon: ReactNode; children: ReactNode }) {
   return (
-    <div className="mx-2 flex items-center gap-2 rounded-[9px] border border-dashed border-border-2 px-2.5 py-[7px]">
+    <div className="mx-2 flex items-center gap-2 rounded-[9px] border border-dashed border-border-2 px-2.5 py-1.75">
       <span className="shrink-0 text-faint">{icon}</span>
       <span className="min-w-0 flex-1 text-[11px] leading-snug text-muted">{children}</span>
     </div>
@@ -1410,7 +1404,7 @@ function BuildLanesEmpty() {
   return (
     <div className="mx-2 mb-1 mt-2 flex flex-col gap-1.5">
       <div
-        className="flex items-center gap-2 rounded-[9px] border border-dashed border-border-2 px-2.5 py-[7px]"
+        className="flex items-center gap-2 rounded-[9px] border border-dashed border-border-2 px-2.5 py-1.75"
         style={{
           background: 'color-mix(in srgb, var(--surface-2) 60%, transparent)',
         }}
@@ -1617,7 +1611,7 @@ function LoadingRow({ label }: { label: string }) {
   return (
     <div className="flex items-center gap-2.5 px-2 py-1.5">
       <span
-        className="h-[7px] w-[7px] shrink-0 animate-pulse rounded-full"
+        className="h-1.75 w-1.75 shrink-0 animate-pulse rounded-full"
         style={{ background: 'var(--border-2)' }}
       />
       <span className="flex-1 font-mono text-[10.5px] text-faint">{label}</span>

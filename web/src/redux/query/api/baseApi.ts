@@ -12,6 +12,7 @@ export enum EBaseApiCacheTags {
   ORG = 'ORG',
   ORG_MEMBER = 'ORG_MEMBER',
   REPO = 'REPO',
+  JOB = 'JOB',
   CREDENTIALS = 'CREDENTIALS',
   AGENT_CREDENTIALS = 'AGENT_CREDENTIALS',
 }

@@ -74,7 +74,7 @@ export function Dropdown({
         ? createPortal(
             <div
               ref={menuRef}
-              className="fixed z-[100] flex max-h-56 flex-col overflow-hidden rounded-md border border-border bg-panel"
+              className="fixed z-100 flex max-h-56 flex-col overflow-hidden rounded-md border border-border bg-panel"
               style={{
                 top: pos.top,
                 left: pos.left,

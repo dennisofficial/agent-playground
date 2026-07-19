@@ -4,7 +4,6 @@ import { Drawer } from '@/components/ui/drawer';
 import { OutboxFlusher } from '@/features/job-workspace/outbox-flusher';
 import { LeftNavProvider } from '@/features/shell/left-nav';
 import { useBreakpoint } from '@/hooks/use-breakpoint';
-import { useAllJobsRealtime } from '@/lib/api/all-jobs-realtime';
 import { useDraftsRealtime } from '@/lib/api/draft-realtime';
 import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
@@ -24,9 +23,6 @@ export function AppChrome({ children, dialog }: { children: ReactNode; dialog: R
   const pathname = usePathname();
   const { isMobile } = useBreakpoint();
 
-  // One shell-wide realtime subscription keeps every thread's "needs you" dot + status live across the
-  // whole app (sidebar, dashboard, board) — independent of which thread, if any, is open.
-  useAllJobsRealtime();
   // One shell-wide subscription keeps the operator's own composer draft synced across their devices.
   useDraftsRealtime();
 

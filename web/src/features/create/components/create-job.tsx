@@ -167,7 +167,7 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
       },
       {
         onSuccess: ({ jobId }) => {
-          router.replace(threadHref({ orgId, repoId, jobId }));
+          router.replace(threadHref(jobId));
           onDone?.();
         },
         onError: () => setError('Could not start the job. Try again.'),
@@ -269,7 +269,7 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
                 className={cn(
                   'rounded-md border px-2.5 py-1.5 text-[12px] transition',
                   kind === value
-                    ? 'border-accent bg-[var(--accent-soft)] text-accent'
+                    ? 'border-accent bg-accent-soft text-accent'
                     : 'border-border-2 text-dim hover:bg-surface-2 hover:text-text',
                 )}
               >
@@ -284,7 +284,7 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
                 onChange={(e) => setPrNumber(e.target.value.replace(/[^\d]/g, ''))}
                 inputMode="numeric"
                 placeholder="PR number (e.g. 116)"
-                className="w-full rounded-md border border-border-2 bg-surface px-3 py-2 text-[13px] text-text outline-none placeholder:text-faint focus:border-accent focus:ring-2 focus:ring-[var(--accent-soft)]"
+                className="w-full rounded-md border border-border-2 bg-surface px-3 py-2 text-[13px] text-text outline-none placeholder:text-faint focus:border-accent focus:ring-2 focus:ring-accent-soft"
               />
               <p className="mt-1 text-[11px] text-faint">
                 Atlas fetches this PR and reviews the diff — no build, no PR of its own.
@@ -308,7 +308,7 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
                     key={t.id}
                     className="flex items-center gap-1 rounded-md border border-border-2 py-1 pl-2.5 pr-1.5 text-[12px] text-dim"
                   >
-                    <span className="max-w-[180px] truncate">{t.title}</span>
+                    <span className="max-w-45 truncate">{t.title}</span>
                     <button
                       type="button"
                       onClick={() => setDependsOn((ids) => ids.filter((x) => x !== t.id))}
@@ -432,7 +432,7 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
           }}
           rows={4}
           placeholder="Describe the work — sent as your first message the moment the job is ready…"
-          className="mt-1.5 w-full resize-none rounded-md border border-border-2 bg-surface px-3 py-2.5 text-[13px] text-text outline-none placeholder:text-faint focus:border-accent focus:ring-2 focus:ring-[var(--accent-soft)]"
+          className="mt-1.5 w-full resize-none rounded-md border border-border-2 bg-surface px-3 py-2.5 text-[13px] text-text outline-none placeholder:text-faint focus:border-accent focus:ring-2 focus:ring-accent-soft"
         />
         <div className="mt-2 flex items-center gap-2">
           <button

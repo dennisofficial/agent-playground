@@ -128,7 +128,7 @@ export function UserBubble({
   return (
     <div className="group anim-fadeUp flex flex-col items-end gap-1">
       <div
-        className="max-w-[92%] [overflow-wrap:anywhere] px-[13px] py-2 text-text transition-opacity"
+        className="max-w-[92%] wrap-anywhere px-3.25 py-2 text-text transition-opacity"
         style={{
           background: 'var(--accent-soft)',
           border: '1px solid var(--accent-line)',
@@ -194,7 +194,7 @@ export function StreamTextBubble({
       <Markdown resolveRelativeLink={resolveRelativeLink}>{text}</Markdown>
       {streaming ? (
         <span
-          className="ml-0.5 inline-block h-[1.05em] w-[2px] translate-y-[2px] animate-pulse"
+          className="ml-0.5 inline-block h-[1.05em] w-0.5 translate-y-0.5 animate-pulse"
           style={{ background: 'var(--accent)' }}
           aria-hidden
         />
@@ -237,7 +237,7 @@ export function ThinkingBlock({
       </div>
       {open ? (
         <p
-          className="mt-1.5 whitespace-pre-wrap pl-[18px] text-[12.5px] italic leading-relaxed text-dim"
+          className="mt-1.5 whitespace-pre-wrap pl-4.5 text-[12.5px] italic leading-relaxed text-dim"
           style={{ borderLeft: '2px solid var(--border)' }}
         >
           {/* trim: summarized thinking arrives with leading/trailing newlines that whitespace-pre-wrap
@@ -1012,7 +1012,7 @@ export function SystemOperatorNotice({
         </span>
         {categoryLabel ? (
           <span
-            className="rounded-full px-1.5 py-[1px] font-mono text-[9.5px] font-medium uppercase tracking-wide"
+            className="rounded-full px-1.5 py-px font-mono text-[9.5px] font-medium uppercase tracking-wide"
             style={{
               color: 'var(--red)',
               background: 'color-mix(in srgb, var(--red) 14%, transparent)',

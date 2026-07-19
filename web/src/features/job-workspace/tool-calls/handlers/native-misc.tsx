@@ -134,7 +134,7 @@ function TodoBody({ tool }: { tool: ToolItem }) {
   return (
     <>
       <div
-        className="my-[3px] rounded-[7px] border border-border px-[11px] py-2"
+        className="my-0.75 rounded-[7px] border border-border px-2.75 py-2"
         style={{ background: 'var(--panel)' }}
       >
         {todos.map((raw, i) => {
@@ -144,9 +144,9 @@ function TodoBody({ tool }: { tool: ToolItem }) {
           const content = str(t.content) || str(t.activeForm);
           const done = status === 'completed';
           return (
-            <div key={i} className="flex items-center gap-2 py-[3px] text-[12px]">
+            <div key={i} className="flex items-center gap-2 py-0.75 text-[12px]">
               <span
-                className="h-[10px] w-[10px] shrink-0 rounded-full"
+                className="h-2.5 w-2.5 shrink-0 rounded-full"
                 style={{
                   background: dot.fill ? dot.color : 'transparent',
                   border: `1.5px solid ${dot.color}`,

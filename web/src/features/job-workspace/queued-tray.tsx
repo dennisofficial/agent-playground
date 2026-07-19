@@ -20,9 +20,9 @@ export function QueuedTray({ jobRef }: { jobRef: JobRef }) {
       className="mb-2 overflow-hidden rounded-[14px] border border-border bg-surface"
       style={{ boxShadow: '0 1px 2px rgba(20,18,12,.05)' }}
     >
-      <div className="flex items-center gap-2 px-3 py-[9px] pl-[13px]">
+      <div className="flex items-center gap-2 px-3 py-2.25 pl-3.25">
         <span
-          className="grid h-[19px] w-[19px] flex-none place-items-center rounded-[5px]"
+          className="grid h-4.75 w-4.75 flex-none place-items-center rounded-[5px]"
           style={{
             background: 'color-mix(in srgb, var(--red) 11%, transparent)',
             color: 'var(--red)',
@@ -42,7 +42,7 @@ export function QueuedTray({ jobRef }: { jobRef: JobRef }) {
         return (
           <div
             key={msg.id}
-            className="flex items-start gap-2.5 border-t border-hair px-[11px] py-2 pl-[13px] first:border-t-0"
+            className="flex items-start gap-2.5 border-t border-hair px-2.75 py-2 pl-3.25 first:border-t-0"
           >
             <span
               className="w-0.5 flex-none self-stretch rounded-full"
@@ -51,12 +51,12 @@ export function QueuedTray({ jobRef }: { jobRef: JobRef }) {
             {msg.hasAttachments ? (
               // The bytes live on the server draft (uploaded on-add), not in the outbox — no local preview
               // URL to render, so show a generic file-icon thumb the same size as the old image thumbnail.
-              <span className="grid h-[34px] w-[34px] flex-none place-items-center rounded-[7px] border border-border bg-surface-2 text-dim">
+              <span className="grid h-8.5 w-8.5 flex-none place-items-center rounded-[7px] border border-border bg-surface-2 text-dim">
                 <ImageIcon size={15} strokeWidth={2} />
               </span>
             ) : (
               <span
-                className="mt-px grid h-[22px] w-[22px] flex-none place-items-center rounded-full"
+                className="mt-px grid h-5.5 w-5.5 flex-none place-items-center rounded-full"
                 style={{
                   background: 'color-mix(in srgb, var(--red) 9%, transparent)',
                   color: 'var(--red)',
@@ -68,7 +68,7 @@ export function QueuedTray({ jobRef }: { jobRef: JobRef }) {
             <div className="min-w-0 flex-1">
               <div className="truncate text-[12.5px] leading-snug text-text">{preview}</div>
               <div
-                className="mt-[3px] flex items-center gap-[5px] font-mono text-[10.5px]"
+                className="mt-0.75 flex items-center gap-1.25 font-mono text-[10.5px]"
                 style={{ color: 'var(--red)' }}
               >
                 <span className="inline-block h-2 w-2 animate-spin rounded-full border-[1.4px] border-current border-t-transparent" />

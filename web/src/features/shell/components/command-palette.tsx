@@ -20,7 +20,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
   const inputRef = useRef<HTMLInputElement>(null);
 
   function openThread(t: InboxThread) {
-    router.push(threadHref({ orgId: t.org.id, repoId: t.repo.id, jobId: t.id }));
+    router.push(threadHref(t.id));
     onClose();
   }
 
@@ -64,7 +64,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-start justify-center px-4 pt-[12vh]"
+      className="fixed inset-0 z-100 flex items-start justify-center px-4 pt-[12vh]"
       onMouseDown={onClose}
     >
       <div className="absolute inset-0" style={{ background: 'rgba(0,0,0,0.4)' }} />

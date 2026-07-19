@@ -125,7 +125,7 @@ export function AutoApprovePopover({
       data-testid="auto-approve-popover"
       role="dialog"
       aria-label="Automation settings"
-      className="fixed z-[90] rounded-xl border border-border-2 bg-panel p-3 pb-3.5"
+      className="fixed z-90 rounded-xl border border-border-2 bg-panel p-3 pb-3.5"
       style={{
         left,
         top,
@@ -220,14 +220,14 @@ export function SwitchRow({
         aria-label={`Auto-approve ${title.toLowerCase()} gate`}
         data-testid={testId}
         onClick={() => onChange(!checked)}
-        className="relative mt-px h-[17px] w-[30px] shrink-0 rounded-full border transition-colors"
+        className="relative mt-px h-4.25 w-7.5 shrink-0 rounded-full border transition-colors"
         style={{
           background: checked ? 'var(--green)' : 'var(--surface-3)',
           borderColor: checked ? 'var(--green)' : 'var(--border-2)',
         }}
       >
         <span
-          className="absolute top-[1px] left-[1px] h-[13px] w-[13px] rounded-full bg-white transition-transform"
+          className="absolute top-px left-px h-3.25 w-3.25 rounded-full bg-white transition-transform"
           style={{
             transform: checked ? 'translateX(13px)' : 'translateX(0)',
             boxShadow: '0 1px 2px rgba(0, 0, 0, 0.25)',

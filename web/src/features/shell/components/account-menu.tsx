@@ -98,7 +98,7 @@ export function AccountMenu() {
                 <span className="block truncate">Organization settings</span>
                 <span className="mt-0.5 flex items-center gap-1.5">
                   <span
-                    className="h-[7px] w-[7px] shrink-0 rounded-[2px]"
+                    className="h-1.75 w-1.75 shrink-0 rounded-xs"
                     style={{ background: orgSwatch() }}
                   />
                   <span className="truncate font-mono text-[9px] text-faint">{targetOrg.name}</span>

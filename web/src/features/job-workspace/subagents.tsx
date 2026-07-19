@@ -343,11 +343,11 @@ export function SubagentCard({
               {subagentLabel(summary.type)}
             </span>
             {summary.background ? (
-              <span className="rounded-sm bg-surface-3 px-1.5 py-px font-mono text-[8.5px] uppercase tracking-[0.1em] text-faint">
+              <span className="rounded-sm bg-surface-3 px-1.5 py-px font-mono text-[8.5px] uppercase tracking-widest text-faint">
                 background
               </span>
             ) : null}
-            <span className="flex items-center gap-1 font-mono text-[9.5px] uppercase tracking-[0.1em] text-faint">
+            <span className="flex items-center gap-1 font-mono text-[9.5px] uppercase tracking-widest text-faint">
               {summary.running ? (
                 <span
                   className="pulse-dot h-1.5 w-1.5 rounded-full"

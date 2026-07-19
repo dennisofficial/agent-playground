@@ -39,7 +39,7 @@ export function AttachmentTray({
           ) : (
             <FileText size={14} strokeWidth={2} className="text-accent-2" />
           )}
-          <span className="max-w-[120px] truncate text-[11px] text-text">{a.name}</span>
+          <span className="max-w-30 truncate text-[11px] text-text">{a.name}</span>
           <button
             type="button"
             onClick={() => onRemove(i)}

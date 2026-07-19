@@ -1,6 +1,10 @@
 'use client';
 
-import { stubQuery, type QueryResultLike } from './_stub';
+import { useGetJobsQuery } from '@/redux/query/api/jobs.api';
+import type { JobListItem } from '@workspace/shared';
+import { useMemo } from 'react';
+import { adaptQuery, type QueryResultLike } from './_stub';
+import { useOrgs } from './me';
 import { toJobKind, toJobStatus } from './status';
 import type {
   CiCounts,
@@ -25,56 +29,6 @@ import type {
  * the thread isn't terminal — see the backend `deriveNeedsYou`). These power the status pie + the alert
  * dot for EVERY thread, not just the open one; a realtime feed keeps them live (see `useAllJobsRealtime`).
  */
-
-export interface RawInboxThread {
-  jobId: string;
-  title: string | null;
-  origin: string; // 'chat' | 'event' | 'control'
-  /** The job's build kind ('feature' | 'bugfix' | 'onboarding' | 'event'); null until scoped. Preferred
-   *  over `origin` for the badge when present (see `deriveInboxKind`). */
-  kind?: string | null;
-  /** Raw backend thread status ('open' | 'planning' | … | 'cancelled'). */
-  status: WireJobStatus;
-  /** Orthogonal backend activity axis; the server folds this into `needsYou`. */
-  activity: WireJobActivity;
-  /** Server-derived: the thread is awaiting the operator (AI idle, not terminal). */
-  needsYou: boolean;
-  /** An unresolved turn-failure box is outstanding — the sidebar renders the failed-style ✕ glyph
-   *  regardless of `status`, and `needsYou` is already true. */
-  halted: boolean;
-  createdAt: string;
-  /** The observed PR (null until one exists) — drives the sidebar PR-status glyph. */
-  pr?: InboxPr | null;
-  /** Aggregate CI outcome for the PR head (`jobs.ci_status`) — the backend list projection emits it as
-   *  `ciStatus`. null = no checks reported. */
-  ciStatus?: CiStatus | null;
-  /** Per-category CI check counts (`jobs.ci_counts`) — emitted alongside `ciStatus`; null when no checks. */
-  ciCounts?: CiCounts | null;
-  /** Sidebar port badge tri-state (`jobs.port_state`): a live service exposed via a public preview URL,
-   *  a live but unexposed service, or null when nothing is running. */
-  portState?: 'exposed' | 'internal' | null;
-  /** Count of build/direct_build thread groups whose builder work has finished (`jobs.build_stages_done`).
-   *  null = not applicable / never computed. */
-  buildStagesDone?: number | null;
-  /** Total build/direct_build thread groups in the job's plan (`jobs.build_stages_total`). */
-  buildStagesTotal?: number | null;
-  /** Failure/pause axis, orthogonal to `status` (the build phase) — null when healthy. */
-  halt?: WireJobHalt | null;
-  /** jobs.section_first_entered — backend JobStatus -> ISO ts of first entry. */
-  sectionFirstEntered?: Partial<Record<WireJobStatus, string>> | null;
-  /** True only while a "Ship it" is being finalized (PR opening). The job re-uses the `running` status
-   *  during shipping, so this keeps the card in "Ready to Ship" instead of "Building". */
-  shipping?: boolean;
-  /** Who spawned this job (immutable snapshot), or null for a top-level job — the fallback source for the
-   *  navigator's "Created by" row before the full pipeline resolves (a fresh `open` job has `no_job`). */
-  createdBy?: JobProvenance | null;
-  /** The jobs this one is blocked on (live blockers) — same fallback role as `createdBy`. */
-  blockedBy?: JobBlocker[];
-  /** The pending seed message a born-blocked job will start on when it unblocks; null unless `blocked`. */
-  blockedSeedMessage?: string | null;
-  org: { id: string; slug?: string; name?: string };
-  repo: { id: string; name?: string };
-}
 
 export interface InboxThread {
   id: string;
@@ -124,62 +78,74 @@ export interface InboxThread {
   repo: { id: string; name: string };
 }
 
-/**
- * The badge kind: prefer the authoritative job `kind` when the backend supplies it (covers `onboarding`
- * and scoped feature/bugfix), and fall back to the thread `origin` for older rows where `kind` is null
- * (only `event` is distinguishable from origin; `chat`/`control` read as `feat`).
- */
-function deriveInboxKind(r: RawInboxThread): JobKind {
-  if (r.kind) return toJobKind(r.kind as WireJobKind);
-  return r.origin === 'event' ? 'event' : 'feat';
-}
-
 /** Backend status (incl. `open`, which `toJobStatus` doesn't cover) → UI status for the pie. */
 export function uiStatus(backend: string, origin: string): JobStatus {
   if (backend === 'open') return origin === 'event' ? 'triaging' : 'planning';
   return toJobStatus(backend as WireJobStatus);
 }
 
-export function normalize(r: RawInboxThread): InboxThread {
+/**
+ * Map the slim `JobListItem` (the flat `GET /jobs` row) to the sidebar's `InboxThread`. Org name comes
+ * from the session (`useOrgs`); the engine-owned fields (`needsYou`, PR/CI, halt, build stages, …) aren't
+ * carried by the read model yet, so they default to a neutral/healthy state until those slices land.
+ */
+function toInboxThread(j: JobListItem, orgName: (id: string) => string): InboxThread {
   return {
-    id: r.jobId,
-    title: r.title?.trim() || 'Untitled thread',
-    kind: deriveInboxKind(r),
-    status: uiStatus(r.status, r.origin),
-    rawStatus: r.status,
-    sectionFirstEntered: r.sectionFirstEntered ?? null,
-    activity: r.activity ?? 'idle',
-    needsYou: r.needsYou,
-    halted: r.halted ?? false,
-    createdAt: r.createdAt,
-    pr: r.pr ?? null,
-    ci: r.ciStatus ?? null,
-    ciCounts: r.ciCounts ?? null,
-    portState: r.portState ?? null,
-    buildStagesDone: r.buildStagesDone ?? null,
-    buildStagesTotal: r.buildStagesTotal ?? null,
-    halt: r.halt ?? null,
-    shipping: r.shipping ?? false,
-    createdBy: r.createdBy ?? null,
-    blockedBy: r.blockedBy ?? [],
-    blockedSeedMessage: r.blockedSeedMessage ?? null,
-    org: {
-      id: r.org.id,
-      slug: r.org.slug ?? r.org.id,
-      name: r.org.name ?? 'Organization',
-    },
-    repo: { id: r.repo.id, name: r.repo.name ?? r.repo.id },
+    id: j.id,
+    title: j.title?.trim() || 'Untitled thread',
+    kind: j.kind ? toJobKind(j.kind as WireJobKind) : j.origin === 'event' ? 'event' : 'feat',
+    status: uiStatus(j.status, j.origin),
+    rawStatus: j.status as WireJobStatus,
+    sectionFirstEntered: null,
+    activity: j.activity ?? 'idle',
+    needsYou: false,
+    halted: false,
+    createdAt: j.createdAt,
+    pr: null,
+    ci: null,
+    ciCounts: null,
+    portState: null,
+    buildStagesDone: null,
+    buildStagesTotal: null,
+    halt: null,
+    shipping: false,
+    createdBy: null,
+    blockedBy: [],
+    blockedSeedMessage: null,
+    org: { id: j.orgId, slug: j.orgId, name: orgName(j.orgId) },
+    // Repo name isn't on the slim list row yet — fall back to the id (a follow-up can join it in).
+    repo: { id: j.repoId, name: j.repoId },
   };
 }
 
-// STUB (Atlas rebuild): backend `GET /web/jobs` isn't rebuilt yet — inbox renders empty on purpose.
-export function useAllJobs(): QueryResultLike<InboxThread[]> {
-  return stubQuery<InboxThread[]>([]);
+const NOT_ARCHIVED = (j: JobListItem): boolean => !j.archivedAt;
+const ARCHIVED = (j: JobListItem): boolean => !!j.archivedAt;
+
+/** Shared: the caller's jobs (`GET /jobs`, RLS-scoped + kept live by the `/jobs/realtime` feed), mapped
+ *  to `InboxThread` and filtered active-vs-archived. */
+function useInboxJobs(
+  keep: (j: JobListItem) => boolean,
+  enabled = true,
+): QueryResultLike<InboxThread[]> {
+  const q = useGetJobsQuery(undefined, { skip: !enabled });
+  const { orgs } = useOrgs();
+  const data = useMemo(() => {
+    if (!q.data) return undefined;
+    const names = new Map(orgs.map((o) => [o.id, o.name] as const));
+    const nameOf = (id: string): string => names.get(id) ?? 'Organization';
+    return q.data.filter(keep).map((j) => toInboxThread(j, nameOf));
+  }, [q.data, orgs, keep]);
+  return { ...adaptQuery(q), data } as QueryResultLike<InboxThread[]>;
 }
 
-// STUB (Atlas rebuild): backend `GET /web/jobs/archived` isn't rebuilt yet — empty archived group.
-export function useArchivedJobs(_enabled: boolean): QueryResultLike<InboxThread[]> {
-  return stubQuery<InboxThread[]>([]);
+/** Every active thread across the operator's orgs — the sidebar + "All organizations" board. */
+export function useAllJobs(): QueryResultLike<InboxThread[]> {
+  return useInboxJobs(NOT_ARCHIVED);
+}
+
+/** Archived threads (only fetched when the sidebar's Archived group is expanded). */
+export function useArchivedJobs(enabled: boolean): QueryResultLike<InboxThread[]> {
+  return useInboxJobs(ARCHIVED, enabled);
 }
 
 /** A repo subgroup: the in-flight threads on one repo. */

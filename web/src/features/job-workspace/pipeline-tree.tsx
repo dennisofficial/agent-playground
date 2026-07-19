@@ -193,9 +193,9 @@ function ThreadStatusGlyph({ state, isHalt }: { state: LaneState; isHalt: boolea
   // for a halt whose lane state doesn't already show it (e.g. a job-level halt on an in-flight lane).
   const haltRed = state === 'failed' || (isHalt && state !== 'blocked' && state !== 'done');
   return (
-    <span className="grid h-[13px] w-[13px] shrink-0 place-items-center">
+    <span className="grid h-3.25 w-3.25 shrink-0 place-items-center">
       {haltRed ? (
-        <span className="h-[9px] w-[9px] rounded-full" style={{ background: 'var(--red)' }} />
+        <span className="h-2.25 w-2.25 rounded-full" style={{ background: 'var(--red)' }} />
       ) : state === 'done' ? (
         <DoneDisc />
       ) : state === 'blocked' ? (
@@ -204,7 +204,7 @@ function ThreadStatusGlyph({ state, isHalt }: { state: LaneState; isHalt: boolea
         <SpinRing />
       ) : (
         <span
-          className="h-[9px] w-[9px] rounded-full"
+          className="h-2.25 w-2.25 rounded-full"
           style={{ border: '1.5px dashed var(--border-2)' }}
         />
       )}
@@ -413,7 +413,7 @@ function BodyHeader({ label, right }: { label: string; right: string }) {
 /** A draft thread's open body — no tasks yet, Atlas is still drafting it (handoff §Draft empty state). */
 function DraftEmptyBody() {
   return (
-    <div className="nav-expand mb-1.5 ml-[9px] flex flex-col">
+    <div className="nav-expand mb-1.5 ml-2.25 flex flex-col">
       <BodyHeader label="TASKS" right="—" />
       <p className="px-1.5 pb-1.5 text-[11px] italic leading-relaxed text-faint">
         Atlas is drafting this thread — no tasks yet.
@@ -474,7 +474,7 @@ export function TasksBody({
   const fold = hidden.length >= DONE_FOLD_MIN;
 
   return (
-    <div className="nav-expand mb-1.5 ml-[9px] flex flex-col gap-px">
+    <div className="nav-expand mb-1.5 ml-2.25 flex flex-col gap-px">
       <BodyHeader label="TASKS" right={total > 0 ? `${done}/${total}` : '—'} />
       {ordered.length === 0 ? (
         <p className="px-1.5 pb-1.5 text-[11px] italic leading-relaxed text-faint">
@@ -488,7 +488,7 @@ export function TasksBody({
             className="flex w-full items-center gap-1.5 rounded-[4px] py-1 pl-1.5 pr-1 text-left text-[11px] text-faint transition hover:text-dim"
             aria-expanded={showDone}
           >
-            <span className="mt-px h-[13px] w-[13px] shrink-0">
+            <span className="mt-px h-3.25 w-3.25 shrink-0">
               <DoneDisc />
             </span>
             <span className="min-w-0 flex-1">{hidden.length} more done</span>
@@ -526,7 +526,7 @@ function TaskRow({ task: t, blockers = [] }: { task: TaskItem; blockers?: string
   const expanded = inProgress || blocked; // the rows that earn a second line
   return (
     <div className="flex items-start gap-1.5 py-1 pl-1.5 pr-1" title={t.description || t.subject}>
-      <span className="mt-px h-[13px] w-[13px] shrink-0">
+      <span className="mt-px h-3.25 w-3.25 shrink-0">
         {t.status === 'completed' ? (
           <DoneDisc />
         ) : inProgress ? (
@@ -605,7 +605,7 @@ function ReviewAgentsBody({
   onSelectNode: (node: string) => void;
 }) {
   return (
-    <div className="nav-expand mb-2 ml-[9px] flex flex-col gap-[2px]">
+    <div className="nav-expand mb-2 ml-2.25 flex flex-col gap-0.5">
       <BodyHeader label="REVIEW AGENTS" right={String(lenses.length)} />
       {lenses.map((c) => (
         <AgentRow
@@ -644,7 +644,7 @@ function LegsBody({
   onSelectNode: (node: string) => void;
 }) {
   return (
-    <div className="nav-expand mb-2 ml-[9px] flex flex-col gap-[2px]">
+    <div className="nav-expand mb-2 ml-2.25 flex flex-col gap-0.5">
       <BodyHeader label="LEGS" right={String(threads.length)} />
       {threads.map((leg, i) => (
         <LegRow
@@ -695,12 +695,12 @@ function LegRow({
       type="button"
       onClick={onOpen}
       className={cn(
-        'flex w-full items-center gap-2 px-1.5 py-[3px] text-left transition hover:bg-surface-2',
+        'flex w-full items-center gap-2 px-1.5 py-0.75 text-left transition hover:bg-surface-2',
         selected && 'bg-surface-2',
       )}
     >
       <span
-        className="ml-[3px] size-[6px] shrink-0 rounded-full"
+        className="ml-0.75 size-1.5 shrink-0 rounded-full"
         style={{ background: wordColor }}
       />
       <span
@@ -771,7 +771,7 @@ function AgentRow({
       type="button"
       onClick={onOpen}
       className={cn(
-        'flex w-full items-center gap-2 px-1.5 py-[3px] text-left transition',
+        'flex w-full items-center gap-2 px-1.5 py-0.75 text-left transition',
         selected ? 'bg-panel shadow-[0_1px_3px_rgba(0,0,0,0.06)]' : 'hover:bg-surface-2',
       )}
     >
@@ -893,7 +893,7 @@ function PostReviewFixesRow({
       onClick={onOpen}
       title="Runs after the review agents finish — applies fixes and verifies. Open its transcript."
       className={cn(
-        'mt-[2px] flex w-full items-center gap-2 border-t border-dashed px-1.5 pb-[3px] pt-1.5 text-left transition',
+        'mt-0.5 flex w-full items-center gap-2 border-t border-dashed px-1.5 pb-0.75 pt-1.5 text-left transition',
         selected ? 'bg-panel shadow-[0_1px_3px_rgba(0,0,0,0.06)]' : 'hover:bg-surface-2',
       )}
       style={{ borderColor: 'var(--border-2)' }}

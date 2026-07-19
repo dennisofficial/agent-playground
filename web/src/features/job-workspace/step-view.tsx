@@ -417,7 +417,7 @@ function SubagentView({
         onPointerLeave={tail.onPointerLeave}
         className="h-full overflow-y-auto px-5 py-4"
       >
-        <div className="mx-auto flex max-w-[820px] flex-col gap-3">
+        <div className="mx-auto flex max-w-205 flex-col gap-3">
           <div className="flex flex-wrap items-center gap-1.5">
             {summary ? <Chip>{summary.type}</Chip> : null}
             {summary?.background ? <Chip>background</Chip> : null}
@@ -469,7 +469,7 @@ function SubagentView({
 
 function Chip({ children }: { children: React.ReactNode }) {
   return (
-    <span className="rounded-sm bg-surface-3 px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.1em] text-dim">
+    <span className="rounded-sm bg-surface-3 px-2 py-0.5 font-mono text-[9px] uppercase tracking-widest text-dim">
       {children}
     </span>
   );
@@ -531,7 +531,7 @@ function SubagentTranscript({ blocks, active }: { blocks: SubBlock[]; active: bo
   }
   flush();
   return (
-    <div className="flex flex-col gap-[9px]">
+    <div className="flex flex-col gap-2.25">
       {items.map((it) => (
         <div key={it.key}>{it.node}</div>
       ))}
@@ -564,7 +564,7 @@ function PlanDoc({
 
   return (
     <div className="h-full overflow-y-auto px-8 py-7">
-      <div ref={contentRef} className="max-w-[720px]">
+      <div ref={contentRef} className="max-w-180">
         {card?.summary ? (
           <div className="mb-6">
             <Markdown
@@ -634,7 +634,7 @@ function DecisionDoc({ card }: { card: WebApprovalCard | null }) {
   const contentRef = useCommentableRef<HTMLDivElement>();
   return (
     <div className="h-full overflow-y-auto px-8 py-7">
-      <div ref={contentRef} className="max-w-[720px]">
+      <div ref={contentRef} className="max-w-180">
         {decisions.length === 0 ? (
           <Placeholder
             title="Decision record"
@@ -664,7 +664,7 @@ function DecisionDoc({ card }: { card: WebApprovalCard | null }) {
 function SectionPlanDoc() {
   return (
     <div className="h-full overflow-y-auto px-8 py-7">
-      <div className="max-w-[720px]">
+      <div className="max-w-180">
         <Placeholder
           title="Thread plan"
           body="The just-in-time thread plan (its build steps) isn't exposed by the web surface yet. The planning step decides the step split when the thread starts."
@@ -712,7 +712,7 @@ function FileView({
     <div className="h-full overflow-y-auto px-8 py-7">
       <div
         ref={contentRef}
-        className={data?.mime === 'text/markdown' ? 'max-w-[820px]' : undefined}
+        className={data?.mime === 'text/markdown' ? 'max-w-205' : undefined}
       >
         {isLoading ? (
           <p className="font-mono text-[11.5px] text-faint">Loading…</p>
@@ -1010,12 +1010,12 @@ export function SubagentPane({
             className="flex min-w-0 items-center gap-1.5 hover:opacity-80"
           >
             <FileText size={12} className="shrink-0 text-blue" />
-            <span className="max-w-[150px] truncate font-mono text-[10px] text-dim">{base}</span>
+            <span className="max-w-37.5 truncate font-mono text-[10px] text-dim">{base}</span>
           </button>
         ) : null}
         <span className="text-[11px] font-semibold text-border-2">▸</span>
         <span
-          className="grid h-[19px] w-[19px] shrink-0 place-items-center rounded-[5px] text-[10px]"
+          className="grid h-4.75 w-4.75 shrink-0 place-items-center rounded-[5px] text-[10px]"
           style={{
             background: 'color-mix(in srgb, var(--blue) 13%, transparent)',
             color: 'var(--blue)',
@@ -1081,7 +1081,7 @@ export function FilePane({
             className="flex min-w-0 items-center gap-1.5 hover:opacity-80"
           >
             <FileText size={12} className="shrink-0 text-blue" />
-            <span className="max-w-[150px] truncate font-mono text-[10px] text-dim">{base}</span>
+            <span className="max-w-37.5 truncate font-mono text-[10px] text-dim">{base}</span>
           </button>
         ) : null}
         <span className="text-[11px] font-semibold text-border-2">▸</span>

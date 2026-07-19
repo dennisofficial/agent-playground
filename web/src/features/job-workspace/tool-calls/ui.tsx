@@ -135,7 +135,7 @@ export function ToolIcon({ kind, color }: { kind: IconKind; color: string }) {
 export function NewPill({ text, size = 'row' }: { text: string; size?: 'group' | 'row' }) {
   const dims =
     size === 'group'
-      ? 'text-[10.5px] px-[7px] py-[1.5px] rounded-[5px]'
+      ? 'text-[10.5px] px-1.75 py-[1.5px] rounded-[5px]'
       : 'text-[9px] px-1.5 py-px rounded-[4px]';
   return (
     <span
@@ -174,7 +174,7 @@ export function JitPill({ count }: { count: number }) {
 export function JitContextPanel({ items }: { items: Array<{ rule: string; text: string }> }) {
   return (
     <div
-      className="my-[3px] space-y-2 rounded-[7px] border px-[11px] py-[9px] font-mono text-[11px] leading-relaxed"
+      className="my-0.75 space-y-2 rounded-[7px] border px-2.75 py-2.25 font-mono text-[11px] leading-relaxed"
       style={{ background: 'var(--blue-soft)', borderColor: 'var(--blue)' }}
     >
       {items.map((it, i) => (
@@ -182,7 +182,7 @@ export function JitContextPanel({ items }: { items: Array<{ rule: string; text: 
           <span className="font-bold" style={{ color: 'var(--blue)' }}>
             {it.rule}
           </span>
-          <pre className="mt-0.5 overflow-x-auto whitespace-pre-wrap break-words text-dim">
+          <pre className="mt-0.5 overflow-x-auto whitespace-pre-wrap wrap-break-word text-dim">
             {it.text}
           </pre>
         </div>
@@ -207,7 +207,7 @@ export function Badge({ badge, size = 'row' }: { badge: ToolBadge; size?: 'group
   if (badge.kind === 'superseded') {
     return (
       <span
-        className="shrink-0 rounded-[4px] px-[6px] py-[0.5px] font-mono text-[9.5px] font-semibold"
+        className="shrink-0 rounded-[4px] px-1.5 py-[0.5px] font-mono text-[9.5px] font-semibold"
         style={{
           color: 'var(--dim)',
           background: 'var(--surface-3)',
@@ -222,7 +222,7 @@ export function Badge({ badge, size = 'row' }: { badge: ToolBadge; size?: 'group
     // Neutral gray pill — e.g. the line count read off a Read row.
     return (
       <span
-        className="shrink-0 rounded-[4px] px-[6px] py-[0.5px] font-mono text-[9.5px] font-semibold tabular-nums"
+        className="shrink-0 rounded-[4px] px-1.5 py-[0.5px] font-mono text-[9.5px] font-semibold tabular-nums"
         style={{
           color: 'var(--dim)',
           background: 'var(--surface-3)',
@@ -236,8 +236,8 @@ export function Badge({ badge, size = 'row' }: { badge: ToolBadge; size?: 'group
   // diffstat — chip pills; the minus glyph is U+2212, not a hyphen.
   const chip =
     size === 'group'
-      ? 'text-[10.5px] px-[7px] py-[1.5px] rounded-[5px]'
-      : 'text-[9.5px] px-[5px] py-[0.5px] rounded-[4px]';
+      ? 'text-[10.5px] px-1.75 py-[1.5px] rounded-[5px]'
+      : 'text-[9.5px] px-1.25 py-[0.5px] rounded-[4px]';
   // Suppress a zero-count chip (a pure insertion shows just `+N`, a pure deletion just `−N`), but
   // keep `+0` as a fallback for a genuine no-op edit so the badge is never empty.
   const showDel = badge.removed != null && badge.removed > 0;
@@ -310,7 +310,7 @@ export function TerminalBlock({
   const [wrapped, setWrapped] = useState(false);
   return (
     <div
-      className="my-[3px] overflow-hidden rounded-[7px]"
+      className="my-0.75 overflow-hidden rounded-[7px]"
       style={{
         background: 'var(--term)',
         border: '1px solid var(--term-border)',
@@ -328,12 +328,12 @@ export function TerminalBlock({
         />
       ) : null}
       <div
-        className="overflow-auto px-[11px] py-[9px] font-mono text-[10.5px] leading-[1.8]"
+        className="overflow-auto px-2.75 py-2.25 font-mono text-[10.5px] leading-[1.8]"
         style={{ maxHeight: CODE_MAX_HEIGHT }}
       >
         {command ? <CommandPrompt command={command} /> : null}
         <pre
-          className={`m-0 ${wrapped ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'}`}
+          className={`m-0 ${wrapped ? 'whitespace-pre-wrap wrap-break-word' : 'whitespace-pre'}`}
           style={{ color: 'var(--term-dim)' }}
         >
           {body}
@@ -359,7 +359,7 @@ export function StructuredPanel({
   const red = isError && !superseded;
   return (
     <div
-      className="my-[3px] space-y-1.5 rounded-[7px] border border-border px-[11px] py-[9px] font-mono text-[11px] leading-relaxed text-dim"
+      className="my-0.75 space-y-1.5 rounded-[7px] border border-border px-2.75 py-2.25 font-mono text-[11px] leading-relaxed text-dim"
       style={{ background: 'var(--panel)' }}
     >
       {superseded ? (
@@ -368,13 +368,13 @@ export function StructuredPanel({
       {input ? (
         <div>
           <span className="text-faint">input</span>
-          <pre className="mt-0.5 overflow-x-auto whitespace-pre-wrap break-words">{input}</pre>
+          <pre className="mt-0.5 overflow-x-auto whitespace-pre-wrap wrap-break-word">{input}</pre>
         </div>
       ) : null}
       <div>
         <span className="text-faint">{red ? 'error' : 'result'}</span>
         <pre
-          className="mt-0.5 overflow-x-auto whitespace-pre-wrap break-words"
+          className="mt-0.5 overflow-x-auto whitespace-pre-wrap wrap-break-word"
           style={red ? { color: 'var(--red)' } : undefined}
         >
           {body}
@@ -497,20 +497,20 @@ export function DiffView({
   let flatIndex = 0;
   return (
     <div
-      className="my-[3px] overflow-hidden rounded-[7px]"
+      className="my-0.75 overflow-hidden rounded-[7px]"
       style={{
         background: 'var(--term)',
         border: '1px solid var(--term-border)',
       }}
     >
       <div
-        className="overflow-auto py-[6px] font-mono text-[11px]"
+        className="overflow-auto py-1.5 font-mono text-[11px]"
         style={{ lineHeight: 1.75, maxHeight: CODE_MAX_HEIGHT }}
       >
         {blocks.map((block, bi) => (
           <div key={bi}>
             <div
-              className="flex items-center gap-[7px] px-[11px] py-[3px] font-mono text-[10px]"
+              className="flex items-center gap-1.75 px-2.75 py-0.75 font-mono text-[10px]"
               style={{ color: 'var(--term-purple)' }}
             >
               {block.header}
@@ -556,7 +556,7 @@ export function CodeListing({
   const gutter = Math.max(30, widest * 7 + 16);
   return (
     <div
-      className={flush ? 'h-full overflow-hidden' : 'my-[3px] overflow-hidden rounded-[7px]'}
+      className={flush ? 'h-full overflow-hidden' : 'my-0.75 overflow-hidden rounded-[7px]'}
       style={{
         background: 'var(--term)',
         ...(flush ? {} : { border: '1px solid var(--term-border)' }),
@@ -649,14 +649,14 @@ export function PathListView({ result }: { result: string }) {
   const lines = splitLines(result);
   return (
     <div
-      className="my-[3px] overflow-hidden rounded-[7px]"
+      className="my-0.75 overflow-hidden rounded-[7px]"
       style={{
         background: 'var(--term)',
         border: '1px solid var(--term-border)',
       }}
     >
       <div
-        className="overflow-auto px-[11px] py-2 font-mono text-[11px]"
+        className="overflow-auto px-2.75 py-2 font-mono text-[11px]"
         style={{ lineHeight: 1.75, maxHeight: CODE_MAX_HEIGHT }}
       >
         {lines.map((line, i) => {

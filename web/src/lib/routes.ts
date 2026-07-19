@@ -2,44 +2,23 @@
  * Typed route helpers (house pattern from rs-crm/cubix `SITE_MAP`, hand-rolled here since
  * `@workspace/site-map` isn't vendored in this repo).
  *
- * A thread is addressed by its real `org/repo/thread` coordinate — every thread API call is org+repo
- * scoped, and the cross-org inbox (`/web/threads`) carries all three ids per row. The triple is encoded
- * into the single `[jobKey]` path segment so the route shape (`/workspace/:jobKey`) is stable.
+ * A job is addressed by its bare id — the URL is `/jobs/:jobId` (which redirects to the job's
+ * `focusedThreadId`) and `/jobs/:jobId/:threadId` for a specific lane. Org/repo are NOT in the URL: the
+ * backend enforces access via RLS, and the client resolves them from the job payload / inbox cache when
+ * needed. `jobId` and `threadId` are globally-unique uuids, so no encoding/triple-key is required.
  */
 
-/** The ids needed to address one thread against the org → repo → thread API. */
+/** The ids needed to address one thread against the (internal) org → repo → thread hooks. Org/repo are
+ *  resolved from the job payload — they no longer live in the URL. */
 export interface ThreadRefParts {
   orgId: string;
   repoId: string;
   jobId: string;
 }
 
-// `~` is never present in a UUID (org/thread ids) or a repo slug, so it's a safe separator that keeps the
-// key a single path segment — unlike `/`, which `encodeURIComponent` turns into `%2F` (encoded slashes are
-// normalized inconsistently by servers/Next and can break single-segment matching).
-const REF_SEP = '~';
-
-/** Encode `{ orgId, repoId, jobId }` into one URL path segment. */
-export function encodeJobRef(ref: ThreadRefParts): string {
-  return [ref.orgId, ref.repoId, ref.jobId].map(encodeURIComponent).join(REF_SEP);
-}
-
-/** Decode a `[jobKey]` segment back to its ids; `null` if it isn't a well-formed triple. */
-export function decodeJobRef(jobKey: string): ThreadRefParts | null {
-  const parts = jobKey.split(REF_SEP);
-  if (parts.length !== 3) return null;
-  try {
-    const [orgId, repoId, jobId] = parts.map(decodeURIComponent);
-    if (!orgId || !repoId || !jobId) return null;
-    return { orgId, repoId, jobId };
-  } catch {
-    return null;
-  }
-}
-
-/** Full href to a thread workspace. */
-export function threadHref(ref: ThreadRefParts): string {
-  return `/workspace/${encodeJobRef(ref)}`;
+/** Href to a job — routes to its focused thread. Optionally deep-link a specific `threadId`. */
+export function threadHref(jobId: string, threadId?: string): string {
+  return threadId ? `/jobs/${jobId}/${threadId}` : `/jobs/${jobId}`;
 }
 
 export const ROUTES = {
@@ -52,7 +31,8 @@ export const ROUTES = {
     signedOut: () => '/auth/signed-out',
   },
   workspace: () => '/workspace',
-  thread: (jobKey: string) => `/workspace/${jobKey}`,
+  job: (jobId: string, threadId?: string) =>
+    threadId ? `/jobs/${jobId}/${threadId}` : `/jobs/${jobId}`,
   /** Create-thread route. Optionally pre-select an org (and repo) — used by the sidebar's per-org/repo ＋. */
   newThread: (opts?: { orgId?: string; repoId?: string }) => {
     const p = new URLSearchParams();

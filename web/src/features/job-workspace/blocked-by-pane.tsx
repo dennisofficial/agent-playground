@@ -25,13 +25,7 @@ export function useOpenBlocker(jobRef: JobRef) {
   const openBlocker = async (blockerJobId: string) => {
     try {
       await resolveJob({ ...jobRef, jobId: blockerJobId });
-      router.push(
-        threadHref({
-          orgId: jobRef.orgId,
-          repoId: jobRef.repoId,
-          jobId: blockerJobId,
-        }),
-      );
+      router.push(threadHref(blockerJobId));
     } catch (err) {
       if (err instanceof ThreadApiError && err.status === 404) {
         show('This job was deleted.');
@@ -84,7 +78,7 @@ export function BlockerRow({ blocker, onClick }: { blocker: JobBlocker; onClick:
       onClick={onClick}
       className="flex items-center gap-2.5 rounded-lg border border-border bg-surface px-4 py-3 text-left transition hover:bg-surface-2"
     >
-      <span className="h-[7px] w-[7px] shrink-0 rounded-full" style={{ background: meta.color }} />
+      <span className="h-1.75 w-1.75 shrink-0 rounded-full" style={{ background: meta.color }} />
       <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-text">
         {blocker.title || 'Untitled job'}
       </span>

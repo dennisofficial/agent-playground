@@ -28,7 +28,7 @@ function CustomTip({ active, payload, label, valueSuffix }: CustomTipProps) {
   const display = typeof value === 'number' ? Math.round(value) : value;
   return (
     <div
-      className="rounded-[5px] px-[7px] py-1 font-mono text-[10px] font-medium whitespace-nowrap text-white shadow-lg"
+      className="rounded-[5px] px-1.75 py-1 font-mono text-[10px] font-medium whitespace-nowrap text-white shadow-lg"
       style={{ background: 'var(--text)' }}
     >
       {display}

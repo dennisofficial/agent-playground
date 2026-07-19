@@ -9,28 +9,17 @@ import type {
 import { baseApi, EBaseApiCacheTags } from './baseApi';
 import { sseOpener } from './sse-opener';
 
-// Resolve against the base URL via `new URL` so a trailing slash on NEXT_PUBLIC_BACKEND_URL doesn't
-// produce `//orgs/…` (the SSE URL is used raw, not through axios's baseURL join, and `//orgs` 404s).
-const realtimeUrl = (path: string): string => new URL(path, env.NEXT_PUBLIC_BACKEND_URL).toString();
-const base = (orgId: string): string => `/orgs/${orgId}/agent-credentials`;
-
-/**
- * Agent SDK accounts data layer. The list is **realtime**: `getAgentCredentials` seeds from REST, then
- * `streamList` keeps it live off the pg-realtime SSE feed — including per-account usage windows, which
- * update as WAL deltas when a harvest/poll writes the snapshot. Mutations therefore don't invalidate the
- * list; the feed reconciles it.
- */
 export const agentCredentialsApi = baseApi.injectEndpoints({
   overrideExisting: true,
   endpoints: (build) => ({
     getAgentCredentials: build.query<AgentCredentialView[], string>({
-      query: (orgId) => ({ url: base(orgId), method: 'GET' }),
+      query: (orgId) => ({ url: `/orgs/${orgId}/agent-credentials`, method: 'GET' }),
       providesTags: (_result, _error, orgId) => [
         { type: EBaseApiCacheTags.AGENT_CREDENTIALS, id: orgId },
       ],
       onCacheEntryAdded: (orgId, api) =>
         streamList<AgentCredentialView>({
-          url: realtimeUrl(`${base(orgId)}/realtime`),
+          url: new URL(`/orgs/${orgId}/agent-credentials/realtime`, env.NEXT_PUBLIC_BACKEND_URL).toString(),
           open: sseOpener,
           lifecycle: api,
         }),
@@ -38,14 +27,14 @@ export const agentCredentialsApi = baseApi.injectEndpoints({
 
     // ── Claude ──
     startClaudeAuthorize: build.mutation<ClaudeAuthorizeUrlResult, { orgId: string }>({
-      query: ({ orgId }) => ({ url: `${base(orgId)}/claude/authorize-url`, method: 'POST' }),
+      query: ({ orgId }) => ({ url: `/orgs/${orgId}/agent-credentials/claude/authorize-url`, method: 'POST' }),
     }),
     createClaudePersonal: build.mutation<
       AgentCredentialView,
       { orgId: string; code: string; state: string }
     >({
       query: ({ orgId, code, state }) => ({
-        url: `${base(orgId)}/claude/personal`,
+        url: `/orgs/${orgId}/agent-credentials/claude/personal`,
         method: 'POST',
         data: { code, state },
       }),
@@ -55,7 +44,7 @@ export const agentCredentialsApi = baseApi.injectEndpoints({
       { orgId: string; setupToken: string; label?: string }
     >({
       query: ({ orgId, setupToken, label }) => ({
-        url: `${base(orgId)}/claude/setup-token`,
+        url: `/orgs/${orgId}/agent-credentials/claude/setup-token`,
         method: 'POST',
         data: { setupToken, label },
       }),
@@ -63,11 +52,11 @@ export const agentCredentialsApi = baseApi.injectEndpoints({
 
     // ── Codex ──
     startCodexDevice: build.mutation<CodexDeviceStartResult, { orgId: string }>({
-      query: ({ orgId }) => ({ url: `${base(orgId)}/codex/device/start`, method: 'POST' }),
+      query: ({ orgId }) => ({ url: `/orgs/${orgId}/agent-credentials/codex/device/start`, method: 'POST' }),
     }),
     pollCodexDevice: build.mutation<CodexDevicePollResult, { orgId: string; handle: string }>({
       query: ({ orgId, handle }) => ({
-        url: `${base(orgId)}/codex/device/poll`,
+        url: `/orgs/${orgId}/agent-credentials/codex/device/poll`,
         method: 'POST',
         data: { handle },
       }),
@@ -77,7 +66,7 @@ export const agentCredentialsApi = baseApi.injectEndpoints({
       { orgId: string; authJson: string; label?: string }
     >({
       query: ({ orgId, authJson, label }) => ({
-        url: `${base(orgId)}/codex/paste`,
+        url: `/orgs/${orgId}/agent-credentials/codex/paste`,
         method: 'POST',
         data: { authJson, label },
       }),
@@ -89,13 +78,13 @@ export const agentCredentialsApi = baseApi.injectEndpoints({
       { orgId: string; credentialId: string }
     >({
       query: ({ orgId, credentialId }) => ({
-        url: `${base(orgId)}/selected`,
+        url: `/orgs/${orgId}/agent-credentials/selected`,
         method: 'PUT',
         data: { credentialId },
       }),
     }),
     removeAgentCredential: build.mutation<{ ok: true }, { orgId: string; id: string }>({
-      query: ({ orgId, id }) => ({ url: `${base(orgId)}/${id}`, method: 'DELETE' }),
+      query: ({ orgId, id }) => ({ url: `/orgs/${orgId}/agent-credentials/${id}`, method: 'DELETE' }),
     }),
   }),
 });

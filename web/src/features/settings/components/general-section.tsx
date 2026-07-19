@@ -35,7 +35,7 @@ export function GeneralSection({ org }: { org: OrgSummary }) {
       <h1 className="font-disp text-[22px] font-semibold tracking-[-0.01em] text-text">General</h1>
       <p className="mb-7 mt-1.5 text-[13px] text-dim">Your organization’s identity and status.</p>
 
-      <div className="flex items-start gap-[18px]">
+      <div className="flex items-start gap-4.5">
         <div className="flex shrink-0 flex-col items-center gap-1.5">
           <span
             className="flex h-16 w-16 items-center justify-center rounded-[15px] font-disp text-[26px] font-semibold text-white"
@@ -110,7 +110,7 @@ export function GeneralSection({ org }: { org: OrgSummary }) {
         }}
       >
         <div
-          className="px-[18px] py-3.5 font-mono text-[9px] tracking-[0.14em] text-red"
+          className="px-4.5 py-3.5 font-mono text-[9px] tracking-[0.14em] text-red"
           style={{
             background: 'color-mix(in srgb, var(--red) 8%, transparent)',
             borderBottom: '1px solid color-mix(in srgb, var(--red) 22%, transparent)',
@@ -171,7 +171,7 @@ function DangerRow({
 }) {
   return (
     <div
-      className="flex items-center gap-3.5 px-[18px] py-3.5"
+      className="flex items-center gap-3.5 px-4.5 py-3.5"
       style={divider ? { borderBottom: '1px solid var(--hair)' } : undefined}
     >
       <div className="flex-1">

@@ -1,6 +1,5 @@
 'use client';
 
-import { BranchPicker } from '@/components/branch-picker';
 import { Spinner } from '@/components/ui/spinner';
 import type { RepoView } from '@/lib/api/job-api';
 import { useOrgRepos } from '@/lib/api/job-queries';
@@ -12,9 +11,7 @@ import {
   useConnectRepoMutation,
   useDisconnectRepoMutation,
   useRevalidateRepoMutation,
-  useUpdateRepoMutation,
 } from '@/redux/query/api/repo.api';
-import { AUTO_MERGE_METHODS, type AutoMergeMethod } from '@workspace/shared';
 import {
   AlertCircle,
   Check,
@@ -28,6 +25,7 @@ import {
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
+import { RepoEditRow } from './RepoEditRow';
 
 /** HTTPS GitHub URL — same shape the backend's `parseGithubRepoUrl` accepts. */
 const GITHUB_URL = /^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i;
@@ -98,7 +96,7 @@ export function ReposSection({
           tone: 'green',
           text: `Atlas is onboarding ${repo.name} — opening the job…`,
         });
-        router.push(threadHref({ orgId, repoId: repo.id, jobId }));
+        router.push(threadHref(jobId));
       },
       onError: (e) =>
         setFlash({
@@ -185,7 +183,7 @@ export function ReposSection({
           {/* List */}
           <div className="overflow-hidden rounded-lg border border-border">
             <div
-              className="flex items-center px-4 py-2.5 font-mono text-[9px] uppercase tracking-[0.1em] text-faint"
+              className="flex items-center px-4 py-2.5 font-mono text-[9px] uppercase tracking-widest text-faint"
               style={{
                 background: 'var(--surface-2)',
                 borderBottom: '1px solid var(--border)',
@@ -279,7 +277,7 @@ function LoadingState() {
     <>
       <div className="overflow-hidden rounded-lg border border-border">
         <div
-          className="flex items-center px-4 py-2.5 font-mono text-[9px] uppercase tracking-[0.1em] text-faint"
+          className="flex items-center px-4 py-2.5 font-mono text-[9px] uppercase tracking-widest text-faint"
           style={{
             background: 'var(--surface-2)',
             borderBottom: '1px solid var(--border)',
@@ -288,10 +286,10 @@ function LoadingState() {
           <span className="flex-1">Repository</span>
           <span>Status</span>
         </div>
-        <div className="flex flex-col gap-[18px] p-4">
+        <div className="flex flex-col gap-4.5 p-4">
           {widths.map(([w1, w2], i) => (
             <div key={i} className="flex items-center justify-between">
-              <div className="flex flex-col gap-[7px]">
+              <div className="flex flex-col gap-1.75">
                 <Sk w={w1} h="13px" />
                 <Sk w={w2} h="10px" />
               </div>
@@ -301,7 +299,7 @@ function LoadingState() {
         </div>
       </div>
       <div className="mt-4 flex items-center gap-2 text-[12px] text-faint">
-        <Spinner className="h-[11px] w-[11px] text-accent" />
+        <Spinner className="h-2.75 w-2.75 text-accent" />
         Loading repos…
       </div>
     </>
@@ -325,7 +323,7 @@ function Sk({ w, h, radius = '5px' }: { w: string; h: string; radius?: string })
 function ErrorState({ onRetry }: { onRetry: () => void }) {
   return (
     <div
-      className="flex items-start gap-3 rounded-lg p-[22px]"
+      className="flex items-start gap-3 rounded-lg p-5.5"
       style={{
         background: RED_SOFT,
         border: `1px solid color-mix(in srgb, var(--red) 30%, transparent)`,
@@ -364,7 +362,7 @@ function EmptyCard({ withToken }: { withToken: boolean }) {
     <div
       className={cn(
         'flex flex-col items-center rounded-lg border border-dashed border-border-2 bg-surface-2 px-7 text-center',
-        withToken ? 'mb-[18px] py-[38px]' : 'py-10',
+        withToken ? 'mb-4.5 py-9.5' : 'py-10',
       )}
     >
       <span
@@ -383,7 +381,7 @@ function EmptyCard({ withToken }: { withToken: boolean }) {
       <div className="font-disp text-[16px] font-semibold text-text">
         No repositories connected yet
       </div>
-      <div className="mt-1.5 max-w-[340px] text-[12.5px] leading-relaxed text-dim">
+      <div className="mt-1.5 max-w-85 text-[12.5px] leading-relaxed text-dim">
         {withToken
           ? 'Connect a GitHub repo to start running jobs on it.'
           : `Connecting a repo needs a GitHub token for this org. Set one in Credentials first.`}
@@ -397,14 +395,14 @@ function NoTokenState({ onOpenCredentials }: { onOpenCredentials: () => void }) 
     <>
       <EmptyCard withToken={false} />
       <div
-        className="mt-[18px] flex items-center gap-3 rounded-lg px-4 py-3.5"
+        className="mt-4.5 flex items-center gap-3 rounded-lg px-4 py-3.5"
         style={{
           background: 'var(--accent-soft)',
           border: '1px solid var(--accent-line)',
         }}
       >
         <span
-          className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-lg bg-surface"
+          className="flex h-7.5 w-7.5 shrink-0 items-center justify-center rounded-lg bg-surface"
           style={{
             border: '1px solid var(--accent-line)',
             color: 'var(--accent)',
@@ -429,7 +427,7 @@ function NoTokenState({ onOpenCredentials }: { onOpenCredentials: () => void }) 
       </div>
       {/* Disabled connect form — a preview of what unlocks once a token is set. */}
       <div
-        className="mt-[18px] rounded-lg border border-border bg-surface p-[18px]"
+        className="mt-4.5 rounded-lg border border-border bg-surface p-4.5"
         style={{ opacity: 0.55, pointerEvents: 'none' }}
       >
         <div className="mb-3 text-[12.5px] font-semibold text-text">Connect a repository</div>
@@ -506,7 +504,7 @@ function ConnectForm({
 
   return (
     <div
-      className="mb-[18px] rounded-lg border bg-surface p-[18px]"
+      className="mb-4.5 rounded-lg border bg-surface p-4.5"
       style={{
         borderColor: 'var(--accent-line)',
         boxShadow: '0 6px 22px var(--accent-soft)',
@@ -514,7 +512,7 @@ function ConnectForm({
     >
       <div className="mb-3.5 flex items-center gap-2.5">
         <span
-          className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-[7px]"
+          className="flex h-6.5 w-6.5 shrink-0 items-center justify-center rounded-[7px]"
           style={{
             background: 'var(--accent-soft)',
             border: '1px solid var(--accent-line)',
@@ -598,7 +596,7 @@ function ConnectForm({
           className="flex items-center gap-1.5 rounded-md px-4 py-2.5 text-[12px] font-semibold text-white transition hover:brightness-105 disabled:opacity-75"
           style={{ background: 'var(--accent)' }}
         >
-          {validating ? <Spinner className="h-[11px] w-[11px]" /> : null}
+          {validating ? <Spinner className="h-2.75 w-2.75" /> : null}
           {validating ? 'Connecting…' : 'Connect'}
         </button>
         {cancelable ? (
@@ -661,14 +659,14 @@ function RepoRow({
         };
 
   return (
-    <div className="flex flex-wrap items-start gap-4 px-4 py-[15px]">
+    <div className="flex flex-wrap items-start gap-4 px-4 py-3.75">
       {/* identity */}
       <div className="min-w-0 flex-1">
         <div className="text-[13px] font-semibold text-text">{repo.name}</div>
         <div className="mt-0.5 truncate font-mono text-[11px] text-faint">{repo.gitUrl}</div>
         <div className="mt-2 flex items-center gap-2.5">
           <span
-            className="flex items-center gap-1.5 rounded-sm border border-border-2 px-2 py-[3px] font-mono text-[10px] text-dim"
+            className="flex items-center gap-1.5 rounded-sm border border-border-2 px-2 py-0.75 font-mono text-[10px] text-dim"
             style={{ background: 'var(--surface-3)' }}
           >
             <GitBranch size={11} />
@@ -687,7 +685,7 @@ function RepoRow({
       {/* right: pill + actions */}
       <div className="flex w-full flex-col items-end gap-2.5 sm:w-auto sm:shrink-0">
         <span
-          className="flex items-center gap-1.5 rounded-full px-2.5 py-[3px] text-[11px] font-medium"
+          className="flex items-center gap-1.5 rounded-full px-2.5 py-0.75 text-[11px] font-medium"
           style={{
             color: pill.color,
             background: pill.bg,
@@ -708,7 +706,7 @@ function RepoRow({
 
         {!revalidating && !repo.accessOk ? (
           <span
-            className="max-w-[200px] text-right text-[10.5px] leading-snug"
+            className="max-w-50 text-right text-[10.5px] leading-snug"
             style={{ color: 'var(--red)' }}
           >
             repo unreachable or token lacks access
@@ -717,7 +715,7 @@ function RepoRow({
 
         {!revalidating && repo.accessOk && repo.webhookWarning ? (
           <span
-            className="flex max-w-[220px] items-start gap-1.5 text-right text-[10.5px] leading-snug"
+            className="flex max-w-55 items-start gap-1.5 text-right text-[10.5px] leading-snug"
             style={{ color: 'var(--amber)' }}
             title={repo.webhookWarning}
           >
@@ -739,7 +737,7 @@ function RepoRow({
                       ? 'Re-run Atlas onboarding — re-derive this repo’s setup (env files, build commands, cache)'
                       : 'Onboard this repo with Atlas — it learns how to build/run the repo and records the setup'
                   }
-                  className="flex items-center gap-1.5 rounded-sm border px-2.5 py-[5px] text-[11px] font-semibold text-accent transition hover:bg-surface-2 disabled:opacity-60"
+                  className="flex items-center gap-1.5 rounded-sm border px-2.5 py-1.25 text-[11px] font-semibold text-accent transition hover:bg-surface-2 disabled:opacity-60"
                   style={{ borderColor: 'var(--accent-line)' }}
                 >
                   {reonboarding ? (
@@ -753,7 +751,7 @@ function RepoRow({
               <button
                 type="button"
                 onClick={onRevalidate}
-                className="flex items-center gap-1.5 rounded-sm border px-2.5 py-[5px] text-[11px] font-semibold transition hover:bg-surface-2"
+                className="flex items-center gap-1.5 rounded-sm border px-2.5 py-1.25 text-[11px] font-semibold transition hover:bg-surface-2"
                 style={{
                   color: repo.accessOk ? 'var(--dim)' : 'var(--accent)',
                   borderColor: repo.accessOk ? 'var(--border-2)' : 'var(--accent-line)',
@@ -765,7 +763,7 @@ function RepoRow({
               <button
                 type="button"
                 onClick={onEdit}
-                className="rounded-sm border border-border-2 px-2.5 py-[5px] text-[11px] font-semibold text-dim transition hover:bg-surface-2"
+                className="rounded-sm border border-border-2 px-2.5 py-1.25 text-[11px] font-semibold text-dim transition hover:bg-surface-2"
               >
                 Edit
               </button>
@@ -777,170 +775,13 @@ function RepoRow({
                     ? `Disconnect — deletes ${threadCount} job${threadCount === 1 ? '' : 's'}`
                     : 'Disconnect this repo'
                 }
-                className="rounded-sm border border-border-2 px-2.5 py-[5px] text-[11px] font-semibold text-dim transition hover:bg-surface-2 hover:text-red"
+                className="rounded-sm border border-border-2 px-2.5 py-1.25 text-[11px] font-semibold text-dim transition hover:bg-surface-2 hover:text-red"
               >
                 Disconnect
               </button>
             </div>
           </>
         ) : null}
-      </div>
-    </div>
-  );
-}
-
-// ── Repo row (edit metadata) ─────────────────────────────────────────────────────────────────────
-function RepoEditRow({
-  orgId,
-  repo,
-  onClose,
-  onError,
-}: {
-  orgId: string;
-  repo: RepoView;
-  onClose: () => void;
-  onError: (text: string) => void;
-}) {
-  const [update, updateState] = useUpdateRepoMutation();
-  const [name, setName] = useState(repo.name);
-  const [branch, setBranch] = useState(repo.defaultBranch);
-  const [branchPrefix, setBranchPrefix] = useState(repo.branchPrefix ?? '');
-  const [mergeMethod, setMergeMethod] = useState<AutoMergeMethod>(repo.defaultAutoMergeMethod);
-  const [deleteBranch, setDeleteBranch] = useState(repo.defaultAutoMergeDeleteBranch);
-
-  async function save() {
-    if (updateState.isLoading) return;
-    try {
-      await update({
-        repoId: repo.id,
-        body: {
-          name: name.trim() || repo.name,
-          defaultBranch: branch.trim() || repo.defaultBranch,
-          // Empty clears the override back to the neutral default.
-          branchPrefix: branchPrefix.trim(),
-          defaultAutoMergeMethod: mergeMethod,
-          defaultAutoMergeDeleteBranch: deleteBranch,
-        },
-      }).unwrap();
-      onClose();
-    } catch (e) {
-      onError((e as Error)?.message || 'Could not save changes.');
-    }
-  }
-
-  return (
-    <div className="px-4 py-[15px]" style={{ background: 'var(--surface-2)' }}>
-      <div className="mb-2.5 font-mono text-[9px] uppercase tracking-[0.12em] text-faint">
-        Edit metadata · {repo.gitUrl}
-      </div>
-      <div className="flex gap-3">
-        <div className="flex-1">
-          <label className="mb-1.5 block text-[11.5px] font-medium text-dim">Display name</label>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="w-full rounded-md border border-border-2 bg-surface px-3 py-2.5 text-[13px] text-text outline-none transition focus:border-accent"
-          />
-        </div>
-        <div className="w-48">
-          <label className="mb-1.5 block text-[11.5px] font-medium text-dim">Base branch</label>
-          <BranchPicker
-            orgId={orgId}
-            repoId={repo.id}
-            value={branch}
-            onChange={setBranch}
-            fallback={repo.defaultBranch}
-          />
-        </div>
-        <div className="w-48">
-          <label className="mb-1.5 block text-[11.5px] font-medium text-dim">Branch prefix</label>
-          <input
-            value={branchPrefix}
-            onChange={(e) => setBranchPrefix(e.target.value)}
-            placeholder="feature/"
-            className="w-full rounded-md border border-border-2 bg-surface px-3 py-2.5 text-[13px] text-text outline-none transition focus:border-accent"
-          />
-        </div>
-      </div>
-
-      <div className="mt-3.5 flex flex-col gap-3 border-t border-dashed border-border-2 pt-3.5">
-        <div className="w-48">
-          <label
-            htmlFor="repo-edit-merge-method"
-            className="mb-1.5 block text-[11.5px] font-medium text-dim"
-          >
-            Merge method
-          </label>
-          <select
-            id="repo-edit-merge-method"
-            data-testid="repo-edit-merge-method"
-            value={mergeMethod}
-            onChange={(e) => setMergeMethod(e.target.value as AutoMergeMethod)}
-            className="w-full rounded-md border border-border-2 bg-surface px-3 py-2.5 text-[13px] capitalize text-text outline-none transition focus:border-accent"
-          >
-            {AUTO_MERGE_METHODS.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="flex items-center justify-between gap-2.5">
-          <div>
-            <label
-              htmlFor="repo-edit-delete-branch"
-              className="mb-0.5 block text-[11.5px] font-medium text-dim"
-            >
-              Delete branch after merge
-            </label>
-            <p className="text-[10.5px] leading-snug text-faint">
-              Removes the head branch once Atlas merges the PR.
-            </p>
-          </div>
-          <button
-            id="repo-edit-delete-branch"
-            type="button"
-            role="switch"
-            aria-checked={deleteBranch}
-            aria-label="Delete branch after merge"
-            data-testid="repo-edit-delete-branch"
-            onClick={() => setDeleteBranch((v) => !v)}
-            className="relative h-[17px] w-[30px] shrink-0 rounded-full border transition-colors"
-            style={{
-              background: deleteBranch ? 'var(--green)' : 'var(--surface-3)',
-              borderColor: deleteBranch ? 'var(--green)' : 'var(--border-2)',
-            }}
-          >
-            <span
-              className="absolute top-[1px] left-[1px] h-[13px] w-[13px] rounded-full bg-white transition-transform"
-              style={{
-                transform: deleteBranch ? 'translateX(13px)' : 'translateX(0)',
-                boxShadow: '0 1px 2px rgba(0, 0, 0, 0.25)',
-              }}
-            />
-          </button>
-        </div>
-      </div>
-
-      <div className="mt-3 flex gap-2.5">
-        <button
-          type="button"
-          onClick={save}
-          disabled={updateState.isLoading}
-          className="flex items-center gap-1.5 rounded-md px-3.5 py-2 text-[12px] font-semibold text-white transition hover:brightness-105 disabled:opacity-75"
-          style={{ background: 'var(--accent)' }}
-        >
-          {updateState.isLoading ? <Spinner className="h-[11px] w-[11px]" /> : null}
-          {updateState.isLoading ? 'Saving…' : 'Save'}
-        </button>
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded-md border border-border-2 px-3.5 py-2 text-[12px] font-medium text-dim transition hover:bg-surface-2"
-        >
-          Cancel
-        </button>
       </div>
     </div>
   );
@@ -988,7 +829,7 @@ function DisconnectDialog({
   return (
     <div
       onClick={onClose}
-      className="fixed inset-0 z-[70] flex justify-center"
+      className="fixed inset-0 z-70 flex justify-center"
       style={{
         background: 'rgba(10,12,16,.5)',
         backdropFilter: 'blur(3px)',
@@ -997,13 +838,13 @@ function DisconnectDialog({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="h-fit w-[430px] max-w-[90%] overflow-hidden rounded-lg border border-border-2 bg-panel"
+        className="h-fit w-107.5 max-w-[90%] overflow-hidden rounded-lg border border-border-2 bg-panel"
         style={{ boxShadow: 'var(--shadow-palette)' }}
       >
-        <div className="px-5 pb-[18px] pt-5">
+        <div className="px-5 pb-4.5 pt-5">
           <div className="mb-3 flex items-center gap-2.5">
             <span
-              className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[9px]"
+              className="flex h-8.5 w-8.5 shrink-0 items-center justify-center rounded-[9px]"
               style={{
                 background: RED_SOFT,
                 border: `1px solid ${RED_BORDER}`,
@@ -1062,7 +903,7 @@ function DisconnectDialog({
             className="flex items-center gap-1.5 rounded-md px-4 py-2.5 text-[12.5px] font-semibold text-white transition hover:brightness-105 disabled:opacity-75"
             style={{ background: 'var(--red)' }}
           >
-            {disconnectState.isLoading ? <Spinner className="h-[11px] w-[11px]" /> : null}
+            {disconnectState.isLoading ? <Spinner className="h-2.75 w-2.75" /> : null}
             {hasThreads ? `Delete ${threadLabel} & disconnect` : 'Disconnect'}
           </button>
         </div>

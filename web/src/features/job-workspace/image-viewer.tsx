@@ -27,7 +27,7 @@ export function ImageViewer({ src, alt }: { src: string; alt: string }) {
 
   if (fullscreen) {
     return (
-      <div className="fixed inset-0 z-[90] bg-black/90">
+      <div className="fixed inset-0 z-90 bg-black/90">
         <button
           type="button"
           onClick={toggleFullscreen}
@@ -72,7 +72,7 @@ function Viewer({
       <Toolbar fullscreen={fullscreen} onToggleFullscreen={onToggleFullscreen} />
       <TransformComponent
         wrapperClass="!h-full !w-full cursor-grab active:cursor-grabbing"
-        contentClass="!h-full !w-full flex items-center justify-center"
+        contentClass="h-full! w-full! flex items-center justify-center"
       >
         {/* eslint-disable-next-line @next/next/no-img-element -- a data: URL, not a remote asset for next/image */}
         <img
@@ -129,7 +129,7 @@ function ToolbarButton({
       type="button"
       title={title}
       onClick={onClick}
-      className="flex h-[29px] w-[29px] items-center justify-center rounded-sm text-dim transition hover:bg-surface-2 hover:text-text"
+      className="flex h-7.25 w-7.25 items-center justify-center rounded-sm text-dim transition hover:bg-surface-2 hover:text-text"
     >
       {children}
     </button>

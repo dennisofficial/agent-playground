@@ -72,7 +72,7 @@ export function WrapButton({ wrapped, onToggle }: { wrapped: boolean; onToggle: 
 export function TerminalChromeBar({ label, actions }: { label?: string; actions?: ReactNode }) {
   return (
     <div
-      className="flex items-center gap-2 px-3 py-[7px]"
+      className="flex items-center gap-2 px-3 py-1.75"
       style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
     >
       <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: '#ff5f57' }} />

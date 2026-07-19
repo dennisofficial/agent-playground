@@ -33,7 +33,7 @@ export function Modal({
   return (
     <div
       className={cn(
-        'fixed inset-0 z-[90] flex',
+        'fixed inset-0 z-90 flex',
         isMobile ? '' : 'items-start justify-center px-4 pt-[10vh]',
       )}
       onMouseDown={() => router.back()}

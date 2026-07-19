@@ -56,7 +56,7 @@ export function McpSection({ orgId, role }: { orgId: string; role: string }) {
       <h1 className="font-disp text-[22px] font-semibold tracking-[-0.01em] text-text">
         MCP Servers
       </h1>
-      <p className="mb-4 mt-1.5 max-w-[640px] text-[13px] leading-relaxed text-dim">
+      <p className="mb-4 mt-1.5 max-w-160 text-[13px] leading-relaxed text-dim">
         Tool servers the agent can call. They resolve in three layers:{' '}
         <b className="font-semibold text-text">System</b> servers are built in and always on;{' '}
         <b className="font-semibold text-text">Organization</b> servers are shared across every repo
@@ -96,7 +96,7 @@ export function McpSection({ orgId, role }: { orgId: string; role: string }) {
         <>
           <SystemTier system={data.system} />
 
-          <div className="h-[34px]" />
+          <div className="h-8.5" />
 
           <McpTier
             orgId={orgId}
@@ -112,7 +112,7 @@ export function McpSection({ orgId, role }: { orgId: string; role: string }) {
             emptyBody="Add an org-wide server (like Linear or Sentry) to give every thread access to its tools."
           />
 
-          <div className="h-[34px]" />
+          <div className="h-8.5" />
 
           <RepoTier orgId={orgId} allServers={data.servers} canManage={isOwner} />
         </>
@@ -134,7 +134,7 @@ function SystemTier({ system }: { system: SystemMcpServer[] }) {
             borderColor: 'color-mix(in srgb, var(--green) 30%, transparent)',
           }}
         >
-          <span className="h-[5px] w-[5px] rounded-full bg-green" />
+          <span className="h-1.25 w-1.25 rounded-full bg-green" />
           always on
         </span>
         <div className="h-px flex-1 bg-border" />
@@ -233,7 +233,7 @@ function RepoTier({
       </div>
 
       <div className="my-3.5 flex items-center gap-2.5">
-        <span className="font-mono text-[9px] tracking-[0.1em] text-faint">REPO</span>
+        <span className="font-mono text-[9px] tracking-widest text-faint">REPO</span>
         <select
           value={repoId}
           onChange={(e) => setRepoId(e.target.value)}
@@ -409,7 +409,7 @@ function EmptyState({
         {icon}
       </div>
       <div className="font-disp text-[15px] font-semibold text-text">{title}</div>
-      <div className="mt-1.5 max-w-[360px] text-[12.5px] leading-relaxed text-dim">{body}</div>
+      <div className="mt-1.5 max-w-90 text-[12.5px] leading-relaxed text-dim">{body}</div>
       {onAdd ? (
         <button
           type="button"
@@ -575,18 +575,18 @@ function DeleteModal({
   return (
     <div
       onClick={onClose}
-      className="fixed inset-0 z-50 flex items-start justify-center pt-[150px]"
+      className="fixed inset-0 z-50 flex items-start justify-center pt-37.5"
       style={{ background: 'rgba(10,12,16,.5)', backdropFilter: 'blur(3px)' }}
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-[430px] max-w-[90%] overflow-hidden rounded-lg border border-border-2 bg-panel"
+        className="w-107.5 max-w-[90%] overflow-hidden rounded-lg border border-border-2 bg-panel"
         style={{ boxShadow: '0 30px 80px rgba(0,0,0,.4)' }}
       >
         <div className="p-5 pb-4">
           <div className="mb-3 flex items-center gap-3">
             <div
-              className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-lg text-red"
+              className="flex h-8.5 w-8.5 shrink-0 items-center justify-center rounded-lg text-red"
               style={{
                 background: 'var(--red-soft)',
                 border: '1px solid color-mix(in srgb, var(--red) 40%, transparent)',
@@ -787,7 +787,7 @@ function ServerForm({
 
   return (
     <div
-      className="mb-3.5 rounded-lg border p-[18px]"
+      className="mb-3.5 rounded-lg border p-4.5"
       style={{
         borderColor: 'var(--accent-line)',
         background: 'var(--surface)',
@@ -796,7 +796,7 @@ function ServerForm({
     >
       <div className="mb-4 flex items-center gap-2.5">
         <div
-          className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-md text-accent"
+          className="flex h-6.5 w-6.5 shrink-0 items-center justify-center rounded-md text-accent"
           style={{
             background: 'var(--accent-soft)',
             border: '1px solid var(--accent-line)',
@@ -937,7 +937,7 @@ function ServerForm({
       )}
 
       {/* Surfaces */}
-      <FormLabel className="mt-[18px]">Applies to</FormLabel>
+      <FormLabel className="mt-4.5">Applies to</FormLabel>
       <div className="flex flex-wrap gap-2">
         {SURFACE_META.map(({ key, label, sub }) => {
           const on = surfaces.includes(key);
@@ -946,10 +946,10 @@ function ServerForm({
               key={key}
               type="button"
               onClick={() => toggleSurface(key)}
-              className="flex min-w-[140px] flex-1 items-center gap-2.5 rounded-md border border-border-2 bg-surface-2 px-3 py-2.5 text-left transition"
+              className="flex min-w-35 flex-1 items-center gap-2.5 rounded-md border border-border-2 bg-surface-2 px-3 py-2.5 text-left transition"
             >
               <span
-                className="flex h-[17px] w-[17px] shrink-0 items-center justify-center rounded-[5px] border"
+                className="flex h-4.25 w-4.25 shrink-0 items-center justify-center rounded-[5px] border"
                 style={{
                   background: on ? 'var(--accent)' : 'transparent',
                   borderColor: on ? 'var(--accent)' : 'var(--border-2)',
@@ -971,12 +971,12 @@ function ServerForm({
         <button
           type="button"
           onClick={() => setEnabled((e) => !e)}
-          className="relative h-[19px] w-[34px] shrink-0 rounded-full transition-colors"
+          className="relative h-4.75 w-8.5 shrink-0 rounded-full transition-colors"
           style={{ background: enabled ? 'var(--accent)' : 'var(--border-2)' }}
           aria-pressed={enabled}
         >
           <span
-            className="absolute top-0.5 h-[15px] w-[15px] rounded-full bg-white transition-all"
+            className="absolute top-0.5 h-3.75 w-3.75 rounded-full bg-white transition-all"
             style={{
               left: enabled ? '17px' : '2px',
               boxShadow: '0 1px 3px rgba(0,0,0,.3)',
@@ -1034,7 +1034,7 @@ function ServerForm({
       {formErr ? <div className="mt-3 text-[11.5px] text-red">{formErr}</div> : null}
 
       {/* Footer */}
-      <div className="mt-[18px] flex items-center gap-2.5">
+      <div className="mt-4.5 flex items-center gap-2.5">
         <button
           type="button"
           onClick={onSave}
@@ -1258,7 +1258,7 @@ function PairEditor({
                   value={r.k}
                   onChange={(e) => patch(i, { k: e.target.value })}
                   placeholder={keyPlaceholder}
-                  className="w-[170px] rounded-md border border-border-2 bg-surface-2 px-2.5 py-2 font-mono text-[12px] text-text outline-none placeholder:text-faint"
+                  className="w-42.5 rounded-md border border-border-2 bg-surface-2 px-2.5 py-2 font-mono text-[12px] text-text outline-none placeholder:text-faint"
                 />
                 {masked ? (
                   <div className="flex flex-1 items-center gap-2 rounded-md border border-border-2 bg-surface-2 px-2.5 py-1.5">

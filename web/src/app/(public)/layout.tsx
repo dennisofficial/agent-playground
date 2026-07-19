@@ -11,7 +11,7 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
   return (
     <PublicGuard>
       <main className="relative flex min-h-dvh flex-col items-center justify-center px-6 py-12">
-        <div className="w-full max-w-[396px]">
+        <div className="w-full max-w-99">
           <div className="mb-8 flex justify-center">
             <BrandLockup size="lg" showCaption />
           </div>

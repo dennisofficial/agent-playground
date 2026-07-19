@@ -17,7 +17,7 @@ export function ReconnectingBanner() {
       className="anim-fadeUp pointer-events-none fixed left-1/2 top-3 z-50 -translate-x-1/2"
     >
       <div
-        className="font-mono flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-[11.5px] font-medium tracking-wide shadow-[var(--shadow-card)] backdrop-blur"
+        className="font-mono flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-[11.5px] font-medium tracking-wide shadow-(--shadow-card) backdrop-blur"
         style={{
           color: 'var(--accent-2)',
           borderColor: 'color-mix(in srgb, var(--accent) 38%, transparent)',

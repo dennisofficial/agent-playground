@@ -60,11 +60,11 @@ export type ToolBadge =
 /** The collapsed one-line treatment for a tool row + its group-preview token. */
 export interface ToolDescriptor {
   icon: IconKind;
-  /** Bold label for native tools; '' for mcp-style rows (the name takes the inline slot). */
+  /** Bold label for native tools; ''for mcp-style rows (the name takes the inline slot). */
   label: string;
-  /** The key argument shown inline (command / path / pattern), or the friendly tool name. */
+  /** The key argument shown (command / path / pattern), or the friendly tool name. */
   arg: string;
-  /** When true, `arg` is a file path: the directory prefix is dimmed and the filename normal. */
+  /** When true,`arg` is a file path: the directory prefix is dimmed and the filename normal. */
   pathArg?: boolean;
   /** Short token for the collapsed group's preview line. */
   preview: string;

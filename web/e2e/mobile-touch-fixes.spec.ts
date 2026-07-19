@@ -1,15 +1,6 @@
-import { encodeJobRef } from '@/lib/routes';
 import { expect, test, type BrowserContext, type Locator, type Page } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
-
-/**
- * Live validation for the three mobile UI fixes. The touch block runs under a REAL touch/mobile
- * emulation (isMobile + hasTouch → Chromium reports `(pointer: coarse)` + `(hover: none)`), so the
- * fixes — which are gated on exactly those media features — actually engage. The desktop block runs a
- * fine-pointer / hover-capable context to prove desktop is unaffected. (The existing responsive.spec.ts
- * uses Desktop Chrome only, so it never exercises the coarse-pointer / hover:none paths.)
- */
 
 const DEV_EMAIL = process.env.ADMIN_SEED_EMAIL ?? 'admin@atlas.dev';
 const DEV_PASSWORD = process.env.ADMIN_SEED_PASSWORD;
@@ -17,7 +8,7 @@ const DEV_PASSWORD = process.env.ADMIN_SEED_PASSWORD;
 const ORG_ID = 'e9af869c-309a-466e-ba1b-51b870106b3f';
 const REPO_ID = '63ad1635-966a-427f-8e52-9cc8a8ecfc8b';
 const RICH_JOB_ID = 'da700000-0000-4000-8000-000000000104';
-const WORKSPACE_PATH = `/workspace/${encodeJobRef({ orgId: ORG_ID, repoId: REPO_ID, jobId: RICH_JOB_ID })}`;
+const WORKSPACE_PATH = `/jobs/${RICH_JOB_ID}`;
 
 const AUTH_FILE = path.join(__dirname, '.auth', 'mobile-user.json');
 

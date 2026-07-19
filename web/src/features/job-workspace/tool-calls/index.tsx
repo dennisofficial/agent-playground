@@ -100,7 +100,7 @@ function DisclosureRow({
     <button
       type="button"
       onClick={onToggle}
-      className="group flex w-full items-center gap-2 rounded-md py-[5px] pl-0.5 pr-2 text-left text-[12.5px] text-dim transition hover:bg-surface-3"
+      className="group flex w-full items-center gap-2 rounded-md py-1.25 pl-0.5 pr-2 text-left text-[12.5px] text-dim transition hover:bg-surface-3"
     >
       <Chevron size={12} className={`text-faint ${open ? 'rotate-90' : ''}`} />
       {children}
@@ -228,7 +228,7 @@ export function ToolGroup({ tools }: { tools: ToolItem[] }) {
       </DisclosureRow>
       {open ? (
         <div
-          className="ml-[5px] flex flex-col gap-px pl-[13px]"
+          className="ml-1.25 flex flex-col gap-px pl-3.25"
           style={{ borderLeft: '1.5px solid var(--border)' }}
         >
           {tools.map((t) => (

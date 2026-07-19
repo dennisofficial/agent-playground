@@ -102,9 +102,9 @@ const OK_RE = /\b(resumed|done|completed|merged|approved|opened|landed)\b/i;
 /**
  * Pick the bubble kind for a message — STRUCTURED SIGNALS ONLY. Everything is keyed off a real backend
  * field (`author`, `kind`, `card.type`); there is NO text-regex inference. Anything that isn't one of
- * those structured kinds falls through to plain `claude` prose (rendered as markdown). This deliberately
- * dropped the old park / PR / decision / status-line heuristics, which mis-fired on ordinary prose that
- * merely mentioned those words (e.g. a message discussing "always-ask" decisions rendered as a fake
+ * those structured kinds falls through to plain `claude`prose (rendered as markdown). This deliberately
+ * dropped the old park / PR / decision / status-line heuristics, which mis-fired on ordinary that
+ * merely mentioned those words (e.g. a message discussing"always-ask" decisions rendered as a fake
  * "Decision needed — paused" card).
  */
 export function classifyMessage(message: JobMessage): ClassifiedMessage {

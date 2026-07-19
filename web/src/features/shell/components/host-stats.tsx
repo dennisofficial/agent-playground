@@ -94,8 +94,8 @@ function Chip({ label, value, color }: { label: string; value: string; color?: s
 
 function ContainerChip({ value, color }: { value: string; color?: string }) {
   return (
-    <span className="flex flex-row items-center gap-[5px] px-2">
-      <Boxes className="h-[11px] w-[11px] text-faint" />
+    <span className="flex flex-row items-center gap-1.25 px-2">
+      <Boxes className="h-2.75 w-2.75 text-faint" />
       <span
         className={cn(
           'font-mono text-[11px] font-semibold tabular-nums',
@@ -178,7 +178,7 @@ function MiniTrigger({
       onClick={onToggle}
       disabled={!data}
       className={cn(
-        'flex h-8 items-center gap-[7px] rounded-full border border-border bg-surface-2 px-2.5 md:hidden',
+        'flex h-8 items-center gap-1.75 rounded-full border border-border bg-surface-2 px-2.5 md:hidden',
         !data && 'opacity-60',
       )}
     >
@@ -232,7 +232,7 @@ function MetricBlock({
           {value}
         </span>
       </div>
-      <div className="mt-[7px]">
+      <div className="mt-1.75">
         <MetricChart
           data={history}
           color={color}
@@ -248,7 +248,7 @@ function MetricBlock({
           <span>now</span>
         </div>
       ) : null}
-      {caption ? <div className="mt-[5px] text-[10px] text-faint">{caption}</div> : null}
+      {caption ? <div className="mt-1.25 text-[10px] text-faint">{caption}</div> : null}
     </div>
   );
 }
@@ -273,12 +273,12 @@ function HostStatsPanel({ data }: { data: HostStatsSnapshot }) {
       aria-label="Host stats"
       className="absolute right-0 top-[calc(100%+8px)] z-30 w-72 rounded-[9px] border border-border bg-surface-2 p-3.5 shadow-lg"
     >
-      <div className="mb-2.5 flex items-center gap-[7px] border-b border-border pb-2.5 text-[11.5px] font-medium text-dim">
-        <Server className="h-[13px] w-[13px]" />
+      <div className="mb-2.5 flex items-center gap-1.75 border-b border-border pb-2.5 text-[11.5px] font-medium text-dim">
+        <Server className="h-3.25 w-3.25" />
         Host — atlas-box
       </div>
 
-      <div className="flex flex-col gap-[15px]">
+      <div className="flex flex-col gap-3.75">
         <MetricBlock
           label="CPU"
           value={`${Math.round(data.cpu.usagePct)}%`}
@@ -320,7 +320,7 @@ function HostStatsPanel({ data }: { data: HostStatsSnapshot }) {
         />
       </div>
 
-      <div className="mt-[11px] flex flex-col gap-[7px] border-t border-border pt-2.5">
+      <div className="mt-2.75 flex flex-col gap-1.75 border-t border-border pt-2.5">
         <SecondaryRow
           label="Load avg"
           value={data.cpu.loadAvg.map((n) => n.toFixed(2)).join(' / ')}
@@ -332,7 +332,7 @@ function HostStatsPanel({ data }: { data: HostStatsSnapshot }) {
         />
       </div>
 
-      <div className="mt-3 flex items-center gap-[7px] border-t border-border pt-2.5">
+      <div className="mt-3 flex items-center gap-1.75 border-t border-border pt-2.5">
         <span
           className="h-1.5 w-1.5 rounded-full"
           style={{ background: fresh ? 'var(--green)' : 'var(--amber)' }}

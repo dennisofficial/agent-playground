@@ -111,7 +111,7 @@ export default function OrgSettingsLayout({
 
         {/* Content */}
         <div className="min-w-0 flex-1 overflow-y-auto bg-surface">
-          <div className="max-w-[640px] px-4 py-8 pb-16 sm:px-9">
+          <div className="max-w-160 px-4 py-8 pb-16 sm:px-9">
             {isLoading ? (
               <p className="text-[13px] text-faint">Loading…</p>
             ) : !org ? (
@@ -160,7 +160,7 @@ function OrgSettingsNav({
     <nav
       className={cn(
         'flex flex-col gap-0.5 px-3 py-4',
-        inDrawer ? 'w-full' : 'w-[228px] shrink-0 border-r border-border',
+        inDrawer ? 'w-full' : 'w-57 shrink-0 border-r border-border',
       )}
       style={{
         background: 'color-mix(in srgb, var(--panel) 60%, transparent)',
@@ -301,7 +301,7 @@ function OrgSwitcher({
                 )}
               >
                 <span
-                  className="h-[9px] w-[9px] shrink-0 rounded-[2px]"
+                  className="h-2.25 w-2.25 shrink-0 rounded-xs"
                   style={{ background: orgSwatch() }}
                 />
                 <span className="flex min-w-0 flex-1 flex-col leading-tight">

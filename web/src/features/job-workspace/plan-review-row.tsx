@@ -39,7 +39,7 @@ export function PlanReviewRow({
         onClick={() => onSelectNode(node)}
         className="flex w-full items-center gap-2 py-1.5 pl-1.5 pr-2 text-left transition hover:bg-surface-2"
       >
-        <span className="grid h-[13px] w-[13px] shrink-0 place-items-center">
+        <span className="grid h-3.25 w-3.25 shrink-0 place-items-center">
           <ShieldCheck size={11} style={{ color }} />
         </span>
         <span

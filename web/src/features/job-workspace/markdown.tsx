@@ -84,8 +84,8 @@ function CodeBlock({ lang, code }: { lang?: string; code: string }) {
         }
       />
       <pre
-        className={`m-0 px-[14px] py-3 font-mono text-[11.5px] leading-[1.7] ${
-          wrapped ? 'whitespace-pre-wrap break-words' : 'overflow-x-auto'
+        className={`m-0 px-3.5 py-3 font-mono text-[11.5px] leading-[1.7] ${
+          wrapped ? 'whitespace-pre-wrap wrap-break-word' : 'overflow-x-auto'
         }`}
         style={{ color: 'var(--term-fg)' }}
       >
@@ -111,14 +111,14 @@ function CodeBlock({ lang, code }: { lang?: string; code: string }) {
 const JSON_VIEW_STYLES = {
   ...darkStyles,
   container: `${darkStyles.container} !bg-transparent`,
-  label: `${darkStyles.label} !text-[#b89cf0]`, // object keys — lavender (function/title)
-  stringValue: `${darkStyles.stringValue} !text-[#6fb3c9]`, // teal (string)
-  numberValue: `${darkStyles.numberValue} !text-[#d89a5c]`,
-  booleanValue: `${darkStyles.booleanValue} !text-[#e8983f]`, // amber
-  nullValue: `${darkStyles.nullValue} !text-[#e8983f]`,
-  undefinedValue: `${darkStyles.undefinedValue} !text-[#e8983f]`,
-  punctuation: `${darkStyles.punctuation} !text-[var(--term-dim)]`,
-  otherValue: `${darkStyles.otherValue} !text-[var(--term-fg)]`,
+  label: `${darkStyles.label} text-[#b89cf0]!`, // object keys — lavender (function/title)
+  stringValue: `${darkStyles.stringValue} text-[#6fb3c9]!`, // teal (string)
+  numberValue: `${darkStyles.numberValue} text-[#d89a5c]!`,
+  booleanValue: `${darkStyles.booleanValue} text-[#e8983f]!`, // amber
+  nullValue: `${darkStyles.nullValue} text-[#e8983f]!`,
+  undefinedValue: `${darkStyles.undefinedValue} text-[#e8983f]!`,
+  punctuation: `${darkStyles.punctuation} text-(--term-dim)!`,
+  otherValue: `${darkStyles.otherValue} text-(--term-fg)!`,
 };
 
 /** Parse `raw` as JSON, returning it only when it's a non-null object/array (what JsonView renders);
@@ -143,7 +143,7 @@ function JsonBlock({ value }: { value: object }) {
         actions={<CopyButton text={JSON.stringify(value, null, 2)} />}
       />
       <div
-        className="overflow-x-auto px-[14px] py-3 font-mono text-[11.5px] leading-[1.7]"
+        className="overflow-x-auto px-3.5 py-3 font-mono text-[11.5px] leading-[1.7]"
         style={{ color: 'var(--term-fg)' }}
       >
         <JsonView
@@ -301,7 +301,7 @@ export function extractMermaidSources(text: string): string[] {
 let warmId = 0;
 /** Render each not-yet-cached diagram off-screen so mermaidCache holds its real {svg,w,h} BEFORE its row is
  *  measured/enters the viewport. Pure in source (theme fixed at init), so it is the same result the live
- *  component would produce. Broken diagrams are skipped (they render an error frame at a small fixed height,
+ *  component would produce. Broken diagrams are skipped (they render an error frame at a small height,
  *  not an aspect-ratio box, so they need no warm). Renders sequentially to bound main-thread cost. */
 export async function warmMermaidDiagrams(sources: string[]): Promise<void> {
   const todo = [...new Set(sources.map((s) => s.trim()))].filter(
@@ -368,7 +368,7 @@ function MermaidFrame({
 }) {
   return (
     <div className="my-3 overflow-hidden rounded-[9px] border border-border bg-surface">
-      <div className="flex items-center gap-2 border-b border-border px-3 py-[7px]">
+      <div className="flex items-center gap-2 border-b border-border px-3 py-1.75">
         <span className="font-mono text-[10px] lowercase text-faint">{label}</span>
         <span className="flex-1" />
         {actions}
@@ -519,10 +519,10 @@ function Mermaid({ chart }: { chart: string }) {
         {/* Reserve the same height the loading placeholder (and premeasure's cold-read) used, so an
             unwarmed/broken diagram's row doesn't grow or shrink when it settles into this error frame. */}
         <div style={{ minHeight: mermaidReservePx(chart) }}>
-          <p className="border-b border-border px-[14px] py-2 font-mono text-[10px] leading-[1.5] text-red">
+          <p className="border-b border-border px-3.5 py-2 font-mono text-[10px] leading-normal text-red">
             failed to render — {error}
           </p>
-          <pre className="m-0 overflow-x-auto px-[14px] py-3 font-mono text-[11.5px] leading-[1.7] text-dim">
+          <pre className="m-0 overflow-x-auto px-3.5 py-3 font-mono text-[11.5px] leading-[1.7] text-dim">
             {chart}
           </pre>
         </div>
@@ -565,7 +565,7 @@ function Mermaid({ chart }: { chart: string }) {
             reserve or vertical centering here, which would leave dead space around wide/short diagrams. */}
         <div
           onClick={() => setZoomed(true)}
-          className="mx-auto flex cursor-zoom-in flex-col p-4 [&>svg]:!h-auto [&>svg]:!w-full"
+          className="mx-auto flex cursor-zoom-in flex-col p-4 [&>svg]:h-auto! [&>svg]:w-full!"
           style={{
             maxWidth: result.w || undefined,
             // Lock the box's aspect ratio so its height is a synchronous function of column width the
@@ -605,7 +605,7 @@ function MermaidLightbox({
   const drag = useRef<{ x: number; y: number; l: number; t: number } | null>(null);
   // Start at fit-to-viewport (capped at 2× so a small diagram doesn't blow up), then zoom/pan from there.
   const fit = () => {
-    if (typeof window === 'undefined' || !w || !h) return 1;
+    if (typeof window === 'undefined' || w! || !h) return 1;
     const s = Math.min((window.innerWidth - 96) / w, (window.innerHeight - 150) / h);
     return Math.max(0.25, Math.min(2, Number(s.toFixed(2))));
   };
@@ -622,7 +622,7 @@ function MermaidLightbox({
   }, [onClose]);
 
   return createPortal(
-    <div className="fixed inset-0 z-[90] flex flex-col" role="dialog" aria-modal>
+    <div className="fixed inset-0 z-90 flex flex-col" role="dialog" aria-modal>
       <div className="absolute inset-0" style={{ background: 'rgba(0,0,0,0.55)' }} />
       <div className="relative z-10 flex items-center justify-between border-b border-border bg-panel px-3 py-2">
         <span className="font-mono text-[9px] tracking-[0.16em] text-faint">DIAGRAM</span>
@@ -659,7 +659,7 @@ function MermaidLightbox({
           {/* Drag the diagram itself to pan (like an image viewer); clicks elsewhere fall through to close. */}
           <div
             data-mmd-card
-            className="shrink-0 cursor-grab touch-none rounded-lg border border-border bg-surface p-5 shadow-[var(--shadow-card)] active:cursor-grabbing"
+            className="shrink-0 cursor-grab touch-none rounded-lg border border-border bg-surface p-5 shadow-(--shadow-card) active:cursor-grabbing"
             onPointerDown={(e) => {
               const el = scrollRef.current;
               if (!el) return;
@@ -680,7 +680,7 @@ function MermaidLightbox({
             onPointerUp={() => (drag.current = null)}
           >
             <div
-              className="[&>svg]:!h-full [&>svg]:!w-full"
+              className="[&>svg]:h-full! [&>svg]:w-full!"
               style={{ width: (w || 300) * scale, height: (h || 200) * scale }}
               // eslint-disable-next-line react/no-danger -- mermaid SVG; securityLevel 'strict' sanitizes it
               dangerouslySetInnerHTML={{ __html: svg }}
@@ -717,7 +717,7 @@ function ToolBtn({
 
 /**
  * Single source of truth for rendering an inline/block `<code>`: a ```mermaid fence → diagram, a fenced
- * block → {@link CodeBlock}, else a plain inline code chip. When `resolveFileLink` is provided (spec/plan
+ * block → {@link CodeBlock}, else a plain code chip. When`resolveFileLink` is provided (spec/plan
  * panes), an inline span that names a manifest-verified repo file becomes a clickable {@link FilePill}
  * instead of a plain chip. Both `COMPONENTS.code` and the file-link override delegate here so chip styling
  * and block detection never drift.
@@ -757,7 +757,7 @@ function renderCode({
   }
   return (
     <code
-      className="rounded-[3px] px-[5px] py-px font-mono text-[12px]"
+      className="rounded-[3px] px-1.25 py-px font-mono text-[12px]"
       style={{ background: 'var(--surface-3)' }}
     >
       {children}
@@ -867,7 +867,7 @@ const COMPONENTS: Components = {
     </h1>
   ),
   h2: ({ children }) => (
-    <h2 className="mb-1.5 mt-[18px] font-disp text-[16.5px] font-bold tracking-[-0.01em] text-text">
+    <h2 className="mb-1.5 mt-4.5 font-disp text-[16.5px] font-bold tracking-[-0.01em] text-text">
       {children}
     </h2>
   ),
@@ -883,12 +883,12 @@ const COMPONENTS: Components = {
   em: ({ children }) => <em className="italic">{children}</em>,
   a: ({ href, children }) => <ExternalAnchor href={href}>{children}</ExternalAnchor>,
   ul: ({ children }) => (
-    <ul className="my-2 flex list-disc flex-col gap-1.5 pl-5 text-[14px] leading-[1.5]">
+    <ul className="my-2 flex list-disc flex-col gap-1.5 pl-5 text-[14px] leading-normal">
       {children}
     </ul>
   ),
   ol: ({ children }) => (
-    <ol className="my-2 flex list-decimal flex-col gap-1.5 pl-5 text-[14px] leading-[1.5]">
+    <ol className="my-2 flex list-decimal flex-col gap-1.5 pl-5 text-[14px] leading-normal">
       {children}
     </ol>
   ),
@@ -950,7 +950,7 @@ function FilePill({
         e.preventDefault();
         onSelect();
       }}
-      className="cursor-pointer rounded-[3px] px-[5px] py-px font-mono text-[12px] text-accent hover:underline"
+      className="cursor-pointer rounded-[3px] px-1.25 py-px font-mono text-[12px] text-accent hover:underline"
       style={{
         background: 'var(--surface-3)',
         borderBottom: '1px solid var(--accent-line)',
@@ -1047,7 +1047,7 @@ export const Markdown = memo(function Markdown({
     return next;
   }, [resolveRelativeLink, resolveFileLink]);
   return (
-    <div className="text-[14px] leading-[1.62] text-text [overflow-wrap:anywhere]">
+    <div className="text-[14px] leading-[1.62] text-text wrap-anywhere">
       <ReactMarkdown remarkPlugins={[remarkGfm, remarkShortcodeIcons]} components={components}>
         {children}
       </ReactMarkdown>

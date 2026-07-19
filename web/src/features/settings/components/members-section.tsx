@@ -41,7 +41,7 @@ export function MembersSection({ orgId, orgName }: { orgId: string; orgName: str
 
       <div className="mt-6 overflow-hidden rounded-lg border border-border">
         <div
-          className="flex items-center px-4 py-2.5 font-mono text-[9px] uppercase tracking-[0.1em] text-faint"
+          className="flex items-center px-4 py-2.5 font-mono text-[9px] uppercase tracking-widest text-faint"
           style={{
             background: 'var(--surface-2)',
             borderBottom: '1px solid var(--border)',

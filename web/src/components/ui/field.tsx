@@ -5,7 +5,7 @@ import { Eye, EyeOff } from 'lucide-react';
 import { forwardRef, useId, useState, type InputHTMLAttributes, type ReactNode } from 'react';
 
 export const inputCls =
-  'w-full h-11 rounded-md border bg-surface px-3 text-[13px] text-text placeholder:text-faint outline-none transition focus:border-accent focus:ring-2 focus:ring-[var(--accent-soft)] data-[err=true]:border-red data-[err=true]:focus:ring-[color-mix(in_srgb,var(--red)_30%,transparent)]';
+  'w-full h-11 rounded-md border bg-surface px-3 text-[13px] text-text placeholder:text-faint outline-none transition focus:border-accent focus:ring-2 focus:ring-(--accent-soft) data-[err=true]:border-red data-[err=true]:focus:ring-[color-mix(in_srgb,var(--red)_30%,transparent)]';
 
 interface FieldProps extends InputHTMLAttributes<HTMLInputElement> {
   label: string;

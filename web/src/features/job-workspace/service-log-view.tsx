@@ -99,7 +99,7 @@ export function ServiceLogView({ jobRef, id }: { jobRef: JobRef; id: string }) {
                 key={vi.key}
                 data-index={vi.index}
                 ref={virtualizer.measureElement}
-                className="absolute left-0 top-0 w-full whitespace-pre-wrap break-words"
+                className="absolute left-0 top-0 w-full whitespace-pre-wrap wrap-break-word"
                 style={{ transform: `translateY(${vi.start}px)` }}
               >
                 <AnsiLine line={lines[vi.index]} />
@@ -154,7 +154,7 @@ export function LogFileView({ content }: { content: string }) {
             key={vi.key}
             data-index={vi.index}
             ref={virtualizer.measureElement}
-            className="absolute left-0 top-0 w-full whitespace-pre-wrap break-words"
+            className="absolute left-0 top-0 w-full whitespace-pre-wrap wrap-break-word"
             style={{ transform: `translateY(${vi.start}px)` }}
           >
             <AnsiLine line={lines[vi.index]} />

@@ -428,12 +428,12 @@ export function Composer({
   return (
     <div
       ref={rootRef}
-      className="pointer-events-none absolute bottom-0 left-0 right-2 px-6 pb-5 pt-[22px]"
+      className="pointer-events-none absolute bottom-0 left-0 right-2 px-6 pb-5 pt-5.5"
       style={{
         background: 'linear-gradient(to top, var(--panel) 58%, transparent)',
       }}
     >
-      <div className="pointer-events-auto mx-auto max-w-[880px]">
+      <div className="pointer-events-auto mx-auto max-w-220">
         {inert || isSubagent ? null : (
           <>
             <QueuedTray jobRef={jobRef} />
@@ -483,14 +483,14 @@ export function Composer({
                           ? 'Add a message with your comments (optional)…'
                           : placeholder
                 }
-                className="max-h-44 min-h-[24px] flex-1 resize-none overflow-y-auto bg-transparent pt-0.5 text-[13.5px] leading-relaxed text-text outline-none placeholder:text-faint disabled:cursor-default"
+                className="max-h-44 min-h-6 flex-1 resize-none overflow-y-auto bg-transparent pt-0.5 text-[13.5px] leading-relaxed text-text outline-none placeholder:text-faint disabled:cursor-default"
               />
               {showStop ? (
                 <button
                   type="button"
                   onClick={() => stop.mutate()}
                   disabled={stop.isPending}
-                  className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px] bg-accent text-white transition hover:brightness-105 disabled:opacity-45"
+                  className="flex h-7.5 w-7.5 shrink-0 items-center justify-center rounded-[9px] bg-accent text-white transition hover:brightness-105 disabled:opacity-45"
                   aria-label="Stop"
                   title="Stop Atlas"
                 >
@@ -510,7 +510,7 @@ export function Composer({
                     message.isPending ||
                     sendReviewComments.isPending
                   }
-                  className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px] bg-accent text-white transition hover:brightness-105 disabled:opacity-45"
+                  className="flex h-7.5 w-7.5 shrink-0 items-center justify-center rounded-[9px] bg-accent text-white transition hover:brightness-105 disabled:opacity-45"
                   aria-label="Send"
                   title={
                     archived

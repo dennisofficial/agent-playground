@@ -87,7 +87,7 @@ export function SkillsSection({ orgId, role }: { orgId: string; role: string }) 
   return (
     <>
       <h1 className="font-disp text-[22px] font-semibold tracking-[-0.01em] text-text">Skills</h1>
-      <p className="mb-4 mt-1.5 max-w-[640px] text-[13px] leading-relaxed text-dim">
+      <p className="mb-4 mt-1.5 max-w-160 text-[13px] leading-relaxed text-dim">
         Directory-based skill bundles the agent can load, in four layers:{' '}
         <b className="font-semibold text-text">Atlas built-in</b> and{' '}
         <b className="font-semibold text-text">Claude Code built-in</b> are read-only and always on;{' '}
@@ -164,7 +164,7 @@ export function SkillsSection({ orgId, role }: { orgId: string; role: string }) 
                 <Sparkles size={20} />
               </div>
               <div className="font-disp text-[15px] font-semibold text-text">No skills yet</div>
-              <div className="mt-1.5 max-w-[360px] text-[12.5px] leading-relaxed text-dim">
+              <div className="mt-1.5 max-w-90 text-[12.5px] leading-relaxed text-dim">
                 Install a skill from a GitHub repo, or author a custom one to give the agent a
                 reusable playbook.
               </div>
@@ -345,7 +345,7 @@ function SystemGroupHeader({
           borderColor: 'color-mix(in srgb, var(--green) 30%, transparent)',
         }}
       >
-        <span className="h-[5px] w-[5px] rounded-full bg-green" />
+        <span className="h-1.25 w-1.25 rounded-full bg-green" />
         always on
       </span>
       <CountPill n={count} />
@@ -658,7 +658,7 @@ function InstallDialog({
       <div
         role="dialog"
         aria-modal="true"
-        className="flex max-h-[88vh] w-full max-w-[520px] flex-col overflow-hidden rounded-xl border border-border bg-panel shadow-xl"
+        className="flex max-h-[88vh] w-full max-w-130 flex-col overflow-hidden rounded-xl border border-border bg-panel shadow-xl"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
@@ -872,7 +872,7 @@ function SkillFormDialog({
       <div
         role="dialog"
         aria-modal="true"
-        className="flex max-h-[88vh] w-full max-w-[620px] flex-col overflow-hidden rounded-xl border border-border bg-panel shadow-xl"
+        className="flex max-h-[88vh] w-full max-w-155 flex-col overflow-hidden rounded-xl border border-border bg-panel shadow-xl"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
@@ -960,7 +960,7 @@ function SkillFormDialog({
                   }}
                   className={cn(
                     inputCls,
-                    'h-[220px] resize-y py-2.5 font-mono text-[12px] leading-relaxed',
+                    'h-55 resize-y py-2.5 font-mono text-[12px] leading-relaxed',
                   )}
                   placeholder={'## When to use this\n\n…\n\n## Steps\n\n1. …'}
                 />
@@ -999,10 +999,10 @@ function SkillFormDialog({
                   key={key}
                   type="button"
                   onClick={() => toggleSurface(key)}
-                  className="flex min-w-[140px] flex-1 items-center gap-2.5 rounded-md border border-border-2 bg-surface-2 px-3 py-2.5 text-left transition"
+                  className="flex min-w-35 flex-1 items-center gap-2.5 rounded-md border border-border-2 bg-surface-2 px-3 py-2.5 text-left transition"
                 >
                   <span
-                    className="flex h-[17px] w-[17px] shrink-0 items-center justify-center rounded-[5px] border"
+                    className="flex h-4.25 w-4.25 shrink-0 items-center justify-center rounded-[5px] border"
                     style={{
                       background: on ? 'var(--accent)' : 'transparent',
                       borderColor: on ? 'var(--accent)' : 'var(--border-2)',
@@ -1023,14 +1023,14 @@ function SkillFormDialog({
             <button
               type="button"
               onClick={() => setEnabled((e) => !e)}
-              className="relative h-[19px] w-[34px] shrink-0 rounded-full transition-colors"
+              className="relative h-4.75 w-8.5 shrink-0 rounded-full transition-colors"
               style={{
                 background: enabled ? 'var(--accent)' : 'var(--border-2)',
               }}
               aria-pressed={enabled}
             >
               <span
-                className="absolute top-0.5 h-[15px] w-[15px] rounded-full bg-white transition-all"
+                className="absolute top-0.5 h-3.75 w-3.75 rounded-full bg-white transition-all"
                 style={{
                   left: enabled ? '17px' : '2px',
                   boxShadow: '0 1px 3px rgba(0,0,0,.3)',
@@ -1087,7 +1087,7 @@ function ViewerDialog({
       <div
         role="dialog"
         aria-modal="true"
-        className="flex max-h-[85vh] w-full max-w-[720px] flex-col overflow-hidden rounded-xl border border-border bg-panel shadow-xl"
+        className="flex max-h-[85vh] w-full max-w-180 flex-col overflow-hidden rounded-xl border border-border bg-panel shadow-xl"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
@@ -1149,7 +1149,7 @@ function ViewerDialog({
               <div className="mb-1.5 font-mono text-[9px] tracking-[0.14em] text-faint">
                 SKILL.MD
               </div>
-              <pre className="max-h-[280px] overflow-auto whitespace-pre-wrap rounded-md border border-border bg-surface-2 p-3 text-[11.5px] leading-relaxed text-dim">
+              <pre className="max-h-70 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-surface-2 p-3 text-[11.5px] leading-relaxed text-dim">
                 {data.skillMd ?? '(no SKILL.md on disk)'}
               </pre>
             </>
@@ -1191,18 +1191,18 @@ function DeleteDialog({
   return (
     <div
       onClick={onClose}
-      className="fixed inset-0 z-50 flex items-start justify-center pt-[150px]"
+      className="fixed inset-0 z-50 flex items-start justify-center pt-37.5"
       style={{ background: 'rgba(10,12,16,.5)', backdropFilter: 'blur(3px)' }}
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-[430px] max-w-[90%] overflow-hidden rounded-lg border border-border-2 bg-panel"
+        className="w-107.5 max-w-[90%] overflow-hidden rounded-lg border border-border-2 bg-panel"
         style={{ boxShadow: '0 30px 80px rgba(0,0,0,.4)' }}
       >
         <div className="p-5 pb-4">
           <div className="mb-3 flex items-center gap-3">
             <div
-              className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-lg text-red"
+              className="flex h-8.5 w-8.5 shrink-0 items-center justify-center rounded-lg text-red"
               style={{
                 background: 'var(--red-soft)',
                 border: '1px solid color-mix(in srgb, var(--red) 40%, transparent)',

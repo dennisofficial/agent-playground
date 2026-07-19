@@ -28,7 +28,7 @@ export function TopBar({
 
   return (
     <header
-      className="relative z-30 flex h-[52px] flex-none items-center gap-2 border-b border-border px-3 md:gap-3.5 md:px-4"
+      className="relative z-30 flex h-13 flex-none items-center gap-2 border-b border-border px-3 md:gap-3.5 md:px-4"
       style={{
         background: 'color-mix(in srgb, var(--panel) 82%, transparent)',
         backdropFilter: 'blur(12px)',
@@ -52,7 +52,7 @@ export function TopBar({
           }}
         >
           <span
-            className="h-[11px] w-[11px] rounded-[1.5px] border-[1.6px] border-white"
+            className="h-2.75 w-2.75 rounded-[1.5px] border-[1.6px] border-white"
             style={{ transform: 'rotate(45deg)' }}
           />
         </span>
@@ -63,7 +63,7 @@ export function TopBar({
 
       <span className="hidden h-5 w-px md:block" style={{ background: 'var(--border)' }} />
 
-      <nav className="flex h-full items-stretch gap-3.5 md:gap-[22px]">
+      <nav className="flex h-full items-stretch gap-3.5 md:gap-5.5">
         <TopNavItem
           href={ROUTES.workspace()}
           active={onJobs}
@@ -107,7 +107,7 @@ function TopNavItem({
     <Link
       href={href}
       className={cn(
-        'flex h-full items-center gap-[7px] border-b-2 px-1 text-[13px] font-semibold transition',
+        'flex h-full items-center gap-1.75 border-b-2 px-1 text-[13px] font-semibold transition',
         active ? 'border-accent text-text' : 'border-transparent text-dim hover:text-text',
       )}
     >

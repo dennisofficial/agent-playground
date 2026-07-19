@@ -38,11 +38,7 @@ export function NeedsYouBand({ threads }: { threads: InboxThread[] }) {
         {attention.map((t) => (
           <Link
             key={t.id}
-            href={threadHref({
-              orgId: t.org.id,
-              repoId: t.repo.id,
-              jobId: t.id,
-            })}
+            href={threadHref(t.id)}
             className="rounded-md border border-border bg-surface p-3 transition hover:border-border-2"
           >
             <div className="mb-2 flex items-center gap-2">

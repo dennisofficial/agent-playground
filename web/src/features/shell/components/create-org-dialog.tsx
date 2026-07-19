@@ -35,12 +35,12 @@ export function CreateOrgDialog({ onClose }: { onClose: () => void }) {
   return (
     <div
       onMouseDown={onClose}
-      className="fixed inset-0 z-[70] flex items-start justify-center px-4 pt-[120px]"
+      className="fixed inset-0 z-70 flex items-start justify-center px-4 pt-30"
       style={{ background: 'rgba(10,12,16,0.5)', backdropFilter: 'blur(3px)' }}
     >
       <div
         onMouseDown={(e) => e.stopPropagation()}
-        className="w-[440px] max-w-[90%] overflow-hidden rounded-lg border border-border-2 bg-panel"
+        className="w-110 max-w-[90%] overflow-hidden rounded-lg border border-border-2 bg-panel"
         style={{ boxShadow: '0 30px 80px rgba(0,0,0,0.4)' }}
         role="dialog"
         aria-modal
@@ -48,7 +48,7 @@ export function CreateOrgDialog({ onClose }: { onClose: () => void }) {
         <div className="p-5">
           <div className="mb-3 flex items-center gap-2.5">
             <span
-              className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-lg text-accent"
+              className="flex h-8.5 w-8.5 shrink-0 items-center justify-center rounded-lg text-accent"
               style={{
                 background: 'var(--accent-soft)',
                 border: '1px solid var(--accent-line)',

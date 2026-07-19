@@ -52,7 +52,7 @@ export function ServerUnreachable() {
       <div aria-hidden style={VIGNETTE} />
       <div aria-hidden style={TOP_LINE} />
 
-      <div className="relative flex max-w-[560px] flex-col items-center px-6 text-center">
+      <div className="relative flex max-w-140 flex-col items-center px-6 text-center">
         {/* ===== ILLUSTRATION ===== */}
         <div className="anim-fadeUp" style={ILLUSTRATION}>
           {/* local node */}

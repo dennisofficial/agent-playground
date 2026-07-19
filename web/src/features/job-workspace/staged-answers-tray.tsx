@@ -20,8 +20,8 @@ export function StagedAnswersTray({ jobRef }: { jobRef: JobRef }) {
       className="mb-2 overflow-hidden rounded-[14px] border border-border bg-surface"
       style={{ boxShadow: '0 1px 2px rgba(20,18,12,.05)' }}
     >
-      <div className="flex items-center gap-2 px-3 py-[9px] pl-[13px]">
-        <span className="grid h-[19px] w-[19px] flex-none place-items-center rounded-[5px] bg-accent-soft text-accent">
+      <div className="flex items-center gap-2 px-3 py-2.25 pl-3.25">
+        <span className="grid h-4.75 w-4.75 flex-none place-items-center rounded-[5px] bg-accent-soft text-accent">
           <Clock size={11} strokeWidth={2.2} />
         </span>
         <span className="text-[12px] font-semibold text-text">
@@ -37,7 +37,7 @@ export function StagedAnswersTray({ jobRef }: { jobRef: JobRef }) {
             // tray; wiping them here would leave `composer.tsx`'s `onError` restore with nothing to find.
             composerStore.setStagedAnswers(jobRef, (prev) => prev.filter((a) => a.submitting))
           }
-          className="rounded-md px-2.5 py-[3px] text-[11px] font-medium text-dim"
+          className="rounded-md px-2.5 py-0.75 text-[11px] font-medium text-dim"
         >
           Clear all
         </button>
@@ -45,7 +45,7 @@ export function StagedAnswersTray({ jobRef }: { jobRef: JobRef }) {
       {stagedAnswers.map((a) => (
         <div
           key={a.cardId}
-          className="flex items-start gap-2.5 border-t border-hair px-[11px] py-2 pl-[13px] first:border-t-0"
+          className="flex items-start gap-2.5 border-t border-hair px-2.75 py-2 pl-3.25 first:border-t-0"
         >
           <span className="w-0.5 flex-none self-stretch rounded-full bg-accent-line" />
           <div className="min-w-0 flex-1">

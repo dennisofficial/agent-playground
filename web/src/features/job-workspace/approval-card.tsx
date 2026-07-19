@@ -251,11 +251,11 @@ function ShipVerificationsList({ verifications }: { verifications: ShipThreadVer
             <span>{v.title}</span>
           </div>
           {v.status === 'not_done' ? (
-            <p className="pl-[18px] text-faint">Not done — needs operator attention.</p>
+            <p className="pl-4.5 text-faint">Not done — needs operator attention.</p>
           ) : v.unverified ? (
-            <p className="pl-[18px] text-faint">No verification evidence reported.</p>
+            <p className="pl-4.5 text-faint">No verification evidence reported.</p>
           ) : (
-            <div className="mt-1 flex flex-col gap-1 pl-[18px]">
+            <div className="mt-1 flex flex-col gap-1 pl-4.5">
               {v.verification.map((entry, j) => (
                 <div key={j} className="font-mono text-[10.5px] text-dim">
                   <span className={entry.exitCode === 0 ? 'text-green' : 'text-red'}>
@@ -378,7 +378,7 @@ function DbWriteCardView({ card, jobRef }: { card: WebApprovalCard; jobRef: JobR
 
       <div className="flex flex-col gap-3 px-4 py-3">
         {card.sql ? (
-          <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-md border border-border bg-surface-2 px-3 py-2.5 font-mono text-[12px] leading-relaxed text-text">
+          <pre className="overflow-x-auto whitespace-pre-wrap wrap-break-word rounded-md border border-border bg-surface-2 px-3 py-2.5 font-mono text-[12px] leading-relaxed text-text">
             {card.sql}
           </pre>
         ) : null}

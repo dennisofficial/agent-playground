@@ -473,7 +473,7 @@ export function TranscriptView({
         onPointerLeave={onPointerLeave}
         className="h-full overflow-y-auto overflow-x-hidden overscroll-contain [overflow-anchor:none] px-7 pt-5"
       >
-        <div className="relative mx-auto flex max-w-[880px] flex-col gap-[9px]">
+        <div className="relative mx-auto flex max-w-220 flex-col gap-2.25">
           {premeasureLayer}
           {isLoading && messages.length === 0 ? (
             <p className="py-10 text-center text-[13px] text-faint">Loading conversation…</p>

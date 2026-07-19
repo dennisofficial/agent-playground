@@ -42,7 +42,7 @@ export function WorkspaceProfileSection({ orgId, role }: { orgId: string; role: 
       <h1 className="font-disp text-[22px] font-semibold tracking-[-0.01em] text-text">
         Workspace profile
       </h1>
-      <p className="mb-7 mt-1.5 max-w-[640px] text-[13px] leading-relaxed text-dim">
+      <p className="mb-7 mt-1.5 max-w-160 text-[13px] leading-relaxed text-dim">
         The Atlas-managed provisioning a repo’s sandboxes are built from — secret files, mounts, a
         setup script, and a preview recipe — plus the dependency manifests Atlas has detected. Pick
         a repo below.
@@ -55,7 +55,7 @@ export function WorkspaceProfileSection({ orgId, role }: { orgId: string; role: 
       ) : null}
 
       <div className="mb-5 flex items-center gap-2.5">
-        <span className="font-mono text-[9px] tracking-[0.1em] text-faint">REPO</span>
+        <span className="font-mono text-[9px] tracking-widest text-faint">REPO</span>
         <select
           value={repoId}
           onChange={(e) => setRepoId(e.target.value)}
@@ -149,7 +149,7 @@ function RepoProfile({
   if (isError || !data) {
     return (
       <div
-        className="flex items-start gap-3 rounded-lg p-[22px]"
+        className="flex items-start gap-3 rounded-lg p-5.5"
         style={{
           background: RED_SOFT,
           border: `1px solid color-mix(in srgb, var(--red) 30%, transparent)`,
@@ -179,7 +179,7 @@ function RepoProfile({
   return (
     <div className="flex flex-col gap-5">
       {SECTIONS.map((s) => (
-        <Card key={s.id} className="p-[18px]">
+        <Card key={s.id} className="p-4.5">
           <div className="mb-3.5">
             <div className="text-[13.5px] font-semibold text-text">{s.title}</div>
             {s.subtitle ? <div className="mt-0.5 text-[11px] text-faint">{s.subtitle}</div> : null}
@@ -318,7 +318,7 @@ function SecretFilesSection({ orgId, repoId, data, canManage }: ProfileCtx) {
               value={label}
               onChange={(e) => setLabel(e.target.value)}
               placeholder="label (optional)"
-              className="w-[180px] rounded-md border border-border-2 bg-surface px-3 py-2 font-mono text-[12px] text-text outline-none placeholder:text-faint"
+              className="w-45 rounded-md border border-border-2 bg-surface px-3 py-2 font-mono text-[12px] text-text outline-none placeholder:text-faint"
             />
           </div>
           <textarea

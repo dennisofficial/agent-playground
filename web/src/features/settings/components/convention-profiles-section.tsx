@@ -36,7 +36,7 @@ export function ConventionProfilesSection({ orgId, role }: { orgId: string; role
       <h1 className="font-disp text-[22px] font-semibold tracking-[-0.01em] text-text">
         Convention Profiles
       </h1>
-      <p className="mb-4 mt-1.5 max-w-[640px] text-[13px] leading-relaxed text-dim">
+      <p className="mb-4 mt-1.5 max-w-160 text-[13px] leading-relaxed text-dim">
         Reusable <b className="font-semibold text-text">house-style</b> bundles — folder structure,
         stack idioms, a shared-contract layout. Define one once, then attach it to any repo that
         follows that style. A repo with <b className="font-semibold text-text">none</b> attached
@@ -95,7 +95,7 @@ export function ConventionProfilesSection({ orgId, role }: { orgId: string; role
             <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border bg-surface-2 px-6 py-10 text-center">
               <Layers size={20} className="text-faint" />
               <div className="text-[13px] font-semibold text-text">No convention profiles yet</div>
-              <div className="max-w-[420px] text-[12px] leading-relaxed text-dim">
+              <div className="max-w-105 text-[12px] leading-relaxed text-dim">
                 Create one (e.g. “NestJS + Next.js + shared contract”) to encode how new code should
                 be structured, then attach it to matching repos below.
               </div>
@@ -114,7 +114,7 @@ export function ConventionProfilesSection({ orgId, role }: { orgId: string; role
             </div>
           )}
 
-          <div className="h-[34px]" />
+          <div className="h-8.5" />
 
           <RepoAttachments orgId={orgId} profiles={profiles} canManage={isOwner} />
         </>
@@ -191,7 +191,7 @@ function ProfileCard({
           </div>
         ) : null}
       </div>
-      <pre className="mt-3 max-h-[140px] overflow-auto whitespace-pre-wrap rounded-md border border-border bg-surface-2 p-3 text-[11.5px] leading-relaxed text-dim">
+      <pre className="mt-3 max-h-35 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-surface-2 p-3 text-[11.5px] leading-relaxed text-dim">
         {profile.body}
       </pre>
     </div>
@@ -258,7 +258,7 @@ function ProfileEditor({
       <div
         role="dialog"
         aria-modal="true"
-        className="flex max-h-[88vh] w-full max-w-[620px] flex-col overflow-hidden rounded-xl border border-border bg-panel shadow-xl"
+        className="flex max-h-[88vh] w-full max-w-155 flex-col overflow-hidden rounded-xl border border-border bg-panel shadow-xl"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
@@ -311,7 +311,7 @@ function ProfileEditor({
           <textarea
             className={cn(
               inputCls,
-              'h-[220px] resize-y py-2.5 font-mono text-[12px] leading-relaxed',
+              'h-55 resize-y py-2.5 font-mono text-[12px] leading-relaxed',
             )}
             value={body}
             placeholder={
@@ -328,7 +328,7 @@ function ProfileEditor({
             a matching repo.
           </p>
           <textarea
-            className={cn(inputCls, 'h-[80px] resize-y py-2.5 text-[12px] leading-relaxed')}
+            className={cn(inputCls, 'h-20 resize-y py-2.5 text-[12px] leading-relaxed')}
             value={detectHint}
             placeholder="A NestJS backend + Next.js frontend wired through a shared/ contract dir."
             onChange={(e) => setDetectHint(e.target.value)}
@@ -377,7 +377,7 @@ function RepoAttachments({
       <div className="mb-1 text-[12px] font-semibold uppercase tracking-wide text-faint">
         Repo attachments
       </div>
-      <p className="mb-3 max-w-[560px] text-[12px] leading-relaxed text-dim">
+      <p className="mb-3 max-w-140 text-[12px] leading-relaxed text-dim">
         Attach a profile to a repo to build its code in that house style. Leave a repo on{' '}
         <b className="font-semibold text-text">None</b> to keep it convention-free.
       </p>
@@ -432,7 +432,7 @@ function RepoAttachmentRow({
       <div className="flex shrink-0 items-center gap-2">
         {attach.isPending ? <Spinner className="h-3 w-3" /> : null}
         <select
-          className={cn(inputCls, 'h-9 w-[220px] cursor-pointer text-[12px]')}
+          className={cn(inputCls, 'h-9 w-55 cursor-pointer text-[12px]')}
           value={current}
           disabled={!canManage || isLoading || attach.isPending}
           onChange={(e) =>

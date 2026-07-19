@@ -20,7 +20,7 @@ export function ShortcutHint() {
   if (isMac === null) return null;
 
   return (
-    <span aria-hidden="true" className="inline-flex items-center gap-[3px]">
+    <span aria-hidden="true" className="inline-flex items-center gap-0.75">
       <Cap>{isMac ? <Command size={11} strokeWidth={2.25} /> : 'Ctrl'}</Cap>
       <Cap>
         <CornerDownLeft size={11} strokeWidth={2.25} />
@@ -32,7 +32,7 @@ export function ShortcutHint() {
 function Cap({ children }: { children: React.ReactNode }) {
   return (
     <kbd
-      className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-[5px] bg-white/15 px-1 font-mono text-[12px] font-medium leading-none text-white/95"
+      className="inline-flex h-4.5 min-w-4.5 items-center justify-center rounded-[5px] bg-white/15 px-1 font-mono text-[12px] font-medium leading-none text-white/95"
       style={{
         boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.28), inset 0 -1px 0 0 rgba(0,0,0,0.14)',
       }}

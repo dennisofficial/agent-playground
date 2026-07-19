@@ -759,7 +759,7 @@ function DiffRowLine({
             e.preventDefault();
             onAdd();
           }}
-          className="absolute z-[3] flex items-center justify-center rounded-full text-white"
+          className="absolute z-3 flex items-center justify-center rounded-full text-white"
           style={{
             left: 4,
             top: '50%',
@@ -864,7 +864,7 @@ function InlineCommentThread({
       onMouseEnter={() => onHoverChange?.(true)}
       onMouseLeave={() => onHoverChange?.(false)}
     >
-      <div className="mb-[5px] flex items-center gap-1.5">
+      <div className="mb-1.25 flex items-center gap-1.5">
         {sent ? (
           <Check
             size={11}
@@ -896,14 +896,14 @@ function InlineCommentThread({
             type="button"
             onClick={onRemove}
             aria-label="Remove comment"
-            className="flex h-[17px] w-[17px] items-center justify-center rounded-[5px] text-faint opacity-0 transition group-hover:opacity-100 hover:text-[var(--red)] focus-visible:opacity-100"
+            className="flex h-4.25 w-4.25 items-center justify-center rounded-[5px] text-faint opacity-0 transition group-hover:opacity-100 hover:text-(--red) focus-visible:opacity-100"
           >
             <X size={12} />
           </button>
         ) : null}
       </div>
       <div
-        className="text-[12.5px] leading-[1.5]"
+        className="text-[12.5px] leading-normal"
         style={{ color: sent ? 'var(--dim)' : 'var(--text)' }}
       >
         {note || <span className="text-faint">No note added</span>}
@@ -972,14 +972,14 @@ function InlineComposer({
         <button
           type="button"
           onClick={onCancel}
-          className="rounded-lg px-[11px] py-[7px] text-[11px] font-semibold text-dim"
+          className="rounded-lg px-2.75 py-1.75 text-[11px] font-semibold text-dim"
         >
           Cancel
         </button>
         <button
           type="button"
           onClick={() => onAdd(note)}
-          className="flex items-center gap-1.5 rounded-lg bg-accent px-[13px] py-[7px] text-[11px] font-bold text-white"
+          className="flex items-center gap-1.5 rounded-lg bg-accent px-3.25 py-1.75 text-[11px] font-bold text-white"
         >
           <Check size={12} strokeWidth={2.4} />
           Add comment

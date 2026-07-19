@@ -67,7 +67,7 @@ function FileChip({ item }: { item: WebAttachmentItem }) {
       title={item.name}
     >
       <FileText size={13} strokeWidth={2} className="shrink-0 text-accent-2" />
-      <span className="max-w-[140px] truncate text-[11px] text-text">{item.name}</span>
+      <span className="max-w-35 truncate text-[11px] text-text">{item.name}</span>
       <span className="font-mono text-[9px] text-dim">{fmtSize(item.size)}</span>
     </div>
   );

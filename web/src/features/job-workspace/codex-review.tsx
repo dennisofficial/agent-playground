@@ -100,17 +100,17 @@ export function CodexReviewCard({
           <div className="flex items-center gap-2">
             <span className="truncate text-[12.5px] font-semibold text-text">Codex review</span>
             {round != null ? (
-              <span className="rounded-sm bg-surface-3 px-1.5 py-px font-mono text-[8.5px] uppercase tracking-[0.1em] text-faint">
+              <span className="rounded-sm bg-surface-3 px-1.5 py-px font-mono text-[8.5px] uppercase tracking-widest text-faint">
                 round {round}
               </span>
             ) : null}
             {findings != null ? (
-              <span className="font-mono text-[9.5px] uppercase tracking-[0.1em] text-faint">
+              <span className="font-mono text-[9.5px] uppercase tracking-widest text-faint">
                 {findings === 0 ? 'no findings' : `${findings} finding${findings === 1 ? '' : 's'}`}
               </span>
             ) : null}
             {running ? (
-              <span className="flex items-center gap-1 font-mono text-[9.5px] uppercase tracking-[0.1em] text-faint">
+              <span className="flex items-center gap-1 font-mono text-[9.5px] uppercase tracking-widest text-faint">
                 <span
                   className="pulse-dot h-1.5 w-1.5 rounded-full"
                   style={{ background: 'var(--accent)' }}

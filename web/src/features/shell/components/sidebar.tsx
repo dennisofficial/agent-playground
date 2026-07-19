@@ -205,7 +205,7 @@ export function Sidebar({ inDrawer = false }: { inDrawer?: boolean } = {}) {
       data-testid="app-sidebar"
       className={cn(
         'flex h-full flex-col',
-        inDrawer ? 'w-full' : 'w-[272px] shrink-0 border-r border-border',
+        inDrawer ? 'w-full' : 'w-68 shrink-0 border-r border-border',
       )}
       style={{ background: 'var(--surface-2)' }}
     >
@@ -214,7 +214,7 @@ export function Sidebar({ inDrawer = false }: { inDrawer?: boolean } = {}) {
         <Link
           href={ROUTES.workspace()}
           className={cn(
-            'flex items-center gap-2.5 rounded-[7px] px-[9px] py-2 transition',
+            'flex items-center gap-2.5 rounded-[7px] px-2.25 py-2 transition',
             onDashboard ? 'bg-accent-soft' : 'hover:bg-surface-2',
           )}
         >
@@ -308,7 +308,7 @@ function OrgSection({
     <div className="border-t border-border px-0.5 pb-2 pt-2.5">
       {/* Org header — the whole row toggles collapse; the absolute icon cluster keeps the title centered.
           No hairline under it: dividers separate siblings (repo↔repo, org↔org), never header↔content. */}
-      <div className={cn('group/org relative', expanded ? 'mb-[5px] pb-[5px]' : '')}>
+      <div className={cn('group/org relative', expanded ? 'mb-1.25 pb-1.25' : '')}>
         <button
           type="button"
           onClick={onToggleOrg}
@@ -377,7 +377,7 @@ function OrgSection({
             reposLoading ? (
               <div className="px-1 py-1 font-mono text-[10px] text-faint">Loading…</div>
             ) : (
-              <div className="flex items-center gap-[7px] px-1 pb-[3px] pt-[5px]">
+              <div className="flex items-center gap-1.75 px-1 pb-0.75 pt-1.25">
                 <span className="flex-1 text-[10.5px] italic text-faint">No repositories yet</span>
                 <Link
                   href={ROUTES.orgSettings(org.id, 'repos')}
@@ -412,7 +412,7 @@ function OrgSection({
                   <button
                     type="button"
                     onClick={onToggleIdle}
-                    className="mt-[3px] flex w-full items-center gap-1.5 border-t border-hair rounded-[4px] px-1 pb-1 pt-[7px] text-left text-[10.5px] text-faint transition hover:text-dim"
+                    className="mt-0.75 flex w-full items-center gap-1.5 border-t border-hair rounded-[4px] px-1 pb-1 pt-1.75 text-left text-[10.5px] text-faint transition hover:text-dim"
                     aria-expanded={vm.idleExpanded}
                   >
                     <ChevronRight
@@ -492,12 +492,12 @@ function RepoGroup({
 }) {
   const iconBtn = 'grid h-[18px] w-[18px] flex-none place-items-center rounded-[4px] transition';
   return (
-    <div className={cn('pb-[3px]', divided && 'mt-[3px] border-t border-hair pt-[3px]')}>
+    <div className={cn('pb-0.75', divided && 'mt-0.75 border-t border-hair pt-0.75')}>
       <div className="group/repo flex items-center gap-1 pr-1">
         <button
           type="button"
           onClick={onToggle}
-          className="flex min-w-0 flex-1 items-center gap-[7px] rounded-[4px] px-[3px] pb-1 pt-[5px] text-left"
+          className="flex min-w-0 flex-1 items-center gap-1.75 rounded-[4px] px-0.75 pb-1 pt-1.25 text-left"
         >
           <span className="min-w-0 flex-1 truncate font-mono text-[11px] font-bold tracking-[-0.01em] text-text">
             {repo.repoName}
@@ -546,7 +546,7 @@ function RepoGroup({
           ) : (
             <Link
               href={ROUTES.newThread({ orgId, repoId: repo.repoId })}
-              className="flex items-center gap-[7px] rounded-[4px] pb-[5px] pl-1 pr-[7px] pt-1 transition hover:bg-surface-2"
+              className="flex items-center gap-1.75 rounded-[4px] pb-1.25 pl-1 pr-1.75 pt-1 transition hover:bg-surface-2"
             >
               <span className="flex-1 text-[10.5px] italic text-faint">No jobs yet</span>
               <span className="flex-none font-mono text-[9.5px] font-semibold text-accent">
@@ -570,7 +570,7 @@ function RepoGroup({
                   thread={t}
                   orgId={orgId}
                   section={section}
-                  active={pathname === threadHref({ orgId, repoId: repo.repoId, jobId: t.id })}
+                  active={pathname === threadHref(t.id)}
                 />
               ))}
             </SidebarSection>
@@ -617,7 +617,7 @@ function ArchivedSection({
               thread={t}
               orgId={t.org.id}
               section="archived"
-              active={pathname === threadHref({ orgId: t.org.id, repoId: t.repo.id, jobId: t.id })}
+              active={pathname === threadHref(t.id)}
             />
           ))
         )}
@@ -661,15 +661,15 @@ function SidebarSection({
 }) {
   const color = SECTION_COLOR[section];
   return (
-    <div className="pb-[3px]">
+    <div className="pb-0.75">
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-center gap-[7px] rounded-[4px] px-[3px] pb-[3px] pt-[7px] text-left"
+        className="flex w-full items-center gap-1.75 rounded-[4px] px-0.75 pb-0.75 pt-1.75 text-left"
         aria-expanded={!collapsed}
       >
         <span
-          className="h-[7px] w-[7px] flex-none rounded-[2px]"
+          className="h-1.75 w-1.75 flex-none rounded-xs"
           style={{ background: color }}
           aria-hidden
         />
@@ -679,7 +679,7 @@ function SidebarSection({
         >
           {SECTION_LABEL[section]}
         </span>
-        <span className="rounded-full bg-surface-2 px-[5px] font-mono text-[9px] text-faint">
+        <span className="rounded-full bg-surface-2 px-1.25 font-mono text-[9px] text-faint">
           {count}
         </span>
         {collapsed && anyNeedsYou ? (
@@ -721,10 +721,10 @@ function ThreadRow({
     thread.portState != null || thread.pr?.number != null || thread.needsYou || showBuildStages;
   return (
     <Link
-      href={threadHref({ orgId, repoId: thread.repo.id, jobId: thread.id })}
+      href={threadHref(thread.id)}
       title={`${thread.org.name} · ${thread.repo.name}`}
       className={cn(
-        'flex items-start gap-1.5 rounded-[7px] pb-[5px] pl-[3px] pr-[7px] pt-[5px] transition',
+        'flex items-start gap-1.5 rounded-[7px] pb-1.25 pl-0.75 pr-1.75 pt-1.25 transition',
         !active && 'hover:bg-surface-2',
       )}
       style={
@@ -750,7 +750,7 @@ function ThreadRow({
         )}
         {thread.halt ? (
           <span
-            className="absolute -bottom-px -right-0.5 h-[7px] w-[7px] rounded-full border-[1.5px] border-panel"
+            className="absolute -bottom-px -right-0.5 h-1.75 w-1.75 rounded-full border-[1.5px] border-panel"
             style={{ background: 'var(--red)' }}
             title={`Halted — ${thread.halt.reason}`}
             aria-label="Halted"

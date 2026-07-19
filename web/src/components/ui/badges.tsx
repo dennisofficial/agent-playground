@@ -69,7 +69,7 @@ export function KindBadge({ kind, className }: { kind: JobKind; className?: stri
   return (
     <span
       className={cn(
-        'inline-flex items-center rounded-[3px] border border-border-2 px-[5px] py-0.5 font-mono text-[8px] font-semibold uppercase tracking-[0.06em] text-dim',
+        'inline-flex items-center rounded-[3px] border border-border-2 px-1.25 py-0.5 font-mono text-[8px] font-semibold uppercase tracking-[0.06em] text-dim',
         className,
       )}
     >
@@ -83,14 +83,14 @@ export function KindBadge({ kind, className }: { kind: JobKind; className?: stri
  * {@link STATUS_META}) names the specific status. Every status is visually distinct:
  *   forming  (planning / triaging)  → dashed ring          · triaging breathes
  *   reviewing(plan_review)          → faint dashed base + a solid arc scanning around it
- *   working  (running)              → spinning arc          · the autonomous "build is churning" spinner
+ *   working  (running)              → spinning arc          · the autonomous "build is churning"spinner
  *   waiting  (awaiting_approval)    → ring + center dot      · bullseye = your move
- *   parked   (blocked)              → ring + a single center bar · a gate, not your move
- *   paused                          → ring + pause bars
- *   failed                          → ring + ✕
+ *   parked   (blocked)              → + a single center bar · a gate, not your move
+ *   paused                          → + pause bars
+ *   failed                          → + ✕
  *   done                            → filled disc + ✓
  *
- * `plan_review` stays in the cool, pre-approval family (blue, like Planning) — it's the
+ *`plan_review` stays in the cool, pre-approval family (blue, like Planning) — it's the
  * you're-in-the-loop phase (Codex reviewing a plan you haven't approved yet), NOT the autonomous
  * post-approval build. Its scanning arc reads as "reviewing" without borrowing `running`'s orange
  * spinner. `status` undefined → a neutral hollow ring (the cross-org inbox carries no status for
@@ -426,13 +426,13 @@ export function CiHeaderGlyph({ ci, counts }: { ci: CiStatus | null; counts?: Ci
                 top: Math.round(anchor.y - 6),
                 transform: 'translate(-50%, -100%)',
               }}
-              className="pointer-events-none z-50 whitespace-nowrap rounded-md bg-[var(--text)] px-1.5 py-1 text-[10px] font-medium text-[var(--panel)] shadow-md"
+              className="pointer-events-none z-50 whitespace-nowrap rounded-md bg-(--text) px-1.5 py-1 text-[10px] font-medium text-(--panel) shadow-md"
             >
               {segments.length > 0 ? (
                 <span className="flex items-center gap-1.5">
                   {segments.map((seg, i) => (
                     <span key={seg.label} className="flex items-center gap-1">
-                      {i > 0 ? <span className="text-[var(--faint)]">·</span> : null}
+                      {i > 0 ? <span className="text-(--faint)">·</span> : null}
                       <span
                         className="inline-block h-1.5 w-1.5 rounded-full"
                         style={{ background: seg.color }}

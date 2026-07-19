@@ -1,14 +1,7 @@
 import { BREAKPOINTS } from '@/hooks/use-breakpoint';
-import { encodeJobRef } from '@/lib/routes';
 import { expect, test, type BrowserContext, type Locator, type Page } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
-
-/**
- * Live e2e breakpoint coverage against the real running stack (Postgres :5433 / Nest :4002 /
- * Next :3000) — no mocks. Viewport widths are derived from the same {@link BREAKPOINTS} the app
- * itself renders against, so a future threshold change updates both sides together.
- */
 
 const DEV_EMAIL = process.env.ADMIN_SEED_EMAIL ?? 'admin@atlas.dev';
 const DEV_PASSWORD = process.env.ADMIN_SEED_PASSWORD;
@@ -17,7 +10,7 @@ const ORG_ID = 'e9af869c-309a-466e-ba1b-51b870106b3f';
 const REPO_ID = '63ad1635-966a-427f-8e52-9cc8a8ecfc8b';
 const RICH_JOB_ID = 'da700000-0000-4000-8000-000000000104';
 
-const WORKSPACE_PATH = `/workspace/${encodeJobRef({ orgId: ORG_ID, repoId: REPO_ID, jobId: RICH_JOB_ID })}`;
+const WORKSPACE_PATH = `/jobs/${RICH_JOB_ID}`;
 const SETTINGS_PATH = `/orgs/${ORG_ID}/settings?section=general`;
 
 const VIEWPORTS = {

@@ -48,11 +48,7 @@ export function CreatedJobsPane({ jobRef }: { jobRef: JobRef }) {
 function CreatedJobItem({ job, jobRef }: { job: CreatedJobRow; jobRef: JobRef }) {
   const status = toJobStatus(job.status as WireJobStatus);
   const meta = STATUS_META[status];
-  const href = threadHref({
-    orgId: jobRef.orgId,
-    repoId: jobRef.repoId,
-    jobId: job.id,
-  });
+  const href = threadHref(job.id);
   return (
     <Link
       href={href}

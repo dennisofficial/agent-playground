@@ -112,7 +112,7 @@ export function TopBarActions({
       <button
         type="button"
         title="View diff · 4 files"
-        className="flex h-[29px] items-center gap-1.5 rounded-sm px-2.5 text-dim transition hover:bg-surface-2 hover:text-text"
+        className="flex h-7.25 items-center gap-1.5 rounded-sm px-2.5 text-dim transition hover:bg-surface-2 hover:text-text"
       >
         <svg
           width="15"
@@ -186,7 +186,7 @@ export function TopBarButton({
       aria-label={title}
       onClick={onClick}
       className={cn(
-        'flex h-[29px] w-[29px] items-center justify-center rounded-sm text-dim transition hover:bg-surface-2 hover:text-text',
+        'flex h-7.25 w-7.25 items-center justify-center rounded-sm text-dim transition hover:bg-surface-2 hover:text-text',
         className,
       )}
     >

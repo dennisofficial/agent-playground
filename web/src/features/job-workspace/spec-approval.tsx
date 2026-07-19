@@ -123,7 +123,7 @@ export function NavigatorApprovalCallout({
         approved={approved}
         blocked={retract.pending || retract.approved}
         directBuild={directBuild}
-        className="mt-[9px] w-full justify-center text-[11px]"
+        className="mt-2.25 w-full justify-center text-[11px]"
         style={{ borderRadius: '7px', padding: '7px 0' }}
         iconSize={12}
       />
@@ -208,16 +208,16 @@ export function PersistentApprovalBar({
   const retract = useRetractPlan(jobRef, value);
   return (
     <div
-      className="flex shrink-0 flex-col gap-[11px] border-t sm:flex-row sm:items-center"
+      className="flex shrink-0 flex-col gap-2.75 border-t sm:flex-row sm:items-center"
       style={{
         borderColor: 'var(--accent-line)',
         background: 'var(--accent-soft)',
         padding: '10px 16px',
       }}
     >
-      <div className="flex min-w-0 flex-1 items-center gap-[11px]">
+      <div className="flex min-w-0 flex-1 items-center gap-2.75">
         <div
-          className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg border"
+          className="flex h-6.5 w-6.5 shrink-0 items-center justify-center rounded-lg border"
           style={{
             background: 'var(--panel)',
             borderColor: 'var(--accent-line)',
@@ -239,7 +239,7 @@ export function PersistentApprovalBar({
           </div>
         </div>
       </div>
-      <div className="flex gap-[11px]">
+      <div className="flex gap-2.75">
         <RetractButton
           onClick={retract.submit}
           pending={retract.pending}
@@ -437,16 +437,16 @@ export function PersistentShipBar({ jobRef, value }: { jobRef: JobRef; value: st
   const retract = useRetractShip(jobRef, value);
   return (
     <div
-      className="flex shrink-0 flex-col gap-[11px] border-t sm:flex-row sm:items-center"
+      className="flex shrink-0 flex-col gap-2.75 border-t sm:flex-row sm:items-center"
       style={{
         borderColor: 'var(--accent-line)',
         background: 'var(--accent-soft)',
         padding: '10px 16px',
       }}
     >
-      <div className="flex min-w-0 flex-1 items-center gap-[11px]">
+      <div className="flex min-w-0 flex-1 items-center gap-2.75">
         <div
-          className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg border"
+          className="flex h-6.5 w-6.5 shrink-0 items-center justify-center rounded-lg border"
           style={{
             background: 'var(--panel)',
             borderColor: 'var(--accent-line)',
@@ -467,7 +467,7 @@ export function PersistentShipBar({ jobRef, value }: { jobRef: JobRef; value: st
           </div>
         </div>
       </div>
-      <div className="flex gap-[11px]">
+      <div className="flex gap-2.75">
         <RetractButton
           onClick={retract.submit}
           pending={retract.pending}

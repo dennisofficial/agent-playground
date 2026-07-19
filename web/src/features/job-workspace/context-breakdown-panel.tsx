@@ -92,7 +92,7 @@ function SubRow({ name, tokens }: { name: string; tokens: number }) {
   return (
     <div className="flex items-center gap-1.5 px-0.5 py-0.5">
       <span
-        className="h-[3px] w-[3px] shrink-0 rounded-full"
+        className="h-0.75 w-0.75 shrink-0 rounded-full"
         style={{ background: 'var(--border-2)' }}
       />
       <span className="min-w-0 flex-1 truncate text-[10.5px] text-faint">{name}</span>
@@ -166,7 +166,7 @@ function CategoryRow({
     <>
       <Chevron open={expanded} hasDetail={clickable} />
       <span
-        className="h-[7px] w-[7px] shrink-0 rounded-[2px]"
+        className="h-1.75 w-1.75 shrink-0 rounded-xs"
         style={
           row.isFreeSpace
             ? {
@@ -184,7 +184,7 @@ function CategoryRow({
       <span className="whitespace-nowrap font-mono text-[10px] tabular-nums text-faint">
         {formatTokens(row.tokens)}
       </span>
-      <span className="w-[34px] shrink-0 whitespace-nowrap text-right font-mono text-[10px] tabular-nums text-faint">
+      <span className="w-8.5 shrink-0 whitespace-nowrap text-right font-mono text-[10px] tabular-nums text-faint">
         {pct}%
       </span>
     </>
@@ -212,7 +212,7 @@ function CategoryRow({
         <div className="flex items-center gap-1.5 px-0.5 py-1">{rowContent}</div>
       )}
       {clickable && expanded ? (
-        <div className="flex flex-col gap-px py-0.5 pl-[22px]">
+        <div className="flex flex-col gap-px py-0.5 pl-5.5">
           {detail.subRows.map((s) => (
             <SubRow key={s.id} name={s.name} tokens={s.tokens} />
           ))}
@@ -257,7 +257,7 @@ export function ContextBreakdownPanel({
       </div>
 
       <div
-        className="mb-2.5 flex h-[5px] w-full overflow-hidden rounded-full"
+        className="mb-2.5 flex h-1.25 w-full overflow-hidden rounded-full"
         style={{ background: 'var(--border)' }}
         aria-hidden
       >

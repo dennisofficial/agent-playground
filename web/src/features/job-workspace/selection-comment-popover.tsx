@@ -66,7 +66,7 @@ export function SelectionCommentPopover() {
   return createPortal(
     <div
       ref={popRef}
-      className="fixed z-[90] w-[290px] rounded-xl border border-border-2 bg-panel p-3 pb-3.5"
+      className="fixed z-90 w-72.5 rounded-xl border border-border-2 bg-panel p-3 pb-3.5"
       style={{
         left,
         top,
@@ -89,7 +89,7 @@ export function SelectionCommentPopover() {
           <X size={13} />
         </button>
       </div>
-      <div className="mb-2.5 max-h-[52px] overflow-hidden rounded-md bg-accent-soft px-2 py-1.5 font-mono text-[10px] leading-relaxed text-accent-2">
+      <div className="mb-2.5 max-h-13 overflow-hidden rounded-md bg-accent-soft px-2 py-1.5 font-mono text-[10px] leading-relaxed text-accent-2">
         &ldquo;{pending.quote}&rdquo;
       </div>
       <textarea
@@ -111,14 +111,14 @@ export function SelectionCommentPopover() {
         <button
           type="button"
           onClick={cancelPending}
-          className="rounded-lg px-[11px] py-[7px] text-[11px] font-semibold text-dim"
+          className="rounded-lg px-2.75 py-1.75 text-[11px] font-semibold text-dim"
         >
           Cancel
         </button>
         <button
           type="button"
           onClick={submit}
-          className="flex items-center gap-1.5 rounded-lg bg-accent px-[13px] py-[7px] text-[11px] font-bold text-white"
+          className="flex items-center gap-1.5 rounded-lg bg-accent px-3.25 py-1.75 text-[11px] font-bold text-white"
         >
           <Check size={12} strokeWidth={2.4} />
           Add comment
