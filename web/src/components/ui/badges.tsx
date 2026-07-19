@@ -1,8 +1,9 @@
 'use client';
 
 import { KIND_META, STATUS_META } from '@/lib/api/status';
-import type { CiCounts, CiStatus, InboxPr, JobKind, JobStatus } from '@/lib/api/types';
+import type { CiCounts, CiStatus, InboxPr } from '@/lib/api/types';
 import { cn } from '@/lib/cn';
+import { EJobKind, EJobStatus } from '@workspace/shared';
 import {
   CheckCircle2,
   CircleDashed,
@@ -21,7 +22,7 @@ export function StatusDot({
   size = 8,
   className,
 }: {
-  status: JobStatus;
+  status: EJobStatus;
   size?: number;
   className?: string;
 }) {
@@ -64,7 +65,7 @@ export function Dot({
 }
 
 /** FEAT / FIX / EVENT mono badge — NEUTRAL grey + hairline border (handoff: no per-kind color). */
-export function KindBadge({ kind, className }: { kind: JobKind; className?: string }) {
+export function KindBadge({ kind, className }: { kind: EJobKind; className?: string }) {
   const meta = KIND_META[kind];
   return (
     <span
@@ -97,11 +98,11 @@ export function KindBadge({ kind, className }: { kind: JobKind; className?: stri
  * most rows yet — see `inbox.ts`).
  */
 const STATUS_SHAPE: Record<
-  JobStatus,
+  EJobStatus,
   'forming' | 'reviewing' | 'working' | 'waiting' | 'parked' | 'paused' | 'failed' | 'done'
 > = {
+  open: 'forming',
   planning: 'forming',
-  triaging: 'forming',
   plan_review: 'reviewing',
   running: 'working',
   awaiting_approval: 'waiting',
@@ -126,7 +127,7 @@ export function StatusPie({
   halted = false,
   size = 14,
 }: {
-  status?: JobStatus;
+  status?: EJobStatus;
   /** A turn-stopping error is outstanding — force the `failed` ✕ glyph (danger color) regardless of
    *  `status`, so a stopped thread reads like the EXDEV failed job even while its pipeline stage lives on. */
   halted?: boolean;
@@ -147,7 +148,6 @@ export function StatusPie({
     kids = ring(color, {
       strokeDasharray: '2 2.8',
       strokeLinecap: 'round',
-      className: status === 'triaging' ? 'status-breathe' : undefined,
     });
   } else if (shape === 'reviewing') {
     // Faint dashed base (still "forming") + a solid arc scanning around it — Codex reviewing the plan.
@@ -426,13 +426,13 @@ export function CiHeaderGlyph({ ci, counts }: { ci: CiStatus | null; counts?: Ci
                 top: Math.round(anchor.y - 6),
                 transform: 'translate(-50%, -100%)',
               }}
-              className="pointer-events-none z-50 whitespace-nowrap rounded-md bg-(--text) px-1.5 py-1 text-[10px] font-medium text-(--panel) shadow-md"
+              className="pointer-events-none z-50 whitespace-nowrap rounded-md bg-text px-1.5 py-1 text-[10px] font-medium text-panel shadow-md"
             >
               {segments.length > 0 ? (
                 <span className="flex items-center gap-1.5">
                   {segments.map((seg, i) => (
                     <span key={seg.label} className="flex items-center gap-1">
-                      {i > 0 ? <span className="text-(--faint)">·</span> : null}
+                      {i > 0 ? <span className="text-faint">·</span> : null}
                       <span
                         className="inline-block h-1.5 w-1.5 rounded-full"
                         style={{ background: seg.color }}
@@ -474,7 +474,7 @@ export function CiStatusDot({ ci, size = 7 }: { ci: CiStatus | null; size?: numb
 }
 
 /** Status pill: a dot + label, tinted by status. */
-export function StatusPill({ status, className }: { status: JobStatus; className?: string }) {
+export function StatusPill({ status, className }: { status: EJobStatus; className?: string }) {
   const meta = STATUS_META[status];
   return (
     <span

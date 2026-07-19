@@ -8,32 +8,11 @@ import { useOrgs, type OrgSummary } from '@/lib/api/me';
 import { cn } from '@/lib/cn';
 import { env } from '@/lib/env';
 import { ROUTES, threadHref } from '@/lib/routes';
+import { EJobStatus } from '@workspace/shared';
 import { ChevronRight, Globe, LayoutGrid, Plus, Server, Settings } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
-
-/**
- * The workspace sidebar (272px) — a strict three-tier tree: ORGANIZATION (centered uppercase divider) →
- * repo (bold mono "folder") → thread (light, wrapping leaf). Redesign of the prior 240px card-based
- * sidebar per the "Atlas Workspace Multi-Org" handoff: flat hairline sections (no cards) and reclaimed
- * vertical space.
- *
- * **Active-first at scale.** Every org you belong to is shown (`useOrgs`), but idleness is tucked away at
- * both levels (an operator can have ~20 connected repos across several orgs):
- *   - A repo with threads is shown directly; the long tail of connected-but-idle repos in an active org
- *     rolls up under a single per-org "▸ N more repos" disclosure, opened on demand.
- *   - An org with NO active threads in any repo collapses to just its divider line by default — quiet
- *     until you open it, at which point its (idle) repos show directly. This keeps a fully-idle org with
- *     many repos to one line instead of dumping all of them.
- * (This replaces the handoff's per-item hide/show, which didn't scale: muting 18 of 20 repos left a
- * permanent "N hidden" line.) Explicit collapse/expand always overrides these data-driven defaults.
- *
- * Threads come from the cross-org inbox (`useAllJobs`), kept live by the realtime feed; each row's
- * `status` (the status pie) and `needsYou` (the accent attention dot) are server-owned. A collapsed
- * org/repo header carries an attention dot when any thread inside needs you (the rollup); expanded headers
- * show the per-thread dots instead.
- */
 
 const repoKeyOf = (orgId: string, repoId: string) => `${orgId}:${repoId}`;
 
@@ -251,17 +230,6 @@ export function Sidebar({ inDrawer = false }: { inDrawer?: boolean } = {}) {
             />
           ))
         )}
-
-        {/* Archived — one flat, cross-org group at the very bottom, fetched only once expanded (archived
-            jobs may span repos/orgs the operator hasn't opened, so they don't live inside any org/repo
-            section above). */}
-        <ArchivedSection
-          threads={archivedThreads}
-          loading={archivedLoading}
-          pathname={pathname}
-          collapsed={!archivedExpanded}
-          onToggle={() => toggleSection('archived')}
-        />
       </div>
 
       {/* Build tag — the running web bundle's git SHA, baked in at build time (falls back to "dev"
@@ -576,51 +544,6 @@ function RepoGroup({
           ))
         )
       ) : null}
-    </div>
-  );
-}
-
-/** The flat, cross-org "Archived" group — a sibling of the per-org sections, not nested inside any of
- *  them (an archived job may belong to a repo/org the operator hasn't expanded). Always rendered so the
- *  operator has something to expand; its jobs are fetched lazily, only once expanded. */
-function ArchivedSection({
-  threads,
-  loading,
-  pathname,
-  collapsed,
-  onToggle,
-}: {
-  threads: InboxThread[];
-  loading: boolean;
-  pathname: string;
-  collapsed: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <div className="border-t border-border px-0.5 pb-2 pt-2.5">
-      <SidebarSection
-        section="archived"
-        count={threads.length}
-        collapsed={collapsed}
-        onToggle={onToggle}
-        anyNeedsYou={false}
-      >
-        {loading ? (
-          <div className="px-1 py-0.5 font-mono text-[10px] text-faint">Loading…</div>
-        ) : threads.length === 0 ? (
-          <div className="px-1 py-0.5 text-[10.5px] italic text-faint">No archived jobs</div>
-        ) : (
-          threads.map((t) => (
-            <ThreadRow
-              key={t.id}
-              thread={t}
-              orgId={t.org.id}
-              section="archived"
-              active={pathname === threadHref(t.id)}
-            />
-          ))
-        )}
-      </SidebarSection>
     </div>
   );
 }

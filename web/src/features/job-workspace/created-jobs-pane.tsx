@@ -3,8 +3,7 @@
 import { StatusPie } from '@/components/ui/badges';
 import type { CreatedJobRow, JobRef } from '@/lib/api/job-api';
 import { useJobCreatedJobs } from '@/lib/api/job-queries';
-import { STATUS_META, toJobStatus } from '@/lib/api/status';
-import type { WireJobStatus } from '@/lib/api/types';
+import { STATUS_META } from '@/lib/api/status';
 import { threadHref } from '@/lib/routes';
 import { GitFork, GitMerge, GitPullRequest, GitPullRequestClosed } from 'lucide-react';
 import Link from 'next/link';
@@ -46,8 +45,7 @@ export function CreatedJobsPane({ jobRef }: { jobRef: JobRef }) {
 }
 
 function CreatedJobItem({ job, jobRef }: { job: CreatedJobRow; jobRef: JobRef }) {
-  const status = toJobStatus(job.status as WireJobStatus);
-  const meta = STATUS_META[status];
+  const meta = STATUS_META[job.status];
   const href = threadHref(job.id);
   return (
     <Link
@@ -55,7 +53,7 @@ function CreatedJobItem({ job, jobRef }: { job: CreatedJobRow; jobRef: JobRef })
       className="block rounded-lg border border-border bg-surface px-4 py-3 transition hover:bg-surface-2"
     >
       <div className="flex items-center gap-2">
-        <StatusPie status={status} size={13} />
+        <StatusPie status={job.status} size={13} />
         <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-text">
           {job.title || 'Untitled job'}
         </span>

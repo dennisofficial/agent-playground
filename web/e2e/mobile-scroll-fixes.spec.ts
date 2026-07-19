@@ -2,7 +2,6 @@ import { expect, test, type BrowserContext, type Locator, type Page } from '@pla
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 
-
 const DEV_EMAIL = process.env.ADMIN_SEED_EMAIL ?? 'admin@atlas.dev';
 const DEV_PASSWORD = process.env.ADMIN_SEED_PASSWORD;
 

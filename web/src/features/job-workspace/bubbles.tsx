@@ -771,21 +771,6 @@ export function TurnMetaDivider({ message }: { message: JobMessage }) {
   );
 }
 
-// `ContextMeter` moved to ./context-meter (so `subagents.tsx` can reuse it without a bubbles↔subagents
-// import cycle). Re-exported here for existing consumers (e.g. composer.tsx imports it from ./bubbles).
-export { ContextMeter } from './context-meter';
-
-/**
- * The "Atlas is working…" indicator. When a live `turn` is supplied it renders a rich, Claude-Code-style
- * status line: `{elapsed} · {N} running task{s} · {statusWord}…` (the "N running task" clause is omitted
- * when there are no open tool calls) — e.g. `25s · 1 running task · still thinking…` or, for longer turns,
- * `19m 24s · 1 running task · using tools…`. `elapsed` ticks every second off the turn's `startedAt` and is
- * formatted compactly (`45s` / `19m 24s` / `1h 05m 24s`); `N` counts in-flight tool calls (tool_use with no tool_result yet,
- * incl. subagent/Task runs); `statusWord` comes from the last live block. Falls back to the plain `text`
- * when no turn is available (e.g. the pipeline-level `live` flag with no live-turn buffer, or a build lane).
- *
- * NOTE: token count is intentionally NOT shown — it's a backend fast-follow that isn't wired yet.
- */
 export function LiveIndicator({
   turn,
   text = 'Atlas is working…',

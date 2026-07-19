@@ -53,9 +53,9 @@ export type AccountUsage = {
   ok: boolean;
 };
 
-// ── Legacy org-level usage (pre-per-account model) ────────────────────────────────────────────────
-// Still consumed by old web code (usage-ring, lib/api/types) during the rebuild. Superseded by the
-// per-account AccountUsage above; kept additively so unrelated old code keeps compiling.
+// Legacy org-level usage (pre-per-account model). Still consumed by old web code (usage-ring,
+// lib/api/types) during the rebuild. Superseded by the per-account AccountUsage above; kept
+// additively so unrelated old code keeps compiling.
 
 export type OrgUsage = {
   fiveHour: UsageWindow;

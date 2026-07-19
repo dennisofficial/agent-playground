@@ -80,7 +80,6 @@ export default function OrgSettingsLayout({
       <TopBar onOpenSidebar={() => setNavOpen(true)} />
 
       <div className="flex min-h-0 flex-1">
-        {/* Settings nav */}
         {isMobile ? (
           <Drawer
             side="left"
@@ -109,7 +108,6 @@ export default function OrgSettingsLayout({
           />
         )}
 
-        {/* Content */}
         <div className="min-w-0 flex-1 overflow-y-auto bg-surface">
           <div className="max-w-160 px-4 py-8 pb-16 sm:px-9">
             {isLoading ? (

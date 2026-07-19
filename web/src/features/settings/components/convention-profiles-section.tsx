@@ -307,10 +307,7 @@ function ProfileEditor({
             House style (markdown)
           </label>
           <textarea
-            className={cn(
-              inputCls,
-              'h-55 resize-y py-2.5 font-mono text-[12px] leading-relaxed',
-            )}
+            className={cn(inputCls, 'h-55 resize-y py-2.5 font-mono text-[12px] leading-relaxed')}
             value={body}
             placeholder={
               '# House style\n\n## Backend (NestJS)\n- one feature = one module; thin controllers…\n\n## Frontend (Next.js)\n- apps/ views, feature folders, atomic components/, libs/…\n\n## Shared contract\n- shared/ holds DTOs + types imported by both ends.'

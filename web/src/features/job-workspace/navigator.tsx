@@ -19,9 +19,7 @@ import type {
   ContextFile,
   JobBlocker,
   JobContext,
-  JobKind,
   JobProvenance,
-  JobStatus,
   PipelineJob,
   PipelineState,
   ServiceInfo,
@@ -31,7 +29,7 @@ import { pipelineAutoApproveMode, pipelineAutoMerge, pipelineMainTasks } from '@
 import { cn } from '@/lib/cn';
 import { threadHref } from '@/lib/routes';
 import { formatBytes } from '@/utils/format';
-import type { AutoApproveMode } from '@workspace/shared';
+import { AutoApproveMode, EJobKind, EJobStatus } from '@workspace/shared';
 import {
   AlertTriangle,
   ArrowUpRight,
@@ -164,8 +162,8 @@ function AutoApproveToggle({
 
 export interface JobMeta {
   title: string;
-  kind: JobKind;
-  status: JobStatus;
+  kind: EJobKind;
+  status: EJobStatus;
   orgName: string;
   /** Org swatch fill — neutral grey now (handoff). */
   orgColor: string;
@@ -718,7 +716,7 @@ function ThreadRows({
   onSelectNode,
   isDirectBuild,
 }: {
-  status: JobStatus;
+  status: EJobStatus;
   job: PipelineJob | null;
   jobId: string;
   laneNode: string | null;
@@ -726,25 +724,6 @@ function ThreadRows({
   /** A committed direct build has no lanes by design — suppress the "approve the plan" empty state. */
   isDirectBuild?: boolean;
 }) {
-  // Triaging — the autonomous lane: triage findings, not a build tree.
-  if (status === 'triaging') {
-    return (
-      <>
-        <div className="flex items-center gap-2.5 px-2 py-1.5">
-          <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: 'var(--green)' }} />
-          <span className="flex-1 text-[11.5px] text-dim">Verified &amp; classified</span>
-        </div>
-        <div className="flex items-center gap-2.5 px-2 py-1.5">
-          <span
-            className="pulse-dot h-2 w-2 shrink-0 rounded-full"
-            style={{ background: 'var(--slate)' }}
-          />
-          <span className="flex-1 text-[11.5px] text-text">1 decision parked for you</span>
-        </div>
-      </>
-    );
-  }
-
   // One renderer for every thread group: running/done/failed threads expand to their live task list;
   // pre-approval drafts render as bare thread rows (dashed dots, no tasks). Empty (early planning) → the
   // hero ghost row — EXCEPT a committed direct build, which never grows lanes, so its "approve the plan"
@@ -816,7 +795,7 @@ function PriorRevisionSection({
       <div className="mt-0.5">
         <PipelineTree
           job={revJob}
-          status="done"
+          status={EJobStatus.DONE}
           jobId={jobId}
           laneNode={laneNode}
           onSelectNode={onSelectNode}
@@ -834,7 +813,7 @@ function OutputsRegion({
   onSelectNode,
   isDirectBuild,
 }: {
-  status: JobStatus;
+  status: EJobStatus;
   context: JobContext | undefined;
   loading?: boolean;
   detailNode: string | null;
@@ -847,7 +826,6 @@ function OutputsRegion({
   const generated = context?.generated ?? [];
   const artifacts = context?.artifacts ?? [];
   const evidence = context?.evidence ?? [];
-  const triaging = status === 'triaging';
 
   return (
     <>
@@ -869,38 +847,7 @@ function OutputsRegion({
         }
         detailNode={detailNode}
         onSelectNode={onSelectNode}
-      >
-        {triaging ? (
-          <div
-            className="mx-1.5 mb-1 rounded-md border border-l-2 px-3 py-2.5"
-            style={{
-              borderColor: 'var(--border)',
-              borderLeftColor: 'var(--slate)',
-              background: 'var(--surface-2)',
-            }}
-          >
-            <div className="mb-1.5 flex items-center gap-2">
-              <GitPullRequest size={11} className="text-dim" />
-              <span className="flex-1 font-mono text-[10px] font-semibold">
-                github · workflow_run
-              </span>
-              <span
-                className="rounded border px-1.5 py-px font-mono text-[8px] font-semibold"
-                style={{
-                  color: 'var(--slate)',
-                  background: 'var(--slate-soft)',
-                  borderColor: 'var(--slate-line)',
-                }}
-              >
-                UNTRUSTED
-              </span>
-            </div>
-            <p className="text-[10.5px] leading-snug text-dim">
-              An untrusted notification seeded this job.
-            </p>
-          </div>
-        ) : null}
-      </OutputGroup>
+      />
 
       {/* GENERATED — system-owned, read-only (decision-record.md). */}
       <OutputGroup

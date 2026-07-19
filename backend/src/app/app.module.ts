@@ -11,15 +11,14 @@ import { atlasRealtimeConfig } from '../_lib/realtime/realtime.config';
 import { RedisModule } from '../_lib/redis/redis.module';
 import { AgentCredentialsModule } from './agent-credentials/agent-credentials.module';
 import { AuthModule } from './auth/auth.module';
-import { OrgCredentialsModule } from './org-credentials/credentials.module';
 import { GithubModule } from './github/github.module';
 import { JobModule } from './job/job.module';
+import { OrgCredentialsModule } from './org-credentials/credentials.module';
 import { OrgModule } from './org/org.module';
 import { RepoModule } from './repo/repo.module';
 
 @CreateModule({
   imports: [
-    // Core Modules
     LoggerModule,
     ScheduleModule.forRoot(),
     EnvModule.forRoot({
@@ -31,10 +30,10 @@ import { RepoModule } from './repo/repo.module';
     CryptoModule,
     PgRealtimeModule.forRootAsync({ inject: [EnvService], useFactory: atlasRealtimeConfig }),
 
-    // App Modules
     OrgModule,
     AuthModule,
     RepoModule,
+    JobModule,
     OrgCredentialsModule,
     GithubModule,
     AgentCredentialsModule,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyStreamFrame, MAIN_LANE, peekLiveTurn } from './job-stream';
+import { applyStreamFrame, MAIN_LANE, peekLiveTurn } from '../job-stream';
 
 // The store is module-global, so each test uses a unique jobId to stay isolated.
 describe('job-stream turn_start clears stale blocks', () => {

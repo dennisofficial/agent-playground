@@ -6,8 +6,6 @@
 import { IsEmail, IsOptional, IsString, MinLength } from 'class-validator';
 import type { OrgSummary } from './org.dto';
 
-// ── Requests ──
-
 export class LoginDto {
   @IsEmail({}, { message: 'Please provide a valid email address' })
   email!: string;
@@ -28,8 +26,6 @@ export class RegisterDto {
   @IsString()
   name?: string;
 }
-
-// ── Responses ──
 
 /** Minimal signed-in identity, returned as `{ user }` by login / register / refresh. */
 export interface AuthSession {

@@ -896,7 +896,7 @@ function InlineCommentThread({
             type="button"
             onClick={onRemove}
             aria-label="Remove comment"
-            className="flex h-4.25 w-4.25 items-center justify-center rounded-[5px] text-faint opacity-0 transition group-hover:opacity-100 hover:text-(--red) focus-visible:opacity-100"
+            className="flex h-4.25 w-4.25 items-center justify-center rounded-[5px] text-faint opacity-0 transition group-hover:opacity-100 hover:text-red focus-visible:opacity-100"
           >
             <X size={12} />
           </button>

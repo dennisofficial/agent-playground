@@ -7,8 +7,6 @@ import { IsEnum, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator
 import { EAgentCredentialKind, EAgentCredentialStatus, EAgentProvider } from '../enums';
 import type { AccountUsage } from '../types/usage';
 
-// ── Views (responses) ──
-
 /** One agent account, as shown in Settings and streamed over realtime. No token material. */
 export interface AgentCredentialView {
   id: string;
@@ -28,8 +26,6 @@ export interface AgentCredentialView {
   usage: AccountUsage | null;
   createdAt: string;
 }
-
-// ── Claude OAuth (authorization-code + PKCE, manual paste-the-code) ──
 
 /** Result of starting the Claude OAuth flow — the URL to open and the state to echo back. */
 export interface ClaudeAuthorizeUrlResult {
@@ -59,8 +55,6 @@ export class CreateSetupTokenDto {
   @MaxLength(200)
   label?: string;
 }
-
-// ── Codex device-code OAuth ──
 
 /** Result of starting the Codex device flow — show the user the code + link, poll with the handle. */
 export interface CodexDeviceStartResult {
@@ -99,8 +93,6 @@ export class PasteCodexAuthDto {
   @MaxLength(200)
   label?: string;
 }
-
-// ── Selection ──
 
 /** Pick the active account for a provider. */
 export class SetSelectedDto {

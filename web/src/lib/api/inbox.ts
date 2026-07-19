@@ -1,24 +1,12 @@
 'use client';
 
 import { useGetJobsQuery } from '@/redux/query/api/jobs.api';
-import type { JobListItem } from '@workspace/shared';
+import { useGetAllReposQuery } from '@/redux/query/api/repo.api';
+import { EJobActivity, EJobKind, EJobStatus, JobHalt, JobListItem } from '@workspace/shared';
 import { useMemo } from 'react';
 import { adaptQuery, type QueryResultLike } from './_stub';
 import { useOrgs } from './me';
-import { toJobKind, toJobStatus } from './status';
-import type {
-  CiCounts,
-  CiStatus,
-  InboxPr,
-  JobBlocker,
-  JobKind,
-  JobProvenance,
-  JobStatus,
-  WireJobActivity,
-  WireJobHalt,
-  WireJobKind,
-  WireJobStatus,
-} from './types';
+import type { CiCounts, CiStatus, InboxPr, JobBlocker, JobProvenance } from './types';
 
 /**
  * The unified cross-org inbox — every thread across ALL the operator's orgs (`GET /web/jobs`), the
@@ -33,17 +21,17 @@ import type {
 export interface InboxThread {
   id: string;
   title: string;
-  kind: JobKind;
+  kind: EJobKind;
   /** UI status (mapped from the backend status) — drives the status pie. */
-  status: JobStatus;
+  status: EJobStatus;
   /** Raw backend status ('open' | 'planning' | … | 'cancelled') — the `sectionFirstEntered` anchor-map
    *  key. Distinct from `status`, which is the UI-mapped status used for grouping. */
-  rawStatus: WireJobStatus;
+  rawStatus: EJobStatus;
   /** jobs.section_first_entered — backend JobStatus -> ISO ts of first entry into that status. Drives
    *  the sidebar's per-section anchor sort (newest arrival on top). */
-  sectionFirstEntered?: Partial<Record<WireJobStatus, string>> | null;
+  sectionFirstEntered?: Partial<Record<EJobStatus, string>> | null;
   /** Backend activity axis, retained so realtime and REST cache rows match the wire contract. */
-  activity: WireJobActivity;
+  activity: EJobActivity;
   /** The alert dot: this thread is waiting on you. */
   needsYou: boolean;
   /** A turn-stopping error is outstanding — the sidebar shows the failed ✕ glyph over the status pie. */
@@ -64,7 +52,7 @@ export interface InboxThread {
   /** Total build/direct_build thread groups in the job's plan. */
   buildStagesTotal: number | null;
   /** Failure/pause axis, orthogonal to `status` (the build phase) — null when healthy. */
-  halt: WireJobHalt | null;
+  halt: JobHalt | null;
   /** True only while a "Ship it" is being finalized (PR opening) — keeps the card in "Ready to Ship"
    *  (with the `running` working spinner) instead of routing it to "Building". */
   shipping: boolean;
@@ -78,24 +66,22 @@ export interface InboxThread {
   repo: { id: string; name: string };
 }
 
-/** Backend status (incl. `open`, which `toJobStatus` doesn't cover) → UI status for the pie. */
-export function uiStatus(backend: string, origin: string): JobStatus {
-  if (backend === 'open') return origin === 'event' ? 'triaging' : 'planning';
-  return toJobStatus(backend as WireJobStatus);
-}
-
 /**
  * Map the slim `JobListItem` (the flat `GET /jobs` row) to the sidebar's `InboxThread`. Org name comes
  * from the session (`useOrgs`); the engine-owned fields (`needsYou`, PR/CI, halt, build stages, …) aren't
  * carried by the read model yet, so they default to a neutral/healthy state until those slices land.
  */
-function toInboxThread(j: JobListItem, orgName: (id: string) => string): InboxThread {
+function toInboxThread(
+  j: JobListItem,
+  orgName: (id: string) => string,
+  repoName: (id: string) => string,
+): InboxThread {
   return {
     id: j.id,
     title: j.title?.trim() || 'Untitled thread',
-    kind: j.kind ? toJobKind(j.kind as WireJobKind) : j.origin === 'event' ? 'event' : 'feat',
-    status: uiStatus(j.status, j.origin),
-    rawStatus: j.status as WireJobStatus,
+    kind: j.kind ?? EJobKind.EVENT, // TODO: Not sure what an InboxThread is, just supplying a default to avoid null
+    status: j.status,
+    rawStatus: j.status,
     sectionFirstEntered: null,
     activity: j.activity ?? 'idle',
     needsYou: false,
@@ -113,8 +99,7 @@ function toInboxThread(j: JobListItem, orgName: (id: string) => string): InboxTh
     blockedBy: [],
     blockedSeedMessage: null,
     org: { id: j.orgId, slug: j.orgId, name: orgName(j.orgId) },
-    // Repo name isn't on the slim list row yet — fall back to the id (a follow-up can join it in).
-    repo: { id: j.repoId, name: j.repoId },
+    repo: { id: j.repoId, name: repoName(j.repoId) },
   };
 }
 
@@ -129,12 +114,15 @@ function useInboxJobs(
 ): QueryResultLike<InboxThread[]> {
   const q = useGetJobsQuery(undefined, { skip: !enabled });
   const { orgs } = useOrgs();
+  const { data: repos } = useGetAllReposQuery(undefined, { skip: !enabled });
   const data = useMemo(() => {
     if (!q.data) return undefined;
-    const names = new Map(orgs.map((o) => [o.id, o.name] as const));
-    const nameOf = (id: string): string => names.get(id) ?? 'Organization';
-    return q.data.filter(keep).map((j) => toInboxThread(j, nameOf));
-  }, [q.data, orgs, keep]);
+    const orgNames = new Map(orgs.map((o) => [o.id, o.name] as const));
+    const nameOf = (id: string): string => orgNames.get(id) ?? 'Organization';
+    const repoNames = new Map((repos ?? []).map((r) => [r.id, r.name] as const));
+    const repoOf = (id: string): string => repoNames.get(id) ?? id;
+    return q.data.filter(keep).map((j) => toInboxThread(j, nameOf, repoOf));
+  }, [q.data, orgs, repos, keep]);
   return { ...adaptQuery(q), data } as QueryResultLike<InboxThread[]>;
 }
 

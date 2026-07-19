@@ -4,8 +4,6 @@
  */
 import { IsBoolean, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
-// ── Requests ──
-
 export class CreateOrgDto {
   @IsString()
   @MinLength(1)
@@ -31,8 +29,6 @@ export class UpdateOrgDto {
   @IsBoolean()
   defaultAutoMerge?: boolean;
 }
-
-// ── Responses ──
 
 /**
  * An organization the current user belongs to. Returned on the session payload

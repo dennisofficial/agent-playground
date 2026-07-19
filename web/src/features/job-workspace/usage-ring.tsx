@@ -1,11 +1,11 @@
 'use client';
 
 import { useOrgUsage } from '@/lib/api/orgs';
-import type { WireOrgUsage } from '@/lib/api/types';
 import { formatClockTime } from '@/utils/org-display';
+import { OrgUsage } from '@workspace/shared';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
-type UsageWindow = WireOrgUsage['fiveHour'];
+type UsageWindow = OrgUsage['fiveHour'];
 /** A panel row's window data — the fixed windows plus the per-model ones (whose `resetsAt` may be null). */
 type PanelWindow = { utilization: number; resetsAt: string | null };
 type RingVisualState = 'active' | 'pending' | 'degraded';
@@ -420,7 +420,7 @@ export function UsageRingView({
   refetch,
   dataUpdatedAt,
 }: {
-  data: WireOrgUsage | undefined;
+  data: OrgUsage | undefined;
   isLoading: boolean;
   size?: number;
   /** Optional on-open refresh: the owning hook's `refetch` + `dataUpdatedAt` (throttled to 1/min). */

@@ -6,8 +6,6 @@
 import { IsBoolean, IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
 import { AUTO_MERGE_METHODS, type AutoMergeMethod } from '../types/auto-merge';
 
-// ── Requests ──
-
 /** `POST /orgs/:orgId/repos` — connect a GitHub repo to the org by URL. */
 export class ConnectRepoDto {
   @IsString()
@@ -52,8 +50,6 @@ export class UpdateRepoDto {
   defaultAutoMergeDeleteBranch?: boolean;
 }
 
-// ── Responses ──
-
 /**
  * Enriched repo shape returned by the list endpoint (`GET /orgs/:orgId/repos`) and the realtime
  * feed. Carries the derived fields (`threadCount`, onboarding/access timestamps) that the single
@@ -61,6 +57,8 @@ export class UpdateRepoDto {
  */
 export interface RepoView {
   id: string;
+  /** The owning org — lets a cross-org repo list (`GET /repos`) group by org without a second lookup. */
+  orgId: string;
   slug: string;
   name: string;
   gitUrl: string;

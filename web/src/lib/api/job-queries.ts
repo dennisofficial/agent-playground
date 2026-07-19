@@ -5,12 +5,16 @@ import {
   useGetJobQuery,
   useGetJobTasksQuery,
 } from '@/redux/query/api/jobs.api';
-import { useGetOrgReposQuery, useGetRepoBranchesQuery } from '@/redux/query/api/repo.api';
+import {
+  useGetAllReposQuery,
+  useGetOrgReposQuery,
+  useGetRepoBranchesQuery,
+} from '@/redux/query/api/repo.api';
 import type { AutoApproveMode } from '@workspace/shared';
 import { useMemo } from 'react';
 import { adaptQuery, type QueryResultLike } from './_stub';
-import { jobViewToPipeline, threadMessageToJobMessage } from './job-adapters';
 import { useMutation, useQuery } from './_tanstack-shim';
+import { jobViewToPipeline, threadMessageToJobMessage } from './job-adapters';
 import {
   addJobDependency,
   approveMcpProposal,
@@ -49,6 +53,7 @@ import {
   type RepoView,
   type ReviewCommentItemBody,
 } from './job-api';
+import { useOrgs } from './me';
 import type { JobBlocker, PipelineState } from './types';
 
 /**
@@ -74,9 +79,20 @@ export interface RepoChoice {
  * `GET /orgs/:id/repos` per org (parallel). Only `accessOk` repos are conversation containers, but we
  * return all connected repos and let the caller reflect emptiness.
  */
-// STUB (Atlas rebuild): the cross-org `GET /orgs/:id/repos` aggregate isn't rebuilt yet — renders empty.
+/** Every connected repo across the operator's orgs (`GET /repos`, member-scoped), each paired with its
+ *  org name (from the session) — the create-job picker's source. */
 export function useAllRepos(): { repos: RepoChoice[]; isLoading: boolean } {
-  return { repos: [], isLoading: false };
+  const { data = [], isLoading } = useGetAllReposQuery();
+  const { orgs } = useOrgs();
+  const repos = useMemo(() => {
+    const orgName = new Map(orgs.map((o) => [o.id, o.name] as const));
+    return data.map((r) => ({
+      orgId: r.orgId,
+      orgName: orgName.get(r.orgId) ?? 'Organization',
+      repo: r,
+    }));
+  }, [data, orgs]);
+  return { repos, isLoading };
 }
 
 /** The job's durable transcript (all threads; the conversation scopes per lane client-side). Wired to

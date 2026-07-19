@@ -40,6 +40,7 @@
     "migrations-control",
     "seeds",
     "src/app_old",
-    "src/engine_old"
+    "src/engine_old",
+    "src/_shared_old"
   ]
 }

@@ -4,6 +4,7 @@ import {
   type ConnectedRepo,
   type DisconnectRepoResult,
   type RepoBranches,
+  type RepoView,
   UpdateRepoDto,
 } from '@workspace/shared';
 import type { User } from '../auth/entities/user.entity';
@@ -19,6 +20,12 @@ import { RepoService } from './repo.service';
 @Controller('repos')
 export class RepoController {
   constructor(private readonly repos: RepoService) {}
+
+  /** Every repo across the caller's orgs — the cross-org picker + the sidebar's repoId→name map. */
+  @Get()
+  listAll(@CurrentUser() user: User): Promise<RepoView[]> {
+    return this.repos.listAll(user.id);
+  }
 
   @Patch(':repoId')
   update(

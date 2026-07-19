@@ -6,8 +6,6 @@
  */
 import { IsOptional, IsString, MaxLength } from 'class-validator';
 
-// ── Request ──
-
 /** Save the org's API keys. Only the included, non-empty fields are written; the rest are untouched. */
 export class SaveCredentialsDto {
   @IsOptional()
@@ -25,8 +23,6 @@ export class SaveCredentialsDto {
   @MaxLength(20_000)
   githubPat?: string;
 }
-
-// ── Responses ──
 
 export interface SaveCredentialsResult {
   ok: boolean;

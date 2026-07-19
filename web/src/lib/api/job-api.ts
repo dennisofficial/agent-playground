@@ -2,7 +2,7 @@
 
 import type { ReviewComment } from '@/features/job-workspace/review-comments';
 import { env } from '@/lib/env';
-import type { AutoApproveMode, AutoMergeMethod } from '@workspace/shared';
+import type { AutoApproveMode, AutoMergeMethod, EJobKind, EJobStatus } from '@workspace/shared';
 import { notImplemented } from './_stub';
 import type {
   ApprovalActionId,
@@ -68,7 +68,6 @@ function threadPath(ref: JobRef, suffix = ''): string {
   return `/orgs/${ref.orgId}/repos/${ref.repoId}/jobs/${ref.jobId}${suffix}`;
 }
 
-// ── Messages ───────────────────────────────────────────────────────────────────────────────────
 /** The durable message row as the backend returns it (`…/threads/:jobId/messages`). */
 export interface RawThreadMessage {
   /** The row's uuid — a stable React key (transcript blocks have no surface `ts`). */
@@ -199,7 +198,6 @@ export function normalizeMessage(r: RawThreadMessage): JobMessage {
   };
 }
 
-
 /** One item in a `/message` send — the wire shape of a `Message` (mirrors the backend's client-originated
  *  `Message` union variants; see `web-surface.controller.ts`'s `MessageInput`). `secret_provided` carries no
  *  kind discriminant — the durable-vs-mcp destination is derived server-side from the card. */
@@ -250,7 +248,6 @@ export function fetchAttachmentUrl(ref: JobRef, path: string): Promise<string> {
   return notImplemented(`job-api fetchAttachmentUrl ${ref.jobId}:${path}`);
 }
 
-// ── Composer draft (server-backed per-job composer) ──────────────────────────────────────────────
 // These mirror the backend `composer-draft.service.ts` wire shapes. There is no shared package, so the
 // types are kept in sync by hand (the same convention `ReviewComment` already follows).
 
@@ -375,7 +372,6 @@ export function postReviewComments(
   });
 }
 
-// ── Approvals ──────────────────────────────────────────────────────────────────────────────────
 export interface ApproveBody {
   /** The prefixed action id from the card action (e.g. `atlas_approval:approve`). */
   actionId: ApprovalActionId | string;
@@ -395,7 +391,6 @@ export function approveThread(
   });
 }
 
-// ── Spin up preview (ship gate) ────────────────────────────────────────────────────────────────────
 /** Ask the build brain to stand up a demo-ready live preview at the ship gate. Injects the full preview
  *  procedure as a server-side seed turn (not the generic /message path) and stamps the ship card so the button
  *  hides. Gated server-side on `awaiting_ship_review`; a no-op `ok:false` off-gate. */
@@ -403,7 +398,6 @@ export function spinUpPreview(ref: JobRef): Promise<{ ok: boolean; ts: string }>
   return webJson(threadPath(ref, '/spin-up-preview'), { method: 'POST' });
 }
 
-// ── Secure secret intake (repo onboarding) ─────────────────────────────────────────────────────────
 export interface ProvideSecretBody {
   /** The secret card's id (its message ts). */
   requestId: string;
@@ -421,7 +415,6 @@ export function provideSecret(
   });
 }
 
-// ── MCP-proposal approval (repo onboarding; owner-only) ────────────────────────────────────────────
 /** Approve a brain `propose_mcp_servers` card — commits each server on the repo (owner-only on the server). */
 export function approveMcpProposal(
   ref: JobRef,
@@ -432,7 +425,6 @@ export function approveMcpProposal(
   });
 }
 
-// ── Skill-proposal approval (owner-only) ───────────────────────────────────────────────────────────
 /** Approve a brain skill proposal — installs (git) / vendors the authored draft / removes, per the card's
  *  mode (owner-only on the server). */
 export function approveSkillProposal(
@@ -475,8 +467,6 @@ export function retryTurn(ref: JobRef, opts?: { force?: boolean }): Promise<{ ok
   return webJson(threadPath(ref, `/retry-turn${q}`), { method: 'POST' });
 }
 
-
-// ── Supervised services (atlas-svc) ───────────────────────────────────────────────────────────
 export function fetchServices(ref: JobRef): Promise<{ services: ServiceInfo[] }> {
   return webJson<{ services: ServiceInfo[] }>(threadPath(ref, '/services'));
 }
@@ -497,7 +487,6 @@ export function pipelineJob(state: PipelineState | undefined): PipelineJob | nul
   return state;
 }
 
-// ── Context (specs + artifacts files) ────────────────────────────────────────────────────────────
 /** List the thread's `/context` files, grouped into `specs` (plan) + `artifacts` (outputs). */
 export function fetchThreadContext(ref: JobRef): Promise<JobContext> {
   return webJson<JobContext>(threadPath(ref, '/context'));
@@ -510,7 +499,6 @@ export function fetchContextFile(ref: JobRef, path: string): Promise<ContextFile
   );
 }
 
-// ── Job diff (accumulated worktree change across all threads) ─────────────────────────────────────
 /** The job's accumulated multi-file diff (`GET …/jobs/:jobId/diff`) — the Changes pane's data. */
 export function fetchJobDiff(ref: JobRef): Promise<JobDiff> {
   return webJson<JobDiff>(threadPath(ref, '/diff'));
@@ -523,7 +511,6 @@ export function fetchJobDiffSummary(ref: JobRef): Promise<JobDiffSummary> {
   return webJson<JobDiffSummary>(threadPath(ref, '/diff/summary'));
 }
 
-// ── Repo files (live job worktree — for spec/plan file-path links) ────────────────────────────────
 /** The job worktree's TRACKED-file manifest (git ls-files) — used to verify which inline-code spans name a
  *  real repo file before linkifying them. Empty when the worktree is gone (closed/reset). */
 export function fetchRepoTree(ref: JobRef): Promise<{ files: string[] }> {
@@ -537,7 +524,6 @@ export function fetchRepoFile(ref: JobRef, path: string): Promise<ContextFileCon
   );
 }
 
-// ── Rename (the only thread Update op) ───────────────────────────────────────────────────────────
 export function renameJob(ref: JobRef, title: string): Promise<{ ok: boolean; title: string }> {
   return webJson(threadPath(ref), {
     method: 'PATCH',
@@ -570,14 +556,13 @@ export function setAutoMerge(
   });
 }
 
-// ── Job relationships (created-by / created jobs / manual block & unblock) ─────────────────────────
 /** A child job spawned FROM this one (`GET …/jobs/:jobId/created`) — the "Created jobs" navigator row +
  *  detail pane. */
 export interface CreatedJobRow {
   id: string;
   title: string | null;
-  status: string;
-  kind: string | null;
+  status: EJobStatus;
+  kind: EJobKind | null;
   prState: string | null;
   needsYou: boolean;
   createdAt: string;
@@ -636,13 +621,11 @@ export function removeJobDependency(
   });
 }
 
-// ── Delete ─────────────────────────────────────────────────────────────────────────────────────
 export function deleteThread(ref: JobRef, prAction?: 'close' | 'leave'): Promise<{ ok: boolean }> {
   const q = prAction ? `?prAction=${prAction}` : '';
   return webJson(`${threadPath(ref)}${q}`, { method: 'DELETE' });
 }
 
-// ── Repos (create-job picker + the settings Repos tab) ────────────────────────────────────────
 export interface RepoView {
   id: string;
   slug: string;

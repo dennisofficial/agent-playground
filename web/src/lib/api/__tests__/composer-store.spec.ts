@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { composerStore, type StagedAnswer } from './composer-store';
-import { getDraft, putDraft, type JobMessage, type JobRef } from './job-api';
+import { composerStore, type StagedAnswer } from '../composer-store';
+import { getDraft, putDraft, type JobMessage, type JobRef } from '../job-api';
 
 // The store now hydrates + autosaves through `job-api`'s `getDraft`/`putDraft` — mock both so these unit
 // tests never make a real network call, and so autosave/hydrate behavior is assertable.
 vi.mock('./job-api', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./job-api')>();
+  const actual = await importOriginal<typeof import('../job-api')>();
   return {
     ...actual,
     getDraft: vi.fn(() =>

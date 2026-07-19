@@ -2,17 +2,15 @@
 
 import { useLiveTurn } from '@/lib/api/job-stream';
 import type {
-  JobStatus,
   PipelineJob,
   PipelineReviewChild,
   PipelineThread,
   PipelineThreadGroup,
   TaskItem,
-  ThreadCondition,
   ThreadGroupKind,
-  ThreadStatus,
 } from '@/lib/api/types';
 import { cn } from '@/lib/cn';
+import { EJobStatus, EThreadCondition, EThreadStatus } from '@workspace/shared';
 import { ChevronRight } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { overlayLiveTasks } from './live-tasks';
@@ -43,7 +41,7 @@ export function Divider({ label, count }: { label: string; count?: ReactNode }) 
 /** The halt thread for a failed job: the furthest in-flight (non-done, non-pending) thread, else the
  *  last non-done one. Exported so the navigator's halt banner derives the same index. */
 export function haltThreadIdx(
-  threads: { status: ThreadStatus; condition: ThreadCondition }[],
+  threads: { status: EThreadStatus; condition: EThreadCondition }[],
 ): number {
   // A halted/paused/failed lane carries a non-none condition — that's the row that owns the job halt.
   for (let i = threads.length - 1; i >= 0; i -= 1) {
@@ -65,7 +63,7 @@ export function haltThreadIdx(
  *  so a thread parked on `block_thread`/a question doesn't masquerade as a live turn. */
 type LaneState = 'draft' | 'in_progress' | 'blocked' | 'done' | 'failed';
 
-function laneState(s: ThreadStatus, condition: ThreadCondition, drafted: boolean): LaneState {
+function laneState(s: EThreadStatus, condition: EThreadCondition, drafted: boolean): LaneState {
   if (drafted || s === 'pending') return 'draft';
   if (condition === 'failed' || condition === 'incomplete') return 'failed'; // terminal halts (nothing shipped)
   if (condition === 'paused') return 'blocked'; // halted, waiting on the operator — NOT a running turn
@@ -209,7 +207,7 @@ function ThreadStatusGlyph({ state, isHalt }: { state: LaneState; isHalt: boolea
 
 export interface TreeProps {
   job: PipelineJob;
-  status: JobStatus;
+  status: EJobStatus;
   /** The job id — each fold subscribes to its thread group's live lane to overlay mid-turn task calls. */
   jobId: string;
   /** The LEFT pane's open lane (`?lane=`) — the selected thread. A bare thread id opens the owning thread
@@ -577,7 +575,7 @@ function BlockedRing({ size = 13 }: { size?: number }) {
 type AgentDisplay = 'pending' | 'in_progress' | 'done' | 'skipped' | 'failed';
 
 /** Map a review CHILD thread's step + condition to its navigator display state. */
-function childDisplay(status: ThreadStatus, condition: ThreadCondition): AgentDisplay {
+function childDisplay(status: EThreadStatus, condition: EThreadCondition): AgentDisplay {
   if (condition === 'failed') return 'failed'; // the lens did NOT run (e.g. engine/auth error) — surface it
   if (condition === 'skipped') return 'skipped'; // nothing to do (unknown lens / no diff) — terminal, not a failure
   if (status === 'done') return 'done'; // terminal — the lens ran clean
@@ -691,10 +689,7 @@ function LegRow({
         selected && 'bg-surface-2',
       )}
     >
-      <span
-        className="ml-0.75 size-1.5 shrink-0 rounded-full"
-        style={{ background: wordColor }}
-      />
+      <span className="ml-0.75 size-1.5 shrink-0 rounded-full" style={{ background: wordColor }} />
       <span
         className={cn(
           'min-w-0 flex-1 truncate text-[11.5px]',
@@ -712,8 +707,8 @@ function LegRow({
 
 /** The post-review fix child's step + condition → its row's display states. */
 function postReviewState(
-  status: ThreadStatus,
-  condition: ThreadCondition,
+  status: EThreadStatus,
+  condition: EThreadCondition,
 ): 'queued' | 'running' | 'done' | 'failed' {
   if (condition === 'failed') return 'failed'; // the fix turn errored out — don't paint it done
   if (status === 'pending') return 'queued';

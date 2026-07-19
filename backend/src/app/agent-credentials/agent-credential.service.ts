@@ -28,20 +28,12 @@ type UpsertPersonalInput = {
   label: string;
 };
 
-/**
- * Store + CRUD for {@link AgentCredential} rows. Owns material encryption, per-account dedupe, the
- * one-selected-per-provider invariant, and the refresh write-back (newer-only under a pessimistic lock).
- * Tenancy is enforced by the controller; this is pure mechanism so internal callers (resolver, refresh,
- * usage) can operate without a request context.
- */
 @Injectable()
 export class AgentCredentialService {
   constructor(
     private readonly repo: AgentCredentialRepo,
     private readonly cipher: SecretCipherService,
   ) {}
-
-  // ── Reads ──
 
   async list(orgId: string): Promise<AgentCredentialView[]> {
     const rows = await this.repo.find({
@@ -66,8 +58,6 @@ export class AgentCredentialService {
   toView(row: AgentCredential): AgentCredentialView {
     return projectAgentCredentialView(row);
   }
-
-  // ── Claude ──
 
   /** Upsert a Claude personal (OAuth) account from a fresh token set; dedupes by account email. */
   async upsertClaudePersonal(orgId: string, tokenSet: ClaudeTokenSet): Promise<AgentCredential> {
@@ -108,8 +98,6 @@ export class AgentCredentialService {
     return saved;
   }
 
-  // ── Codex ──
-
   /**
    * Upsert a Codex personal account from a full `~/.codex/auth.json` blob (device-login result or a
    * user paste). Dedupes by the account email decoded from the id_token; validates the blob shape.
@@ -142,8 +130,6 @@ export class AgentCredentialService {
     });
   }
 
-  // ── Selection / removal ──
-
   /** Make one account the selected one for its (org, provider). Throws if the credential isn't found. */
   async setSelected(orgId: string, credentialId: string): Promise<void> {
     const row = await this.repo.findOne({ where: { id: credentialId, orgId } });
@@ -166,8 +152,6 @@ export class AgentCredentialService {
     // If we removed the selected account, promote the next one so the provider still has an active pick.
     if (row.selected) await this.ensureOneSelected(orgId, row.provider);
   }
-
-  // ── Refresh write-back (used by the refresh service + the engine sink) ──
 
   /** Persist a rotated secret only if it's newer than what's stored, under a pessimistic row lock. */
   async advanceMaterial(
@@ -194,8 +178,6 @@ export class AgentCredentialService {
   async markStatus(credentialId: string, status: EAgentCredentialStatus): Promise<void> {
     await this.repo.update({ id: credentialId }, { status });
   }
-
-  // ── Internals ──
 
   private async upsertPersonal(input: UpsertPersonalInput): Promise<AgentCredential> {
     if (input.accountEmail) {

@@ -25,6 +25,13 @@ export const repoApi = baseApi.injectEndpoints({
         }),
     }),
 
+    // Every repo across the caller's orgs (member-scoped, RLS) — the create-job picker + the sidebar's
+    // repoId→name map. No org in the path.
+    getAllRepos: build.query<RepoView[], void>({
+      query: () => ({ url: `/repos`, method: 'GET' }),
+      providesTags: [EBaseApiCacheTags.REPO],
+    }),
+
     // Item ops are addressed by repoId alone — the backend scopes them to the caller's orgs
     // (OrgScope), so no orgId is needed in the path.
     getRepoBranches: build.query<RepoBranches, { repoId: string }>({
@@ -67,6 +74,7 @@ export const repoApi = baseApi.injectEndpoints({
 
 export const {
   useGetOrgReposQuery,
+  useGetAllReposQuery,
   useGetRepoBranchesQuery,
   useConnectRepoMutation,
   useUpdateRepoMutation,

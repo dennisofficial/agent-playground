@@ -11,14 +11,6 @@ import {
 import { TimestampedEntity } from '../../../_lib/database/base.entity';
 import { Organization } from '../../org/entities/organization.entity';
 
-/**
- * A GitHub repository connected under an org — the unit threads/jobs attach to. GitHub-derived
- * fields (`accessOk`, `defaultBranch`, `webhookWarning`) are populated by the GitHub module through
- * the `GithubAccessPort`; until that module lands they default to the unvalidated state.
- *
- * `threadCount` is a denormalized counter (kept at 0 until the threads slice exists) so the realtime
- * row is self-contained — the repo feed is a single-table pg-realtime model with no joins.
- */
 @Entity({ name: 'repos' })
 @Index(['orgId'])
 @Index(['orgId', 'slug'], { unique: true })
@@ -56,8 +48,6 @@ export class Repo extends TimestampedEntity {
   @Column({ type: 'boolean', default: true })
   defaultAutoMergeDeleteBranch!: boolean;
 
-  // ── GitHub access state (owned by the GitHub module via GithubAccessPort) ──
-
   @Column({ type: 'boolean', default: false })
   accessOk!: boolean;
 
@@ -66,8 +56,6 @@ export class Repo extends TimestampedEntity {
 
   @Column({ type: 'text', nullable: true })
   webhookWarning!: string | null;
-
-  // ── Onboarding (owned by the threads slice; null until then) ──
 
   @Column({ type: 'uuid', nullable: true })
   onboardingThreadId!: string | null;

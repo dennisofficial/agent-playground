@@ -24,10 +24,10 @@ import { TranscriptView } from './conversation';
 import { CreatedJobsPane } from './created-jobs-pane';
 import { DetailTopBar, TopBarActions, TopBarButton } from './detail-top-bar';
 import { DiffPane } from './diff-pane';
+import { useCommentableRef } from './hooks/use-text-selection';
 import { ImageViewer } from './image-viewer';
 import { Markdown } from './markdown';
-import { contextConvoNodeForHref } from './node-registry';
-import { resolveNode } from './node-resolution';
+import { contextConvoNodeForHref, resolveNode } from './node-registry';
 import { threadLane } from './phases';
 import { makeResolveFileLink } from './repo-file-links';
 import { useReviewComments } from './review-comments';
@@ -48,7 +48,6 @@ import { JumpToLatestButton, useTailFollow } from './tail-follow';
 import { ToolGroup, segmentToolRun, type ToolItem } from './tool-calls';
 import { langFromPath } from './tool-calls/highlight';
 import { CodeListing } from './tool-calls/ui';
-import { useCommentableRef } from './use-text-selection';
 
 /**
  * Step mode — the work column when a navigator node is selected. The plan / decision docs and the build
@@ -707,10 +706,7 @@ function FileView({
   // don't sprawl edge-to-edge.
   return (
     <div className="h-full overflow-y-auto px-8 py-7">
-      <div
-        ref={contentRef}
-        className={data?.mime === 'text/markdown' ? 'max-w-205' : undefined}
-      >
+      <div ref={contentRef} className={data?.mime === 'text/markdown' ? 'max-w-205' : undefined}>
         {isLoading ? (
           <p className="font-mono text-[11.5px] text-faint">Loading…</p>
         ) : error ? (

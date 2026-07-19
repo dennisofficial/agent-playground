@@ -19,14 +19,20 @@ export const agentCredentialsApi = baseApi.injectEndpoints({
       ],
       onCacheEntryAdded: (orgId, api) =>
         streamList<AgentCredentialView>({
-          url: new URL(`/orgs/${orgId}/agent-credentials/realtime`, env.NEXT_PUBLIC_BACKEND_URL).toString(),
+          url: new URL(
+            `/orgs/${orgId}/agent-credentials/realtime`,
+            env.NEXT_PUBLIC_BACKEND_URL,
+          ).toString(),
           open: sseOpener,
           lifecycle: api,
         }),
     }),
 
     startClaudeAuthorize: build.mutation<ClaudeAuthorizeUrlResult, { orgId: string }>({
-      query: ({ orgId }) => ({ url: `/orgs/${orgId}/agent-credentials/claude/authorize-url`, method: 'POST' }),
+      query: ({ orgId }) => ({
+        url: `/orgs/${orgId}/agent-credentials/claude/authorize-url`,
+        method: 'POST',
+      }),
     }),
     createClaudePersonal: build.mutation<
       AgentCredentialView,
@@ -50,7 +56,10 @@ export const agentCredentialsApi = baseApi.injectEndpoints({
     }),
 
     startCodexDevice: build.mutation<CodexDeviceStartResult, { orgId: string }>({
-      query: ({ orgId }) => ({ url: `/orgs/${orgId}/agent-credentials/codex/device/start`, method: 'POST' }),
+      query: ({ orgId }) => ({
+        url: `/orgs/${orgId}/agent-credentials/codex/device/start`,
+        method: 'POST',
+      }),
     }),
     pollCodexDevice: build.mutation<CodexDevicePollResult, { orgId: string; handle: string }>({
       query: ({ orgId, handle }) => ({
@@ -81,7 +90,10 @@ export const agentCredentialsApi = baseApi.injectEndpoints({
       }),
     }),
     removeAgentCredential: build.mutation<{ ok: true }, { orgId: string; id: string }>({
-      query: ({ orgId, id }) => ({ url: `/orgs/${orgId}/agent-credentials/${id}`, method: 'DELETE' }),
+      query: ({ orgId, id }) => ({
+        url: `/orgs/${orgId}/agent-credentials/${id}`,
+        method: 'DELETE',
+      }),
     }),
   }),
 });

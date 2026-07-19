@@ -1,9 +1,9 @@
 'use client';
 
+import type { OrgUsage } from '@workspace/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { notImplemented, stubMutation, stubQuery, type MutationResultLike } from './_stub';
 import { useMutation } from './_tanstack-shim';
-import type { WireOrgUsage } from './types';
 
 /**
  * STUBBED for the Atlas rebuild: the old `/orgs/:orgId/...` backend hasn't been rebuilt yet, so every
@@ -80,7 +80,7 @@ export function useDisconnectGithubApp(_orgId: string) {
  * means "unknown right now".
  */
 export function useOrgUsage(_orgId: string) {
-  return stubQuery<WireOrgUsage>();
+  return stubQuery<OrgUsage>();
 }
 
 // One repo-scoped surface over the same `WorkspaceConfigStore`/`WorkspaceSecretFileStore` rows the

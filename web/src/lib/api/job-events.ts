@@ -2,13 +2,13 @@
 
 import { useQueryClient } from '@/lib/api/_tanstack-shim';
 import { env } from '@/lib/env';
+import type { OrgUsage } from '@workspace/shared';
 import { useEffect, useRef } from 'react';
 import type { InboxThread } from './inbox';
 import type { JobRef } from './job-api';
 import { applyStreamFrame, endLiveTurn, sweepLiveTurnsAfterReconnect } from './job-stream';
 import { qk } from './query-keys';
 import { subscribeSse } from './sse-manager';
-import type { WireOrgUsage } from './types';
 import { writeUsageCache } from './usage-cache';
 
 /** A frame off the repo SSE: a durable-post change-signal, a live engine-stream frame, or a meta update. */
@@ -28,7 +28,7 @@ interface SseFrame {
   /** `usage` frame: the org whose subscription usage snapshot changed. */
   orgId?: string;
   /** `usage` frame: the fresh subscription-usage snapshot to push into the ring's query cache. */
-  usage?: WireOrgUsage;
+  usage?: OrgUsage;
 }
 
 /**

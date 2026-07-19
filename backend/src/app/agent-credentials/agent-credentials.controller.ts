@@ -89,8 +89,6 @@ export class AgentCredentialsController {
     );
   }
 
-  // ── Claude ──
-
   /** Start the Claude OAuth flow: returns the authorize URL to open and the state to echo back. */
   @Post('claude/authorize-url')
   async claudeAuthorizeUrl(
@@ -141,8 +139,6 @@ export class AgentCredentialsController {
     const row = await this.store.createClaudeSetupToken(orgId, token, body.label);
     return this.store.toView(row);
   }
-
-  // ── Codex ──
 
   /** Start the Codex device-code login: returns the code + link to show and a handle to poll. */
   @Post('codex/device/start')
@@ -216,8 +212,6 @@ export class AgentCredentialsController {
       throw err;
     }
   }
-
-  // ── Selection / removal / usage ──
 
   /** Make an account the active one for its provider. */
   @Put('selected')

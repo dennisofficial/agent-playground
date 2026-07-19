@@ -6,7 +6,6 @@
  * imports — this package stays standalone.
  */
 
-/** The engine backing the session. */
 export type SessionEngine = 'claude' | 'codex';
 
 /**
@@ -89,9 +88,9 @@ export type EngineEvent =
    * stream like any other frame, so it survives a host detach + boot re-attach (replayed with the log).
    */
   | { kind: 'input_ack'; id: string }
-  // ── Rich streaming (emitted only when `RunEngineArgs.richStream` is set — the thread BRAIN turn). The
-  //    `*_delta` kinds are LIVE-only (token-by-token); the full-block kinds (`text`/`thinking`/`tool_use`/
-  //    `tool_result`) are AUTHORITATIVE — the caller persists those as the durable transcript. ──
+  // Rich streaming (emitted only when `RunEngineArgs.richStream` is set — the thread BRAIN turn). The
+  // `*_delta` kinds are LIVE-only (token-by-token); the full-block kinds (`text`/`thinking`/`tool_use`/
+  // `tool_result`) are AUTHORITATIVE — the caller persists those as the durable transcript.
   //
   // `parentToolUseId` (authoritative blocks only): the SDK message's `parent_tool_use_id`. UNSET for the
   // main agent (the brain); SET to the spawning `Task` tool_use id for blocks produced by a SUBAGENT. The

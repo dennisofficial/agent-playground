@@ -2,7 +2,8 @@ import { useAllJobs } from '@/lib/api/inbox';
 import { mutationErrorMessage, type JobRef } from '@/lib/api/job-api';
 import { useAddJobDependency, useUnblockJob } from '@/lib/api/job-queries';
 import { groupThreadsBySection, SECTION_LABEL } from '@/lib/api/job-section';
-import type { JobBlocker, JobStatus } from '@/lib/api/types';
+import type { JobBlocker } from '@/lib/api/types';
+import { EJobStatus } from '@workspace/shared';
 import { Archive, Ban, MoreHorizontal, Pencil, Unlock } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { EphemeralToast, useEphemeralToast } from './ephemeral-toast';
@@ -10,11 +11,11 @@ import { EphemeralToast, useEphemeralToast } from './ephemeral-toast';
 /** Job statuses a manual block is still meaningful for — mirrors the backend guard ("can't block a job
  *  that's already building or finished"). The backend is the source of truth (a stale client check just
  *  400s), so this only gates the UI affordance, not correctness. */
-const BLOCKABLE_STATUSES = new Set<JobStatus>([
-  'planning',
-  'plan_review',
-  'awaiting_approval',
-  'blocked',
+const BLOCKABLE_STATUSES = new Set<EJobStatus>([
+  EJobStatus.PLANNING,
+  EJobStatus.PLAN_REVIEW,
+  EJobStatus.AWAITING_APPROVAL,
+  EJobStatus.BLOCKED,
 ]);
 
 /** Kebab → "Rename job" + "Unblock" (when blocked) + "Block on another job…" + a two-click "Archive job". */
@@ -39,7 +40,7 @@ export function JobMenu({
   /** The open job — powers the block/unblock actions (both real, server-mutating dependency edges). */
   jobRef: JobRef;
   /** The current job's UI status — gates whether "Block on another job…" is allowed. */
-  status: JobStatus;
+  status: EJobStatus;
   /** The job's current blockers — "Unblock" clears every one of these edges. */
   blockedBy?: JobBlocker[];
 }) {

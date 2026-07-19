@@ -5,7 +5,7 @@ import {
   MAIN_LANE,
   peekLiveTurn,
   retryCountdownSeconds,
-} from './job-stream';
+} from '../job-stream';
 
 // The store is module-global, so each test uses a unique jobId to stay isolated.
 describe('job-stream turn_retry reducer', () => {

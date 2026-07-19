@@ -54,3 +54,153 @@ export enum EAgentCredentialStatus {
   NEEDS_REAUTH = 'needs_reauth',
   ERROR = 'error',
 }
+
+// The canonical categorical enums for the job aggregate. Single-sourced here so the backend (DB `enum`
+// columns + read views) and the web console can't drift. A **job** is the top build unit; it owns thread
+// groups → threads → thread messages (+ subagents), and a group owns tasks.
+
+/**
+ * The canonical job lifecycle status — the WIRE CONTRACT. NOTE: the web also has a SEPARATE, web-local
+ * presentation status (adds `triaging`, folds `cancelled`→paused) that is deliberately NOT shared.
+ */
+export enum EJobStatus {
+  OPEN = 'open', // a conversation; no build scoped yet
+  PLANNING = 'planning', // upfront grill in progress (no locked plan yet)
+  PLAN_REVIEW = 'plan_review', // plan submitted; Codex reviewing (async) / Atlas addressing findings — not a needs-you state
+  AWAITING_APPROVAL = 'awaiting_approval', // decision record + track list posted; waiting on the operator
+  RUNNING = 'running', // tracks executing
+  AWAITING_SHIP_REVIEW = 'awaiting_ship_review', // reviewed diff parked on the operator's "Ship it" — the SECOND human gate
+  AMENDING = 'amending', // ship review RETRACTED (withdraw_ship) — the build exists and is being tweaked, not re-planned
+  BLOCKED = 'blocked', // parked waiting on blocker jobs' PRs to merge; the brain never runs while blocked
+  DONE = 'done', // one PR opened, all tracks handed off
+  CANCELLED = 'cancelled',
+  DELETING = 'deleting', // operator deleted the job; container + worktree teardown in progress (transient)
+  ARCHIVED = 'archived', // TERMINAL: archived (manual or idle sweep); row + transcript survive, mutations 409
+}
+
+/**
+ * The orthogonal "system is working" axis on a job — what the AI/pipeline is DOING right now, separate
+ * from the build PHASE ({@link EJobStatus}). Any non-`idle` value means the system owns the next step.
+ */
+export enum EJobActivity {
+  IDLE = 'idle',
+  TURN = 'turn', // a live conversational (brain) turn is streaming
+  PLAN_REVIEW = 'plan_review', // a synchronous Codex plan review is in flight
+  BUILD = 'build', // the driver is executing a builder thread
+  MASTER_REVIEW = 'master_review', // the driver is running the whole-diff master review
+  BASE_CHECK = 'base_check', // post-approval, pre-build: rebasing/checking the base branch
+  RETRYING = 'retrying',
+}
+
+/** The shape of work a job represents. */
+export enum EJobKind {
+  FEATURE = 'feature',
+  BUGFIX = 'bugfix',
+  ONBOARDING = 'onboarding', // the repo's first-run workspace setup
+  EVENT = 'event', // an automated (CI/review) follow-up
+  REVIEW = 'review', // a standalone review pass
+}
+
+/** Why/how a job was created — a human chat, an external event, or a control-plane action. */
+export enum EThreadOrigin {
+  CHAT = 'chat',
+  EVENT = 'event',
+  CONTROL = 'control',
+}
+
+/** A thread (lane)'s PURE LINEAR STEP. Pause/failure/skip are NOT steps — see {@link EThreadCondition}. */
+export enum EThreadStatus {
+  PENDING = 'pending',
+  PLANNING = 'planning',
+  REVIEWING = 'reviewing',
+  EXECUTING = 'executing',
+  AUTO_FIXING = 'auto_fixing',
+  DONE = 'done',
+}
+
+/** The orthogonal condition overlay on a lane, independent of the linear {@link EThreadStatus} step. */
+export enum EThreadCondition {
+  NONE = 'none',
+  PAUSED = 'paused', // a mid-build pause (request_operator_input / thread-level approval)
+  INCOMPLETE = 'incomplete', // halted without asserting completion
+  FAILED = 'failed', // crashed / errored out
+  SKIPPED = 'skipped', // a review child that had nothing to do — terminal, not a failure
+}
+
+/** Per-step status (the execute folder's leaves). */
+export enum EStepStatus {
+  PENDING = 'pending',
+  BUILDING = 'building',
+  REVIEWING = 'reviewing',
+  DONE = 'done',
+}
+
+/** A thread's function in the pipeline — drives which harness/prompt kit runs it. */
+export enum EThreadRole {
+  PLANNING = 'planning',
+  PLAN_REVIEW = 'plan_review',
+  BUILDER = 'builder',
+  REVIEW_AGENT = 'review_agent',
+  REVIEW_FIX = 'review_fix',
+  MASTER_REVIEW = 'master_review',
+  POST_BUILD = 'post_build',
+  CI = 'ci',
+}
+
+/** A thread's subject area (used to group threads under a thread group in the navigator). */
+export enum EThreadType {
+  BACKEND = 'backend',
+  FRONTEND = 'frontend',
+  DOCS = 'docs',
+  TESTING = 'testing',
+  INFRA = 'infra',
+  DATA = 'data',
+  GENERAL = 'general',
+}
+
+/** A thread group's kind (pipeline phase). One group holds many threads of varying {@link EThreadRole}s. */
+export enum EThreadGroupKind {
+  PLANNING = 'planning',
+  PLAN_REVIEW = 'plan_review',
+  BUILD = 'build',
+  DIRECT_BUILD = 'direct_build',
+  MASTER_REVIEW = 'master_review',
+  POST_BUILD = 'post_build',
+  CI = 'ci',
+}
+
+/** A thread message's render type — what the conversation classifier switches on. */
+export enum EThreadMessageKind {
+  CHAT = 'chat',
+  THINKING = 'thinking',
+  TOOL = 'tool',
+  CARD = 'card',
+  BUILD_EVENT = 'build_event',
+}
+
+/** Message provenance, by AUDIENCE — who authored a block and who can see it (`isAtlas` derives from it). */
+export enum EThreadMessageSource {
+  OPERATOR = 'operator',
+  ATLAS = 'atlas',
+  SYSTEM_OPERATOR = 'system_operator', // system → operator only (Atlas never sees it)
+  SYSTEM_SHARED = 'system_shared', // system → operator AND Atlas (e.g. Codex plan-review findings)
+  SYSTEM_EVENT = 'system_event', // an automated notification that opened the thread
+  SYSTEM_NOTICE = 'system_notice',
+  SYSTEM_REMINDER = 'system_reminder',
+  UNTRUSTED = 'untrusted', // content from an untrusted external source
+}
+
+/** One task's status in a thread group's agent-maintained TODO list (`dropped` is the deleted status). */
+export enum ETaskStatus {
+  PENDING = 'pending',
+  IN_PROGRESS = 'in_progress',
+  COMPLETED = 'completed',
+  DROPPED = 'dropped',
+}
+
+/** A spawned subagent (Task tool run)'s lifecycle status. */
+export enum ESubagentStatus {
+  RUNNING = 'running',
+  DONE = 'done',
+  FAILED = 'failed',
+}

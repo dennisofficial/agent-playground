@@ -16,27 +16,25 @@ import {
   useSetAutoMerge,
 } from '@/lib/api/job-queries';
 import { MAIN_LANE } from '@/lib/api/job-stream';
-import { toJobKind, toJobStatus } from '@/lib/api/status';
 import {
   APPROVE_ACTION_ID,
   SHIP_ACTION_ID,
   pipelineMainDefaultFooter,
-  type JobKind,
-  type JobStatus,
   type WebApprovalCard,
 } from '@/lib/api/types';
 import { orgSwatch } from '@/utils/org-display';
+import { EJobKind, EJobStatus } from '@workspace/shared';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Group, Panel, Separator, useDefaultLayout, useGroupRef } from 'react-resizable-panels';
 import { Conversation } from './conversation';
 import { DeleteJobPrDialog } from './delete-job-pr-dialog';
+import { useSelectedNode } from './hooks/use-selected-node';
 import { MarkdownActionsProvider } from './markdown';
 import { Navigator, type JobMeta } from './navigator';
 import { ReviewCommentsProvider } from './review-comments';
 import { SelectionCommentPopover } from './selection-comment-popover';
 import { PersistentApprovalBar, PersistentShipBar } from './spec-approval';
 import { EmptyPane, FilePane, PhaseView, SubagentPane } from './step-view';
-import { useSelectedNode } from './use-selected-node';
 
 /**
  * The thread workspace — the navigator (pipeline / state panels) + the work column (Conversation or
@@ -134,13 +132,9 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   const prStateKnown = job != null || inboxThread != null;
   const [prDialogOpen, setPrDialogOpen] = useState(false);
 
-  const pipelineKind = job ? toJobKind(job.kind) : null;
-  const kind: JobKind = inboxThread?.kind ?? pipelineKind ?? 'feat';
-  const status: JobStatus = job
-    ? toJobStatus(job.status)
-    : kind === 'event'
-      ? 'triaging'
-      : 'planning';
+  const pipelineKind = job?.kind;
+  const kind: EJobKind = inboxThread?.kind ?? pipelineKind ?? EJobKind.FEATURE;
+  const status: EJobStatus = job ? job.status : EJobStatus.PLANNING;
 
   // The LAST plan-approval card in the log (kind `plan`/`direct`/undefined — never the ship-review card
   // or the brain's `amend` proposal, which are distinct gates with their own inline rendering). A POSITIVE

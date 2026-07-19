@@ -4,9 +4,10 @@ import { useComposerStagedAnswers } from '@/lib/api/composer-store';
 import { useAllJobs } from '@/lib/api/inbox';
 import type { JobMessage, JobRef } from '@/lib/api/job-api';
 import { MAIN_LANE, useLiveTurn, type ContextBreakdown } from '@/lib/api/job-stream';
-import type { JobBlocker, LaneDefaultFooter, WireJobActivity } from '@/lib/api/types';
+import type { JobBlocker, LaneDefaultFooter } from '@/lib/api/types';
 import { assertNever } from '@/utils/assert';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { EJobActivity } from '@workspace/shared';
 import { HelpCircle, Upload } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ApprovalCardView, VerdictCardView } from './approval-card';
@@ -34,6 +35,8 @@ import { indexCodexReviewBlocks } from './codex-review';
 import { Composer, type ComposerFooter } from './composer';
 import { DetailTopBar } from './detail-top-bar';
 import { FileCardView } from './file-card';
+import { useAttachments } from './hooks/use-attachments';
+import { useFileDrop } from './hooks/use-file-drop';
 import { isTouchCapableDevice, PREMEASURE_MIN_ROWS, useIdlePremeasure } from './idle-premeasure';
 import { extractMermaidSources, mermaidReservePx } from './markdown';
 import { McpProposalCard } from './mcp-proposal-card';
@@ -47,8 +50,6 @@ import { SkillProposalCard } from './skill-proposal-card';
 import { indexDurableSubagents, SubagentCard, subagentNode } from './subagents';
 import { JumpToLatestButton, useTailFollow } from './tail-follow';
 import { segmentToolRun, ToolGroup, type ToolItem } from './tool-calls';
-import { useAttachments } from './use-attachments';
-import { useFileDrop } from './use-file-drop';
 
 /**
  * Conversation mode — the Main lane (the thread's brain). Just the shared {@link TranscriptView} with the
@@ -1022,7 +1023,7 @@ function useRealtimeIdle(jobId: string | null): boolean {
  * as "no positive driver-owned evidence" and fall back to the coarse phase, so a cold cache never falsely
  * SUPPRESSES a genuine indicator.
  */
-function useRealtimeActivity(jobId: string | null): WireJobActivity | null {
+function useRealtimeActivity(jobId: string | null): EJobActivity | null {
   const { data: threads } = useAllJobs();
   if (!jobId) return null;
   return threads?.find((t) => t.id === jobId)?.activity ?? null;

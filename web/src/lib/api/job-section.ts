@@ -48,14 +48,6 @@ export const SECTION_LABEL: Record<JobSection, string> = {
 export function sectionOf(t: InboxThread): JobSection | null {
   switch (t.status) {
     case 'planning':
-    case 'triaging':
-      // The synchronous Codex plan review keeps the `planning` status and only flips the orthogonal
-      // `activity` axis to `plan_review` — surface it in its own hands-off Reviewing section (mirrors the
-      // `master_review` carve-out in the `running` branch below) so it reads as "step away".
-      if (t.activity === 'plan_review') return 'reviewing';
-      return 'planning';
-    // A hands-off, system-owned phase (Codex reviewing the plan + the review→revise loop): its own
-    // section so it reads as "step away", separate from Planning's you're-in-the-loop grilling.
     case 'plan_review':
       return 'reviewing';
     case 'blocked':

@@ -15,13 +15,13 @@ import { formatEffort, formatModelLabel } from '@/utils/format';
 import { ArrowUp, ChevronDown, Plus, Square } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import { AttachmentTray } from './attachment-tray';
-import { ContextMeter } from './bubbles';
 import { CommentTray } from './comment-tray';
+import { ContextMeter } from './context-meter';
+import type { AttachmentsApi } from './hooks/use-attachments';
 import { QueuedTray } from './queued-tray';
 import { useReviewComments, type ReviewComment } from './review-comments';
 import { StagedAnswersTray } from './staged-answers-tray';
 import { UsageRing } from './usage-ring';
-import type { AttachmentsApi } from './use-attachments';
 
 /** Map one staged answer to the wire shape `/message` expects (drops the chip-only `label`). */
 function toMessageItem(a: StagedAnswer): MessageInput {

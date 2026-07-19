@@ -113,11 +113,9 @@ export interface GithubTokenMeta {
   updatedAt: string;
 }
 
-// ---------------------------------------------------------------------------
 // Plan Viewer — read-only shapes powering the web Plan Viewer (`/plans/:teamId/:taskId`)
 // and the board/pipeline dashboards. A plan is rendered as diagrams + prose instead of a
 // wall of markdown; these DTOs carry the data the viewer renders.
-// ---------------------------------------------------------------------------
 
 /** A team-board task as shown in the plan viewer / board dashboard. */
 export interface BoardTaskView {

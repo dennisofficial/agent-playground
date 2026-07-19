@@ -1,8 +1,9 @@
 'use client';
 
 import { resolveJob, ThreadApiError, type JobRef } from '@/lib/api/job-api';
-import { STATUS_META, toJobStatus } from '@/lib/api/status';
-import type { JobBlocker, WireJobStatus } from '@/lib/api/types';
+import { STATUS_META } from '@/lib/api/status';
+import type { JobBlocker } from '@/lib/api/types';
+
 import { threadHref } from '@/lib/routes';
 import { GitMerge, GitPullRequest, GitPullRequestClosed, Lock } from 'lucide-react';
 import { useRouter } from 'next/navigation';
@@ -70,8 +71,7 @@ export function BlockedByPane({ jobRef, blockedBy }: { jobRef: JobRef; blockedBy
 }
 
 export function BlockerRow({ blocker, onClick }: { blocker: JobBlocker; onClick: () => void }) {
-  const status = toJobStatus(blocker.status as WireJobStatus);
-  const meta = STATUS_META[status];
+  const meta = STATUS_META[blocker.status];
   return (
     <button
       type="button"

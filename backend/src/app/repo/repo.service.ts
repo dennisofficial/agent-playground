@@ -29,12 +29,25 @@ export class RepoService {
     @Inject(GITHUB_ACCESS_PORT) private readonly github: GithubAccessPort,
   ) {}
 
-  // ── Org-scoped collection (needs the org context) ──
-
   /** Repos connected under an org, oldest first. */
   async list(userId: string, orgId: string): Promise<RepoView[]> {
     await this.orgs.assertMember(userId, orgId);
     const rows = await this.repos.find({ where: { orgId }, order: { createdAt: 'ASC' } });
+    return rows.map((r) => this.toView(r));
+  }
+
+  /** Every repo across the caller's orgs (member-scoped via the `repos` guard) — the cross-org picker +
+   *  the client-side `repoId → name` map for the sidebar. No org in the path; RLS scopes it. */
+  async listAll(userId: string): Promise<RepoView[]> {
+    const { allowed, where } = await scopedFindWhere<Repo>({
+      rls: this.realtime.rls,
+      model: 'repos',
+      user: { id: userId },
+      action: 'read',
+      where: {},
+    });
+    if (!allowed) return [];
+    const rows = await this.repos.find({ where, order: { createdAt: 'ASC' } });
     return rows.map((r) => this.toView(r));
   }
 
@@ -75,8 +88,6 @@ export class RepoService {
 
     return this.toConnected(saved, probe.reason);
   }
-
-  // ── Item ops: identified by repoId, tenant-scoped centrally (no orgId in the path) ──
 
   /** Update repo metadata (no GitHub call). Owner-only. */
   async update(userId: string, repoId: string, patch: UpdateRepoDto): Promise<ConnectedRepo> {
@@ -152,6 +163,7 @@ export class RepoService {
   private toView(r: Repo): RepoView {
     return {
       id: r.id,
+      orgId: r.orgId,
       slug: r.slug,
       name: r.name,
       gitUrl: r.gitUrl,

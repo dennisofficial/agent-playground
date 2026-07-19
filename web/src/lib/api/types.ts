@@ -1,55 +1,15 @@
-/**
- * Contracts for the Atlas web surface (`/web/*`). These MIRROR the backend shapes verbatim:
- *  - `WebApprovalCard` / `WebVerdictCard` — the approval-card payload carried on a message's `card`.
- *  - `PipelineState` — `DriverStoreService.getPipelineState` (job + threads + per-thread steps; carries
- *    the thread's PR url/number + feature/base branch — the navigator's ARTIFACTS + header read them).
- *
- * The live message + request shapes are owned by `job-api.ts` (the org → repo → thread client).
- */
-
 import type {
   AutoApproveMode,
-  EStepStatus,
+  EJobKind,
+  EJobStatus,
   EThreadCondition,
   EThreadStatus,
-  OrgUsage,
-  EJobActivity as WireJobActivity,
-  JobHalt as WireJobHalt,
-  EJobStatus as WireJobStatus,
+  JobHalt,
 } from '@workspace/shared';
-
-/**
- * The backend job WIRE status — single-sourced in `@workspace/shared` so it can't drift from the
- * backend's `JobStatus`. (The web's own UI-presentation `JobStatus` — below — is a separate type.)
- */
-export type { WireJobStatus };
-/** The backend job halt reason — single-sourced in `@workspace/shared`. Null when the job is healthy. */
-export type { WireJobHalt };
-/**
- * Host-side Claude subscription usage snapshot — single-sourced in `@workspace/shared`. Carries the
- * OPTIONAL panel-header fields (`accountLabel` = the selected account's email/label, `plan` = its
- * subscription plan); both are absent when no credential is selected and the panel falls back to a
- * neutral single-account header.
- */
-export type WireOrgUsage = OrgUsage;
 /**
  * The backend "system is working" axis (`idle | turn | plan_review | build | master_review`) —
  * single-sourced in `@workspace/shared`. Carried on the realtime row; the dot itself reads `needsYou`.
  */
-export type { WireJobActivity };
-
-export type WireJobKind = 'feature' | 'bugfix' | 'onboarding' | 'event' | 'review';
-
-/**
- * The lane (Thread) linear step, its orthogonal condition overlay, and the per-step leaf status — the
- * native `E*` enums single-sourced in `@workspace/shared` (so they can't drift from the backend `threads`
- * table). Re-exported under their web-local names so existing workspace imports keep resolving; because
- * they're now nominal TS enums, VALUE comparisons must use the member (e.g. `EThreadStatus.DONE`).
- */
-export type ThreadStatus = EThreadStatus;
-export type ThreadCondition = EThreadCondition;
-export type StepStatus = EStepStatus;
-
 export const APPROVE_ACTION_ID = 'atlas_approval:approve';
 export const REQUEST_CHANGES_ACTION_ID = 'atlas_approval:request_changes';
 export const DENY_ACTION_ID = 'atlas_approval:deny';
@@ -430,9 +390,9 @@ export interface PipelineReviewChild {
   id: string;
   role: 'review_agent' | 'review_fix';
   brief: string;
-  status: ThreadStatus;
+  status: EThreadStatus;
   /** The orthogonal condition overlay (skipped/failed/…) — independent of the linear {@link status} step. */
-  condition: ThreadCondition;
+  condition: EThreadCondition;
   /** The lens id (`best_practices`/…) for a `review_agent` child; absent for `review_fix`. */
   lensId?: string;
   /** Findings this lens surfaced, or null until it has run (`review_fix` is always null). */
@@ -490,9 +450,9 @@ export interface PipelineThread {
   brief: string;
   /** The thread's scope type (backend/frontend/docs/…), `'general'` fallback. */
   type: string;
-  status: ThreadStatus;
+  status: EThreadStatus;
   /** The orthogonal condition overlay (pause/terminal tag) — independent of the linear {@link status} step. */
-  condition: ThreadCondition;
+  condition: EThreadCondition;
   /** Whether a just-in-time plan was generated — gates the optional `plan` leaf in the nav tree. */
   hasPlan: boolean;
   /** The resumable engine session id, or null before the thread's first turn. */
@@ -545,8 +505,8 @@ export interface PipelineThreadGroup {
   /** The build slice's review-selection TYPE (backend/frontend/docs/…) — null on non-build thread groups. */
   type: string | null;
   ordinal: number;
-  status: ThreadStatus;
-  condition: ThreadCondition;
+  status: EThreadStatus;
+  condition: EThreadCondition;
   /** The plan revision this thread group belongs to, or null for a revision-agnostic/legacy thread group. */
   decisionRecordId: string | null;
   /** This thread group's ROOT threads, ordinal-sorted (a build thread group's sequential builder legs, oldest
@@ -566,16 +526,16 @@ export type JobBlocker = {
   jobId: string;
   title: string | null;
   prState: string | null;
-  status: string;
+  status: EJobStatus;
 };
 
 export interface PipelineJob {
   /** The thread id — the backend keys the pipeline on the thread (thread = the build unit). */
   jobId: string;
   title: string;
-  kind: WireJobKind;
-  status: WireJobStatus;
-  halt: WireJobHalt | null;
+  kind: EJobKind;
+  status: EJobStatus;
+  halt: JobHalt | null;
   /** Who spawned this job (immutable snapshot), or null for a top-level job. Powers the "Created by"
    *  header row. */
   createdBy?: JobProvenance | null;
@@ -819,25 +779,6 @@ export interface ServiceInfo {
    */
   url: string | null;
 }
-
-/** The Job UI-presentation status set from handoff §7 (semantic dot colors). */
-export type JobStatus =
-  | 'running'
-  | 'planning'
-  | 'plan_review'
-  | 'awaiting_approval'
-  | 'awaiting_ship_review'
-  | 'amending'
-  | 'blocked'
-  | 'done'
-  | 'triaging'
-  | 'cancelled'
-  | 'deleting'
-  | 'archived';
-
-/** UI kind badge — `feat`/`fix` from WireJobKind; `event` denotes a notification-seeded job;
- *  `onboard` is the Atlas-run repo-init (onboarding) job; `review` is an external-PR review job. */
-export type JobKind = 'feat' | 'fix' | 'event' | 'onboard' | 'review';
 
 /** Observed PR lifecycle — the backend `jobs.pr_state`. Null (no `pr`) means no PR yet. */
 export type PrState = 'open' | 'merged' | 'closed';

@@ -40,22 +40,18 @@ export function ServerUnreachable() {
     return () => clearInterval(id);
   }, []);
 
-  // Fire the auto-retry when the countdown runs out.
   useEffect(() => {
     if (secs <= 1 && !retryingRef.current) void runRetry();
   }, [secs, runRetry]);
 
   return (
     <main className="relative flex min-h-dvh items-center justify-center overflow-hidden px-6">
-      {/* grid + warm vignette + top accent line — matches the workspace canvas */}
       <div aria-hidden style={GRID} />
       <div aria-hidden style={VIGNETTE} />
       <div aria-hidden style={TOP_LINE} />
 
       <div className="relative flex max-w-140 flex-col items-center px-6 text-center">
-        {/* ===== ILLUSTRATION ===== */}
         <div className="anim-fadeUp" style={ILLUSTRATION}>
-          {/* local node */}
           <div className="flex flex-col items-center gap-2.5">
             <div style={NODE_CARD}>
               <span style={{ ...BAR, background: 'var(--border-2)' }} />
@@ -65,7 +61,6 @@ export function ServerUnreachable() {
             <span style={NODE_LABEL}>atlas</span>
           </div>
 
-          {/* broken link */}
           <div style={CABLE_WRAP}>
             <div style={CABLE_LEFT} />
             <div style={CABLE_RIGHT} />
@@ -75,7 +70,6 @@ export function ServerUnreachable() {
             </div>
           </div>
 
-          {/* server node (offline) */}
           <div style={SERVER_NODE}>
             <div style={{ position: 'relative', width: 60, height: 60 }}>
               <div style={{ ...PING_RING }} />
@@ -89,7 +83,6 @@ export function ServerUnreachable() {
           </div>
         </div>
 
-        {/* ===== TEXT ===== */}
         <div className="anim-fadeUp" style={{ ...BADGE, animationDelay: '0.06s' }}>
           <span style={BADGE_DOT} />
           connection lost
@@ -104,14 +97,12 @@ export function ServerUnreachable() {
           keep going and the board will resync the moment we’re back.
         </p>
 
-        {/* error detail */}
         <div className="anim-fadeUp font-mono" style={{ ...DETAIL, animationDelay: '0.18s' }}>
           <span style={{ color: 'var(--red)', fontWeight: 600 }}>UNREACHABLE</span>
           <span style={DETAIL_DIV} />
           <span>{backendHost()}</span>
         </div>
 
-        {/* action */}
         <div className="anim-fadeUp" style={{ marginTop: 26, animationDelay: '0.22s' }}>
           <Button
             variant="primary"
@@ -124,7 +115,6 @@ export function ServerUnreachable() {
           </Button>
         </div>
 
-        {/* auto-retry line */}
         <div className="anim-fadeUp font-mono" style={{ ...AUTO_LINE, animationDelay: '0.26s' }}>
           {retrying ? 'attempting to reconnect…' : `auto-retry in 0:0${Math.max(secs, 1)}`}
         </div>
@@ -144,7 +134,6 @@ function backendHost(): string {
   }
 }
 
-// ── decorative overlays ──────────────────────────────────────────────────────────────────────
 const GRID: CSSProperties = {
   position: 'absolute',
   inset: 0,
@@ -170,7 +159,6 @@ const TOP_LINE: CSSProperties = {
   pointerEvents: 'none',
 };
 
-// ── illustration ─────────────────────────────────────────────────────────────────────────────
 const ILLUSTRATION: CSSProperties = {
   // Top-align the three columns so every 60px card shares the same top edge — and therefore the
   // same vertical center as the cable/X marker. Centering instead would push each card's center up
@@ -300,7 +288,6 @@ const OFFLINE_DOT: CSSProperties = {
   boxShadow: '0 0 7px color-mix(in srgb, var(--red) 50%, transparent)',
 };
 
-// ── text + chips ─────────────────────────────────────────────────────────────────────────────
 const BADGE: CSSProperties = {
   fontFamily: 'var(--f-mono)',
   fontSize: 10,
