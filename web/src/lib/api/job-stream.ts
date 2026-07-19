@@ -95,7 +95,7 @@ export type LiveBlock =
        */
       bgSettled?: boolean;
       /**
-       * Set on the ANCHOR tool block from the `bg_task 'started'` frame — the authoritative signal that this
+       * Set on the ANCHOR tool from the`bg_task 'started'` frame — the authoritative signal that this
        * Task was launched in the background, INDEPENDENT of `input.run_in_background` (which is absent when the
        * caller relies on the default-background behavior). The subagent card reads this (not the input field)
        * to know it must track settlement rather than the launch-ack `done`. Carried across reconnect via the
@@ -140,8 +140,8 @@ export interface LiveTurn {
   /**
    * Set while a retry is in flight — either the SDK's native `api_retry` mid-turn (overloaded/5xx) or the
    * host's 10×/10s auth/transport backstop between turns. Drives the `LiveIndicator`'s "Reconnecting to
-   * Claude — auto-retry n/m…" label + countdown. `nextAttemptAt` is ALWAYS an absolute epoch-ms instant
-   * (the reducer resolves a relative `retryDelayMs` to absolute ONCE at frame-apply time so the countdown
+   * Claude — auto-retry n/m…" label + countdown. `nextAttemptAt`is ALWAYS an absolute epoch-ms instant
+   * (the reducer resolves a`retryDelayMs` to absolute ONCE at frame-apply time so the countdown
    * has a stable target). Cleared the moment any real content frame lands (the retry succeeded).
    */
   retrying?: {

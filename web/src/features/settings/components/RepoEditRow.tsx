@@ -6,7 +6,6 @@ import { useUpdateRepoMutation } from '@/redux/query/api/repo.api';
 import { type AutoMergeMethod, AUTO_MERGE_METHODS } from '@workspace/shared';
 import { useState } from 'react';
 
-// ── Repo row (edit metadata) ─────────────────────────────────────────────────────────────────────
 export function RepoEditRow({
     orgId, repo, onClose, onError,
 }: {

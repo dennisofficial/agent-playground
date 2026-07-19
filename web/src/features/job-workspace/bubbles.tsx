@@ -993,7 +993,6 @@ export function SystemOperatorNotice({
       className="anim-fadeUp rounded-[9px] border"
       style={{ borderColor: 'var(--red-line)', background: 'var(--red-soft)' }}
     >
-      {/* Header strip */}
       <div
         className="flex items-center gap-2 rounded-t-[8px] px-3.5 py-2"
         style={{
@@ -1106,7 +1105,6 @@ export function HarnessBubble({ message }: { message: JobMessage }) {
         background: 'color-mix(in srgb, var(--surface-2) 60%, transparent)',
       }}
     >
-      {/* Header strip */}
       <div
         className="flex items-center gap-2 rounded-t-[8px] px-3.5 py-2"
         style={{
@@ -1137,7 +1135,6 @@ export function HarnessBubble({ message }: { message: JobMessage }) {
         <span className="flex-1" />
         <span className="font-mono text-[10px] text-faint">{message.authorName}</span>
       </div>
-      {/* Markdown body */}
       <div className="px-3.5 py-3">
         <Markdown>{message.text}</Markdown>
       </div>
@@ -1203,7 +1200,6 @@ export function EventBubble({ message }: { message: JobMessage }) {
           background: 'var(--accent-soft)',
         }}
       >
-        {/* Header strip */}
         <div
           className="flex items-center gap-2 rounded-t-[8px] px-3.5 py-2"
           style={{
@@ -1223,7 +1219,6 @@ export function EventBubble({ message }: { message: JobMessage }) {
           <span className="flex-1" />
           {severity ? <span className="font-mono text-[10px] text-faint">{severity}</span> : null}
         </div>
-        {/* Markdown body */}
         <div className="px-3.5 py-3">
           <Markdown>{message.text}</Markdown>
         </div>
@@ -1241,7 +1236,6 @@ export function EventBubble({ message }: { message: JobMessage }) {
         background: 'var(--accent-soft)',
       }}
     >
-      {/* Header strip */}
       <div
         className="flex items-center gap-2 rounded-t-[8px] px-3.5 py-2"
         style={{
@@ -1257,7 +1251,6 @@ export function EventBubble({ message }: { message: JobMessage }) {
           {label}
         </span>
       </div>
-      {/* Markdown body */}
       <div className="px-3.5 py-3">
         <Markdown>{message.text}</Markdown>
       </div>

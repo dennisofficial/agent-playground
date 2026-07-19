@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractMermaidSources } from './markdown';
+import { extractMermaidSources } from '../markdown';
 
 describe('extractMermaidSources', () => {
   it('extracts and trims a single fenced diagram', () => {

@@ -1,8 +1,15 @@
 'use client';
 
+import {
+  useGetJobMessagesQuery,
+  useGetJobQuery,
+  useGetJobTasksQuery,
+} from '@/redux/query/api/jobs.api';
 import { useGetOrgReposQuery, useGetRepoBranchesQuery } from '@/redux/query/api/repo.api';
 import type { AutoApproveMode } from '@workspace/shared';
-import { adaptQuery } from './_stub';
+import { useMemo } from 'react';
+import { adaptQuery, type QueryResultLike } from './_stub';
+import { jobViewToPipeline, threadMessageToJobMessage } from './job-adapters';
 import { useMutation, useQuery } from './_tanstack-shim';
 import {
   addJobDependency,
@@ -16,8 +23,6 @@ import {
   fetchCreatedJobs,
   fetchJobDiff,
   fetchJobDiffSummary,
-  fetchMessages,
-  fetchPipeline,
   fetchRepoFile,
   fetchRepoTree,
   fetchServices,
@@ -37,13 +42,14 @@ import {
   stopJob,
   type ApproveBody,
   type CreateThreadBody,
+  type JobMessage,
   type JobRef,
   type MessageInput,
   type ProvideSecretBody,
   type RepoView,
   type ReviewCommentItemBody,
 } from './job-api';
-import type { JobBlocker } from './types';
+import type { JobBlocker, PipelineState } from './types';
 
 /**
  * Tanstack Query hooks over the org → repo → thread API.
@@ -73,9 +79,12 @@ export function useAllRepos(): { repos: RepoChoice[]; isLoading: boolean } {
   return { repos: [], isLoading: false };
 }
 
-/** A thread's durable message log. SSE keeps it fresh via `useJobEvents` (refetch on any frame). */
-export function useJobMessages(ref: JobRef) {
-  return useQuery({ queryFn: () => fetchMessages(ref) });
+/** The job's durable transcript (all threads; the conversation scopes per lane client-side). Wired to
+ *  `GET /jobs/:id/messages` and kept live by its realtime feed. */
+export function useJobMessages(ref: JobRef): QueryResultLike<JobMessage[]> {
+  const q = useGetJobMessagesQuery(ref.jobId);
+  const data = useMemo(() => q.data?.map(threadMessageToJobMessage), [q.data]);
+  return { ...adaptQuery(q), data } as QueryResultLike<JobMessage[]>;
 }
 
 /**
@@ -88,9 +97,16 @@ export function useDraft(ref: JobRef) {
   return useQuery({ queryFn: () => getDraft(ref) });
 }
 
-/** A thread's pipeline (job + threads), or `{ status: 'no_job' }` before a plan is approved. */
-export function usePipeline(ref: JobRef) {
-  return useQuery({ queryFn: () => fetchPipeline(ref) });
+/** A job's pipeline (job + thread groups + threads + tasks), or `{ status: 'no_job' }` before a plan is
+ *  approved. Adapted from `GET /jobs/:id` + `/tasks` onto the navigator's `PipelineState` shape. */
+export function usePipeline(ref: JobRef): QueryResultLike<PipelineState> {
+  const jobQ = useGetJobQuery(ref.jobId);
+  const tasksQ = useGetJobTasksQuery(ref.jobId);
+  const data = useMemo(
+    () => (jobQ.data ? jobViewToPipeline(jobQ.data, tasksQ.data ?? []) : undefined),
+    [jobQ.data, tasksQ.data],
+  );
+  return { ...adaptQuery(jobQ), data } as QueryResultLike<PipelineState>;
 }
 
 /** A thread's `/context` files (specs + artifacts). SSE keeps it fresh via `useJobEvents`. */

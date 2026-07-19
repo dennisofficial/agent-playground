@@ -17,14 +17,13 @@ import { threadLane } from './phases';
 
 export type NodeResolution = 'loading' | 'found' | 'not_found';
 
-// ── node-id builders ─────────────────────────────────────────────────────────────────────────────
 /** Every conversational thread — a build/leg thread AND a review CHILD thread (a `review_agent` or the
  *  `review_fix` turn) — is a BARE id (no prefix); it opens in the LEFT lane pane. The old
  *  `rev:<tid>:<agent>` / `fix:<tid>` synthetic ids are gone: review children are real thread rows, so they
  *  are addressed by their own id and their lane comes from the pipeline data (`PipelineReviewChild.lane`). */
 export const threadNode = (threadId: string): string => threadId;
 
-// ── stacked repo-file view id (rides its own `?file=` param, like `subagent:` rides `?sub=`) ─────────
+// A stacked repo-file view id rides its own `?file=` param, like `subagent:` rides `?sub=`.
 /** A stacked repo-file view id: `file:<path>` with an optional `::L<a>[-<b>]` line target. */
 export const fileNode = (path: string, lines?: string): string =>
   `file:${path}${lines ? `::L${lines}` : ''}`;
@@ -39,7 +38,6 @@ export function parseFileNode(token: string): { path: string; lines: string | nu
     : { path: rest, lines: null };
 }
 
-// ── placement: which pane a node opens in ───────────────────────────────────────────────────────
 /** Literals that render from card/derived data in the RIGHT detail pane. */
 const DETAIL_LITERALS = new Set(['plan', 'decision', 'diff', 'created', 'blocked-by']);
 /** Prefixed detail-pane nodes (files, ports, services, section plans). Review lenses (`rev:`) and the
@@ -53,7 +51,6 @@ export function isDetailNode(node: string): boolean {
   return DETAIL_LITERALS.has(node) || DETAIL_PREFIX.test(node);
 }
 
-// ── resolution (a stale `?node=`/`?lane=` → not-found) ──────────────────────────────────────────
 /** Literals that render from card / derived data — no live-id dependency, always resolvable. */
 const ID_FREE_NODES = new Set(['plan', 'decision', 'diff', 'created', 'blocked-by']);
 
@@ -110,7 +107,6 @@ function hasThread(job: PipelineJob, id: string): boolean {
   return id.length > 0 && job.threadGroups.some((st) => st.threads.some((t) => t.id === id));
 }
 
-// ── conversation /context link → node id ────────────────────────────────────────────────────────
 /**
  * Map a conversation markdown-link href that points at a `/context` file — absolute
  * `/context/<bucket>/<path>` OR bucket-relative `<bucket>/<path>` (bucket ∈ specs|generated|artifacts|
@@ -140,7 +136,6 @@ export function contextConvoNodeForHref(href: string): string | null {
   return prefix + rest.join('/');
 }
 
-// ── transcript lane for a node (null = not a transcript-backed node) ────────────────────────────
 /**
  * The live/durable lane a transcript-backed node renders on — the ONE place that maps a node id to its
  * `TranscriptView` lane. Returns `null` for non-transcript nodes (files/plan/decision/ports/…), which have

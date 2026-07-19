@@ -121,7 +121,6 @@ export function McpSection({ orgId, role }: { orgId: string; role: string }) {
   );
 }
 
-// ── Tier 1 · System (read-only) ───────────────────────────────────────────────────────────────────
 function SystemTier({ system }: { system: SystemMcpServer[] }) {
   return (
     <>
@@ -199,7 +198,6 @@ function SystemTier({ system }: { system: SystemMcpServer[] }) {
   );
 }
 
-// ── Tier 3 · Repository (a repo picker scoping a tier) ─────────────────────────────────────────────
 function RepoTier({
   orgId,
   allServers,
@@ -274,7 +272,6 @@ function RepoTier({
   );
 }
 
-// ── A tier body: header + add button + empty/form/list + delete modal ─────────────────────────────
 function McpTier({
   orgId,
   scope,
@@ -427,7 +424,6 @@ function EmptyState({
   );
 }
 
-// ── A configured-server row ───────────────────────────────────────────────────────────────────────
 function ServerRow({
   orgId,
   scope,
@@ -455,7 +451,6 @@ function ServerRow({
       style={{ opacity: server.enabled ? 1 : 0.62 }}
     >
       <div className="flex items-start gap-3.5">
-        {/* left: identity */}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-mono text-[13px] font-semibold text-text">{server.name}</span>
@@ -501,7 +496,6 @@ function ServerRow({
           </div>
         </div>
 
-        {/* right: validation + actions */}
         <div className="flex shrink-0 flex-col items-end gap-2.5">
           <span
             title={v.title}
@@ -548,7 +542,6 @@ function ServerRow({
   );
 }
 
-// ── Delete confirm modal ──────────────────────────────────────────────────────────────────────────
 function DeleteModal({
   orgId,
   scope,
@@ -630,7 +623,6 @@ function DeleteModal({
   );
 }
 
-// ── The add / edit form ───────────────────────────────────────────────────────────────────────────
 interface PairRow {
   k: string;
   v: string;
@@ -809,7 +801,6 @@ function ServerForm({
         </div>
       </div>
 
-      {/* Name */}
       <FormLabel>
         Name <span className="text-accent">*</span>
       </FormLabel>
@@ -825,7 +816,6 @@ function ServerForm({
         Namespaces tools as <span className="text-dim">mcp__{name || '<name>'}__&lt;tool&gt;</span>
       </div>
 
-      {/* Transport */}
       <FormLabel className="mt-4">Transport</FormLabel>
       <div className="flex gap-1 rounded-md border border-border-2 bg-surface-2 p-1">
         {(
@@ -854,7 +844,6 @@ function ServerForm({
         })}
       </div>
 
-      {/* Remote: url + auth (static headers | OAuth) */}
       {isRemote ? (
         <>
           <FormLabel className="mt-4">
@@ -936,7 +925,6 @@ function ServerForm({
         </>
       )}
 
-      {/* Surfaces */}
       <FormLabel className="mt-4.5">Applies to</FormLabel>
       <div className="flex flex-wrap gap-2">
         {SURFACE_META.map(({ key, label, sub }) => {
@@ -966,7 +954,6 @@ function ServerForm({
         })}
       </div>
 
-      {/* Enabled */}
       <div className="mt-4 flex items-center gap-2.5">
         <button
           type="button"
@@ -987,7 +974,6 @@ function ServerForm({
         <span className="text-[11px] text-faint">Agent sessions can call this server’s tools.</span>
       </div>
 
-      {/* In-form validation result */}
       {valResult?.ok ? (
         <div
           className="mt-4 rounded-md border p-3.5"
@@ -1033,7 +1019,6 @@ function ServerForm({
 
       {formErr ? <div className="mt-3 text-[11.5px] text-red">{formErr}</div> : null}
 
-      {/* Footer */}
       <div className="mt-4.5 flex items-center gap-2.5">
         <button
           type="button"
@@ -1161,7 +1146,6 @@ function OAuthStatus({
   return <span className="text-[11.5px] text-faint">Not connected</span>;
 }
 
-// ── Form building blocks ──────────────────────────────────────────────────────────────────────────
 function FormLabel({
   children,
   className = '',
@@ -1321,7 +1305,6 @@ function PairEditor({
   );
 }
 
-// ── Bits ──────────────────────────────────────────────────────────────────────────────────────────
 const TRANSPORT_HUE: Record<McpTransport, string> = {
   http: 'blue',
   sse: 'purple',

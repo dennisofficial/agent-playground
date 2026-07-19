@@ -350,7 +350,6 @@ export function PhaseView({
   );
 }
 
-// ── Subagent run (its own sub-page) ──────────────────────────────────────────────────────────────
 /**
  * The detail-pane view for one subagent (Task) run. Renders the subagent's OWN transcript — its thinking,
  * narration, and tool calls — peeled out of the main conversation by `meta.parentToolUseId`. Prefers the
@@ -539,7 +538,6 @@ function SubagentTranscript({ blocks, active }: { blocks: SubBlock[]; active: bo
   );
 }
 
-// ── Docs ─────────────────────────────────────────────────────────────────────────────────────────
 function PlanDoc({
   card,
   threads,
@@ -678,7 +676,6 @@ function DiffView({ jobRef }: { jobRef: JobRef }) {
   return <DiffPane jobRef={jobRef} />;
 }
 
-// ── Context file viewer (specs / artifacts) ───────────────────────────────────────────────────────
 /** Render one real `/context` file: markdown → prose, images → inline, anything else → mono text. */
 function FileView({
   jobRef,
@@ -734,15 +731,15 @@ function FileView({
   );
 }
 
+/** Stable empty fallback for `FileBody`'s `fileSet` prop (no tracked-file manifest available). */
+const EMPTY_FILE_SET: Set<string> = new Set();
+const MAX_HIGHLIGHTED_FILE_LINES = 500;
+
 /**
  * Resolve a RELATIVE markdown link (e.g. `sections/01-backend.md`, `../data-model.md`) found inside a
  * `/context` file at `fromPath` (bucket-rooted, e.g. `specs/plan.md`) to the navigator node that opens it
  * (`spec:`/`gen:`/`artifact:` + the bucket-relative path). Returns null if it escapes a known bucket.
  */
-/** Stable empty fallback for `FileBody`'s `fileSet` prop (no tracked-file manifest available). */
-const EMPTY_FILE_SET: Set<string> = new Set();
-const MAX_HIGHLIGHTED_FILE_LINES = 500;
-
 function contextNodeForLink(fromPath: string, href: string): string | null {
   // A site-absolute `/context/<bucket>/…` href already carries its own bucket, so it resolves against the
   // context root — NOT relative to `fromPath`. Delegate it to the href-based resolver.
@@ -1208,7 +1205,6 @@ export function EmptyPane() {
   );
 }
 
-// ── shared bits ──────────────────────────────────────────────────────────────────────────────────
 function Placeholder({ title, body }: { title: string; body: string }) {
   return (
     <div className="flex h-full flex-col items-center justify-center text-center">

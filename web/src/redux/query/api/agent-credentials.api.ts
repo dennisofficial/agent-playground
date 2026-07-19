@@ -25,7 +25,6 @@ export const agentCredentialsApi = baseApi.injectEndpoints({
         }),
     }),
 
-    // ── Claude ──
     startClaudeAuthorize: build.mutation<ClaudeAuthorizeUrlResult, { orgId: string }>({
       query: ({ orgId }) => ({ url: `/orgs/${orgId}/agent-credentials/claude/authorize-url`, method: 'POST' }),
     }),
@@ -50,7 +49,6 @@ export const agentCredentialsApi = baseApi.injectEndpoints({
       }),
     }),
 
-    // ── Codex ──
     startCodexDevice: build.mutation<CodexDeviceStartResult, { orgId: string }>({
       query: ({ orgId }) => ({ url: `/orgs/${orgId}/agent-credentials/codex/device/start`, method: 'POST' }),
     }),
@@ -72,7 +70,6 @@ export const agentCredentialsApi = baseApi.injectEndpoints({
       }),
     }),
 
-    // ── Selection / removal ──
     setSelectedAgentCredential: build.mutation<
       { ok: true },
       { orgId: string; credentialId: string }

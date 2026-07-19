@@ -424,8 +424,6 @@ class ComposerStore {
     this.markEdited(jobId);
   }
 
-  // ── Server sync (draft body autosave + realtime reconcile) ─────────────────────────────────────
-
   /** Record a local edit (the last-write-wins clock) and schedule a debounced server autosave. */
   private markEdited(jobId: string): void {
     const entry = this.entries.get(jobId);

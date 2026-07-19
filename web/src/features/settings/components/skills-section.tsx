@@ -229,7 +229,6 @@ export function SkillsSection({ orgId, role }: { orgId: string; role: string }) 
   );
 }
 
-// ── System · Atlas built-in (read-only, code-defined, composed into every turn) ────────────────────────
 function SystemSkillsGroup({ skills }: { skills: SystemSkill[] }) {
   return (
     <div className="mb-7">
@@ -294,7 +293,6 @@ function SystemSkillsGroup({ skills }: { skills: SystemSkill[] }) {
   );
 }
 
-// ── System · Claude Code built-in (display-only — already active via `skills: 'all'`) ─────────────────
 function BundledSkillsGroup({ names }: { names: string[] }) {
   return (
     <div className="mb-7">
@@ -355,7 +353,6 @@ function SystemGroupHeader({
   );
 }
 
-// ── A scope group (Organization, or one repo) ───────────────────────────────────────────────────────
 function ScopeGroup({
   orgId,
   title,
@@ -448,7 +445,6 @@ function CountPill({ n }: { n: number }) {
   );
 }
 
-// ── A skill row ──────────────────────────────────────────────────────────────────────────────────
 function SkillRow({
   orgId,
   skill,
@@ -614,7 +610,6 @@ function UpdateAvailableBadge() {
   );
 }
 
-// ── Install-from-GitHub dialog ──────────────────────────────────────────────────────────────────────
 function InstallDialog({
   orgId,
   repos,
@@ -755,7 +750,6 @@ function InstallDialog({
   );
 }
 
-// ── Create / edit dialog ─────────────────────────────────────────────────────────────────────────────
 function slugify(name: string): string {
   return name
     .toLowerCase()
@@ -1067,7 +1061,6 @@ function SkillFormDialog({
   );
 }
 
-// ── Read-only viewer (file tree + SKILL.md) ─────────────────────────────────────────────────────────
 function ViewerDialog({
   orgId,
   skill,
@@ -1166,7 +1159,6 @@ function ViewerDialog({
   );
 }
 
-// ── Delete confirm dialog ───────────────────────────────────────────────────────────────────────────
 function DeleteDialog({
   orgId,
   skill,
@@ -1243,7 +1235,6 @@ function DeleteDialog({
   );
 }
 
-// ── Form building blocks ──────────────────────────────────────────────────────────────────────────
 function FormLabel({
   children,
   className = '',

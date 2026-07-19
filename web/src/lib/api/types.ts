@@ -9,16 +9,15 @@
 
 import type {
   AutoApproveMode,
+  EStepStatus,
+  EThreadCondition,
+  EThreadStatus,
   OrgUsage,
-  StepStatus,
-  ThreadCondition,
-  ThreadStatus,
-  JobActivity as WireJobActivity,
+  EJobActivity as WireJobActivity,
   JobHalt as WireJobHalt,
-  JobStatus as WireJobStatus,
+  EJobStatus as WireJobStatus,
 } from '@workspace/shared';
 
-// ── Backend (wire) enums ─────────────────────────────────────────────────────────────────────────
 /**
  * The backend job WIRE status — single-sourced in `@workspace/shared` so it can't drift from the
  * backend's `JobStatus`. (The web's own UI-presentation `JobStatus` — below — is a separate type.)
@@ -42,13 +41,15 @@ export type { WireJobActivity };
 export type WireJobKind = 'feature' | 'bugfix' | 'onboarding' | 'event' | 'review';
 
 /**
- * The lane (Thread) linear step, its orthogonal condition overlay, and the per-step leaf status — all
- * single-sourced in `@workspace/shared` so they can't drift from the backend `threads` table + read
- * views. Re-exported here so existing web imports keep working.
+ * The lane (Thread) linear step, its orthogonal condition overlay, and the per-step leaf status — the
+ * native `E*` enums single-sourced in `@workspace/shared` (so they can't drift from the backend `threads`
+ * table). Re-exported under their web-local names so existing workspace imports keep resolving; because
+ * they're now nominal TS enums, VALUE comparisons must use the member (e.g. `EThreadStatus.DONE`).
  */
-export type { StepStatus, ThreadCondition, ThreadStatus };
+export type ThreadStatus = EThreadStatus;
+export type ThreadCondition = EThreadCondition;
+export type StepStatus = EStepStatus;
 
-// ── Approval / verdict cards ───────────────────────────────────────────────────────────────────
 export const APPROVE_ACTION_ID = 'atlas_approval:approve';
 export const REQUEST_CHANGES_ACTION_ID = 'atlas_approval:request_changes';
 export const DENY_ACTION_ID = 'atlas_approval:deny';
@@ -403,8 +404,6 @@ export type WebCard =
   | WebMcpProposalCard
   | WebSkillProposalCard;
 
-// ── Pipeline (`…/threads/:jobId/pipeline`) ────────────────────────────────────────────────────
-
 /**
  * A lane's STATIC composer-footer default (`model · effort`) — what the footer shows BEFORE the lane's
  * first turn completes (no `turn_meta` to derive from yet). Backend-supplied per role (`laneDefaultFooter`),
@@ -713,7 +712,6 @@ export function pipelineAutoMerge(pipeline: PipelineState | undefined): {
   };
 }
 
-// ── Context files (`…/threads/:jobId/context`) ────────────────────────────────────────────────
 /** One file in a `/context` bucket — mirrors the backend `ContextFile`. */
 export interface ContextFile {
   name: string;
@@ -749,7 +747,6 @@ export interface ContextFileContent {
   content: string;
 }
 
-// ── Job diff (`…/jobs/:jobId/diff`) ───────────────────────────────────────────────────────────────
 /** One hunk of a file's unified diff — mirrors the backend `JobDiffHunk` (`app/surface/job-diff.ts`).
  *  `lines` are sign-prefixed (`' '` context / `'+'` add / `'-'` del), offsets are 1-based file lines. */
 export interface JobDiffHunk {
@@ -794,7 +791,6 @@ export interface JobDiffSummary {
   files: JobDiffSummaryFile[];
 }
 
-// ── Supervised services (`…/threads/:jobId/services`) ────────────────────────────────────────────
 /**
  * One process the agent started via `atlas-svc run`, from its durable marker file. Mirrors the backend
  * `ServiceInfo`. The marker fields (pid/startedAt/log*) are a durable snapshot; `status` is a LIVE
@@ -824,7 +820,6 @@ export interface ServiceInfo {
   url: string | null;
 }
 
-// ── UI job model ───────────────────────────────────────────────────────────────────────────────
 /** The Job UI-presentation status set from handoff §7 (semantic dot colors). */
 export type JobStatus =
   | 'running'

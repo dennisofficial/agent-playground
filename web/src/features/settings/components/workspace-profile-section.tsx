@@ -20,6 +20,7 @@ import { AlertCircle, Check, FileKey, Package, Plus, Trash2 } from 'lucide-react
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 type Flash = { tone: 'green' | 'red'; text: string };
+const FLASH_DURATION_MS = 4200;
 
 const RED_SOFT = 'color-mix(in srgb, var(--red) 8%, transparent)';
 const RED_BORDER = 'color-mix(in srgb, var(--red) 40%, transparent)';
@@ -81,7 +82,6 @@ export function WorkspaceProfileSection({ orgId, role }: { orgId: string; role: 
   );
 }
 
-// ── The hub: renders a fixed registry of sections from the loaded profile ──────────────────────────
 type ProfileCtx = {
   orgId: string;
   repoId: string;
@@ -191,12 +191,11 @@ function RepoProfile({
   );
 }
 
-// ── A local success/error flash — clears itself after ~4s ──────────────────────────────────────────
 function useFlash() {
   const [flash, setFlash] = useState<Flash | null>(null);
   useEffect(() => {
     if (!flash) return;
-    const t = setTimeout(() => setFlash(null), 4200);
+    const t = setTimeout(() => setFlash(null), FLASH_DURATION_MS);
     return () => clearTimeout(t);
   }, [flash]);
   return [flash, setFlash] as const;
@@ -228,7 +227,6 @@ function Flasher({ flash }: { flash: Flash | null }) {
   );
 }
 
-// ── Secret files ──────────────────────────────────────────────────────────────────────────────────
 function SecretFilesSection({ orgId, repoId, data, canManage }: ProfileCtx) {
   const save = useSaveRepoSecretFile(orgId, repoId);
   const del = useDeleteRepoSecretFile(orgId, repoId);
@@ -343,7 +341,6 @@ function SecretFilesSection({ orgId, repoId, data, canManage }: ProfileCtx) {
   );
 }
 
-// ── Mounts ────────────────────────────────────────────────────────────────────────────────────────
 const MOUNT_MODES: WorkspaceProfileMount['mode'][] = ['per-thread', 'shared-ro', 'shared-rw'];
 
 function MountsSection({ orgId, repoId, data, canManage }: ProfileCtx) {
@@ -490,7 +487,6 @@ function MountsSection({ orgId, repoId, data, canManage }: ProfileCtx) {
   );
 }
 
-// ── Setup script / Preview recipe (shared textarea shape) ───────────────────────────────────────────
 function ScriptEditor({
   value: seeded,
   onSave,
@@ -598,7 +594,6 @@ function PreviewRecipeSection({ orgId, repoId, data, canManage }: ProfileCtx) {
   );
 }
 
-// ── Detected stack (read-only) ───────────────────────────────────────────────────────────────────
 function DetectedStackSection({ data }: ProfileCtx) {
   const manifests = data.seenManifests ?? [];
   return (

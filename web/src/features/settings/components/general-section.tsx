@@ -102,7 +102,6 @@ export function GeneralSection({ org }: { org: OrgSummary }) {
         </div>
       </div>
 
-      {/* Danger zone */}
       <div
         className="mt-10 overflow-hidden rounded-lg border"
         style={{

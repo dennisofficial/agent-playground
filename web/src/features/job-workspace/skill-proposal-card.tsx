@@ -84,7 +84,6 @@ export function SkillProposalCard({
       </div>
 
       <div className="flex flex-col gap-2.5 px-4 py-3">
-        {/* install — the exact resolved rows + overwrite badges */}
         {card.mode === 'install'
           ? installRows.map((r) => (
               <div key={r.name} className="rounded-md border border-border bg-surface-2 px-3 py-2">
@@ -101,7 +100,6 @@ export function SkillProposalCard({
             ))
           : null}
 
-        {/* create — name + description + authored file tree */}
         {card.mode === 'create' ? (
           <div className="rounded-md border border-border bg-surface-2 px-3 py-2">
             <span className="font-mono text-[12.5px] font-semibold text-text">{card.name}</span>
@@ -118,7 +116,6 @@ export function SkillProposalCard({
           </div>
         ) : null}
 
-        {/* remove — what will be deleted */}
         {card.mode === 'remove' ? (
           <div className="rounded-md border border-border bg-surface-2 px-3 py-2">
             <span className="font-mono text-[12.5px] font-semibold text-text">{card.name}</span>
@@ -128,7 +125,6 @@ export function SkillProposalCard({
           </div>
         ) : null}
 
-        {/* install source + create/remove SKILL.md preview */}
         {card.mode === 'install' && card.sourceUrl ? (
           <p className="truncate font-mono text-[11px] text-faint">
             {card.sourceUrl}

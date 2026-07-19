@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isOutputGroupHidden } from './output-group';
+import { isOutputGroupHidden } from '../output-group';
 
 describe('isOutputGroupHidden (EVIDENCE hidden-when-empty region)', () => {
   it('hides a hideWhenEmpty group with no files, nothing loading, and no children', () => {

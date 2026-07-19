@@ -6,7 +6,7 @@ import {
   indexDurableSubagents,
   indexLiveSubagents,
   liveSubBlocksForParent,
-} from './subagents';
+} from '../subagents';
 
 /**
  * The subagent card's live "running vs done" state.

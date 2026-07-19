@@ -102,7 +102,6 @@ function CodeBlock({ lang, code }: { lang?: string; code: string }) {
   );
 }
 
-// ── JSON tree ──────────────────────────────────────────────────────────────────────────────────────
 // A ```json fence whose content is an object/array renders as an interactive collapsible tree
 // (react-json-view-lite) instead of a flat, often-minified code line. Colors mirror the --term token
 // palette (the same hues the Shiki atlas-term theme emits); the `!` important classes win over the
@@ -157,7 +156,6 @@ function JsonBlock({ value }: { value: object }) {
   );
 }
 
-// ── Mermaid (lazy) ─────────────────────────────────────────────────────────────────────────────────
 // Inline ```mermaid fences render as real diagrams. mermaid is heavy + DOM-only, so it's dynamically
 // imported (kept out of the main bundle), client-side, pulling its palette from the live CSS tokens so
 // diagrams match the design system (and re-match it live on a theme switch — see the theme store below).
@@ -196,7 +194,6 @@ function applyMermaidTheme(mermaid: Awaited<ReturnType<typeof loadMermaid>>) {
   });
 }
 
-// ── Theme-reactive re-init ────────────────────────────────────────────────────────────────────────
 // next-themes applies `data-theme` on <html> from its OWN useEffect, and React 19 flushes CHILD passive
 // effects before PARENT ones — so a naive "read data-theme inside the Mermaid component's effect" can run
 // before next-themes has actually applied the new attribute. Reacting to a MutationObserver on the
@@ -733,7 +730,6 @@ function renderCode({
 }) {
   const cls = className ?? '';
   const match = /language-(\w+)/.exec(cls);
-  // A ```mermaid fence becomes a rendered diagram instead of a code frame.
   if (match?.[1] === 'mermaid') return <Mermaid chart={nodeText(children).replace(/\n$/, '')} />;
   // A ```json fence whose content is an object/array renders as an interactive collapsible tree;
   // invalid or scalar JSON falls through to the normal code frame below.
@@ -765,7 +761,6 @@ function renderCode({
   );
 }
 
-// ── Slack shortcode → inline icon ────────────────────────────────────────────────────────────────
 // Harness/system status messages carry Slack-era emoji shortcodes (`:rocket:`, `:warning:`, …). No
 // surface converts them anymore (Atlas is web-only), so they used to leak through as literal text. We
 // map the known ones to real Lucide icons at render time: a small remark pass splits each `:name:` out

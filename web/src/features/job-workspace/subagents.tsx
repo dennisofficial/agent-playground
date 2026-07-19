@@ -116,8 +116,6 @@ const firstLine = (v: unknown): string => (typeof v === 'string' ? v.split('\n')
 export const subagentLabel = (type: string): string =>
   `${type.charAt(0).toUpperCase()}${type.slice(1)} agent`;
 
-// ── Durable side (JobMessage[]) ────────────────────────────────────────────────────────────────
-
 export interface DurableSubagentIndex {
   /** `message.ts` of every block that belongs to a subagent (skip these in the main log). */
   childKeys: Set<string>;
@@ -215,8 +213,6 @@ export function durableSubBlocks(children: JobMessage[]): SubBlock[] {
   });
 }
 
-// ── Live side (LiveBlock[]) ───────────────────────────────────────────────────────────────────────
-
 export interface LiveSubagentIndex {
   childKeys: Set<string>;
   anchorKeys: Set<string>;
@@ -296,8 +292,6 @@ export function liveSubBlocksForParent(blocks: LiveBlock[], parentId: string): S
   }
   return out;
 }
-
-// ── The conversation card ─────────────────────────────────────────────────────────────────────────
 
 /**
  * The compact card that stands in for a subagent run in the MAIN conversation. The run's tool calls and

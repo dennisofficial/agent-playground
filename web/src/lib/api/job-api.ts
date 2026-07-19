@@ -199,11 +199,6 @@ export function normalizeMessage(r: RawThreadMessage): JobMessage {
   };
 }
 
-export function fetchMessages(ref: JobRef): Promise<JobMessage[]> {
-  return webJson<RawThreadMessage[]>(threadPath(ref, '/messages')).then((rows) =>
-    rows.map(normalizeMessage),
-  );
-}
 
 /** One item in a `/message` send — the wire shape of a `Message` (mirrors the backend's client-originated
  *  `Message` union variants; see `web-surface.controller.ts`'s `MessageInput`). `secret_provided` carries no
@@ -480,10 +475,6 @@ export function retryTurn(ref: JobRef, opts?: { force?: boolean }): Promise<{ ok
   return webJson(threadPath(ref, `/retry-turn${q}`), { method: 'POST' });
 }
 
-// ── Pipeline ───────────────────────────────────────────────────────────────────────────────────
-export function fetchPipeline(ref: JobRef): Promise<PipelineState> {
-  return webJson<PipelineState>(threadPath(ref, '/pipeline'));
-}
 
 // ── Supervised services (atlas-svc) ───────────────────────────────────────────────────────────
 export function fetchServices(ref: JobRef): Promise<{ services: ServiceInfo[] }> {

@@ -1,6 +1,6 @@
 import type { JobMessage } from '@/lib/api/job-api';
 import { describe, expect, it } from 'vitest';
-import { messageOrderMs } from './conversation';
+import { messageOrderMs } from '../conversation';
 
 function fixture(overrides: Partial<JobMessage>): JobMessage {
   return {

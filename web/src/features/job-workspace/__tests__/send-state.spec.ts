@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cardSendState, messageSendState } from './send-state';
+import { cardSendState, messageSendState } from '../send-state';
 
 describe('messageSendState', () => {
   it('is sending while local (optimistic, pre-server-echo)', () => {

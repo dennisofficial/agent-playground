@@ -170,7 +170,6 @@ export function Sidebar({ inDrawer = false }: { inDrawer?: boolean } = {}) {
     };
   };
 
-  // ── Build the tree view-model ───────────────────────────────────────────────────────────────────
   const sidebarOrgs: OrgVM[] = orgs.map((org): OrgVM => {
     const repoList = reposByOrg.get(org.id) ?? [];
     const vms = repoList.map((r) => buildRepoVM(org.id, r));

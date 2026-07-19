@@ -1,6 +1,6 @@
 import { Virtualizer } from '@tanstack/react-virtual';
 import { describe, expect, it } from 'vitest';
-import { compensateAboveViewportResize } from './scroll-compensation';
+import { compensateAboveViewportResize } from '../scroll-compensation';
 
 /**
  * Deterministic RED→GREEN for Cause B: an already-measured row ABOVE the viewport

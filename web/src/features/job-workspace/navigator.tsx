@@ -336,7 +336,6 @@ export function Navigator({
         background: 'color-mix(in srgb, var(--panel) 35%, transparent)',
       }}
     >
-      {/* ── STICKY header (compact) ─────────────────────────────────────────────────────────── */}
       <div className="flex-none border-b border-border px-4 pb-2.5 pt-3">
         <div className="mb-1.5 flex items-center gap-2">
           <KindBadge kind={meta.kind} />
@@ -577,9 +576,9 @@ export function Navigator({
         ) : null}
       </div>
 
-      {/* ── scroll body — the constant skeleton (THREADS · OUTPUTS · PORTS). No horizontal padding: rows
-             carry their own px, so each is a full-width band (design "Atlas Workspace HiFi") and the
-             selected `.nav-selected` band + left accent bar can run flush to the rail edge. ─────────── */}
+      {/* The scroll body is a constant skeleton (THREADS · OUTPUTS · PORTS). No horizontal padding: rows
+          carry their own px, so each is a full-width band (design "Atlas Workspace HiFi") and the
+          selected `.nav-selected` band + left accent bar can run flush to the rail edge. */}
       <div className="flex min-h-0 flex-1 flex-col gap-px overflow-y-auto py-3">
         <StateBanner
           job={job}
@@ -647,8 +646,6 @@ export function Navigator({
     </div>
   );
 }
-
-// ── THREADS: the Main lane + the build-lane tree ───────────────────────────────────────────────────
 
 /** The Main planning lane — the job's brain conversation, the accordion's always-first row (the design's
  *  `active` thread: solid green dot, green rail + wash while it's the open lane). Active when no other
@@ -828,8 +825,6 @@ function PriorRevisionSection({
     </details>
   );
 }
-
-// ── OUTPUTS: specs / artifacts / generated, merged into one region ─────────────────────────────────
 
 function OutputsRegion({
   status,
@@ -1034,8 +1029,6 @@ function OutputGroup({
   );
 }
 
-// ── SERVICES: atlas-svc supervised processes (real data — the process supervisor) ──────────────────
-
 /** The build lanes' `atlas-svc run` processes — a DURABLE snapshot (marker files), not a live liveness
  *  check (the host can't see into the container's PID namespace). Rows never claim "running" outright;
  *  a pulsing dot is only a heuristic ("its log wrote recently"), never a guarantee — see `ServiceInfo`. */
@@ -1102,8 +1095,6 @@ function ServicesRegion({
     </>
   );
 }
-
-// ── PORTS: the sandbox's live dev servers (real exposures) ─────────────────────────────────────────
 
 /** The PORTS region: a filtered view of the same supervised services as SERVICES, showing only those that
  *  declared a port and haven't stopped. Each exposed row (`url` present) links out to its public preview
@@ -1198,8 +1189,6 @@ function PortsRegion({ services }: { services: ServiceInfo[] }) {
     </>
   );
 }
-
-// ── state banners (failed / paused / awaiting) ─────────────────────────────────────────────────────
 
 function StateBanner({
   job,
@@ -1379,8 +1368,6 @@ function BannerBtn({
   );
 }
 
-// ── empty states (design handoff "Navigator Empty States") ─────────────────────────────────────────
-
 /** A section's dashed empty-placeholder row — 13px faint icon + short muted copy, deliberately
  *  NON-interactive (no hover, no click; the handoff's "2a" treatment). Each section renders its own,
  *  independently of its siblings. */
@@ -1419,8 +1406,6 @@ function BuildLanesEmpty() {
     </div>
   );
 }
-
-// ── small primitives ────────────────────────────────────────────────────────────────────────────
 
 function FileRow({
   icon,

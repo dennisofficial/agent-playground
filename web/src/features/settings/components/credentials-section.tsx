@@ -284,7 +284,6 @@ export function CredentialsSection({ orgId, role }: { orgId: string; role: strin
   );
 }
 
-// ── GitHub App connect ───────────────────────────────────────────────────────────────────────────
 /** Friendly copy for the `?githubApp=error&reason=…` redirect the install callback lands on. */
 function githubAppErrorMessage(reason: string | null): string {
   if (reason === 'already_connected')
@@ -505,7 +504,6 @@ function GithubAppConnect({
   );
 }
 
-// ── Agent accounts (coding-engine subscriptions) ──────────────────────────────────────────────────
 /**
  * The coding-engine auth surface — a multi-account manager for Claude AND Codex subscription logins.
  * The list is realtime (streamed from `agent_credentials`) and carries each account's per-account usage

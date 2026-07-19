@@ -804,7 +804,7 @@ function buildLogItems(
   };
 
   for (const message of log) {
-    // ── the initial-prompt block: THIS turn's "first message" (the exact task the engine received) ──
+    // The initial-prompt block: THIS turn's "first message" (the exact task the engine received).
     // Rendered INLINE at its chronological position on every agent lane (a build thread, a review child).
     // Handled here, before `classifyMessage`, else an atlas-authored row falls through as a normal bubble.
     if (message.kind === 'agent_prompt') {
@@ -824,7 +824,7 @@ function buildLogItems(
       }
       continue;
     }
-    // ── lane membership: peel this thread's own subagents; the Codex lane self-selects its stream ──
+    // Lane membership: peel this thread's own subagents; the Codex lane self-selects its stream.
     if (isCodexLane) {
       // The out-of-scope Codex review lane isn't thread-scoped, so it shows ONLY its own review stream.
       if (!codex.childKeys.has(message.ts)) continue;
@@ -838,7 +838,7 @@ function buildLogItems(
       }
     }
 
-    // ── shared rendering (IDENTICAL across every lane) ──
+    // Shared rendering (IDENTICAL across every lane).
 
     // A per-turn accounting block (token usage + context occupancy) — rendered as a turn-end divider.
     // Handled raw, BEFORE classifyMessage (which would otherwise fall this unknown kind through to a

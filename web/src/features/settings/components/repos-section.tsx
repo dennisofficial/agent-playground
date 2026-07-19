@@ -34,6 +34,7 @@ const RED_BORDER = 'color-mix(in srgb, var(--red) 40%, transparent)';
 const GREEN_BORDER = 'color-mix(in srgb, var(--green) 32%, transparent)';
 
 type Flash = { tone: 'green' | 'red'; text: string };
+const FLASH_DURATION_MS = 4200;
 
 /**
  * Repos — the GitHub repositories connected to the org. Owners can connect, re-validate, edit metadata,
@@ -67,10 +68,9 @@ export function ReposSection({
   const reonboard = useReonboardRepo(orgId);
   const router = useRouter();
 
-  // Auto-clear the success/error flash.
   useEffect(() => {
     if (!flash) return;
-    const t = setTimeout(() => setFlash(null), 4200);
+    const t = setTimeout(() => setFlash(null), FLASH_DURATION_MS);
     return () => clearTimeout(t);
   }, [flash]);
 
@@ -108,7 +108,6 @@ export function ReposSection({
 
   return (
     <>
-      {/* Header */}
       <div className="flex items-start gap-3.5">
         <div className="min-w-0 flex-1">
           <h1 className="font-disp text-[22px] font-semibold tracking-[-0.01em] text-text">
@@ -180,7 +179,6 @@ export function ReposSection({
 
           <Flasher flash={flash} />
 
-          {/* List */}
           <div className="overflow-hidden rounded-lg border border-border">
             <div
               className="flex items-center px-4 py-2.5 font-mono text-[9px] uppercase tracking-widest text-faint"
@@ -239,7 +237,6 @@ export function ReposSection({
   );
 }
 
-// ── Flash ──────────────────────────────────────────────────────────────────────────────────────
 function Flasher({ flash }: { flash: Flash | null }) {
   if (!flash) return null;
   const ok = flash.tone === 'green';
@@ -266,7 +263,6 @@ function Flasher({ flash }: { flash: Flash | null }) {
   );
 }
 
-// ── Loading / Error / Empty states ───────────────────────────────────────────────────────────────
 function LoadingState() {
   const widths = [
     ['120px', '210px'],
@@ -425,7 +421,6 @@ function NoTokenState({ onOpenCredentials }: { onOpenCredentials: () => void }) 
           Open Credentials
         </button>
       </div>
-      {/* Disabled connect form — a preview of what unlocks once a token is set. */}
       <div
         className="mt-4.5 rounded-lg border border-border bg-surface p-4.5"
         style={{ opacity: 0.55, pointerEvents: 'none' }}
@@ -448,7 +443,6 @@ function NoTokenState({ onOpenCredentials }: { onOpenCredentials: () => void }) 
   );
 }
 
-// ── Connect form ─────────────────────────────────────────────────────────────────────────────────
 function ConnectForm({
   orgId,
   cancelable,
@@ -613,7 +607,6 @@ function ConnectForm({
   );
 }
 
-// ── Repo row (display) ───────────────────────────────────────────────────────────────────────────
 function RepoRow({
   repo,
   canManage,
@@ -660,7 +653,6 @@ function RepoRow({
 
   return (
     <div className="flex flex-wrap items-start gap-4 px-4 py-3.75">
-      {/* identity */}
       <div className="min-w-0 flex-1">
         <div className="text-[13px] font-semibold text-text">{repo.name}</div>
         <div className="mt-0.5 truncate font-mono text-[11px] text-faint">{repo.gitUrl}</div>
@@ -682,7 +674,6 @@ function RepoRow({
         </div>
       </div>
 
-      {/* right: pill + actions */}
       <div className="flex w-full flex-col items-end gap-2.5 sm:w-auto sm:shrink-0">
         <span
           className="flex items-center gap-1.5 rounded-full px-2.5 py-0.75 text-[11px] font-medium"
@@ -787,7 +778,6 @@ function RepoRow({
   );
 }
 
-// ── Disconnect confirm ───────────────────────────────────────────────────────────────────────────
 function DisconnectDialog({
   orgId,
   orgName,
@@ -807,7 +797,6 @@ function DisconnectDialog({
   const hasThreads = threadCount > 0;
   const threadLabel = `${threadCount} job${threadCount === 1 ? '' : 's'}`;
 
-  // Esc to dismiss.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') closeRef.current();
@@ -912,7 +901,6 @@ function DisconnectDialog({
   );
 }
 
-// ── helpers ──────────────────────────────────────────────────────────────────────────────────────
 function timeAgo(iso?: string | null): string {
   if (!iso) return '';
   const t = new Date(iso).getTime();

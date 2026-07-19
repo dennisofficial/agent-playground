@@ -6,12 +6,6 @@ import { computeDiffRows, rowsFromHunk, splitLines, type DiffRow } from './diff-
 import { renderTokenLine, useHighlightTokens, type ThemedToken } from './highlight';
 import type { DiffHunk, IconKind, ToolBadge } from './types';
 
-// Re-exported so existing importers keep resolving these from `./ui` after the move to `./diff-rows`.
-export { rowsFromHunk };
-export type { DiffRow };
-
-/** Shared presentational primitives for the tool-call renderers. */
-
 /** Every code/diff body scrolls inside this fixed window (~14 lines) instead of growing unbounded. */
 const CODE_MAX_HEIGHT = 280;
 

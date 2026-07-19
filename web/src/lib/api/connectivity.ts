@@ -75,7 +75,7 @@ class ConnectivityStore {
     this.scheduleProbe();
   }
 
-  // ── React external-store glue. Arrow props keep `this` bound when destructured by useSyncExternalStore. ──
+  // Arrow props keep `this` bound when destructured by useSyncExternalStore.
   subscribe = (cb: () => void): (() => void) => {
     this.listeners.add(cb);
     return () => {

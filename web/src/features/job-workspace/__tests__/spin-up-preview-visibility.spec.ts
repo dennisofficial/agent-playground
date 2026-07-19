@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { shouldShowSpinUpPreview } from './spin-up-preview-visibility';
+import { shouldShowSpinUpPreview } from '../spin-up-preview-visibility';
 
 describe('shouldShowSpinUpPreview', () => {
   it('offers the button at the live ship gate before it is requested', () => {

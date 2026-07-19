@@ -81,7 +81,6 @@ function useRetractShip(jobRef: JobRef, value: string) {
   return useVerdictAction(jobRef, RETRACT_SHIP_ACTION_ID, value);
 }
 
-// ── Component 1 — Navigator Approval Callout ───────────────────────────────────────────────────────
 /**
  * The navigator callout — sits above the SPECS header. Title row ("Plan ready for review") + a full-width
  * green Approve button. No spec/step counts (removed deliberately); the spec list renders below as usual.
@@ -143,7 +142,6 @@ export function NavigatorApprovalCallout({
   );
 }
 
-// ── Navigator header approve button (just the button) ──────────────────────────────────────────────
 /** The bare full-width green Approve button — pinned as the LAST item in the navigator's sticky header
  *  (no card/title). Same idempotent verdict as the other surfaces. */
 export function NavigatorApproveButton({
@@ -185,7 +183,6 @@ export function NavigatorApproveButton({
   );
 }
 
-// ── Component 2 — Persistent Approval Bar ──────────────────────────────────────────────────────────
 /**
  * The persistent bar — `flex:none` footer pinned to the bottom of the detail pane, so the plan can be
  * approved from anywhere in that column. Leading lock tile · text block (dynamic spec/step counts) ·
@@ -270,7 +267,6 @@ export function PersistentApprovalBar({
   );
 }
 
-// ── Navigator header ship button (just the button) ─────────────────────────────────────────────────
 /** The bare full-width green "Ship it" button — pinned as the LAST item in the navigator's sticky
  *  header, exactly like {@link NavigatorApproveButton} does for the plan gate. */
 export function NavigatorShipButton({
@@ -320,7 +316,6 @@ export function NavigatorShipButton({
   );
 }
 
-// ── Navigator header merge button (just the button) ────────────────────────────────────────────────
 /** The bare full-width primary "Merge PR" button — pinned as the LAST item in the navigator's sticky
  *  header once the PR is GitHub-mergeable (the THIRD human gate, after Approve/Ship). POSTs the merge
  *  gate's {@link MERGE_ACTION_ID} verdict via the SAME `useApprove` mutation the merge approval card
@@ -352,7 +347,6 @@ export function NavigatorMergeButton({ jobRef, value }: { jobRef: JobRef; value:
   );
 }
 
-// ── Navigator header auto-merging indicator ─────────────────────────────────────────────────────────
 /** The disabled twin of {@link NavigatorMergeButton}, shown in its place while AUTO-MERGE is armed on an
  *  open PR. The host performs the merge from OUTSIDE the sandbox once GitHub reports the PR green, so
  *  there is no operator click to make — but the manual merge gate isn't "ready" while CI is still
@@ -373,7 +367,6 @@ export function NavigatorAutoMergingButton() {
   );
 }
 
-// ── Navigator header "Spin up preview" button ─────────────────────────────────────────────────────────
 /** The sidebar-header twin of the ship card's `ShipCardPreviewButton` (approval-card.tsx): requests a
  *  demo-ready live preview of the just-built change via the SAME {@link useSpinUpPreview} mutation and
  *  {@link shouldShowSpinUpPreview} gate. Shown only while the job is live at `awaiting_ship_review` with
@@ -427,7 +420,6 @@ function SpinUpPreviewButton({
   );
 }
 
-// ── Component 4 — Persistent Ship Bar ───────────────────────────────────────────────────────────────
 /**
  * The ship-review counterpart of {@link PersistentApprovalBar} — a `flex:none` footer pinned to the
  * bottom of the detail pane, so the build can be shipped from anywhere in that column.
@@ -497,7 +489,6 @@ export function PersistentShipBar({ jobRef, value }: { jobRef: JobRef; value: st
   );
 }
 
-// ── shared green verdict button ─────────────────────────────────────────────────────────────────────
 /** The green verdict button shared by every surface — pending → spinner + verb, success → done label.
  *  Copy is parametrized (`idleLabel`/`pendingLabel`/`doneLabel`) so {@link ApproveButton} and
  *  {@link ShipButton} are thin wrappers over the same look. */
@@ -566,7 +557,6 @@ function VerdictButton({
   );
 }
 
-// ── shared secondary retract button ─────────────────────────────────────────────────────────────────
 /** The secondary "retract" button shared by both gates — steps the job back a stage without
  *  discarding completed work ("Amend build" → `amending` at the ship gate, "Back to planning" →
  *  `planning` at the plan gate).

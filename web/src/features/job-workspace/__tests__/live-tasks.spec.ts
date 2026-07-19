@@ -1,6 +1,6 @@
 import type { LiveTurn } from '@/lib/api/job-stream';
 import { describe, expect, it } from 'vitest';
-import { overlayLiveTasks } from './live-tasks';
+import { overlayLiveTasks } from '../live-tasks';
 
 function liveTurn(blocks: LiveTurn['blocks']): LiveTurn {
   return { blocks, active: true, lastSeq: blocks.length };

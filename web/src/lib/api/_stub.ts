@@ -90,8 +90,6 @@ export function stubMutation<TData = unknown, TVars = void>(
   };
 }
 
-// ── Adapters: RTK Query result → the TanStack-shaped surface the consumers expect ──
-
 type RtkQueryResult<T> = {
   data?: T;
   isLoading: boolean;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { autoPillView, composeMode } from './auto-approve-mode';
+import { autoPillView, composeMode } from '../auto-approve-mode';
 
 describe('composeMode', () => {
   it('maps the two switches to the wire mode', () => {

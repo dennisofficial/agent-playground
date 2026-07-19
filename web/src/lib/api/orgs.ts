@@ -12,7 +12,6 @@ import type { WireOrgUsage } from './types';
  * comments are kept verbatim as the contract for whichever slice eventually replaces this file.
  */
 
-// ── GitHub App (connect the platform Atlas App as host/background auth and optional sandbox auth) ─────
 // One platform-level Atlas GitHub App; an org INSTALLS it and Atlas stores a non-secret installation id
 // plus a `githubAuthMode` (pat|app). Host/background calls use the App token whenever connected; the
 // `githubAuthMode` setting explicitly chooses sandbox commit/push/PR identity. `configured` reflects whether
@@ -84,8 +83,6 @@ export function useOrgUsage(_orgId: string) {
   return stubQuery<WireOrgUsage>();
 }
 
-// ── Workspace profile (Atlas-managed per-repo provisioning: mounts, setup script, preview recipe,
-// secret-file refs, acknowledged manifests) ──────────────────────────────────────────────────────────
 // One repo-scoped surface over the same `WorkspaceConfigStore`/`WorkspaceSecretFileStore` rows the
 // onboarding brain's `write_workspace_config` tool writes through — a console edit and a brain call
 // converge on the same DB rows. GET is member-readable; every write is owner-only server-side. Secret
@@ -164,7 +161,6 @@ export function useDeleteRepoSecretFile(_orgId: string, _repoId: string) {
   });
 }
 
-// ── MCP servers (user-defined tool servers, in System / Org / Repo tiers) ──────────────────────────
 // GET returns the read-only System tier plus the org + repo user servers, with EVERY secret header/env
 // value redacted (secret slots come back `null` in `config`, and are listed in `secretKeys`). Writes
 // (PUT/DELETE/validate) are owner-only server-side. A secret field follows the credentials UX: presence
@@ -377,7 +373,6 @@ export function useMcpOAuthConnect(orgId: string) {
   return { connect, busy, result, reset: () => setResult(null) };
 }
 
-// ── Org CRUD + repo mutations — now consumed RTK-native straight from the slices ────────────────────
 // `@/redux/query/api/org.api` (useCreateOrg/useUpdateOrg/useDeleteOrgMutation) and
 // `@/redux/query/api/repo.api` (useConnect/useRevalidate/useUpdate/useDisconnectRepoMutation) own these.
 // The repo request/response shapes live in `@workspace/shared` (ConnectRepoDto / UpdateRepoDto /
@@ -391,7 +386,6 @@ export function useReonboardRepo(_orgId: string): MutationResultLike<{ jobId: st
   return stubMutation<{ jobId: string }, string>('re-onboard repo');
 }
 
-// ── Convention profiles (reusable house-style bundles, opt-in per repo) ─────────────────────────────
 // An org defines named house-style profiles (folder conventions, stack idioms, a shared-contract layout);
 // a repo opts in by pointing `convention_profile_slug` at one, and its `body` is injected into every
 // build-facing prompt for that repo. GET is any-member; writes (PUT/DELETE profile, PUT repo attach) are
@@ -462,7 +456,6 @@ export function useAttachConventionProfile(_orgId: string) {
   });
 }
 
-// ── Skills (directory-based skill bundles: git-installed or custom-authored) ───────────────────────
 // Registry metadata only — the real `SKILL.md` + support files live on the host store. Two writable
 // scopes (org-wide `'org'` + per-repo). GET (list + the file/content viewer) is any-member; every
 // mutation (install/set/update/fork/delete) is owner-only server-side. Mirrors the MCP hooks above.

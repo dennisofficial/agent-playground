@@ -132,7 +132,6 @@ export function ConventionProfilesSection({ orgId, role }: { orgId: string; role
   );
 }
 
-// ── One profile card ────────────────────────────────────────────────────────────────────────────
 function ProfileCard({
   orgId,
   profile,
@@ -198,7 +197,6 @@ function ProfileCard({
   );
 }
 
-// ── The create/edit dialog ────────────────────────────────────────────────────────────────────────
 function slugify(name: string): string {
   return name
     .toLowerCase()
@@ -360,7 +358,6 @@ function ProfileEditor({
   );
 }
 
-// ── Per-repo attachment ─────────────────────────────────────────────────────────────────────────
 function RepoAttachments({
   orgId,
   profiles,

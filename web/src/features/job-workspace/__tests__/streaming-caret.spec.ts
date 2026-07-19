@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { streamingBlockKeys } from './streaming-caret';
+import { streamingBlockKeys } from '../streaming-caret';
 
 type Block = {
   kind: string;

@@ -28,9 +28,8 @@ import { threadLane } from './phases';
  * "Master Review" with no review-agents fold), not a pinned region.
  */
 
-// ── shared nav primitives (also used by the navigator skeleton) ──────────────────────────────────
-
-/** A divider header (SPECS / ARTIFACTS / PORTS) — mono label, hairline rule, optional right count. */
+/** A divider header (SPECS / ARTIFACTS / PORTS) — mono label, hairline rule, optional right count. Also
+ *  used by the navigator skeleton. */
 export function Divider({ label, count }: { label: string; count?: ReactNode }) {
   return (
     <div className="flex items-center gap-2 px-2 pb-1.5 pt-3">
@@ -40,8 +39,6 @@ export function Divider({ label, count }: { label: string; count?: ReactNode }) 
     </div>
   );
 }
-
-// ── status helpers ───────────────────────────────────────────────────────────────────────────────
 
 /** The halt thread for a failed job: the furthest in-flight (non-done, non-pending) thread, else the
  *  last non-done one. Exported so the navigator's halt banner derives the same index. */
@@ -110,8 +107,6 @@ function railStyle(
       };
   }
 }
-
-// ── status glyphs (13px status dots · spinners · discs, straight from the handoff) ────────────────
 
 /** A spinning progress ring — faint track + rotating colored arc (`.status-spin` = the design's 1.05s). */
 function SpinRing({
@@ -211,8 +206,6 @@ function ThreadStatusGlyph({ state, isHalt }: { state: LaneState; isHalt: boolea
     </span>
   );
 }
-
-// ── the accordion ──────────────────────────────────────────────────────────────────────────────────
 
 export interface TreeProps {
   job: PipelineJob;
@@ -579,8 +572,7 @@ function BlockedRing({ size = 13 }: { size?: number }) {
   );
 }
 
-// ── REVIEW children — each review lens + the post-review fix are first-class child threads ─────────
-
+// Each review lens + the post-review fix are first-class child threads.
 /** The design's agent states — a review child's wire `ThreadStatus` folds onto these. */
 type AgentDisplay = 'pending' | 'in_progress' | 'done' | 'skipped' | 'failed';
 
