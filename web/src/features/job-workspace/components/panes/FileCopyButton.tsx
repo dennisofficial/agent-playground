@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { TopBarButton } from "../chrome/detail-top-bar";
 import { fileCopyKind, fileDataUrl, imageDataUrlToPngBlob } from "./step-view";
 
-function FileCopyButton({ file }: { file: ContextFileContent | undefined }) {
+export function FileCopyButton({ file }: { file: ContextFileContent | undefined }) {
   const [copied, setCopied] = useState(false);
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(

@@ -5,7 +5,7 @@ import { MAIN_LANE } from "@/lib/api/job-stream";
 import { ChevronRight, RotateCw, Check } from "lucide-react";
 import { useState, useEffect } from "react";
 import Markdown from "react-markdown";
-import { humanizeFailureCategory, useRetryCountdown } from "./bubbles";
+import { humanizeFailureCategory, SessionLimitActions, useRetryCountdown } from "./bubbles";
 
 export function SystemOperatorNotice({
   message,

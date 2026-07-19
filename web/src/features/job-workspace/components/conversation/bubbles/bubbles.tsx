@@ -473,7 +473,7 @@ export function humanizeFailureCategory(category: string | undefined): string | 
   }
 }
 
-function SessionLimitActions({
+export function SessionLimitActions({
   jobRef,
   isMain,
   resumeAt,
