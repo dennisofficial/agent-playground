@@ -24,15 +24,17 @@ import { Repo } from '../src/app/repo/entities/repo.entity';
 import { DEV_SEED_IDS } from './_shared/dev-seed-ids';
 
 /**
- * A REAL (sanitized) job tree on the FIXTURES repo (`atlas-dev/fixtures`) so the workspace UI has
- * authentic content — sidebar navigator (7 thread groups), lanes (planning / plan_review / builders /
- * review agents / master_review), a real transcript, and the agent task list. Dumped from prod (the
- * `Custom Codex SDK` job), mapped old→new schema (author→source, old kinds→`EThreadMessageKind`, ids
- * remapped to the fixtures org/repo, operator identity → the dev user, secrets/PII redacted). The data
- * lives in `_data/codex-sdk.fixture.json`.
+ * REAL (sanitized) job trees on the FIXTURES repo (`atlas-dev/fixtures`) so the workspace UI has
+ * authentic, varied content — a multi-job sidebar (spread across done / awaiting-ship / running /
+ * planning / blocked / archived), the navigator (thread groups → lanes), real transcripts, and agent
+ * task lists. Dumped from prod (6 jobs) and mapped old→new schema (author→source, old kinds→
+ * `EThreadMessageKind`, ids remapped to the fixtures org/repo, operator identity → the dev user,
+ * secrets/PII redacted, `card`/`meta` dropped, review children flattened). The data (with the original
+ * prod uuids) lives in `_data/prod-threads.fixture.json`. Only the top-level `status` is spread for the
+ * demo — the prod rows are all `archived`; every transcript is real.
  *
- * UPSERT + ADDITIVE: rows keep their original prod uuids and are `save()`d (insert-or-update by PK), so
- * re-running `pnpm db:seed` re-applies changes without duplicating and never touches the real repo.
+ * UPSERT + ADDITIVE: rows keep their prod uuids and are `save()`d (insert-or-update by PK) — re-running
+ * `pnpm db:seed` re-applies without duplicating and never touches the real repo.
  */
 
 interface FxJob {
@@ -42,6 +44,7 @@ interface FxJob {
   kind: EJobKind | null;
   status: EJobStatus;
   activity: EJobActivity;
+  archivedAt: string | null;
   focusedThreadId: string | null;
   createdAt: string;
 }
@@ -90,12 +93,15 @@ interface FxMsg {
   kind: EThreadMessageKind;
   createdAt: string;
 }
-interface Fx {
+interface JobTree {
   job: FxJob;
   groups: FxGroup[];
   threads: FxThread[];
   tasks: FxTask[];
   messages: FxMsg[];
+}
+interface Fx {
+  jobs: JobTree[];
 }
 
 export default (async (ds) => {
@@ -104,7 +110,7 @@ export default (async (ds) => {
   const dennis = DEV_SEED_IDS.users.dennis;
 
   const fx = JSON.parse(
-    readFileSync(join(__dirname, '_data', 'codex-sdk.fixture.json'), 'utf8'),
+    readFileSync(join(__dirname, '_data', 'prod-threads.fixture.json'), 'utf8'),
   ) as Fx;
 
   const jobs = ds.getRepository(Job);
@@ -112,115 +118,115 @@ export default (async (ds) => {
   const threadsRepo = ds.getRepository(Thread);
   const tasksRepo = ds.getRepository(Task);
   const messagesRepo = ds.getRepository(ThreadMessage);
-  const JOB = fx.job.id;
 
   // One-time cleanup: drop the superseded synthesized magic-link fixture (cascades its whole tree).
-  // No-op once it's gone.
   await jobs.delete({ id: '297a7963-c02b-4c7b-bf04-9720d0b79242' });
 
-  // ── Job (focusedThreadId set after threads exist so the FK is satisfied) ──
-  await jobs.save(
-    jobs.create({
-      id: JOB,
-      orgId,
-      repoId,
-      focusedThreadId: null,
-      title: fx.job.title,
-      origin: fx.job.origin,
-      kind: fx.job.kind,
-      status: fx.job.status,
-      activity: fx.job.activity,
-      createdAt: new Date(fx.job.createdAt),
-    }),
-  );
+  let threadTotal = 0;
 
-  // ── Thread groups (the navigator items) ──
-  await groupsRepo.save(
-    fx.groups.map((g) =>
-      groupsRepo.create({
-        id: g.id,
-        jobId: JOB,
+  for (const tree of fx.jobs) {
+    const JOB = tree.job.id;
+
+    // Job (focusedThreadId set after threads exist so the FK is satisfied).
+    await jobs.save(
+      jobs.create({
+        id: JOB,
         orgId,
-        ordinal: g.ordinal,
-        kind: g.kind,
-        title: g.title,
-        type: g.type,
-        status: g.status,
-        condition: g.condition,
-        createdAt: new Date(g.createdAt),
+        repoId,
+        focusedThreadId: null,
+        title: tree.job.title,
+        origin: tree.job.origin,
+        kind: tree.job.kind,
+        status: tree.job.status,
+        activity: tree.job.activity,
+        archivedAt: tree.job.archivedAt ? new Date(tree.job.archivedAt) : null,
+        createdAt: new Date(tree.job.createdAt),
       }),
-    ),
-  );
+    );
 
-  // ── Threads (lanes) ──
-  await threadsRepo.save(
-    fx.threads.map((t) =>
-      threadsRepo.create({
-        id: t.id,
-        jobId: JOB,
-        threadGroupId: t.threadGroupId,
-        orgId,
-        role: t.role,
-        type: t.type,
-        parentThreadId: t.parentThreadId,
-        ordinal: t.ordinal,
-        brief: t.brief ?? '',
-        status: t.status,
-        condition: t.condition,
-        sessionId: t.sessionId,
-        createdAt: new Date(t.createdAt),
-      }),
-    ),
-  );
+    await groupsRepo.save(
+      tree.groups.map((g) =>
+        groupsRepo.create({
+          id: g.id,
+          jobId: JOB,
+          orgId,
+          ordinal: g.ordinal,
+          kind: g.kind,
+          title: g.title,
+          type: g.type,
+          status: g.status,
+          condition: g.condition,
+          createdAt: new Date(g.createdAt),
+        }),
+      ),
+    );
 
-  // Focus the job's planning thread (what a job click routes to by default) — now that it exists.
-  if (fx.job.focusedThreadId) await jobs.update(JOB, { focusedThreadId: fx.job.focusedThreadId });
+    await threadsRepo.save(
+      tree.threads.map((t) =>
+        threadsRepo.create({
+          id: t.id,
+          jobId: JOB,
+          threadGroupId: t.threadGroupId,
+          orgId,
+          role: t.role,
+          type: t.type,
+          parentThreadId: t.parentThreadId,
+          ordinal: t.ordinal,
+          brief: t.brief ?? '',
+          status: t.status,
+          condition: t.condition,
+          sessionId: t.sessionId,
+          createdAt: new Date(t.createdAt),
+        }),
+      ),
+    );
 
-  // ── Agent tasks ──
-  await tasksRepo.save(
-    fx.tasks.map((k) =>
-      tasksRepo.create({
-        id: k.id,
-        jobId: JOB,
-        threadGroupId: k.threadGroupId,
-        orgId,
-        ordinal: k.ordinal,
-        title: k.title,
-        brief: k.brief,
-        activeForm: k.activeForm,
-        status: k.status,
-        blockedBy: k.blockedBy ?? [],
-        createdAt: new Date(k.createdAt),
-      }),
-    ),
-  );
+    if (tree.job.focusedThreadId) await jobs.update(JOB, { focusedThreadId: tree.job.focusedThreadId });
 
-  // ── Transcript (real, sanitized) — operator identity remapped to the dev user ──
-  await messagesRepo.save(
-    fx.messages.map((m) =>
-      messagesRepo.create({
-        id: m.id,
-        jobId: JOB,
-        threadId: m.threadId,
-        orgId,
-        subagentId: null,
-        source: m.source,
-        authorId: m.authorId === '__DEV_USER__' ? dennis : m.authorId,
-        author: m.author,
-        text: m.text,
-        kind: m.kind,
-        card: null,
-        meta: null,
-        orderAt: null,
-        createdAt: new Date(m.createdAt),
-      }),
-    ),
-  );
+    await tasksRepo.save(
+      tree.tasks.map((k) =>
+        tasksRepo.create({
+          id: k.id,
+          jobId: JOB,
+          threadGroupId: k.threadGroupId,
+          orgId,
+          ordinal: k.ordinal,
+          title: k.title,
+          brief: k.brief,
+          activeForm: k.activeForm,
+          status: k.status,
+          blockedBy: k.blockedBy ?? [],
+          createdAt: new Date(k.createdAt),
+        }),
+      ),
+    );
+
+    await messagesRepo.save(
+      tree.messages.map((m) =>
+        messagesRepo.create({
+          id: m.id,
+          jobId: JOB,
+          threadId: m.threadId,
+          orgId,
+          subagentId: null,
+          source: m.source,
+          authorId: m.authorId === '__DEV_USER__' ? dennis : m.authorId,
+          author: m.author,
+          text: m.text,
+          kind: m.kind,
+          card: null,
+          meta: null,
+          orderAt: null,
+          createdAt: new Date(m.createdAt),
+        }),
+      ),
+    );
+
+    threadTotal += tree.threads.length;
+  }
 
   // Keep the fixtures repo row self-consistent (denormalized thread counter).
-  await ds.getRepository(Repo).update({ id: repoId }, { threadCount: fx.threads.length });
+  await ds.getRepository(Repo).update({ id: repoId }, { threadCount: threadTotal });
 
-  console.log(
-    `  003: upserted "${fx.job.title}" (${fx.groups.length} groups, ${fx.threads.length} threads, ${fx.messages.length} messages, ${fx.tasks.length} tasks)`,
-  );
+  console.log(`  003: upserted ${fx.jobs.length} prod jobs (${threadTotal} threads total)`);
 }) satisfies Seeder;
