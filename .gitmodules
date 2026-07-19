@@ -13,3 +13,6 @@
 [submodule "submodules/pg-realtime"]
 	path = submodules/pg-realtime
 	url = https://github.com/dennisofficial/pg-realtime.git
+[submodule "submodules/site-map"]
+	path = submodules/site-map
+	url = https://github.com/dennisofficial/site-map

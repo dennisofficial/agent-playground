@@ -5,7 +5,7 @@ import { Field, PasswordField } from '@/components/ui/field';
 import { AuthCard, AuthHeader, ErrorBanner, OrDivider } from '@/features/auth/components/auth-ui';
 import { GoogleButton } from '@/features/auth/components/google-button';
 import { auth } from '@/lib/auth';
-import { ROUTES, safeNext } from '@/lib/routes';
+import { SITE_MAP, safeNext } from '@/lib/site-map';
 import { validateEmail, validatePasswordRequired } from '@/utils/validation';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -72,7 +72,7 @@ export default function LoginPage() {
           onChange={(e) => setPassword(e.target.value)}
           error={pwErr}
           labelAside={
-            <Link href={ROUTES.auth.forgot()} className="text-[11.5px] text-accent hover:underline">
+            <Link href={SITE_MAP.auth.forgot()} className="text-[11.5px] text-accent hover:underline">
               Forgot?
             </Link>
           }
@@ -84,7 +84,7 @@ export default function LoginPage() {
 
       <p className="mt-5 text-center text-[12.5px] text-dim">
         New to Atlas?{' '}
-        <Link href={ROUTES.auth.signup()} className="font-medium text-accent hover:underline">
+        <Link href={SITE_MAP.auth.signup()} className="font-medium text-accent hover:underline">
           Create an account
         </Link>
       </p>

@@ -2,7 +2,7 @@
 
 import { Spinner } from '@/components/ui/spinner';
 import { JobWorkspace } from '@/features/job-workspace/job-workspace';
-import { ROUTES } from '@/lib/routes';
+import { SITE_MAP } from '@/lib/site-map';
 import { useGetJobQuery } from '@/redux/query/api/jobs.api';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -16,7 +16,7 @@ export default function JobIndexPage({ params }: { params: Promise<{ jobId: stri
   const target = job ? (job.focusedThreadId ?? job.threadGroups[0]?.threads[0]?.id ?? null) : null;
 
   useEffect(() => {
-    if (target) router.replace(ROUTES.job(jobId, target));
+    if (target) router.replace(SITE_MAP.jobs.job(jobId).thread(target)());
   }, [target, jobId, router]);
 
   if (isError) {
@@ -28,7 +28,7 @@ export default function JobIndexPage({ params }: { params: Promise<{ jobId: stri
             That job doesn&apos;t exist or you don&apos;t have access to it.
           </p>
           <Link
-            href={ROUTES.workspace()}
+            href={SITE_MAP.workspace()}
             className="mt-5 inline-block rounded-md border px-3.5 py-2 text-[12.5px] font-medium text-accent"
             style={{ background: 'var(--accent-soft)', borderColor: 'var(--accent-line)' }}
           >

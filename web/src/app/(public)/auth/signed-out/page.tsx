@@ -2,7 +2,7 @@
 
 import { Button } from '@/components/ui/button';
 import { AuthCard } from '@/features/auth/components/auth-ui';
-import { ROUTES } from '@/lib/routes';
+import { SITE_MAP } from '@/lib/site-map';
 import { LogOut } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
@@ -27,7 +27,7 @@ export default function SignedOutPage() {
           className="mt-5"
           size="lg"
           block
-          onClick={() => router.replace(ROUTES.auth.login())}
+          onClick={() => router.replace(SITE_MAP.auth.login())}
         >
           Sign back in
         </Button>

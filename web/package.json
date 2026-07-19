@@ -22,6 +22,7 @@
     "@workspace/auth": "workspace:*",
     "@workspace/pg-realtime": "workspace:*",
     "@workspace/shared": "workspace:*",
+    "@workspace/site-map": "workspace:*",
     "anser": "^2.3.5",
     "axios": "^1.15.2",
     "diff": "^9.0.0",

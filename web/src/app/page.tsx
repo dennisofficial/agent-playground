@@ -2,7 +2,7 @@
 
 import { ServerUnreachable } from '@/components/error/server-unreachable';
 import { auth, type AuthState } from '@/lib/auth';
-import { ROUTES } from '@/lib/routes';
+import { SITE_MAP } from '@/lib/site-map';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
@@ -15,7 +15,7 @@ export default function Home() {
 
   useEffect(() => {
     if (!state || state.backendUnreachable) return;
-    router.replace(state.authenticated ? ROUTES.workspace() : ROUTES.auth.login());
+    router.replace(state.authenticated ? SITE_MAP.workspace() : SITE_MAP.auth.login());
   }, [state, router]);
 
   if (state?.backendUnreachable) return <ServerUnreachable />;

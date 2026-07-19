@@ -2,7 +2,7 @@
 
 import { ServerUnreachable } from '@/components/error/server-unreachable';
 import { auth, type AuthState } from '@/lib/auth';
-import { ROUTES, safeNext } from '@/lib/routes';
+import { SITE_MAP, safeNext } from '@/lib/site-map';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
@@ -40,7 +40,7 @@ export function PrivateGuard({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (state && !state.authenticated && !state.backendUnreachable) {
       const search = typeof window !== 'undefined' ? window.location.search : '';
-      router.replace(ROUTES.auth.login(`${pathname}${search}`));
+      router.replace(SITE_MAP.auth.login({ next: `${pathname}${search}` }));
     }
   }, [state, router, pathname]);
 

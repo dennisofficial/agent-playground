@@ -2,7 +2,7 @@
 
 import { useCurrentUser, useOrgs } from '@/lib/api/me';
 import { auth } from '@/lib/auth';
-import { ROUTES } from '@/lib/routes';
+import { SITE_MAP } from '@/lib/site-map';
 import { orgSwatch } from '@/utils/org-display';
 import { Building2, LogOut, Settings } from 'lucide-react';
 import Link from 'next/link';
@@ -57,7 +57,7 @@ export function AccountMenu() {
     auth.signOut();
     // Hard nav so the signed-out screen wins the race against the PrivateGuard's
     // unauthenticated → /auth/login redirect on the current protected route.
-    window.location.assign(ROUTES.auth.signedOut());
+    window.location.assign(SITE_MAP.auth.signedOut());
   }
 
   return (
@@ -89,7 +89,7 @@ export function AccountMenu() {
           <div className="my-1 h-px" style={{ background: 'var(--hair)' }} />
           {targetOrg ? (
             <Link
-              href={ROUTES.orgSettings(targetOrg.id)}
+              href={SITE_MAP.orgs.org(targetOrg.id).settings()}
               onClick={() => setOpen(false)}
               className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[12.5px] text-dim transition hover:bg-surface-2 hover:text-text"
             >

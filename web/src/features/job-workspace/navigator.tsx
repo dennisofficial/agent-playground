@@ -27,7 +27,7 @@ import type {
 } from '@/lib/api/types';
 import { pipelineAutoApproveMode, pipelineAutoMerge, pipelineMainTasks } from '@/lib/api/types';
 import { cn } from '@/lib/cn';
-import { threadHref } from '@/lib/routes';
+import { SITE_MAP } from '@/lib/site-map';
 import { formatBytes } from '@/utils/format';
 import { AutoApproveMode, EJobKind, EJobStatus } from '@workspace/shared';
 import {
@@ -313,7 +313,7 @@ export function Navigator({
   const openJob = async (targetJobId: string) => {
     try {
       await resolveJob({ ...jobRef, jobId: targetJobId });
-      router.push(threadHref(targetJobId));
+      router.push(SITE_MAP.jobs.job(targetJobId)());
     } catch (err) {
       if (err instanceof ThreadApiError && err.status === 404) {
         showToast('This job was deleted.');

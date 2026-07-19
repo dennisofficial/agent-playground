@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
 import { AuthCard, AuthHeader, ErrorBanner } from '@/features/auth/components/auth-ui';
 import { auth } from '@/lib/auth';
-import { ROUTES } from '@/lib/routes';
+import { SITE_MAP } from '@/lib/site-map';
 import { validateEmail } from '@/utils/validation';
 import { ArrowLeft, CheckCircle2 } from 'lucide-react';
 import Link from 'next/link';
@@ -55,7 +55,7 @@ export default function ForgotPage() {
               {resent ? '✓ Sent again just now' : 'Resend email'}
             </Button>
             <Link
-              href={ROUTES.auth.login()}
+              href={SITE_MAP.auth.login()}
               className="inline-flex items-center justify-center gap-1.5 text-[12.5px] text-dim hover:text-text"
             >
               <ArrowLeft size={13} /> Back to sign in
@@ -88,7 +88,7 @@ export default function ForgotPage() {
         </Button>
       </form>
       <Link
-        href={ROUTES.auth.login()}
+        href={SITE_MAP.auth.login()}
         className="mt-5 inline-flex items-center justify-center gap-1.5 text-[12.5px] text-dim hover:text-text"
       >
         <ArrowLeft size={13} /> Back to sign in

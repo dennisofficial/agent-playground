@@ -5,7 +5,7 @@ import { TopBar } from '@/features/shell/components/top-bar';
 import { useBreakpoint } from '@/hooks/use-breakpoint';
 import { useOrg, useOrgs, type OrgSummary } from '@/lib/api/me';
 import { cn } from '@/lib/cn';
-import { ROUTES, type SettingsSection } from '@/lib/routes';
+import { SITE_MAP, type SettingsSection } from '@/lib/site-map';
 import { orgSwatch, roleLabel } from '@/utils/org-display';
 import {
   Check,
@@ -72,7 +72,7 @@ export default function OrgSettingsLayout({
   }, [isMobile]);
 
   const switchOrg = (id: string) => {
-    if (id !== orgId) router.push(ROUTES.orgSettings(id, section));
+    if (id !== orgId) router.push(SITE_MAP.orgs.org(id).settings.section(section)());
   };
 
   return (
@@ -119,7 +119,7 @@ export default function OrgSettingsLayout({
                   This organization doesn’t exist or you don’t have access to it.
                 </p>
                 <Link
-                  href={ROUTES.workspace()}
+                  href={SITE_MAP.workspace()}
                   className="mt-4 inline-block text-[12.5px] font-medium text-accent"
                 >
                   ← Back to workspace
@@ -183,7 +183,7 @@ function OrgSettingsNav({
         return (
           <Link
             key={id}
-            href={ROUTES.orgSettings(orgId, id)}
+            href={SITE_MAP.orgs.org(orgId).settings.section(id)()}
             onClick={() => setNavOpen(false)}
             className={cn(
               'flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[12.5px] font-medium transition',

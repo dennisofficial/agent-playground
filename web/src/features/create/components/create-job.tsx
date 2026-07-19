@@ -14,7 +14,7 @@ import { useCreateThread, useOrgRepos } from '@/lib/api/job-queries';
 import { groupThreadsBySection, SECTION_LABEL } from '@/lib/api/job-section';
 import { useOrgs } from '@/lib/api/me';
 import { cn } from '@/lib/cn';
-import { ROUTES, threadHref } from '@/lib/routes';
+import { SITE_MAP } from '@/lib/site-map';
 import { isSubmitCombo } from '@/utils/keyboard';
 import { orgInitials, orgSwatch } from '@/utils/org-display';
 import { modeApprovesPlan, modeApprovesShip, type AutoApproveMode } from '@workspace/shared';
@@ -167,7 +167,7 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
       },
       {
         onSuccess: ({ jobId }) => {
-          router.replace(threadHref(jobId));
+          router.replace(SITE_MAP.jobs.job(jobId)());
           onDone?.();
         },
         onError: () => setError('Could not start the job. Try again.'),
@@ -596,7 +596,7 @@ function NoRepos({ orgId, onDone }: { orgId: string; onDone?: () => void }) {
         thread.
       </p>
       <Link
-        href={ROUTES.orgSettings(orgId, 'repos')}
+        href={SITE_MAP.orgs.org(orgId).settings.section('repos')()}
         onClick={onDone}
         className="mt-3 rounded-md border px-3 py-1.5 text-[12px] font-medium text-accent"
         style={{

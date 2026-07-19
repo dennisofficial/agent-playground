@@ -1,4 +1,4 @@
-import { ROUTES } from '@/lib/routes';
+import { SITE_MAP } from '@/lib/site-map';
 import { redirect } from 'next/navigation';
 
 /**
@@ -21,7 +21,7 @@ export default async function OrgSettingsIndexPage({
       if (typeof value === 'string') qs.set(key, value);
       else if (Array.isArray(value) && value[0] !== undefined) qs.set(key, value[0]);
     }
-    redirect(`${ROUTES.orgSettings(orgId, 'credentials')}?${qs.toString()}`);
+    redirect(`${SITE_MAP.orgs.org(orgId).settings.section('credentials')()}?${qs.toString()}`);
   }
-  redirect(ROUTES.orgSettings(orgId, 'general'));
+  redirect(SITE_MAP.orgs.org(orgId).settings.section('general')());
 }

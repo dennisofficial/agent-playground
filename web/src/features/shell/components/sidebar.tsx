@@ -7,7 +7,7 @@ import { groupThreadsBySection, SECTION_LABEL, type JobSection } from '@/lib/api
 import { useOrgs, type OrgSummary } from '@/lib/api/me';
 import { cn } from '@/lib/cn';
 import { env } from '@/lib/env';
-import { ROUTES, threadHref } from '@/lib/routes';
+import { SITE_MAP } from '@/lib/site-map';
 import { EJobStatus } from '@workspace/shared';
 import { ChevronRight, Globe, LayoutGrid, Plus, Server, Settings } from 'lucide-react';
 import Link from 'next/link';
@@ -176,7 +176,7 @@ export function Sidebar({ inDrawer = false }: { inDrawer?: boolean } = {}) {
     };
   });
 
-  const onDashboard = pathname === ROUTES.workspace();
+  const onDashboard = pathname === SITE_MAP.workspace();
 
   return (
     <aside
@@ -190,7 +190,7 @@ export function Sidebar({ inDrawer = false }: { inDrawer?: boolean } = {}) {
       <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-1.5 pb-3 pt-3">
         {/* Dashboard — flat row, no card. */}
         <Link
-          href={ROUTES.workspace()}
+          href={SITE_MAP.workspace()}
           className={cn(
             'flex items-center gap-2.5 rounded-[7px] px-2.25 py-2 transition',
             onDashboard ? 'bg-accent-soft' : 'hover:bg-surface-2',
@@ -289,7 +289,7 @@ function OrgSection({
 
         <div className="absolute right-0 top-1/2 flex -translate-y-1/2 items-center gap-1.5">
           <Link
-            href={ROUTES.newThread({ orgId: org.id })}
+            href={SITE_MAP.newThread({ org: org.id })}
             onClick={(e) => e.stopPropagation()}
             className={cn(
               iconBtn,
@@ -302,7 +302,7 @@ function OrgSection({
           </Link>
 
           <Link
-            href={ROUTES.orgSettings(org.id)}
+            href={SITE_MAP.orgs.org(org.id).settings()}
             onClick={(e) => e.stopPropagation()}
             className={cn(
               iconBtn,
@@ -347,7 +347,7 @@ function OrgSection({
               <div className="flex items-center gap-1.75 px-1 pb-0.75 pt-1.25">
                 <span className="flex-1 text-[10.5px] italic text-faint">No repositories yet</span>
                 <Link
-                  href={ROUTES.orgSettings(org.id, 'repos')}
+                  href={SITE_MAP.orgs.org(org.id).settings.section('repos')()}
                   className="flex-none font-mono text-[9.5px] font-semibold text-accent"
                 >
                   Connect ↗
@@ -472,7 +472,7 @@ function RepoGroup({
         </button>
 
         <Link
-          href={ROUTES.newThread({ orgId, repoId: repo.repoId })}
+          href={SITE_MAP.newThread({ org: orgId, repo: repo.repoId })}
           className={cn(
             iconBtn,
             'text-faint opacity-0 transition-opacity hover:bg-accent-soft hover:text-accent group-hover/repo:opacity-90 focus-visible:opacity-100 [@media(hover:none)]:opacity-100',
@@ -512,7 +512,7 @@ function RepoGroup({
             <div className="px-1 py-0.5 font-mono text-[10px] text-faint">Loading…</div>
           ) : (
             <Link
-              href={ROUTES.newThread({ orgId, repoId: repo.repoId })}
+              href={SITE_MAP.newThread({ org: orgId, repo: repo.repoId })}
               className="flex items-center gap-1.75 rounded-[4px] pb-1.25 pl-1 pr-1.75 pt-1 transition hover:bg-surface-2"
             >
               <span className="flex-1 text-[10.5px] italic text-faint">No jobs yet</span>
@@ -537,7 +537,7 @@ function RepoGroup({
                   thread={t}
                   orgId={orgId}
                   section={section}
-                  active={pathname === threadHref(t.id)}
+                  active={pathname === SITE_MAP.jobs.job(t.id)()}
                 />
               ))}
             </SidebarSection>
@@ -643,7 +643,7 @@ function ThreadRow({
     thread.portState != null || thread.pr?.number != null || thread.needsYou || showBuildStages;
   return (
     <Link
-      href={threadHref(thread.id)}
+      href={SITE_MAP.jobs.job(thread.id)()}
       title={`${thread.org.name} · ${thread.repo.name}`}
       className={cn(
         'flex items-start gap-1.5 rounded-[7px] pb-1.25 pl-0.75 pr-1.75 pt-1.25 transition',

@@ -2,7 +2,7 @@
 
 import { ReposSection } from '@/features/settings/components/repos-section';
 import { useOrg } from '@/lib/api/me';
-import { ROUTES } from '@/lib/routes';
+import { SITE_MAP } from '@/lib/site-map';
 import { useRouter } from 'next/navigation';
 import { use } from 'react';
 
@@ -16,7 +16,7 @@ export default function ReposSettingsPage({ params }: { params: Promise<{ orgId:
       orgId={org.id}
       orgName={org.name}
       role={org.role}
-      onNavigate={(section) => router.push(ROUTES.orgSettings(orgId, section))}
+      onNavigate={(section) => router.push(SITE_MAP.orgs.org(orgId).settings.section(section)())}
     />
   );
 }

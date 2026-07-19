@@ -4,7 +4,7 @@ import { resolveJob, ThreadApiError, type JobRef } from '@/lib/api/job-api';
 import { STATUS_META } from '@/lib/api/status';
 import type { JobBlocker } from '@/lib/api/types';
 
-import { threadHref } from '@/lib/routes';
+import { SITE_MAP } from '@/lib/site-map';
 import { GitMerge, GitPullRequest, GitPullRequestClosed, Lock } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { EphemeralToast, useEphemeralToast } from './ephemeral-toast';
@@ -26,7 +26,7 @@ export function useOpenBlocker(jobRef: JobRef) {
   const openBlocker = async (blockerJobId: string) => {
     try {
       await resolveJob({ ...jobRef, jobId: blockerJobId });
-      router.push(threadHref(blockerJobId));
+      router.push(SITE_MAP.jobs.job(blockerJobId)());
     } catch (err) {
       if (err instanceof ThreadApiError && err.status === 404) {
         show('This job was deleted.');

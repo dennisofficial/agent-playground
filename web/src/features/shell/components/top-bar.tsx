@@ -1,7 +1,7 @@
 'use client';
 
 import { cn } from '@/lib/cn';
-import { ROUTES } from '@/lib/routes';
+import { SITE_MAP } from '@/lib/site-map';
 import { Menu, Network, Search } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -24,7 +24,7 @@ export function TopBar({
   onOpenSearch?: () => void;
 }) {
   const pathname = usePathname();
-  const onJobs = pathname.startsWith(ROUTES.workspace());
+  const onJobs = pathname.startsWith(SITE_MAP.workspace());
 
   return (
     <header
@@ -43,7 +43,7 @@ export function TopBar({
         <Menu size={17} />
       </button>
 
-      <Link href={ROUTES.workspace()} className="flex items-center gap-2.5" aria-label="Atlas home">
+      <Link href={SITE_MAP.workspace()} className="flex items-center gap-2.5" aria-label="Atlas home">
         <span
           className="grid h-7 w-7 flex-none place-items-center rounded-lg"
           style={{
@@ -65,7 +65,7 @@ export function TopBar({
 
       <nav className="flex h-full items-stretch gap-3.5 md:gap-5.5">
         <TopNavItem
-          href={ROUTES.workspace()}
+          href={SITE_MAP.workspace()}
           active={onJobs}
           icon={<Network size={13} />}
           label="Jobs"

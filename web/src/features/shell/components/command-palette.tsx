@@ -2,7 +2,7 @@
 
 import { useAllJobs, type InboxThread } from '@/lib/api/inbox';
 import { cn } from '@/lib/cn';
-import { threadHref } from '@/lib/routes';
+import { SITE_MAP } from '@/lib/site-map';
 import { orgSwatch } from '@/utils/org-display';
 import { Search } from 'lucide-react';
 import { useRouter } from 'next/navigation';
@@ -20,7 +20,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
   const inputRef = useRef<HTMLInputElement>(null);
 
   function openThread(t: InboxThread) {
-    router.push(threadHref(t.id));
+    router.push(SITE_MAP.jobs.job(t.id)());
     onClose();
   }
 

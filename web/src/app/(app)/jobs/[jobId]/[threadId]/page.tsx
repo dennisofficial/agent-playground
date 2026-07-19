@@ -2,7 +2,7 @@
 
 import { Spinner } from '@/components/ui/spinner';
 import { JobWorkspace } from '@/features/job-workspace/job-workspace';
-import { ROUTES } from '@/lib/routes';
+import { SITE_MAP } from '@/lib/site-map';
 import { useGetJobQuery } from '@/redux/query/api/jobs.api';
 import Link from 'next/link';
 import { Suspense, use } from 'react';
@@ -32,7 +32,7 @@ export default function ThreadPage({
             That job doesn&apos;t exist or you don&apos;t have access to it.
           </p>
           <Link
-            href={ROUTES.workspace()}
+            href={SITE_MAP.workspace()}
             className="mt-5 inline-block rounded-md border px-3.5 py-2 text-[12.5px] font-medium text-accent"
             style={{ background: 'var(--accent-soft)', borderColor: 'var(--accent-line)' }}
           >

@@ -4,7 +4,7 @@ import { StatusPie } from '@/components/ui/badges';
 import type { CreatedJobRow, JobRef } from '@/lib/api/job-api';
 import { useJobCreatedJobs } from '@/lib/api/job-queries';
 import { STATUS_META } from '@/lib/api/status';
-import { threadHref } from '@/lib/routes';
+import { SITE_MAP } from '@/lib/site-map';
 import { GitFork, GitMerge, GitPullRequest, GitPullRequestClosed } from 'lucide-react';
 import Link from 'next/link';
 
@@ -46,7 +46,7 @@ export function CreatedJobsPane({ jobRef }: { jobRef: JobRef }) {
 
 function CreatedJobItem({ job, jobRef }: { job: CreatedJobRow; jobRef: JobRef }) {
   const meta = STATUS_META[job.status];
-  const href = threadHref(job.id);
+  const href = SITE_MAP.jobs.job(job.id)();
   return (
     <Link
       href={href}

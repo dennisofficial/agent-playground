@@ -5,7 +5,7 @@ import type { RepoView } from '@/lib/api/job-api';
 import { useOrgRepos } from '@/lib/api/job-queries';
 import { useReonboardRepo } from '@/lib/api/orgs';
 import { cn } from '@/lib/cn';
-import { threadHref, type SettingsSection } from '@/lib/routes';
+import { SITE_MAP, type SettingsSection } from '@/lib/site-map';
 import { useGetCredentialsQuery } from '@/redux/query/api/credentials.api';
 import {
   useConnectRepoMutation,
@@ -96,7 +96,7 @@ export function ReposSection({
           tone: 'green',
           text: `Atlas is onboarding ${repo.name} — opening the job…`,
         });
-        router.push(threadHref(jobId));
+        router.push(SITE_MAP.jobs.job(jobId)());
       },
       onError: (e) =>
         setFlash({

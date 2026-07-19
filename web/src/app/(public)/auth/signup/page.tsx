@@ -5,7 +5,7 @@ import { Field, PasswordField, StrengthMeter } from '@/components/ui/field';
 import { AuthCard, AuthHeader, ErrorBanner, OrDivider } from '@/features/auth/components/auth-ui';
 import { GoogleButton } from '@/features/auth/components/google-button';
 import { auth } from '@/lib/auth';
-import { ROUTES } from '@/lib/routes';
+import { SITE_MAP } from '@/lib/site-map';
 import { validateEmail, validateNameRequired, validatePasswordMin } from '@/utils/validation';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -36,7 +36,7 @@ export default function SignupPage() {
     setPending(true);
     try {
       await auth.register(email.trim(), password, name);
-      router.replace(ROUTES.workspace());
+      router.replace(SITE_MAP.workspace());
     } catch (err) {
       setBanner(err instanceof Error ? err.message : 'Could not create your account.');
       setPending(false);
@@ -93,7 +93,7 @@ export default function SignupPage() {
       </p>
       <p className="mt-3 text-center text-[12.5px] text-dim">
         Already have an account?{' '}
-        <Link href={ROUTES.auth.login()} className="font-medium text-accent hover:underline">
+        <Link href={SITE_MAP.auth.login()} className="font-medium text-accent hover:underline">
           Sign in
         </Link>
       </p>

@@ -3,7 +3,7 @@
 import { StatusPie } from '@/components/ui/badges';
 import type { InboxThread } from '@/lib/api/inbox';
 import { STATUS_META } from '@/lib/api/status';
-import { threadHref } from '@/lib/routes';
+import { SITE_MAP } from '@/lib/site-map';
 import { orgSwatch } from '@/utils/org-display';
 import Link from 'next/link';
 
@@ -38,7 +38,7 @@ export function NeedsYouBand({ threads }: { threads: InboxThread[] }) {
         {attention.map((t) => (
           <Link
             key={t.id}
-            href={threadHref(t.id)}
+            href={SITE_MAP.jobs.job(t.id)()}
             className="rounded-md border border-border bg-surface p-3 transition hover:border-border-2"
           >
             <div className="mb-2 flex items-center gap-2">

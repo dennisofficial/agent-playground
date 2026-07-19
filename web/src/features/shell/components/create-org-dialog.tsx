@@ -1,7 +1,7 @@
 'use client';
 
 import { inputCls } from '@/components/ui/field';
-import { ROUTES } from '@/lib/routes';
+import { SITE_MAP } from '@/lib/site-map';
 import { useCreateOrgMutation } from '@/redux/query/api/org.api';
 import { Building2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
@@ -25,7 +25,7 @@ export function CreateOrgDialog({ onClose }: { onClose: () => void }) {
       .unwrap()
       .then((org) => {
         onClose();
-        router.push(ROUTES.orgSettings(org.id));
+        router.push(SITE_MAP.orgs.org(org.id).settings());
       })
       .catch(() => {
         /* surfaced via createState.isError */

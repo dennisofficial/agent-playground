@@ -1,7 +1,7 @@
 'use client';
 
 import { inputCls } from '@/components/ui/field';
-import { ROUTES } from '@/lib/routes';
+import { SITE_MAP } from '@/lib/site-map';
 import { useDeleteOrgMutation } from '@/redux/query/api/org.api';
 import { Trash2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
@@ -32,7 +32,7 @@ export function DeleteOrgDialog({
       .unwrap()
       .then(() => {
         onClose();
-        router.push(ROUTES.workspace());
+        router.push(SITE_MAP.workspace());
       })
       .catch(() => {
         /* surfaced via delState.isError */
