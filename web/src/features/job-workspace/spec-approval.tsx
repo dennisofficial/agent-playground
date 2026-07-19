@@ -12,7 +12,7 @@ import {
   SHIP_ACTION_ID,
 } from '@/lib/api/types';
 import { Check, ClipboardCheck, Globe, Lock, Undo2 } from 'lucide-react';
-import { shouldShowSpinUpPreview } from './spin-up-preview-visibility';
+import { shouldShowSpinUpPreview } from './lib/spin-up-preview-visibility';
 
 /**
  * The async spec-approval surfaces (handoff: "Async Spec / Plan Approval Components") — mirrored for

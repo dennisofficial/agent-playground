@@ -1,7 +1,7 @@
 'use client';
 
 import { Drawer } from '@/components/ui/drawer';
-import { OutboxFlusher } from '@/features/job-workspace/outbox-flusher';
+import { OutboxFlusher } from '@/features/job-workspace/components/composer/outbox-flusher';
 import { LeftNavProvider } from '@/features/shell/left-nav';
 import { useBreakpoint } from '@/hooks/use-breakpoint';
 import { useDraftsRealtime } from '@/lib/api/draft-realtime';

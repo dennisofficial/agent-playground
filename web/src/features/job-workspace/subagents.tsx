@@ -5,7 +5,7 @@ import type { LiveBlock } from '@/lib/api/job-stream';
 import { formatModelLabel } from '@/utils/format';
 import { ChevronRight, Sparkles } from 'lucide-react';
 import { useState } from 'react';
-import { ContextMeter } from './context-meter';
+import { ContextMeter } from './components/chrome/context-meter';
 
 /**
  * Subagent (Task) activity is peeled OUT of the main conversation and rendered as its own node/sub-page.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { contextConvoNodeForHref, resolveNode } from '../node-registry';
+import { contextConvoNodeForHref, resolveNode } from '../lib/node-registry';
 
 describe('contextConvoNodeForHref', () => {
   it('maps absolute /context bucket hrefs to their node id', () => {

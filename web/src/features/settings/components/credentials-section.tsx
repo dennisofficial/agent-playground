@@ -1,6 +1,6 @@
 'use client';
 
-import { UsageRingView } from '@/features/job-workspace/usage-ring';
+import { UsageRingView } from '@/features/job-workspace/components/chrome/usage-ring';
 import { useQueryClient } from '@/lib/api/_tanstack-shim';
 import {
   useDisconnectGithubApp,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { liveTurnVisibleForLeg } from '../live-turn-visibility';
+import { liveTurnVisibleForLeg } from '../lib/live-turn-visibility';
 
 describe('liveTurnVisibleForLeg', () => {
   it('shows the live turn on a non-Leg lane (legOrdinal undefined), regardless of legIsLive', () => {

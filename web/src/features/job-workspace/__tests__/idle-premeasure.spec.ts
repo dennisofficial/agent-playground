@@ -1,6 +1,6 @@
 import { Virtualizer } from '@tanstack/react-virtual';
 import { describe, expect, it } from 'vitest';
-import { premeasureChunkIndexes } from '../idle-premeasure';
+import { premeasureChunkIndexes } from '../components/conversation/idle-premeasure';
 
 /**
  * Deterministic RED→GREEN for the pre-measurement seeding mechanism `useIdlePremeasure` relies on:

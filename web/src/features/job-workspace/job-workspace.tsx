@@ -26,15 +26,15 @@ import { orgSwatch } from '@/utils/org-display';
 import { EJobKind, EJobStatus } from '@workspace/shared';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Group, Panel, Separator, useDefaultLayout, useGroupRef } from 'react-resizable-panels';
-import { Conversation } from './conversation';
-import { DeleteJobPrDialog } from './delete-job-pr-dialog';
+import { Conversation } from './components/conversation/conversation';
+import { DeleteJobPrDialog } from './components/chrome/delete-job-pr-dialog';
 import { useSelectedNode } from './hooks/use-selected-node';
-import { MarkdownActionsProvider } from './markdown';
-import { Navigator, type JobMeta } from './navigator';
-import { ReviewCommentsProvider } from './review-comments';
-import { SelectionCommentPopover } from './selection-comment-popover';
+import { MarkdownActionsProvider } from './components/conversation/markdown';
+import { Navigator, type JobMeta } from './components/navigator/navigator';
+import { ReviewCommentsProvider } from './components/review/review-comments';
+import { SelectionCommentPopover } from './components/review/selection-comment-popover';
 import { PersistentApprovalBar, PersistentShipBar } from './spec-approval';
-import { EmptyPane, FilePane, PhaseView, SubagentPane } from './step-view';
+import { EmptyPane, FilePane, PhaseView, SubagentPane } from './components/panes/step-view';
 
 /**
  * The thread workspace — the navigator (pipeline / state panels) + the work column (Conversation or

@@ -1,6 +1,6 @@
 'use client';
 
-import { SwitchRow } from '@/features/job-workspace/auto-approve-popover';
+import { SwitchRow } from '@/features/job-workspace/components/composer/auto-approve-popover';
 import type { OrgSummary } from '@/lib/api/me';
 import { useUpdateOrgMutation } from '@/redux/query/api/org.api';
 import { useState } from 'react';

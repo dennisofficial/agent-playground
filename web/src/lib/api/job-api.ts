@@ -1,6 +1,6 @@
 'use client';
 
-import type { ReviewComment } from '@/features/job-workspace/review-comments';
+import type { ReviewComment } from '@/features/job-workspace/components/review/review-comments';
 import { env } from '@/lib/env';
 import type { AutoApproveMode, AutoMergeMethod, EJobKind, EJobStatus } from '@workspace/shared';
 import { notImplemented } from './_stub';

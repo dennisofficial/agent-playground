@@ -537,7 +537,7 @@ function RepoGroup({
                   thread={t}
                   orgId={orgId}
                   section={section}
-                  active={pathname === SITE_MAP.jobs.job(t.id)()}
+                  active={pathname.startsWith(SITE_MAP.jobs.job(t.id)())}
                 />
               ))}
             </SidebarSection>

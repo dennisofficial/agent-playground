@@ -2,7 +2,7 @@
 
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useCallback } from 'react';
-import { isDetailNode, parseFileNode } from '../node-registry';
+import { isDetailNode, parseFileNode } from '../lib/node-registry';
 
 const LANE_PARAM = 'lane';
 const NODE_PARAM = 'node';

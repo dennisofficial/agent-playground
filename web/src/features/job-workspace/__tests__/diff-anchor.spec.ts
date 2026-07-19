@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { anchorLabel, deriveLineAnchor } from '../diff-anchor';
+import { anchorLabel, deriveLineAnchor } from '../lib/diff-anchor';
 
 describe('deriveLineAnchor', () => {
   it('returns null for an empty selection', () => {

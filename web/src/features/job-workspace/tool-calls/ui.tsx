@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { CopyButton, TerminalChromeBar, WrapButton } from '../terminal-chrome';
+import { CopyButton, TerminalChromeBar, WrapButton } from '../components/terminal/terminal-chrome';
 import { computeDiffRows, rowsFromHunk, splitLines, type DiffRow } from './diff-rows';
 import { renderTokenLine, useHighlightTokens, type ThemedToken } from './highlight';
 import type { DiffHunk, IconKind, ToolBadge } from './types';

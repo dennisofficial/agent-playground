@@ -1,6 +1,6 @@
 'use client';
 
-import type { ReviewComment } from '@/features/job-workspace/review-comments';
+import type { ReviewComment } from '@/features/job-workspace/components/review/review-comments';
 import { useCallback, useSyncExternalStore } from 'react';
 import { connectivity } from './connectivity';
 import {

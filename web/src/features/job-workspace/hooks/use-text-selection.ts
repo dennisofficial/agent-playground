@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { useReviewComments } from '../review-comments';
+import { useReviewComments } from '../components/review/review-comments';
 
 /**
  * Detect a completed text selection inside `containerRef` and hand it off to `onSelect`. Used only on the
