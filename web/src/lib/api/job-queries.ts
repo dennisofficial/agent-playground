@@ -14,7 +14,7 @@ import type { AutoApproveMode } from '@workspace/shared';
 import { useMemo } from 'react';
 import { adaptQuery, type QueryResultLike } from './_stub';
 import { useMutation, useQuery } from './_tanstack-shim';
-import { jobViewToPipeline, threadMessageToJobMessage } from './job-adapters';
+import { threadMessageToJobMessage } from './job-adapters';
 import {
   addJobDependency,
   approveMcpProposal,
@@ -54,7 +54,7 @@ import {
   type ReviewCommentItemBody,
 } from './job-api';
 import { useOrgs } from './me';
-import type { JobBlocker, PipelineState } from './types';
+import type { JobBlocker, Pipeline } from './types';
 
 /**
  * Tanstack Query hooks over the org → repo → thread API.
@@ -113,16 +113,17 @@ export function useDraft(ref: JobRef) {
   return useQuery({ queryFn: () => getDraft(ref) });
 }
 
-/** A job's pipeline (job + thread groups + threads + tasks), or `{ status: 'no_job' }` before a plan is
- *  approved. Adapted from `GET /jobs/:id` + `/tasks` onto the navigator's `PipelineState` shape. */
-export function usePipeline(ref: JobRef): QueryResultLike<PipelineState> {
+/** A job's pipeline — the shared `JobView` (`GET /jobs/:id`, its nested thread-group→thread tree) paired
+ *  with its flat task feed (`/tasks`). Components read these DTOs directly; derivations + the not-yet-emitted
+ *  fields live in `job-workspace/lib/pipeline-selectors.ts` (e.g. `activeJob` narrows to the built job). */
+export function usePipeline(ref: JobRef): QueryResultLike<Pipeline> {
   const jobQ = useGetJobQuery(ref.jobId);
   const tasksQ = useGetJobTasksQuery(ref.jobId);
-  const data = useMemo(
-    () => (jobQ.data ? jobViewToPipeline(jobQ.data, tasksQ.data ?? []) : undefined),
+  const data = useMemo<Pipeline | undefined>(
+    () => (jobQ.data ? { job: jobQ.data, tasks: tasksQ.data ?? [] } : undefined),
     [jobQ.data, tasksQ.data],
   );
-  return { ...adaptQuery(jobQ), data } as QueryResultLike<PipelineState>;
+  return { ...adaptQuery(jobQ), data } as QueryResultLike<Pipeline>;
 }
 
 /** A thread's `/context` files (specs + artifacts). SSE keeps it fresh via `useJobEvents`. */

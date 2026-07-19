@@ -1,4 +1,4 @@
-import type { PipelineState } from '@/lib/api/types';
+import type { EJobStatus } from '@workspace/shared';
 
 /**
  * Whether the ship-card "Spin up preview" button should be offered.
@@ -9,7 +9,7 @@ import type { PipelineState } from '@/lib/api/types';
  * `done`), so the card alone is not enough — the job must actually still be parked at the gate.
  */
 export function shouldShowSpinUpPreview(
-  status: PipelineState['status'] | undefined,
+  status: EJobStatus | undefined,
   previewRequestedAt: string | null | undefined,
 ): boolean {
   return status === 'awaiting_ship_review' && previewRequestedAt == null;

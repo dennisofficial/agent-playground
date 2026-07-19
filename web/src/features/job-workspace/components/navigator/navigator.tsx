@@ -5,7 +5,7 @@ import { FolderRow } from '@/features/job-workspace/components/panes/folder-row'
 import { JobMenu } from '@/features/job-workspace/components/chrome/job-menu';
 import { PlanReviewRow } from '@/features/job-workspace/components/review/plan-review-row';
 import type { JobRef } from '@/lib/api/job-api';
-import { pipelineJob, resolveJob, ThreadApiError } from '@/lib/api/job-api';
+import { resolveJob, ThreadApiError } from '@/lib/api/job-api';
 import {
   useJobCreatedJobs,
   useJobDiffSummary,
@@ -20,16 +20,36 @@ import type {
   JobBlocker,
   JobContext,
   JobProvenance,
-  PipelineJob,
-  PipelineState,
+  Pipeline,
+  PrState,
   ServiceInfo,
   TaskItem,
 } from '@/lib/api/types';
-import { pipelineAutoApproveMode, pipelineAutoMerge, pipelineMainTasks } from '@/lib/api/types';
+import {
+  activeJob,
+  jobAutoApproveMode,
+  jobAutoMerge,
+  jobBaseBranch,
+  jobBuildPath,
+  jobCiCounts,
+  jobCiStatus,
+  jobCurrentBranch,
+  jobFeatureBranch,
+  jobHalt,
+  jobPlanReview,
+  jobPrMergeable,
+  jobPrNumber,
+  jobPrState,
+  jobPrUrl,
+  jobPriorRevisions,
+  mainTasks,
+  type PriorRevision,
+} from '../../lib/pipeline-selectors';
 import { cn } from '@/lib/cn';
 import { SITE_MAP } from '@/lib/site-map';
 import { formatBytes } from '@/utils/format';
 import { AutoApproveMode, EJobKind, EJobStatus } from '@workspace/shared';
+import type { JobView, TaskView } from '@workspace/shared';
 import {
   AlertTriangle,
   ArrowUpRight,
@@ -72,8 +92,8 @@ import {
  * `pr_state` / `pr_mergeable` columns the sidebar does. `label` is the short word after `PR #NN · `.
  */
 function prNavGlyph(
-  state: PipelineJob['prState'],
-  mergeable: PipelineJob['prMergeable'],
+  state: PrState | null,
+  mergeable: string | null,
 ): { Icon: typeof GitPullRequest; color: string; label: string } {
   if (state === 'merged') return { Icon: GitMerge, color: 'var(--purple)', label: 'merged' };
   if (state === 'closed')
@@ -215,7 +235,7 @@ export function Navigator({
   inDrawer = false,
 }: {
   meta: JobMeta;
-  pipeline: PipelineState | undefined;
+  pipeline: Pipeline | undefined;
   /** The job's `/context` files (specs + generated + artifacts) — feeds the OUTPUTS region. */
   context: JobContext | undefined;
   contextLoading?: boolean;
@@ -255,29 +275,24 @@ export function Navigator({
   /** Rendered inside the left Drawer (below xl) — fills the sheet width instead of the fixed 288px rail. */
   inDrawer?: boolean;
 }) {
-  const job = pipelineJob(pipeline);
+  const job = activeJob(pipeline);
+  // The job's flat task feed — folded into each thread group's fold by `PipelineTree`/`tasksForGroup`.
+  const tasks = pipeline?.tasks ?? [];
   // A COMMITTED direct build (durable `jobs.build_path`, stamped only at approval) never grows build lanes,
   // a `plan.md`, or generated plan docs — so its plan-oriented empty-state placeholders are pure noise.
-  // Gates on the persisted field, NOT the `directBuild` approval-CTA hint (which is derived from message
-  // history and only meaningful at the approval gate). Null while still awaiting approval ⇒ false ⇒ a
-  // requested-but-unapproved direct build keeps its placeholders (it can still convert to a full plan).
-  const isDirectBuild = job?.buildPath === 'direct';
-  // AUTO-APPROVE mode — read from the RAW pipeline (not `job`), so it works for an open/pre-plan job whose
-  // pipeline is the `no_job` shape (`pipelineJob()` is null there but the mode still rides along).
-  const autoApproveMode = pipelineAutoApproveMode(pipeline);
-  // AUTO-MERGE setting + manual-merge gate — read from the RAW pipeline (not `job`) the same cross-shape way
-  // as `autoApproveMode`, so an auto-merge-armed job still in the `no_job` (open/pre-plan) shape shows the
-  // Merge toggle correctly instead of reading stale/off (`pipelineJob()` is null there).
-  const { autoMerge, mergeReady, mergeValue } = pipelineAutoMerge(pipeline);
-  const branch = job?.featureBranch ?? job?.baseBranch ?? undefined;
+  // TODO(backend): build_path isn't emitted yet (`jobBuildPath` returns null), so this is dark for now.
+  const isDirectBuild = jobBuildPath(job) === 'direct';
+  const autoApproveMode = jobAutoApproveMode(job);
+  const { autoMerge, mergeReady, mergeValue } = jobAutoMerge(job);
+  const branch = jobFeatureBranch(job) ?? jobBaseBranch(job) ?? undefined;
   // DRIFT: the agent switched the sandbox HEAD to a branch other than the host-named featureBranch. Surfaced
   // (never blocked) — the live branch is what actually ships. Null when there's no divergence to show.
-  const drift =
-    job?.currentBranch && job.currentBranch !== job.featureBranch ? job.currentBranch : null;
+  const currentBranch = jobCurrentBranch(job);
+  const drift = currentBranch && currentBranch !== jobFeatureBranch(job) ? currentBranch : null;
   // "Has a PR" mirrors the sidebar's signal — the observed PR lifecycle (`prState`), NOT `prUrl`. A closed
   // PR (or a partially-recorded row) can carry `prState`/`prNumber` with a null `prUrl`; gating on `prUrl`
   // would then say "No PR yet" while the sidebar shows the closed glyph. The URL only gates the link-out.
-  const hasPr = Boolean(job?.prState);
+  const hasPr = Boolean(jobPrState(job));
   // A job that hasn't built anything yet (planning / awaiting / triaging) plainly has no changes — show a
   // muted "—" on the Changes row then, and skip the diff fetch below.
   const noChanges =
@@ -446,13 +461,15 @@ export function Navigator({
         <div className="mt-1 flex items-center gap-1.5 px-1">
           {hasPr ? (
             (() => {
-              const { Icon, color, label } = prNavGlyph(job!.prState, job!.prMergeable);
-              const text = `${job!.prNumber != null ? `PR #${job!.prNumber}` : 'pull request'} · ${label}`;
-              const showCi = job!.prNumber != null;
+              const prUrl = jobPrUrl(job);
+              const prNumber = jobPrNumber(job);
+              const { Icon, color, label } = prNavGlyph(jobPrState(job), jobPrMergeable(job));
+              const text = `${prNumber != null ? `PR #${prNumber}` : 'pull request'} · ${label}`;
+              const showCi = prNumber != null;
               // Link out only when we actually have the PR url; otherwise show the same status inline.
-              return job!.prUrl ? (
+              return prUrl ? (
                 <a
-                  href={job!.prUrl}
+                  href={prUrl}
                   target="_blank"
                   rel="noreferrer"
                   className="flex flex-1 items-center gap-1.5 rounded py-0.5 hover:bg-surface-2"
@@ -461,7 +478,7 @@ export function Navigator({
                   <span className="flex-1 font-mono text-[9.5px] font-semibold" style={{ color }}>
                     {text}
                   </span>
-                  {showCi ? <CiHeaderGlyph ci={job!.ciStatus} counts={job!.ciCounts} /> : null}
+                  {showCi ? <CiHeaderGlyph ci={jobCiStatus(job)} counts={jobCiCounts(job)} /> : null}
                   <ArrowUpRight size={11} className="text-faint" />
                 </a>
               ) : (
@@ -470,7 +487,7 @@ export function Navigator({
                   <span className="flex-1 font-mono text-[9.5px] font-semibold" style={{ color }}>
                     {text}
                   </span>
-                  {showCi ? <CiHeaderGlyph ci={job!.ciStatus} counts={job!.ciCounts} /> : null}
+                  {showCi ? <CiHeaderGlyph ci={jobCiStatus(job)} counts={jobCiCounts(job)} /> : null}
                 </div>
               );
             })()
@@ -563,7 +580,7 @@ export function Navigator({
             armed on an open PR the host clicks it for us (from outside the sandbox) the moment CI goes
             green, so we show a disabled "Auto merging…" indicator instead of a live button — otherwise
             the header sits empty during the CI wait and the job looks stalled. */}
-        {autoMerge && job?.prState === 'open' ? (
+        {autoMerge && jobPrState(job) === 'open' ? (
           <div className="mt-2">
             <NavigatorAutoMergingButton />
           </div>
@@ -592,22 +609,26 @@ export function Navigator({
           active={laneNode === null}
           running={st === 'running' || st === 'planning'}
           jobId={jobRef.jobId}
-          durableTasks={pipelineMainTasks(pipeline)}
+          durableTasks={mainTasks(pipeline)}
           onClick={onConversation}
         />
         {/* CODEX REVIEW — the plan-review dialogue as its own first-class navigator row (Main communicates
             with it). Present once a review has run; opens the `codex-review:<jobId>` lane in the LEFT pane. */}
-        {job?.planReview ? (
-          <PlanReviewRow
-            jobId={jobRef.jobId}
-            status={job.planReview.status}
-            laneNode={laneNode}
-            onSelectNode={onSelectNode}
-          />
-        ) : null}
+        {(() => {
+          const planReview = jobPlanReview(job);
+          return planReview ? (
+            <PlanReviewRow
+              jobId={jobRef.jobId}
+              status={planReview.status}
+              laneNode={laneNode}
+              onSelectNode={onSelectNode}
+            />
+          ) : null;
+        })()}
         <ThreadRows
           status={st}
           job={job}
+          tasks={tasks}
           jobId={jobRef.jobId}
           laneNode={laneNode}
           onSelectNode={onSelectNode}
@@ -711,13 +732,15 @@ function MainLaneRow({
 function ThreadRows({
   status,
   job,
+  tasks,
   jobId,
   laneNode,
   onSelectNode,
   isDirectBuild,
 }: {
   status: EJobStatus;
-  job: PipelineJob | null;
+  job: JobView | null;
+  tasks: TaskView[];
   jobId: string;
   laneNode: string | null;
   onSelectNode: (node: string) => void;
@@ -730,7 +753,7 @@ function ThreadRows({
   // ghost is just noise.
   // PLAN VERSIONING: prior revisions (browsable history) render below the active lanes; a re-propose/direct
   // build over already-DONE work can leave the active lanes empty while history persists — show history then.
-  const prior = job?.priorRevisions ?? [];
+  const prior = jobPriorRevisions(job);
   // The tree renders every thread group EXCEPT planning/plan_review (those are pinned above), so "no lanes
   // yet" is the absence of any buildable thread group — not just an empty thread group list.
   const hasBuildThreadGroups =
@@ -743,6 +766,7 @@ function ThreadRows({
       {hasBuildThreadGroups ? (
         <PipelineTree
           job={job}
+          tasks={tasks}
           status={status}
           jobId={jobId}
           laneNode={laneNode}
@@ -753,6 +777,7 @@ function ThreadRows({
         <PriorRevisionSection
           key={rev.decisionRecordId}
           job={job}
+          tasks={tasks}
           revision={rev}
           jobId={jobId}
           laneNode={laneNode}
@@ -771,21 +796,22 @@ function ThreadRows({
  */
 function PriorRevisionSection({
   job,
+  tasks,
   revision,
   jobId,
   laneNode,
   onSelectNode,
 }: {
-  job: PipelineJob;
-  revision: NonNullable<PipelineJob['priorRevisions']>[number];
+  job: JobView;
+  tasks: TaskView[];
+  revision: PriorRevision;
   jobId: string;
   laneNode: string | null;
   onSelectNode: (node: string) => void;
 }) {
-  const revJob: PipelineJob = {
+  const revJob: JobView = {
     ...job,
     threadGroups: revision.threadGroups,
-    halt: null,
   };
   return (
     <details className="mt-1 opacity-70">
@@ -795,6 +821,7 @@ function PriorRevisionSection({
       <div className="mt-0.5">
         <PipelineTree
           job={revJob}
+          tasks={tasks}
           status={EJobStatus.DONE}
           jobId={jobId}
           laneNode={laneNode}
@@ -1143,7 +1170,7 @@ function StateBanner({
   onConversation,
   onNotice,
 }: {
-  job: PipelineJob | null;
+  job: JobView | null;
   jobRef: JobRef;
   onConversation: () => void;
   /** Surface a human-readable notice (the server's refusal `reason`) — a banner control the backend
@@ -1152,6 +1179,9 @@ function StateBanner({
 }) {
   const retry = useRetryJob(jobRef);
   const shipWithoutReview = useShipWithoutReview(jobRef);
+  // TODO(backend): JobView doesn't carry `halt` yet, so `jobHalt` returns null and every banner below is
+  // dark. The banner UI is kept intact — it lights up once the read model emits the halt.
+  const halt = jobHalt(job);
   // Re-drive the halted build, then drop to the conversation to watch it resume.
   const onRetry = () => {
     retry.mutate(undefined, { onSuccess: onConversation });
@@ -1160,7 +1190,7 @@ function StateBanner({
   // The Codex-outage hold on the ship-time master_review: a transient infra hold, not a terminal
   // failure — the job auto-retries on the resume clock, or the operator can jump straight to the
   // ship-review gate without the automated whole-diff pass.
-  if (job?.halt?.kind === 'codex_review_unavailable') {
+  if (halt?.kind === 'codex_review_unavailable') {
     const pending = retry.isPending || shipWithoutReview.isPending;
     const onShipWithoutReview = () =>
       shipWithoutReview.mutate(undefined, {
@@ -1205,7 +1235,7 @@ function StateBanner({
     );
   }
 
-  if (job?.halt && (job.halt.kind === 'failed' || job.halt.kind === 'incomplete')) {
+  if (halt && (halt.kind === 'failed' || halt.kind === 'incomplete')) {
     return (
       <div
         className="mx-1.5 my-1 rounded-md border px-3 py-2.5"
@@ -1236,7 +1266,7 @@ function StateBanner({
       </div>
     );
   }
-  if (job?.halt?.kind === 'blocked_credentials') {
+  if (halt?.kind === 'blocked_credentials') {
     return (
       <div
         className="mx-1.5 my-1 rounded-md border border-l-2 px-3 py-2.5"

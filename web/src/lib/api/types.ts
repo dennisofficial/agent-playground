@@ -1,10 +1,9 @@
 import type {
-  AutoApproveMode,
-  EJobKind,
   EJobStatus,
   EThreadCondition,
   EThreadStatus,
-  JobHalt,
+  JobView,
+  TaskView,
 } from '@workspace/shared';
 /**
  * The backend "system is working" axis (`idle | turn | plan_review | build | master_review`) —
@@ -380,7 +379,7 @@ export interface LaneDefaultFooter {
 /**
  * One review CHILD thread of a builder — a `review_agent` (one read-only review lens) or the single
  * `review_fix` (fix · apply · verify). Grouped under the SAME STAGE as its parent builder; related to it by
- * `parentId` (already pre-nested here as {@link PipelineThread.children} — the web never needs the raw
+ * `parentId` (surfaced via the `threadChildren` selector — the web never needs the raw
  * parent link). A first-class thread row: its own status + streaming `lane` + (for review_agent) the
  * `lensId` and finding count. The navigator renders these directly as bare child-thread nodes (no synthetic
  * `rev:`/`fix:` ids); `lane` is the `autofix:<parentId>:<lensId>` / `autofix:<parentId>:fix` transcript lane
@@ -422,102 +421,6 @@ export interface TaskItem {
   blockedBy?: string[];
 }
 
-/** The thread ROLE — the single differentiator (subsumes the old `kind`/`is_master_review` split).
- *  Mirrors backend `ThreadRole` (`thread-kind/spec.ts`). `planning`/`post_build`/`ci` all reuse the brain's
- *  conversational session machinery; `builder`/`master_review` are top-level executable; `review_agent`/
- *  `review_fix` are thread-group-scoped children of a builder; `plan_review` is the Codex plan-review dialogue. */
-export type ThreadRole =
-  | 'planning'
-  | 'plan_review'
-  | 'builder'
-  | 'review_agent'
-  | 'review_fix'
-  | 'master_review'
-  | 'post_build'
-  | 'ci';
-
-/**
- * One THREAD — a first-class row differentiated by {@link ThreadRole}, grouped under a {@link PipelineThreadGroup}.
- * A builder's `review_agent`/`review_fix` children live in the SAME thread group as their parent (related by a
- * backend `parentId` link the web never needs directly — they arrive pre-nested as {@link children}).
- * No more `steps`/`legs`/`tasks` on a thread: a thread IS the leaf now (a "leg" is just an ordinary builder
- * thread — see {@link PipelineThreadGroup.threads}), and the task checklist moved up to the owning thread group.
- */
-export interface PipelineThread {
-  id: string;
-  role: ThreadRole;
-  ordinal: number;
-  brief: string;
-  /** The thread's scope type (backend/frontend/docs/…), `'general'` fallback. */
-  type: string;
-  status: EThreadStatus;
-  /** The orthogonal condition overlay (pause/terminal tag) — independent of the linear {@link status} step. */
-  condition: EThreadCondition;
-  /** Whether a just-in-time plan was generated — gates the optional `plan` leaf in the nav tree. */
-  hasPlan: boolean;
-  /** The resumable engine session id, or null before the thread's first turn. */
-  sessionId: string | null;
-  /** The thread's commit sha (the review-diff head for a build/direct_build role's cumulative diff), or
-   *  null on non-build roles / before the thread's first commit. */
-  commitSha: string | null;
-  /** The lane's pre-turn composer-footer default (`model · effort`), keyed off the thread's role. */
-  defaultFooter?: LaneDefaultFooter;
-  /** Per-role operator-chat toggle (d12) — whether this role accepts operator input AT ALL (a static,
-   *  per-kind flag: true for `builder`/`planning`, false by default for the rest). Live steerability while
-   *  a turn is running, or guidance-while-halted, is a separate RUNTIME concern this flag doesn't capture. */
-  operatorInput: boolean;
-  /** True for the whole-diff Codex master-review thread (derived from `role === 'master_review'`) —
-   *  rendered "Master review" with no review children. */
-  isMasterReview?: boolean;
-  /**
-   * This builder's review CHILD threads (review_agent × N + review_fix) — each a first-class row the
-   * navigator renders directly. `[]` until the builder finishes executing and its review is materialized;
-   * always `[]` for a non-builder thread (a master-review thread IS the review; it has no children).
-   */
-  children: PipelineReviewChild[];
-}
-
-/** The thread group KIND — the single differentiator for a pipeline grouping. Mirrors backend `ThreadGroupKind`
- *  (`thread-group-kind/spec.ts`). Only `build`/`direct_build` hold multiple threads (sequential builder legs +
- *  review children); every other kind is a singleton thread group (exactly one thread). */
-export type ThreadGroupKind =
-  | 'planning'
-  | 'plan_review'
-  | 'build'
-  | 'direct_build'
-  | 'master_review'
-  | 'post_build'
-  | 'ci';
-
-/**
- * A THREAD GROUP — the first-class §N pipeline grouping. A job's pipeline is the ordinal-ordered sequence of
- * its thread groups. A `build`/`direct_build` thread group owns MULTIPLE threads (sequential builder legs —
- * rotation is just "insert the next builder-thread row" — plus its review_agent(s)/review_fix) and a shared
- * task checklist that survives leg rotation; every other kind is a singleton thread group wrapping one thread.
- */
-export interface PipelineThreadGroup {
-  id: string;
-  kind: ThreadGroupKind;
-  /** Human label — populated only for `build`/`direct_build` (the slice name, e.g. "Foundation") and
-   *  `planning` (to disambiguate re-plan rounds, e.g. "Re-plan #2"); other kinds derive their sidebar label
-   *  from `kind` alone. */
-  title: string | null;
-  /** The build slice's review-selection TYPE (backend/frontend/docs/…) — null on non-build thread groups. */
-  type: string | null;
-  ordinal: number;
-  status: EThreadStatus;
-  condition: EThreadCondition;
-  /** The plan revision this thread group belongs to, or null for a revision-agnostic/legacy thread group. */
-  decisionRecordId: string | null;
-  /** This thread group's ROOT threads, ordinal-sorted (a build thread group's sequential builder legs, oldest
-   *  first; a singleton thread group's one thread). Each thread nests its own review children — see
-   *  {@link PipelineThread.children}. */
-  threads: PipelineThread[];
-  /** This thread group's shared task checklist — owned by the thread group (not any one thread) so it survives
-   *  builder-leg rotation (d1/d6). For a singleton thread group this is just that one thread's checklist. */
-  tasks: TaskItem[];
-}
-
 /** Immutable snapshot of the job that spawned another job, captured at create time. */
 export type JobProvenance = { jobId: string; title: string | null };
 
@@ -529,147 +432,15 @@ export type JobBlocker = {
   status: EJobStatus;
 };
 
-export interface PipelineJob {
-  /** The thread id — the backend keys the pipeline on the thread (thread = the build unit). */
-  jobId: string;
-  title: string;
-  kind: EJobKind;
-  status: EJobStatus;
-  halt: JobHalt | null;
-  /** Who spawned this job (immutable snapshot), or null for a top-level job. Powers the "Created by"
-   *  header row. */
-  createdBy?: JobProvenance | null;
-  /** The jobs this one is blocked on (live blockers), for the "Blocked by" navigator row. `[]` unless status==='blocked'. */
-  blockedBy?: JobBlocker[];
-  /** The pending seed message a born-blocked job will start on when it unblocks (jobs.blocked_seed_message).
-   *  null unless status==='blocked' and a seed exists. Powers the blocked overlay's pending-message preview. */
-  blockedSeedMessage?: string | null;
-  /**
-   * Which build path was committed at approval: `'direct'` (fast, brain-implemented) | `'plan'` (driver
-   * multi-thread) | `null` (never approved — still an open/awaiting-approval proposal that could become
-   * either). The navigator reads this to suppress the plan-oriented empty-state placeholders (build lanes,
-   * `plan.md`, generated docs) for a direct build, where they never apply. Absent on very old payloads.
-   */
-  buildPath?: 'direct' | 'plan' | null;
-  /** Per-job AUTO-APPROVE MODE: which gates auto-advance with no operator click (`off`/`plan`/`ship`/`both`;
-   *  the card is still posted for audit, then immediately resolved). Settable any time from job creation
-   *  onward — so the `no_job` (open) shape carries it too. */
-  autoApproveMode: AutoApproveMode;
-  /** Per-job AUTO-MERGE master toggle: when on, a merge-ready open PR auto-merges (host auto-clicks the Merge gate). Orthogonal to autoApproveMode. */
-  autoMerge: boolean;
-  /** True when the PR is GitHub-mergeable right now (open + clean + CI not failing/pending) — gates the manual "Merge PR" button/card. */
-  mergeReady: boolean;
-  /** The Merge gate's verbatim `{ jobId }` value when mergeReady, else null. */
-  mergeValue: string | null;
-  decisionRecordId: string | null;
-  /** The plan-review (Codex) thread — a first-class navigator row that opens the `codex-review:<jobId>`
-   *  lane (the review dialogue Main communicates with). Null when no review has run. */
-  planReview: { status: string; defaultFooter?: LaneDefaultFooter } | null;
-  /** The opened PR (ARTIFACTS), or null until the PR-tail thread group opens one. */
-  prUrl: string | null;
-  prNumber: number | null;
-  /** Observed PR lifecycle (`jobs.pr_state`) — same source as the sidebar glyph; null until a PR exists. */
-  prState: PrState | null;
-  /** GitHub `mergeable_state` (`'dirty'` = merge conflict), or null. Refines the `open` state's coloring. */
-  prMergeable: string | null;
-  /** Aggregate CI outcome for the PR head (`jobs.ci_status`) — same four-state taxonomy as the sidebar
-   *  dot; null = no checks reported. Only meaningful once a PR exists (prNumber != null). */
-  ciStatus: CiStatus | null;
-  /** Per-category CI check counts (`jobs.ci_counts`) — drives the header glyph's hover tooltip. Parallel
-   *  to `ciStatus`; null when no checks reported. */
-  ciCounts?: CiCounts | null;
-  /** The feature branch all threads stack on (header), or null before the sandbox is cut. */
-  featureBranch: string | null;
-  /** The OBSERVED live branch the agent's HEAD is on; differs from featureBranch ⇒ drift (badge). Null
-   *  until first sampled / on detached HEAD. */
-  currentBranch: string | null;
-  baseBranch: string | null;
-  /** The whole pipeline: ordinal-ordered thread groups, each owning its own threads + task checklist.
-   *  Replaces the old flat `threads` array + job-level `mainTasks`/`mainDefaultFooter` — the planning thread
-   *  group's own single thread (+ its thread group's `tasks`) is now the Main row's data source; see
-   *  {@link pipelineMainTasks} / {@link pipelineMainDefaultFooter}. */
-  threadGroups: PipelineThreadGroup[];
-  /**
-   * Prior PLAN REVISIONS' THREAD GROUPS as read-only, browsable history — present only once a re-propose over
-   * already-DONE work has forged a new revision (the common single-revision job sends `[]`/absent). Each
-   * entry is a superseded revision with its own executable thread groups; `revision` is 1-based by age
-   * (oldest = v1). The navigator renders each as a collapsed "Previous plan (vN)" section below the active
-   * thread groups.
-   */
-  priorRevisions?: {
-    decisionRecordId: string;
-    revision: number;
-    status: string;
-    threadGroups: PipelineThreadGroup[];
-  }[];
-}
-
 /**
- * `no_job` = the job never entered the build lifecycle (still `open`, chatting/planning). It still
- * carries the brain's own `mainTasks` (folded from its always-present planning thread group) so the
- * navigator's Main row can show the checklist pre-plan.
+ * The job-workspace pipeline read — the job detail (`GET /jobs/:id`) paired with its flat task feed
+ * (`GET /jobs/:id/tasks`). Components consume the shared DTOs (`JobView`/`ThreadGroupView`/`ThreadView`/
+ * `TaskView`) directly; the navigator's derivations (task-join, role flags, `no_job` discrimination) and
+ * the fields the backend read model doesn't emit yet live in `job-workspace/lib/pipeline-selectors.ts`.
  */
-export type PipelineState =
-  | PipelineJob
-  | {
-      status: 'no_job';
-      mainTasks?: TaskItem[];
-      mainDefaultFooter?: LaneDefaultFooter;
-      /** Carried on the open/pre-plan shape too, so the auto-approve toggle works from job creation onward. */
-      autoApproveMode?: AutoApproveMode;
-      /** Carried on the open/pre-plan shape too (mirroring autoApproveMode), so the Merge toggle reflects an
-       *  auto-merge-armed job from creation onward — read via `pipelineAutoMerge()`. */
-      autoMerge?: boolean;
-      mergeReady?: boolean;
-      mergeValue?: string | null;
-      blockedSeedMessage?: string | null;
-    };
-
-/**
- * The Main brain session's task list, from either pipeline shape. `no_job` carries `mainTasks` directly
- * (folded from its planning thread group). An active job has NO top-level `mainTasks` any more — it's the
- * planning thread group's own `tasks` (planning is always exactly one singleton thread group).
- */
-export function pipelineMainTasks(pipeline: PipelineState | undefined): TaskItem[] {
-  if (!pipeline) return [];
-  if (pipeline.status === 'no_job') return pipeline.mainTasks ?? [];
-  return pipeline.threadGroups.find((s) => s.kind === 'planning')?.tasks ?? [];
-}
-
-/**
- * The Main row's live footer default, from either pipeline shape. `no_job` carries `mainDefaultFooter`
- * directly; an active job derives it from the planning thread group's own (singleton) thread.
- */
-export function pipelineMainDefaultFooter(
-  pipeline: PipelineState | undefined,
-): LaneDefaultFooter | undefined {
-  if (!pipeline) return undefined;
-  if (pipeline.status === 'no_job') return pipeline.mainDefaultFooter;
-  return pipeline.threadGroups.find((s) => s.kind === 'planning')?.threads[0]?.defaultFooter;
-}
-
-/** The job's per-job auto-approve mode, from either pipeline shape (`no_job` carries the mode too). */
-export function pipelineAutoApproveMode(pipeline: PipelineState | undefined): AutoApproveMode {
-  if (!pipeline) return 'off';
-  const mode = 'autoApproveMode' in pipeline ? pipeline.autoApproveMode : undefined;
-  return mode ?? 'off';
-}
-
-/** The job's auto-merge settings + manual-merge gate, from either pipeline shape (`no_job` carries them too,
- *  mirroring `pipelineAutoApproveMode`). Reading via this helper — instead of gating on `pipelineJob()`,
- *  which is null for the open/pre-plan shape — keeps the Merge toggle in sync for an auto-merge-armed job
- *  that hasn't approved its first plan yet. */
-export function pipelineAutoMerge(pipeline: PipelineState | undefined): {
-  autoMerge: boolean;
-  mergeReady: boolean;
-  mergeValue: string | null;
-} {
-  const p = pipeline as { [K in keyof PipelineJob]?: PipelineJob[K] } | undefined;
-  return {
-    autoMerge: p?.autoMerge ?? false,
-    mergeReady: p?.mergeReady ?? false,
-    mergeValue: p?.mergeValue ?? null,
-  };
+export interface Pipeline {
+  job: JobView;
+  tasks: TaskView[];
 }
 
 /** One file in a `/context` bucket — mirrors the backend `ContextFile`. */

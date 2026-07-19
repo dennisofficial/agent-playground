@@ -13,8 +13,6 @@ import type {
   JobDiff,
   JobDiffSummary,
   JobProvenance,
-  PipelineJob,
-  PipelineState,
   ServiceInfo,
   WebCard,
 } from './types';
@@ -479,12 +477,6 @@ export function fetchServiceLogTail(
   return webJson<{ id: string; content: string; truncated: boolean }>(
     threadPath(ref, `/services/${encodeURIComponent(id)}/logs`),
   );
-}
-
-/** Narrow a pipeline read to its job, or `null` before a plan is approved (`{ status: 'no_job' }`). */
-export function pipelineJob(state: PipelineState | undefined): PipelineJob | null {
-  if (!state || state.status === 'no_job') return null;
-  return state;
 }
 
 /** List the thread's `/context` files, grouped into `specs` (plan) + `artifacts` (outputs). */

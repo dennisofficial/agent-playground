@@ -3,7 +3,7 @@
 import { Drawer } from '@/components/ui/drawer';
 import { useBreakpoint } from '@/hooks/use-breakpoint';
 import { useAllJobs } from '@/lib/api/inbox';
-import { pipelineJob, type JobRef } from '@/lib/api/job-api';
+import type { JobRef } from '@/lib/api/job-api';
 import { useJobEvents } from '@/lib/api/job-events';
 import {
   useDeleteJob,
@@ -16,12 +16,7 @@ import {
   useSetAutoMerge,
 } from '@/lib/api/job-queries';
 import { MAIN_LANE } from '@/lib/api/job-stream';
-import {
-  APPROVE_ACTION_ID,
-  SHIP_ACTION_ID,
-  pipelineMainDefaultFooter,
-  type WebApprovalCard,
-} from '@/lib/api/types';
+import { APPROVE_ACTION_ID, SHIP_ACTION_ID, type WebApprovalCard } from '@/lib/api/types';
 import { orgSwatch } from '@/utils/org-display';
 import { EJobKind, EJobStatus } from '@workspace/shared';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -31,6 +26,17 @@ import { DeleteJobPrDialog } from './components/chrome/delete-job-pr-dialog';
 import { useSelectedNode } from './hooks/use-selected-node';
 import { MarkdownActionsProvider } from './components/conversation/markdown';
 import { Navigator, type JobMeta } from './components/navigator/navigator';
+import {
+  activeJob,
+  jobBlockedBy,
+  jobBlockedSeedMessage,
+  jobCreatedBy,
+  jobDecisionRecordId,
+  jobPrNumber,
+  jobPrState,
+  jobPrUrl,
+  mainDefaultFooter,
+} from './lib/pipeline-selectors';
 import { ReviewCommentsProvider } from './components/review/review-comments';
 import { SelectionCommentPopover } from './components/review/selection-comment-popover';
 import { PersistentApprovalBar, PersistentShipBar } from './spec-approval';
@@ -121,12 +127,14 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   const openDetail = () => selectNode(lastDetail.current ?? 'plan');
 
   const inboxThread = useMemo(() => inbox?.find((t) => t.id === jobId), [inbox, jobId]);
-  const job = pipelineJob(pipeline);
+  const job = activeJob(pipeline);
 
   // Prefer the pipeline job; fall back to the sidebar feed (resolves earlier). null = genuinely unknown.
-  const prState = job?.prState ?? inboxThread?.pr?.state ?? null;
-  const prUrl = job?.prUrl ?? inboxThread?.pr?.url ?? null;
-  const prNumber = job?.prNumber ?? null;
+  // TODO(backend): JobView doesn't carry PR fields yet (`jobPr*` return null), so the inbox feed is the
+  // only PR source until the read model emits them.
+  const prState = jobPrState(job) ?? inboxThread?.pr?.state ?? null;
+  const prUrl = jobPrUrl(job) ?? inboxThread?.pr?.url ?? null;
+  const prNumber = jobPrNumber(job) ?? null;
   const hasOpenPr = prState === 'open' && Boolean(prUrl);
   // PR state is "known" once EITHER source has resolved; until then, block delete (don't leave-orphan).
   const prStateKnown = job != null || inboxThread != null;
@@ -171,9 +179,10 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
       approvalCard?.actions[0]?.value;
     if (fromCard) return fromCard;
     if (job && status === 'awaiting_approval') {
+      const decisionRecordId = jobDecisionRecordId(job);
       return JSON.stringify({
-        jobId: job.jobId,
-        ...(job.decisionRecordId ? { decisionRecordId: job.decisionRecordId } : {}),
+        jobId: job.id,
+        ...(decisionRecordId ? { decisionRecordId } : {}),
       });
     }
     return '';
@@ -190,7 +199,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
     const fromCard = shipCard?.actions.find((a) => a.actionId === SHIP_ACTION_ID)?.value;
     if (fromCard) return fromCard;
     if (job && status === 'awaiting_ship_review') {
-      return JSON.stringify({ jobId: job.jobId });
+      return JSON.stringify({ jobId: job.id });
     }
     return '';
   }, [shipCard, job, status]);
@@ -216,10 +225,10 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
     // inbox row for a job still in `no_job` (pre-build `open`/chat) — the most common time to want the
     // parent link. `job?.createdBy ?? inboxThread?.createdBy` would wrongly fall through to the inbox row
     // whenever the pipeline's own value is null, so gate on `job` existing at all instead.
-    createdBy: job ? (job.createdBy ?? null) : (inboxThread?.createdBy ?? null),
-    blockedBy: job ? (job.blockedBy ?? []) : (inboxThread?.blockedBy ?? []),
+    createdBy: job ? jobCreatedBy(job) : (inboxThread?.createdBy ?? null),
+    blockedBy: job ? jobBlockedBy(job) : (inboxThread?.blockedBy ?? []),
     blockedSeedMessage: job
-      ? (job.blockedSeedMessage ?? null)
+      ? jobBlockedSeedMessage(job)
       : (inboxThread?.blockedSeedMessage ?? null),
   };
 
@@ -296,7 +305,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
         blockedBy={meta.blockedBy}
         blockedSeedMessage={meta.blockedSeedMessage}
         mainThreadId={mainThreadId}
-        mainDefaultFooter={pipelineMainDefaultFooter(pipeline)}
+        mainDefaultFooter={mainDefaultFooter(pipeline)}
         onOpenPlan={onOpenPlan}
         onSelectNode={(node) => selectNode(node, { push: true })}
         onOpenNav={onOpenNav}

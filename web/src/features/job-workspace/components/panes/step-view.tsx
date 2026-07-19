@@ -1,13 +1,13 @@
 'use client';
 
-import { pipelineJob, type JobMessage, type JobRef } from '@/lib/api/job-api';
+import type { JobMessage, JobRef } from '@/lib/api/job-api';
 import { useContextFile, useRepoTree, useServices } from '@/lib/api/job-queries';
 import { useLiveTurn, type LiveTurn } from '@/lib/api/job-stream';
 import {
   APPROVE_ACTION_ID,
   type ContextFileContent,
   type JobBlocker,
-  type PipelineState,
+  type Pipeline,
   type WebApprovalCard,
 } from '@/lib/api/types';
 import { formatBytes } from '@/utils/format';
@@ -17,7 +17,7 @@ import { usePathname, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { VerdictButtons } from '../cards/approval-card';
 import { BlockedByPane } from './blocked-by-pane';
-import { ThinkingBlock, UserBubble } from '../conversation/bubbles/bubbles';
+import { UserBubble } from '../conversation/bubbles/bubbles';
 import { StreamTextBubble } from '../conversation/bubbles/StreamTextBubble';
 import { MessageTime } from '../conversation/bubbles/MessageTime';
 import { codexReviewLane } from '../review/codex-review';
@@ -30,6 +30,15 @@ import { useCommentableRef } from '../../hooks/use-text-selection';
 import { ImageViewer } from '../chrome/image-viewer';
 import { Markdown } from '../conversation/markdown';
 import { contextConvoNodeForHref, resolveNode } from '../../lib/node-registry';
+import {
+  activeJob,
+  isMasterReviewThread,
+  jobBlockedBy,
+  jobPlanReview,
+  threadAcceptsOperatorInput,
+  threadChildren,
+  threadDefaultFooter,
+} from '../../lib/pipeline-selectors';
 import { threadLane } from '../conversation/phases';
 import { makeResolveFileLink } from '../../lib/repo-file-links';
 import { useReviewComments } from '../review/review-comments';
@@ -52,6 +61,8 @@ import { ProvenanceBadge } from './ProvenanceBadge';
 import { DocLabel } from './DocLabel';
 import { RepoFileBody } from './RepoFileBody';
 import { HtmlFileBody } from './HtmlFileBody';
+import { FileCopyButton } from './FileCopyButton';
+import { ThinkingBlock } from '../conversation/bubbles/ThinkingBlock';
 
 /**
  * Step mode — the work column when a navigator node is selected. The plan / decision docs and the build
@@ -76,7 +87,7 @@ export function PhaseView({
   tracksComments = false,
 }: {
   jobRef: JobRef;
-  pipeline: PipelineState | undefined;
+  pipeline: Pipeline | undefined;
   /** The pipeline query's loading state — needed to tell "still loading" from "node is gone" when no
    *  cached pipeline is available yet. */
   pipelineLoading?: boolean;
@@ -108,13 +119,13 @@ export function PhaseView({
 }) {
   // Subagent sub-pages stream live (a running subagent) and fall back to the durable transcript afterward.
   const liveTurn = useLiveTurn(jobRef.jobId);
-  const job = pipelineJob(pipeline);
+  const job = activeJob(pipeline);
   const threads = job?.threadGroups.flatMap((s) => s.threads) ?? [];
   const thread = threads.find((t) => t.id === selectedNode) ?? null;
   // A review CHILD thread (a `review_agent` / `review_fix` row) — matched by its own bare id. Carries the
   // transcript lane the backend computed for it.
   const reviewChild =
-    threads.flatMap((t) => t.children ?? []).find((c) => c.id === selectedNode) ?? null;
+    threads.flatMap((t) => threadChildren(t)).find((c) => c.id === selectedNode) ?? null;
 
   // A `?node=` URL can outlive the node it names (deleted spec, a thread/step id from before a re-plan).
   // Resolve EVERY job-derived token against the live job so a stale link shows NodeNotFound rather than a
@@ -197,7 +208,7 @@ export function PhaseView({
   } else if (selectedNode === 'blocked-by') {
     title = 'Blocked by';
     subtitle = 'jobs this one is waiting on';
-    body = <BlockedByPane jobRef={jobRef} blockedBy={blockedBy ?? job?.blockedBy ?? []} />;
+    body = <BlockedByPane jobRef={jobRef} blockedBy={blockedBy ?? jobBlockedBy(job)} />;
   } else if (selectedNode.startsWith('service:')) {
     const svcId = selectedNode.slice('service:'.length);
     const svc = servicesQuery.data?.services.find((s) => s.id === svcId) ?? null;
@@ -242,7 +253,7 @@ export function PhaseView({
         composer
         readOnly
         archived={job?.status === 'archived'}
-        defaultFooter={job?.planReview?.defaultFooter}
+        defaultFooter={jobPlanReview(job)?.defaultFooter}
         emptyText="No review activity yet — Codex’s reasoning appears here as it runs."
         onSelectNode={onSelectNode}
       />
@@ -289,8 +300,9 @@ export function PhaseView({
     subtitle = 'thread plan';
     body = <SectionPlanDoc />;
   } else if (thread) {
-    title = thread.isMasterReview ? 'Master review' : `§ ${threadTitle(thread.brief)}`;
-    subtitle = thread.isMasterReview ? 'Codex · whole-diff review & fix' : 'Claude · execute';
+    const masterReview = isMasterReviewThread(thread);
+    title = masterReview ? 'Master review' : `§ ${threadTitle(thread.brief)}`;
+    subtitle = masterReview ? 'Codex · whole-diff review & fix' : 'Claude · execute';
     // A build thread is a Claude Code session like Main — subscribe to its STABLE `thread:<id>` live lane and
     // scope its durable transcript by the message's own `threadId`. Operator input is gated per-role.
     body = (
@@ -300,9 +312,9 @@ export function PhaseView({
         threadId={thread.id}
         lane={threadLane(thread.id)}
         composer
-        readOnly={!thread.operatorInput}
+        readOnly={!threadAcceptsOperatorInput(thread.role)}
         archived={job?.status === 'archived'}
-        defaultFooter={thread.defaultFooter}
+        defaultFooter={threadDefaultFooter(thread)}
         onSelectNode={onSelectNode}
         emptyText="No build activity yet — this thread hasn’t run."
       />

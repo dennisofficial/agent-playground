@@ -22,8 +22,8 @@ describe('shouldShowSpinUpPreview', () => {
     expect(shouldShowSpinUpPreview(EJobStatus.AMENDING, undefined)).toBe(false);
   });
 
-  it('hides the button when the live status is not yet known', () => {
+  it('hides the button when the live status is not yet known or pre-plan (open)', () => {
     expect(shouldShowSpinUpPreview(undefined, undefined)).toBe(false);
-    expect(shouldShowSpinUpPreview('no_job', undefined)).toBe(false);
+    expect(shouldShowSpinUpPreview(EJobStatus.OPEN, undefined)).toBe(false);
   });
 });

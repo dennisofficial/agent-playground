@@ -387,7 +387,7 @@ function SpinUpPreviewButton({
 }) {
   const pipeline = usePipeline(jobRef);
   const preview = useSpinUpPreview(jobRef);
-  if (!shouldShowSpinUpPreview(pipeline.data?.status, previewRequestedAt)) {
+  if (!shouldShowSpinUpPreview(pipeline.data?.job.status, previewRequestedAt)) {
     return null;
   }
   return (

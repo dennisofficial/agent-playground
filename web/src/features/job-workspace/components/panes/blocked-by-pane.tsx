@@ -10,7 +10,7 @@ import { useRouter } from 'next/navigation';
 import { EphemeralToast, useEphemeralToast } from '../overlays/ephemeral-toast';
 
 /**
- * The "Blocked by" detail pane — the live blockers holding this job in `blocked` (`PipelineJob.blockedBy`).
+ * The "Blocked by" detail pane — the live blockers holding this job in `blocked` (`jobBlockedBy`).
  * A job block is real gating: the brain never runs while a blocker is outstanding, and the wake path
  * clears it automatically once every blocker reaches a terminal state. Each row resolves the blocker before
  * navigating — a hard-deleted blocker 404s, so we toast instead of routing into a dead job.

@@ -26,6 +26,7 @@ import { useMemo, useState } from 'react';
 import { Markdown } from '../conversation/markdown';
 import { makeResolveFileLink } from '../../lib/repo-file-links';
 import { shouldShowSpinUpPreview } from '../../lib/spin-up-preview-visibility';
+import { activeJob, jobCiCounts, jobCiStatus } from '../../lib/pipeline-selectors';
 
 const RULED_BY = 'U-OPERATOR';
 
@@ -224,12 +225,13 @@ function ShipCardView({ card, jobRef }: { card: WebApprovalCard; jobRef: JobRef 
  *  there's no CI to report (no PR yet, or the PR has no checks). */
 function ShipCardCiRow({ jobRef }: { jobRef: JobRef }) {
   const pipeline = usePipeline(jobRef);
-  const job = pipeline.data && pipeline.data.status !== 'no_job' ? pipeline.data : null;
-  if (!job?.ciStatus) return null;
+  const job = activeJob(pipeline.data);
+  // TODO(backend): JobView doesn't carry `ci_status` yet, so this row is dark until the read model emits it.
+  if (!jobCiStatus(job)) return null;
   return (
     <div className="flex items-center gap-1.5 border-t border-border px-4 py-2.5">
       <span className="font-mono text-[9.5px] font-semibold tracking-[0.04em] text-faint">CI</span>
-      <CiHeaderGlyph ci={job.ciStatus} counts={job.ciCounts} />
+      <CiHeaderGlyph ci={jobCiStatus(job)} counts={jobCiCounts(job)} />
     </div>
   );
 }
@@ -281,7 +283,7 @@ function ShipVerificationsList({ verifications }: { verifications: ShipThreadVer
 function ShipCardPreviewButton({ jobRef, card }: { jobRef: JobRef; card: WebApprovalCard }) {
   const pipeline = usePipeline(jobRef);
   const preview = useSpinUpPreview(jobRef);
-  if (!shouldShowSpinUpPreview(pipeline.data?.status, card.previewRequestedAt)) {
+  if (!shouldShowSpinUpPreview(pipeline.data?.job.status, card.previewRequestedAt)) {
     return null;
   }
   return (

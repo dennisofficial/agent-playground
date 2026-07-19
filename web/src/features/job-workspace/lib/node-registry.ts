@@ -1,6 +1,7 @@
-import type { PipelineJob } from '@/lib/api/types';
+import type { JobView } from '@workspace/shared';
 import { codexReviewLane } from '../components/review/codex-review';
 import { threadLane } from '../components/conversation/phases';
+import { threadChildren } from './pipeline-selectors';
 
 /**
  * THE NODE REGISTRY — the single source of truth for how a navigator `?node=`/`?lane=` token is
@@ -67,7 +68,7 @@ const ID_FREE_NODES = new Set(['plan', 'decision', 'diff', 'created', 'blocked-b
  */
 export function resolveNode(
   node: string,
-  job: PipelineJob | null,
+  job: JobView | null,
   loading: boolean,
 ): NodeResolution {
   if (ID_FREE_NODES.has(node)) return 'found';
@@ -98,12 +99,12 @@ export function resolveNode(
   // `review_agent` / `review_fix` row). A review child legitimately exists even before its lens has run (an
   // empty transcript is a TranscriptView empty-state, not a not-found).
   const matches = job.threadGroups.some((st) =>
-    st.threads.some((t) => t.id === node || (t.children ?? []).some((c) => c.id === node)),
+    st.threads.some((t) => t.id === node || threadChildren(t).some((c) => c.id === node)),
   );
   return matches ? 'found' : 'not_found';
 }
 
-function hasThread(job: PipelineJob, id: string): boolean {
+function hasThread(job: JobView, id: string): boolean {
   return id.length > 0 && job.threadGroups.some((st) => st.threads.some((t) => t.id === id));
 }
 
@@ -142,14 +143,14 @@ export function contextConvoNodeForHref(href: string): string | null {
  * their own view components. `jobId` is needed for the job-scoped Codex/fix lanes; `job` locates a step's
  * owning thread.
  */
-export function nodeLane(node: string, jobId: string, job: PipelineJob | null): string | null {
+export function nodeLane(node: string, jobId: string, job: JobView | null): string | null {
   if (node.startsWith('codex-review:')) return codexReviewLane(jobId);
   if (!job) return null;
   const threads = job.threadGroups.flatMap((s) => s.threads);
   // A review CHILD thread (review_agent / review_fix) → the lane the backend already computed for it
   // (`autofix:<parentId>:<lensId>` / `autofix:<parentId>:fix`), carried on the pipeline data.
   for (const t of threads) {
-    const child = (t.children ?? []).find((c) => c.id === node);
+    const child = threadChildren(t).find((c) => c.id === node);
     if (child) return child.lane;
   }
   // A bare thread id (a builder leg is just an ordinary thread) → its stable thread lane.

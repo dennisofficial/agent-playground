@@ -1,19 +1,22 @@
 'use client';
 
 import { useLiveTurn } from '@/lib/api/job-stream';
-import type {
-  PipelineJob,
-  PipelineReviewChild,
-  PipelineThread,
-  PipelineThreadGroup,
-  TaskItem,
-  ThreadGroupKind,
-} from '@/lib/api/types';
+import type { PipelineReviewChild, TaskItem } from '@/lib/api/types';
 import { cn } from '@/lib/cn';
-import { EJobStatus, EThreadCondition, EThreadStatus } from '@workspace/shared';
+import {
+  EJobStatus,
+  EThreadCondition,
+  EThreadGroupKind,
+  EThreadStatus,
+  type JobView,
+  type TaskView,
+  type ThreadGroupView,
+  type ThreadView,
+} from '@workspace/shared';
 import { ChevronRight } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { overlayLiveTasks } from '../../lib/live-tasks';
+import { jobHalt, tasksForGroup, threadChildren } from '../../lib/pipeline-selectors';
 import { threadLane } from '../conversation/phases';
 
 /**
@@ -206,7 +209,9 @@ function ThreadStatusGlyph({ state, isHalt }: { state: LaneState; isHalt: boolea
 }
 
 export interface TreeProps {
-  job: PipelineJob;
+  job: JobView;
+  /** The job's flat task feed (`/tasks`) — folded into each thread group by id (see `tasksForGroup`). */
+  tasks: TaskView[];
   status: EJobStatus;
   /** The job id — each fold subscribes to its thread group's live lane to overlay mid-turn task calls. */
   jobId: string;
@@ -218,7 +223,7 @@ export interface TreeProps {
 }
 
 /** The thread-group-kind → sidebar label, used when a thread group carries no explicit `title`. */
-const THREAD_GROUP_LABELS: Record<ThreadGroupKind, string> = {
+const THREAD_GROUP_LABELS: Record<EThreadGroupKind, string> = {
   planning: 'Planning',
   plan_review: 'Plan Review',
   build: 'Build',
@@ -230,7 +235,7 @@ const THREAD_GROUP_LABELS: Record<ThreadGroupKind, string> = {
 
 /** A thread group's sidebar label — its explicit `title` (a build slice name, or a "Re-plan #N" round) when
  *  set, else derived from its kind. */
-function threadGroupLabel(threadGroup: PipelineThreadGroup): string {
+function threadGroupLabel(threadGroup: ThreadGroupView): string {
   return threadGroup.title?.trim() || THREAD_GROUP_LABELS[threadGroup.kind];
 }
 
@@ -242,7 +247,7 @@ function threadGroupLabel(threadGroup: PipelineThreadGroup): string {
  * (planning) row and the plan-review row are pinned above the tree by the navigator, so they are skipped
  * here.
  */
-export function PipelineTree({ job, status, jobId, laneNode, onSelectNode }: TreeProps) {
+export function PipelineTree({ job, tasks, status, jobId, laneNode, onSelectNode }: TreeProps) {
   const threadGroups = job.threadGroups.filter(
     (s) => s.kind !== 'planning' && s.kind !== 'plan_review',
   );
@@ -253,7 +258,7 @@ export function PipelineTree({ job, status, jobId, laneNode, onSelectNode }: Tre
   // the whole flattened thread list — the in-flight thread (furthest non-`done`/non-`pending`) is where the
   // run stopped; later ones never ran. Identify it by id so it maps across the thread group grouping.
   const allThreads = job.threadGroups.flatMap((s) => s.threads);
-  const haltIdx = job.halt != null ? haltThreadIdx(allThreads) : -1;
+  const haltIdx = jobHalt(job) != null ? haltThreadIdx(allThreads) : -1;
   const haltThreadId = haltIdx >= 0 ? (allThreads[haltIdx]?.id ?? null) : null;
   const notReached = new Set(haltIdx >= 0 ? allThreads.slice(haltIdx + 1).map((t) => t.id) : []);
 
@@ -263,6 +268,7 @@ export function PipelineTree({ job, status, jobId, laneNode, onSelectNode }: Tre
         <ThreadGroupFold
           key={threadGroup.id}
           threadGroup={threadGroup}
+          tasks={tasks}
           jobId={jobId}
           drafted={drafted}
           haltThreadId={haltThreadId}
@@ -284,6 +290,7 @@ export function PipelineTree({ job, status, jobId, laneNode, onSelectNode }: Tre
  */
 function ThreadGroupFold({
   threadGroup,
+  tasks,
   jobId,
   drafted,
   haltThreadId,
@@ -291,7 +298,9 @@ function ThreadGroupFold({
   laneNode,
   onSelectNode,
 }: {
-  threadGroup: PipelineThreadGroup;
+  threadGroup: ThreadGroupView;
+  /** The job's flat task feed — this group's own tasks are folded in by id. */
+  tasks: TaskView[];
   jobId: string;
   drafted: boolean;
   /** The id of the thread that owns the job halt, or null when the job is healthy. */
@@ -320,7 +329,7 @@ function ThreadGroupFold({
   const isHalt = roots.some((t) => t.id === haltThreadId);
   const threadGroupNotReached = roots.every((t) => notReached.has(t.id));
 
-  const reviewChildren = roots.flatMap((t) => t.children ?? []);
+  const reviewChildren = roots.flatMap((t) => threadChildren(t));
   const reviewLenses = reviewChildren.filter((c) => c.role === 'review_agent');
   const postReview = reviewChildren.find((c) => c.role === 'review_fix') ?? null;
 
@@ -328,10 +337,10 @@ function ThreadGroupFold({
     laneNode != null &&
     (roots.some((t) => t.id === laneNode) || reviewChildren.some((c) => c.id === laneNode));
 
-  const tasks = overlayLiveTasks(threadGroup.tasks, liveTurn);
-  const done = tasks.filter((t) => t.status === 'completed').length;
+  const groupTasks = overlayLiveTasks(tasksForGroup(tasks, threadGroup.id), liveTurn);
+  const done = groupTasks.filter((t) => t.status === 'completed').length;
   const isDraft = state === 'draft';
-  const count = isDraft ? 'draft' : tasks.length > 0 ? `${done}/${tasks.length}` : '';
+  const count = isDraft ? 'draft' : groupTasks.length > 0 ? `${done}/${groupTasks.length}` : '';
 
   return (
     <div className="border-l-[3px]" style={railStyle(state, open)}>
@@ -366,7 +375,7 @@ function ThreadGroupFold({
           <DraftEmptyBody />
         ) : (
           <>
-            <TasksBody tasks={tasks} done={done} total={tasks.length} />
+            <TasksBody tasks={groupTasks} done={done} total={groupTasks.length} />
             {roots.length > 1 ? (
               <LegsBody
                 threads={roots}
@@ -430,7 +439,7 @@ const DONE_TAIL = 2;
 const DONE_FOLD_MIN = 2;
 
 /** The open thread group's TASKS section — the thread group's live, LLM-authored checklist. Exported for
- *  the navigator's Main row, whose fold shows the brain session's own list (`pipelineMainTasks`) the same
+ *  the navigator's Main row, whose fold shows the brain session's own list (`mainTasks`) the same
  *  way. */
 export function TasksBody({
   tasks,
@@ -628,7 +637,7 @@ function LegsBody({
   laneNode,
   onSelectNode,
 }: {
-  threads: PipelineThread[];
+  threads: ThreadView[];
   drafted: boolean;
   laneNode: string | null;
   onSelectNode: (node: string) => void;
