@@ -1,4 +1,6 @@
 import { TimestampedEntity } from '@lib/database/base.entity';
+import type { AtlasClaims } from '@lib/rls/atlas-claims';
+import { Rls } from '@workspace/nestjs-rls';
 import { AUTO_MERGE_METHODS, type AutoMergeMethod } from '@workspace/shared';
 import {
   Column,
@@ -14,6 +16,9 @@ import { Organization } from './organization.entity';
 @Entity({ name: 'repos' })
 @Index(['orgId'])
 @Index(['orgId', 'slug'], { unique: true })
+@Rls<Repo, AtlasClaims>((c, action) => ({
+  orgId: { $in: action === 'read' ? c.orgIds : c.ownerOrgIds },
+}))
 export class Repo extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;

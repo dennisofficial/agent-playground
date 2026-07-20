@@ -1,12 +1,10 @@
-import { getRepositoryToken, TypeOrmModule } from '@nestjs/typeorm';
 import { CreateModule } from '@workspace/nestjs-core';
+import { RLS_CONTEXT, type RlsContextConfig } from '@workspace/nestjs-rls/nest';
 import { PgRealtimeModule } from '@workspace/pg-realtime/nest';
-import type { Repository } from 'typeorm';
 import {
   AgentCredential,
   AgentCredentialRepo,
 } from '../../_lib/database/entities/agent-credential.entity';
-import { OrganizationMember } from '../../_lib/database/entities/organization-member.entity';
 import { OrgModule } from '../org/org.module';
 import { AgentAuthRefreshSink } from './agent-auth-refresh.sink';
 import { AgentCredentialKeepaliveService } from './agent-credential-keepalive.service';
@@ -30,11 +28,8 @@ import { AgentUsageService } from './usage/agent-usage.service';
   imports: [
     OrgModule, // OrgService tenancy gate in the controller
     PgRealtimeModule.forFeature({
-      imports: [TypeOrmModule.forFeature([OrganizationMember])],
-      inject: [getRepositoryToken(OrganizationMember)],
-      useFactory: (members: Repository<OrganizationMember>) => [
-        buildAgentCredentialsRealtimeModel(members),
-      ],
+      inject: [RLS_CONTEXT],
+      useFactory: (ctx: RlsContextConfig) => [buildAgentCredentialsRealtimeModel(ctx.resolveClaims)],
     }),
   ],
   entities: [{ entity: AgentCredential, repoClass: AgentCredentialRepo }],

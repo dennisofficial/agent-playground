@@ -37,11 +37,11 @@ export class JobController {
   ) {}
 
   @Get()
-  list(@CurrentUser() user: User, @Query('repoId') repoId?: string): Promise<JobListItem[]> {
-    return this.jobs.list(user.id, repoId);
+  list(@Query('repoId') repoId?: string): Promise<JobListItem[]> {
+    return this.jobs.list(repoId);
   }
 
-  /** Realtime job list. The membership guard scopes rows to the caller's orgs; `repoId` narrows. */
+  /** Realtime job list. The @Rls guard scopes rows to the caller's orgs; `repoId` narrows. */
   @Sse('realtime')
   streamJobs(
     @CurrentUser() user: User,
@@ -53,16 +53,13 @@ export class JobController {
   }
 
   @Get(':jobId')
-  get(@CurrentUser() user: User, @Param('jobId', ParseUUIDPipe) jobId: string): Promise<JobView> {
-    return this.jobs.get(user.id, jobId);
+  get(@Param('jobId', ParseUUIDPipe) jobId: string): Promise<JobView> {
+    return this.jobs.get(jobId);
   }
 
   @Get(':jobId/thread-groups')
-  async groups(
-    @CurrentUser() user: User,
-    @Param('jobId', ParseUUIDPipe) jobId: string,
-  ): Promise<ThreadGroupView[]> {
-    await this.jobs.assertAccess(user.id, jobId);
+  async groups(@Param('jobId', ParseUUIDPipe) jobId: string): Promise<ThreadGroupView[]> {
+    await this.jobs.assertAccess(jobId);
     return this.threads.listGroups(jobId);
   }
 
@@ -78,12 +75,11 @@ export class JobController {
 
   @Get(':jobId/threads')
   async listThreads(
-    @CurrentUser() user: User,
     @Param('jobId', ParseUUIDPipe) jobId: string,
     @Query('groupId') groupId?: string,
     @Query('kind') kind?: string,
   ): Promise<ThreadView[]> {
-    await this.jobs.assertAccess(user.id, jobId);
+    await this.jobs.assertAccess(jobId);
     return this.threads.listThreads(jobId, { groupId, kind });
   }
 
@@ -100,10 +96,9 @@ export class JobController {
   /** The whole job's transcript (all threads) — the workspace fetches this once and scopes per lane. */
   @Get(':jobId/messages')
   async listJobMessages(
-    @CurrentUser() user: User,
     @Param('jobId', ParseUUIDPipe) jobId: string,
   ): Promise<ThreadMessageView[]> {
-    await this.jobs.assertAccess(user.id, jobId);
+    await this.jobs.assertAccess(jobId);
     return this.messages.listJobMessages(jobId);
   }
 
@@ -119,11 +114,10 @@ export class JobController {
 
   @Get(':jobId/threads/:threadId/messages')
   async listMessages(
-    @CurrentUser() user: User,
     @Param('jobId', ParseUUIDPipe) jobId: string,
     @Param('threadId', ParseUUIDPipe) threadId: string,
   ): Promise<ThreadMessageView[]> {
-    await this.jobs.assertAccess(user.id, jobId);
+    await this.jobs.assertAccess(jobId);
     return this.messages.listMessages(jobId, threadId);
   }
 
@@ -139,11 +133,8 @@ export class JobController {
   }
 
   @Get(':jobId/tasks')
-  async listTasks(
-    @CurrentUser() user: User,
-    @Param('jobId', ParseUUIDPipe) jobId: string,
-  ): Promise<TaskView[]> {
-    await this.jobs.assertAccess(user.id, jobId);
+  async listTasks(@Param('jobId', ParseUUIDPipe) jobId: string): Promise<TaskView[]> {
+    await this.jobs.assertAccess(jobId);
     return this.tasks.listTasks(jobId);
   }
 

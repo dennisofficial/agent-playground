@@ -143,7 +143,6 @@ export function NewPill({ text, size = 'row' }: { text: string; size?: 'group' |
   );
 }
 
- * github-fetch-guard / install-awareness) — an info-toned pill distinct from NewPill's add-green. */
 export function JitPill({ count }: { count: number }) {
   return (
     <span

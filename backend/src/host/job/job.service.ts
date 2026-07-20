@@ -1,51 +1,36 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { type GuardAction, RealtimeEngine } from '@workspace/pg-realtime';
-import { PG_REALTIME_ENGINE } from '@workspace/pg-realtime/nest';
-import { scopedFindWhere } from '@workspace/pg-realtime/typeorm';
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { Db, type RlsAction } from '@workspace/nestjs-rls/nest';
 import type { JobListItem, JobView, ThreadGroupView, ThreadView } from '@workspace/shared';
-import { Job, JobRepo } from '../../_lib/database/entities/job.entity';
+import { Job } from '../../_lib/database/entities/job.entity';
 import { ThreadGroup, ThreadGroupRepo } from '../../_lib/database/entities/thread-group.entity';
 import { Thread, ThreadRepo } from '../../_lib/database/entities/thread.entity';
 
 @Injectable()
 export class JobService {
   constructor(
-    private readonly jobs: JobRepo,
+    private readonly db: Db,
     private readonly groups: ThreadGroupRepo,
     private readonly threads: ThreadRepo,
-    @Inject(PG_REALTIME_ENGINE) private readonly realtime: RealtimeEngine,
   ) {}
 
   /** The caller's jobs (newest first), optionally narrowed to one repo — the sidebar list. */
-  async list(userId: string, repoId?: string): Promise<JobListItem[]> {
-    const { allowed, where } = await scopedFindWhere<Job>({
-      rls: this.realtime.rls,
-      model: 'jobs',
-      user: { id: userId },
-      action: 'read',
+  async list(repoId?: string): Promise<JobListItem[]> {
+    const rows = await this.db.scoped(Job).find({
       where: repoId ? { repoId } : {},
+      order: { createdAt: 'DESC' },
     });
-    if (!allowed) return [];
-    const rows = await this.jobs.find({ where, order: { createdAt: 'DESC' } });
     return rows.map((j) => toJobListItem(j));
   }
 
-  async assertAccess(userId: string, jobId: string, action: GuardAction = 'read'): Promise<Job> {
-    const { allowed, where } = await scopedFindWhere<Job>({
-      rls: this.realtime.rls,
-      model: 'jobs',
-      user: { id: userId },
-      action,
-      where: { id: jobId },
-    });
-    const job = allowed ? await this.jobs.findOne({ where }) : null;
+  async assertAccess(jobId: string, action: RlsAction = 'read'): Promise<Job> {
+    const job = await this.db.scoped(Job).findOneScoped({ id: jobId }, action);
     if (!job) throw new NotFoundException('Job not found');
     return job;
   }
 
   /** One job with its nested group→thread tree. */
-  async get(userId: string, jobId: string): Promise<JobView> {
-    const job = await this.assertAccess(userId, jobId);
+  async get(jobId: string): Promise<JobView> {
+    const job = await this.assertAccess(jobId);
     const [groups, threads] = await Promise.all([
       this.groups.find({ where: { jobId }, order: { ordinal: 'ASC' } }),
       this.threads.find({ where: { jobId }, order: { ordinal: 'ASC' } }),

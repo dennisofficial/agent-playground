@@ -36,8 +36,6 @@ const SUBAGENT_MODELS: Record<string, string> = {
 };
 export const subagentModel = (type: string): string | undefined => SUBAGENT_MODELS[type];
 
- *  `WRITER_SUBAGENTS` / `VALIDATE_SUBAGENT` / `PROTOTYPE_SUBAGENT` in engine-core.ts). Effort is pinned
- *  per type at spawn, so this is the effort a given subagent runs at. Unknown types return undefined. */
 const SUBAGENT_EFFORTS: Record<string, string> = {
   explore: 'medium',
   docs: 'low',

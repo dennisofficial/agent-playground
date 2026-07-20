@@ -1,4 +1,6 @@
 import { TimestampedEntity } from '@lib/database/base.entity';
+import type { AtlasClaims } from '@lib/rls/atlas-claims';
+import { Rls } from '@workspace/nestjs-rls';
 import { ESubagentStatus } from '@workspace/shared';
 import {
   Column,
@@ -18,6 +20,7 @@ import { Thread } from './thread.entity';
 @Index(['toolUseId'])
 @Index(['parentMessageId'])
 @Index(['orgId'])
+@Rls<Subagent, AtlasClaims>((c) => ({ orgId: { $in: c.orgIds } }))
 export class Subagent extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;

@@ -5,7 +5,7 @@ import { JobEntity } from './job.entity';
 @Entity({ name: 'active_turns' })
 @Index(['status'])
 @Index(['job_id'])
-@Index('ux_active_turns_one_running_brain_per_job', ['job_id'], {
+@Index(['job_id'], {
   unique: true,
   where: `"kind" = 'brain' AND "status" = 'running'`,
 })

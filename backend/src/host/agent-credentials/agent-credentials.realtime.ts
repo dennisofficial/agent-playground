@@ -1,13 +1,13 @@
+import type { ResolveClaims } from '@workspace/nestjs-rls';
+import { rlsGuard } from '@workspace/nestjs-rls/pg-realtime';
 import type { ModelConfig, Row } from '@workspace/pg-realtime';
 import type {
   EAgentCredentialKind,
   EAgentCredentialStatus,
   EAgentProvider,
 } from '@workspace/shared';
-import type { Repository } from 'typeorm';
-import type { OrganizationMember } from '../../_lib/database/entities/organization-member.entity';
+import { AgentCredential } from '../../_lib/database/entities/agent-credential.entity';
 import { projectAgentCredentialView } from './agent-credential.view';
-import { AgentCredentialsRealtimeGuard } from './agent-credentials.guard';
 
 /**
  * The `agentCredentials` realtime model — streams each account's metadata + usage windows to the web.
@@ -15,14 +15,12 @@ import { AgentCredentialsRealtimeGuard } from './agent-credentials.guard';
  * as the REST seed) and CRUCIALLY drops `material_enc` — token material never reaches the SSE feed. Keeps
  * `orgId` for the guard scope. Contributed via `PgRealtimeModule.forFeature(...)`.
  */
-export function buildAgentCredentialsRealtimeModel(
-  members: Repository<OrganizationMember>,
-): ModelConfig {
+export function buildAgentCredentialsRealtimeModel(resolveClaims: ResolveClaims): ModelConfig {
   return {
     table: 'agent_credentials',
     name: 'agentCredentials',
     primaryKey: 'id',
-    guard: new AgentCredentialsRealtimeGuard(members),
+    guard: rlsGuard(AgentCredential, resolveClaims),
     mapRow: (raw: Row): Row => ({
       ...projectAgentCredentialView({
         id: raw.id as string,

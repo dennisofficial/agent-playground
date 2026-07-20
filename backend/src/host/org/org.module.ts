@@ -1,7 +1,6 @@
-import { getRepositoryToken, TypeOrmModule } from '@nestjs/typeorm';
 import { CreateModule } from '@workspace/nestjs-core';
+import { RLS_CONTEXT, type RlsContextConfig } from '@workspace/nestjs-rls/nest';
 import { PgRealtimeModule } from '@workspace/pg-realtime/nest';
-import type { Repository } from 'typeorm';
 import {
   OrganizationMember,
   OrganizationMemberRepo,
@@ -14,12 +13,10 @@ import { OrgService } from './org.service';
 @CreateModule({
   imports: [
     // Contribute the org read-feeds (organizations + organization_members) to the realtime engine.
-    // Sources the members repo via TypeOrmModule.forFeature (not OrgModule) so the contribution module
-    // doesn't import OrgModule and cause a self-cycle.
+    // Row-scope comes from each entity's @Rls policy via the RLS_CONTEXT claims resolver.
     PgRealtimeModule.forFeature({
-      imports: [TypeOrmModule.forFeature([OrganizationMember])],
-      inject: [getRepositoryToken(OrganizationMember)],
-      useFactory: (members: Repository<OrganizationMember>) => buildOrgRealtimeModels(members),
+      inject: [RLS_CONTEXT],
+      useFactory: (ctx: RlsContextConfig) => buildOrgRealtimeModels(ctx.resolveClaims),
     }),
   ],
   entities: [

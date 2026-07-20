@@ -1,15 +1,24 @@
+import type { ResolveClaims } from '@workspace/nestjs-rls';
+import { rlsGuard } from '@workspace/nestjs-rls/pg-realtime';
 import type { ModelConfig, Row } from '@workspace/pg-realtime';
-import type { Repository } from 'typeorm';
-import type { OrganizationMember } from '../../_lib/database/entities/organization-member.entity';
-import { JobRealtimeGuard } from './job.guard';
+import { Job } from '../../_lib/database/entities/job.entity';
+import { Task } from '../../_lib/database/entities/task.entity';
+import { ThreadGroup } from '../../_lib/database/entities/thread-group.entity';
+import { ThreadMessage } from '../../_lib/database/entities/thread-message.entity';
+import { Thread } from '../../_lib/database/entities/thread.entity';
 
-export function buildJobRealtimeModels(members: Repository<OrganizationMember>): ModelConfig[] {
+/**
+ * Realtime models for the job cluster. Each model's row-scope comes from the entity's `@Rls`
+ * policy (via `rlsGuard`), resolving claims from the subscribe-time principal. `mapRow` stays
+ * per-model: it maps snake_case WAL columns to the shape the policy scopes on (always `orgId`).
+ */
+export function buildJobRealtimeModels(resolveClaims: ResolveClaims): ModelConfig[] {
   return [
     {
       table: 'jobs',
       name: 'jobs',
       primaryKey: 'id',
-      guard: new JobRealtimeGuard(members),
+      guard: rlsGuard(Job, resolveClaims),
       mapRow: (raw: Row): Row => ({
         id: raw.id,
         orgId: raw.org_id, // kept for the guard scope
@@ -29,7 +38,7 @@ export function buildJobRealtimeModels(members: Repository<OrganizationMember>):
       table: 'thread_groups',
       name: 'thread_groups',
       primaryKey: 'id',
-      guard: new JobRealtimeGuard(members),
+      guard: rlsGuard(ThreadGroup, resolveClaims),
       mapRow: (raw: Row): Row => ({
         id: raw.id,
         orgId: raw.org_id,
@@ -46,7 +55,7 @@ export function buildJobRealtimeModels(members: Repository<OrganizationMember>):
       table: 'threads',
       name: 'threads',
       primaryKey: 'id',
-      guard: new JobRealtimeGuard(members),
+      guard: rlsGuard(Thread, resolveClaims),
       mapRow: (raw: Row): Row => ({
         id: raw.id,
         orgId: raw.org_id,
@@ -68,7 +77,7 @@ export function buildJobRealtimeModels(members: Repository<OrganizationMember>):
       table: 'thread_messages',
       name: 'thread_messages',
       primaryKey: 'id',
-      guard: new JobRealtimeGuard(members),
+      guard: rlsGuard(ThreadMessage, resolveClaims),
       mapRow: (raw: Row): Row => ({
         id: raw.id,
         orgId: raw.org_id,
@@ -91,7 +100,7 @@ export function buildJobRealtimeModels(members: Repository<OrganizationMember>):
       table: 'tasks',
       name: 'tasks',
       primaryKey: 'id',
-      guard: new JobRealtimeGuard(members),
+      guard: rlsGuard(Task, resolveClaims),
       mapRow: (raw: Row): Row => ({
         id: raw.id,
         orgId: raw.org_id,

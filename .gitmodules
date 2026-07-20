@@ -16,3 +16,6 @@
 [submodule "submodules/site-map"]
 	path = submodules/site-map
 	url = https://github.com/dennisofficial/site-map
+[submodule "submodules/nestjs-rls"]
+	path = submodules/nestjs-rls
+	url = https://github.com/dennisofficial/nestjs-rls.git

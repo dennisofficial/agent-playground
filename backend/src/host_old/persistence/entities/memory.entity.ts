@@ -1,4 +1,3 @@
-import { TimestampedEntity } from '@workspace/shared/schemas';
 import {
   Column,
   DeleteDateColumn,
@@ -9,6 +8,7 @@ import {
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import { OrganizationEntity } from './organization.entity';
+import { TimestampedEntity } from '@lib/database/base.entity';
 
 @Entity({ name: 'memory' })
 @Index(['scope'])

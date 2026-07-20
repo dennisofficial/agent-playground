@@ -1,4 +1,5 @@
-import '@core/tracing'; // MUST be first: starts the Langfuse OTEL SDK before any LangChain run
+// MUST be first: starts the Langfuse OTEL SDK before any LangChain run
+import '@core/tracing';
 
 import { EnvService } from '@core/config/env/env.service';
 import { ENodeEnv } from '@core/config/env/validation';

@@ -1,4 +1,6 @@
 import { TimestampedEntity } from '@lib/database/base.entity';
+import type { AtlasClaims } from '@lib/rls/atlas-claims';
+import { Rls } from '@workspace/nestjs-rls';
 import type { AccountUsageSnapshot } from '@workspace/shared';
 import { EAgentCredentialKind, EAgentCredentialStatus, EAgentProvider } from '@workspace/shared';
 import {
@@ -21,15 +23,18 @@ import { Organization } from './organization.entity';
 @Entity({ name: 'agent_credentials' })
 @Index(['orgId'])
 // One selected account per (org, provider) — replaces the old organizations.selected_claude_credential_id.
-@Index('uq_agent_cred_org_provider_selected', ['orgId', 'provider'], {
+@Index(['orgId', 'provider'], {
   unique: true,
   where: 'selected',
 })
 // Dedupe personal (OAuth) accounts by email within a provider — a re-login updates in place.
-@Index('uq_agent_cred_org_provider_email_personal', ['orgId', 'provider', 'accountEmail'], {
+  @Index(['orgId', 'provider', 'accountEmail'], {
   unique: true,
   where: `kind = 'personal' AND account_email IS NOT NULL`,
 })
+@Rls<AgentCredential, AtlasClaims>((c, action) => ({
+  orgId: { $in: action === 'read' ? c.orgIds : c.ownerOrgIds },
+}))
 export class AgentCredential extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;

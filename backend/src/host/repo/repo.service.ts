@@ -1,7 +1,5 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { type GuardAction, RealtimeEngine } from '@workspace/pg-realtime';
-import { PG_REALTIME_ENGINE } from '@workspace/pg-realtime/nest';
-import { scopedFindWhere } from '@workspace/pg-realtime/typeorm';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Db, type RlsAction } from '@workspace/nestjs-rls/nest';
 import {
   type ConnectedRepo,
   type DisconnectRepoResult,
@@ -25,7 +23,7 @@ export class RepoService {
   constructor(
     private readonly repos: RepoRepo,
     private readonly orgs: OrgService,
-    @Inject(PG_REALTIME_ENGINE) private readonly realtime: RealtimeEngine,
+    private readonly db: Db,
     private readonly github: GithubAccessAdapter,
   ) {}
 
@@ -38,16 +36,8 @@ export class RepoService {
 
   /** Every repo across the caller's orgs (member-scoped via the `repos` guard) — the cross-org picker +
    *  the client-side `repoId → name` map for the sidebar. No org in the path; RLS scopes it. */
-  async listAll(userId: string): Promise<RepoView[]> {
-    const { allowed, where } = await scopedFindWhere<Repo>({
-      rls: this.realtime.rls,
-      model: 'repos',
-      user: { id: userId },
-      action: 'read',
-      where: {},
-    });
-    if (!allowed) return [];
-    const rows = await this.repos.find({ where, order: { createdAt: 'ASC' } });
+  async listAll(): Promise<RepoView[]> {
+    const rows = await this.db.scoped(Repo).find({ order: { createdAt: 'ASC' } });
     return rows.map((r) => this.toView(r));
   }
 
@@ -90,8 +80,8 @@ export class RepoService {
   }
 
   /** Update repo metadata (no GitHub call). Owner-only. */
-  async update(userId: string, repoId: string, patch: UpdateRepoDto): Promise<ConnectedRepo> {
-    const repo = await this.findRepoScoped(userId, repoId, 'update');
+  async update(repoId: string, patch: UpdateRepoDto): Promise<ConnectedRepo> {
+    const repo = await this.findRepoScoped(repoId, 'update');
 
     if (patch.name !== undefined) repo.name = patch.name.trim() || repo.name;
     if (patch.defaultBranch !== undefined)
@@ -108,16 +98,16 @@ export class RepoService {
   }
 
   /** Disconnect a repo (cascades its threads). Owner-only. */
-  async remove(userId: string, repoId: string): Promise<DisconnectRepoResult> {
-    const repo = await this.findRepoScoped(userId, repoId, 'delete');
+  async remove(repoId: string): Promise<DisconnectRepoResult> {
+    const repo = await this.findRepoScoped(repoId, 'delete');
     const threadsDeleted = repo.threadCount;
     await this.repos.delete({ id: repo.id });
     return { ok: true, threadsDeleted };
   }
 
   /** Live branch list (default first). Falls back to the stored default branch. Any member may read. */
-  async branches(userId: string, repoId: string): Promise<RepoBranches> {
-    const repo = await this.findRepoScoped(userId, repoId, 'read');
+  async branches(repoId: string): Promise<RepoBranches> {
+    const repo = await this.findRepoScoped(repoId, 'read');
     const parsed = parseGithubRepoUrl(repo.gitUrl);
     const live = parsed
       ? await this.github.listBranches(repo.orgId, parsed.owner, parsed.repo)
@@ -126,8 +116,8 @@ export class RepoService {
   }
 
   /** Re-run the GitHub access probe for a repo. Owner-only. */
-  async revalidate(userId: string, repoId: string): Promise<ConnectedRepo> {
-    const repo = await this.findRepoScoped(userId, repoId, 'update');
+  async revalidate(repoId: string): Promise<ConnectedRepo> {
+    const repo = await this.findRepoScoped(repoId, 'update');
     const parsed = parseGithubRepoUrl(repo.gitUrl);
     if (!parsed) throw new BadRequestException(`Not an HTTPS GitHub URL: ${repo.gitUrl}`);
 
@@ -140,22 +130,14 @@ export class RepoService {
   }
 
   /**
-   * Load a repo the caller may act on for `action`, scoped by the **same** `repos` realtime guard
-   * (`RepoRealtimeGuard`) that gates the SSE feed. `scopedFindWhere` runs the guard (`canRead` → member
-   * orgs; `canUpdate`/`canDelete` → owned orgs) and ANDs its `orgId In (...)` scope into the query — so a
-   * repo outside the caller's authority is a 404 (never a leak) and REST/realtime can't drift. This is
-   * what lets item ops drop `orgId` from the path AND makes ownership authoritative at the DB, not the
-   * URL: a non-owner who knows the ids still can't write.
+   * Load a repo the caller may act on for `action`, scoped by Repo's `@Rls` policy — the **same** rule
+   * that gates the SSE feed (`read` → member orgs; `update`/`delete` → owned orgs). The scope is ANDed
+   * into the query, so a repo outside the caller's authority is a 404 (never a leak) and REST/realtime
+   * can't drift. This makes ownership authoritative at the DB, not the URL: a non-owner who knows the
+   * ids still can't write.
    */
-  private async findRepoScoped(userId: string, repoId: string, action: GuardAction): Promise<Repo> {
-    const { allowed, where } = await scopedFindWhere<Repo>({
-      rls: this.realtime.rls,
-      model: 'repos',
-      user: { id: userId },
-      action,
-      where: { id: repoId },
-    });
-    const repo = allowed ? await this.repos.findOne({ where }) : null;
+  private async findRepoScoped(repoId: string, action: RlsAction): Promise<Repo> {
+    const repo = await this.db.scoped(Repo).findOneScoped({ id: repoId }, action);
     if (!repo) throw new NotFoundException('Repository not found');
     return repo;
   }

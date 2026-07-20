@@ -1,8 +1,11 @@
 import { TimestampedEntity } from '@lib/database/base.entity';
+import { RlsExempt } from '@workspace/nestjs-rls';
 import { EUserRole, EUserStatus } from '@workspace/shared';
 import { Column, Entity, Index, PrimaryGeneratedColumn, Repository } from 'typeorm';
 
 @Entity({ name: 'users' })
+// Identity table — never row-scoped. Also read by the claims resolver, so it must not recurse.
+@RlsExempt()
 export class User extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;

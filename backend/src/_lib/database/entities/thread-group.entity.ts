@@ -1,4 +1,6 @@
 import { TimestampedEntity } from '@lib/database/base.entity';
+import type { AtlasClaims } from '@lib/rls/atlas-claims';
+import { Rls } from '@workspace/nestjs-rls';
 import { EThreadCondition, EThreadGroupKind, EThreadStatus } from '@workspace/shared';
 import {
   Column,
@@ -16,6 +18,7 @@ import { Organization } from './organization.entity';
 @Index(['jobId'])
 @Index(['jobId', 'ordinal'])
 @Index(['orgId'])
+@Rls<ThreadGroup, AtlasClaims>((c) => ({ orgId: { $in: c.orgIds } }))
 export class ThreadGroup extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;

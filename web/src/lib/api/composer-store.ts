@@ -14,28 +14,6 @@ import {
 } from './job-api';
 import type { DraftAttachment } from './job-queries';
 
-/**
- * Per-Job Composer draft store — a module singleton keyed by `jobId`, modeled on `service-log-store.ts`
- * (a `Map` of entries, per-key listener `Set`s, `useSyncExternalStore`).
- *
- * WHY an external store rather than component state: nothing keys `JobWorkspace`/`Conversation`/
- * `Composer` by `jobId`, so switching Jobs re-renders with new props but never remounts. A draft held in
- * `useState` therefore BLEEDS from one Job into the next and is lost on reload. Holding it here — loaded
- * and saved explicitly on `jobId` change — keeps each Job's draft isolated and lets it outlive the view.
- *
- * A draft is `{ text, attachments, comments, stagedAnswers }` (+ `outbox`, populated by the offline-send
- * queue). The draft body is SERVER-BACKED per (job, user): `text`/`stagedAnswers`/`comments` autosave to
- * `PUT .../draft` (debounced) and attachments upload on-add to `POST .../draft/attachments`, so a draft
- * syncs across the operator's own devices (via the drafts realtime stream) and survives a full reload.
- * `sessionStorage["atlas.composer.draft.<jobId>"]` is kept only as an OFFLINE FALLBACK buffer — read first
- * for an instant paint, then OVERWRITTEN the moment the server responds (server wins over stale storage).
- * The `outbox` (offline-send queue) is unchanged: still sessionStorage-only serializable metadata.
- */
-
-/** The offline-send queue entry — one message the operator sent while disconnected, awaiting reconnect.
- *  The store carries and persists its metadata so a queued message survives reload. `hasAttachments` is a
- *  flag, not the bytes: the attachments themselves already live on the server draft (uploaded on-add), and
- *  the reconnect-time send promotes whatever is still staged there. */
 export interface QueuedMessage {
   id: string;
   /** Wall-clock enqueue time — orders `allQueued()` FIFO across every Job, not just within one. */
@@ -705,12 +683,6 @@ function isStagedAnswerStale(answer: StagedAnswer, messages: JobMessage[]): bool
 export const composerStore = new ComposerStore();
 composerStore.restorePersistedOutboxes();
 
-/**
- * Subscribe a component to one Job's Composer draft. Calls `ensure(ref)` (idempotent) so a first read
- * hydrates from sessionStorage, then reads via `useSyncExternalStore` keyed on `jobId`. `getServerSnapshot`
- * returns the shared `EMPTY` (SSR has no storage); the client re-renders from the hydrated store after
- * mount — no hydration mismatch for the controlled textarea.
- */
 export function useComposerDraft(ref: JobRef): ComposerDraft {
   composerStore.ensure(ref);
   const subscribe = useCallback(
@@ -721,13 +693,6 @@ export function useComposerDraft(ref: JobRef): ComposerDraft {
   return useSyncExternalStore(subscribe, getSnapshot, () => EMPTY);
 }
 
-/**
- * Slice-aware subscriptions — `attachments` / `comments` only. `replace` spreads the untouched arrays, so a
- * draft's `attachments` and `comments` refs are PRESERVED across a text edit; a `getSnapshot` that returns
- * just that array is therefore stable under keystrokes (Object.is holds) and `useSyncExternalStore` skips the
- * re-render. This keeps the transcript pane (via `useAttachments`) and the review-comments provider off the
- * per-keystroke render path — only the Composer's own text subscription re-renders while typing.
- */
 export function useComposerAttachments(ref: JobRef): DraftAttachment[] {
   composerStore.ensure(ref);
   const subscribe = useCallback(
@@ -748,8 +713,6 @@ export function useComposerComments(ref: JobRef): ReviewComment[] {
   return useSyncExternalStore(subscribe, getSnapshot, () => EMPTY.comments);
 }
 
-/** Slice-aware subscription — a Job's staged-answers tray only, so `<StagedAnswersTray>` and each card's
- *  compact "staged" state re-render on stage/remove without subscribing to text/attachments/comments. */
 export function useComposerStagedAnswers(ref: JobRef): StagedAnswer[] {
   composerStore.ensure(ref);
   const subscribe = useCallback(
@@ -763,7 +726,6 @@ export function useComposerStagedAnswers(ref: JobRef): StagedAnswer[] {
   return useSyncExternalStore(subscribe, getSnapshot, () => EMPTY.stagedAnswers);
 }
 
- *  removeQueued without subscribing to text/attachments/comments changes. Same pattern as `useComposerComments`. */
 export function useOutbox(ref: JobRef): QueuedMessage[] {
   composerStore.ensure(ref);
   const subscribe = useCallback(

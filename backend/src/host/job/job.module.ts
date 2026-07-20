@@ -1,9 +1,7 @@
-import { getRepositoryToken, TypeOrmModule } from '@nestjs/typeorm';
 import { CreateModule } from '@workspace/nestjs-core';
+import { RLS_CONTEXT, type RlsContextConfig } from '@workspace/nestjs-rls/nest';
 import { PgRealtimeModule } from '@workspace/pg-realtime/nest';
-import type { Repository } from 'typeorm';
 import { Job, JobRepo } from '../../_lib/database/entities/job.entity';
-import { OrganizationMember } from '../../_lib/database/entities/organization-member.entity';
 import { Subagent, SubagentRepo } from '../../_lib/database/entities/subagent.entity';
 import { Task, TaskRepo } from '../../_lib/database/entities/task.entity';
 import { ThreadGroup, ThreadGroupRepo } from '../../_lib/database/entities/thread-group.entity';
@@ -22,9 +20,8 @@ import { ThreadService } from './thread.service';
 @CreateModule({
   imports: [
     PgRealtimeModule.forFeature({
-      imports: [TypeOrmModule.forFeature([OrganizationMember])],
-      inject: [getRepositoryToken(OrganizationMember)],
-      useFactory: (members: Repository<OrganizationMember>) => buildJobRealtimeModels(members),
+      inject: [RLS_CONTEXT],
+      useFactory: (ctx: RlsContextConfig) => buildJobRealtimeModels(ctx.resolveClaims),
     }),
   ],
   entities: [

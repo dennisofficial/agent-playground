@@ -9,7 +9,7 @@ import { ThreadEntity } from './thread.entity';
 @Index(['thread_id', 'created_at'])
 @Index(['subagent_id'])
 @Index(['stimulus_id'])
-@Index('ux_transcript_messages_idem_key', ['idem_key'], {
+@Index(['idem_key'], {
   unique: true,
   where: `"idem_key" IS NOT NULL`,
 })

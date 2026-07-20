@@ -3,12 +3,10 @@
   "compilerOptions": {
     "declaration": false,
     "outDir": "../../dist",
-    "paths": {
-      "@core/*": ["../_core/*"],
-      "@host/*": ["./*"],
-      "@lib/*": ["../_lib/*"],
-      "@shared/*": ["../_shared/*"]
-    }
+    // Inherit `paths` from the root tsconfig. Do NOT redefine them here: nest's build-time
+    // tsconfig-paths hook resolves paths against baseUrl='./' (the backend cwd), so root's
+    // "./src/_core/*" rewrites correctly while a nested "../_core/*" would silently no-op and
+    // leave bare `@core/*` requires in dist (runtime "Cannot find module '@core/...'").
   },
   "include": ["**/*", "./main.ts", "../_core/**/*", "../_lib/**/*", "../_shared/**/*"],
   "exclude": [
@@ -17,6 +15,6 @@
     "**/*spec.ts",
     "**/*.test.ts",
     "**/*.eval.ts",
-    "**/*.ai.data.ts"
-  ]
+    "**/*.ai.data.ts",
+  ],
 }

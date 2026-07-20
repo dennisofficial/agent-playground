@@ -1,9 +1,9 @@
-import { TimestampedEntity } from '@workspace/shared/schemas';
 import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import type { ReviewFinding } from '../../autofix/autofix.types';
 import { JobEntity } from './job.entity';
 import { OrganizationEntity } from './organization.entity';
 import { ThreadGroupEntity } from './thread-group.entity';
+import { TimestampedEntity } from '@lib/database/base.entity';
 
 @Entity({ name: 'threads' })
 @Index(['job_id'])

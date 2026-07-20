@@ -1,4 +1,6 @@
 import { TimestampedEntity } from '@lib/database/base.entity';
+import type { AtlasClaims } from '@lib/rls/atlas-claims';
+import { Rls } from '@workspace/nestjs-rls';
 import { EThreadMessageKind, EThreadMessageSource } from '@workspace/shared';
 import {
   Column,
@@ -19,6 +21,7 @@ import { Thread } from './thread.entity';
 @Index(['threadId', 'createdAt'])
 @Index(['subagentId'])
 @Index(['orgId'])
+@Rls<ThreadMessage, AtlasClaims>((c) => ({ orgId: { $in: c.orgIds } }))
 export class ThreadMessage extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;

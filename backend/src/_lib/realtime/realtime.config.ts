@@ -13,11 +13,6 @@ function buildConnectionString(env: EnvService): string {
   return `postgresql://${user}:${password}@${env.get('POSTGRES_HOST')}:${env.get('POSTGRES_PORT')}/${env.get('POSTGRES_DB')}?application_name=${appName}`;
 }
 
-/**
- * Atlas's pg-realtime engine config, for `PgRealtimeModule.forRootAsync({ inject: [EnvService], useFactory:
- * atlasRealtimeConfig })`. Just the Postgres connection + slot/lock names — the models are added by each
- * `PgRealtimeModule.forFeature()` a feature module declares.
- */
 export function atlasRealtimeConfig(env: EnvService): RootEngineConfig {
   const connectionString = buildConnectionString(env);
   return {

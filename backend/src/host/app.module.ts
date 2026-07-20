@@ -8,8 +8,11 @@ import { RedisModule } from '@lib/redis/redis.module';
 import { ValidationPipe } from '@nestjs/common';
 import { APP_PIPE } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
+import { atlasRlsOptions } from '@lib/rls/atlas-rls.config';
 import { CreateModule, EnvModule, LoggerModule } from '@workspace/nestjs-core';
+import { RlsModule } from '@workspace/nestjs-rls/nest';
 import { PgRealtimeModule } from '@workspace/pg-realtime/nest';
+import { ClsModule } from 'nestjs-cls';
 import { AgentCredentialsModule } from './agent-credentials/agent-credentials.module';
 import { AuthModule } from './auth/auth.module';
 import { GithubModule } from './github/github.module';
@@ -26,6 +29,9 @@ import { WorkspaceProfileModule } from './workspace-profile/workspace-profile.mo
 
 @CreateModule({
   imports: [
+    // ClsMiddleware wraps every request in a CLS context BEFORE guards run, so AuthGuard
+    // can publish the user into CLS for the RLS layer to read ambiently.
+    ClsModule.forRoot({ middleware: { mount: true }, global: true }),
     LoggerModule,
     ScheduleModule.forRoot(),
     EnvModule.forRoot({
@@ -37,6 +43,7 @@ import { WorkspaceProfileModule } from './workspace-profile/workspace-profile.mo
     CryptoModule,
     K8sModule,
     PgRealtimeModule.forRootAsync({ inject: [EnvService], useFactory: atlasRealtimeConfig }),
+    RlsModule.forRootAsync(atlasRlsOptions),
 
     OrgModule,
     AuthModule,

@@ -1,4 +1,6 @@
 import { TimestampedEntity } from '@lib/database/base.entity';
+import type { AtlasClaims } from '@lib/rls/atlas-claims';
+import { Rls } from '@workspace/nestjs-rls';
 import { EJobActivity, EJobKind, EJobStatus, EThreadOrigin } from '@workspace/shared';
 import {
   Column,
@@ -15,6 +17,7 @@ import { Thread } from './thread.entity';
 
 @Entity({ name: 'jobs' })
 @Index(['orgId', 'repoId'])
+@Rls<Job, AtlasClaims>((c) => ({ orgId: { $in: c.orgIds } }))
 export class Job extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;

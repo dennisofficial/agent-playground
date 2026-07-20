@@ -1,7 +1,7 @@
+import type { ResolveClaims } from '@workspace/nestjs-rls';
+import { rlsGuard } from '@workspace/nestjs-rls/pg-realtime';
 import type { ModelConfig, Row } from '@workspace/pg-realtime';
-import type { Repository } from 'typeorm';
-import type { OrganizationMember } from '../../_lib/database/entities/organization-member.entity';
-import { RepoRealtimeGuard } from './repo.guard';
+import { Repo } from '../../_lib/database/entities/repo.entity';
 
 /**
  * The `repos` realtime model — the flagship `streamList` feed. A self-contained single table: `mapRow`
@@ -10,12 +10,12 @@ import { RepoRealtimeGuard } from './repo.guard';
  * no coercion is needed; `Date`s serialize to ISO on the SSE JSON encode). It keeps `orgId` so the guard
  * can scope the mapped row. Contributed via `PgRealtimeModule.forFeature(...)` in `RepoModule`.
  */
-export function buildRepoRealtimeModel(members: Repository<OrganizationMember>): ModelConfig {
+export function buildRepoRealtimeModel(resolveClaims: ResolveClaims): ModelConfig {
   return {
     table: 'repos',
     name: 'repos',
     primaryKey: 'id',
-    guard: new RepoRealtimeGuard(members),
+    guard: rlsGuard(Repo, resolveClaims),
     mapRow: (raw: Row): Row => ({
       id: raw.id,
       orgId: raw.org_id, // kept for the guard scope

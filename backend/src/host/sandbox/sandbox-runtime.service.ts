@@ -67,11 +67,6 @@ export class SandboxRuntime {
     this.isTestDb = /_test$/.test(env.get('POSTGRES_DB'));
   }
 
-  /**
-   * Ensure a Ready runtime exists for the job. Idempotent and race-safe (the deterministic pod name lets
-   * k8s reject a concurrent create with 409, which we treat as "someone else is provisioning"). Provisions
-   * on a cold start, resumes after a reap, returns immediately when already Running.
-   */
   async ensureReady(jobId: string): Promise<void> {
     const job = await this.jobs.findOne({ where: { id: jobId } });
     if (!job) throw new NotFoundException(`Job ${jobId} not found`);
@@ -86,13 +81,10 @@ export class SandboxRuntime {
       await this.k8s.deletePod(this.namespace, name);
     }
 
-    // Config comes from the repo's workspace profile; the mount carries setup state across reaps.
     const [setupScript, mounts] = await Promise.all([
       this.profile.materializeSetupScript(job.repoId),
       this.profile.materializeMounts(job.repoId),
     ]);
-    // TODO(secrets): materialize decrypted secret files (WorkspaceProfileService.materializeSecrets)
-    //   as a per-job k8s Secret volume once the profile logic + git-auth for clone land.
 
     try {
       await this.k8s.createPod(this.namespace, this.buildPodSpec(job, name, setupScript, mounts));
@@ -103,11 +95,6 @@ export class SandboxRuntime {
     await this.k8s.waitForPodReady(this.namespace, name);
   }
 
-  /**
-   * Ensure the runtime is Ready, then launch the engine for `turnId` inside it (detached — events flow
-   * back over Redis independently, tailed by the turn dispatcher). Sets the liveness lease so a
-   * just-started turn is never reaped mid-flight.
-   */
   async launchEngineTurn(jobId: string, turnId: string): Promise<void> {
     await this.ensureReady(jobId);
     const env = [`TURN_ID=${turnId}`, 'ENGINE_TRANSPORT=redis', `REDIS_URL=${this.redisUrl}`];
@@ -122,11 +109,6 @@ export class SandboxRuntime {
     await this.redis.set(leaseKey(jobId), '1', 'EX', LEASE_TTL_S);
   }
 
-  /**
-   * Delete pods whose liveness lease has expired — i.e. no real engine activity for {@link LEASE_TTL_S}.
-   * Mounts persist, so a reap is a resume point, not a loss. K8s + Redis only; never reads the jobs DB.
-   * Single host (no leader). Silent no-op on the test DB.
-   */
   @Cron(CronExpression.EVERY_MINUTE)
   async reap(): Promise<void> {
     if (this.isTestDb) return;
@@ -157,9 +139,6 @@ export class SandboxRuntime {
     setupScript: string | null,
     mounts: WorkspaceMountView[],
   ): V1Pod {
-    // First pass: a single `work` volume backs the durable worktree + all profile mount paths (subPath).
-    // TODO(mounts): honor per-EMountMode semantics and back `work` with a per-job PVC (durable across
-    //   reaps) instead of emptyDir; wire shared-ro/shared-rw volumes.
     const volumeMounts = [
       { name: 'work', mountPath: WORK_MOUNT },
       ...mounts.map((m) => ({ name: 'work', mountPath: m.path, subPath: subPathFor(m.path) })),
