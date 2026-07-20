@@ -11,7 +11,7 @@ import { hash, verify } from '@node-rs/argon2';
 import { JwtService } from '@workspace/auth/server';
 import { EUserRole, EUserStatus, type AuthSession } from '@workspace/shared';
 import type { CookieOptions, Request, Response } from 'express';
-import { User, UserRepo } from './entities/user.entity';
+import { User, UserRepo } from '../../_lib/database/entities/user.entity';
 
 const ACCESS_COOKIE = 'access_token';
 const REFRESH_COOKIE = 'refresh_token';

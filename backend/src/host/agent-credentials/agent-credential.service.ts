@@ -6,8 +6,11 @@ import {
   EAgentCredentialStatus,
   EAgentProvider,
 } from '@workspace/shared';
+import {
+  AgentCredential,
+  AgentCredentialRepo,
+} from '../../_lib/database/entities/agent-credential.entity';
 import { projectAgentCredentialView } from './agent-credential.view';
-import { AgentCredential, AgentCredentialRepo } from './entities/agent-credential.entity';
 import { type ClaudeTokenSet, tokenSetToBlob } from './oauth/claude-oauth.client';
 import { assertValidCodexAuthJson, CodexAuthInvalidError } from './oauth/codex-auth-validate';
 import {

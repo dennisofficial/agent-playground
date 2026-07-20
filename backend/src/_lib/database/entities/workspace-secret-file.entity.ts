@@ -8,7 +8,7 @@ import {
   PrimaryGeneratedColumn,
   Repository,
 } from 'typeorm';
-import { Repo } from '../../repo/entities/repo.entity';
+import { Repo } from './repo.entity';
 
 /**
  * A per-repo secret file (env / gitignored file) the sandbox writes into a job's container to make the repo

@@ -9,9 +9,12 @@ import {
   type StoredUsageWindow,
 } from '@workspace/shared';
 import axios from 'axios';
+import {
+  AgentCredential,
+  AgentCredentialRepo,
+} from '../../../_lib/database/entities/agent-credential.entity';
 import { AgentCredentialRefreshService } from '../agent-credential-refresh.service';
 import { AgentCredentialService } from '../agent-credential.service';
-import { AgentCredential, AgentCredentialRepo } from '../entities/agent-credential.entity';
 import { type ClaudeCredentialBlob } from '../oauth/claude-oauth.client';
 import {
   type ParsedUsage,

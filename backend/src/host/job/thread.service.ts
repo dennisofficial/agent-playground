@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import type { ThreadGroupView, ThreadView } from '@workspace/shared';
 import type { FindOptionsWhere } from 'typeorm';
-import { ThreadGroupRepo } from './entities/thread-group.entity';
-import { Thread, ThreadRepo } from './entities/thread.entity';
+import { ThreadGroupRepo } from '../../_lib/database/entities/thread-group.entity';
+import { Thread, ThreadRepo } from '../../_lib/database/entities/thread.entity';
 import { toThreadGroupView, toThreadView } from './job.service';
 
 @Injectable()

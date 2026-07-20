@@ -1,7 +1,7 @@
 import { SecretCipherService } from '@lib/crypto/secret-cipher.service';
 import { Injectable } from '@nestjs/common';
 import type { CredentialPresence } from '@workspace/shared';
-import { OrgCredentialRepo } from './entities/org-credential.entity';
+import { OrgCredentialRepo } from '../../_lib/database/entities/org-credential.entity';
 
 export type SaveCredentialsInput = {
   anthropicApiKey?: string;

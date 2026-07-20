@@ -1,6 +1,6 @@
 import { TimestampedEntity } from '@lib/database/base.entity';
 import { Column, Entity, Index, JoinColumn, OneToOne, PrimaryColumn, Repository } from 'typeorm';
-import { Repo } from '../../repo/entities/repo.entity';
+import { Repo } from './repo.entity';
 
 /**
  * The Atlas-managed operational INSTRUCTIONS for a repo — one row per repo (PK = repoId). The scalar half

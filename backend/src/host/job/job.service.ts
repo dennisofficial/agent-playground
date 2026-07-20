@@ -3,9 +3,9 @@ import { type GuardAction, RealtimeEngine } from '@workspace/pg-realtime';
 import { PG_REALTIME_ENGINE } from '@workspace/pg-realtime/nest';
 import { scopedFindWhere } from '@workspace/pg-realtime/typeorm';
 import type { JobListItem, JobView, ThreadGroupView, ThreadView } from '@workspace/shared';
-import { Job, JobRepo } from './entities/job.entity';
-import { ThreadGroup, ThreadGroupRepo } from './entities/thread-group.entity';
-import { Thread, ThreadRepo } from './entities/thread.entity';
+import { Job, JobRepo } from '../../_lib/database/entities/job.entity';
+import { ThreadGroup, ThreadGroupRepo } from '../../_lib/database/entities/thread-group.entity';
+import { Thread, ThreadRepo } from '../../_lib/database/entities/thread.entity';
 
 @Injectable()
 export class JobService {

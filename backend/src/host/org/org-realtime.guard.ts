@@ -1,7 +1,7 @@
 import { type MingoFilter, RealtimeRuleGuard, type Row } from '@workspace/pg-realtime';
 import type { Repository } from 'typeorm';
-import type { User } from '../auth/entities/user.entity';
-import { OrganizationMember } from './entities/organization-member.entity';
+import { OrganizationMember } from '../../_lib/database/entities/organization-member.entity';
+import type { User } from '../../_lib/database/entities/user.entity';
 
 /**
  * Row-level guard for the org read-feeds — the `organizations` document/list feed (scope by `id`) and the

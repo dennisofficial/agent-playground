@@ -1,8 +1,8 @@
 import { TimestampedEntity } from '@lib/database/base.entity';
 import { EOrgRole } from '@workspace/shared';
 import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryColumn, Repository } from 'typeorm';
-import { User } from '../../auth/entities/user.entity';
 import { Organization } from './organization.entity';
+import { User } from './user.entity';
 
 @Entity({ name: 'organization_members' })
 @Index(['userId'])

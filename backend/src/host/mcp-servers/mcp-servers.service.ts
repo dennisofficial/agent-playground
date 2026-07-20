@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { McpServerRepo } from './entities/mcp-server.entity';
+import { McpServerRepo } from '../../_lib/database/entities/mcp-server.entity';
 
 export interface McpServerRow {
   name: string;

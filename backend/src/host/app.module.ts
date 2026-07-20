@@ -2,6 +2,7 @@ import { EnvService } from '@core/config/env/env.service';
 import { envConfigValidation } from '@core/config/env/validation';
 import { CryptoModule } from '@lib/crypto/crypto.module';
 import { DatabaseModule } from '@lib/database/database.module';
+import { K8sModule } from '@lib/k8s/k8s.module';
 import { atlasRealtimeConfig } from '@lib/realtime/realtime.config';
 import { RedisModule } from '@lib/redis/redis.module';
 import { ValidationPipe } from '@nestjs/common';
@@ -20,6 +21,7 @@ import { OrgModule } from './org/org.module';
 import { RepoModule } from './repo/repo.module';
 import { SandboxModule } from './sandbox/sandbox.module';
 import { SkillsModule } from './skills/skills.module';
+import { TurnModule } from './turn/turn.module';
 import { WorkspaceProfileModule } from './workspace-profile/workspace-profile.module';
 
 @CreateModule({
@@ -33,6 +35,7 @@ import { WorkspaceProfileModule } from './workspace-profile/workspace-profile.mo
     DatabaseModule,
     RedisModule,
     CryptoModule,
+    K8sModule,
     PgRealtimeModule.forRootAsync({ inject: [EnvService], useFactory: atlasRealtimeConfig }),
 
     OrgModule,
@@ -47,6 +50,7 @@ import { WorkspaceProfileModule } from './workspace-profile/workspace-profile.mo
     McpServersModule,
     SkillsModule,
     SandboxModule,
+    TurnModule,
   ],
   providers: [
     {

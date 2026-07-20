@@ -24,9 +24,6 @@ function resolveSsl(env: EnvService): false | { rejectUnauthorized: boolean } {
         username: env.get('POSTGRES_USER'),
         password: env.get('POSTGRES_PASSWORD'),
         database: env.get('POSTGRES_DB'),
-        // Entities are co-located with their feature modules and register themselves via
-        // `@CreateModule({ entities })` (TypeOrmModule.forFeature). autoLoadEntities picks
-        // each one up for the connection, so there is no central entity list to maintain.
         autoLoadEntities: true,
         synchronize: false,
         namingStrategy: new CustomNamingStrategy(),

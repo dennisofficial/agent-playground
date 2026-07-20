@@ -9,8 +9,8 @@ import {
   PrimaryGeneratedColumn,
   Repository,
 } from 'typeorm';
-import { Organization } from '../../org/entities/organization.entity';
 import { Job } from './job.entity';
+import { Organization } from './organization.entity';
 
 @Entity({ name: 'thread_groups' })
 @Index(['jobId'])

@@ -1,6 +1,6 @@
 import { TimestampedEntity } from '@lib/database/base.entity';
 import { Column, Entity, JoinColumn, OneToOne, PrimaryColumn, Repository } from 'typeorm';
-import { Organization } from '../../org/entities/organization.entity';
+import { Organization } from './organization.entity';
 
 /**
  * The org's raw API keys, one row per org (PK = orgId). Each value is AES-256-GCM encrypted at rest

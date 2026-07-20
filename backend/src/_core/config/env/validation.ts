@@ -36,6 +36,10 @@ export type IEnvConfig = {
 
   ADMIN_SEED_EMAIL?: string; // optional: dev-only — provisions the admin on boot; unset in prod
   ADMIN_SEED_PASSWORD?: string;
+
+  K8S_NAMESPACE: string; // sandbox pods live here; may diverge per env
+  KUBECONFIG?: string; // optional: dev-only kubeconfig path; in-cluster path is preferred when running in k8s
+  SANDBOX_IMAGE: string; // the engine runtime image sandbox pods run; infra, not user/profile input
 };
 
 export const envConfigValidation = Joi.object<IEnvConfig, true>({
@@ -65,4 +69,8 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
 
   ADMIN_SEED_EMAIL: Joi.string().email().optional(),
   ADMIN_SEED_PASSWORD: Joi.string().optional(),
+
+  K8S_NAMESPACE: Joi.string().default('atlas-sandboxes'),
+  KUBECONFIG: Joi.string().optional(),
+  SANDBOX_IMAGE: Joi.string().default('atlas-sandbox:latest'),
 });

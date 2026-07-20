@@ -7,9 +7,9 @@ import {
   type CurrentUserResponse,
 } from '@workspace/shared';
 import type { Request, Response } from 'express';
+import type { User } from '../../_lib/database/entities/user.entity';
 import { OrgService } from '../org/org.service';
 import { AuthService } from './auth.service';
-import type { User } from './entities/user.entity';
 
 @Controller('auth')
 export class AuthController {

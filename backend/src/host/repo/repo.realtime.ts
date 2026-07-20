@@ -1,6 +1,6 @@
 import type { ModelConfig, Row } from '@workspace/pg-realtime';
 import type { Repository } from 'typeorm';
-import type { OrganizationMember } from '../org/entities/organization-member.entity';
+import type { OrganizationMember } from '../../_lib/database/entities/organization-member.entity';
 import { RepoRealtimeGuard } from './repo.guard';
 
 /**

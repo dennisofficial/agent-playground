@@ -3,8 +3,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { EAgentCredentialKind, EAgentCredentialStatus } from '@workspace/shared';
 import { LessThan } from 'typeorm';
+import { AgentCredentialRepo } from '../../_lib/database/entities/agent-credential.entity';
 import { AgentCredentialRefreshService } from './agent-credential-refresh.service';
-import { AgentCredentialRepo } from './entities/agent-credential.entity';
 
 const REFRESH_WINDOW_MS = 35 * 60 * 1000;
 

@@ -7,7 +7,7 @@ import {
   type RepoView,
   UpdateRepoDto,
 } from '@workspace/shared';
-import type { User } from '../auth/entities/user.entity';
+import type { User } from '../../_lib/database/entities/user.entity';
 import { RepoService } from './repo.service';
 
 /**

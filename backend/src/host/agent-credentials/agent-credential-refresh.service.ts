@@ -1,7 +1,10 @@
 import { SecretCipherService } from '@lib/crypto/secret-cipher.service';
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { EAgentCredentialKind, EAgentCredentialStatus, EAgentProvider } from '@workspace/shared';
-import { AgentCredential, AgentCredentialRepo } from './entities/agent-credential.entity';
+import {
+  AgentCredential,
+  AgentCredentialRepo,
+} from '../../_lib/database/entities/agent-credential.entity';
 import {
   type ClaudeCredentialBlob,
   refresh as claudeRefresh,

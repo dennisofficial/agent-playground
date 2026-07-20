@@ -1,8 +1,13 @@
-import { query, type Options, type Query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import {
+  query,
+  type Options,
+  type Query,
+  type SDKUserMessage,
+} from '@anthropic-ai/claude-agent-sdk';
 import { Injectable } from '@nestjs/common';
+import type { TurnSpec } from '@shared/engine/turn-spec';
 import { EngineTransportService } from '../engine-transport/engine-transport.service';
 import { MessageQueue } from './message-queue';
-import type { TurnSpec } from '@shared/engine/turn-spec';
 
 @Injectable()
 export class RunnerService {
@@ -16,7 +21,7 @@ export class RunnerService {
     this.input.push(this.userMessage(spec.prompt));
     this.handle = query({
       prompt: this.input,
-      options: this.buildClaudeOptions(spec)
+      options: this.buildClaudeOptions(spec),
     });
 
     try {

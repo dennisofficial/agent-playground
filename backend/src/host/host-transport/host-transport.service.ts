@@ -21,7 +21,13 @@ export class HostTransportService {
     try {
       let lastId = '0';
       while (true) {
-        const res: Array<[string, Array<[string, string[]]>]> | null = (await conn.xread('BLOCK', EVENTS_BLOCK_MS, 'STREAMS', events, lastId))
+        const res: Array<[string, Array<[string, string[]]>]> | null = await conn.xread(
+          'BLOCK',
+          EVENTS_BLOCK_MS,
+          'STREAMS',
+          events,
+          lastId,
+        );
         if (!res) continue;
         for (const [, entries] of res) {
           for (const [id, fields] of entries) {

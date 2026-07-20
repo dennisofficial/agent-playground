@@ -2,11 +2,11 @@ import { EnvService } from '@core/config/env/env.service';
 import { APP_GUARD } from '@nestjs/core';
 import { JwtModule, type JwtModuleOptions } from '@workspace/auth/server';
 import { CreateModule } from '@workspace/nestjs-core';
+import { User, UserRepo } from '../../_lib/database/entities/user.entity';
 import { OrgModule } from '../org/org.module';
 import { AuthController } from './auth.controller';
 import { AuthGuard } from './auth.guard';
 import { AuthService } from './auth.service';
-import { User, UserRepo } from './entities/user.entity';
 
 @CreateModule({
   imports: [

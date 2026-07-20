@@ -1,8 +1,8 @@
 import { type MingoFilter, RealtimeRuleGuard, type Row } from '@workspace/pg-realtime';
 import { EOrgRole } from '@workspace/shared';
 import type { Repository } from 'typeorm';
-import type { User } from '../auth/entities/user.entity';
-import { OrganizationMember } from '../org/entities/organization-member.entity';
+import { OrganizationMember } from '../../_lib/database/entities/organization-member.entity';
+import type { User } from '../../_lib/database/entities/user.entity';
 
 /**
  * Row-level guard for the `repos` model — the single authority for BOTH the SSE feed (mingo scope) and

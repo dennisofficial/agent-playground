@@ -1,8 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import type { ThreadMessageView } from '@workspace/shared';
 import { In } from 'typeorm';
-import { Subagent, SubagentRepo } from './entities/subagent.entity';
-import { ThreadMessage, ThreadMessageRepo } from './entities/thread-message.entity';
+import { Subagent, SubagentRepo } from '../../_lib/database/entities/subagent.entity';
+import {
+  ThreadMessage,
+  ThreadMessageRepo,
+} from '../../_lib/database/entities/thread-message.entity';
 
 @Injectable()
 export class MessageService {

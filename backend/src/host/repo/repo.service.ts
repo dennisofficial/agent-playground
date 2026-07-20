@@ -9,9 +9,9 @@ import {
   type RepoView,
   type UpdateRepoDto,
 } from '@workspace/shared';
+import { Repo, RepoRepo } from '../../_lib/database/entities/repo.entity';
 import { GithubAccessAdapter } from '../github/github-access.adapter';
 import { OrgService } from '../org/org.service';
-import { Repo, RepoRepo } from './entities/repo.entity';
 
 const GITHUB_URL = /^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i;
 

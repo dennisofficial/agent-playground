@@ -24,9 +24,9 @@
     "paths": {
       "@core/*": ["./src/_core/*"],
       "@lib/*": ["./src/_lib/*"],
-      "@shared/*": ["./src/_shared/*"],
+      "@shared/*": ["./src/_shared/*"]
     },
-    "types": ["node", "vitest/globals"],
+    "types": ["node", "vitest/globals"]
   },
   "include": ["src/**/*", "ai-testing.config.ts"],
   "exclude": [
@@ -41,6 +41,6 @@
     "seeds",
     "src/host_old",
     "src/engine_old",
-    "src/_shared_old",
-  ],
+    "src/_shared_old"
+  ]
 }

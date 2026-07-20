@@ -20,7 +20,7 @@ import type {
   ThreadView,
 } from '@workspace/shared';
 import type { Observable } from 'rxjs';
-import type { User } from '../auth/entities/user.entity';
+import type { User } from '../../_lib/database/entities/user.entity';
 import { JobService } from './job.service';
 import { MessageService } from './message.service';
 import { TaskService } from './task.service';

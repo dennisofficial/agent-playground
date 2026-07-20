@@ -5,7 +5,7 @@ import {
   SaveCredentialsDto,
   type SaveCredentialsResult,
 } from '@workspace/shared';
-import type { User } from '../auth/entities/user.entity';
+import type { User } from '../../_lib/database/entities/user.entity';
 import { OrgService } from '../org/org.service';
 import { OrgCredentialsService } from './credentials.service';
 

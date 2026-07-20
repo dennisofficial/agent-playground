@@ -9,7 +9,7 @@ import {
   PrimaryGeneratedColumn,
   Repository,
 } from 'typeorm';
-import { Organization } from '../../org/entities/organization.entity';
+import { Organization } from './organization.entity';
 import { ThreadMessage } from './thread-message.entity';
 import { Thread } from './thread.entity';
 

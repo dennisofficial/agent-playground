@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { BaseAuthGuard, JwtService } from '@workspace/auth/server';
-import { User, UserRepo } from './entities/user.entity';
+import { User, UserRepo } from '../../_lib/database/entities/user.entity';
 
 /**
  * Global auth guard. Verifies the `access_token` cookie (or Bearer header) and

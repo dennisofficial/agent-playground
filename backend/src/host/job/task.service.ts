@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { TaskView } from '@workspace/shared';
-import { Task, TaskRepo } from './entities/task.entity';
+import { Task, TaskRepo } from '../../_lib/database/entities/task.entity';
 
 /**
  * Task reads — the agent's TODO list across the job's thread groups. Pure mechanism: the controller gates

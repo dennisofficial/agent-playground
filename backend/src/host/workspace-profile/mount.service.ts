@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
+import { WorkspaceMountRepo } from '../../_lib/database/entities/workspace-mount.entity';
 import { OrgService } from '../org/org.service';
-import { WorkspaceMountRepo } from './entities/workspace-mount.entity';
 
 /**
  * Per-repo mount CRUD (the list half of the profile). SHELL this pass — deps wired, bodies deferred to the

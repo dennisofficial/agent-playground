@@ -7,8 +7,8 @@ import {
   type UpdateOrgDto,
 } from '@workspace/shared';
 import { In } from 'typeorm';
-import { OrganizationMemberRepo } from './entities/organization-member.entity';
-import { Organization, OrganizationRepo } from './entities/organization.entity';
+import { OrganizationMemberRepo } from '../../_lib/database/entities/organization-member.entity';
+import { Organization, OrganizationRepo } from '../../_lib/database/entities/organization.entity';
 
 @Injectable()
 export class OrgService {

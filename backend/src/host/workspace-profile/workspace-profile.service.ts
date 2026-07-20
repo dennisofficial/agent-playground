@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import type { EMountMode } from '@workspace/shared';
+import { RepoRepo } from '../../_lib/database/entities/repo.entity';
+import { WorkspaceProfileRepo } from '../../_lib/database/entities/workspace-profile.entity';
 import { OrgService } from '../org/org.service';
-import { RepoRepo } from '../repo/entities/repo.entity';
-import { WorkspaceProfileRepo } from './entities/workspace-profile.entity';
 import { MountService } from './mount.service';
 import { SecretFileService } from './secret-file.service';
 
@@ -42,6 +42,11 @@ export class WorkspaceProfileService {
 
   /** Read-only aggregate of the repo's workspace profile (safe fields only). */
   describe(_orgId: string, _repoId: string): Promise<WorkspaceProfileSnapshot> {
+    throw new Error('not implemented');
+  }
+
+  /** The cold-boot setup script the sandbox runs on first provision. Internal, no tenancy check. */
+  materializeSetupScript(_repoId: string): Promise<string | null> {
     throw new Error('not implemented');
   }
 

@@ -1,5 +1,5 @@
-import { EJitDelivery, EJitTrigger, JitHook } from '@shared/jit/jit.decorator';
 import { Injectable } from '@nestjs/common';
+import { EJitDelivery, EJitTrigger, JitHook } from '@shared/jit/jit.decorator';
 
 // TODO: Needs rework
 @Injectable()

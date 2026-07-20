@@ -10,7 +10,7 @@ import {
   PrimaryGeneratedColumn,
   Repository,
 } from 'typeorm';
-import { Organization } from '../../org/entities/organization.entity';
+import { Organization } from './organization.entity';
 
 /**
  * One agent SDK subscription account for an org — a Claude.ai or ChatGPT/Codex login, multi-account per

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { SkillRepo } from './entities/skill.entity';
+import { SkillRepo } from '../../_lib/database/entities/skill.entity';
 
 export interface SkillRow {
   name: string;

@@ -5,7 +5,7 @@ import type {
   EAgentProvider,
 } from '@workspace/shared';
 import type { Repository } from 'typeorm';
-import type { OrganizationMember } from '../org/entities/organization-member.entity';
+import type { OrganizationMember } from '../../_lib/database/entities/organization-member.entity';
 import { projectAgentCredentialView } from './agent-credential.view';
 import { AgentCredentialsRealtimeGuard } from './agent-credentials.guard';
 

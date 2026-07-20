@@ -9,8 +9,8 @@ import {
   PrimaryGeneratedColumn,
   Repository,
 } from 'typeorm';
-import { Organization } from '../../org/entities/organization.entity';
-import { Repo } from '../../repo/entities/repo.entity';
+import { Organization } from './organization.entity';
+import { Repo } from './repo.entity';
 import { Thread } from './thread.entity';
 
 @Entity({ name: 'jobs' })

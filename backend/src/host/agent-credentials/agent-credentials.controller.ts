@@ -28,7 +28,7 @@ import {
   SetSelectedDto,
 } from '@workspace/shared';
 import type { Observable } from 'rxjs';
-import type { User } from '../auth/entities/user.entity';
+import type { User } from '../../_lib/database/entities/user.entity';
 import { OrgService } from '../org/org.service';
 import { AgentCredentialService } from './agent-credential.service';
 import {

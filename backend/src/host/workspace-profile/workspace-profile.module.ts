@@ -1,12 +1,18 @@
 import { CreateModule } from '@workspace/nestjs-core';
-import { OrgModule } from '../org/org.module';
-import { RepoModule } from '../repo/repo.module';
-import { WorkspaceMount, WorkspaceMountRepo } from './entities/workspace-mount.entity';
-import { WorkspaceProfile, WorkspaceProfileRepo } from './entities/workspace-profile.entity';
+import {
+  WorkspaceMount,
+  WorkspaceMountRepo,
+} from '../../_lib/database/entities/workspace-mount.entity';
+import {
+  WorkspaceProfile,
+  WorkspaceProfileRepo,
+} from '../../_lib/database/entities/workspace-profile.entity';
 import {
   WorkspaceSecretFile,
   WorkspaceSecretFileRepo,
-} from './entities/workspace-secret-file.entity';
+} from '../../_lib/database/entities/workspace-secret-file.entity';
+import { OrgModule } from '../org/org.module';
+import { RepoModule } from '../repo/repo.module';
 import { InstallAwarenessRule } from './jit/install-awareness.rule';
 import { MountService } from './mount.service';
 import { SecretFileService } from './secret-file.service';

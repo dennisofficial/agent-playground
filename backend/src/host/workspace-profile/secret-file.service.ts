@@ -1,7 +1,7 @@
 import { SecretCipherService } from '@lib/crypto/secret-cipher.service';
 import { Injectable } from '@nestjs/common';
+import { WorkspaceSecretFileRepo } from '../../_lib/database/entities/workspace-secret-file.entity';
 import { OrgService } from '../org/org.service';
-import { WorkspaceSecretFileRepo } from './entities/workspace-secret-file.entity';
 
 /**
  * Per-repo secret-file CRUD (encrypted, write-only value) — the same AES-256-GCM pattern as
