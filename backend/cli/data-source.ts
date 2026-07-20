@@ -4,13 +4,6 @@ import { resolve } from 'path';
 import { DataSource } from 'typeorm';
 import { CustomNamingStrategy } from '../src/_lib/database/custom-naming.strategy';
 
-/**
- * Standalone DataSource for the TypeORM CLI on the fresh Atlas backend schema — the co-located
- * `src/app/**` entities + `migrations/`. Entities are discovered by glob (they live next to their
- * feature modules), matching the app's `autoLoadEntities` wiring. Never imported by the app.
- *
- * Run with the `db:*` scripts (e.g. `pnpm db:migrate`, `pnpm db:migration:generate`).
- */
 function resolveSsl(): false | { rejectUnauthorized: boolean } {
   const mode =
     process.env.POSTGRES_SSL_MODE ??

@@ -8,15 +8,15 @@
     "tsConfigPath": "tsconfig.build.json"
   },
   "monorepo": true,
-  "root": "src/app",
+  "root": "src/host",
   "projects": {
-    "app": {
+    "host": {
       "type": "application",
-      "root": "src/app",
-      "entryFile": "app/main",
-      "sourceRoot": "src/app",
+      "root": "src/host",
+      "entryFile": "host/main",
+      "sourceRoot": "src/host",
       "compilerOptions": {
-        "tsConfigPath": "src/app/tsconfig.json"
+        "tsConfigPath": "src/host/tsconfig.json"
       }
     },
     "engine": {

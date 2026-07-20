@@ -3,7 +3,13 @@
   "compilerOptions": {
     "declaration": false,
     "outDir": "../../dist",
-    "sourceMap": true
+    "sourceMap": true,
+    "paths": {
+      "@engine/*": ["./*"],
+      "@core/*": ["../_core/*"],
+      "@lib/*": ["../_lib/*"],
+      "@shared/*": ["../_shared/*"]
+    }
   },
   "include": ["**/*", "../shared/**/*", "../_core/**/*", "../_lib/**/*"],
   "exclude": [

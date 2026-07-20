@@ -13,7 +13,7 @@
     "target": "ES2023",
     "sourceMap": true,
     "outDir": "./dist",
-    "rootDir": "./src",
+    "rootDir": "./",
     "incremental": true,
     "skipLibCheck": true,
     "strictNullChecks": true,
@@ -27,19 +27,18 @@
     },
     "types": ["node", "vitest/globals"]
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "ai-testing.config.ts"],
   "exclude": [
     "node_modules",
     "dist",
     "vitest.config.ts",
     "vitest.setup.ts",
     "vitest.global-setup.ts",
-    "ai-testing.config.ts",
     "cli",
     "migrations",
     "migrations-control",
     "seeds",
-    "src/app_old",
+    "src/host_old",
     "src/engine_old",
     "src/_shared_old"
   ]

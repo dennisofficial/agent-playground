@@ -1,16 +1,5 @@
 import { defineConfig } from '@workspace/ai-testing/config';
 
-/**
- * Config for the `@workspace/ai-testing` CLI (`pnpm eval` / `pnpm eval:check`, run from
- * `backend/`). The package imports no tracing SDK — tracing is wired here, optionally, the
- * same way the app does it (Langfuse via OTEL).
- *
- * Env: mirrors `vitest.setup.ts` layering — `.env.personal` first (git-ignored; holds the real
- * secrets like `ANTHROPIC_API_KEY`), THEN `.env.test.enc` (committed, encrypted, non-secret
- * config) overloading on top. The chain-under-test and the LLM judge both read `ANTHROPIC_API_KEY`
- * (the judge is pinned to Anthropic Haiku, so this stays a single-provider run).
- */
-
 import { existsSync } from 'node:fs';
 
 // Held across setup()/teardown() so spans flush before the process exits.

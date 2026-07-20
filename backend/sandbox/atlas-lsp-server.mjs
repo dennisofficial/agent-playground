@@ -218,8 +218,6 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-/** Open a doc if not already open, then wait (bounded) for tsserver to publish diagnostics for it —
- *  a reliable "the project is loaded and this file is analyzed" readiness signal before position queries. */
 async function openAndSettle(absFile, { waitDiag = true, timeoutMs = 15000 } = {}) {
   const uri = uriOf(absFile);
   if (!openDocs.has(uri)) {
@@ -261,7 +259,6 @@ function offsetOf(starts, pos) {
   return base + pos.character;
 }
 
-/** Apply LSP TextEdits to a file's content, bottom-up so earlier offsets stay valid. */
 function applyTextEdits(content, edits) {
   const starts = lineStarts(content);
   const sorted = edits.slice().sort((a, b) => {

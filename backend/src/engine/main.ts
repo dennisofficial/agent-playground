@@ -1,5 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { EngineModule } from './engine.module';
+import { RunnerService } from './runner/runner.service';
 
 async function bootstrap(): Promise<void> {
   const turnId = process.env.TURN_ID;
@@ -11,6 +12,9 @@ async function bootstrap(): Promise<void> {
   });
 
   await app.init();
+
+  const runnerService = app.get(RunnerService);
+  await runnerService.run();
 }
 
 void bootstrap();

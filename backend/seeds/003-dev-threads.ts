@@ -181,7 +181,8 @@ export default (async (ds) => {
       ),
     );
 
-    if (tree.job.focusedThreadId) await jobs.update(JOB, { focusedThreadId: tree.job.focusedThreadId });
+    if (tree.job.focusedThreadId)
+      await jobs.update(JOB, { focusedThreadId: tree.job.focusedThreadId });
 
     await tasksRepo.save(
       tree.tasks.map((k) =>

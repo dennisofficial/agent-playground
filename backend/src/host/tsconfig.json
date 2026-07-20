@@ -1,0 +1,22 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "declaration": false,
+    "outDir": "../../dist",
+    "paths": {
+      "@core/*": ["../_core/*"],
+      "@host/*": ["./*"],
+      "@lib/*": ["../_lib/*"],
+      "@shared/*": ["../_shared/*"]
+    }
+  },
+  "include": ["**/*", "./main.ts", "../_core/**/*", "../_lib/**/*", "../_shared/**/*"],
+  "exclude": [
+    "../../node_modules",
+    "dist",
+    "**/*spec.ts",
+    "**/*.test.ts",
+    "**/*.eval.ts",
+    "**/*.ai.data.ts"
+  ]
+}
