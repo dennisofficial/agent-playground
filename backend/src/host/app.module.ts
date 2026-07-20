@@ -12,10 +12,9 @@ import { PgRealtimeModule } from '@workspace/pg-realtime/nest';
 import { AgentCredentialsModule } from './agent-credentials/agent-credentials.module';
 import { AuthModule } from './auth/auth.module';
 import { GithubModule } from './github/github.module';
-import { JitHostModule } from './jit/jit-host.module';
+import { JitHostModule } from './jit/jit.module';
 import { JobModule } from './job/job.module';
 import { McpServersModule } from './mcp-servers/mcp-servers.module';
-import { OrchestratorModule } from './orchestrator/orchestrator.module';
 import { OrgCredentialsModule } from './org-credentials/credentials.module';
 import { OrgModule } from './org/org.module';
 import { RepoModule } from './repo/repo.module';
@@ -43,14 +42,11 @@ import { WorkspaceProfileModule } from './workspace-profile/workspace-profile.mo
     OrgCredentialsModule,
     GithubModule,
     AgentCredentialsModule,
-
-    // Workspace-profile cluster (DI scaffold — no runtime behavior yet).
     JitHostModule,
     WorkspaceProfileModule,
     McpServersModule,
     SkillsModule,
     SandboxModule,
-    OrchestratorModule,
   ],
   providers: [
     {

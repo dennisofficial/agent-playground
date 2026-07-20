@@ -8,12 +8,6 @@ export interface RegisteredJitHook {
   invoke: (...args: unknown[]) => unknown;
 }
 
-/**
- * Discovers every `@JitHook`-annotated provider method across the whole app at boot and indexes them by
- * trigger. This is the inversion that keeps feature modules from depending on `JitModule`: features attach
- * metadata (via the dependency-free `_lib/jit/contracts`), and this registry finds them through Nest's
- * `DiscoveryService`. Dispatch/matching behavior is NOT here yet — this pass only proves discovery works.
- */
 @Injectable()
 export class JitHostRegistry implements OnModuleInit {
   private readonly logger = new Logger(JitHostRegistry.name);
