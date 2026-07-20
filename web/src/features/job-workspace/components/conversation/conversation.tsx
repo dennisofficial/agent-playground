@@ -185,7 +185,6 @@ interface ParsedLane {
   isCodexLane: boolean;
 }
 
-/** Decompose a lane token into its {@link ParsedLane} identity. */
 function parseLane(lane: string): ParsedLane {
   return {
     isMain: lane === MAIN_LANE,
@@ -193,7 +192,6 @@ function parseLane(lane: string): ParsedLane {
   };
 }
 
-/** The lane-tag fields the backend stamps on a `turn_meta` block (via the harness `metaTag`). */
 interface LaneMeta {
   codexReviewId?: string | null;
 }
@@ -998,13 +996,11 @@ const MERMAID_FENCE = /```mermaid\n([\s\S]*?)```/g;
  *  instead of letting it fall through to the prose wrapped-line math below. Run AFTER {@link MERMAID_FENCE}
  *  has already been stripped from the text, so a mermaid fence never double-matches here. */
 const CODE_FENCE = /```(\w*)\n([\s\S]*?)```/g;
-/** Card chrome (header bar + vertical margins) around a rendered Mermaid diagram body. */
 const MERMAID_CHROME_PX = 64;
 /** Rendered height of one line inside a `CodeBlock` (`text-[11.5px] leading-[1.7]` ≈ 19.5px/line) plus the
  *  header-bar + padding chrome around the block. */
 const CODE_LINE_PX = 19;
 const CODE_CHROME_PX = 28;
-/** Approx chars per line at the ~800px content column, and the rendered height of one wrapped line. */
 const CHARS_PER_LINE = 92;
 const LINE_PX = 22;
 
@@ -1066,7 +1062,6 @@ const ROW_ESTIMATE: Record<string, number> = {
   attachments: 132,
 };
 
-/** Initial height guess for a classified message row. */
 function estimateForKind(kind: string): number {
   return ROW_ESTIMATE[kind] ?? ROW_ESTIMATE_FALLBACK;
 }

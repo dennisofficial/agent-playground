@@ -11,7 +11,6 @@ import { qk } from './query-keys';
 import { subscribeSse } from './sse-manager';
 import { writeUsageCache } from './usage-cache';
 
-/** A frame off the repo SSE: a durable-post change-signal, a live engine-stream frame, or a meta update. */
 interface SseFrame {
   type?: string;
   jobId?: string;

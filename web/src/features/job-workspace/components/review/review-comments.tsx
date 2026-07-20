@@ -40,7 +40,6 @@ export interface ReviewComment {
   lines?: DiffLineAnchor;
 }
 
-/** The stored anchor for a diff line comment (mirrors the backend `ReviewCommentItemDto.lines`). */
 export interface DiffLineAnchor {
   path: string;
   oldStart?: number;

@@ -1,4 +1,3 @@
-/** Compact human-readable byte size (e.g. `912 B`, `2 KB`, `9 KB`, `1.4 MB`). */
 export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
@@ -34,7 +33,6 @@ const EFFORT_LABELS: Record<string, string> = {
   max: 'Max',
 };
 
-/** A friendly display label for a reasoning-effort value (`xhigh` → `xHigh`). Null when unset. */
 export function formatEffort(effort?: string): string | null {
   if (!effort) return null;
   return EFFORT_LABELS[effort.toLowerCase()] ?? effort;

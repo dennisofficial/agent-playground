@@ -4,7 +4,6 @@
  * names (theme-aware): the swatch recolors for free on a theme swap.
  */
 
-/** The avatar palette (theme tokens). Used for member/user avatars (keyed by user id). */
 const ORG_COLORS = [
   'var(--accent)',
   'var(--blue)',
@@ -24,12 +23,10 @@ export function orgColor(orgId: string): string {
   return ORG_COLORS[Math.abs(h) % ORG_COLORS.length];
 }
 
-/** Org swatch fill — NEUTRAL grey (handoff: do not reintroduce per-org color). */
 export function orgSwatch(): string {
   return 'var(--faint)';
 }
 
-/** 1–2 letter avatar initials from an org name (first letters of the first two words, else first two chars). */
 export function orgInitials(name: string): string {
   const parts = (name || '').trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return '?';
@@ -37,12 +34,10 @@ export function orgInitials(name: string): string {
   return (parts[0][0] + parts[1][0]).toUpperCase();
 }
 
-/** A short, lowercase role label for chips (`owner` / `member`). */
 export function roleLabel(role: string): string {
   return (role || 'member').toLowerCase();
 }
 
-/** Compact relative time ("just now", "5m", "3h", "2d", "Apr 9") from an ISO timestamp. */
 export function timeAgo(iso: string): string {
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return '';
@@ -81,7 +76,6 @@ export function formatClockTime(iso: string): string {
   return `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}, ${time}`;
 }
 
-/** Format a token count compactly ("340", "1.2k", "1.3M") for the per-turn counter + context ring. */
 export function formatTokens(n: number): string {
   if (!Number.isFinite(n) || n < 0) return '0';
   if (n < 1000) return String(Math.round(n));
@@ -93,7 +87,6 @@ export function formatTokens(n: number): string {
   return `${m < 10 ? m.toFixed(1) : Math.round(m)}M`;
 }
 
-/** Slugify an org name into a URL-safe handle (mirrors the backend's `slugifyName`). */
 export function slugify(name: string): string {
   return (
     (name || '')

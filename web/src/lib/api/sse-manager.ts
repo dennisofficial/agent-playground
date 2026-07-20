@@ -23,7 +23,6 @@ import { refreshSession } from './refresh';
  * the duplicate-URL connections, which is the part that bit on every thread switch.
  */
 
-/** Handle passed to a subscriber's callbacks for stream-level control. */
 export interface SseHandle {
   /** Stop this URL's stream for good (no reconnect) until every subscriber has detached. */
   closePermanently(): void;

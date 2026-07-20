@@ -8,7 +8,6 @@ import { UserBubble } from '../conversation/bubbles/bubbles';
 import { MessageTime } from '../conversation/bubbles/MessageTime';
 import { PremeasureContext } from '../conversation/idle-premeasure';
 
-/** Human file size (1 decimal for KB+). */
 function fmtSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
@@ -60,7 +59,6 @@ function ImageThumb({ jobRef, item }: { jobRef: JobRef; item: WebAttachmentItem 
   );
 }
 
-/** One non-image file chip (name + size). */
 function FileChip({ item }: { item: WebAttachmentItem }) {
   return (
     <div

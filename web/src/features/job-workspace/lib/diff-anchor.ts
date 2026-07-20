@@ -16,7 +16,6 @@ export type LineAnchor = {
 
 const rowSign = (t: DiffRow['type']): string => (t === 'add' ? '+' : t === 'del' ? '-' : ' ');
 
-/** Derive the old/new spans + signed fragment from a contiguous run of selected diff rows. */
 export function deriveLineAnchor(
   rows: Pick<DiffRow, 'type' | 'oldNo' | 'newNo' | 'code'>[],
 ): LineAnchor | null {
@@ -37,14 +36,12 @@ type Spans = {
   newEnd?: number;
 };
 
-/** Short display label for an anchor: the new-side span (what's in the worktree) when present, else old. */
 export function anchorLabel(a: Spans): string {
   const span = (s?: number, e?: number, tag = ''): string | null =>
     s == null ? null : `L${s}${e != null && e !== s ? `–${e}` : ''}${tag}`;
   return span(a.newStart, a.newEnd) ?? span(a.oldStart, a.oldEnd, ' (old)') ?? '';
 }
 
-/** The (side, line) a comment docks under — the end of its new span, else its old span. */
 export function anchorEnd(a: {
   oldEnd?: number;
   newEnd?: number;

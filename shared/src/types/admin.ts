@@ -11,7 +11,6 @@ import type { BranchingPolicy } from './branching';
  */
 export type Tier = 'team' | 'project' | 'bot' | 'private';
 
-/** Full fact response shape for the Memory Viewer API. */
 export interface FactView {
   id: number;
   /** The fact text — `content` per the Memory Viewer API contract (spec field name). */
@@ -43,7 +42,6 @@ export interface FactListResponse {
   offset: number;
 }
 
-/** Query params for `listFacts` / `listAllFacts`. All optional. */
 export interface FactQuery {
   tier?: Tier;
   projectId?: string;
@@ -74,7 +72,6 @@ export interface TenantView {
   slug: string;
 }
 
-/** A registered project: binds a project id (the slug rooms carry) to a GitHub repo. */
 export interface ProjectRecord {
   /** The tenant (Slack team id) this project belongs to. */
   teamId: string;
@@ -105,7 +102,6 @@ export interface NewProject {
   tokenName?: string | null;
 }
 
-/** Token METADATA — the only shape that ever leaves the store besides `resolve()`. */
 export interface GithubTokenMeta {
   name: string;
   isDefault: boolean;
@@ -117,7 +113,6 @@ export interface GithubTokenMeta {
 // and the board/pipeline dashboards. A plan is rendered as diagrams + prose instead of a
 // wall of markdown; these DTOs carry the data the viewer renders.
 
-/** A team-board task as shown in the plan viewer / board dashboard. */
 export interface BoardTaskView {
   id: number;
   project: string;
@@ -153,7 +148,6 @@ export interface PlanRowView {
   updatedAt: string;
 }
 
-/** One build phase within a feature-pipeline section. */
 export interface PhaseView {
   id: string;
   sectionId: string;
@@ -165,7 +159,6 @@ export interface PhaseView {
   status: string;
 }
 
-/** One section of a feature pipeline, with its archived approved plan + phases. */
 export interface SectionView {
   id: string;
   /** Execution order, gap-numbered (10, 20, 30…). */
@@ -182,7 +175,6 @@ export interface SectionView {
   phases: PhaseView[];
 }
 
-/** A feature-pipeline run for a task, with ordered sections + phases. */
 export interface PipelineRunView {
   id: string;
   taskId: number;

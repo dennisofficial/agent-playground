@@ -67,7 +67,6 @@ async function shot(page: Page, name: string) {
 
 type Box = { top: number; left: number; width: number; height: number };
 
-/** Tag the tallest scroll container on the page and return a handle + its box. */
 async function findScrollContainer(page: Page): Promise<{ handle: Locator; box: Box }> {
   await page.evaluate(() => {
     let best: Element | null = null;
@@ -159,7 +158,6 @@ async function measureAnchorDrift(
   return { maxJump, scrollHeightDelta: Math.abs(shAfter - shBefore) };
 }
 
-/** Pick a stable, text-bearing element at the middle of the scroll container's viewport. */
 async function anchorAtMidViewport(page: Page, box: Box): Promise<Locator> {
   const x = box.left + box.width / 2;
   const y = box.top + box.height / 2;

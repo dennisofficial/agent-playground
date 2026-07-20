@@ -14,7 +14,6 @@ interface FieldProps extends InputHTMLAttributes<HTMLInputElement> {
   labelAside?: ReactNode;
 }
 
-/** Labeled text input with inline error (red 11.5px under the field + red border/ring). */
 export const Field = forwardRef<HTMLInputElement, FieldProps>(function Field(
   { label, error, labelAside, className, id, ...rest },
   ref,
@@ -43,7 +42,6 @@ export const Field = forwardRef<HTMLInputElement, FieldProps>(function Field(
 
 interface PasswordFieldProps extends Omit<FieldProps, 'type'> {}
 
-/** Password input with an in-field show/hide toggle (mono, right-aligned). */
 export const PasswordField = forwardRef<HTMLInputElement, PasswordFieldProps>(
   function PasswordField({ label, error, labelAside, className, id, ...rest }, ref) {
     const autoId = useId();
@@ -83,7 +81,6 @@ export const PasswordField = forwardRef<HTMLInputElement, PasswordFieldProps>(
   },
 );
 
-/** 4-segment password strength meter (score 0–4 → width + label + color). */
 export function StrengthMeter({ password }: { password: string }) {
   const score = strength(password);
   const meta = [

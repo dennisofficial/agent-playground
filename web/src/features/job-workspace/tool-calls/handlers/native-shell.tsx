@@ -10,7 +10,6 @@ function ShellBody({ tool }: { tool: ToolItem }) {
   return <TerminalBlock body={body} chrome label="bash" command={command} />;
 }
 
-/** Bash — shell command + terminal output, rendered as a macOS terminal with the command as a prompt. */
 export const nativeShellHandler: ToolHandler = {
   id: 'native-shell',
   match: (name) => name.toLowerCase() === 'bash',

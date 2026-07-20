@@ -13,7 +13,6 @@
  * `Record<AtlasHostBridgeTool, string>` so a missing/stale label is a compile error.
  */
 
-/** The in-process MCP server name the host-bridge tools are registered under (`mcp__<server>__<tool>`). */
 export const BRIDGE_SERVER_NAME = 'atlas-host-bridge';
 
 /**
@@ -53,5 +52,4 @@ export const ATLAS_HOST_BRIDGE_TOOLS = [
   'finish_onboarding',
 ] as const;
 
-/** A single atlas-host-bridge tool name. */
 export type AtlasHostBridgeTool = (typeof ATLAS_HOST_BRIDGE_TOOLS)[number];

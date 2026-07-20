@@ -30,7 +30,6 @@ export interface JobListItem {
   updatedAt: string;
 }
 
-/** One thread (execution lane) within a group. */
 export interface ThreadView {
   id: string;
   jobId: string;
@@ -48,7 +47,6 @@ export interface ThreadView {
   updatedAt: string;
 }
 
-/** One thread group (pipeline phase / navigator item), with its threads nested for the workspace. */
 export interface ThreadGroupView {
   id: string;
   jobId: string;
@@ -92,7 +90,6 @@ export interface ThreadMessageView {
   postedAt: string;
 }
 
-/** One spawned subagent (Task tool run) with its token/cost accounting. */
 export interface SubagentView {
   id: string;
   threadId: string;
@@ -110,7 +107,6 @@ export interface SubagentView {
   endedAt: string | null;
 }
 
-/** One item in a thread group's agent TODO list (`GET /jobs/:jobId/tasks`). */
 export interface TaskView {
   id: string;
   jobId: string;

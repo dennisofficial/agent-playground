@@ -165,12 +165,10 @@ export function LogFileView({ content }: { content: string }) {
   );
 }
 
-/** anser returns colors as a bare `"r, g, b"` triple (e.g. `"85, 85, 85"`), not a CSS color — must wrap. */
 function cssColor(triple: string | null): string | undefined {
   return triple ? `rgb(${triple})` : undefined;
 }
 
-/** One log line, ANSI codes parsed into colored spans (no `dangerouslySetInnerHTML` — anser gives tokens). */
 function AnsiLine({ line }: { line: string }) {
   const segments = useMemo(
     () => Anser.ansiToJson(line, { use_classes: false, remove_empty: true }),

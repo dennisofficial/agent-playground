@@ -50,7 +50,6 @@ export interface KindMeta {
   color: string;
 }
 
-/** Kind badges are NEUTRAL grey (handoff: do not reintroduce per-kind color). */
 export const KIND_META: Record<EJobKind, KindMeta> = {
   [EJobKind.FEATURE]: { label: 'FEAT', color: 'var(--dim)' },
   [EJobKind.BUGFIX]: { label: 'FIX', color: 'var(--dim)' },

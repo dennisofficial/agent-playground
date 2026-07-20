@@ -28,7 +28,6 @@ function FullScreenMessage({
   );
 }
 
-/** Wraps the protected `(app)` group — unauth → /auth/login?next=… */
 export function PrivateGuard({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -51,7 +50,6 @@ export function PrivateGuard({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
-/** Wraps the public `(auth)` group — authed users are bounced to the workspace (or `?next=`). */
 export function PublicGuard({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [state, setState] = useState<AuthState | null>(null);

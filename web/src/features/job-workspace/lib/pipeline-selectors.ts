@@ -33,7 +33,6 @@ import type {
 
 // ─── Derivable now (real view logic) ──────────────────────────────────────────────────────────────
 
-/** An open job is still a conversation — it never entered the build lifecycle (the old `no_job` shape). */
 export function isNoJob(job: JobView): boolean {
   return job.status === EJobStatus.OPEN;
 }
@@ -48,12 +47,10 @@ export function activeJob(pipeline: Pipeline | undefined): JobView | null {
   return pipeline.job;
 }
 
-/** A job's thread groups in pipeline (ordinal) order. */
 export function sortedThreadGroups(job: JobView): ThreadGroupView[] {
   return [...job.threadGroups].sort((a, b) => a.ordinal - b.ordinal);
 }
 
-/** A thread group's threads in ordinal order (a build group's sequential builder legs, oldest first). */
 export function sortedThreads(group: ThreadGroupView): ThreadView[] {
   return [...group.threads].sort((a, b) => a.ordinal - b.ordinal);
 }
@@ -94,7 +91,6 @@ export function threadAcceptsOperatorInput(role: EThreadRole): boolean {
   return role === EThreadRole.BUILDER || role === EThreadRole.PLANNING;
 }
 
-/** The whole-diff Codex master-review thread (rendered "Master review", no review children). */
 export function isMasterReviewThread(t: ThreadView): boolean {
   return t.role === EThreadRole.MASTER_REVIEW;
 }
@@ -106,7 +102,6 @@ export function isMasterReviewThread(t: ThreadView): boolean {
 // the backend emits it. Kept as named selectors (not inline `null`s) so the whole gap greps as
 // `TODO(backend)` and lights up field-by-field as the read model lands.
 
-/** A prior plan revision as browsable history — a re-propose over already-DONE work forges one. */
 export interface PriorRevision {
   decisionRecordId: string;
   revision: number;
@@ -114,81 +109,62 @@ export interface PriorRevision {
   threadGroups: ThreadGroupView[];
 }
 
-/** TODO(backend): JobView does not carry `halt` yet. */
 export function jobHalt(_job: JobView | null): JobHalt | null {
   return null;
 }
-/** TODO(backend): JobView does not carry `build_path` yet (so a direct build is never distinguished). */
 export function jobBuildPath(_job: JobView | null): 'direct' | 'plan' | null {
   return null;
 }
-/** TODO(backend): JobView does not carry `pr_state` yet. */
 export function jobPrState(_job: JobView | null): PrState | null {
   return null;
 }
-/** TODO(backend): JobView does not carry `pr_number` yet. */
 export function jobPrNumber(_job: JobView | null): number | null {
   return null;
 }
-/** TODO(backend): JobView does not carry `pr_url` yet. */
 export function jobPrUrl(_job: JobView | null): string | null {
   return null;
 }
-/** TODO(backend): JobView does not carry `pr_mergeable` yet. */
 export function jobPrMergeable(_job: JobView | null): string | null {
   return null;
 }
-/** TODO(backend): JobView does not carry `ci_status` yet. */
 export function jobCiStatus(_job: JobView | null): CiStatus | null {
   return null;
 }
-/** TODO(backend): JobView does not carry `ci_counts` yet. */
 export function jobCiCounts(_job: JobView | null): CiCounts | null {
   return null;
 }
-/** TODO(backend): JobView does not carry the plan-review row yet. */
 export function jobPlanReview(
   _job: JobView | null,
 ): { status: string; defaultFooter?: LaneDefaultFooter } | null {
   return null;
 }
-/** TODO(backend): JobView does not carry prior plan revisions yet. */
 export function jobPriorRevisions(_job: JobView | null): PriorRevision[] {
   return [];
 }
-/** TODO(backend): JobView does not carry `feature_branch` yet. */
 export function jobFeatureBranch(_job: JobView | null): string | null {
   return null;
 }
-/** TODO(backend): JobView does not carry the observed `current_branch` yet. */
 export function jobCurrentBranch(_job: JobView | null): string | null {
   return null;
 }
-/** TODO(backend): JobView does not carry `base_branch` yet. */
 export function jobBaseBranch(_job: JobView | null): string | null {
   return null;
 }
-/** TODO(backend): JobView does not carry the `created_by` provenance snapshot yet. */
 export function jobCreatedBy(_job: JobView | null): JobProvenance | null {
   return null;
 }
-/** TODO(backend): JobView does not carry live blockers yet. */
 export function jobBlockedBy(_job: JobView | null): JobBlocker[] {
   return [];
 }
-/** TODO(backend): JobView does not carry the born-blocked `blocked_seed_message` yet. */
 export function jobBlockedSeedMessage(_job: JobView | null): string | null {
   return null;
 }
-/** TODO(backend): JobView does not carry the active `decision_record_id` yet. */
 export function jobDecisionRecordId(_job: JobView | null): string | null {
   return null;
 }
-/** TODO(backend): JobView does not carry the per-job auto-approve mode yet. */
 export function jobAutoApproveMode(_job: JobView | null): AutoApproveMode {
   return 'off';
 }
-/** TODO(backend): JobView does not carry the auto-merge settings / manual-merge gate yet. */
 export function jobAutoMerge(_job: JobView | null): {
   autoMerge: boolean;
   mergeReady: boolean;
@@ -196,15 +172,12 @@ export function jobAutoMerge(_job: JobView | null): {
 } {
   return { autoMerge: false, mergeReady: false, mergeValue: null };
 }
-/** TODO(backend): ThreadView does not carry pre-nested review children yet — the review path stays dark. */
 export function threadChildren(_t: ThreadView): PipelineReviewChild[] {
   return [];
 }
-/** TODO(backend): ThreadView does not carry the lane's pre-turn composer-footer default yet. */
 export function threadDefaultFooter(_t: ThreadView): LaneDefaultFooter | undefined {
   return undefined;
 }
-/** TODO(backend): the Main lane's pre-turn composer-footer default isn't emitted yet. */
 export function mainDefaultFooter(_pipeline: Pipeline | undefined): LaneDefaultFooter | undefined {
   return undefined;
 }

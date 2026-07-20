@@ -20,7 +20,6 @@ import { useMutation } from './_tanstack-shim';
 // to the settings page (`?githubApp=…`). Every write is owner-only server-side; `status` is member-readable
 // (no secrets).
 
-/** Connect state for the settings card (`GET …/github-app/status`) — never any secret value. */
 export interface GithubAppStatus {
   /** The platform Atlas App env is configured server-side (app id + key). When false, hide Connect. */
   configured: boolean;
@@ -106,12 +105,10 @@ export interface WorkspaceProfileView {
   seenManifests: string[] | null;
 }
 
-/** One repo's Atlas-managed provisioning (GET /web/orgs/:orgId/repos/:repoId/workspace-profile). Member-readable. */
 export function useWorkspaceProfile(_orgId: string, _repoId: string) {
   return stubQuery<WorkspaceProfileView>();
 }
 
-/** Owner-only: idempotent upsert-by-path of a mount. Server returns `restartsSandbox: true` — the mount SET changed, so in-flight sandboxes recreate on next attach. */
 export function useSaveMount(_orgId: string, _repoId: string) {
   return useMutation({
     mutationFn: (body: {
@@ -121,7 +118,6 @@ export function useSaveMount(_orgId: string, _repoId: string) {
   });
 }
 
-/** Owner-only: remove a mount by path. Also restarts sandboxes on next attach. */
 export function useDeleteMount(_orgId: string, _repoId: string) {
   return useMutation({
     mutationFn: (body: { path: string }): Promise<{ ok: true; restartsSandbox: true }> =>
@@ -129,7 +125,6 @@ export function useDeleteMount(_orgId: string, _repoId: string) {
   });
 }
 
-/** Owner-only: set (or, with `script: null`, clear) the repo's setup script. Runs on every cold sandbox bring-up. */
 export function useSaveSetupScript(_orgId: string, _repoId: string) {
   return useMutation({
     mutationFn: (body: { script: string | null }): Promise<{ ok: true }> =>
@@ -137,7 +132,6 @@ export function useSaveSetupScript(_orgId: string, _repoId: string) {
   });
 }
 
-/** Owner-only: set (or, with `instructions: null`, clear) the repo's preview recipe. */
 export function useSavePreviewRecipe(_orgId: string, _repoId: string) {
   return useMutation({
     mutationFn: (body: { instructions: string | null }): Promise<{ ok: true }> =>
@@ -145,7 +139,6 @@ export function useSavePreviewRecipe(_orgId: string, _repoId: string) {
   });
 }
 
-/** Owner-only: create/replace a repo's secret file at a destination path. Reuses the existing (unretired) secret-files endpoint — repoId goes in the body, not the path. */
 export function useSaveRepoSecretFile(_orgId: string, _repoId: string) {
   return useMutation({
     mutationFn: (body: { path: string; value: string; label?: string }): Promise<{ ok: boolean }> =>
@@ -153,7 +146,6 @@ export function useSaveRepoSecretFile(_orgId: string, _repoId: string) {
   });
 }
 
-/** Owner-only: delete a repo's secret file. */
 export function useDeleteRepoSecretFile(_orgId: string, _repoId: string) {
   return useMutation({
     mutationFn: (body: { path: string }): Promise<{ ok: boolean }> =>
@@ -172,13 +164,11 @@ export type McpSurface = 'brain' | 'build' | 'review';
 export type McpAuthKind = 'static' | 'oauth';
 export type McpOAuthTokenAuthMethod = 'none' | 'client_secret_post' | 'client_secret_basic';
 
-/** Non-secret OAuth knobs (only meaningful when `authKind='oauth'`). Tokens themselves are never exposed. */
 export interface McpOAuthConfig {
   scope?: string;
   tokenAuthMethod?: McpOAuthTokenAuthMethod;
 }
 
-/** A built-in server, shown read-only so operators know what the agent already has. */
 export interface SystemMcpServer {
   name: string;
   description: string;
@@ -190,7 +180,6 @@ export interface SystemMcpServer {
   inactiveReason?: string;
 }
 
-/** The non-secret, fully displayable config; secret header/env values appear as `null`. */
 export interface StoredMcpConfig {
   url?: string;
   command?: string;
@@ -200,7 +189,6 @@ export interface StoredMcpConfig {
   oauth?: McpOAuthConfig;
 }
 
-/** A user server as returned to the client — NEVER any secret value. */
 export interface McpServer {
   /** `'org'` for an org-wide server, otherwise the repo id. */
   scope: 'org' | string;
@@ -227,14 +215,12 @@ export interface McpServersView {
   servers: McpServer[];
 }
 
-/** One header/env entry sent on write. `secret:true` + empty `value` preserves the stored secret. */
 export interface McpHeaderInput {
   name: string;
   value: string;
   secret?: boolean;
 }
 
-/** Body for `PUT /web/orgs/:orgId/mcp-servers/:scope/:name` — replaces the server row. */
 export interface SaveMcpServerBody {
   transport: McpTransport;
   url?: string;
@@ -258,7 +244,6 @@ export function useMcpServers(_orgId: string) {
   return stubQuery<McpServersView>();
 }
 
-/** Owner-only: create/replace a server at a scope (`'org'` or a repo id). */
 export function useSaveMcpServer(_orgId: string) {
   return useMutation({
     mutationFn: ({
@@ -273,7 +258,6 @@ export function useSaveMcpServer(_orgId: string) {
   });
 }
 
-/** Owner-only: delete a server at a scope. */
 export function useDeleteMcpServer(_orgId: string) {
   return useMutation({
     mutationFn: ({ scope, name }: { scope: string; name: string }): Promise<{ ok: boolean }> =>
@@ -281,7 +265,6 @@ export function useDeleteMcpServer(_orgId: string) {
   });
 }
 
-/** Owner-only: best-effort probe (remote handshake / stdio structural). Persists the discovered tools. */
 export function useValidateMcpServer(_orgId: string) {
   return useMutation({
     mutationFn: ({ scope, name }: { scope: string; name: string }): Promise<McpValidateResult> =>
@@ -404,19 +387,16 @@ export interface ConventionProfilesView {
   profiles: ConventionProfile[];
 }
 
-/** Body for `PUT /web/orgs/:orgId/convention-profiles/:slug` — create or replace a profile. */
 export interface SaveConventionProfileBody {
   name: string;
   body: string;
   detectHint?: string;
 }
 
-/** Every house-style profile for the org (with body) — the settings editor's data. */
 export function useConventionProfiles(_orgId: string) {
   return stubQuery<ConventionProfilesView>();
 }
 
-/** Owner-only: create/replace a profile by slug. */
 export function useSaveConventionProfile(_orgId: string) {
   return useMutation({
     mutationFn: ({
@@ -429,7 +409,6 @@ export function useSaveConventionProfile(_orgId: string) {
   });
 }
 
-/** Owner-only: delete a profile. Repos still pointing at it fall back to "no house style". */
 export function useDeleteConventionProfile(_orgId: string) {
   return useMutation({
     mutationFn: (slug: string): Promise<{ ok: boolean }> =>
@@ -437,12 +416,10 @@ export function useDeleteConventionProfile(_orgId: string) {
   });
 }
 
-/** The slug currently attached to a repo (or null) — the repo-attach control's initial state. */
 export function useRepoConventionProfile(_orgId: string, _repoId: string) {
   return stubQuery<{ slug: string | null }>();
 }
 
-/** Owner-only: attach a profile to a repo, or clear it with `slug: null`. */
 export function useAttachConventionProfile(_orgId: string) {
   return useMutation({
     mutationFn: ({
@@ -477,7 +454,6 @@ export interface SystemSkill {
   synced?: boolean;
 }
 
-/** A skill as returned to the client — no secrets exist on a skill, so this is the full row. */
 export interface Skill {
   /** `'org'` for an org-wide skill, otherwise the repo id. */
   scope: 'org' | string;
@@ -498,7 +474,6 @@ export interface Skill {
   updateAvailable: boolean;
 }
 
-/** The `snake_case` shape the backend actually returns (`SkillView`) — mapped to `Skill` on read. */
 interface SkillWire {
   scope: string;
   name: string;
@@ -525,7 +500,6 @@ export interface SkillsView {
   skills: Skill[];
 }
 
-/** Every skill for the org — the System tiers plus org-wide + every repo scope. */
 export function useSkills(_orgId: string) {
   return stubQuery<SkillsView>();
 }
@@ -541,7 +515,6 @@ export interface InstallSkillBody {
   surfaces?: McpSurface[];
 }
 
-/** Owner-only: install from GitHub. */
 export function useInstallSkill(_orgId: string) {
   return useMutation({
     mutationFn: (body: InstallSkillBody): Promise<{ skills: SkillWire[] }> =>
@@ -579,7 +552,6 @@ export function useSaveSkill(_orgId: string) {
   });
 }
 
-/** Owner-only: apply-now — re-vendor a `git` skill from its recorded source, regardless of `updatePolicy`. */
 export function useUpdateSkill(_orgId: string) {
   return useMutation({
     mutationFn: ({ scope, name }: { scope: string; name: string }): Promise<{ ok: boolean }> =>
@@ -587,7 +559,6 @@ export function useUpdateSkill(_orgId: string) {
   });
 }
 
-/** Owner-only: fork a `git` skill to a fresh, freely-editable `custom` copy in the same scope. */
 export function useForkSkill(_orgId: string) {
   return useMutation({
     mutationFn: ({ scope, name }: { scope: string; name: string }): Promise<Skill> =>
@@ -595,7 +566,6 @@ export function useForkSkill(_orgId: string) {
   });
 }
 
-/** Owner-only: delete a skill (registry row + its on-disk dir). */
 export function useDeleteSkill(_orgId: string) {
   return useMutation({
     mutationFn: ({ scope, name }: { scope: string; name: string }): Promise<{ ok: boolean }> =>

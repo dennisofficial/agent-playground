@@ -48,9 +48,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { CredentialCard } from './CredentialCard';
 import { StatusChip } from './StatusChip';
 
-/** Visual tone for a status pill / chip. */
 export type Tone = 'green' | 'dim' | 'faint';
-/** Client-side validation status shown by {@link EditPill} for a credential field. */
 export type Status = 'idle' | 'testing' | 'valid' | 'invalid';
 
 /**
@@ -284,7 +282,6 @@ export function CredentialsSection({ orgId, role }: { orgId: string; role: strin
   );
 }
 
-/** Friendly copy for the `?githubApp=error&reason=…` redirect the install callback lands on. */
 function githubAppErrorMessage(reason: string | null): string {
   if (reason === 'already_connected')
     return 'That installation is already connected to another organization.';
@@ -575,7 +572,6 @@ type BlockProps = {
   deleteErrors: Record<string, string>;
 };
 
-/** Claude sub-block: account list + the two add affordances (personal OAuth login, setup-token). */
 function ClaudeBlock({
   accounts,
   orgId,
@@ -621,7 +617,6 @@ function ClaudeBlock({
   );
 }
 
-/** Codex sub-block: account list + device-code login and the paste-auth.json fallback. */
 function CodexBlock({
   accounts,
   orgId,
@@ -710,7 +705,6 @@ function AccountList({
   );
 }
 
-/** One account row: selected radio, label/badge/status, meta, per-account usage bars, owner delete. */
 function AgentAccountRow({
   cred,
   isOwner,
@@ -829,7 +823,6 @@ function AgentAccountRow({
   );
 }
 
-/** Badge distinguishing a personal OAuth login from a long-lived setup-token. */
 function AgentKindBadge({ kind }: { kind: AgentCredentialView['kind'] }) {
   const isPersonal = kind === 'personal';
   return (
@@ -854,7 +847,6 @@ function AgentKindBadge({ kind }: { kind: AgentCredentialView['kind'] }) {
   );
 }
 
-/** Status chip: active (green), needs re-auth (red), or error (red). */
 function AgentStatusChip({ status }: { status: AgentCredentialView['status'] }) {
   if (status === 'active') {
     return (
@@ -886,7 +878,6 @@ function AgentStatusChip({ status }: { status: AgentCredentialView['status'] }) 
   );
 }
 
-/** The row's secondary line: expiry + account for a personal login, or a masked token placeholder. */
 function agentMeta(cred: AgentCredentialView): string {
   if (cred.kind === 'setup_token') return 'sk-ant-oat01-••••••••••••';
   const emailSuffix = cred.accountEmail ? ` · ${cred.accountEmail}` : '';
@@ -981,7 +972,6 @@ function useClaudeLogin(orgId: string) {
 
 type ClaudeLogin = ReturnType<typeof useClaudeLogin>;
 
-/** Renders the shared personal-login flow as a card; owns no login state (the hook does). */
 function AddClaudePersonalCard({
   login,
   cardRef,
@@ -1079,7 +1069,6 @@ function AddClaudePersonalCard({
   );
 }
 
-/** A single "step N" pill used by the personal-login card's two-step flow. */
 function StepNumber({ n }: { n: number }) {
   return (
     <span className="mt-px flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-border-2 bg-surface-3 font-mono text-[10px] font-semibold text-dim">
@@ -1088,7 +1077,6 @@ function StepNumber({ n }: { n: number }) {
   );
 }
 
-/** Compact inline form for a long-lived Claude setup-token, generated via `claude setup-token`. */
 function AddClaudeSetupTokenCard({ orgId }: { orgId: string }) {
   const [add, { isLoading }] = useCreateClaudeSetupTokenMutation();
   const [label, setLabel] = useState('');
@@ -1159,7 +1147,6 @@ function AddClaudeSetupTokenCard({ orgId }: { orgId: string }) {
   );
 }
 
-/** Codex device-code login: start → show the code + link → poll until the account connects. */
 function AddCodexDeviceCard({ orgId }: { orgId: string }) {
   const [start, { isLoading: starting }] = useStartCodexDeviceMutation();
   const [poll] = usePollCodexDeviceMutation();
@@ -1276,7 +1263,6 @@ function AddCodexDeviceCard({ orgId }: { orgId: string }) {
   );
 }
 
-/** Fallback: paste the full `~/.codex/auth.json` from a local `codex login`. */
 function AddCodexPasteCard({ orgId }: { orgId: string }) {
   const [paste, { isLoading }] = usePasteCodexAuthMutation();
   const [label, setLabel] = useState('');
@@ -1346,12 +1332,10 @@ function AddCodexPasteCard({ orgId }: { orgId: string }) {
   );
 }
 
-/** Extract a human message from an RTK/axios mutation error. */
 function errMsg(e: unknown, fallback: string): string {
   return (e as { data?: { message?: string } })?.data?.message ?? (e as Error)?.message ?? fallback;
 }
 
-/** A lightweight group heading separating the credential cards by purpose. */
 function SectionLabel({ title, hint }: { title: string; hint: string }) {
   return (
     <div className="mb-2.5 mt-6 first:mt-0">
@@ -1361,7 +1345,6 @@ function SectionLabel({ title, hint }: { title: string; hint: string }) {
   );
 }
 
-/** "How to get this token" panel shown inside a credential's edit form. */
 function HelpBlock({ children }: { children: ReactNode }) {
   return (
     <div className="space-y-2 rounded-md border border-border-2 bg-surface-2 p-3 text-[11.5px] leading-relaxed text-dim">
@@ -1370,7 +1353,6 @@ function HelpBlock({ children }: { children: ReactNode }) {
   );
 }
 
-/** External link to a provider's token/key page inside help copy. */
 function HelpLink({ href, children }: { href: string; children: ReactNode }) {
   return (
     <a
@@ -1384,7 +1366,6 @@ function HelpLink({ href, children }: { href: string; children: ReactNode }) {
   );
 }
 
-/** Inline monospace token/path reference inside help copy. */
 function Code({ children }: { children: ReactNode }) {
   return (
     <code className="rounded-[3px] bg-surface-3 px-1 py-0.5 font-mono text-[11px] text-text">
@@ -1393,7 +1374,6 @@ function Code({ children }: { children: ReactNode }) {
   );
 }
 
-/** A copyable shell command line. */
 function CommandLine({ cmd }: { cmd: string }) {
   const [copied, setCopied] = useState(false);
   async function copy() {

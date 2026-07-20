@@ -32,7 +32,6 @@ function mapStatus(raw: unknown): TaskItem['status'] | null {
   return raw === 'pending' || raw === 'in_progress' || raw === 'completed' ? raw : null;
 }
 
-/** Apply one task-tool call to the map — same semantics as the backend fold (deleted REMOVES). */
 function applyCall(
   byId: Map<string, TaskItem>,
   name: string,

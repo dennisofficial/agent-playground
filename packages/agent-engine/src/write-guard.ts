@@ -59,7 +59,6 @@ export function evaluateWriteGuard(
   return { allow: true };
 }
 
-/** Is `path` inside `root` (after resolution)? Confines writes to the worktree. */
 function isInsideRoot(path: string, root: string): boolean {
   const r = resolvePath(root);
   const p = resolvePath(root, path);

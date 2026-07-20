@@ -17,10 +17,8 @@ import { durableSubBlocks, type SubBlock } from '../../subagents';
  * coherent back-and-forth, since they resume the same Codex session.
  */
 
-/** The node key that opens the Codex review lane in the detail pane (`?node=`). */
 export const CODEX_REVIEW_PREFIX = 'codex-review:';
 export const codexReviewNode = (jobId: string): string => `${CODEX_REVIEW_PREFIX}${jobId}`;
-/** The live-stream lane the review dialogue streams on (matches the backend `codexReviewLane`). */
 export const codexReviewLane = (jobId: string): string => `codex-review:${jobId}`;
 
 export interface CodexReviewIndex {
@@ -30,7 +28,6 @@ export interface CodexReviewIndex {
   anchorKeys: Set<string>;
 }
 
-/** Peel the Codex review stream out of the main conversation + mark the per-round summary anchors. */
 export function indexCodexReviewBlocks(messages: JobMessage[]): CodexReviewIndex {
   const childKeys = new Set<string>();
   const anchorKeys = new Set<string>();
@@ -46,7 +43,6 @@ export function indexCodexReviewBlocks(messages: JobMessage[]): CodexReviewIndex
   return { childKeys, anchorKeys };
 }
 
-/** The review lane's durable transcript blocks — the stream rows (anchors excluded), mapped to SubBlock. */
 export function durableCodexBlocks(messages: JobMessage[]): SubBlock[] {
   return durableSubBlocks(
     messages.filter(

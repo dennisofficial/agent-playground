@@ -36,7 +36,6 @@ const SUBAGENT_MODELS: Record<string, string> = {
 };
 export const subagentModel = (type: string): string | undefined => SUBAGENT_MODELS[type];
 
-/** Known subagent types → pinned reasoning effort (mirrors the `effort:` values in `SUBAGENTS` /
  *  `WRITER_SUBAGENTS` / `VALIDATE_SUBAGENT` / `PROTOTYPE_SUBAGENT` in engine-core.ts). Effort is pinned
  *  per type at spawn, so this is the effort a given subagent runs at. Unknown types return undefined. */
 const SUBAGENT_EFFORTS: Record<string, string> = {
@@ -174,7 +173,6 @@ export function indexDurableSubagents(messages: JobMessage[]): DurableSubagentIn
   return { childKeys, anchorKeys, summaryById, childrenById };
 }
 
-/** The Task anchor's prompt (full) — for the detail pane's collapsible "Task prompt". */
 export function durableSubagentPrompt(messages: JobMessage[], parentId: string): string {
   for (const m of messages) {
     if (m.kind === 'tool' && m.meta?.id === parentId) {

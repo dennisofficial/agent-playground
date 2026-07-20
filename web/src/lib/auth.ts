@@ -46,7 +46,6 @@ function authErrorMessage(err: unknown, fallback: string): Error {
   return new Error(err instanceof Error && err.message ? err.message : fallback);
 }
 
-/** Real adapter — wraps `@workspace/auth` against the Atlas app's `/auth/*` (direct, credentialed CORS). */
 class RealAuth implements AtlasAuth {
   private readonly inner = new Auth<{ id: string }>();
 

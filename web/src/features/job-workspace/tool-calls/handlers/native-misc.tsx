@@ -116,7 +116,6 @@ const STATUS_DOT: Record<string, { color: string; fill: boolean }> = {
   pending: { color: 'var(--faint)', fill: false },
 };
 
-/** TodoWrite body — the agent's checklist, with a per-item status marker. */
 function TodoBody({ tool }: { tool: ToolItem }) {
   const todos = Array.isArray(asRecord(tool.input).todos)
     ? (asRecord(tool.input).todos as unknown[])
@@ -171,7 +170,6 @@ function TodoBody({ tool }: { tool: ToolItem }) {
   );
 }
 
-/** Default body for the non-Todo native tools — the structured input/result panel. */
 function MiscBody({ tool }: { tool: ToolItem }) {
   if (tool.name.toLowerCase() === 'todowrite') return <TodoBody tool={tool} />;
   return (
@@ -189,7 +187,6 @@ function MiscBody({ tool }: { tool: ToolItem }) {
 const nativeKey = (name: string): string =>
   (isBridgeTool(name) ? mcpName(name) : name).toLowerCase();
 
-/** Misc native tools — proper label/icon so they don't render as `mcp · name`. */
 export const nativeMiscHandler: ToolHandler = {
   id: 'native-misc',
   match: (name) => Object.prototype.hasOwnProperty.call(NATIVE, nativeKey(name)),

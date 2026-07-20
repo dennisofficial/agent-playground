@@ -27,7 +27,6 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { RepoEditRow } from './RepoEditRow';
 
-/** HTTPS GitHub URL — same shape the backend's `parseGithubRepoUrl` accepts. */
 const GITHUB_URL = /^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i;
 const RED_SOFT = 'color-mix(in srgb, var(--red) 8%, transparent)';
 const RED_BORDER = 'color-mix(in srgb, var(--red) 40%, transparent)';

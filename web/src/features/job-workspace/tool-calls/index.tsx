@@ -22,7 +22,6 @@ export function segmentToolRun(tools: ToolItem[]): ToolItem[][] {
   return segments;
 }
 
-/** Sum the +/- diffstats across a group's tool calls into one badge — null if none carry a diffstat. */
 function aggregateDiffstat(tools: ToolItem[]): ToolBadge {
   let added = 0;
   let removed = 0;
@@ -41,7 +40,6 @@ function aggregateDiffstat(tools: ToolItem[]): ToolBadge {
   return sawDiffstat ? { kind: 'diffstat', added, removed: sawRemoved ? removed : null } : null;
 }
 
-/** Sum the line counts across a group's tool calls (Read) into one badge — null if none. */
 function aggregateLines(tools: ToolItem[]): ToolBadge {
   let n = 0;
   let saw = false;
@@ -65,7 +63,6 @@ export type { ToolItem } from './types';
  * row. File edits carry a `+N −N` diffstat badge and expand to a unified diff.
  */
 
-/** The inline arg slot. For a file path, dims the directory prefix and keeps the filename normal. */
 function PathArg({ arg, pathArg }: { arg: string; pathArg?: boolean }) {
   if (!pathArg) return <span className="flex-1 truncate font-mono text-[11.5px]">{arg}</span>;
   const cut = arg.lastIndexOf('/');

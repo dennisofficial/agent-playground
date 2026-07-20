@@ -21,7 +21,6 @@ function thresholdColor(pct: number): string {
   return 'var(--green)';
 }
 
-/** Friendly size scaling up to TB (1024 base). GB/TB keep one decimal unless the value is a whole number. */
 function humanizeBytes(bytes: number): string {
   let value = bytes;
   let unitIndex = 0;
@@ -38,7 +37,6 @@ function humanizeBytes(bytes: number): string {
   return `${Math.round(value)} ${unit}`;
 }
 
-/** "14d 3h" once past a day, "3h 12m" under a day, "12m" under an hour. */
 function humanizeUptime(seconds: number): string {
   const days = Math.floor(seconds / 86_400);
   if (days >= 1) {

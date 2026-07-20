@@ -23,7 +23,6 @@ import { useReviewComments, type ReviewComment } from '../review/review-comments
 import { StagedAnswersTray } from '../trays/staged-answers-tray';
 import { UsageRing } from '../chrome/usage-ring';
 
-/** Map one staged answer to the wire shape `/message` expects (drops the chip-only `label`). */
 function toMessageItem(a: StagedAnswer): MessageInput {
   if (a.kind === 'question') {
     return { type: 'answer_question', questionId: a.cardId, answer: a.answer };
@@ -39,7 +38,6 @@ function toMessageItem(a: StagedAnswer): MessageInput {
   return { type: 'secret_provided', requestId: a.cardId, value: a.value };
 }
 
-/** The lane's live footer data — the model/effort/engine that ran + its context occupancy. */
 export interface ComposerFooter {
   model?: string;
   effort?: string;

@@ -38,7 +38,6 @@ const NAV: { id: SettingsSection; label: string; icon: typeof SettingsIcon }[] =
 
 const NAV_IDS = new Set<SettingsSection>(NAV.map((n) => n.id));
 
-/** The active section is the last path segment (`…/settings/<section>`); the bare path falls back. */
 function sectionFromPath(pathname: string): SettingsSection {
   const last = pathname.split('/').pop() ?? '';
   return NAV_IDS.has(last as SettingsSection) ? (last as SettingsSection) : 'general';

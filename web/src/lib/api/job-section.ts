@@ -44,7 +44,6 @@ export const SECTION_LABEL: Record<JobSection, string> = {
   archived: 'Archived',
 };
 
-/** d1: build phase wins; PR state only decides once done. Returns null → not shown. */
 export function sectionOf(t: InboxThread): JobSection | null {
   switch (t.status) {
     case 'planning':

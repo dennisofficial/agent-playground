@@ -149,7 +149,6 @@
   --shadow-palette: 0 30px 80px rgba(0, 0, 0, 0.7);
 }
 
-/* Map tokens to Tailwind utilities. `inline` keeps utilities referencing var(--x). */
 @theme inline {
   --color-bg: var(--bg);
   --color-panel: var(--panel);
@@ -230,7 +229,6 @@ body {
   font-family: var(--f-ui), system-ui, sans-serif;
 }
 
-/* ── Thin scrollbar — the global default for every scroll surface. ─────────────────────────── */
 /* Standard properties, applied to EVERY element directly: `scrollbar-width` is NOT inherited, so
    setting it only on the root would never reach the scroll containers (they'd stay native/`auto`). */
 * {
@@ -261,7 +259,6 @@ body {
   background: transparent;
 }
 
-/* ── Animations — TRANSFORM-ONLY (handoff §5: never opacity-from-0). ───────────────────────── */
 @keyframes atlas-fadeUp {
   from {
     transform: translateY(8px);
@@ -307,7 +304,6 @@ body {
     opacity: 0;
   }
 }
-/* ── Server-unreachable illustration loops (decorative; opacity is intentional here). ────────── */
 @keyframes atlas-node-float {
   0%,
   100% {
@@ -464,7 +460,6 @@ body {
 .status-breathe {
   animation: atlas-status-breathe 1.5s ease-in-out infinite;
 }
-/* sweeping progress fill — the parent clips, this bar sweeps across */
 .prog-sweep {
   animation: atlas-prog 1.3s ease-in-out infinite;
 }

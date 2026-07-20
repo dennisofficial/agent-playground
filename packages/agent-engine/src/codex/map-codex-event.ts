@@ -12,7 +12,6 @@ import type { EngineEvent, StructuredPatchHunk } from '../types.js';
  */
 export type FileChangeKind = 'add' | 'delete' | 'update';
 
-/** Per-turn context the pure mapper needs — no turn state is owned by the mapper itself. */
 export interface MapCodexEventCtx {
   /** Worktree root, for reconstructing a `file_change`'s HEAD-relative diff. */
   cwd: string;

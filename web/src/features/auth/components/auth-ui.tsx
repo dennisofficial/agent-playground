@@ -2,7 +2,6 @@ import { Card } from '@/components/ui/card';
 import { AlertCircle } from 'lucide-react';
 import type { ReactNode } from 'react';
 
-/** Auth card wrapper (centered 396px column owns the width; this owns the padding + surface). */
 export function AuthCard({ children }: { children: ReactNode }) {
   return <Card className="p-7">{children}</Card>;
 }
@@ -16,7 +15,6 @@ export function AuthHeader({ title, subtitle }: { title: string; subtitle?: stri
   );
 }
 
-/** Red error banner — only renders when a message is present. */
 export function ErrorBanner({ message }: { message?: string | null }) {
   if (!message) return null;
   return (
@@ -35,7 +33,6 @@ export function ErrorBanner({ message }: { message?: string | null }) {
   );
 }
 
-/** Hairline — "OR" — hairline divider. */
 export function OrDivider() {
   return (
     <div className="my-4 flex items-center gap-3">

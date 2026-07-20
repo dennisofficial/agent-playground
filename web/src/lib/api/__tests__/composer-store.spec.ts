@@ -27,7 +27,6 @@ const refFor = (jobId: string): JobRef => ({
   jobId,
 });
 
-/** Minimal Map-backed `sessionStorage` — the vitest env is `node`, so there's no real `window`. */
 function makeStorage(): Storage {
   const map = new Map<string, string>();
   return {

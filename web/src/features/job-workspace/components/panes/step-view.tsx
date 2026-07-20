@@ -489,7 +489,6 @@ function Chip({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** Render a subagent's normalized transcript — consecutive tool blocks collapse into one group. */
 function SubagentTranscript({ blocks, active }: { blocks: SubBlock[]; active: boolean }) {
   const items: Array<{ key: string; node: React.ReactNode }> = [];
   let pending: ToolItem[] = [];
@@ -691,7 +690,6 @@ function DiffView({ jobRef }: { jobRef: JobRef }) {
   return <DiffPane jobRef={jobRef} />;
 }
 
-/** Render one real `/context` file: markdown → prose, images → inline, anything else → mono text. */
 function FileView({
   jobRef,
   path,
@@ -743,7 +741,6 @@ function FileView({
   );
 }
 
-/** Stable empty fallback for `FileBody`'s `fileSet` prop (no tracked-file manifest available). */
 const EMPTY_FILE_SET: Set<string> = new Set();
 export const MAX_HIGHLIGHTED_FILE_LINES = 500;
 
@@ -832,14 +829,12 @@ function FileBody({
   );
 }
 
-/** Builds a `data:` URL for a context file's inline content (base64 or utf8-encoded). */
 export function fileDataUrl(file: ContextFileContent): string {
   return file.encoding === 'base64'
     ? `data:${file.mime};base64,${file.content}`
     : `data:${file.mime};utf8,${encodeURIComponent(file.content)}`;
 }
 
-/** Image artifact viewer. Renders full-bleed — the viewer fills the entire pane body below the top bar. */
 function ImageFileBody({ file }: { file: ContextFileContent }) {
   return <ImageViewer src={fileDataUrl(file)} alt={file.name} />;
 }
@@ -864,7 +859,6 @@ export function fileCopyKind(mime: string): 'text' | 'image' | null {
   return null;
 }
 
-/** Re-encode any image data URL to a PNG blob via a canvas — browser clipboard image writes only accept PNG. */
 export async function imageDataUrlToPngBlob(dataUrl: string): Promise<Blob> {
   const img = new Image();
   img.src = dataUrl;

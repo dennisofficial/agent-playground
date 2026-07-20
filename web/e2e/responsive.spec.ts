@@ -46,7 +46,6 @@ test.beforeAll(async ({ browser, baseURL }) => {
   await context.close();
 });
 
-/** No horizontal scrollbar at this viewport — checked on every route/tier combination below. */
 async function expectNoHorizontalOverflow(page: Page) {
   await expect
     .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))

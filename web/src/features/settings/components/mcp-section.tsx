@@ -1107,7 +1107,6 @@ function OAuthConnect({
   );
 }
 
-/** A small status pill for an OAuth server: live popup result wins, else the persisted connected/needs-reauth. */
 function OAuthStatus({
   connected,
   needsReauth,
@@ -1158,7 +1157,6 @@ function FormLabel({
   );
 }
 
-/** stdio args — one input per positional arg, with an index gutter. */
 function ArgsEditor({ rows, onChange }: { rows: string[]; onChange: (rows: string[]) => void }) {
   return (
     <>
@@ -1201,7 +1199,6 @@ function ArgsEditor({ rows, onChange }: { rows: string[]; onChange: (rows: strin
   );
 }
 
-/** Header / env editor — key + value, each markable secret (lock toggle), stored secrets masked. */
 function PairEditor({
   label,
   addLabel,
@@ -1327,7 +1324,6 @@ function TransportBadge({ transport }: { transport: McpTransport }) {
   );
 }
 
-/** A compact OAuth auth badge for a server row: shows the auth type + connection state at a glance. */
 function OAuthBadge({ server }: { server: McpServer }) {
   const state = server.needsReauth
     ? { hue: 'red', label: 'needs re-auth' }
@@ -1352,7 +1348,6 @@ function surfaceLabel(s: McpSurface): string {
   return s === 'build' ? 'build' : s;
 }
 
-/** Derive a row's validation pill (color/text/spinner) from its stored state + any live probe. */
 function validationState(
   server: McpServer,
   pending: boolean,
@@ -1406,7 +1401,6 @@ function validationState(
   };
 }
 
-/** Turn a stored config's header/env map into editable rows (secret values come back withheld). */
 function configToRows(bag?: Record<string, string | null>): PairRow[] {
   if (!bag) return [];
   return Object.entries(bag).map(([k, v]) => ({
@@ -1418,14 +1412,12 @@ function configToRows(bag?: Record<string, string | null>): PairRow[] {
   }));
 }
 
-/** Turn editable rows back into the write payload (drops rows with no key). */
 function rowsToInput(rows: PairRow[]) {
   return rows
     .filter((r) => r.k.trim())
     .map((r) => ({ name: r.k.trim(), value: r.v, secret: r.secret }));
 }
 
-/** A one-line endpoint summary for a server row. */
 function endpointLabel(config: StoredMcpConfig, transport: McpTransport): string {
   if (transport === 'stdio') {
     return [config.command, ...(config.args ?? [])].filter(Boolean).join(' ');

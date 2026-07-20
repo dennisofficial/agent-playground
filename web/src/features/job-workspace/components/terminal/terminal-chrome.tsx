@@ -10,7 +10,6 @@ import { useState, type ReactNode } from 'react';
  * the same copy-to-clipboard affordance, so it lives here once instead of being re-typed per renderer.
  */
 
-/** Copy-to-clipboard with a 1.5s "copied" confirmation flash. */
 export function useCopied(): [boolean, (text: string) => void] {
   const [copied, setCopied] = useState(false);
   const copy = (text: string) => {
@@ -21,7 +20,6 @@ export function useCopied(): [boolean, (text: string) => void] {
   return [copied, copy];
 }
 
-/** A header-bar action button styled for the dark terminal frame (light-frame chrome uses `FrameBtn`). */
 export function TermBtn({
   onClick,
   title,
@@ -44,7 +42,6 @@ export function TermBtn({
   );
 }
 
-/** The Copy action for a terminal frame — writes `text` and flips to a ✓ flash. */
 export function CopyButton({ text }: { text: string }) {
   const [copied, copy] = useCopied();
   return (
@@ -55,7 +52,6 @@ export function CopyButton({ text }: { text: string }) {
   );
 }
 
-/** The Wrap toggle — flips a body between horizontal-scroll and line-wrapping. */
 export function WrapButton({ wrapped, onToggle }: { wrapped: boolean; onToggle: () => void }) {
   return (
     <TermBtn title={wrapped ? 'Disable line wrapping' : 'Wrap long lines'} onClick={onToggle}>

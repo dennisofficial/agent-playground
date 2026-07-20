@@ -54,7 +54,6 @@ async function shot(page: Page, name: string) {
   });
 }
 
-/** Inject a scripted stream frame into the REAL client live-turn store via the dev hook. */
 async function injectFrame(
   page: Page,
   jobId: string,

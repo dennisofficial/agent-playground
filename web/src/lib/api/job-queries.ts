@@ -67,7 +67,6 @@ import type { JobBlocker, Pipeline } from './types';
  * backend exists. The two RTK-wired repo hooks (`useOrgRepos`, `useRepoBranches`) are live.
  */
 
-/** A repo in a flat cross-org picker — its org context + the connected-repo view. */
 export interface RepoChoice {
   orgId: string;
   orgName: string;
@@ -126,12 +125,10 @@ export function usePipeline(ref: JobRef): QueryResultLike<Pipeline> {
   return { ...adaptQuery(jobQ), data } as QueryResultLike<Pipeline>;
 }
 
-/** A thread's `/context` files (specs + artifacts). SSE keeps it fresh via `useJobEvents`. */
 export function useJobContext(ref: JobRef) {
   return useQuery({ queryFn: () => fetchThreadContext(ref) });
 }
 
-/** One `/context` file's content (`path` bucket-relative, e.g. `specs/plan.md`). Lazy — only when opened. */
 export function useContextFile(ref: JobRef, path: string | null) {
   return useQuery({ queryFn: () => fetchContextFile(ref, path!) });
 }
@@ -154,7 +151,6 @@ export function useRepoTree(ref: JobRef) {
   return useQuery({ queryFn: () => fetchRepoTree(ref) });
 }
 
-/** One repo file's content (LIVE worktree). Lazy — only when a path is set (a file view is open). */
 export function useRepoFile(ref: JobRef, path: string | null) {
   return useQuery({ queryFn: () => fetchRepoFile(ref, path!) });
 }
@@ -176,12 +172,10 @@ export function useOrgRepos(orgId: string) {
   return adaptQuery(useGetOrgReposQuery(orgId, { skip: !orgId }));
 }
 
-/** A repo's branches — the create-job base-branch picker (hits GitHub via the org token). */
 export function useRepoBranches(_orgId: string, repoId: string) {
   return adaptQuery(useGetRepoBranchesQuery({ repoId }, { skip: !repoId }));
 }
 
-/** Jobs Atlas spawned FROM this one — the job workspace's "Created jobs" panel. */
 export function useJobCreatedJobs(ref: JobRef) {
   return useQuery({ queryFn: () => fetchCreatedJobs(ref) });
 }
@@ -372,7 +366,6 @@ export function useCreateThread(orgId: string, repoId: string) {
   });
 }
 
-/** Rename a thread (the only thread Update op). Refreshes the inbox so the new title shows everywhere. */
 export function useRenameJob(ref: JobRef) {
   return useMutation({ mutationFn: (title: string) => renameJob(ref, title) });
 }
@@ -383,7 +376,6 @@ export function useSetAutoApprove(ref: JobRef) {
   return useMutation({ mutationFn: (mode: AutoApproveMode) => setAutoApprove(ref, mode) });
 }
 
-/** Flip the job's auto-merge settings. Invalidate the pipeline so the popover reflects immediately. */
 export function useSetAutoMerge(ref: JobRef) {
   return useMutation({
     mutationFn: (body: { autoMerge: boolean }) => setAutoMerge(ref, body),

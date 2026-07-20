@@ -9,7 +9,6 @@ import type { WebMcpProposalCard, WebMcpProposalServer } from '@/lib/api/types';
 import { CheckCircle2, Lock, Plug, RefreshCw } from 'lucide-react';
 import { Markdown } from '../conversation/markdown';
 
-/** The secret header/env keys a server still needs after approval (declared by name, filled via a secret card). */
 function secretSlots(s: WebMcpProposalServer): string[] {
   return [
     ...(s.headers ?? []).filter((h) => h.secret).map((h) => `header:${h.name}`),

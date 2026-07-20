@@ -18,7 +18,6 @@ const BLOCKABLE_STATUSES = new Set<EJobStatus>([
   EJobStatus.BLOCKED,
 ]);
 
-/** Kebab → "Rename job" + "Unblock" (when blocked) + "Block on another job…" + a two-click "Archive job". */
 export function JobMenu({
   onStartRename,
   onDelete,

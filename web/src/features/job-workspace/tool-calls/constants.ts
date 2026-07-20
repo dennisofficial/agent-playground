@@ -4,7 +4,6 @@ import {
   type AtlasHostBridgeTool,
 } from '@workspace/shared';
 
-/** The in-process MCP server the Atlas host-bridge tools are registered under (mirrors the backend). */
 export { ATLAS_HOST_BRIDGE_TOOLS, BRIDGE_SERVER_NAME };
 export type { AtlasHostBridgeTool };
 

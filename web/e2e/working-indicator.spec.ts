@@ -35,7 +35,6 @@ async function shot(page: Page, name: string) {
   });
 }
 
-/** Force pipeline status=running (arms the Main `live` fallback) and pin the inbox row `activity`. */
 async function installRoutes(page: Page, activity: 'idle' | 'build') {
   // Abort the realtime SSE so it can't overwrite the patched activity in the query cache.
   await page.route(

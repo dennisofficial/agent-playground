@@ -126,24 +126,20 @@ function useInboxJobs(
   return { ...adaptQuery(q), data } as QueryResultLike<InboxThread[]>;
 }
 
-/** Every active thread across the operator's orgs — the sidebar + "All organizations" board. */
 export function useAllJobs(): QueryResultLike<InboxThread[]> {
   return useInboxJobs(NOT_ARCHIVED);
 }
 
-/** Archived threads (only fetched when the sidebar's Archived group is expanded). */
 export function useArchivedJobs(enabled: boolean): QueryResultLike<InboxThread[]> {
   return useInboxJobs(ARCHIVED, enabled);
 }
 
-/** A repo subgroup: the in-flight threads on one repo. */
 export interface RepoThreadGroup {
   repoId: string;
   repoName: string;
   threads: InboxThread[];
 }
 
-/** An org with its repos that have threads (the sidebar's org → repo → thread tree). */
 export interface OrgRepoGroup {
   orgId: string;
   orgName: string;

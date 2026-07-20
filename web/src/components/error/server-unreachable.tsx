@@ -125,7 +125,6 @@ export function ServerUnreachable() {
 
 const AUTO_RETRY_SECS = 8;
 
-/** Real backend host for the detail chip (browsers never surface the design's mock `ECONNREFUSED`). */
 function backendHost(): string {
   try {
     return new URL(env.NEXT_PUBLIC_BACKEND_URL).host;

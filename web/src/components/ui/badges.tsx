@@ -16,7 +16,6 @@ import {
 import { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
-/** A status dot — colored by status, optionally pulsing (running/triaging) with a soft glow. */
 export function StatusDot({
   status,
   size = 8,
@@ -43,7 +42,6 @@ export function StatusDot({
   );
 }
 
-/** A plain colored dot (used for section nodes + system-event tones). */
 export function Dot({
   color,
   pulse = false,
@@ -64,7 +62,6 @@ export function Dot({
   );
 }
 
-/** FEAT / FIX / EVENT mono badge — NEUTRAL grey + hairline border (handoff: no per-kind color). */
 export function KindBadge({ kind, className }: { kind: EJobKind; className?: string }) {
   const meta = KIND_META[kind];
   return (
@@ -350,7 +347,6 @@ export function ciGlyph(ci: CiStatus | null): {
   };
 }
 
-/** One tooltip segment for the CI counts popover — a colored dot + "N label". */
 type CiCountSegment = { label: string; color: string };
 
 /** Build the Variant-A tooltip segments ("X failed · Y skipped · Z passed", plus pending when > 0) from
@@ -473,7 +469,6 @@ export function CiStatusDot({ ci, size = 7 }: { ci: CiStatus | null; size?: numb
   );
 }
 
-/** Status pill: a dot + label, tinted by status. */
 export function StatusPill({ status, className }: { status: EJobStatus; className?: string }) {
   const meta = STATUS_META[status];
   return (

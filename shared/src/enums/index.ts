@@ -1,23 +1,32 @@
-/** Lifecycle state of an organization. */
 export enum EOrgStatus {
   ONBOARDING = 'onboarding',
   ACTIVE = 'active',
   SUSPENDED = 'suspended',
 }
 
-/** A user's role within a single organization. */
 export enum EOrgRole {
   OWNER = 'owner',
   MEMBER = 'member',
 }
 
-/** A user's platform-wide role. */
 export enum EUserRole {
   ADMIN = 'admin',
   OPERATOR = 'operator',
 }
 
-/** Account lifecycle — new sign-ups are PENDING until an operator approves them. */
+/**
+ * How a workspace mount is exposed to a job's sandbox — the WIRE CONTRACT (single-sourced so the DB `enum`
+ * column and the web console can't drift).
+ * - `PER_THREAD` — a fresh copy per thread/worktree (isolated, writable).
+ * - `SHARED_RO`  — one shared mount across threads, read-only (e.g. a model/cache dir).
+ * - `SHARED_RW`  — one shared mount across threads, read-write (e.g. a package store).
+ */
+export enum EMountMode {
+  PER_THREAD = 'per-thread',
+  SHARED_RO = 'shared-ro',
+  SHARED_RW = 'shared-rw',
+}
+
 export enum EUserStatus {
   PENDING = 'pending',
   ACTIVE = 'active',
@@ -48,7 +57,6 @@ export enum EAgentCredentialKind {
   SETUP_TOKEN = 'setup_token',
 }
 
-/** Health of an agent credential — surfaced in the UI; `needs_reauth` means a refresh hard-failed. */
 export enum EAgentCredentialStatus {
   ACTIVE = 'active',
   NEEDS_REAUTH = 'needs_reauth',
@@ -92,7 +100,6 @@ export enum EJobActivity {
   RETRYING = 'retrying',
 }
 
-/** The shape of work a job represents. */
 export enum EJobKind {
   FEATURE = 'feature',
   BUGFIX = 'bugfix',
@@ -101,14 +108,12 @@ export enum EJobKind {
   REVIEW = 'review', // a standalone review pass
 }
 
-/** Why/how a job was created — a human chat, an external event, or a control-plane action. */
 export enum EThreadOrigin {
   CHAT = 'chat',
   EVENT = 'event',
   CONTROL = 'control',
 }
 
-/** A thread (lane)'s PURE LINEAR STEP. Pause/failure/skip are NOT steps — see {@link EThreadCondition}. */
 export enum EThreadStatus {
   PENDING = 'pending',
   PLANNING = 'planning',
@@ -118,7 +123,6 @@ export enum EThreadStatus {
   DONE = 'done',
 }
 
-/** The orthogonal condition overlay on a lane, independent of the linear {@link EThreadStatus} step. */
 export enum EThreadCondition {
   NONE = 'none',
   PAUSED = 'paused', // a mid-build pause (request_operator_input / thread-level approval)
@@ -127,7 +131,6 @@ export enum EThreadCondition {
   SKIPPED = 'skipped', // a review child that had nothing to do — terminal, not a failure
 }
 
-/** Per-step status (the execute folder's leaves). */
 export enum EStepStatus {
   PENDING = 'pending',
   BUILDING = 'building',
@@ -135,7 +138,6 @@ export enum EStepStatus {
   DONE = 'done',
 }
 
-/** A thread's function in the pipeline — drives which harness/prompt kit runs it. */
 export enum EThreadRole {
   PLANNING = 'planning',
   PLAN_REVIEW = 'plan_review',
@@ -147,7 +149,6 @@ export enum EThreadRole {
   CI = 'ci',
 }
 
-/** A thread's subject area (used to group threads under a thread group in the navigator). */
 export enum EThreadType {
   BACKEND = 'backend',
   FRONTEND = 'frontend',
@@ -158,7 +159,6 @@ export enum EThreadType {
   GENERAL = 'general',
 }
 
-/** A thread group's kind (pipeline phase). One group holds many threads of varying {@link EThreadRole}s. */
 export enum EThreadGroupKind {
   PLANNING = 'planning',
   PLAN_REVIEW = 'plan_review',
@@ -169,7 +169,6 @@ export enum EThreadGroupKind {
   CI = 'ci',
 }
 
-/** A thread message's render type — what the conversation classifier switches on. */
 export enum EThreadMessageKind {
   CHAT = 'chat',
   THINKING = 'thinking',
@@ -178,7 +177,6 @@ export enum EThreadMessageKind {
   BUILD_EVENT = 'build_event',
 }
 
-/** Message provenance, by AUDIENCE — who authored a block and who can see it (`isAtlas` derives from it). */
 export enum EThreadMessageSource {
   OPERATOR = 'operator',
   ATLAS = 'atlas',
@@ -190,7 +188,6 @@ export enum EThreadMessageSource {
   UNTRUSTED = 'untrusted', // content from an untrusted external source
 }
 
-/** One task's status in a thread group's agent-maintained TODO list (`dropped` is the deleted status). */
 export enum ETaskStatus {
   PENDING = 'pending',
   IN_PROGRESS = 'in_progress',
@@ -198,7 +195,6 @@ export enum ETaskStatus {
   DROPPED = 'dropped',
 }
 
-/** A spawned subagent (Task tool run)'s lifecycle status. */
 export enum ESubagentStatus {
   RUNNING = 'running',
   DONE = 'done',

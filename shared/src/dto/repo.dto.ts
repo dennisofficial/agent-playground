@@ -6,7 +6,6 @@
 import { IsBoolean, IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
 import { AUTO_MERGE_METHODS, type AutoMergeMethod } from '../types/auto-merge';
 
-/** `POST /orgs/:orgId/repos` — connect a GitHub repo to the org by URL. */
 export class ConnectRepoDto {
   @IsString()
   @MaxLength(300)
@@ -23,7 +22,6 @@ export class ConnectRepoDto {
   baseBranch?: string;
 }
 
-/** `PATCH /orgs/:orgId/repos/:repoId` — metadata only; makes no GitHub call. */
 export class UpdateRepoDto {
   @IsOptional()
   @IsString()
@@ -98,13 +96,11 @@ export interface ConnectedRepo {
   reason?: string;
 }
 
-/** `GET /orgs/:orgId/repos/:repoId/branches` — live branch list, default branch first. */
 export interface RepoBranches {
   branches: string[];
   defaultBranch: string;
 }
 
-/** `DELETE /orgs/:orgId/repos/:repoId` result. */
 export interface DisconnectRepoResult {
   ok: boolean;
   threadsDeleted: number;

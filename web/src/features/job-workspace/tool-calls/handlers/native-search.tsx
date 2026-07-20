@@ -7,7 +7,6 @@ import { asRecord, basename, formatPayload, resultLineCount, str } from '../util
 
 const SEARCH_TOOLS = new Set(['read', 'grep', 'glob']);
 
-/** True when most lines look like ripgrep's single-file `<n>:match` / `<n>-context` output. */
 function isNumberedGrep(result: string): boolean {
   const lines = result.split('\n').filter((l) => l.trim() && l !== '--');
   if (!lines.length) return false;
@@ -40,7 +39,6 @@ function SearchBody({ tool }: { tool: ToolItem }) {
   return <TerminalBlock body={body} />;
 }
 
-/** Read / Grep / Glob — file reads and content/path searches. Only Read carries a line-count pill. */
 export const nativeSearchHandler: ToolHandler = {
   id: 'native-search',
   match: (name) => SEARCH_TOOLS.has(name.toLowerCase()),

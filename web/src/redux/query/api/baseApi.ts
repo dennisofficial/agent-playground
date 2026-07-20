@@ -6,7 +6,6 @@ import { axiosQuery } from '@/redux/query/axiosQuery';
 import { createApi } from '@reduxjs/toolkit/query/react';
 import axios from 'axios';
 
-/** Cache tags for RTK Query invalidation. Case-sensitive. */
 export enum EBaseApiCacheTags {
   SESSION = 'SESSION',
   ORG = 'ORG',

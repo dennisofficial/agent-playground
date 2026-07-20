@@ -21,11 +21,8 @@ import { useSyncExternalStore } from 'react';
  */
 export type ConnectivityStatus = 'online' | 'reconnecting' | 'offline';
 
-/** ms a failure must persist before we surface the "Reconnecting…" banner (debounces transient blips). */
 const RECONNECTING_AFTER_MS = 1500;
-/** ms a failure must persist before we escalate to the persistent red offline indicator. */
 const OFFLINE_AFTER_MS = 8000;
-/** Recovery-probe backoff. The first tick (600 ms) lands before the banner so a false alarm self-heals silently. */
 const PROBE_BACKOFF_MS = [600, 1500, 3000, 5000, 8000];
 
 type Timer = ReturnType<typeof setTimeout>;
@@ -136,7 +133,6 @@ class ConnectivityStore {
 
 export const connectivity = new ConnectivityStore();
 
-/** Subscribe a component to the global backend-connectivity status. */
 export function useConnectivity(): ConnectivityStatus {
   return useSyncExternalStore(
     connectivity.subscribe,

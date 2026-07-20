@@ -6,7 +6,6 @@ import { computeDiffRows, rowsFromHunk, splitLines, type DiffRow } from './diff-
 import { renderTokenLine, useHighlightTokens, type ThemedToken } from './highlight';
 import type { DiffHunk, IconKind, ToolBadge } from './types';
 
-/** Every code/diff body scrolls inside this fixed window (~14 lines) instead of growing unbounded. */
 const CODE_MAX_HEIGHT = 280;
 
 export const Chevron = ({ size = 11, className = '' }: { size?: number; className?: string }) => (
@@ -125,7 +124,6 @@ export function ToolIcon({ kind, color }: { kind: IconKind; color: string }) {
   }
 }
 
-/** An add-toned pill before the badge — e.g. "NEW" on a Write row, or "N NEW" rolled up on a group. */
 export function NewPill({ text, size = 'row' }: { text: string; size?: 'group' | 'row' }) {
   const dims =
     size === 'group'
@@ -145,7 +143,6 @@ export function NewPill({ text, size = 'row' }: { text: string; size?: 'group' |
   );
 }
 
-/** Marks a tool row whose tool triggered a JIT PostToolUse additionalContext injection (svc-nudge /
  * github-fetch-guard / install-awareness) — an info-toned pill distinct from NewPill's add-green. */
 export function JitPill({ count }: { count: number }) {
   return (
@@ -266,7 +263,6 @@ export function Badge({ badge, size = 'row' }: { badge: ToolBadge; size?: 'group
   );
 }
 
-/** A shell prompt line (bash-highlighted) above terminal output — the command as if we'd typed it. */
 function CommandPrompt({ command }: { command: string }) {
   const lines = command.replace(/\n$/, '').split('\n');
   const lineTokens = useHighlightTokens(lines.join('\n'), 'bash', true);
@@ -337,7 +333,6 @@ export function TerminalBlock({
   );
 }
 
-/** Light panel for structured (MCP) results — optional `input` section + a result/error section. */
 export function StructuredPanel({
   input,
   result,
@@ -380,7 +375,6 @@ export function StructuredPanel({
 
 const NBSP = ' ';
 
-/** A renderable diff block: a hunk header line + its numbered rows. */
 type DiffBlock = { header: string; rows: DiffRow[] };
 
 /**
@@ -408,7 +402,6 @@ function CodeText({
   );
 }
 
-/** One diff line: old-no gutter · new-no gutter · sign · highlighted code, tinted by row type (dark). */
 function DiffLine({ row, tokens }: { row: DiffRow; tokens: ThemedToken[] | null | undefined }) {
   const isAdd = row.type === 'add';
   const isDel = row.type === 'del';
@@ -519,7 +512,6 @@ export function DiffView({
   );
 }
 
-/** A numbered code listing on the dark frame: right-aligned line-number gutter + highlighted code. */
 export function CodeListing({
   rows,
   lang,

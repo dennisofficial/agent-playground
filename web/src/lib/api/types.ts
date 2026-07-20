@@ -132,7 +132,6 @@ export interface WebVerdictCard {
   verdictLine: string;
 }
 
-/** One selectable answer in a question card (mirrors the backend `WebQuestionOption`). */
 export interface WebQuestionOption {
   id: string;
   label: string;
@@ -251,7 +250,6 @@ export interface WebReviewCommentsCard {
   message?: string;
 }
 
-/** One attachment the operator sent from the composer (image or file). Mirrors the backend `AttachmentCardItem`. */
 export interface WebAttachmentItem {
   /** Display filename. */
   name: string;
@@ -278,7 +276,6 @@ export interface WebAttachmentsCard {
   message?: string;
 }
 
-/** One proposed server in an MCP-proposal card — the non-secret definition only (mirrors the backend). */
 export interface WebMcpProposalServer {
   name: string;
   transport: 'http' | 'sse' | 'stdio';
@@ -421,10 +418,8 @@ export interface TaskItem {
   blockedBy?: string[];
 }
 
-/** Immutable snapshot of the job that spawned another job, captured at create time. */
 export type JobProvenance = { jobId: string; title: string | null };
 
-/** A live blocker of a `blocked` job — one row per job it depends on. */
 export type JobBlocker = {
   jobId: string;
   title: string | null;
@@ -443,7 +438,6 @@ export interface Pipeline {
   tasks: TaskView[];
 }
 
-/** One file in a `/context` bucket — mirrors the backend `ContextFile`. */
 export interface ContextFile {
   name: string;
   size: number;
@@ -464,7 +458,6 @@ export interface JobContext {
   evidence: ContextFile[];
 }
 
-/** One `/context` file's content for the viewer (`…/context/file?path=…`). Mirrors the backend shape. */
 export interface ContextFileContent {
   name: string;
   /** Path relative to the `/context` root, forward-slashed (e.g. `specs/plan.md`). */
@@ -488,7 +481,6 @@ export interface JobDiffHunk {
   lines: string[];
 }
 
-/** One file's change in the accumulated job diff — mirrors the backend `JobDiffFile`. */
 export interface JobDiffFile {
   path: string;
   /** Prior path for a rename; absent otherwise. */
@@ -507,7 +499,6 @@ export interface JobDiff {
   truncated: boolean;
 }
 
-/** One file's line totals/status in the cheap diff summary — mirrors the backend `JobDiffSummaryFile`. */
 export interface JobDiffSummaryFile {
   path: string;
   oldPath?: string;
@@ -517,7 +508,6 @@ export interface JobDiffSummaryFile {
   binary: boolean;
 }
 
-/** Numstat-only summary (no hunks) for the sidebar counts — mirrors the backend `JobDiffSummary`. */
 export interface JobDiffSummary {
   files: JobDiffSummaryFile[];
 }
@@ -551,7 +541,6 @@ export interface ServiceInfo {
   url: string | null;
 }
 
-/** Observed PR lifecycle — the backend `jobs.pr_state`. Null (no `pr`) means no PR yet. */
 export type PrState = 'open' | 'merged' | 'closed';
 
 /** Aggregate CI outcome for the PR head — backend `jobs.ci_status`. null = no checks reported ("no-CI").

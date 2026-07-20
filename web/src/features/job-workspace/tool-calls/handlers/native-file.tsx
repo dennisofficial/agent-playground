@@ -9,7 +9,6 @@ import { asRecord, basename, formatPayload, str } from '../util';
 const FILE_TOOLS = new Set(['edit', 'multiedit', 'write', 'notebookedit']);
 const isWriteName = (name: string) => ['write', 'notebookedit'].includes(name.toLowerCase());
 
-/** True for a file-creating/editing tool — used to gather these into a "N files changed" group. */
 export function isFileEditTool(name: string): boolean {
   return FILE_TOOLS.has(name.toLowerCase());
 }
@@ -19,7 +18,6 @@ function filePath(input: unknown): string {
   return str(inp.file_path ?? inp.path ?? inp.notebook_path);
 }
 
-/** The success-path body: a created-file listing for a Write, or a unified diff (per edit) for an Edit. */
 function FileBodyContent({ tool }: { tool: ToolItem }) {
   const inp = asRecord(tool.input);
   const lang = langFromPath(filePath(tool.input));
@@ -69,7 +67,6 @@ function FileBody({ tool }: { tool: ToolItem }) {
   );
 }
 
-/** Native file-editing tools: Edit / MultiEdit / Write / NotebookEdit — with a +/- diffstat badge. */
 export const nativeFileHandler: ToolHandler = {
   id: 'native-file',
   match: (name) => FILE_TOOLS.has(name.toLowerCase()),

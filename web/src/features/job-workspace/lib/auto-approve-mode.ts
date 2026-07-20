@@ -1,6 +1,5 @@
 import { type AutoApproveMode, modeApprovesPlan, modeApprovesShip } from '@workspace/shared';
 
-/** Composes the wire `AutoApproveMode` from the two independent Plan/Ship switches. */
 export function composeMode(plan: boolean, ship: boolean): AutoApproveMode {
   if (plan && ship) return 'both';
   if (plan) return 'plan';

@@ -1,4 +1,3 @@
-/** Auth validation rules from handoff §4.1. */
 export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function validateEmail(email: string): string | null {

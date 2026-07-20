@@ -23,7 +23,6 @@ export type HostStats = {
   sampledAt: string;
 };
 
-/** One bucketed sample of the `/host-stats/history` series. Mirrors the backend `HostStatsHistoryPoint`. */
 export type HostStatsHistoryPoint = {
   /** ISO bucket start. */
   t: string;
@@ -45,5 +44,4 @@ export function useHostStatsHistory(_hours = 24): QueryResultLike<HostStatsHisto
   return stubQuery<HostStatsHistory>();
 }
 
-/** No-op until the `/web/host-stats/realtime` SSE endpoint exists. */
 export function useHostStatsRealtime(): void {}

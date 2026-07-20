@@ -52,7 +52,6 @@ export default function CoordinatorPage() {
   );
 }
 
-/** Shown when there are threads but none currently need the operator (the common case today). */
 function AllCaughtUp() {
   return (
     <div

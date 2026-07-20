@@ -23,7 +23,6 @@ import {
 import { createJavaScriptRegexEngine } from 'shiki/engine/javascript';
 
 export type { ThemedToken };
-/** One `ThemedToken[]` per source line. */
 export type LineTokens = ThemedToken[][];
 
 /**
@@ -158,7 +157,6 @@ const LANG_ALIAS: Record<string, string> = {
   hcl: 'terraform',
 };
 
-/** Resolve a raw language id (file-derived or a markdown fence info string) to a canonical Shiki id. */
 function canonicalLang(lang: string): string {
   const normalized = lang.trim().toLowerCase();
   return LANG_ALIAS[normalized] ?? normalized;
@@ -192,7 +190,6 @@ function getHighlighter(): Promise<HighlighterCore> {
 const langPromises = new Map<string, Promise<void>>();
 const failedLangs = new Set<string>();
 
-/** Ensure `lang`'s grammar is loaded into `hi`; returns false for an unknown (non-curated) id. */
 async function ensureLang(hi: HighlighterCore, lang: string): Promise<boolean> {
   const loader = LANG_LOADERS[lang];
   if (!loader || failedLangs.has(lang)) return false;
@@ -213,19 +210,16 @@ async function ensureLang(hi: HighlighterCore, lang: string): Promise<boolean> {
   }
 }
 
-/** Whole-file tokenization — one pass, cross-line context preserved. Caller guarantees hi + lang ready. */
 function tokenizeWhole(hi: HighlighterCore, code: string, lang: string): LineTokens {
   return hi.codeToTokens(code, { lang, theme: 'atlas-term' }).tokens;
 }
 
-/** Per-line tokenization — each line highlighted in isolation, for non-contiguous rows (grep/diff). */
 function tokenizeLines(hi: HighlighterCore, lines: string[], lang: string): LineTokens {
   return lines.map(
     (l) => hi.codeToTokens(l.length ? l : ' ', { lang, theme: 'atlas-term' }).tokens[0] ?? [],
   );
 }
 
-/** Map a file extension (or basename, for e.g. Dockerfile) to a Shiki language id, or `null`. */
 const EXT_LANG: Record<string, string> = {
   ts: 'typescript',
   tsx: 'tsx',
@@ -267,7 +261,6 @@ const EXT_LANG: Record<string, string> = {
   hcl: 'terraform',
 };
 
-/** The Shiki language id for a path, or `null` when unknown (caller renders plain escaped text). */
 export function langFromPath(path: string): string | null {
   if (!path) return null;
   const base = path.split('/').pop() ?? path;
@@ -276,7 +269,6 @@ export function langFromPath(path: string): string | null {
   return EXT_LANG[ext] ?? null;
 }
 
-/** Skip highlighting inputs large enough that a single synchronous tokenization pass would jank. */
 const MAX_HIGHLIGHT_LENGTH = 2_000_000;
 
 /**

@@ -25,11 +25,9 @@ export type NodeResolution = 'loading' | 'found' | 'not_found';
 export const threadNode = (threadId: string): string => threadId;
 
 // A stacked repo-file view id rides its own `?file=` param, like `subagent:` rides `?sub=`.
-/** A stacked repo-file view id: `file:<path>` with an optional `::L<a>[-<b>]` line target. */
 export const fileNode = (path: string, lines?: string): string =>
   `file:${path}${lines ? `::L${lines}` : ''}`;
 
-/** Parse a `file:<path>[::L<lines>]` token back to its parts, or null if it isn't a file node. */
 export function parseFileNode(token: string): { path: string; lines: string | null } | null {
   if (!token.startsWith('file:')) return null;
   const rest = token.slice('file:'.length);
@@ -39,7 +37,6 @@ export function parseFileNode(token: string): { path: string; lines: string | nu
     : { path: rest, lines: null };
 }
 
-/** Literals that render from card/derived data in the RIGHT detail pane. */
 const DETAIL_LITERALS = new Set(['plan', 'decision', 'diff', 'created', 'blocked-by']);
 /** Prefixed detail-pane nodes (files, ports, services, section plans). Review lenses (`rev:`) and the
  *  post-review fix turn (`fix:`) are THREADS, not detail nodes — they open in the LEFT lane pane like the
@@ -52,7 +49,6 @@ export function isDetailNode(node: string): boolean {
   return DETAIL_LITERALS.has(node) || DETAIL_PREFIX.test(node);
 }
 
-/** Literals that render from card / derived data — no live-id dependency, always resolvable. */
 const ID_FREE_NODES = new Set(['plan', 'decision', 'diff', 'created', 'blocked-by']);
 
 /**

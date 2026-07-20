@@ -5,7 +5,6 @@ import { addDraftAttachment, type JobRef } from '@/lib/api/job-api';
 import type { DraftAttachment, PendingAttachment } from '@/lib/api/job-queries';
 import { useEffect, useRef, useState } from 'react';
 
-/** Attachment caps — mirror the backend (`MAX_ATTACHMENTS` / `MAX_ATTACHMENT_BYTES`). */
 export const MAX_ATTACHMENTS = 25;
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 
@@ -214,5 +213,4 @@ export function useAttachments(ref?: JobRef): AttachmentsApi | LocalAttachmentsA
     : { ...api, attachments: localAttachments };
 }
 
-/** The ref-less sentinel — the store treats a blank jobId as "no draft" (create-job modal). */
 const EMPTY_REF: JobRef = { orgId: '', repoId: '', jobId: '' };

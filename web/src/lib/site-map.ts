@@ -49,7 +49,6 @@ export type SettingsSection =
   | 'members'
   | 'repos';
 
-/** Only honor a same-origin relative `?next=` target (no open-redirect). */
 export function safeNext(
   next: string | null | undefined,
   fallback = SITE_MAP.workspace(),

@@ -12,14 +12,12 @@ export type DiffRow = {
   code: string;
 };
 
-/** Drop the trailing empty element a terminal `\n` leaves after split, but keep interior blank lines. */
 export function splitLines(text: string): string[] {
   const lines = text.split('\n');
   if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
   return lines;
 }
 
-/** Walk a jsdiff line-diff into numbered rows + the old/new line totals for the hunk header. */
 export function computeDiffRows(
   before: string,
   after: string,
@@ -39,7 +37,6 @@ export function computeDiffRows(
   return { rows, oldCount: oldNo - 1, newCount: newNo - 1 };
 }
 
-/** Walk one structured-patch hunk into numbered rows, seeding line numbers from its real file offsets. */
 export function rowsFromHunk(hunk: DiffHunk, keyBase: number): DiffRow[] {
   const rows: DiffRow[] = [];
   let oldNo = hunk.oldStart;

@@ -7,7 +7,6 @@ import { IsEnum, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator
 import { EAgentCredentialKind, EAgentCredentialStatus, EAgentProvider } from '../enums';
 import type { AccountUsage } from '../types/usage';
 
-/** One agent account, as shown in Settings and streamed over realtime. No token material. */
 export interface AgentCredentialView {
   id: string;
   provider: EAgentProvider;
@@ -27,13 +26,11 @@ export interface AgentCredentialView {
   createdAt: string;
 }
 
-/** Result of starting the Claude OAuth flow — the URL to open and the state to echo back. */
 export interface ClaudeAuthorizeUrlResult {
   url: string;
   state: string;
 }
 
-/** Finish Claude OAuth: the `code#state` string the user pasted back, plus the issued state. */
 export class CreateClaudePersonalDto {
   @IsString()
   @MaxLength(4000)
@@ -44,7 +41,6 @@ export class CreateClaudePersonalDto {
   state!: string;
 }
 
-/** Add a Claude setup-token account (`sk-ant-oat…`), no OAuth dance. */
 export class CreateSetupTokenDto {
   @IsString()
   @MaxLength(20_000)
@@ -56,7 +52,6 @@ export class CreateSetupTokenDto {
   label?: string;
 }
 
-/** Result of starting the Codex device flow — show the user the code + link, poll with the handle. */
 export interface CodexDeviceStartResult {
   /** Opaque server-side handle used to poll; NOT the raw device_code. */
   handle: string;
@@ -69,20 +64,17 @@ export interface CodexDeviceStartResult {
   interval: number;
 }
 
-/** Poll a running Codex device flow. */
 export class CodexDevicePollDto {
   @IsString()
   @MaxLength(200)
   handle!: string;
 }
 
-/** Result of a Codex device poll; `credential` is present only once `status === 'complete'`. */
 export interface CodexDevicePollResult {
   status: 'pending' | 'slow_down' | 'complete' | 'expired' | 'denied';
   credential?: AgentCredentialView;
 }
 
-/** Add a Codex account by pasting `~/.codex/auth.json` (fallback when device login isn't available). */
 export class PasteCodexAuthDto {
   @IsString()
   @MaxLength(20_000)
@@ -94,13 +86,11 @@ export class PasteCodexAuthDto {
   label?: string;
 }
 
-/** Pick the active account for a provider. */
 export class SetSelectedDto {
   @IsUUID()
   credentialId!: string;
 }
 
-/** Provider is echoed for a couple of endpoints that need it in the body rather than the path. */
 export class ProviderParamDto {
   @IsEnum(EAgentProvider)
   provider!: EAgentProvider;

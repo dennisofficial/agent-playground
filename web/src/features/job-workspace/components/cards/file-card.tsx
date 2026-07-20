@@ -12,7 +12,6 @@ import { useRef, useState } from 'react';
 import { Markdown } from '../conversation/markdown';
 import { cardSendState } from '../../lib/send-state';
 
-/** Max upload size, kept in lockstep with the backend `MAX_FILE_UPLOAD_BYTES`. */
 const MAX_FILE_BYTES = 512 * 1024;
 
 /**

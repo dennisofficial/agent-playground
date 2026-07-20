@@ -27,7 +27,6 @@ import type {
 
 const BASE = `${env.NEXT_PUBLIC_BACKEND_URL}/web`;
 
-/** Everything needed to address one thread. The inbox row (`/web/jobs`) carries all three. */
 export interface JobRef {
   orgId: string;
   repoId: string;
@@ -66,7 +65,6 @@ function threadPath(ref: JobRef, suffix = ''): string {
   return `/orgs/${ref.orgId}/repos/${ref.repoId}/jobs/${ref.jobId}${suffix}`;
 }
 
-/** The durable message row as the backend returns it (`…/threads/:jobId/messages`). */
 export interface RawThreadMessage {
   /** The row's uuid — a stable React key (transcript blocks have no surface `ts`). */
   id?: string;
@@ -124,7 +122,6 @@ export interface RawThreadMessage {
   orderAt?: string | null;
 }
 
-/** UI message shape — normalized so the conversation classifier can read it uniformly. */
 export interface JobMessage {
   /** Stable key (synthetic monotonic ts; a local optimistic post gets a `local-*` key). */
   ts: string;
@@ -263,14 +260,12 @@ export type DraftStagedAnswerWire =
     }
   | { kind: 'secret'; cardId: string; label: string; value: string };
 
-/** The serializable draft body — `PUT .../draft` sends it, `GET .../draft` returns it under `payload`. */
 export interface DraftPayloadWire {
   text: string;
   stagedAnswers: DraftStagedAnswerWire[];
   comments: ReviewComment[];
 }
 
-/** A server-stored draft attachment (already uploaded), as the draft endpoints return it. No raw bytes. */
 export interface DraftAttachmentDto {
   id: string;
   name: string;
@@ -278,7 +273,6 @@ export interface DraftAttachmentDto {
   size: number;
 }
 
-/** Read the caller's own draft for a job. Never creates a row — an absent draft reads as empty. */
 export function getDraft(ref: JobRef): Promise<{
   payload: DraftPayloadWire;
   attachments: DraftAttachmentDto[];
@@ -287,7 +281,6 @@ export function getDraft(ref: JobRef): Promise<{
   return webJson(threadPath(ref, '/draft'));
 }
 
-/** Debounced autosave — replace the caller's whole draft body (attachments are managed separately). */
 export function putDraft(ref: JobRef, payload: DraftPayloadWire): Promise<{ ok: boolean }> {
   return webJson(threadPath(ref, '/draft'), {
     method: 'PUT',
@@ -295,7 +288,6 @@ export function putDraft(ref: JobRef, payload: DraftPayloadWire): Promise<{ ok: 
   });
 }
 
-/** Upload one draft attachment (multipart `files`, same caps as a normal attachment). Returns its row. */
 export function addDraftAttachment(ref: JobRef, file: File): Promise<DraftAttachmentDto> {
   const form = new FormData();
   form.append('files', file, file.name);
@@ -305,7 +297,6 @@ export function addDraftAttachment(ref: JobRef, file: File): Promise<DraftAttach
   }).then((r) => r.attachments[0]);
 }
 
-/** Remove one uploaded draft attachment by id. */
 export function deleteDraftAttachment(ref: JobRef, attachmentId: string): Promise<{ ok: boolean }> {
   return webJson(threadPath(ref, `/draft/attachments/${attachmentId}`), {
     method: 'DELETE',
@@ -339,7 +330,6 @@ export function stopJob(ref: JobRef): Promise<{ stopped: boolean }> {
   return webJson(threadPath(ref, '/stop'), { method: 'POST' });
 }
 
-/** One inline highlight-and-comment item, as sent to `…/jobs/:jobId/review-comments`. */
 export interface ReviewCommentItemBody {
   file: string;
   quote: string;
@@ -413,7 +403,6 @@ export function provideSecret(
   });
 }
 
-/** Approve a brain `propose_mcp_servers` card — commits each server on the repo (owner-only on the server). */
 export function approveMcpProposal(
   ref: JobRef,
   requestId: string,
@@ -469,7 +458,6 @@ export function fetchServices(ref: JobRef): Promise<{ services: ServiceInfo[] }>
   return webJson<{ services: ServiceInfo[] }>(threadPath(ref, '/services'));
 }
 
-/** The last-N-lines tail of one supervised process's log — the same content the SSE `snapshot` frame carries. */
 export function fetchServiceLogTail(
   ref: JobRef,
   id: string,
@@ -479,19 +467,16 @@ export function fetchServiceLogTail(
   );
 }
 
-/** List the thread's `/context` files, grouped into `specs` (plan) + `artifacts` (outputs). */
 export function fetchThreadContext(ref: JobRef): Promise<JobContext> {
   return webJson<JobContext>(threadPath(ref, '/context'));
 }
 
-/** Read one `/context` file's content (`path` is bucket-relative, e.g. `specs/plan.md`). */
 export function fetchContextFile(ref: JobRef, path: string): Promise<ContextFileContent> {
   return webJson<ContextFileContent>(
     threadPath(ref, `/context/file?path=${encodeURIComponent(path)}`),
   );
 }
 
-/** The job's accumulated multi-file diff (`GET …/jobs/:jobId/diff`) — the Changes pane's data. */
 export function fetchJobDiff(ref: JobRef): Promise<JobDiff> {
   return webJson<JobDiff>(threadPath(ref, '/diff'));
 }
@@ -509,7 +494,6 @@ export function fetchRepoTree(ref: JobRef): Promise<{ files: string[] }> {
   return webJson<{ files: string[] }>(threadPath(ref, '/repo/tree'));
 }
 
-/** Read one repo file from the LIVE job worktree by git-relative path (tracked files only; 404 otherwise). */
 export function fetchRepoFile(ref: JobRef, path: string): Promise<ContextFileContent> {
   return webJson<ContextFileContent>(
     threadPath(ref, `/repo/file?path=${encodeURIComponent(path)}`),
@@ -582,7 +566,6 @@ export function resolveJob(ref: JobRef): Promise<JobDetail> {
   return webJson<JobDetail>(threadPath(ref));
 }
 
-/** The manual-block response — every job's live blockers, including the one just added. */
 export interface JobDependencyResult {
   ok: boolean;
   blocked: boolean;
@@ -652,12 +635,10 @@ export interface RepoBranches {
   defaultBranch: string;
 }
 
-/** A repo's branches (default first) for the create-job base-branch picker. */
 export function fetchRepoBranches(orgId: string, repoId: string): Promise<RepoBranches> {
   return webJson<RepoBranches>(`/orgs/${orgId}/repos/${repoId}/branches`);
 }
 
-/** Operator-selectable job kinds (mirrors the backend allowlist; system kinds event/onboarding excluded). */
 export type OperatorJobKind = 'feature' | 'bugfix' | 'review';
 
 export interface CreateThreadBody {
@@ -693,7 +674,6 @@ function dependsOnList(dependsOn: CreateThreadBody['dependsOn']): string[] {
   return Array.isArray(dependsOn) ? dependsOn : [dependsOn];
 }
 
-/** Create a job WITH attachments — multipart (`firstMessage`/`title`/`baseBranch` fields + `files` parts). */
 export function createJobWithFiles(
   orgId: string,
   repoId: string,

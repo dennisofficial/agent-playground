@@ -31,7 +31,6 @@ function loadCollapsedSections(): Set<JobSection> {
   }
 }
 
-/** The per-repo view-model the tree renders. */
 interface RepoVM {
   repoId: string;
   repoName: string;
@@ -45,7 +44,6 @@ interface RepoVM {
   rollupAct: boolean;
 }
 
-/** The per-org view-model. */
 interface OrgVM {
   org: OrgSummary;
   activeRepos: RepoVM[];
@@ -243,7 +241,6 @@ export function Sidebar({ inDrawer = false }: { inDrawer?: boolean } = {}) {
   );
 }
 
-/** One org section: a centered-divider header over its active repos + an idle-repos disclosure. */
 function OrgSection({
   vm,
   pathname,
@@ -548,7 +545,6 @@ function RepoGroup({
   );
 }
 
-/** The fixed swatch/label color per {@link JobSection} (matches the sidebar-redesign mockup palette). */
 const SECTION_COLOR: Record<JobSection, string> = {
   planning: 'var(--blue)',
   reviewing: 'var(--blue)',
@@ -626,7 +622,6 @@ function SidebarSection({
   );
 }
 
-/** A thread leaf — opens the workspace. Status pie + a 2-line wrapping title + an accent dot when it needs you. */
 function ThreadRow({
   thread,
   orgId,

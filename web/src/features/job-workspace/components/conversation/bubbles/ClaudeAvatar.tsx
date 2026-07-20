@@ -1,5 +1,4 @@
 'use client';
-/** Small Atlas/Claude avatar — the brand mark, mini (the rotated rounded square). */
 
 export function ClaudeAvatar({ size = 24 }: { size?: number; }) {
     const inner = Math.round(size * 0.38);

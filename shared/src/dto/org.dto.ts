@@ -48,7 +48,6 @@ export interface OrgSummary {
   defaultAutoMerge: boolean;
 }
 
-/** A member of an organization, returned by `GET /orgs/:orgId/members`. */
 export interface MemberView {
   userId: string;
   email: string;

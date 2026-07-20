@@ -25,9 +25,7 @@ const DEFAULT_CHUNK_SIZE = 24;
 /** Matches the real windowed row wrapper's bottom gap (conversation.tsx's `paddingBottom: 9`) so a row
  *  pre-measured here comes out the same height the live viewport will later measure for the same content. */
 const ROW_PADDING_BOTTOM = 9;
-/** Within this many px of the bottom counts as "pinned to the tail" — matches useTailFollow's 80px band. */
 const AT_BOTTOM_PX = 80;
-/** `requestIdleCallback` timeout so a chunk isn't starved indefinitely on a busy main thread. */
 const IDLE_TIMEOUT_MS = 200;
 
 type PremeasureItem = { key: string; node: React.ReactNode };

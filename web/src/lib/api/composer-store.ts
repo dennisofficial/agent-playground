@@ -99,7 +99,6 @@ interface Entry {
   pendingDeletes: Set<string>;
 }
 
-/** Shared snapshot for an unknown jobId / SSR — a stable identity keeps `useSyncExternalStore` quiet. */
 const EMPTY: ComposerDraft = Object.freeze({
   ref: { orgId: '', repoId: '', jobId: '' },
   text: '',
@@ -120,7 +119,6 @@ const PERSIST_DEBOUNCE_MS = 300;
  *  write so a burst of keystrokes settles into a single round-trip. */
 const DRAFT_AUTOSAVE_MS = 500;
 
-/** The serializable projection of a draft (what actually lands in sessionStorage — no attachments). */
 interface PersistedDraft {
   ref: JobRef;
   text: string;
@@ -765,7 +763,6 @@ export function useComposerStagedAnswers(ref: JobRef): StagedAnswer[] {
   return useSyncExternalStore(subscribe, getSnapshot, () => EMPTY.stagedAnswers);
 }
 
-/** Slice-aware subscription — a Job's offline-send outbox only, so `<QueuedTray>` re-renders on enqueue/
  *  removeQueued without subscribing to text/attachments/comments changes. Same pattern as `useComposerComments`. */
 export function useOutbox(ref: JobRef): QueuedMessage[] {
   composerStore.ensure(ref);

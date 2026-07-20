@@ -281,7 +281,6 @@ export function seedTypePresentation(seedType: SeedType): {
   }
 }
 
-/** Human-readable label for a `system_reminder`'s `meta.reminderKind`. */
 export function reminderLabel(kind: string | undefined): string {
   switch (kind) {
     case 'open_questions':
@@ -365,7 +364,6 @@ export function UntrustedBlock({ message }: { message: JobMessage }) {
   );
 }
 
-/** The shape of a `turn_meta` block's `meta` — per-turn token usage + context occupancy (see the brain). */
 interface TurnMeta {
   usage?: {
     inputTokens?: number;
@@ -381,7 +379,6 @@ interface TurnMeta {
   workedMs?: number;
 }
 
-/** Format a USD cost: sub-cent as 4dp ($0.0042), otherwise 2dp ($0.03). */
 function formatCost(n: number): string {
   return `$${n < 0.01 ? n.toFixed(4) : n.toFixed(2)}`;
 }
@@ -424,7 +421,6 @@ export function useRetryCountdown(targetMs: number | undefined): number | null {
   return retryCountdownSeconds(targetMs, now);
 }
 
-/** Compact countdown label ("12m", "1h 4m", "45s") for the session-limit auto-resume clock. */
 function formatRemaining(ms: number): string {
   const totalSeconds = Math.max(0, Math.round(ms / 1000));
   const h = Math.floor(totalSeconds / 3600);
@@ -435,7 +431,6 @@ function formatRemaining(ms: number): string {
   return `${s}s`;
 }
 
-/** The live "auto-resumes in …" countdown text, ticking every second toward `resumeAt`. */
 function useResumeCountdown(resumeAt: string | undefined): string {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {

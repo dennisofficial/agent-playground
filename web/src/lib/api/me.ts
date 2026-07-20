@@ -9,12 +9,10 @@ import { adaptQuery, type QueryResultLike } from './_stub';
 export type { OrgSummary };
 export type CurrentUser = CurrentUserResponse;
 
-/** The current operator's session (identity + orgs) via RTK Query (`GET /auth/session`). */
 export function useCurrentUser(): QueryResultLike<CurrentUser> {
   return adaptQuery(useGetSessionQuery());
 }
 
-/** The operator's orgs, split into owned vs joined for the rail (owned first, then joined). */
 export function useOrgs() {
   const { data, isLoading, isError } = useCurrentUser();
   const orgs = useMemo(() => data?.orgs ?? [], [data]);
@@ -23,7 +21,6 @@ export function useOrgs() {
   return { orgs, owned, joined, isLoading, isError };
 }
 
-/** Look up a single org from the session by id (the settings page targets one org). */
 export function useOrg(orgId: string): OrgSummary | undefined {
   const { orgs } = useOrgs();
   return useMemo(() => orgs.find((o) => o.id === orgId), [orgs, orgId]);

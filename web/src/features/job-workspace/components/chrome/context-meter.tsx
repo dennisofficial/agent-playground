@@ -76,7 +76,6 @@ export function ContextMeter({
   );
 }
 
-/** The clickable variant, split out so the plain (non-breakdown) path above never pays for the extra hooks. */
 function ClickableContextMeter({
   tokens,
   limit,

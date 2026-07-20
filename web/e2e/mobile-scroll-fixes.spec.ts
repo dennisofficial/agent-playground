@@ -38,7 +38,6 @@ async function shot(page: Page, name: string) {
   });
 }
 
-/** Walk up from an element to the nearest ancestor that actually scrolls, and report its metrics. */
 const scrollMetrics = (loc: Locator) =>
   loc.evaluate((start) => {
     let el: HTMLElement | null = start as HTMLElement;

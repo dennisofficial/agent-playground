@@ -183,7 +183,6 @@ class ServiceLogStore {
 
 const store = new ServiceLogStore();
 
-/** Subscribe to one supervised process's live-tailed log. */
 export function useServiceLogStream(ref: JobRef, id: string): ServiceLogState | undefined {
   const subscribe = useCallback(
     (cb: () => void) => store.subscribe(ref, id, cb),

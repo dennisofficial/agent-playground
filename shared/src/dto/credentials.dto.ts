@@ -6,7 +6,6 @@
  */
 import { IsOptional, IsString, MaxLength } from 'class-validator';
 
-/** Save the org's API keys. Only the included, non-empty fields are written; the rest are untouched. */
 export class SaveCredentialsDto {
   @IsOptional()
   @IsString()
@@ -28,7 +27,6 @@ export interface SaveCredentialsResult {
   ok: boolean;
 }
 
-/** Which API keys the org has set. Presence booleans never expose a value. */
 export interface CredentialPresence {
   anthropic: boolean;
   openai: boolean;

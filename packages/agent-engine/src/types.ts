@@ -61,10 +61,8 @@ export interface JitInjection {
   text: string;
 }
 
-/** The set of JIT PostToolUse additionalContext rules that can tag a tool call (decision d2). */
 export type JitInjectionRule = 'svc-nudge' | 'github-fetch-guard' | 'install-awareness';
 
-/** A normalized progress event, emitted by both engines regardless of native event shape. */
 export type EngineEvent =
   | { kind: 'text'; text: string; parentToolUseId?: string }
   /**
@@ -265,7 +263,6 @@ export interface ModelUsageBreakdown {
   webSearchRequests?: number;
 }
 
-/** Vendor-neutral token-usage counts (all optional — engines populate what their SDK reports). */
 export interface EngineUsage {
   /**
    * Grand-total input INCLUDING cache, SUMMED across every model round-trip in the turn (fresh +
@@ -341,7 +338,6 @@ const MODEL_CONTEXT_LIMITS: ReadonlyArray<readonly [match: string, limit: number
   ['haiku', 200_000],
 ];
 
-/** Fallback window when the model id is unknown/absent — the conservative 200k floor. */
 export const DEFAULT_CONTEXT_LIMIT = 200_000;
 
 /**
@@ -384,7 +380,6 @@ export type CodexReasoningEffort =
  *  value spaces; mapped to each engine's own type at the SDK boundary. */
 export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
-/** A detected subscription limit hit — the resume metadata the host parks the lane on. */
 export type SessionLimitHit = {
   /** ISO-8601 instant the limit window resets, when known (best-effort). */
   resetAt?: string;
@@ -396,7 +391,6 @@ export type SessionLimitHit = {
   source?: 'structured' | 'text';
 };
 
-/** The result of one engine run — the report, the resume handle, and optional plan/usage. */
 export interface EngineRunResult {
   result: string;
   sessionId?: string;
@@ -443,7 +437,6 @@ export interface EngineRunResult {
  */
 export type EngineHomeType = 'brain' | 'build' | 'plan-review' | 'autofix' | 'review';
 
-/** The structured parts that key an engine home — see {@link EngineHomeType} for the layout. */
 export interface EngineHomeKey {
   orgId: string;
   repoId: string;
@@ -535,12 +528,10 @@ export class EngineDetachedError extends Error {
   }
 }
 
-/** Whether this error is the host losing its tail mid-turn (see {@link EngineDetachedError}). */
 export function isEngineDetachedError(err: unknown): boolean {
   return err instanceof EngineDetachedError || (err as { isDetachedError?: boolean })?.isDetachedError === true;
 }
 
-/** Host-side auto-retry budget (d1-B): re-run a transient auth/transport error this many times. */
 export const MAX_HOST_RETRIES = 10;
 /** Fixed backoff between host-side auto-retries (d1-B). NOT the SDK's native API backoff (that stays the
  *  SDK's own exponential schedule via CLAUDE_CODE_MAX_RETRIES). */
@@ -553,7 +544,6 @@ export const HOST_RETRY_BACKOFF_MS = 10_000;
 export const HOST_TRANSPORT_TRANSIENT_RE =
   /econnreset|econnrefused|etimedout|epipe|socket hang up|connection reset|connection refused|network error|no such container|container .*(not running|is not running|gone)|exec failed|failed to (start|create) (the )?container|redis|stream .*(closed|reset)|xread|503|502|temporarily unavailable|index\.lock|another git process seems to be running/;
 
-/** API failures that already spent the SDK's own retry loop. Keep them out of the host retry allowlist. */
 export const SDK_RETRY_EXHAUSTED_API_RE =
   /\bapi error\b|\boverloaded(?:_error)?\b|\brate[ _-]?limit(?:ed|_error)?\b|\bserver[ _-]?error\b|\b(?:claude|anthropic)\b.*\b(?:api|502|503|504|529|bad gateway)\b|\b(?:api|502|503|504|529|bad gateway)\b.*\b(?:claude|anthropic)\b/;
 
@@ -592,19 +582,16 @@ export function isRetryableTransientError(err: unknown): boolean {
  */
 export const UNRESUMABLE_SESSION_MARKER = 'ENGINE_SESSION_UNRESUMABLE';
 
-/** Whether this engine error is an unresumable-session failure (see {@link UNRESUMABLE_SESSION_MARKER}). */
 export function isUnresumableSessionMessage(message: string): boolean {
   return message.includes(UNRESUMABLE_SESSION_MARKER);
 }
 
-/** Heuristic: does this engine error message look like a credential/401 failure (vs a normal error)? */
 export function isAuthErrorMessage(message: string): boolean {
   return /\b401\b|not logged in|please run \/login|invalid[ _-]?api[ _-]?key|invalid x-api-key|authentication[ _]?error|\bunauthorized\b|oauth[^.]*\b(expired|invalid|revoked)\b|token[^.]*\b(expired|revoked)\b|permission_error/i.test(
     message,
   );
 }
 
-/** Sentinel prefix a no-credential auth halt carries so the operator copy can be specific. */
 export const NO_ENGINE_CREDENTIAL_MARKER = 'NO_ENGINE_CREDENTIAL';
 
 /** Map a raw EngineAuthError message to clean, actionable operator copy — never leak SDK/CLI text. The

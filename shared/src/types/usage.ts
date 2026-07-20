@@ -5,7 +5,6 @@
 // (Claude only). `ok:false` means no source was available — the UI shows "unknown" rather than a
 // stale number.
 
-/** A single rolling window: percent used + when it resets. `null` when the source didn't report it. */
 export type UsageWindow = { utilization: number; resetsAt: string } | null;
 
 /**
@@ -15,10 +14,8 @@ export type UsageWindow = { utilization: number; resetsAt: string } | null;
  */
 export type ModelUsageWindow = { label: string; utilization: number; resetsAt: string | null };
 
-/** The four flat Claude subscription windows. */
 export type ClaudeUsageWindowKey = 'fiveHour' | 'sevenDay' | 'sevenDayOpus' | 'sevenDaySonnet';
 
-/** A non-null stored window (utilization + reset instant) — the shape persisted in a snapshot. */
 export type StoredUsageWindow = { utilization: number; resetsAt: string };
 
 /**
@@ -70,7 +67,6 @@ export type OrgUsage = {
   modelWindows?: ModelUsageWindow[];
 };
 
-/** Legacy durable snapshot (org_credentials.claude_usage_snapshot). fetchedAt = epoch ms. */
 export type ClaudeUsageSnapshot = {
   windows: Partial<Record<ClaudeUsageWindowKey, StoredUsageWindow>>;
   fetchedAt: number;

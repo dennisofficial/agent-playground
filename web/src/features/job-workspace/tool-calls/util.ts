@@ -1,4 +1,3 @@
-/** Shared, presentation-free helpers for the tool-call renderers. */
 
 import { BRIDGE_SERVER_NAME } from './constants';
 
@@ -16,7 +15,6 @@ export function basename(path: string): string {
   return parts[parts.length - 1] || clean;
 }
 
-/** Pretty MCP name: `mcp__server__do_thing` / `do_thing` → `do_thing`. */
 export function mcpName(name: string): string {
   const segs = name.split('__').filter(Boolean);
   return segs[segs.length - 1] || name;
@@ -33,12 +31,10 @@ export function argsOf(input: unknown): Record<string, unknown> {
   return asRecord('args' in rec ? rec.args : rec);
 }
 
-/** True for an Atlas host-bridge tool (`mcp__atlas-host-bridge__*`). */
 export function isBridgeTool(name: string): boolean {
   return name.startsWith(`mcp__${BRIDGE_SERVER_NAME}__`);
 }
 
-/** Format a tool input/result for display (object → pretty JSON, string → as-is), truncated. */
 export function formatPayload(value: unknown): string {
   if (value == null) return '';
   let out: string;
@@ -53,7 +49,6 @@ export function formatPayload(value: unknown): string {
   return out.length > 4000 ? `${out.slice(0, 4000)}\n… (truncated)` : out;
 }
 
-/** Line count of a result string, for the "N ln" badge — 0 when empty/single-line. */
 export function resultLineCount(result: unknown): number {
   const s = typeof result === 'string' ? result : '';
   if (!s.trim()) return 0;

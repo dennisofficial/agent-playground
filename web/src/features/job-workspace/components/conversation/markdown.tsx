@@ -162,7 +162,6 @@ function JsonBlock({ value }: { value: object }) {
 // securityLevel 'strict' DOMPurify-sanitizes the SVG (diagrams are agent-authored), which makes the
 // dangerouslySetInnerHTML below safe.
 let mermaidReady: Promise<typeof import('mermaid').default> | null = null;
-/** Import-only — memoized so the heavy module is fetched once regardless of theme. */
 function loadMermaid() {
   if (!mermaidReady) mermaidReady = import('mermaid').then((mod) => mod.default);
   return mermaidReady;
@@ -235,7 +234,6 @@ function getThemeVersion() {
   return themeVersion;
 }
 
-/** Load mermaid and (re-)apply its theme if the live data-theme has changed since the last init. */
 async function ensureMermaid() {
   const mermaid = await loadMermaid();
   const key = currentThemeKey();
@@ -247,7 +245,6 @@ async function ensureMermaid() {
   return mermaid;
 }
 
-/** Flatten code-block children to plain text (string, number, or nested markdown nodes). */
 function nodeText(node: ReactNode): string {
   if (node == null || typeof node === 'boolean') return '';
   if (typeof node === 'string' || typeof node === 'number') return String(node);
@@ -287,7 +284,6 @@ function getCachedMermaid(chart: string) {
   return entry && entry.theme === currentThemeKey() ? entry : undefined;
 }
 
-/** Extract trimmed ```mermaid fence sources from raw markdown text. */
 export function extractMermaidSources(text: string): string[] {
   const out: string[] = [];
   const re = /```mermaid\n([\s\S]*?)```/g; // same shape as conversation.tsx MERMAID_FENCE
@@ -328,7 +324,6 @@ export async function warmMermaidDiagrams(sources: string[]): Promise<void> {
   }
 }
 
-/** A header-bar action button shared by the diagram frame (copy / expand / fix). */
 function FrameBtn({
   onClick,
   title,
@@ -353,7 +348,6 @@ function FrameBtn({
   );
 }
 
-/** The card chrome shared by every mermaid state: a labelled header bar (with actions) over a body. */
 function MermaidFrame({
   label,
   actions,
@@ -586,7 +580,6 @@ function Mermaid({ chart }: { chart: string }) {
   );
 }
 
-/** Fullscreen, zoomable, pannable view of one diagram — the readable view for dense plan diagrams. */
 function MermaidLightbox({
   svg,
   w,
@@ -786,7 +779,6 @@ const SHORTCODE_ICONS: Record<string, { Icon: LucideIcon; tone: string }> = {
 
 const SHORTCODE_RE = /:([a-z0-9_+]+):/g;
 
-/** Minimal mdast shape this pass touches — a container with `children`, or a `text` leaf with `value`. */
 interface MdNode {
   type: string;
   value?: string;
@@ -956,7 +948,6 @@ function FilePill({
   );
 }
 
-/** The default external link (new tab) — used for absolute/scheme/anchor hrefs. */
 function ExternalAnchor({ href, children }: { href?: string; children: ReactNode }) {
   return (
     <a
@@ -974,7 +965,6 @@ function ExternalAnchor({ href, children }: { href?: string; children: ReactNode
   );
 }
 
-/** A relative link (no scheme, not an anchor, not site-absolute) — e.g. `sections/01-backend.md`. */
 function isRelativeHref(href: string | undefined): href is string {
   return (
     !!href &&

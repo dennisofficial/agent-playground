@@ -11,7 +11,6 @@ const PREFIX = 'atlas:usage-cache:v1:';
 
 export type CachedUsage<T> = { data: T; at: number };
 
-/** Read a cached usage snapshot for `key`, or `null` on a miss, malformed entry, or SSR (no `window`). */
 export function readUsageCache<T>(key: string): CachedUsage<T> | null {
   if (typeof window === 'undefined') return null;
   try {
@@ -25,7 +24,6 @@ export function readUsageCache<T>(key: string): CachedUsage<T> | null {
   }
 }
 
-/** Persist a usage snapshot for `key`. Best-effort — a full/blocked localStorage silently no-ops. */
 export function writeUsageCache<T>(key: string, data: T, at: number): void {
   if (typeof window === 'undefined') return;
   try {
@@ -35,7 +33,6 @@ export function writeUsageCache<T>(key: string, data: T, at: number): void {
   }
 }
 
-/** Remove one cached usage snapshot, e.g. when a credential switch makes the org-level snapshot misleading. */
 export function removeUsageCache(key: string): void {
   if (typeof window === 'undefined') return;
   try {

@@ -1,6 +1,5 @@
 import { cn } from '@/lib/cn';
 
-/** Inline spinner — a rotating ring. Color inherits via `currentColor`. */
 export function Spinner({ className }: { className?: string }) {
   return (
     <span

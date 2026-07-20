@@ -20,7 +20,6 @@ export const autofixLensLane = (autofixId: string, lensId: string): string =>
  *  (NOT `meta.lensId`), so `TranscriptView` filters this lane on `fixTurn` — see `conversation.tsx`. */
 export const autofixFixLane = (autofixId: string): string => `autofix:${autofixId}:fix`;
 
-/** The `?node=` sentinel used in place of a thread id to mean "the job-level PR-tail pass". */
 export const REVIEW_JOB_SCOPE = 'job';
 
 export interface AutofixIndex {
@@ -30,7 +29,6 @@ export interface AutofixIndex {
   anchorKeys: Set<string>;
 }
 
-/** Peel auto-fix stage blocks out of the main conversation (their content lives in the `rev:` sub-page). */
 export function indexAutofixBlocks(messages: JobMessage[]): AutofixIndex {
   const childKeys = new Set<string>();
   const anchorKeys = new Set<string>();

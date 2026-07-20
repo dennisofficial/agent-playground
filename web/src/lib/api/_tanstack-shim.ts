@@ -48,7 +48,6 @@ export function useMutation<
   return stubMutation<TData, TVariables>('mutation');
 }
 
-/** Inert fan-out — returns no results; the one consumer (`useAllRepos`) folds it to an empty list. */
 export function useQueries<TResult = unknown>(_options: {
   queries: readonly unknown[];
   combine?: (results: TResult[]) => unknown;
@@ -57,7 +56,6 @@ export function useQueries<TResult = unknown>(_options: {
   return [];
 }
 
-/** No-op cache client — invalidate/set/etc. do nothing until a real store-backed cache exists. */
 export function useQueryClient() {
   return {
     invalidateQueries: (_filters?: unknown): Promise<void> => Promise.resolve(),

@@ -13,7 +13,6 @@ export type AutoApproveMode = (typeof AUTO_APPROVE_MODES)[number];
 export const modeApprovesPlan = (m: AutoApproveMode): boolean => m === 'plan' || m === 'both';
 export const modeApprovesShip = (m: AutoApproveMode): boolean => m === 'ship' || m === 'both';
 
-/** True when ANY gate auto-advances — the display/"is autonomy on" helper. */
 export const isAutoApproveOn = (m: AutoApproveMode): boolean => m !== 'off';
 
 export const isAutoApproveMode = (v: unknown): v is AutoApproveMode =>

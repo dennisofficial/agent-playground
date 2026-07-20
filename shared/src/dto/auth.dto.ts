@@ -27,19 +27,16 @@ export class RegisterDto {
   name?: string;
 }
 
-/** Minimal signed-in identity, returned as `{ user }` by login / register / refresh. */
 export interface AuthSession {
   id: string;
   email: string;
   name: string | null;
 }
 
-/** Returned by `GET /auth/session` — the signed-in user plus the orgs they belong to. */
 export interface CurrentUserResponse extends AuthSession {
   orgs: OrgSummary[];
 }
 
-/** Envelope returned by `POST /auth/login`, `/register`, and `/refresh`. */
 export interface LoginResponse {
   user: AuthSession;
 }

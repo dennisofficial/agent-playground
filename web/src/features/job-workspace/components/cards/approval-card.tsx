@@ -427,7 +427,6 @@ function DbWriteCardView({ card, jobRef }: { card: WebApprovalCard; jobRef: JobR
   );
 }
 
-/** The plan-verdict buttons (Approve / Deny). Deny reveals an optional `note` before submitting. */
 export function VerdictButtons({
   jobRef,
   value,
@@ -534,7 +533,6 @@ export function VerdictButtons({
   );
 }
 
-/** Green confirmation bar that replaces the approval card after a ruling (a verdict_card over SSE). */
 export function VerdictCardView({ card }: { card: WebVerdictCard }) {
   const approved = card.verdict === 'approve';
   const color = approved ? 'var(--green)' : 'var(--red)';

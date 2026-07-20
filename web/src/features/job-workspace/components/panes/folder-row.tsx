@@ -1,6 +1,5 @@
 import { ChevronRight, Folder } from 'lucide-react';
 
-/** One folder header row inside a SPECS/GENERATED/ARTIFACTS tree — click toggles its subtree. */
 export function FolderRow({
   name,
   indent,

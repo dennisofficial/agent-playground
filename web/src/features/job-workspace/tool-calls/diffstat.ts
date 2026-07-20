@@ -15,7 +15,6 @@ export interface DiffStat {
 const isEditName = (n: string) => ['edit', 'multiedit'].includes(n.toLowerCase());
 const isWriteName = (n: string) => ['write', 'notebookedit'].includes(n.toLowerCase());
 
-/** Sum added/removed lines of a single `old → new` line diff. */
 function diffPair(oldStr: string, newStr: string): DiffStat {
   let added = 0;
   let removed = 0;

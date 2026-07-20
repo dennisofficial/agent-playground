@@ -1,4 +1,3 @@
-/** TanStack Query key factory for the `/web/*` data layer. Pure — safe to import from anywhere. */
 export const qk = {
   /** The operator session (identity + orgs) from `GET /auth/session`. */
   session: () => ['session'] as const,

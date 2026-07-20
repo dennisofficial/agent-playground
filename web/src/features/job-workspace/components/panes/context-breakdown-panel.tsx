@@ -4,10 +4,8 @@ import type { ContextBreakdown, ContextBreakdownCategory } from '@/lib/api/job-s
 import { formatTokens } from '@/utils/org-display';
 import { useState } from 'react';
 
-/** Name literally reported by the SDK for the synthetic free-space category — pinned last, per the mockup. */
 const FREE_SPACE_NAME = 'Free space';
 
-/** Fixed name→theme-token swatch colors (case-sensitive, matches the SDK's exact category names). */
 const SWATCH_COLOR: Record<string, string> = {
   Messages: 'var(--accent)',
   'Memory files': 'var(--blue)',
@@ -18,7 +16,6 @@ const SWATCH_COLOR: Record<string, string> = {
   'Custom agents': 'var(--blue)',
 };
 
-/** A CSS color the SDK's own `category.color` field can plausibly be used as (hex, rgb()/hsl(), or a `var(--…)`). */
 function looksLikeCssColor(color: string | undefined): color is string {
   if (!color) return false;
   return /^#|^rgb|^hsl|^var\(/.test(color.trim());
@@ -29,7 +26,6 @@ function swatchColor(cat: ContextBreakdownCategory): string {
   return SWATCH_COLOR[cat.name] ?? (looksLikeCssColor(cat.color) ? cat.color : 'var(--faint)');
 }
 
-/** One category row, sorted-and-placed by the caller; free space is a synthetic row with no detail data. */
 type Row = {
   name: string;
   tokens: number;
@@ -37,7 +33,6 @@ type Row = {
   isFreeSpace: boolean;
 };
 
-/** Partition + sort the SDK categories into display rows, always ending on exactly one Free-space row. */
 function buildRows(breakdown: ContextBreakdown): Row[] {
   const sdkFreeSpace = breakdown.categories.find((c) => c.name === FREE_SPACE_NAME);
   const rest = breakdown.categories
@@ -103,7 +98,6 @@ function SubRow({ name, tokens }: { name: string; tokens: number }) {
   );
 }
 
-/** A category row's expandable detail — undefined/empty means the row isn't clickable at all. */
 function detailFor(
   row: Row,
   breakdown: ContextBreakdown,

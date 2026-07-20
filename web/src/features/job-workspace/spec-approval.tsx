@@ -58,12 +58,10 @@ function useVerdictAction(jobRef: JobRef, actionId: string, value: string) {
   };
 }
 
-/** The plan-approval verdict — see {@link useVerdictAction}. */
 function useApprovePlan(jobRef: JobRef, value: string) {
   return useVerdictAction(jobRef, APPROVE_ACTION_ID, value);
 }
 
-/** The ship-review verdict — see {@link useVerdictAction}. */
 function useApproveShip(jobRef: JobRef, value: string) {
   return useVerdictAction(jobRef, SHIP_ACTION_ID, value);
 }
@@ -631,7 +629,6 @@ function ApproveButton({
   );
 }
 
-/** The ship-review verdict button — "Ship it" / "Shipping…" / "Shipped". */
 function ShipButton(
   props: Omit<
     React.ComponentProps<typeof VerdictButton>,

@@ -6,7 +6,6 @@ import { OrgUsage } from '@workspace/shared';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 type UsageWindow = OrgUsage['fiveHour'];
-/** A panel row's window data — the fixed windows plus the per-model ones (whose `resetsAt` may be null). */
 type PanelWindow = { utilization: number; resetsAt: string | null };
 type RingVisualState = 'active' | 'pending' | 'degraded';
 /**
@@ -30,18 +29,14 @@ const RING_CIRC = 2 * Math.PI * RING_R;
 const RING_STROKE = 2.2;
 
 const SESSION_WARNING_THRESHOLD = 0.7;
-/** ≥ this turns the session arc + % label the "critical" red — a warning colour, NOT the maxed-out dot. */
 const SESSION_LIMIT_THRESHOLD = 0.9;
-/** The center dot means "usage limit actually hit" — only at a full 100% window, never merely close to it. */
 const SESSION_MAXED_THRESHOLD = 1;
 const WEEKLY_CAPPED_THRESHOLD = 0.95;
-/** Weekly grey peaks (darkest in light theme, brightest in dark) at the half-week mark, then holds. */
 const WEEKLY_GREY_PEAK_PCT = 0.5;
 const WEEKLY_GREY_MIN_MIX = 15;
 const WEEKLY_GREY_MAX_MIX = 68;
 
 const FRESHNESS_STALE_MS = 10 * 60_000;
-/** Opening the usage card re-fetches at most this often (1/min) — a fresh look without hammering the endpoint. */
 const OPEN_REFRESH_THROTTLE_MS = 60_000;
 const MS_PER_MINUTE = 60_000;
 const MS_PER_HOUR = 60 * MS_PER_MINUTE;
@@ -56,7 +51,6 @@ function clampPct(fraction: number): number {
   return Math.min(1, Math.max(0, fraction));
 }
 
-/** Accent → accent-2 → red by the shared usage thresholds. Drives BOTH the session arc and every panel row. */
 function thresholdColor(pct: number): string {
   if (pct >= SESSION_LIMIT_THRESHOLD) return 'var(--red)';
   if (pct >= SESSION_WARNING_THRESHOLD) return 'var(--accent-2)';
@@ -85,7 +79,6 @@ function isFresh(fetchedAt: string | undefined, now: number = Date.now()): boole
   return now - then <= FRESHNESS_STALE_MS;
 }
 
-/** Compact "time since" for the panel's last-updated stamp. Returns null for missing/unparseable input. */
 function timeAgo(iso: string | undefined, now: number = Date.now()): string | null {
   if (!iso) return null;
   const then = new Date(iso).getTime();
@@ -99,7 +92,6 @@ function timeAgo(iso: string | undefined, now: number = Date.now()): string | nu
   return `${Math.round(hours / 24)}d ago`;
 }
 
-/** Countdown to a reset ("4d 6h" / "4h 05m" / "13m"), clamped at 0. Null for missing/unparseable input. */
 function formatCountdown(resetsAt: string | undefined, now: number = Date.now()): string | null {
   if (!resetsAt) return null;
   const target = new Date(resetsAt).getTime();
@@ -646,7 +638,6 @@ export function UsageRingView({
   );
 }
 
-/** The composer footer's ring — the org's Claude subscription usage snapshot. */
 export function UsageRing({ orgId, size = 17 }: { orgId: string; size?: number }) {
   const { data, isLoading, refetch, dataUpdatedAt } = useOrgUsage(orgId);
   return (

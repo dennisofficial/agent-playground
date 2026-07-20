@@ -11,7 +11,6 @@ type CustomTipProps = {
   valueSuffix?: string;
 };
 
-/** "now", "12m ago", or "3h ago" relative to the current time. */
 function relTime(iso: string | number | undefined): string {
   if (iso === undefined) return '';
   const then = new Date(iso).getTime();

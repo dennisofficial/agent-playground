@@ -38,10 +38,8 @@ const SIGN = 16;
 /** `fileIdx * HUNK_KEY_STRIDE + hunkIdx` — a per-file-namespaced hunk id that doubles as the same-hunk
  *  contiguity guard: because it encodes `fileIdx`, comparing it also prevents a selection crossing files. */
 const HUNK_KEY_STRIDE = 100_000;
-/** Min content width (in `ch`) so a diff with no rows still fills the pane. */
 const MIN_CODE_LEN = 40;
 
-/** First-pass estimates; `measureElement` corrects each once it renders, so these need only be close. */
 const ESTIMATE: Record<DiffItem['kind'], number> = {
   row: 19,
   hunk: 22,
@@ -53,7 +51,6 @@ const ESTIMATE: Record<DiffItem['kind'], number> = {
 
 type FileRow = DiffRow & { gIdx: number; fileIdx: number; hunkKey: number };
 
-/** One entry in the flattened, windowed diff list spanning every file. */
 type DiffItem =
   | { kind: 'file'; key: string; file: JobDiffFile; fileIdx: number }
   | { kind: 'note'; key: string; text: string }

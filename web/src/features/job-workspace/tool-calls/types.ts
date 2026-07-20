@@ -21,7 +21,6 @@ export type DiffHunk = {
   lines: string[];
 };
 
-/** One tool call, as captured by the brain's turn streamer (`meta: { name, input, result, isError }`). */
 export interface ToolItem {
   key: string;
   name: string;
@@ -49,7 +48,6 @@ export type IconKind =
   | 'task'
   | 'plan';
 
-/** Right-aligned badge on a tool row. */
 export type ToolBadge =
   | { kind: 'diffstat'; added: number; removed: number | null }
   | { kind: 'lines'; n: number }
@@ -57,7 +55,6 @@ export type ToolBadge =
   | { kind: 'superseded' }
   | null;
 
-/** The collapsed one-line treatment for a tool row + its group-preview token. */
 export interface ToolDescriptor {
   icon: IconKind;
   /** Bold label for native tools; ''for mcp-style rows (the name takes the inline slot). */
@@ -77,7 +74,6 @@ export interface ToolDescriptor {
   badge: ToolBadge;
 }
 
-/** A pluggable renderer for one family of tools. */
 export interface ToolHandler {
   /** Stable id, for debugging/tests. */
   id: string;

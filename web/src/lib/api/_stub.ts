@@ -51,7 +51,6 @@ export interface MutationResultLike<TData, TVars> {
 
 const noopRefetch = async (): Promise<undefined> => undefined;
 
-/** A settled query result carrying `value` (omit for an empty read) — for endpoints not served yet. */
 export function stubQuery<T>(value?: T): QueryResultLike<T> {
   return {
     data: value,
@@ -67,12 +66,10 @@ export function stubQuery<T>(value?: T): QueryResultLike<T> {
   };
 }
 
-/** Throws — an endpoint the (rebuilt) backend doesn't serve yet must never look like it works. */
 export function notImplemented(feature: string): never {
   throw new Error(`Not Implemented: "${feature}" is not served by the backend yet.`);
 }
 
-/** A mutation whose invocation is loud (throws) — for unwired write endpoints. */
 export function stubMutation<TData = unknown, TVars = void>(
   feature: string,
 ): MutationResultLike<TData, TVars> {

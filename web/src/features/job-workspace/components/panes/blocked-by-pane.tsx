@@ -90,7 +90,6 @@ export function BlockerRow({ blocker, onClick }: { blocker: JobBlocker; onClick:
   );
 }
 
-/** A compact PR-state chip (icon + word) — same GitHub color convention as `created-jobs-pane.tsx`. */
 function PrStateChip({ state }: { state: string }) {
   const { Icon, color, label } =
     state === 'merged'

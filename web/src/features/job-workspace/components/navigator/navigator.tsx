@@ -1357,7 +1357,6 @@ function EmptyRow({ icon, children }: { icon: ReactNode; children: ReactNode }) 
   );
 }
 
-/** The muted `0` a section divider trails with while it's empty (vs the faint real count). */
 function ZeroCount() {
   return <span className="text-border-2">0</span>;
 }
@@ -1436,7 +1435,6 @@ function FileRow({
 }
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|svg|webp|avif)$/i;
-/** Pick a file-row icon from the extension (images get the image glyph; everything else a doc). */
 function fileIcon(name: string): ReactNode {
   return IMAGE_EXT.test(name) ? <ImageIcon size={12} /> : <FileText size={12} />;
 }
@@ -1451,7 +1449,6 @@ interface FileTreeNode {
   files: ContextFile[];
 }
 
-/** Groups a flat list of (possibly slash-nested) `ContextFile.name` paths into a folder tree. */
 function buildFileTree(files: ContextFile[]): FileTreeNode {
   const root: FileTreeNode = { folders: new Map(), files: [] };
   for (const f of files) {
@@ -1471,7 +1468,6 @@ function buildFileTree(files: ContextFile[]): FileTreeNode {
   return root;
 }
 
-/** Every folder path in a tree, at any depth — used to seed a group's initial "all collapsed" state. */
 function allFolderPaths(node: FileTreeNode, path = ''): Set<string> {
   const paths = new Set<string>();
   for (const [folderName, child] of node.folders) {
@@ -1482,7 +1478,6 @@ function allFolderPaths(node: FileTreeNode, path = ''): Set<string> {
   return paths;
 }
 
-/** Renders a `FileTreeNode` as folder rows then file rows, each level sorted folder (a-z) then files (a-z). */
 function renderFileTree({
   node,
   path,
@@ -1568,7 +1563,6 @@ function renderFileTree({
   return rows;
 }
 
-/** A muted "loading" placeholder row for a region whose files are still being fetched. */
 function LoadingRow({ label }: { label: string }) {
   return (
     <div className="flex items-center gap-2.5 px-2 py-1.5">

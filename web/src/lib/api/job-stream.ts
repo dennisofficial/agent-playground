@@ -199,9 +199,7 @@ type StreamPayload = {
 
 let blockSeq = 0;
 
-/** The default lane — the thread brain's conversational turn (vs `phase:<stepId>` for a build turn). */
 export const MAIN_LANE = 'main';
-/** The store keys an in-flight turn by thread AND lane, so a brain turn and a build turn coexist. */
 const laneKey = (jobId: string, lane: string): string => `${jobId}::${lane}`;
 
 /**
@@ -656,7 +654,6 @@ class ThreadStreamStore {
 
 const store = new ThreadStreamStore();
 
-/** Feed one `{type:'stream'}` frame (snapshot or delta) into a thread's live turn lane. */
 export function applyStreamFrame(jobId: string, lane: string, seq: number, event: unknown): void {
   store.apply(jobId, lane, seq, event as StreamPayload);
 }
@@ -698,7 +695,6 @@ export function useLiveTurn(jobId: string, lane: string = MAIN_LANE): LiveTurn |
   return useSyncExternalStore(subscribe, getByKey, () => undefined);
 }
 
-/** The short status word for the working indicator, derived from the LAST live block's kind. */
 export type LiveStatusWord = 'still thinking' | 'using tools' | 'responding';
 
 /**

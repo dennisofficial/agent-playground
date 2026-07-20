@@ -74,7 +74,6 @@ function laneState(s: EThreadStatus, condition: EThreadCondition, drafted: boole
   return 'in_progress'; // planning / reviewing / executing / auto_fixing
 }
 
-/** The open accordion's state-colored left rail + soft wash (handoff §State colors). */
 function railStyle(
   state: LaneState,
   open: boolean,
@@ -109,7 +108,6 @@ function railStyle(
   }
 }
 
-/** A spinning progress ring — faint track + rotating colored arc (`.status-spin` = the design's 1.05s). */
 function SpinRing({
   size = 13,
   color = 'var(--accent)',
@@ -148,7 +146,6 @@ function SpinRing({
   );
 }
 
-/** The solid green disc with a white check — a `done` thread / `completed` task. */
 function DoneDisc({ size = 13 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 20 20" className="block" aria-hidden>
@@ -165,7 +162,6 @@ function DoneDisc({ size = 13 }: { size?: number }) {
   );
 }
 
-/** The dashed pending/draft ring. */
 function DashedRing({ size = 13, color = 'var(--border-2)' }: { size?: number; color?: string }) {
   return (
     <svg width={size} height={size} viewBox="0 0 20 20" className="block" aria-hidden>
@@ -182,7 +178,6 @@ function DashedRing({ size = 13, color = 'var(--border-2)' }: { size?: number; c
   );
 }
 
-/** The 13px status glyph slot on a thread header row. */
 function ThreadStatusGlyph({ state, isHalt }: { state: LaneState; isHalt: boolean }) {
   // The lane's OWN state owns its glyph: a `blocked` (paused) or `done` lane keeps its glyph even when it
   // is the job's halt row, so it never masquerades as a red failure. `isHalt` only paints red as a fallback
@@ -222,7 +217,6 @@ export interface TreeProps {
   onSelectNode: (node: string) => void;
 }
 
-/** The thread-group-kind → sidebar label, used when a thread group carries no explicit `title`. */
 const THREAD_GROUP_LABELS: Record<EThreadGroupKind, string> = {
   planning: 'Planning',
   plan_review: 'Plan Review',
@@ -399,7 +393,6 @@ function ThreadGroupFold({
   );
 }
 
-/** The mono "TASKS · done/total" sub-header shared by every fold body. */
 function BodyHeader({ label, right }: { label: string; right: string }) {
   return (
     <div className="flex items-center gap-2 px-1.5 pb-1 pt-px">
@@ -410,7 +403,6 @@ function BodyHeader({ label, right }: { label: string; right: string }) {
   );
 }
 
-/** A draft thread's open body — no tasks yet, Atlas is still drafting it (handoff §Draft empty state). */
 function DraftEmptyBody() {
   return (
     <div className="nav-expand mb-1.5 ml-2.25 flex flex-col">
@@ -569,7 +561,6 @@ function TaskRow({ task: t, blockers = [] }: { task: TaskItem; blockers?: string
   );
 }
 
-/** The blocked glyph — slate ring with a center dot (handoff §Task row). */
 function BlockedRing({ size = 13 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 20 20" className="block" aria-hidden>
@@ -580,10 +571,8 @@ function BlockedRing({ size = 13 }: { size?: number }) {
 }
 
 // Each review lens + the post-review fix are first-class child threads.
-/** The design's agent states — a review child's wire `ThreadStatus` folds onto these. */
 type AgentDisplay = 'pending' | 'in_progress' | 'done' | 'skipped' | 'failed';
 
-/** Map a review CHILD thread's step + condition to its navigator display state. */
 function childDisplay(status: EThreadStatus, condition: EThreadCondition): AgentDisplay {
   if (condition === 'failed') return 'failed'; // the lens did NOT run (e.g. engine/auth error) — surface it
   if (condition === 'skipped') return 'skipped'; // nothing to do (unknown lens / no diff) — terminal, not a failure
@@ -714,7 +703,6 @@ function LegRow({
   );
 }
 
-/** The post-review fix child's step + condition → its row's display states. */
 function postReviewState(
   status: EThreadStatus,
   condition: EThreadCondition,
@@ -799,7 +787,6 @@ function AgentRow({
   );
 }
 
-/** The 16px status icon tile on an agent-style row (blue spinner / green check / dashed pending). */
 function AgentStatusTile({ display }: { display: AgentDisplay | 'queued' | 'running' }) {
   const done = display === 'done';
   const failed = display === 'failed';

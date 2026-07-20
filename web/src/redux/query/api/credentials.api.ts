@@ -1,7 +1,6 @@
 import type { CredentialPresence, SaveCredentialsResult } from '@workspace/shared';
 import { baseApi, EBaseApiCacheTags } from './baseApi';
 
-/** The settings UI's domain view of credential presence. */
 export interface CredentialPresenceView {
   hasAnthropic: boolean;
   hasOpenai: boolean;
@@ -12,7 +11,6 @@ export interface CredentialPresenceView {
   githubAuthMode: 'pat' | 'app';
 }
 
-/** The settings UI's write body — sent as-is (the wire speaks these keys by name). */
 export interface SaveCredentialsBody {
   anthropicApiKey?: string;
   openaiApiKey?: string;
