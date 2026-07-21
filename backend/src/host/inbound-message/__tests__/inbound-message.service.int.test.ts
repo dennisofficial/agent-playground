@@ -12,10 +12,7 @@ import {
 import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { CustomNamingStrategy } from '../../../_lib/database/custom-naming.strategy';
-import {
-  InboundMessage,
-  InboundMessageRepo,
-} from '../../../_lib/database/entities/inbound-message.entity';
+import { InboundMessage } from '../../../_lib/database/entities/inbound-message.entity';
 import { Job } from '../../../_lib/database/entities/job.entity';
 import { Organization } from '../../../_lib/database/entities/organization.entity';
 import { Repo } from '../../../_lib/database/entities/repo.entity';
@@ -25,13 +22,22 @@ import { ThreadMessage } from '../../../_lib/database/entities/thread-message.en
 import { Thread } from '../../../_lib/database/entities/thread.entity';
 import { InboundMessageService } from '../inbound-message.service';
 
-const ENTITIES = [Organization, Repo, Job, ThreadGroup, Thread, ThreadMessage, Subagent, InboundMessage];
+const ENTITIES = [
+  Organization,
+  Repo,
+  Job,
+  ThreadGroup,
+  Thread,
+  ThreadMessage,
+  Subagent,
+  InboundMessage,
+];
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // System-actor ctx: this service writes/reads through `db.unsafe`, so the claims are never consulted.
 const SYSTEM_CTX = {
-  resolveContext: async () => ({ userId: null, orgIds: [], ownerOrgIds: [] }),
+  resolveContext: async () => Promise.resolve({ userId: null, orgIds: [], ownerOrgIds: [] }),
   resolveClaims: () => ({ userId: null, orgIds: [], ownerOrgIds: [] }),
   exempt: () => true,
 };
@@ -56,10 +62,7 @@ describe('InboundMessageService (int)', () => {
       namingStrategy: new CustomNamingStrategy(),
     }).initialize();
     const db = new Db(ds, SYSTEM_CTX);
-    service = new InboundMessageService(
-      db,
-      ds.getRepository(InboundMessage) as InboundMessageRepo,
-    );
+    service = new InboundMessageService(db, ds.getRepository(InboundMessage));
   });
 
   afterAll(async () => {
@@ -78,7 +81,9 @@ describe('InboundMessageService (int)', () => {
       name: 'r',
       gitUrl: 'https://example.test/o/r.git',
     });
-    const job = await ds.getRepository(Job).save({ orgId, repoId: repo.id, origin: EThreadOrigin.CHAT });
+    const job = await ds
+      .getRepository(Job)
+      .save({ orgId, repoId: repo.id, origin: EThreadOrigin.CHAT });
     jobId = job.id;
     const group = await ds.getRepository(ThreadGroup).save({
       jobId,

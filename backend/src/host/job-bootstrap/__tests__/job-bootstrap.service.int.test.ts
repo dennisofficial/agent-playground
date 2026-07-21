@@ -117,12 +117,12 @@ describe('JobBootstrapService.create (int)', () => {
     expect(inbound[0].status).toBe(EInboundMessageStatus.PENDING);
     expect(inbound[0].priority).toBe(EInboundPriority.NOW);
     expect(inbound[0].text).toBe('do the thing');
-    expect(inbound[0].author).toBe('Dennis');
     expect(inbound[0].source).toBe(EThreadMessageSource.OPERATOR);
 
     const bubbles = await ds.getRepository(ThreadMessage).find({ where: { jobId: result.jobId } });
     expect(bubbles).toHaveLength(1);
     expect(bubbles[0].source).toBe(EThreadMessageSource.OPERATOR);
+    expect(bubbles[0].author).toBe('Dennis'); // display name lives on the bubble, not the inbound row
 
     // The flow is added with deterministic single-flight ids — a second add for the same jobId would
     // collide on these ids (BullMQ dedups), so a job can't run two concurrent flows.

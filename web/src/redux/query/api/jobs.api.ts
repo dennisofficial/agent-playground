@@ -1,6 +1,7 @@
 import { env } from '@/lib/env';
 import { streamList } from '@workspace/pg-realtime/rtk';
 import type {
+  CreateJobDto,
   JobListItem,
   JobView,
   TaskView,
@@ -13,16 +14,14 @@ import { sseOpener } from './sse-opener';
 
 const BACKEND = env.NEXT_PUBLIC_BACKEND_URL;
 
-/**
- * The flattened job read API. Everything is addressed by `jobId` (+ `threadId`) — no org/repo in the
- * path; the backend scopes reads to the caller's orgs via RLS. Each list query is kept live by its
- * `…/realtime` SSE feed (`streamList`). Mutations + the live turn-stream are still stubbed pending the
- * engine slice.
- */
 export const jobsApi = baseApi.injectEndpoints({
   overrideExisting: true,
   endpoints: (build) => ({
-    // The cross-org sidebar list.
+    createJob: build.mutation<{ jobId: string }, CreateJobDto>({
+      query: (body) => ({ url: `/jobs`, method: 'POST', data: body }),
+      invalidatesTags: [EBaseApiCacheTags.JOB],
+    }),
+
     getJobs: build.query<JobListItem[], void>({
       query: () => ({ url: `/jobs`, method: 'GET' }),
       providesTags: [EBaseApiCacheTags.JOB],
@@ -34,13 +33,11 @@ export const jobsApi = baseApi.injectEndpoints({
         }),
     }),
 
-    // Full job detail — the nested group→thread tree the workspace navigator renders.
     getJob: build.query<JobView, string>({
       query: (jobId) => ({ url: `/jobs/${jobId}`, method: 'GET' }),
       providesTags: (_result, _error, jobId) => [{ type: EBaseApiCacheTags.JOB, id: jobId }],
     }),
 
-    // The job's thread groups (each with threads nested) — kept live for the navigator.
     getThreadGroups: build.query<ThreadGroupView[], string>({
       query: (jobId) => ({ url: `/jobs/${jobId}/thread-groups`, method: 'GET' }),
       providesTags: (_result, _error, jobId) => [
@@ -54,7 +51,6 @@ export const jobsApi = baseApi.injectEndpoints({
         }),
     }),
 
-    // The job's threads (flat), optionally narrowed to one group or thread kind.
     getThreads: build.query<ThreadView[], { jobId: string; groupId?: string; kind?: string }>({
       query: ({ jobId, groupId, kind }) => {
         const p = new URLSearchParams();
@@ -74,7 +70,6 @@ export const jobsApi = baseApi.injectEndpoints({
         }),
     }),
 
-    // The whole job's transcript (all threads) — the workspace fetches this once and scopes per lane.
     getJobMessages: build.query<ThreadMessageView[], string>({
       query: (jobId) => ({ url: `/jobs/${jobId}/messages`, method: 'GET' }),
       providesTags: (_result, _error, jobId) => [
@@ -88,7 +83,6 @@ export const jobsApi = baseApi.injectEndpoints({
         }),
     }),
 
-    // One thread's transcript, kept live by the per-thread messages feed.
     getThreadMessages: build.query<ThreadMessageView[], { jobId: string; threadId: string }>({
       query: ({ jobId, threadId }) => ({
         url: `/jobs/${jobId}/threads/${threadId}/messages`,
@@ -105,7 +99,6 @@ export const jobsApi = baseApi.injectEndpoints({
         }),
     }),
 
-    // The agent task list across the job's thread groups.
     getJobTasks: build.query<TaskView[], string>({
       query: (jobId) => ({ url: `/jobs/${jobId}/tasks`, method: 'GET' }),
       providesTags: (_result, _error, jobId) => [
@@ -122,6 +115,7 @@ export const jobsApi = baseApi.injectEndpoints({
 });
 
 export const {
+  useCreateJobMutation,
   useGetJobsQuery,
   useGetJobQuery,
   useGetThreadGroupsQuery,

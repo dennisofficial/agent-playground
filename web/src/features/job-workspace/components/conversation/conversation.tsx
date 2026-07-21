@@ -7,7 +7,6 @@ import { MAIN_LANE, useLiveTurn, type ContextBreakdown } from '@/lib/api/job-str
 import type { JobBlocker, LaneDefaultFooter } from '@/lib/api/types';
 import { assertNever } from '@/utils/assert';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { EJobActivity } from '@workspace/shared';
 import { HelpCircle, Upload } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAttachments } from '../../hooks/use-attachments';
@@ -389,14 +388,10 @@ export function TranscriptView({
   const realtimeIdle = useRealtimeIdle(composer && !readOnly ? jobRef.jobId : null);
   const turnActive = (liveTurn?.active ?? false) && !realtimeIdle;
 
-  // The server-owned realtime `activity` axis: distinguishes brain-owned work (`turn`/`plan_review`/
-  // `base_check`, where THIS Main chat is the live surface) from DRIVER-owned work (`build`/`master_review`,
-  // where a build lane owns the work and the Main brain is dormant). During a build the coarse `live` phase
-  // (`status === "running"`) stays true the whole time, so without this the Main footer keeps showing
-  // "Atlas is working…" for work a build lane is actually doing. Only consulted on the interactive Main lane
-  // (same gate as `realtimeIdle`); a build lane's own view drives its own indicator off its own live turn.
-  const activity = useRealtimeActivity(composer && !readOnly ? jobRef.jobId : null);
-  const driverOwnsWork = activity === 'build' || activity === 'master_review';
+  // Whether a build lane (not this Main brain) owns the live work — used to suppress the Main "Atlas is
+  // working…" footer for work a driver is actually doing. The server-owned working axis that drove this was
+  // dropped from the read model; it stays `false` until that slice lands (see inbox `InboxThread`).
+  const driverOwnsWork = false;
 
   // Stream signature — grows with streaming text/thinking so the tail follows token-by-token, not just on
   // block boundaries.
@@ -1090,12 +1085,6 @@ function useRealtimeIdle(jobId: string | null): boolean {
   const { data: threads } = useAllJobs();
   if (!jobId) return false;
   return threads?.find((t) => t.id === jobId)?.needsYou ?? false;
-}
-
-function useRealtimeActivity(jobId: string | null): EJobActivity | null {
-  const { data: threads } = useAllJobs();
-  if (!jobId) return null;
-  return threads?.find((t) => t.id === jobId)?.activity ?? null;
 }
 
 /**

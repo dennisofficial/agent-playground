@@ -151,6 +151,9 @@ export interface JobMessage {
   source:
     | 'operator'
     | 'atlas'
+    // `system` is the current shared author value; the `system_*` variants are legacy render kinds this
+    // v2 layer still recognises (see classify.ts) until the transcript is migrated onto shared types.
+    | 'system'
     | 'system_operator'
     | 'system_shared'
     | 'system_event'

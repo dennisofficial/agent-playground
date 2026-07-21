@@ -10,34 +10,24 @@ import { useFileDrop } from '@/features/job-workspace/hooks/use-file-drop';
 import { composeMode } from '@/features/job-workspace/lib/auto-approve-mode';
 import { useAllJobs, type InboxThread } from '@/lib/api/inbox';
 import type { OperatorJobKind } from '@/lib/api/job-api';
-import { useCreateThread, useOrgRepos } from '@/lib/api/job-queries';
+import { useOrgRepos } from '@/lib/api/job-queries';
 import { groupThreadsBySection, SECTION_LABEL } from '@/lib/api/job-section';
+import { useCreateJobMutation } from '@/redux/query/api/jobs.api';
 import { useOrgs } from '@/lib/api/me';
 import { cn } from '@/lib/cn';
 import { SITE_MAP } from '@/lib/site-map';
 import { isSubmitCombo } from '@/utils/keyboard';
 import { orgInitials, orgSwatch } from '@/utils/org-display';
-import { modeApprovesPlan, modeApprovesShip, type AutoApproveMode } from '@workspace/shared';
+import { EJobKind, modeApprovesPlan, modeApprovesShip, type AutoApproveMode } from '@workspace/shared';
 import { Check, Paperclip, Plug, Upload, X } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-/**
- * Create-thread form — shared by the `@dialog` modal and the `/new` full-page fallback (single source).
- * Picks an org → a connected repo → a base branch, takes a required first message, and creates the thread
- * via `POST /web/orgs/:orgId/repos/:repoId/threads` (which injects the first message), then opens the new
- * thread workspace. Honest empty states when there are no orgs / the org has no connected repo.
- */
 export function CreateThread({ onDone }: { onDone?: () => void }) {
   const router = useRouter();
   const { orgs, isLoading: orgsLoading } = useOrgs();
 
-  // Pre-selection from the sidebar's per-org / per-repo ＋ (`/new?org=…&repo=…`). Read from the router's
-  // search params (NOT `window.location.search`) — on a `<Link>` navigation into the intercepted `/new`
-  // modal, `window.location` still holds the PREVIOUS url during this render, so the preselect would come
-  // back empty and the org/repo would wrongly fall back to the first one. `useSearchParams` reflects the
-  // navigated-to route correctly; both call sites wrap this component in a `<Suspense>` boundary for it.
   const search = useSearchParams();
   const [preselect] = useState(() => ({
     org: search.get('org') ?? '',
@@ -87,7 +77,7 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
   }, [selectedOrg?.id]);
 
   const { data: repos = [], isLoading: reposLoading } = useOrgRepos(orgId);
-  const create = useCreateThread(orgId, repoId);
+  const [createJob, { isLoading: creating }] = useCreateJobMutation();
 
   // When the org (or its repo list) changes, default the repo + its base branch.
   useEffect(() => {
@@ -153,26 +143,24 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
     // Seed a title from the first line of the message so the thread isn't "Untitled" before the
     // brain renames it (the create endpoint takes an optional title).
     const title = text.split('\n')[0].trim().slice(0, 80) || undefined;
-    create.mutate(
-      {
-        firstMessage: text,
-        title,
-        baseBranch: branch.trim() || undefined,
-        ...(kind ? { kind } : {}),
-        ...(isReview ? { prNumber: pr } : {}),
-        autoApproveMode,
-        autoMerge,
-        ...(dependsOn.length ? { dependsOn } : {}),
-        ...(attachments.length ? { files: attachments.map((a) => a.file) } : {}),
-      },
-      {
-        onSuccess: ({ jobId }) => {
-          router.replace(SITE_MAP.jobs.job(jobId)());
-          onDone?.();
-        },
-        onError: () => setError('Could not start the job. Try again.'),
-      },
-    );
+    // S1 sends only the locked contract fields. The other controls (base branch, automation, depends-on,
+    // attachments, review PR) are rendered but deferred; `kind` is only sent for feature/bugfix (the
+    // backend restricts it — `Auto`/`review` are handled in later sequences).
+    const kindToSend =
+      kind === 'feature' ? EJobKind.FEATURE : kind === 'bugfix' ? EJobKind.BUGFIX : undefined;
+    createJob({
+      orgId,
+      repoId,
+      firstMessage: text,
+      ...(title ? { title } : {}),
+      ...(kindToSend ? { kind: kindToSend } : {}),
+    })
+      .unwrap()
+      .then(({ jobId }) => {
+        router.replace(SITE_MAP.jobs.job(jobId)());
+        onDone?.();
+      })
+      .catch(() => setError('Could not start the job. Try again.'));
   }
 
   function onPick(e: React.ChangeEvent<HTMLInputElement>) {
@@ -424,7 +412,7 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
             // Plain Enter still inserts a newline. No-op while a create is in flight or there are no repos.
             if (!isSubmitCombo(e)) return;
             e.preventDefault();
-            if (create.isPending || repos.length === 0) return;
+            if (creating || repos.length === 0) return;
             submit();
           }}
           onPaste={(e) => {
@@ -469,7 +457,7 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
       <div className="flex justify-end">
         <Button
           onClick={submit}
-          loading={create.isPending}
+          loading={creating}
           loadingText="Starting…"
           disabled={repos.length === 0}
         >

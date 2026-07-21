@@ -47,10 +47,6 @@ export class InboundMessage extends TimestampedEntity {
   @Column({ type: 'text' })
   authorId!: string;
 
-  /** Display name of the author. */
-  @Column({ type: 'text' })
-  author!: string;
-
   @Column({ type: 'enum', enum: EThreadMessageSource })
   source!: EThreadMessageSource;
 

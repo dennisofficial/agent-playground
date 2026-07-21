@@ -2,7 +2,7 @@
 
 import { useGetJobsQuery } from '@/redux/query/api/jobs.api';
 import { useGetAllReposQuery } from '@/redux/query/api/repo.api';
-import { EJobActivity, EJobKind, EJobStatus, JobHalt, JobListItem } from '@workspace/shared';
+import { EJobKind, EJobStatus, JobHalt, JobListItem } from '@workspace/shared';
 import { useMemo } from 'react';
 import { adaptQuery, type QueryResultLike } from './_stub';
 import { useOrgs } from './me';
@@ -30,8 +30,6 @@ export interface InboxThread {
   /** jobs.section_first_entered — backend JobStatus -> ISO ts of first entry into that status. Drives
    *  the sidebar's per-section anchor sort (newest arrival on top). */
   sectionFirstEntered?: Partial<Record<EJobStatus, string>> | null;
-  /** Backend activity axis, retained so realtime and REST cache rows match the wire contract. */
-  activity: EJobActivity;
   /** The alert dot: this thread is waiting on you. */
   needsYou: boolean;
   /** A turn-stopping error is outstanding — the sidebar shows the failed ✕ glyph over the status pie. */
@@ -83,7 +81,6 @@ function toInboxThread(
     status: j.status,
     rawStatus: j.status,
     sectionFirstEntered: null,
-    activity: j.activity ?? 'idle',
     needsYou: false,
     halted: false,
     createdAt: j.createdAt,

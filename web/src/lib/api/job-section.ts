@@ -58,11 +58,9 @@ export function sectionOf(t: InboxThread): JobSection | null {
     case 'awaiting_ship_review':
       return 'ready_to_ship';
     case 'running':
-      // The ship-time Codex master review (after all builder threads) keeps the `running` status;
-      // surface it as its own section rather than an indistinct "Building" row.
-      if (t.activity === 'master_review') return 'master_review';
       // A shipping job re-uses the `running` status while its PR opens — keep it in "Ready to Ship"
-      // (showing the `running` working spinner) rather than teleporting it to "Building".
+      // (showing the `running` working spinner) rather than teleporting it to "Building". (The ship-time
+      // master-review section will resurface once the working-axis slice lands on the read model.)
       return t.shipping ? 'ready_to_ship' : 'building';
     case 'done':
       if (t.pr?.state === 'open') return 'pr_open';

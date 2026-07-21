@@ -1,7 +1,7 @@
 import { TimestampedEntity } from '@lib/database/base.entity';
 import type { AtlasClaims } from '@lib/rls/atlas-claims';
 import { Rls } from '@workspace/nestjs-rls';
-import { EThreadMessageKind, EThreadMessageSource } from '@workspace/shared';
+import { EMessageAudience, EThreadMessageKind, EThreadMessageSource } from '@workspace/shared';
 import {
   Column,
   Entity,
@@ -58,6 +58,11 @@ export class ThreadMessage extends TimestampedEntity {
 
   @Column({ type: 'enum', enum: EThreadMessageSource })
   source!: EThreadMessageSource;
+
+  /** Who may see this message — orthogonal to `source`. `operator`/`atlas` are always shared; `system`
+   *  messages choose (operator-only vs shared → whether it enters Atlas's context). */
+  @Column({ type: 'enum', enum: EMessageAudience, default: EMessageAudience.SHARED })
+  audience!: EMessageAudience;
 
   @Column({ type: 'text' })
   authorId!: string;

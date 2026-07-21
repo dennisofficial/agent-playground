@@ -71,7 +71,7 @@ export function ReposSection({
 
   function onRevalidate(repoId: string) {
     if (revalidateState.isLoading) return;
-    revalidate({ orgId, repoId })
+    revalidate({ repoId })
       .unwrap()
       .catch((e) =>
         setFlash({

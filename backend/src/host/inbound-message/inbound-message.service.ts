@@ -34,7 +34,6 @@ export class InboundMessageService {
         threadId: input.threadId,
         orgId: input.orgId,
         authorId: input.authorId,
-        author: input.author,
         source: input.source,
         text: input.text,
         payload: input.payload ?? null,
