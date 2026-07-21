@@ -1,5 +1,5 @@
 import { InjectFlowProducer } from '@nestjs/bullmq';
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Db } from '@workspace/nestjs-rls/nest';
 import type { CreateJobDto, CreateJobResult } from '@workspace/shared';
 import {
@@ -23,6 +23,8 @@ import { buildTurnFlow } from './turn-flow';
 
 @Injectable()
 export class JobBootstrapService {
+  private readonly logger = new Logger(this.constructor.name);
+
   constructor(
     private readonly db: Db,
     private readonly inbound: InboundMessageService,
@@ -33,6 +35,8 @@ export class JobBootstrapService {
     // Authorize the write against the target repo (and, transitively, the org) before creating anything.
     await this.db.scoped(Repo).assertAccess({ id: dto.repoId, orgId: dto.orgId });
 
+    // Job rows AND the first inbound message commit together — a job never exists without its trigger
+    // message (nor the reverse), so the reconciler's "job has a PENDING message" invariant is exact.
     const { jobId, focusedThreadId } = await this.db
       .unsafe(Job)
       .manager.transaction(async (m): Promise<CreateJobResult> => {
@@ -72,21 +76,30 @@ export class JobBootstrapService {
         job.focusedThreadId = thread.id;
         await m.save(job);
 
+        await this.inbound.enqueue(
+          {
+            jobId: job.id,
+            threadId: thread.id,
+            orgId: dto.orgId,
+            authorId: user.id,
+            author: user.name?.trim() || user.email,
+            source: EThreadMessageSource.OPERATOR,
+            text: dto.firstMessage,
+            priority: EInboundPriority.NOW,
+          },
+          m,
+        );
+
         return { jobId: job.id, focusedThreadId: thread.id };
       });
 
-    await this.inbound.enqueue({
-      jobId,
-      threadId: focusedThreadId,
-      orgId: dto.orgId,
-      authorId: user.id,
-      author: user.name?.trim() || user.email,
-      source: EThreadMessageSource.OPERATOR,
-      text: dto.firstMessage,
-      priority: EInboundPriority.NOW,
-    });
-
-    await this.flowProducer.add(buildTurnFlow(jobId));
+    try {
+      await this.flowProducer.add(buildTurnFlow(jobId));
+    } catch (err) {
+      this.logger.warn(
+        `flow enqueue failed for job ${jobId}; reconciler will recover: ${String(err)}`,
+      );
+    }
 
     return { jobId, focusedThreadId };
   }

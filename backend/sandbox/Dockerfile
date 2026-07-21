@@ -69,10 +69,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Single-tenant throwaway sandbox, so a blanket safe.directory is fine here.
 RUN git config --system --add safe.directory '*'
 
-# Engine runtime: the bundled engine entrypoint + an `atlas-engine-turn` launcher on PATH. The two agent
-# SDKs are webpack-EXTERNAL (`import()`), so they must exist in a node_modules colocated with the bundle.
-# Install them flat via npm into /usr/local/lib/atlas/node_modules (NOT pnpm — a plain flat layout so the
-# ESM `import()` resolves identically without pnpm's symlink store). Pin to the engine's own deps versions.
+# Engine runtime: the two agent SDKs are webpack-EXTERNAL (`import()`), so they must exist in a node_modules
+# colocated with the bundle. Install them flat via npm into /usr/local/lib/atlas/node_modules (NOT pnpm — a
+# plain flat layout so the ESM `import()` resolves identically without pnpm's symlink store). Pin to the
+# engine's own deps versions.
 ARG CLAUDE_SDK_VERSION=0.3.204
 ARG CODEX_SDK_VERSION=0.137.0
 RUN mkdir -p /usr/local/lib/atlas \
@@ -85,25 +85,17 @@ RUN mkdir -p /usr/local/lib/atlas \
 # runtime (`__webpack_require__.e`), so copying only engine-app.js would crash at the first dynamic import.
 COPY --from=builder /repo/backend/dist/engine-bundle/*engine-app.js /usr/local/lib/atlas/
 COPY --from=builder /repo/backend/dist/engine-bundle/*engine-app.js.map /usr/local/lib/atlas/
-RUN printf '#!/usr/bin/env bash\nexec /usr/local/bin/node --enable-source-maps /usr/local/lib/atlas/engine-app.js "$@"\n' \
-      > /usr/local/bin/atlas-engine-turn \
-  && chmod +x /usr/local/bin/atlas-engine-turn
 
-# atlas-classify: the wrapper Claude Code runs every Bash command through (via CLAUDE_CODE_SHELL_PREFIX,
-# set on the engine in launchEngineTurn). It renices agent-spawned work — builds, installs, integration
-# tests — to the bottom of the CPU/IO scheduler so the engine's streaming loop always preempts it. The
-# engine itself never routes through here, so it keeps default priority. `nice` is coreutils (always
-# present); `ionice` is util-linux and guarded so a missing binary can't break command execution.
-RUN printf '%s\n' \
-      '#!/bin/sh' \
-      '# Deprioritize agent-spawned work so the engine stream never waits behind a build. $1 = full command.' \
-      'if command -v ionice >/dev/null 2>&1; then' \
-      '  exec nice -n 19 ionice -c 3 -t /bin/bash -c "$1"' \
-      'else' \
-      '  exec nice -n 19 /bin/bash -c "$1"' \
-      'fi' \
-      > /usr/local/bin/atlas-classify \
-  && chmod +x /usr/local/bin/atlas-classify
+# Sandbox launchers, split by audience:
+#  - libexec/ → /usr/local/lib/atlas (OFF $PATH): host-only launchers the host execs by absolute path. Kept
+#    undiscoverable so the in-sandbox agent's Bash tool can't run them. atlas-engine-turn lives here — a turn
+#    is the host's to start, never the agent's (running it in-sandbox would recursively spawn an engine turn).
+#  - bin/ → /usr/local/bin (ON $PATH): agent-runtime tools. atlas-classify (the CLAUDE_CODE_SHELL_PREFIX
+#    wrapper that deprioritizes agent-spawned work) today; future agent-facing tools (e.g. atlas-svc, which
+#    the agent calls to expose a process to the internet) go here.
+COPY backend/sandbox/libexec/ /usr/local/lib/atlas/
+COPY backend/sandbox/bin/ /usr/local/bin/
+RUN chmod +x /usr/local/lib/atlas/atlas-* /usr/local/bin/atlas-*
 
 # PID 1: start the inner dockerd (auto overlay2/vfs), then idle / exec the given command.
 COPY backend/sandbox/entrypoint.sh /usr/local/bin/entrypoint.sh

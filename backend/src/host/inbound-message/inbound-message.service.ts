@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Db } from '@workspace/nestjs-rls/nest';
 import { EInboundMessageStatus, EInboundPriority, EThreadMessageSource } from '@workspace/shared';
-import { In } from 'typeorm';
+import { EntityManager, In } from 'typeorm';
 import {
   InboundMessage,
   InboundMessageRepo,
@@ -27,39 +27,42 @@ export class InboundMessageService {
     private readonly inbound: InboundMessageRepo,
   ) {}
 
-  async enqueue(input: EnqueueInput): Promise<InboundMessage> {
-    return this.db.unsafe(InboundMessage).manager.transaction(async (m) => {
-      const inbound = m.create(InboundMessage, {
-        jobId: input.jobId,
-        threadId: input.threadId,
-        orgId: input.orgId,
-        authorId: input.authorId,
-        source: input.source,
-        text: input.text,
-        payload: input.payload ?? null,
-        status: EInboundMessageStatus.PENDING,
-        priority: input.priority,
-        deliveredAt: null,
-      });
-      await m.save(inbound);
+  async enqueue(input: EnqueueInput, manager?: EntityManager): Promise<InboundMessage> {
+    if (manager) return this.insert(manager, input);
+    return this.db.unsafe(InboundMessage).manager.transaction((m) => this.insert(m, input));
+  }
 
-      const bubble = m.create(ThreadMessage, {
-        jobId: input.jobId,
-        threadId: input.threadId,
-        orgId: input.orgId,
-        subagentId: null,
-        source: input.source,
-        authorId: input.authorId,
-        author: input.author,
-        text: input.text,
-        card: null,
-        meta: null,
-        orderAt: null,
-      });
-      await m.save(bubble);
-
-      return inbound;
+  private async insert(m: EntityManager, input: EnqueueInput): Promise<InboundMessage> {
+    const inbound = m.create(InboundMessage, {
+      jobId: input.jobId,
+      threadId: input.threadId,
+      orgId: input.orgId,
+      authorId: input.authorId,
+      source: input.source,
+      text: input.text,
+      payload: input.payload ?? null,
+      status: EInboundMessageStatus.PENDING,
+      priority: input.priority,
+      deliveredAt: null,
     });
+    await m.save(inbound);
+
+    const bubble = m.create(ThreadMessage, {
+      jobId: input.jobId,
+      threadId: input.threadId,
+      orgId: input.orgId,
+      subagentId: null,
+      source: input.source,
+      authorId: input.authorId,
+      author: input.author,
+      text: input.text,
+      card: null,
+      meta: null,
+      orderAt: null,
+    });
+    await m.save(bubble);
+
+    return inbound;
   }
 
   async claimPending(jobId: string): Promise<InboundMessage[]> {
@@ -92,5 +95,19 @@ export class InboundMessageService {
         priority: In([EInboundPriority.NOW, EInboundPriority.QUEUED]),
       },
     });
+  }
+
+  async pendingJobIds(): Promise<string[]> {
+    const rows = await this.db
+      .unsafe(InboundMessage)
+      .createQueryBuilder('m')
+      .select('m.jobId', 'jobId')
+      .distinct(true)
+      .where('m.status = :status', { status: EInboundMessageStatus.PENDING })
+      .andWhere('m.priority IN (:...priorities)', {
+        priorities: [EInboundPriority.NOW, EInboundPriority.QUEUED],
+      })
+      .getRawMany<{ jobId: string }>();
+    return rows.map((r) => r.jobId);
   }
 }

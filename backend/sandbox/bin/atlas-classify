@@ -1,0 +1,12 @@
+#!/bin/sh
+# atlas-classify — the wrapper Claude Code runs every Bash command through (via CLAUDE_CODE_SHELL_PREFIX,
+# set on the engine in launchEngineTurn). It renices agent-spawned work — builds, installs, integration
+# tests — to the bottom of the CPU/IO scheduler so the engine's streaming loop always preempts it. The
+# engine itself never routes through here, so it keeps default priority. `nice` is coreutils (always
+# present); `ionice` is util-linux and guarded so a missing binary can't break command execution.
+# $1 = full command.
+if command -v ionice >/dev/null 2>&1; then
+  exec nice -n 19 ionice -c 3 -t /bin/bash -c "$1"
+else
+  exec nice -n 19 /bin/bash -c "$1"
+fi

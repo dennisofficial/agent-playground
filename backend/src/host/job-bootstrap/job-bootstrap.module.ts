@@ -6,6 +6,7 @@ import { TurnModule } from '../turn/turn.module';
 import { WorkspaceFsModule } from '../workspace-fs/workspace-fs.module';
 import { JobBootstrapController } from './job-bootstrap.controller';
 import { JobBootstrapService } from './job-bootstrap.service';
+import { JobReconcileService } from './job-reconcile.service';
 import { TurnDispatchProcessor } from './turn-dispatch.processor';
 import { TurnSpecBuilder } from './turn-spec-builder.service';
 
@@ -21,7 +22,7 @@ import { TurnSpecBuilder } from './turn-spec-builder.service';
   ],
   queues: [TurnDispatchProcessor],
   processors: [TurnDispatchProcessor],
-  services: [JobBootstrapService, TurnSpecBuilder],
+  services: [JobBootstrapService, JobReconcileService, TurnSpecBuilder],
   controllers: [JobBootstrapController],
 })
 export class JobBootstrapModule {}
