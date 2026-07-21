@@ -5,12 +5,12 @@ import { randomUUID } from 'node:crypto';
 import type { InboundMessage } from '../../_lib/database/entities/inbound-message.entity';
 import { HostTransportService } from '../host-transport/host-transport.service';
 import { SandboxService } from '../sandbox/sandbox.service';
-import { TurnSpecBuilder } from './turn-spec-builder.service';
+import { TurnSpecBuilderService } from './turn-spec-builder.service';
 
 @Injectable()
 export class TurnDispatcherService {
   constructor(
-    private readonly specBuilder: TurnSpecBuilder,
+    private readonly specBuilder: TurnSpecBuilderService,
     private readonly transport: HostTransportService,
     private readonly sandbox: SandboxService,
     private readonly db: Db,

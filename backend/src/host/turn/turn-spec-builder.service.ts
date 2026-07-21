@@ -20,7 +20,7 @@ const ATLAS_BASELINE_PROMPT = [
 ].join('\n');
 
 @Injectable()
-export class TurnSpecBuilder {
+export class TurnSpecBuilderService {
   constructor(
     private readonly db: Db,
     private readonly turnEnv: TurnEnvBuilder,
