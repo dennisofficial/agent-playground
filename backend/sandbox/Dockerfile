@@ -31,7 +31,7 @@ WORKDIR /repo
 COPY . .
 
 # Install the workspace from the lockfile, build the in-repo @workspace/* packages the engine inlines
-# (shared + packages/** + submodules/**), then webpack the engine into backend/sandbox/engine-app.js.
+# (shared + packages/** + submodules/**), then webpack the engine into backend/dist/engine-bundle/engine-app.js.
 RUN pnpm install --frozen-lockfile \
   && pnpm build:packages \
   && pnpm --filter backend build:engine
@@ -83,8 +83,8 @@ RUN mkdir -p /usr/local/lib/atlas \
 # The webpack bundle built in the builder stage (pinned to this image's Node 22 by absolute path). Glob ALL
 # chunks — webpack code-splits some deps into `<id>.engine-app.js` chunks the main bundle lazy-loads at
 # runtime (`__webpack_require__.e`), so copying only engine-app.js would crash at the first dynamic import.
-COPY --from=builder /repo/backend/sandbox/*engine-app.js /usr/local/lib/atlas/
-COPY --from=builder /repo/backend/sandbox/*engine-app.js.map /usr/local/lib/atlas/
+COPY --from=builder /repo/backend/dist/engine-bundle/*engine-app.js /usr/local/lib/atlas/
+COPY --from=builder /repo/backend/dist/engine-bundle/*engine-app.js.map /usr/local/lib/atlas/
 RUN printf '#!/usr/bin/env bash\nexec /usr/local/bin/node --enable-source-maps /usr/local/lib/atlas/engine-app.js "$@"\n' \
       > /usr/local/bin/atlas-engine-turn \
   && chmod +x /usr/local/bin/atlas-engine-turn

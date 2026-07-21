@@ -18,7 +18,11 @@ module.exports = function (options) {
     target: 'node',
     entry: './src/engine/main.ts',
     output: {
-      path: join(__dirname, 'sandbox'),
+      // Build output belongs in dist/ (git- + docker-ignored), NOT the source `sandbox/` dir. Its own subdir
+      // (not dist/engine) so the webpack megabundle never mingles with tsc's compiled src/engine output. The
+      // Docker image rebuilds this itself in its builder stage and COPYs from the matching path — nothing
+      // consumes the local artifact, so this is just the local compile check.
+      path: join(__dirname, 'dist', 'engine-bundle'),
       filename: 'engine-app.js',
       environment: { dynamicImport: true },
     },
