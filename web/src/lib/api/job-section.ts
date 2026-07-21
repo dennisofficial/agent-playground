@@ -46,6 +46,10 @@ export const SECTION_LABEL: Record<JobSection, string> = {
 
 export function sectionOf(t: InboxThread): JobSection | null {
   switch (t.status) {
+    case 'open':
+      // A freshly created conversation (no plan scoped yet) — the top-of-funnel "Planning" bucket.
+      // Without this an `open` job falls through to `null` and never appears in the sidebar.
+      return 'planning';
     case 'planning':
     case 'plan_review':
       return 'reviewing';

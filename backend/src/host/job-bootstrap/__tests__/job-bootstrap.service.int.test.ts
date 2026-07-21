@@ -128,8 +128,8 @@ describe('JobBootstrapService.create (int)', () => {
     // collide on these ids (BullMQ dedups), so a job can't run two concurrent flows.
     expect(flow.add).toHaveBeenCalledTimes(1);
     const added = flow.add.mock.calls[0][0];
-    expect(added.opts.jobId).toBe(`dispatch:${result.jobId}`);
-    expect(added.children[0].opts.jobId).toBe(`provision:${result.jobId}`);
+    expect(added.opts.jobId).toBe(`dispatch-${result.jobId}`);
+    expect(added.children[0].opts.jobId).toBe(`provision-${result.jobId}`);
   });
 
   it('rejects creating a job for a repo the caller cannot access', async () => {

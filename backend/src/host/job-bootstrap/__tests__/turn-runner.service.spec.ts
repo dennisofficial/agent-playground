@@ -76,8 +76,8 @@ describe('TurnRunnerService.run', () => {
 describe('buildTurnFlow', () => {
   it('uses deterministic single-flight job ids for the parent + child', () => {
     const flow = buildTurnFlow('job-9');
-    expect(flow.opts?.jobId).toBe('dispatch:job-9');
-    expect(flow.children?.[0].opts?.jobId).toBe('provision:job-9');
+    expect(flow.opts?.jobId).toBe('dispatch-job-9');
+    expect(flow.children?.[0].opts?.jobId).toBe('provision-job-9');
     // Provision fails fast (low attempts) rather than hammering the not-yet-implemented sandbox.
     expect(flow.children?.[0].opts?.attempts).toBe(2);
   });
