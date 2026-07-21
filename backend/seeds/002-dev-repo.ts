@@ -1,5 +1,5 @@
 import type { Seeder } from '@workspace/nestjs-core';
-import { Repo } from '../src/app/repo/entities/repo.entity';
+import { Repo } from '../src/_lib/database/entities/repo.entity';
 import { DEV_SEED_IDS } from './_shared/dev-seed-ids';
 
 /**

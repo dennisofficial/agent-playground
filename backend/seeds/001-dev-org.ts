@@ -1,8 +1,8 @@
 import type { Seeder } from '@workspace/nestjs-core';
 import { EOrgRole, EOrgStatus } from '@workspace/shared';
-import { User } from '../src/app/auth/entities/user.entity';
-import { OrganizationMember } from '../src/app/org/entities/organization-member.entity';
-import { Organization } from '../src/app/org/entities/organization.entity';
+import { OrganizationMember } from '../src/_lib/database/entities/organization-member.entity';
+import { Organization } from '../src/_lib/database/entities/organization.entity';
+import { User } from '../src/_lib/database/entities/user.entity';
 import { DEV_SEED_IDS } from './_shared/dev-seed-ids';
 
 /**

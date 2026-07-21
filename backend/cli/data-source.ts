@@ -1,4 +1,7 @@
+// Resolve the `@lib`/`@core`/`@shared` tsconfig path aliases at runtime — the entity files loaded by the
+// glob below import through them. Reads TS_NODE_PROJECT (set to tsconfig.cli.json by the db:* scripts).
 import 'reflect-metadata';
+import 'tsconfig-paths/register';
 
 import { resolve } from 'path';
 import { DataSource } from 'typeorm';
@@ -20,11 +23,8 @@ export const AppDataSource = new DataSource({
   username: process.env.POSTGRES_USER,
   password: process.env.POSTGRES_PASSWORD,
   database: process.env.POSTGRES_DB,
-  entities: [resolve(__dirname, '../src/app/**/*.entity.{ts,js}')],
+  entities: [resolve(__dirname, '../src/_lib/database/entities/*.entity.{ts,js}')],
   migrations: [resolve(__dirname, '../migrations/*.ts')],
-  // Atlas keeps its OWN migrations bookkeeping table so its history never tangles with v1's
-  // `migrations` table on the shared database.
-  migrationsTableName: 'migrations',
   synchronize: false,
   logging: ['migration'],
   connectTimeoutMS: 10_000,

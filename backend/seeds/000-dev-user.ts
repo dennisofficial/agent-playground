@@ -1,7 +1,7 @@
 import { hash } from '@node-rs/argon2';
 import type { Seeder } from '@workspace/nestjs-core';
 import { EUserRole, EUserStatus } from '@workspace/shared';
-import { User } from '../src/app/auth/entities/user.entity';
+import { User } from '../src/_lib/database/entities/user.entity';
 import { DEV_SEED_IDS } from './_shared/dev-seed-ids';
 
 export default (async (ds) => {

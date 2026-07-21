@@ -15,12 +15,12 @@ import {
 } from '@workspace/shared';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { Job } from '../src/app/job/entities/job.entity';
-import { Task } from '../src/app/job/entities/task.entity';
-import { ThreadGroup } from '../src/app/job/entities/thread-group.entity';
-import { ThreadMessage } from '../src/app/job/entities/thread-message.entity';
-import { Thread } from '../src/app/job/entities/thread.entity';
-import { Repo } from '../src/app/repo/entities/repo.entity';
+import { Job } from '../src/_lib/database/entities/job.entity';
+import { Repo } from '../src/_lib/database/entities/repo.entity';
+import { Task } from '../src/_lib/database/entities/task.entity';
+import { ThreadGroup } from '../src/_lib/database/entities/thread-group.entity';
+import { ThreadMessage } from '../src/_lib/database/entities/thread-message.entity';
+import { Thread } from '../src/_lib/database/entities/thread.entity';
 import { DEV_SEED_IDS } from './_shared/dev-seed-ids';
 
 /**
@@ -229,5 +229,5 @@ export default (async (ds) => {
   // Keep the fixtures repo row self-consistent (denormalized thread counter).
   await ds.getRepository(Repo).update({ id: repoId }, { threadCount: threadTotal });
 
-  console.log(`  003: upserted ${fx.jobs.length} prod jobs (${threadTotal} threads total)`);
+  console.log(`  004: upserted ${fx.jobs.length} prod jobs (${threadTotal} threads total)`);
 }) satisfies Seeder;

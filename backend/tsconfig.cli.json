@@ -4,8 +4,10 @@
     "module": "nodenext",
     "moduleResolution": "nodenext",
     "rootDir": ".",
-    "noEmit": false
+    "noEmit": false,
+    "baseUrl": ".",
+    "ignoreDeprecations": "6.0",
   },
   "include": ["cli/**/*", "migrations/**/*", "seeds/**/*"],
-  "exclude": ["node_modules", "dist"]
+  "exclude": ["node_modules", "dist", "seeds/_deferred"],
 }
