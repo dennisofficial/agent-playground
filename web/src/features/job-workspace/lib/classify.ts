@@ -139,6 +139,18 @@ export function classifyMessage(message: JobMessage): ClassifiedMessage {
     return { kind: 'attachments', message, card: message.card };
   }
 
+  // A `build_event` is ALWAYS a system-generated pill (sandbox lifecycle, build relays, compaction) — check
+  // BEFORE the user/atlas fallback. The read model maps every non-`atlas` message to `author:'user'`, so a
+  // SYSTEM-sourced build_event (e.g. the sandbox "Provisioning…" pill) would otherwise be swallowed as a
+  // plain user bubble here instead of reaching the pill branch below.
+  if (message.kind === 'build_event') {
+    const summary = message.meta?.compactionSummary;
+    if (typeof summary === 'string' && summary.length > 0) {
+      return { kind: 'compaction', message, tone: toneOf(message.text ?? ''), summary };
+    }
+    return { kind: 'event', message, tone: toneOf(message.text ?? '') };
+  }
+
   if (message.author === 'user' || message.local) {
     return { kind: 'user', message };
   }
@@ -168,22 +180,6 @@ export function classifyMessage(message: JobMessage): ClassifiedMessage {
   }
   if (message.card?.type === 'skill_proposal_card') {
     return { kind: 'skill_proposal', message, card: message.card };
-  }
-
-  // The driver's build relays are a real backend kind (`build_event`) — the only system-pill source. A
-  // compaction pill is a build_event that ALSO carries the full handoff summary in `meta.compactionSummary`;
-  // it renders as the same pill but is expandable so the operator can inspect what context was kept.
-  if (message.kind === 'build_event') {
-    const summary = message.meta?.compactionSummary;
-    if (typeof summary === 'string' && summary.length > 0) {
-      return {
-        kind: 'compaction',
-        message,
-        tone: toneOf(message.text ?? ''),
-        summary,
-      };
-    }
-    return { kind: 'event', message, tone: toneOf(message.text ?? '') };
   }
 
   return { kind: 'claude', message };

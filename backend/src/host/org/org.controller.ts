@@ -1,4 +1,4 @@
-import { sseSnapshotList } from '@lib/realtime/sse-snapshot';
+import { sseSnapshotList } from '@lib/realtime/sse-snapshot.util';
 import {
   Body,
   Controller,

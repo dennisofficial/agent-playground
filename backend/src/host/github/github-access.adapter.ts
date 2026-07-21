@@ -10,13 +10,6 @@ export interface RepoProbe {
   defaultBranch?: string;
 }
 
-/**
- * Everything the repos slice needs from GitHub. It bridges the token-agnostic {@link GithubApiService} and
- * the org's resolved credential ({@link GithubCredentialsService}), and translates GitHub errors into
- * graceful shapes (never throws for expected failures like a missing token or an unreachable repo — the
- * repos slice records those as `accessOk:false`). Injected directly by the repos slice — no port; one impl,
- * and github doesn't import repo, so there's no cycle.
- */
 @Injectable()
 export class GithubAccessAdapter {
   constructor(

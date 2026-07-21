@@ -3,7 +3,7 @@ import {
   isNewerMaterial,
   parseClaudeExpiresAt,
   parseCodexLastRefresh,
-} from '../material-freshness';
+} from '../material-freshness.util';
 
 const claude = (expiresAt: number): string => JSON.stringify({ claudeAiOauth: { expiresAt } });
 const codex = (lastRefresh: string): string => JSON.stringify({ last_refresh: lastRefresh });

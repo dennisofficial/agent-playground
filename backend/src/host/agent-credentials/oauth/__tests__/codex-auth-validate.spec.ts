@@ -1,4 +1,4 @@
-import { assertValidCodexAuthJson, CodexAuthInvalidError } from '../codex-auth-validate';
+import { assertValidCodexAuthJson, CodexAuthInvalidError } from '../codex-auth-validate.util';
 
 describe('assertValidCodexAuthJson', () => {
   it('accepts a full tokens object', () => {

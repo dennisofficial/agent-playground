@@ -25,22 +25,6 @@ export function resetEpochToIso(resetsAt: number | undefined | null): string | u
   return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
 }
 
-function parseWindow(raw: unknown): StoredUsageWindow | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const w = raw as { utilization?: unknown; resets_at?: unknown };
-  const utilization = typeof w.utilization === 'number' ? w.utilization : null;
-  if (utilization == null) return null;
-  const resetsAtMs =
-    typeof w.resets_at === 'string' || typeof w.resets_at === 'number'
-      ? new Date(w.resets_at).getTime()
-      : NaN;
-  if (Number.isNaN(resetsAtMs)) return null;
-  return {
-    utilization: Math.round(Math.min(100, Math.max(0, utilization))),
-    resetsAt: new Date(resetsAtMs).toISOString(),
-  };
-}
-
 export function parseModelWindows(root: Record<string, unknown>): ModelUsageWindow[] {
   const limits = root.limits;
   if (!Array.isArray(limits)) return [];
@@ -60,6 +44,22 @@ export function parseModelWindows(root: Record<string, unknown>): ModelUsageWind
     });
   }
   return out;
+}
+
+function parseWindow(raw: unknown): StoredUsageWindow | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const w = raw as { utilization?: unknown; resets_at?: unknown };
+  const utilization = typeof w.utilization === 'number' ? w.utilization : null;
+  if (utilization == null) return null;
+  const resetsAtMs =
+    typeof w.resets_at === 'string' || typeof w.resets_at === 'number'
+      ? new Date(w.resets_at).getTime()
+      : NaN;
+  if (Number.isNaN(resetsAtMs)) return null;
+  return {
+    utilization: Math.round(Math.min(100, Math.max(0, utilization))),
+    resetsAt: new Date(resetsAtMs).toISOString(),
+  };
 }
 
 export function parseUsageResponse(body: unknown): ParsedUsage {

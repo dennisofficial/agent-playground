@@ -22,7 +22,7 @@ import {
   RATE_LIMIT_TYPE_TO_WINDOW,
   resetEpochToIso,
   toPercentUtilization,
-} from './usage-parse';
+} from './usage-parse.util';
 
 const USAGE_API_URL = 'https://api.anthropic.com/api/oauth/usage';
 const OAUTH_BETA_HEADER = 'oauth-2025-04-20';
@@ -91,7 +91,7 @@ export class AgentUsageService {
       this.logger.warn(`usage refresh failed for ${credentialId}: ${String(err)}`);
       return null;
     }
-    const token = bearerFromMaterial(material, row.kind);
+    const token = AgentUsageService.bearerFromMaterial(material, row.kind);
     if (!token) return null;
 
     const parsed = await this.fetchUsage(token);
@@ -161,14 +161,14 @@ export class AgentUsageService {
       await m.save(row);
     });
   }
-}
 
-function bearerFromMaterial(material: string, kind: EAgentCredentialKind): string | null {
-  if (kind === EAgentCredentialKind.SETUP_TOKEN) return material.trim() || null;
-  try {
-    const token = (JSON.parse(material) as ClaudeCredentialBlob).claudeAiOauth?.accessToken;
-    return typeof token === 'string' && token.length > 0 ? token : null;
-  } catch {
-    return null;
+  private static bearerFromMaterial(material: string, kind: EAgentCredentialKind): string | null {
+    if (kind === EAgentCredentialKind.SETUP_TOKEN) return material.trim() || null;
+    try {
+      const token = (JSON.parse(material) as ClaudeCredentialBlob).claudeAiOauth?.accessToken;
+      return typeof token === 'string' && token.length > 0 ? token : null;
+    } catch {
+      return null;
+    }
   }
 }

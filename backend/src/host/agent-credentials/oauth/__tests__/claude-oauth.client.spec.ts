@@ -1,13 +1,10 @@
-import {
-  buildAuthorizeUrl,
-  exchangeCode,
-  parseTokenSet,
-  tokenSetToBlob,
-} from '../claude-oauth.client';
+import { ClaudeOAuthClient } from '../claude-oauth.client';
+
+const client = new ClaudeOAuthClient();
 
 describe('buildAuthorizeUrl', () => {
   it('sets PKCE + manual-code params', () => {
-    const url = new URL(buildAuthorizeUrl({ challenge: 'CH', state: 'ST' }));
+    const url = new URL(client.buildAuthorizeUrl({ challenge: 'CH', state: 'ST' }));
     expect(url.origin + url.pathname).toBe('https://claude.com/cai/oauth/authorize');
     expect(url.searchParams.get('code_challenge')).toBe('CH');
     expect(url.searchParams.get('code_challenge_method')).toBe('S256');
@@ -20,14 +17,18 @@ describe('buildAuthorizeUrl', () => {
 describe('exchangeCode', () => {
   it('rejects a pasted code whose fragment state does not match', async () => {
     await expect(
-      exchangeCode({ code: 'abc#wrongstate', verifier: 'v', state: 'rightstate' }),
+      client.exchangeCode({
+        code: 'abc#wrongstate',
+        verifier: 'v',
+        state: 'rightstate',
+      }),
     ).rejects.toThrow(/state mismatch/);
   });
 });
 
 describe('parseTokenSet', () => {
   it('extracts tokens, expiry, plan and email', () => {
-    const t = parseTokenSet({
+    const t = client.parseTokenSet({
       access_token: 'at',
       refresh_token: 'rt',
       expires_in: 3600,
@@ -42,13 +43,13 @@ describe('parseTokenSet', () => {
   });
 
   it('throws when required fields are missing', () => {
-    expect(() => parseTokenSet({ access_token: 'at' })).toThrow();
+    expect(() => client.parseTokenSet({ access_token: 'at' })).toThrow();
   });
 });
 
 describe('tokenSetToBlob', () => {
   it('splits the scope string into an array under claudeAiOauth', () => {
-    const blob = tokenSetToBlob({
+    const blob = client.tokenSetToBlob({
       accessToken: 'at',
       refreshToken: 'rt',
       expiresAt: 123,

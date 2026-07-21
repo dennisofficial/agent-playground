@@ -21,10 +21,6 @@ export function parseCodexLastRefresh(material: string): number | null {
   }
 }
 
-/**
- * Is `next` a newer credential than `current`? Used to avoid clobbering a fresher token when the engine
- * hands one back concurrently. Falls back to a plain inequality when timestamps can't be parsed.
- */
 export function isNewerMaterial(provider: EAgentProvider, next: string, current: string): boolean {
   const parse = provider === EAgentProvider.CLAUDE ? parseClaudeExpiresAt : parseCodexLastRefresh;
   const nw = parse(next);

@@ -1,10 +1,9 @@
+import { SecretCipherService } from '@lib/crypto/secret-cipher.service';
 import { Injectable } from '@nestjs/common';
 import type { EMountMode } from '@workspace/shared';
-import { RepoRepo } from '../../_lib/database/entities/repo.entity';
+import { WorkspaceMountRepo } from '../../_lib/database/entities/workspace-mount.entity';
 import { WorkspaceProfileRepo } from '../../_lib/database/entities/workspace-profile.entity';
-import { OrgService } from '../org/org.service';
-import { MountService } from './mount.service';
-import { SecretFileService } from './secret-file.service';
+import { WorkspaceSecretFileRepo } from '../../_lib/database/entities/workspace-secret-file.entity';
 
 export interface WorkspaceMountView {
   path: string;
@@ -24,20 +23,13 @@ export interface WorkspaceProfileSnapshot {
   secretFiles: { path: string; label: string | null }[];
 }
 
-/**
- * The workspace profile aggregate + instructions (setup script, preview recipe). Owns the scalar
- * `workspace_profiles` row and composes the mount/secret sub-services into a snapshot. Exported directly and
- * injected by consumers (SandboxModule etc.) — no port indirection; there's one implementation and no cycle.
- * SHELL this pass — method bodies land with the logic pass.
- */
 @Injectable()
 export class WorkspaceProfileService {
   constructor(
-    private readonly profiles: WorkspaceProfileRepo,
-    private readonly repos: RepoRepo,
-    private readonly orgs: OrgService,
-    private readonly mounts: MountService,
-    private readonly secrets: SecretFileService,
+    private readonly workspaceProfileRepo: WorkspaceProfileRepo,
+    private readonly workspaceMountRepo: WorkspaceMountRepo,
+    private readonly workspaceSecretFileRepo: WorkspaceSecretFileRepo,
+    private readonly secretCipherService: SecretCipherService,
   ) {}
 
   /** Read-only aggregate of the repo's workspace profile (safe fields only). */
@@ -46,17 +38,24 @@ export class WorkspaceProfileService {
   }
 
   /** The cold-boot setup script the sandbox runs on first provision. Internal, no tenancy check. */
-  materializeSetupScript(_repoId: string): Promise<string | null> {
-    throw new Error('not implemented');
+  async materializeSetupScript(repoId: string): Promise<string | null> {
+    const profile = await this.workspaceProfileRepo.findOne({ where: { repoId } });
+    return profile?.setupScript ?? null;
   }
 
   /** Mounts to materialize into a container. Internal (host provisioning), no tenancy check. */
-  materializeMounts(_repoId: string): Promise<WorkspaceMountView[]> {
-    throw new Error('not implemented');
+  async materializeMounts(repoId: string): Promise<WorkspaceMountView[]> {
+    const rows = await this.workspaceMountRepo.find({ where: { repoId } });
+    return rows.map((m) => ({ path: m.path, mode: m.mode }));
   }
 
   /** Secret files WITH decrypted contents to write into a container. Internal, no tenancy check. */
-  materializeSecrets(_repoId: string): Promise<MaterializedSecretFile[]> {
-    throw new Error('not implemented');
+  async materializeSecrets(repoId: string): Promise<MaterializedSecretFile[]> {
+    const rows = await this.workspaceSecretFileRepo.find({ where: { repoId } });
+    return rows.map((s) => ({
+      path: s.path,
+      label: s.label,
+      value: this.secretCipherService.decrypt(s.valueEnc),
+    }));
   }
 }

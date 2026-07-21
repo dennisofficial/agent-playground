@@ -5,17 +5,9 @@ import {
   AgentCredential,
   AgentCredentialRepo,
 } from '../../_lib/database/entities/agent-credential.entity';
-import {
-  type ClaudeCredentialBlob,
-  refresh as claudeRefresh,
-  tokenSetToBlob,
-} from './oauth/claude-oauth.client';
-import { decodeJwtExpMs } from './oauth/codex-id-token';
-import {
-  buildAuthJson,
-  refresh as codexRefresh,
-  type CodexTokens,
-} from './oauth/codex-oauth.client';
+import { ClaudeOAuthClient, type ClaudeCredentialBlob } from './oauth/claude-oauth.client';
+import { decodeJwtExpMs } from './oauth/codex-id-token.util';
+import { CodexOAuthClient, type CodexTokens } from './oauth/codex-oauth.client';
 
 const DEFAULT_SKEW_MS = 30 * 60 * 1000;
 
@@ -26,11 +18,6 @@ export class CredentialNeedsReauthError extends Error {
   }
 }
 
-function hardAuthFailure(err: unknown): boolean {
-  const status = (err as { status?: number })?.status;
-  return status === 400 || status === 401 || status === 403;
-}
-
 @Injectable()
 export class AgentCredentialRefreshService {
   private readonly logger = new Logger(AgentCredentialRefreshService.name);
@@ -38,6 +25,8 @@ export class AgentCredentialRefreshService {
   constructor(
     private readonly repo: AgentCredentialRepo,
     private readonly cipher: SecretCipherService,
+    private readonly claudeOAuth: ClaudeOAuthClient,
+    private readonly codexOAuth: CodexOAuthClient,
   ) {}
 
   /** Return fresh runtime material for a credential, refreshing first if near expiry. */
@@ -80,7 +69,10 @@ export class AgentCredentialRefreshService {
         await m.save(row);
         return material;
       } catch (err) {
-        if (hardAuthFailure(err) || err instanceof MissingRefreshTokenError) {
+        if (
+          AgentCredentialRefreshService.hardAuthFailure(err) ||
+          err instanceof MissingRefreshTokenError
+        ) {
           row.status = EAgentCredentialStatus.NEEDS_REAUTH;
           await m.save(row);
           throw new CredentialNeedsReauthError(credentialId);
@@ -95,9 +87,9 @@ export class AgentCredentialRefreshService {
     const blob = JSON.parse(current) as ClaudeCredentialBlob;
     const refreshToken = blob.claudeAiOauth?.refreshToken;
     if (!refreshToken) throw new MissingRefreshTokenError();
-    const tokenSet = await claudeRefresh(refreshToken);
+    const tokenSet = await this.claudeOAuth.refresh(refreshToken);
     return {
-      material: JSON.stringify(tokenSetToBlob(tokenSet)),
+      material: JSON.stringify(this.claudeOAuth.tokenSetToBlob(tokenSet)),
       expiresAt: new Date(tokenSet.expiresAt),
     };
   }
@@ -111,7 +103,7 @@ export class AgentCredentialRefreshService {
     const tokens = auth.tokens;
     const refreshToken = tokens?.refresh_token;
     if (!refreshToken || !tokens) throw new MissingRefreshTokenError();
-    const next = await codexRefresh(refreshToken);
+    const next = await this.codexOAuth.refresh(refreshToken);
     const merged: CodexTokens = {
       idToken: next.idToken ?? (tokens as { id_token?: string }).id_token ?? '',
       accessToken: next.accessToken ?? (tokens as { access_token?: string }).access_token ?? '',
@@ -119,9 +111,14 @@ export class AgentCredentialRefreshService {
     };
     const expMs = decodeJwtExpMs(merged.accessToken);
     return {
-      material: buildAuthJson(merged, new Date().toISOString()),
+      material: this.codexOAuth.buildAuthJson(merged, new Date().toISOString()),
       expiresAt: expMs ? new Date(expMs) : null,
     };
+  }
+
+  private static hardAuthFailure(err: unknown): boolean {
+    const status = (err as { status?: number })?.status;
+    return status === 400 || status === 401 || status === 403;
   }
 }
 

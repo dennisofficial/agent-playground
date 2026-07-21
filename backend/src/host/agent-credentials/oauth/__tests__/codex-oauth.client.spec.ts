@@ -1,12 +1,9 @@
 import axios from 'axios';
-import {
-  buildAuthJson,
-  CodexOAuthHttpError,
-  pollDeviceOnce,
-  startDeviceAuth,
-} from '../codex-oauth.client';
+import { CodexOAuthClient, CodexOAuthHttpError } from '../codex-oauth.client';
 
 vi.mock('axios');
+
+const client = new CodexOAuthClient();
 
 function jwt(payload: Record<string, unknown>): string {
   const b = (o: unknown): string => Buffer.from(JSON.stringify(o)).toString('base64url');
@@ -22,7 +19,7 @@ afterEach(() => vi.clearAllMocks());
 describe('startDeviceAuth', () => {
   it('returns the device code + a client-constructed verification URL', async () => {
     mockPost(200, { device_auth_id: 'dev_1', user_code: 'WXYZ-1234', interval: '0' });
-    const res = await startDeviceAuth();
+    const res = await client.startDeviceAuth();
     expect(res.deviceAuthId).toBe('dev_1');
     expect(res.userCode).toBe('WXYZ-1234');
     expect(res.intervalSec).toBe(0);
@@ -32,7 +29,7 @@ describe('startDeviceAuth', () => {
 
   it('explains when device login is not enabled (404)', async () => {
     mockPost(404, {});
-    await expect(startDeviceAuth()).rejects.toThrow(/not enabled/i);
+    await expect(client.startDeviceAuth()).rejects.toThrow(/not enabled/i);
   });
 });
 
@@ -41,12 +38,12 @@ describe('pollDeviceOnce', () => {
 
   it('treats 403 as still pending', async () => {
     mockPost(403, {});
-    expect(await pollDeviceOnce(input)).toEqual({ pending: true });
+    expect(await client.pollDeviceOnce(input)).toEqual({ pending: true });
   });
 
   it('returns the authorization code + verifier on success', async () => {
     mockPost(200, { authorization_code: 'ac', code_challenge: 'cc', code_verifier: 'cv' });
-    expect(await pollDeviceOnce(input)).toEqual({
+    expect(await client.pollDeviceOnce(input)).toEqual({
       pending: false,
       authorizationCode: 'ac',
       codeVerifier: 'cv',
@@ -55,7 +52,7 @@ describe('pollDeviceOnce', () => {
 
   it('throws on an unexpected status', async () => {
     mockPost(500, {});
-    await expect(pollDeviceOnce(input)).rejects.toBeInstanceOf(CodexOAuthHttpError);
+    await expect(client.pollDeviceOnce(input)).rejects.toBeInstanceOf(CodexOAuthHttpError);
   });
 });
 
@@ -64,7 +61,7 @@ describe('buildAuthJson', () => {
     const idToken = jwt({ 'https://api.openai.com/auth': { chatgpt_account_id: 'acc_9' } });
     const now = '2026-07-18T00:00:00.000Z';
     const parsed = JSON.parse(
-      buildAuthJson({ idToken, accessToken: 'at', refreshToken: 'rt' }, now),
+      client.buildAuthJson({ idToken, accessToken: 'at', refreshToken: 'rt' }, now),
     );
     expect(parsed.OPENAI_API_KEY).toBeNull();
     expect(parsed.tokens).toEqual({

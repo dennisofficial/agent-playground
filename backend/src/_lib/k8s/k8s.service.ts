@@ -10,15 +10,27 @@ import {
 } from '@kubernetes/client-node';
 import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import { Writable } from 'node:stream';
-import { isK8sNotFoundError } from './k8s.utils';
+import { isK8sNotFoundError } from './k8s.util';
 
 const READY_POLL_INTERVAL_MS = 1_000;
 
-function normalizeLoopbackServer(kc: KubeConfig): void {
-  const cluster = kc.getCurrentCluster();
-  if (!cluster?.server) return;
-  const server = cluster.server.replace('://0.0.0.0:', '://127.0.0.1:');
-  if (server !== cluster.server) (cluster as { server: string }).server = server;
+const TERMINAL_WAITING_REASONS = new Set([
+  'ImagePullBackOff',
+  'ErrImagePull',
+  'InvalidImageName',
+  'ErrImageNeverPull',
+  'ImageInspectError',
+  'RegistryUnavailable',
+  'CreateContainerConfigError',
+  'CreateContainerError',
+  'CrashLoopBackOff',
+]);
+
+export class TerminalPodError extends Error {
+  constructor(readonly reason: string) {
+    super(reason);
+    this.name = 'TerminalPodError';
+  }
 }
 
 @Injectable()
@@ -40,7 +52,11 @@ export class K8sService implements OnModuleInit {
       this.logger.log('Loaded in-cluster kubeconfig');
     } else {
       kc.loadFromDefault();
-      normalizeLoopbackServer(kc);
+      // Pin the target cluster explicitly when configured — never silently inherit the ambient
+      // current-context (that once sent every sandbox pod to a dead spike cluster).
+      const context = this.envService.get('K8S_CONTEXT');
+      if (context) this.selectContext(kc, context);
+      K8sService.normalizeLoopbackServer(kc);
       const server = kc.getCurrentCluster()?.server;
       this.logger.log(
         `Loaded kubeconfig from default (context ${kc.getCurrentContext()}, ${server})`,
@@ -53,6 +69,16 @@ export class K8sService implements OnModuleInit {
     // Startup requirement: fail boot fast if the cluster is unreachable, rather than surfacing a
     // cryptic error deep inside the first sandbox provision.
     await this.assertClusterReachable(kc);
+  }
+
+  private selectContext(kc: KubeConfig, context: string): void {
+    const names = kc.getContexts().map((c) => c.name);
+    if (!names.includes(context)) {
+      throw new Error(
+        `K8S_CONTEXT="${context}" not found in kubeconfig. Available contexts: ${names.join(', ') || '(none)'}.`,
+      );
+    }
+    kc.setCurrentContext(context);
   }
 
   /** Probe the apiserver `/version` endpoint; throw (aborting boot) if the cluster can't be reached. */
@@ -115,11 +141,6 @@ export class K8sService implements OnModuleInit {
     return res.items;
   }
 
-  /**
-   * Run a command in a container of a running pod. Resolves when the process reports Success, rejects
-   * with the captured stderr otherwise. Detached launches should background inside the command itself
-   * (e.g. `setsid ... &`) so the exec stream closes immediately.
-   */
   async execInPod(
     namespace: string,
     pod: string,
@@ -129,7 +150,7 @@ export class K8sService implements OnModuleInit {
     const errChunks: string[] = [];
     const stderr = new Writable({
       write(chunk, _enc, cb): void {
-        errChunks.push(chunk.toString());
+        errChunks.push(String(chunk));
         cb();
       },
     });
@@ -164,7 +185,6 @@ export class K8sService implements OnModuleInit {
     });
   }
 
-  /** Poll until the pod is Running with a true Ready condition, or throw on terminal phase / timeout. */
   async waitForPodReady(namespace: string, pod: string, timeoutMs = 120_000): Promise<void> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
@@ -173,12 +193,44 @@ export class K8sService implements OnModuleInit {
         const phase = p.status?.phase;
         const ready = p.status?.conditions?.some((c) => c.type === 'Ready' && c.status === 'True');
         if (phase === 'Running' && ready) return;
+        const terminal = K8sService.terminalPodFailure(p);
+        if (terminal) throw new TerminalPodError(`pod ${pod} failed to provision: ${terminal}`);
         if (phase === 'Failed' || phase === 'Succeeded') {
-          throw new Error(`pod ${pod} reached terminal phase ${phase} before becoming Ready`);
+          throw new TerminalPodError(
+            `pod ${pod} reached terminal phase ${phase} before becoming Ready`,
+          );
         }
       }
       await new Promise((r) => setTimeout(r, READY_POLL_INTERVAL_MS));
     }
     throw new Error(`pod ${pod} did not become Ready within ${timeoutMs}ms`);
+  }
+
+  /** Inspect a pod's (init) container statuses for a terminal failure; return a human reason or null. */
+  private static terminalPodFailure(pod: V1Pod): string | null {
+    const statuses = [
+      ...(pod.status?.initContainerStatuses ?? []),
+      ...(pod.status?.containerStatuses ?? []),
+    ];
+    for (const cs of statuses) {
+      const waiting = cs.state?.waiting;
+      if (waiting?.reason && TERMINAL_WAITING_REASONS.has(waiting.reason)) {
+        return `container ${cs.name}: ${waiting.reason}${waiting.message ? ` — ${waiting.message}` : ''}`;
+      }
+      // A container that ran and exited non-zero — for the bootstrap init container this is a failed clone/setup.
+      const terminated = cs.state?.terminated;
+      if (terminated && terminated.exitCode !== 0) {
+        const detail = terminated.message ?? terminated.reason ?? '';
+        return `container ${cs.name} exited ${terminated.exitCode}${detail ? ` — ${detail}` : ''}`;
+      }
+    }
+    return null;
+  }
+
+  private static normalizeLoopbackServer(kc: KubeConfig): void {
+    const cluster = kc.getCurrentCluster();
+    if (!cluster?.server) return;
+    const server = cluster.server.replace('://0.0.0.0:', '://127.0.0.1:');
+    if (server !== cluster.server) (cluster as { server: string }).server = server;
   }
 }

@@ -1,16 +1,14 @@
 import { CreateModule } from '@workspace/nestjs-core';
-import { JobModule } from '../job/job.module';
+import { ProvisionStatusModule } from '../provision-status/provision-status.module';
 import { WorkspaceProfileModule } from '../workspace-profile/workspace-profile.module';
-import { SandboxRuntime } from './sandbox-runtime.service';
+import { SandboxProvisionProcessor } from './sandbox-provision.processor';
+import { SandboxService } from './sandbox.service';
 
-/**
- * The sandbox RUNTIME — a lazily materialized, resumable k8s pod that hosts the in-process engine for a job.
- * Not a user resource: no entity, no CRUD, no realtime table (k8s is the source of truth; see
- * {@link SandboxRuntime}). Imports `JobModule` (JobRepo → resolve a job's repo/org) and `WorkspaceProfileModule`
- * (the mounts/secrets/setup config it executes). K8s and Redis are global.
- */
 @CreateModule({
-  imports: [JobModule, WorkspaceProfileModule],
-  services: [SandboxRuntime],
+  imports: [WorkspaceProfileModule, ProvisionStatusModule],
+  queues: [SandboxProvisionProcessor],
+  processors: [SandboxProvisionProcessor],
+  // Exported: launchEngineTurn (via TurnModule) also calls ensureReady, so the service can't be module-private.
+  services: [SandboxService],
 })
 export class SandboxModule {}

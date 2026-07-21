@@ -4,7 +4,7 @@ import {
   RATE_LIMIT_TYPE_TO_WINDOW,
   resetEpochToIso,
   toPercentUtilization,
-} from '../usage-parse';
+} from '../usage-parse.util';
 
 describe('toPercentUtilization', () => {
   it('scales a 0–1 fraction to a 0–100 percent', () => {

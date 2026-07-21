@@ -13,11 +13,6 @@ import { OrgService } from '../org/org.service';
 
 const GITHUB_URL = /^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i;
 
-function parseGithubRepoUrl(url: string): { owner: string; repo: string } | null {
-  const m = url.trim().match(GITHUB_URL);
-  return m ? { owner: m[1], repo: m[2] } : null;
-}
-
 @Injectable()
 export class RepoService {
   constructor(
@@ -48,7 +43,7 @@ export class RepoService {
     body: { repoUrl: string; displayName?: string; baseBranch?: string },
   ): Promise<ConnectedRepo> {
     await this.orgs.assertOwner(userId, orgId);
-    const parsed = parseGithubRepoUrl(body.repoUrl);
+    const parsed = RepoService.parseGithubRepoUrl(body.repoUrl);
     if (!parsed) throw new BadRequestException(`Not an HTTPS GitHub URL: ${body.repoUrl}`);
     const { owner, repo } = parsed;
     const slug = `${owner}/${repo}`;
@@ -108,7 +103,7 @@ export class RepoService {
   /** Live branch list (default first). Falls back to the stored default branch. Any member may read. */
   async branches(repoId: string): Promise<RepoBranches> {
     const repo = await this.findRepoScoped(repoId, 'read');
-    const parsed = parseGithubRepoUrl(repo.gitUrl);
+    const parsed = RepoService.parseGithubRepoUrl(repo.gitUrl);
     const live = parsed
       ? await this.github.listBranches(repo.orgId, parsed.owner, parsed.repo)
       : null;
@@ -118,7 +113,7 @@ export class RepoService {
   /** Re-run the GitHub access probe for a repo. Owner-only. */
   async revalidate(repoId: string): Promise<ConnectedRepo> {
     const repo = await this.findRepoScoped(repoId, 'update');
-    const parsed = parseGithubRepoUrl(repo.gitUrl);
+    const parsed = RepoService.parseGithubRepoUrl(repo.gitUrl);
     if (!parsed) throw new BadRequestException(`Not an HTTPS GitHub URL: ${repo.gitUrl}`);
 
     const probe = await this.github.probeRepo(repo.orgId, parsed.owner, parsed.repo);
@@ -175,5 +170,10 @@ export class RepoService {
       accessOk: r.accessOk,
       ...(reason ? { reason } : {}),
     };
+  }
+
+  private static parseGithubRepoUrl(url: string): { owner: string; repo: string } | null {
+    const m = url.trim().match(GITHUB_URL);
+    return m ? { owner: m[1], repo: m[2] } : null;
   }
 }

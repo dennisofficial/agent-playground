@@ -3,7 +3,7 @@ import type { ThreadGroupView, ThreadView } from '@workspace/shared';
 import type { FindOptionsWhere } from 'typeorm';
 import { ThreadGroupRepo } from '../../_lib/database/entities/thread-group.entity';
 import { Thread, ThreadRepo } from '../../_lib/database/entities/thread.entity';
-import { toThreadGroupView, toThreadView } from './job.service';
+import { toThreadGroupView, toThreadView } from './job.view';
 
 @Injectable()
 export class ThreadService {

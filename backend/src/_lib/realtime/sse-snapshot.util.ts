@@ -2,16 +2,6 @@ import type { Subscription } from '@workspace/pg-realtime';
 import type { SseMessageEvent } from '@workspace/pg-realtime/nest';
 import { Observable } from 'rxjs';
 
-/**
- * Serve a **joined** list as a realtime feed the client consumes with `streamList`. pg-realtime feeds
- * are single-table; a list that needs a join (org list with the caller's role, members with user
- * email/name) can't be a plain model. Instead we open one or more pg-realtime subscriptions purely as
- * change-triggers, and on the initial snapshot and every subsequent change re-run the rich `load()`
- * query and emit it as a `data` event — which `streamList` treats as a full-list replace.
- *
- * `load` runs serially (a change during a load queues exactly one re-run), so a burst of WAL deltas
- * collapses into at most one in-flight + one pending reload.
- */
 export function sseSnapshotList<T>(
   openTriggers: Array<() => Promise<Subscription>>,
   load: () => Promise<T[]>,

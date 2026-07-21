@@ -4,14 +4,6 @@ import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule, TypeOrmModuleOptions } from '@nestjs/typeorm';
 import { CustomNamingStrategy } from './custom-naming.strategy';
 
-function resolveSsl(env: EnvService): false | { rejectUnauthorized: boolean } {
-  const mode =
-    env.get('POSTGRES_SSL_MODE') ??
-    (env.get('NODE_ENV') === ENodeEnv.PROD ? 'verify-full' : 'disable');
-  if (mode === 'disable') return false;
-  return { rejectUnauthorized: mode === 'verify-full' };
-}
-
 @Global()
 @Module({
   imports: [
@@ -29,10 +21,18 @@ function resolveSsl(env: EnvService): false | { rejectUnauthorized: boolean } {
         namingStrategy: new CustomNamingStrategy(),
         applicationName: 'atlas (TypeORM)',
         connectTimeoutMS: 10_000,
-        ssl: resolveSsl(env),
+        ssl: DatabaseModule.resolveSsl(env),
         extra: { max: 10 },
       }),
     }),
   ],
 })
-export class DatabaseModule {}
+export class DatabaseModule {
+  private static resolveSsl(env: EnvService): false | { rejectUnauthorized: boolean } {
+    const mode =
+      env.get('POSTGRES_SSL_MODE') ??
+      (env.get('NODE_ENV') === ENodeEnv.PROD ? 'verify-full' : 'disable');
+    if (mode === 'disable') return false;
+    return { rejectUnauthorized: mode === 'verify-full' };
+  }
+}

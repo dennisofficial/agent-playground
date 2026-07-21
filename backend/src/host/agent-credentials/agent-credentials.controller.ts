@@ -31,20 +31,9 @@ import type { Observable } from 'rxjs';
 import type { User } from '../../_lib/database/entities/user.entity';
 import { OrgService } from '../org/org.service';
 import { AgentCredentialService } from './agent-credential.service';
-import {
-  buildAuthorizeUrl,
-  ClaudeOAuthHttpError,
-  exchangeCode,
-  generatePkce,
-} from './oauth/claude-oauth.client';
-import { CodexAuthInvalidError } from './oauth/codex-auth-validate';
-import {
-  buildAuthJson,
-  CodexOAuthHttpError,
-  exchangeDeviceCode,
-  pollDeviceOnce,
-  startDeviceAuth,
-} from './oauth/codex-oauth.client';
+import { ClaudeOAuthClient, ClaudeOAuthHttpError } from './oauth/claude-oauth.client';
+import { CodexAuthInvalidError } from './oauth/codex-auth-validate.util';
+import { CodexOAuthClient, CodexOAuthHttpError } from './oauth/codex-oauth.client';
 import { OAuthDeviceStore } from './oauth/oauth-device.store';
 import { OAuthPkceStore } from './oauth/oauth-pkce.store';
 import { AgentUsageService } from './usage/agent-usage.service';
@@ -62,6 +51,8 @@ export class AgentCredentialsController {
     private readonly pkce: OAuthPkceStore,
     private readonly devices: OAuthDeviceStore,
     private readonly orgs: OrgService,
+    private readonly claudeOAuth: ClaudeOAuthClient,
+    private readonly codexOAuth: CodexOAuthClient,
     @Inject(PG_REALTIME_ENGINE) private readonly realtime: RealtimeEngine,
   ) {}
 
@@ -96,9 +87,9 @@ export class AgentCredentialsController {
     @Param('orgId', ParseUUIDPipe) orgId: string,
   ): Promise<ClaudeAuthorizeUrlResult> {
     await this.orgs.assertOwner(user.id, orgId);
-    const { verifier, challenge, state } = generatePkce();
+    const { verifier, challenge, state } = this.claudeOAuth.generatePkce();
     await this.pkce.stash(orgId, state, verifier);
-    return { url: buildAuthorizeUrl({ challenge, state }), state };
+    return { url: this.claudeOAuth.buildAuthorizeUrl({ challenge, state }), state };
   }
 
   /** Finish Claude OAuth from the pasted `code#state`. */
@@ -115,9 +106,13 @@ export class AgentCredentialsController {
     }
     let tokenSet;
     try {
-      tokenSet = await exchangeCode({ code: body.code.trim(), verifier, state: body.state });
+      tokenSet = await this.claudeOAuth.exchangeCode({
+        code: body.code.trim(),
+        verifier,
+        state: body.state,
+      });
     } catch (err) {
-      throw oauthBadRequest(err, 'Claude authorization failed.');
+      throw AgentCredentialsController.oauthBadRequest(err, 'Claude authorization failed.');
     }
     const row = await this.store.upsertClaudePersonal(orgId, tokenSet);
     void this.usage.pollClaudeUsage(orgId, row.id); // populate usage in the background
@@ -149,9 +144,9 @@ export class AgentCredentialsController {
     await this.orgs.assertOwner(user.id, orgId);
     let device;
     try {
-      device = await startDeviceAuth();
+      device = await this.codexOAuth.startDeviceAuth();
     } catch (err) {
-      throw oauthBadRequest(err, 'Could not start Codex device login.');
+      throw AgentCredentialsController.oauthBadRequest(err, 'Could not start Codex device login.');
     }
     const handle = await this.devices.stash(
       { orgId, deviceAuthId: device.deviceAuthId, userCode: device.userCode },
@@ -177,16 +172,16 @@ export class AgentCredentialsController {
     const state = await this.devices.get(body.handle, orgId);
     if (!state) return { status: 'expired' };
     try {
-      const poll = await pollDeviceOnce({
+      const poll = await this.codexOAuth.pollDeviceOnce({
         deviceAuthId: state.deviceAuthId,
         userCode: state.userCode,
       });
       if (poll.pending) return { status: 'pending' };
-      const tokens = await exchangeDeviceCode({
+      const tokens = await this.codexOAuth.exchangeDeviceCode({
         authorizationCode: poll.authorizationCode,
         codeVerifier: poll.codeVerifier,
       });
-      const authJson = buildAuthJson(tokens, new Date().toISOString());
+      const authJson = this.codexOAuth.buildAuthJson(tokens, new Date().toISOString());
       const row = await this.store.upsertCodexFromAuthJson(orgId, authJson);
       await this.devices.remove(body.handle);
       return { status: 'complete', credential: this.store.toView(row) };
@@ -246,12 +241,12 @@ export class AgentCredentialsController {
     await this.orgs.assertMember(user.id, orgId);
     return this.usage.pollClaudeUsage(orgId, id);
   }
-}
 
-function oauthBadRequest(err: unknown, fallback: string): BadRequestException {
-  if (err instanceof ClaudeOAuthHttpError || err instanceof CodexOAuthHttpError) {
-    return new BadRequestException(`${fallback} (HTTP ${err.status})`);
+  private static oauthBadRequest(err: unknown, fallback: string): BadRequestException {
+    if (err instanceof ClaudeOAuthHttpError || err instanceof CodexOAuthHttpError) {
+      return new BadRequestException(`${fallback} (HTTP ${err.status})`);
+    }
+    if (err instanceof Error) return new BadRequestException(err.message);
+    return new BadRequestException(fallback);
   }
-  if (err instanceof Error) return new BadRequestException(err.message);
-  return new BadRequestException(fallback);
 }

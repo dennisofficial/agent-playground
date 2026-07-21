@@ -13,6 +13,8 @@ import { AgentCredentialResolver } from './agent-credential-resolver.service';
 import { AgentCredentialService } from './agent-credential.service';
 import { AgentCredentialsController } from './agent-credentials.controller';
 import { buildAgentCredentialsRealtimeModel } from './agent-credentials.realtime';
+import { ClaudeOAuthClient } from './oauth/claude-oauth.client';
+import { CodexOAuthClient } from './oauth/codex-oauth.client';
 import { OAuthDeviceStore } from './oauth/oauth-device.store';
 import { OAuthPkceStore } from './oauth/oauth-pkce.store';
 import { AgentUsageService } from './usage/agent-usage.service';
@@ -41,6 +43,8 @@ import { AgentUsageService } from './usage/agent-usage.service';
     AgentCredentialRefreshService,
     AgentCredentialKeepaliveService,
     AgentUsageService,
+    ClaudeOAuthClient,
+    CodexOAuthClient,
     OAuthPkceStore,
     OAuthDeviceStore,
   ],

@@ -1,8 +1,8 @@
 import type { Seeder } from '@workspace/nestjs-core';
 import {
-  EJobActivity,
   EJobKind,
   EJobStatus,
+  EMessageAudience,
   ETaskStatus,
   EThreadCondition,
   EThreadGroupKind,
@@ -29,7 +29,6 @@ interface FxJob {
   origin: EThreadOrigin;
   kind: EJobKind | null;
   status: EJobStatus;
-  activity: EJobActivity;
   archivedAt: string | null;
   focusedThreadId: string | null;
   createdAt: string;
@@ -73,6 +72,7 @@ interface FxMsg {
   threadId: string;
   subagentId: string | null;
   source: EThreadMessageSource;
+  audience?: EMessageAudience;
   author: string;
   authorId: string;
   text: string;
@@ -196,6 +196,7 @@ export default (async (ds) => {
           orgId,
           subagentId: null,
           source: m.source,
+          audience: m.audience ?? EMessageAudience.SHARED,
           authorId: m.authorId === '__DEV_USER__' ? dennis : m.authorId,
           author: m.author,
           text: m.text,

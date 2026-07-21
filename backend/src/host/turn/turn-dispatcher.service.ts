@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { TurnSpec } from '../../_shared/engine/turn-spec';
 import { HostTransportService } from '../host-transport/host-transport.service';
-import { SandboxRuntime } from '../sandbox/sandbox-runtime.service';
+import { SandboxService } from '../sandbox/sandbox.service';
 
 /**
  * Orchestrates one turn: publish the spec, ensure a runtime and launch the engine into it, then tail the
@@ -17,7 +17,7 @@ import { SandboxRuntime } from '../sandbox/sandbox-runtime.service';
 export class TurnDispatcherService {
   constructor(
     private readonly transport: HostTransportService,
-    private readonly sandbox: SandboxRuntime,
+    private readonly sandbox: SandboxService,
   ) {}
 
   async run(jobId: string, spec: TurnSpec): Promise<void> {

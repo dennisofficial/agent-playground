@@ -11,14 +11,14 @@ import {
   AgentCredentialRepo,
 } from '../../_lib/database/entities/agent-credential.entity';
 import { projectAgentCredentialView } from './agent-credential.view';
-import { type ClaudeTokenSet, tokenSetToBlob } from './oauth/claude-oauth.client';
-import { assertValidCodexAuthJson, CodexAuthInvalidError } from './oauth/codex-auth-validate';
+import { ClaudeOAuthClient, type ClaudeTokenSet } from './oauth/claude-oauth.client';
+import { assertValidCodexAuthJson, CodexAuthInvalidError } from './oauth/codex-auth-validate.util';
 import {
   decodeCodexAccountEmail,
   decodeCodexIdentity,
   decodeJwtExpMs,
-} from './oauth/codex-id-token';
-import { isNewerMaterial } from './oauth/material-freshness';
+} from './oauth/codex-id-token.util';
+import { isNewerMaterial } from './oauth/material-freshness.util';
 
 type UpsertPersonalInput = {
   orgId: string;
@@ -36,6 +36,7 @@ export class AgentCredentialService {
   constructor(
     private readonly repo: AgentCredentialRepo,
     private readonly cipher: SecretCipherService,
+    private readonly claudeOAuth: ClaudeOAuthClient,
   ) {}
 
   async list(orgId: string): Promise<AgentCredentialView[]> {
@@ -64,7 +65,7 @@ export class AgentCredentialService {
 
   /** Upsert a Claude personal (OAuth) account from a fresh token set; dedupes by account email. */
   async upsertClaudePersonal(orgId: string, tokenSet: ClaudeTokenSet): Promise<AgentCredential> {
-    const material = JSON.stringify(tokenSetToBlob(tokenSet));
+    const material = JSON.stringify(this.claudeOAuth.tokenSetToBlob(tokenSet));
     return this.upsertPersonal({
       orgId,
       provider: EAgentProvider.CLAUDE,
@@ -205,7 +206,7 @@ export class AgentCredentialService {
       saved = await this.repo.save(row);
     } catch (err) {
       // Concurrent first-login for the same email: the unique index rejected us — update in place.
-      if (isUniqueViolation(err) && input.accountEmail) {
+      if (AgentCredentialService.isUniqueViolation(err) && input.accountEmail) {
         const existing = await this.findPersonalByEmail(input);
         if (existing) return this.applyPersonalUpdate(existing, input);
       }
@@ -252,10 +253,10 @@ export class AgentCredentialService {
       (await this.repo.findOne({ where: { orgId, provider }, order: { createdAt: 'ASC' } }))?.id;
     if (target) await this.repo.update({ id: target }, { selected: true });
   }
-}
 
-function isUniqueViolation(err: unknown): boolean {
-  const code = (err as { code?: string; driverError?: { code?: string } })?.code;
-  const driverCode = (err as { driverError?: { code?: string } })?.driverError?.code;
-  return code === '23505' || driverCode === '23505';
+  private static isUniqueViolation(err: unknown): boolean {
+    const code = (err as { code?: string; driverError?: { code?: string } })?.code;
+    const driverCode = (err as { driverError?: { code?: string } })?.driverError?.code;
+    return code === '23505' || driverCode === '23505';
+  }
 }

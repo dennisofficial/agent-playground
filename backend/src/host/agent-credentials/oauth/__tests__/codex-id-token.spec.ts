@@ -1,4 +1,8 @@
-import { decodeCodexAccountEmail, decodeCodexIdentity, decodeJwtExpMs } from '../codex-id-token';
+import {
+  decodeCodexAccountEmail,
+  decodeCodexIdentity,
+  decodeJwtExpMs,
+} from '../codex-id-token.util';
 
 function jwt(payload: Record<string, unknown>): string {
   const b = (o: unknown): string => Buffer.from(JSON.stringify(o)).toString('base64url');

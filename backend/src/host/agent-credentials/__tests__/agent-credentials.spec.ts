@@ -1,22 +1,20 @@
 import { EAgentProvider } from '@workspace/shared';
 import { describe, expect, it } from 'vitest';
 import { projectAgentCredentialView } from '../agent-credential.view';
-import {
-  buildAuthorizeUrl,
-  exchangeCode,
-  parseTokenSet,
-  tokenSetToBlob,
-} from '../oauth/claude-oauth.client';
-import { assertValidCodexAuthJson, CodexAuthInvalidError } from '../oauth/codex-auth-validate';
-import { decodeCodexAccountEmail } from '../oauth/codex-id-token';
-import { buildAuthJson } from '../oauth/codex-oauth.client';
-import { isNewerMaterial } from '../oauth/material-freshness';
+import { ClaudeOAuthClient } from '../oauth/claude-oauth.client';
+import { assertValidCodexAuthJson, CodexAuthInvalidError } from '../oauth/codex-auth-validate.util';
+import { decodeCodexAccountEmail } from '../oauth/codex-id-token.util';
+import { CodexOAuthClient } from '../oauth/codex-oauth.client';
+import { isNewerMaterial } from '../oauth/material-freshness.util';
 import {
   parseModelWindows,
   parseUsageResponse,
   resetEpochToIso,
   toPercentUtilization,
-} from '../usage/usage-parse';
+} from '../usage/usage-parse.util';
+
+const claudeOAuth = new ClaudeOAuthClient();
+const codexOAuth = new CodexOAuthClient();
 
 function fakeJwt(claims: Record<string, unknown>): string {
   const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url');
@@ -25,7 +23,7 @@ function fakeJwt(claims: Record<string, unknown>): string {
 
 describe('claude-oauth.client', () => {
   it('buildAuthorizeUrl carries PKCE challenge, state, S256 and manual code mode', () => {
-    const url = new URL(buildAuthorizeUrl({ challenge: 'CHAL', state: 'ST' }));
+    const url = new URL(claudeOAuth.buildAuthorizeUrl({ challenge: 'CHAL', state: 'ST' }));
     expect(url.searchParams.get('code_challenge')).toBe('CHAL');
     expect(url.searchParams.get('code_challenge_method')).toBe('S256');
     expect(url.searchParams.get('state')).toBe('ST');
@@ -35,12 +33,12 @@ describe('claude-oauth.client', () => {
 
   it('exchangeCode rejects a pasted code whose #state fragment mismatches', async () => {
     await expect(
-      exchangeCode({ code: 'abc#WRONG', verifier: 'v', state: 'RIGHT' }),
+      claudeOAuth.exchangeCode({ code: 'abc#WRONG', verifier: 'v', state: 'RIGHT' }),
     ).rejects.toThrow(/state mismatch/);
   });
 
   it('parseTokenSet + tokenSetToBlob produce a .credentials.json-shaped blob', () => {
-    const ts = parseTokenSet({
+    const ts = claudeOAuth.parseTokenSet({
       access_token: 'AT',
       refresh_token: 'RT',
       expires_in: 3600,
@@ -49,7 +47,7 @@ describe('claude-oauth.client', () => {
     });
     expect(ts.accountEmail).toBe('x@y.com');
     expect(ts.subscriptionType).toBe('max');
-    const blob = tokenSetToBlob(ts);
+    const blob = claudeOAuth.tokenSetToBlob(ts);
     expect(blob.claudeAiOauth.accessToken).toBe('AT');
     expect(blob.claudeAiOauth.scopes).toEqual(['a', 'b']);
     expect(blob.claudeAiOauth.expiresAt).toBeGreaterThan(Date.now());
@@ -62,7 +60,7 @@ describe('codex auth', () => {
       email: 'me@openai.com',
       'https://api.openai.com/auth': { chatgpt_account_id: 'acc_123', chatgpt_plan_type: 'pro' },
     });
-    const json = buildAuthJson(
+    const json = codexOAuth.buildAuthJson(
       { idToken, accessToken: 'AT', refreshToken: 'RT' },
       '2026-07-18T00:00:00.000Z',
     );
@@ -158,7 +156,10 @@ describe('projectAgentCredentialView', () => {
   };
 
   it('never leaks material and formats the plan label', () => {
-    const view = projectAgentCredentialView({ ...base, usageSnapshot: null });
+    const view = projectAgentCredentialView({
+      ...base,
+      usageSnapshot: null,
+    });
     expect(view).not.toHaveProperty('materialEnc');
     expect(view.plan).toBe('Max plan');
     expect(view.usage).toBeNull();

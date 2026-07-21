@@ -23,23 +23,8 @@ export type AgentCredentialViewInput = {
   createdAt: Date | string;
 };
 
-const iso = (d: Date | string | null): string | null =>
-  d == null ? null : d instanceof Date ? d.toISOString() : d;
-
-export function projectAgentCredentialView(input: AgentCredentialViewInput): AgentCredentialView {
-  return {
-    id: input.id,
-    provider: input.provider,
-    kind: input.kind,
-    label: input.label,
-    accountEmail: input.accountEmail,
-    plan: planLabel(input.subscriptionType),
-    status: input.status,
-    selected: input.selected,
-    expiresAt: iso(input.expiresAt),
-    usage: snapshotToUsage(input.usageSnapshot),
-    createdAt: iso(input.createdAt) ?? new Date(0).toISOString(),
-  };
+function iso(d: Date | string | null): string | null {
+  return d == null ? null : d instanceof Date ? d.toISOString() : d;
 }
 
 export function planLabel(subscriptionType: string | null): string | null {
@@ -73,5 +58,21 @@ export function snapshotToUsage(snap: AccountUsageSnapshot | null): AccountUsage
     fetchedAt: new Date(snap.fetchedAt).toISOString(),
     source: ok ? snap.source : 'stale',
     ok,
+  };
+}
+
+export function projectAgentCredentialView(input: AgentCredentialViewInput): AgentCredentialView {
+  return {
+    id: input.id,
+    provider: input.provider,
+    kind: input.kind,
+    label: input.label,
+    accountEmail: input.accountEmail,
+    plan: planLabel(input.subscriptionType),
+    status: input.status,
+    selected: input.selected,
+    expiresAt: iso(input.expiresAt),
+    usage: snapshotToUsage(input.usageSnapshot),
+    createdAt: iso(input.createdAt) ?? new Date(0).toISOString(),
   };
 }

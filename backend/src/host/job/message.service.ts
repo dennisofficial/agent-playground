@@ -39,30 +39,32 @@ export class MessageService {
       where: { parentMessageId: In(rows.map((r) => r.id)) },
     });
     const byAnchor = new Map<string, Subagent>(anchors.map((s) => [s.parentMessageId, s]));
-    return rows.map((r) => toThreadMessageView(r, byAnchor.get(r.id) ?? null));
+    return rows.map((r) => MessageService.toThreadMessageView(r, byAnchor.get(r.id) ?? null));
   }
-}
 
-function toThreadMessageView(
-  m: ThreadMessage,
-  anchoredSubagent: Subagent | null,
-): ThreadMessageView {
-  return {
-    id: m.id,
-    jobId: m.jobId,
-    threadId: m.threadId,
-    subagentId: m.subagentId,
-    subagentStatus: anchoredSubagent ? anchoredSubagent.status : undefined,
-    subagentEndedAt: anchoredSubagent?.endedAt ? anchoredSubagent.endedAt.toISOString() : undefined,
-    source: m.source,
-    isAtlas: m.source === 'atlas',
-    authorId: m.authorId,
-    author: m.author,
-    text: m.text,
-    kind: m.kind,
-    card: m.card,
-    meta: m.meta,
-    orderAt: m.orderAt ? m.orderAt.toISOString() : null,
-    postedAt: m.createdAt.toISOString(),
-  };
+  private static toThreadMessageView(
+    m: ThreadMessage,
+    anchoredSubagent: Subagent | null,
+  ): ThreadMessageView {
+    return {
+      id: m.id,
+      jobId: m.jobId,
+      threadId: m.threadId,
+      subagentId: m.subagentId,
+      subagentStatus: anchoredSubagent ? anchoredSubagent.status : undefined,
+      subagentEndedAt: anchoredSubagent?.endedAt
+        ? anchoredSubagent.endedAt.toISOString()
+        : undefined,
+      source: m.source,
+      isAtlas: m.source === 'atlas',
+      authorId: m.authorId,
+      author: m.author,
+      text: m.text,
+      kind: m.kind,
+      card: m.card,
+      meta: m.meta,
+      orderAt: m.orderAt ? m.orderAt.toISOString() : null,
+      postedAt: m.createdAt.toISOString(),
+    };
+  }
 }

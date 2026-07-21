@@ -15,20 +15,20 @@ export class TaskService {
       where: { jobId },
       order: { ordinal: 'ASC' },
     });
-    return rows.map(toTaskView);
+    return rows.map(TaskService.toTaskView);
   }
-}
 
-function toTaskView(t: Task): TaskView {
-  return {
-    id: t.id,
-    jobId: t.jobId,
-    threadGroupId: t.threadGroupId,
-    ordinal: t.ordinal,
-    title: t.title,
-    brief: t.brief,
-    activeForm: t.activeForm,
-    status: t.status,
-    blockedBy: t.blockedBy,
-  };
+  private static toTaskView(t: Task): TaskView {
+    return {
+      id: t.id,
+      jobId: t.jobId,
+      threadGroupId: t.threadGroupId,
+      ordinal: t.ordinal,
+      title: t.title,
+      brief: t.brief,
+      activeForm: t.activeForm,
+      status: t.status,
+      blockedBy: t.blockedBy,
+    };
+  }
 }
