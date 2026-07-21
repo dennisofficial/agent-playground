@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Db, type RlsAction } from '@workspace/nestjs-rls/nest';
 import type { JobListItem, JobView, ThreadGroupView, ThreadView } from '@workspace/shared';
+import { EJobStatus } from '@workspace/shared';
 import { Job } from '../../_lib/database/entities/job.entity';
 import { ThreadGroup, ThreadGroupRepo } from '../../_lib/database/entities/thread-group.entity';
 import { Thread, ThreadRepo } from '../../_lib/database/entities/thread.entity';
@@ -26,6 +27,15 @@ export class JobService {
     const job = await this.db.scoped(Job).findOneScoped({ id: jobId }, action);
     if (!job) throw new NotFoundException('Job not found');
     return job;
+  }
+
+  async archive(jobId: string): Promise<JobListItem> {
+    const job = await this.assertAccess(jobId, 'update');
+    const archivedAt = new Date();
+    await this.db.scoped(Job).update({ id: jobId }, { status: EJobStatus.ARCHIVED, archivedAt });
+    // Build the result from the row we already hold + the applied change — a scoped RE-read would now
+    // miss it (the read policy excludes archived jobs).
+    return toJobListItem(Object.assign(job, { status: EJobStatus.ARCHIVED, archivedAt }));
   }
 
   /** One job with its nested group→thread tree. */

@@ -17,7 +17,14 @@ import { Thread } from './thread.entity';
 
 @Entity({ name: 'jobs' })
 @Index(['orgId', 'repoId'])
-@Rls<Job, AtlasClaims>((c) => ({ orgId: { $in: c.orgIds } }))
+@Rls<Job, AtlasClaims>((c, action) => {
+  switch (action) {
+    case 'read':
+      return { orgId: { $in: c.orgIds }, archivedAt: null };
+    default:
+      return { orgId: { $in: c.orgIds } };
+  }
+})
 export class Job extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;

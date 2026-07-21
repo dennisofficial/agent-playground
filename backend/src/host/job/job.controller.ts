@@ -5,6 +5,7 @@ import {
   type MessageEvent,
   Param,
   ParseUUIDPipe,
+  Post,
   Query,
   Sse,
 } from '@nestjs/common';
@@ -55,6 +56,11 @@ export class JobController {
   @Get(':jobId')
   get(@Param('jobId', ParseUUIDPipe) jobId: string): Promise<JobView> {
     return this.jobs.get(jobId);
+  }
+
+  @Post(':jobId/archive')
+  archive(@Param('jobId', ParseUUIDPipe) jobId: string): Promise<JobListItem> {
+    return this.jobs.archive(jobId);
   }
 
   @Get(':jobId/thread-groups')

@@ -6,33 +6,67 @@ import {
   KubeConfig,
   type V1Pod,
   type V1Status,
+  VersionApi,
 } from '@kubernetes/client-node';
 import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import { Writable } from 'node:stream';
 import { isK8sNotFoundError } from './k8s.utils';
 
-/** How long `waitForPodReady` polls before giving up, and its poll interval. */
 const READY_POLL_INTERVAL_MS = 1_000;
+
+function normalizeLoopbackServer(kc: KubeConfig): void {
+  const cluster = kc.getCurrentCluster();
+  if (!cluster?.server) return;
+  const server = cluster.server.replace('://0.0.0.0:', '://127.0.0.1:');
+  if (server !== cluster.server) (cluster as { server: string }).server = server;
+}
 
 @Injectable()
 export class K8sService implements OnModuleInit {
   private readonly logger = new Logger(K8sService.name);
   private core!: CoreV1Api;
+  private version!: VersionApi;
   private exec!: Exec;
 
   constructor(private readonly envService: EnvService) {}
 
-  onModuleInit(): void {
+  async onModuleInit(): Promise<void> {
     const kc = new KubeConfig();
-    try {
+    // NB: KubeConfig.loadFromCluster() does NOT throw off-cluster — it silently produces a config
+    // with server `https://undefined:undefined`, so a try/catch fallback never fires and every request
+    // dies with "Invalid URL". Gate on the standard in-cluster signal instead.
+    if (process.env.KUBERNETES_SERVICE_HOST) {
       kc.loadFromCluster();
       this.logger.log('Loaded in-cluster kubeconfig');
-    } catch {
+    } else {
       kc.loadFromDefault();
-      this.logger.log('Loaded kubeconfig from default (env KUBECONFIG or ~/.kube/config)');
+      normalizeLoopbackServer(kc);
+      const server = kc.getCurrentCluster()?.server;
+      this.logger.log(
+        `Loaded kubeconfig from default (context ${kc.getCurrentContext()}, ${server})`,
+      );
     }
     this.core = kc.makeApiClient(CoreV1Api);
+    this.version = kc.makeApiClient(VersionApi);
     this.exec = new Exec(kc);
+
+    // Startup requirement: fail boot fast if the cluster is unreachable, rather than surfacing a
+    // cryptic error deep inside the first sandbox provision.
+    await this.assertClusterReachable(kc);
+  }
+
+  /** Probe the apiserver `/version` endpoint; throw (aborting boot) if the cluster can't be reached. */
+  private async assertClusterReachable(kc: KubeConfig): Promise<void> {
+    const server = kc.getCurrentCluster()?.server ?? '(no server in kubeconfig)';
+    try {
+      const info = await this.version.getCode();
+      this.logger.log(`Connected to Kubernetes ${info.gitVersion} at ${server}`);
+    } catch (err) {
+      throw new Error(
+        `Cannot reach Kubernetes cluster at ${server}: ${err instanceof Error ? err.message : String(err)}. ` +
+          `Ensure a cluster is running and the current kubeconfig context points at it.`,
+      );
+    }
   }
 
   async ensureNamespace(namespace: string): Promise<void> {

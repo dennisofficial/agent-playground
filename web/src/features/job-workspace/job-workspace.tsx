@@ -6,7 +6,6 @@ import { useAllJobs } from '@/lib/api/inbox';
 import type { JobRef } from '@/lib/api/job-api';
 import { useJobEvents } from '@/lib/api/job-events';
 import {
-  useDeleteJob,
   useJobContext,
   useJobMessages,
   useMessage,
@@ -15,10 +14,13 @@ import {
   useSetAutoApprove,
   useSetAutoMerge,
 } from '@/lib/api/job-queries';
+import { useArchiveJobMutation } from '@/redux/query/api/jobs.api';
 import { MAIN_LANE } from '@/lib/api/job-stream';
 import { APPROVE_ACTION_ID, SHIP_ACTION_ID, type WebApprovalCard } from '@/lib/api/types';
+import { SITE_MAP } from '@/lib/site-map';
 import { orgSwatch } from '@/utils/org-display';
 import { EJobKind, EJobStatus } from '@workspace/shared';
+import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Group, Panel, Separator, useDefaultLayout, useGroupRef } from 'react-resizable-panels';
 import { DeleteJobPrDialog } from './components/chrome/delete-job-pr-dialog';
@@ -49,12 +51,13 @@ import { PersistentApprovalBar, PersistentShipBar } from './spec-approval';
  */
 export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   const ref = useMemo<JobRef>(() => ({ orgId, repoId, jobId }), [orgId, repoId, jobId]);
+  const router = useRouter();
 
   const { data: inbox } = useAllJobs();
   const { data: messages = [], isLoading: messagesLoading } = useJobMessages(ref);
   const { data: pipeline, isLoading: pipelineLoading } = usePipeline(ref);
   const { data: context, isLoading: contextLoading } = useJobContext(ref);
-  const del = useDeleteJob(ref);
+  const [archiveJob, archiveState] = useArchiveJobMutation();
   const rename = useRenameJob(ref);
   const autoApprove = useSetAutoApprove(ref);
   const autoMerge = useSetAutoMerge(ref);
@@ -234,14 +237,20 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
 
   const onConversation = openConversation;
   const onSelectNode = selectNode;
+
   const onOpenPlan = () => selectNode('plan');
+
   const onRename = (title: string) => rename.mutate(title);
-  // Archiving is terminal but the job stays put — the operator remains on this (now read-only) page rather
-  // than being navigated away, so there's no `router.push` here.
-  const runDelete = (prAction: 'close' | 'leave') =>
-    del.mutate(prAction, {
-      onSuccess: () => setPrDialogOpen(false),
-    });
+
+  const runDelete = (_prAction: 'close' | 'leave') => {
+    void archiveJob(ref.jobId)
+      .unwrap()
+      .then(() => {
+        setPrDialogOpen(false);
+        router.replace(SITE_MAP.workspace());
+      })
+      .catch(() => {});
+  };
 
   const onDelete = () => {
     if (!prStateKnown) return; // safety: never delete before we know whether a PR is open (button is disabled too)
@@ -269,7 +278,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
       onDelete={onDelete}
       onSetAutoApprove={(mode) => autoApprove.mutate(mode)}
       onSetAutoMerge={(body) => autoMerge.mutate(body)}
-      deleting={del.isPending}
+      deleting={archiveState.isLoading}
       hasOpenPr={hasOpenPr}
       deleteReady={prStateKnown}
       inDrawer={inDrawer}
@@ -448,12 +457,12 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
         {prDialogOpen ? (
           <DeleteJobPrDialog
             prNumber={prNumber}
-            pending={del.isPending}
-            error={del.error as Error | null}
+            pending={archiveState.isLoading}
+            error={(archiveState.error as Error | null) ?? null}
             onChoose={runDelete}
             onClose={() => {
               setPrDialogOpen(false);
-              del.reset();
+              archiveState.reset();
             }}
           />
         ) : null}

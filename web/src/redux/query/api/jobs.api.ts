@@ -23,6 +23,14 @@ export const jobsApi = baseApi.injectEndpoints({
       invalidatesTags: [EBaseApiCacheTags.JOB],
     }),
 
+    archiveJob: build.mutation<JobListItem, string>({
+      query: (jobId) => ({ url: `/jobs/${jobId}/archive`, method: 'POST' }),
+      invalidatesTags: (_result, _error, jobId) => [
+        EBaseApiCacheTags.JOB,
+        { type: EBaseApiCacheTags.JOB, id: jobId },
+      ],
+    }),
+
     getJobs: build.query<JobListItem[], void>({
       query: () => ({ url: `/jobs`, method: 'GET' }),
       providesTags: [EBaseApiCacheTags.JOB],
@@ -117,6 +125,7 @@ export const jobsApi = baseApi.injectEndpoints({
 
 export const {
   useCreateJobMutation,
+  useArchiveJobMutation,
   useGetJobsQuery,
   useGetJobQuery,
   useGetThreadGroupsQuery,
