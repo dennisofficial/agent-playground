@@ -1,34 +1,35 @@
+import { Thread } from '@lib/database/entities/thread.entity';
 import { Injectable } from '@nestjs/common';
+import { Db } from '@workspace/nestjs-rls/nest';
 import { randomUUID } from 'node:crypto';
 import type { TurnSpec } from '../../_shared/engine/turn-spec';
 import { HostTransportService } from '../host-transport/host-transport.service';
 import { SandboxService } from '../sandbox/sandbox.service';
 
-/**
- * Orchestrates one turn: publish the spec, ensure a runtime and launch the engine into it, then tail the
- * engine's events (refreshing the sandbox liveness lease off that real activity). This is the business
- * logic that sits ABOVE {@link HostTransportService} — the transport is a dumb Redis messenger, this owns
- * the turnId, the sandbox handshake, and the event loop.
- *
- * STUB this pass: no trigger wires jobs → turns yet, and events are only used to keep the lease warm.
- * Routing events into the job realtime feed lands with the jobs-execution pass.
- */
 @Injectable()
 export class TurnDispatcherService {
   constructor(
     private readonly transport: HostTransportService,
     private readonly sandbox: SandboxService,
+    private readonly db: Db,
   ) {}
 
-  async run(jobId: string, spec: TurnSpec): Promise<void> {
+  async run(jobId: string, threadId: string, spec: TurnSpec): Promise<void> {
     const turnId = randomUUID();
     await this.transport.writeSpec(turnId, spec);
     await this.sandbox.launchEngineTurn(jobId, turnId);
 
+    let sessionId: string | undefined;
     for await (const event of this.transport.readEvents(turnId)) {
       await this.sandbox.touch(jobId); // real engine activity → keep the sandbox alive
+      const sid = (event as { session_id?: string })?.session_id;
+      if (sid) sessionId = sid;
       // TODO(jobs): route `event` into the job's realtime feed.
       if ((event as { type?: string })?.type === 'result') break;
+    }
+
+    if (sessionId && sessionId !== spec.sessionId) {
+      await this.db.unsafe(Thread).update({ id: threadId }, { sessionId });
     }
   }
 }

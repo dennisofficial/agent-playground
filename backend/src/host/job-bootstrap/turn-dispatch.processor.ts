@@ -33,7 +33,7 @@ export class TurnDispatchProcessor extends BaseQueue {
           break;
         }
         const spec = await this.specBuilder.build(jobId, claimed);
-        await this.turnDispatcher.run(jobId, spec);
+        await this.turnDispatcher.run(jobId, claimed[0].threadId, spec);
         await this.inbound.markDelivered(claimed.map((m) => m.id));
       }
     } finally {
