@@ -1,11 +1,10 @@
 import { Thread } from '@lib/database/entities/thread.entity';
 import { Injectable } from '@nestjs/common';
-import type { EngineAuth } from '@workspace/agent-engine';
+import { WORK_MOUNT } from '@shared/engine/paths.constants';
+import type { TurnSpec } from '@shared/engine/turn-spec';
 import { Db } from '@workspace/nestjs-rls/nest';
-import { EAgentCredentialKind, EAgentProvider } from '@workspace/shared';
 import type { InboundMessage } from '../../_lib/database/entities/inbound-message.entity';
-import type { TurnSpec } from '../../_shared/engine/turn-spec';
-import { AgentCredentialResolver } from '../agent-credentials/agent-credential-resolver.service';
+import { TurnEnvBuilder } from './turn-env-builder.service';
 
 /** Default Claude model for a turn until per-profile model selection lands.
  * TODO: Temporary
@@ -24,36 +23,27 @@ const ATLAS_BASELINE_PROMPT = [
 export class TurnSpecBuilder {
   constructor(
     private readonly db: Db,
-    private readonly credentials: AgentCredentialResolver,
+    private readonly turnEnv: TurnEnvBuilder,
   ) {}
 
   async build(jobId: string, messages: InboundMessage[]): Promise<TurnSpec> {
     const { orgId, threadId } = messages[0];
 
-    // System/background path (no request user) → unscoped read.
+    // System/background path (no request user) → unscoped reads.
     const thread = await this.db.unsafe(Thread).findOne({ where: { id: threadId } });
 
-    const resolved = await this.credentials.resolve(orgId, EAgentProvider.CLAUDE);
-    if (!resolved) throw new Error(`no Claude credential selected for org ${orgId}`);
-
-    const auth: EngineAuth = {
-      secret: resolved.material,
-      kind: TurnSpecBuilder.mapKind(resolved.kind),
-      // No `refreshBack`: setup-token has none, and personal write-back is deferred.
-    };
+    // Every credential-owning module contributes its env slice; TurnEnvBuilder merges them (collision-checked).
+    const { env, credentialsFile } = await this.turnEnv.build({ orgId, jobId });
 
     return {
       engine: 'claude',
       prompt: messages.map((m) => m.text).join('\n\n'),
       systemPrompt: ATLAS_BASELINE_PROMPT,
-      cwd: '/workspace',
+      cwd: WORK_MOUNT,
       model: DEFAULT_CLAUDE_MODEL,
       sessionId: thread?.sessionId ?? undefined,
-      auth,
+      env,
+      credentialsFile,
     };
-  }
-
-  private static mapKind(kind: EAgentCredentialKind): EngineAuth['kind'] {
-    return kind === EAgentCredentialKind.PERSONAL ? 'personal' : 'setup-token';
   }
 }

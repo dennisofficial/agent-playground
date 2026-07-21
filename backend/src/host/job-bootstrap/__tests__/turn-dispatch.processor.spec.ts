@@ -5,7 +5,6 @@ import type { InboundMessageService } from '../../inbound-message/inbound-messag
 import type { TurnDispatcherService } from '../../turn/turn-dispatcher.service';
 import { TurnDispatchProcessor } from '../turn-dispatch.processor';
 import { buildTurnFlow } from '../turn-flow';
-import type { TurnSpecBuilder } from '../turn-spec-builder.service';
 
 const msg = (id: string): InboundMessage => ({ id }) as InboundMessage;
 
@@ -25,12 +24,9 @@ function makeProcessor(over: {
   const dispatcher = {
     run: over.dispatch ?? vi.fn(async () => {}),
   } as unknown as TurnDispatcherService;
-  const specBuilder = {
-    build: vi.fn(async () => Promise.resolve({ prompt: 'x' })),
-  } as unknown as TurnSpecBuilder;
   const flow = { add: vi.fn(async () => Promise.resolve({})) };
-  const processor = new TurnDispatchProcessor(inbound, dispatcher, specBuilder, flow as never);
-  return { processor, inbound, dispatcher, specBuilder, flow };
+  const processor = new TurnDispatchProcessor(inbound, dispatcher, flow as never);
+  return { processor, inbound, dispatcher, flow };
 }
 
 describe('TurnDispatchProcessor.process', () => {

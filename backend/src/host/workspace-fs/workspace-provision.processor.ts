@@ -8,7 +8,7 @@ import { resolve } from 'node:path';
 import { Job } from '../../_lib/database/entities/job.entity';
 import { Repo } from '../../_lib/database/entities/repo.entity';
 import { BaseQueue } from '../../_lib/queue/base-queue';
-import { GithubCredentialsService } from '../github/github-credentials.service';
+import { GithubTokenService } from '../github/github-token.service';
 import { ProvisionStatusService } from '../provision-status/provision-status.service';
 import { WorkspaceProfileService } from '../workspace-profile/workspace-profile.service';
 import { GitCloneService } from './git-clone.service';
@@ -24,7 +24,7 @@ export class WorkspaceProvisionProcessor extends BaseQueue {
   constructor(
     private readonly db: Db,
     private readonly profile: WorkspaceProfileService,
-    private readonly github: GithubCredentialsService,
+    private readonly github: GithubTokenService,
     private readonly gitClone: GitCloneService,
     private readonly status: ProvisionStatusService,
     private readonly secretFileWriter: SecretFileWriter,
@@ -62,7 +62,7 @@ export class WorkspaceProvisionProcessor extends BaseQueue {
     try {
       const [secrets, token] = await Promise.all([
         this.profile.materializeSecrets(job.repoId),
-        this.github.resolveToken(job.orgId),
+        this.github.hostToken(job.orgId),
       ]);
 
       // Pre-sentinel the workspace is disposable — start clean so a retry can't hit a half-clone.

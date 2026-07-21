@@ -2,19 +2,24 @@ import { Thread } from '@lib/database/entities/thread.entity';
 import { Injectable } from '@nestjs/common';
 import { Db } from '@workspace/nestjs-rls/nest';
 import { randomUUID } from 'node:crypto';
-import type { TurnSpec } from '../../_shared/engine/turn-spec';
+import type { InboundMessage } from '../../_lib/database/entities/inbound-message.entity';
 import { HostTransportService } from '../host-transport/host-transport.service';
 import { SandboxService } from '../sandbox/sandbox.service';
+import { TurnSpecBuilder } from './turn-spec-builder.service';
 
 @Injectable()
 export class TurnDispatcherService {
   constructor(
+    private readonly specBuilder: TurnSpecBuilder,
     private readonly transport: HostTransportService,
     private readonly sandbox: SandboxService,
     private readonly db: Db,
   ) {}
 
-  async run(jobId: string, threadId: string, spec: TurnSpec): Promise<void> {
+  async run(jobId: string, messages: InboundMessage[]): Promise<void> {
+    const threadId = messages[0].threadId;
+    const spec = await this.specBuilder.build(jobId, messages);
+
     const turnId = randomUUID();
     await this.transport.writeSpec(turnId, spec);
     await this.sandbox.launchEngineTurn(jobId, turnId);

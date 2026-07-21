@@ -29,6 +29,11 @@ export type IEnvConfig = {
 
   REDIS_URL: string;
 
+  GITHUB_APP_ID: string; // numeric App id — the JWT `iss`
+  GITHUB_APP_SLUG: string; // the App's slug — install URL + `{slug}[bot]` commit identity
+  GITHUB_APP_PRIVATE_KEY: string; // PEM, or base64-encoded PEM; `\n` escapes are tolerated
+  GITHUB_WEBHOOK_SECRET: string; // HMAC secret shared with GitHub for inbound webhook verification
+
   SECRETS_ENCRYPTION_KEY: string;
   JWT_ACCESS_SECRET: string;
   JWT_REFRESH_SECRET: string;
@@ -62,6 +67,11 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   POSTGRES_SSL_MODE: Joi.string().valid('disable', 'require', 'verify-full').optional(),
 
   REDIS_URL: Joi.string().uri(),
+
+  GITHUB_APP_ID: Joi.string().required(),
+  GITHUB_APP_SLUG: Joi.string().required(),
+  GITHUB_APP_PRIVATE_KEY: Joi.string().required(),
+  GITHUB_WEBHOOK_SECRET: Joi.string().required(),
 
   SECRETS_ENCRYPTION_KEY: Joi.string().required(),
   JWT_ACCESS_SECRET: Joi.string().required(),

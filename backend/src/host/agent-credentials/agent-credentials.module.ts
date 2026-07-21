@@ -6,6 +6,7 @@ import {
   AgentCredentialRepo,
 } from '../../_lib/database/entities/agent-credential.entity';
 import { OrgModule } from '../org/org.module';
+import { AgentAuthEnvProvider } from './agent-auth-env.provider';
 import { AgentAuthRefreshSink } from './agent-auth-refresh.sink';
 import { AgentCredentialKeepaliveService } from './agent-credential-keepalive.service';
 import { AgentCredentialRefreshService } from './agent-credential-refresh.service';
@@ -38,7 +39,12 @@ import { AgentUsageService } from './usage/agent-usage.service';
   ],
   entities: [{ entity: AgentCredential, repoClass: AgentCredentialRepo }],
   // exported — the two engine-facing seams are the concrete resolver + refresh sink.
-  services: [AgentCredentialService, AgentCredentialResolver, AgentAuthRefreshSink],
+  services: [
+    AgentCredentialService,
+    AgentCredentialResolver,
+    AgentAuthRefreshSink,
+    AgentAuthEnvProvider,
+  ],
   providers: [
     AgentCredentialRefreshService,
     AgentCredentialKeepaliveService,

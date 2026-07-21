@@ -1,6 +1,7 @@
 import { SecretCipherService } from '@lib/crypto/secret-cipher.service';
 import { Injectable } from '@nestjs/common';
 import type { CredentialPresence } from '@workspace/shared';
+import { Not } from 'typeorm';
 import { OrgCredentialRepo } from '../../_lib/database/entities/org-credential.entity';
 
 export type SaveCredentialsInput = {
@@ -26,12 +27,18 @@ export class OrgCredentialsService {
   async presence(orgId: string): Promise<CredentialPresence> {
     const row = await this.repo.findOne({
       where: { orgId },
-      select: { anthropicApiKeyEnc: true, openaiApiKeyEnc: true, githubPatEnc: true },
+      select: {
+        anthropicApiKeyEnc: true,
+        openaiApiKeyEnc: true,
+        githubPatEnc: true,
+        githubAppInstallationId: true,
+      },
     });
     return {
       anthropic: !!row?.anthropicApiKeyEnc,
       openai: !!row?.openaiApiKeyEnc,
       github: !!row?.githubPatEnc,
+      githubApp: !!row?.githubAppInstallationId,
     };
   }
 
@@ -63,6 +70,50 @@ export class OrgCredentialsService {
   async hasGithubPat(orgId: string): Promise<boolean> {
     const p = await this.presence(orgId);
     return p.github;
+  }
+
+  /** The org's GitHub App installation (id + account login), or null when the App isn't connected. */
+  async getGithubAppInstallation(
+    orgId: string,
+  ): Promise<{ id: string; account: string | null } | null> {
+    const row = await this.repo.findOne({
+      where: { orgId },
+      select: { githubAppInstallationId: true, githubAppInstallationAccount: true },
+    });
+    if (!row?.githubAppInstallationId) return null;
+    return { id: row.githubAppInstallationId, account: row.githubAppInstallationAccount };
+  }
+
+  /** Persist (connect) the org's GitHub App installation. */
+  async setGithubAppInstallation(
+    orgId: string,
+    installation: { id: string; account: string | null },
+  ): Promise<void> {
+    const row = (await this.repo.findOne({ where: { orgId } })) ?? this.repo.create({ orgId });
+    row.githubAppInstallationId = installation.id;
+    row.githubAppInstallationAccount = installation.account;
+    await this.repo.save(row);
+  }
+
+  /** Disconnect the org's GitHub App installation (no-op when unset). */
+  async clearGithubAppInstallation(orgId: string): Promise<void> {
+    const row = await this.repo.findOne({ where: { orgId } });
+    if (!row) return;
+    row.githubAppInstallationId = null;
+    row.githubAppInstallationAccount = null;
+    await this.repo.save(row);
+  }
+
+  /**
+   * Other orgs already holding this installation id (excluding `exceptOrgId`). Powers the callback's
+   * reuse guard: a single GitHub installation must not be silently claimed by a second, unrelated org.
+   */
+  async orgsHoldingInstallation(installationId: string, exceptOrgId: string): Promise<string[]> {
+    const rows = await this.repo.find({
+      where: { githubAppInstallationId: installationId, orgId: Not(exceptOrgId) },
+      select: { orgId: true },
+    });
+    return rows.map((r) => r.orgId);
   }
 
   private async decryptField(

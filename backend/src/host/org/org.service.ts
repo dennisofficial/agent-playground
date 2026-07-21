@@ -77,6 +77,15 @@ export class OrgService {
     return role;
   }
 
+  /** Whether the user is an OWNER of at least one of the given orgs (empty list → false). */
+  async ownsAnyOf(userId: string, orgIds: string[]): Promise<boolean> {
+    if (orgIds.length === 0) return false;
+    const owned = await this.members.findOne({
+      where: { userId, role: EOrgRole.OWNER, orgId: In(orgIds) },
+    });
+    return !!owned;
+  }
+
   private toSummary(o: Organization, role: EOrgRole): OrgSummary {
     return {
       id: o.id,

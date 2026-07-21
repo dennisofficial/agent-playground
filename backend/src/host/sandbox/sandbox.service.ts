@@ -6,6 +6,14 @@ import { isK8sConflictError } from '@lib/k8s/k8s.util';
 import { REDIS_CLIENT } from '@lib/redis/redis.tokens';
 import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import {
+  ATLAS_STATE_MOUNT,
+  ATLAS_STATE_VOLUME,
+  DOCKER_STORAGE_MOUNT,
+  DOCKER_STORAGE_VOLUME,
+  WORK_MOUNT,
+  WORK_VOLUME,
+} from '@shared/engine/paths.constants';
 import { Db } from '@workspace/nestjs-rls/nest';
 import type { Redis } from 'ioredis';
 import { resolve } from 'node:path';
@@ -15,10 +23,6 @@ import {
   WorkspaceProfileService,
 } from '../workspace-profile/workspace-profile.service';
 import {
-  ATLAS_STATE_MOUNT,
-  ATLAS_STATE_VOLUME,
-  DOCKER_STORAGE_MOUNT,
-  DOCKER_STORAGE_VOLUME,
   ENGINE_ENTRYPOINT,
   LABEL_JOB,
   LABEL_ORG,
@@ -28,8 +32,6 @@ import {
   POD_RESOURCES,
   SETUP_CONTAINER,
   SHELL_PREFIX_WRAPPER,
-  WORK_MOUNT,
-  WORK_VOLUME,
 } from './sandbox.constants';
 
 @Injectable()
@@ -104,17 +106,25 @@ export class SandboxService {
 
   async launchEngineTurn(jobId: string, turnId: string): Promise<void> {
     await this.ensureReady(jobId);
-    const env = [
-      `TURN_ID=${turnId}`,
-      'ENGINE_TRANSPORT=redis',
-      `REDIS_URL=${this._redisUrl}`,
-      // Every Bash tool command the agent runs is wrapped by this reniced launcher, so builds/tests/installs
-      // can't starve the engine's token stream. Inherited by the SDK from the engine's own environment.
-      `CLAUDE_CODE_SHELL_PREFIX=${SHELL_PREFIX_WRAPPER}`,
-    ];
+    // Bootstrap infra ONLY — the env the engine needs *before* it can read its spec from Redis. Per-turn
+    // credentials (agent auth + git) ride `TurnSpec.env`, assembled host-side by TurnSpecBuilder.
+    const env: Record<string, string> = {
+      TURN_ID: turnId,
+      ENGINE_TRANSPORT: 'redis',
+      REDIS_URL: this._redisUrl,
+      CLAUDE_CODE_SHELL_PREFIX: SHELL_PREFIX_WRAPPER,
+    };
+    // Each value is single-quoted so values with spaces survive the shell.
+    const assignments = Object.entries(env)
+      .map(([k, v]) => `${k}=${shQuote(v)}`)
+      .join(' ');
     // setsid detaches the engine from the exec session so the stream closes while the process keeps running.
-    const cmd = `setsid env ${env.join(' ')} ${ENGINE_ENTRYPOINT} </dev/null >/tmp/engine-${turnId}.log 2>&1 &`;
-    await this.k8s.execInPod(this._namespace, SandboxService.podName(jobId), MAIN_CONTAINER, ['sh', '-c', cmd]);
+    const cmd = `setsid env ${assignments} ${ENGINE_ENTRYPOINT} </dev/null >/tmp/engine-${turnId}.log 2>&1 &`;
+    await this.k8s.execInPod(this._namespace, SandboxService.podName(jobId), MAIN_CONTAINER, [
+      'sh',
+      '-c',
+      cmd,
+    ]);
     await this.touch(jobId);
   }
 
@@ -248,4 +258,9 @@ export class SandboxService {
   private static setupWrapper(setupScript: string): string {
     return ['set -e', `cd ${WORK_MOUNT}`, setupScript].join('\n');
   }
+}
+
+/** POSIX single-quote a value so it passes through `sh -c` verbatim (spaces, colons, `$`, etc.). */
+function shQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
 }

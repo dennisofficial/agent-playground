@@ -29,6 +29,13 @@ export class OrgCredential extends TimestampedEntity {
   /** GitHub Personal Access Token (`ghp_…` / `github_pat_…`) — consumed by the GitHub module. */
   @Column({ type: 'text', nullable: true })
   githubPatEnc!: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  githubAppInstallationId!: string | null;
+
+  /** The installation account login (e.g. the org/user the App is installed on) — for display only. */
+  @Column({ type: 'text', nullable: true })
+  githubAppInstallationAccount!: string | null;
 }
 
 export class OrgCredentialRepo extends Repository<OrgCredential> {}

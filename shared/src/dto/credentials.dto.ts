@@ -31,4 +31,5 @@ export interface CredentialPresence {
   anthropic: boolean;
   openai: boolean;
   github: boolean;
+  githubApp: boolean;
 }

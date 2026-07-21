@@ -4,7 +4,6 @@ import { BaseQueue } from '../../_lib/queue/base-queue';
 import { InboundMessageService } from '../inbound-message/inbound-message.service';
 import { TurnDispatcherService } from '../turn/turn-dispatcher.service';
 import { buildTurnFlow } from './turn-flow';
-import { TurnSpecBuilder } from './turn-spec-builder.service';
 
 type DispatchData = { jobId: string };
 
@@ -13,7 +12,6 @@ export class TurnDispatchProcessor extends BaseQueue {
   constructor(
     private readonly inbound: InboundMessageService,
     private readonly turnDispatcher: TurnDispatcherService,
-    private readonly specBuilder: TurnSpecBuilder,
     @InjectFlowProducer() private readonly flowProducer: FlowProducer,
   ) {
     super();
@@ -32,8 +30,7 @@ export class TurnDispatchProcessor extends BaseQueue {
           drained = true;
           break;
         }
-        const spec = await this.specBuilder.build(jobId, claimed);
-        await this.turnDispatcher.run(jobId, claimed[0].threadId, spec);
+        await this.turnDispatcher.run(jobId, claimed);
         await this.inbound.markDelivered(claimed.map((m) => m.id));
       }
     } finally {
