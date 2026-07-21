@@ -6,8 +6,8 @@
     "rootDir": ".",
     "noEmit": false,
     "baseUrl": ".",
-    "ignoreDeprecations": "6.0",
+    "ignoreDeprecations": "6.0"
   },
   "include": ["cli/**/*", "migrations/**/*", "seeds/**/*"],
-  "exclude": ["node_modules", "dist", "seeds/_deferred"],
+  "exclude": ["node_modules", "dist", "seeds/_deferred"]
 }

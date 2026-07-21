@@ -1,6 +1,7 @@
 import { InjectFlowProducer } from '@nestjs/bullmq';
 import { Injectable } from '@nestjs/common';
 import { Db } from '@workspace/nestjs-rls/nest';
+import type { CreateJobDto, CreateJobResult } from '@workspace/shared';
 import {
   EInboundPriority,
   EJobStatus,
@@ -16,12 +17,9 @@ import { Job } from '../../_lib/database/entities/job.entity';
 import { Repo } from '../../_lib/database/entities/repo.entity';
 import { ThreadGroup } from '../../_lib/database/entities/thread-group.entity';
 import { Thread } from '../../_lib/database/entities/thread.entity';
-import type { CreateJobDto } from '@workspace/shared';
 import type { User } from '../../_lib/database/entities/user.entity';
 import { InboundMessageService } from '../inbound-message/inbound-message.service';
 import { buildTurnFlow } from './turn-flow';
-
-export type CreateJobResult = { jobId: string; focusedThreadId: string };
 
 @Injectable()
 export class JobBootstrapService {

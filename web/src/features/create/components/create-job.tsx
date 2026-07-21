@@ -12,13 +12,18 @@ import { useAllJobs, type InboxThread } from '@/lib/api/inbox';
 import type { OperatorJobKind } from '@/lib/api/job-api';
 import { useOrgRepos } from '@/lib/api/job-queries';
 import { groupThreadsBySection, SECTION_LABEL } from '@/lib/api/job-section';
-import { useCreateJobMutation } from '@/redux/query/api/jobs.api';
 import { useOrgs } from '@/lib/api/me';
 import { cn } from '@/lib/cn';
 import { SITE_MAP } from '@/lib/site-map';
+import { useCreateJobMutation } from '@/redux/query/api/jobs.api';
 import { isSubmitCombo } from '@/utils/keyboard';
 import { orgInitials, orgSwatch } from '@/utils/org-display';
-import { EJobKind, modeApprovesPlan, modeApprovesShip, type AutoApproveMode } from '@workspace/shared';
+import {
+  EJobKind,
+  modeApprovesPlan,
+  modeApprovesShip,
+  type AutoApproveMode,
+} from '@workspace/shared';
 import { Check, Paperclip, Plug, Upload, X } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';

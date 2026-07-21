@@ -2,6 +2,7 @@ import { env } from '@/lib/env';
 import { streamList } from '@workspace/pg-realtime/rtk';
 import type {
   CreateJobDto,
+  CreateJobResult,
   JobListItem,
   JobView,
   TaskView,
@@ -17,7 +18,7 @@ const BACKEND = env.NEXT_PUBLIC_BACKEND_URL;
 export const jobsApi = baseApi.injectEndpoints({
   overrideExisting: true,
   endpoints: (build) => ({
-    createJob: build.mutation<{ jobId: string }, CreateJobDto>({
+    createJob: build.mutation<CreateJobResult, CreateJobDto>({
       query: (body) => ({ url: `/jobs`, method: 'POST', data: body }),
       invalidatesTags: [EBaseApiCacheTags.JOB],
     }),
