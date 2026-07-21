@@ -33,6 +33,7 @@ export default defineConfig(
       '@typescript-eslint/no-unsafe-member-access': 'off',
       '@typescript-eslint/no-redundant-type-constituents': 'off',
       '@typescript-eslint/no-unused-vars': 'off',
+      '@typescript-eslint/require-await': 'off',
     },
   },
   // Test files: relax rules that fire as false positives on vi.fn() mock objects.

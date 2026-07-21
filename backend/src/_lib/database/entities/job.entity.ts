@@ -1,7 +1,7 @@
 import { TimestampedEntity } from '@lib/database/base.entity';
 import type { AtlasClaims } from '@lib/rls/atlas-claims';
 import { Rls } from '@workspace/nestjs-rls';
-import { EJobActivity, EJobKind, EJobStatus, EThreadOrigin } from '@workspace/shared';
+import { EJobKind, EJobStatus, EThreadOrigin } from '@workspace/shared';
 import {
   Column,
   Entity,
@@ -36,8 +36,6 @@ export class Job extends TimestampedEntity {
   @JoinColumn({ name: 'repo_id' })
   repo?: Repo;
 
-  /** The thread a job click routes to by default; null until the first thread exists. `SET NULL` so
-   *  deleting the focused thread nulls the pointer rather than dangling. */
   @Column({ type: 'uuid', nullable: true })
   focusedThreadId!: string | null;
 
@@ -56,9 +54,6 @@ export class Job extends TimestampedEntity {
 
   @Column({ type: 'enum', enum: EJobStatus, default: EJobStatus.OPEN })
   status!: EJobStatus;
-
-  @Column({ type: 'enum', enum: EJobActivity, default: EJobActivity.IDLE })
-  activity!: EJobActivity;
 
   @Column({ type: 'timestamptz', nullable: true })
   archivedAt!: Date | null;

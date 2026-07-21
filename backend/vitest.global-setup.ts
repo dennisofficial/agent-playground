@@ -118,9 +118,15 @@ async function provisionMcpRoles(conn: {
     await client.query(
       `ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE ON SEQUENCES TO mcp_writer`,
     );
-    await client.query(
-      `REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON prod_maintenance_write FROM mcp_writer`,
-    );
+    // `prod_maintenance_write` is an infra-provisioned audit ledger (infra/mcp-writer-role.sql), not a
+    // migrated table — a freshly-created *_test DB won't have it. Guard the REVOKE so the harness still
+    // provisions cleanly when it's absent; where it does exist (prod), the tamper protection still applies.
+    const ledger = await client.query(`SELECT to_regclass('public.prod_maintenance_write') AS t`);
+    if (ledger.rows[0].t) {
+      await client.query(
+        `REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON prod_maintenance_write FROM mcp_writer`,
+      );
+    }
     await client.query(`ALTER ROLE mcp_writer SET statement_timeout = '15s'`);
     console.log(
       '[global-setup] provisioned mcp_reader (SELECT-only) + mcp_writer (DML-only) roles',

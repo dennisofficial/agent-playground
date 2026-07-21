@@ -1,6 +1,5 @@
 import type { Pipeline } from '@/lib/api/types';
 import {
-  EJobActivity,
   EJobKind,
   EJobStatus,
   ETaskStatus,
@@ -80,7 +79,6 @@ function job(status: EJobStatus, threadGroups: ThreadGroupView[]): JobView {
     repoId: 'r1',
     title: 'A job',
     status,
-    activity: EJobActivity.IDLE,
     kind: EJobKind.FEATURE,
     origin: EThreadOrigin.CHAT,
     focusedThreadId: null,

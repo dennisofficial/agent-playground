@@ -6,8 +6,13 @@ import { configDefaults, defineConfig } from 'vitest/config';
 // metadata (reads .swcrc) so NestJS DI works inside tests.
 const alias = {
   '@core': resolve(__dirname, 'src/_core'),
-  '@shared': resolve(__dirname, 'src/shared'),
+  '@lib': resolve(__dirname, 'src/_lib'),
+  '@shared': resolve(__dirname, 'src/_shared'),
 };
+
+// The `*_old` reference trees are excluded from every build (see tsconfig) and must never be imported;
+// their stale specs don't resolve. Keep them out of the test sweep too, the same way tsconfig does.
+const excludeOld = ['**/src/host_old/**', '**/src/engine_old/**', '**/src/_shared_old/**'];
 
 // Loads the local secret overlay + the encrypted test env (authoritative) before tests,
 // and hard-refuses any POSTGRES_DB that isn't a dedicated *_test database.
@@ -78,7 +83,7 @@ export default defineConfig((env) => {
         setupFiles,
         globalSetup,
         include: ['**/*.int.test.ts'],
-        exclude: ['**/*.e2e-spec.ts', '**/*.ai.test.ts', ...configDefaults.exclude],
+        exclude: ['**/*.e2e-spec.ts', '**/*.ai.test.ts', ...excludeOld, ...configDefaults.exclude],
         pool: 'threads',
         poolOptions: { threads: { singleThread: true } },
         testTimeout: 30_000,
@@ -101,7 +106,7 @@ export default defineConfig((env) => {
           '**/*.int.test.ts',
           '**/*.e2e-spec.ts',
           '**/*.ai.test.ts',
-          ...configDefaults.exclude,
+          ...excludeOld, ...configDefaults.exclude,
         ],
         testTimeout: 30_000,
       },
@@ -129,7 +134,7 @@ export default defineConfig((env) => {
               '**/*.int.test.ts',
               '**/*.e2e-spec.ts',
               '**/*.ai.test.ts',
-              ...configDefaults.exclude,
+              ...excludeOld, ...configDefaults.exclude,
             ],
             testTimeout: 30_000,
           },
@@ -142,7 +147,7 @@ export default defineConfig((env) => {
             environment: 'node',
             setupFiles,
             include: ['**/*.int.test.ts', '**/*.e2e-spec.ts'],
-            exclude: ['**/*.ai.test.ts', ...configDefaults.exclude],
+            exclude: ['**/*.ai.test.ts', ...excludeOld, ...configDefaults.exclude],
             pool: 'threads',
             poolOptions: { threads: { singleThread: true } },
             testTimeout: 30_000,

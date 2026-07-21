@@ -23,20 +23,6 @@ import { ThreadMessage } from '../src/_lib/database/entities/thread-message.enti
 import { Thread } from '../src/_lib/database/entities/thread.entity';
 import { DEV_SEED_IDS } from './_shared/dev-seed-ids';
 
-/**
- * REAL (sanitized) job trees on the FIXTURES repo (`atlas-dev/fixtures`) so the workspace UI has
- * authentic, varied content — a multi-job sidebar (spread across done / awaiting-ship / running /
- * planning / blocked / archived), the navigator (thread groups → lanes), real transcripts, and agent
- * task lists. Dumped from prod (6 jobs) and mapped old→new schema (author→source, old kinds→
- * `EThreadMessageKind`, ids remapped to the fixtures org/repo, operator identity → the dev user,
- * secrets/PII redacted, `card`/`meta` dropped, review children flattened). The data (with the original
- * prod uuids) lives in `_data/prod-threads.fixture.json`. Only the top-level `status` is spread for the
- * demo — the prod rows are all `archived`; every transcript is real.
- *
- * UPSERT + ADDITIVE: rows keep their prod uuids and are `save()`d (insert-or-update by PK) — re-running
- * `pnpm db:seed` re-applies without duplicating and never touches the real repo.
- */
-
 interface FxJob {
   id: string;
   title: string | null;
@@ -138,7 +124,6 @@ export default (async (ds) => {
         origin: tree.job.origin,
         kind: tree.job.kind,
         status: tree.job.status,
-        activity: tree.job.activity,
         archivedAt: tree.job.archivedAt ? new Date(tree.job.archivedAt) : null,
         createdAt: new Date(tree.job.createdAt),
       }),

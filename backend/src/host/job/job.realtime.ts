@@ -7,11 +7,6 @@ import { ThreadGroup } from '../../_lib/database/entities/thread-group.entity';
 import { ThreadMessage } from '../../_lib/database/entities/thread-message.entity';
 import { Thread } from '../../_lib/database/entities/thread.entity';
 
-/**
- * Realtime models for the job cluster. Each model's row-scope comes from the entity's `@Rls`
- * policy (via `rlsGuard`), resolving claims from the subscribe-time principal. `mapRow` stays
- * per-model: it maps snake_case WAL columns to the shape the policy scopes on (always `orgId`).
- */
 export function buildJobRealtimeModels(resolveClaims: ResolveClaims): ModelConfig[] {
   return [
     {
@@ -25,7 +20,6 @@ export function buildJobRealtimeModels(resolveClaims: ResolveClaims): ModelConfi
         repoId: raw.repo_id,
         title: raw.title,
         status: raw.status,
-        activity: raw.activity,
         kind: raw.kind,
         origin: raw.origin,
         focusedThreadId: raw.focused_thread_id,

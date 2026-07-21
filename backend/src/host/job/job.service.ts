@@ -55,7 +55,6 @@ export function toJobListItem(j: Job): JobListItem {
     repoId: j.repoId,
     title: j.title,
     status: j.status,
-    activity: j.activity,
     kind: j.kind,
     origin: j.origin,
     focusedThreadId: j.focusedThreadId,

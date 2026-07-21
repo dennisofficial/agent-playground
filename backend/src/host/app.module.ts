@@ -6,6 +6,7 @@ import { K8sModule } from '@lib/k8s/k8s.module';
 import { atlasRealtimeConfig } from '@lib/realtime/realtime.config';
 import { RedisModule } from '@lib/redis/redis.module';
 import { atlasRlsOptions } from '@lib/rls/atlas-rls.config';
+import { QueueModule } from '@lib/queue/queue.module';
 import { ValidationPipe } from '@nestjs/common';
 import { APP_PIPE } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -16,7 +17,9 @@ import { ClsModule } from 'nestjs-cls';
 import { AgentCredentialsModule } from './agent-credentials/agent-credentials.module';
 import { AuthModule } from './auth/auth.module';
 import { GithubModule } from './github/github.module';
+import { InboundMessageModule } from './inbound-message/inbound-message.module';
 import { JitHostModule } from './jit/jit.module';
+import { JobBootstrapModule } from './job-bootstrap/job-bootstrap.module';
 import { JobModule } from './job/job.module';
 import { McpServersModule } from './mcp-servers/mcp-servers.module';
 import { OrgCredentialsModule } from './org-credentials/credentials.module';
@@ -44,6 +47,7 @@ import { WorkspaceProfileModule } from './workspace-profile/workspace-profile.mo
     K8sModule,
     PgRealtimeModule.forRootAsync({ inject: [EnvService], useFactory: atlasRealtimeConfig }),
     RlsModule.forRootAsync(atlasRlsOptions),
+    QueueModule,
 
     OrgModule,
     AuthModule,
@@ -58,6 +62,8 @@ import { WorkspaceProfileModule } from './workspace-profile/workspace-profile.mo
     SkillsModule,
     SandboxModule,
     TurnModule,
+    InboundMessageModule,
+    JobBootstrapModule,
   ],
   providers: [
     {

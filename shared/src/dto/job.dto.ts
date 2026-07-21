@@ -1,5 +1,4 @@
 import type {
-  EJobActivity,
   EJobKind,
   EJobStatus,
   ESubagentStatus,
@@ -20,7 +19,6 @@ export interface JobListItem {
   repoId: string;
   title: string | null;
   status: EJobStatus;
-  activity: EJobActivity;
   kind: EJobKind | null;
   origin: EThreadOrigin;
   /** The thread a job click routes to by default, or null before any thread exists. */
@@ -59,15 +57,10 @@ export interface ThreadGroupView {
   threads: ThreadView[];
 }
 
-/** The full job detail (`GET /jobs/:jobId`) — the list item plus the nested group→thread tree the
- *  workspace navigator renders. Transcript messages are fetched per-thread, not embedded. */
 export interface JobView extends JobListItem {
   threadGroups: ThreadGroupView[];
 }
 
-/** One durable transcript block (`GET /jobs/:jobId/threads/:threadId/messages`) — the wire shape the web
- *  conversation renders (mirrors the client's `RawThreadMessage`). `isAtlas` derives from `source`;
- *  `subagentStatus`/`subagentEndedAt` are joined from the subagent row on the anchor (Task) message. */
 export interface ThreadMessageView {
   id: string;
   jobId: string;

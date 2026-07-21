@@ -27,20 +27,14 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { RepoEditRow } from './RepoEditRow';
 
-const GITHUB_URL = /^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i;
-const RED_SOFT = 'color-mix(in srgb, var(--red) 8%, transparent)';
-const RED_BORDER = 'color-mix(in srgb, var(--red) 40%, transparent)';
-const GREEN_BORDER = 'color-mix(in srgb, var(--green) 32%, transparent)';
+export const GITHUB_URL = /^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i;
+export const RED_SOFT = 'color-mix(in srgb, var(--red) 8%, transparent)';
+export const RED_BORDER = 'color-mix(in srgb, var(--red) 40%, transparent)';
+export const GREEN_BORDER = 'color-mix(in srgb, var(--green) 32%, transparent)';
 
-type Flash = { tone: 'green' | 'red'; text: string };
-const FLASH_DURATION_MS = 4200;
+export type Flash = { tone: 'green' | 'red'; text: string };
+export const FLASH_DURATION_MS = 4200;
 
-/**
- * Repos — the GitHub repositories connected to the org. Owners can connect, re-validate, edit metadata,
- * and disconnect; members see a read-only list. Mirrors the credentials/members sections (this renders
- * inside the shared settings content column). Every write hits the live `/web/orgs/:orgId/repos*` API and
- * invalidates `qk.orgRepos` so the enriched list (thread-count + last-checked) refetches.
- */
 export function ReposSection({
   orgId,
   orgName,
@@ -77,7 +71,7 @@ export function ReposSection({
 
   function onRevalidate(repoId: string) {
     if (revalidateState.isLoading) return;
-    revalidate({ repoId })
+    revalidate({ orgId, repoId })
       .unwrap()
       .catch((e) =>
         setFlash({
@@ -236,7 +230,7 @@ export function ReposSection({
   );
 }
 
-function Flasher({ flash }: { flash: Flash | null }) {
+export function Flasher({ flash }: { flash: Flash | null }) {
   if (!flash) return null;
   const ok = flash.tone === 'green';
   return (
@@ -900,7 +894,7 @@ function DisconnectDialog({
   );
 }
 
-function timeAgo(iso?: string | null): string {
+export function timeAgo(iso?: string | null): string {
   if (!iso) return '';
   const t = new Date(iso).getTime();
   if (Number.isNaN(t)) return '';

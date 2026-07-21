@@ -1,0 +1,97 @@
+import { Injectable } from '@nestjs/common';
+import { Db } from '@workspace/nestjs-rls/nest';
+import { EInboundMessageStatus, EInboundPriority, EThreadMessageSource } from '@workspace/shared';
+import { In } from 'typeorm';
+import {
+  InboundMessage,
+  InboundMessageRepo,
+} from '../../_lib/database/entities/inbound-message.entity';
+import { ThreadMessage } from '../../_lib/database/entities/thread-message.entity';
+
+export type EnqueueInput = {
+  jobId: string;
+  threadId: string;
+  orgId: string;
+  authorId: string;
+  author: string;
+  source: EThreadMessageSource;
+  text: string;
+  priority: EInboundPriority;
+  payload?: Record<string, unknown> | null;
+};
+
+@Injectable()
+export class InboundMessageService {
+  constructor(
+    private readonly db: Db,
+    private readonly inbound: InboundMessageRepo,
+  ) {}
+
+  async enqueue(input: EnqueueInput): Promise<InboundMessage> {
+    return this.db.unsafe(InboundMessage).manager.transaction(async (m) => {
+      const inbound = m.create(InboundMessage, {
+        jobId: input.jobId,
+        threadId: input.threadId,
+        orgId: input.orgId,
+        authorId: input.authorId,
+        author: input.author,
+        source: input.source,
+        text: input.text,
+        payload: input.payload ?? null,
+        status: EInboundMessageStatus.PENDING,
+        priority: input.priority,
+        deliveredAt: null,
+      });
+      await m.save(inbound);
+
+      const bubble = m.create(ThreadMessage, {
+        jobId: input.jobId,
+        threadId: input.threadId,
+        orgId: input.orgId,
+        subagentId: null,
+        source: input.source,
+        authorId: input.authorId,
+        author: input.author,
+        text: input.text,
+        card: null,
+        meta: null,
+        orderAt: null,
+      });
+      await m.save(bubble);
+
+      return inbound;
+    });
+  }
+
+  async claimPending(jobId: string): Promise<InboundMessage[]> {
+    const pending = await this.db.unsafe(InboundMessage).find({
+      where: { jobId, status: EInboundMessageStatus.PENDING },
+      order: { createdAt: 'ASC' },
+    });
+    const hasTrigger = pending.some(
+      (r) => r.priority === EInboundPriority.NOW || r.priority === EInboundPriority.QUEUED,
+    );
+    return hasTrigger ? pending : [];
+  }
+
+  /** Mark a claimed batch as handed off to the engine. */
+  async markDelivered(ids: string[]): Promise<void> {
+    if (ids.length === 0) return;
+    await this.db
+      .unsafe(InboundMessage)
+      .update(
+        { id: In(ids) },
+        { status: EInboundMessageStatus.DELIVERED, deliveredAt: new Date() },
+      );
+  }
+
+  async hasPending(jobId: string): Promise<boolean> {
+    return this.db.unsafe(InboundMessage).exists({
+      where: {
+        jobId,
+        status: EInboundMessageStatus.PENDING,
+        priority: In([EInboundPriority.NOW, EInboundPriority.QUEUED]),
+      },
+    });
+  }
+}
