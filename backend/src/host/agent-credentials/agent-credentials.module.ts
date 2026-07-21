@@ -29,7 +29,9 @@ import { AgentUsageService } from './usage/agent-usage.service';
     OrgModule, // OrgService tenancy gate in the controller
     PgRealtimeModule.forFeature({
       inject: [RLS_CONTEXT],
-      useFactory: (ctx: RlsContextConfig) => [buildAgentCredentialsRealtimeModel(ctx.resolveClaims)],
+      useFactory: (ctx: RlsContextConfig) => [
+        buildAgentCredentialsRealtimeModel(ctx.resolveClaims),
+      ],
     }),
   ],
   entities: [{ entity: AgentCredential, repoClass: AgentCredentialRepo }],

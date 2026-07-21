@@ -14,21 +14,13 @@ import {
 } from 'typeorm';
 import { Organization } from './organization.entity';
 
-/**
- * One agent SDK subscription account for an org — a Claude.ai or ChatGPT/Codex login, multi-account per
- * (org, provider). The runtime token material lives ENCRYPTED in `materialEnc` (provider-specific shape);
- * every other column is denormalized metadata so list / usage / realtime paths never decrypt. Distinct
- * from the key-agnostic secret vault (`org_secrets`), which holds single-valued raw API keys + the PAT.
- */
 @Entity({ name: 'agent_credentials' })
 @Index(['orgId'])
-// One selected account per (org, provider) — replaces the old organizations.selected_claude_credential_id.
 @Index(['orgId', 'provider'], {
   unique: true,
   where: 'selected',
 })
-// Dedupe personal (OAuth) accounts by email within a provider — a re-login updates in place.
-  @Index(['orgId', 'provider', 'accountEmail'], {
+@Index(['orgId', 'provider', 'accountEmail'], {
   unique: true,
   where: `kind = 'personal' AND account_email IS NOT NULL`,
 })

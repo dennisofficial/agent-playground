@@ -1,10 +1,9 @@
 import { OrganizationMember } from '@lib/database/entities/organization-member.entity';
-import { getRepositoryToken } from '@nestjs/typeorm';
-import { EOrgRole } from '@workspace/shared';
+import { getRepositoryToken, TypeOrmModule } from '@nestjs/typeorm';
 import type { RlsContextConfig } from '@workspace/nestjs-rls';
 import type { RlsModuleAsyncOptions } from '@workspace/nestjs-rls/nest';
+import { EOrgRole } from '@workspace/shared';
 import { ClsService } from 'nestjs-cls';
-import { TypeOrmModule } from '@nestjs/typeorm';
 import type { Repository } from 'typeorm';
 import { AtlasClaims, CLS_CLAIMS, CLS_USER, EMPTY_CLAIMS } from './atlas-claims';
 

@@ -2,7 +2,7 @@
   "extends": "../../tsconfig.json",
   "compilerOptions": {
     "declaration": false,
-    "outDir": "../../dist",
+    "outDir": "../../dist"
     // Inherit `paths` from the root tsconfig. Do NOT redefine them here: nest's build-time
     // tsconfig-paths hook resolves paths against baseUrl='./' (the backend cwd), so root's
     // "./src/_core/*" rewrites correctly while a nested "../_core/*" would silently no-op and
@@ -15,6 +15,6 @@
     "**/*spec.ts",
     "**/*.test.ts",
     "**/*.eval.ts",
-    "**/*.ai.data.ts",
-  ],
+    "**/*.ai.data.ts"
+  ]
 }

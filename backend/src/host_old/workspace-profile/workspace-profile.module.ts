@@ -3,9 +3,7 @@ import { WorkspaceProfileService } from './workspace-profile.service';
 
 @Global()
 @Module({
-  providers: [
-    WorkspaceProfileService,
-  ],
+  providers: [WorkspaceProfileService],
   exports: [WorkspaceProfileService],
 })
 export class WorkspaceProfileModule {}
