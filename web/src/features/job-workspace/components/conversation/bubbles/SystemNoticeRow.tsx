@@ -1,9 +1,9 @@
-import { SeedType, toneOf } from "@/features/job-workspace/lib/classify";
-import { JobMessage } from "@/lib/api/job-api";
-import { ChevronRight } from "lucide-react";
-import { useState } from "react";
-import Markdown from "react-markdown";
-import { KNOWN_SEED_TYPES, seedTypePresentation, TONE_COLOR } from "./bubbles";
+import { SeedType, toneOf } from '@/features/job-workspace/lib/classify';
+import { JobMessage } from '@/lib/api/job-api';
+import { ChevronRight } from 'lucide-react';
+import { useState } from 'react';
+import Markdown from 'react-markdown';
+import { KNOWN_SEED_TYPES, seedTypePresentation, TONE_COLOR } from './bubbles';
 
 export function SystemNoticeRow({ message }: { message: JobMessage }) {
   const [open, setOpen] = useState(false);

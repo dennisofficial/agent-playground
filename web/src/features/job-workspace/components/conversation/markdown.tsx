@@ -43,8 +43,8 @@ import { JsonView, allExpanded, darkStyles } from 'react-json-view-lite';
 import 'react-json-view-lite/dist/index.css';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { CopyButton, TerminalChromeBar, WrapButton, useCopied } from '../terminal/terminal-chrome';
 import { renderTokenLine, useHighlightTokens } from '../../tool-calls/highlight';
+import { CopyButton, TerminalChromeBar, WrapButton, useCopied } from '../terminal/terminal-chrome';
 
 /**
  * Markdown renderer for assistant prose in the conversation — ported from the "Atlas Conversation View"

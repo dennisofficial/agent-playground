@@ -1,21 +1,21 @@
+import type { Pipeline } from '@/lib/api/types';
 import {
   EJobActivity,
   EJobKind,
   EJobStatus,
+  ETaskStatus,
   EThreadCondition,
   EThreadGroupKind,
   EThreadOrigin,
   EThreadRole,
   EThreadStatus,
   EThreadType,
-  ETaskStatus,
   type JobView,
   type TaskView,
   type ThreadGroupView,
   type ThreadView,
 } from '@workspace/shared';
 import { describe, expect, it } from 'vitest';
-import type { Pipeline } from '@/lib/api/types';
 import {
   activeJob,
   isMasterReviewThread,
@@ -28,7 +28,9 @@ import {
   threadAcceptsOperatorInput,
 } from '../lib/pipeline-selectors';
 
-function task(over: Partial<TaskView> & Pick<TaskView, 'threadGroupId' | 'ordinal' | 'title'>): TaskView {
+function task(
+  over: Partial<TaskView> & Pick<TaskView, 'threadGroupId' | 'ordinal' | 'title'>,
+): TaskView {
   return {
     id: `task-${over.ordinal}`,
     jobId: 'j1',
@@ -40,7 +42,9 @@ function task(over: Partial<TaskView> & Pick<TaskView, 'threadGroupId' | 'ordina
   };
 }
 
-function thread(over: Partial<ThreadView> & Pick<ThreadView, 'id' | 'threadGroupId' | 'role' | 'ordinal'>): ThreadView {
+function thread(
+  over: Partial<ThreadView> & Pick<ThreadView, 'id' | 'threadGroupId' | 'role' | 'ordinal'>,
+): ThreadView {
   return {
     jobId: 'j1',
     type: EThreadType.GENERAL,
@@ -55,7 +59,9 @@ function thread(over: Partial<ThreadView> & Pick<ThreadView, 'id' | 'threadGroup
   };
 }
 
-function group(over: Partial<ThreadGroupView> & Pick<ThreadGroupView, 'id' | 'kind' | 'ordinal'>): ThreadGroupView {
+function group(
+  over: Partial<ThreadGroupView> & Pick<ThreadGroupView, 'id' | 'kind' | 'ordinal'>,
+): ThreadGroupView {
   return {
     jobId: 'j1',
     title: null,
@@ -109,7 +115,13 @@ describe('tasksForGroup', () => {
     ];
     const result = tasksForGroup(tasks, 'g1');
     expect(result).toEqual([
-      { id: '1', subject: 'First', status: 'pending', description: 'do the first thing', blockedBy: [] },
+      {
+        id: '1',
+        subject: 'First',
+        status: 'pending',
+        description: 'do the first thing',
+        blockedBy: [],
+      },
       { id: '3', subject: 'Third', status: 'pending', blockedBy: [] },
     ]);
   });
@@ -134,10 +146,14 @@ describe('mainTasks', () => {
 describe('thread role derivations', () => {
   it('identifies the master-review thread', () => {
     expect(
-      isMasterReviewThread(thread({ id: 't1', threadGroupId: 'g1', role: EThreadRole.MASTER_REVIEW, ordinal: 0 })),
+      isMasterReviewThread(
+        thread({ id: 't1', threadGroupId: 'g1', role: EThreadRole.MASTER_REVIEW, ordinal: 0 }),
+      ),
     ).toBe(true);
     expect(
-      isMasterReviewThread(thread({ id: 't2', threadGroupId: 'g1', role: EThreadRole.BUILDER, ordinal: 0 })),
+      isMasterReviewThread(
+        thread({ id: 't2', threadGroupId: 'g1', role: EThreadRole.BUILDER, ordinal: 0 }),
+      ),
     ).toBe(false);
   });
 

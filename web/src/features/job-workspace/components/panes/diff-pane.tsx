@@ -10,7 +10,6 @@ import {
 import { Check, ChevronDown, ChevronRight, MessageSquarePlus, Plus, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { anchorEnd, anchorLabel, deriveLineAnchor } from '../../lib/diff-anchor';
-import { useReviewComments } from '../review/review-comments';
 import { rowsFromHunk, type DiffRow } from '../../tool-calls/diff-rows';
 import {
   langFromPath,
@@ -19,6 +18,7 @@ import {
   useEnsureHighlightLangs,
   type ThemedToken,
 } from '../../tool-calls/highlight';
+import { useReviewComments } from '../review/review-comments';
 
 /**
  * The Changes pane — a full-bleed, GitHub-style unified diff of the job's accumulated worktree change.

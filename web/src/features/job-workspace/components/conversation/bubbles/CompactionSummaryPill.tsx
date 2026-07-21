@@ -1,9 +1,9 @@
-import { SystemTone } from "@/features/job-workspace/lib/classify";
-import { JobMessage } from "@/lib/api/job-api";
-import { ChevronRight } from "lucide-react";
-import { useState } from "react";
-import Markdown from "react-markdown";
-import { TONE_COLOR } from "./bubbles";
+import { SystemTone } from '@/features/job-workspace/lib/classify';
+import { JobMessage } from '@/lib/api/job-api';
+import { ChevronRight } from 'lucide-react';
+import { useState } from 'react';
+import Markdown from 'react-markdown';
+import { TONE_COLOR } from './bubbles';
 
 export function CompactionSummaryPill({
   message,

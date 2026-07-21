@@ -14,14 +14,14 @@ import { MAIN_LANE, useLiveTurn, type ContextBreakdown } from '@/lib/api/job-str
 import { formatEffort, formatModelLabel } from '@/utils/format';
 import { ArrowUp, ChevronDown, Plus, Square } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef } from 'react';
+import type { AttachmentsApi } from '../../hooks/use-attachments';
+import { ContextMeter } from '../chrome/context-meter';
+import { UsageRing } from '../chrome/usage-ring';
+import { useReviewComments, type ReviewComment } from '../review/review-comments';
 import { AttachmentTray } from '../trays/attachment-tray';
 import { CommentTray } from '../trays/comment-tray';
-import { ContextMeter } from '../chrome/context-meter';
-import type { AttachmentsApi } from '../../hooks/use-attachments';
 import { QueuedTray } from '../trays/queued-tray';
-import { useReviewComments, type ReviewComment } from '../review/review-comments';
 import { StagedAnswersTray } from '../trays/staged-answers-tray';
-import { UsageRing } from '../chrome/usage-ring';
 
 function toMessageItem(a: StagedAnswer): MessageInput {
   if (a.kind === 'question') {

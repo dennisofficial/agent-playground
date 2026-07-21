@@ -1,4 +1,3 @@
-
 import { BRIDGE_SERVER_NAME } from './constants';
 
 export function asRecord(v: unknown): Record<string, unknown> {

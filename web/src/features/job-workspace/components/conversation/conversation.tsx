@@ -10,46 +10,41 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { EJobActivity } from '@workspace/shared';
 import { HelpCircle, Upload } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ApprovalCardView, VerdictCardView } from '../cards/approval-card';
-import { ArchivedOverlay } from '../overlays/archived-overlay';
-import { AttachmentsCardView } from '../cards/attachments-card';
-import { BlockedOverlay } from '../overlays/blocked-overlay';
-import {
-  buildLiveTurnItems,
-  TurnMetaDivider,
-  UntrustedBlock,
-  UserBubble,
-} from './bubbles/bubbles';
-import { ClaudeBubble } from './bubbles/ClaudeBubble';
-import { SystemEventPill } from './bubbles/SystemEventPill';
-import { SystemReminderChip } from './bubbles/SystemReminderChip';
-import { LiveIndicator } from './bubbles/LiveIndicator';
-import { HarnessBubble } from './bubbles/HarnessBubble';
-import { EventBubble } from './bubbles/EventBubble';
-import { classifyMessage } from '../../lib/classify';
-import { indexCodexReviewBlocks } from '../review/codex-review';
-import { Composer, type ComposerFooter } from '../composer/composer';
-import { DetailTopBar } from '../chrome/detail-top-bar';
-import { FileCardView } from '../cards/file-card';
 import { useAttachments } from '../../hooks/use-attachments';
 import { useFileDrop } from '../../hooks/use-file-drop';
+import { classifyMessage } from '../../lib/classify';
+import { compensateAboveViewportResize } from '../../lib/scroll-compensation';
+import { messageSendState } from '../../lib/send-state';
+import { indexDurableSubagents, SubagentCard, subagentNode } from '../../subagents';
+import { segmentToolRun, ToolGroup, type ToolItem } from '../../tool-calls';
+import { ApprovalCardView, VerdictCardView } from '../cards/approval-card';
+import { AttachmentsCardView } from '../cards/attachments-card';
+import { FileCardView } from '../cards/file-card';
+import { McpProposalCard } from '../cards/mcp-proposal-card';
+import { QuestionCardView } from '../cards/question-card';
+import { SecretCardView } from '../cards/secret-card';
+import { SkillProposalCard } from '../cards/skill-proposal-card';
+import { DetailTopBar } from '../chrome/detail-top-bar';
+import { Composer, type ComposerFooter } from '../composer/composer';
+import { ArchivedOverlay } from '../overlays/archived-overlay';
+import { BlockedOverlay } from '../overlays/blocked-overlay';
+import { indexCodexReviewBlocks } from '../review/codex-review';
+import { ReviewCommentsCardView } from '../review/review-comments-card';
+import { buildLiveTurnItems, TurnMetaDivider, UntrustedBlock, UserBubble } from './bubbles/bubbles';
+import { ClaudeBubble } from './bubbles/ClaudeBubble';
+import { CompactionSummaryPill } from './bubbles/CompactionSummaryPill';
+import { EventBubble } from './bubbles/EventBubble';
+import { HarnessBubble } from './bubbles/HarnessBubble';
+import { LiveIndicator } from './bubbles/LiveIndicator';
+import { SystemEventPill } from './bubbles/SystemEventPill';
+import { SystemNoticeRow } from './bubbles/SystemNoticeRow';
+import { SystemOperatorNotice } from './bubbles/SystemOperatorNotice';
+import { SystemReminderChip } from './bubbles/SystemReminderChip';
+import { ThinkingBlock } from './bubbles/ThinkingBlock';
 import { isTouchCapableDevice, PREMEASURE_MIN_ROWS, useIdlePremeasure } from './idle-premeasure';
 import { extractMermaidSources, mermaidReservePx } from './markdown';
-import { McpProposalCard } from '../cards/mcp-proposal-card';
 import { AgentPromptBlock } from './phases';
-import { QuestionCardView } from '../cards/question-card';
-import { ReviewCommentsCardView } from '../review/review-comments-card';
-import { compensateAboveViewportResize } from '../../lib/scroll-compensation';
-import { SecretCardView } from '../cards/secret-card';
-import { messageSendState } from '../../lib/send-state';
-import { SkillProposalCard } from '../cards/skill-proposal-card';
-import { indexDurableSubagents, SubagentCard, subagentNode } from '../../subagents';
 import { JumpToLatestButton, useTailFollow } from './tail-follow';
-import { segmentToolRun, ToolGroup, type ToolItem } from '../../tool-calls';
-import { CompactionSummaryPill } from './bubbles/CompactionSummaryPill';
-import { ThinkingBlock } from './bubbles/ThinkingBlock';
-import { SystemOperatorNotice } from './bubbles/SystemOperatorNotice';
-import { SystemNoticeRow } from './bubbles/SystemNoticeRow';
 
 export function Conversation({
   jobRef,
@@ -727,7 +722,6 @@ export function TranscriptView({
   );
 }
 
-
 /**
  * Fold the durable transcript into one {@link LogItem} per top-level row, collapsing runs of consecutive
  * tool messages into `ToolGroup`s (file-edits split into their own "N files changed" group via
@@ -1065,7 +1059,6 @@ const ROW_ESTIMATE: Record<string, number> = {
 function estimateForKind(kind: string): number {
   return ROW_ESTIMATE[kind] ?? ROW_ESTIMATE_FALLBACK;
 }
-
 
 /** One windowable top-level row of the durable transcript — a stable key, its rendered node, and the
  *  initial height guess the virtualizer uses before the row is measured. */

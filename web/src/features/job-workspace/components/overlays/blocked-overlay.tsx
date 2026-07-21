@@ -4,8 +4,8 @@ import { mutationErrorMessage, type JobRef } from '@/lib/api/job-api';
 import { useUnblockJob } from '@/lib/api/job-queries';
 import type { JobBlocker } from '@/lib/api/types';
 import { Lock, Unlock } from 'lucide-react';
-import { BlockerRow, useOpenBlocker } from '../panes/blocked-by-pane';
 import { StreamTextBubble } from '../conversation/bubbles/StreamTextBubble';
+import { BlockerRow, useOpenBlocker } from '../panes/blocked-by-pane';
 import { EphemeralToast, useEphemeralToast } from './ephemeral-toast';
 
 /**

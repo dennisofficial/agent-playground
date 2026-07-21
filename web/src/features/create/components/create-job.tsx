@@ -3,11 +3,11 @@
 import { BranchPicker, Dropdown } from '@/components/branch-picker';
 import { Button } from '@/components/ui/button';
 import { ShortcutHint } from '@/components/ui/shortcut-hint';
-import { AttachmentTray } from '@/features/job-workspace/components/trays/attachment-tray';
-import { composeMode } from '@/features/job-workspace/lib/auto-approve-mode';
 import { SwitchRow } from '@/features/job-workspace/components/composer/auto-approve-popover';
+import { AttachmentTray } from '@/features/job-workspace/components/trays/attachment-tray';
 import { useAttachments } from '@/features/job-workspace/hooks/use-attachments';
 import { useFileDrop } from '@/features/job-workspace/hooks/use-file-drop';
+import { composeMode } from '@/features/job-workspace/lib/auto-approve-mode';
 import { useAllJobs, type InboxThread } from '@/lib/api/inbox';
 import type { OperatorJobKind } from '@/lib/api/job-api';
 import { useCreateThread, useOrgRepos } from '@/lib/api/job-queries';

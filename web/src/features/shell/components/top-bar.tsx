@@ -43,7 +43,11 @@ export function TopBar({
         <Menu size={17} />
       </button>
 
-      <Link href={SITE_MAP.workspace()} className="flex items-center gap-2.5" aria-label="Atlas home">
+      <Link
+        href={SITE_MAP.workspace()}
+        className="flex items-center gap-2.5"
+        aria-label="Atlas home"
+      >
         <span
           className="grid h-7 w-7 flex-none place-items-center rounded-lg"
           style={{

@@ -1,14 +1,3 @@
-import {
-  EJobStatus,
-  EThreadGroupKind,
-  EThreadRole,
-  type AutoApproveMode,
-  type JobHalt,
-  type JobView,
-  type TaskView,
-  type ThreadGroupView,
-  type ThreadView,
-} from '@workspace/shared';
 import type {
   CiCounts,
   CiStatus,
@@ -20,6 +9,17 @@ import type {
   PrState,
   TaskItem,
 } from '@/lib/api/types';
+import {
+  EJobStatus,
+  EThreadGroupKind,
+  EThreadRole,
+  type AutoApproveMode,
+  type JobHalt,
+  type JobView,
+  type TaskView,
+  type ThreadGroupView,
+  type ThreadView,
+} from '@workspace/shared';
 
 /**
  * PIPELINE SELECTORS — pure functions over the shared job DTOs (`@workspace/shared`), the single home for

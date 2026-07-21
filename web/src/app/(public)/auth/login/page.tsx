@@ -72,7 +72,10 @@ export default function LoginPage() {
           onChange={(e) => setPassword(e.target.value)}
           error={pwErr}
           labelAside={
-            <Link href={SITE_MAP.auth.forgot()} className="text-[11.5px] text-accent hover:underline">
+            <Link
+              href={SITE_MAP.auth.forgot()}
+              className="text-[11.5px] text-accent hover:underline"
+            >
               Forgot?
             </Link>
           }

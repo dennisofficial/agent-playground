@@ -1,8 +1,8 @@
 'use client';
 
 import { CiHeaderGlyph, Dot, KindBadge, StatusPie } from '@/components/ui/badges';
-import { FolderRow } from '@/features/job-workspace/components/panes/folder-row';
 import { JobMenu } from '@/features/job-workspace/components/chrome/job-menu';
+import { FolderRow } from '@/features/job-workspace/components/panes/folder-row';
 import { PlanReviewRow } from '@/features/job-workspace/components/review/plan-review-row';
 import type { JobRef } from '@/lib/api/job-api';
 import { resolveJob, ThreadApiError } from '@/lib/api/job-api';
@@ -25,31 +25,11 @@ import type {
   ServiceInfo,
   TaskItem,
 } from '@/lib/api/types';
-import {
-  activeJob,
-  jobAutoApproveMode,
-  jobAutoMerge,
-  jobBaseBranch,
-  jobBuildPath,
-  jobCiCounts,
-  jobCiStatus,
-  jobCurrentBranch,
-  jobFeatureBranch,
-  jobHalt,
-  jobPlanReview,
-  jobPrMergeable,
-  jobPrNumber,
-  jobPrState,
-  jobPrUrl,
-  jobPriorRevisions,
-  mainTasks,
-  type PriorRevision,
-} from '../../lib/pipeline-selectors';
 import { cn } from '@/lib/cn';
 import { SITE_MAP } from '@/lib/site-map';
 import { formatBytes } from '@/utils/format';
-import { AutoApproveMode, EJobKind, EJobStatus } from '@workspace/shared';
 import type { JobView, TaskView } from '@workspace/shared';
+import { AutoApproveMode, EJobKind, EJobStatus } from '@workspace/shared';
 import {
   AlertTriangle,
   ArrowUpRight,
@@ -74,17 +54,37 @@ import {
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { autoPillView } from '../../lib/auto-approve-mode';
-import { AutoApprovePopover } from '../composer/auto-approve-popover';
-import { EphemeralToast, useEphemeralToast } from '../overlays/ephemeral-toast';
 import { overlayLiveTasks } from '../../lib/live-tasks';
 import { isOutputGroupHidden } from '../../lib/output-group';
-import { Divider, PipelineTree, TasksBody } from './pipeline-tree';
+import {
+  activeJob,
+  jobAutoApproveMode,
+  jobAutoMerge,
+  jobBaseBranch,
+  jobBuildPath,
+  jobCiCounts,
+  jobCiStatus,
+  jobCurrentBranch,
+  jobFeatureBranch,
+  jobHalt,
+  jobPlanReview,
+  jobPriorRevisions,
+  jobPrMergeable,
+  jobPrNumber,
+  jobPrState,
+  jobPrUrl,
+  mainTasks,
+  type PriorRevision,
+} from '../../lib/pipeline-selectors';
 import {
   NavigatorApproveButton,
   NavigatorAutoMergingButton,
   NavigatorMergeButton,
   NavigatorShipButton,
 } from '../../spec-approval';
+import { AutoApprovePopover } from '../composer/auto-approve-popover';
+import { EphemeralToast, useEphemeralToast } from '../overlays/ephemeral-toast';
+import { Divider, PipelineTree, TasksBody } from './pipeline-tree';
 
 /**
  * PR-row glyph for the navigator header — mirrors the sidebar's `prGlyph` (GitHub color convention) so the
@@ -478,7 +478,9 @@ export function Navigator({
                   <span className="flex-1 font-mono text-[9.5px] font-semibold" style={{ color }}>
                     {text}
                   </span>
-                  {showCi ? <CiHeaderGlyph ci={jobCiStatus(job)} counts={jobCiCounts(job)} /> : null}
+                  {showCi ? (
+                    <CiHeaderGlyph ci={jobCiStatus(job)} counts={jobCiCounts(job)} />
+                  ) : null}
                   <ArrowUpRight size={11} className="text-faint" />
                 </a>
               ) : (
@@ -487,7 +489,9 @@ export function Navigator({
                   <span className="flex-1 font-mono text-[9.5px] font-semibold" style={{ color }}>
                     {text}
                   </span>
-                  {showCi ? <CiHeaderGlyph ci={jobCiStatus(job)} counts={jobCiCounts(job)} /> : null}
+                  {showCi ? (
+                    <CiHeaderGlyph ci={jobCiStatus(job)} counts={jobCiCounts(job)} />
+                  ) : null}
                 </div>
               );
             })()

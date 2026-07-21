@@ -1,6 +1,6 @@
 import type { JobView } from '@workspace/shared';
-import { codexReviewLane } from '../components/review/codex-review';
 import { threadLane } from '../components/conversation/phases';
+import { codexReviewLane } from '../components/review/codex-review';
 import { threadChildren } from './pipeline-selectors';
 
 /**
@@ -62,11 +62,7 @@ const ID_FREE_NODES = new Set(['plan', 'decision', 'diff', 'created', 'blocked-b
  * against it too rather than blanking every node to `not_found` on a transient error. `loading` matters only
  * when there is no cached `job` at all.
  */
-export function resolveNode(
-  node: string,
-  job: JobView | null,
-  loading: boolean,
-): NodeResolution {
+export function resolveNode(node: string, job: JobView | null, loading: boolean): NodeResolution {
   if (ID_FREE_NODES.has(node)) return 'found';
   if (
     node.startsWith('spec:') ||

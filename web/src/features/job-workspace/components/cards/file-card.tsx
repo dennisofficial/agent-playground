@@ -9,8 +9,8 @@ import type { JobRef } from '@/lib/api/job-api';
 import type { WebFileRequestCard } from '@/lib/api/types';
 import { CheckCircle2, Clock, FileUp, Loader2, XCircle } from 'lucide-react';
 import { useRef, useState } from 'react';
-import { Markdown } from '../conversation/markdown';
 import { cardSendState } from '../../lib/send-state';
+import { Markdown } from '../conversation/markdown';
 
 const MAX_FILE_BYTES = 512 * 1024;
 

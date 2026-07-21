@@ -13,8 +13,8 @@ import type { WebQuestionCard } from '@/lib/api/types';
 import { isSubmitCombo } from '@/utils/keyboard';
 import { CheckCircle2, Clock, HelpCircle, Loader2, XCircle } from 'lucide-react';
 import { useState } from 'react';
-import { Markdown } from '../conversation/markdown';
 import { cardSendState } from '../../lib/send-state';
+import { Markdown } from '../conversation/markdown';
 
 /**
  * A formal question the brain posed via `ask_question`. Renders one button per option (+ optional

@@ -23,10 +23,10 @@ import { isSubmitCombo } from '@/utils/keyboard';
 import { AlertTriangle, ArrowRight, CheckCircle2, ClipboardCheck, Globe } from 'lucide-react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useMemo, useState } from 'react';
-import { Markdown } from '../conversation/markdown';
+import { activeJob, jobCiCounts, jobCiStatus } from '../../lib/pipeline-selectors';
 import { makeResolveFileLink } from '../../lib/repo-file-links';
 import { shouldShowSpinUpPreview } from '../../lib/spin-up-preview-visibility';
-import { activeJob, jobCiCounts, jobCiStatus } from '../../lib/pipeline-selectors';
+import { Markdown } from '../conversation/markdown';
 
 const RULED_BY = 'U-OPERATOR';
 

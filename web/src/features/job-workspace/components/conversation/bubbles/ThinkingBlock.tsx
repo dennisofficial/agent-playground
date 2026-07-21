@@ -1,5 +1,5 @@
-import { ChevronRight } from "lucide-react";
-import { useState, useEffect } from "react";
+import { ChevronRight } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { MessageTime } from './MessageTime';
 
 export function ThinkingBlock({

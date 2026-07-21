@@ -49,10 +49,7 @@ export type SettingsSection =
   | 'members'
   | 'repos';
 
-export function safeNext(
-  next: string | null | undefined,
-  fallback = SITE_MAP.workspace(),
-): string {
+export function safeNext(next: string | null | undefined, fallback = SITE_MAP.workspace()): string {
   if (next && next.startsWith('/') && !next.startsWith('//') && !next.includes('://')) {
     return next;
   }

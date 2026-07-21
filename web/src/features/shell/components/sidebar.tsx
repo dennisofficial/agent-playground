@@ -8,7 +8,6 @@ import { useOrgs, type OrgSummary } from '@/lib/api/me';
 import { cn } from '@/lib/cn';
 import { env } from '@/lib/env';
 import { SITE_MAP } from '@/lib/site-map';
-import { EJobStatus } from '@workspace/shared';
 import { ChevronRight, Globe, LayoutGrid, Plus, Server, Settings } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';

@@ -1,8 +1,8 @@
-import { ContextFileContent } from "@/lib/api/types";
-import { Check, Copy } from "lucide-react";
-import { useState, useRef, useEffect } from "react";
-import { TopBarButton } from "../chrome/detail-top-bar";
-import { fileCopyKind, fileDataUrl, imageDataUrlToPngBlob } from "./step-view";
+import { ContextFileContent } from '@/lib/api/types';
+import { Check, Copy } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { TopBarButton } from '../chrome/detail-top-bar';
+import { fileCopyKind, fileDataUrl, imageDataUrlToPngBlob } from './step-view';
 
 export function FileCopyButton({ file }: { file: ContextFileContent | undefined }) {
   const [copied, setCopied] = useState(false);

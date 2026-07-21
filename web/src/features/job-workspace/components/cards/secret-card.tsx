@@ -11,8 +11,8 @@ import { useProvideSecret } from '@/lib/api/job-queries';
 import type { WebSecretInputCard } from '@/lib/api/types';
 import { CheckCircle2, Clock, ExternalLink, KeyRound, Loader2, XCircle } from 'lucide-react';
 import { useState } from 'react';
-import { Markdown } from '../conversation/markdown';
 import { cardSendState } from '../../lib/send-state';
+import { Markdown } from '../conversation/markdown';
 
 /**
  * A secure secret request the onboarding brain posed via `request_secret`. Renders a MASKED input.

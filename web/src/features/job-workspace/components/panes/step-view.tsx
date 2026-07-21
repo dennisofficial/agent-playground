@@ -12,23 +12,10 @@ import {
 } from '@/lib/api/types';
 import { formatBytes } from '@/utils/format';
 import { threadTitle } from '@/utils/thread-title';
-import { ArrowRight, Check, Copy, FileText, PanelRight } from 'lucide-react';
+import { ArrowRight, FileText, PanelRight } from 'lucide-react';
 import { usePathname, useSearchParams } from 'next/navigation';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { VerdictButtons } from '../cards/approval-card';
-import { BlockedByPane } from './blocked-by-pane';
-import { UserBubble } from '../conversation/bubbles/bubbles';
-import { StreamTextBubble } from '../conversation/bubbles/StreamTextBubble';
-import { MessageTime } from '../conversation/bubbles/MessageTime';
-import { codexReviewLane } from '../review/codex-review';
-import { Composer, type ComposerFooter } from '../composer/composer';
-import { TranscriptView } from '../conversation/conversation';
-import { CreatedJobsPane } from './created-jobs-pane';
-import { DetailTopBar, TopBarActions, TopBarButton } from '../chrome/detail-top-bar';
-import { DiffPane } from './diff-pane';
+import { useEffect, useMemo, useState } from 'react';
 import { useCommentableRef } from '../../hooks/use-text-selection';
-import { ImageViewer } from '../chrome/image-viewer';
-import { Markdown } from '../conversation/markdown';
 import { contextConvoNodeForHref, resolveNode } from '../../lib/node-registry';
 import {
   activeJob,
@@ -39,10 +26,7 @@ import {
   threadChildren,
   threadDefaultFooter,
 } from '../../lib/pipeline-selectors';
-import { threadLane } from '../conversation/phases';
 import { makeResolveFileLink } from '../../lib/repo-file-links';
-import { useReviewComments } from '../review/review-comments';
-import { LogFileView, ServiceLogView, serviceHeaderSubtitle } from '../terminal/service-log-view';
 import {
   durableSubBlocks,
   durableSubagentPrompt,
@@ -55,14 +39,30 @@ import {
   subagentModel,
   type SubBlock,
 } from '../../subagents';
-import { JumpToLatestButton, useTailFollow } from '../conversation/tail-follow';
 import { ToolGroup, segmentToolRun, type ToolItem } from '../../tool-calls';
-import { ProvenanceBadge } from './ProvenanceBadge';
-import { DocLabel } from './DocLabel';
-import { RepoFileBody } from './RepoFileBody';
-import { HtmlFileBody } from './HtmlFileBody';
-import { FileCopyButton } from './FileCopyButton';
+import { VerdictButtons } from '../cards/approval-card';
+import { DetailTopBar, TopBarActions } from '../chrome/detail-top-bar';
+import { ImageViewer } from '../chrome/image-viewer';
+import { Composer, type ComposerFooter } from '../composer/composer';
+import { UserBubble } from '../conversation/bubbles/bubbles';
+import { MessageTime } from '../conversation/bubbles/MessageTime';
+import { StreamTextBubble } from '../conversation/bubbles/StreamTextBubble';
 import { ThinkingBlock } from '../conversation/bubbles/ThinkingBlock';
+import { TranscriptView } from '../conversation/conversation';
+import { Markdown } from '../conversation/markdown';
+import { threadLane } from '../conversation/phases';
+import { JumpToLatestButton, useTailFollow } from '../conversation/tail-follow';
+import { codexReviewLane } from '../review/codex-review';
+import { useReviewComments } from '../review/review-comments';
+import { LogFileView, ServiceLogView, serviceHeaderSubtitle } from '../terminal/service-log-view';
+import { BlockedByPane } from './blocked-by-pane';
+import { CreatedJobsPane } from './created-jobs-pane';
+import { DiffPane } from './diff-pane';
+import { DocLabel } from './DocLabel';
+import { FileCopyButton } from './FileCopyButton';
+import { HtmlFileBody } from './HtmlFileBody';
+import { ProvenanceBadge } from './ProvenanceBadge';
+import { RepoFileBody } from './RepoFileBody';
 
 /**
  * Step mode — the work column when a navigator node is selected. The plan / decision docs and the build

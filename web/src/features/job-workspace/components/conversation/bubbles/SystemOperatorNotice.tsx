@@ -1,11 +1,11 @@
-import { Button } from "@/components/ui/button";
-import { JobMessage, JobRef, ThreadApiError } from "@/lib/api/job-api";
-import { useRetryTurn } from "@/lib/api/job-queries";
-import { MAIN_LANE } from "@/lib/api/job-stream";
-import { ChevronRight, RotateCw, Check } from "lucide-react";
-import { useState, useEffect } from "react";
-import Markdown from "react-markdown";
-import { humanizeFailureCategory, SessionLimitActions, useRetryCountdown } from "./bubbles";
+import { Button } from '@/components/ui/button';
+import { JobMessage, JobRef, ThreadApiError } from '@/lib/api/job-api';
+import { useRetryTurn } from '@/lib/api/job-queries';
+import { MAIN_LANE } from '@/lib/api/job-stream';
+import { Check, ChevronRight, RotateCw } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import Markdown from 'react-markdown';
+import { humanizeFailureCategory, SessionLimitActions, useRetryCountdown } from './bubbles';
 
 export function SystemOperatorNotice({
   message,

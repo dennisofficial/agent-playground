@@ -3,8 +3,8 @@
 import type { JobMessage } from '@/lib/api/job-api';
 import { useLiveTurn } from '@/lib/api/job-stream';
 import { ShieldCheck } from 'lucide-react';
-import { Markdown } from '../conversation/markdown';
 import { durableSubBlocks, type SubBlock } from '../../subagents';
+import { Markdown } from '../conversation/markdown';
 
 /**
  * The Codex PLAN REVIEW is a dialogue that rides the shared transcript spine on a `codex-review:<jobId>`

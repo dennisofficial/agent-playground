@@ -4,40 +4,40 @@ import { Button } from '@/components/ui/button';
 import { type JobMessage, type JobRef } from '@/lib/api/job-api';
 import { useRetryJob, useRetryTurn } from '@/lib/api/job-queries';
 import {
-    formatElapsed,
-    retryCountdownSeconds,
-    type LiveBlock,
-    type LiveTurn
+  formatElapsed,
+  retryCountdownSeconds,
+  type LiveBlock,
+  type LiveTurn,
 } from '@/lib/api/job-stream';
 import { assertNever } from '@/utils/assert';
 import { formatTokens } from '@/utils/org-display';
 import {
-    AlertTriangle,
-    CheckCircle2,
-    ChevronRight,
-    CircleSlash,
-    CornerDownRight,
-    GitPullRequest,
-    Loader2,
-    MessageSquare,
-    Puzzle,
-    RefreshCw,
-    RotateCw,
-    Sparkles,
-    UserCheck,
-    Wrench,
-    XCircle,
-    type LucideIcon
+  AlertTriangle,
+  CheckCircle2,
+  ChevronRight,
+  CircleSlash,
+  CornerDownRight,
+  GitPullRequest,
+  Loader2,
+  MessageSquare,
+  Puzzle,
+  RefreshCw,
+  RotateCw,
+  Sparkles,
+  UserCheck,
+  Wrench,
+  XCircle,
+  type LucideIcon,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { toneOf, type EventKind, type SeedType, type SystemTone } from '../../../lib/classify';
+import { type EventKind, type SeedType, type SystemTone } from '../../../lib/classify';
 import { streamingBlockKeys } from '../../../lib/streaming-caret';
 import { SubagentCard, indexLiveSubagents, subagentNode } from '../../../subagents';
 import { ToolGroup, segmentToolRun, type ToolItem } from '../../../tool-calls';
 import { Markdown } from '../markdown';
-import { ThinkingBlock } from './ThinkingBlock';
 import { MessageTime } from './MessageTime';
 import { StreamTextBubble } from './StreamTextBubble';
+import { ThinkingBlock } from './ThinkingBlock';
 
 /** Per-type tone for {@link MessageTime} — distinct colors so the operator can tell turn boundaries from
  *  in-turn blocks at a glance (the user wants to eyeball density/color before we tune it down). */

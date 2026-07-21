@@ -2,9 +2,9 @@
 
 import type { WebReviewCommentItem, WebReviewCommentsCard } from '@/lib/api/types';
 import { Loader2, Pencil } from 'lucide-react';
+import { anchorLabel } from '../../lib/diff-anchor';
 import { UserBubble } from '../conversation/bubbles/bubbles';
 import { MessageTime } from '../conversation/bubbles/MessageTime';
-import { anchorLabel } from '../../lib/diff-anchor';
 import { Markdown } from '../conversation/markdown';
 
 /**
