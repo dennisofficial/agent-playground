@@ -1,2 +1,7 @@
 #!/usr/bin/env bash
-exec /usr/local/bin/node --enable-source-maps /usr/local/lib/atlas/engine-app.js "$@"
+# Prefer the host-synced engine bundle (SANDBOX_ENGINE_HOTSWAP) when present, else the baked one. Each turn re-execs
+# this, so a freshly synced bundle is picked up on the next turn with no pod restart. The SDKs are webpack-external
+# import()s resolved from a node_modules up-tree at /usr/local/lib/atlas, so both locations resolve them identically.
+BUNDLE=/usr/local/lib/atlas/engine-app.js
+[ -f /usr/local/lib/atlas/engine/engine-app.js ] && BUNDLE=/usr/local/lib/atlas/engine/engine-app.js
+exec /usr/local/bin/node --enable-source-maps "$BUNDLE" "$@"

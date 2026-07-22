@@ -49,21 +49,30 @@ the host app read the same values.
 | `K8S_CONTEXT`   | _(unset → ambient current-context)_            | Pin the kubeconfig context. Set to `k3d-atlas` in `.env.local`. Boot fails loud if it isn't in your kubeconfig.                           |
 | `ATLAS_DATA`    | `/tmp/atlas-data`                              | Host storage root; **must match** what `dev-cluster:up` bind-mounts (set in `.env.local`).                                                |
 | `SANDBOX_IMAGE` | `k3d-atlas-registry:5111/atlas-sandbox:latest` | In-cluster registry ref pods pull. Port is 5111 not 5000 (macOS AirPlay owns 5000); must match `ATLAS_REGISTRY_PORT` in `dev-cluster:up`. **Immutable per build** — `sandbox:build` writes the current `atlas-sandbox:<git-sha>` ref into `backend/.env.personal`, so this default only applies before the first build. |
+| `SANDBOX_ENGINE_HOTSWAP` | `false`                                 | When `true`, pods mount the host-synced engine bundle (`$ATLAS_DATA/engine-bundle`) and run it instead of the baked one — so `engine:sync` updates the engine on the next turn with no pod restart. Off in prod (baked bundle wins). |
 
 k3d bind-mount durability needs Docker Desktop file-sharing to cover `$ATLAS_DATA` (`/tmp` is shared by
 default). For a home-dir root, set `ATLAS_DATA=$HOME/atlas-data` in `.env.local` and share it in Docker Desktop.
 
 ## Keeping running pods on the latest build
 
-The engine bundle and runtime tools are **baked into the image** (not mounted), so any change — engine code or a
-runtime addition — needs the pod to run a new image. Same flow in dev and prod:
+Engine code and runtime are delivered on **two different rates of change**, so they refresh two different ways.
 
-`pnpm sandbox:build` produces an **immutable** `atlas-sandbox:<git-sha>` tag (a `-dirty-<ts>` suffix when the tree
-is dirty) and writes `SANDBOX_IMAGE` into `backend/.env.personal`. On restart the host reads the new ref;
-`SandboxService.ensureReady` compares each running pod's image to it at **turn start** and force-recreates on
-mismatch — so a running job picks up the new build on its **next turn**, with no 30-min reap wait. The reaper's
-30-min idle TTL is unchanged (idle cleanup only). Recreating drops inner-dockerd state (agent `docker compose`
-stacks), same as a reap cold-boot; the workspace and atlas-state hostPaths persist.
+**Engine code (changes constantly) — swappable, no restart.** The bundle is baked into the image as the default,
+but each turn re-execs `atlas-engine-turn`, which prefers a host-synced bundle when present. With
+`SANDBOX_ENGINE_HOTSWAP=true`, pods mount `$ATLAS_DATA/engine-bundle` at `/usr/local/lib/atlas/engine`; run
+`pnpm engine:sync` (build + rsync) and the **next turn** runs the new engine — no docker build, no pod restart, so
+the sandbox's running processes (inner dockerd, `docker compose` stacks, dev servers) **survive**. Because the
+image ref is unchanged, the freshness gate below ignores it. (Prod hot-delivery of the bundle to nodes is a later
+design item; prod runs the baked bundle and picks up engine changes via a normal image deploy.)
+
+**Runtime / base image (rare — apt packages, base OS) — new image, pod recreate.** `pnpm sandbox:build` produces
+an **immutable** `atlas-sandbox:<git-sha>` tag (a `-dirty-<ts>` suffix when the tree is dirty) and writes
+`SANDBOX_IMAGE` into `backend/.env.personal`. On restart the host reads the new ref; `SandboxService.ensureReady`
+compares each running pod's image to it at **turn start** and force-recreates on mismatch — so a running job picks
+up the new image on its **next turn**, with no 30-min reap wait. Because this is gated at turn start (between
+turns), it never interrupts a running turn. The reaper's 30-min idle TTL is unchanged (idle cleanup only).
+Recreating drops inner-dockerd state, same as a reap cold-boot; the workspace and atlas-state hostPaths persist.
 
 ## Runbook (local)
 

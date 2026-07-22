@@ -10,6 +10,8 @@ import {
   ATLAS_STATE_VOLUME,
   DOCKER_STORAGE_MOUNT,
   DOCKER_STORAGE_VOLUME,
+  ENGINE_MOUNT,
+  ENGINE_VOLUME,
   WORK_MOUNT,
   WORK_VOLUME,
 } from '@shared/engine/paths.constants';
@@ -23,6 +25,7 @@ import {
 } from '../workspace-profile/workspace-profile.service';
 import {
   ENGINE_ENTRYPOINT,
+  ENGINE_HOST_SUBDIR,
   LABEL_JOB,
   LABEL_ORG,
   LEASE_TTL_S,
@@ -38,6 +41,7 @@ export class SandboxService {
   private readonly logger = new Logger(this.constructor.name);
   private readonly _namespace: string = 'atlas-sandboxes';
   private readonly _image: string;
+  private readonly _engineHotswap: boolean;
   private readonly _sandboxRedisUrl: string;
   private readonly _atlasData: string;
   private readonly isTestDb: boolean;
@@ -51,6 +55,7 @@ export class SandboxService {
     env: EnvService,
   ) {
     this._image = env.get('SANDBOX_IMAGE');
+    this._engineHotswap = env.get('SANDBOX_ENGINE_HOTSWAP') === true;
     this._sandboxRedisUrl = env.get('SANDBOX_REDIS_URL');
     this._atlasData = resolve(env.get('ATLAS_DATA'));
     this.isTestDb = /_test$/.test(env.get('POSTGRES_DB'));
@@ -71,8 +76,9 @@ export class SandboxService {
       const phase = existing.status?.phase;
       // Build-freshness gate: a pod created on an older image keeps running the old engine/runtime until reaped
       // (30 min idle). A new deploy bumps SANDBOX_IMAGE (immutable per build), so recreate on mismatch NOW — at
-      // turn start, before we launch — and the next turn runs the current build. Covers both new engine code and
-      // new runtime additions; the dev engine-bundle mount is out of band (same image ref), so it never trips this.
+      // turn start, before we launch — and the next turn runs the current build. This is the RUNTIME/image-change
+      // path (new base image, apt packages); engine-code changes ride the swappable engine mount instead (same
+      // image ref, hotswapped between turns), so they never trip this.
       const podImage = existing.spec?.containers?.find((c) => c.name === MAIN_CONTAINER)?.image;
       const staleBuild = phase !== 'Failed' && podImage !== undefined && podImage !== this._image;
       if (staleBuild) {
@@ -187,6 +193,23 @@ export class SandboxService {
       { name: ATLAS_STATE_VOLUME, mountPath: ATLAS_STATE_MOUNT },
     ];
 
+    // Swappable engine bundle (readOnly), main container only — the setup init container never runs the engine.
+    // Off in prod (baked bundle wins). See ENGINE_MOUNT.
+    const engineVolumes = this._engineHotswap
+      ? [
+          {
+            name: ENGINE_VOLUME,
+            hostPath: {
+              path: `${this._atlasData}/${ENGINE_HOST_SUBDIR}`,
+              type: 'DirectoryOrCreate' as const,
+            },
+          },
+        ]
+      : [];
+    const engineMounts: V1VolumeMount[] = this._engineHotswap
+      ? [{ name: ENGINE_VOLUME, mountPath: ENGINE_MOUNT, readOnly: true }]
+      : [];
+
     // Only carry a setup init container when the repo actually configures a setup script; otherwise the pod is
     // a bare runtime over the pre-materialized workspace.
     const initContainers: V1Container[] = setupScript?.trim()
@@ -222,6 +245,7 @@ export class SandboxService {
             hostPath: { path: `${this._atlasData}/state/${job.id}`, type: 'DirectoryOrCreate' },
           },
           { name: DOCKER_STORAGE_VOLUME, emptyDir: {} },
+          ...engineVolumes,
         ],
         initContainers,
         containers: [
@@ -241,6 +265,7 @@ export class SandboxService {
             volumeMounts: [
               ...sharedMounts,
               { name: DOCKER_STORAGE_VOLUME, mountPath: DOCKER_STORAGE_MOUNT },
+              ...engineMounts,
             ],
           },
         ],

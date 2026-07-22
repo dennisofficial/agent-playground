@@ -8,6 +8,8 @@ export const SETUP_CONTAINER = 'setup';
 export const ENGINE_ENTRYPOINT = '/usr/local/lib/atlas/atlas-engine-turn';
 export const SHELL_PREFIX_WRAPPER = '/usr/local/bin/atlas-classify';
 
+export const ENGINE_HOST_SUBDIR = 'engine-bundle';
+
 export const POD_RESOURCES = {
   requests: { cpu: '25m', memory: '64Mi' },
   limits: { cpu: '2', memory: '4Gi' },

@@ -13,6 +13,7 @@
     "dev-cluster:up": "pnpm env:inject -- bash scripts/dev-cluster-up.sh",
     "dev-cluster:down": "bash scripts/dev-cluster-down.sh",
     "sandbox:build": "pnpm env:inject -- bash scripts/build-and-push.sh",
+    "engine:sync": "pnpm env:inject -- bash scripts/engine-sync.sh",
     "dev": "pnpm dev:env -- nest start host --watch",
     "start:prod": "node dist/main",
     "typecheck": "tsc --noEmit",
