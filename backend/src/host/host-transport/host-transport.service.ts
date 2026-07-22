@@ -15,6 +15,11 @@ export class HostTransportService {
     await this.redis.xadd(turnKeys(turnId).spec, '*', 'data', JSON.stringify(spec));
   }
 
+  /** Push a mid-turn steering message to the running engine; it lands in the live SDK at the next tool boundary. */
+  async writeInput(turnId: string, text: string): Promise<void> {
+    await this.redis.xadd(turnKeys(turnId).input, '*', 'data', text);
+  }
+
   async *readEvents(turnId: string): AsyncGenerator<unknown> {
     const { events } = turnKeys(turnId);
     const conn = this.redis.duplicate();

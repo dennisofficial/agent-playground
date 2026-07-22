@@ -32,6 +32,10 @@ export class RunnerService {
       options: this.buildClaudeOptions(spec),
     });
 
+    // Pump mid-turn steering messages into the live query. Runs concurrently with the SDK loop; aborted at turn end.
+    const steering = new AbortController();
+    const pump = this.pumpInput(turnId, steering.signal);
+
     let events = 0;
     try {
       for await (const msg of this.handle) {
@@ -43,9 +47,24 @@ export class RunnerService {
       }
       this.logger.log(`SDK query loop ended after ${events} event(s)`);
     } finally {
+      steering.abort();
+      await pump; // let the input reader tear its connection down before we close the queue
       this.input?.close();
       this.input = undefined;
       this.handle = undefined;
+    }
+  }
+
+  /** Forward host-sent steering messages into the live SDK queue until the turn ends (signal aborts). */
+  private async pumpInput(turnId: string, signal: AbortSignal): Promise<void> {
+    try {
+      for await (const text of this.transport.readInput(turnId, signal)) {
+        this.logger.log(`steering message received mid-turn`);
+        this.enqueue(text);
+      }
+    } catch (err) {
+      // Never let a steering-channel failure sink the turn — the SDK loop is the source of truth.
+      this.logger.warn(`input pump stopped: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 

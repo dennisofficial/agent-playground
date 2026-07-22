@@ -3,6 +3,8 @@ export interface TurnKeys {
   spec: string;
   /** Engine → host, appended over the run: SDK events for the realtime feed. */
   events: string;
+  /** Host → engine, appended over the run: mid-turn steering messages injected into the live SDK. */
+  input: string;
 }
 
 export function turnKeys(turnId: string): TurnKeys {
@@ -10,5 +12,6 @@ export function turnKeys(turnId: string): TurnKeys {
   return {
     spec: `${base}:spec`,
     events: `${base}:events`,
+    input: `${base}:input`,
   };
 }
