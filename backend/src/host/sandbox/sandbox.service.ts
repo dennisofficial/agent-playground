@@ -2,7 +2,6 @@ import { EnvService } from '@core/config/env/env.service';
 import { type V1Container, type V1Pod, type V1VolumeMount } from '@kubernetes/client-node';
 import { Job } from '@lib/database/entities/job.entity';
 import { K8sService, TerminalPodError } from '@lib/k8s/k8s.service';
-import { isK8sConflictError } from '@lib/k8s/k8s.util';
 import { REDIS_CLIENT } from '@lib/redis/redis.tokens';
 import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
@@ -94,7 +93,7 @@ export class SandboxService {
         );
       } catch (err) {
         // Lost the provision race — the winner's pod is coming up; just wait for it.
-        if (!isK8sConflictError(err)) throw err;
+        if (!this.k8s.isConflictError(err)) throw err;
       }
       await this.k8s.waitForPodReady(this._namespace, name);
       await this.status.write(job, 'ready', 'Sandbox ready');

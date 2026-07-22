@@ -1,4 +1,8 @@
-import { assertValidCodexAuthJson, CodexAuthInvalidError } from '../codex-auth-validate.util';
+import { CodexAuthInvalidError } from '../codex-auth-invalid.error';
+import { CodexAuthService } from '../codex-auth.service';
+
+const codexAuth = new CodexAuthService();
+const assertValidCodexAuthJson = (parsed: unknown) => codexAuth.assertValidAuthJson(parsed);
 
 describe('assertValidCodexAuthJson', () => {
   it('accepts a full tokens object', () => {

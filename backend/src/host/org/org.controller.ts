@@ -1,4 +1,4 @@
-import { sseSnapshotList } from '@lib/realtime/sse-snapshot.util';
+import { SseSnapshotService } from '@lib/realtime/sse-snapshot.service';
 import {
   Body,
   Controller,
@@ -24,6 +24,7 @@ import { OrgService } from './org.service';
 export class OrgController {
   constructor(
     private readonly orgs: OrgService,
+    private readonly sseSnapshotService: SseSnapshotService,
     @Inject(PG_REALTIME_ENGINE) private readonly realtime: RealtimeEngine,
   ) {}
 
@@ -58,14 +59,9 @@ export class OrgController {
     return this.orgs.membersOf(user.id, orgId);
   }
 
-  /**
-   * Realtime org list for the workspace shell (`streamList`). A joined feed (each org tagged with the
-   * caller's role), so it's served as a change-triggered snapshot: any change to the caller's orgs or
-   * memberships re-emits the full `OrgSummary[]`.
-   */
   @Sse('realtime')
   streamOrgs(@CurrentUser() user: User): Observable<MessageEvent> {
-    return sseSnapshotList<OrgSummary>(
+    return this.sseSnapshotService.snapshotList<OrgSummary>(
       [
         () => this.realtime.openSubscription({ model: 'organizations', user }),
         () => this.realtime.openSubscription({ model: 'organization_members', user }),
@@ -92,7 +88,7 @@ export class OrgController {
     @CurrentUser() user: User,
     @Param('orgId', ParseUUIDPipe) orgId: string,
   ): Observable<MessageEvent> {
-    return sseSnapshotList<MemberView>(
+    return this.sseSnapshotService.snapshotList<MemberView>(
       [
         () =>
           this.realtime.openSubscription({

@@ -5,6 +5,7 @@ import { DatabaseModule } from '@lib/database/database.module';
 import { K8sModule } from '@lib/k8s/k8s.module';
 import { QueueModule } from '@lib/queue/queue.module';
 import { atlasRealtimeConfig } from '@lib/realtime/realtime.config';
+import { SseSnapshotModule } from '@lib/realtime/sse-snapshot.module';
 import { RedisModule } from '@lib/redis/redis.module';
 import { atlasRlsOptions } from '@lib/rls/atlas-rls.config';
 import { ValidationPipe } from '@nestjs/common';
@@ -45,6 +46,7 @@ import { WorkspaceProfileModule } from './workspace-profile/workspace-profile.mo
     RedisModule,
     CryptoModule,
     K8sModule,
+    SseSnapshotModule,
     PgRealtimeModule.forRootAsync({ inject: [EnvService], useFactory: atlasRealtimeConfig }),
     RlsModule.forRootAsync(atlasRlsOptions),
     QueueModule,

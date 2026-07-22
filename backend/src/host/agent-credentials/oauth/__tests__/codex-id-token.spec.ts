@@ -1,8 +1,9 @@
-import {
-  decodeCodexAccountEmail,
-  decodeCodexIdentity,
-  decodeJwtExpMs,
-} from '../codex-id-token.util';
+import { CodexAuthService } from '../codex-auth.service';
+
+const codexAuth = new CodexAuthService();
+const decodeCodexAccountEmail = (authJson: string) => codexAuth.decodeAccountEmail(authJson);
+const decodeCodexIdentity = (idToken: string) => codexAuth.decodeIdentity(idToken);
+const decodeJwtExpMs = (jwt: string | undefined) => codexAuth.decodeJwtExpMs(jwt);
 
 function jwt(payload: Record<string, unknown>): string {
   const b = (o: unknown): string => Buffer.from(JSON.stringify(o)).toString('base64url');

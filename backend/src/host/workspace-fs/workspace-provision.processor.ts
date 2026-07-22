@@ -13,7 +13,7 @@ import { ProvisionStatusService } from '../provision-status/provision-status.ser
 import { WorkspaceProfileService } from '../workspace-profile/workspace-profile.service';
 import { GitCloneService } from './git-clone.service';
 import { SecretFileWriter } from './secret-file-writer';
-import { clonedSentinel, stateDir, workspaceDir } from './workspace-paths.util';
+import { WorkspacePathsService } from './workspace-paths.service';
 
 type ProvisionData = { jobId: string };
 
@@ -28,11 +28,10 @@ export class WorkspaceProvisionProcessor extends BaseQueue {
     private readonly gitClone: GitCloneService,
     private readonly status: ProvisionStatusService,
     private readonly secretFileWriter: SecretFileWriter,
+    private readonly workspacePathsService: WorkspacePathsService,
     env: EnvService,
   ) {
     super();
-    // Resolve to absolute (against the backend cwd) so a portable relative ATLAS_DATA like `./.atlas-data`
-    // works: the pod hostPath and the k3d bind mount both require absolute paths. No-op if already absolute.
     this.atlasData = resolve(env.get('ATLAS_DATA'));
   }
 
@@ -53,8 +52,8 @@ export class WorkspaceProvisionProcessor extends BaseQueue {
     const repo = await this.db.unsafe(Repo).findOne({ where: { id: job.repoId } });
     if (!repo) throw new NotFoundException(`Repo ${job.repoId} for job ${jobId} not found`);
 
-    const dir = workspaceDir(this.atlasData, jobId);
-    const sentinel = clonedSentinel(this.atlasData, jobId);
+    const dir = this.workspacePathsService.workspaceDir(this.atlasData, jobId);
+    const sentinel = this.workspacePathsService.clonedSentinel(this.atlasData, jobId);
     // warm resume — the workspace is already materialized
     if (await pathExists(sentinel)) return;
 
@@ -71,7 +70,9 @@ export class WorkspaceProvisionProcessor extends BaseQueue {
       await this.gitClone.clone({ url: repo.gitUrl, branch: repo.defaultBranch, token, dest: dir });
       await this.secretFileWriter.write(dir, secrets);
 
-      await fs.mkdir(stateDir(this.atlasData, jobId), { recursive: true });
+      await fs.mkdir(this.workspacePathsService.stateDir(this.atlasData, jobId), {
+        recursive: true,
+      });
       await fs.writeFile(sentinel, '');
     } catch (err) {
       await this.status.write(job, 'failed', `Workspace prep failed — ${reason(err)}`);

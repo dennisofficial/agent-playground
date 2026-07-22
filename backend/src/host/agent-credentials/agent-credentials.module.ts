@@ -16,10 +16,13 @@ import { AgentCredentialService } from './agent-credential.service';
 import { AgentCredentialsController } from './agent-credentials.controller';
 import { buildAgentCredentialsRealtimeModel } from './agent-credentials.realtime';
 import { ClaudeOAuthClient } from './oauth/claude-oauth.client';
+import { CodexAuthService } from './oauth/codex-auth.service';
 import { CodexOAuthClient } from './oauth/codex-oauth.client';
+import { MaterialFreshnessService } from './oauth/material-freshness.service';
 import { OAuthDeviceStore } from './oauth/oauth-device.store';
 import { OAuthPkceStore } from './oauth/oauth-pkce.store';
 import { AgentUsageService } from './usage/agent-usage.service';
+import { UsageParseService } from './usage/usage-parse.service';
 
 @CreateModule({
   imports: [
@@ -43,8 +46,11 @@ import { AgentUsageService } from './usage/agent-usage.service';
     AgentCredentialRefreshService,
     AgentCredentialKeepaliveService,
     AgentUsageService,
+    UsageParseService,
     ClaudeOAuthClient,
     CodexOAuthClient,
+    CodexAuthService,
+    MaterialFreshnessService,
     OAuthPkceStore,
     OAuthDeviceStore,
   ],

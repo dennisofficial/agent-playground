@@ -2,19 +2,26 @@ import { EAgentProvider } from '@workspace/shared';
 import { describe, expect, it } from 'vitest';
 import { AgentCredentialViewService } from '../agent-credential-view.service';
 import { ClaudeOAuthClient } from '../oauth/claude-oauth.client';
-import { assertValidCodexAuthJson, CodexAuthInvalidError } from '../oauth/codex-auth-validate.util';
-import { decodeCodexAccountEmail } from '../oauth/codex-id-token.util';
+import { CodexAuthInvalidError } from '../oauth/codex-auth-invalid.error';
+import { CodexAuthService } from '../oauth/codex-auth.service';
 import { CodexOAuthClient } from '../oauth/codex-oauth.client';
-import { isNewerMaterial } from '../oauth/material-freshness.util';
-import {
-  parseModelWindows,
-  parseUsageResponse,
-  resetEpochToIso,
-  toPercentUtilization,
-} from '../usage/usage-parse.util';
+import { MaterialFreshnessService } from '../oauth/material-freshness.service';
+import { UsageParseService } from '../usage/usage-parse.service';
 
+const codexAuth = new CodexAuthService();
+const materialFreshness = new MaterialFreshnessService();
+const usageParse = new UsageParseService();
 const claudeOAuth = new ClaudeOAuthClient();
-const codexOAuth = new CodexOAuthClient();
+const codexOAuth = new CodexOAuthClient(codexAuth);
+
+const assertValidCodexAuthJson = (parsed: unknown) => codexAuth.assertValidAuthJson(parsed);
+const decodeCodexAccountEmail = (authJson: string) => codexAuth.decodeAccountEmail(authJson);
+const isNewerMaterial = (p: EAgentProvider, next: string, current: string) =>
+  materialFreshness.isNewerMaterial(p, next, current);
+const parseModelWindows = (root: Record<string, unknown>) => usageParse.parseModelWindows(root);
+const parseUsageResponse = (body: unknown) => usageParse.parseUsageResponse(body);
+const resetEpochToIso = (n: number | undefined | null) => usageParse.resetEpochToIso(n);
+const toPercentUtilization = (n: number | undefined) => usageParse.toPercentUtilization(n);
 
 function fakeJwt(claims: Record<string, unknown>): string {
   const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url');

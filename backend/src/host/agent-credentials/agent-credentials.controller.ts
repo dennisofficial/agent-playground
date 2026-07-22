@@ -32,7 +32,7 @@ import type { User } from '../../_lib/database/entities/user.entity';
 import { OrgService } from '../org/org.service';
 import { AgentCredentialService } from './agent-credential.service';
 import { ClaudeOAuthClient, ClaudeOAuthHttpError } from './oauth/claude-oauth.client';
-import { CodexAuthInvalidError } from './oauth/codex-auth-validate.util';
+import { CodexAuthInvalidError } from './oauth/codex-auth-invalid.error';
 import { CodexOAuthClient, CodexOAuthHttpError } from './oauth/codex-oauth.client';
 import { OAuthDeviceStore } from './oauth/oauth-device.store';
 import { OAuthPkceStore } from './oauth/oauth-pkce.store';

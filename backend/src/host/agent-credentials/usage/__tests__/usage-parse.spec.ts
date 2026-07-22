@@ -1,10 +1,10 @@
-import {
-  parseModelWindows,
-  parseUsageResponse,
-  RATE_LIMIT_TYPE_TO_WINDOW,
-  resetEpochToIso,
-  toPercentUtilization,
-} from '../usage-parse.util';
+import { UsageParseService } from '../usage-parse.service';
+
+const usageParse = new UsageParseService();
+const parseModelWindows = (root: Record<string, unknown>) => usageParse.parseModelWindows(root);
+const parseUsageResponse = (body: unknown) => usageParse.parseUsageResponse(body);
+const resetEpochToIso = (n: number | undefined | null) => usageParse.resetEpochToIso(n);
+const toPercentUtilization = (n: number | undefined) => usageParse.toPercentUtilization(n);
 
 describe('toPercentUtilization', () => {
   it('scales a 0–1 fraction to a 0–100 percent', () => {
@@ -77,9 +77,13 @@ describe('parseModelWindows', () => {
   });
 });
 
-describe('RATE_LIMIT_TYPE_TO_WINDOW', () => {
+describe('windowKeyFor', () => {
   it('maps the four Anthropic rate-limit types', () => {
-    expect(RATE_LIMIT_TYPE_TO_WINDOW.five_hour).toBe('fiveHour');
-    expect(RATE_LIMIT_TYPE_TO_WINDOW.seven_day_opus).toBe('sevenDayOpus');
+    expect(usageParse.windowKeyFor('five_hour')).toBe('fiveHour');
+    expect(usageParse.windowKeyFor('seven_day_opus')).toBe('sevenDayOpus');
+  });
+  it('returns undefined for unknown/absent types', () => {
+    expect(usageParse.windowKeyFor('nope')).toBeUndefined();
+    expect(usageParse.windowKeyFor(undefined)).toBeUndefined();
   });
 });

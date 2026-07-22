@@ -16,13 +16,7 @@ import {
 import { AgentCredentialRefreshService } from '../agent-credential-refresh.service';
 import { AgentCredentialService } from '../agent-credential.service';
 import { type ClaudeCredentialBlob } from '../oauth/claude-oauth.client';
-import {
-  type ParsedUsage,
-  parseUsageResponse,
-  RATE_LIMIT_TYPE_TO_WINDOW,
-  resetEpochToIso,
-  toPercentUtilization,
-} from './usage-parse.util';
+import { type ParsedUsage, UsageParseService } from './usage-parse.service';
 
 const USAGE_API_URL = 'https://api.anthropic.com/api/oauth/usage';
 const OAUTH_BETA_HEADER = 'oauth-2025-04-20';
@@ -38,14 +32,6 @@ export type HarvestInfo = {
   utilization?: number;
 };
 
-/**
- * Per-account subscription usage. Two sources both write the SAME per-account snapshot
- * (`agent_credentials.usage_snapshot`): {@link applyHarvest} (fed by the engine from `rate_limit_event`
- * frames — the receiving end of the harvest seam) and {@link pollClaudeUsage} (a direct `/api/oauth/usage`
- * poll, Claude only). Snapshot writes are WAL deltas, so the web sees usage update live over realtime —
- * no bespoke event bus. Codex has no usage poll (no public ChatGPT-plan usage API); its windows populate
- * only via harvest once the engine surfaces Codex rate limits.
- */
 @Injectable()
 export class AgentUsageService {
   private readonly logger = new Logger(AgentUsageService.name);
@@ -55,17 +41,20 @@ export class AgentUsageService {
     private readonly repo: AgentCredentialRepo,
     private readonly store: AgentCredentialService,
     private readonly refresh: AgentCredentialRefreshService,
+    private readonly usageParseService: UsageParseService,
   ) {}
 
   /** Receiving end of the live-harvest seam — merge a rate-limit frame into the account's snapshot. */
   async applyHarvest(orgId: string, credentialId: string, info: HarvestInfo): Promise<void> {
-    const resetsAt = resetEpochToIso(info.resetsAt);
+    const resetsAt = this.usageParseService.resetEpochToIso(info.resetsAt);
     if (!resetsAt) return;
     const rejected = info.status === 'rejected';
-    const utilization = rejected ? 100 : toPercentUtilization(info.utilization);
+    const utilization = rejected
+      ? 100
+      : this.usageParseService.toPercentUtilization(info.utilization);
     if (utilization == null) return;
     const rateLimitType = info.rateLimitType ?? (rejected ? 'five_hour' : undefined);
-    const key = rateLimitType ? RATE_LIMIT_TYPE_TO_WINDOW[rateLimitType] : undefined;
+    const key = this.usageParseService.windowKeyFor(rateLimitType);
     if (!key) return;
     await this.mergeWindows(
       orgId,
@@ -119,7 +108,7 @@ export class AgentUsageService {
         this.logger.warn(`usage fetch failed: HTTP ${res.status}`);
         return null;
       }
-      return parseUsageResponse(res.data);
+      return this.usageParseService.parseUsageResponse(res.data);
     } catch (err) {
       this.logger.warn(`usage fetch error: ${String(err)}`);
       return null;

@@ -12,13 +12,9 @@ import {
 } from '../../_lib/database/entities/agent-credential.entity';
 import { AgentCredentialViewService } from './agent-credential-view.service';
 import { ClaudeOAuthClient, type ClaudeTokenSet } from './oauth/claude-oauth.client';
-import { assertValidCodexAuthJson, CodexAuthInvalidError } from './oauth/codex-auth-validate.util';
-import {
-  decodeCodexAccountEmail,
-  decodeCodexIdentity,
-  decodeJwtExpMs,
-} from './oauth/codex-id-token.util';
-import { isNewerMaterial } from './oauth/material-freshness.util';
+import { CodexAuthInvalidError } from './oauth/codex-auth-invalid.error';
+import { CodexAuthService } from './oauth/codex-auth.service';
+import { MaterialFreshnessService } from './oauth/material-freshness.service';
 
 type UpsertPersonalInput = {
   orgId: string;
@@ -38,6 +34,8 @@ export class AgentCredentialService {
     private readonly secretCipherService: SecretCipherService,
     private readonly claudeOAuthClient: ClaudeOAuthClient,
     private readonly agentCredentialViewService: AgentCredentialViewService,
+    private readonly codexAuthService: CodexAuthService,
+    private readonly materialFreshnessService: MaterialFreshnessService,
   ) {}
 
   async list(orgId: string): Promise<AgentCredentialView[]> {
@@ -118,11 +116,13 @@ export class AgentCredentialService {
     } catch {
       throw new CodexAuthInvalidError('not valid JSON');
     }
-    assertValidCodexAuthJson(parsed);
+    this.codexAuthService.assertValidAuthJson(parsed);
     const tokens = (parsed as { tokens?: { id_token?: string; access_token?: string } }).tokens;
-    const email = decodeCodexAccountEmail(authJson) ?? null;
-    const planType = tokens?.id_token ? decodeCodexIdentity(tokens.id_token).planType : undefined;
-    const accessExpMs = decodeJwtExpMs(tokens?.access_token);
+    const email = this.codexAuthService.decodeAccountEmail(authJson) ?? null;
+    const planType = tokens?.id_token
+      ? this.codexAuthService.decodeIdentity(tokens.id_token).planType
+      : undefined;
+    const accessExpMs = this.codexAuthService.decodeJwtExpMs(tokens?.access_token);
     return this.upsertPersonal({
       orgId,
       provider: EAgentProvider.CODEX,
@@ -171,7 +171,7 @@ export class AgentCredentialService {
       });
       if (!row) return;
       const current = this.secretCipherService.decrypt(row.materialEnc);
-      if (!isNewerMaterial(row.provider, material, current)) return;
+      if (!this.materialFreshnessService.isNewerMaterial(row.provider, material, current)) return;
       row.materialEnc = this.secretCipherService.encrypt(material);
       row.expiresAt = expiresAt;
       row.lastRefreshedAt = new Date();

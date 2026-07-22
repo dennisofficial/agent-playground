@@ -1,9 +1,11 @@
 import { EAgentProvider } from '@workspace/shared';
-import {
-  isNewerMaterial,
-  parseClaudeExpiresAt,
-  parseCodexLastRefresh,
-} from '../material-freshness.util';
+import { MaterialFreshnessService } from '../material-freshness.service';
+
+const materialFreshness = new MaterialFreshnessService();
+const parseClaudeExpiresAt = (m: string) => materialFreshness.parseClaudeExpiresAt(m);
+const parseCodexLastRefresh = (m: string) => materialFreshness.parseCodexLastRefresh(m);
+const isNewerMaterial = (p: EAgentProvider, next: string, current: string) =>
+  materialFreshness.isNewerMaterial(p, next, current);
 
 const claude = (expiresAt: number): string => JSON.stringify({ claudeAiOauth: { expiresAt } });
 const codex = (lastRefresh: string): string => JSON.stringify({ last_refresh: lastRefresh });

@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { EAgentProvider } from '@workspace/shared';
 import { AgentCredentialService } from './agent-credential.service';
-import { decodeJwtExpMs } from './oauth/codex-id-token.util';
-import { parseClaudeExpiresAt } from './oauth/material-freshness.util';
+import { CodexAuthService } from './oauth/codex-auth.service';
+import { MaterialFreshnessService } from './oauth/material-freshness.service';
 
 export interface AuthRefreshProvenance {
   orgId: string;
@@ -12,22 +12,26 @@ export interface AuthRefreshProvenance {
 
 @Injectable()
 export class AgentAuthRefreshSink {
-  constructor(private readonly store: AgentCredentialService) {}
+  constructor(
+    private readonly store: AgentCredentialService,
+    private readonly codexAuthService: CodexAuthService,
+    private readonly materialFreshnessService: MaterialFreshnessService,
+  ) {}
 
   async persist(provenance: AuthRefreshProvenance, secret: string): Promise<void> {
-    const expiresAt = AgentAuthRefreshSink.expiryFromSecret(provenance.provider, secret);
+    const expiresAt = this.expiryFromSecret(provenance.provider, secret);
     await this.store.advanceMaterial(provenance.credentialId, secret, expiresAt);
   }
 
-  private static expiryFromSecret(provider: EAgentProvider, secret: string): Date | null {
+  private expiryFromSecret(provider: EAgentProvider, secret: string): Date | null {
     if (provider === EAgentProvider.CLAUDE) {
-      const ms = parseClaudeExpiresAt(secret);
+      const ms = this.materialFreshnessService.parseClaudeExpiresAt(secret);
       return ms ? new Date(ms) : null;
     }
     try {
       const accessToken = (JSON.parse(secret) as { tokens?: { access_token?: string } }).tokens
         ?.access_token;
-      const ms = decodeJwtExpMs(accessToken);
+      const ms = this.codexAuthService.decodeJwtExpMs(accessToken);
       return ms ? new Date(ms) : null;
     } catch {
       return null;

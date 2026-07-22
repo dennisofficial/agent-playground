@@ -10,7 +10,6 @@ import {
 } from '@kubernetes/client-node';
 import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import { Writable } from 'node:stream';
-import { isK8sNotFoundError } from './k8s.util';
 
 const READY_POLL_INTERVAL_MS = 1_000;
 
@@ -100,7 +99,7 @@ export class K8sService implements OnModuleInit {
       await this.core.readNamespace({ name: namespace });
       return;
     } catch (err) {
-      if (!isK8sNotFoundError(err)) throw err;
+      if (!this.isNotFoundError(err)) throw err;
     }
     await this.core.createNamespace({ body: { metadata: { name: namespace } } });
     this.logger.log(`Created namespace ${namespace}`);
@@ -114,7 +113,7 @@ export class K8sService implements OnModuleInit {
     try {
       return await this.core.readNamespacedPod({ namespace, name });
     } catch (err) {
-      if (isK8sNotFoundError(err)) return null;
+      if (this.isNotFoundError(err)) return null;
       throw err;
     }
   }
@@ -123,7 +122,7 @@ export class K8sService implements OnModuleInit {
     try {
       await this.core.deleteNamespacedPod({ namespace, name });
     } catch (err) {
-      if (isK8sNotFoundError(err)) return;
+      if (this.isNotFoundError(err)) return;
       throw err;
     }
   }
@@ -131,6 +130,25 @@ export class K8sService implements OnModuleInit {
   async listPodsByLabel(namespace: string, labelSelector: string): Promise<V1Pod[]> {
     const res = await this.core.listNamespacedPod({ namespace, labelSelector });
     return res.items;
+  }
+
+  /** True if a k8s API error is a 404 (resource not found). */
+  isNotFoundError(err: unknown): boolean {
+    return K8sService.isStatusCode(err, 404);
+  }
+
+  /** True if a k8s API error is a 409 (conflict — e.g. the resource already exists). */
+  isConflictError(err: unknown): boolean {
+    return K8sService.isStatusCode(err, 409);
+  }
+
+  private static isStatusCode(err: unknown, code: number): boolean {
+    return (
+      typeof err === 'object' &&
+      err !== null &&
+      'code' in err &&
+      (err as { code: number }).code === code
+    );
   }
 
   async listPodEvents(namespace: string, podName: string): Promise<CoreV1Event[]> {

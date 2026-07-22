@@ -12,8 +12,6 @@ import { OrgService } from './org.service';
 
 @CreateModule({
   imports: [
-    // Contribute the org read-feeds (organizations + organization_members) to the realtime engine.
-    // Row-scope comes from each entity's @Rls policy via the RLS_CONTEXT claims resolver.
     PgRealtimeModule.forFeature({
       inject: [RLS_CONTEXT],
       useFactory: (ctx: RlsContextConfig) => buildOrgRealtimeModels(ctx.resolveClaims),

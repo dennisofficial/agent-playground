@@ -6,7 +6,7 @@ import {
   AgentCredentialRepo,
 } from '../../_lib/database/entities/agent-credential.entity';
 import { ClaudeOAuthClient, type ClaudeCredentialBlob } from './oauth/claude-oauth.client';
-import { decodeJwtExpMs } from './oauth/codex-id-token.util';
+import { CodexAuthService } from './oauth/codex-auth.service';
 import { CodexOAuthClient, type CodexTokens } from './oauth/codex-oauth.client';
 
 const DEFAULT_SKEW_MS = 30 * 60 * 1000;
@@ -27,6 +27,7 @@ export class AgentCredentialRefreshService {
     private readonly cipher: SecretCipherService,
     private readonly claudeOAuth: ClaudeOAuthClient,
     private readonly codexOAuth: CodexOAuthClient,
+    private readonly codexAuthService: CodexAuthService,
   ) {}
 
   /** Return fresh runtime material for a credential, refreshing first if near expiry. */
@@ -109,7 +110,7 @@ export class AgentCredentialRefreshService {
       accessToken: next.accessToken ?? (tokens as { access_token?: string }).access_token ?? '',
       refreshToken: next.refreshToken ?? refreshToken,
     };
-    const expMs = decodeJwtExpMs(merged.accessToken);
+    const expMs = this.codexAuthService.decodeJwtExpMs(merged.accessToken);
     return {
       material: this.codexOAuth.buildAuthJson(merged, new Date().toISOString()),
       expiresAt: expMs ? new Date(expMs) : null,

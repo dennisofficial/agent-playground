@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import axios, { type AxiosResponse } from 'axios';
-import { decodeCodexIdentity } from './codex-id-token.util';
+import { CodexAuthService } from './codex-auth.service';
 
 /**
  * ChatGPT/Codex subscription login via OpenAI's device-code flow — the same one `codex login --device-auth`
@@ -46,6 +46,8 @@ export type CodexPollResult =
 
 @Injectable()
 export class CodexOAuthClient {
+  constructor(private readonly codexAuthService: CodexAuthService) {}
+
   isHardAuthFailure(status: number): boolean {
     return status === 400 || status === 401 || status === 403;
   }
@@ -149,7 +151,7 @@ export class CodexOAuthClient {
    * `nowIso` is injected so callers stamp a real timestamp (kept out of this pure builder for testability).
    */
   buildAuthJson(tokens: CodexTokens, nowIso: string): string {
-    const { accountId } = decodeCodexIdentity(tokens.idToken);
+    const { accountId } = this.codexAuthService.decodeIdentity(tokens.idToken);
     return JSON.stringify({
       OPENAI_API_KEY: null,
       tokens: {

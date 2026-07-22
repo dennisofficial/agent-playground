@@ -1,9 +1,10 @@
 import axios from 'axios';
+import { CodexAuthService } from '../codex-auth.service';
 import { CodexOAuthClient, CodexOAuthHttpError } from '../codex-oauth.client';
 
 vi.mock('axios');
 
-const client = new CodexOAuthClient();
+const client = new CodexOAuthClient(new CodexAuthService());
 
 function jwt(payload: Record<string, unknown>): string {
   const b = (o: unknown): string => Buffer.from(JSON.stringify(o)).toString('base64url');
