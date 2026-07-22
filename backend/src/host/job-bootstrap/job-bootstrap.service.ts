@@ -1,6 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Db } from '@workspace/nestjs-rls/nest';
-import type { CreateJobDto, CreateJobResult } from '@workspace/shared';
+import type {
+  CreateJobDto,
+  CreateJobResult,
+  SendMessageDto,
+  SendMessageResult,
+} from '@workspace/shared';
 import {
   EInboundPriority,
   EJobStatus,
@@ -100,5 +105,35 @@ export class JobBootstrapService {
     }
 
     return { jobId, focusedThreadId };
+  }
+
+  async sendMessage(jobId: string, user: User, dto: SendMessageDto): Promise<SendMessageResult> {
+    const job = await this.db.scoped(Job).findOneScoped({ id: jobId }, 'update');
+    if (!job) throw new NotFoundException('Job not found');
+    if (job.archivedAt) throw new BadRequestException('Job is archived');
+
+    const threadId = dto.threadId ?? job.focusedThreadId;
+    if (!threadId) throw new BadRequestException('Job has no thread to post to');
+
+    const inbound = await this.inbound.enqueue({
+      jobId,
+      threadId,
+      orgId: job.orgId,
+      authorId: user.id,
+      author: user.name?.trim() || user.email,
+      source: EThreadMessageSource.OPERATOR,
+      text: dto.text,
+      priority: EInboundPriority.NOW,
+    });
+
+    try {
+      await this.turnFlow.enqueue(jobId);
+    } catch (err) {
+      this.logger.warn(
+        `flow enqueue failed for job ${jobId} on message; reconciler will recover: ${String(err)}`,
+      );
+    }
+
+    return { messageId: inbound.id };
   }
 }

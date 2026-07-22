@@ -1,7 +1,7 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, Param, ParseUUIDPipe, Post } from '@nestjs/common';
 import { CurrentUser } from '@workspace/auth/server';
-import type { CreateJobResult } from '@workspace/shared';
-import { CreateJobDto } from '@workspace/shared';
+import type { CreateJobResult, SendMessageResult } from '@workspace/shared';
+import { CreateJobDto, SendMessageDto } from '@workspace/shared';
 import type { User } from '../../_lib/database/entities/user.entity';
 import { JobBootstrapService } from './job-bootstrap.service';
 
@@ -12,5 +12,14 @@ export class JobBootstrapController {
   @Post('jobs')
   create(@CurrentUser() user: User, @Body() dto: CreateJobDto): Promise<CreateJobResult> {
     return this.bootstrap.create(dto, user);
+  }
+
+  @Post('jobs/:jobId/messages')
+  sendMessage(
+    @CurrentUser() user: User,
+    @Param('jobId', ParseUUIDPipe) jobId: string,
+    @Body() dto: SendMessageDto,
+  ): Promise<SendMessageResult> {
+    return this.bootstrap.sendMessage(jobId, user, dto);
   }
 }

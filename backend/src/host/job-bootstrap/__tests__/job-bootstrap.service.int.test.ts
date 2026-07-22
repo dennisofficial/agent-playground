@@ -9,6 +9,7 @@ import {
   EThreadOrigin,
   EThreadRole,
 } from '@workspace/shared';
+import type { FlowProducer } from 'bullmq';
 import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CustomNamingStrategy } from '../../../_lib/database/custom-naming.strategy';
@@ -21,7 +22,6 @@ import { ThreadGroup } from '../../../_lib/database/entities/thread-group.entity
 import { ThreadMessage } from '../../../_lib/database/entities/thread-message.entity';
 import { Thread } from '../../../_lib/database/entities/thread.entity';
 import type { User } from '../../../_lib/database/entities/user.entity';
-import type { FlowProducer } from 'bullmq';
 import { InboundMessageService } from '../../inbound-message/inbound-message.service';
 import { JobBootstrapService } from '../job-bootstrap.service';
 import { TurnFlowService } from '../turn-flow.service';
@@ -37,7 +37,7 @@ const ENTITIES = [
   InboundMessage,
 ];
 
-describe('JobBootstrapService.create (int)', () => {
+describe('JobBootstrapService (int)', () => {
   let ds: DataSource;
   let service: JobBootstrapService;
   let flow: { add: ReturnType<typeof vi.fn> };
@@ -141,6 +141,42 @@ describe('JobBootstrapService.create (int)', () => {
     await expect(
       service.create({ orgId, repoId, firstMessage: 'nope' }, user),
     ).rejects.toBeTruthy();
+    expect(flow.add).not.toHaveBeenCalled();
+  });
+
+  it('sendMessage enqueues a PENDING operator message on the focused thread and adds the flow', async () => {
+    const { jobId, focusedThreadId } = await service.create(
+      { orgId, repoId, firstMessage: 'start' },
+      user,
+    );
+    flow.add.mockClear(); // ignore create's flow add — assert only sendMessage's
+
+    const res = await service.sendMessage(jobId, user, { text: 'and also this' });
+
+    const inbound = await ds.getRepository(InboundMessage).find({ where: { jobId } });
+    expect(inbound).toHaveLength(2); // create's trigger + this message
+    const posted = inbound.find((r) => r.id === res.messageId);
+    expect(posted).toBeDefined();
+    expect(posted?.status).toBe(EInboundMessageStatus.PENDING);
+    expect(posted?.priority).toBe(EInboundPriority.NOW);
+    expect(posted?.source).toBe(EThreadMessageSource.OPERATOR);
+    expect(posted?.threadId).toBe(focusedThreadId); // defaulted to the focused thread
+    expect(posted?.text).toBe('and also this');
+
+    // The visible bubble is written too (create's + this one).
+    const bubbles = await ds.getRepository(ThreadMessage).find({ where: { jobId } });
+    expect(bubbles).toHaveLength(2);
+
+    expect(flow.add).toHaveBeenCalledTimes(1);
+    expect(flow.add.mock.calls[0][0].opts.jobId).toBe(`dispatch-${jobId}`);
+  });
+
+  it('sendMessage rejects an archived job and does not add a flow', async () => {
+    const { jobId } = await service.create({ orgId, repoId, firstMessage: 'start' }, user);
+    await ds.getRepository(Job).update({ id: jobId }, { archivedAt: new Date() });
+    flow.add.mockClear();
+
+    await expect(service.sendMessage(jobId, user, { text: 'too late' })).rejects.toBeTruthy();
     expect(flow.add).not.toHaveBeenCalled();
   });
 });

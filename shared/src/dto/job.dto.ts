@@ -1,5 +1,4 @@
 import { IsIn, IsNotEmpty, IsOptional, IsString, IsUUID } from 'class-validator';
-import { EJobKind } from '../enums';
 import type {
   EJobStatus,
   ESubagentStatus,
@@ -13,6 +12,7 @@ import type {
   EThreadStatus,
   EThreadType,
 } from '../enums';
+import { EJobKind } from '../enums';
 
 export interface JobListItem {
   id: string;
@@ -29,11 +29,6 @@ export interface JobListItem {
   updatedAt: string;
 }
 
-/**
- * `POST /jobs` request — the class-validator DTO the backend validates and the web sends (one source of
- * truth). `kind` is restricted to the two operator-selectable kinds; the other create-modal controls
- * (base branch, automation, depends-on, attachments, review PR) are deferred, not part of the contract yet.
- */
 export class CreateJobDto {
   @IsUUID()
   orgId!: string;
@@ -54,10 +49,23 @@ export class CreateJobDto {
   kind?: EJobKind.FEATURE | EJobKind.BUGFIX;
 }
 
-/** `POST /jobs` response — the new job's id and the thread the web redirects into. */
 export interface CreateJobResult {
   jobId: string;
   focusedThreadId: string;
+}
+
+export class SendMessageDto {
+  @IsString()
+  @IsNotEmpty()
+  text!: string;
+
+  @IsOptional()
+  @IsUUID()
+  threadId?: string;
+}
+
+export interface SendMessageResult {
+  messageId: string;
 }
 
 export interface ThreadView {
