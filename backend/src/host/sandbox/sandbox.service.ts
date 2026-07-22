@@ -65,7 +65,7 @@ export class SandboxService {
 
     await this.touch(jobId);
 
-    const name = SandboxService.podName(jobId);
+    const name = this.podName(jobId);
     const existing = await this.k8s.getPod(this._namespace, name);
     if (existing) {
       const phase = existing.status?.phase;
@@ -98,7 +98,7 @@ export class SandboxService {
       await this.k8s.waitForPodReady(this._namespace, name);
       await this.status.write(job, 'ready', 'Sandbox ready');
     } catch (err) {
-      const message = SandboxService.provisionReason(err);
+      const message = this.provisionReason(err);
       await this.status.write(job, 'failed', `Sandbox failed to start — ${message}`);
       throw err;
     }
@@ -106,36 +106,23 @@ export class SandboxService {
 
   async launchEngineTurn(jobId: string, turnId: string): Promise<void> {
     await this.ensureReady(jobId);
-    // Bootstrap infra ONLY — the env the engine needs *before* it can read its spec from Redis. Per-turn
-    // credentials (agent auth + git) ride `TurnSpec.env`, assembled host-side by TurnSpecBuilder.
-    const env: Record<string, string> = {
-      TURN_ID: turnId,
-      ENGINE_TRANSPORT: 'redis',
-      REDIS_URL: this._sandboxRedisUrl,
-      CLAUDE_CODE_SHELL_PREFIX: SHELL_PREFIX_WRAPPER,
-    };
-    // Each value is single-quoted so values with spaces survive the shell.
-    const assignments = Object.entries(env)
-      .map(([k, v]) => `${k}=${shQuote(v)}`)
-      .join(' ');
-    // setsid detaches the engine from the exec session so the stream closes while the process keeps running.
-    const cmd = `setsid env ${assignments} ${ENGINE_ENTRYPOINT} </dev/null >/tmp/engine-${turnId}.log 2>&1 &`;
-    const pod = SandboxService.podName(jobId);
-    this.logger.log(`launching engine turn ${turnId} in pod ${pod} → /tmp/engine-${turnId}.log`);
+    const cmd = `setsid env TURN_ID=${shQuote(turnId)} ${ENGINE_ENTRYPOINT} </dev/null >/proc/1/fd/1 2>/proc/1/fd/2 &`;
+    const pod = this.podName(jobId);
+    this.logger.log(`launching engine turn ${turnId} in pod ${pod} → main container log`);
     await this.k8s.execInPod(this._namespace, pod, MAIN_CONTAINER, ['sh', '-c', cmd]);
     await this.touch(jobId);
   }
 
   /** Refresh the liveness lease. Called by the dispatcher on real engine activity, keeping the pod alive. */
   async touch(jobId: string): Promise<void> {
-    await this.redis.set(SandboxService.leaseKey(jobId), '1', 'EX', LEASE_TTL_S);
+    await this.redis.set(this.leaseKey(jobId), '1', 'EX', LEASE_TTL_S);
   }
 
   /** Tear down a job's sandbox immediately (on archive). Best-effort — the reaper is the backstop. */
   async teardown(jobId: string): Promise<void> {
-    await this.redis.del(SandboxService.leaseKey(jobId));
+    await this.redis.del(this.leaseKey(jobId));
     try {
-      await this.k8s.deletePod(this._namespace, SandboxService.podName(jobId));
+      await this.k8s.deletePod(this._namespace, this.podName(jobId));
       this.logger.log(`tore down sandbox for archived job ${jobId}`);
     } catch (err) {
       this.logger.warn(`teardown of sandbox for job ${jobId} failed: ${String(err)}`);
@@ -156,7 +143,7 @@ export class SandboxService {
       const name = pod.metadata?.name;
       const jobId = pod.metadata?.labels?.[LABEL_JOB];
       if (!name || !jobId) continue;
-      if (await this.redis.exists(SandboxService.leaseKey(jobId))) continue;
+      if (await this.redis.exists(this.leaseKey(jobId))) continue;
       try {
         await this.k8s.deletePod(this._namespace, name);
         this.logger.log(`reaped idle sandbox ${name} (job ${jobId}); workspace persists`);
@@ -179,7 +166,7 @@ export class SandboxService {
       ...mounts.map((m) => ({
         name: WORK_VOLUME,
         mountPath: m.path,
-        subPath: SandboxService.subPathFor(m.path),
+        subPath: this.subPathFor(m.path),
       })),
       { name: ATLAS_STATE_VOLUME, mountPath: ATLAS_STATE_MOUNT },
     ];
@@ -192,7 +179,7 @@ export class SandboxService {
             name: SETUP_CONTAINER,
             image: this._image,
             imagePullPolicy: 'Always',
-            command: ['sh', '-c', SandboxService.setupWrapper(setupScript)],
+            command: ['sh', '-c', this.setupWrapper(setupScript)],
             volumeMounts: sharedMounts,
           },
         ]
@@ -230,6 +217,11 @@ export class SandboxService {
               privileged: true,
             },
             resources: POD_RESOURCES,
+            env: [
+              { name: 'ENGINE_TRANSPORT', value: 'redis' },
+              { name: 'REDIS_URL', value: this._sandboxRedisUrl },
+              { name: 'CLAUDE_CODE_SHELL_PREFIX', value: SHELL_PREFIX_WRAPPER },
+            ],
             volumeMounts: [
               ...sharedMounts,
               { name: DOCKER_STORAGE_VOLUME, mountPath: DOCKER_STORAGE_MOUNT },
@@ -240,22 +232,22 @@ export class SandboxService {
     };
   }
 
-  private static podName(jobId: string): string {
+  private podName(jobId: string): string {
     return `${POD_NAME_PREFIX}${jobId}`;
   }
 
-  private static leaseKey(jobId: string): string {
+  private leaseKey(jobId: string): string {
     return `sbx:active:${jobId}`;
   }
 
   /** Human reason for a failed provision — the terminal pod reason when we have one, else the raw message. */
-  private static provisionReason(err: unknown): string {
+  private provisionReason(err: unknown): string {
     if (err instanceof TerminalPodError) return err.reason;
     return err instanceof Error ? err.message : String(err);
   }
 
   /** Deterministic subPath under the `work` volume for a profile mount path. */
-  private static subPathFor(path: string): string {
+  private subPathFor(path: string): string {
     return path.replace(/^\/+/, '').replace(/\//g, '_') || 'root';
   }
 
@@ -264,7 +256,7 @@ export class SandboxService {
    * on every sandbox (re)start, and repos rely on that (some do per-boot work in it), so a cold boot after a reap
    * re-runs it — the script owns its own idempotency.
    */
-  private static setupWrapper(setupScript: string): string {
+  private setupWrapper(setupScript: string): string {
     return ['set -e', `cd ${WORK_MOUNT}`, setupScript].join('\n');
   }
 }

@@ -13,7 +13,7 @@
     "host": {
       "type": "application",
       "root": "src/host",
-      "entryFile": "host/main",
+      "entryFile": "src/host/main",
       "sourceRoot": "src/host",
       "compilerOptions": {
         "tsConfigPath": "src/host/tsconfig.json"
@@ -22,7 +22,7 @@
     "engine": {
       "type": "application",
       "root": "src/engine",
-      "entryFile": "main",
+      "entryFile": "src/engine/main",
       "sourceRoot": "src",
       "compilerOptions": {
         "tsConfigPath": "src/engine/tsconfig.json",

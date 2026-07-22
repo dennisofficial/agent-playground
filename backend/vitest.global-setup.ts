@@ -3,13 +3,6 @@ import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { Client } from 'pg';
 
-/**
- * Vitest globalSetup (default + e2e modes): provision the dedicated test database.
- * Runs ONCE per test run, before any worker. Creates POSTGRES_DB if missing and brings
- * it to the current migration state (the init migration creates the pgvector extension).
- * setupFiles don't apply here (separate context), so the env loads itself — same
- * layering as vitest.setup.ts, which also re-asserts the *_test guard in every worker.
- */
 export default async function globalSetup(): Promise<void> {
   if (existsSync('.env.personal')) {
     config({ path: '.env.personal', logLevel: 'error', overload: true });

@@ -1,4 +1,5 @@
 import { EnvService } from '@core/config/env/env.service';
+import { EsmModule } from '@lib/esm/esm.module';
 import { RedisModule } from '@lib/redis/redis.module';
 import { CreateModule, EnvModule } from '@workspace/nestjs-core';
 import { engineEnvValidation } from './engine-env.validation';
@@ -14,6 +15,7 @@ import { RunnerModule } from './runner/runner.module';
 
     // Libraries
     RedisModule,
+    EsmModule,
 
     // Modules
     RunnerModule,

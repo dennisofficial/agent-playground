@@ -1,10 +1,6 @@
-import {
-  query,
-  type Options,
-  type Query,
-  type SDKUserMessage,
-} from '@anthropic-ai/claude-agent-sdk';
-import { Injectable, Logger } from '@nestjs/common';
+import type { Options, Query, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import { ANTHROPIC_AGENT_SDK } from '@lib/esm/esm.module';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ATLAS_STATE_MOUNT } from '@shared/engine/paths.constants';
 import type { TurnSpec } from '@shared/engine/turn-spec';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -21,13 +17,17 @@ export class RunnerService {
   private input?: MessageQueue<SDKUserMessage>;
   private handle?: Query;
 
-  constructor(private readonly transport: EngineTransportService) {}
+  constructor(
+    private readonly transport: EngineTransportService,
+    @Inject(ANTHROPIC_AGENT_SDK)
+    private readonly sdk: typeof import('@anthropic-ai/claude-agent-sdk'),
+  ) {}
 
   async run(turnId: string, spec: TurnSpec): Promise<void> {
     this.input = new MessageQueue<SDKUserMessage>();
     this.input.push(this.userMessage(spec.prompt));
     this.logger.log(`turn ${turnId}: starting Claude SDK query (model=${spec.model ?? 'default'})`);
-    this.handle = query({
+    this.handle = this.sdk.query({
       prompt: this.input,
       options: this.buildClaudeOptions(spec),
     });
