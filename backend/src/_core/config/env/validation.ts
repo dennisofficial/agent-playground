@@ -45,6 +45,7 @@ export type IEnvConfig = {
   KUBECONFIG?: string; // optional: dev-only kubeconfig path; in-cluster path is preferred when running in k8s
   K8S_CONTEXT?: string; // optional: local-only — pin the kubeconfig context (else the ambient current-context)
   SANDBOX_IMAGE: string; // the engine runtime image sandbox pods run; infra, not user/profile input
+  SANDBOX_REDIS_URL: string; // Redis URL the in-pod engine uses to reach the SAME Redis as the host FROM INSIDE the k3d pod (e.g. redis://host.k3d.internal:6380). Distinct from REDIS_URL (the host's own localhost address).
   ATLAS_DATA: string; // host root for ALL local sandbox state; bind-mounted into the k3d node (see below)
 };
 
@@ -67,6 +68,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   POSTGRES_SSL_MODE: Joi.string().valid('disable', 'require', 'verify-full').optional(),
 
   REDIS_URL: Joi.string().uri(),
+  SANDBOX_REDIS_URL: Joi.string().uri(),
 
   GITHUB_APP_ID: Joi.string().required(),
   GITHUB_APP_SLUG: Joi.string().required(),

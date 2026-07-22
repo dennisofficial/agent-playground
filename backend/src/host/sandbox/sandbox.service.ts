@@ -39,7 +39,7 @@ export class SandboxService {
   private readonly logger = new Logger(this.constructor.name);
   private readonly _namespace: string = 'atlas-sandboxes';
   private readonly _image: string;
-  private readonly _redisUrl: string;
+  private readonly _sandboxRedisUrl: string;
   private readonly _atlasData: string;
   private readonly isTestDb: boolean;
 
@@ -52,9 +52,7 @@ export class SandboxService {
     env: EnvService,
   ) {
     this._image = env.get('SANDBOX_IMAGE');
-    this._redisUrl = env.get('REDIS_URL');
-    // Resolve to absolute (against the backend cwd) so a portable relative ATLAS_DATA like `./.atlas-data`
-    // works: the pod hostPath requires an absolute path. No-op if already absolute.
+    this._sandboxRedisUrl = env.get('SANDBOX_REDIS_URL');
     this._atlasData = resolve(env.get('ATLAS_DATA'));
     this.isTestDb = /_test$/.test(env.get('POSTGRES_DB'));
   }
@@ -111,7 +109,7 @@ export class SandboxService {
     const env: Record<string, string> = {
       TURN_ID: turnId,
       ENGINE_TRANSPORT: 'redis',
-      REDIS_URL: this._redisUrl,
+      REDIS_URL: this._sandboxRedisUrl,
       CLAUDE_CODE_SHELL_PREFIX: SHELL_PREFIX_WRAPPER,
     };
     // Each value is single-quoted so values with spaces survive the shell.

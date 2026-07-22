@@ -7,8 +7,6 @@ const OPTIONAL_NEST_PEERS = [
   '@nestjs/microservices/microservices-module',
   '@nestjs/websockets',
   '@nestjs/websockets/socket-module',
-  'class-validator',
-  'class-transformer',
   'cache-manager',
 ];
 
