@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { GithubApiError, GithubApiService } from './github-api.service';
-import { GithubCredentialsService } from './github-credentials.service';
+import { GithubTokenService } from './github-token.service';
+import { GithubWebhookService } from './github-webhook.service';
 
 export interface RepoProbe {
   accessOk: boolean;
@@ -13,16 +14,17 @@ export interface RepoProbe {
 @Injectable()
 export class GithubAccessAdapter {
   constructor(
-    private readonly credentials: GithubCredentialsService,
+    private readonly tokens: GithubTokenService,
     private readonly api: GithubApiService,
+    private readonly webhooks: GithubWebhookService,
   ) {}
 
   hasGithub(orgId: string): Promise<boolean> {
-    return this.credentials.hasToken(orgId);
+    return this.tokens.hasAnyGithub(orgId);
   }
 
   async probeRepo(orgId: string, owner: string, repo: string): Promise<RepoProbe> {
-    const token = await this.credentials.resolveToken(orgId);
+    const token = await this.tokens.hostToken(orgId);
     if (!token) return { accessOk: false, reason: 'No GitHub token is configured for this org.' };
     try {
       const info = await this.api.getRepo(token, owner, repo);
@@ -37,7 +39,7 @@ export class GithubAccessAdapter {
     owner: string,
     repo: string,
   ): Promise<{ branches: string[]; defaultBranch: string } | null> {
-    const token = await this.credentials.resolveToken(orgId);
+    const token = await this.tokens.hostToken(orgId);
     if (!token) return null;
     try {
       const [info, branches] = await Promise.all([
@@ -53,11 +55,9 @@ export class GithubAccessAdapter {
     }
   }
 
-  async ensureWebhook(_orgId: string, _owner: string, _repo: string): Promise<string | null> {
-    // Webhook registration needs a public backend host + GITHUB_WEBHOOK_SECRET and an inbound webhook
-    // route to receive events — none of which exist yet. Real-time PR/CI sync lands with the webhook
-    // phase; until then there's nothing to register and no warning to surface.
-    return Promise.resolve(null);
+  /** Register Atlas's inbound webhooks for the repo; returns a soft warning to store, or null. */
+  ensureWebhook(orgId: string, owner: string, repo: string): Promise<string | null> {
+    return this.webhooks.ensureForRepo(orgId, owner, repo);
   }
 
   private reasonFor(err: unknown, owner: string, repo: string): string {
