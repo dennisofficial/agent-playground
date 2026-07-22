@@ -10,9 +10,11 @@ import {
   ThreadMessageRepo,
 } from '../../_lib/database/entities/thread-message.entity';
 import { Thread, ThreadRepo } from '../../_lib/database/entities/thread.entity';
+import { InboundMessageModule } from '../inbound-message/inbound-message.module';
+import { SandboxModule } from '../sandbox/sandbox.module';
+import { JobViewService } from './job-view.service';
 import { JobController } from './job.controller';
 import { buildJobRealtimeModels } from './job.realtime';
-import { JobViewService } from './job-view.service';
 import { JobService } from './job.service';
 import { MessageService } from './message.service';
 import { TaskService } from './task.service';
@@ -24,6 +26,8 @@ import { ThreadService } from './thread.service';
       inject: [RLS_CONTEXT],
       useFactory: (ctx: RlsContextConfig) => buildJobRealtimeModels(ctx.resolveClaims),
     }),
+    InboundMessageModule,
+    SandboxModule,
   ],
   entities: [
     { entity: Job, repoClass: JobRepo },

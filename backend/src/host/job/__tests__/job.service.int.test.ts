@@ -1,13 +1,15 @@
 import { Db } from '@workspace/nestjs-rls/nest';
 import { EJobStatus, EThreadOrigin } from '@workspace/shared';
 import { DataSource } from 'typeorm';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CustomNamingStrategy } from '../../../_lib/database/custom-naming.strategy';
 import { Job } from '../../../_lib/database/entities/job.entity';
 import { Organization } from '../../../_lib/database/entities/organization.entity';
 import { Repo } from '../../../_lib/database/entities/repo.entity';
 import { ThreadGroup } from '../../../_lib/database/entities/thread-group.entity';
 import { Thread } from '../../../_lib/database/entities/thread.entity';
+import type { InboundMessageService } from '../../inbound-message/inbound-message.service';
+import type { SandboxService } from '../../sandbox/sandbox.service';
 import { JobViewService } from '../job-view.service';
 import { JobService } from '../job.service';
 
@@ -37,11 +39,15 @@ describe('JobService.archive + archived read-exclusion (int)', () => {
       resolveClaims: () => claims,
       exempt: () => false,
     });
+    const inbound = { discardPending: vi.fn(async () => {}) } as unknown as InboundMessageService;
+    const sandbox = { teardown: vi.fn(async () => {}) } as unknown as SandboxService;
     service = new JobService(
       db,
       ds.getRepository(ThreadGroup),
       ds.getRepository(Thread),
       new JobViewService(),
+      inbound,
+      sandbox,
     );
   });
 

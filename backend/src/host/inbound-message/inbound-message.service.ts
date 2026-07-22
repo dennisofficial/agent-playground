@@ -6,6 +6,7 @@ import {
   InboundMessage,
   InboundMessageRepo,
 } from '../../_lib/database/entities/inbound-message.entity';
+import { Job } from '../../_lib/database/entities/job.entity';
 import { ThreadMessage } from '../../_lib/database/entities/thread-message.entity';
 
 export type EnqueueInput = {
@@ -101,13 +102,27 @@ export class InboundMessageService {
     const rows = await this.db
       .unsafe(InboundMessage)
       .createQueryBuilder('m')
+      // Join the job so an archived job's stray PENDING rows can't resurrect it — without this the reconciler
+      // re-provisions a sandbox for every archived job on every tick.
+      .innerJoin(Job, 'j', 'j.id = m.jobId')
       .select('m.jobId', 'jobId')
       .distinct(true)
       .where('m.status = :status', { status: EInboundMessageStatus.PENDING })
       .andWhere('m.priority IN (:...priorities)', {
         priorities: [EInboundPriority.NOW, EInboundPriority.QUEUED],
       })
+      .andWhere('j.archivedAt IS NULL')
       .getRawMany<{ jobId: string }>();
     return rows.map((r) => r.jobId);
+  }
+
+  /** Drain a job's PENDING queue when the job is archived — nothing more should be dispatched for it. */
+  async discardPending(jobId: string): Promise<void> {
+    await this.db
+      .unsafe(InboundMessage)
+      .update(
+        { jobId, status: EInboundMessageStatus.PENDING },
+        { status: EInboundMessageStatus.DELIVERED, deliveredAt: new Date() },
+      );
   }
 }

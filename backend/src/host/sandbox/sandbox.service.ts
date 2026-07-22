@@ -60,6 +60,9 @@ export class SandboxService {
   async ensureReady(jobId: string): Promise<void> {
     const job = await this.db.unsafe(Job).findOne({ where: { id: jobId } });
     if (!job) throw new NotFoundException(`Job ${jobId} not found`);
+    // An archived job is terminal — refuse to provision. TerminalPodError fails the flow unrecoverably (no retry),
+    // so an in-flight flow that raced an archive dies here instead of spawning an orphan pod.
+    if (job.archivedAt) throw new TerminalPodError(`job ${jobId} is archived`);
 
     await this.touch(jobId);
 
@@ -127,6 +130,17 @@ export class SandboxService {
   /** Refresh the liveness lease. Called by the dispatcher on real engine activity, keeping the pod alive. */
   async touch(jobId: string): Promise<void> {
     await this.redis.set(SandboxService.leaseKey(jobId), '1', 'EX', LEASE_TTL_S);
+  }
+
+  /** Tear down a job's sandbox immediately (on archive). Best-effort — the reaper is the backstop. */
+  async teardown(jobId: string): Promise<void> {
+    await this.redis.del(SandboxService.leaseKey(jobId));
+    try {
+      await this.k8s.deletePod(this._namespace, SandboxService.podName(jobId));
+      this.logger.log(`tore down sandbox for archived job ${jobId}`);
+    } catch (err) {
+      this.logger.warn(`teardown of sandbox for job ${jobId} failed: ${String(err)}`);
+    }
   }
 
   @Cron(CronExpression.EVERY_MINUTE)
