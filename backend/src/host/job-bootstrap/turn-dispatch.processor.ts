@@ -1,9 +1,8 @@
-import { Processor } from '@nestjs/bullmq';
-import { Job } from 'bullmq';
+import { InjectQueue, Processor } from '@nestjs/bullmq';
+import { Job, Queue } from 'bullmq';
 import { BaseQueue } from '../../_lib/queue/base-queue';
 import { InboundMessageService } from '../inbound-message/inbound-message.service';
 import { TurnDispatcherService } from '../turn/turn-dispatcher.service';
-import { TurnFlowService } from './turn-flow.service';
 
 type DispatchData = { jobId: string };
 
@@ -12,7 +11,7 @@ export class TurnDispatchProcessor extends BaseQueue {
   constructor(
     private readonly inbound: InboundMessageService,
     private readonly turnDispatcher: TurnDispatcherService,
-    private readonly turnFlow: TurnFlowService,
+    @InjectQueue(TurnDispatchProcessor.name) private readonly dispatchQueue: Queue,
   ) {
     super();
   }
@@ -39,8 +38,8 @@ export class TurnDispatchProcessor extends BaseQueue {
       // Only chase mid-run arrivals when we exited cleanly. On a thrown dispatch we let the BullMQ job
       // fail and retry the flow itself — re-adding here would double up with that retry.
       if (drained && (await this.inbound.hasPending(jobId))) {
-        this.logger.log(`job ${jobId}: work arrived mid-run, re-enqueuing flow`);
-        await this.turnFlow.enqueue(jobId);
+        this.logger.log(`job ${jobId}: work arrived mid-run, re-dispatching`);
+        await this.dispatchQueue.add('dispatch', { jobId });
       }
     }
   }
