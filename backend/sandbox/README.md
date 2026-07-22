@@ -48,10 +48,22 @@ the host app read the same values.
 | --------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `K8S_CONTEXT`   | _(unset → ambient current-context)_            | Pin the kubeconfig context. Set to `k3d-atlas` in `.env.local`. Boot fails loud if it isn't in your kubeconfig.                           |
 | `ATLAS_DATA`    | `/tmp/atlas-data`                              | Host storage root; **must match** what `dev-cluster:up` bind-mounts (set in `.env.local`).                                                |
-| `SANDBOX_IMAGE` | `k3d-atlas-registry:5111/atlas-sandbox:latest` | In-cluster registry ref pods pull. Port is 5111 not 5000 (macOS AirPlay owns 5000); must match `ATLAS_REGISTRY_PORT` in `dev-cluster:up`. |
+| `SANDBOX_IMAGE` | `k3d-atlas-registry:5111/atlas-sandbox:latest` | In-cluster registry ref pods pull. Port is 5111 not 5000 (macOS AirPlay owns 5000); must match `ATLAS_REGISTRY_PORT` in `dev-cluster:up`. **Immutable per build** — `sandbox:build` writes the current `atlas-sandbox:<git-sha>` ref into `backend/.env.personal`, so this default only applies before the first build. |
 
 k3d bind-mount durability needs Docker Desktop file-sharing to cover `$ATLAS_DATA` (`/tmp` is shared by
 default). For a home-dir root, set `ATLAS_DATA=$HOME/atlas-data` in `.env.local` and share it in Docker Desktop.
+
+## Keeping running pods on the latest build
+
+The engine bundle and runtime tools are **baked into the image** (not mounted), so any change — engine code or a
+runtime addition — needs the pod to run a new image. Same flow in dev and prod:
+
+`pnpm sandbox:build` produces an **immutable** `atlas-sandbox:<git-sha>` tag (a `-dirty-<ts>` suffix when the tree
+is dirty) and writes `SANDBOX_IMAGE` into `backend/.env.personal`. On restart the host reads the new ref;
+`SandboxService.ensureReady` compares each running pod's image to it at **turn start** and force-recreates on
+mismatch — so a running job picks up the new build on its **next turn**, with no 30-min reap wait. The reaper's
+30-min idle TTL is unchanged (idle cleanup only). Recreating drops inner-dockerd state (agent `docker compose`
+stacks), same as a reap cold-boot; the workspace and atlas-state hostPaths persist.
 
 ## Runbook (local)
 

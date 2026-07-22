@@ -118,13 +118,24 @@ export class K8sService implements OnModuleInit {
     }
   }
 
-  async deletePod(namespace: string, name: string): Promise<void> {
+  /** Delete a pod. `grace` (seconds) overrides the default graceful termination — pass 0 to force-delete. */
+  async deletePod(namespace: string, name: string, grace?: number): Promise<void> {
     try {
-      await this.core.deleteNamespacedPod({ namespace, name });
+      await this.core.deleteNamespacedPod({ namespace, name, gracePeriodSeconds: grace });
     } catch (err) {
       if (this.isNotFoundError(err)) return;
       throw err;
     }
+  }
+
+  /** Poll until the pod no longer exists (delete is async — the object lingers while terminating). */
+  async waitForPodGone(namespace: string, name: string, timeoutMs = 30_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (!(await this.getPod(namespace, name))) return;
+      await new Promise((r) => setTimeout(r, READY_POLL_INTERVAL_MS));
+    }
+    throw new Error(`pod ${name} still present ${timeoutMs}ms after delete`);
   }
 
   async listPodsByLabel(namespace: string, labelSelector: string): Promise<V1Pod[]> {

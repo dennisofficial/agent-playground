@@ -69,10 +69,26 @@ export class SandboxService {
     const existing = await this.k8s.getPod(this._namespace, name);
     if (existing) {
       const phase = existing.status?.phase;
-      if (phase === 'Running') return;
-      if (phase === 'Pending') return this.k8s.waitForPodReady(this._namespace, name);
-      // Terminal / unknown → the pod is stale; remove it and re-provision against the same workspace.
-      await this.k8s.deletePod(this._namespace, name);
+      // Build-freshness gate: a pod created on an older image keeps running the old engine/runtime until reaped
+      // (30 min idle). A new deploy bumps SANDBOX_IMAGE (immutable per build), so recreate on mismatch NOW — at
+      // turn start, before we launch — and the next turn runs the current build. Covers both new engine code and
+      // new runtime additions; the dev engine-bundle mount is out of band (same image ref), so it never trips this.
+      const podImage = existing.spec?.containers?.find((c) => c.name === MAIN_CONTAINER)?.image;
+      const staleBuild = phase !== 'Failed' && podImage !== undefined && podImage !== this._image;
+      if (staleBuild) {
+        // Force-delete and wait for it to actually disappear before recreating the same pod name — a graceful
+        // delete of a running pod lingers (terminating) and would 409 the immediate re-create.
+        this.logger.log(`recreating ${name}: sandbox build ${podImage} → ${this._image}`);
+        await this.k8s.deletePod(this._namespace, name, 0);
+        await this.k8s.waitForPodGone(this._namespace, name);
+      } else if (phase === 'Running') {
+        return;
+      } else if (phase === 'Pending') {
+        return this.k8s.waitForPodReady(this._namespace, name);
+      } else {
+        // Terminal / unknown → the pod is stale; remove it and re-provision against the same workspace.
+        await this.k8s.deletePod(this._namespace, name);
+      }
     }
 
     const [setupScript, mounts] = await Promise.all([
