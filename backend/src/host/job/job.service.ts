@@ -5,14 +5,15 @@ import { EJobStatus } from '@workspace/shared';
 import { Job } from '../../_lib/database/entities/job.entity';
 import { ThreadGroupRepo } from '../../_lib/database/entities/thread-group.entity';
 import { Thread, ThreadRepo } from '../../_lib/database/entities/thread.entity';
-import { toJobListItem, toThreadGroupView } from './job.view';
+import { JobViewService } from './job-view.service';
 
 @Injectable()
 export class JobService {
   constructor(
     private readonly db: Db,
-    private readonly groups: ThreadGroupRepo,
-    private readonly threads: ThreadRepo,
+    private readonly threadGroupRepo: ThreadGroupRepo,
+    private readonly threadRepo: ThreadRepo,
+    private readonly jobViewService: JobViewService,
   ) {}
 
   /** The caller's jobs (newest first), optionally narrowed to one repo — the sidebar list. */
@@ -21,7 +22,7 @@ export class JobService {
       where: repoId ? { repoId } : {},
       order: { createdAt: 'DESC' },
     });
-    return rows.map((j) => toJobListItem(j));
+    return rows.map((j) => this.jobViewService.toJobListItem(j));
   }
 
   async assertAccess(jobId: string, action: RlsAction = 'read'): Promise<Job> {
@@ -36,15 +37,17 @@ export class JobService {
     await this.db.scoped(Job).update({ id: jobId }, { status: EJobStatus.ARCHIVED, archivedAt });
     // Build the result from the row we already hold + the applied change — a scoped RE-read would now
     // miss it (the read policy excludes archived jobs).
-    return toJobListItem(Object.assign(job, { status: EJobStatus.ARCHIVED, archivedAt }));
+    return this.jobViewService.toJobListItem(
+      Object.assign(job, { status: EJobStatus.ARCHIVED, archivedAt }),
+    );
   }
 
   /** One job with its nested group→thread tree. */
   async get(jobId: string): Promise<JobView> {
     const job = await this.assertAccess(jobId);
     const [groups, threads] = await Promise.all([
-      this.groups.find({ where: { jobId }, order: { ordinal: 'ASC' } }),
-      this.threads.find({ where: { jobId }, order: { ordinal: 'ASC' } }),
+      this.threadGroupRepo.find({ where: { jobId }, order: { ordinal: 'ASC' } }),
+      this.threadRepo.find({ where: { jobId }, order: { ordinal: 'ASC' } }),
     ]);
     const threadsByGroup = new Map<string, Thread[]>();
     for (const t of threads) {
@@ -53,8 +56,10 @@ export class JobService {
       threadsByGroup.set(t.threadGroupId, list);
     }
     return {
-      ...toJobListItem(job),
-      threadGroups: groups.map((g) => toThreadGroupView(g, threadsByGroup.get(g.id) ?? [])),
+      ...this.jobViewService.toJobListItem(job),
+      threadGroups: groups.map((g) =>
+        this.jobViewService.toThreadGroupView(g, threadsByGroup.get(g.id) ?? []),
+      ),
     };
   }
 }

@@ -10,7 +10,7 @@ import {
   AgentCredential,
   AgentCredentialRepo,
 } from '../../_lib/database/entities/agent-credential.entity';
-import { projectAgentCredentialView } from './agent-credential.view';
+import { AgentCredentialViewService } from './agent-credential-view.service';
 import { ClaudeOAuthClient, type ClaudeTokenSet } from './oauth/claude-oauth.client';
 import { assertValidCodexAuthJson, CodexAuthInvalidError } from './oauth/codex-auth-validate.util';
 import {
@@ -34,38 +34,39 @@ type UpsertPersonalInput = {
 @Injectable()
 export class AgentCredentialService {
   constructor(
-    private readonly repo: AgentCredentialRepo,
-    private readonly cipher: SecretCipherService,
-    private readonly claudeOAuth: ClaudeOAuthClient,
+    private readonly agentCredentialRepo: AgentCredentialRepo,
+    private readonly secretCipherService: SecretCipherService,
+    private readonly claudeOAuthClient: ClaudeOAuthClient,
+    private readonly agentCredentialViewService: AgentCredentialViewService,
   ) {}
 
   async list(orgId: string): Promise<AgentCredentialView[]> {
-    const rows = await this.repo.find({
+    const rows = await this.agentCredentialRepo.find({
       where: { orgId },
       order: { provider: 'ASC', createdAt: 'ASC' },
     });
-    return rows.map(projectAgentCredentialView);
+    return rows.map((row) => this.agentCredentialViewService.project(row));
   }
 
   async getById(orgId: string, credentialId: string): Promise<AgentCredential | null> {
-    return this.repo.findOne({ where: { id: credentialId, orgId } });
+    return this.agentCredentialRepo.findOne({ where: { id: credentialId, orgId } });
   }
 
   async getSelected(orgId: string, provider: EAgentProvider): Promise<AgentCredential | null> {
-    return this.repo.findOne({ where: { orgId, provider, selected: true } });
+    return this.agentCredentialRepo.findOne({ where: { orgId, provider, selected: true } });
   }
 
   decrypt(row: AgentCredential): string {
-    return this.cipher.decrypt(row.materialEnc);
+    return this.secretCipherService.decrypt(row.materialEnc);
   }
 
   toView(row: AgentCredential): AgentCredentialView {
-    return projectAgentCredentialView(row);
+    return this.agentCredentialViewService.project(row);
   }
 
   /** Upsert a Claude personal (OAuth) account from a fresh token set; dedupes by account email. */
   async upsertClaudePersonal(orgId: string, tokenSet: ClaudeTokenSet): Promise<AgentCredential> {
-    const material = JSON.stringify(this.claudeOAuth.tokenSetToBlob(tokenSet));
+    const material = JSON.stringify(this.claudeOAuthClient.tokenSetToBlob(tokenSet));
     return this.upsertPersonal({
       orgId,
       provider: EAgentProvider.CLAUDE,
@@ -84,7 +85,7 @@ export class AgentCredentialService {
     setupToken: string,
     label?: string,
   ): Promise<AgentCredential> {
-    const row = this.repo.create({
+    const row = this.agentCredentialRepo.create({
       orgId,
       provider: EAgentProvider.CLAUDE,
       kind: EAgentCredentialKind.SETUP_TOKEN,
@@ -92,12 +93,12 @@ export class AgentCredentialService {
       accountEmail: null,
       subscriptionType: null,
       scopes: null,
-      materialEnc: this.cipher.encrypt(setupToken.trim()),
+      materialEnc: this.secretCipherService.encrypt(setupToken.trim()),
       expiresAt: null,
       status: EAgentCredentialStatus.ACTIVE,
       selected: false,
     });
-    const saved = await this.repo.save(row);
+    const saved = await this.agentCredentialRepo.save(row);
     await this.ensureOneSelected(orgId, EAgentProvider.CLAUDE, saved.id);
     return saved;
   }
@@ -136,9 +137,9 @@ export class AgentCredentialService {
 
   /** Make one account the selected one for its (org, provider). Throws if the credential isn't found. */
   async setSelected(orgId: string, credentialId: string): Promise<void> {
-    const row = await this.repo.findOne({ where: { id: credentialId, orgId } });
+    const row = await this.agentCredentialRepo.findOne({ where: { id: credentialId, orgId } });
     if (!row) throw new NotFoundException('Agent credential not found');
-    await this.repo.manager.transaction(async (m) => {
+    await this.agentCredentialRepo.manager.transaction(async (m) => {
       // Clear the current selection FIRST so the partial-unique (org, provider) WHERE selected holds.
       await m.update(
         AgentCredential,
@@ -150,9 +151,9 @@ export class AgentCredentialService {
   }
 
   async remove(orgId: string, credentialId: string): Promise<void> {
-    const row = await this.repo.findOne({ where: { id: credentialId, orgId } });
+    const row = await this.agentCredentialRepo.findOne({ where: { id: credentialId, orgId } });
     if (!row) return;
-    await this.repo.delete({ id: credentialId, orgId });
+    await this.agentCredentialRepo.delete({ id: credentialId, orgId });
     // If we removed the selected account, promote the next one so the provider still has an active pick.
     if (row.selected) await this.ensureOneSelected(orgId, row.provider);
   }
@@ -163,15 +164,15 @@ export class AgentCredentialService {
     material: string,
     expiresAt: Date | null,
   ): Promise<void> {
-    await this.repo.manager.transaction(async (m) => {
+    await this.agentCredentialRepo.manager.transaction(async (m) => {
       const row = await m.findOne(AgentCredential, {
         where: { id: credentialId },
         lock: { mode: 'pessimistic_write' },
       });
       if (!row) return;
-      const current = this.cipher.decrypt(row.materialEnc);
+      const current = this.secretCipherService.decrypt(row.materialEnc);
       if (!isNewerMaterial(row.provider, material, current)) return;
-      row.materialEnc = this.cipher.encrypt(material);
+      row.materialEnc = this.secretCipherService.encrypt(material);
       row.expiresAt = expiresAt;
       row.lastRefreshedAt = new Date();
       row.status = EAgentCredentialStatus.ACTIVE;
@@ -180,7 +181,7 @@ export class AgentCredentialService {
   }
 
   async markStatus(credentialId: string, status: EAgentCredentialStatus): Promise<void> {
-    await this.repo.update({ id: credentialId }, { status });
+    await this.agentCredentialRepo.update({ id: credentialId }, { status });
   }
 
   private async upsertPersonal(input: UpsertPersonalInput): Promise<AgentCredential> {
@@ -188,7 +189,7 @@ export class AgentCredentialService {
       const existing = await this.findPersonalByEmail(input);
       if (existing) return this.applyPersonalUpdate(existing, input);
     }
-    const row = this.repo.create({
+    const row = this.agentCredentialRepo.create({
       orgId: input.orgId,
       provider: input.provider,
       kind: EAgentCredentialKind.PERSONAL,
@@ -197,13 +198,13 @@ export class AgentCredentialService {
       subscriptionType: input.subscriptionType,
       scopes: input.scopes,
       expiresAt: input.expiresAt,
-      materialEnc: this.cipher.encrypt(input.material),
+      materialEnc: this.secretCipherService.encrypt(input.material),
       status: EAgentCredentialStatus.ACTIVE,
       selected: false,
     });
     let saved: AgentCredential;
     try {
-      saved = await this.repo.save(row);
+      saved = await this.agentCredentialRepo.save(row);
     } catch (err) {
       // Concurrent first-login for the same email: the unique index rejected us — update in place.
       if (AgentCredentialService.isUniqueViolation(err) && input.accountEmail) {
@@ -217,7 +218,7 @@ export class AgentCredentialService {
   }
 
   private findPersonalByEmail(input: UpsertPersonalInput): Promise<AgentCredential | null> {
-    return this.repo.findOne({
+    return this.agentCredentialRepo.findOne({
       where: {
         orgId: input.orgId,
         provider: input.provider,
@@ -231,14 +232,14 @@ export class AgentCredentialService {
     row: AgentCredential,
     input: UpsertPersonalInput,
   ): Promise<AgentCredential> {
-    row.materialEnc = this.cipher.encrypt(input.material);
+    row.materialEnc = this.secretCipherService.encrypt(input.material);
     row.subscriptionType = input.subscriptionType;
     row.scopes = input.scopes;
     row.expiresAt = input.expiresAt;
     row.label = input.label;
     row.status = EAgentCredentialStatus.ACTIVE;
     row.lastRefreshedAt = new Date();
-    return this.repo.save(row);
+    return this.agentCredentialRepo.save(row);
   }
 
   /** Select `fallbackId` (or the oldest remaining account) when the provider has no selected account. */
@@ -247,11 +248,17 @@ export class AgentCredentialService {
     provider: EAgentProvider,
     fallbackId?: string,
   ): Promise<void> {
-    if (await this.repo.findOne({ where: { orgId, provider, selected: true } })) return;
+    if (await this.agentCredentialRepo.findOne({ where: { orgId, provider, selected: true } }))
+      return;
     const target =
       fallbackId ??
-      (await this.repo.findOne({ where: { orgId, provider }, order: { createdAt: 'ASC' } }))?.id;
-    if (target) await this.repo.update({ id: target }, { selected: true });
+      (
+        await this.agentCredentialRepo.findOne({
+          where: { orgId, provider },
+          order: { createdAt: 'ASC' },
+        })
+      )?.id;
+    if (target) await this.agentCredentialRepo.update({ id: target }, { selected: true });
   }
 
   private static isUniqueViolation(err: unknown): boolean {

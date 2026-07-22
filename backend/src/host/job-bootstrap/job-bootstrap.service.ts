@@ -1,4 +1,3 @@
-import { InjectFlowProducer } from '@nestjs/bullmq';
 import { Injectable, Logger } from '@nestjs/common';
 import { Db } from '@workspace/nestjs-rls/nest';
 import type { CreateJobDto, CreateJobResult } from '@workspace/shared';
@@ -12,14 +11,13 @@ import {
   EThreadStatus,
   EThreadType,
 } from '@workspace/shared';
-import { FlowProducer } from 'bullmq';
 import { Job } from '../../_lib/database/entities/job.entity';
 import { Repo } from '../../_lib/database/entities/repo.entity';
 import { ThreadGroup } from '../../_lib/database/entities/thread-group.entity';
 import { Thread } from '../../_lib/database/entities/thread.entity';
 import type { User } from '../../_lib/database/entities/user.entity';
 import { InboundMessageService } from '../inbound-message/inbound-message.service';
-import { buildTurnFlow } from './turn-flow';
+import { TurnFlowService } from './turn-flow.service';
 
 @Injectable()
 export class JobBootstrapService {
@@ -28,7 +26,7 @@ export class JobBootstrapService {
   constructor(
     private readonly db: Db,
     private readonly inbound: InboundMessageService,
-    @InjectFlowProducer() private readonly flowProducer: FlowProducer,
+    private readonly turnFlow: TurnFlowService,
   ) {}
 
   async create(dto: CreateJobDto, user: User): Promise<CreateJobResult> {
@@ -94,7 +92,7 @@ export class JobBootstrapService {
       });
 
     try {
-      await this.flowProducer.add(buildTurnFlow(jobId));
+      await this.turnFlow.enqueue(jobId);
     } catch (err) {
       this.logger.warn(
         `flow enqueue failed for job ${jobId}; reconciler will recover: ${String(err)}`,

@@ -10,11 +10,6 @@ export interface AuthRefreshProvenance {
   provider: EAgentProvider;
 }
 
-/**
- * Persists a token the engine's SDK rotated mid-run. Derives the new expiry from the secret itself and hands
- * it to the store, which writes it only if it's newer than what's held — so a slow write-back never clobbers
- * a fresher token. Exported directly (no port); the engine calls it across the app↔engine boundary later.
- */
 @Injectable()
 export class AgentAuthRefreshSink {
   constructor(private readonly store: AgentCredentialService) {}

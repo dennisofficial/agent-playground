@@ -8,12 +8,6 @@ import { AgentCredentialRefreshService } from './agent-credential-refresh.servic
 
 const REFRESH_WINDOW_MS = 35 * 60 * 1000;
 
-/**
- * Proactively refreshes personal accounts before they expire, so a turn never starts on a stale token.
- * Safe to run on every instance: `ensureFresh` serializes on a pessimistic row lock and re-checks
- * freshness under it, so at most one refresh actually hits the token endpoint per window. Skips the test
- * DB so the suite never makes live OAuth calls.
- */
 @Injectable()
 export class AgentCredentialKeepaliveService {
   private readonly logger = new Logger(AgentCredentialKeepaliveService.name);

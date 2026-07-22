@@ -10,8 +10,6 @@ export interface ResolvedAgentAuth {
   material: string;
 }
 
-/** The agent-auth slice of a turn's environment: env overrides (`null` = unset) plus, for `personal` OAuth,
- * the raw `.credentials.json` the engine writes to `CLAUDE_CONFIG_DIR`. */
 export interface AgentAuthEnv {
   env: Record<string, string | null>;
   credentialsFile?: string;
@@ -31,11 +29,6 @@ export class AgentCredentialResolver {
     return { credentialId: row.id, provider, kind: row.kind, material };
   }
 
-  /**
-   * The agent-auth env for a turn, or `null` when the org has no selected credential for the provider. Owns the
-   * Claude credential→env translation the engine used to do: a `setup-token` becomes `CLAUDE_CODE_OAUTH_TOKEN`
-   * with the metered API-key vars unset; a `personal` login rides `credentialsFile` (the engine writes it).
-   */
   async envForTurn(orgId: string, provider: EAgentProvider): Promise<AgentAuthEnv | null> {
     const resolved = await this.resolve(orgId, provider);
     if (!resolved) return null;

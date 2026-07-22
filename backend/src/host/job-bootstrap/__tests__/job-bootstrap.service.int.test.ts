@@ -21,8 +21,10 @@ import { ThreadGroup } from '../../../_lib/database/entities/thread-group.entity
 import { ThreadMessage } from '../../../_lib/database/entities/thread-message.entity';
 import { Thread } from '../../../_lib/database/entities/thread.entity';
 import type { User } from '../../../_lib/database/entities/user.entity';
+import type { FlowProducer } from 'bullmq';
 import { InboundMessageService } from '../../inbound-message/inbound-message.service';
 import { JobBootstrapService } from '../job-bootstrap.service';
+import { TurnFlowService } from '../turn-flow.service';
 
 const ENTITIES = [
   Organization,
@@ -63,7 +65,8 @@ describe('JobBootstrapService.create (int)', () => {
     });
     const inbound = new InboundMessageService(db, ds.getRepository(InboundMessage));
     flow = { add: vi.fn(async () => Promise.resolve({})) };
-    service = new JobBootstrapService(db, inbound, flow as never);
+    const turnFlow = new TurnFlowService(flow as unknown as FlowProducer);
+    service = new JobBootstrapService(db, inbound, turnFlow);
   });
 
   afterAll(async () => {

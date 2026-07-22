@@ -1,9 +1,9 @@
-import { InjectFlowProducer, Processor } from '@nestjs/bullmq';
-import { FlowProducer, Job } from 'bullmq';
+import { Processor } from '@nestjs/bullmq';
+import { Job } from 'bullmq';
 import { BaseQueue } from '../../_lib/queue/base-queue';
 import { InboundMessageService } from '../inbound-message/inbound-message.service';
 import { TurnDispatcherService } from '../turn/turn-dispatcher.service';
-import { buildTurnFlow } from './turn-flow';
+import { TurnFlowService } from './turn-flow.service';
 
 type DispatchData = { jobId: string };
 
@@ -12,7 +12,7 @@ export class TurnDispatchProcessor extends BaseQueue {
   constructor(
     private readonly inbound: InboundMessageService,
     private readonly turnDispatcher: TurnDispatcherService,
-    @InjectFlowProducer() private readonly flowProducer: FlowProducer,
+    private readonly turnFlow: TurnFlowService,
   ) {
     super();
   }
@@ -28,8 +28,10 @@ export class TurnDispatchProcessor extends BaseQueue {
         const claimed = await this.inbound.claimPending(jobId);
         if (claimed.length === 0) {
           drained = true;
+          this.logger.log(`job ${jobId}: no pending trigger messages, dispatch drained`);
           break;
         }
+        this.logger.log(`job ${jobId}: dispatching ${claimed.length} message(s)`);
         await this.turnDispatcher.run(jobId, claimed);
         await this.inbound.markDelivered(claimed.map((m) => m.id));
       }
@@ -37,7 +39,8 @@ export class TurnDispatchProcessor extends BaseQueue {
       // Only chase mid-run arrivals when we exited cleanly. On a thrown dispatch we let the BullMQ job
       // fail and retry the flow itself — re-adding here would double up with that retry.
       if (drained && (await this.inbound.hasPending(jobId))) {
-        await this.flowProducer.add(buildTurnFlow(jobId));
+        this.logger.log(`job ${jobId}: work arrived mid-run, re-enqueuing flow`);
+        await this.turnFlow.enqueue(jobId);
       }
     }
   }

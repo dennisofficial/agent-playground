@@ -118,11 +118,9 @@ export class SandboxService {
       .join(' ');
     // setsid detaches the engine from the exec session so the stream closes while the process keeps running.
     const cmd = `setsid env ${assignments} ${ENGINE_ENTRYPOINT} </dev/null >/tmp/engine-${turnId}.log 2>&1 &`;
-    await this.k8s.execInPod(this._namespace, SandboxService.podName(jobId), MAIN_CONTAINER, [
-      'sh',
-      '-c',
-      cmd,
-    ]);
+    const pod = SandboxService.podName(jobId);
+    this.logger.log(`launching engine turn ${turnId} in pod ${pod} → /tmp/engine-${turnId}.log`);
+    await this.k8s.execInPod(this._namespace, pod, MAIN_CONTAINER, ['sh', '-c', cmd]);
     await this.touch(jobId);
   }
 

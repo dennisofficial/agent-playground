@@ -1,5 +1,9 @@
 import type { AccountUsageSnapshot } from '@workspace/shared';
-import { planLabel, snapshotToUsage } from '../agent-credential.view';
+import { AgentCredentialViewService } from '../agent-credential-view.service';
+
+const view = new AgentCredentialViewService();
+const planLabel = (s: string | null) => view.planLabel(s);
+const snapshotToUsage = (s: AccountUsageSnapshot | null) => view.snapshotToUsage(s);
 
 describe('planLabel', () => {
   it('title-cases and appends "plan"', () => {

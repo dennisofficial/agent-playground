@@ -8,6 +8,7 @@ import { JobBootstrapController } from './job-bootstrap.controller';
 import { JobBootstrapService } from './job-bootstrap.service';
 import { JobReconcileService } from './job-reconcile.service';
 import { TurnDispatchProcessor } from './turn-dispatch.processor';
+import { TurnFlowService } from './turn-flow.service';
 
 @CreateModule({
   imports: [
@@ -19,7 +20,7 @@ import { TurnDispatchProcessor } from './turn-dispatch.processor';
   ],
   queues: [TurnDispatchProcessor],
   processors: [TurnDispatchProcessor],
-  services: [JobBootstrapService, JobReconcileService],
+  services: [JobBootstrapService, JobReconcileService, TurnFlowService],
   controllers: [JobBootstrapController],
 })
 export class JobBootstrapModule {}

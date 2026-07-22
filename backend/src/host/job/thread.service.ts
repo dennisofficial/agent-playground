@@ -3,20 +3,21 @@ import type { ThreadGroupView, ThreadView } from '@workspace/shared';
 import type { FindOptionsWhere } from 'typeorm';
 import { ThreadGroupRepo } from '../../_lib/database/entities/thread-group.entity';
 import { Thread, ThreadRepo } from '../../_lib/database/entities/thread.entity';
-import { toThreadGroupView, toThreadView } from './job.view';
+import { JobViewService } from './job-view.service';
 
 @Injectable()
 export class ThreadService {
   constructor(
-    private readonly groups: ThreadGroupRepo,
-    private readonly threads: ThreadRepo,
+    private readonly threadGroupRepo: ThreadGroupRepo,
+    private readonly threadRepo: ThreadRepo,
+    private readonly jobViewService: JobViewService,
   ) {}
 
   /** The job's thread groups (ordered), each with its threads nested. */
   async listGroups(jobId: string): Promise<ThreadGroupView[]> {
     const [groups, threads] = await Promise.all([
-      this.groups.find({ where: { jobId }, order: { ordinal: 'ASC' } }),
-      this.threads.find({ where: { jobId }, order: { ordinal: 'ASC' } }),
+      this.threadGroupRepo.find({ where: { jobId }, order: { ordinal: 'ASC' } }),
+      this.threadRepo.find({ where: { jobId }, order: { ordinal: 'ASC' } }),
     ]);
     const byGroup = new Map<string, Thread[]>();
     for (const t of threads) {
@@ -24,7 +25,7 @@ export class ThreadService {
       list.push(t);
       byGroup.set(t.threadGroupId, list);
     }
-    return groups.map((g) => toThreadGroupView(g, byGroup.get(g.id) ?? []));
+    return groups.map((g) => this.jobViewService.toThreadGroupView(g, byGroup.get(g.id) ?? []));
   }
 
   /** The job's threads (ordered), optionally narrowed to one group or thread kind. */
@@ -35,7 +36,7 @@ export class ThreadService {
     const where: FindOptionsWhere<Thread> = { jobId };
     if (filter.groupId) where.threadGroupId = filter.groupId;
     if (filter.kind) where.type = filter.kind as Thread['type'];
-    const rows = await this.threads.find({ where, order: { ordinal: 'ASC' } });
-    return rows.map(toThreadView);
+    const rows = await this.threadRepo.find({ where, order: { ordinal: 'ASC' } });
+    return rows.map((thread) => this.jobViewService.toThreadView(thread));
   }
 }

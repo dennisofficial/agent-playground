@@ -1,6 +1,6 @@
 import { EAgentProvider } from '@workspace/shared';
 import { describe, expect, it } from 'vitest';
-import { projectAgentCredentialView } from '../agent-credential.view';
+import { AgentCredentialViewService } from '../agent-credential-view.service';
 import { ClaudeOAuthClient } from '../oauth/claude-oauth.client';
 import { assertValidCodexAuthJson, CodexAuthInvalidError } from '../oauth/codex-auth-validate.util';
 import { decodeCodexAccountEmail } from '../oauth/codex-id-token.util';
@@ -142,6 +142,8 @@ describe('material-freshness', () => {
 });
 
 describe('projectAgentCredentialView', () => {
+  const projectAgentCredentialView = (input: Parameters<AgentCredentialViewService['project']>[0]) =>
+    new AgentCredentialViewService().project(input);
   const base = {
     id: 'id1',
     provider: EAgentProvider.CLAUDE,

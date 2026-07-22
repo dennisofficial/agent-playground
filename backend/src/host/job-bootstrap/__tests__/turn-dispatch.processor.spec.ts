@@ -4,7 +4,7 @@ import type { InboundMessage } from '../../../_lib/database/entities/inbound-mes
 import type { InboundMessageService } from '../../inbound-message/inbound-message.service';
 import type { TurnDispatcherService } from '../../turn/turn-dispatcher.service';
 import { TurnDispatchProcessor } from '../turn-dispatch.processor';
-import { buildTurnFlow } from '../turn-flow';
+import type { TurnFlowService } from '../turn-flow.service';
 
 const msg = (id: string): InboundMessage => ({ id }) as InboundMessage;
 
@@ -24,9 +24,9 @@ function makeProcessor(over: {
   const dispatcher = {
     run: over.dispatch ?? vi.fn(async () => {}),
   } as unknown as TurnDispatcherService;
-  const flow = { add: vi.fn(async () => Promise.resolve({})) };
-  const processor = new TurnDispatchProcessor(inbound, dispatcher, flow as never);
-  return { processor, inbound, dispatcher, flow };
+  const turnFlow = { enqueue: vi.fn(async () => {}) } as unknown as TurnFlowService;
+  const processor = new TurnDispatchProcessor(inbound, dispatcher, turnFlow);
+  return { processor, inbound, dispatcher, turnFlow };
 }
 
 describe('TurnDispatchProcessor.process', () => {
@@ -35,12 +35,12 @@ describe('TurnDispatchProcessor.process', () => {
       .fn<InboundMessageService['claimPending']>()
       .mockResolvedValueOnce([msg('a'), msg('b')])
       .mockResolvedValueOnce([]);
-    const { processor, inbound, flow } = makeProcessor({ claimPending });
+    const { processor, inbound, turnFlow } = makeProcessor({ claimPending });
 
     await processor.process(dispatch('job-1'));
 
     expect(inbound.markDelivered).toHaveBeenCalledWith(['a', 'b']);
-    expect(flow.add).not.toHaveBeenCalled(); // nothing new landed → no re-add
+    expect(turnFlow.enqueue).not.toHaveBeenCalled(); // nothing new landed → no re-add
   });
 
   it('leaves rows PENDING (never delivered) and does not re-add when a dispatch throws', async () => {
@@ -49,13 +49,13 @@ describe('TurnDispatchProcessor.process', () => {
       .mockResolvedValue([msg('a')]);
     const dispatchFn = vi.fn(async () => Promise.reject(new Error('sandbox not ready')));
     const hasPending = vi.fn(async () => Promise.resolve(true)); // rows are still pending after the failure
-    const { processor, inbound, flow } = makeProcessor({ claimPending, dispatch: dispatchFn, hasPending });
+    const { processor, inbound, turnFlow } = makeProcessor({ claimPending, dispatch: dispatchFn, hasPending });
 
     await expect(processor.process(dispatch('job-1'))).rejects.toThrow('sandbox not ready');
 
     expect(inbound.markDelivered).not.toHaveBeenCalled();
     // On a thrown dispatch BullMQ retries the flow — the processor must NOT also re-add it.
-    expect(flow.add).not.toHaveBeenCalled();
+    expect(turnFlow.enqueue).not.toHaveBeenCalled();
   });
 
   it('re-adds the flow in finally when new triggering work lands mid-run', async () => {
@@ -64,23 +64,11 @@ describe('TurnDispatchProcessor.process', () => {
       .mockResolvedValueOnce([msg('a')])
       .mockResolvedValueOnce([]); // drained cleanly
     const hasPending = vi.fn(async () => Promise.resolve(true)); // ...but a new now/queued row arrived meanwhile
-    const { processor, flow } = makeProcessor({ claimPending, hasPending });
+    const { processor, turnFlow } = makeProcessor({ claimPending, hasPending });
 
     await processor.process(dispatch('job-1'));
 
-    expect(flow.add).toHaveBeenCalledTimes(1);
-    expect(flow.add).toHaveBeenCalledWith(buildTurnFlow('job-1'));
-  });
-});
-
-describe('buildTurnFlow', () => {
-  it('uses deterministic single-flight job ids for the parent + child', () => {
-    const flow = buildTurnFlow('job-9');
-    expect(flow.opts?.jobId).toBe('dispatch-job-9');
-    expect(flow.children?.[0].opts?.jobId).toBe('provision-job-9');
-    // Provision fails fast (low attempts) rather than hammering the not-yet-implemented sandbox.
-    expect(flow.children?.[0].opts?.attempts).toBe(2);
-    // Host-side workspace prep is a grandchild so it retries independently of pod bring-up.
-    expect(flow.children?.[0].children?.[0].opts?.jobId).toBe('prepare-workspace-job-9');
+    expect(turnFlow.enqueue).toHaveBeenCalledTimes(1);
+    expect(turnFlow.enqueue).toHaveBeenCalledWith('job-1');
   });
 });

@@ -8,6 +8,7 @@ import { Organization } from '../../../_lib/database/entities/organization.entit
 import { Repo } from '../../../_lib/database/entities/repo.entity';
 import { ThreadGroup } from '../../../_lib/database/entities/thread-group.entity';
 import { Thread } from '../../../_lib/database/entities/thread.entity';
+import { JobViewService } from '../job-view.service';
 import { JobService } from '../job.service';
 
 const ENTITIES = [Organization, Repo, Job, ThreadGroup, Thread];
@@ -36,7 +37,12 @@ describe('JobService.archive + archived read-exclusion (int)', () => {
       resolveClaims: () => claims,
       exempt: () => false,
     });
-    service = new JobService(db, ds.getRepository(ThreadGroup), ds.getRepository(Thread));
+    service = new JobService(
+      db,
+      ds.getRepository(ThreadGroup),
+      ds.getRepository(Thread),
+      new JobViewService(),
+    );
   });
 
   afterAll(async () => {

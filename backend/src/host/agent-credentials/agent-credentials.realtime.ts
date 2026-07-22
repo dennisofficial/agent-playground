@@ -7,22 +7,19 @@ import type {
   EAgentProvider,
 } from '@workspace/shared';
 import { AgentCredential } from '../../_lib/database/entities/agent-credential.entity';
-import { projectAgentCredentialView } from './agent-credential.view';
+import { AgentCredentialViewService } from './agent-credential-view.service';
 
-/**
- * The `agentCredentials` realtime model — streams each account's metadata + usage windows to the web.
- * `mapRow` projects the WAL/snapshot row to the {@link AgentCredentialView} wire shape (same projection
- * as the REST seed) and CRUCIALLY drops `material_enc` — token material never reaches the SSE feed. Keeps
- * `orgId` for the guard scope. Contributed via `PgRealtimeModule.forFeature(...)`.
- */
-export function buildAgentCredentialsRealtimeModel(resolveClaims: ResolveClaims): ModelConfig {
+export function buildAgentCredentialsRealtimeModel(
+  resolveClaims: ResolveClaims,
+  view: AgentCredentialViewService,
+): ModelConfig {
   return {
     table: 'agent_credentials',
     name: 'agentCredentials',
     primaryKey: 'id',
     guard: rlsGuard(AgentCredential, resolveClaims),
     mapRow: (raw: Row): Row => ({
-      ...projectAgentCredentialView({
+      ...view.project({
         id: raw.id as string,
         provider: raw.provider as EAgentProvider,
         kind: raw.kind as EAgentCredentialKind,

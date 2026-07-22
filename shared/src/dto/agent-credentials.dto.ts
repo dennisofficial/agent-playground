@@ -1,8 +1,3 @@
-/**
- * Agent SDK credential manager contract (frontend ⇄ backend). Unlike the key-agnostic secret vault,
- * this surface is domain-aware: it speaks providers (Claude/Codex), OAuth login flows, and per-account
- * subscription usage. Token material NEVER crosses this wire — only metadata + usage windows.
- */
 import { IsEnum, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 import { EAgentCredentialKind, EAgentCredentialStatus, EAgentProvider } from '../enums';
 import type { AccountUsage } from '../types/usage';

@@ -16,3 +16,17 @@ the only things inside of each file is a class wrapped with functions, and for a
 # Naming Convension
 
 file names should be kebab-case, e.g. `order.service.ts`, AND classes should match the file name, e.g. `OrderService`.
+
+Whenever naming constructor parameters, name the parameter the same as the type. E.g.
+
+```ts
+constructor(private readonly orderService: OrderService) {
+}
+```
+
+NOT
+
+```ts
+constructor(private readonly orders: OrderService) {
+}
+```

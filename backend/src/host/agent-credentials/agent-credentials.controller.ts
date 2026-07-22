@@ -38,11 +38,6 @@ import { OAuthDeviceStore } from './oauth/oauth-device.store';
 import { OAuthPkceStore } from './oauth/oauth-pkce.store';
 import { AgentUsageService } from './usage/agent-usage.service';
 
-/**
- * Agent SDK credential manager — multi-account subscription login for an org. Reads require membership;
- * every write requires ownership (mirrors the vault controller). Token material never crosses this wire;
- * the account list is also streamed live via the `agentCredentials` realtime model.
- */
 @Controller('orgs/:orgId/agent-credentials')
 export class AgentCredentialsController {
   constructor(
@@ -66,10 +61,6 @@ export class AgentCredentialsController {
     return this.store.list(orgId);
   }
 
-  /**
-   * Realtime account list for an org (`streamList`). The membership guard scopes rows to the caller's
-   * orgs; the `orgId` filter narrows to this org — a non-member gets an empty stream, never a leak.
-   */
   @Sse('realtime')
   stream(
     @CurrentUser() user: User,

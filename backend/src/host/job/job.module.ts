@@ -12,6 +12,7 @@ import {
 import { Thread, ThreadRepo } from '../../_lib/database/entities/thread.entity';
 import { JobController } from './job.controller';
 import { buildJobRealtimeModels } from './job.realtime';
+import { JobViewService } from './job-view.service';
 import { JobService } from './job.service';
 import { MessageService } from './message.service';
 import { TaskService } from './task.service';
@@ -32,7 +33,7 @@ import { ThreadService } from './thread.service';
     { entity: Subagent, repoClass: SubagentRepo },
     { entity: Task, repoClass: TaskRepo },
   ],
-  services: [JobService, ThreadService, MessageService, TaskService],
+  services: [JobViewService, JobService, ThreadService, MessageService, TaskService],
   controllers: [JobController],
 })
 export class JobModule {}
