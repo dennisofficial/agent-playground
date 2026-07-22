@@ -11,6 +11,11 @@ import { MessageQueue } from './message-queue';
 const CLAUDE_CONFIG_DIR = join(ATLAS_STATE_MOUNT, 'claude');
 const CODEX_CONFIG_DIR = join(ATLAS_STATE_MOUNT, 'codex');
 
+// Emit a liveness beat while the SDK runs. It keeps the host's sandbox lease warm through long *silent* steps (a
+// 40-min build) so the reaper can't kill the pod mid-turn, and resets the host's stall timer so a healthy-but-quiet
+// turn isn't mistaken for a dead engine. Must be well under the host's TURN_STALL_MS.
+const HEARTBEAT_MS = 20_000;
+
 @Injectable()
 export class RunnerService {
   private readonly logger = new Logger(RunnerService.name);
@@ -35,6 +40,9 @@ export class RunnerService {
     // Pump mid-turn steering messages into the live query. Runs concurrently with the SDK loop; aborted at turn end.
     const steering = new AbortController();
     const pump = this.pumpInput(turnId, steering.signal);
+    const heartbeat = setInterval(() => {
+      void this.transport.emitEvent(turnId, { type: 'heartbeat' }).catch(() => {});
+    }, HEARTBEAT_MS);
 
     let events = 0;
     try {
@@ -47,6 +55,7 @@ export class RunnerService {
       }
       this.logger.log(`SDK query loop ended after ${events} event(s)`);
     } finally {
+      clearInterval(heartbeat);
       steering.abort();
       await pump; // let the input reader tear its connection down before we close the queue
       this.input?.close();

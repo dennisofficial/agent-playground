@@ -165,4 +165,18 @@ describe('InboundMessageService (int)', () => {
     expect(await service.hasPending(jobId)).toBe(false);
     expect(await service.claimPending(jobId)).toEqual([]);
   });
+
+  it('pendingExcluding returns PENDING arrivals not in the exclude set (a running turn steers these)', async () => {
+    const a = await service.enqueue(base('a', EInboundPriority.NOW)); // the turn's own trigger
+    await sleep(5);
+    const b = await service.enqueue(base('b', EInboundPriority.NOW)); // arrived mid-turn
+
+    const fresh = await service.pendingExcluding(jobId, new Set([a.id]));
+    expect(fresh.map((m) => m.id)).toEqual([b.id]);
+
+    // Delivered rows never come back — after steering `b`, only the still-pending `a` remains.
+    await service.markDelivered([b.id]);
+    const remaining = await service.pendingExcluding(jobId, new Set());
+    expect(remaining.map((m) => m.id)).toEqual([a.id]);
+  });
 });

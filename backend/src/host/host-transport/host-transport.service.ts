@@ -4,8 +4,16 @@ import { REDIS_CLIENT } from '../../_lib/redis/redis.tokens';
 import { turnKeys } from '../../_shared/engine/redis-turn-keys';
 import type { TurnSpec } from '../../_shared/engine/turn-spec';
 
-/** How long an events read blocks per poll before looping — bounds shutdown latency. */
 const EVENTS_BLOCK_MS = 1_000;
+const TURN_STALL_MS = 60_000;
+
+/** A turn's engine stopped emitting — no event (incl. heartbeat) within the stall window. Thrown by readEvents. */
+export class TurnStalledError extends Error {
+  constructor(turnId: string, stallMs: number) {
+    super(`turn ${turnId} stalled: no engine event for ${stallMs}ms`);
+    this.name = 'TurnStalledError';
+  }
+}
 
 @Injectable()
 export class HostTransportService {
@@ -20,11 +28,12 @@ export class HostTransportService {
     await this.redis.xadd(turnKeys(turnId).input, '*', 'data', text);
   }
 
-  async *readEvents(turnId: string): AsyncGenerator<unknown> {
+  async *readEvents(turnId: string, stallMs: number = TURN_STALL_MS): AsyncGenerator<unknown> {
     const { events } = turnKeys(turnId);
     const conn = this.redis.duplicate();
     try {
       let lastId = '0';
+      let lastEventAt = Date.now();
       while (true) {
         const res: Array<[string, Array<[string, string[]]>]> | null = await conn.xread(
           'BLOCK',
@@ -33,10 +42,14 @@ export class HostTransportService {
           events,
           lastId,
         );
-        if (!res) continue;
+        if (!res) {
+          if (Date.now() - lastEventAt > stallMs) throw new TurnStalledError(turnId, stallMs);
+          continue;
+        }
         for (const [, entries] of res) {
           for (const [id, fields] of entries) {
             lastId = id;
+            lastEventAt = Date.now();
             const di = fields.indexOf('data');
             if (di >= 0) yield JSON.parse(fields[di + 1]);
           }

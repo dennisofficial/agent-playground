@@ -77,6 +77,14 @@ export class InboundMessageService {
     return hasTrigger ? pending : [];
   }
 
+  async pendingExcluding(jobId: string, exclude: Set<string>): Promise<InboundMessage[]> {
+    const rows = await this.db.unsafe(InboundMessage).find({
+      where: { jobId, status: EInboundMessageStatus.PENDING },
+      order: { createdAt: 'ASC' },
+    });
+    return rows.filter((r) => !exclude.has(r.id));
+  }
+
   /** Mark a claimed batch as handed off to the engine. */
   async markDelivered(ids: string[]): Promise<void> {
     if (ids.length === 0) return;
