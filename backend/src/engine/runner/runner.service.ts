@@ -26,7 +26,7 @@ export class RunnerService {
   async run(turnId: string, spec: TurnSpec): Promise<void> {
     this.input = new MessageQueue<SDKUserMessage>();
     this.input.push(this.userMessage(spec.prompt));
-    this.logger.log(`turn ${turnId}: starting Claude SDK query (model=${spec.model ?? 'default'})`);
+    this.logger.log(`starting Claude SDK query (model=${spec.model ?? 'default'})`);
     this.handle = this.sdk.query({
       prompt: this.input,
       options: this.buildClaudeOptions(spec),
@@ -37,11 +37,11 @@ export class RunnerService {
       for await (const msg of this.handle) {
         events++;
         // First event confirms the SDK subprocess actually spawned — the usual silent-hang boundary.
-        if (events === 1) this.logger.log(`turn ${turnId}: SDK stream open, first event received`);
+        if (events === 1) this.logger.log(`SDK stream open, first event received`);
         await this.transport.emitEvent(turnId, msg);
         if (msg.type === 'result') break;
       }
-      this.logger.log(`turn ${turnId}: SDK query loop ended after ${events} event(s)`);
+      this.logger.log(`SDK query loop ended after ${events} event(s)`);
     } finally {
       this.input?.close();
       this.input = undefined;

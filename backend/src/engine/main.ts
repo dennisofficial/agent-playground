@@ -17,9 +17,9 @@ async function bootstrap(): Promise<void> {
 
   // Fetch the spec up front, then hand it to the runner.
   const engineTransportService = app.get(EngineTransportService);
-  logger.log(`turn ${turnId}: reading spec from Redis…`);
+  logger.log(`reading spec from Redis…`);
   const spec = await engineTransportService.readSpec(turnId);
-  logger.log(`turn ${turnId}: spec read (model=${spec.model ?? 'default'}, cwd=${spec.cwd})`);
+  logger.log(`spec read (model=${spec.model ?? 'default'}, cwd=${spec.cwd})`);
 
   const runner = app.get(RunnerService);
   process.on('SIGTERM', () => void runner.interrupt());
@@ -27,7 +27,7 @@ async function bootstrap(): Promise<void> {
   let code = 0;
   try {
     await runner.run(turnId, spec);
-    logger.log(`turn ${turnId}: completed`);
+    logger.log(`completed`);
   } catch (err) {
     logger.error(
       `turn ${turnId} failed: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
