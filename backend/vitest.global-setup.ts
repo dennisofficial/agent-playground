@@ -37,14 +37,6 @@ export default async function globalSetup(): Promise<void> {
     await admin.end();
   }
 
-  // Atlas v2 owns its datasource ('atlas') with its own `app` tables + migration history
-  // (`migrations/`, bookkept in `atlas_migrations`). Stand it up so the Atlas boot int test
-  // — which boots the full Atlas DI graph and reconciles in-flight jobs on bootstrap — runs against the
-  // real schema, not a missing-table error. The migrations run via the same CLI path as
-  // `pnpm db:atlas:migrate`, minus env:inject (which would load the DEV env — this child inherits
-  // our already-loaded test env instead). The CLI's ts-node hook is what loads the .ts migration
-  // files; TypeORM can't require them from this vite-node context. Idempotent: only pending
-  // atlas migrations run.
   execFileSync(
     'pnpm',
     ['exec', 'typeorm-ts-node-commonjs', 'migration:run', '-d', 'cli/data-source.ts'],
@@ -58,15 +50,6 @@ export default async function globalSetup(): Promise<void> {
   await provisionMcpRoles({ ...conn, database: db });
 }
 
-/**
- * Provision the two dedicated diagnostics DB roles on the test database with the SAME least-privilege
- * grants the `infra/mcp-{reader,writer}-role.sql` files apply in prod, so the backend thread's integration
- * tests exercise the REAL role restrictions (a `mcp_reader` that genuinely rejects an UPDATE; a `mcp_writer`
- * that genuinely can't DDL and can't touch its own audit ledger) — not a mock. Runs AFTER migrate so the
- * blanket grants cover every table and the audit-ledger REVOKE finds `prod_maintenance_write`. Idempotent:
- * roles are cluster-global, so re-create only if absent; grants are always re-applied. `MCP_*_PG_*` in
- * `.env.test.enc` point the pools at these roles with the fixed test password.
- */
 async function provisionMcpRoles(conn: {
   host?: string;
   port: number;
