@@ -18,6 +18,7 @@ import {
 import { Db } from '@workspace/nestjs-rls/nest';
 import type { Redis } from 'ioredis';
 import { resolve } from 'node:path';
+import { HostTransportService } from '../host-transport/host-transport.service';
 import { ProvisionStatusService } from '../provision-status/provision-status.service';
 import {
   type WorkspaceMountView,
@@ -51,6 +52,7 @@ export class SandboxService {
     private readonly profile: WorkspaceProfileService,
     private readonly status: ProvisionStatusService,
     private readonly k8s: K8sService,
+    private readonly transport: HostTransportService,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
     env: EnvService,
   ) {
@@ -70,21 +72,20 @@ export class SandboxService {
 
     await this.touch(jobId);
 
+    // Resolve SANDBOX_IMAGE's `:latest` tag to the immutable digest the registry currently serves. Comparing
+    // (and pinning the pod spec to) that digest makes the freshness check definite and self-updating: a rebuild
+    // changes the digest, so a running pod goes stale with NO host restart to bump a tag.
+    const desiredImage = await this.resolveDesiredImage();
+
     const name = this.podName(jobId);
     const existing = await this.k8s.getPod(this._namespace, name);
     if (existing) {
       const phase = existing.status?.phase;
-      // Build-freshness gate: a pod created on an older image keeps running the old engine/runtime until reaped
-      // (30 min idle). A new deploy bumps SANDBOX_IMAGE (immutable per build), so recreate on mismatch NOW — at
-      // turn start, before we launch — and the next turn runs the current build. This is the RUNTIME/image-change
-      // path (new base image, apt packages); engine-code changes ride the swappable engine mount instead (same
-      // image ref, hotswapped between turns), so they never trip this.
       const podImage = existing.spec?.containers?.find((c) => c.name === MAIN_CONTAINER)?.image;
-      const staleBuild = phase !== 'Failed' && podImage !== undefined && podImage !== this._image;
-      if (staleBuild) {
-        // Force-delete and wait for it to actually disappear before recreating the same pod name — a graceful
-        // delete of a running pod lingers (terminating) and would 409 the immediate re-create.
-        this.logger.log(`recreating ${name}: sandbox build ${podImage} → ${this._image}`);
+      const staleBuild = phase !== 'Failed' && podImage !== undefined && podImage !== desiredImage;
+      const turnLive = (await this.transport.readTurnLive(jobId)) !== null;
+      if (staleBuild && !turnLive) {
+        this.logger.log(`recreating ${name}: sandbox build ${podImage} → ${desiredImage}`);
         await this.k8s.deletePod(this._namespace, name, 0);
         await this.k8s.waitForPodGone(this._namespace, name);
       } else if (phase === 'Running') {
@@ -111,7 +112,7 @@ export class SandboxService {
       try {
         await this.k8s.createPod(
           this._namespace,
-          this.buildPodSpec(job, name, setupScript, mounts),
+          this.buildPodSpec(job, name, desiredImage, setupScript, mounts),
         );
       } catch (err) {
         // Lost the provision race — the winner's pod is coming up; just wait for it.
@@ -175,9 +176,56 @@ export class SandboxService {
     }
   }
 
+  /**
+   * Resolve SANDBOX_IMAGE (a `registry/repo:tag` ref) to the immutable digest ref (`registry/repo@sha256:…`) the
+   * registry currently serves for that tag, by asking the k3d registry's v2 manifest API. Pinning the pod spec to
+   * the digest turns build-freshness into a definite comparison — a rebuild+push changes the digest, so running
+   * pods go stale with no host restart to bump a tag. Falls back to the tag ref (previous behavior) when the ref
+   * is already digest-pinned or the registry can't be reached, so a registry hiccup never blocks a turn.
+   */
+  private async resolveDesiredImage(): Promise<string> {
+    const ref = this._image;
+    if (ref.includes('@')) return ref; // already digest-pinned
+    const slash = ref.lastIndexOf('/');
+    const authority = ref.slice(0, slash); // e.g. k3d-atlas-registry:5111 (the in-cluster name pods pull by)
+    const nameTag = ref.slice(slash + 1); // e.g. atlas-sandbox:latest
+    const colon = nameTag.lastIndexOf(':');
+    if (colon === -1) return ref; // untagged → nothing to resolve
+    const repo = nameTag.slice(0, colon);
+    const tag = nameTag.slice(colon + 1);
+    // The k3d registry is published to the host on the same port under localhost; the in-cluster authority name
+    // isn't host-resolvable, so query localhost:<port> for the digest and keep the in-cluster authority in the ref.
+    const port = authority.includes(':') ? authority.slice(authority.lastIndexOf(':') + 1) : '80';
+    const url = `http://localhost:${port}/v2/${repo}/manifests/${tag}`;
+    try {
+      const res = await fetch(url, {
+        method: 'HEAD',
+        headers: {
+          Accept: [
+            'application/vnd.docker.distribution.manifest.v2+json',
+            'application/vnd.oci.image.manifest.v1+json',
+            'application/vnd.docker.distribution.manifest.list.v2+json',
+            'application/vnd.oci.image.index.v1+json',
+          ].join(', '),
+        },
+      });
+      const digest = res.headers.get('docker-content-digest');
+      if (!res.ok || !digest) {
+        this.logger.warn(`registry digest lookup for ${ref} returned ${res.status}; using tag ref`);
+        return ref;
+      }
+      return `${authority}/${repo}@${digest}`;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`registry unreachable for ${ref} digest lookup (${msg}); using tag ref`);
+      return ref;
+    }
+  }
+
   private buildPodSpec(
     job: Job,
     name: string,
+    image: string,
     setupScript: string | null,
     mounts: WorkspaceMountView[],
   ): V1Pod {
@@ -216,7 +264,7 @@ export class SandboxService {
       ? [
           {
             name: SETUP_CONTAINER,
-            image: this._image,
+            image,
             imagePullPolicy: 'Always',
             command: ['sh', '-c', this.setupWrapper(setupScript)],
             volumeMounts: sharedMounts,
@@ -251,7 +299,7 @@ export class SandboxService {
         containers: [
           {
             name: MAIN_CONTAINER,
-            image: this._image,
+            image,
             imagePullPolicy: 'Always',
             securityContext: {
               privileged: true,
@@ -261,6 +309,9 @@ export class SandboxService {
               { name: 'ENGINE_TRANSPORT', value: 'redis' },
               { name: 'REDIS_URL', value: this._sandboxRedisUrl },
               { name: 'CLAUDE_CODE_SHELL_PREFIX', value: SHELL_PREFIX_WRAPPER },
+              // The pod is privileged and runs as root; Claude Code refuses bypassPermissions (RunnerService sets
+              // it) under root unless told it is already sandboxed. This container IS the sandbox, so declare it.
+              { name: 'IS_SANDBOX', value: '1' },
             ],
             volumeMounts: [
               ...sharedMounts,

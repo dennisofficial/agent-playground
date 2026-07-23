@@ -1,5 +1,5 @@
-import { env } from '@/lib/env';
-import { streamList } from '@workspace/pg-realtime/rtk';
+import { getRealtimeClient } from '@/lib/realtime/realtime-client';
+import { makeSocketListOpener, streamList } from '@workspace/pg-realtime/rtk';
 import type {
   CreateJobDto,
   CreateJobResult,
@@ -14,9 +14,6 @@ import type {
   ThreadView,
 } from '@workspace/shared';
 import { baseApi, EBaseApiCacheTags } from './baseApi';
-import { sseOpener } from './sse-opener';
-
-const BACKEND = env.NEXT_PUBLIC_BACKEND_URL;
 
 export const jobsApi = baseApi.injectEndpoints({
   overrideExisting: true,
@@ -55,8 +52,8 @@ export const jobsApi = baseApi.injectEndpoints({
       providesTags: [EBaseApiCacheTags.JOB],
       onCacheEntryAdded: (_arg, api) =>
         streamList<JobListItem>({
-          url: new URL(`/jobs/realtime`, BACKEND).toString(),
-          open: sseOpener,
+          url: 'jobs',
+          open: makeSocketListOpener(getRealtimeClient(), 'jobs'),
           lifecycle: api,
         }),
     }),
@@ -73,8 +70,8 @@ export const jobsApi = baseApi.injectEndpoints({
       ],
       onCacheEntryAdded: (jobId, api) =>
         streamList<ThreadGroupView>({
-          url: new URL(`/jobs/${jobId}/thread-groups/realtime`, BACKEND).toString(),
-          open: sseOpener,
+          url: 'thread_groups',
+          open: makeSocketListOpener(getRealtimeClient(), 'thread_groups', { filter: { jobId } }),
           lifecycle: api,
         }),
     }),
@@ -92,8 +89,12 @@ export const jobsApi = baseApi.injectEndpoints({
       ],
       onCacheEntryAdded: ({ jobId }, api) =>
         streamList<ThreadView>({
-          url: new URL(`/jobs/${jobId}/threads/realtime`, BACKEND).toString(),
-          open: sseOpener,
+          url: 'threads',
+          // Server streams all threads for the job (same as the old SSE endpoint); groupId/kind are
+          // client-side cache-key/scoping args only — they are NOT fields on the threads model.
+          open: makeSocketListOpener(getRealtimeClient(), 'threads', {
+            filter: { jobId },
+          }),
           lifecycle: api,
         }),
     }),
@@ -105,8 +106,10 @@ export const jobsApi = baseApi.injectEndpoints({
       ],
       onCacheEntryAdded: (jobId, api) =>
         streamList<ThreadMessageView>({
-          url: new URL(`/jobs/${jobId}/messages/realtime`, BACKEND).toString(),
-          open: sseOpener,
+          url: 'thread_messages',
+          open: makeSocketListOpener(getRealtimeClient(), 'thread_messages', {
+            filter: { jobId },
+          }),
           lifecycle: api,
         }),
     }),
@@ -119,10 +122,12 @@ export const jobsApi = baseApi.injectEndpoints({
       providesTags: (_result, _error, { threadId }) => [
         { type: EBaseApiCacheTags.JOB, id: `thread:${threadId}` },
       ],
-      onCacheEntryAdded: ({ jobId, threadId }, api) =>
+      onCacheEntryAdded: ({ threadId }, api) =>
         streamList<ThreadMessageView>({
-          url: new URL(`/jobs/${jobId}/threads/${threadId}/messages/realtime`, BACKEND).toString(),
-          open: sseOpener,
+          url: 'thread_messages',
+          open: makeSocketListOpener(getRealtimeClient(), 'thread_messages', {
+            filter: { threadId },
+          }),
           lifecycle: api,
         }),
     }),
@@ -134,8 +139,8 @@ export const jobsApi = baseApi.injectEndpoints({
       ],
       onCacheEntryAdded: (jobId, api) =>
         streamList<TaskView>({
-          url: new URL(`/jobs/${jobId}/tasks/realtime`, BACKEND).toString(),
-          open: sseOpener,
+          url: 'tasks',
+          open: makeSocketListOpener(getRealtimeClient(), 'tasks', { filter: { jobId } }),
           lifecycle: api,
         }),
     }),
@@ -149,12 +154,13 @@ export const jobsApi = baseApi.injectEndpoints({
       ],
       onCacheEntryAdded: (jobId, api) =>
         streamList<InboundMessageView>({
-          url: new URL(`/jobs/${jobId}/inbound/realtime`, BACKEND).toString(),
-          open: sseOpener,
+          url: 'inbound_messages',
+          open: makeSocketListOpener(getRealtimeClient(), 'inbound_messages', {
+            filter: { jobId },
+          }),
           lifecycle: api,
         }),
     }),
-
   }),
 });
 

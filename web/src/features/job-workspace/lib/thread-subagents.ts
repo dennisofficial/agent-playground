@@ -1,5 +1,6 @@
 import type { JobMessage } from '@/lib/api/job-api';
 import type { LiveBlock } from '@/lib/api/job-stream';
+import { EThreadOutputType } from '@workspace/shared';
 import { indexDurableSubagents, indexLiveSubagents, type SubagentSummary } from '../subagents';
 
 /**
@@ -75,7 +76,7 @@ export function liveSubagentRunsForPhase(laneBlocks: LiveBlock[]): SubagentSumma
 export function durableSessionToolCounts(messages: JobMessage[]): Map<string, number> {
   const counts = new Map<string, number>();
   for (const m of messages) {
-    if (m.kind !== 'tool') continue;
+    if (m.type !== EThreadOutputType.TOOL) continue;
     const phaseId = typeof m.meta?.phaseId === 'string' ? m.meta.phaseId : null;
     if (!phaseId) continue;
     if (typeof m.meta?.parentToolUseId === 'string') continue; // a writer subagent's tool, not the session's

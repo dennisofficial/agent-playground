@@ -33,10 +33,8 @@ export function indexAutofixBlocks(messages: JobMessage[]): AutofixIndex {
   const childKeys = new Set<string>();
   const anchorKeys = new Set<string>();
   for (const m of messages) {
-    if (m.kind === 'autofix_anchor') {
-      anchorKeys.add(m.ts);
-      continue;
-    }
+    // Autofix blocks self-select by `meta.autofixId`. (A dedicated anchor row is not a v3 message type yet,
+    // so `anchorKeys` stays empty until the engine emits one.)
     if (typeof m.meta?.autofixId === 'string') childKeys.add(m.ts);
   }
   return { childKeys, anchorKeys };

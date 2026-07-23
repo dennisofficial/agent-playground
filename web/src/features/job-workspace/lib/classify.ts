@@ -10,6 +10,7 @@ import type {
   WebSkillProposalCard,
   WebVerdictCard,
 } from '@/lib/api/types';
+import { EInboundMessageType, EThreadOutputType } from '@workspace/shared';
 
 /**
  * The conversation bubble kinds the work column renders. `approval`/`verdict` are STRUCTURED (the card
@@ -92,97 +93,95 @@ export type ClassifiedMessage =
   | { kind: 'system_reminder'; message: JobMessage }
   /** Untrusted external data folded into a turn (event body, halted-thread record). Its own "untrusted" pill. */
   | { kind: 'untrusted'; message: JobMessage }
-  /** A build-thread anchor row (`kind: 'build_anchor'`) — driver bookkeeping with no operator-facing content.
-   *  Explicitly excluded from rendering (see the render-kind dispatch's no-op case). */
+  /** A build-thread anchor row — driver bookkeeping with no operator-facing content, never rendered. */
   | { kind: 'build_anchor'; message: JobMessage };
 
 const WARN_RE = /\b(paused|halt|failed|error|blocked|credential|expired)\b/i;
 const OK_RE = /\b(resumed|done|completed|merged|approved|opened|landed)\b/i;
 
 /**
- * Pick the bubble kind for a message — STRUCTURED SIGNALS ONLY. Everything is keyed off a real backend
- * field (`author`, `kind`, `card.type`); there is NO text-regex inference. Anything that isn't one of
- * those structured kinds falls through to plain `claude`prose (rendered as markdown). This deliberately
- * dropped the old park / PR / decision / status-line heuristics, which mis-fired on ordinary that
- * merely mentioned those words (e.g. a message discussing"always-ask" decisions rendered as a fake
- * "Decision needed — paused" card).
+ * Map a message's authoritative {@link EThreadMessageType} (stamped server-side) to the view's render kind —
+ * the ONE place the data taxonomy meets the render taxonomy. It's an exhaustive switch, so adding a new
+ * `EThreadMessageType` member fails to compile here (`assertNever`) until it's given a render kind. That is
+ * the single-source guarantee: a new message type can't slip into the UI silently.
+ *
+ * Several intake types collapse to one render kind on purpose (an `operator`/`answer_question`/… all render
+ * as the same user bubble) — the VIEW doesn't care which intake variety produced the bubble.
  */
 export function classifyMessage(message: JobMessage): ClassifiedMessage {
-  // System messages (provenance-tagged) — check BEFORE the user/atlas fallback. Older rows without an
-  // explicit `source` are unaffected (they fall through to user/atlas).
-  if (message.source === 'system_operator') {
-    return { kind: 'system_operator', message };
-  }
-  if (message.source === 'system_shared') {
-    return { kind: 'system_shared', message };
-  }
-  if (message.source === 'system_event') {
-    return { kind: 'system_event', message };
-  }
-  if (message.source === 'system_notice') {
-    return { kind: 'system_notice', message };
-  }
-  if (message.source === 'system_reminder') {
-    return { kind: 'system_reminder', message };
-  }
-  if (message.source === 'untrusted') {
-    return { kind: 'untrusted', message };
-  }
+  switch (message.type) {
+    // Intake → user bubble (the view collapses every operator-originated variety).
+    case EInboundMessageType.OPERATOR:
+    case EInboundMessageType.ANSWER_QUESTION:
+    case EInboundMessageType.FILE_ANSWERED:
+    case EInboundMessageType.SECRET_PROVIDED:
+      return { kind: 'user', message };
+    case EInboundMessageType.REVIEW_COMMENTS:
+      return { kind: 'review_comments', message, card: message.card as WebReviewCommentsCard };
+    case EInboundMessageType.ATTACHMENTS:
+      return { kind: 'attachments', message, card: message.card as WebAttachmentsCard };
 
-  // A sent review-comment bundle IS operator-authored (`author: 'user'`) but carries a structured card and
-  // renders as one — check it BEFORE the plain-user fallback below.
-  if (message.card?.type === 'review_comments_card') {
-    return { kind: 'review_comments', message, card: message.card };
-  }
-  // Composer attachments are ALSO operator-authored but carry an attachments card — check before the fallback.
-  if (message.card?.type === 'attachments_card') {
-    return { kind: 'attachments', message, card: message.card };
-  }
+    // Atlas output.
+    case EThreadOutputType.CHAT:
+      return { kind: 'claude', message };
+    case EThreadOutputType.THINKING:
+      return { kind: 'thinking', message };
+    case EThreadOutputType.TOOL:
+      return { kind: 'tool', message };
+    case EThreadOutputType.APPROVAL:
+      return { kind: 'approval', message, card: message.card as WebApprovalCard };
+    case EThreadOutputType.VERDICT:
+      return { kind: 'verdict', message, card: message.card as WebVerdictCard };
+    case EThreadOutputType.QUESTION:
+      return { kind: 'question', message, card: message.card as WebQuestionCard };
+    case EThreadOutputType.SECRET_REQUEST:
+      return { kind: 'secret', message, card: message.card as WebSecretInputCard };
+    case EThreadOutputType.FILE_REQUEST:
+      return { kind: 'file', message, card: message.card as WebFileRequestCard };
+    case EThreadOutputType.MCP_PROPOSAL:
+      return { kind: 'mcp_proposal', message, card: message.card as WebMcpProposalCard };
+    case EThreadOutputType.SKILL_PROPOSAL:
+      return { kind: 'skill_proposal', message, card: message.card as WebSkillProposalCard };
 
-  // A `build_event` is ALWAYS a system-generated pill (sandbox lifecycle, build relays, compaction) — check
-  // BEFORE the user/atlas fallback. The read model maps every non-`atlas` message to `author:'user'`, so a
-  // SYSTEM-sourced build_event (e.g. the sandbox "Provisioning…" pill) would otherwise be swallowed as a
-  // plain user bubble here instead of reaching the pill branch below.
-  if (message.kind === 'build_event') {
-    const summary = message.meta?.compactionSummary;
-    if (typeof summary === 'string' && summary.length > 0) {
+    // Pills / dividers.
+    case EThreadOutputType.EVENT: {
+      const summary = message.meta?.compactionSummary;
+      if (typeof summary === 'string' && summary.length > 0)
+        return { kind: 'compaction', message, tone: toneOf(message.text ?? ''), summary };
+      return { kind: 'event', message, tone: toneOf(message.text ?? '') };
+    }
+    case EThreadOutputType.COMPACTION: {
+      const summary = String(message.meta?.compactionSummary ?? message.text ?? '');
       return { kind: 'compaction', message, tone: toneOf(message.text ?? ''), summary };
     }
-    return { kind: 'event', message, tone: toneOf(message.text ?? '') };
-  }
+    case EThreadOutputType.BUILD_ANCHOR:
+      // Bookkeeping anchor — peeled by the build lane; a no-op if one reaches the main switch.
+      return { kind: 'build_anchor', message };
 
-  if (message.author === 'user' || message.local) {
-    return { kind: 'user', message };
-  }
+    // System provenance.
+    case EThreadOutputType.SYSTEM_SHARED:
+      return { kind: 'system_shared', message };
+    case EThreadOutputType.SYSTEM_EVENT:
+      return { kind: 'system_event', message };
+    case EThreadOutputType.SYSTEM_OPERATOR:
+      return { kind: 'system_operator', message };
+    case EThreadOutputType.SYSTEM_NOTICE:
+      return { kind: 'system_notice', message };
+    case EThreadOutputType.SYSTEM_REMINDER:
+      return { kind: 'system_reminder', message };
+    case EThreadOutputType.UNTRUSTED:
+      return { kind: 'untrusted', message };
 
-  // Structured transcript blocks (from the in-sandbox session) — classified by `kind`, not by regex.
-  if (message.kind === 'thinking') return { kind: 'thinking', message };
-  if (message.kind === 'tool') return { kind: 'tool', message };
-  if (message.kind === 'build_anchor') return { kind: 'build_anchor', message };
-
-  if (message.card?.type === 'approval_card') {
-    return { kind: 'approval', message, card: message.card };
+    default: {
+      // COMPILE-TIME exhaustiveness: if a new EThreadMessageType is added and left unhandled above, this
+      // assignment fails to compile (its type is no longer `never`) — the single-source guarantee. But at
+      // RUNTIME we must never crash the transcript on an unexpected/undefined type (an optimistic local row,
+      // wire drift, a message written before this taxonomy) — fall back to plain prose.
+      const _exhaustive: never = message.type;
+      void _exhaustive;
+      return { kind: 'claude', message };
+    }
   }
-  if (message.card?.type === 'verdict_card') {
-    return { kind: 'verdict', message, card: message.card };
-  }
-  if (message.card?.type === 'question_card') {
-    return { kind: 'question', message, card: message.card };
-  }
-  if (message.card?.type === 'secret_input_card') {
-    return { kind: 'secret', message, card: message.card };
-  }
-  if (message.card?.type === 'file_request_card') {
-    return { kind: 'file', message, card: message.card };
-  }
-  if (message.card?.type === 'mcp_proposal_card') {
-    return { kind: 'mcp_proposal', message, card: message.card };
-  }
-  if (message.card?.type === 'skill_proposal_card') {
-    return { kind: 'skill_proposal', message, card: message.card };
-  }
-
-  return { kind: 'claude', message };
 }
 
 export function toneOf(text: string): SystemTone {

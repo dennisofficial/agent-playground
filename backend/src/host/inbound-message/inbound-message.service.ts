@@ -2,8 +2,10 @@ import { Injectable } from '@nestjs/common';
 import { Db } from '@workspace/nestjs-rls/nest';
 import {
   EInboundMessageStatus,
+  EInboundMessageType,
   EInboundPriority,
   EThreadMessageSource,
+  type EThreadMessageType,
   type InboundMessagePayload,
 } from '@workspace/shared';
 import { EntityManager, In } from 'typeorm';
@@ -56,6 +58,10 @@ export class InboundMessageService {
 
   async consume(row: InboundMessage, manager?: EntityManager): Promise<void> {
     const run = async (m: EntityManager): Promise<void> => {
+      // The bubble's authoritative type IS the intake type it arrived as (operator/answer/file/secret) — the
+      // inbound payload's discriminant maps 1:1 onto EInboundMessageType (a subset of EThreadMessageType).
+      const type: EThreadMessageType =
+        (row.payload?.type as EInboundMessageType | undefined) ?? EInboundMessageType.OPERATOR;
       const bubble = m.create(ThreadMessage, {
         jobId: row.jobId,
         threadId: row.threadId,
@@ -64,6 +70,7 @@ export class InboundMessageService {
         source: row.source,
         authorId: row.authorId,
         text: row.text,
+        type,
         card: null,
         meta: null,
         orderAt: null,

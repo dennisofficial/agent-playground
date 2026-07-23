@@ -1,29 +1,32 @@
-import { env } from '@/lib/env';
-import { streamList } from '@workspace/pg-realtime/rtk';
+import { getRealtimeClient } from '@/lib/realtime/realtime-client';
+import { makeSocketListOpener, streamList } from '@workspace/pg-realtime/rtk';
 import type {
   AgentCredentialView,
   ClaudeAuthorizeUrlResult,
   CodexDevicePollResult,
   CodexDeviceStartResult,
+  RawAgentCredential,
 } from '@workspace/shared';
 import { baseApi, EBaseApiCacheTags } from './baseApi';
-import { sseOpener } from './sse-opener';
 
 export const agentCredentialsApi = baseApi.injectEndpoints({
   overrideExisting: true,
   endpoints: (build) => ({
-    getAgentCredentials: build.query<AgentCredentialView[], string>({
+    // Delivers RAW `agent_credentials` rows (no server-side projection) — the `plan`/`usage` fields
+    // that used to be computed server-side are time-sensitive (usage windows expire), so consumers
+    // derive `AgentCredentialView` on read via `buildAgentCredentialView` (see credentials-section.tsx)
+    // instead of freezing a stale projection in the RTK Query cache.
+    getAgentCredentials: build.query<RawAgentCredential[], string>({
       query: (orgId) => ({ url: `/orgs/${orgId}/agent-credentials`, method: 'GET' }),
       providesTags: (_result, _error, orgId) => [
         { type: EBaseApiCacheTags.AGENT_CREDENTIALS, id: orgId },
       ],
       onCacheEntryAdded: (orgId, api) =>
-        streamList<AgentCredentialView>({
-          url: new URL(
-            `/orgs/${orgId}/agent-credentials/realtime`,
-            env.NEXT_PUBLIC_BACKEND_URL,
-          ).toString(),
-          open: sseOpener,
+        streamList<RawAgentCredential>({
+          url: 'agent_credentials',
+          open: makeSocketListOpener(getRealtimeClient(), 'agent_credentials', {
+            filter: { orgId },
+          }),
           lifecycle: api,
         }),
     }),

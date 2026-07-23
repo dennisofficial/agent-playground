@@ -1,7 +1,23 @@
-import { env } from '@/lib/env';
+import { getRealtimeClient } from '@/lib/realtime/realtime-client';
+import type { LiveQuery } from '@workspace/pg-realtime/client';
+import { EOrgRole } from '@workspace/shared';
 import type { CurrentUserResponse, OrgSummary } from '@workspace/shared';
 import { baseApi, EBaseApiCacheTags } from './baseApi';
-import { sseOpener } from './sse-opener';
+
+interface OrganizationRow extends Record<string, unknown> {
+  id: string;
+  name: string;
+  status: string;
+  defaultAutoApprove: boolean;
+  defaultAutoShip: boolean;
+  defaultAutoMerge: boolean;
+}
+
+interface OrganizationMemberRow extends Record<string, unknown> {
+  orgId: string;
+  userId: string;
+  role: string;
+}
 
 export const authApi = baseApi.injectEndpoints({
   overrideExisting: true,
@@ -10,30 +26,38 @@ export const authApi = baseApi.injectEndpoints({
       query: () => ({ url: '/auth/session', method: 'GET' }),
       providesTags: [EBaseApiCacheTags.SESSION],
       onCacheEntryAdded: async (_arg, api) => {
-        const controller = new AbortController();
         try {
-          await api.cacheDataLoaded;
-          const stream = sseOpener(
-            new URL('orgs/realtime', env.NEXT_PUBLIC_BACKEND_URL).toString(),
-            {
-              signal: controller.signal,
-              onmessage: (ev) => {
-                if (ev.event !== 'data' || !ev.data) return;
-                const rows = JSON.parse(ev.data) as Array<{
-                  pk: string;
-                  row: OrgSummary;
-                }>;
-                api.updateCachedData((draft) => {
-                  draft.orgs = rows.map((r) => r.row);
-                });
-              },
-            },
-          );
+          const { data: session } = await api.cacheDataLoaded;
+          const currentUserId = session.id;
+
+          const client = getRealtimeClient();
+          const orgsQuery: LiveQuery<OrganizationRow> = client.query('organizations');
+          const membersQuery: LiveQuery<OrganizationMemberRow> =
+            client.query('organization_members');
+
+          const rebuild = (): void => {
+            const members = membersQuery.get();
+            api.updateCachedData((draft) => {
+              draft.orgs = orgsQuery.get().map(
+                (org): OrgSummary => ({
+                  ...org,
+                  role:
+                    members.find((m) => m.userId === currentUserId && m.orgId === org.id)
+                      ?.role ?? EOrgRole.MEMBER,
+                }),
+              );
+            });
+          };
+
+          const unsubOrgs = orgsQuery.subscribe(rebuild);
+          const unsubMembers = membersQuery.subscribe(rebuild);
+          rebuild();
+
           await api.cacheEntryRemoved;
-          controller.abort();
-          await stream.catch(() => undefined);
+          unsubOrgs();
+          unsubMembers();
         } catch {
-          controller.abort();
+          // cacheEntryRemoved before cacheDataLoaded resolves — nothing to tear down.
         }
       },
     }),

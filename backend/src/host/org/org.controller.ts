@@ -1,32 +1,12 @@
-import { SseSnapshotService } from '@lib/realtime/sse-snapshot.service';
-import {
-  Body,
-  Controller,
-  Delete,
-  Get,
-  Inject,
-  Param,
-  ParseUUIDPipe,
-  Patch,
-  Post,
-  Sse,
-  type MessageEvent,
-} from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
 import { CurrentUser } from '@workspace/auth/server';
-import { RealtimeEngine } from '@workspace/pg-realtime';
-import { PG_REALTIME_ENGINE, sseObservable } from '@workspace/pg-realtime/nest';
 import { CreateOrgDto, UpdateOrgDto, type MemberView, type OrgSummary } from '@workspace/shared';
-import type { Observable } from 'rxjs';
 import type { User } from '../../_lib/database/entities/user.entity';
 import { OrgService } from './org.service';
 
 @Controller('orgs')
 export class OrgController {
-  constructor(
-    private readonly orgs: OrgService,
-    private readonly sseSnapshotService: SseSnapshotService,
-    @Inject(PG_REALTIME_ENGINE) private readonly realtime: RealtimeEngine,
-  ) {}
+  constructor(private readonly orgs: OrgService) {}
 
   @Post()
   create(@CurrentUser() user: User, @Body() body: CreateOrgDto): Promise<OrgSummary> {
@@ -57,48 +37,5 @@ export class OrgController {
     @Param('orgId', ParseUUIDPipe) orgId: string,
   ): Promise<MemberView[]> {
     return this.orgs.membersOf(user.id, orgId);
-  }
-
-  @Sse('realtime')
-  streamOrgs(@CurrentUser() user: User): Observable<MessageEvent> {
-    return this.sseSnapshotService.snapshotList<OrgSummary>(
-      [
-        () => this.realtime.openSubscription({ model: 'organizations', user }),
-        () => this.realtime.openSubscription({ model: 'organization_members', user }),
-      ],
-      () => this.orgs.listForUser(user.id),
-      (o) => o.id,
-    );
-  }
-
-  /** Realtime single-org document (`streamDocument`) — live name/status/automation settings. */
-  @Sse(':orgId/realtime')
-  streamOrg(
-    @CurrentUser() user: User,
-    @Param('orgId', ParseUUIDPipe) orgId: string,
-  ): Observable<MessageEvent> {
-    return sseObservable(() =>
-      this.realtime.openSubscription({ model: 'organizations', user, pk: JSON.stringify([orgId]) }),
-    );
-  }
-
-  /** Realtime member list (`streamList`) — joined snapshot, re-emitted on any membership change. */
-  @Sse(':orgId/members/realtime')
-  streamMembers(
-    @CurrentUser() user: User,
-    @Param('orgId', ParseUUIDPipe) orgId: string,
-  ): Observable<MessageEvent> {
-    return this.sseSnapshotService.snapshotList<MemberView>(
-      [
-        () =>
-          this.realtime.openSubscription({
-            model: 'organization_members',
-            user,
-            filter: { orgId },
-          }),
-      ],
-      () => this.orgs.membersOf(user.id, orgId),
-      (m) => m.userId,
-    );
   }
 }

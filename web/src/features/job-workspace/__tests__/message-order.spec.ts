@@ -1,4 +1,5 @@
 import type { JobMessage } from '@/lib/api/job-api';
+import { EThreadOutputType } from '@workspace/shared';
 import { describe, expect, it } from 'vitest';
 import { messageOrderMs } from '../components/conversation/conversation';
 
@@ -7,10 +8,8 @@ function fixture(overrides: Partial<JobMessage>): JobMessage {
     ts: '1',
     threadId: 'thread-1',
     subagentId: null,
-    author: 'atlas',
-    authorId: 'atlas',
     text: 'text',
-    kind: 'chat',
+    type: EThreadOutputType.CHAT,
     source: 'atlas',
     postedAt: '2026-07-17T00:00:00.000Z',
     ...overrides,

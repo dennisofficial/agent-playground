@@ -1,8 +1,7 @@
-import { env } from '@/lib/env';
-import { streamList } from '@workspace/pg-realtime/rtk';
+import { getRealtimeClient } from '@/lib/realtime/realtime-client';
+import { makeSocketListOpener, streamList } from '@workspace/pg-realtime/rtk';
 import type { CreateOrgDto, MemberView, OrgSummary, UpdateOrgDto } from '@workspace/shared';
 import { baseApi, EBaseApiCacheTags } from './baseApi';
-import { sseOpener } from './sse-opener';
 
 export const orgApi = baseApi.injectEndpoints({
   overrideExisting: true,
@@ -12,8 +11,8 @@ export const orgApi = baseApi.injectEndpoints({
       providesTags: (_result, _error, orgId) => [{ type: EBaseApiCacheTags.ORG_MEMBER, id: orgId }],
       onCacheEntryAdded: (orgId, api) =>
         streamList<MemberView>({
-          url: new URL(`orgs/${orgId}/members/realtime`, env.NEXT_PUBLIC_BACKEND_URL).toString(),
-          open: sseOpener,
+          url: 'org_members',
+          open: makeSocketListOpener(getRealtimeClient(), 'org_members', { filter: { orgId } }),
           lifecycle: api,
         }),
     }),

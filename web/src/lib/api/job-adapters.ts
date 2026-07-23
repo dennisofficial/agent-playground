@@ -10,7 +10,7 @@ export function threadMessageToJobMessage(v: ThreadMessageView): JobMessage {
     subagentStatus: v.subagentStatus ?? null,
     subagentEndedAt: v.subagentEndedAt ?? null,
     text: v.text ?? '',
-    kind: v.kind,
+    type: v.type,
     source: v.source,
     card: (v.card ?? undefined) as WebCard | undefined,
     meta: v.meta ?? undefined,

@@ -26,6 +26,7 @@ import {
   type SaveCredentialsBody,
 } from '@/redux/query/api/credentials.api';
 import {
+  buildAgentCredentialView,
   EAgentProvider,
   type AgentCredentialView,
   type CodexDeviceStartResult,
@@ -44,7 +45,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { CredentialCard } from './CredentialCard';
 import { StatusChip } from './StatusChip';
 
@@ -507,7 +508,11 @@ function GithubAppConnect({
  * windows. Reads are member-visible; add / select / delete are owner-only.
  */
 function AgentAccountsManager({ orgId, isOwner }: { orgId: string; isOwner: boolean }) {
-  const { data, isLoading, isError } = useGetAgentCredentialsQuery(orgId, { skip: !orgId });
+  const { data: raw, isLoading, isError } = useGetAgentCredentialsQuery(orgId, { skip: !orgId });
+  // `plan`/`usage` are derived, time-sensitive fields (usage windows expire) — the socket delivers raw
+  // rows now, so compute the view here at render time rather than freezing it in the RTK Query cache.
+  // Recomputes whenever a new row set streams in (new usage snapshot, selection change, etc.).
+  const data = useMemo(() => raw?.map(buildAgentCredentialView), [raw]);
   const [select, selectState] = useSetSelectedAgentCredentialMutation();
   const [remove, removeState] = useRemoveAgentCredentialMutation();
   const [deleteErrors, setDeleteErrors] = useState<Record<string, string>>({});

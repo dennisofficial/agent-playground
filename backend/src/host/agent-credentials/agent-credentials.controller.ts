@@ -4,17 +4,12 @@ import {
   Controller,
   Delete,
   Get,
-  Inject,
-  type MessageEvent,
   Param,
   ParseUUIDPipe,
   Post,
   Put,
-  Sse,
 } from '@nestjs/common';
 import { CurrentUser } from '@workspace/auth/server';
-import { RealtimeEngine } from '@workspace/pg-realtime';
-import { PG_REALTIME_ENGINE, sseObservable } from '@workspace/pg-realtime/nest';
 import {
   type AccountUsage,
   type AgentCredentialView,
@@ -27,7 +22,6 @@ import {
   PasteCodexAuthDto,
   SetSelectedDto,
 } from '@workspace/shared';
-import type { Observable } from 'rxjs';
 import type { User } from '../../_lib/database/entities/user.entity';
 import { OrgService } from '../org/org.service';
 import { AgentCredentialService } from './agent-credential.service';
@@ -48,7 +42,6 @@ export class AgentCredentialsController {
     private readonly orgs: OrgService,
     private readonly claudeOAuth: ClaudeOAuthClient,
     private readonly codexOAuth: CodexOAuthClient,
-    @Inject(PG_REALTIME_ENGINE) private readonly realtime: RealtimeEngine,
   ) {}
 
   /** All agent accounts for the org (metadata + usage; no token material). Members can read. */
@@ -59,16 +52,6 @@ export class AgentCredentialsController {
   ): Promise<AgentCredentialView[]> {
     await this.orgs.assertMember(user.id, orgId);
     return this.store.list(orgId);
-  }
-
-  @Sse('realtime')
-  stream(
-    @CurrentUser() user: User,
-    @Param('orgId', ParseUUIDPipe) orgId: string,
-  ): Observable<MessageEvent> {
-    return sseObservable(() =>
-      this.realtime.openSubscription({ model: 'agentCredentials', user, filter: { orgId } }),
-    );
   }
 
   /** Start the Claude OAuth flow: returns the authorize URL to open and the state to echo back. */

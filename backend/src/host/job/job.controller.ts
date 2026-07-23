@@ -1,7 +1,6 @@
 import {
   Controller,
   Get,
-  Inject,
   type MessageEvent,
   Param,
   ParseUUIDPipe,
@@ -9,9 +8,6 @@ import {
   Query,
   Sse,
 } from '@nestjs/common';
-import { CurrentUser } from '@workspace/auth/server';
-import { RealtimeEngine } from '@workspace/pg-realtime';
-import { PG_REALTIME_ENGINE, sseObservable } from '@workspace/pg-realtime/nest';
 import type {
   InboundMessageView,
   JobListItem,
@@ -22,7 +18,6 @@ import type {
   ThreadView,
 } from '@workspace/shared';
 import { Observable } from 'rxjs';
-import type { User } from '../../_lib/database/entities/user.entity';
 import { HostTransportService } from '../host-transport/host-transport.service';
 import { JobService } from './job.service';
 import { LiveStateService } from './live-state.service';
@@ -39,23 +34,11 @@ export class JobController {
     private readonly tasks: TaskService,
     private readonly live: LiveStateService,
     private readonly hostTransport: HostTransportService,
-    @Inject(PG_REALTIME_ENGINE) private readonly realtime: RealtimeEngine,
   ) {}
 
   @Get()
   list(@Query('repoId') repoId?: string): Promise<JobListItem[]> {
     return this.jobs.list(repoId);
-  }
-
-  /** Realtime job list. The @Rls guard scopes rows to the caller's orgs; `repoId` narrows. */
-  @Sse('realtime')
-  streamJobs(
-    @CurrentUser() user: User,
-    @Query('repoId') repoId?: string,
-  ): Observable<MessageEvent> {
-    return sseObservable(() =>
-      this.realtime.openSubscription({ model: 'jobs', user, filter: repoId ? { repoId } : {} }),
-    );
   }
 
   @Get(':jobId')
@@ -74,16 +57,6 @@ export class JobController {
     return this.threads.listGroups(jobId);
   }
 
-  @Sse(':jobId/thread-groups/realtime')
-  streamGroups(
-    @CurrentUser() user: User,
-    @Param('jobId', ParseUUIDPipe) jobId: string,
-  ): Observable<MessageEvent> {
-    return sseObservable(() =>
-      this.realtime.openSubscription({ model: 'thread_groups', user, filter: { jobId } }),
-    );
-  }
-
   @Get(':jobId/threads')
   async listThreads(
     @Param('jobId', ParseUUIDPipe) jobId: string,
@@ -92,16 +65,6 @@ export class JobController {
   ): Promise<ThreadView[]> {
     await this.jobs.assertAccess(jobId);
     return this.threads.listThreads(jobId, { groupId, kind });
-  }
-
-  @Sse(':jobId/threads/realtime')
-  streamThreads(
-    @CurrentUser() user: User,
-    @Param('jobId', ParseUUIDPipe) jobId: string,
-  ): Observable<MessageEvent> {
-    return sseObservable(() =>
-      this.realtime.openSubscription({ model: 'threads', user, filter: { jobId } }),
-    );
   }
 
   /** The whole job's transcript (all threads) — the workspace fetches this once and scopes per lane. */
@@ -113,16 +76,6 @@ export class JobController {
     return this.messages.listJobMessages(jobId);
   }
 
-  @Sse(':jobId/messages/realtime')
-  streamJobMessages(
-    @CurrentUser() user: User,
-    @Param('jobId', ParseUUIDPipe) jobId: string,
-  ): Observable<MessageEvent> {
-    return sseObservable(() =>
-      this.realtime.openSubscription({ model: 'thread_messages', user, filter: { jobId } }),
-    );
-  }
-
   @Get(':jobId/threads/:threadId/messages')
   async listMessages(
     @Param('jobId', ParseUUIDPipe) jobId: string,
@@ -132,31 +85,10 @@ export class JobController {
     return this.messages.listMessages(jobId, threadId);
   }
 
-  @Sse(':jobId/threads/:threadId/messages/realtime')
-  streamMessages(
-    @CurrentUser() user: User,
-    @Param('jobId', ParseUUIDPipe) jobId: string,
-    @Param('threadId', ParseUUIDPipe) threadId: string,
-  ): Observable<MessageEvent> {
-    return sseObservable(() =>
-      this.realtime.openSubscription({ model: 'thread_messages', user, filter: { threadId } }),
-    );
-  }
-
   @Get(':jobId/tasks')
   async listTasks(@Param('jobId', ParseUUIDPipe) jobId: string): Promise<TaskView[]> {
     await this.jobs.assertAccess(jobId);
     return this.tasks.listTasks(jobId);
-  }
-
-  @Sse(':jobId/tasks/realtime')
-  streamTasks(
-    @CurrentUser() user: User,
-    @Param('jobId', ParseUUIDPipe) jobId: string,
-  ): Observable<MessageEvent> {
-    return sseObservable(() =>
-      this.realtime.openSubscription({ model: 'tasks', user, filter: { jobId } }),
-    );
   }
 
   /** The pending queue (sent, not yet consumed) — the composer's pending zone. */
@@ -164,16 +96,6 @@ export class JobController {
   async listInbound(@Param('jobId', ParseUUIDPipe) jobId: string): Promise<InboundMessageView[]> {
     await this.jobs.assertAccess(jobId);
     return this.live.listPendingInbound(jobId);
-  }
-
-  @Sse(':jobId/inbound/realtime')
-  streamInbound(
-    @CurrentUser() user: User,
-    @Param('jobId', ParseUUIDPipe) jobId: string,
-  ): Observable<MessageEvent> {
-    return sseObservable(() =>
-      this.realtime.openSubscription({ model: 'inbound_messages', user, filter: { jobId } }),
-    );
   }
 
   @Sse(':jobId/turn/stream')

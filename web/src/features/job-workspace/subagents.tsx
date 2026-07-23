@@ -3,6 +3,7 @@
 import type { JobMessage } from '@/lib/api/job-api';
 import type { LiveBlock } from '@/lib/api/job-stream';
 import { formatModelLabel } from '@/utils/format';
+import { EInboundMessageType, type EThreadMessageType, EThreadOutputType } from '@workspace/shared';
 import { ChevronRight, Sparkles } from 'lucide-react';
 import { useState } from 'react';
 import { ContextMeter } from './components/chrome/context-meter';
@@ -140,7 +141,7 @@ export function indexDurableSubagents(messages: JobMessage[]): DurableSubagentIn
   const anchorKeys = new Set<string>();
   for (const m of messages) {
     const id = typeof m.meta?.id === 'string' ? m.meta.id : null;
-    if (m.kind !== 'tool' || !id || !childrenById.has(id)) continue;
+    if (m.type !== EThreadOutputType.TOOL || !id || !childrenById.has(id)) continue;
     anchorKeys.add(m.ts);
     const input = (m.meta?.input ?? {}) as Record<string, unknown>;
     const kids = childrenById.get(id) ?? [];
@@ -159,7 +160,7 @@ export function indexDurableSubagents(messages: JobMessage[]): DurableSubagentIn
         typeof m.subagentStatus === 'string'
           ? m.subagentStatus === 'running'
           : m.meta?.result == null,
-      toolCount: kids.filter((k) => k.kind === 'tool').length,
+      toolCount: kids.filter((k) => k.type === EThreadOutputType.TOOL).length,
       summary: String(input.description || firstLine(input.prompt)),
       ...(typeof meta.subContextTokens === 'number'
         ? { contextTokens: meta.subContextTokens }
@@ -173,7 +174,7 @@ export function indexDurableSubagents(messages: JobMessage[]): DurableSubagentIn
 
 export function durableSubagentPrompt(messages: JobMessage[], parentId: string): string {
   for (const m of messages) {
-    if (m.kind === 'tool' && m.meta?.id === parentId) {
+    if (m.type === EThreadOutputType.TOOL && m.meta?.id === parentId) {
       const input = (m.meta?.input ?? {}) as Record<string, unknown>;
       return typeof input.prompt === 'string' ? input.prompt : '';
     }
@@ -181,17 +182,27 @@ export function durableSubagentPrompt(messages: JobMessage[], parentId: string):
   return '';
 }
 
+/** Intake types that render as a user bubble inside a subagent's transcript (a parent→sub injection). */
+const INTAKE_USER_TYPES: ReadonlySet<EThreadMessageType> = new Set([
+  EInboundMessageType.OPERATOR,
+  EInboundMessageType.ANSWER_QUESTION,
+  EInboundMessageType.FILE_ANSWERED,
+  EInboundMessageType.SECRET_PROVIDED,
+]);
+
 export function durableSubBlocks(children: JobMessage[]): SubBlock[] {
   return children.map((m): SubBlock => {
-    if (m.kind === 'user') return { kind: 'user', key: m.ts, text: m.text, postedAt: m.postedAt };
-    if (m.kind === 'thinking')
+    // An intake-typed child (a parent→subagent SendMessage injection) renders as a user bubble.
+    if (INTAKE_USER_TYPES.has(m.type))
+      return { kind: 'user', key: m.ts, text: m.text, postedAt: m.postedAt };
+    if (m.type === EThreadOutputType.THINKING)
       return {
         kind: 'thinking',
         key: m.ts,
         text: m.text,
         postedAt: m.postedAt,
       };
-    if (m.kind === 'tool') {
+    if (m.type === EThreadOutputType.TOOL) {
       const mm = m.meta ?? {};
       return {
         kind: 'tool',

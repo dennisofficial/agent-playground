@@ -2,7 +2,13 @@
 
 import type { ReviewComment } from '@/features/job-workspace/components/review/review-comments';
 import { env } from '@/lib/env';
-import type { AutoApproveMode, AutoMergeMethod, EJobKind, EJobStatus } from '@workspace/shared';
+import type {
+  AutoApproveMode,
+  AutoMergeMethod,
+  EJobKind,
+  EJobStatus,
+  EThreadMessageType,
+} from '@workspace/shared';
 import { notImplemented } from './_stub';
 import type {
   ApprovalActionId,
@@ -81,11 +87,9 @@ export interface RawThreadMessage {
   /** ISO end time of the spawned subagent, or null while running; present only on the anchor message. */
   subagentEndedAt?: string | null;
   ts: string | null;
-  author: string;
-  authorId: string;
-  isAtlas: boolean;
   text: string;
-  kind: string; // 'chat' | 'thinking' | 'tool' | 'card' | 'build_event'
+  /** The authoritative message type (intake OR output) — what the render layer classifies off of. */
+  type: EThreadMessageType;
   /**
    * Message provenance, by AUDIENCE (always set by the `/messages` mapping).
    * `'system_operator'` = system→operator only (e.g. an unresumable-thread error; Atlas didn't author it
@@ -136,7 +140,8 @@ export interface JobMessage {
   /** ISO end time of the spawned subagent, or null while running; present only on the anchor message. */
   subagentEndedAt?: string | null;
   text: string;
-  kind: string;
+  /** The authoritative message type (intake OR output) — {@link classifyMessage} maps it to a render kind. */
+  type: EThreadMessageType;
   /**
    * Message provenance, by AUDIENCE (normalize applies a default for older rows). The `system_*` kinds
    * each render as their own distinct block, NOT as an operator or Atlas bubble:
@@ -177,10 +182,8 @@ export function normalizeMessage(r: RawThreadMessage): JobMessage {
     subagentId: r.subagentId,
     subagentStatus: r.subagentStatus ?? null,
     subagentEndedAt: r.subagentEndedAt ?? null,
-    author: r.isAtlas ? 'atlas' : 'user',
-    authorId: r.authorId,
     text: r.text ?? '',
-    kind: r.kind,
+    type: r.type,
     source: r.source,
     card: r.card ?? undefined,
     meta: r.meta ?? undefined,

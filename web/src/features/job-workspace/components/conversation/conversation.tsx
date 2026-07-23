@@ -3,7 +3,7 @@
 import { useComposerStagedAnswers } from '@/lib/api/composer-store';
 import { useAllJobs } from '@/lib/api/inbox';
 import type { JobMessage, JobRef } from '@/lib/api/job-api';
-import { MAIN_LANE, useLiveTurn, type ContextBreakdown } from '@/lib/api/job-stream';
+import { MAIN_LANE, useLiveTurn } from '@/lib/api/job-stream';
 import type { JobBlocker, LaneDefaultFooter } from '@/lib/api/types';
 import { useJobTurnStream } from '../../hooks/use-job-turn-stream';
 import { assertNever } from '@/utils/assert';
@@ -30,7 +30,7 @@ import { ArchivedOverlay } from '../overlays/archived-overlay';
 import { BlockedOverlay } from '../overlays/blocked-overlay';
 import { indexCodexReviewBlocks } from '../review/codex-review';
 import { ReviewCommentsCardView } from '../review/review-comments-card';
-import { buildLiveTurnItems, TurnMetaDivider, UntrustedBlock, UserBubble } from './bubbles/bubbles';
+import { buildLiveTurnItems, UntrustedBlock, UserBubble } from './bubbles/bubbles';
 import { ClaudeBubble } from './bubbles/ClaudeBubble';
 import { CompactionSummaryPill } from './bubbles/CompactionSummaryPill';
 import { EventBubble } from './bubbles/EventBubble';
@@ -44,7 +44,6 @@ import { SystemReminderChip } from './bubbles/SystemReminderChip';
 import { ThinkingBlock } from './bubbles/ThinkingBlock';
 import { isTouchCapableDevice, PREMEASURE_MIN_ROWS, useIdlePremeasure } from './idle-premeasure';
 import { extractMermaidSources, mermaidReservePx } from './markdown';
-import { AgentPromptBlock } from './phases';
 import { JumpToLatestButton, useTailFollow } from './tail-follow';
 
 export function Conversation({
@@ -190,87 +189,6 @@ function parseLane(lane: string): ParsedLane {
   };
 }
 
-interface LaneMeta {
-  codexReviewId?: string | null;
-}
-
-/**
- * Does a `turn_meta` belong to `lane`'s footer? The durable log is already thread-scoped for every lane
- * EXCEPT the out-of-scope Codex review lane, which self-selects by `meta.codexReviewId`. So a thread-scoped
- * lane accepts any `turn_meta` (they're all this thread's); the Codex lane accepts only its tagged ones.
- */
-function laneMetaBelongs(meta: LaneMeta, p: ParsedLane): boolean {
-  if (p.isCodexLane) return meta.codexReviewId != null;
-  return true;
-}
-
-/**
- * The composer footer for a given lane — the model/effort/engine of the lane's most recent reporting
- * turn, plus its last reported context occupancy. Scans the (already thread-scoped) `messages` backward:
- *  - model/effort/engine: taken from the latest matching `turn_meta`'s `usage` (regardless of context
- *    numbers — a Codex lane carries no occupancy but still has a model/effort to show).
- *  - context: the latest matching block that carries usable `contextTokens`+`contextLimit` (may be an
- *    OLDER block than the model one — matches "last reported occupancy", Claude-Code style, so the ring
- *    doesn't flicker out on a turn whose result lacked a usage block).
- */
-export function laneFooterMeta(messages: JobMessage[], lane: string): ComposerFooter | null {
-  const p = parseLane(lane);
-  let model: string | undefined;
-  let effort: string | undefined;
-  let engine: string | undefined;
-  let context: ComposerFooter['context'] = null;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    if (m.kind !== 'turn_meta') continue;
-    const meta = (m.meta ?? {}) as LaneMeta & {
-      contextTokens?: number | null;
-      contextLimit?: number | null;
-      contextBreakdown?: ContextBreakdown | null;
-      usage?: {
-        model?: string;
-        contextModel?: string;
-        engine?: string;
-        reasoningEffort?: string;
-      };
-    };
-    if (!laneMetaBelongs(meta, p)) continue;
-    const u = meta.usage ?? {};
-    if (model === undefined && engine === undefined) {
-      // First (newest) matching block wins the model/effort/engine. Prefer `contextModel` (the MAIN
-      // agent's own model, from parent-unset messages) over `model` — mirrors the ring (line ~945) and
-      // heals older rows whose `usage.model` recorded a whole-turn billing key (e.g. a Haiku helper).
-      model = u.contextModel ?? u.model;
-      effort = u.reasoningEffort;
-      engine = u.engine;
-    }
-    if (
-      !context &&
-      typeof meta.contextTokens === 'number' &&
-      typeof meta.contextLimit === 'number' &&
-      meta.contextLimit > 0
-    ) {
-      context = {
-        tokens: meta.contextTokens,
-        limit: meta.contextLimit,
-        model: u.contextModel ?? u.model,
-        contextBreakdown: meta.contextBreakdown,
-      };
-    } else if (!context && meta.contextBreakdown) {
-      // Fallback: this block's scalar occupancy is missing/invalid but it DOES carry a breakdown — let the
-      // ring mount from the breakdown's own totals rather than staying blank.
-      context = {
-        tokens: meta.contextBreakdown.totalTokens,
-        limit: meta.contextBreakdown.maxTokens,
-        model: meta.contextBreakdown.model,
-        contextBreakdown: meta.contextBreakdown,
-      };
-    }
-    if ((model !== undefined || engine !== undefined) && context) break;
-  }
-  if (model === undefined && effort === undefined && engine === undefined && !context) return null;
-  return { model, effort, engine, context };
-}
-
 /**
  * The lane's STATIC footer default (`model · effort`) as a {@link ComposerFooter} — used when the lane has no
  * `turn_meta` yet (before its first turn completes). No `context` ring (occupancy is unknown until a turn
@@ -376,10 +294,12 @@ export function TranscriptView({
   // The durable transcript, scoped to THIS lane's real thread by the message's own `threadId` field (its
   // subagents ride the same threadId and stay in, to be peeled into cards below). Undefined threadId (the
   // Codex review lane, or a pre-plan Main) leaves the already-single-thread log unfiltered.
-  const scoped = useMemo(
-    () => (threadId ? messages.filter((m) => m.threadId === threadId) : messages),
-    [messages, threadId],
-  );
+  const scoped = useMemo(() => {
+    const lane = threadId ? messages.filter((m) => m.threadId === threadId) : messages;
+    // Sort by the message's OWN effective time — never trust realtime delivery order (the socket snapshot
+    // isn't guaranteed ordered), so the transcript is always chronological regardless of how rows arrive.
+    return [...lane].sort((a, b) => messageOrderMs(a) - messageOrderMs(b));
+  }, [messages, threadId]);
 
   const liveTurn = useLiveTurn(jobRef.jobId, lane);
   const liveBlockCount = liveTurn?.blocks.length ?? 0;
@@ -437,10 +357,11 @@ export function TranscriptView({
   // context ring. Computed for every lane that shows a composer (Main + read-only), scoped to the lane. The
   // ring prefers a LIVE occupancy value (`liveTurn.contextTokens`, streamed mid-turn by the engine's `usage`
   // event) while the turn is running, so a multi-minute turn's ring fills as it goes instead of only jumping
-  // at turn end; it falls back to the durable `turn_meta` occupancy between turns.
+  // at turn end; between turns it shows the lane's static default (`model · effort`). (Durable per-turn
+  // occupancy will return once the engine emits a `turn_meta`-style accounting row — not a v3 type yet.)
   const footer = useMemo(() => {
     if (!composer) return null;
-    const base = laneFooterMeta(scoped, lane) ?? defaultFooterAsComposer(defaultFooter);
+    const base = defaultFooterAsComposer(defaultFooter);
     const liveContext =
       turnActive && typeof liveTurn?.contextTokens === 'number' && liveTurn.contextLimit
         ? {
@@ -454,8 +375,6 @@ export function TranscriptView({
     return { ...(base ?? {}), context: liveContext };
   }, [
     composer,
-    scoped,
-    lane,
     defaultFooter,
     turnActive,
     liveTurn?.contextTokens,
@@ -789,26 +708,6 @@ export function buildLogItems(
   };
 
   for (const message of log) {
-    // The initial-prompt block: THIS turn's "first message" (the exact task the engine received).
-    // Rendered INLINE at its chronological position on every agent lane (a build thread, a review child).
-    // Handled here, before `classifyMessage`, else an atlas-authored row falls through as a normal bubble.
-    if (message.kind === 'agent_prompt') {
-      // The brain's Main transcript mirrors the agent's turns via typed durable rows (operator bubble,
-      // system_notice/system_reminder/untrusted pills) — so the raw serialized prompt snapshot is pure
-      // duplication there and is NOT rendered. On the out-of-scope Codex lane it belongs only when tagged.
-      const cid =
-        typeof message.meta?.codexReviewId === 'string' ? message.meta.codexReviewId : null;
-      const show = isMain ? false : isCodexLane ? cid != null : true;
-      if (show) {
-        flush();
-        nodes.push({
-          key: message.ts,
-          node: <AgentPromptBlock key={message.ts} text={message.text} />,
-          estimate: 200,
-        });
-      }
-      continue;
-    }
     // Lane membership: peel this thread's own subagents; the Codex lane self-selects its stream.
     if (isCodexLane) {
       // The out-of-scope Codex review lane isn't thread-scoped, so it shows ONLY its own review stream.
@@ -823,21 +722,8 @@ export function buildLogItems(
       }
     }
 
-    // Shared rendering (IDENTICAL across every lane).
-
-    // A per-turn accounting block (token usage + context occupancy) — rendered as a turn-end divider.
-    // Handled raw, BEFORE classifyMessage (which would otherwise fall this unknown kind through to a
-    // plain Claude bubble). Flush any open tool run first so the divider lands after the turn's tools.
-    if (message.kind === 'turn_meta') {
-      flush();
-      nodes.push({
-        key: message.ts,
-        node: <TurnMetaDivider key={message.ts} message={message} />,
-        estimate: 38,
-      });
-      continue;
-    }
-
+    // Shared rendering (IDENTICAL across every lane). Every branch below is driven by the message's
+    // authoritative `type` via classifyMessage — no raw field pokes, no pre-classify special cases.
     const c = classifyMessage(message);
     if (c.kind === 'tool') {
       const m = message.meta ?? {};

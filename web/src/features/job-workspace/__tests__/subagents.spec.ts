@@ -1,5 +1,6 @@
 import type { JobMessage } from '@/lib/api/job-api';
 import type { LiveBlock } from '@/lib/api/job-stream';
+import { EInboundMessageType, EThreadOutputType } from '@workspace/shared';
 import { describe, expect, it } from 'vitest';
 import {
   durableSubBlocks,
@@ -124,10 +125,8 @@ const durableAnchor = (
   ts: 'a1',
   threadId: 't1',
   subagentId: null,
-  author: 'atlas',
-  authorId: 'atlas',
   text: '',
-  kind: 'tool',
+  type: EThreadOutputType.TOOL,
   source: 'atlas',
   postedAt: '2026-07-16T00:00:00.000Z',
   meta: {
@@ -143,10 +142,8 @@ const durableChild = (): JobMessage => ({
   ts: 'c1',
   threadId: 't1',
   subagentId: 's1',
-  author: 'atlas',
-  authorId: 'atlas',
   text: 'working',
-  kind: 'text',
+  type: EThreadOutputType.CHAT,
   source: 'atlas',
   postedAt: '2026-07-16T00:00:01.000Z',
   meta: { parentToolUseId: 'tu-bg' },
@@ -196,10 +193,8 @@ describe("durableSubBlocks — injected 'user' message", () => {
       ts: 'c2',
       threadId: 't1',
       subagentId: 's1',
-      author: 'atlas',
-      authorId: 'atlas',
       text: 'keep going on the auth module',
-      kind: 'user',
+      type: EInboundMessageType.OPERATOR,
       source: 'atlas',
       postedAt: '2026-07-16T00:00:02.000Z',
       meta: { parentToolUseId: 'tu-bg' },

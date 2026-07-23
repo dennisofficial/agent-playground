@@ -1,5 +1,5 @@
-import { env } from '@/lib/env';
-import { streamList } from '@workspace/pg-realtime/rtk';
+import { getRealtimeClient } from '@/lib/realtime/realtime-client';
+import { makeSocketListOpener, streamList } from '@workspace/pg-realtime/rtk';
 import type {
   ConnectedRepo,
   ConnectRepoDto,
@@ -9,7 +9,6 @@ import type {
   UpdateRepoDto,
 } from '@workspace/shared';
 import { baseApi, EBaseApiCacheTags } from './baseApi';
-import { sseOpener } from './sse-opener';
 
 export const repoApi = baseApi.injectEndpoints({
   overrideExisting: true,
@@ -19,8 +18,8 @@ export const repoApi = baseApi.injectEndpoints({
       providesTags: (_result, _error, orgId) => [{ type: EBaseApiCacheTags.REPO, id: orgId }],
       onCacheEntryAdded: (orgId, api) =>
         streamList<RepoView>({
-          url: new URL(`/orgs/${orgId}/repos/realtime`, env.NEXT_PUBLIC_BACKEND_URL).toString(),
-          open: sseOpener,
+          url: 'repos',
+          open: makeSocketListOpener(getRealtimeClient(), 'repos', { filter: { orgId } }),
           lifecycle: api,
         }),
     }),

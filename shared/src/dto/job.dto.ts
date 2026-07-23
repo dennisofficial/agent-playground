@@ -15,8 +15,8 @@ import type {
   ETaskStatus,
   EThreadCondition,
   EThreadGroupKind,
-  EThreadMessageKind,
   EThreadMessageSource,
+  EThreadMessageType,
   EThreadOrigin,
   EThreadRole,
   EThreadStatus,
@@ -151,9 +151,8 @@ export interface ThreadMessageView {
   subagentStatus?: ESubagentStatus | null;
   subagentEndedAt?: string | null;
   source: EThreadMessageSource;
-  isAtlas: boolean;
   text: string;
-  kind: EThreadMessageKind;
+  type: EThreadMessageType;
   card: Record<string, unknown> | null;
   meta: Record<string, unknown> | null;
   /** Render-order override (`order_at`), or null → falls back to `postedAt`. */

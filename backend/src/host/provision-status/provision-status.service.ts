@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Db } from '@workspace/nestjs-rls/nest';
-import { EMessageAudience, EThreadMessageKind, EThreadMessageSource } from '@workspace/shared';
+import { EMessageAudience, EThreadMessageSource, EThreadOutputType } from '@workspace/shared';
 import { Job } from '../../_lib/database/entities/job.entity';
 import { ThreadMessage } from '../../_lib/database/entities/thread-message.entity';
 
@@ -35,7 +35,7 @@ export class ProvisionStatusService {
             subagentId: null,
             source: EThreadMessageSource.SYSTEM,
             audience: EMessageAudience.OPERATOR_ONLY,
-            kind: EThreadMessageKind.BUILD_EVENT,
+            type: EThreadOutputType.EVENT,
             authorId: 'system',
             text,
             card: null,

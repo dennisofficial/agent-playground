@@ -1,6 +1,4 @@
 import { CreateModule } from '@workspace/nestjs-core';
-import { RLS_CONTEXT, type RlsContextConfig } from '@workspace/nestjs-rls/nest';
-import { PgRealtimeModule } from '@workspace/pg-realtime/nest';
 import {
   AgentCredential,
   AgentCredentialRepo,
@@ -12,10 +10,8 @@ import { AgentCredentialKeepaliveService } from './agent-credential-keepalive.se
 import { AgentCredentialRefreshService } from './agent-credential-refresh.service';
 import { AgentCredentialResolver } from './agent-credential-resolver.service';
 import { AgentCredentialViewModule } from './agent-credential-view.module';
-import { AgentCredentialViewService } from './agent-credential-view.service';
 import { AgentCredentialService } from './agent-credential.service';
 import { AgentCredentialsController } from './agent-credentials.controller';
-import { buildAgentCredentialsRealtimeModel } from './agent-credentials.realtime';
 import { ClaudeOAuthClient } from './oauth/claude-oauth.client';
 import { CodexAuthService } from './oauth/codex-auth.service';
 import { CodexOAuthClient } from './oauth/codex-oauth.client';
@@ -26,17 +22,7 @@ import { AgentUsageService } from './usage/agent-usage.service';
 import { UsageParseService } from './usage/usage-parse.service';
 
 @CreateModule({
-  imports: [
-    OrgModule,
-    AgentCredentialViewModule,
-    PgRealtimeModule.forFeature({
-      imports: [AgentCredentialViewModule],
-      inject: [RLS_CONTEXT, AgentCredentialViewService],
-      useFactory: (ctx: RlsContextConfig, view: AgentCredentialViewService) => [
-        buildAgentCredentialsRealtimeModel(ctx.resolveClaims, view),
-      ],
-    }),
-  ],
+  imports: [OrgModule, AgentCredentialViewModule],
   entities: [{ entity: AgentCredential, repoClass: AgentCredentialRepo }],
   services: [
     AgentCredentialService,

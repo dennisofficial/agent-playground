@@ -1,3 +1,4 @@
+import { EThreadOutputType } from '@workspace/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { composerStore, type StagedAnswer } from '../composer-store';
 import { getDraft, putDraft, type JobMessage, type JobRef } from '../job-api';
@@ -330,10 +331,8 @@ describe('composerStore', () => {
         ts: 'ts1',
         threadId: 't1',
         subagentId: null,
-        author: 'atlas',
-        authorId: 'atlas',
         text: '',
-        kind: 'card',
+        type: EThreadOutputType.QUESTION,
         source: 'atlas',
         card,
         postedAt: new Date().toISOString(),
