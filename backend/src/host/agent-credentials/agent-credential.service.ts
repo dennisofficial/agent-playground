@@ -38,14 +38,6 @@ export class AgentCredentialService {
     private readonly materialFreshnessService: MaterialFreshnessService,
   ) {}
 
-  async list(orgId: string): Promise<AgentCredentialView[]> {
-    const rows = await this.agentCredentialRepo.find({
-      where: { orgId },
-      order: { provider: 'ASC', createdAt: 'ASC' },
-    });
-    return rows.map((row) => this.agentCredentialViewService.project(row));
-  }
-
   async getById(orgId: string, credentialId: string): Promise<AgentCredential | null> {
     return this.agentCredentialRepo.findOne({ where: { id: credentialId, orgId } });
   }

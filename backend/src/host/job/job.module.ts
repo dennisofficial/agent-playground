@@ -1,23 +1,14 @@
 import { CreateModule } from '@workspace/nestjs-core';
 import { Job, JobRepo } from '../../_lib/database/entities/job.entity';
-import { Subagent, SubagentRepo } from '../../_lib/database/entities/subagent.entity';
-import { Task, TaskRepo } from '../../_lib/database/entities/task.entity';
 import { ThreadGroup, ThreadGroupRepo } from '../../_lib/database/entities/thread-group.entity';
-import {
-  ThreadMessage,
-  ThreadMessageRepo,
-} from '../../_lib/database/entities/thread-message.entity';
 import { Thread, ThreadRepo } from '../../_lib/database/entities/thread.entity';
 import { HostTransportModule } from '../host-transport/host-transport.module';
 import { InboundMessageModule } from '../inbound-message/inbound-message.module';
 import { SandboxModule } from '../sandbox/sandbox.module';
+import { JobRealtimeResourcesService } from './job-realtime-resources.service';
 import { JobViewService } from './job-view.service';
 import { JobController } from './job.controller';
 import { JobService } from './job.service';
-import { LiveStateService } from './live-state.service';
-import { MessageService } from './message.service';
-import { TaskService } from './task.service';
-import { ThreadService } from './thread.service';
 
 @CreateModule({
   imports: [HostTransportModule, InboundMessageModule, SandboxModule],
@@ -25,18 +16,8 @@ import { ThreadService } from './thread.service';
     { entity: Job, repoClass: JobRepo },
     { entity: ThreadGroup, repoClass: ThreadGroupRepo },
     { entity: Thread, repoClass: ThreadRepo },
-    { entity: ThreadMessage, repoClass: ThreadMessageRepo },
-    { entity: Subagent, repoClass: SubagentRepo },
-    { entity: Task, repoClass: TaskRepo },
   ],
-  services: [
-    JobViewService,
-    JobService,
-    ThreadService,
-    MessageService,
-    TaskService,
-    LiveStateService,
-  ],
+  services: [JobViewService, JobService, JobRealtimeResourcesService],
   controllers: [JobController],
 })
 export class JobModule {}

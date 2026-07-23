@@ -14,7 +14,8 @@ export const repoApi = baseApi.injectEndpoints({
   overrideExisting: true,
   endpoints: (build) => ({
     getOrgRepos: build.query<RepoView[], string>({
-      query: (orgId) => ({ url: `/orgs/${orgId}/repos`, method: 'GET' }),
+      // Socket-only: the realtime feed delivers the full initial snapshot on subscribe.
+      queryFn: () => ({ data: [] }),
       providesTags: (_result, _error, orgId) => [{ type: EBaseApiCacheTags.REPO, id: orgId }],
       onCacheEntryAdded: (orgId, api) =>
         streamList<RepoView>({
@@ -25,10 +26,18 @@ export const repoApi = baseApi.injectEndpoints({
     }),
 
     // Every repo across the caller's orgs (member-scoped, RLS) — the create-job picker + the sidebar's
-    // repoId→name map. No org in the path.
+    // repoId→name map. No org in the path; an unfiltered subscription is naturally scoped by the `repos`
+    // guard, so this is the live equivalent of the old `GET /repos` (listAll).
     getAllRepos: build.query<RepoView[], void>({
-      query: () => ({ url: `/repos`, method: 'GET' }),
+      // Socket-only: the realtime feed delivers the full initial snapshot on subscribe.
+      queryFn: () => ({ data: [] }),
       providesTags: [EBaseApiCacheTags.REPO],
+      onCacheEntryAdded: (_arg, api) =>
+        streamList<RepoView>({
+          url: 'repos',
+          open: makeSocketListOpener(getRealtimeClient(), 'repos'),
+          lifecycle: api,
+        }),
     }),
 
     // Item ops are addressed by repoId alone — the backend scopes them to the caller's orgs

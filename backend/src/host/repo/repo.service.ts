@@ -4,7 +4,6 @@ import {
   type ConnectedRepo,
   type DisconnectRepoResult,
   type RepoBranches,
-  type RepoView,
   type UpdateRepoDto,
 } from '@workspace/shared';
 import { Repo, RepoRepo } from '../../_lib/database/entities/repo.entity';
@@ -21,20 +20,6 @@ export class RepoService {
     private readonly db: Db,
     private readonly github: GithubAccessAdapter,
   ) {}
-
-  /** Repos connected under an org, oldest first. */
-  async list(userId: string, orgId: string): Promise<RepoView[]> {
-    await this.orgs.assertMember(userId, orgId);
-    const rows = await this.repos.find({ where: { orgId }, order: { createdAt: 'ASC' } });
-    return rows.map((r) => this.toView(r));
-  }
-
-  /** Every repo across the caller's orgs (member-scoped via the `repos` guard) — the cross-org picker +
-   *  the client-side `repoId → name` map for the sidebar. No org in the path; RLS scopes it. */
-  async listAll(): Promise<RepoView[]> {
-    const rows = await this.db.scoped(Repo).find({ order: { createdAt: 'ASC' } });
-    return rows.map((r) => this.toView(r));
-  }
 
   /** Connect (or re-connect) a GitHub repo to the org by URL. Owner-only. */
   async connect(
@@ -135,26 +120,6 @@ export class RepoService {
     const repo = await this.db.scoped(Repo).findOneScoped({ id: repoId }, action);
     if (!repo) throw new NotFoundException('Repository not found');
     return repo;
-  }
-
-  private toView(r: Repo): RepoView {
-    return {
-      id: r.id,
-      orgId: r.orgId,
-      slug: r.slug,
-      name: r.name,
-      gitUrl: r.gitUrl,
-      defaultBranch: r.defaultBranch,
-      accessOk: r.accessOk,
-      accessCheckedAt: r.accessCheckedAt ? r.accessCheckedAt.toISOString() : null,
-      threadCount: r.threadCount,
-      onboardingThreadId: r.onboardingThreadId,
-      onboardedAt: r.onboardedAt ? r.onboardedAt.toISOString() : null,
-      webhookWarning: r.webhookWarning,
-      branchPrefix: r.branchPrefix,
-      defaultAutoMergeMethod: r.defaultAutoMergeMethod,
-      defaultAutoMergeDeleteBranch: r.defaultAutoMergeDeleteBranch,
-    };
   }
 
   private toConnected(r: Repo, reason?: string): ConnectedRepo {

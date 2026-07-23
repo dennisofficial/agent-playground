@@ -17,7 +17,8 @@ export const agentCredentialsApi = baseApi.injectEndpoints({
     // derive `AgentCredentialView` on read via `buildAgentCredentialView` (see credentials-section.tsx)
     // instead of freezing a stale projection in the RTK Query cache.
     getAgentCredentials: build.query<RawAgentCredential[], string>({
-      query: (orgId) => ({ url: `/orgs/${orgId}/agent-credentials`, method: 'GET' }),
+      // Socket-only: the realtime feed delivers the full initial snapshot on subscribe.
+      queryFn: () => ({ data: [] }),
       providesTags: (_result, _error, orgId) => [
         { type: EBaseApiCacheTags.AGENT_CREDENTIALS, id: orgId },
       ],

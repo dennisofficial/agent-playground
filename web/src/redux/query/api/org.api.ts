@@ -7,7 +7,8 @@ export const orgApi = baseApi.injectEndpoints({
   overrideExisting: true,
   endpoints: (build) => ({
     getOrgs: build.query<OrgSummary[], void>({
-      query: () => ({ url: `/orgs`, method: 'GET' }),
+      // Socket-only: the realtime feed delivers the full initial snapshot on subscribe.
+      queryFn: () => ({ data: [] }),
       providesTags: [EBaseApiCacheTags.SESSION],
       onCacheEntryAdded: (_arg, api) =>
         streamList<OrgSummary>({
@@ -17,7 +18,7 @@ export const orgApi = baseApi.injectEndpoints({
         }),
     }),
     getOrgMembers: build.query<MemberView[], string>({
-      query: (orgId) => ({ url: `/orgs/${orgId}/members`, method: 'GET' }),
+      queryFn: () => ({ data: [] }),
       providesTags: (_result, _error, orgId) => [{ type: EBaseApiCacheTags.ORG_MEMBER, id: orgId }],
       onCacheEntryAdded: (orgId, api) =>
         streamList<MemberView>({

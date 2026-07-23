@@ -44,16 +44,6 @@ export class AgentCredentialsController {
     private readonly codexOAuth: CodexOAuthClient,
   ) {}
 
-  /** All agent accounts for the org (metadata + usage; no token material). Members can read. */
-  @Get()
-  async list(
-    @CurrentUser() user: User,
-    @Param('orgId', ParseUUIDPipe) orgId: string,
-  ): Promise<AgentCredentialView[]> {
-    await this.orgs.assertMember(user.id, orgId);
-    return this.store.list(orgId);
-  }
-
   /** Start the Claude OAuth flow: returns the authorize URL to open and the state to echo back. */
   @Post('claude/authorize-url')
   async claudeAuthorizeUrl(

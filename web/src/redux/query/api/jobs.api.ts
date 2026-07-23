@@ -1,5 +1,5 @@
 import { getRealtimeClient } from '@/lib/realtime/realtime-client';
-import { makeSocketListOpener, streamList } from '@workspace/pg-realtime/rtk';
+import { makeSocketListOpener, streamDocument, streamList } from '@workspace/pg-realtime/rtk';
 import type {
   CreateJobDto,
   CreateJobResult,
@@ -48,7 +48,9 @@ export const jobsApi = baseApi.injectEndpoints({
     }),
 
     getJobs: build.query<JobListItem[], void>({
-      query: () => ({ url: `/jobs`, method: 'GET' }),
+      // Socket-only: the realtime feed delivers the full initial snapshot on subscribe, so no REST
+      // first-fetch is needed. `data: []` is just the placeholder until the snapshot lands.
+      queryFn: () => ({ data: [] }),
       providesTags: [EBaseApiCacheTags.JOB],
       onCacheEntryAdded: (_arg, api) =>
         streamList<JobListItem>({
@@ -58,13 +60,33 @@ export const jobsApi = baseApi.injectEndpoints({
         }),
     }),
 
+    // Socket-only: the composed `job_detail` resource (flat job row + thread-group→thread tree,
+    // `JobRealtimeResourcesService` on the backend) reruns on any change to the job/groups/threads.
+    // Unlike the list endpoints above, `queryFn` genuinely awaits the first snapshot before resolving
+    // — the job-detail pages gate real navigation/redirect logic on `isLoading`, so (unlike a list's
+    // safe `[]` placeholder) resolving early with no data would flash a false "not found" state.
     getJob: build.query<JobView, string>({
-      query: (jobId) => ({ url: `/jobs/${jobId}`, method: 'GET' }),
+      queryFn: (jobId) =>
+        new Promise((resolve) => {
+          const query = getRealtimeClient().query('job_detail', { filter: { jobId } });
+          const unsubscribe = query.onChange((changes) => {
+            const row = changes.find((c) => c.op === 'add' || c.op === 'update')?.row;
+            if (!row) return;
+            unsubscribe();
+            resolve({ data: row as JobView });
+          });
+        }),
       providesTags: (_result, _error, jobId) => [{ type: EBaseApiCacheTags.JOB, id: jobId }],
+      onCacheEntryAdded: (jobId, api) =>
+        streamDocument<JobView>({
+          url: 'job_detail',
+          open: makeSocketListOpener(getRealtimeClient(), 'job_detail', { filter: { jobId } }),
+          lifecycle: api,
+        }),
     }),
 
     getThreadGroups: build.query<ThreadGroupView[], string>({
-      query: (jobId) => ({ url: `/jobs/${jobId}/thread-groups`, method: 'GET' }),
+      queryFn: () => ({ data: [] }),
       providesTags: (_result, _error, jobId) => [
         { type: EBaseApiCacheTags.JOB, id: `${jobId}:groups` },
       ],
@@ -77,13 +99,7 @@ export const jobsApi = baseApi.injectEndpoints({
     }),
 
     getThreads: build.query<ThreadView[], { jobId: string; groupId?: string; kind?: string }>({
-      query: ({ jobId, groupId, kind }) => {
-        const p = new URLSearchParams();
-        if (groupId) p.set('groupId', groupId);
-        if (kind) p.set('kind', kind);
-        const qs = p.toString();
-        return { url: `/jobs/${jobId}/threads${qs ? `?${qs}` : ''}`, method: 'GET' };
-      },
+      queryFn: () => ({ data: [] }),
       providesTags: (_result, _error, { jobId }) => [
         { type: EBaseApiCacheTags.JOB, id: `${jobId}:threads` },
       ],
@@ -100,7 +116,7 @@ export const jobsApi = baseApi.injectEndpoints({
     }),
 
     getJobMessages: build.query<ThreadMessageView[], string>({
-      query: (jobId) => ({ url: `/jobs/${jobId}/messages`, method: 'GET' }),
+      queryFn: () => ({ data: [] }),
       providesTags: (_result, _error, jobId) => [
         { type: EBaseApiCacheTags.JOB, id: `${jobId}:messages` },
       ],
@@ -115,10 +131,7 @@ export const jobsApi = baseApi.injectEndpoints({
     }),
 
     getThreadMessages: build.query<ThreadMessageView[], { jobId: string; threadId: string }>({
-      query: ({ jobId, threadId }) => ({
-        url: `/jobs/${jobId}/threads/${threadId}/messages`,
-        method: 'GET',
-      }),
+      queryFn: () => ({ data: [] }),
       providesTags: (_result, _error, { threadId }) => [
         { type: EBaseApiCacheTags.JOB, id: `thread:${threadId}` },
       ],
@@ -133,7 +146,7 @@ export const jobsApi = baseApi.injectEndpoints({
     }),
 
     getJobTasks: build.query<TaskView[], string>({
-      query: (jobId) => ({ url: `/jobs/${jobId}/tasks`, method: 'GET' }),
+      queryFn: () => ({ data: [] }),
       providesTags: (_result, _error, jobId) => [
         { type: EBaseApiCacheTags.JOB, id: `${jobId}:tasks` },
       ],
@@ -148,7 +161,7 @@ export const jobsApi = baseApi.injectEndpoints({
     // The pending queue (sent, not yet consumed). The list may include CONSUMED rows that streamed by; the
     // composer's pending zone renders only `status === 'pending'`.
     getInbound: build.query<InboundMessageView[], string>({
-      query: (jobId) => ({ url: `/jobs/${jobId}/inbound`, method: 'GET' }),
+      queryFn: () => ({ data: [] }),
       providesTags: (_result, _error, jobId) => [
         { type: EBaseApiCacheTags.JOB, id: `${jobId}:inbound` },
       ],
