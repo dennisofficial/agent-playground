@@ -56,7 +56,9 @@ describe('JobService.archive + archived read-exclusion (int)', () => {
   });
 
   beforeEach(async () => {
-    await ds.query(`TRUNCATE threads, thread_groups, jobs, repos, organizations RESTART IDENTITY CASCADE`);
+    await ds.query(
+      `TRUNCATE threads, thread_groups, jobs, repos, organizations RESTART IDENTITY CASCADE`,
+    );
     const org = await ds.getRepository(Organization).save({ name: 'Org' });
     orgId = org.id;
     const repo = await ds.getRepository(Repo).save({

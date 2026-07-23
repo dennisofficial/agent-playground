@@ -2,7 +2,7 @@
   "extends": "../../tsconfig.json",
   "compilerOptions": {
     "declaration": false,
-    "outDir": "../../dist",
+    "outDir": "../../dist"
   },
   "include": ["**/*", "./main.ts", "../_core/**/*", "../_lib/**/*", "../_shared/**/*"],
   "exclude": [
@@ -11,6 +11,6 @@
     "**/*spec.ts",
     "**/*.test.ts",
     "**/*.eval.ts",
-    "**/*.ai.data.ts",
-  ],
+    "**/*.ai.data.ts"
+  ]
 }

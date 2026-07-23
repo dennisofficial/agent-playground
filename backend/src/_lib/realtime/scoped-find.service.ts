@@ -28,12 +28,18 @@ export class ScopedFindService {
     this.scopedFind = createWindowedScopedFind({
       dataSource,
       resolveExposed: getExposed,
-      runScopedFind: <E extends ObjectLiteral>(entity: EntityTarget<E>, findOptions: FindManyOptions<E>) =>
-        this.db.scoped(entity).find(findOptions),
+      runScopedFind: <E extends ObjectLiteral>(
+        entity: EntityTarget<E>,
+        findOptions: FindManyOptions<E>,
+      ) => this.db.scoped(entity).find(findOptions),
     });
   }
 
-  find(model: string, spec: QuerySpec, principal: unknown): Promise<Array<{ pk: string; row: Row }>> {
+  find(
+    model: string,
+    spec: QuerySpec,
+    principal: unknown,
+  ): Promise<Array<{ pk: string; row: Row }>> {
     return this.scopedFind(model, spec, principal);
   }
 }

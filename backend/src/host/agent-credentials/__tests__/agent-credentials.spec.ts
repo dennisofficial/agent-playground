@@ -149,8 +149,9 @@ describe('material-freshness', () => {
 });
 
 describe('projectAgentCredentialView', () => {
-  const projectAgentCredentialView = (input: Parameters<AgentCredentialViewService['project']>[0]) =>
-    new AgentCredentialViewService().project(input);
+  const projectAgentCredentialView = (
+    input: Parameters<AgentCredentialViewService['project']>[0],
+  ) => new AgentCredentialViewService().project(input);
   const base = {
     id: 'id1',
     provider: EAgentProvider.CLAUDE,

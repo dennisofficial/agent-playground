@@ -1,10 +1,10 @@
 'use client';
 
-import { env } from '@/lib/env';
-import { refreshSession } from '@/lib/api/refresh';
 import { applyStreamFrame, endLiveTurn, MAIN_LANE } from '@/lib/api/job-stream';
-import type { LiveTurnFrame } from '@workspace/shared';
+import { refreshSession } from '@/lib/api/refresh';
+import { env } from '@/lib/env';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
+import type { LiveTurnFrame } from '@workspace/shared';
 import { useEffect } from 'react';
 
 export function useJobTurnStream(jobId: string | undefined): void {
@@ -78,7 +78,10 @@ interface RawUserMessage {
 class TurnNormalizer {
   private seq = 0;
   /** content-block index → the tool call being assembled (id, name, streamed JSON input). */
-  private readonly tools = new Map<number, { id: string; name: string; json: string; pid?: string }>();
+  private readonly tools = new Map<
+    number,
+    { id: string; name: string; json: string; pid?: string }
+  >();
 
   constructor(private readonly jobId: string) {}
 
@@ -123,7 +126,8 @@ class TurnNormalizer {
 
     if (ev.type === 'content_block_delta') {
       const d = ev.delta;
-      if (d?.type === 'text_delta' && d.text) this.apply({ kind: 'text_delta', text: d.text, parentToolUseId: pid });
+      if (d?.type === 'text_delta' && d.text)
+        this.apply({ kind: 'text_delta', text: d.text, parentToolUseId: pid });
       else if (d?.type === 'thinking_delta' && d.thinking)
         this.apply({ kind: 'thinking_delta', text: d.thinking, parentToolUseId: pid });
       else if (d?.type === 'input_json_delta' && typeof ev.index === 'number') {

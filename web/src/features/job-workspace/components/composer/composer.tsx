@@ -10,7 +10,6 @@ import { useConnectivity } from '@/lib/api/connectivity';
 import { useAllJobs } from '@/lib/api/inbox';
 import { ThreadApiError, type JobRef, type MessageInput } from '@/lib/api/job-api';
 import { useJobMessages, useSendReviewComments, useStop } from '@/lib/api/job-queries';
-import { useSendMessage } from './use-send-message';
 import { MAIN_LANE, useLiveTurn, type ContextBreakdown } from '@/lib/api/job-stream';
 import { formatEffort, formatModelLabel } from '@/utils/format';
 import { ArrowUp, ChevronDown, Plus, Square } from 'lucide-react';
@@ -23,6 +22,7 @@ import { AttachmentTray } from '../trays/attachment-tray';
 import { CommentTray } from '../trays/comment-tray';
 import { QueuedTray } from '../trays/queued-tray';
 import { StagedAnswersTray } from '../trays/staged-answers-tray';
+import { useSendMessage } from './use-send-message';
 
 function toMessageItem(a: StagedAnswer): MessageInput {
   if (a.kind === 'question') {

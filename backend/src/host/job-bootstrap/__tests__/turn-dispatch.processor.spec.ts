@@ -49,7 +49,11 @@ describe('TurnDispatchProcessor.process', () => {
       .mockResolvedValue([msg('a')]);
     const dispatchFn = vi.fn(async () => Promise.reject(new Error('sandbox not ready')));
     const hasPending = vi.fn(async () => Promise.resolve(true)); // rows are still pending after the failure
-    const { processor, dispatchQueue } = makeProcessor({ claimPending, dispatch: dispatchFn, hasPending });
+    const { processor, dispatchQueue } = makeProcessor({
+      claimPending,
+      dispatch: dispatchFn,
+      hasPending,
+    });
 
     await expect(processor.process(dispatch('job-1'))).rejects.toThrow('sandbox not ready');
 

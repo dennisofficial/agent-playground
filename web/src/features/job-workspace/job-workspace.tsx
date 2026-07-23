@@ -14,10 +14,10 @@ import {
   useSetAutoApprove,
   useSetAutoMerge,
 } from '@/lib/api/job-queries';
-import { useArchiveJobMutation } from '@/redux/query/api/jobs.api';
 import { MAIN_LANE } from '@/lib/api/job-stream';
 import { APPROVE_ACTION_ID, SHIP_ACTION_ID, type WebApprovalCard } from '@/lib/api/types';
 import { SITE_MAP } from '@/lib/site-map';
+import { useArchiveJobMutation } from '@/redux/query/api/jobs.api';
 import { orgSwatch } from '@/utils/org-display';
 import { EJobKind, EJobStatus } from '@workspace/shared';
 import { useRouter } from 'next/navigation';

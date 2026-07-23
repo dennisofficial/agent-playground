@@ -21,10 +21,15 @@ function makeService(opts: {
       if (opts.mintThrows) throw new Error('mint failed');
       return 'install-token';
     }),
-    appBotIdentity: vi.fn(async () => ({ name: 'atlas[bot]', email: '1+atlas[bot]@users.noreply.github.com' })),
+    appBotIdentity: vi.fn(async () => ({
+      name: 'atlas[bot]',
+      email: '1+atlas[bot]@users.noreply.github.com',
+    })),
   };
   const api = {
-    getAuthenticatedUser: vi.fn(async () => opts.user ?? { login: 'octo', id: 42, name: 'Octo Cat' }),
+    getAuthenticatedUser: vi.fn(
+      async () => opts.user ?? { login: 'octo', id: 42, name: 'Octo Cat' },
+    ),
   };
   const service = new GithubTokenService(credentials as never, appTokens as never, api as never);
   return { service, credentials, appTokens, api };
@@ -42,7 +47,11 @@ describe('hostToken (faceless — prefers the App installation token)', () => {
   });
 
   it('returns null (never leaks the PAT) when minting fails despite a stored PAT', async () => {
-    const { service } = makeService({ pat: 'pat', installation: { id: '9', account: null }, mintThrows: true });
+    const { service } = makeService({
+      pat: 'pat',
+      installation: { id: '9', account: null },
+      mintThrows: true,
+    });
     expect(await service.hostToken('o')).toBeNull();
   });
 
