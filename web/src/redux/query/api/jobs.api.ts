@@ -3,8 +3,10 @@ import { streamList } from '@workspace/pg-realtime/rtk';
 import type {
   CreateJobDto,
   CreateJobResult,
+  InboundItemInput,
   JobListItem,
   JobView,
+  SendMessageResult,
   TaskView,
   ThreadGroupView,
   ThreadMessageView,
@@ -28,6 +30,22 @@ export const jobsApi = baseApi.injectEndpoints({
       invalidatesTags: (_result, _error, jobId) => [
         EBaseApiCacheTags.JOB,
         { type: EBaseApiCacheTags.JOB, id: jobId },
+      ],
+    }),
+
+    // Post a typed batch into a job (the inbound-message choke point). The operator bubble + any reply arrive
+    // via the messages/realtime stream (streamList on getJobMessages), so no optimistic wiring is needed here.
+    sendMessage: build.mutation<
+      SendMessageResult,
+      { jobId: string; messages: InboundItemInput[]; threadId?: string }
+    >({
+      query: ({ jobId, messages, threadId }) => ({
+        url: `/jobs/${jobId}/messages`,
+        method: 'POST',
+        data: threadId ? { messages, threadId } : { messages },
+      }),
+      invalidatesTags: (_result, _error, { jobId }) => [
+        { type: EBaseApiCacheTags.JOB, id: `${jobId}:messages` },
       ],
     }),
 
@@ -126,6 +144,7 @@ export const jobsApi = baseApi.injectEndpoints({
 export const {
   useCreateJobMutation,
   useArchiveJobMutation,
+  useSendMessageMutation,
   useGetJobsQuery,
   useGetJobQuery,
   useGetThreadGroupsQuery,

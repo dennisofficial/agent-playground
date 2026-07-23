@@ -1,4 +1,12 @@
-import { IsIn, IsNotEmpty, IsOptional, IsString, IsUUID } from 'class-validator';
+import {
+  ArrayNotEmpty,
+  IsArray,
+  IsIn,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  IsUUID,
+} from 'class-validator';
 import type {
   EJobStatus,
   ESubagentStatus,
@@ -54,18 +62,33 @@ export interface CreateJobResult {
   focusedThreadId: string;
 }
 
+export type InboundItemInput =
+  | { type: 'operator'; text: string }
+  | { type: 'answer_question'; questionId: string; answer: string }
+  | { type: 'file_answered'; requestId: string; filename: string; content: string }
+  | { type: 'secret_provided'; requestId: string; value: string };
+
+export type InboundMessagePayload =
+  | { type: 'operator' }
+  | { type: 'answer_question'; questionId: string }
+  | { type: 'file_answered'; requestId: string; filename: string; content: string }
+  | { type: 'secret_provided'; requestId: string };
+
+/** `POST /jobs/:jobId/messages` request — a typed batch (NOT flattened text). `threadId` defaults to focus. */
 export class SendMessageDto {
-  @IsString()
-  @IsNotEmpty()
-  text!: string;
+  // NOTE: items pass through un-whitelisted (no @ValidateNested yet) — deep per-item validation is a follow-up.
+  @IsArray()
+  @ArrayNotEmpty()
+  messages!: InboundItemInput[];
 
   @IsOptional()
   @IsUUID()
   threadId?: string;
 }
 
+/** `POST /jobs/:jobId/messages` response — the enqueued inbound rows, in send order. */
 export interface SendMessageResult {
-  messageId: string;
+  messageIds: string[];
 }
 
 export interface ThreadView {

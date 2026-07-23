@@ -9,7 +9,8 @@ import {
 import { useConnectivity } from '@/lib/api/connectivity';
 import { useAllJobs } from '@/lib/api/inbox';
 import { ThreadApiError, type JobRef, type MessageInput } from '@/lib/api/job-api';
-import { useJobMessages, useMessage, useSendReviewComments, useStop } from '@/lib/api/job-queries';
+import { useJobMessages, useSendReviewComments, useStop } from '@/lib/api/job-queries';
+import { useSendMessage } from './use-send-message';
 import { MAIN_LANE, useLiveTurn, type ContextBreakdown } from '@/lib/api/job-stream';
 import { formatEffort, formatModelLabel } from '@/utils/format';
 import { ArrowUp, ChevronDown, Plus, Square } from 'lucide-react';
@@ -126,7 +127,7 @@ export function Composer({
   // Send, no attach/paste — the only difference is the placeholder copy (and that the operator unblocks
   // above for a blocked job; an archived job has no way out).
   const inert = readOnly || blocked || archived;
-  const message = useMessage(jobRef);
+  const message = useSendMessage(jobRef);
   const stop = useStop(jobRef);
   const sendReviewComments = useSendReviewComments(jobRef);
   const stagedAnswers = useComposerStagedAnswers(jobRef);

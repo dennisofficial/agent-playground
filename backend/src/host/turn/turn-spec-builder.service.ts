@@ -19,6 +19,25 @@ const ATLAS_BASELINE_PROMPT = [
   'Complete the requested task directly, using the tools available to you.',
 ].join('\n');
 
+/**
+ * Render one inbound row into its SDK-prompt block, per the typed `payload`. Operator text is the user turn
+ * itself; other item types are structured context blocks around it. Extend the switch as item types grow.
+ */
+function renderInboundForPrompt(m: InboundMessage): string {
+  const payload = m.payload;
+  switch (payload?.type) {
+    case 'answer_question':
+      return `<answer question_id="${payload.questionId}">\n${m.text}\n</answer>`;
+    case 'file_answered':
+      return `<system_notice>Operator attached a file: ${payload.filename}</system_notice>`;
+    case 'secret_provided':
+      return `<system_notice>Operator provided a requested secret.</system_notice>`;
+    case 'operator':
+    default:
+      return m.text;
+  }
+}
+
 @Injectable()
 export class TurnSpecBuilderService {
   constructor(
@@ -37,7 +56,7 @@ export class TurnSpecBuilderService {
 
     return {
       engine: 'claude',
-      prompt: messages.map((m) => m.text).join('\n\n'),
+      prompt: messages.map(renderInboundForPrompt).join('\n\n'),
       systemPrompt: ATLAS_BASELINE_PROMPT,
       cwd: WORK_MOUNT,
       model: DEFAULT_CLAUDE_MODEL,

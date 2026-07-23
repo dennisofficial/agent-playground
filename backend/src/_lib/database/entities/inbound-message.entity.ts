@@ -1,7 +1,12 @@
 import { TimestampedEntity } from '@lib/database/base.entity';
 import type { AtlasClaims } from '@lib/rls/atlas-claims';
 import { Rls } from '@workspace/nestjs-rls';
-import { EInboundMessageStatus, EInboundPriority, EThreadMessageSource } from '@workspace/shared';
+import {
+  EInboundMessageStatus,
+  EInboundPriority,
+  EThreadMessageSource,
+  type InboundMessagePayload,
+} from '@workspace/shared';
 import {
   Column,
   Entity,
@@ -53,9 +58,8 @@ export class InboundMessage extends TimestampedEntity {
   @Column({ type: 'text' })
   text!: string;
 
-  /** Structured card-reply / injected payload, or null for a plain operator message. */
   @Column({ type: 'jsonb', nullable: true })
-  payload!: Record<string, unknown> | null;
+  payload!: InboundMessagePayload | null;
 
   @Column({ type: 'enum', enum: EInboundMessageStatus, default: EInboundMessageStatus.PENDING })
   status!: EInboundMessageStatus;

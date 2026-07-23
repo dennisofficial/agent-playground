@@ -7,6 +7,7 @@ import { HostTransportService, TurnStalledError } from '../host-transport/host-t
 import { InboundMessageService } from '../inbound-message/inbound-message.service';
 import { SandboxService } from '../sandbox/sandbox.service';
 import { TurnSpecBuilderService } from './turn-spec-builder.service';
+import { TurnTranscriptService } from './turn-transcript.service';
 
 /** How often, while a turn runs, we sweep for freshly-arrived messages to steer into it. */
 const FORWARD_POLL_MS = 750;
@@ -20,11 +21,13 @@ export class TurnDispatcherService {
     private readonly transport: HostTransportService,
     private readonly sandbox: SandboxService,
     private readonly inbound: InboundMessageService,
+    private readonly transcript: TurnTranscriptService,
     private readonly db: Db,
   ) {}
 
   async run(jobId: string, messages: InboundMessage[]): Promise<void> {
     const threadId = messages[0].threadId;
+    const orgId = messages[0].orgId;
     const spec = await this.specBuilder.build(jobId, messages);
 
     const turnId = randomUUID();
@@ -47,7 +50,8 @@ export class TurnDispatcherService {
         await this.sandbox.touch(jobId); // real engine activity (incl. heartbeat) → keep the sandbox alive
         const sid = (event as { session_id?: string })?.session_id;
         if (sid) sessionId = sid;
-        // TODO(jobs): route `event` into the job's realtime feed (filtering out `heartbeat`).
+        // Persist visible output as thread_messages; pg-realtime streams the inserts to the workspace.
+        await this.transcript.record({ jobId, threadId, orgId }, event);
         if ((event as { type?: string })?.type === 'result') break;
       }
       this.logger.log(`turn ${turnId}: event stream ended after ${eventCount} event(s)`);

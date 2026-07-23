@@ -3,6 +3,7 @@ import { Db } from '@workspace/nestjs-rls/nest';
 import type {
   CreateJobDto,
   CreateJobResult,
+  InboundItemInput,
   SendMessageDto,
   SendMessageResult,
 } from '@workspace/shared';
@@ -21,7 +22,10 @@ import { Repo } from '../../_lib/database/entities/repo.entity';
 import { ThreadGroup } from '../../_lib/database/entities/thread-group.entity';
 import { Thread } from '../../_lib/database/entities/thread.entity';
 import type { User } from '../../_lib/database/entities/user.entity';
-import { InboundMessageService } from '../inbound-message/inbound-message.service';
+import {
+  type EnqueueInput,
+  InboundMessageService,
+} from '../inbound-message/inbound-message.service';
 import { TurnFlowService } from './turn-flow.service';
 
 @Injectable()
@@ -89,6 +93,7 @@ export class JobBootstrapService {
             source: EThreadMessageSource.OPERATOR,
             text: dto.firstMessage,
             priority: EInboundPriority.NOW,
+            payload: { type: 'operator' },
           },
           m,
         );
@@ -115,15 +120,19 @@ export class JobBootstrapService {
     const threadId = dto.threadId ?? job.focusedThreadId;
     if (!threadId) throw new BadRequestException('Job has no thread to post to');
 
-    const inbound = await this.inbound.enqueue({
-      jobId,
-      threadId,
-      orgId: job.orgId,
-      authorId: user.id,
-      author: user.name?.trim() || user.email,
-      source: EThreadMessageSource.OPERATOR,
-      text: dto.text,
-      priority: EInboundPriority.NOW,
+    // One inbound row per typed item, committed together — the batch becomes this turn's trigger (claimPending
+    // returns them as an array; the spec builder renders each per type into the prompt).
+    const author = user.name?.trim() || user.email;
+    const messageIds = await this.db.unsafe(Job).manager.transaction(async (m) => {
+      const ids: string[] = [];
+      for (const item of dto.messages) {
+        const row = await this.inbound.enqueue(
+          this.toEnqueue(item, { jobId, threadId, orgId: job.orgId, authorId: user.id, author }),
+          m,
+        );
+        ids.push(row.id);
+      }
+      return ids;
     });
 
     try {
@@ -134,6 +143,50 @@ export class JobBootstrapService {
       );
     }
 
-    return { messageId: inbound.id };
+    return { messageIds };
+  }
+
+  /** Map a composer item to an inbound row: routing (`source`), a display `text`, and typed `payload`. */
+  private toEnqueue(
+    item: InboundItemInput,
+    ctx: { jobId: string; threadId: string; orgId: string; authorId: string; author: string },
+  ): EnqueueInput {
+    const base = { ...ctx, priority: EInboundPriority.NOW };
+    switch (item.type) {
+      case 'operator':
+        return {
+          ...base,
+          source: EThreadMessageSource.OPERATOR,
+          text: item.text,
+          payload: { type: 'operator' },
+        };
+      case 'answer_question':
+        return {
+          ...base,
+          source: EThreadMessageSource.OPERATOR,
+          text: item.answer,
+          payload: { type: 'answer_question', questionId: item.questionId },
+        };
+      case 'file_answered':
+        return {
+          ...base,
+          source: EThreadMessageSource.OPERATOR,
+          text: `Attached ${item.filename}`,
+          payload: {
+            type: 'file_answered',
+            requestId: item.requestId,
+            filename: item.filename,
+            content: item.content,
+          },
+        };
+      case 'secret_provided':
+        // Never persist the secret VALUE — only that one was provided. Routing to the MCP is future work.
+        return {
+          ...base,
+          source: EThreadMessageSource.SYSTEM,
+          text: 'Secret provided.',
+          payload: { type: 'secret_provided', requestId: item.requestId },
+        };
+    }
   }
 }

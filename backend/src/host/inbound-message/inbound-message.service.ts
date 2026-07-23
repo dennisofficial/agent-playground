@@ -1,6 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { Db } from '@workspace/nestjs-rls/nest';
-import { EInboundMessageStatus, EInboundPriority, EThreadMessageSource } from '@workspace/shared';
+import {
+  EInboundMessageStatus,
+  EInboundPriority,
+  EThreadMessageSource,
+  type InboundMessagePayload,
+} from '@workspace/shared';
 import { EntityManager, In } from 'typeorm';
 import {
   InboundMessage,
@@ -18,7 +23,7 @@ export type EnqueueInput = {
   source: EThreadMessageSource;
   text: string;
   priority: EInboundPriority;
-  payload?: Record<string, unknown> | null;
+  payload?: InboundMessagePayload | null;
 };
 
 @Injectable()
