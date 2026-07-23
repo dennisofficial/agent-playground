@@ -135,10 +135,6 @@ export interface JobMessage {
   subagentStatus?: string | null;
   /** ISO end time of the spawned subagent, or null while running; present only on the anchor message. */
   subagentEndedAt?: string | null;
-  /** `atlas` (the agent) or `user` (a human — the operator). Drives bubble alignment. */
-  author: 'atlas' | 'user';
-  authorId: string;
-  authorName: string;
   text: string;
   kind: string;
   /**
@@ -183,7 +179,6 @@ export function normalizeMessage(r: RawThreadMessage): JobMessage {
     subagentEndedAt: r.subagentEndedAt ?? null,
     author: r.isAtlas ? 'atlas' : 'user',
     authorId: r.authorId,
-    authorName: r.author,
     text: r.text ?? '',
     kind: r.kind,
     source: r.source,

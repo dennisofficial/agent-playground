@@ -4,6 +4,7 @@ import { InboundMessageModule } from '../inbound-message/inbound-message.module'
 import { SandboxModule } from '../sandbox/sandbox.module';
 import { TurnModule } from '../turn/turn.module';
 import { WorkspaceFsModule } from '../workspace-fs/workspace-fs.module';
+import { IntakeService } from './intake.service';
 import { JobBootstrapController } from './job-bootstrap.controller';
 import { JobBootstrapService } from './job-bootstrap.service';
 import { JobReconcileService } from './job-reconcile.service';
@@ -20,7 +21,7 @@ import { TurnFlowService } from './turn-flow.service';
   ],
   queues: [TurnDispatchProcessor],
   processors: [TurnDispatchProcessor],
-  services: [JobBootstrapService, JobReconcileService, TurnFlowService],
+  services: [IntakeService, JobBootstrapService, JobReconcileService, TurnFlowService],
   controllers: [JobBootstrapController],
 })
 export class JobBootstrapModule {}

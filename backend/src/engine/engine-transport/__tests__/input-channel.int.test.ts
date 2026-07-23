@@ -32,37 +32,37 @@ describe('input channel (int)', () => {
     return id;
   };
 
-  it('delivers host-written steering messages to the engine reader, in order', async () => {
+  it('delivers host-written steering frames to the engine reader, in order (with priority)', async () => {
     const turnId = freshTurn();
-    await host.writeInput(turnId, 'first');
-    await host.writeInput(turnId, 'second');
+    await host.writeInput(turnId, { text: 'first', priority: 'next' });
+    await host.writeInput(turnId, { text: 'second' });
 
     const ac = new AbortController();
-    const got: string[] = [];
-    for await (const text of engine.readInput(turnId, ac.signal)) {
-      got.push(text);
+    const got: Array<{ text: string; priority?: string }> = [];
+    for await (const frame of engine.readInput(turnId, ac.signal)) {
+      got.push(frame);
       if (got.length === 2) ac.abort(); // stop once we've drained what we wrote
     }
 
-    expect(got).toEqual(['first', 'second']);
+    expect(got).toEqual([{ text: 'first', priority: 'next' }, { text: 'second' }]);
   });
 
-  it('picks up a message written after the reader is already blocked', async () => {
+  it('picks up a frame written after the reader is already blocked', async () => {
     const turnId = freshTurn();
     const ac = new AbortController();
-    const got: string[] = [];
+    const got: Array<{ text: string }> = [];
     const consume = (async () => {
-      for await (const text of engine.readInput(turnId, ac.signal)) {
-        got.push(text);
+      for await (const frame of engine.readInput(turnId, ac.signal)) {
+        got.push(frame);
         ac.abort();
       }
     })();
 
     await sleep(50); // let the reader enter its blocking XREAD first
-    await host.writeInput(turnId, 'late');
+    await host.writeInput(turnId, { text: 'late' });
     await consume;
 
-    expect(got).toEqual(['late']);
+    expect(got).toEqual([{ text: 'late' }]);
   });
 
   it('a blocked reader unblocks and returns promptly on abort (no message)', async () => {

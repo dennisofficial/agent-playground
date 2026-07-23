@@ -15,3 +15,7 @@ export function turnKeys(turnId: string): TurnKeys {
     input: `${base}:input`,
   };
 }
+
+export function jobLiveKey(jobId: string): string {
+  return `job:${jobId}:live`;
+}

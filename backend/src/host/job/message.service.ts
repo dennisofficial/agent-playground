@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { ThreadMessageView } from '@workspace/shared';
+import { EThreadMessageSource, type ThreadMessageView } from '@workspace/shared';
 import { In } from 'typeorm';
 import { Subagent, SubagentRepo } from '../../_lib/database/entities/subagent.entity';
 import {
@@ -56,9 +56,8 @@ export class MessageService {
         ? anchoredSubagent.endedAt.toISOString()
         : undefined,
       source: m.source,
-      isAtlas: m.source === 'atlas',
+      isAtlas: m.source === EThreadMessageSource.ATLAS,
       authorId: m.authorId,
-      author: m.author,
       text: m.text,
       kind: m.kind,
       card: m.card,

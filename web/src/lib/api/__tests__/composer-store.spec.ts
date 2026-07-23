@@ -332,7 +332,6 @@ describe('composerStore', () => {
         subagentId: null,
         author: 'atlas',
         authorId: 'atlas',
-        authorName: 'Atlas',
         text: '',
         kind: 'card',
         source: 'atlas',

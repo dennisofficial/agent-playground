@@ -11,9 +11,6 @@ import { MessageQueue } from './message-queue';
 const CLAUDE_CONFIG_DIR = join(ATLAS_STATE_MOUNT, 'claude');
 const CODEX_CONFIG_DIR = join(ATLAS_STATE_MOUNT, 'codex');
 
-// Emit a liveness beat while the SDK runs. It keeps the host's sandbox lease warm through long *silent* steps (a
-// 40-min build) so the reaper can't kill the pod mid-turn, and resets the host's stall timer so a healthy-but-quiet
-// turn isn't mistaken for a dead engine. Must be well under the host's TURN_STALL_MS.
 const HEARTBEAT_MS = 20_000;
 
 @Injectable()
@@ -67,9 +64,11 @@ export class RunnerService {
   /** Forward host-sent steering messages into the live SDK queue until the turn ends (signal aborts). */
   private async pumpInput(turnId: string, signal: AbortSignal): Promise<void> {
     try {
-      for await (const text of this.transport.readInput(turnId, signal)) {
-        this.logger.log(`steering message received mid-turn`);
-        this.enqueue(text);
+      for await (const frame of this.transport.readInput(turnId, signal)) {
+        this.logger.log(
+          `steering message received mid-turn (priority=${frame.priority ?? 'default'})`,
+        );
+        this.enqueue(frame.text, frame.priority);
       }
     } catch (err) {
       // Never let a steering-channel failure sink the turn — the SDK loop is the source of truth.
@@ -81,12 +80,17 @@ export class RunnerService {
     await this.handle?.interrupt();
   }
 
-  enqueue(text: string): void {
-    this.input?.push(this.userMessage(text));
+  enqueue(text: string, priority?: SDKUserMessage['priority']): void {
+    this.input?.push(this.userMessage(text, priority));
   }
 
-  private userMessage(text: string): SDKUserMessage {
-    return { type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null };
+  private userMessage(text: string, priority?: SDKUserMessage['priority']): SDKUserMessage {
+    return {
+      type: 'user',
+      message: { role: 'user', content: text },
+      parent_tool_use_id: null,
+      ...(priority ? { priority } : {}),
+    };
   }
 
   private buildClaudeOptions(spec: TurnSpec): Options {
@@ -101,6 +105,7 @@ export class RunnerService {
       cwd: spec.cwd,
       model: spec.model,
       resume: spec.sessionId,
+      includePartialMessages: true,
       env: { ...process.env, CLAUDE_CONFIG_DIR, ...RunnerService.applyEnv(spec.env) },
     };
   }

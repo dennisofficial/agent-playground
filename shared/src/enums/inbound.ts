@@ -1,6 +1,12 @@
 export enum EInboundMessageStatus {
+  // Staged in the composer, not yet sent (future: composer loads these back).
   DRAFT = 'draft',
+  // Sent, sitting in the queue, not yet seen by the SDK.
   PENDING = 'pending',
+  // The SDK's turn incorporated it — a thread_messages bubble was written at that moment. Terminal (happy path).
+  CONSUMED = 'consumed',
+  // Terminal SANS consumption: drained without the model ever seeing it (e.g. the job was archived). The
+  // consumption model made this the ONLY remaining use of `delivered` — the row is retired, not handed off.
   DELIVERED = 'delivered',
 }
 

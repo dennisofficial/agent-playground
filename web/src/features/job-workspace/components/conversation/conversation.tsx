@@ -5,6 +5,7 @@ import { useAllJobs } from '@/lib/api/inbox';
 import type { JobMessage, JobRef } from '@/lib/api/job-api';
 import { MAIN_LANE, useLiveTurn, type ContextBreakdown } from '@/lib/api/job-stream';
 import type { JobBlocker, LaneDefaultFooter } from '@/lib/api/types';
+import { useJobTurnStream } from '../../hooks/use-job-turn-stream';
 import { assertNever } from '@/utils/assert';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { HelpCircle, Upload } from 'lucide-react';
@@ -35,6 +36,7 @@ import { CompactionSummaryPill } from './bubbles/CompactionSummaryPill';
 import { EventBubble } from './bubbles/EventBubble';
 import { HarnessBubble } from './bubbles/HarnessBubble';
 import { LiveIndicator } from './bubbles/LiveIndicator';
+import { PendingZone } from './pending-zone';
 import { SystemEventPill } from './bubbles/SystemEventPill';
 import { SystemNoticeRow } from './bubbles/SystemNoticeRow';
 import { SystemOperatorNotice } from './bubbles/SystemOperatorNotice';
@@ -85,6 +87,8 @@ export function Conversation({
   onOpenNav?: () => void;
   onOpenDetail?: () => void;
 }) {
+  // Open the job's single live-turn stream once here — it feeds the live-turn store every consumer reads.
+  useJobTurnStream(jobRef.jobId);
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
       <ConversationTopBar onOpenNav={onOpenNav} onOpenDetail={onOpenDetail} />
@@ -380,13 +384,11 @@ export function TranscriptView({
   const liveTurn = useLiveTurn(jobRef.jobId, lane);
   const liveBlockCount = liveTurn?.blocks.length ?? 0;
 
-  // The AUTHORITATIVE turn signal: the server-owned realtime `needsYou` (true = the AI is idle / awaiting
-  // you — a turn is NOT running). If it flips true while a stale live turn still lingers (a dropped
-  // `turn_end`), we treat the turn as OVER so the "working…" indicator self-heals OFF. Only the Main lane
-  // cross-checks this — the realtime feed is job-level, so it can't gate independent build (phase) lanes,
-  // and a read-only lane (composer on, but not Main) must NOT cross-check it either.
-  const realtimeIdle = useRealtimeIdle(composer && !readOnly ? jobRef.jobId : null);
-  const turnActive = (liveTurn?.active ?? false) && !realtimeIdle;
+  // The SINGLE authoritative "a turn is running" signal: the live-turn store, fed by the job's one Redis-backed
+  // `/turn/stream` (presence + content in one). Its `turn_start`/`turn_end` bracket the run; the crash-safe TTL
+  // on the server side means a dropped `turn_end` (host died) self-heals — no client `needsYou` cross-check
+  // or separate `active_turns` presence query needed anymore.
+  const turnActive = liveTurn?.active ?? false;
 
   // Whether a build lane (not this Main brain) owns the live work — used to suppress the Main "Atlas is
   // working…" footer for work a driver is actually doing. The server-owned working axis that drove this was
@@ -675,6 +677,9 @@ export function TranscriptView({
           {(live && !driverOwnsWork) || turnActive ? (
             <LiveIndicator turn={turnActive ? liveTurn : undefined} />
           ) : null}
+          {/* Sent-but-not-yet-consumed messages, dimmed, just above the composer — they drop to the transcript
+              the moment the model incorporates them (status → CONSUMED). */}
+          <PendingZone jobId={jobRef.jobId} threadId={threadId} />
           {/* Spacer so the last line clears the floating composer (or just breathes on read-only lanes). */}
           <div className="shrink-0" style={{ height: bottomPad }} aria-hidden />
           <div ref={endRef} />
@@ -1080,12 +1085,6 @@ const TEXT_KINDS = new Set([
   'compaction',
   'system_operator',
 ]);
-
-function useRealtimeIdle(jobId: string | null): boolean {
-  const { data: threads } = useAllJobs();
-  if (!jobId) return false;
-  return threads?.find((t) => t.id === jobId)?.needsYou ?? false;
-}
 
 /**
  * Live "an unresolved turn-failure box is outstanding" bit for one job, from the same server-owned realtime

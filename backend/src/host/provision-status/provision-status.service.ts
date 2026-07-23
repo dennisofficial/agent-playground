@@ -37,7 +37,6 @@ export class ProvisionStatusService {
             audience: EMessageAudience.OPERATOR_ONLY,
             kind: EThreadMessageKind.BUILD_EVENT,
             authorId: 'system',
-            author: 'System',
             text,
             card: null,
             meta,

@@ -1,6 +1,7 @@
 import type { ResolveClaims } from '@workspace/nestjs-rls';
 import { rlsGuard } from '@workspace/nestjs-rls/pg-realtime';
 import type { ModelConfig, Row } from '@workspace/pg-realtime';
+import { InboundMessage } from '../../_lib/database/entities/inbound-message.entity';
 import { Job } from '../../_lib/database/entities/job.entity';
 import { Task } from '../../_lib/database/entities/task.entity';
 import { ThreadGroup } from '../../_lib/database/entities/thread-group.entity';
@@ -81,13 +82,33 @@ export function buildJobRealtimeModels(resolveClaims: ResolveClaims): ModelConfi
         source: raw.source,
         isAtlas: raw.source === 'atlas',
         authorId: raw.author_id,
-        author: raw.author,
         text: raw.text,
         kind: raw.kind,
         card: raw.card,
         meta: raw.meta,
         orderAt: raw.order_at,
         postedAt: raw.created_at,
+      }),
+    },
+    {
+      // The "sent, not yet consumed" queue — the composer's pending zone streams PENDING rows and drops each
+      // when it flips to CONSUMED (at which point a thread_messages bubble takes its place).
+      table: 'inbound_messages',
+      name: 'inbound_messages',
+      primaryKey: 'id',
+      guard: rlsGuard(InboundMessage, resolveClaims),
+      mapRow: (raw: Row): Row => ({
+        id: raw.id,
+        orgId: raw.org_id,
+        jobId: raw.job_id,
+        threadId: raw.thread_id,
+        source: raw.source,
+        authorId: raw.author_id,
+        text: raw.text,
+        payload: raw.payload,
+        status: raw.status,
+        priority: raw.priority,
+        createdAt: raw.created_at,
       }),
     },
     {

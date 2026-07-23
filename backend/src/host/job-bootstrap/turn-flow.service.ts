@@ -23,8 +23,7 @@ export class TurnFlowService {
       name: 'dispatch',
       queueName: TurnDispatchProcessor.name,
       data: { jobId },
-      // BullMQ custom job ids must NOT contain ':' (its Redis key separator) — use '-'.
-      opts: { jobId: `dispatch-${jobId}` },
+      opts: { jobId: `dispatch-${jobId}`, removeOnComplete: true, removeOnFail: true },
       children: [
         {
           name: 'provision',
@@ -34,6 +33,8 @@ export class TurnFlowService {
             jobId: `provision-${jobId}`,
             attempts: 2,
             backoff: { type: 'exponential', delay: 1000 },
+            removeOnComplete: true,
+            removeOnFail: true,
           },
           children: [
             {
@@ -44,6 +45,8 @@ export class TurnFlowService {
                 jobId: `prepare-workspace-${jobId}`,
                 attempts: 3,
                 backoff: { type: 'exponential', delay: 1000 },
+                removeOnComplete: true,
+                removeOnFail: true,
               },
             },
           ],

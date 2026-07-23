@@ -31,8 +31,9 @@ export class TurnDispatchProcessor extends BaseQueue {
           break;
         }
         this.logger.log(`job ${jobId}: dispatching ${claimed.length} message(s)`);
+        // run() consumes the batch as the SDK's turn incorporates each message (writes the bubble + flips the row
+        // to CONSUMED), with a turn-end backstop — so nothing here marks delivery.
         await this.turnDispatcher.run(jobId, claimed);
-        await this.inbound.markDelivered(claimed.map((m) => m.id));
       }
     } finally {
       // Only chase mid-run arrivals when we exited cleanly. On a thrown dispatch we let the BullMQ job

@@ -39,8 +39,6 @@ import { MessageTime } from './MessageTime';
 import { StreamTextBubble } from './StreamTextBubble';
 import { ThinkingBlock } from './ThinkingBlock';
 
-/** Per-type tone for {@link MessageTime} — distinct colors so the operator can tell turn boundaries from
- *  in-turn blocks at a glance (the user wants to eyeball density/color before we tune it down). */
 export type TimeTone = 'muted' | 'user' | 'thinking' | 'turn';
 
 export const TIME_TONE_COLOR: Record<TimeTone, string> = {
@@ -50,19 +48,19 @@ export const TIME_TONE_COLOR: Record<TimeTone, string> = {
   turn: 'var(--accent-2)',
 };
 
-/**
- * An operator message — the right-aligned accent bubble. Takes raw `text` (not a `JobMessage`) so it can
- * stand in for any operator-authored instruction, including a subagent's Task prompt (the "user message"
- * that kicked the run off), rendered identically to the main transcript.
- */
 export function UserBubble({
   text,
   time,
   pending = false,
+  pendingLabel = 'sending…',
 }: {
   text: string;
   time?: string;
+  /** Dim the bubble (0.6) and show a status caption instead of the timestamp. */
   pending?: boolean;
+  /** The caption shown while `pending`. `'sending…'` (default) = not yet server-acked; the pending zone passes
+   *  `'queued · waiting for the model'` for a sent-but-not-yet-consumed message — SAME bubble body either way. */
+  pendingLabel?: string;
 }) {
   return (
     <div className="group anim-fadeUp flex flex-col items-end gap-1">
@@ -80,7 +78,7 @@ export function UserBubble({
       {pending ? (
         <span className="flex select-none items-center gap-1 pr-0.5 font-mono text-[9.5px] text-faint">
           <Loader2 size={9} className="animate-spin" />
-          sending…
+          {pendingLabel}
         </span>
       ) : (
         <MessageTime iso={time} tone="user" align="right" />

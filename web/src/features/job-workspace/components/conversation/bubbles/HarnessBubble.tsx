@@ -39,7 +39,6 @@ export function HarnessBubble({ message }: { message: JobMessage }) {
           Codex review
         </span>
         <span className="flex-1" />
-        <span className="font-mono text-[10px] text-faint">{message.authorName}</span>
       </div>
       <div className="px-3.5 py-3">
         <Markdown>{message.text}</Markdown>

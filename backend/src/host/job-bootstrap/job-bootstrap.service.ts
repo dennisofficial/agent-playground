@@ -1,17 +1,14 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Db } from '@workspace/nestjs-rls/nest';
 import type {
   CreateJobDto,
   CreateJobResult,
-  InboundItemInput,
   SendMessageDto,
   SendMessageResult,
 } from '@workspace/shared';
 import {
-  EInboundPriority,
   EJobStatus,
   EThreadGroupKind,
-  EThreadMessageSource,
   EThreadOrigin,
   EThreadRole,
   EThreadStatus,
@@ -22,20 +19,13 @@ import { Repo } from '../../_lib/database/entities/repo.entity';
 import { ThreadGroup } from '../../_lib/database/entities/thread-group.entity';
 import { Thread } from '../../_lib/database/entities/thread.entity';
 import type { User } from '../../_lib/database/entities/user.entity';
-import {
-  type EnqueueInput,
-  InboundMessageService,
-} from '../inbound-message/inbound-message.service';
-import { TurnFlowService } from './turn-flow.service';
+import { IntakeService } from './intake.service';
 
 @Injectable()
 export class JobBootstrapService {
-  private readonly logger = new Logger(this.constructor.name);
-
   constructor(
     private readonly db: Db,
-    private readonly inbound: InboundMessageService,
-    private readonly turnFlow: TurnFlowService,
+    private readonly intake: IntakeService,
   ) {}
 
   async create(dto: CreateJobDto, user: User): Promise<CreateJobResult> {
@@ -83,31 +73,19 @@ export class JobBootstrapService {
         job.focusedThreadId = thread.id;
         await m.save(job);
 
-        await this.inbound.enqueue(
-          {
-            jobId: job.id,
-            threadId: thread.id,
-            orgId: dto.orgId,
-            authorId: user.id,
-            author: user.name?.trim() || user.email,
-            source: EThreadMessageSource.OPERATOR,
-            text: dto.firstMessage,
-            priority: EInboundPriority.NOW,
-            payload: { type: 'operator' },
-          },
+        // Enqueue the trigger message in the SAME transaction as the job/thread — a job never exists without
+        // its first inbound row (the reconciler's "job has PENDING work" invariant stays exact).
+        await this.intake.enqueueBatch(
+          { jobId: job.id, threadId: thread.id, orgId: dto.orgId, authorId: user.id },
+          [{ type: 'operator', text: dto.firstMessage }],
           m,
         );
 
         return { jobId: job.id, focusedThreadId: thread.id };
       });
 
-    try {
-      await this.turnFlow.enqueue(jobId);
-    } catch (err) {
-      this.logger.warn(
-        `flow enqueue failed for job ${jobId}; reconciler will recover: ${String(err)}`,
-      );
-    }
+    // Kick AFTER the transaction commits — a flow started against uncommitted rows would claim nothing.
+    await this.intake.kick(jobId);
 
     return { jobId, focusedThreadId };
   }
@@ -120,73 +98,12 @@ export class JobBootstrapService {
     const threadId = dto.threadId ?? job.focusedThreadId;
     if (!threadId) throw new BadRequestException('Job has no thread to post to');
 
-    // One inbound row per typed item, committed together — the batch becomes this turn's trigger (claimPending
-    // returns them as an array; the spec builder renders each per type into the prompt).
-    const author = user.name?.trim() || user.email;
-    const messageIds = await this.db.unsafe(Job).manager.transaction(async (m) => {
-      const ids: string[] = [];
-      for (const item of dto.messages) {
-        const row = await this.inbound.enqueue(
-          this.toEnqueue(item, { jobId, threadId, orgId: job.orgId, authorId: user.id, author }),
-          m,
-        );
-        ids.push(row.id);
-      }
-      return ids;
-    });
-
-    try {
-      await this.turnFlow.enqueue(jobId);
-    } catch (err) {
-      this.logger.warn(
-        `flow enqueue failed for job ${jobId} on message; reconciler will recover: ${String(err)}`,
-      );
-    }
+    // Same intake pipeline as job-create and any other source — one durable row per item, then a flow kick.
+    const messageIds = await this.intake.receive(
+      { jobId, threadId, orgId: job.orgId, authorId: user.id },
+      dto.messages,
+    );
 
     return { messageIds };
-  }
-
-  /** Map a composer item to an inbound row: routing (`source`), a display `text`, and typed `payload`. */
-  private toEnqueue(
-    item: InboundItemInput,
-    ctx: { jobId: string; threadId: string; orgId: string; authorId: string; author: string },
-  ): EnqueueInput {
-    const base = { ...ctx, priority: EInboundPriority.NOW };
-    switch (item.type) {
-      case 'operator':
-        return {
-          ...base,
-          source: EThreadMessageSource.OPERATOR,
-          text: item.text,
-          payload: { type: 'operator' },
-        };
-      case 'answer_question':
-        return {
-          ...base,
-          source: EThreadMessageSource.OPERATOR,
-          text: item.answer,
-          payload: { type: 'answer_question', questionId: item.questionId },
-        };
-      case 'file_answered':
-        return {
-          ...base,
-          source: EThreadMessageSource.OPERATOR,
-          text: `Attached ${item.filename}`,
-          payload: {
-            type: 'file_answered',
-            requestId: item.requestId,
-            filename: item.filename,
-            content: item.content,
-          },
-        };
-      case 'secret_provided':
-        // Never persist the secret VALUE — only that one was provided. Routing to the MCP is future work.
-        return {
-          ...base,
-          source: EThreadMessageSource.SYSTEM,
-          text: 'Secret provided.',
-          payload: { type: 'secret_provided', requestId: item.requestId },
-        };
-    }
   }
 }

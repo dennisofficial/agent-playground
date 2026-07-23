@@ -13,6 +13,7 @@ import { CurrentUser } from '@workspace/auth/server';
 import { RealtimeEngine } from '@workspace/pg-realtime';
 import { PG_REALTIME_ENGINE, sseObservable } from '@workspace/pg-realtime/nest';
 import type {
+  InboundMessageView,
   JobListItem,
   JobView,
   TaskView,
@@ -20,9 +21,11 @@ import type {
   ThreadMessageView,
   ThreadView,
 } from '@workspace/shared';
-import type { Observable } from 'rxjs';
+import { Observable } from 'rxjs';
 import type { User } from '../../_lib/database/entities/user.entity';
+import { HostTransportService } from '../host-transport/host-transport.service';
 import { JobService } from './job.service';
+import { LiveStateService } from './live-state.service';
 import { MessageService } from './message.service';
 import { TaskService } from './task.service';
 import { ThreadService } from './thread.service';
@@ -34,6 +37,8 @@ export class JobController {
     private readonly threads: ThreadService,
     private readonly messages: MessageService,
     private readonly tasks: TaskService,
+    private readonly live: LiveStateService,
+    private readonly hostTransport: HostTransportService,
     @Inject(PG_REALTIME_ENGINE) private readonly realtime: RealtimeEngine,
   ) {}
 
@@ -152,5 +157,41 @@ export class JobController {
     return sseObservable(() =>
       this.realtime.openSubscription({ model: 'tasks', user, filter: { jobId } }),
     );
+  }
+
+  /** The pending queue (sent, not yet consumed) — the composer's pending zone. */
+  @Get(':jobId/inbound')
+  async listInbound(@Param('jobId', ParseUUIDPipe) jobId: string): Promise<InboundMessageView[]> {
+    await this.jobs.assertAccess(jobId);
+    return this.live.listPendingInbound(jobId);
+  }
+
+  @Sse(':jobId/inbound/realtime')
+  streamInbound(
+    @CurrentUser() user: User,
+    @Param('jobId', ParseUUIDPipe) jobId: string,
+  ): Observable<MessageEvent> {
+    return sseObservable(() =>
+      this.realtime.openSubscription({ model: 'inbound_messages', user, filter: { jobId } }),
+    );
+  }
+
+  @Sse(':jobId/turn/stream')
+  streamTurn(@Param('jobId', ParseUUIDPipe) jobId: string): Observable<MessageEvent> {
+    return new Observable<MessageEvent>((subscriber) => {
+      const abort = new AbortController();
+      void (async () => {
+        try {
+          await this.jobs.assertAccess(jobId);
+          for await (const frame of this.hostTransport.streamLive(jobId, abort.signal)) {
+            subscriber.next({ type: frame.kind, data: frame });
+          }
+          subscriber.complete();
+        } catch (err) {
+          subscriber.error(err);
+        }
+      })();
+      return () => abort.abort();
+    });
   }
 }

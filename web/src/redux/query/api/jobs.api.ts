@@ -4,6 +4,7 @@ import type {
   CreateJobDto,
   CreateJobResult,
   InboundItemInput,
+  InboundMessageView,
   JobListItem,
   JobView,
   SendMessageResult,
@@ -138,6 +139,22 @@ export const jobsApi = baseApi.injectEndpoints({
           lifecycle: api,
         }),
     }),
+
+    // The pending queue (sent, not yet consumed). The list may include CONSUMED rows that streamed by; the
+    // composer's pending zone renders only `status === 'pending'`.
+    getInbound: build.query<InboundMessageView[], string>({
+      query: (jobId) => ({ url: `/jobs/${jobId}/inbound`, method: 'GET' }),
+      providesTags: (_result, _error, jobId) => [
+        { type: EBaseApiCacheTags.JOB, id: `${jobId}:inbound` },
+      ],
+      onCacheEntryAdded: (jobId, api) =>
+        streamList<InboundMessageView>({
+          url: new URL(`/jobs/${jobId}/inbound/realtime`, BACKEND).toString(),
+          open: sseOpener,
+          lifecycle: api,
+        }),
+    }),
+
   }),
 });
 
@@ -152,4 +169,5 @@ export const {
   useGetJobMessagesQuery,
   useGetThreadMessagesQuery,
   useGetJobTasksQuery,
+  useGetInboundQuery,
 } = jobsApi;

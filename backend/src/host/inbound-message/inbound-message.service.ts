@@ -19,7 +19,6 @@ export type EnqueueInput = {
   threadId: string;
   orgId: string;
   authorId: string;
-  author: string;
   source: EThreadMessageSource;
   text: string;
   priority: EInboundPriority;
@@ -52,23 +51,32 @@ export class InboundMessageService {
       deliveredAt: null,
     });
     await m.save(inbound);
-
-    const bubble = m.create(ThreadMessage, {
-      jobId: input.jobId,
-      threadId: input.threadId,
-      orgId: input.orgId,
-      subagentId: null,
-      source: input.source,
-      authorId: input.authorId,
-      author: input.author,
-      text: input.text,
-      card: null,
-      meta: null,
-      orderAt: null,
-    });
-    await m.save(bubble);
-
     return inbound;
+  }
+
+  async consume(row: InboundMessage, manager?: EntityManager): Promise<void> {
+    const run = async (m: EntityManager): Promise<void> => {
+      const bubble = m.create(ThreadMessage, {
+        jobId: row.jobId,
+        threadId: row.threadId,
+        orgId: row.orgId,
+        subagentId: null,
+        source: row.source,
+        authorId: row.authorId,
+        text: row.text,
+        card: null,
+        meta: null,
+        orderAt: null,
+      });
+      await m.save(bubble);
+      await m.update(
+        InboundMessage,
+        { id: row.id },
+        { status: EInboundMessageStatus.CONSUMED, deliveredAt: new Date() },
+      );
+    };
+    if (manager) return run(manager);
+    return this.db.unsafe(InboundMessage).manager.transaction(run);
   }
 
   async claimPending(jobId: string): Promise<InboundMessage[]> {
@@ -90,15 +98,12 @@ export class InboundMessageService {
     return rows.filter((r) => !exclude.has(r.id));
   }
 
-  /** Mark a claimed batch as handed off to the engine. */
-  async markDelivered(ids: string[]): Promise<void> {
-    if (ids.length === 0) return;
-    await this.db
-      .unsafe(InboundMessage)
-      .update(
-        { id: In(ids) },
-        { status: EInboundMessageStatus.DELIVERED, deliveredAt: new Date() },
-      );
+  async pendingNowExcluding(jobId: string, exclude: Set<string>): Promise<InboundMessage[]> {
+    const rows = await this.db.unsafe(InboundMessage).find({
+      where: { jobId, status: EInboundMessageStatus.PENDING, priority: EInboundPriority.NOW },
+      order: { createdAt: 'ASC' },
+    });
+    return rows.filter((r) => !exclude.has(r.id));
   }
 
   async hasPending(jobId: string): Promise<boolean> {
@@ -115,8 +120,6 @@ export class InboundMessageService {
     const rows = await this.db
       .unsafe(InboundMessage)
       .createQueryBuilder('m')
-      // Join the job so an archived job's stray PENDING rows can't resurrect it — without this the reconciler
-      // re-provisions a sandbox for every archived job on every tick.
       .innerJoin(Job, 'j', 'j.id = m.jobId')
       .select('m.jobId', 'jobId')
       .distinct(true)

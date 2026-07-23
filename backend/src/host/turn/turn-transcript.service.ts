@@ -34,7 +34,6 @@ export class TurnTranscriptService {
           source: EThreadMessageSource.ATLAS,
           kind: EThreadMessageKind.CHAT,
           authorId: 'atlas',
-          author: 'Atlas',
           text,
           card: null,
           meta: null,

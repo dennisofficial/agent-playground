@@ -8,6 +8,8 @@ import {
   IsUUID,
 } from 'class-validator';
 import type {
+  EInboundMessageStatus,
+  EInboundPriority,
   EJobStatus,
   ESubagentStatus,
   ETaskStatus,
@@ -91,6 +93,24 @@ export interface SendMessageResult {
   messageIds: string[];
 }
 
+export interface InboundMessageView {
+  id: string;
+  jobId: string;
+  threadId: string;
+  source: EThreadMessageSource;
+  authorId: string;
+  text: string;
+  payload: InboundMessagePayload | null;
+  status: EInboundMessageStatus;
+  priority: EInboundPriority;
+  createdAt: string;
+}
+
+export type LiveTurnFrame =
+  | { kind: 'turn_start'; turnId: string; threadId: string; startedAt: number }
+  | { kind: 'event'; turnId: string; event: unknown }
+  | { kind: 'turn_end'; turnId: string };
+
 export interface ThreadView {
   id: string;
   jobId: string;
@@ -134,8 +154,6 @@ export interface ThreadMessageView {
   source: EThreadMessageSource;
   isAtlas: boolean;
   authorId: string;
-  /** Display name of the author. */
-  author: string;
   text: string;
   kind: EThreadMessageKind;
   card: Record<string, unknown> | null;

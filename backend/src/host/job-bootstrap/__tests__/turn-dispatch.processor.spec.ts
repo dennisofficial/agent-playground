@@ -17,7 +17,6 @@ function makeProcessor(over: {
 }) {
   const inbound = {
     claimPending: over.claimPending,
-    markDelivered: vi.fn(async () => {}),
     hasPending: over.hasPending ?? vi.fn(async () => Promise.resolve(false)),
   } as unknown as InboundMessageService;
   const dispatcher = {
@@ -29,16 +28,18 @@ function makeProcessor(over: {
 }
 
 describe('TurnDispatchProcessor.process', () => {
-  it('drains claimed messages and marks them DELIVERED on a successful dispatch', async () => {
+  it('drains claimed messages by dispatching each batch (run() handles consumption, not the processor)', async () => {
     const claimPending = vi
       .fn<InboundMessageService['claimPending']>()
       .mockResolvedValueOnce([msg('a'), msg('b')])
       .mockResolvedValueOnce([]);
-    const { processor, inbound, dispatchQueue } = makeProcessor({ claimPending });
+    const { processor, dispatcher, dispatchQueue } = makeProcessor({ claimPending });
 
     await processor.process(dispatch('job-1'));
 
-    expect(inbound.markDelivered).toHaveBeenCalledWith(['a', 'b']);
+    expect(dispatcher.run).toHaveBeenCalledWith('job-1', [msg('a'), msg('b')]);
+    // run() writes each bubble + flips the row to CONSUMED as the SDK incorporates it — the processor itself
+    // performs no status transitions.
     expect(dispatchQueue.add).not.toHaveBeenCalled(); // nothing new landed → no re-add
   });
 
@@ -48,11 +49,10 @@ describe('TurnDispatchProcessor.process', () => {
       .mockResolvedValue([msg('a')]);
     const dispatchFn = vi.fn(async () => Promise.reject(new Error('sandbox not ready')));
     const hasPending = vi.fn(async () => Promise.resolve(true)); // rows are still pending after the failure
-    const { processor, inbound, dispatchQueue } = makeProcessor({ claimPending, dispatch: dispatchFn, hasPending });
+    const { processor, dispatchQueue } = makeProcessor({ claimPending, dispatch: dispatchFn, hasPending });
 
     await expect(processor.process(dispatch('job-1'))).rejects.toThrow('sandbox not ready');
 
-    expect(inbound.markDelivered).not.toHaveBeenCalled();
     // On a thrown dispatch BullMQ retries the flow — the processor must NOT also re-add it.
     expect(dispatchQueue.add).not.toHaveBeenCalled();
   });

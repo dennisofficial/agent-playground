@@ -23,6 +23,7 @@ import { ThreadMessage } from '../../../_lib/database/entities/thread-message.en
 import { Thread } from '../../../_lib/database/entities/thread.entity';
 import type { User } from '../../../_lib/database/entities/user.entity';
 import { InboundMessageService } from '../../inbound-message/inbound-message.service';
+import { IntakeService } from '../intake.service';
 import { JobBootstrapService } from '../job-bootstrap.service';
 import { TurnFlowService } from '../turn-flow.service';
 
@@ -66,7 +67,8 @@ describe('JobBootstrapService (int)', () => {
     const inbound = new InboundMessageService(db, ds.getRepository(InboundMessage));
     flow = { add: vi.fn(async () => Promise.resolve({})) };
     const turnFlow = new TurnFlowService(flow as unknown as FlowProducer);
-    service = new JobBootstrapService(db, inbound, turnFlow);
+    const intake = new IntakeService(db, inbound, turnFlow);
+    service = new JobBootstrapService(db, intake);
   });
 
   afterAll(async () => {
@@ -91,7 +93,7 @@ describe('JobBootstrapService (int)', () => {
     claims.ownerOrgIds = [orgId];
   });
 
-  it('creates the job + planning tree, enqueues one PENDING message + operator bubble, and adds the flow', async () => {
+  it('creates the job + planning tree, enqueues one PENDING message, and adds the flow', async () => {
     const result = await service.create(
       { orgId, repoId, firstMessage: 'do the thing', title: 'My job', kind: EJobKind.FEATURE },
       user,
@@ -122,10 +124,9 @@ describe('JobBootstrapService (int)', () => {
     expect(inbound[0].text).toBe('do the thing');
     expect(inbound[0].source).toBe(EThreadMessageSource.OPERATOR);
 
+    // No bubble at enqueue time — the visible thread_messages row is written later, at consumption.
     const bubbles = await ds.getRepository(ThreadMessage).find({ where: { jobId: result.jobId } });
-    expect(bubbles).toHaveLength(1);
-    expect(bubbles[0].source).toBe(EThreadMessageSource.OPERATOR);
-    expect(bubbles[0].author).toBe('Dennis'); // display name lives on the bubble, not the inbound row
+    expect(bubbles).toHaveLength(0);
 
     // The flow is added with deterministic single-flight ids — a second add for the same jobId would
     // collide on these ids (BullMQ dedups), so a job can't run two concurrent flows.
@@ -165,9 +166,9 @@ describe('JobBootstrapService (int)', () => {
     expect(posted?.threadId).toBe(focusedThreadId); // defaulted to the focused thread
     expect(posted?.text).toBe('and also this');
 
-    // The visible bubble is written too (create's + this one).
+    // Still no bubbles — those are written at consumption, not enqueue.
     const bubbles = await ds.getRepository(ThreadMessage).find({ where: { jobId } });
-    expect(bubbles).toHaveLength(2);
+    expect(bubbles).toHaveLength(0);
 
     expect(flow.add).toHaveBeenCalledTimes(1);
     expect(flow.add.mock.calls[0][0].opts.jobId).toBe(`dispatch-${jobId}`);

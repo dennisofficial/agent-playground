@@ -67,10 +67,6 @@ export class ThreadMessage extends TimestampedEntity {
   @Column({ type: 'text' })
   authorId!: string;
 
-  /** Display name of the author. */
-  @Column({ type: 'text' })
-  author!: string;
-
   @Column({ type: 'text' })
   text!: string;
 

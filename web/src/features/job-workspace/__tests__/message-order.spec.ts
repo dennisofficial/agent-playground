@@ -9,7 +9,6 @@ function fixture(overrides: Partial<JobMessage>): JobMessage {
     subagentId: null,
     author: 'atlas',
     authorId: 'atlas',
-    authorName: 'Atlas',
     text: 'text',
     kind: 'chat',
     source: 'atlas',

@@ -1,7 +1,7 @@
 import { REDIS_CLIENT } from '@lib/redis/redis.tokens';
 import { Inject, Injectable } from '@nestjs/common';
 import { turnKeys } from '@shared/engine/redis-turn-keys';
-import type { TurnSpec } from '@shared/engine/turn-spec';
+import type { SteeringFrame, TurnSpec } from '@shared/engine/turn-spec';
 import type { Redis } from 'ioredis';
 
 const SPEC_READ_BLOCK_MS = 5_000;
@@ -37,7 +37,7 @@ export class EngineTransportService {
     await this.redis.xadd(turnKeys(turnId).events, '*', 'data', JSON.stringify(event));
   }
 
-  async *readInput(turnId: string, signal: AbortSignal): AsyncGenerator<string> {
+  async *readInput(turnId: string, signal: AbortSignal): AsyncGenerator<SteeringFrame> {
     const { input } = turnKeys(turnId);
     const conn = this.redis.duplicate();
     const onAbort = () => conn.disconnect();
@@ -58,7 +58,7 @@ export class EngineTransportService {
           for (const [id, fields] of entries) {
             lastId = id;
             const di = fields.indexOf('data');
-            if (di >= 0) yield fields[di + 1];
+            if (di >= 0) yield JSON.parse(fields[di + 1]) as SteeringFrame;
           }
         }
       }
