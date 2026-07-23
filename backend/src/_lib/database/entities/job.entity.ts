@@ -1,6 +1,7 @@
 import { TimestampedEntity } from '@lib/database/base.entity';
 import type { AtlasClaims } from '@lib/rls/atlas-claims';
-import { Rls } from '@workspace/nestjs-rls';
+import { Expose, Rls } from '@workspace/nestjs-rls';
+import { Realtime } from '@workspace/pg-realtime/nest-realtime';
 import { EJobKind, EJobStatus, EThreadOrigin } from '@workspace/shared';
 import {
   Column,
@@ -25,11 +26,14 @@ import { Thread } from './thread.entity';
       return { orgId: { $in: c.orgIds } };
   }
 })
+@Realtime()
 export class Job extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
+  @Expose()
   id!: string;
 
   @Column({ type: 'uuid' })
+  @Expose() // kept for the guard scope
   orgId!: string;
 
   @ManyToOne(() => Organization, { onDelete: 'CASCADE' })
@@ -37,6 +41,7 @@ export class Job extends TimestampedEntity {
   org?: Organization;
 
   @Column({ type: 'uuid' })
+  @Expose()
   repoId!: string;
 
   @ManyToOne(() => Repo, { onDelete: 'CASCADE' })
@@ -44,6 +49,7 @@ export class Job extends TimestampedEntity {
   repo?: Repo;
 
   @Column({ type: 'uuid', nullable: true })
+  @Expose()
   focusedThreadId!: string | null;
 
   @ManyToOne(() => Thread, { onDelete: 'SET NULL', nullable: true })
@@ -51,19 +57,32 @@ export class Job extends TimestampedEntity {
   focusedThread?: Thread | null;
 
   @Column({ type: 'text', nullable: true })
+  @Expose()
   title!: string | null;
 
   @Column({ type: 'enum', enum: EThreadOrigin, default: EThreadOrigin.CHAT })
+  @Expose()
   origin!: EThreadOrigin;
 
   @Column({ type: 'enum', enum: EJobKind, nullable: true })
+  @Expose()
   kind!: EJobKind | null;
 
   @Column({ type: 'enum', enum: EJobStatus, default: EJobStatus.OPEN })
+  @Expose()
   status!: EJobStatus;
 
   @Column({ type: 'timestamptz', nullable: true })
+  @Expose()
   archivedAt!: Date | null;
+
+  // Redeclared (no @Column — inherited from TimestampedEntity) purely to attach @Expose;
+  // TypeORM's own column metadata is untouched.
+  @Expose()
+  declare createdAt: Date;
+
+  @Expose()
+  declare updatedAt: Date;
 }
 
 export class JobRepo extends Repository<Job> {}

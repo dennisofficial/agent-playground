@@ -1,6 +1,7 @@
 import { TimestampedEntity } from '@lib/database/base.entity';
 import type { AtlasClaims } from '@lib/rls/atlas-claims';
-import { Rls } from '@workspace/nestjs-rls';
+import { Expose, Rls } from '@workspace/nestjs-rls';
+import { Realtime } from '@workspace/pg-realtime/nest-realtime';
 import type { AccountUsageSnapshot } from '@workspace/shared';
 import { EAgentCredentialKind, EAgentCredentialStatus, EAgentProvider } from '@workspace/shared';
 import {
@@ -27,11 +28,14 @@ import { Organization } from './organization.entity';
 @Rls<AgentCredential, AtlasClaims>((c, action) => ({
   orgId: { $in: action === 'read' ? c.orgIds : c.ownerOrgIds },
 }))
+@Realtime()
 export class AgentCredential extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
+  @Expose()
   id!: string;
 
   @Column({ type: 'uuid' })
+  @Expose() // kept for the guard scope
   orgId!: string;
 
   @ManyToOne(() => Organization, { onDelete: 'CASCADE' })
@@ -39,22 +43,28 @@ export class AgentCredential extends TimestampedEntity {
   org?: Organization;
 
   @Column({ type: 'enum', enum: EAgentProvider })
+  @Expose()
   provider!: EAgentProvider;
 
   @Column({ type: 'enum', enum: EAgentCredentialKind })
+  @Expose()
   kind!: EAgentCredentialKind;
 
   @Column({ type: 'text' })
+  @Expose()
   label!: string;
 
   @Column({ type: 'text', nullable: true })
+  @Expose()
   accountEmail!: string | null;
 
   /** Raw subscription plan (e.g. "max"), source of the "Max plan" badge. */
   @Column({ type: 'text', nullable: true })
+  @Expose()
   subscriptionType!: string | null;
 
   @Column({ type: 'enum', enum: EAgentCredentialStatus, default: EAgentCredentialStatus.ACTIVE })
+  @Expose()
   status!: EAgentCredentialStatus;
 
   @Column({ type: 'text', nullable: true })
@@ -72,17 +82,25 @@ export class AgentCredential extends TimestampedEntity {
 
   /** Denormalized access-token expiry for the keepalive scan; null for non-expiring setup-tokens. */
   @Column({ type: 'timestamptz', nullable: true })
+  @Expose()
   expiresAt!: Date | null;
 
   @Column({ type: 'timestamptz', nullable: true })
   lastRefreshedAt!: Date | null;
 
   @Column({ type: 'boolean', default: false })
+  @Expose()
   selected!: boolean;
 
   /** Per-account subscription usage windows (util% + resets). Plain literal default null (no fn-default). */
   @Column({ type: 'jsonb', nullable: true })
+  @Expose()
   usageSnapshot!: AccountUsageSnapshot | null;
+
+  // Redeclared (no @Column — inherited from TimestampedEntity) purely to attach @Expose;
+  // TypeORM's own column metadata is untouched.
+  @Expose()
+  declare createdAt: Date;
 }
 
 export class AgentCredentialRepo extends Repository<AgentCredential> {}

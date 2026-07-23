@@ -1,5 +1,5 @@
 import { EnvService } from '@core/config/env/env.service';
-import { PgAdvisoryLockLeaderElector, PgNotifyBus } from '@workspace/pg-realtime';
+import { PgAdvisoryLockLeaderElector, RedisBus } from '@workspace/pg-realtime';
 import type { RootEngineConfig } from '@workspace/pg-realtime/nest';
 
 const RT_SLOT_NAME = 'pg_realtime_slot';
@@ -14,7 +14,7 @@ export function atlasRealtimeConfig(env: EnvService): RootEngineConfig {
     publicationName: RT_PUBLICATION_NAME,
     consume: true,
     leader: new PgAdvisoryLockLeaderElector({ connectionString, lockName: RT_LOCK_NAME }),
-    bus: new PgNotifyBus({ connectionString }),
+    bus: new RedisBus({ url: env.get('REDIS_URL') }),
   };
 }
 
