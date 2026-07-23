@@ -98,7 +98,6 @@ export interface InboundMessageView {
   jobId: string;
   threadId: string;
   source: EThreadMessageSource;
-  authorId: string;
   text: string;
   payload: InboundMessagePayload | null;
   status: EInboundMessageStatus;
@@ -153,7 +152,6 @@ export interface ThreadMessageView {
   subagentEndedAt?: string | null;
   source: EThreadMessageSource;
   isAtlas: boolean;
-  authorId: string;
   text: string;
   kind: EThreadMessageKind;
   card: Record<string, unknown> | null;
