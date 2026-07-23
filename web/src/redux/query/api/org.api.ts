@@ -6,6 +6,16 @@ import { baseApi, EBaseApiCacheTags } from './baseApi';
 export const orgApi = baseApi.injectEndpoints({
   overrideExisting: true,
   endpoints: (build) => ({
+    getOrgs: build.query<OrgSummary[], void>({
+      query: () => ({ url: `/orgs`, method: 'GET' }),
+      providesTags: [EBaseApiCacheTags.SESSION],
+      onCacheEntryAdded: (_arg, api) =>
+        streamList<OrgSummary>({
+          url: 'org_summary',
+          open: makeSocketListOpener(getRealtimeClient(), 'org_summary'),
+          lifecycle: api,
+        }),
+    }),
     getOrgMembers: build.query<MemberView[], string>({
       query: (orgId) => ({ url: `/orgs/${orgId}/members`, method: 'GET' }),
       providesTags: (_result, _error, orgId) => [{ type: EBaseApiCacheTags.ORG_MEMBER, id: orgId }],
@@ -36,6 +46,7 @@ export const orgApi = baseApi.injectEndpoints({
 });
 
 export const {
+  useGetOrgsQuery,
   useGetOrgMembersQuery,
   useCreateOrgMutation,
   useUpdateOrgMutation,

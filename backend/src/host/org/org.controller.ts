@@ -8,6 +8,11 @@ import { OrgService } from './org.service';
 export class OrgController {
   constructor(private readonly orgs: OrgService) {}
 
+  @Get()
+  list(@CurrentUser() user: User): Promise<OrgSummary[]> {
+    return this.orgs.listForUser(user.id);
+  }
+
   @Post()
   create(@CurrentUser() user: User, @Body() body: CreateOrgDto): Promise<OrgSummary> {
     return this.orgs.create(user.id, body.name);
