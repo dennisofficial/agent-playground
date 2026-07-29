@@ -6,6 +6,7 @@
     <mapping directory="$PROJECT_DIR$/submodules/jwt-auth" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/submodules/nestjs-ai-essentials" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/submodules/nestjs-core-essentials" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/submodules/nestjs-rls" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/submodules/pg-realtime" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/submodules/site-map" vcs="Git" />
   </component>

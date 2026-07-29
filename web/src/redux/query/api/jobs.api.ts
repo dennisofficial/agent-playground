@@ -48,8 +48,6 @@ export const jobsApi = baseApi.injectEndpoints({
     }),
 
     getJobs: build.query<JobListItem[], void>({
-      // Socket-only: the realtime feed delivers the full initial snapshot on subscribe, so no REST
-      // first-fetch is needed. `data: []` is just the placeholder until the snapshot lands.
       queryFn: () => ({ data: [] }),
       providesTags: [EBaseApiCacheTags.JOB],
       onCacheEntryAdded: (_arg, api) =>
@@ -60,11 +58,6 @@ export const jobsApi = baseApi.injectEndpoints({
         }),
     }),
 
-    // Socket-only: the composed `job_detail` resource (flat job row + thread-group→thread tree,
-    // `JobRealtimeResourcesService` on the backend) reruns on any change to the job/groups/threads.
-    // Unlike the list endpoints above, `queryFn` genuinely awaits the first snapshot before resolving
-    // — the job-detail pages gate real navigation/redirect logic on `isLoading`, so (unlike a list's
-    // safe `[]` placeholder) resolving early with no data would flash a false "not found" state.
     getJob: build.query<JobView, string>({
       queryFn: (jobId) =>
         new Promise((resolve) => {

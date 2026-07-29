@@ -2,6 +2,7 @@ import { EnvService } from '@core/config/env/env.service';
 import { ENodeEnv } from '@core/config/env/validation';
 import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule, TypeOrmModuleOptions } from '@nestjs/typeorm';
+import { join } from 'node:path';
 import { CustomNamingStrategy } from './custom-naming.strategy';
 
 @Global()
@@ -16,13 +17,18 @@ import { CustomNamingStrategy } from './custom-naming.strategy';
         username: env.get('POSTGRES_USER'),
         password: env.get('POSTGRES_PASSWORD'),
         database: env.get('POSTGRES_DB'),
+        // Load every entity from the folder (same glob the CLI data-source uses). This is the
+        // single source of truth for what's in the DataSource, so realtime discovery
+        // (`buildRealtimeModels` over `dataSource.entityMetadatas`) always sees every
+        // `@Realtime` entity — independent of which feature module happens to `forFeature` it.
+        entities: [join(__dirname, 'entities', '*.entity.{ts,js}')],
         autoLoadEntities: true,
         synchronize: false,
         namingStrategy: new CustomNamingStrategy(),
         applicationName: 'atlas (TypeORM)',
         connectTimeoutMS: 10_000,
         ssl: DatabaseModule.resolveSsl(env),
-        extra: { max: 10 },
+        extra: { max: 20, connectionTimeoutMillis: 10_000 },
       }),
     }),
   ],

@@ -1,5 +1,6 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Post, Req, Res } from '@nestjs/common';
 import { CurrentUser, Public } from '@workspace/auth/server';
+import { SkipLogger } from '@workspace/nestjs-core';
 import {
   LoginDto,
   RegisterDto,
@@ -38,6 +39,7 @@ export class AuthController {
   }
 
   @Get('session')
+  @SkipLogger()
   async session(@CurrentUser() user: User): Promise<CurrentUserResponse> {
     const orgs = await this.orgs.listForUser(user.id);
     return { id: user.id, email: user.email, name: user.name, orgs };
