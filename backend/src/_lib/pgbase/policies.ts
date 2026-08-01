@@ -7,6 +7,7 @@ import type {
   OrganizationMemberModel,
   OrganizationModel,
   RepoModel,
+  SubagentModel,
   TaskModel,
   ThreadGroupModel,
   ThreadMessageModel,
@@ -85,6 +86,37 @@ const threadGroupPolicy = definePolicy<ThreadGroupModel, AtlasClaims>('ThreadGro
   rls: (claims) => ({ orgId: { in: claims.orgIds } }),
 });
 
+/**
+ * The one model here that carried no `@Expose` and still gets a policy.
+ *
+ * Its `status` and `endedAt` were already reaching the browser before this migration, joined onto
+ * `ThreadMessage` by the old realtime layer to drive the subagent cards. pgbase cannot keep a join
+ * live, so the client subscribes to the rows directly and composes them — which means exposing
+ * exactly the two columns that were already visible, and nothing else. This is not a widening.
+ *
+ * Everything else stays hidden, and that is the point of the explicit list: `costUsd` and the four
+ * token counters are spend data, and `sessionRef`, `model` and `agentType` describe the harness.
+ */
+const subagentPolicy = definePolicy<SubagentModel, AtlasClaims>('Subagent')({
+  omit: [
+    'threadId',
+    'parentMessageId',
+    'toolUseId',
+    'agentType',
+    'model',
+    'sessionRef',
+    'inputTokens',
+    'outputTokens',
+    'cacheReadTokens',
+    'cacheWriteTokens',
+    'costUsd',
+    'startedAt',
+    'createdAt',
+    'updatedAt',
+  ],
+  rls: (claims) => ({ orgId: { in: claims.orgIds } }),
+});
+
 const threadMessagePolicy = definePolicy<ThreadMessageModel, AtlasClaims>('ThreadMessage')({
   // `audience` decides whether a message is operator-only, and `authorId` identifies the actor
   // behind a system message — both are routing inputs, not content the client is entitled to.
@@ -99,6 +131,7 @@ export const atlasPolicies = {
   Organization: organizationPolicy,
   OrganizationMember: organizationMemberPolicy,
   Repo: repoPolicy,
+  Subagent: subagentPolicy,
   Task: taskPolicy,
   Thread: threadPolicy,
   ThreadGroup: threadGroupPolicy,
@@ -111,8 +144,6 @@ export const atlasPolicies = {
   // Holds the org's encrypted Anthropic/OpenAI/GitHub credentials.
   OrgCredential: NO_CLIENT_ACCESS,
   Skill: NO_CLIENT_ACCESS,
-  // Org-scoped server-side, but never client-visible: carries per-subagent token counts and cost.
-  Subagent: NO_CLIENT_ACCESS,
   // Holds `passwordHash`.
   User: NO_CLIENT_ACCESS,
   WorkspaceMount: NO_CLIENT_ACCESS,
