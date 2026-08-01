@@ -2,6 +2,8 @@ import type { PrismaService } from '@lib/prisma/prisma.service';
 import { describe, expect, it, vi } from 'vitest';
 import type { SteeringFrame } from '../../../_shared/engine/turn-spec';
 import type { InboundMessageModel as InboundMessage } from '../../../generated/prisma/models';
+import type { AgentCredentialService } from '../../agent-credentials/agent-credential.service';
+import type { AgentUsageService } from '../../agent-credentials/usage/agent-usage.service';
 import type { HostTransportService } from '../../host-transport/host-transport.service';
 import type { InboundMessageService } from '../../inbound-message/inbound-message.service';
 import type { SandboxService } from '../../sandbox/sandbox.service';
@@ -20,6 +22,7 @@ function harness(opts: {
   steer?: InboundMessage;
   script: (ctl: { release: () => void; steerSent: Promise<void> }) => Array<() => Promise<unknown>>;
 }) {
+  const applyHarvest = vi.fn(async () => {});
   const forwarded: SteeringFrame[] = [];
   let onForward: () => void;
   const steerSent = new Promise<void>((resolve) => {
@@ -70,9 +73,13 @@ function harness(opts: {
     inbound,
     { record: vi.fn(async () => {}) } as unknown as TurnTranscriptService,
     {} as unknown as PrismaService,
+    {
+      getSelected: vi.fn(async () => ({ id: 'cred-1' })),
+    } as unknown as AgentCredentialService,
+    { applyHarvest } as unknown as AgentUsageService,
   );
 
-  return { dispatcher, forwarded, consumed };
+  return { dispatcher, forwarded, consumed, applyHarvest };
 }
 
 describe('TurnDispatcherService.run', () => {
@@ -139,6 +146,34 @@ describe('TurnDispatcherService.run', () => {
     expect(consumed.map((c) => c.id)).toEqual(['trigger-1', 'steer-1']);
     expect(consumed[0].orderAt?.getTime()).not.toBe(BOUNDARY_MS);
     expect(consumed[1].orderAt?.getTime()).toBe(BOUNDARY_MS);
+  });
+
+  it('harvests a rate_limit_event into the running account’s usage snapshot', async () => {
+    const info = { status: 'allowed', rateLimitType: 'five_hour', utilization: 0.42, resetsAt: 1 };
+    const { dispatcher, applyHarvest } = harness({
+      script: () => [
+        async () => messageStart,
+        async () => ({ type: 'rate_limit_event', rate_limit_info: info }),
+        async () => ({ type: 'result' }),
+      ],
+    });
+
+    await dispatcher.run('job-1', [row('trigger-1', 'go')]);
+
+    expect(applyHarvest).toHaveBeenCalledWith('org-1', 'cred-1', info);
+  });
+
+  it('does not let a failing usage harvest sink the turn', async () => {
+    const { dispatcher, applyHarvest, consumed } = harness({
+      script: () => [
+        async () => ({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed' } }),
+        async () => ({ type: 'result' }),
+      ],
+    });
+    applyHarvest.mockRejectedValueOnce(new Error('db down'));
+
+    await expect(dispatcher.run('job-1', [row('trigger-1', 'go')])).resolves.toBeUndefined();
+    expect(consumed.map((c) => c.id)).toEqual(['trigger-1']);
   });
 
   it('writes the bubble when the message OPENS, not when it completes', async () => {

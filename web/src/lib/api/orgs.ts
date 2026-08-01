@@ -1,35 +1,14 @@
 'use client';
 
-import type { OrgUsage } from '@workspace/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { notImplemented, stubMutation, stubQuery, type MutationResultLike } from './_stub';
 import { useMutation } from './_tanstack-shim';
 
-/**
- * STUBBED for the Atlas rebuild: the old `/orgs/:orgId/...` backend hasn't been rebuilt yet, so every
- * hook here is an inert placeholder. Reads render empty (`stubQuery`); writes throw "Not Implemented"
- * on invoke (`notImplemented`) so an unwired action can never look like it succeeded. Types + doc
- * comments are kept verbatim as the contract for whichever slice eventually replaces this file.
- */
-
-// One platform-level Atlas GitHub App; an org INSTALLS it and Atlas stores a non-secret installation id
-// plus a `githubAuthMode` (pat|app). Host/background calls use the App token whenever connected; the
-// `githubAuthMode` setting explicitly chooses sandbox commit/push/PR identity. `configured` reflects whether
-// the platform App env is set server-side; when false the connect affordance hides. Connecting is a redirect
-// flow: `install-url` mints a nonce-backed GitHub install URL, the owner installs, and GitHub redirects back
-// to the settings page (`?githubApp=…`). Every write is owner-only server-side; `status` is member-readable
-// (no secrets).
-
 export interface GithubAppStatus {
-  /** The platform Atlas App env is configured server-side (app id + key). When false, hide Connect. */
   configured: boolean;
-  /** This org has a connected installation. */
   connected: boolean;
-  /** The org's active GitHub credential. */
   mode: 'pat' | 'app';
-  /** The connected installation id (plaintext, non-secret); null when not connected. */
   installationId: string | null;
-  /** The installation's GitHub account login (display) — null when not connected. */
   account: string | null;
 }
 
@@ -37,21 +16,12 @@ export function useGithubAppStatus(_orgId: string) {
   return stubQuery<GithubAppStatus>();
 }
 
-/**
- * Owner-only: mint the org's single-use GitHub App install URL. Does not persist anything — the install
- * lands on GitHub's redirect back to the settings page, which the backend callback verifies + stores.
- */
 export function useGithubAppInstallUrl(_orgId: string) {
   return useMutation({
     mutationFn: (): Promise<{ url: string }> => notImplemented('useGithubAppInstallUrl'),
   });
 }
 
-/**
- * Owner-only: switch the resolved GitHub credential between `pat` and `app`. `app` requires a connected
- * installation server-side. Invalidates presence + status (the mode drives which credential authenticates)
- * and the session (mode can flip the onboarding checklist).
- */
 export function useSetGithubAuthMode(_orgId: string) {
   return useMutation({
     mutationFn: (mode: 'pat' | 'app'): Promise<{ ok: true; mode: 'pat' | 'app' }> =>
@@ -59,35 +29,11 @@ export function useSetGithubAuthMode(_orgId: string) {
   });
 }
 
-/**
- * Owner-only: disconnect the org's GitHub App installation. Invalidates status + presence/session (the
- * resolved credential and onboarding checklist can shift when the App goes away).
- */
 export function useDisconnectGithubApp(_orgId: string) {
   return useMutation({
     mutationFn: (): Promise<{ ok: true }> => notImplemented('useDisconnectGithubApp'),
   });
 }
-
-/**
- * An org's Claude subscription usage snapshot (the composer's usage ring). Push-driven: fresh snapshots
- * arrive over the repo `/events` SSE (`type:'usage'` frame → `setQueryData`), so there's no client poll.
- * We keep an initial fetch on mount plus TanStack's default focus refetch as a backstop (the SSE bus is
- * single-process, so cross-instance changes settle on mount/focus/switch); a short `staleTime` lets those
- * refetch. The unofficial usage endpoint stays aggressively rate-limited and backend-throttled — do NOT
- * re-add a `refetchInterval`. Always returns 200 (never throws on a degraded snapshot); `ok:false` just
- * means "unknown right now".
- */
-export function useOrgUsage(_orgId: string) {
-  return stubQuery<OrgUsage>();
-}
-
-// One repo-scoped surface over the same `WorkspaceConfigStore`/`WorkspaceSecretFileStore` rows the
-// onboarding brain's `write_workspace_config` tool writes through — a console edit and a brain call
-// converge on the same DB rows. GET is member-readable; every write is owner-only server-side. Secret
-// file VALUES are never re-exposed — only refs (path + label); the underlying files endpoint is shared
-// with the (retired) workspace-secrets tab, so writes still go through `/orgs/:orgId/workspace-secrets/files`
-// with `repoId` in the body.
 
 export interface WorkspaceProfileMount {
   path: string;
@@ -153,12 +99,6 @@ export function useDeleteRepoSecretFile(_orgId: string, _repoId: string) {
   });
 }
 
-// GET returns the read-only System tier plus the org + repo user servers, with EVERY secret header/env
-// value redacted (secret slots come back `null` in `config`, and are listed in `secretKeys`). Writes
-// (PUT/DELETE/validate) are owner-only server-side. A secret field follows the credentials UX: presence
-// is shown, and re-entering a value changes it — submitting a secret entry with an EMPTY value preserves
-// the stored one. The URL scope is `'org'` (org-wide) or a repo id.
-
 export type McpTransport = 'http' | 'sse' | 'stdio';
 export type McpSurface = 'brain' | 'build' | 'review';
 export type McpAuthKind = 'static' | 'oauth';
@@ -174,9 +114,7 @@ export interface SystemMcpServer {
   description: string;
   transport: McpTransport;
   tools: string[];
-  /** Whether this built-in is actually live right now, for this org + deployment. */
   active: boolean;
-  /** When inactive, what to configure to turn it on. */
   inactiveReason?: string;
 }
 
@@ -190,23 +128,18 @@ export interface StoredMcpConfig {
 }
 
 export interface McpServer {
-  /** `'org'` for an org-wide server, otherwise the repo id. */
   scope: 'org' | string;
   name: string;
   transport: McpTransport;
   config: StoredMcpConfig;
-  /** `header:<name>` / `env:<name>` keys whose value is a stored secret. */
   secretKeys: string[];
   surfaces: McpSurface[];
   enabled: boolean;
   discoveredTools: string[] | null;
   lastValidatedAt: string | null;
   validationError: string | null;
-  /** `'static'` (header/env secrets) or `'oauth'` (interactive OAuth 2.1). */
   authKind: McpAuthKind;
-  /** OAuth only: consent has completed (a token bundle exists). Never the token itself. */
   oauthConnected: boolean;
-  /** OAuth only: the last resolve/refresh failed — the operator must reconnect. */
   needsReauth: boolean;
 }
 
@@ -272,11 +205,6 @@ export function useValidateMcpServer(_orgId: string) {
   });
 }
 
-/**
- * Owner-only: begin interactive OAuth consent for an `authKind='oauth'` server. Returns the provider authorize
- * URL; the caller opens it (a popup) and the provider redirects the browser back to the backend callback, which
- * completes the token exchange. The console refetches the server list when the popup posts back / closes.
- */
 export function useStartMcpOAuth(_orgId: string) {
   return useMutation({
     mutationFn: ({
@@ -289,12 +217,6 @@ export function useStartMcpOAuth(_orgId: string) {
   });
 }
 
-/**
- * Owner-only: drive the interactive OAuth consent popup for an already-registered `authKind='oauth'`
- * server — centralizes the popup open, the callback's postMessage/focus-close handling, and the server-list
- * refetch, so the settings form and the job-workspace proposal card share one implementation. Does not
- * persist the server itself; callers pass a scope+name that's already been saved.
- */
 export function useMcpOAuthConnect(orgId: string) {
   const startOAuth = useStartMcpOAuth(orgId);
   const [busy, setBusy] = useState(false);
@@ -356,24 +278,9 @@ export function useMcpOAuthConnect(orgId: string) {
   return { connect, busy, result, reset: () => setResult(null) };
 }
 
-// `@/redux/query/api/org.api` (useCreateOrg/useUpdateOrg/useDeleteOrgMutation) and
-// `@/redux/query/api/repo.api` (useConnect/useRevalidate/useUpdate/useDisconnectRepoMutation) own these.
-// The repo request/response shapes live in `@workspace/shared` (ConnectRepoDto / UpdateRepoDto /
-// ConnectedRepo / DisconnectRepoResult). Only the re-onboard stub remains here (no threads slice yet).
-
-/**
- * (Re-)run the Atlas onboarding thread for a repo. Deferred to the threads slice — onboarding spawns a
- * thread, which doesn't exist yet — so this is a loud stub until then.
- */
 export function useReonboardRepo(_orgId: string): MutationResultLike<{ jobId: string }, string> {
   return stubMutation<{ jobId: string }, string>('re-onboard repo');
 }
-
-// An org defines named house-style profiles (folder conventions, stack idioms, a shared-contract layout);
-// a repo opts in by pointing `convention_profile_slug` at one, and its `body` is injected into every
-// build-facing prompt for that repo. GET is any-member; writes (PUT/DELETE profile, PUT repo attach) are
-// owner-only server-side. No secrets — the body is plain text. Mirrors the onboarding brain's owner-gated
-// proposal flow, exposed here for manual management.
 
 export interface ConventionProfile {
   slug: string;
@@ -433,17 +340,9 @@ export function useAttachConventionProfile(_orgId: string) {
   });
 }
 
-// Registry metadata only — the real `SKILL.md` + support files live on the host store. Two writable
-// scopes (org-wide `'org'` + per-repo). GET (list + the file/content viewer) is any-member; every
-// mutation (install/set/update/fork/delete) is owner-only server-side. Mirrors the MCP hooks above.
-
 export type SkillProvenance = 'git' | 'custom' | 'managed';
 export type SkillUpdatePolicy = 'pinned' | 'track-ref' | 'manual';
 
-/** A built-in (Atlas-managed) skill, shown read-only — the skills counterpart of `SystemMcpServer`. Not a
- *  `workspace_skills` row (no `scope`/`enabled`/etc.) — it's code-defined, always on. Two flavors: STATIC
- *  (no `git`, committed to `backend/skills-managed/`) or GIT-SOURCED (`git` present — synced from an
- *  upstream repo by `ManagedSkillSyncService`; `synced` says whether that sync has landed yet). */
 export interface SystemSkill {
   name: string;
   description: string;
@@ -492,8 +391,6 @@ interface SkillWire {
   update_available: boolean;
 }
 
-/** The `GET /skills` response: the read-only System tiers (Atlas-managed + Claude Code bundled) alongside
- *  this org's writable Organization/Repository skills. */
 export interface SkillsView {
   system: SystemSkill[];
   bundled: string[];
@@ -504,8 +401,6 @@ export function useSkills(_orgId: string) {
   return stubQuery<SkillsView>();
 }
 
-/** Body for `POST /web/orgs/:orgId/skills/install` — install (or re-install) from a git repo, or expand
- *  every skill a marketplace manifest lists. */
 export interface InstallSkillBody {
   scope: string;
   sourceUrl: string;
@@ -522,8 +417,6 @@ export function useInstallSkill(_orgId: string) {
   });
 }
 
-/** Body for `PUT /web/orgs/:orgId/skills/:scope/:name` — create/replace a skill's registry row, and (when
- *  `body` is set) its `SKILL.md` content — a custom skill's create/edit path. */
 export interface SaveSkillBody {
   description: string;
   provenance?: SkillProvenance;
@@ -532,12 +425,9 @@ export interface SaveSkillBody {
   reviewForGlobs?: string[];
   enabled?: boolean;
   updatePolicy?: SkillUpdatePolicy;
-  /** `SKILL.md` body (frontmatter-stripped) — custom skills only. */
   body?: string;
 }
 
-/** Owner-only: create a custom skill, or edit one (registry fields, and — for a custom skill — its
- *  `SKILL.md` body). */
 export function useSaveSkill(_orgId: string) {
   return useMutation({
     mutationFn: ({
@@ -573,8 +463,6 @@ export function useDeleteSkill(_orgId: string) {
   });
 }
 
-/** A skill's read-only file tree + `SKILL.md` content — the console viewer's data (any member; not cached
- *  under `qk.orgSkills` since it's fetched on demand per open viewer). */
 export function useSkillFiles(_orgId: string, _scope: string, _name: string, _enabled: boolean) {
   return stubQuery<{ files: string[]; skillMd: string | null }>();
 }

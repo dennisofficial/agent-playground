@@ -24,11 +24,11 @@ import { UsageParseService } from './usage/usage-parse.service';
     AgentCredentialResolver,
     AgentAuthRefreshSink,
     AgentAuthEnvProvider,
+    AgentUsageService,
   ],
   providers: [
     AgentCredentialRefreshService,
     AgentCredentialKeepaliveService,
-    AgentUsageService,
     UsageParseService,
     ClaudeOAuthClient,
     CodexOAuthClient,

@@ -1,22 +1,23 @@
 'use client';
 
-import { useOrgUsage } from '@/lib/api/orgs';
+import {
+  useGetAgentCredentialsQuery,
+  useRefreshAgentCredentialUsageMutation,
+} from '@/redux/query/api/agent-credentials.api';
 import { formatClockTime } from '@/utils/org-display';
-import { OrgUsage } from '@workspace/shared';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {
+  buildAgentCredentialView,
+  EAgentCredentialKind,
+  EAgentProvider,
+  OrgUsage,
+  type AgentCredentialView,
+} from '@workspace/shared';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 type UsageWindow = OrgUsage['fiveHour'];
 type PanelWindow = { utilization: number; resetsAt: string | null };
 type RingVisualState = 'active' | 'pending' | 'degraded';
-/**
- * Why an always-on row (Session/Weekly) has no data: `waiting` = the endpoint responded but that window
- * hasn't started this cycle (its 5h/7d clock only ticks once a message is sent); `unavailable` = the
- * endpoint itself gave no usable response. The two read differently so a real outage isn't mistaken for
- * an idle account. Dynamic rows (Opus/Sonnet/per-model) are simply omitted when absent, never "unknown".
- */
 type UnknownReason = 'waiting' | 'unavailable';
-/** One panel row: a known window, or an always-on row with no data yet (Session/Weekly only).
- *  `windowMs` is the window's nominal length, used only to place the pace marker. */
 type PanelRow = {
   label: string;
   window: PanelWindow | null;
@@ -42,8 +43,6 @@ const MS_PER_MINUTE = 60_000;
 const MS_PER_HOUR = 60 * MS_PER_MINUTE;
 const MS_PER_DAY = 24 * MS_PER_HOUR;
 
-/** Nominal window lengths, used only to place the pace marker (the wire payload carries no start/duration).
- *  Session is the 5-hour window; every other window (Weekly, Opus/Sonnet, per-model caps) is 7 days. */
 const SESSION_WINDOW_MS = 5 * MS_PER_HOUR;
 const WEEKLY_WINDOW_MS = 7 * MS_PER_DAY;
 
@@ -57,11 +56,6 @@ function thresholdColor(pct: number): string {
   return 'var(--accent)';
 }
 
-/**
- * Grey mix % for the weekly arc, ramping from faint to darkest across 0–50% weekly then holding. Uses
- * `color-mix` against `var(--dim)` (not a hardcoded hex) so the SAME curve reads as "darkens" on a light
- * surface and "brightens" on a dark one — `--dim` itself is the theme-appropriate mid tone in each theme.
- */
 function weeklyGreyMix(pct: number): number {
   const ramp = Math.min(pct, WEEKLY_GREY_PEAK_PCT) / WEEKLY_GREY_PEAK_PCT;
   return Math.round(WEEKLY_GREY_MIN_MIX + ramp * (WEEKLY_GREY_MAX_MIX - WEEKLY_GREY_MIN_MIX));
@@ -112,12 +106,6 @@ function formatCountdown(resetsAt: string | undefined, now: number = Date.now())
   return `${minutes}m`;
 }
 
-/**
- * The pace / budget marker position: the fraction of the window's TIME that has elapsed, so a bar fill
- * to the RIGHT of it means usage is running ahead of the clock (over budget) and to the left, behind it.
- * Derived from the window's end (`resetsAt`) and its nominal length, since the payload has no start time.
- * Null (marker hidden) when `resetsAt` is missing/unparseable or the length is non-positive.
- */
 function paceFraction(
   resetsAt: string | null | undefined,
   windowMs: number,
@@ -160,12 +148,6 @@ function firstLetter(label: string): string {
   return label.trim().charAt(0).toUpperCase() || '?';
 }
 
-/**
- * The inline ring glyph — a single groove with NO background track. `active` overlays two arcs, both
- * starting at 12 o'clock and growing clockwise: the grey/red WEEKLY arc behind, the accent/red SESSION
- * arc on top (the headline). `pending` (no data harvested yet) draws a clean thin empty outline; `degraded`
- * (unknown/stale) draws a faint dashed outline. Neither of those draws a fill — there's nothing to show yet.
- */
 function Ring({
   state,
   sessionPct,
@@ -213,8 +195,6 @@ function Ring({
     );
   }
 
-  // The arc always reflects the ACTUAL utilization (a near-max window is drawn as it is, not force-filled),
-  // coloured red by the shared thresholds from 90% up. The maxed-out center dot is the only "limit hit" mark.
   const sessionColor = thresholdColor(sessionPct);
   const sessionDasharray = `${RING_CIRC * sessionPct} ${RING_CIRC}`;
 
@@ -281,10 +261,6 @@ function PanelHeader({ accountLabel, plan }: { accountLabel?: string; plan?: str
   );
 }
 
-/** An always-on row (Session/Weekly) with no window data — a muted "Waiting for next turn" (endpoint OK,
- *  window not started) or amber "Usage unavailable" (endpoint gave no response). Same shape as a known
- *  row so the panel never jumps: label + dot, a dashed/hollow bar instead of a fill, and the reason in
- *  place of a reset line. */
 function UnknownRow({ label, reason }: { label: string; reason: UnknownReason }) {
   const unavailable = reason === 'unavailable';
   const accent = unavailable ? 'var(--accent-2)' : 'var(--faint)';
@@ -314,8 +290,6 @@ function UnknownRow({ label, reason }: { label: string; reason: UnknownReason })
   );
 }
 
-/** One window's row in the usage panel — a colored dot + label, a thin progress bar, and a reset line.
- *  Only rendered for windows we have data for; `dimmed` mutes a stale (not-fresh) snapshot's rows. */
 function WindowRow({
   label,
   window,
@@ -367,8 +341,6 @@ function WindowRow({
   );
 }
 
-/** Panel footer — a freshness dot + status. When the endpoint gave no response (`unavailable`) it says
- *  so in amber; otherwise the last-fetched relative time (green when fresh, amber when stale). */
 function PanelFooter({
   fetchedAt,
   unavailable,
@@ -396,15 +368,6 @@ function PanelFooter({
   );
 }
 
-/**
- * A subscription-usage ring (Claude Code `/usage` style) — the SESSION (5-hour) window as a small SVG arc
- * + %, with the WEEKLY (7-day) window as a second arc sharing the same groove behind it. CLICK it to open
- * a panel: Session and Weekly are ALWAYS listed (as an unknown row when they have no data yet), and
- * Opus/Sonnet/per-model caps are listed dynamically when present. The ring always stays visible, with
- * dedicated "pending" (responded, not started) and "degraded" (unavailable) states — the usage endpoint
- * is best-effort and must never block or error its host surface (the composer footer, or a Settings
- * credential card).
- */
 export function UsageRingView({
   data,
   isLoading,
@@ -422,14 +385,8 @@ export function UsageRingView({
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  // The panel is anchored to the right of a trigger that sits mid-composer, so on a narrow (mobile)
-  // viewport its fixed width overflows past the left screen edge. Measure once open and nudge it back
-  // on-screen with a small horizontal offset; 0 on desktop, where it already fits.
   const [shiftX, setShiftX] = useState(0);
 
-  // Refresh-on-open: opening the panel re-fetches usage on the spot, but at most once per minute (skipped
-  // when the data is already newer than that). Read via a ref so this fires only on the open transition,
-  // not every time the cache updates. The backend also floors its live fetch at 1/min, so this can't spam.
   const usageMeta = useRef({ refetch, dataUpdatedAt });
   usageMeta.current = { refetch, dataUpdatedAt };
   useEffect(() => {
@@ -454,8 +411,6 @@ export function UsageRingView({
     };
   }, [open]);
 
-  // Keep the panel within the viewport. Read the panel's natural left edge (subtracting any offset
-  // already applied) and, if it clips either side, shift it just enough to sit inside an 8px margin.
   useLayoutEffect(() => {
     if (!open) {
       setShiftX(0);
@@ -477,23 +432,13 @@ export function UsageRingView({
     measure();
     window.addEventListener('resize', measure);
     return () => window.removeEventListener('resize', measure);
-    // `shiftX` is intentionally omitted: it's derived here, and re-running on it would loop.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   const session = data?.fiveHour ?? null;
   const weekly = data?.sevenDay ?? null;
-  // The endpoint gave a usable response iff we have a snapshot that isn't the degraded (`ok:false`) shape.
-  // A fresh account returns `ok:true` with every fixed window null — that's "responded, not started yet",
-  // NOT an outage — so its empty Session/Weekly rows read "Waiting for next turn", while a real failure
-  // reads "Usage unavailable". A first load with no cache yet (no data, still fetching) is treated as
-  // pending too, so it doesn't flash "unavailable" before the response lands.
   const responded = data ? data.ok !== false : isLoading;
   const unknownReason: UnknownReason = responded ? 'waiting' : 'unavailable';
 
-  // Session (5h) and Weekly (7d) are ALWAYS shown; when their window is absent they render as an unknown
-  // row rather than being hidden. Opus/Sonnet and the per-model weekly caps (e.g. Fable) stay dynamic —
-  // present only when the endpoint reports them.
   const alwaysOnRows: PanelRow[] = [
     {
       label: 'Session · 5h',
@@ -534,14 +479,9 @@ export function UsageRingView({
 
   const sessionPct = session ? clampPct(session.utilization / 100) : 0;
   const weeklyPct = weekly ? clampPct(weekly.utilization / 100) : 0;
-  // The ring draws real arcs whenever session OR weekly has data; `pending` (fresh, not started) shows a
-  // clean outline; `degraded` (unavailable) shows a dashed one.
   const visualState: RingVisualState =
     session || weekly ? 'active' : responded ? 'pending' : 'degraded';
 
-  // `maxed` (100%) lights the limit-hit dot for EITHER window — a capped weekly blocks you just as hard as
-  // a capped session. When maxed, the ring's label becomes a countdown to the soonest reset among the
-  // windows that are actually maxed (when you first get headroom back), instead of a bare "100%".
   const sessionMaxed = sessionPct >= SESSION_MAXED_THRESHOLD;
   const weeklyMaxed = weeklyPct >= SESSION_MAXED_THRESHOLD;
   const maxed = sessionMaxed || weeklyMaxed;
@@ -554,12 +494,8 @@ export function UsageRingView({
     : undefined;
   const maxedCountdown = maxed ? formatCountdown(soonestMaxedReset) : null;
 
-  // `critical` is the red treatment on the label: a maxed window, or a session heading into its cap.
   const critical = maxed || (!!session && sessionPct >= SESSION_LIMIT_THRESHOLD);
 
-  // Before the first turn of a reset session, the 5h window has no data yet ("waiting for next turn"),
-  // but usage is genuinely 0% — so show "0%" rather than a bare middot that reads as broken. Only a real
-  // endpoint failure (not responded) falls through to the "–" placeholder.
   const labelText = maxedCountdown
     ? maxedCountdown
     : session
@@ -638,15 +574,42 @@ export function UsageRingView({
   );
 }
 
+export function accountToRingData(cred: AgentCredentialView): OrgUsage | undefined {
+  if (!cred.usage) return undefined;
+  return {
+    ...cred.usage,
+    accountLabel: cred.accountEmail ?? undefined,
+    plan: cred.plan ?? undefined,
+  };
+}
+
 export function UsageRing({ orgId, size = 17 }: { orgId: string; size?: number }) {
-  const { data, isLoading, refetch, dataUpdatedAt } = useOrgUsage(orgId);
+  const { data: raw, isLoading } = useGetAgentCredentialsQuery(orgId, { skip: !orgId });
+  const [refreshUsage] = useRefreshAgentCredentialUsageMutation();
+
+  const selected = useMemo(
+    () =>
+      raw
+        ?.map(buildAgentCredentialView)
+        .find((c) => c.provider === EAgentProvider.CLAUDE && c.selected),
+    [raw],
+  );
+
+  const refetch = useCallback(() => {
+    if (!selected || selected.kind !== EAgentCredentialKind.PERSONAL) return;
+    void refreshUsage({ orgId, id: selected.id })
+      .unwrap()
+      .catch(() => {});
+  }, [orgId, refreshUsage, selected]);
+
+  const data = selected ? accountToRingData(selected) : undefined;
   return (
     <UsageRingView
       data={data}
       isLoading={isLoading}
       size={size}
       refetch={refetch}
-      dataUpdatedAt={dataUpdatedAt}
+      dataUpdatedAt={data ? Date.parse(data.fetchedAt) : 0}
     />
   );
 }

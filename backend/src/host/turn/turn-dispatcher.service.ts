@@ -1,7 +1,13 @@
 import { PrismaService } from '@lib/prisma/prisma.service';
 import { Injectable, Logger } from '@nestjs/common';
+import { EAgentProvider } from '@workspace/shared';
 import { randomUUID } from 'node:crypto';
 import type { InboundMessageModel } from '../../generated/prisma/models';
+import { AgentCredentialService } from '../agent-credentials/agent-credential.service';
+import {
+  AgentUsageService,
+  type HarvestInfo,
+} from '../agent-credentials/usage/agent-usage.service';
 import {
   HostTransportService,
   type LivePointer,
@@ -32,12 +38,17 @@ export class TurnDispatcherService {
     private readonly inbound: InboundMessageService,
     private readonly transcript: TurnTranscriptService,
     private readonly prismaService: PrismaService,
+    private readonly agentCredentialService: AgentCredentialService,
+    private readonly agentUsageService: AgentUsageService,
   ) {}
 
   async run(jobId: string, messages: InboundMessageModel[]): Promise<void> {
     const { threadId, orgId } = messages[0];
     const dispatchedAt = new Date();
     const spec = await this.specBuilder.build(jobId, messages);
+
+    const harvestCredentialId =
+      (await this.agentCredentialService.getSelected(orgId, EAgentProvider.CLAUDE))?.id ?? null;
 
     const turnId = randomUUID();
     this.logger.log(`turn ${turnId} (job ${jobId}): spec built, launching engine`);
@@ -93,6 +104,7 @@ export class TurnDispatcherService {
             await flushRead(new Date(emittedAt));
           }
         }
+        if (type === 'rate_limit_event') await this.harvestUsage(orgId, harvestCredentialId, event);
         const sid = (event as { session_id?: string })?.session_id;
         if (sid) sessionId = sid;
         await this.transcript.record({ jobId, threadId, orgId }, event); // persist visible output (assistant)
@@ -121,6 +133,21 @@ export class TurnDispatcherService {
     if (realError) throw realError;
     if (sessionId && sessionId !== spec.sessionId) {
       await this.prismaService.thread.update({ where: { id: threadId }, data: { sessionId } });
+    }
+  }
+
+  private async harvestUsage(
+    orgId: string,
+    credentialId: string | null,
+    event: unknown,
+  ): Promise<void> {
+    if (!credentialId) return;
+    const info = (event as { rate_limit_info?: HarvestInfo })?.rate_limit_info;
+    if (!info) return;
+    try {
+      await this.agentUsageService.applyHarvest(orgId, credentialId, info);
+    } catch (err) {
+      this.logger.warn(`usage harvest failed for credential ${credentialId}: ${String(err)}`);
     }
   }
 

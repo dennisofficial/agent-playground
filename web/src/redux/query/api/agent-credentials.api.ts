@@ -2,6 +2,7 @@ import { pgbase } from '@/lib/pgbase/client';
 import { agentCredentialToRaw } from '@/lib/pgbase/adapters';
 import { liveListEndpoint } from '@/lib/pgbase/rtk';
 import type {
+  AccountUsage,
   AgentCredentialView,
   ClaudeAuthorizeUrlResult,
   CodexDevicePollResult,
@@ -13,10 +14,6 @@ import { baseApi, EBaseApiCacheTags } from './baseApi';
 export const agentCredentialsApi = baseApi.injectEndpoints({
   overrideExisting: true,
   endpoints: (build) => ({
-    // Delivers RAW `agent_credentials` rows (no server-side projection) — the `plan`/`usage` fields
-    // that used to be computed server-side are time-sensitive (usage windows expire), so consumers
-    // derive `AgentCredentialView` on read via `buildAgentCredentialView` (see credentials-section.tsx)
-    // instead of freezing a stale projection in the RTK Query cache.
     getAgentCredentials: build.query<RawAgentCredential[], string>({
       ...liveListEndpoint(pgbase.AgentCredential, agentCredentialToRaw, (orgId: string) => ({
         where: { orgId },
@@ -87,6 +84,12 @@ export const agentCredentialsApi = baseApi.injectEndpoints({
         data: { credentialId },
       }),
     }),
+    refreshAgentCredentialUsage: build.mutation<AccountUsage | null, { orgId: string; id: string }>({
+      query: ({ orgId, id }) => ({
+        url: `/orgs/${orgId}/agent-credentials/${id}/usage`,
+        method: 'GET',
+      }),
+    }),
     removeAgentCredential: build.mutation<{ ok: true }, { orgId: string; id: string }>({
       query: ({ orgId, id }) => ({
         url: `/orgs/${orgId}/agent-credentials/${id}`,
@@ -105,5 +108,6 @@ export const {
   usePollCodexDeviceMutation,
   usePasteCodexAuthMutation,
   useSetSelectedAgentCredentialMutation,
+  useRefreshAgentCredentialUsageMutation,
   useRemoveAgentCredentialMutation,
 } = agentCredentialsApi;

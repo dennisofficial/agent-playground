@@ -71,6 +71,10 @@ export class AgentUsageService {
     const row = await this.store.getById(orgId, credentialId);
     if (!row || (row.provider as EAgentProvider) !== EAgentProvider.CLAUDE) return null;
 
+    if ((row.kind as EAgentCredentialKind) === EAgentCredentialKind.SETUP_TOKEN) {
+      return this.store.toView(row).usage;
+    }
+
     const floor = this.pollFloor.get(credentialId);
     if (floor && Date.now() - floor < POLL_FLOOR_MS) return this.store.toView(row).usage;
 
@@ -81,7 +85,7 @@ export class AgentUsageService {
       this.logger.warn(`usage refresh failed for ${credentialId}: ${String(err)}`);
       return null;
     }
-    const token = AgentUsageService.bearerFromMaterial(material, row.kind as EAgentCredentialKind);
+    const token = AgentUsageService.bearerFromMaterial(material);
     if (!token) return null;
 
     const parsed = await this.fetchUsage(token);
@@ -116,10 +120,6 @@ export class AgentUsageService {
     }
   }
 
-  /**
-   * Overlay new windows onto the account's stored snapshot (newest write wins per window, since both
-   * sources stamp `fetchedAt=now`). Skips the write when nothing changed, so realtime isn't spammed.
-   */
   private async mergeWindows(
     orgId: string,
     credentialId: string,
@@ -153,8 +153,7 @@ export class AgentUsageService {
     });
   }
 
-  private static bearerFromMaterial(material: string, kind: EAgentCredentialKind): string | null {
-    if (kind === EAgentCredentialKind.SETUP_TOKEN) return material.trim() || null;
+  private static bearerFromMaterial(material: string): string | null {
     try {
       const token = (JSON.parse(material) as ClaudeCredentialBlob).claudeAiOauth?.accessToken;
       return typeof token === 'string' && token.length > 0 ? token : null;

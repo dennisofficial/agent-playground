@@ -1,6 +1,9 @@
 'use client';
 
-import { UsageRingView } from '@/features/job-workspace/components/chrome/usage-ring';
+import {
+  accountToRingData,
+  UsageRingView,
+} from '@/features/job-workspace/components/chrome/usage-ring';
 import { useQueryClient } from '@/lib/api/_tanstack-shim';
 import {
   useDisconnectGithubApp,
@@ -15,6 +18,7 @@ import {
   useGetAgentCredentialsQuery,
   usePasteCodexAuthMutation,
   usePollCodexDeviceMutation,
+  useRefreshAgentCredentialUsageMutation,
   useRemoveAgentCredentialMutation,
   useSetSelectedAgentCredentialMutation,
   useStartClaudeAuthorizeMutation,
@@ -27,6 +31,7 @@ import {
 } from '@/redux/query/api/credentials.api';
 import {
   buildAgentCredentialView,
+  EAgentCredentialKind,
   EAgentProvider,
   type AgentCredentialView,
   type CodexDeviceStartResult,
@@ -52,21 +57,6 @@ import { StatusChip } from './StatusChip';
 export type Tone = 'green' | 'dim' | 'faint';
 export type Status = 'idle' | 'testing' | 'valid' | 'invalid';
 
-/**
- * Credentials — the org-wide encrypted secrets every thread uses. The list is presence-only (the API never
- * returns secret values), so saved keys render fully masked with no last-4. Writing goes through the real
- * `PUT /web/orgs/:orgId/credentials`; the Anthropic key is probed server-side and that verdict is surfaced.
- * Per-key client-side checks are format sanity only.
- *
- * Two distinct purposes, grouped on the page:
- *  - **API keys** (Anthropic + OpenAI) power LangChain one-shot prompts and embeddings.
- *  - **Coding-engine subscriptions** (Claude, and optionally Codex) authenticate the SDK harness that
- *    actually drives the build. The harness runs subscription-only — an API key does NOT authorize it.
- * That's why Anthropic appears twice: an API key for prompts AND a subscription for the coding engine.
- *
- * Claude is the one exception to the presence-only cards above: it manages a full LIST of credentials
- * (see `ClaudeCredentialsManager`) and is owner-gated, since the list surfaces account emails.
- */
 export function CredentialsSection({ orgId, role }: { orgId: string; role: string }) {
   const {
     data: presence,
@@ -291,13 +281,6 @@ function githubAppErrorMessage(reason: string | null): string {
   return 'The connect request expired or was invalid — try again.';
 }
 
-/**
- * The GitHub App is a separate, optional credential from the PAT above: connecting it gives host/background
- * GitHub operations an installation token with its own rate-limit pool. The PAT/App segmented control below
- * explicitly chooses the in-sandbox commit/push/PR identity. Connecting is a redirect flow — `install-url`
- * mints a one-time GitHub install URL, and GitHub's callback lands back here via `?githubApp=connected|error`,
- * which this component picks up on mount.
- */
 function GithubAppConnect({
   orgId,
   isOwner,
@@ -333,11 +316,6 @@ function GithubAppConnect({
   async function connect() {
     setError('');
     setNote('');
-    // Open the window synchronously within the click handler so popup blockers
-    // don't block it after the mutation's network round-trip loses the user gesture.
-    // Note: passing `noopener`/`noreferrer` here makes window.open return null,
-    // which would defeat the synchronous pre-open. Open the blank window without
-    // those features and null out `opener` after navigating instead.
     const installWindow = window.open('', '_blank');
     try {
       const result = await installUrl.mutateAsync();
@@ -502,20 +480,26 @@ function GithubAppConnect({
   );
 }
 
-/**
- * The coding-engine auth surface — a multi-account manager for Claude AND Codex subscription logins.
- * The list is realtime (streamed from `agent_credentials`) and carries each account's per-account usage
- * windows. Reads are member-visible; add / select / delete are owner-only.
- */
 function AgentAccountsManager({ orgId, isOwner }: { orgId: string; isOwner: boolean }) {
   const { data: raw, isLoading, isError } = useGetAgentCredentialsQuery(orgId, { skip: !orgId });
-  // `plan`/`usage` are derived, time-sensitive fields (usage windows expire) — the socket delivers raw
-  // rows now, so compute the view here at render time rather than freezing it in the RTK Query cache.
-  // Recomputes whenever a new row set streams in (new usage snapshot, selection change, etc.).
   const data = useMemo(() => raw?.map(buildAgentCredentialView), [raw]);
   const [select, selectState] = useSetSelectedAgentCredentialMutation();
   const [remove, removeState] = useRemoveAgentCredentialMutation();
+  const [refreshUsage] = useRefreshAgentCredentialUsageMutation();
   const [deleteErrors, setDeleteErrors] = useState<Record<string, string>>({});
+
+  const refreshedRef = useRef(new Set<string>());
+  useEffect(() => {
+    for (const cred of data ?? []) {
+      if (cred.provider !== EAgentProvider.CLAUDE) continue;
+      if (cred.kind !== EAgentCredentialKind.PERSONAL) continue;
+      if (refreshedRef.current.has(cred.id)) continue;
+      refreshedRef.current.add(cred.id);
+      void refreshUsage({ orgId, id: cred.id })
+        .unwrap()
+        .catch(() => {});
+    }
+  }, [data, orgId, refreshUsage]);
 
   const onSelect = (id: string) => {
     void select({ orgId, credentialId: id })
@@ -793,7 +777,7 @@ function AgentAccountRow({
 
       {cred.kind === 'personal' ? (
         <div className="shrink-0 pt-0.5">
-          <UsageRingView data={toRingData(cred)} isLoading={false} />
+          <UsageRingView data={accountToRingData(cred)} isLoading={false} />
         </div>
       ) : null}
 
@@ -901,26 +885,6 @@ function formatDuration(ms: number): string {
   return `${Math.round(hours / 24)}d`;
 }
 
-/**
- * Feed the shared usage ring ({@link UsageRingView}) from a streamed account — its per-account 5h/weekly
- * windows plus the account/plan header. Returns undefined when there's no snapshot yet, so the ring shows
- * its own "unknown" state (Codex accounts stay there until the engine harvests their rate limits).
- */
-function toRingData(cred: AgentCredentialView): OrgUsage | undefined {
-  if (!cred.usage) return undefined;
-  return {
-    ...cred.usage,
-    accountLabel: cred.accountEmail ?? undefined,
-    plan: cred.plan ?? undefined,
-  };
-}
-
-/**
- * The two-step Claude personal-login flow as a hook, so both the add-card and a row's Reconnect button
- * drive ONE shared login: step 1 mints a Claude login URL and opens it; step 2 exchanges the pasted
- * `code#state` for a credential (the backend re-keys by account email, so reconnecting revives the
- * same row to `active`).
- */
 function useClaudeLogin(orgId: string) {
   const [startAuth, startState] = useStartClaudeAuthorizeMutation();
   const [createPersonal, createState] = useCreateClaudePersonalMutation();
@@ -930,9 +894,6 @@ function useClaudeLogin(orgId: string) {
 
   async function openLogin() {
     setError('');
-    // Open the window synchronously within the click handler so popup blockers don't block it after the
-    // mutation's network round-trip loses the user gesture. Open WITHOUT "noopener" (which returns null),
-    // then sever the back-reference via `opener = null`.
     const loginWindow = window.open('about:blank', '_blank');
     if (loginWindow) loginWindow.opener = null;
     try {
