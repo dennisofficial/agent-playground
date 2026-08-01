@@ -6,7 +6,7 @@ import { RepoService } from './repo.service';
 
 @Controller('orgs/:orgId/repos')
 export class OrgRepoController {
-  constructor(private readonly repos: RepoService) {}
+  constructor(private readonly repoService: RepoService) {}
 
   @Post()
   connect(
@@ -14,6 +14,6 @@ export class OrgRepoController {
     @Param('orgId', ParseUUIDPipe) orgId: string,
     @Body() body: ConnectRepoDto,
   ): Promise<ConnectedRepo> {
-    return this.repos.connect(user.id, orgId, body);
+    return this.repoService.connect(user.id, orgId, body);
   }
 }

@@ -2,7 +2,7 @@ import { EnvService } from '@core/config/env/env.service';
 
 import { PrismaModule } from '@lib/prisma/prisma.module';
 import { PrismaService } from '@lib/prisma/prisma.service';
-import { Module, UnauthorizedException } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { EnvModule } from '@dltech/nestjs-core';
 import type { PgbaseRequest } from '@dltech/pgbase/context';
 import { PgbaseModule as PgbaseCoreModule } from '@dltech/pgbase/nest';
@@ -29,7 +29,7 @@ function getPrincipal(pgbaseRequest: PgbaseRequest): AtlasPrincipal {
   if (fromCookie) return fromCookie;
 
   const credential = pgbaseRequest.credential('authorization') ?? pgbaseRequest.auth.token;
-  if (!credential) throw new UnauthorizedException('No access token');
+  if (!credential) return null;
   return credential.startsWith('Bearer ') ? credential.slice('Bearer '.length) : credential;
 }
 

@@ -1,9 +1,7 @@
 import { SecretCipherService } from '@lib/crypto/secret-cipher.service';
+import { PrismaService } from '@lib/prisma/prisma.service';
 import { Injectable } from '@nestjs/common';
 import type { EMountMode } from '@workspace/shared';
-import { WorkspaceMountRepo } from '../../_lib/database/entities/workspace-mount.entity';
-import { WorkspaceProfileRepo } from '../../_lib/database/entities/workspace-profile.entity';
-import { WorkspaceSecretFileRepo } from '../../_lib/database/entities/workspace-secret-file.entity';
 
 export interface WorkspaceMountView {
   path: string;
@@ -26,9 +24,7 @@ export interface WorkspaceProfileSnapshot {
 @Injectable()
 export class WorkspaceProfileService {
   constructor(
-    private readonly workspaceProfileRepo: WorkspaceProfileRepo,
-    private readonly workspaceMountRepo: WorkspaceMountRepo,
-    private readonly workspaceSecretFileRepo: WorkspaceSecretFileRepo,
+    private readonly prismaService: PrismaService,
     private readonly secretCipherService: SecretCipherService,
   ) {}
 
@@ -37,21 +33,25 @@ export class WorkspaceProfileService {
     throw new Error('not implemented');
   }
 
-  /** The cold-boot setup script the sandbox runs on first provision. Internal, no tenancy check. */
+  /**
+   * The cold-boot setup script the sandbox runs on first provision. Internal (host provisioning), no
+   * tenancy check — `WorkspaceProfile` is `NO_CLIENT_ACCESS`, so this goes through `PrismaService`;
+   * the caller-resolved `repoId` is the only scope this internal path has ever had.
+   */
   async materializeSetupScript(repoId: string): Promise<string | null> {
-    const profile = await this.workspaceProfileRepo.findOne({ where: { repoId } });
+    const profile = await this.prismaService.workspaceProfile.findUnique({ where: { repoId } });
     return profile?.setupScript ?? null;
   }
 
   /** Mounts to materialize into a container. Internal (host provisioning), no tenancy check. */
   async materializeMounts(repoId: string): Promise<WorkspaceMountView[]> {
-    const rows = await this.workspaceMountRepo.find({ where: { repoId } });
-    return rows.map((m) => ({ path: m.path, mode: m.mode }));
+    const rows = await this.prismaService.workspaceMount.findMany({ where: { repoId } });
+    return rows.map((m) => ({ path: m.path, mode: m.mode as EMountMode }));
   }
 
   /** Secret files WITH decrypted contents to write into a container. Internal, no tenancy check. */
   async materializeSecrets(repoId: string): Promise<MaterializedSecretFile[]> {
-    const rows = await this.workspaceSecretFileRepo.find({ where: { repoId } });
+    const rows = await this.prismaService.workspaceSecretFile.findMany({ where: { repoId } });
     return rows.map((s) => ({
       path: s.path,
       label: s.label,

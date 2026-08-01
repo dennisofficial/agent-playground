@@ -1,7 +1,7 @@
 import { EnvService } from '@core/config/env/env.service';
 import { type V1Container, type V1Pod, type V1VolumeMount } from '@kubernetes/client-node';
-import { Job } from '@lib/database/entities/job.entity';
 import { K8sService, TerminalPodError } from '@lib/k8s/k8s.service';
+import { PrismaService } from '@lib/prisma/prisma.service';
 import { REDIS_CLIENT } from '@lib/redis/redis.tokens';
 import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
@@ -15,9 +15,9 @@ import {
   WORK_MOUNT,
   WORK_VOLUME,
 } from '@shared/engine/paths.constants';
-import { Db } from '@workspace/nestjs-rls/nest';
 import type { Redis } from 'ioredis';
 import { resolve } from 'node:path';
+import type { JobModel } from '../../generated/prisma/models';
 import { HostTransportService } from '../host-transport/host-transport.service';
 import { ProvisionStatusService } from '../provision-status/provision-status.service';
 import {
@@ -48,7 +48,7 @@ export class SandboxService {
   private readonly isTestDb: boolean;
 
   constructor(
-    private readonly db: Db,
+    private readonly prismaService: PrismaService,
     private readonly profile: WorkspaceProfileService,
     private readonly status: ProvisionStatusService,
     private readonly k8s: K8sService,
@@ -64,7 +64,7 @@ export class SandboxService {
   }
 
   async ensureReady(jobId: string): Promise<void> {
-    const job = await this.db.unsafe(Job).findOne({ where: { id: jobId } });
+    const job = await this.prismaService.job.findUnique({ where: { id: jobId } });
     if (!job) throw new NotFoundException(`Job ${jobId} not found`);
     // An archived job is terminal — refuse to provision. TerminalPodError fails the flow unrecoverably (no retry),
     // so an in-flight flow that raced an archive dies here instead of spawning an orphan pod.
@@ -223,7 +223,7 @@ export class SandboxService {
   }
 
   private buildPodSpec(
-    job: Job,
+    job: JobModel,
     name: string,
     image: string,
     setupScript: string | null,

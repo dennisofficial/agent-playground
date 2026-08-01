@@ -1,40 +1,46 @@
 import { EnvService } from '@core/config/env/env.service';
+import { PrismaService } from '@lib/prisma/prisma.service';
 import { Injectable, Logger, type OnApplicationBootstrap } from '@nestjs/common';
-import { Db } from '@workspace/nestjs-rls/nest';
 import { createHmac, timingSafeEqual } from 'crypto';
-import { Repo } from '../../_lib/database/entities/repo.entity';
 import { OrgCredentialsService } from '../org-credentials/credentials.service';
 import { GithubApiService } from './github-api.service';
 import { GithubTokenService } from './github-token.service';
 
+/**
+ * Webhook delivery and registration. HMAC-authenticated, not user-authenticated — there is no
+ * caller/request principal here, so every query goes through `PrismaService` (never `ScopedDb`,
+ * which throws outside a request).
+ */
 @Injectable()
 export class GithubWebhookService implements OnApplicationBootstrap {
   private readonly logger = new Logger(this.constructor.name);
   private readonly isTestDb: boolean;
 
   constructor(
-    private readonly env: EnvService,
-    private readonly tokens: GithubTokenService,
-    private readonly credentials: OrgCredentialsService,
-    private readonly api: GithubApiService,
-    private readonly db: Db,
+    private readonly envService: EnvService,
+    private readonly githubTokenService: GithubTokenService,
+    private readonly orgCredentialsService: OrgCredentialsService,
+    private readonly githubApiService: GithubApiService,
+    private readonly prismaService: PrismaService,
   ) {
-    this.isTestDb = /_test$/.test(env.get('POSTGRES_DB'));
+    this.isTestDb = /_test$/.test(envService.get('POSTGRES_DB'));
   }
 
   /** One-shot backfill so already-connected repos get (or refresh) their hooks after a deploy. */
   async onApplicationBootstrap(): Promise<void> {
     if (this.isTestDb) return;
     if (!this.publicBase()) return; // no public host (dev) → nothing to register
-    const repos = await this.db.unsafe(Repo).find({ where: { accessOk: true } });
+    const repos = await this.prismaService.repo.findMany({ where: { accessOk: true } });
     for (const repo of repos) {
       const parsed = this.parseOwnerRepo(repo.gitUrl);
       if (!parsed) continue;
       try {
         const warning = await this.ensureForRepo(repo.orgId, parsed.owner, parsed.repo);
         if (repo.webhookWarning !== warning) {
-          repo.webhookWarning = warning;
-          await this.db.unsafe(Repo).save(repo);
+          await this.prismaService.repo.update({
+            where: { id: repo.id },
+            data: { webhookWarning: warning },
+          });
         }
       } catch (err) {
         this.logger.warn(`webhook backfill failed for ${repo.slug}: ${this.reason(err)}`);
@@ -44,22 +50,22 @@ export class GithubWebhookService implements OnApplicationBootstrap {
 
   async ensureForRepo(orgId: string, owner: string, repo: string): Promise<string | null> {
     // App installation → the App-level webhook covers every repo the installation can see. No per-repo hook.
-    if (await this.credentials.getGithubAppInstallation(orgId)) return null;
+    if (await this.orgCredentialsService.getGithubAppInstallation(orgId)) return null;
 
     const base = this.publicBase();
     if (!base) return null;
-    const token = await this.tokens.hostToken(orgId); // PAT here — the org has no App installation
+    const token = await this.githubTokenService.hostToken(orgId); // PAT here — the org has no App installation
     if (!token) return null;
 
     const url = `${base}/${WEBHOOK_PATH}`;
-    const result = await this.api.ensureWebhook(token, {
+    const result = await this.githubApiService.ensureWebhook(token, {
       owner,
       repo,
       url,
-      secret: this.env.get('GITHUB_WEBHOOK_SECRET'),
+      secret: this.envService.get('GITHUB_WEBHOOK_SECRET'),
       events: WEBHOOK_EVENTS,
     });
-    await this.api
+    await this.githubApiService
       .pruneWebhooksExcept(token, {
         owner,
         repo,
@@ -77,7 +83,7 @@ export class GithubWebhookService implements OnApplicationBootstrap {
   /** Resolve an inbound `repository.full_name` to its owning org + repo, or null when not connected. */
   async route(fullName: string): Promise<{ orgId: string; repoId: string } | null> {
     const gitUrl = `https://github.com/${fullName}`;
-    const repo = await this.db.unsafe(Repo).findOne({ where: { gitUrl } });
+    const repo = await this.prismaService.repo.findFirst({ where: { gitUrl } });
     return repo ? { orgId: repo.orgId, repoId: repo.id } : null;
   }
 
@@ -106,7 +112,7 @@ export class GithubWebhookService implements OnApplicationBootstrap {
 
   /** The public https origin GitHub can reach, or null for loopback/private/non-https hosts (dev). */
   private publicBase(): string | null {
-    const raw = this.env.get('BACKEND_HOST');
+    const raw = this.envService.get('BACKEND_HOST');
 
     if (!raw) return null;
     let u: URL;

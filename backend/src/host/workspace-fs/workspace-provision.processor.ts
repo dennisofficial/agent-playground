@@ -1,12 +1,10 @@
 import { EnvService } from '@core/config/env/env.service';
+import { PrismaService } from '@lib/prisma/prisma.service';
 import { Processor } from '@nestjs/bullmq';
 import { NotFoundException } from '@nestjs/common';
-import { Db } from '@workspace/nestjs-rls/nest';
 import { Job as QueueJob, UnrecoverableError } from 'bullmq';
 import { promises as fs } from 'node:fs';
 import { resolve } from 'node:path';
-import { Job } from '../../_lib/database/entities/job.entity';
-import { Repo } from '../../_lib/database/entities/repo.entity';
 import { BaseQueue } from '../../_lib/queue/base-queue';
 import { GithubTokenService } from '../github/github-token.service';
 import { ProvisionStatusService } from '../provision-status/provision-status.service';
@@ -22,7 +20,7 @@ export class WorkspaceProvisionProcessor extends BaseQueue {
   private readonly atlasData: string;
 
   constructor(
-    private readonly db: Db,
+    private readonly prismaService: PrismaService,
     private readonly profile: WorkspaceProfileService,
     private readonly github: GithubTokenService,
     private readonly gitClone: GitCloneService,
@@ -47,9 +45,9 @@ export class WorkspaceProvisionProcessor extends BaseQueue {
   }
 
   private async prepare(jobId: string): Promise<void> {
-    const job = await this.db.unsafe(Job).findOne({ where: { id: jobId } });
+    const job = await this.prismaService.job.findUnique({ where: { id: jobId } });
     if (!job) throw new NotFoundException(`Job ${jobId} not found`);
-    const repo = await this.db.unsafe(Repo).findOne({ where: { id: job.repoId } });
+    const repo = await this.prismaService.repo.findUnique({ where: { id: job.repoId } });
     if (!repo) throw new NotFoundException(`Repo ${job.repoId} for job ${jobId} not found`);
 
     const dir = this.workspacePathsService.workspaceDir(this.atlasData, jobId);

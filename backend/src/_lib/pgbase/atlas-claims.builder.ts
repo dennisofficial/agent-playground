@@ -3,7 +3,10 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@dltech/jwt-auth/server';
 import type { ClaimsBuilder } from '@dltech/pgbase/context';
 import { EOrgRole } from '@workspace/shared';
-import type { AtlasClaims, AtlasPrincipal } from './atlas-claims';
+import { ANONYMOUS_CLAIMS, type AtlasClaims, type AtlasPrincipal } from './atlas-claims';
+
+/** Cache key for every anonymous caller; they all resolve to the same empty claims. */
+const ANONYMOUS = 'anonymous';
 
 @Injectable()
 export class AtlasClaimsBuilder implements ClaimsBuilder<AtlasPrincipal, AtlasClaims> {
@@ -20,10 +23,12 @@ export class AtlasClaimsBuilder implements ClaimsBuilder<AtlasPrincipal, AtlasCl
   readonly ttlMs = 15_000;
 
   key(principal: AtlasPrincipal): string {
-    return principal;
+    return principal ?? ANONYMOUS;
   }
 
   async build(principal: AtlasPrincipal): Promise<AtlasClaims> {
+    if (principal === null) return ANONYMOUS_CLAIMS;
+
     const { sub } = await this.jwtService.verifyAccessToken(principal);
     if (!sub) throw new UnauthorizedException('Malformed access token');
 
