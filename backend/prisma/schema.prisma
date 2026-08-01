@@ -1,0 +1,678 @@
+generator client {
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  previewFeatures = ["partialIndexes"]
+  moduleFormat    = "cjs"
+}
+
+generator pgbase {
+  provider        = "pgbase"
+  output          = "../src/generated/pgbase"
+  previewFeatures = ["partialIndexes"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model AgentCredential {
+  createdAt  DateTime @map("created_at") @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime @map("updated_at") @default(now()) @db.Timestamptz(6)
+  id  String @id(map: "pk_agent_credentials") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  orgId  String @map("org_id") @db.Uuid
+  provider  EAgentProvider
+  kind  EAgentCredentialKind
+  label  String
+  accountEmail  String? @map("account_email")
+  subscriptionType  String? @map("subscription_type")
+  status  EAgentCredentialStatus @default(active)
+  scopes  String?
+  materialEnc  String @map("material_enc")
+  expiresAt  DateTime? @map("expires_at") @db.Timestamptz(6)
+  lastRefreshedAt  DateTime? @map("last_refreshed_at") @db.Timestamptz(6)
+  selected  Boolean @default(false)
+  usageSnapshot  Json? @map("usage_snapshot")
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_agent_credentials_org_id_organizations")
+
+  @@unique([orgId, provider], map: "idx_agent_credentials_org_id_provider", where: raw("selected"))
+  @@unique([orgId, provider, accountEmail], map: "idx_agent_credentials_org_id_provider_account_email", where: raw("((kind = 'personal'::EAgentCredentialKind) AND (account_email IS NOT NULL))"))
+  @@index([orgId], map: "idx_agent_credentials_org_id")
+
+  @@map("agent_credentials")
+}
+
+model InboundMessage {
+  createdAt  DateTime @map("created_at") @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime @map("updated_at") @default(now()) @db.Timestamptz(6)
+  id  String @id(map: "pk_inbound_messages") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  orgId  String @map("org_id") @db.Uuid
+  jobId  String @map("job_id") @db.Uuid
+  threadId  String @map("thread_id") @db.Uuid
+  authorId  String @map("author_id")
+  source  EInboundMessageSource
+  text  String
+  payload  Json?
+  status  EInboundMessageStatus @default(pending)
+  priority  EInboundPriority @default(now)
+  deliveredAt  DateTime? @map("delivered_at") @db.Timestamptz(6)
+  job  Job @relation(fields: [jobId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_inbound_messages_job_id_jobs")
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_inbound_messages_org_id_organizations")
+  thread  Thread @relation(fields: [threadId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_inbound_messages_thread_id_threads")
+
+  @@index([jobId, status], map: "idx_inbound_messages_job_id_status")
+  @@index([orgId], map: "idx_inbound_messages_org_id")
+
+  @@map("inbound_messages")
+}
+
+model Job {
+  createdAt  DateTime @map("created_at") @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime @map("updated_at") @default(now()) @db.Timestamptz(6)
+  id  String @id(map: "pk_jobs") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  orgId  String @map("org_id") @db.Uuid
+  repoId  String @map("repo_id") @db.Uuid
+  focusedThreadId  String? @map("focused_thread_id") @db.Uuid
+  title  String?
+  origin  EJobOrigin @default(chat)
+  kind  EJobKind?
+  status  EJobStatus @default(open)
+  archivedAt  DateTime? @map("archived_at") @db.Timestamptz(6)
+  inboundMessages  InboundMessage[]
+  focusedThread  Thread? @relation("JobFocusedThread", fields: [focusedThreadId], references: [id], onUpdate: NoAction, map: "fk_jobs_focused_thread_id_threads")
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_jobs_org_id_organizations")
+  repo  Repo @relation(fields: [repoId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_jobs_repo_id_repos")
+  tasks  Task[]
+  threadGroups  ThreadGroup[]
+  threadMessages  ThreadMessage[]
+  threads  Thread[] @relation("ThreadJob")
+
+  @@index([orgId, repoId], map: "idx_jobs_org_id_repo_id")
+
+  @@map("jobs")
+}
+
+model McpServer {
+  createdAt  DateTime @map("created_at") @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime @map("updated_at") @default(now()) @db.Timestamptz(6)
+  id  String @id(map: "pk_mcp_servers") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  orgId  String @map("org_id") @db.Uuid
+  repoId  String? @map("repo_id") @db.Uuid
+  name  String
+  enabled  Boolean @default(true)
+
+  @@index([orgId], map: "idx_mcp_servers_org_id")
+
+  @@map("mcp_servers")
+}
+
+model OrgCredential {
+  createdAt  DateTime @map("created_at") @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime @map("updated_at") @default(now()) @db.Timestamptz(6)
+  orgId  String @map("org_id") @id(map: "pk_org_credentials") @db.Uuid
+  anthropicApiKeyEnc  String? @map("anthropic_api_key_enc")
+  openaiApiKeyEnc  String? @map("openai_api_key_enc")
+  githubPatEnc  String? @map("github_pat_enc")
+  githubAppInstallationId  String? @map("github_app_installation_id")
+  githubAppInstallationAccount  String? @map("github_app_installation_account")
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_org_credentials_org_id_organizations")
+
+  @@map("org_credentials")
+}
+
+model OrganizationMember {
+  createdAt  DateTime @map("created_at") @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime @map("updated_at") @default(now()) @db.Timestamptz(6)
+  orgId  String @map("org_id") @db.Uuid
+  userId  String @map("user_id") @db.Uuid
+  role  EOrgRole @default(member)
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_organization_members_org_id_organizations")
+  user  User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_organization_members_user_id_users")
+
+  @@id([orgId, userId], map: "pk_organization_members")
+  @@index([userId], map: "idx_organization_members_user_id")
+
+  @@map("organization_members")
+}
+
+model Organization {
+  createdAt  DateTime @map("created_at") @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime @map("updated_at") @default(now()) @db.Timestamptz(6)
+  id  String @id(map: "pk_organizations") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  name  String
+  status  EOrgStatus @default(onboarding)
+  defaultAutoApprove  Boolean @map("default_auto_approve") @default(false)
+  defaultAutoShip  Boolean @map("default_auto_ship") @default(false)
+  defaultAutoMerge  Boolean @map("default_auto_merge") @default(false)
+  agentCredentials  AgentCredential[]
+  inboundMessages  InboundMessage[]
+  jobs  Job[]
+  orgCredentials  OrgCredential?
+  organizationMembers  OrganizationMember[]
+  repos  Repo[]
+  subagents  Subagent[]
+  tasks  Task[]
+  threadGroups  ThreadGroup[]
+  threadMessages  ThreadMessage[]
+  threads  Thread[]
+  @@map("organizations")
+}
+
+model Repo {
+  createdAt  DateTime @map("created_at") @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime @map("updated_at") @default(now()) @db.Timestamptz(6)
+  id  String @id(map: "pk_repos") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  orgId  String @map("org_id") @db.Uuid
+  slug  String
+  name  String
+  gitUrl  String @map("git_url")
+  defaultBranch  String @map("default_branch") @default("main")
+  branchPrefix  String? @map("branch_prefix")
+  defaultAutoMergeMethod  EAutoMergeMethod @map("default_auto_merge_method") @default(squash)
+  defaultAutoMergeDeleteBranch  Boolean @map("default_auto_merge_delete_branch") @default(true)
+  accessOk  Boolean @map("access_ok") @default(false)
+  accessCheckedAt  DateTime? @map("access_checked_at") @db.Timestamptz(6)
+  webhookWarning  String? @map("webhook_warning")
+  onboardingThreadId  String? @map("onboarding_thread_id") @db.Uuid
+  onboardedAt  DateTime? @map("onboarded_at") @db.Timestamptz(6)
+  threadCount  Int @map("thread_count") @default(0)
+  jobs  Job[]
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_repos_org_id_organizations")
+  workspaceMounts  WorkspaceMount[]
+  workspaceProfiles  WorkspaceProfile?
+  workspaceSecretFiles  WorkspaceSecretFile[]
+
+  @@unique([orgId, slug], map: "idx_repos_org_id_slug")
+  @@index([orgId], map: "idx_repos_org_id")
+
+  @@map("repos")
+}
+
+model Skill {
+  createdAt  DateTime @map("created_at") @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime @map("updated_at") @default(now()) @db.Timestamptz(6)
+  id  String @id(map: "pk_skills") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  orgId  String @map("org_id") @db.Uuid
+  repoId  String? @map("repo_id") @db.Uuid
+  name  String
+  description  String?
+  enabled  Boolean @default(true)
+
+  @@index([orgId], map: "idx_skills_org_id")
+
+  @@map("skills")
+}
+
+model Subagent {
+  createdAt  DateTime @map("created_at") @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime @map("updated_at") @default(now()) @db.Timestamptz(6)
+  id  String @id(map: "pk_subagents") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  threadId  String @map("thread_id") @db.Uuid
+  orgId  String @map("org_id") @db.Uuid
+  parentMessageId  String @map("parent_message_id") @db.Uuid
+  toolUseId  String @map("tool_use_id")
+  agentType  String? @map("agent_type")
+  model  String?
+  status  ESubagentStatus @default(running)
+  sessionRef  String? @map("session_ref")
+  inputTokens  Int @map("input_tokens") @default(0)
+  outputTokens  Int @map("output_tokens") @default(0)
+  cacheReadTokens  Int @map("cache_read_tokens") @default(0)
+  cacheWriteTokens  Int @map("cache_write_tokens") @default(0)
+  costUsd  Float? @map("cost_usd")
+  startedAt  DateTime? @map("started_at") @db.Timestamptz(6)
+  endedAt  DateTime? @map("ended_at") @db.Timestamptz(6)
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_subagents_org_id_organizations")
+  parentMessage  ThreadMessage @relation("SubagentParentMessage", fields: [parentMessageId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_subagents_parent_message_id_thread_messages")
+  thread  Thread @relation(fields: [threadId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_subagents_thread_id_threads")
+  messages  ThreadMessage[] @relation("ThreadMessageSubagent")
+
+  @@index([orgId], map: "idx_subagents_org_id")
+  @@index([parentMessageId], map: "idx_subagents_parent_message_id")
+  @@index([threadId], map: "idx_subagents_thread_id")
+  @@index([toolUseId], map: "idx_subagents_tool_use_id")
+
+  @@map("subagents")
+}
+
+model Task {
+  createdAt  DateTime @map("created_at") @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime @map("updated_at") @default(now()) @db.Timestamptz(6)
+  id  String @id(map: "pk_tasks") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  jobId  String @map("job_id") @db.Uuid
+  threadGroupId  String @map("thread_group_id") @db.Uuid
+  orgId  String @map("org_id") @db.Uuid
+  ordinal  Int
+  title  String
+  brief  String?
+  activeForm  String? @map("active_form")
+  status  ETaskStatus @default(pending)
+  blockedBy  Json @map("blocked_by") @default("[]")
+  job  Job @relation(fields: [jobId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_tasks_job_id_jobs")
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_tasks_org_id_organizations")
+  threadGroup  ThreadGroup @relation(fields: [threadGroupId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_tasks_thread_group_id_thread_groups")
+
+  @@index([jobId], map: "idx_tasks_job_id")
+  @@index([orgId], map: "idx_tasks_org_id")
+  @@index([threadGroupId], map: "idx_tasks_thread_group_id")
+  @@index([threadGroupId, ordinal], map: "idx_tasks_thread_group_id_ordinal")
+
+  @@map("tasks")
+}
+
+model ThreadGroup {
+  createdAt  DateTime @map("created_at") @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime @map("updated_at") @default(now()) @db.Timestamptz(6)
+  id  String @id(map: "pk_thread_groups") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  jobId  String @map("job_id") @db.Uuid
+  orgId  String @map("org_id") @db.Uuid
+  ordinal  Int
+  kind  EThreadGroupKind
+  title  String?
+  type  String?
+  status  EThreadGroupStatus @default(pending)
+  condition  EThreadGroupCondition @default(none)
+  tasks  Task[]
+  job  Job @relation(fields: [jobId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_thread_groups_job_id_jobs")
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_thread_groups_org_id_organizations")
+  threads  Thread[]
+  @@index([jobId], map: "idx_thread_groups_job_id")
+  @@index([jobId, ordinal], map: "idx_thread_groups_job_id_ordinal")
+  @@index([orgId], map: "idx_thread_groups_org_id")
+
+  @@map("thread_groups")
+}
+
+model ThreadMessage {
+  createdAt  DateTime @map("created_at") @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime @map("updated_at") @default(now()) @db.Timestamptz(6)
+  id  String @id(map: "pk_thread_messages") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  jobId  String @map("job_id") @db.Uuid
+  threadId  String @map("thread_id") @db.Uuid
+  orgId  String @map("org_id") @db.Uuid
+  subagentId  String? @map("subagent_id") @db.Uuid
+  source  EThreadMessageSource
+  authorId  String @map("author_id")
+  text  String
+  card  Json?
+  meta  Json?
+  orderAt  DateTime? @map("order_at") @db.Timestamptz(6)
+  audience  EMessageAudience @default(shared)
+  type  EThreadMessageType @default(chat)
+  spawnedSubagents  Subagent[] @relation("SubagentParentMessage")
+  job  Job @relation(fields: [jobId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_thread_messages_job_id_jobs")
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_thread_messages_org_id_organizations")
+  subagent  Subagent? @relation("ThreadMessageSubagent", fields: [subagentId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_thread_messages_subagent_id_subagents")
+  thread  Thread @relation(fields: [threadId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_thread_messages_thread_id_threads")
+
+  @@index([jobId, createdAt], map: "idx_thread_messages_job_id_created_at")
+  @@index([orgId], map: "idx_thread_messages_org_id")
+  @@index([subagentId], map: "idx_thread_messages_subagent_id")
+  @@index([threadId, createdAt], map: "idx_thread_messages_thread_id_created_at")
+
+  @@map("thread_messages")
+}
+
+model Thread {
+  createdAt  DateTime @map("created_at") @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime @map("updated_at") @default(now()) @db.Timestamptz(6)
+  id  String @id(map: "pk_threads") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  jobId  String @map("job_id") @db.Uuid
+  threadGroupId  String @map("thread_group_id") @db.Uuid
+  orgId  String @map("org_id") @db.Uuid
+  parentThreadId  String? @map("parent_thread_id") @db.Uuid
+  role  EThreadRole
+  type  EThreadType @default(general)
+  ordinal  Int
+  brief  String
+  status  EThreadStatus @default(pending)
+  condition  EThreadCondition @default(none)
+  sessionId  String? @map("session_id")
+  inboundMessages  InboundMessage[]
+  focusedByJobs  Job[] @relation("JobFocusedThread")
+  subagents  Subagent[]
+  threadMessages  ThreadMessage[]
+  job  Job @relation("ThreadJob", fields: [jobId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_threads_job_id_jobs")
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_threads_org_id_organizations")
+  parentThread  Thread? @relation("ThreadParent", fields: [parentThreadId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_threads_parent_thread_id_threads")
+  childThreads  Thread[] @relation("ThreadParent")
+  threadGroup  ThreadGroup @relation(fields: [threadGroupId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_threads_thread_group_id_thread_groups")
+
+  @@index([jobId], map: "idx_threads_job_id")
+  @@index([orgId], map: "idx_threads_org_id")
+  @@index([parentThreadId], map: "idx_threads_parent_thread_id")
+  @@index([threadGroupId], map: "idx_threads_thread_group_id")
+
+  @@map("threads")
+}
+
+model User {
+  createdAt  DateTime @map("created_at") @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime @map("updated_at") @default(now()) @db.Timestamptz(6)
+  id  String @id(map: "pk_users") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  email  String @unique(map: "idx_users_email")
+  passwordHash  String @map("password_hash")
+  name  String?
+  role  EUserRole @default(operator)
+  status  EUserStatus @default(pending)
+  organizationMembers  OrganizationMember[]
+
+  @@map("users")
+}
+
+model WorkspaceMount {
+  createdAt  DateTime @map("created_at") @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime @map("updated_at") @default(now()) @db.Timestamptz(6)
+  id  String @id(map: "pk_workspace_mounts") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  orgId  String @map("org_id") @db.Uuid
+  repoId  String @map("repo_id") @db.Uuid
+  path  String
+  mode  EMountMode @default(per_thread)
+  repo  Repo @relation(fields: [repoId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_workspace_mounts_repo_id_repos")
+
+  @@unique([repoId, path], map: "idx_workspace_mounts_repo_id_path")
+  @@index([orgId], map: "idx_workspace_mounts_org_id")
+
+  @@map("workspace_mounts")
+}
+
+model WorkspaceProfile {
+  createdAt  DateTime @map("created_at") @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime @map("updated_at") @default(now()) @db.Timestamptz(6)
+  repoId  String @map("repo_id") @id(map: "pk_workspace_profiles") @db.Uuid
+  orgId  String @map("org_id") @db.Uuid
+  setupScript  String? @map("setup_script")
+  previewRecipe  String? @map("preview_recipe")
+  repo  Repo @relation(fields: [repoId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_workspace_profiles_repo_id_repos")
+
+  @@index([orgId], map: "idx_workspace_profiles_org_id")
+
+  @@map("workspace_profiles")
+}
+
+model WorkspaceSecretFile {
+  createdAt  DateTime @map("created_at") @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime @map("updated_at") @default(now()) @db.Timestamptz(6)
+  id  String @id(map: "pk_workspace_secret_files") @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  orgId  String @map("org_id") @db.Uuid
+  repoId  String @map("repo_id") @db.Uuid
+  path  String
+  label  String?
+  valueEnc  String @map("value_enc")
+  repo  Repo @relation(fields: [repoId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_workspace_secret_files_repo_id_repos")
+
+  @@unique([repoId, path], map: "idx_workspace_secret_files_repo_id_path")
+  @@index([orgId], map: "idx_workspace_secret_files_org_id")
+
+  @@map("workspace_secret_files")
+}
+
+enum EAgentCredentialKind {
+  personal
+  setup_token
+
+  @@map("agent_credentials_kind_enum")
+}
+
+enum EAgentProvider {
+  claude
+  codex
+
+  @@map("agent_credentials_provider_enum")
+}
+
+enum EAgentCredentialStatus {
+  active
+  needs_reauth
+  error
+
+  @@map("agent_credentials_status_enum")
+}
+
+enum EInboundPriority {
+  now
+  queued
+  later
+
+  @@map("inbound_messages_priority_enum")
+}
+
+enum EInboundMessageSource {
+  operator
+  atlas
+  system
+  untrusted
+
+  @@map("inbound_messages_source_enum")
+}
+
+enum EInboundMessageStatus {
+  draft
+  pending
+  consumed
+  delivered
+
+  @@map("inbound_messages_status_enum")
+}
+
+enum EJobKind {
+  feature
+  bugfix
+  onboarding
+  event
+  review
+
+  @@map("jobs_kind_enum")
+}
+
+enum EJobOrigin {
+  chat
+  event
+  control
+
+  @@map("jobs_origin_enum")
+}
+
+enum EJobStatus {
+  open
+  planning
+  plan_review
+  awaiting_approval
+  running
+  awaiting_ship_review
+  amending
+  blocked
+  done
+  cancelled
+  deleting
+  archived
+
+  @@map("jobs_status_enum")
+}
+
+enum EOrgRole {
+  owner
+  member
+
+  @@map("organization_members_role_enum")
+}
+
+enum EOrgStatus {
+  onboarding
+  active
+  suspended
+
+  @@map("organizations_status_enum")
+}
+
+enum EAutoMergeMethod {
+  merge
+  squash
+  rebase
+
+  @@map("repos_default_auto_merge_method_enum")
+}
+
+enum ESubagentStatus {
+  running
+  done
+  failed
+
+  @@map("subagents_status_enum")
+}
+
+enum ETaskStatus {
+  pending
+  in_progress
+  completed
+  dropped
+
+  @@map("tasks_status_enum")
+}
+
+enum EThreadGroupCondition {
+  none
+  paused
+  incomplete
+  failed
+  skipped
+
+  @@map("thread_groups_condition_enum")
+}
+
+enum EThreadGroupKind {
+  planning
+  plan_review
+  build
+  direct_build
+  master_review
+  post_build
+  ci
+
+  @@map("thread_groups_kind_enum")
+}
+
+enum EThreadGroupStatus {
+  pending
+  planning
+  reviewing
+  executing
+  auto_fixing
+  done
+
+  @@map("thread_groups_status_enum")
+}
+
+enum EMessageAudience {
+  operator_only
+  shared
+
+  @@map("thread_messages_audience_enum")
+}
+
+enum EThreadMessageSource {
+  operator
+  atlas
+  system
+  untrusted
+
+  @@map("thread_messages_source_enum")
+}
+
+enum EThreadMessageType {
+  operator
+  answer_question
+  file_answered
+  secret_provided
+  review_comments
+  attachments
+  chat
+  thinking
+  tool
+  approval
+  verdict
+  question
+  secret_request
+  file_request
+  mcp_proposal
+  skill_proposal
+  event
+  compaction
+  untrusted
+  system_shared
+  system_event
+  system_operator
+  system_notice
+  system_reminder
+  build_anchor
+
+  @@map("thread_messages_type_enum")
+}
+
+enum EThreadCondition {
+  none
+  paused
+  incomplete
+  failed
+  skipped
+
+  @@map("threads_condition_enum")
+}
+
+enum EThreadRole {
+  planning
+  plan_review
+  builder
+  review_agent
+  review_fix
+  master_review
+  post_build
+  ci
+
+  @@map("threads_role_enum")
+}
+
+enum EThreadStatus {
+  pending
+  planning
+  reviewing
+  executing
+  auto_fixing
+  done
+
+  @@map("threads_status_enum")
+}
+
+enum EThreadType {
+  backend
+  frontend
+  docs
+  testing
+  infra
+  data
+  general
+
+  @@map("threads_type_enum")
+}
+
+enum EUserRole {
+  admin
+  operator
+
+  @@map("users_role_enum")
+}
+
+enum EUserStatus {
+  pending
+  active
+  suspended
+
+  @@map("users_status_enum")
+}
+
+enum EMountMode {
+  per_thread @map("per-thread")
+  shared_ro  @map("shared-ro")
+  shared_rw  @map("shared-rw")
+
+  @@map("workspace_mounts_mode_enum")
+}

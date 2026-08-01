@@ -22,6 +22,8 @@ syncInjectedDepsAfterScripts:
 allowBuilds:
   '@nestjs/core': true
   '@node-rs/argon2': true
+  '@prisma/engines': true
+  prisma: true
   '@swc/core': true
   better-sqlite3: true
   cpu-features: false
