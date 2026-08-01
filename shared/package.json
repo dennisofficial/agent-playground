@@ -15,6 +15,10 @@
         "types": "./src/index.ts",
         "default": "./dist/index.js"
       }
+    },
+    "./pgbase": {
+      "types": "./src/generated/pgbase/models.ts",
+      "default": "./src/generated/pgbase/models.ts"
     }
   },
   "files": [

@@ -11,6 +11,16 @@ generator pgbase {
   previewFeatures = ["partialIndexes"]
 }
 
+// The same artifact again, into shared/, because the browser needs the row types to type the pgbase
+// client and cannot reach the backend's gitignored build output. Emitted rather than hand-mirrored:
+// both copies come from one `prisma generate` over one schema, so they cannot drift. Only the
+// types-only `models.ts` half is exported to consumers — see shared's `./pgbase` subpath.
+generator pgbaseClient {
+  provider        = "pgbase"
+  output          = "../../shared/src/generated/pgbase"
+  previewFeatures = ["partialIndexes"]
+}
+
 datasource db {
   provider = "postgresql"
 }
