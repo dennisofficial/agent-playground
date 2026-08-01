@@ -8,6 +8,14 @@
     "baseUrl": ".",
     "ignoreDeprecations": "6.0"
   },
+  // The generated Prisma client imports its own internals with ESM-style specifiers
+  // ('./internal/class.js') while the files on disk are .ts. Nest's build rewrites those; plain
+  // ts-node in CJS does not, and fails at require time with MODULE_NOT_FOUND — which is what the
+  // seed runner hits, since it loads the client outside any Nest build. experimentalResolver is
+  // ts-node's flag for resolving a .js specifier to its .ts source.
+  "ts-node": {
+    "experimentalResolver": true
+  },
   "include": ["cli/**/*", "seeds/**/*"],
   "exclude": ["node_modules", "dist", "seeds/_deferred"]
 }

@@ -57,7 +57,21 @@ export class InboundMessageService {
     });
   }
 
-  async consume(row: InboundMessageModel, tx?: Prisma.TransactionClient): Promise<void> {
+  /**
+   * Write the row's operator bubble and mark it CONSUMED.
+   *
+   * `sentAt` is the instant the text was handed to the engine (turn launch, or the mid-turn steer's
+   * `writeInput`) and becomes the bubble's `orderAt`. Consumption happens LATER — at the model's next
+   * assistant boundary — so `created_at` alone would sort the bubble after the reply tokens that were
+   * already streaming by then, which is the "my message renders below the response" bug. It must not be
+   * the row's own `createdAt` either: a message that waits in the queue while an earlier turn is still
+   * talking would then sort back into the middle of that turn's output.
+   */
+  async consume(
+    row: InboundMessageModel,
+    sentAt: Date,
+    tx?: Prisma.TransactionClient,
+  ): Promise<void> {
     const run = async (t: Prisma.TransactionClient): Promise<void> => {
       // The bubble's authoritative type IS the intake type it arrived as (operator/answer/file/secret) — the
       // inbound payload's discriminant maps 1:1 onto EInboundMessageType (a subset of EThreadMessageType).
@@ -75,7 +89,7 @@ export class InboundMessageService {
           type,
           card: undefined,
           meta: undefined,
-          orderAt: null,
+          orderAt: sentAt,
         },
       });
       await t.inboundMessage.update({

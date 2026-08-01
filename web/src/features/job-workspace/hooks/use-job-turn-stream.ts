@@ -77,6 +77,10 @@ interface RawUserMessage {
 
 class TurnNormalizer {
   private seq = 0;
+  /** The server instant of the frame being translated, stamped onto every block it produces so live blocks
+   *  and durable rows sort on ONE clock. Undefined only for a frame that carries none (the store then falls
+   *  back to arrival time). */
+  private emittedAt: number | undefined;
   /** content-block index → the tool call being assembled (id, name, streamed JSON input). */
   private readonly tools = new Map<
     number,
@@ -96,7 +100,12 @@ class TurnNormalizer {
         endLiveTurn(this.jobId, MAIN_LANE);
         return;
       case 'event':
-        this.event(frame.event);
+        this.emittedAt = frame.emittedAt;
+        try {
+          this.event(frame.event);
+        } finally {
+          this.emittedAt = undefined;
+        }
         return;
     }
   }
@@ -168,6 +177,9 @@ class TurnNormalizer {
   }
 
   private apply(payload: Record<string, unknown>): void {
-    applyStreamFrame(this.jobId, MAIN_LANE, this.seq++, payload);
+    applyStreamFrame(this.jobId, MAIN_LANE, this.seq++, {
+      ...(this.emittedAt != null ? { emittedAt: this.emittedAt } : {}),
+      ...payload,
+    });
   }
 }

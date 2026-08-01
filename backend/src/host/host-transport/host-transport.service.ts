@@ -120,7 +120,14 @@ export class HostTransportService {
               const di = fields.indexOf('data');
               if (di < 0) continue;
               const event: unknown = JSON.parse(fields[di + 1]);
-              yield { kind: 'event', turnId: live.turnId, event };
+              // The entry id's `<ms>-<seq>` prefix IS the server instant the engine appended this event —
+              // stamped once by Redis, so it stays put across a replay to a reconnecting subscriber.
+              yield {
+                kind: 'event',
+                turnId: live.turnId,
+                event,
+                emittedAt: Number.parseInt(id, 10),
+              };
               if ((event as { type?: string })?.type === 'result') ended = true;
             }
           }

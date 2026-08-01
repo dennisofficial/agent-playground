@@ -107,7 +107,10 @@ export interface InboundMessageView {
 
 export type LiveTurnFrame =
   | { kind: 'turn_start'; turnId: string; threadId: string; startedAt: number }
-  | { kind: 'event'; turnId: string; event: unknown }
+  /** `emittedAt` is the SERVER instant the engine wrote this event (the Redis stream entry's own ms id), so a
+   *  live block's render order is comparable to a durable row's `orderAt`/`postedAt` — both server-clock. It
+   *  survives replay: a late subscriber re-reads the same entry ids and rebuilds the same order. */
+  | { kind: 'event'; turnId: string; event: unknown; emittedAt: number }
   | { kind: 'turn_end'; turnId: string };
 
 export interface ThreadView {

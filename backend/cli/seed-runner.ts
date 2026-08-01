@@ -24,7 +24,11 @@ async function runSeeds(prisma: PrismaClient): Promise<void> {
     .filter((f) => f.endsWith('.ts') || f.endsWith('.js'))
     .sort();
   for (const file of files) {
-    const mod = (await import(resolve(SEEDS_DIR, file))) as { default: Seeder };
+    // `require`, not `await import`. This runs under ts-node in CommonJS, where a dynamic import of
+    // a .ts file is handed to Node's ESM loader — which has no TypeScript hook registered and fails
+    // with ERR_UNKNOWN_FILE_EXTENSION. require goes through ts-node's CJS hook and compiles it.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const mod = require(resolve(SEEDS_DIR, file)) as { default: Seeder };
     console.log(`seed: running ${file}`);
     await mod.default(prisma);
     console.log(`seed: ${file} done`);

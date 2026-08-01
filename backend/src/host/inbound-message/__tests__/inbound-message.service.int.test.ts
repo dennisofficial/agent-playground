@@ -108,7 +108,7 @@ describe('InboundMessageService (int)', () => {
   it('consume writes the operator bubble and flips the row to CONSUMED', async () => {
     const row = await service.enqueue(base('hello', EInboundPriority.NOW));
 
-    await service.consume(row);
+    await service.consume(row, new Date());
 
     const after = await prisma.inboundMessage.findUniqueOrThrow({ where: { id: row.id } });
     expect(after.status).toBe(EInboundMessageStatus.CONSUMED);
@@ -118,6 +118,20 @@ describe('InboundMessageService (int)', () => {
     expect(bubbles[0].source).toBe(EThreadMessageSource.OPERATOR);
     expect(bubbles[0].text).toBe('hello');
     expect(bubbles[0].authorId).toBe('u1');
+  });
+
+  it("the bubble's render order is `sentAt`, not the (later) instant it was consumed", async () => {
+    const row = await service.enqueue(base('hello', EInboundPriority.NOW));
+    const sentAt = new Date();
+    await sleep(10); // the model only reaches its assistant boundary well after the text was handed over
+
+    await service.consume(row, sentAt);
+
+    const [bubble] = await prisma.threadMessage.findMany({ where: { jobId } });
+    expect(bubble.orderAt).toEqual(sentAt);
+    // …and that order key really is earlier than the row's own creation instant, which is what the
+    // transcript would otherwise sort the operator below a reply that was already streaming.
+    expect(bubble.orderAt!.getTime()).toBeLessThan(bubble.createdAt.getTime());
   });
 
   it('claimPending returns PENDING rows in FIFO order', async () => {
@@ -151,7 +165,7 @@ describe('InboundMessageService (int)', () => {
     expect(fresh.map((m) => m.id)).toEqual([b.id]);
 
     // Consumed rows never come back — after the model incorporates `b`, only the still-pending `a` remains.
-    await service.consume(b);
+    await service.consume(b, new Date());
     const remaining = await service.pendingExcluding(jobId, new Set());
     expect(remaining.map((m) => m.id)).toEqual([a.id]);
   });

@@ -15,6 +15,12 @@ import { TurnTranscriptService } from './turn-transcript.service';
 /** How often, while a turn runs, we sweep for freshly-arrived `now` messages to steer into it. */
 const FORWARD_POLL_MS = 750;
 
+/** An inbound row awaiting consumption, paired with the instant it was handed to the engine. */
+interface SentMessage {
+  row: InboundMessageModel;
+  sentAt: Date;
+}
+
 @Injectable()
 export class TurnDispatcherService {
   private readonly logger = new Logger(this.constructor.name);
@@ -30,6 +36,9 @@ export class TurnDispatcherService {
 
   async run(jobId: string, messages: InboundMessageModel[]): Promise<void> {
     const { threadId, orgId } = messages[0];
+    // The trigger batch's render position: taken BEFORE the launch so it precedes the live turn's `startedAt`
+    // and therefore every block the engine streams into it — the operator's bubble always leads its own turn.
+    const dispatchedAt = new Date();
     const spec = await this.specBuilder.build(jobId, messages);
 
     const turnId = randomUUID();
@@ -44,8 +53,10 @@ export class TurnDispatcherService {
 
     // Consumption model: messages sent to the SDK but not yet incorporated. Starts as this turn's trigger batch;
     // mid-turn `now` steers append to it. Each is CONSUMED (bubble written) at the next assistant boundary — the
-    // moment the model's turn actually sees it. `steered` guards against re-forwarding the same row.
-    const pendingConsumption: InboundMessageModel[] = [...messages];
+    // moment the model's turn actually sees it — but carries the instant it was SENT as its render order, so the
+    // bubble lands where the operator typed it rather than after the tokens that streamed while it waited.
+    // `steered` guards against re-forwarding the same row.
+    const pendingConsumption: SentMessage[] = messages.map((row) => ({ row, sentAt: dispatchedAt }));
     const steered = new Set(messages.map((m) => m.id));
     const forwardAbort = new AbortController();
     const forwarding = this.forwardMidTurn(
@@ -58,7 +69,7 @@ export class TurnDispatcherService {
 
     const flushConsumption = async (): Promise<void> => {
       const batch = pendingConsumption.splice(0); // take all; anything forwarded during the awaits flushes next time
-      for (const row of batch) await this.inbound.consume(row);
+      for (const { row, sentAt } of batch) await this.inbound.consume(row, sentAt);
     };
 
     let sessionId: string | undefined;
@@ -100,7 +111,7 @@ export class TurnDispatcherService {
     jobId: string,
     turnId: string,
     steered: Set<string>,
-    pendingConsumption: InboundMessageModel[],
+    pendingConsumption: SentMessage[],
     signal: AbortSignal,
   ): Promise<void> {
     while (!signal.aborted) {
@@ -109,7 +120,8 @@ export class TurnDispatcherService {
         for (const m of fresh) {
           steered.add(m.id);
           await this.transport.writeInput(turnId, { text: m.text, priority: 'next' });
-          pendingConsumption.push(m);
+          // Stamped at the hand-off, not at consumption, so the steer sorts among the blocks it interrupted.
+          pendingConsumption.push({ row: m, sentAt: new Date() });
           this.logger.log(
             `turn ${turnId}: steered mid-turn message ${m.id} (now) into the live engine`,
           );
