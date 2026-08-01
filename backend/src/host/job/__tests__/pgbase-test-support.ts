@@ -56,6 +56,9 @@ export async function createScopedTestContext(): Promise<ScopedTestContext> {
   const moduleRef = await Test.createTestingModule({
     imports: [
       PgbaseCoreModule.forRoot({
+        // pgbase reads pg_catalog over its own pg pool, separate from Prisma's, so the client alone
+        // is not enough — without this it refuses to boot rather than guessing a host.
+        connectionString: connectionString(),
         prisma,
         schema: pgbaseSchema,
         policies: atlasPolicies,

@@ -1,3 +1,9 @@
+-- Extensions are not emitted by `prisma migrate diff`, but the id defaults below call
+-- uuid_generate_v4(), so a database built from these migrations needs uuid-ossp before the first
+-- CREATE TABLE. Without it the baseline applies to the existing dev database (which already has the
+-- extension from the TypeORM migrations this replaces) and fails on any database built from empty.
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
 -- CreateSchema
 CREATE SCHEMA IF NOT EXISTS "public";
 
@@ -80,7 +86,7 @@ CREATE TYPE "users_role_enum" AS ENUM ('admin', 'operator');
 CREATE TYPE "users_status_enum" AS ENUM ('pending', 'active', 'suspended');
 
 -- CreateEnum
-CREATE TYPE "workspace_mounts_mode_enum" AS ENUM ('per-thread', 'shared-ro', 'shared-rw');
+CREATE TYPE "workspace_mounts_mode_enum" AS ENUM ('per_thread', 'shared_ro', 'shared_rw');
 
 -- CreateTable
 CREATE TABLE "agent_credentials" (
@@ -351,7 +357,7 @@ CREATE TABLE "workspace_mounts" (
     "org_id" UUID NOT NULL,
     "repo_id" UUID NOT NULL,
     "path" TEXT NOT NULL,
-    "mode" "workspace_mounts_mode_enum" NOT NULL DEFAULT 'per-thread',
+    "mode" "workspace_mounts_mode_enum" NOT NULL DEFAULT 'per_thread',
 
     CONSTRAINT "pk_workspace_mounts" PRIMARY KEY ("id")
 );
@@ -389,7 +395,7 @@ CREATE INDEX "idx_agent_credentials_org_id" ON "agent_credentials"("org_id");
 CREATE UNIQUE INDEX "idx_agent_credentials_org_id_provider" ON "agent_credentials"("org_id", "provider") WHERE (selected);
 
 -- CreateIndex
-CREATE UNIQUE INDEX "idx_agent_credentials_org_id_provider_account_email" ON "agent_credentials"("org_id", "provider", "account_email") WHERE ((kind = 'personal'::EAgentCredentialKind) AND (account_email IS NOT NULL));
+CREATE UNIQUE INDEX "idx_agent_credentials_org_id_provider_account_email" ON "agent_credentials"("org_id", "provider", "account_email") WHERE ((kind = 'personal'::agent_credentials_kind_enum) AND (account_email IS NOT NULL));
 
 -- CreateIndex
 CREATE INDEX "idx_inbound_messages_job_id_status" ON "inbound_messages"("job_id", "status");

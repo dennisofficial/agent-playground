@@ -1,3 +1,4 @@
+import { PrismaService } from '@lib/prisma/prisma.service';
 import { ScopedDb } from '@lib/pgbase/scoped-db';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { JobListItem, JobView } from '@workspace/shared';
@@ -11,6 +12,7 @@ import { JobViewService } from './job-view.service';
 export class JobService {
   constructor(
     private readonly scopedDb: ScopedDb,
+    private readonly prismaService: PrismaService,
     private readonly jobViewService: JobViewService,
     private readonly inbound: InboundMessageService,
     private readonly sandbox: SandboxService,
@@ -34,7 +36,12 @@ export class JobService {
   async archive(jobId: string): Promise<JobListItem> {
     const job = await this.assertAccess(jobId);
     const archivedAt = new Date();
-    await this.scopedDb.job.update({
+    // Unscoped on purpose. The Job policy is `orgId IN claims.orgIds AND archivedAt IS NULL`, and a
+    // scoped update proves the row still satisfies that predicate AFTER the write — which archiving
+    // is precisely designed not to do, so ScopedDb rejects its own terminal state transition.
+    // assertAccess above has already resolved this job through the scoped read, so the caller's
+    // right to it is established before the write; what it cannot do is perform the write.
+    await this.prismaService.job.update({
       where: { id: jobId },
       data: { status: EJobStatus.ARCHIVED, archivedAt },
     });

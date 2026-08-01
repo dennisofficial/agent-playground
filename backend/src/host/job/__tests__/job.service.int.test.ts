@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import type { InboundMessageService } from '../../inbound-message/inbound-message.service';
 import type { SandboxService } from '../../sandbox/sandbox.service';
 import { JobViewService } from '../job-view.service';
+import type { PrismaService } from '@lib/prisma/prisma.service';
 import { JobService } from '../job.service';
 import { createScopedTestContext, type ScopedTestContext } from './pgbase-test-support';
 
@@ -16,7 +17,15 @@ describe('JobService.archive + archived read-exclusion (int)', () => {
     ctx = await createScopedTestContext();
     const inbound = { discardPending: vi.fn(async () => {}) } as unknown as InboundMessageService;
     const sandbox = { teardown: vi.fn(async () => {}) } as unknown as SandboxService;
-    service = new JobService(ctx.scopedDb, new JobViewService(), inbound, sandbox);
+    // archive() writes through the unscoped client: its own post-image leaves the Job policy's
+    // scope, so a scoped update would refuse it. The context's PrismaClient stands in.
+    service = new JobService(
+      ctx.scopedDb,
+      ctx.prisma as unknown as PrismaService,
+      new JobViewService(),
+      inbound,
+      sandbox,
+    );
   });
 
   afterAll(async () => {
