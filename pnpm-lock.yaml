@@ -36,8 +36,8 @@ importers:
         specifier: ^1.0.0
         version: 1.0.0(@nestjs/common@11.1.26(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@5.5.0))(@nestjs/core@11.1.26)(debug@4.4.3(supports-color@8.1.1))(supports-color@8.1.1)
       '@dltech/nestjs-core':
-        specifier: ^1.0.0
-        version: 1.0.0(ad394e9831fbfc091a0c8edba465fa2e)
+        specifier: ^1.0.1
+        version: 1.0.1(1d2988d248c69187e70eae1d1d549deb)
       '@dltech/nestjs-langfuse':
         specifier: ^1.0.0
         version: 1.0.0(@langchain/core@1.1.48(@opentelemetry/api@1.9.1)(@opentelemetry/exporter-trace-otlp-proto@0.214.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.6.1(@opentelemetry/api@1.9.1))(openai@6.42.0(ws@8.21.0)(zod@4.4.3))(ws@8.21.0))(@langfuse/client@5.4.1(@opentelemetry/api@1.9.1))(@langfuse/core@5.4.1(@opentelemetry/api@1.9.1))(@langfuse/tracing@5.4.1(@opentelemetry/api@1.9.1))(@opentelemetry/api@1.9.1)
@@ -342,13 +342,13 @@ importers:
         version: 4.3.0(prettier@3.8.3)(typescript@6.0.3)
       tsup:
         specifier: ^8.5.1
-        version: 8.5.1(@swc/core@1.15.40)(jiti@2.7.0)(postcss@8.5.15)(supports-color@5.5.0)(tsx@4.22.4)(typescript@6.0.3)(yaml@2.9.0)
+        version: 8.5.1(@swc/core@1.15.40)(jiti@2.7.0)(postcss@8.5.15)(supports-color@8.1.1)(tsx@4.22.4)(typescript@6.0.3)(yaml@2.9.0)
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       vitest:
         specifier: ^3.0.0
-        version: 3.2.6(@types/debug@4.1.13)(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(supports-color@5.5.0)(terser@5.48.0)(tsx@4.22.4)(yaml@2.9.0)
+        version: 3.2.6(@types/debug@4.1.13)(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(supports-color@8.1.1)(terser@5.48.0)(tsx@4.22.4)(yaml@2.9.0)
 
   packages/codex-sdk:
     devDependencies:
@@ -369,13 +369,13 @@ importers:
         version: 4.3.0(prettier@3.8.3)(typescript@6.0.3)
       tsup:
         specifier: ^8.5.1
-        version: 8.5.1(@swc/core@1.15.40)(jiti@2.7.0)(postcss@8.5.15)(supports-color@8.1.1)(tsx@4.22.4)(typescript@6.0.3)(yaml@2.9.0)
+        version: 8.5.1(@swc/core@1.15.40)(jiti@2.7.0)(postcss@8.5.15)(supports-color@5.5.0)(tsx@4.22.4)(typescript@6.0.3)(yaml@2.9.0)
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       vitest:
         specifier: ^3.0.0
-        version: 3.2.6(@types/debug@4.1.13)(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(supports-color@8.1.1)(terser@5.48.0)(tsx@4.22.4)(yaml@2.9.0)
+        version: 3.2.6(@types/debug@4.1.13)(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(supports-color@5.5.0)(terser@5.48.0)(tsx@4.22.4)(yaml@2.9.0)
 
   shared:
     dependencies:
@@ -770,8 +770,8 @@ packages:
       '@nestjs/core':
         optional: true
 
-  '@dltech/nestjs-core@1.0.0':
-    resolution: {integrity: sha512-ZjA9eNPJLDJW2h/FCxnARnDgR3e7NkGWxYbZocwngyyltrIKuVrMU6juzXEap20ydBsf8agGVPLK5S55ragZBw==}
+  '@dltech/nestjs-core@1.0.1':
+    resolution: {integrity: sha512-kPnKVz2Kb+b7stRcl40lhJwSLuOm5/MQdmQMWzroY9mF6KjDM94ZGqhydZ5z/LJaHrTa9LhE0AH3V0TaFP7ieg==}
     engines: {node: '>=20'}
     peerDependencies:
       '@nestjs/bullmq': '>=11.0.0'
@@ -7854,7 +7854,7 @@ snapshots:
       - debug
       - supports-color
 
-  '@dltech/nestjs-core@1.0.0(ad394e9831fbfc091a0c8edba465fa2e)':
+  '@dltech/nestjs-core@1.0.1(1d2988d248c69187e70eae1d1d549deb)':
     dependencies:
       '@nestjs/common': 11.1.26(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@5.5.0)
       '@nestjs/core': 11.1.26(@nestjs/common@11.1.26(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@5.5.0))(@nestjs/platform-express@11.1.26)(reflect-metadata@0.2.2)(rxjs@7.8.2)
@@ -7866,10 +7866,10 @@ snapshots:
       '@nestjs/bullmq': 11.0.4(@nestjs/common@11.1.26(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@5.5.0))(@nestjs/core@11.1.26)(bullmq@5.78.0(supports-color@5.5.0))
       '@nestjs/config': 4.0.4(@nestjs/common@11.1.26(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@5.5.0))(rxjs@7.8.2)
       '@nestjs/mongoose': 11.0.4(@nestjs/common@11.1.26(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@5.5.0))(@nestjs/core@11.1.26)(mongoose@9.6.3(socks@2.8.9))(rxjs@7.8.2)
-      '@nestjs/typeorm': 11.0.1(@nestjs/common@11.1.26(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@5.5.0))(@nestjs/core@11.1.26)(reflect-metadata@0.2.2)(rxjs@7.8.2)(typeorm@0.3.30(ioredis@5.11.1(supports-color@5.5.0))(mongodb@6.21.0(socks@2.8.9))(mysql2@3.15.3)(pg@8.21.0)(supports-color@5.5.0)(ts-node@10.9.2(@swc/core@1.15.40)(@types/node@22.19.20)(typescript@6.0.3)))
+      '@nestjs/typeorm': 11.0.1(@nestjs/common@11.1.26(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@5.5.0))(@nestjs/core@11.1.26)(reflect-metadata@0.2.2)(rxjs@7.8.2)(typeorm@0.3.30(ioredis@5.11.1(supports-color@5.5.0))(mongodb@6.21.0(socks@2.8.9))(mysql2@3.15.3)(pg@8.21.0)(supports-color@8.1.1)(ts-node@10.9.2(@swc/core@1.15.40)(@types/node@22.19.20)(typescript@6.0.3)))
       express: 5.2.1(supports-color@8.1.1)
       mongoose: 9.6.3(socks@2.8.9)
-      typeorm: 0.3.30(ioredis@5.11.1(supports-color@5.5.0))(mongodb@6.21.0(socks@2.8.9))(mysql2@3.15.3)(pg@8.21.0)(supports-color@5.5.0)(ts-node@10.9.2(@swc/core@1.15.40)(@types/node@22.19.20)(typescript@6.0.3))
+      typeorm: 0.3.30(ioredis@5.11.1(supports-color@5.5.0))(mongodb@6.21.0(socks@2.8.9))(mysql2@3.15.3)(pg@8.21.0)(supports-color@8.1.1)(ts-node@10.9.2(@swc/core@1.15.40)(@types/node@22.19.20)(typescript@6.0.3))
 
   '@dltech/nestjs-langfuse@1.0.0(@langchain/core@1.1.48(@opentelemetry/api@1.9.1)(@opentelemetry/exporter-trace-otlp-proto@0.214.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.6.1(@opentelemetry/api@1.9.1))(openai@6.42.0(ws@8.21.0)(zod@4.4.3))(ws@8.21.0))(@langfuse/client@5.4.1(@opentelemetry/api@1.9.1))(@langfuse/core@5.4.1(@opentelemetry/api@1.9.1))(@langfuse/tracing@5.4.1(@opentelemetry/api@1.9.1))(@opentelemetry/api@1.9.1)':
     dependencies:
@@ -8893,13 +8893,13 @@ snapshots:
     optionalDependencies:
       '@nestjs/platform-express': 11.1.26(@nestjs/common@11.1.26(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@5.5.0))(@nestjs/core@11.1.26)(supports-color@8.1.1)
 
-  '@nestjs/typeorm@11.0.1(@nestjs/common@11.1.26(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@5.5.0))(@nestjs/core@11.1.26)(reflect-metadata@0.2.2)(rxjs@7.8.2)(typeorm@0.3.30(ioredis@5.11.1(supports-color@5.5.0))(mongodb@6.21.0(socks@2.8.9))(mysql2@3.15.3)(pg@8.21.0)(supports-color@5.5.0)(ts-node@10.9.2(@swc/core@1.15.40)(@types/node@22.19.20)(typescript@6.0.3)))':
+  '@nestjs/typeorm@11.0.1(@nestjs/common@11.1.26(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@5.5.0))(@nestjs/core@11.1.26)(reflect-metadata@0.2.2)(rxjs@7.8.2)(typeorm@0.3.30(ioredis@5.11.1(supports-color@5.5.0))(mongodb@6.21.0(socks@2.8.9))(mysql2@3.15.3)(pg@8.21.0)(supports-color@8.1.1)(ts-node@10.9.2(@swc/core@1.15.40)(@types/node@22.19.20)(typescript@6.0.3)))':
     dependencies:
       '@nestjs/common': 11.1.26(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@5.5.0)
       '@nestjs/core': 11.1.26(@nestjs/common@11.1.26(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@5.5.0))(@nestjs/platform-express@11.1.26)(reflect-metadata@0.2.2)(rxjs@7.8.2)
       reflect-metadata: 0.2.2
       rxjs: 7.8.2
-      typeorm: 0.3.30(ioredis@5.11.1(supports-color@5.5.0))(mongodb@6.21.0(socks@2.8.9))(mysql2@3.15.3)(pg@8.21.0)(supports-color@5.5.0)(ts-node@10.9.2(@swc/core@1.15.40)(@types/node@22.19.20)(typescript@6.0.3))
+      typeorm: 0.3.30(ioredis@5.11.1(supports-color@5.5.0))(mongodb@6.21.0(socks@2.8.9))(mysql2@3.15.3)(pg@8.21.0)(supports-color@8.1.1)(ts-node@10.9.2(@swc/core@1.15.40)(@types/node@22.19.20)(typescript@6.0.3))
     optional: true
 
   '@next/env@16.3.0-preview.3': {}
@@ -14653,14 +14653,14 @@ snapshots:
 
   typedarray@0.0.6: {}
 
-  typeorm@0.3.30(ioredis@5.11.1(supports-color@5.5.0))(mongodb@6.21.0(socks@2.8.9))(mysql2@3.15.3)(pg@8.21.0)(supports-color@5.5.0)(ts-node@10.9.2(@swc/core@1.15.40)(@types/node@22.19.20)(typescript@6.0.3)):
+  typeorm@0.3.30(ioredis@5.11.1(supports-color@5.5.0))(mongodb@6.21.0(socks@2.8.9))(mysql2@3.15.3)(pg@8.21.0)(supports-color@8.1.1)(ts-node@10.9.2(@swc/core@1.15.40)(@types/node@22.19.20)(typescript@6.0.3)):
     dependencies:
       '@sqltools/formatter': 1.2.5
       ansis: 4.2.0
       app-root-path: 3.1.0
       buffer: 6.0.3
       dayjs: 1.11.21
-      debug: 4.4.3(supports-color@5.5.0)
+      debug: 4.4.3(supports-color@8.1.1)
       dedent: 1.7.2
       dotenv: 16.6.1
       glob: 10.5.0
