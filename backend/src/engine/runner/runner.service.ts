@@ -106,6 +106,7 @@ export class RunnerService {
       model: spec.model,
       resume: spec.sessionId,
       includePartialMessages: true,
+      thinking: { type: 'adaptive', display: 'summarized' },
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
       env: { ...process.env, CLAUDE_CONFIG_DIR, ...RunnerService.applyEnv(spec.env) },
