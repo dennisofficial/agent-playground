@@ -1,11 +1,9 @@
 packages:
-  - submodules/**
   - packages/**
   - backend
   - shared
   - web
-# Submodule packages (@workspace/pg-realtime, @workspace/nestjs-rls) live under submodules/ and resolve
-# via the glob above. Everything else that used to live there is now published to npm under @dltech/*.
+# Everything that used to live under submodules/ is now published to npm under @dltech/*.
 # pnpm 11 also uses this file as the workspace settings store:
 #   - injectWorkspacePackages + nodeLinker: isolated — inject workspace packages the way `pnpm install`
 #     would for external packages, so peerDependencies don't get duplicate runtime instances

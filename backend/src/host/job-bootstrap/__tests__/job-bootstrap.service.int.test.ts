@@ -16,7 +16,7 @@ import {
   type ScopedTestContext,
 } from '../../job/__tests__/pgbase-test-support';
 import { InboundMessageService } from '../../inbound-message/inbound-message.service';
-import type { User } from '../../../_lib/database/entities/user.entity';
+import type { User } from '../../../generated/prisma/client';
 import { IntakeService } from '../intake.service';
 import { JobBootstrapService } from '../job-bootstrap.service';
 import { TurnFlowService } from '../turn-flow.service';

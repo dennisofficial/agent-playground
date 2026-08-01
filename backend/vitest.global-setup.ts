@@ -37,15 +37,14 @@ export default async function globalSetup(): Promise<void> {
     await admin.end();
   }
 
-  execFileSync(
-    'pnpm',
-    ['exec', 'typeorm-ts-node-commonjs', 'migration:run', '-d', 'cli/data-source.ts'],
-    {
-      cwd: __dirname,
-      stdio: 'inherit',
-      env: { ...process.env, TS_NODE_PROJECT: 'tsconfig.cli.json' },
-    },
-  );
+  // `migrate deploy` rather than `dev`: it applies the committed migrations and never prompts or
+  // reshapes the schema, which is what a CI/test bootstrap wants. The POSTGRES_* overrides below
+  // point prisma.config.ts at the freshly created test database rather than the dev one.
+  execFileSync('pnpm', ['exec', 'prisma', 'migrate', 'deploy'], {
+    cwd: __dirname,
+    stdio: 'inherit',
+    env: { ...process.env, POSTGRES_DB: db },
+  });
 
   await provisionMcpRoles({ ...conn, database: db });
 }

@@ -1,6 +1,6 @@
 import type { Job, Queue } from 'bullmq';
 import { describe, expect, it, vi } from 'vitest';
-import type { InboundMessage } from '../../../_lib/database/entities/inbound-message.entity';
+import type { InboundMessageModel as InboundMessage } from '../../../generated/prisma/models';
 import type { InboundMessageService } from '../../inbound-message/inbound-message.service';
 import type { TurnDispatcherService } from '../../turn/turn-dispatcher.service';
 import { TurnDispatchProcessor } from '../turn-dispatch.processor';

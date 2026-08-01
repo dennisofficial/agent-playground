@@ -1,29 +1,15 @@
 import { EnvService } from '@core/config/env/env.service';
 import { envConfigValidation } from '@core/config/env/validation';
 import { CryptoModule } from '@lib/crypto/crypto.module';
-import { DatabaseModule } from '@lib/database/database.module';
 import { K8sModule } from '@lib/k8s/k8s.module';
+import { PgbaseModule } from '@lib/pgbase/pgbase.module';
+import { PrismaModule } from '@lib/prisma/prisma.module';
 import { QueueModule } from '@lib/queue/queue.module';
-import { RealtimeAuthService } from '@lib/realtime/realtime-auth.service';
-import { atlasRealtimeConfig } from '@lib/realtime/realtime.config';
-import { AtlasRealtimeModule } from '@lib/realtime/realtime.module';
-import { ScopedFindService } from '@lib/realtime/scoped-find.service';
 import { RedisModule } from '@lib/redis/redis.module';
-import { CLS_USER } from '@lib/rls/atlas-claims';
-import { atlasRlsOptions } from '@lib/rls/atlas-rls.config';
 import { ValidationPipe } from '@nestjs/common';
 import { APP_PIPE } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
-import { getDataSourceToken } from '@nestjs/typeorm';
 import { CreateModule, EnvModule, LoggerModule } from '@dltech/nestjs-core';
-import { getExposed } from '@workspace/nestjs-rls';
-import { RLS_CONTEXT, RlsModule, type RlsContextConfig } from '@workspace/nestjs-rls/nest';
-import { rlsGuard } from '@workspace/nestjs-rls/pg-realtime';
-import { RealtimeNestModule, type RealtimeNestConfig } from '@workspace/pg-realtime/nest-realtime';
-import type { Principal } from '@workspace/pg-realtime/socketio';
-import { ClsModule, ClsService } from 'nestjs-cls';
-import type { Socket } from 'socket.io';
-import type { DataSource } from 'typeorm';
 import { AgentCredentialsModule } from './agent-credentials/agent-credentials.module';
 import { AuthModule } from './auth/auth.module';
 import { GithubModule } from './github/github.module';
@@ -42,55 +28,22 @@ import { WorkspaceProfileModule } from './workspace-profile/workspace-profile.mo
 
 @CreateModule({
   imports: [
-    // ClsMiddleware wraps every request in a CLS context BEFORE guards run, so AuthGuard
-    // can publish the user into CLS for the RLS layer to read ambiently.
-    ClsModule.forRoot({ middleware: { mount: true }, global: true }),
     LoggerModule,
     ScheduleModule.forRoot(),
     EnvModule.forRoot({
       envService: EnvService,
       validationSchema: envConfigValidation,
     }),
-    DatabaseModule,
+    PrismaModule,
+    // Replaces DatabaseModule, RlsModule and RealtimeNestModule together: the policy registry is
+    // both the row filter and the live-feed definition, so there is no separate realtime engine to
+    // configure and no per-entity guard to build. It resolves its schema against pg_catalog at boot
+    // and fails there — on a drifted schema, a model without a primary key, or a misconfigured
+    // policy — rather than on the first request.
+    PgbaseModule,
     RedisModule,
     CryptoModule,
     K8sModule,
-    RlsModule.forRootAsync(atlasRlsOptions),
-    RealtimeNestModule.forRootAsync({
-      imports: [AtlasRealtimeModule],
-      inject: [
-        EnvService,
-        getDataSourceToken(),
-        RLS_CONTEXT,
-        RealtimeAuthService,
-        ScopedFindService,
-        ClsService,
-      ],
-      useFactory: (
-        env: EnvService,
-        dataSource: DataSource,
-        ctx: RlsContextConfig,
-        realtimeAuthService: RealtimeAuthService,
-        scopedFindService: ScopedFindService,
-        cls: ClsService,
-      ): RealtimeNestConfig => ({
-        dataSource,
-        engine: atlasRealtimeConfig(env),
-        authenticate: (handshake: Socket['handshake']) =>
-          realtimeAuthService.authenticate(handshake) as unknown as Promise<Principal>,
-        withPrincipalContext: (principal, fn) =>
-          Promise.resolve(
-            cls.run(() => {
-              cls.set(CLS_USER, principal);
-              return fn();
-            }),
-          ),
-        resolveExposed: getExposed,
-        buildGuard: (entity) => rlsGuard(entity, ctx.resolveClaims),
-        scopedFind: (model, spec, principal) => scopedFindService.find(model, spec, principal),
-        cors: { origin: env.get('FRONTEND_HOST'), credentials: true },
-      }),
-    }),
     QueueModule,
 
     OrgModule,

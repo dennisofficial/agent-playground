@@ -1,5 +1,4 @@
 import { CreateModule } from '@dltech/nestjs-core';
-import { McpServer, McpServerRepo } from '../../_lib/database/entities/mcp-server.entity';
 import { McpServersService } from './mcp-servers.service';
 
 /**
@@ -7,7 +6,6 @@ import { McpServersService } from './mcp-servers.service';
  * the future SandboxModule reads. Distinct from the workspace-profile agent tool server.
  */
 @CreateModule({
-  entities: [{ entity: McpServer, repoClass: McpServerRepo }],
   services: [McpServersService],
 })
 export class McpServersModule {}

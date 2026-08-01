@@ -1,6 +1,0 @@
-[submodule "submodules/pg-realtime"]
-	path = submodules/pg-realtime
-	url = https://github.com/dennisofficial/pg-realtime.git
-[submodule "submodules/nestjs-rls"]
-	path = submodules/nestjs-rls
-	url = https://github.com/dennisofficial/nestjs-rls.git

@@ -8,17 +8,6 @@ description: >
 runs:
   using: composite
   steps:
-    - name: Clean stale submodule artifacts
-      # Self-hosted runners REUSE the _work directory between jobs. actions/checkout
-      # cleans the superproject but NOT untracked files inside git submodules
-      # (submodules/pg-realtime, submodules/nestjs-rls), so a prior
-      # run's pnpm node_modules — full of store symlinks that dangle once the store is
-      # pruned — persists there. hashFiles('submodules/**') then follows a broken symlink
-      # and fails the whole cache step. Wipe untracked submodule content before anything
-      # hashes the tree. No-op on ephemeral hosted runners (already a clean checkout).
-      shell: bash
-      run: git submodule foreach --recursive 'git clean -ffdx' || true
-
     - name: Set up pnpm
       # No `version:` here — action-setup reads it from package.json's `packageManager`
       # field (single source of truth), so a pnpm bump can't desync the two.
@@ -47,17 +36,14 @@ runs:
       # Restored BEFORE install: pnpm's injectWorkspacePackages hardlinks each package's
       # dist into dependents at install time, so a warm dist lets us skip build:packages.
       # The key hashes source only (dist does not exist yet at this point), so any change
-      # to a package or the lockfile invalidates it. Both `packages/**` (first-party) and
-      # `submodules/**` (workspace-package submodules like @workspace/pg-realtime) are
-      # covered: build:packages builds both, so a cache that omitted submodules/**/dist
-      # would leave their gitignored dist unbuilt on a hit and break module resolution
-      # (e.g. `@workspace/pg-realtime/client`).
+      # to a package or the lockfile invalidates it. build:packages builds every workspace
+      # package, so a cache that omitted a dist would leave it unbuilt on a hit and break
+      # module resolution.
       uses: actions/cache@v4
       with:
         path: |
           packages/**/dist
-          submodules/**/dist
-        key: pkgs-dist-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'packages/**', 'submodules/**') }}
+        key: pkgs-dist-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'packages/**') }}
 
     - name: Install dependencies
       shell: bash

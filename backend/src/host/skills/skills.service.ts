@@ -1,5 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import { SkillRepo } from '../../_lib/database/entities/skill.entity';
 
 export interface SkillRow {
   name: string;
@@ -13,8 +12,6 @@ export interface SkillRow {
  */
 @Injectable()
 export class SkillsService {
-  constructor(private readonly repo: SkillRepo) {}
-
   async listForRepo(_orgId: string, _repoId: string): Promise<SkillRow[]> {
     return await Promise.resolve([]);
   }

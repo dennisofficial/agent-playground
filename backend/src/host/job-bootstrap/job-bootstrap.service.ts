@@ -15,7 +15,7 @@ import {
   EThreadStatus,
   EThreadType,
 } from '@workspace/shared';
-import type { User } from '../../_lib/database/entities/user.entity';
+import type { User } from '../../generated/prisma/client';
 import { IntakeService } from './intake.service';
 
 @Injectable()

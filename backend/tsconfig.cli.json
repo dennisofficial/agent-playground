@@ -8,6 +8,6 @@
     "baseUrl": ".",
     "ignoreDeprecations": "6.0"
   },
-  "include": ["cli/**/*", "migrations/**/*", "seeds/**/*"],
+  "include": ["cli/**/*", "seeds/**/*"],
   "exclude": ["node_modules", "dist", "seeds/_deferred"]
 }

@@ -1,5 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import { McpServerRepo } from '../../_lib/database/entities/mcp-server.entity';
 
 export interface McpServerRow {
   name: string;
@@ -12,8 +11,6 @@ export interface McpServerRow {
  */
 @Injectable()
 export class McpServersService {
-  constructor(private readonly repo: McpServerRepo) {}
-
   async listForRepo(_orgId: string, _repoId: string): Promise<McpServerRow[]> {
     return await Promise.resolve([]);
   }

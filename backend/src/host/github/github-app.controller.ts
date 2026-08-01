@@ -10,7 +10,7 @@ import {
 } from '@nestjs/common';
 import { CurrentUser } from '@dltech/jwt-auth/server';
 import type { GithubAppInstallUrl, GithubAppStatus } from '@workspace/shared';
-import type { User } from '../../_lib/database/entities/user.entity';
+import type { User } from '../../generated/prisma/client';
 import { GithubAppConnectService } from './github-app-connect.service';
 
 @Controller('orgs/:orgId/github-app')

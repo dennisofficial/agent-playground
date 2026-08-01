@@ -1,7 +1,7 @@
 import { Body, Controller, Param, ParseUUIDPipe, Post } from '@nestjs/common';
 import { CurrentUser } from '@dltech/jwt-auth/server';
 import { ConnectRepoDto, type ConnectedRepo } from '@workspace/shared';
-import type { User } from '../../_lib/database/entities/user.entity';
+import type { User } from '../../generated/prisma/client';
 import { RepoService } from './repo.service';
 
 @Controller('orgs/:orgId/repos')
