@@ -1,20 +1,30 @@
 import { Injectable } from '@nestjs/common';
-import type { JobListItem, ThreadGroupView, ThreadView } from '@workspace/shared';
-import { Job } from '../../_lib/database/entities/job.entity';
-import { ThreadGroup } from '../../_lib/database/entities/thread-group.entity';
-import { Thread } from '../../_lib/database/entities/thread.entity';
+import type {
+  EJobKind,
+  EJobStatus,
+  EThreadCondition,
+  EThreadGroupKind,
+  EThreadOrigin,
+  EThreadRole,
+  EThreadStatus,
+  EThreadType,
+  JobListItem,
+  ThreadGroupView,
+  ThreadView,
+} from '@workspace/shared';
+import type { JobModel, ThreadGroupModel, ThreadModel } from '../../generated/prisma/models';
 
 @Injectable()
 export class JobViewService {
-  toJobListItem(job: Job): JobListItem {
+  toJobListItem(job: JobModel): JobListItem {
     return {
       id: job.id,
       orgId: job.orgId,
       repoId: job.repoId,
       title: job.title,
-      status: job.status,
-      kind: job.kind,
-      origin: job.origin,
+      status: job.status as unknown as EJobStatus,
+      kind: job.kind as unknown as EJobKind | null,
+      origin: job.origin as unknown as EThreadOrigin,
       focusedThreadId: job.focusedThreadId,
       archivedAt: job.archivedAt ? job.archivedAt.toISOString() : null,
       createdAt: job.createdAt.toISOString(),
@@ -22,34 +32,34 @@ export class JobViewService {
     };
   }
 
-  toThreadView(thread: Thread): ThreadView {
+  toThreadView(thread: ThreadModel): ThreadView {
     return {
       id: thread.id,
       jobId: thread.jobId,
       threadGroupId: thread.threadGroupId,
-      role: thread.role,
-      type: thread.type,
+      role: thread.role as unknown as EThreadRole,
+      type: thread.type as unknown as EThreadType,
       parentThreadId: thread.parentThreadId,
       ordinal: thread.ordinal,
       brief: thread.brief,
-      status: thread.status,
-      condition: thread.condition,
+      status: thread.status as unknown as EThreadStatus,
+      condition: thread.condition as unknown as EThreadCondition,
       sessionId: thread.sessionId,
       createdAt: thread.createdAt.toISOString(),
       updatedAt: thread.updatedAt.toISOString(),
     };
   }
 
-  toThreadGroupView(group: ThreadGroup, threads: Thread[]): ThreadGroupView {
+  toThreadGroupView(group: ThreadGroupModel, threads: ThreadModel[]): ThreadGroupView {
     return {
       id: group.id,
       jobId: group.jobId,
       ordinal: group.ordinal,
-      kind: group.kind,
+      kind: group.kind as unknown as EThreadGroupKind,
       title: group.title,
       type: group.type,
-      status: group.status,
-      condition: group.condition,
+      status: group.status as unknown as EThreadStatus,
+      condition: group.condition as unknown as EThreadCondition,
       threads: threads.map((thread) => this.toThreadView(thread)),
     };
   }

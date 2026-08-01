@@ -1,15 +1,13 @@
-import type { Seeder } from '@dltech/nestjs-core';
-import { EAgentCredentialKind, EAgentCredentialStatus, EAgentProvider } from '@workspace/shared';
-import type { Repository } from 'typeorm';
 import { EnvService } from '../src/_core/config/env/env.service';
 import { SecretCipherService } from '../src/_lib/crypto/secret-cipher.service';
-import { AgentCredential } from '../src/_lib/database/entities/agent-credential.entity';
-import { OrgCredential } from '../src/_lib/database/entities/org-credential.entity';
+import { EAgentCredentialKind, EAgentCredentialStatus, EAgentProvider } from '@workspace/shared';
+import type { PrismaClient } from '../src/generated/prisma/client';
 import { DEV_SEED_IDS } from './_shared/dev-seed-ids';
+import type { Seeder } from './_shared/seeder';
 
 const CLAUDE_SETUP_TOKEN_LABEL = 'Dev seed setup-token';
 
-export default (async (ds) => {
+export default (async (prisma) => {
   const key = process.env.SECRETS_ENCRYPTION_KEY;
   if (!key) {
     console.log('  003: SECRETS_ENCRYPTION_KEY not set — skipping dev credentials');
@@ -35,19 +33,21 @@ export default (async (ds) => {
 
   // ── org_credentials: raw API keys (one row per org, PK = orgId) ───────────────────────────────────
   if (anthropicApiKey || openaiApiKey || githubPat) {
-    const orgCreds = ds.getRepository(OrgCredential);
-    const row = (await orgCreds.findOne({ where: { orgId } })) ?? orgCreds.create({ orgId });
-    if (anthropicApiKey) row.anthropicApiKeyEnc = cipher.encrypt(anthropicApiKey);
-    if (openaiApiKey) row.openaiApiKeyEnc = cipher.encrypt(openaiApiKey);
-    if (githubPat) row.githubPatEnc = cipher.encrypt(githubPat);
-    await orgCreds.save(row);
+    const data: { anthropicApiKeyEnc?: string; openaiApiKeyEnc?: string; githubPatEnc?: string } = {};
+    if (anthropicApiKey) data.anthropicApiKeyEnc = cipher.encrypt(anthropicApiKey);
+    if (openaiApiKey) data.openaiApiKeyEnc = cipher.encrypt(openaiApiKey);
+    if (githubPat) data.githubPatEnc = cipher.encrypt(githubPat);
+    await prisma.orgCredential.upsert({
+      where: { orgId },
+      create: { orgId, ...data },
+      update: data,
+    });
     console.log('  003: seeded org_credentials (API keys)');
   }
 
   // ── Claude: setup-token (non-expiring, non-refreshing) ────────────────────────────────────────────
   if (claudeSetupToken?.trim()) {
-    const agentCreds = ds.getRepository(AgentCredential);
-    const existing = await agentCreds.findOne({
+    const existing = await prisma.agentCredential.findFirst({
       where: {
         orgId,
         provider: EAgentProvider.CLAUDE,
@@ -55,35 +55,39 @@ export default (async (ds) => {
         label: CLAUDE_SETUP_TOKEN_LABEL,
       },
     });
-    const row =
-      existing ??
-      agentCreds.create({
-        orgId,
-        provider: EAgentProvider.CLAUDE,
-        kind: EAgentCredentialKind.SETUP_TOKEN,
-        label: CLAUDE_SETUP_TOKEN_LABEL,
-        accountEmail: null,
-        subscriptionType: null,
-        scopes: null,
-        expiresAt: null,
-        status: EAgentCredentialStatus.ACTIVE,
-        selected: false,
-      });
-    row.materialEnc = cipher.encrypt(claudeSetupToken.trim());
-    row.status = EAgentCredentialStatus.ACTIVE;
-    const saved = await agentCreds.save(row);
-    await ensureSelected(agentCreds, orgId, EAgentProvider.CLAUDE, saved.id);
+    const materialEnc = cipher.encrypt(claudeSetupToken.trim());
+    const saved = existing
+      ? await prisma.agentCredential.update({
+          where: { id: existing.id },
+          data: { materialEnc, status: EAgentCredentialStatus.ACTIVE },
+        })
+      : await prisma.agentCredential.create({
+          data: {
+            orgId,
+            provider: EAgentProvider.CLAUDE,
+            kind: EAgentCredentialKind.SETUP_TOKEN,
+            label: CLAUDE_SETUP_TOKEN_LABEL,
+            accountEmail: null,
+            subscriptionType: null,
+            scopes: null,
+            expiresAt: null,
+            status: EAgentCredentialStatus.ACTIVE,
+            selected: false,
+            materialEnc,
+          },
+        });
+    await ensureSelected(prisma, orgId, EAgentProvider.CLAUDE, saved.id);
     console.log(`  003: seeded Claude setup-token (${existing ? 'updated' : 'created'})`);
   }
 }) satisfies Seeder;
 
 /** Select `fallbackId` only when the (org, provider) pair has no selected account yet. */
 async function ensureSelected(
-  repo: Repository<AgentCredential>,
+  prisma: PrismaClient,
   orgId: string,
   provider: EAgentProvider,
   fallbackId: string,
 ): Promise<void> {
-  if (await repo.findOne({ where: { orgId, provider, selected: true } })) return;
-  await repo.update({ id: fallbackId }, { selected: true });
+  if (await prisma.agentCredential.findFirst({ where: { orgId, provider, selected: true } })) return;
+  await prisma.agentCredential.update({ where: { id: fallbackId }, data: { selected: true } });
 }

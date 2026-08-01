@@ -1,8 +1,7 @@
+import { PrismaService } from '@lib/prisma/prisma.service';
 import { Injectable, Logger } from '@nestjs/common';
-import { Db } from '@workspace/nestjs-rls/nest';
 import { EMessageAudience, EThreadMessageSource, EThreadOutputType } from '@workspace/shared';
-import { Job } from '../../_lib/database/entities/job.entity';
-import { ThreadMessage } from '../../_lib/database/entities/thread-message.entity';
+import type { JobModel } from '../../generated/prisma/models';
 
 export type ProvisionStatus = 'preparing' | 'provisioning' | 'ready' | 'failed';
 
@@ -10,25 +9,25 @@ export type ProvisionStatus = 'preparing' | 'provisioning' | 'ready' | 'failed';
 export class ProvisionStatusService {
   private readonly logger = new Logger(this.constructor.name);
 
-  constructor(private readonly db: Db) {}
+  constructor(private readonly prismaService: PrismaService) {}
 
-  async write(job: Job, status: ProvisionStatus, text: string): Promise<void> {
+  async write(job: JobModel, status: ProvisionStatus, text: string): Promise<void> {
     const threadId = job.focusedThreadId;
     if (!threadId) return; // no planning thread to attach to yet — skip silently
     const tone = status === 'failed' ? 'error' : status === 'ready' ? 'success' : 'info';
     const meta = { event: 'sandbox', status, tone };
     try {
-      const messages = this.db.unsafe(ThreadMessage);
-      const existing = await messages
-        .createQueryBuilder('m')
-        .where('m.jobId = :jobId', { jobId: job.id })
-        .andWhere("m.meta ->> 'event' = 'sandbox'")
-        .getOne();
+      const existing = await this.prismaService.threadMessage.findFirst({
+        where: { jobId: job.id, meta: { path: ['event'], equals: 'sandbox' } },
+      });
       if (existing) {
-        await messages.update({ id: existing.id }, { text, meta });
+        await this.prismaService.threadMessage.update({
+          where: { id: existing.id },
+          data: { text, meta },
+        });
       } else {
-        await messages.save(
-          messages.create({
+        await this.prismaService.threadMessage.create({
+          data: {
             jobId: job.id,
             threadId,
             orgId: job.orgId,
@@ -38,11 +37,11 @@ export class ProvisionStatusService {
             type: EThreadOutputType.EVENT,
             authorId: 'system',
             text,
-            card: null,
+            card: undefined,
             meta,
             orderAt: null,
-          }),
-        );
+          },
+        });
       }
     } catch (err) {
       this.logger.warn(`sandbox status pill write failed for job ${job.id}: ${String(err)}`);

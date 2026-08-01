@@ -1,11 +1,11 @@
-import { ThreadMessage } from '@lib/database/entities/thread-message.entity';
+import { PrismaService } from '@lib/prisma/prisma.service';
 import { Injectable, Logger } from '@nestjs/common';
-import { Db } from '@workspace/nestjs-rls/nest';
 import {
   EThreadMessageSource,
   type EThreadMessageType,
   EThreadOutputType,
 } from '@workspace/shared';
+import type { Prisma } from '../../generated/prisma/client';
 
 /** The thread a turn's output belongs to. */
 export type TurnContext = { jobId: string; threadId: string; orgId: string };
@@ -35,7 +35,7 @@ interface EngineEvent {
 export class TurnTranscriptService {
   private readonly logger = new Logger(this.constructor.name);
 
-  constructor(private readonly db: Db) {}
+  constructor(private readonly prismaService: PrismaService) {}
 
   async record(ctx: TurnContext, event: unknown): Promise<void> {
     const e = event as EngineEvent;
@@ -79,9 +79,8 @@ export class TurnTranscriptService {
     text: string,
     meta: Record<string, unknown> | null,
   ): Promise<void> {
-    const repo = this.db.unsafe(ThreadMessage);
-    await repo.save(
-      repo.create({
+    await this.prismaService.threadMessage.create({
+      data: {
         jobId: ctx.jobId,
         threadId: ctx.threadId,
         orgId: ctx.orgId,
@@ -90,11 +89,11 @@ export class TurnTranscriptService {
         type,
         authorId: 'atlas',
         text,
-        card: null,
-        meta,
+        card: undefined,
+        meta: (meta ?? undefined) as Prisma.InputJsonValue | undefined,
         orderAt: null,
-      }),
-    );
+      },
+    });
   }
 
   /** Stitch a `tool_result` onto its TOOL row (matched by the tool_use id in `meta.id`). */
@@ -104,19 +103,27 @@ export class TurnTranscriptService {
     result: unknown,
     isError: boolean,
   ): Promise<void> {
-    const repo = this.db.unsafe(ThreadMessage);
-    const row = await repo
-      .createQueryBuilder('m')
-      .where('m.jobId = :jobId', { jobId: ctx.jobId })
-      .andWhere('m.type = :type', { type: EThreadOutputType.TOOL })
-      .andWhere("m.meta ->> 'id' = :id", { id: toolUseId })
-      .orderBy('m.createdAt', 'DESC')
-      .getOne();
+    const row = await this.prismaService.threadMessage.findFirst({
+      where: {
+        jobId: ctx.jobId,
+        type: EThreadOutputType.TOOL,
+        meta: { path: ['id'], equals: toolUseId },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
     if (!row) {
       this.logger.warn(`tool_result for unknown tool_use ${toolUseId} (job ${ctx.jobId})`);
       return;
     }
-    row.meta = { ...(row.meta ?? {}), result, isError };
-    await repo.save(row);
+    await this.prismaService.threadMessage.update({
+      where: { id: row.id },
+      data: {
+        meta: {
+          ...((row.meta as Record<string, unknown>) ?? {}),
+          result,
+          isError,
+        } as Prisma.InputJsonValue,
+      },
+    });
   }
 }

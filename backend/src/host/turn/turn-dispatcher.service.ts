@@ -1,8 +1,7 @@
-import { Thread } from '@lib/database/entities/thread.entity';
+import { PrismaService } from '@lib/prisma/prisma.service';
 import { Injectable, Logger } from '@nestjs/common';
-import { Db } from '@workspace/nestjs-rls/nest';
 import { randomUUID } from 'node:crypto';
-import type { InboundMessage } from '../../_lib/database/entities/inbound-message.entity';
+import type { InboundMessageModel } from '../../generated/prisma/models';
 import {
   HostTransportService,
   type LivePointer,
@@ -26,10 +25,10 @@ export class TurnDispatcherService {
     private readonly sandbox: SandboxService,
     private readonly inbound: InboundMessageService,
     private readonly transcript: TurnTranscriptService,
-    private readonly db: Db,
+    private readonly prismaService: PrismaService,
   ) {}
 
-  async run(jobId: string, messages: InboundMessage[]): Promise<void> {
+  async run(jobId: string, messages: InboundMessageModel[]): Promise<void> {
     const { threadId, orgId } = messages[0];
     const spec = await this.specBuilder.build(jobId, messages);
 
@@ -46,7 +45,7 @@ export class TurnDispatcherService {
     // Consumption model: messages sent to the SDK but not yet incorporated. Starts as this turn's trigger batch;
     // mid-turn `now` steers append to it. Each is CONSUMED (bubble written) at the next assistant boundary — the
     // moment the model's turn actually sees it. `steered` guards against re-forwarding the same row.
-    const pendingConsumption: InboundMessage[] = [...messages];
+    const pendingConsumption: InboundMessageModel[] = [...messages];
     const steered = new Set(messages.map((m) => m.id));
     const forwardAbort = new AbortController();
     const forwarding = this.forwardMidTurn(
@@ -93,7 +92,7 @@ export class TurnDispatcherService {
 
     if (realError) throw realError;
     if (sessionId && sessionId !== spec.sessionId) {
-      await this.db.unsafe(Thread).update({ id: threadId }, { sessionId });
+      await this.prismaService.thread.update({ where: { id: threadId }, data: { sessionId } });
     }
   }
 
@@ -101,7 +100,7 @@ export class TurnDispatcherService {
     jobId: string,
     turnId: string,
     steered: Set<string>,
-    pendingConsumption: InboundMessage[],
+    pendingConsumption: InboundMessageModel[],
     signal: AbortSignal,
   ): Promise<void> {
     while (!signal.aborted) {

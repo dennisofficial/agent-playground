@@ -1,27 +1,23 @@
-import type { Seeder } from '@dltech/nestjs-core';
 import {
   EJobKind,
   EJobStatus,
   EMessageAudience,
-  ETaskStatus,
   EThreadCondition,
   EThreadGroupKind,
-  EThreadMessageKind,
   EThreadMessageSource,
   EThreadOrigin,
+  EThreadOutputType,
   EThreadRole,
   EThreadStatus,
   EThreadType,
+  ETaskStatus,
+  type EThreadMessageType,
 } from '@workspace/shared';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { Job } from '../src/_lib/database/entities/job.entity';
-import { Repo } from '../src/_lib/database/entities/repo.entity';
-import { Task } from '../src/_lib/database/entities/task.entity';
-import { ThreadGroup } from '../src/_lib/database/entities/thread-group.entity';
-import { ThreadMessage } from '../src/_lib/database/entities/thread-message.entity';
-import { Thread } from '../src/_lib/database/entities/thread.entity';
+import { Prisma } from '../src/generated/prisma/client';
 import { DEV_SEED_IDS } from './_shared/dev-seed-ids';
+import type { Seeder } from './_shared/seeder';
 
 interface FxJob {
   id: string;
@@ -76,7 +72,9 @@ interface FxMsg {
   author: string;
   authorId: string;
   text: string;
-  kind: EThreadMessageKind;
+  /** Fixture-era coarse kind — mapped to the current {@link EThreadMessageType} below; `author` is
+   *  dropped, the schema only keeps `authorId` now. */
+  kind: string;
   createdAt: string;
 }
 interface JobTree {
@@ -90,7 +88,23 @@ interface Fx {
   jobs: JobTree[];
 }
 
-export default (async (ds) => {
+/** Maps the fixture's pre-taxonomy `kind` strings onto the current, single-source `EThreadMessageType`. */
+function mapMessageType(kind: string): EThreadMessageType {
+  switch (kind) {
+    case 'chat':
+      return EThreadOutputType.CHAT;
+    case 'thinking':
+      return EThreadOutputType.THINKING;
+    case 'tool':
+      return EThreadOutputType.TOOL;
+    case 'build_event':
+      return EThreadOutputType.EVENT;
+    default:
+      throw new Error(`004: unmapped fixture message kind "${kind}"`);
+  }
+}
+
+export default (async (prisma) => {
   const orgId = DEV_SEED_IDS.orgs.atlasTest;
   const repoId = DEV_SEED_IDS.repos.fixtures;
   const dennis = DEV_SEED_IDS.users.dennis;
@@ -99,14 +113,10 @@ export default (async (ds) => {
     readFileSync(join(__dirname, '_data', 'prod-threads.fixture.json'), 'utf8'),
   ) as Fx;
 
-  const jobs = ds.getRepository(Job);
-  const groupsRepo = ds.getRepository(ThreadGroup);
-  const threadsRepo = ds.getRepository(Thread);
-  const tasksRepo = ds.getRepository(Task);
-  const messagesRepo = ds.getRepository(ThreadMessage);
-
   // One-time cleanup: drop the superseded synthesized magic-link fixture (cascades its whole tree).
-  await jobs.delete({ id: '297a7963-c02b-4c7b-bf04-9720d0b79242' });
+  // `deleteMany` (not `delete`), so a re-run after the row is already gone stays a no-op instead of
+  // throwing "record not found".
+  await prisma.job.deleteMany({ where: { id: '297a7963-c02b-4c7b-bf04-9720d0b79242' } });
 
   let threadTotal = 0;
 
@@ -114,27 +124,23 @@ export default (async (ds) => {
     const JOB = tree.job.id;
 
     // Job (focusedThreadId set after threads exist so the FK is satisfied).
-    await jobs.save(
-      jobs.create({
-        id: JOB,
-        orgId,
-        repoId,
-        focusedThreadId: null,
-        title: tree.job.title,
-        origin: tree.job.origin,
-        kind: tree.job.kind,
-        status: tree.job.status,
-        archivedAt: tree.job.archivedAt ? new Date(tree.job.archivedAt) : null,
-        createdAt: new Date(tree.job.createdAt),
-      }),
-    );
+    const jobFields = {
+      title: tree.job.title,
+      origin: tree.job.origin,
+      kind: tree.job.kind,
+      status: tree.job.status,
+      archivedAt: tree.job.archivedAt ? new Date(tree.job.archivedAt) : null,
+      createdAt: new Date(tree.job.createdAt),
+    };
+    await prisma.job.upsert({
+      where: { id: JOB },
+      create: { id: JOB, orgId, repoId, focusedThreadId: null, ...jobFields },
+      update: jobFields,
+    });
 
-    await groupsRepo.save(
-      tree.groups.map((g) =>
-        groupsRepo.create({
-          id: g.id,
-          jobId: JOB,
-          orgId,
+    await Promise.all(
+      tree.groups.map((g) => {
+        const fields = {
           ordinal: g.ordinal,
           kind: g.kind,
           title: g.title,
@@ -142,17 +148,19 @@ export default (async (ds) => {
           status: g.status,
           condition: g.condition,
           createdAt: new Date(g.createdAt),
-        }),
-      ),
+        };
+        return prisma.threadGroup.upsert({
+          where: { id: g.id },
+          create: { id: g.id, jobId: JOB, orgId, ...fields },
+          update: fields,
+        });
+      }),
     );
 
-    await threadsRepo.save(
-      tree.threads.map((t) =>
-        threadsRepo.create({
-          id: t.id,
-          jobId: JOB,
+    await Promise.all(
+      tree.threads.map((t) => {
+        const fields = {
           threadGroupId: t.threadGroupId,
-          orgId,
           role: t.role,
           type: t.type,
           parentThreadId: t.parentThreadId,
@@ -162,20 +170,25 @@ export default (async (ds) => {
           condition: t.condition,
           sessionId: t.sessionId,
           createdAt: new Date(t.createdAt),
-        }),
-      ),
+        };
+        return prisma.thread.upsert({
+          where: { id: t.id },
+          create: { id: t.id, jobId: JOB, orgId, ...fields },
+          update: fields,
+        });
+      }),
     );
 
     if (tree.job.focusedThreadId)
-      await jobs.update(JOB, { focusedThreadId: tree.job.focusedThreadId });
+      await prisma.job.update({
+        where: { id: JOB },
+        data: { focusedThreadId: tree.job.focusedThreadId },
+      });
 
-    await tasksRepo.save(
-      tree.tasks.map((k) =>
-        tasksRepo.create({
-          id: k.id,
-          jobId: JOB,
+    await Promise.all(
+      tree.tasks.map((k) => {
+        const fields = {
           threadGroupId: k.threadGroupId,
-          orgId,
           ordinal: k.ordinal,
           title: k.title,
           brief: k.brief,
@@ -183,37 +196,43 @@ export default (async (ds) => {
           status: k.status,
           blockedBy: k.blockedBy ?? [],
           createdAt: new Date(k.createdAt),
-        }),
-      ),
+        };
+        return prisma.task.upsert({
+          where: { id: k.id },
+          create: { id: k.id, jobId: JOB, orgId, ...fields },
+          update: fields,
+        });
+      }),
     );
 
-    await messagesRepo.save(
-      tree.messages.map((m) =>
-        messagesRepo.create({
-          id: m.id,
-          jobId: JOB,
+    await Promise.all(
+      tree.messages.map((m) => {
+        const fields = {
           threadId: m.threadId,
-          orgId,
           subagentId: null,
           source: m.source,
           audience: m.audience ?? EMessageAudience.SHARED,
           authorId: m.authorId === '__DEV_USER__' ? dennis : m.authorId,
-          author: m.author,
           text: m.text,
-          kind: m.kind,
-          card: null,
-          meta: null,
+          type: mapMessageType(m.kind),
+          card: Prisma.JsonNull,
+          meta: Prisma.JsonNull,
           orderAt: null,
           createdAt: new Date(m.createdAt),
-        }),
-      ),
+        };
+        return prisma.threadMessage.upsert({
+          where: { id: m.id },
+          create: { id: m.id, jobId: JOB, orgId, ...fields },
+          update: fields,
+        });
+      }),
     );
 
     threadTotal += tree.threads.length;
   }
 
   // Keep the fixtures repo row self-consistent (denormalized thread counter).
-  await ds.getRepository(Repo).update({ id: repoId }, { threadCount: threadTotal });
+  await prisma.repo.update({ where: { id: repoId }, data: { threadCount: threadTotal } });
 
   console.log(`  004: upserted ${fx.jobs.length} prod jobs (${threadTotal} threads total)`);
 }) satisfies Seeder;

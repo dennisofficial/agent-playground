@@ -1,6 +1,5 @@
-import type { Seeder } from '@dltech/nestjs-core';
-import { Repo } from '../src/_lib/database/entities/repo.entity';
 import { DEV_SEED_IDS } from './_shared/dev-seed-ids';
+import type { Seeder } from './_shared/seeder';
 
 /**
  * Dev repo fixtures on the "Atlas Test" org — so the repos settings tab + create-job picker have content
@@ -14,8 +13,7 @@ import { DEV_SEED_IDS } from './_shared/dev-seed-ids';
  *
  * NON-DESTRUCTIVE + ADDITIVE: skips any repo whose id already exists.
  */
-export default (async (ds) => {
-  const repos = ds.getRepository(Repo);
+export default (async (prisma) => {
   const orgId = DEV_SEED_IDS.orgs.atlasTest;
 
   const SPEC = [
@@ -34,12 +32,12 @@ export default (async (ds) => {
   ];
 
   for (const r of SPEC) {
-    if (await repos.findOne({ where: { id: r.id } })) {
+    if (await prisma.repo.findFirst({ where: { id: r.id } })) {
       console.log(`  002: repo ${r.slug} already exists — skipping`);
       continue;
     }
-    await repos.save(
-      repos.create({
+    await prisma.repo.create({
+      data: {
         id: r.id,
         orgId,
         slug: r.slug,
@@ -50,8 +48,8 @@ export default (async (ds) => {
         accessCheckedAt: new Date(),
         defaultAutoMergeMethod: 'squash',
         defaultAutoMergeDeleteBranch: true,
-      }),
-    );
+      },
+    });
     console.log(`  002: seeded repo ${r.slug}`);
   }
 }) satisfies Seeder;

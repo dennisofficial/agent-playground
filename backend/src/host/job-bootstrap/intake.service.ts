@@ -1,8 +1,7 @@
+import { PrismaService } from '@lib/prisma/prisma.service';
 import { Injectable, Logger } from '@nestjs/common';
-import { Db } from '@workspace/nestjs-rls/nest';
 import { EInboundPriority, EThreadMessageSource, type InboundItemInput } from '@workspace/shared';
-import type { EntityManager } from 'typeorm';
-import { InboundMessage } from '../../_lib/database/entities/inbound-message.entity';
+import type { Prisma } from '../../generated/prisma/client';
 import {
   type EnqueueInput,
   InboundMessageService,
@@ -22,7 +21,7 @@ export class IntakeService {
   private readonly logger = new Logger(this.constructor.name);
 
   constructor(
-    private readonly db: Db,
+    private readonly prismaService: PrismaService,
     private readonly inbound: InboundMessageService,
     private readonly turnFlow: TurnFlowService,
   ) {}
@@ -37,18 +36,18 @@ export class IntakeService {
   async enqueueBatch(
     ctx: IntakeContext,
     items: InboundItemInput[],
-    manager?: EntityManager,
+    tx?: Prisma.TransactionClient,
   ): Promise<string[]> {
-    const run = async (m: EntityManager): Promise<string[]> => {
+    const run = async (t: Prisma.TransactionClient): Promise<string[]> => {
       const ids: string[] = [];
       for (const item of items) {
-        const row = await this.inbound.enqueue(this.toEnqueue(item, ctx), m);
+        const row = await this.inbound.enqueue(this.toEnqueue(item, ctx), t);
         ids.push(row.id);
       }
       return ids;
     };
-    if (manager) return run(manager);
-    return this.db.unsafe(InboundMessage).manager.transaction(run);
+    if (tx) return run(tx);
+    return this.prismaService.$transaction(run);
   }
 
   async kick(jobId: string): Promise<void> {

@@ -1,3 +1,4 @@
+import { PgbaseModule } from '@lib/pgbase/pgbase.module';
 import { BullModule } from '@nestjs/bullmq';
 import { CreateModule } from '@dltech/nestjs-core';
 import { InboundMessageModule } from '../inbound-message/inbound-message.module';
@@ -18,6 +19,8 @@ import { TurnFlowService } from './turn-flow.service';
     SandboxModule,
     WorkspaceFsModule,
     BullModule.registerFlowProducer({}),
+    // Exports ScopedDb, which JobBootstrapService injects for the Repo access-check + Job read.
+    PgbaseModule,
   ],
   queues: [TurnDispatchProcessor],
   processors: [TurnDispatchProcessor],
