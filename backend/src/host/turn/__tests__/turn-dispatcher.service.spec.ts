@@ -14,13 +14,6 @@ const row = (id: string, text: string): InboundMessage =>
 
 const messageStart = { type: 'stream_event', event: { type: 'message_start' } };
 
-/**
- * Drives a whole turn against a fake engine.
- *
- * `script` is what the engine "emits", written as thunks so each step can control exactly where the steer
- * lands relative to a message boundary — without racing the 750ms sweep. `release()` makes the steer visible
- * to the sweep; `steerSent` resolves once it has actually been forwarded.
- */
 function harness(opts: {
   steer?: InboundMessage;
   script: (ctl: { release: () => void; steerSent: Promise<void> }) => Array<() => Promise<unknown>>;
@@ -147,6 +140,26 @@ describe('TurnDispatcherService.run', () => {
     // created_at, which is the boundary the model picked it up at — after the output it waited behind.
     expect(consumed[0].orderAt).toBeInstanceOf(Date);
     expect(consumed[1].orderAt).toBeNull();
+  });
+
+  it('writes the bubble when the message OPENS, not when it completes', async () => {
+    const seenAtOpen: string[][] = [];
+    const { dispatcher, consumed } = harness({
+      script: () => [
+        async () => messageStart,
+        async () => {
+          // The model is now thinking/streaming this message. The operator's bubble must already exist —
+          // otherwise it sits in the pending tray underneath the thinking block reasoning about it.
+          seenAtOpen.push(consumed.map((c) => c.id));
+          return { type: 'assistant' };
+        },
+        async () => ({ type: 'result' }),
+      ],
+    });
+
+    await dispatcher.run('job-1', [row('trigger-1', 'go')]);
+
+    expect(seenAtOpen[0]).toEqual(['trigger-1']);
   });
 
   it('still consumes an unseen TRIGGER batch at turn end, so a failing turn cannot retry-loop', async () => {

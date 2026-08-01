@@ -30,6 +30,11 @@ import { ArchivedOverlay } from '../overlays/archived-overlay';
 import { BlockedOverlay } from '../overlays/blocked-overlay';
 import { indexCodexReviewBlocks } from '../review/codex-review';
 import { ReviewCommentsCardView } from '../review/review-comments-card';
+import {
+  belongsInLiveWindow,
+  messageOrderMs,
+  messagePostedMs,
+} from '../../lib/message-order';
 import { buildLiveTurnItems, UntrustedBlock, UserBubble } from './bubbles/bubbles';
 import { ClaudeBubble } from './bubbles/ClaudeBubble';
 import { CompactionSummaryPill } from './bubbles/CompactionSummaryPill';
@@ -66,23 +71,14 @@ export function Conversation({
   messages: JobMessage[];
   isLoading: boolean;
   live: boolean;
-  /** The job is `blocked` on another job — disables the composer and pins the blocked overlay at the top. */
   blocked?: boolean;
-  /** The blockers holding this job (drives the overlay's list + "Unblock now"). */
   blockedBy?: JobBlocker[];
-  /** The pending seed message this job will start on when it unblocks — previewed in the blocked overlay. */
   blockedSeedMessage?: string | null;
-  /** The job is `archived` — terminal and read-only, pins the archived overlay at the top. */
   archived?: boolean;
-  /** The planning thread group's thread id — Main's transcript is scoped to it. Undefined for a pre-plan (`no_job`)
-   *  job, where every message belongs to the single brain thread and no scoping is needed. */
   mainThreadId?: string;
-  /** The Main (brain) lane's pre-turn footer default ("Opus 4.8") — shown before the first brain turn. */
   mainDefaultFooter?: LaneDefaultFooter;
   onOpenPlan?: () => void;
-  /** Open a node in the right detail pane (e.g. a subagent run's sub-page). */
   onSelectNode?: (node: string) => void;
-  /** Below xl: top-bar toggles for the Navigator / Detail drawers (undefined = no button, desktop). */
   onOpenNav?: () => void;
   onOpenDetail?: () => void;
 }) {
@@ -117,12 +113,6 @@ export function Conversation({
   );
 }
 
-/**
- * A pinned "N awaiting you" chip, shown whenever the Main lane has unanswered question cards. Clicking it
- * scrolls to the next open question (cycling on repeated clicks) and flashes it — so a card buried by a wall
- * of the brain's thinking is one click away instead of a scroll-hunt. Anchored bottom-LEFT so it never
- * collides with the centered {@link JumpToLatestButton}.
- */
 function OpenQuestionsChip({
   count,
   onClick,
@@ -163,20 +153,7 @@ function OpenQuestionsChip({
   );
 }
 
-export function messagePostedMs(message: JobMessage): number {
-  const ms = Date.parse(message.postedAt);
-  return Number.isFinite(ms) ? ms : Number.NEGATIVE_INFINITY;
-}
 
-// The instant the brain PROCESSED this row (its SDK-conversation position) — what the transcript orders
-// by. Falls back to delivered/posted time. Display still uses postedAt.
-export function messageOrderMs(message: JobMessage): number {
-  const ms = Date.parse(message.orderAt ?? message.deliveredAt ?? message.postedAt);
-  return Number.isFinite(ms) ? ms : Number.NEGATIVE_INFINITY;
-}
-
-/** The parsed identity of a transcript lane — the ONE place a lane string is decomposed, shared by
- *  `buildLogItems` (subagent-vs-codex peeling) and `laneMetaBelongs` (footer selection) so they never drift. */
 interface ParsedLane {
   isMain: boolean;
   isCodexLane: boolean;
@@ -189,21 +166,11 @@ function parseLane(lane: string): ParsedLane {
   };
 }
 
-/**
- * The lane's STATIC footer default (`model · effort`) as a {@link ComposerFooter} — used when the lane has no
- * `turn_meta` yet (before its first turn completes). No `context` ring (occupancy is unknown until a turn
- * runs). Returns null when there's no default (very old pipeline payloads), so the footer just stays blank.
- */
 export function defaultFooterAsComposer(d?: LaneDefaultFooter): ComposerFooter | null {
   if (!d) return null;
   return { model: d.model, effort: d.effort, engine: d.engine, context: null };
 }
 
-/**
- * The conversation top bar — the shared {@link DetailTopBar} with a lane-style left title and the standard
- * action cluster on the right, so it matches every lane/detail header exactly. (The context-window ring
- * lives in the composer's bottom-right, Claude-Code style.)
- */
 function ConversationTopBar({
   onOpenNav,
   onOpenDetail,
@@ -239,98 +206,56 @@ export function TranscriptView({
 }: {
   jobRef: JobRef;
   messages: JobMessage[];
-  /** Which lane's transcript this renders — `'main'` | `codex-review:<jobId>` | `thread:<threadId>` |
-   *  `autofix:<parentId>:<lensId>`. Used for the LIVE-turn subscription; the DURABLE log is scoped by
-   *  {@link threadId} (a plain per-message field) instead. */
   lane?: string;
-  /** The real thread id this lane's DURABLE transcript belongs to — the log is filtered to
-   *  `message.threadId === threadId` (its subagents ride the same threadId and are peeled into cards).
-   *  Undefined only for the out-of-scope Codex review lane and a pre-plan Main, where the unfiltered log is
-   *  already single-thread. */
   threadId?: string;
-  /** Show the composer. On Main it's interactive; on every other lane pass `readOnly` alongside. */
   composer?: boolean;
-  /** Read-only lane (not Main): the composer's input + Send are disabled, but its footer stays live. */
   readOnly?: boolean;
-  /** The job is `blocked` — fully disable the composer (a send would just 400). */
   blocked?: boolean;
-  /** The job is `archived` — fully disable the composer, no send would be accepted (409). */
   archived?: boolean;
   isLoading?: boolean;
   live?: boolean;
-  /** The empty-state line when the lane has no activity yet. */
   emptyText?: string;
-  /** The lane's backend-supplied `model · effort` default — shown in the footer BEFORE the lane's first turn
-   *  completes (no `turn_meta` yet). A real `turn_meta` always wins over it. */
   defaultFooter?: LaneDefaultFooter;
   onOpenPlan?: () => void;
   onSelectNode?: (node: string) => void;
 }) {
-  // The composer is a floating overlay; thread its height so the transcript reserves matching space and
-  // the last line never slips under it as the box auto-grows. Read-only lanes just reserve a small pad.
   const [composerHeight, setComposerHeight] = useState(116);
   const bottomPad = composer ? composerHeight : 20;
 
-  // Touch capability is a stable device property, but Client Components still render once on the server.
-  // Compute it after hydration so the SSR guard does not permanently pin touch devices to `false`.
   const [isTouch, setIsTouch] = useState(false);
   useEffect(() => {
     setIsTouch(isTouchCapableDevice());
   }, []);
 
-  // The attachment tray is owned HERE (not inside the composer) so a file dropped anywhere on the pane feeds
-  // the same tray the ＋ button and paste do. Drop is live only on the interactive Main composer — read-only
-  // lanes and lanes without a composer ignore drags entirely.
   const attach = useAttachments(jobRef);
   const acceptsDrop = composer && !readOnly;
   const { isDragging, dropHandlers } = useFileDrop(attach.add, acceptsDrop);
 
-  // A brief ring flash on the question card we just jumped to, so it's easy to spot after the scroll lands.
   const [flashKey, setFlashKey] = useState<string | null>(null);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Cursor for cycling the pinned "awaiting you" chip through multiple open questions on repeated clicks.
   const cycleRef = useRef(0);
 
-  // The durable transcript, scoped to THIS lane's real thread by the message's own `threadId` field (its
-  // subagents ride the same threadId and stay in, to be peeled into cards below). Undefined threadId (the
-  // Codex review lane, or a pre-plan Main) leaves the already-single-thread log unfiltered.
   const scoped = useMemo(() => {
     const lane = threadId ? messages.filter((m) => m.threadId === threadId) : messages;
-    // Sort by the message's OWN effective time — never trust realtime delivery order (the socket snapshot
-    // isn't guaranteed ordered), so the transcript is always chronological regardless of how rows arrive.
     return [...lane].sort((a, b) => messageOrderMs(a) - messageOrderMs(b));
   }, [messages, threadId]);
 
   const liveTurn = useLiveTurn(jobRef.jobId, lane);
   const liveBlockCount = liveTurn?.blocks.length ?? 0;
 
-  // The SINGLE authoritative "a turn is running" signal: the live-turn store, fed by the job's one Redis-backed
-  // `/turn/stream` (presence + content in one). Its `turn_start`/`turn_end` bracket the run; the crash-safe TTL
-  // on the server side means a dropped `turn_end` (host died) self-heals — no client `needsYou` cross-check
-  // or separate `active_turns` presence query needed anymore.
   const turnActive = liveTurn?.active ?? false;
 
-  // Whether a build lane (not this Main brain) owns the live work — used to suppress the Main "Atlas is
-  // working…" footer for work a driver is actually doing. The server-owned working axis that drove this was
-  // dropped from the read model; it stays `false` until that slice lands (see inbox `InboxThread`).
   const driverOwnsWork = false;
 
-  // Stream signature — grows with streaming text/thinking so the tail follows token-by-token, not just on
-  // block boundaries.
   const liveStreamSig = (liveTurn?.blocks ?? []).reduce(
     (n, b) => n + (b.kind === 'tool' ? 1 : b.text.length),
     0,
   );
 
-  // Steering is server-side now: a message sent mid-turn is injected into the running turn by the backend
-  // (no client queue) — a message posted mid-turn shows up in `messages` before the turn ends. So the
-  // durable log (below the live turn) and the live turn itself would render it TWICE — once here, once
-  // wherever it lands in `log` — unless we split it out and time-merge it into the LIVE window instead (see
-  // `trailing` below). Fallback (no live turn / startedAt unknown): behave exactly as today, one flat log.
   const startedAt = liveTurn?.startedAt;
   const liveWindowActive = !!liveTurn?.active && startedAt != null;
   const midTurnRows = useMemo(
-    () => (liveWindowActive ? scoped.filter((m) => messagePostedMs(m) >= startedAt!) : []),
+    () => (liveWindowActive ? scoped.filter((m) => belongsInLiveWindow(m, startedAt!)) : []),
     [scoped, liveWindowActive, startedAt],
   );
   const log = useMemo(
@@ -338,11 +263,6 @@ export function TranscriptView({
     [scoped, liveWindowActive, startedAt],
   );
 
-  // A turn-failure "Resume" card is only actionable while the thread is STILL halted (the failure is
-  // outstanding). `halted` is a single live bit, so the outstanding failure is always the MOST-RECENT
-  // retryable card; once the thread resumes it flips false and every past failure card shows a muted
-  // "Resumed" instead of a live CTA that could be pressed again by mistake. Unknown (realtime row not
-  // cached yet) keeps the button, so we never hide a genuinely-needed Resume.
   const openThreadHalted = useThreadHalted(jobRef.jobId);
   const outstandingRetryTs = useMemo<string | null>(() => {
     if (openThreadHalted === false) return null;
@@ -353,12 +273,6 @@ export function TranscriptView({
     return ts;
   }, [scoped, openThreadHalted]);
 
-  // The composer footer — model · effort (from the latest `turn_meta`, else the lane's config default) + the
-  // context ring. Computed for every lane that shows a composer (Main + read-only), scoped to the lane. The
-  // ring prefers a LIVE occupancy value (`liveTurn.contextTokens`, streamed mid-turn by the engine's `usage`
-  // event) while the turn is running, so a multi-minute turn's ring fills as it goes instead of only jumping
-  // at turn end; between turns it shows the lane's static default (`model · effort`). (Durable per-turn
-  // occupancy will return once the engine emits a `turn_meta`-style accounting row — not a v3 type yet.)
   const footer = useMemo(() => {
     if (!composer) return null;
     const base = defaultFooterAsComposer(defaultFooter);
@@ -383,8 +297,6 @@ export function TranscriptView({
     liveTurn?.contextBreakdown,
   ]);
 
-  // The durable transcript, folded into one descriptor per top-level row (tool groups, subagent/phase
-  // cards, bubbles), SCOPED to this lane. Windowed: on a long thread only the on-screen rows render.
   const items = useMemo(
     () =>
       buildLogItems(log, jobRef, {
@@ -396,14 +308,9 @@ export function TranscriptView({
     [log, jobRef, lane, outstandingRetryTs, onOpenPlan, onSelectNode],
   );
 
-  // The LIVE window: the in-flight turn's streaming blocks, time-merged with any mid-turn durable row (a
-  // steer, notice, reminder, card, seed, etc.) by each item's real timestamp — so each row renders at the
-  // moment it landed relative to the tokens streaming around it, not shoved before or after them.
   const trailing = useMemo(() => {
     if (!liveWindowActive || !liveTurn) return [];
     const liveItems = buildLiveTurnItems(liveTurn, lane, onSelectNode);
-    // Effective-order instant (not raw postedAt) so a mid-turn row settles into the SAME position it will
-    // hold once it crosses into history — see messageOrderMs.
     const tsByKey = new Map(midTurnRows.map((m) => [m.ts, messageOrderMs(m)]));
     const itemTs = (key: string) =>
       tsByKey.get(key.startsWith('tg-') ? key.slice(3) : key) ?? Number.POSITIVE_INFINITY;
@@ -425,10 +332,6 @@ export function TranscriptView({
     onSelectNode,
   ]);
 
-  // Unanswered question cards on the Main lane (each card's message `ts` IS its LogItem key). The operator
-  // can jump to a buried one via the pinned chip below instead of scrolling the transcript to hunt for it.
-  // A card whose answer is already staged into the send-together tray is no longer awaiting the operator, so
-  // it's excluded here — the pill counts only questions that still need a pick.
   const stagedAnswers = useComposerStagedAnswers(jobRef);
   const openQuestions = useMemo(() => {
     if (!composer || readOnly) return [] as JobMessage[];
@@ -446,9 +349,6 @@ export function TranscriptView({
     });
   }, [scoped, composer, readOnly, stagedAnswers]);
 
-  // `pin` snaps the view to the bottom for the virtualized case (see useTailFollow). Assigned into a ref so
-  // the callback passed to useTailFollow stays stable while still reaching the freshly-built `virtualizer`
-  // (which itself depends on the scrollRef useTailFollow returns — the ref breaks that render-order cycle).
   const pinRef = useRef<() => void>(() => {});
   const { scrollRef, endRef, showJump, jumpToLatest, onScroll, onPointerOver, onPointerLeave } =
     useTailFollow(
@@ -471,39 +371,21 @@ export function TranscriptView({
     estimateSize: (index) => items[index].estimate,
     overscan: 8,
     getItemKey: (index) => items[index].key,
-    // Native bottom-anchoring (@tanstack/virtual-core ≥3.16): when the view is at/near the bottom, a row
-    // resizing (a fresh row measuring taller than its estimate, an async Mermaid SVG landing) keeps the
-    // bottom edge pinned via the total-size delta instead of the top-anchored predicate below — and on iOS
-    // the adjustment rides the built-in deferred-scrollTop path (held through touch/momentum, flushed once on
-    // settle) so it never lands as a mid-gesture jump. `scrollEndThreshold` matches useTailFollow's 80px
-    // "stuck to bottom" band so the two agree on what counts as "at the end".
     anchorTo: 'end',
     scrollEndThreshold: 80,
   });
 
-  // `shouldAdjustScrollPositionOnItemSizeChange` is a Virtualizer INSTANCE field, not a constructor
-  // option — `useVirtualizer`'s options merge never copies it onto the instance, so it must be assigned
-  // directly here rather than inside the options object above. It governs the SCROLLED-UP case only: when
-  // NOT at the end, `anchorTo:'end'` defers to this predicate, which compensates any above-viewport resize
-  // (the desktop Cause-B backstop) — again through the iOS deferred-scrollTop path when on iOS.
   virtualizer.shouldAdjustScrollPositionOnItemSizeChange = compensateAboveViewportResize;
 
   pinRef.current = () => {
     const el = scrollRef.current;
     if (!el) return;
-    // Incremental streaming follow (the common case — already near the bottom): a single write to the true
-    // bottom. The trailing live turn / composer spacer render in normal flow AFTER the windowed list, so
-    // `scrollHeight` is exact and no virtualizer scroll-to-index is needed. Doing just this one write (no
-    // second rAF snap) avoids the tail jittering on every streamed token.
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     if (distanceFromBottom <= el.clientHeight) {
       el.scrollTop = el.scrollHeight;
       return;
     }
-    // Big "jump to latest" from far up: the tail rows may be windowed out, so drive the virtualizer to
-    // render them first (accounts for estimated off-screen heights)…
     if (items.length > 0) virtualizer.scrollToIndex(items.length - 1, { align: 'end' });
-    // …then, once layout settles, pin to the true bottom to include the trailing live turn / composer spacer.
     requestAnimationFrame(() => {
       const e = scrollRef.current;
       if (e) e.scrollTop = e.scrollHeight;
@@ -512,15 +394,7 @@ export function TranscriptView({
 
   const virtualItems = virtualizer.getVirtualItems();
 
-  // Idle, off-screen pre-measurement of the not-yet-seen backlog's exact row heights — so a fresh tall row
-  // (long markdown/code, a Mermaid diagram) already has its real height BEFORE it scrolls into view and
-  // therefore never triggers a first-measure resize/scroll-compensation on iOS. The pass measures silently
-  // (no scroll writes) and seeds all rows in one synchronous settle, so it's safe to run while pinned at the
-  // tail — which is exactly when we want it, so the very first upward scroll is already smooth. Touch-only +
-  // long transcripts (short ones have negligible residual). See idle-premeasure.tsx.
   const premeasureEnabled = isTouch && items.length >= PREMEASURE_MIN_ROWS;
-  // Every ```mermaid fence in the lane-filtered durable transcript, deduped by the warm helper — handed to the
-  // idle pass so it can warm the render cache off-screen BEFORE a diagram row is pre-measured.
   const warmSources = useMemo(
     () =>
       premeasureEnabled
@@ -566,9 +440,6 @@ export function TranscriptView({
               {emptyText ?? 'No messages yet — say something to Atlas below.'}
             </p>
           ) : (
-            // Windowed durable log: a single spacer sized to the full transcript, with only the on-screen
-            // rows rendered and absolutely positioned. `measureElement` re-measures async height changes
-            // (mermaid diagrams, code highlighting) so rows never overlap once they finish rendering.
             <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
               {virtualItems.map((vi) => (
                 <div
@@ -596,10 +467,7 @@ export function TranscriptView({
           {(live && !driverOwnsWork) || turnActive ? (
             <LiveIndicator turn={turnActive ? liveTurn : undefined} />
           ) : null}
-          {/* Sent-but-not-yet-consumed messages, dimmed, just above the composer — they drop to the transcript
-              the moment the model incorporates them (status → CONSUMED). */}
           <PendingZone jobId={jobRef.jobId} threadId={threadId} />
-          {/* Spacer so the last line clears the floating composer (or just breathes on read-only lanes). */}
           <div className="shrink-0" style={{ height: bottomPad }} aria-hidden />
           <div ref={endRef} />
         </div>
@@ -627,8 +495,6 @@ export function TranscriptView({
           archived={archived}
         />
       ) : null}
-      {/* Drag-over affordance — covers the whole pane; `pointer-events-none` so the drop still lands on the
-          root's handlers (a capturing overlay would fire dragleave the instant it appeared and flicker). */}
       {isDragging ? (
         <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-accent/5 backdrop-blur-[1px]">
           <div className="flex items-center gap-2 rounded-2xl border-2 border-dashed border-accent bg-surface/90 px-6 py-4 text-[13px] font-medium text-accent shadow-lg">
@@ -641,21 +507,11 @@ export function TranscriptView({
   );
 }
 
-/**
- * Fold the durable transcript into one {@link LogItem} per top-level row, collapsing runs of consecutive
- * tool messages into `ToolGroup`s (file-edits split into their own "N files changed" group via
- * {@link segmentToolRun}) while every other kind becomes its own typed block. The returned array is what
- * the conversation virtualizes — each entry is one measured, independently-windowed row.
- */
 export function buildLogItems(
   log: JobMessage[],
   jobRef: JobRef,
   opts: {
-    /** Which lane to build items for — decides subagent-only peeling vs the out-of-scope Codex lane. The
-     *  durable log is already thread-scoped by the caller ({@link TranscriptView}'s `threadId` filter). */
     lane?: string;
-    /** The `ts` of the currently-OUTSTANDING retryable failure card (the only one whose "Resume" button is
-     *  live). Null when the thread has resumed — every failure card then shows a muted "Resumed" instead. */
     outstandingRetryTs?: string | null;
     onOpenPlan?: () => void;
     onSelectNode?: (node: string) => void;
@@ -665,12 +521,7 @@ export function buildLogItems(
   const nodes: LogItem[] = [];
   let pending: Array<{ key: string; tool: ToolItem }> = [];
 
-  // The log arrives already scoped to ONE thread (Main, a build thread, or a review child) via the message's
-  // `threadId` field. The only nested activity still peeled here is the thread's OWN spawned subagents: a
-  // Task block becomes a compact card opening the run's sub-page, its child blocks render on that sub-page.
   const sub = indexDurableSubagents(log);
-  // The out-of-scope Codex plan-review lane is NOT thread-scoped by the caller, so it still selects its own
-  // stream by `meta.codexReviewId` (see the `isCodexLane` branch below).
   const codex = indexCodexReviewBlocks(log);
 
   const { isMain, isCodexLane } = parseLane(lane);
@@ -688,8 +539,6 @@ export function buildLogItems(
     pending = [];
   };
 
-  // The Task block that spawned a subagent → a compact card opening the run's sub-page (used in any lane
-  // that CONTAINS a subagent: Main, and a build phase lane).
   const pushSubagentCard = (message: JobMessage) => {
     flush();
     const summary = sub.summaryById.get(String(message.meta?.id));
@@ -708,13 +557,9 @@ export function buildLogItems(
   };
 
   for (const message of log) {
-    // Lane membership: peel this thread's own subagents; the Codex lane self-selects its stream.
     if (isCodexLane) {
-      // The out-of-scope Codex review lane isn't thread-scoped, so it shows ONLY its own review stream.
       if (!codex.childKeys.has(message.ts)) continue;
     } else {
-      // Every thread-scoped lane (Main, a build thread, a review child): the log is already this thread's,
-      // so render it all — only the thread's own spawned subagents peel out into cards.
       if (sub.childKeys.has(message.ts)) continue;
       if (sub.anchorKeys.has(message.ts)) {
         pushSubagentCard(message);
@@ -722,8 +567,6 @@ export function buildLogItems(
       }
     }
 
-    // Shared rendering (IDENTICAL across every lane). Every branch below is driven by the message's
-    // authoritative `type` via classifyMessage — no raw field pokes, no pre-classify special cases.
     const c = classifyMessage(message);
     if (c.kind === 'tool') {
       const m = message.meta ?? {};
@@ -750,9 +593,6 @@ export function buildLogItems(
         node,
         estimate: estimateForMessage(message, c.kind),
       });
-    // Interactive cards (buttons/inputs the operator clicks) are wrapped in `data-tailpause` so hovering
-    // ANYWHERE on the card — not just its controls — suspends tail-follow (see useTailFollow), keeping the
-    // target still under the cursor while tokens stream in.
     const pushCard = (node: React.ReactNode) => push(<div data-tailpause>{node}</div>);
     switch (c.kind) {
       case 'user':
@@ -872,13 +712,8 @@ export function buildLogItems(
 }
 
 const MERMAID_FENCE = /```mermaid\n([\s\S]*?)```/g;
-/** Any fenced code block (language tag optional) — used to reserve non-mermaid code at code line-height
- *  instead of letting it fall through to the prose wrapped-line math below. Run AFTER {@link MERMAID_FENCE}
- *  has already been stripped from the text, so a mermaid fence never double-matches here. */
 const CODE_FENCE = /```(\w*)\n([\s\S]*?)```/g;
 const MERMAID_CHROME_PX = 64;
-/** Rendered height of one line inside a `CodeBlock` (`text-[11.5px] leading-[1.7]` ≈ 19.5px/line) plus the
- *  header-bar + padding chrome around the block. */
 const CODE_LINE_PX = 19;
 const CODE_CHROME_PX = 28;
 const CHARS_PER_LINE = 92;
@@ -946,19 +781,12 @@ function estimateForKind(kind: string): number {
   return ROW_ESTIMATE[kind] ?? ROW_ESTIMATE_FALLBACK;
 }
 
-/** One windowable top-level row of the durable transcript — a stable key, its rendered node, and the
- *  initial height guess the virtualizer uses before the row is measured. */
 interface LogItem {
   key: string;
   node: React.ReactNode;
-  /** First-guess row height (px) for `estimateSize`. `measureElement` corrects it to the exact height
-   *  once the row mounts; a close guess keeps that correction small so rows don't visibly shift as they
-   *  scroll into view (a flat guess for every row is what made scrolling jump). */
   estimate: number;
 }
 
-/** Initial height guess for a folded tool-run group — the collapsed `DisclosureRow` is a single line
- *  regardless of how many calls it folds, so the estimate is flat. */
 function toolGroupEstimate(_toolCount: number): number {
   return 40;
 }
@@ -972,12 +800,6 @@ const TEXT_KINDS = new Set([
   'system_operator',
 ]);
 
-/**
- * Live "an unresolved turn-failure box is outstanding" bit for one job, from the same server-owned realtime
- * inbox row (`halted`, kept live by `useAllJobsRealtime`) — the durable signal a failed turn's "Resume" card
- * keys off. Returns `undefined` when the row isn't cached yet, so callers keep showing Resume until realtime
- * confirms the thread has actually resumed (never hide a genuinely-needed button on a cold cache).
- */
 function useThreadHalted(jobId: string | null): boolean | undefined {
   const { data: threads } = useAllJobs();
   if (!jobId) return undefined;

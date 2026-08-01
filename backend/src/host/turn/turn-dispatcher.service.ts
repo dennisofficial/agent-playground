@@ -12,21 +12,8 @@ import { SandboxService } from '../sandbox/sandbox.service';
 import { TurnSpecBuilderService } from './turn-spec-builder.service';
 import { TurnTranscriptService } from './turn-transcript.service';
 
-/** How often, while a turn runs, we sweep for freshly-arrived `now` messages to steer into it. */
 const FORWARD_POLL_MS = 750;
 
-/**
- * An inbound row handed to the engine but not yet incorporated by the model.
- *
- * `messagesAtHandoff` is how many assistant messages the turn had opened when this row was handed over. The
- * model can only have seen it once a LATER message opens, so `messagesOpened > messagesAtHandoff` is the
- * proof it was read — a counter rather than a timestamp, because a steer forwarded in the same millisecond
- * as a message boundary must not be mistaken for one the model had already taken in.
- *
- * `trigger` rows opened the turn (they sit in the spec's prompt); everything else is a mid-turn steer, which
- * the SDK only injects at a tool boundary — so a steer may still be unread when the turn ends, and the two
- * are handled differently there.
- */
 interface SentMessage {
   row: InboundMessageModel;
   orderAt: Date | null;
@@ -49,8 +36,6 @@ export class TurnDispatcherService {
 
   async run(jobId: string, messages: InboundMessageModel[]): Promise<void> {
     const { threadId, orgId } = messages[0];
-    // The trigger batch's render position: taken BEFORE the launch so it precedes the live turn's `startedAt`
-    // and therefore every block the engine streams into it — the operator's bubble always leads its own turn.
     const dispatchedAt = new Date();
     const spec = await this.specBuilder.build(jobId, messages);
 
@@ -58,15 +43,10 @@ export class TurnDispatcherService {
     this.logger.log(`turn ${turnId} (job ${jobId}): spec built, launching engine`);
     await this.transport.writeSpec(turnId, spec);
     await this.sandbox.launchEngineTurn(jobId, turnId);
-    // Redis-backed live-turn pointer (crash-safe presence + the live SSE's stream locator). Refreshed on every
-    // event below; lapses on its own if this host dies mid-turn, so the working indicator self-heals.
     const live: LivePointer = { turnId, threadId, startedAt: Date.now() };
     await this.transport.markTurnLive(jobId, live);
     this.logger.log(`turn ${turnId}: engine launched, awaiting events`);
 
-    // Consumption model: messages handed to the SDK but not yet incorporated. Starts as this turn's trigger
-    // batch; mid-turn steers append to it. A row is CONSUMED (bubble written) once the model has *begun* an
-    // assistant message after receiving it — see `messageStartedAt`. `steered` guards re-forwarding.
     const pendingConsumption: SentMessage[] = messages.map((row) => ({
       row,
       orderAt: dispatchedAt,
@@ -74,7 +54,6 @@ export class TurnDispatcherService {
       trigger: true,
     }));
 
-    // How many assistant messages this turn has opened so far (counted off `message_start`).
     let messagesOpened = 0;
 
     const steered = new Set(messages.map((m) => m.id));
@@ -83,8 +62,6 @@ export class TurnDispatcherService {
       jobId,
       turnId,
       steered,
-      // A steer takes its natural `created_at` position (`orderAt` null) — the boundary where the model
-      // actually picked it up, i.e. after the output it was queued behind.
       (row) =>
         pendingConsumption.push({
           row,
@@ -95,11 +72,6 @@ export class TurnDispatcherService {
       forwardAbort.signal,
     );
 
-    /**
-     * Consume every row the model has demonstrably read: those handed over before the message that has just
-     * been produced was opened. A trigger row is at handoff-count 0, so it always flushes at the turn's first
-     * boundary; a steer only flushes once the SDK has injected it and the model has opened a fresh message.
-     */
     const flushRead = async (): Promise<void> => {
       const read = pendingConsumption.filter((m) => messagesOpened > m.messagesAtHandoff);
       for (const m of read) pendingConsumption.splice(pendingConsumption.indexOf(m), 1);
@@ -113,16 +85,13 @@ export class TurnDispatcherService {
         await this.sandbox.touch(jobId); // real engine activity (incl. heartbeat) → keep the sandbox alive
         await this.transport.markTurnLive(jobId, live); // …and keep the live-turn pointer's TTL fresh
         const type = (event as { type?: string })?.type;
-        // `message_start` opens a new assistant message: everything handed over before it is what the model
-        // is answering. Counted off the partial-message stream, which `includePartialMessages` gives us —
-        // without it a steer delivered mid-generation would look like one the model had already read.
         if (type === 'stream_event') {
           const inner = (event as { event?: { type?: string } }).event?.type;
-          if (inner === 'message_start') messagesOpened++;
+          if (inner === 'message_start') {
+            messagesOpened++;
+            await flushRead();
+          }
         }
-        // The model produced a turn → write the bubbles it has read BEFORE the reply, so the transcript reads
-        // in order.
-        if (type === 'assistant') await flushRead();
         const sid = (event as { session_id?: string })?.session_id;
         if (sid) sessionId = sid;
         await this.transcript.record({ jobId, threadId, orgId }, event); // persist visible output (assistant)
@@ -135,16 +104,7 @@ export class TurnDispatcherService {
     } finally {
       forwardAbort.abort();
       await forwarding.catch(() => {});
-      // Turn over. Split what the model never reached:
-      //
-      // • Trigger rows are CONSUMED anyway. They were in the spec's prompt, so re-dispatching them would just
-      //   re-run a turn that already failed once — a retry loop. The operator sees their message with no reply
-      //   and resends.
-      // • Steer rows stay PENDING. The SDK only injects a `next` message at a tool boundary, so a turn that
-      //   answered in one stretch of prose never reached one and the text is still unread — consuming it here
-      //   is what silently swallowed steers. Left pending, the dispatch processor's claim loop picks it up on
-      //   its very next pass and runs it as the trigger of a fresh turn, where it lands in the prompt directly
-      //   (so this cannot loop).
+
       for (const { row, orderAt, trigger } of pendingConsumption.splice(0)) {
         if (trigger) await this.inbound.consume(row, orderAt);
         else
@@ -156,6 +116,7 @@ export class TurnDispatcherService {
       await this.transport.disposeTurn(turnId); // drop the finished turn's Redis streams
     }
 
+    // eslint-disable-next-line @typescript-eslint/only-throw-error
     if (realError) throw realError;
     if (sessionId && sessionId !== spec.sessionId) {
       await this.prismaService.thread.update({ where: { id: threadId }, data: { sessionId } });
@@ -174,14 +135,10 @@ export class TurnDispatcherService {
         const fresh = await this.inbound.pendingNowExcluding(jobId, steered);
         for (const m of fresh) {
           steered.add(m.id);
-          // `next`, not `now`: the model finishes what it is saying and takes this at the next tool boundary.
-          // `now` cuts the in-flight response off mid-sentence, which is not what sending a message mid-stream
-          // should do. If the turn ends without reaching a boundary, the backstop above re-runs it as its own
-          // turn rather than dropping it.
           await this.transport.writeInput(turnId, { text: m.text, priority: 'next' });
           queueForConsumption(m);
           this.logger.log(
-            `turn ${turnId}: steered mid-turn message ${m.id} (now) into the live engine`,
+            `turn ${turnId}: steered mid-turn message ${m.id} into the live engine (SDK priority next)`,
           );
         }
       } catch (err) {
