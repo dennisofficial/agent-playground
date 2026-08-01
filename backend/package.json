@@ -42,7 +42,7 @@
     "@anthropic-ai/claude-agent-sdk": "^0.3.204",
     "@dltech/jwt-auth": "^1.0.0",
     "@dltech/nestjs-core": "^1.0.1",
-    "@dltech/nestjs-langfuse": "^1.0.0",
+    "@dltech/nestjs-langfuse": "^1.0.1",
     "@dltech/pgbase": "^1.0.0",
     "@dotenvx/dotenvx": "^1.71.0",
     "@kubernetes/client-node": "^1.4.0",
@@ -103,7 +103,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@dltech/ai-testing": "^1.0.0",
+    "@dltech/ai-testing": "^1.0.1",
     "@eslint/eslintrc": "^3.2.0",
     "@eslint/js": "^9.18.0",
     "@nestjs/cli": "^11.0.0",
