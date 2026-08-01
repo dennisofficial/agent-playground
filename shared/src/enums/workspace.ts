@@ -4,7 +4,7 @@
  * - `SHARED_RW`  — one shared mount across threads, read-write (e.g. a package store).
  */
 export enum EMountMode {
-  PER_THREAD = 'per-thread',
-  SHARED_RO = 'shared-ro',
-  SHARED_RW = 'shared-rw',
+  PER_THREAD = 'per_thread',
+  SHARED_RO = 'shared_ro',
+  SHARED_RW = 'shared_rw',
 }

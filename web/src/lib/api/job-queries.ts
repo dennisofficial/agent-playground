@@ -164,9 +164,8 @@ export function useServices(ref: JobRef) {
 }
 
 /**
- * An org's connected repos — the create-job + settings repo list. **Realtime**: RTK seeds from the
- * REST list, then a pg-realtime `streamList` feed keeps it live (connect/update/revalidate/disconnect
- * arrive as WAL deltas) — no manual invalidation.
+ * An org's connected repos — the create-job + settings repo list. **Realtime**: a pgbase live query
+ * on `Repo` (connect/update/revalidate/disconnect arrive as WAL deltas) — no manual invalidation.
  */
 export function useOrgRepos(orgId: string) {
   return adaptQuery(useGetOrgReposQuery(orgId, { skip: !orgId }));

@@ -14,15 +14,21 @@ export function useCurrentUser(): QueryResultLike<CurrentUser> {
   return adaptQuery(useGetSessionQuery());
 }
 
-// Server-composed org_summary (organizations ⋈ organization_members, role joined on the backend) —
-// a single realtime resource, no client-side join/race. `orgs` stays [] until isLoading resolves, so
-// callers must gate the "no organizations" empty state on isLoading (never show it while loading).
+// `org_summary` (organizations ⋈ organization_members, the caller's own role) is now a client-side
+// join of two pgbase live feeds keyed on the session's user id (see `org.api.ts#composeOrgSummaries`)
+// rather than a single server-composed resource. `orgs` stays [] until isLoading resolves, so callers
+// must gate the "no organizations" empty state on isLoading (never show it while loading).
 export function useOrgs() {
-  const { data, isLoading, isError } = useGetOrgsQuery();
+  const { data: user, isLoading: isUserLoading } = useGetSessionQuery();
+  const {
+    data,
+    isLoading: isOrgsLoading,
+    isError,
+  } = useGetOrgsQuery(user?.id, { skip: !user?.id });
   const orgs = useMemo(() => data ?? [], [data]);
   const owned = useMemo(() => orgs.filter((o) => o.role === 'owner'), [orgs]);
   const joined = useMemo(() => orgs.filter((o) => o.role !== 'owner'), [orgs]);
-  return { orgs, owned, joined, isLoading, isError };
+  return { orgs, owned, joined, isLoading: isUserLoading || isOrgsLoading, isError };
 }
 
 export function useOrg(orgId: string): OrgSummary | undefined {

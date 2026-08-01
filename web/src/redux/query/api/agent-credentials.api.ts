@@ -1,5 +1,6 @@
-import { getRealtimeClient } from '@/lib/realtime/realtime-client';
-import { makeSocketListOpener, streamList } from '@workspace/pg-realtime/rtk';
+import { pgbase } from '@/lib/pgbase/client';
+import { agentCredentialToRaw } from '@/lib/pgbase/adapters';
+import { liveListEndpoint } from '@/lib/pgbase/rtk';
 import type {
   AgentCredentialView,
   ClaudeAuthorizeUrlResult,
@@ -17,19 +18,12 @@ export const agentCredentialsApi = baseApi.injectEndpoints({
     // derive `AgentCredentialView` on read via `buildAgentCredentialView` (see credentials-section.tsx)
     // instead of freezing a stale projection in the RTK Query cache.
     getAgentCredentials: build.query<RawAgentCredential[], string>({
-      // Socket-only: the realtime feed delivers the full initial snapshot on subscribe.
-      queryFn: () => ({ data: [] }),
+      ...liveListEndpoint(pgbase.AgentCredential, agentCredentialToRaw, (orgId: string) => ({
+        where: { orgId },
+      })),
       providesTags: (_result, _error, orgId) => [
         { type: EBaseApiCacheTags.AGENT_CREDENTIALS, id: orgId },
       ],
-      onCacheEntryAdded: (orgId, api) =>
-        streamList<RawAgentCredential>({
-          url: 'agent_credentials',
-          open: makeSocketListOpener(getRealtimeClient(), 'agent_credentials', {
-            filter: { orgId },
-          }),
-          lifecycle: api,
-        }),
     }),
 
     startClaudeAuthorize: build.mutation<ClaudeAuthorizeUrlResult, { orgId: string }>({

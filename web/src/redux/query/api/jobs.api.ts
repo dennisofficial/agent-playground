@@ -1,5 +1,14 @@
-import { getRealtimeClient } from '@/lib/realtime/realtime-client';
-import { makeSocketListOpener, streamDocument, streamList } from '@workspace/pg-realtime/rtk';
+import { pgbase } from '@/lib/pgbase/client';
+import {
+  buildJobView,
+  inboundToView,
+  jobToListItem,
+  taskToView,
+  threadGroupToView,
+  threadToView,
+} from '@/lib/pgbase/adapters';
+import { liveListEndpoint } from '@/lib/pgbase/rtk';
+import { liveThreadMessagesEndpoint } from '@/lib/pgbase/thread-messages';
 import type {
   CreateJobDto,
   CreateJobResult,
@@ -32,7 +41,8 @@ export const jobsApi = baseApi.injectEndpoints({
     }),
 
     // Post a typed batch into a job (the inbound-message choke point). The operator bubble + any reply arrive
-    // via the messages/realtime stream (streamList on getJobMessages), so no optimistic wiring is needed here.
+    // via the messages/realtime stream (the `thread_messages` live feed on getJobMessages), so no optimistic
+    // wiring is needed here.
     sendMessage: build.mutation<
       SendMessageResult,
       { jobId: string; messages: InboundItemInput[]; threadId?: string }
@@ -48,124 +58,146 @@ export const jobsApi = baseApi.injectEndpoints({
     }),
 
     getJobs: build.query<JobListItem[], void>({
-      queryFn: () => ({ data: [] }),
+      ...liveListEndpoint(pgbase.Job, jobToListItem),
       providesTags: [EBaseApiCacheTags.JOB],
-      onCacheEntryAdded: (_arg, api) =>
-        streamList<JobListItem>({
-          url: 'jobs',
-          open: makeSocketListOpener(getRealtimeClient(), 'jobs'),
-          lifecycle: api,
-        }),
     }),
 
+    // `JobView.threadGroups` used to be a server-composed nested tree (a `job_detail` view). pgbase has
+    // no live joins, so this subscribes to `Job`, `ThreadGroup`, and `Thread` (all own-column, filtered
+    // by `jobId`/`id`) and rebuilds the tree client-side on every delta from any of the three — the same
+    // pattern the pgbase example app uses to join `Task` to `Job` in the browser. `queryFn` resolves the
+    // initial snapshot from all three; `onCacheEntryAdded` keeps it live off the same three subscriptions.
     getJob: build.query<JobView, string>({
-      queryFn: (jobId) =>
-        new Promise((resolve) => {
-          const query = getRealtimeClient().query('job_detail', { filter: { jobId } });
-          const unsubscribe = query.onChange((changes) => {
-            const row = changes.find((c) => c.op === 'add' || c.op === 'update')?.row;
-            if (!row) return;
-            unsubscribe();
-            resolve({ data: row as JobView });
-          });
-        }),
+      queryFn: async (jobId) => {
+        const jobSub = pgbase.Job.createSubscription();
+        const groupSub = pgbase.ThreadGroup.createSubscription();
+        const threadSub = pgbase.Thread.createSubscription();
+        try {
+          const [jobRows, groups, threads] = await Promise.all([
+            jobSub.query({ where: { id: jobId } }),
+            groupSub.query({ where: { jobId } }),
+            threadSub.query({ where: { jobId } }),
+          ]);
+          const job = jobRows[0];
+          if (!job) {
+            jobSub.close();
+            groupSub.close();
+            threadSub.close();
+            return { error: { message: 'Job not found' } };
+          }
+          return {
+            data: buildJobView(job, groups, threads),
+            meta: { jobSub, groupSub, threadSub },
+          };
+        } catch (err) {
+          jobSub.close();
+          groupSub.close();
+          threadSub.close();
+          return { error: { message: err instanceof Error ? err.message : String(err) } };
+        }
+      },
       providesTags: (_result, _error, jobId) => [{ type: EBaseApiCacheTags.JOB, id: jobId }],
-      onCacheEntryAdded: (jobId, api) =>
-        streamDocument<JobView>({
-          url: 'job_detail',
-          open: makeSocketListOpener(getRealtimeClient(), 'job_detail', { filter: { jobId } }),
-          lifecycle: api,
-        }),
+      onCacheEntryAdded: async (_jobId, api) => {
+        const { meta } = await api.cacheDataLoaded;
+        const subs = meta as
+          | {
+              jobSub: ReturnType<typeof pgbase.Job.createSubscription>;
+              groupSub: ReturnType<typeof pgbase.ThreadGroup.createSubscription>;
+              threadSub: ReturnType<typeof pgbase.Thread.createSubscription>;
+            }
+          | undefined;
+        if (!subs) return;
+
+        let job = subs.jobSub.getSnapshot()[0];
+        let groups = subs.groupSub.getSnapshot();
+        let threads = subs.threadSub.getSnapshot();
+        // A job that disappears (deleted, or scoped out of the caller's orgs) leaves the last known
+        // view in the cache rather than clearing it — same "stale until reconnect" tradeoff pgbase
+        // itself takes for a row that falls out of RLS scope without REPLICA IDENTITY FULL.
+        const recompute = () => {
+          if (!job) return;
+          api.updateCachedData(() => buildJobView(job!, groups, threads));
+        };
+
+        const offJob = subs.jobSub.subscribe((rows) => {
+          job = rows[0];
+          recompute();
+        });
+        const offGroups = subs.groupSub.subscribe((rows) => {
+          groups = rows;
+          recompute();
+        });
+        const offThreads = subs.threadSub.subscribe((rows) => {
+          threads = rows;
+          recompute();
+        });
+
+        await api.cacheEntryRemoved;
+        offJob();
+        offGroups();
+        offThreads();
+        subs.jobSub.close();
+        subs.groupSub.close();
+        subs.threadSub.close();
+      },
     }),
 
     getThreadGroups: build.query<ThreadGroupView[], string>({
-      queryFn: () => ({ data: [] }),
+      ...liveListEndpoint(pgbase.ThreadGroup, (g) => threadGroupToView(g, []), (jobId: string) => ({
+        where: { jobId },
+      })),
       providesTags: (_result, _error, jobId) => [
         { type: EBaseApiCacheTags.JOB, id: `${jobId}:groups` },
       ],
-      onCacheEntryAdded: (jobId, api) =>
-        streamList<ThreadGroupView>({
-          url: 'thread_groups',
-          open: makeSocketListOpener(getRealtimeClient(), 'thread_groups', { filter: { jobId } }),
-          lifecycle: api,
-        }),
     }),
 
     getThreads: build.query<ThreadView[], { jobId: string; groupId?: string; kind?: string }>({
-      queryFn: () => ({ data: [] }),
+      // groupId/kind are client-side cache-key/scoping args only — they are NOT fields on the threads
+      // model (same as the pre-pgbase feed: the server streams every thread for the job).
+      ...liveListEndpoint(pgbase.Thread, threadToView, ({ jobId }: { jobId: string }) => ({
+        where: { jobId },
+      })),
       providesTags: (_result, _error, { jobId }) => [
         { type: EBaseApiCacheTags.JOB, id: `${jobId}:threads` },
       ],
-      onCacheEntryAdded: ({ jobId }, api) =>
-        streamList<ThreadView>({
-          url: 'threads',
-          // Server streams all threads for the job (same as the old SSE endpoint); groupId/kind are
-          // client-side cache-key/scoping args only — they are NOT fields on the threads model.
-          open: makeSocketListOpener(getRealtimeClient(), 'threads', {
-            filter: { jobId },
-          }),
-          lifecycle: api,
-        }),
     }),
 
+    // `ThreadMessage.subagentId → Subagent.status/endedAt` used to arrive pre-joined. `Subagent` is
+    // narrowly client-readable now (`id`/`orgId`/`status`/`endedAt`, no `jobId`/`threadId` column to
+    // filter a live subscription on), so `liveThreadMessagesEndpoint` composes the two feeds itself —
+    // see `lib/pgbase/thread-messages.ts`.
     getJobMessages: build.query<ThreadMessageView[], string>({
-      queryFn: () => ({ data: [] }),
+      ...liveThreadMessagesEndpoint((jobId: string) => ({ jobId })),
       providesTags: (_result, _error, jobId) => [
         { type: EBaseApiCacheTags.JOB, id: `${jobId}:messages` },
       ],
-      onCacheEntryAdded: (jobId, api) =>
-        streamList<ThreadMessageView>({
-          url: 'thread_messages',
-          open: makeSocketListOpener(getRealtimeClient(), 'thread_messages', {
-            filter: { jobId },
-          }),
-          lifecycle: api,
-        }),
     }),
 
     getThreadMessages: build.query<ThreadMessageView[], { jobId: string; threadId: string }>({
-      queryFn: () => ({ data: [] }),
+      ...liveThreadMessagesEndpoint(({ threadId }: { jobId: string; threadId: string }) => ({
+        threadId,
+      })),
       providesTags: (_result, _error, { threadId }) => [
         { type: EBaseApiCacheTags.JOB, id: `thread:${threadId}` },
       ],
-      onCacheEntryAdded: ({ threadId }, api) =>
-        streamList<ThreadMessageView>({
-          url: 'thread_messages',
-          open: makeSocketListOpener(getRealtimeClient(), 'thread_messages', {
-            filter: { threadId },
-          }),
-          lifecycle: api,
-        }),
     }),
 
     getJobTasks: build.query<TaskView[], string>({
-      queryFn: () => ({ data: [] }),
+      ...liveListEndpoint(pgbase.Task, taskToView, (jobId: string) => ({ where: { jobId } })),
       providesTags: (_result, _error, jobId) => [
         { type: EBaseApiCacheTags.JOB, id: `${jobId}:tasks` },
       ],
-      onCacheEntryAdded: (jobId, api) =>
-        streamList<TaskView>({
-          url: 'tasks',
-          open: makeSocketListOpener(getRealtimeClient(), 'tasks', { filter: { jobId } }),
-          lifecycle: api,
-        }),
     }),
 
     // The pending queue (sent, not yet consumed). The list may include CONSUMED rows that streamed by; the
     // composer's pending zone renders only `status === 'pending'`.
     getInbound: build.query<InboundMessageView[], string>({
-      queryFn: () => ({ data: [] }),
+      ...liveListEndpoint(pgbase.InboundMessage, inboundToView, (jobId: string) => ({
+        where: { jobId },
+      })),
       providesTags: (_result, _error, jobId) => [
         { type: EBaseApiCacheTags.JOB, id: `${jobId}:inbound` },
       ],
-      onCacheEntryAdded: (jobId, api) =>
-        streamList<InboundMessageView>({
-          url: 'inbound_messages',
-          open: makeSocketListOpener(getRealtimeClient(), 'inbound_messages', {
-            filter: { jobId },
-          }),
-          lifecycle: api,
-        }),
     }),
   }),
 });
