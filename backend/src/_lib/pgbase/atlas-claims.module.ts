@@ -1,6 +1,5 @@
 import { PrismaModule } from '@lib/prisma/prisma.module';
 import { Module } from '@nestjs/common';
-import { JwtModule } from '@dltech/jwt-auth/server';
 import { AtlasClaimsBuilder } from './atlas-claims.builder';
 
 /**
@@ -8,7 +7,9 @@ import { AtlasClaimsBuilder } from './atlas-claims.builder';
  * its factory against its own `imports`, not against whatever module declares it.
  */
 @Module({
-  imports: [PrismaModule, JwtModule],
+  // JwtService is not imported here: AuthModule registers JwtModule with isGlobal, and importing
+  // it bare would re-register it WITHOUT its options, shadowing the configured instance.
+  imports: [PrismaModule],
   providers: [AtlasClaimsBuilder],
   exports: [AtlasClaimsBuilder],
 })
