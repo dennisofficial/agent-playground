@@ -14,6 +14,8 @@ const row = (id: string, text: string): InboundMessage =>
 
 const messageStart = { type: 'stream_event', event: { type: 'message_start' } };
 
+const BOUNDARY_MS = 1_700_000_000_000;
+
 function harness(opts: {
   steer?: InboundMessage;
   script: (ctl: { release: () => void; steerSent: Promise<void> }) => Array<() => Promise<unknown>>;
@@ -38,7 +40,9 @@ function harness(opts: {
       onForward();
     }),
     async *readEvents() {
-      for (const step of opts.script({ release, steerSent })) yield await step();
+      // Mirrors the real generator: each event carries the Redis entry id it was appended at.
+      for (const step of opts.script({ release, steerSent }))
+        yield { event: await step(), emittedAt: BOUNDARY_MS };
     },
   } as unknown as HostTransportService;
 
@@ -109,13 +113,10 @@ describe('TurnDispatcherService.run', () => {
 
     await dispatcher.run('job-1', [row('trigger-1', 'go')]);
 
-    // The trigger is consumed; the steer is NOT — the model never saw it, so consuming it here would write a
-    // bubble with no reply and mark the row delivered, which is exactly how steers got silently swallowed.
-    // Left PENDING, the dispatch processor's claim loop runs it as the next turn's trigger.
     expect(consumed.map((c) => c.id)).toEqual(['trigger-1']);
   });
 
-  it('consumes a steer once the model opens a new message after it, with no order override', async () => {
+  it('consumes a steer at the boundary the model opened, keyed to the engine clock', async () => {
     const { dispatcher, consumed } = harness({
       steer: row('steer-1', 'say hello'),
       script: ({ release, steerSent }) => [
@@ -136,10 +137,8 @@ describe('TurnDispatcherService.run', () => {
     await dispatcher.run('job-1', [row('trigger-1', 'go')]);
 
     expect(consumed.map((c) => c.id)).toEqual(['trigger-1', 'steer-1']);
-    // The trigger overrides its order to sit ahead of its own turn's reply; the steer takes its natural
-    // created_at, which is the boundary the model picked it up at — after the output it waited behind.
-    expect(consumed[0].orderAt).toBeInstanceOf(Date);
-    expect(consumed[1].orderAt).toBeNull();
+    expect(consumed[0].orderAt?.getTime()).not.toBe(BOUNDARY_MS);
+    expect(consumed[1].orderAt?.getTime()).toBe(BOUNDARY_MS);
   });
 
   it('writes the bubble when the message OPENS, not when it completes', async () => {
@@ -148,8 +147,6 @@ describe('TurnDispatcherService.run', () => {
       script: () => [
         async () => messageStart,
         async () => {
-          // The model is now thinking/streaming this message. The operator's bubble must already exist —
-          // otherwise it sits in the pending tray underneath the thinking block reasoning about it.
           seenAtOpen.push(consumed.map((c) => c.id));
           return { type: 'assistant' };
         },

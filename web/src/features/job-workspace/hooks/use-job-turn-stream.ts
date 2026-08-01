@@ -77,15 +77,12 @@ interface RawUserMessage {
 
 class TurnNormalizer {
   private seq = 0;
-  /** The server instant of the frame being translated, stamped onto every block it produces so live blocks
-   *  and durable rows sort on ONE clock. Undefined only for a frame that carries none (the store then falls
-   *  back to arrival time). */
   private emittedAt: number | undefined;
-  /** content-block index → the tool call being assembled (id, name, streamed JSON input). */
   private readonly tools = new Map<
     number,
     { id: string; name: string; json: string; pid?: string }
   >();
+  private readonly prose = new Map<number, 'text' | 'thinking'>();
 
   constructor(private readonly jobId: string) {}
 
@@ -93,10 +90,12 @@ class TurnNormalizer {
     switch (frame.kind) {
       case 'turn_start':
         this.tools.clear();
+        this.prose.clear();
         this.apply({ kind: 'turn_start', startedAt: frame.startedAt });
         return;
       case 'turn_end':
         this.tools.clear();
+        this.prose.clear();
         endLiveTurn(this.jobId, MAIN_LANE);
         return;
       case 'event':
@@ -112,6 +111,7 @@ class TurnNormalizer {
 
   dispose(): void {
     this.tools.clear();
+    this.prose.clear();
   }
 
   private event(raw: unknown): void {
@@ -127,8 +127,12 @@ class TurnNormalizer {
 
     if (ev.type === 'content_block_start') {
       const cb = ev.content_block;
-      if (cb?.type === 'tool_use' && typeof ev.index === 'number') {
-        this.tools.set(ev.index, { id: cb.id ?? '', name: cb.name ?? 'tool', json: '', pid });
+      if (typeof ev.index === 'number') {
+        if (cb?.type === 'tool_use') {
+          this.tools.set(ev.index, { id: cb.id ?? '', name: cb.name ?? 'tool', json: '', pid });
+        } else if (cb?.type === 'text' || cb?.type === 'thinking') {
+          this.prose.set(ev.index, cb.type);
+        }
       }
       return;
     }
@@ -147,6 +151,12 @@ class TurnNormalizer {
     }
 
     if (ev.type === 'content_block_stop' && typeof ev.index === 'number') {
+      const proseKind = this.prose.get(ev.index);
+      if (proseKind) {
+        this.prose.delete(ev.index);
+        this.apply({ kind: 'block_done', blockKind: proseKind, parentToolUseId: pid });
+        return;
+      }
       const t = this.tools.get(ev.index);
       if (t) {
         this.tools.delete(ev.index);

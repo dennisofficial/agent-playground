@@ -348,6 +348,38 @@ body {
 .anim-fadeUp {
   animation: atlas-fadeUp 0.22s ease both;
 }
+
+/* Streaming caret. Rendered as ::after on the LAST rendered block rather than as a sibling element, so it
+   sits on the same line as the final word instead of dropping to a line of its own — markdown's tail is a
+   block (<p>, <ul>, …), and a sibling span always lands underneath it. The list/quote selectors reach one
+   level deeper, since the tail is then the last <li>/paragraph inside that container. */
+.md-caret > :last-child:not(ul):not(ol):not(blockquote)::after,
+.md-caret > ul:last-child > li:last-child::after,
+.md-caret > ol:last-child > li:last-child::after,
+.md-caret > blockquote:last-child > :last-child::after {
+  content: '';
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  margin-left: 2px;
+  transform: translateY(2px);
+  background: var(--accent);
+  animation: atlas-caret-pulse 1s ease-in-out infinite;
+}
+/* A nested list would otherwise match BOTH the outer and inner selector — keep only the innermost. */
+.md-caret > ul:last-child > li:last-child:has(> ul, > ol)::after,
+.md-caret > ol:last-child > li:last-child:has(> ul, > ol)::after {
+  content: none;
+}
+@keyframes atlas-caret-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
 .anim-pop {
   animation: atlas-pop 0.18s ease both;
 }

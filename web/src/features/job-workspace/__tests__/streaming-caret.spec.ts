@@ -21,12 +21,32 @@ describe('streamingBlockKeys', () => {
     expect(keys).toEqual(new Set(['text1']));
   });
 
-  it('streams the last open block of EACH kind (interleaved thinking)', () => {
+  it('streams ONLY the tail when a thinking block is interleaved — the stream is linear', () => {
+    // Previously this returned {text1, thinking0}: two carets, one of them on a thinking block the model
+    // had already finished. Anything with a later block after it is done, whatever its flag says.
     const keys = streamingBlockKeys(
       [open('text', 'text0'), open('thinking', 'thinking0'), open('text', 'text1')],
       true,
     );
-    expect(keys).toEqual(new Set(['text1', 'thinking0']));
+    expect(keys).toEqual(new Set(['text1']));
+  });
+
+  it('streams nothing while a tool call trails the text (the reported caret)', () => {
+    // The exact shape on screen: prose, then the model moves on to tools. Text/thinking blocks are never
+    // flagged done on the live path, so the old per-kind scan kept a caret blinking under finished prose.
+    const keys = streamingBlockKeys(
+      [open('text', 'text0'), open('tool', 'tool0')],
+      true,
+    );
+    expect(keys).toEqual(new Set());
+  });
+
+  it('streams the trailing thinking block while the model reasons', () => {
+    const keys = streamingBlockKeys(
+      [closed('text', 'text0'), closed('tool', 'tool0'), open('thinking', 'thinking0')],
+      true,
+    );
+    expect(keys).toEqual(new Set(['thinking0']));
   });
 
   it('returns empty when every block is done', () => {

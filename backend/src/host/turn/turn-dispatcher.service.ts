@@ -72,16 +72,17 @@ export class TurnDispatcherService {
       forwardAbort.signal,
     );
 
-    const flushRead = async (): Promise<void> => {
+    const flushRead = async (boundaryAt: Date): Promise<void> => {
       const read = pendingConsumption.filter((m) => messagesOpened > m.messagesAtHandoff);
       for (const m of read) pendingConsumption.splice(pendingConsumption.indexOf(m), 1);
-      for (const { row, orderAt } of read) await this.inbound.consume(row, orderAt);
+      // Triggers carry their own dispatch instant; a steer takes the boundary it was picked up at.
+      for (const { row, orderAt } of read) await this.inbound.consume(row, orderAt ?? boundaryAt);
     };
 
     let sessionId: string | undefined;
     let realError: unknown;
     try {
-      for await (const event of this.transport.readEvents(turnId)) {
+      for await (const { event, emittedAt } of this.transport.readEvents(turnId)) {
         await this.sandbox.touch(jobId); // real engine activity (incl. heartbeat) → keep the sandbox alive
         await this.transport.markTurnLive(jobId, live); // …and keep the live-turn pointer's TTL fresh
         const type = (event as { type?: string })?.type;
@@ -89,7 +90,7 @@ export class TurnDispatcherService {
           const inner = (event as { event?: { type?: string } }).event?.type;
           if (inner === 'message_start') {
             messagesOpened++;
-            await flushRead();
+            await flushRead(new Date(emittedAt));
           }
         }
         const sid = (event as { session_id?: string })?.session_id;

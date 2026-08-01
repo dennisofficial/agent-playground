@@ -102,11 +102,6 @@ function CodeBlock({ lang, code }: { lang?: string; code: string }) {
   );
 }
 
-// A ```json fence whose content is an object/array renders as an interactive collapsible tree
-// (react-json-view-lite) instead of a flat, often-minified code line. Colors mirror the --term token
-// palette (the same hues the Shiki atlas-term theme emits); the `!` important classes win over the
-// package CSS regardless of stylesheet order. Structure (indentation + expand/collapse icons) comes
-// from spreading darkStyles.
 const JSON_VIEW_STYLES = {
   ...darkStyles,
   container: `${darkStyles.container} !bg-transparent`,
@@ -120,8 +115,6 @@ const JSON_VIEW_STYLES = {
   otherValue: `${darkStyles.otherValue} text-(--term-fg)!`,
 };
 
-/** Parse `raw` as JSON, returning it only when it's a non-null object/array (what JsonView renders);
- *  anything else (scalar or malformed) returns null so the caller falls back to the plain code frame. */
 function parseJsonContainer(raw: string): object | null {
   try {
     const value: unknown = JSON.parse(raw);
@@ -156,27 +149,18 @@ function JsonBlock({ value }: { value: object }) {
   );
 }
 
-// Inline ```mermaid fences render as real diagrams. mermaid is heavy + DOM-only, so it's dynamically
-// imported (kept out of the main bundle), client-side, pulling its palette from the live CSS tokens so
-// diagrams match the design system (and re-match it live on a theme switch — see the theme store below).
-// securityLevel 'strict' DOMPurify-sanitizes the SVG (diagrams are agent-authored), which makes the
-// dangerouslySetInnerHTML below safe.
 let mermaidReady: Promise<typeof import('mermaid').default> | null = null;
 function loadMermaid() {
   if (!mermaidReady) mermaidReady = import('mermaid').then((mod) => mod.default);
   return mermaidReady;
 }
 
-/** (Re-)initialize mermaid from the CURRENTLY live CSS custom properties, so the diagram palette tracks
- *  whichever theme is active at call time rather than whatever was live the first time mermaid loaded. */
 function applyMermaidTheme(mermaid: Awaited<ReturnType<typeof loadMermaid>>) {
   const css = getComputedStyle(document.documentElement);
   const v = (name: string, fallback: string) => css.getPropertyValue(name).trim() || fallback;
   mermaid.initialize({
     startOnLoad: false,
     securityLevel: 'strict',
-    // We catch render errors and show our own inline fallback; without this, mermaid ALSO
-    // injects its default "bomb" error SVG into the DOM. Suppress it so only our UI shows.
     suppressErrorRendering: true,
     theme: 'base',
     fontFamily: v('--f-mono', 'ui-monospace, monospace'),
@@ -193,11 +177,6 @@ function applyMermaidTheme(mermaid: Awaited<ReturnType<typeof loadMermaid>>) {
   });
 }
 
-// next-themes applies `data-theme` on <html> from its OWN useEffect, and React 19 flushes CHILD passive
-// effects before PARENT ones — so a naive "read data-theme inside the Mermaid component's effect" can run
-// before next-themes has actually applied the new attribute. Reacting to a MutationObserver on the
-// attribute instead is ordering-independent: it only fires once the attribute (and the CSS vars it
-// controls) are truly live.
 let appliedMermaidTheme: string | null = null;
 let themeVersion = 0;
 const themeListeners = new Set<() => void>();
@@ -206,7 +185,6 @@ let themeObserver: MutationObserver | null = null;
 function currentThemeKey() {
   if (typeof document === 'undefined') return 'daylight';
   const key = document.documentElement.getAttribute('data-theme');
-  // next-themes' pre-paint script writes raw light/dark before the runtime value map writes daylight/night.
   if (key === 'dark') return 'night';
   if (key === 'light' || !key) return 'daylight';
   return key;
@@ -255,10 +233,6 @@ function nodeText(node: ReactNode): string {
   return '';
 }
 
-/**
- * Strip mermaid's inline `max-width` clamp (which uniformly downscales wide diagrams until text is
- * illegible) and read the intrinsic px size from the viewBox, so we can size the diagram ourselves.
- */
 function parseSvg(raw: string): { svg: string; w: number; h: number } {
   const vb = /viewBox="[\d.\-]+ [\d.\-]+ ([\d.\-]+) ([\d.\-]+)"/.exec(raw);
   return {
@@ -268,17 +242,8 @@ function parseSvg(raw: string): { svg: string; w: number; h: number } {
   };
 }
 
-/** Rendered SVGs by TRIMMED diagram source, tagged with the theme key they were rendered under. A diagram
- *  already seen elsewhere in the transcript (in the SAME live theme) can reuse its parsed result instead of
- *  replaying the async render and the placeholder→SVG size jump it causes. The theme tag matters because a
- *  theme flip mid-flight (e.g. `warmMermaidDiagrams` still looping when the operator switches theme) can
- *  otherwise write a stale-palette SVG back into a freshly-cleared cache with nothing to invalidate it
- *  afterward — see {@link getCachedMermaid}. */
 const mermaidCache = new Map<string, { theme: string; svg: string; w: number; h: number }>();
 
-/** Cache lookup that also validates the entry was rendered under the CURRENTLY live theme — a hit tagged
- *  with a stale theme (see above) is treated as a miss so callers re-render instead of showing the wrong
- *  palette. */
 function getCachedMermaid(chart: string) {
   const entry = mermaidCache.get(chart);
   return entry && entry.theme === currentThemeKey() ? entry : undefined;
@@ -292,18 +257,11 @@ export function extractMermaidSources(text: string): string[] {
 }
 
 let warmId = 0;
-/** Render each not-yet-cached diagram off-screen so mermaidCache holds its real {svg,w,h} BEFORE its row is
- *  measured/enters the viewport. Pure in source (theme fixed at init), so it is the same result the live
- *  component would produce. Broken diagrams are skipped (they render an error frame at a small height,
- *  not an aspect-ratio box, so they need no warm). Renders sequentially to bound main-thread cost. */
 export async function warmMermaidDiagrams(sources: string[]): Promise<void> {
   const todo = [...new Set(sources.map((s) => s.trim()))].filter(
     (s) => s.length > 0 && !getCachedMermaid(s),
   );
   if (todo.length === 0) return;
-  // ensureMermaid (and the theme key) are re-checked EVERY iteration, not once before the loop — a theme
-  // flip mid-flight re-applies the palette and is reflected in the tag each entry is written with, so a
-  // fast switch can no longer poison the cache with wrong-palette, theme-untagged SVGs (see mermaidCache).
   for (const src of todo) {
     if (getCachedMermaid(src)) continue;
     let mermaid: Awaited<ReturnType<typeof loadMermaid>>;
@@ -370,43 +328,27 @@ function MermaidFrame({
 }
 
 const MERMAID_RESERVE_MIN = 200;
-/** Tall diagrams (deep flowcharts) really do render past 1000px on a phone-width column — a low cap is
- *  exactly what left big diagrams badly under-reserved, so the placeholder jumped when the SVG landed. */
 const MERMAID_RESERVE_MAX = 1600;
 
 function clampMermaidReserve(px: number): number {
   return Math.min(Math.max(Math.round(px), MERMAID_RESERVE_MIN), MERMAID_RESERVE_MAX);
 }
 
-/**
- * Approximate rendered body height (px) of a Mermaid diagram from its SOURCE, reserved by the loading
- * placeholder AND used by the transcript virtualizer's row estimate — the two MUST agree so the async
- * placeholder→SVG swap barely changes the row height. A flat "px per source line" is a poor proxy because
- * height depends on the diagram KIND: a vertical flowchart grows with its rank depth (tall), while a
- * sequence diagram grows with its message count and renders wide-and-short — sizing both by raw line count
- * over-reserves sequences and (with a low cap) under-reserves flowcharts. So estimate per kind instead.
- * Still only an approximation — the exact height isn't knowable until Mermaid lays the diagram out; the
- * virtualizer's own resize compensation absorbs the residual.
- */
 export function mermaidReservePx(source: string): number {
   const lines = source
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
   const header = lines[0]?.toLowerCase() ?? '';
-  // Sequence diagrams: height ≈ header chrome + one row per message arrow; participants add width, not height.
   if (header.startsWith('sequencediagram')) {
     const messages = lines.filter((line) => /--?>>?/.test(line)).length;
     return clampMermaidReserve(120 + messages * 44);
   }
-  // Flowchart / graph / stateDiagram (the vertical, dominant kinds): height tracks the number of ranks,
-  // proxied by edge count (`-->`/`->`), which avoids double-counting standalone node-label lines.
   const edges = lines.filter((line) => line.includes('->')).length;
   return clampMermaidReserve(Math.max(edges, 1) * 84);
 }
 
 function Mermaid({ chart }: { chart: string }) {
-  // useId is colon-bearing; mermaid's render id must be a valid DOM/CSS id, so strip non-word chars.
   const renderId = `mmd-${useId().replace(/[^a-zA-Z0-9]/g, '')}`;
   const [result, setResult] = useState<{
     svg: string;
@@ -418,36 +360,20 @@ function Mermaid({ chart }: { chart: string }) {
   const [sent, setSent] = useState(false);
   const [copied, copy] = useCopied();
   const actions = useContext(MarkdownActionsContext);
-  // Re-runs the render effect below on a live theme switch (see the MutationObserver-driven store
-  // above `Mermaid`) — independent of next-themes/useTheme, and of React 19's child-before-parent
-  // passive-effect ordering, since it only fires once the new data-theme attribute is truly live.
   const themeVersion = useSyncExternalStore(subscribeTheme, getThemeVersion, () => 0);
 
   useEffect(() => {
     let cancelled = false;
-    // Mermaid render is pure in its source + theme, so a previously-rendered diagram (in the CURRENT
-    // theme) can reuse its cached SVG instead of replaying the placeholder→SVG transition — this is what
-    // makes a diagram seen once elsewhere in the transcript mount at its FINAL size immediately.
-    // getCachedMermaid rejects a hit tagged with a stale theme (see mermaidCache), so a wrong-palette
-    // entry left behind by an in-flight warm during a fast theme switch is treated as a miss and re-rendered.
     const cached = getCachedMermaid(chart.trim());
     if (cached) {
       setResult(cached);
       setError(null);
       return;
     }
-    // Don't clear an already-rendered SVG here — e.g. on a theme switch the cache was just dropped, but
-    // the old-themed diagram stays visible until the freshly re-rendered one replaces it, so re-render
-    // never flashes back to the loading placeholder.
     setError(null);
     ensureMermaid()
       .then(async (mermaid) => {
-        // Capture the theme key ensureMermaid just applied (not whatever is live when the render settles)
-        // so the cache entry is tagged with the palette actually baked into this SVG.
         const key = currentThemeKey();
-        // Validate BEFORE rendering: parse() throws on bad syntax but injects nothing, so mermaid's
-        // default "bomb" error SVG never lands in the DOM — independent of whether suppressErrorRendering
-        // took effect at init time (initialize runs once via a module singleton).
         await mermaid.parse(chart);
         const { svg } = await mermaid.render(renderId, chart);
         return { svg, key };
@@ -474,8 +400,6 @@ function Mermaid({ chart }: { chart: string }) {
     </FrameBtn>
   );
 
-  // A malformed diagram keeps the same card chrome — we just can't draw it. The source renders in the body
-  // (where the graph would be) and the header offers "fix with Atlas".
   if (error) {
     return (
       <MermaidFrame
@@ -488,8 +412,6 @@ function Mermaid({ chart }: { chart: string }) {
                 title="Send this broken diagram to Atlas to fix"
                 disabled={sent}
                 onClick={() => {
-                  // Fence the source as plain text (no `mermaid` lang) so the operator's own message
-                  // doesn't re-trigger a failed render — Atlas reads the raw source and fixes it.
                   actions.sendToThread(
                     `This mermaid diagram failed to render. Please fix the syntax.\n\n` +
                       `Parse error: ${error}\n\n` +
@@ -507,8 +429,6 @@ function Mermaid({ chart }: { chart: string }) {
           </>
         }
       >
-        {/* Reserve the same height the loading placeholder (and premeasure's cold-read) used, so an
-            unwarmed/broken diagram's row doesn't grow or shrink when it settles into this error frame. */}
         <div style={{ minHeight: mermaidReservePx(chart) }}>
           <p className="border-b border-border px-3.5 py-2 font-mono text-[10px] leading-normal text-red">
             failed to render — {error}
@@ -521,11 +441,6 @@ function Mermaid({ chart }: { chart: string }) {
     );
   }
   if (!result) {
-    // Reserve the body height while the SVG renders asynchronously. Without this the row mounts (and is
-    // measured by the transcript virtualizer) at the tiny placeholder height, then pops taller when the
-    // diagram resolves — a visible jump. The reservation is derived from the diagram SOURCE (see
-    // mermaidReservePx) and matches the rendered body's min-height below, so the loading→diagram transition
-    // changes height by little or nothing.
     return (
       <MermaidFrame label="mermaid">
         <div
@@ -550,18 +465,11 @@ function Mermaid({ chart }: { chart: string }) {
           </>
         }
       >
-        {/* Fit to width, but never upscale past the intrinsic size — so the diagram never breaks the doc
-            layout, and the whole thing is click-to-expand for a readable view. The box hugs the SVG: it's
-            forced to width:100%/height:auto (below), so it already carries its own aspect ratio — no height
-            reserve or vertical centering here, which would leave dead space around wide/short diagrams. */}
         <div
           onClick={() => setZoomed(true)}
           className="mx-auto flex cursor-zoom-in flex-col p-4 [&>svg]:h-auto! [&>svg]:w-full!"
           style={{
             maxWidth: result.w || undefined,
-            // Lock the box's aspect ratio so its height is a synchronous function of column width the
-            // instant `result` is known — one deterministic swap instead of waiting for the SVG (forced to
-            // width:100%/height:auto above) to reflow internally.
             aspectRatio: result.w > 0 && result.h > 0 ? `${result.w} / ${result.h}` : undefined,
           }}
           // eslint-disable-next-line react/no-danger -- mermaid SVG; securityLevel 'strict' sanitizes it
@@ -593,7 +501,6 @@ function MermaidLightbox({
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const drag = useRef<{ x: number; y: number; l: number; t: number } | null>(null);
-  // Start at fit-to-viewport (capped at 2× so a small diagram doesn't blow up), then zoom/pan from there.
   const fit = () => {
     if (typeof window === 'undefined' || w! || !h) return 1;
     const s = Math.min((window.innerWidth - 96) / w, (window.innerHeight - 150) / h);
@@ -984,10 +891,14 @@ function isContextHref(href: string | undefined): href is string {
 
 export const Markdown = memo(function Markdown({
   children,
+  className,
   resolveRelativeLink,
   resolveFileLink,
 }: {
   children: string;
+  /** Extra classes on the wrapper that DIRECTLY parents the rendered blocks — so a `> :last-child` rule
+   *  (the streaming caret) can reach the final paragraph/list rather than this wrapper. */
+  className?: string;
   /** Resolve a RELATIVE link (e.g. a spec file linking `sections/01-backend.md`) to a real in-app deep
    *  link + a select action. The anchor's `href` becomes `url` (so cmd/middle-click opens the right thing
    *  in a new tab), and a plain left-click is intercepted to `onSelect()` (SPA nav, no reload). Return null
@@ -1032,7 +943,9 @@ export const Markdown = memo(function Markdown({
     return next;
   }, [resolveRelativeLink, resolveFileLink]);
   return (
-    <div className="text-[14px] leading-[1.62] text-text wrap-anywhere">
+    <div
+      className={`text-[14px] leading-[1.62] text-text wrap-anywhere${className ? ` ${className}` : ''}`}
+    >
       <ReactMarkdown remarkPlugins={[remarkGfm, remarkShortcodeIcons]} components={components}>
         {children}
       </ReactMarkdown>

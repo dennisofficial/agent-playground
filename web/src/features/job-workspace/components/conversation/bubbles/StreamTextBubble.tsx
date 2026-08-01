@@ -25,16 +25,15 @@ export function StreamTextBubble({
       };
     };
   }, [onSelectNode, pathname]);
+
   return (
     <div className="anim-fadeUp">
-      <Markdown resolveRelativeLink={resolveRelativeLink}>{text}</Markdown>
-      {streaming ? (
-        <span
-          className="ml-0.5 inline-block h-[1.05em] w-0.5 translate-y-0.5 animate-pulse"
-          style={{ background: 'var(--accent)' }}
-          aria-hidden
-        />
-      ) : null}
+      <Markdown
+        className={streaming ? 'md-caret' : undefined}
+        resolveRelativeLink={resolveRelativeLink}
+      >
+        {text}
+      </Markdown>
     </div>
   );
 }

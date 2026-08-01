@@ -13,6 +13,7 @@ import { useAttachments } from '../../hooks/use-attachments';
 import { useFileDrop } from '../../hooks/use-file-drop';
 import { useJobTurnStream } from '../../hooks/use-job-turn-stream';
 import { classifyMessage } from '../../lib/classify';
+import { belongsInLiveWindow, messageOrderMs, messagePostedMs } from '../../lib/message-order';
 import { compensateAboveViewportResize } from '../../lib/scroll-compensation';
 import { messageSendState } from '../../lib/send-state';
 import { indexDurableSubagents, SubagentCard, subagentNode } from '../../subagents';
@@ -30,11 +31,6 @@ import { ArchivedOverlay } from '../overlays/archived-overlay';
 import { BlockedOverlay } from '../overlays/blocked-overlay';
 import { indexCodexReviewBlocks } from '../review/codex-review';
 import { ReviewCommentsCardView } from '../review/review-comments-card';
-import {
-  belongsInLiveWindow,
-  messageOrderMs,
-  messagePostedMs,
-} from '../../lib/message-order';
 import { buildLiveTurnItems, UntrustedBlock, UserBubble } from './bubbles/bubbles';
 import { ClaudeBubble } from './bubbles/ClaudeBubble';
 import { CompactionSummaryPill } from './bubbles/CompactionSummaryPill';
@@ -152,7 +148,6 @@ function OpenQuestionsChip({
     </button>
   );
 }
-
 
 interface ParsedLane {
   isMain: boolean;
