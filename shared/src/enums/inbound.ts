@@ -30,7 +30,7 @@ export enum EInboundMessageStatus {
  * └──────────┴───────────────┴────────────────────┴───────────┘
  */
 export enum EInboundPriority {
-  // At the next boundary
+  // Steered into the running turn (SDK `now`), or starts one if none is live.
   NOW = 'now',
   // After the current active turn
   QUEUED = 'queued',

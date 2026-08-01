@@ -120,18 +120,29 @@ describe('InboundMessageService (int)', () => {
     expect(bubbles[0].authorId).toBe('u1');
   });
 
-  it("the bubble's render order is `sentAt`, not the (later) instant it was consumed", async () => {
+  it("a trigger row's render order is the dispatch instant, not the (later) instant it was consumed", async () => {
     const row = await service.enqueue(base('hello', EInboundPriority.NOW));
-    const sentAt = new Date();
+    const dispatchedAt = new Date();
     await sleep(10); // the model only reaches its assistant boundary well after the text was handed over
 
-    await service.consume(row, sentAt);
+    await service.consume(row, dispatchedAt);
 
     const [bubble] = await prisma.threadMessage.findMany({ where: { jobId } });
-    expect(bubble.orderAt).toEqual(sentAt);
+    expect(bubble.orderAt).toEqual(dispatchedAt);
     // …and that order key really is earlier than the row's own creation instant, which is what the
     // transcript would otherwise sort the operator below a reply that was already streaming.
     expect(bubble.orderAt!.getTime()).toBeLessThan(bubble.createdAt.getTime());
+  });
+
+  it('a steer passes no override, so it sorts where the model picked it up', async () => {
+    const row = await service.enqueue(base('say hello', EInboundPriority.NOW));
+
+    await service.consume(row, null);
+
+    const [bubble] = await prisma.threadMessage.findMany({ where: { jobId } });
+    // Null `orderAt` → the transcript falls back to `created_at`, i.e. this boundary — after the output the
+    // steer was queued behind, rather than back above it.
+    expect(bubble.orderAt).toBeNull();
   });
 
   it('claimPending returns PENDING rows in FIFO order', async () => {

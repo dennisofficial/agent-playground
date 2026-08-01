@@ -60,16 +60,21 @@ export class InboundMessageService {
   /**
    * Write the row's operator bubble and mark it CONSUMED.
    *
-   * `sentAt` is the instant the text was handed to the engine (turn launch, or the mid-turn steer's
-   * `writeInput`) and becomes the bubble's `orderAt`. Consumption happens LATER — at the model's next
-   * assistant boundary — so `created_at` alone would sort the bubble after the reply tokens that were
-   * already streaming by then, which is the "my message renders below the response" bug. It must not be
-   * the row's own `createdAt` either: a message that waits in the queue while an earlier turn is still
-   * talking would then sort back into the middle of that turn's output.
+   * `orderAt` overrides where the bubble sorts in the transcript; `null` leaves it at its natural
+   * `created_at`, which is this very moment — the boundary at which the model took the message in.
+   *
+   * A turn's TRIGGER batch passes the dispatch instant, because consumption happens later (at the model's
+   * first assistant boundary) and `created_at` alone would sort the operator below reply tokens that were
+   * already streaming — the "my message renders under the response" bug. It must not be the row's own
+   * `createdAt` either: a message that waited in the queue while an earlier turn was still talking would
+   * sort back into the middle of that turn's output.
+   *
+   * A mid-turn STEER passes `null`. It is consumed exactly where the model picked it up, which is already
+   * the position the operator expects — after the output it was queued behind.
    */
   async consume(
     row: InboundMessageModel,
-    sentAt: Date,
+    orderAt: Date | null,
     tx?: Prisma.TransactionClient,
   ): Promise<void> {
     const run = async (t: Prisma.TransactionClient): Promise<void> => {
@@ -89,7 +94,7 @@ export class InboundMessageService {
           type,
           card: undefined,
           meta: undefined,
-          orderAt: sentAt,
+          orderAt,
         },
       });
       await t.inboundMessage.update({
