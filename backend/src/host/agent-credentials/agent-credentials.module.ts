@@ -1,8 +1,4 @@
 import { CreateModule } from '@dltech/nestjs-core';
-import {
-  AgentCredential,
-  AgentCredentialRepo,
-} from '../../_lib/database/entities/agent-credential.entity';
 import { OrgModule } from '../org/org.module';
 import { AgentAuthEnvProvider } from './agent-auth-env.provider';
 import { AgentAuthRefreshSink } from './agent-auth-refresh.sink';
@@ -23,7 +19,6 @@ import { UsageParseService } from './usage/usage-parse.service';
 
 @CreateModule({
   imports: [OrgModule, AgentCredentialViewModule],
-  entities: [{ entity: AgentCredential, repoClass: AgentCredentialRepo }],
   services: [
     AgentCredentialService,
     AgentCredentialResolver,

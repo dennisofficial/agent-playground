@@ -53,7 +53,7 @@ export class CodexAuthService {
     }
     const t = tokens as Record<string, unknown>;
     const missing = (['id_token', 'access_token', 'refresh_token'] as const).filter(
-      (k) => typeof t[k] !== 'string' || (t[k] as string).length === 0,
+      (k) => typeof t[k] !== 'string' || t[k].length === 0,
     );
     if (missing.length > 0) {
       throw new CodexAuthInvalidError(`tokens is missing required field(s): ${missing.join(', ')}`);

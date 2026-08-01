@@ -26,7 +26,7 @@ export class AgentCredentialResolver {
     const row = await this.store.getSelected(orgId, provider);
     if (!row) return null;
     const material = await this.refresh.ensureFresh(orgId, row.id);
-    return { credentialId: row.id, provider, kind: row.kind, material };
+    return { credentialId: row.id, provider, kind: row.kind as EAgentCredentialKind, material };
   }
 
   async envForTurn(orgId: string, provider: EAgentProvider): Promise<AgentAuthEnv | null> {

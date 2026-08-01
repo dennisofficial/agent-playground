@@ -1,9 +1,10 @@
-import { User, UserRepo } from '@lib/database/entities/user.entity';
+import { BaseAuthGuard, JwtService } from '@dltech/jwt-auth/server';
+import { PrismaService } from '@lib/prisma/prisma.service';
 import { CLS_USER } from '@lib/rls/atlas-claims';
 import { ExecutionContext, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { BaseAuthGuard, JwtService } from '@dltech/jwt-auth/server';
 import { ClsService } from 'nestjs-cls';
+import type { User } from '../../generated/prisma/client';
 
 @Injectable()
 export class AuthGuard extends BaseAuthGuard {
@@ -11,7 +12,7 @@ export class AuthGuard extends BaseAuthGuard {
     reflector: Reflector,
     jwtService: JwtService,
     private readonly cls: ClsService,
-    private readonly users: UserRepo,
+    private readonly prismaService: PrismaService,
   ) {
     super(reflector, jwtService);
   }
@@ -26,6 +27,6 @@ export class AuthGuard extends BaseAuthGuard {
   }
 
   async findUser(sub: string): Promise<User | null> {
-    return this.users.findOne({ where: { id: sub } });
+    return this.prismaService.user.findUnique({ where: { id: sub } });
   }
 }

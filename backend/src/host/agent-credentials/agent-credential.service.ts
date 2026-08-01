@@ -1,15 +1,15 @@
 import { SecretCipherService } from '@lib/crypto/secret-cipher.service';
+import { PrismaService } from '@lib/prisma/prisma.service';
 import { Injectable, NotFoundException } from '@nestjs/common';
+import type { RawAgentCredential } from '@workspace/shared';
 import {
   type AgentCredentialView,
   EAgentCredentialKind,
   EAgentCredentialStatus,
   EAgentProvider,
 } from '@workspace/shared';
-import {
-  AgentCredential,
-  AgentCredentialRepo,
-} from '../../_lib/database/entities/agent-credential.entity';
+import type { AgentCredential } from '../../generated/prisma/client';
+import { Prisma } from '../../generated/prisma/client';
 import { AgentCredentialViewService } from './agent-credential-view.service';
 import { ClaudeOAuthClient, type ClaudeTokenSet } from './oauth/claude-oauth.client';
 import { CodexAuthInvalidError } from './oauth/codex-auth-invalid.error';
@@ -27,10 +27,18 @@ type UpsertPersonalInput = {
   label: string;
 };
 
+/**
+ * Runs from both a request (the controller) and the turn-dispatch queue worker (via
+ * `AgentCredentialResolver`), so this injects `PrismaService`, not `ScopedDb` — a scoped delegate
+ * would throw outside a request. Every CREATE/UPDATE/DELETE entry point below is only ever reached
+ * through `AgentCredentialsController`, which asserts org ownership (`OrgService.assertOwner`)
+ * before calling in — that's the imperative `orgId ∈ ownerOrgIds` check pgbase's registry can't
+ * express for this model.
+ */
 @Injectable()
 export class AgentCredentialService {
   constructor(
-    private readonly agentCredentialRepo: AgentCredentialRepo,
+    private readonly prismaService: PrismaService,
     private readonly secretCipherService: SecretCipherService,
     private readonly claudeOAuthClient: ClaudeOAuthClient,
     private readonly agentCredentialViewService: AgentCredentialViewService,
@@ -39,11 +47,13 @@ export class AgentCredentialService {
   ) {}
 
   async getById(orgId: string, credentialId: string): Promise<AgentCredential | null> {
-    return this.agentCredentialRepo.findOne({ where: { id: credentialId, orgId } });
+    return this.prismaService.agentCredential.findFirst({ where: { id: credentialId, orgId } });
   }
 
   async getSelected(orgId: string, provider: EAgentProvider): Promise<AgentCredential | null> {
-    return this.agentCredentialRepo.findOne({ where: { orgId, provider, selected: true } });
+    return this.prismaService.agentCredential.findFirst({
+      where: { orgId, provider, selected: true },
+    });
   }
 
   decrypt(row: AgentCredential): string {
@@ -51,7 +61,8 @@ export class AgentCredentialService {
   }
 
   toView(row: AgentCredential): AgentCredentialView {
-    return this.agentCredentialViewService.project(row);
+    // Enum branding + Json only: the Prisma row and RawAgentCredential are the same shape on the wire.
+    return this.agentCredentialViewService.project(row as unknown as RawAgentCredential);
   }
 
   /** Upsert a Claude personal (OAuth) account from a fresh token set; dedupes by account email. */
@@ -75,20 +86,21 @@ export class AgentCredentialService {
     setupToken: string,
     label?: string,
   ): Promise<AgentCredential> {
-    const row = this.agentCredentialRepo.create({
-      orgId,
-      provider: EAgentProvider.CLAUDE,
-      kind: EAgentCredentialKind.SETUP_TOKEN,
-      label: label?.trim() || 'Claude setup token',
-      accountEmail: null,
-      subscriptionType: null,
-      scopes: null,
-      materialEnc: this.secretCipherService.encrypt(setupToken.trim()),
-      expiresAt: null,
-      status: EAgentCredentialStatus.ACTIVE,
-      selected: false,
+    const saved = await this.prismaService.agentCredential.create({
+      data: {
+        orgId,
+        provider: EAgentProvider.CLAUDE,
+        kind: EAgentCredentialKind.SETUP_TOKEN,
+        label: label?.trim() || 'Claude setup token',
+        accountEmail: null,
+        subscriptionType: null,
+        scopes: null,
+        materialEnc: this.secretCipherService.encrypt(setupToken.trim()),
+        expiresAt: null,
+        status: EAgentCredentialStatus.ACTIVE,
+        selected: false,
+      },
     });
-    const saved = await this.agentCredentialRepo.save(row);
     await this.ensureOneSelected(orgId, EAgentProvider.CLAUDE, saved.id);
     return saved;
   }
@@ -129,25 +141,28 @@ export class AgentCredentialService {
 
   /** Make one account the selected one for its (org, provider). Throws if the credential isn't found. */
   async setSelected(orgId: string, credentialId: string): Promise<void> {
-    const row = await this.agentCredentialRepo.findOne({ where: { id: credentialId, orgId } });
+    const row = await this.prismaService.agentCredential.findFirst({
+      where: { id: credentialId, orgId },
+    });
     if (!row) throw new NotFoundException('Agent credential not found');
-    await this.agentCredentialRepo.manager.transaction(async (m) => {
+    await this.prismaService.$transaction(async (tx) => {
       // Clear the current selection FIRST so the partial-unique (org, provider) WHERE selected holds.
-      await m.update(
-        AgentCredential,
-        { orgId, provider: row.provider, selected: true },
-        { selected: false },
-      );
-      await m.update(AgentCredential, { id: credentialId }, { selected: true });
+      await tx.agentCredential.updateMany({
+        where: { orgId, provider: row.provider, selected: true },
+        data: { selected: false },
+      });
+      await tx.agentCredential.update({ where: { id: credentialId }, data: { selected: true } });
     });
   }
 
   async remove(orgId: string, credentialId: string): Promise<void> {
-    const row = await this.agentCredentialRepo.findOne({ where: { id: credentialId, orgId } });
+    const row = await this.prismaService.agentCredential.findFirst({
+      where: { id: credentialId, orgId },
+    });
     if (!row) return;
-    await this.agentCredentialRepo.delete({ id: credentialId, orgId });
+    await this.prismaService.agentCredential.delete({ where: { id: credentialId, orgId } });
     // If we removed the selected account, promote the next one so the provider still has an active pick.
-    if (row.selected) await this.ensureOneSelected(orgId, row.provider);
+    if (row.selected) await this.ensureOneSelected(orgId, row.provider as EAgentProvider);
   }
 
   /** Persist a rotated secret only if it's newer than what's stored, under a pessimistic row lock. */
@@ -156,24 +171,36 @@ export class AgentCredentialService {
     material: string,
     expiresAt: Date | null,
   ): Promise<void> {
-    await this.agentCredentialRepo.manager.transaction(async (m) => {
-      const row = await m.findOne(AgentCredential, {
-        where: { id: credentialId },
-        lock: { mode: 'pessimistic_write' },
-      });
+    await this.prismaService.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM agent_credentials WHERE id = ${credentialId}::uuid FOR UPDATE`;
+      const row = await tx.agentCredential.findUnique({ where: { id: credentialId } });
       if (!row) return;
       const current = this.secretCipherService.decrypt(row.materialEnc);
-      if (!this.materialFreshnessService.isNewerMaterial(row.provider, material, current)) return;
-      row.materialEnc = this.secretCipherService.encrypt(material);
-      row.expiresAt = expiresAt;
-      row.lastRefreshedAt = new Date();
-      row.status = EAgentCredentialStatus.ACTIVE;
-      await m.save(row);
+      if (
+        !this.materialFreshnessService.isNewerMaterial(
+          row.provider as EAgentProvider,
+          material,
+          current,
+        )
+      )
+        return;
+      await tx.agentCredential.update({
+        where: { id: credentialId },
+        data: {
+          materialEnc: this.secretCipherService.encrypt(material),
+          expiresAt,
+          lastRefreshedAt: new Date(),
+          status: EAgentCredentialStatus.ACTIVE,
+        },
+      });
     });
   }
 
   async markStatus(credentialId: string, status: EAgentCredentialStatus): Promise<void> {
-    await this.agentCredentialRepo.update({ id: credentialId }, { status });
+    await this.prismaService.agentCredential.update({
+      where: { id: credentialId },
+      data: { status },
+    });
   }
 
   private async upsertPersonal(input: UpsertPersonalInput): Promise<AgentCredential> {
@@ -181,22 +208,23 @@ export class AgentCredentialService {
       const existing = await this.findPersonalByEmail(input);
       if (existing) return this.applyPersonalUpdate(existing, input);
     }
-    const row = this.agentCredentialRepo.create({
-      orgId: input.orgId,
-      provider: input.provider,
-      kind: EAgentCredentialKind.PERSONAL,
-      label: input.label,
-      accountEmail: input.accountEmail,
-      subscriptionType: input.subscriptionType,
-      scopes: input.scopes,
-      expiresAt: input.expiresAt,
-      materialEnc: this.secretCipherService.encrypt(input.material),
-      status: EAgentCredentialStatus.ACTIVE,
-      selected: false,
-    });
     let saved: AgentCredential;
     try {
-      saved = await this.agentCredentialRepo.save(row);
+      saved = await this.prismaService.agentCredential.create({
+        data: {
+          orgId: input.orgId,
+          provider: input.provider,
+          kind: EAgentCredentialKind.PERSONAL,
+          label: input.label,
+          accountEmail: input.accountEmail,
+          subscriptionType: input.subscriptionType,
+          scopes: input.scopes,
+          expiresAt: input.expiresAt,
+          materialEnc: this.secretCipherService.encrypt(input.material),
+          status: EAgentCredentialStatus.ACTIVE,
+          selected: false,
+        },
+      });
     } catch (err) {
       // Concurrent first-login for the same email: the unique index rejected us — update in place.
       if (AgentCredentialService.isUniqueViolation(err) && input.accountEmail) {
@@ -210,7 +238,7 @@ export class AgentCredentialService {
   }
 
   private findPersonalByEmail(input: UpsertPersonalInput): Promise<AgentCredential | null> {
-    return this.agentCredentialRepo.findOne({
+    return this.prismaService.agentCredential.findFirst({
       where: {
         orgId: input.orgId,
         provider: input.provider,
@@ -224,14 +252,18 @@ export class AgentCredentialService {
     row: AgentCredential,
     input: UpsertPersonalInput,
   ): Promise<AgentCredential> {
-    row.materialEnc = this.secretCipherService.encrypt(input.material);
-    row.subscriptionType = input.subscriptionType;
-    row.scopes = input.scopes;
-    row.expiresAt = input.expiresAt;
-    row.label = input.label;
-    row.status = EAgentCredentialStatus.ACTIVE;
-    row.lastRefreshedAt = new Date();
-    return this.agentCredentialRepo.save(row);
+    return this.prismaService.agentCredential.update({
+      where: { id: row.id },
+      data: {
+        materialEnc: this.secretCipherService.encrypt(input.material),
+        subscriptionType: input.subscriptionType,
+        scopes: input.scopes,
+        expiresAt: input.expiresAt,
+        label: input.label,
+        status: EAgentCredentialStatus.ACTIVE,
+        lastRefreshedAt: new Date(),
+      },
+    });
   }
 
   /** Select `fallbackId` (or the oldest remaining account) when the provider has no selected account. */
@@ -240,22 +272,29 @@ export class AgentCredentialService {
     provider: EAgentProvider,
     fallbackId?: string,
   ): Promise<void> {
-    if (await this.agentCredentialRepo.findOne({ where: { orgId, provider, selected: true } }))
+    if (
+      await this.prismaService.agentCredential.findFirst({
+        where: { orgId, provider, selected: true },
+      })
+    )
       return;
     const target =
       fallbackId ??
       (
-        await this.agentCredentialRepo.findOne({
+        await this.prismaService.agentCredential.findFirst({
           where: { orgId, provider },
-          order: { createdAt: 'ASC' },
+          orderBy: { createdAt: 'asc' },
         })
       )?.id;
-    if (target) await this.agentCredentialRepo.update({ id: target }, { selected: true });
+    if (target) {
+      await this.prismaService.agentCredential.update({
+        where: { id: target },
+        data: { selected: true },
+      });
+    }
   }
 
   private static isUniqueViolation(err: unknown): boolean {
-    const code = (err as { code?: string; driverError?: { code?: string } })?.code;
-    const driverCode = (err as { driverError?: { code?: string } })?.driverError?.code;
-    return code === '23505' || driverCode === '23505';
+    return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
   }
 }

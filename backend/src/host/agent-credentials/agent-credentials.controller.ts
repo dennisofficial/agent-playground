@@ -1,3 +1,4 @@
+import { CurrentUser } from '@dltech/jwt-auth/server';
 import {
   BadRequestException,
   Body,
@@ -9,7 +10,6 @@ import {
   Post,
   Put,
 } from '@nestjs/common';
-import { CurrentUser } from '@dltech/jwt-auth/server';
 import {
   type AccountUsage,
   type AgentCredentialView,
@@ -22,7 +22,7 @@ import {
   PasteCodexAuthDto,
   SetSelectedDto,
 } from '@workspace/shared';
-import type { User } from '../../_lib/database/entities/user.entity';
+import type { User } from '../../generated/prisma/client';
 import { OrgService } from '../org/org.service';
 import { AgentCredentialService } from './agent-credential.service';
 import { ClaudeOAuthClient, ClaudeOAuthHttpError } from './oauth/claude-oauth.client';

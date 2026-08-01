@@ -1,4 +1,6 @@
 import { EnvService } from '@core/config/env/env.service';
+import { JwtService } from '@dltech/jwt-auth/server';
+import { PrismaService } from '@lib/prisma/prisma.service';
 import {
   ConflictException,
   ForbiddenException,
@@ -8,10 +10,9 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { hash, verify } from '@node-rs/argon2';
-import { JwtService } from '@dltech/jwt-auth/server';
 import { EUserRole, EUserStatus, type AuthSession } from '@workspace/shared';
 import type { CookieOptions, Request, Response } from 'express';
-import { User, UserRepo } from '../../_lib/database/entities/user.entity';
+import type { User } from '../../generated/prisma/client';
 
 const ACCESS_COOKIE = 'access_token';
 const REFRESH_COOKIE = 'refresh_token';
@@ -19,12 +20,16 @@ const REFRESH_PATH = '/auth/refresh';
 const ACCESS_MAX_AGE_MS = 15 * 60 * 1000; // mirrors JwtModule's default 15m access TTL
 const REFRESH_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // mirrors the default 7d refresh TTL
 
+/**
+ * No caller to scope to — auth is the layer that establishes who the caller is, and `User` is
+ * `NO_CLIENT_ACCESS` in the pgbase registry regardless — so this injects `PrismaService` throughout.
+ */
 @Injectable()
 export class AuthService implements OnApplicationBootstrap {
   private readonly logger = new Logger(AuthService.name);
 
   constructor(
-    private readonly users: UserRepo,
+    private readonly prismaService: PrismaService,
     private readonly jwt: JwtService,
     private readonly env: EnvService,
   ) {}
@@ -34,17 +39,17 @@ export class AuthService implements OnApplicationBootstrap {
     const email = this.env.get('ADMIN_SEED_EMAIL');
     const password = this.env.get('ADMIN_SEED_PASSWORD');
     if (!email || !password) return;
-    if (await this.users.findOne({ where: { email } })) return;
+    if (await this.prismaService.user.findUnique({ where: { email } })) return;
 
-    await this.users.save(
-      this.users.create({
+    await this.prismaService.user.create({
+      data: {
         email,
         name: 'Admin',
         passwordHash: await hash(password),
         role: EUserRole.ADMIN,
         status: EUserStatus.ACTIVE,
-      }),
-    );
+      },
+    });
     this.logger.log(`Seed admin ${email} provisioned.`);
   }
 
@@ -53,23 +58,23 @@ export class AuthService implements OnApplicationBootstrap {
    * operator approves them — so this never issues tokens; it always ends in a 403.
    */
   async register(email: string, password: string, name: string | undefined): Promise<never> {
-    const existing = await this.users.findOne({ where: { email } });
+    const existing = await this.prismaService.user.findUnique({ where: { email } });
     if (existing) throw new ConflictException('Email already in use');
 
-    await this.users.save(
-      this.users.create({
+    await this.prismaService.user.create({
+      data: {
         email,
         name: name ?? null,
         passwordHash: await hash(password),
         role: EUserRole.OPERATOR,
         status: EUserStatus.PENDING,
-      }),
-    );
+      },
+    });
     throw new ForbiddenException('Your account is pending approval.');
   }
 
   async login(email: string, password: string, res: Response): Promise<AuthSession> {
-    const user = await this.users.findOne({ where: { email } });
+    const user = await this.prismaService.user.findUnique({ where: { email } });
     if (!user || !(await verify(user.passwordHash, password))) {
       throw new UnauthorizedException('Invalid email or password.');
     }
@@ -96,7 +101,7 @@ export class AuthService implements OnApplicationBootstrap {
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
 
-    const user = sub ? await this.users.findOne({ where: { id: sub } }) : null;
+    const user = sub ? await this.prismaService.user.findUnique({ where: { id: sub } }) : null;
     if (!user) {
       this.logger.warn(`refresh 401: no user found for sub=${sub ?? '(none)'}`);
       this.clearTokensAllScopes(req, res);
@@ -113,10 +118,11 @@ export class AuthService implements OnApplicationBootstrap {
   }
 
   private assertActive(user: User): void {
-    if (user.status === EUserStatus.PENDING) {
+    const status = user.status as EUserStatus;
+    if (status === EUserStatus.PENDING) {
       throw new ForbiddenException('Your account is pending approval.');
     }
-    if (user.status === EUserStatus.SUSPENDED) {
+    if (status === EUserStatus.SUSPENDED) {
       throw new ForbiddenException('Your account has been suspended.');
     }
   }

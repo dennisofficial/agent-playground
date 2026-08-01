@@ -1,3 +1,4 @@
+import { PrismaService } from '@lib/prisma/prisma.service';
 import { Injectable, Logger } from '@nestjs/common';
 import {
   type AccountUsage,
@@ -9,10 +10,6 @@ import {
   type StoredUsageWindow,
 } from '@workspace/shared';
 import axios from 'axios';
-import {
-  AgentCredential,
-  AgentCredentialRepo,
-} from '../../../_lib/database/entities/agent-credential.entity';
 import { AgentCredentialRefreshService } from '../agent-credential-refresh.service';
 import { AgentCredentialService } from '../agent-credential.service';
 import { type ClaudeCredentialBlob } from '../oauth/claude-oauth.client';
@@ -32,13 +29,17 @@ export type HarvestInfo = {
   utilization?: number;
 };
 
+/**
+ * Shares `AgentCredentialService`'s PrismaService boundary (see that file's header) — this also
+ * calls `AgentCredentialRefreshService`, which can run from the turn-dispatch queue worker.
+ */
 @Injectable()
 export class AgentUsageService {
   private readonly logger = new Logger(AgentUsageService.name);
   private readonly pollFloor = new Map<string, number>();
 
   constructor(
-    private readonly repo: AgentCredentialRepo,
+    private readonly prismaService: PrismaService,
     private readonly store: AgentCredentialService,
     private readonly refresh: AgentCredentialRefreshService,
     private readonly usageParseService: UsageParseService,
@@ -68,7 +69,7 @@ export class AgentUsageService {
   /** Poll Claude's usage API for an account and store the result. Returns the projected usage view. */
   async pollClaudeUsage(orgId: string, credentialId: string): Promise<AccountUsage | null> {
     const row = await this.store.getById(orgId, credentialId);
-    if (!row || row.provider !== EAgentProvider.CLAUDE) return null;
+    if (!row || (row.provider as EAgentProvider) !== EAgentProvider.CLAUDE) return null;
 
     const floor = this.pollFloor.get(credentialId);
     if (floor && Date.now() - floor < POLL_FLOOR_MS) return this.store.toView(row).usage;
@@ -80,7 +81,7 @@ export class AgentUsageService {
       this.logger.warn(`usage refresh failed for ${credentialId}: ${String(err)}`);
       return null;
     }
-    const token = AgentUsageService.bearerFromMaterial(material, row.kind);
+    const token = AgentUsageService.bearerFromMaterial(material, row.kind as EAgentCredentialKind);
     if (!token) return null;
 
     const parsed = await this.fetchUsage(token);
@@ -126,13 +127,11 @@ export class AgentUsageService {
     modelWindows: ModelUsageWindow[],
     source: AccountUsageSnapshot['source'],
   ): Promise<void> {
-    await this.repo.manager.transaction(async (m) => {
-      const row = await m.findOne(AgentCredential, {
-        where: { id: credentialId, orgId },
-        lock: { mode: 'pessimistic_write' },
-      });
+    await this.prismaService.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM agent_credentials WHERE id = ${credentialId}::uuid AND org_id = ${orgId}::uuid FOR UPDATE`;
+      const row = await tx.agentCredential.findFirst({ where: { id: credentialId, orgId } });
       if (!row) return;
-      const prev = row.usageSnapshot;
+      const prev = row.usageSnapshot as AccountUsageSnapshot | null;
       const mergedWindows = { ...(prev?.windows ?? {}), ...windows };
       // Poll carries modelWindows; harvest passes []. Keep the previous ones when the source has none.
       const mergedModels = modelWindows.length > 0 ? modelWindows : (prev?.modelWindows ?? []);
@@ -141,13 +140,16 @@ export class AgentUsageService {
         JSON.stringify(prev.windows) === JSON.stringify(mergedWindows) &&
         JSON.stringify(prev.modelWindows ?? []) === JSON.stringify(mergedModels);
       if (unchanged) return;
-      row.usageSnapshot = {
+      const usageSnapshot: AccountUsageSnapshot = {
         windows: mergedWindows,
         modelWindows: mergedModels,
         fetchedAt: Date.now(),
         source,
       };
-      await m.save(row);
+      await tx.agentCredential.update({
+        where: { id: credentialId },
+        data: { usageSnapshot: usageSnapshot },
+      });
     });
   }
 

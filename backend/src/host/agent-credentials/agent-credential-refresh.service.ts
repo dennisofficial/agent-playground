@@ -1,10 +1,7 @@
 import { SecretCipherService } from '@lib/crypto/secret-cipher.service';
+import { PrismaService } from '@lib/prisma/prisma.service';
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { EAgentCredentialKind, EAgentCredentialStatus, EAgentProvider } from '@workspace/shared';
-import {
-  AgentCredential,
-  AgentCredentialRepo,
-} from '../../_lib/database/entities/agent-credential.entity';
 import { ClaudeOAuthClient, type ClaudeCredentialBlob } from './oauth/claude-oauth.client';
 import { CodexAuthService } from './oauth/codex-auth.service';
 import { CodexOAuthClient, type CodexTokens } from './oauth/codex-oauth.client';
@@ -18,12 +15,16 @@ export class CredentialNeedsReauthError extends Error {
   }
 }
 
+/**
+ * Runs from both a request (usage polling) and the turn-dispatch queue worker (resolving env for a
+ * turn) and the keepalive cron — no request is guaranteed in flight, so this injects `PrismaService`.
+ */
 @Injectable()
 export class AgentCredentialRefreshService {
   private readonly logger = new Logger(AgentCredentialRefreshService.name);
 
   constructor(
-    private readonly repo: AgentCredentialRepo,
+    private readonly prismaService: PrismaService,
     private readonly cipher: SecretCipherService,
     private readonly claudeOAuth: ClaudeOAuthClient,
     private readonly codexOAuth: CodexOAuthClient,
@@ -36,10 +37,12 @@ export class AgentCredentialRefreshService {
     credentialId: string,
     skewMs = DEFAULT_SKEW_MS,
   ): Promise<string> {
-    const row = await this.repo.findOne({ where: { id: credentialId, orgId } });
+    const row = await this.prismaService.agentCredential.findFirst({
+      where: { id: credentialId, orgId },
+    });
     if (!row) throw new NotFoundException('Agent credential not found');
     const material = this.cipher.decrypt(row.materialEnc);
-    if (row.kind === EAgentCredentialKind.SETUP_TOKEN) return material; // no refresh
+    if ((row.kind as EAgentCredentialKind) === EAgentCredentialKind.SETUP_TOKEN) return material; // no refresh
     if (!this.needsRefresh(row.expiresAt, skewMs)) return material;
     return this.refreshLocked(credentialId, skewMs);
   }
@@ -49,33 +52,37 @@ export class AgentCredentialRefreshService {
   }
 
   private async refreshLocked(credentialId: string, skewMs: number): Promise<string> {
-    return this.repo.manager.transaction(async (m) => {
-      const row = await m.findOne(AgentCredential, {
-        where: { id: credentialId },
-        lock: { mode: 'pessimistic_write' },
-      });
+    return this.prismaService.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM agent_credentials WHERE id = ${credentialId}::uuid FOR UPDATE`;
+      const row = await tx.agentCredential.findUnique({ where: { id: credentialId } });
       if (!row) throw new NotFoundException('Agent credential not found');
       const current = this.cipher.decrypt(row.materialEnc);
       // Re-check under the lock — a concurrent refresh may have already renewed it.
       if (!this.needsRefresh(row.expiresAt, skewMs)) return current;
       try {
         const { material, expiresAt } =
-          row.provider === EAgentProvider.CLAUDE
+          (row.provider as EAgentProvider) === EAgentProvider.CLAUDE
             ? await this.refreshClaude(current)
             : await this.refreshCodex(current);
-        row.materialEnc = this.cipher.encrypt(material);
-        row.expiresAt = expiresAt;
-        row.lastRefreshedAt = new Date();
-        row.status = EAgentCredentialStatus.ACTIVE;
-        await m.save(row);
+        await tx.agentCredential.update({
+          where: { id: credentialId },
+          data: {
+            materialEnc: this.cipher.encrypt(material),
+            expiresAt,
+            lastRefreshedAt: new Date(),
+            status: EAgentCredentialStatus.ACTIVE,
+          },
+        });
         return material;
       } catch (err) {
         if (
           AgentCredentialRefreshService.hardAuthFailure(err) ||
           err instanceof MissingRefreshTokenError
         ) {
-          row.status = EAgentCredentialStatus.NEEDS_REAUTH;
-          await m.save(row);
+          await tx.agentCredential.update({
+            where: { id: credentialId },
+            data: { status: EAgentCredentialStatus.NEEDS_REAUTH },
+          });
           throw new CredentialNeedsReauthError(credentialId);
         }
         this.logger.warn(`refresh failed for ${credentialId}: ${String(err)}`);

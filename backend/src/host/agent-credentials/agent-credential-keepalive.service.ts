@@ -1,20 +1,20 @@
 import { EnvService } from '@core/config/env/env.service';
+import { PrismaService } from '@lib/prisma/prisma.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { EAgentCredentialKind, EAgentCredentialStatus } from '@workspace/shared';
-import { LessThan } from 'typeorm';
-import { AgentCredentialRepo } from '../../_lib/database/entities/agent-credential.entity';
 import { AgentCredentialRefreshService } from './agent-credential-refresh.service';
 
 const REFRESH_WINDOW_MS = 35 * 60 * 1000;
 
+/** A cron sweep with no caller to scope to — every org's soon-to-expire credentials, by design. */
 @Injectable()
 export class AgentCredentialKeepaliveService {
   private readonly logger = new Logger(AgentCredentialKeepaliveService.name);
   private readonly isTestDb: boolean;
 
   constructor(
-    private readonly repo: AgentCredentialRepo,
+    private readonly prismaService: PrismaService,
     private readonly refresh: AgentCredentialRefreshService,
     env: EnvService,
   ) {
@@ -25,11 +25,11 @@ export class AgentCredentialKeepaliveService {
   async sweep(): Promise<void> {
     if (this.isTestDb) return;
     const soon = new Date(Date.now() + REFRESH_WINDOW_MS);
-    const rows = await this.repo.find({
+    const rows = await this.prismaService.agentCredential.findMany({
       where: {
         kind: EAgentCredentialKind.PERSONAL,
         status: EAgentCredentialStatus.ACTIVE,
-        expiresAt: LessThan(soon),
+        expiresAt: { lt: soon },
       },
       select: { id: true, orgId: true },
     });

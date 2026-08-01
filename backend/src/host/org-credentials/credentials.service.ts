@@ -1,8 +1,7 @@
 import { SecretCipherService } from '@lib/crypto/secret-cipher.service';
+import { PrismaService } from '@lib/prisma/prisma.service';
 import { Injectable } from '@nestjs/common';
 import type { CredentialPresence } from '@workspace/shared';
-import { Not } from 'typeorm';
-import { OrgCredentialRepo } from '../../_lib/database/entities/org-credential.entity';
 
 export type SaveCredentialsInput = {
   anthropicApiKey?: string;
@@ -15,17 +14,21 @@ export type SaveCredentialsInput = {
  * Values are write-only; reads expose presence only, except the internal typed getters used by consuming
  * modules (GitHub today; the engine later). Pure mechanism — no tenancy checks here (the controller gates
  * them), so internal callers can resolve a key without a request context.
+ *
+ * `OrgCredential` is `NO_CLIENT_ACCESS` in the pgbase registry (never on `ScopedDb`), and internal
+ * callers may have no request at all — this injects `PrismaService` and writes the `orgId` filter
+ * explicitly on every query.
  */
 @Injectable()
 export class OrgCredentialsService {
   constructor(
-    private readonly repo: OrgCredentialRepo,
+    private readonly prismaService: PrismaService,
     private readonly cipher: SecretCipherService,
   ) {}
 
   /** Which keys the org has set — presence only, no decryption. */
   async presence(orgId: string): Promise<CredentialPresence> {
-    const row = await this.repo.findOne({
+    const row = await this.prismaService.orgCredential.findUnique({
       where: { orgId },
       select: {
         anthropicApiKeyEnc: true,
@@ -44,11 +47,18 @@ export class OrgCredentialsService {
 
   /** Write the provided keys (encrypted). Only non-empty fields are set; the rest stay as they are. */
   async save(orgId: string, input: SaveCredentialsInput): Promise<void> {
-    const row = (await this.repo.findOne({ where: { orgId } })) ?? this.repo.create({ orgId });
-    if (input.anthropicApiKey) row.anthropicApiKeyEnc = this.cipher.encrypt(input.anthropicApiKey);
-    if (input.openaiApiKey) row.openaiApiKeyEnc = this.cipher.encrypt(input.openaiApiKey);
-    if (input.githubPat) row.githubPatEnc = this.cipher.encrypt(input.githubPat);
-    await this.repo.save(row);
+    const data = {
+      ...(input.anthropicApiKey && {
+        anthropicApiKeyEnc: this.cipher.encrypt(input.anthropicApiKey),
+      }),
+      ...(input.openaiApiKey && { openaiApiKeyEnc: this.cipher.encrypt(input.openaiApiKey) }),
+      ...(input.githubPat && { githubPatEnc: this.cipher.encrypt(input.githubPat) }),
+    };
+    await this.prismaService.orgCredential.upsert({
+      where: { orgId },
+      create: { orgId, ...data },
+      update: data,
+    });
   }
 
   /** Decrypt and return the org's Anthropic API key, or null when unset. */
@@ -76,7 +86,7 @@ export class OrgCredentialsService {
   async getGithubAppInstallation(
     orgId: string,
   ): Promise<{ id: string; account: string | null } | null> {
-    const row = await this.repo.findOne({
+    const row = await this.prismaService.orgCredential.findUnique({
       where: { orgId },
       select: { githubAppInstallationId: true, githubAppInstallationAccount: true },
     });
@@ -89,28 +99,33 @@ export class OrgCredentialsService {
     orgId: string,
     installation: { id: string; account: string | null },
   ): Promise<void> {
-    const row = (await this.repo.findOne({ where: { orgId } })) ?? this.repo.create({ orgId });
-    row.githubAppInstallationId = installation.id;
-    row.githubAppInstallationAccount = installation.account;
-    await this.repo.save(row);
+    const data = {
+      githubAppInstallationId: installation.id,
+      githubAppInstallationAccount: installation.account,
+    };
+    await this.prismaService.orgCredential.upsert({
+      where: { orgId },
+      create: { orgId, ...data },
+      update: data,
+    });
   }
 
   /** Disconnect the org's GitHub App installation (no-op when unset). */
   async clearGithubAppInstallation(orgId: string): Promise<void> {
-    const row = await this.repo.findOne({ where: { orgId } });
-    if (!row) return;
-    row.githubAppInstallationId = null;
-    row.githubAppInstallationAccount = null;
-    await this.repo.save(row);
+    await this.prismaService.orgCredential.updateMany({
+      where: { orgId },
+      data: { githubAppInstallationId: null, githubAppInstallationAccount: null },
+    });
   }
 
   /**
    * Other orgs already holding this installation id (excluding `exceptOrgId`). Powers the callback's
    * reuse guard: a single GitHub installation must not be silently claimed by a second, unrelated org.
+   * Deliberately cross-org — this is a global uniqueness check, not a tenancy read.
    */
   async orgsHoldingInstallation(installationId: string, exceptOrgId: string): Promise<string[]> {
-    const rows = await this.repo.find({
-      where: { githubAppInstallationId: installationId, orgId: Not(exceptOrgId) },
+    const rows = await this.prismaService.orgCredential.findMany({
+      where: { githubAppInstallationId: installationId, orgId: { not: exceptOrgId } },
       select: { orgId: true },
     });
     return rows.map((r) => r.orgId);
@@ -120,7 +135,7 @@ export class OrgCredentialsService {
     orgId: string,
     field: 'anthropicApiKeyEnc' | 'openaiApiKeyEnc' | 'githubPatEnc',
   ): Promise<string | null> {
-    const row = await this.repo.findOne({ where: { orgId } });
+    const row = await this.prismaService.orgCredential.findUnique({ where: { orgId } });
     const ciphertext = row?.[field];
     return ciphertext ? this.cipher.decrypt(ciphertext) : null;
   }

@@ -1,8 +1,7 @@
 import { EnvService } from '@core/config/env/env.service';
-import { APP_GUARD } from '@nestjs/core';
 import { JwtModule, type JwtModuleOptions } from '@dltech/jwt-auth/server';
 import { CreateModule } from '@dltech/nestjs-core';
-import { User, UserRepo } from '../../_lib/database/entities/user.entity';
+import { APP_GUARD } from '@nestjs/core';
 import { OrgModule } from '../org/org.module';
 import { AuthController } from './auth.controller';
 import { AuthGuard } from './auth.guard';
@@ -27,7 +26,6 @@ import { AuthService } from './auth.service';
   ],
   // OrgModule is re-exported so AuthController can resolve OrgService for /auth/session.
   modules: [OrgModule],
-  entities: [{ entity: User, repoClass: UserRepo }],
   controllers: [AuthController],
   providers: [AuthService, { provide: APP_GUARD, useClass: AuthGuard }],
 })

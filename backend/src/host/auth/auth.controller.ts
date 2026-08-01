@@ -1,6 +1,6 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Post, Req, Res } from '@nestjs/common';
 import { CurrentUser, Public } from '@dltech/jwt-auth/server';
 import { SkipLogger } from '@dltech/nestjs-core';
+import { Body, Controller, Get, HttpCode, HttpStatus, Post, Req, Res } from '@nestjs/common';
 import {
   LoginDto,
   RegisterDto,
@@ -8,7 +8,7 @@ import {
   type CurrentUserResponse,
 } from '@workspace/shared';
 import type { Request, Response } from 'express';
-import type { User } from '../../_lib/database/entities/user.entity';
+import type { User } from '../../generated/prisma/client';
 import { OrgService } from '../org/org.service';
 import { AuthService } from './auth.service';
 
