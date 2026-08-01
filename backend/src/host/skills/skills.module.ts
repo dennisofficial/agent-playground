@@ -1,4 +1,4 @@
-import { CreateModule } from '@workspace/nestjs-core';
+import { CreateModule } from '@dltech/nestjs-core';
 import { Skill, SkillRepo } from '../../_lib/database/entities/skill.entity';
 import { SkillsService } from './skills.service';
 

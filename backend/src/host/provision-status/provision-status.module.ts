@@ -1,4 +1,4 @@
-import { CreateModule } from '@workspace/nestjs-core';
+import { CreateModule } from '@dltech/nestjs-core';
 import { ProvisionStatusService } from './provision-status.service';
 
 @CreateModule({

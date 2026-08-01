@@ -1,21 +1,6 @@
-[submodule "submodules/nestjs-core-essentials"]
-	path = submodules/nestjs-core-essentials
-	url = https://github.com/dennisofficial/nestjs-core-essentials.git
-[submodule "submodules/jwt-auth"]
-	path = submodules/jwt-auth
-	url = https://github.com/dennisofficial/jwt-auth.git
-[submodule "submodules/nestjs-ai-essentials"]
-	path = submodules/nestjs-ai-essentials
-	url = https://github.com/dennisofficial/nestjs-ai-essentials
-[submodule "submodules/ai-testing"]
-	path = submodules/ai-testing
-	url = https://github.com/dennisofficial/langchain-testing-framework
 [submodule "submodules/pg-realtime"]
 	path = submodules/pg-realtime
 	url = https://github.com/dennisofficial/pg-realtime.git
-[submodule "submodules/site-map"]
-	path = submodules/site-map
-	url = https://github.com/dennisofficial/site-map
 [submodule "submodules/nestjs-rls"]
 	path = submodules/nestjs-rls
 	url = https://github.com/dennisofficial/nestjs-rls.git

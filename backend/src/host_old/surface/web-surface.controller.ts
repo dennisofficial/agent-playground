@@ -30,7 +30,7 @@ import {
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { InjectRepository } from '@nestjs/typeorm';
-import { CurrentUser, Public } from '@workspace/auth/server';
+import { CurrentUser, Public } from '@dltech/jwt-auth/server';
 import {
   isAutoApproveMode,
   modeApprovesPlan,

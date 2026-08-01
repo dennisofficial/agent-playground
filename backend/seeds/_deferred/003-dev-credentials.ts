@@ -1,4 +1,4 @@
-import type { Seeder } from '@workspace/nestjs-core';
+import type { Seeder } from '@dltech/nestjs-core';
 import { isNewerCodexAuth } from '../../src/app_old/onboarding/codex-auth-freshness';
 import {
   decryptSecret,

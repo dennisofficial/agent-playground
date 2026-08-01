@@ -1,5 +1,5 @@
 import { User, UserRepo } from '@lib/database/entities/user.entity';
-import { CreateModule } from '@workspace/nestjs-core';
+import { CreateModule } from '@dltech/nestjs-core';
 import { RealtimeAuthService } from './realtime-auth.service';
 import { ScopedFindService } from './scoped-find.service';
 

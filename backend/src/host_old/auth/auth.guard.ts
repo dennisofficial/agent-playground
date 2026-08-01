@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { InjectRepository } from '@nestjs/typeorm';
-import { BaseAuthGuard, JwtService } from '@workspace/auth/server';
+import { BaseAuthGuard, JwtService } from '@dltech/jwt-auth/server';
 import { Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { UserEntity } from '../persistence/entities';

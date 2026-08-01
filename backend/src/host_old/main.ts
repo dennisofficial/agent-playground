@@ -7,7 +7,7 @@ import { setupLogger } from '@core/setup-logger';
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
-import { installShutdownGuard } from '@workspace/nestjs-core';
+import { installShutdownGuard } from '@dltech/nestjs-core';
 import cookieParser from 'cookie-parser';
 import { AppOldModule } from './app-old.module';
 

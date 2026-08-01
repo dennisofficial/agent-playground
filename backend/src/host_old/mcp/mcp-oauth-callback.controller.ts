@@ -1,6 +1,6 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Controller, Get, Header, Logger, Query } from '@nestjs/common';
-import { Public } from '@workspace/auth/server';
+import { Public } from '@dltech/jwt-auth/server';
 import { McpOAuthService } from './mcp-oauth.service';
 
 @Public()

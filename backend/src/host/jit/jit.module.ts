@@ -1,5 +1,5 @@
 import { DiscoveryModule } from '@nestjs/core';
-import { CreateModule } from '@workspace/nestjs-core';
+import { CreateModule } from '@dltech/nestjs-core';
 import { JitHostRegistry } from './jit.registry';
 
 @CreateModule({

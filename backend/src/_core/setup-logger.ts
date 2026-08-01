@@ -1,4 +1,4 @@
-import { LoggerAdapter } from '@workspace/nestjs-core';
+import { LoggerAdapter } from '@dltech/nestjs-core';
 
 export const setupLogger = (): LoggerAdapter => {
   const logger = new LoggerAdapter('Bootstrap', { timestamp: false });

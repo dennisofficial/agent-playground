@@ -1,4 +1,4 @@
-import type { Seeder } from '@workspace/nestjs-core';
+import type { Seeder } from '@dltech/nestjs-core';
 import { EAgentCredentialKind, EAgentCredentialStatus, EAgentProvider } from '@workspace/shared';
 import type { Repository } from 'typeorm';
 import { EnvService } from '../src/_core/config/env/env.service';

@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { hash, verify } from '@node-rs/argon2';
-import { JwtService } from '@workspace/auth/server';
+import { JwtService } from '@dltech/jwt-auth/server';
 import type { CookieOptions, Request, Response } from 'express';
 import { Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';

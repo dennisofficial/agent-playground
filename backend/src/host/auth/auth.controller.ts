@@ -1,6 +1,6 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Post, Req, Res } from '@nestjs/common';
-import { CurrentUser, Public } from '@workspace/auth/server';
-import { SkipLogger } from '@workspace/nestjs-core';
+import { CurrentUser, Public } from '@dltech/jwt-auth/server';
+import { SkipLogger } from '@dltech/nestjs-core';
 import {
   LoginDto,
   RegisterDto,

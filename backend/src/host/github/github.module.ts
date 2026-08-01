@@ -1,5 +1,5 @@
 import { OCTOKIT_SDK_PROVIDER } from '@lib/esm/octokit.provider';
-import { CreateModule } from '@workspace/nestjs-core';
+import { CreateModule } from '@dltech/nestjs-core';
 import { OrgCredentialsModule } from '../org-credentials/credentials.module';
 import { OrgModule } from '../org/org.module';
 import { GitAuthEnvProvider } from './git-auth-env.provider';

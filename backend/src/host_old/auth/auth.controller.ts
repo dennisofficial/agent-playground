@@ -1,5 +1,5 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Post, Req, Res } from '@nestjs/common';
-import { CurrentUser, Public } from '@workspace/auth/server';
+import { CurrentUser, Public } from '@dltech/jwt-auth/server';
 import type { Request, Response } from 'express';
 import { OrganizationService, type OrgSummary } from '../org/organization.service';
 import type { UserEntity } from '../persistence/entities';

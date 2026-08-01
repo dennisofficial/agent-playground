@@ -9,7 +9,7 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
-import { CurrentUser } from '@workspace/auth/server';
+import { CurrentUser } from '@dltech/jwt-auth/server';
 import { AUTO_APPROVE_MODES, type AutoApproveMode } from '@workspace/shared';
 import { IsBoolean, IsEmail, IsIn, IsOptional, IsString, MinLength } from 'class-validator';
 import { OnboardingService } from '../onboarding/onboarding.service';

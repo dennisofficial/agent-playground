@@ -27,7 +27,7 @@ const axiosInstance = axios.create({
   withCredentials: true, // cookie session rides on credentialed CORS
 });
 
-// 401 → refresh → retry (and re-probe /auth/session on failure) — reuses the @workspace/auth client.
+// 401 → refresh → retry (and re-probe /auth/session on failure) — reuses the @dltech/jwt-auth client.
 auth.attachInterceptors(axiosInstance);
 
 export const baseApi = createApi({

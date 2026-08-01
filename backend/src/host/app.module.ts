@@ -15,7 +15,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { APP_PIPE } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
 import { getDataSourceToken } from '@nestjs/typeorm';
-import { CreateModule, EnvModule, LoggerModule } from '@workspace/nestjs-core';
+import { CreateModule, EnvModule, LoggerModule } from '@dltech/nestjs-core';
 import { getExposed } from '@workspace/nestjs-rls';
 import { RLS_CONTEXT, RlsModule, type RlsContextConfig } from '@workspace/nestjs-rls/nest';
 import { rlsGuard } from '@workspace/nestjs-rls/pg-realtime';

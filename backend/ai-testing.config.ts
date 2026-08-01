@@ -1,4 +1,4 @@
-import { defineConfig } from '@workspace/ai-testing/config';
+import { defineConfig } from '@dltech/ai-testing/config';
 
 import { existsSync } from 'node:fs';
 
@@ -33,7 +33,7 @@ export default defineConfig({
   // LangChain callbacks attached to every runnable.invoke. [] = no tracing.
   tracing: async () => {
     if (!tracerShutdown) return [];
-    const { LangfuseCallbackHandler } = await import('@workspace/langfuse');
+    const { LangfuseCallbackHandler } = await import('@dltech/nestjs-langfuse');
     return [new LangfuseCallbackHandler({ tags: ['ai-testing'] })];
   },
 

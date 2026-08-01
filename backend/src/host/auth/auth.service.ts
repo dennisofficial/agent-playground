@@ -8,7 +8,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { hash, verify } from '@node-rs/argon2';
-import { JwtService } from '@workspace/auth/server';
+import { JwtService } from '@dltech/jwt-auth/server';
 import { EUserRole, EUserStatus, type AuthSession } from '@workspace/shared';
 import type { CookieOptions, Request, Response } from 'express';
 import { User, UserRepo } from '../../_lib/database/entities/user.entity';

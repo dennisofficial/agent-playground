@@ -1,5 +1,5 @@
 import { Body, Controller, Param, ParseUUIDPipe, Post } from '@nestjs/common';
-import { CurrentUser } from '@workspace/auth/server';
+import { CurrentUser } from '@dltech/jwt-auth/server';
 import { ConnectRepoDto, type ConnectedRepo } from '@workspace/shared';
 import type { User } from '../../_lib/database/entities/user.entity';
 import { RepoService } from './repo.service';

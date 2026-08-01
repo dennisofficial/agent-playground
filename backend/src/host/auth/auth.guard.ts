@@ -2,7 +2,7 @@ import { User, UserRepo } from '@lib/database/entities/user.entity';
 import { CLS_USER } from '@lib/rls/atlas-claims';
 import { ExecutionContext, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { BaseAuthGuard, JwtService } from '@workspace/auth/server';
+import { BaseAuthGuard, JwtService } from '@dltech/jwt-auth/server';
 import { ClsService } from 'nestjs-cls';
 
 @Injectable()

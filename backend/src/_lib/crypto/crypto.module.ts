@@ -1,5 +1,5 @@
 import { Global } from '@nestjs/common';
-import { CreateModule } from '@workspace/nestjs-core';
+import { CreateModule } from '@dltech/nestjs-core';
 import { SecretCipherService } from './secret-cipher.service';
 
 /**

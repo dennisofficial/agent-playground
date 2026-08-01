@@ -1,4 +1,4 @@
-import type { Seeder } from '@workspace/nestjs-core';
+import type { Seeder } from '@dltech/nestjs-core';
 import { ConventionProfileEntity } from '../../src/app_old/persistence/entities';
 import { DEV_SEED_IDS } from '../_shared/dev-seed-ids';
 

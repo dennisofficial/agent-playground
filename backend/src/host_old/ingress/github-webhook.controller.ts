@@ -1,5 +1,5 @@
 import { Controller, HttpCode, Logger, Post, Req } from '@nestjs/common';
-import { Public } from '@workspace/auth/server';
+import { Public } from '@dltech/jwt-auth/server';
 import { BaseMoveMergeabilitySync } from '../driver/base-move-mergeability-sync.service';
 import { GitStateReconciler } from '../driver/git-state-reconciler.service';
 import { GithubCiStateSync } from '../driver/github-ci-state-sync.service';

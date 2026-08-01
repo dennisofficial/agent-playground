@@ -1,5 +1,5 @@
 import { Controller, Get, Query, Res } from '@nestjs/common';
-import { Public } from '@workspace/auth/server';
+import { Public } from '@dltech/jwt-auth/server';
 import type { Response } from 'express';
 import { GithubAppConnectService } from './github-app-connect.service';
 

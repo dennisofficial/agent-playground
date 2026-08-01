@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
-import { CurrentUser } from '@workspace/auth/server';
+import { CurrentUser } from '@dltech/jwt-auth/server';
 import { CreateOrgDto, UpdateOrgDto, type OrgSummary } from '@workspace/shared';
 import type { User } from '../../_lib/database/entities/user.entity';
 import { OrgService } from './org.service';

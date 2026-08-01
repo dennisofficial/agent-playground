@@ -1,4 +1,4 @@
-import { CreateModule } from '@workspace/nestjs-core';
+import { CreateModule } from '@dltech/nestjs-core';
 import { Job, JobRepo } from '../../_lib/database/entities/job.entity';
 import { ThreadGroup, ThreadGroupRepo } from '../../_lib/database/entities/thread-group.entity';
 import { Thread, ThreadRepo } from '../../_lib/database/entities/thread.entity';

@@ -1,13 +1,13 @@
 'use client';
 
-import { Auth, type AuthState } from '@workspace/auth';
+import { Auth, type AuthState } from '@dltech/jwt-auth';
 import type { AxiosInstance } from 'axios';
 import { env } from './env';
 
 export type { AuthState };
 
 /**
- * The auth surface the Atlas console consumes — a thin superset of the real `@workspace/auth`
+ * The auth surface the Atlas console consumes — a thin superset of the real `@dltech/jwt-auth`
  * (`signIn` / `register` / `signOut` / `initialize` / `recheck` / `onAuthStateChanged` /
  * `currentAuthState`) plus the two design flows the backend doesn't expose yet (`signInWithGoogle`,
  * `requestPasswordReset`). Implemented by `RealAuth`, wrapping `new Auth(...)` against the Atlas app's
@@ -33,7 +33,7 @@ export interface AtlasAuth {
 }
 
 /**
- * Pull the human message out of an Axios-style error. The `@workspace/auth` client rethrows the raw
+ * Pull the human message out of an Axios-style error. The `@dltech/jwt-auth` client rethrows the raw
  * Axios error on a 4xx, whose `.response.data.message` carries our Nest exception message (e.g. the
  * pending-approval text on register, or "Invalid email or password." on login). class-validator
  * failures arrive as a `string[]`; join them. Falls back to the generic message when absent.

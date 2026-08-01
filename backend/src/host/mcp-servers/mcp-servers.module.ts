@@ -1,4 +1,4 @@
-import { CreateModule } from '@workspace/nestjs-core';
+import { CreateModule } from '@dltech/nestjs-core';
 import { McpServer, McpServerRepo } from '../../_lib/database/entities/mcp-server.entity';
 import { McpServersService } from './mcp-servers.service';
 

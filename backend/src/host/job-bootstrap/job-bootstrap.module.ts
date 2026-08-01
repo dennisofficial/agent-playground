@@ -1,5 +1,5 @@
 import { BullModule } from '@nestjs/bullmq';
-import { CreateModule } from '@workspace/nestjs-core';
+import { CreateModule } from '@dltech/nestjs-core';
 import { InboundMessageModule } from '../inbound-message/inbound-message.module';
 import { SandboxModule } from '../sandbox/sandbox.module';
 import { TurnModule } from '../turn/turn.module';

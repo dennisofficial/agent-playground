@@ -1,6 +1,6 @@
 import { User, UserRepo } from '@lib/database/entities/user.entity';
 import { Injectable } from '@nestjs/common';
-import { JwtService } from '@workspace/auth/server';
+import { JwtService } from '@dltech/jwt-auth/server';
 import type { Socket } from 'socket.io';
 
 @Injectable()

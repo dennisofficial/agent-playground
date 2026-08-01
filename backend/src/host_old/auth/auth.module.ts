@@ -2,7 +2,7 @@ import { EnvService } from '@core/config/env/env.service';
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { JwtModule, type JwtModuleOptions } from '@workspace/auth/server';
+import { JwtModule, type JwtModuleOptions } from '@dltech/jwt-auth/server';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { UserEntity } from '../persistence/entities';
 import { AuthController } from './auth.controller';

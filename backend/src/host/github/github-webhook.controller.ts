@@ -10,7 +10,7 @@ import {
   Req,
   UnauthorizedException,
 } from '@nestjs/common';
-import { Public } from '@workspace/auth/server';
+import { Public } from '@dltech/jwt-auth/server';
 import type { Request } from 'express';
 import { GithubWebhookService } from './github-webhook.service';
 

@@ -8,7 +8,7 @@ import {
   ParseUUIDPipe,
   Post,
 } from '@nestjs/common';
-import { CurrentUser } from '@workspace/auth/server';
+import { CurrentUser } from '@dltech/jwt-auth/server';
 import type { GithubAppInstallUrl, GithubAppStatus } from '@workspace/shared';
 import type { User } from '../../_lib/database/entities/user.entity';
 import { GithubAppConnectService } from './github-app-connect.service';

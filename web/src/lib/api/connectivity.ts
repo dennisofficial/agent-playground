@@ -7,7 +7,7 @@ import { useSyncExternalStore } from 'react';
 /**
  * Global backend-connectivity signal — orthogonal to auth (a `/web/*` outage is not an auth state).
  *
- * `@workspace/auth` only flips `AuthState.backendUnreachable` when an *auth* call fails, so a backend
+ * `@dltech/jwt-auth` only flips `AuthState.backendUnreachable` when an *auth* call fails, so a backend
  * that dies while the operator sits in the workspace would otherwise show nothing until the next auth
  * round-trip. This vanilla singleton lets the non-React in-app paths — `fetchWithRefresh` (`./refresh`)
  * and the `/web/events` EventSource (`./events`) — report liveness, and surfaces it to React via

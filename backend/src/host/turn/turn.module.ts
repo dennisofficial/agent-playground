@@ -1,4 +1,4 @@
-import { CreateModule } from '@workspace/nestjs-core';
+import { CreateModule } from '@dltech/nestjs-core';
 import { AgentCredentialsModule } from '../agent-credentials/agent-credentials.module';
 import { GithubModule } from '../github/github.module';
 import { HostTransportModule } from '../host-transport/host-transport.module';

@@ -1,4 +1,4 @@
-import type { Seeder } from '@workspace/nestjs-core';
+import type { Seeder } from '@dltech/nestjs-core';
 import { EOrgRole, EOrgStatus } from '@workspace/shared';
 import { OrganizationMember } from '../src/_lib/database/entities/organization-member.entity';
 import { Organization } from '../src/_lib/database/entities/organization.entity';

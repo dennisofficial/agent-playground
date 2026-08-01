@@ -9,7 +9,7 @@ import {
   Post,
   Put,
 } from '@nestjs/common';
-import { CurrentUser } from '@workspace/auth/server';
+import { CurrentUser } from '@dltech/jwt-auth/server';
 import {
   type AccountUsage,
   type AgentCredentialView,

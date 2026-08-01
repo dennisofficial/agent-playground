@@ -1,5 +1,5 @@
 /**
- * Typed internal routes, built from a route tree via `@workspace/site-map`.
+ * Typed internal routes, built from a route tree via `@dltech/site-map`.
  *
  * A job is addressed by its bare id — the URL is `/jobs/:jobId` (which redirects to the job's
  * `focusedThreadId`) and `/jobs/:jobId/:threadId` for a specific lane. Org/repo are NOT in the URL: the
@@ -11,7 +11,7 @@
  *   SITE_MAP.jobs.job(jobId).thread(t)()     → '/jobs/:jobId/:threadId'
  *   SITE_MAP.orgs.org(orgId).settings.section(s)() → '/orgs/:orgId/settings/:section'
  */
-import { createSiteMap } from '@workspace/site-map';
+import { createSiteMap } from '@dltech/site-map';
 
 export const SITE_MAP = createSiteMap(({ makeRoute }) => ({
   auth: makeRoute('auth', ({ makeRoute }) => ({

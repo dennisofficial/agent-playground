@@ -4,7 +4,7 @@ import { connectivity } from './connectivity';
 
 /**
  * Single-flight session refresh for the NATIVE fetch (`/web/*`, `/auth/session`) and SSE paths. Unlike
- * the `@workspace/auth` axios client, these have no built-in 401→refresh interceptor, so the 15-min
+ * the `@dltech/jwt-auth` axios client, these have no built-in 401→refresh interceptor, so the 15-min
  * access cookie expiring would otherwise silently break the console (REST 401s; an SSE 401 is FATAL and
  * EventSource never reconnects) until a full page reload.
  *

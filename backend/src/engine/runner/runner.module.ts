@@ -1,4 +1,4 @@
-import { CreateModule } from '@workspace/nestjs-core';
+import { CreateModule } from '@dltech/nestjs-core';
 import { EngineTransportModule } from '../engine-transport/engine-transport.module';
 import { RunnerService } from './runner.service';
 

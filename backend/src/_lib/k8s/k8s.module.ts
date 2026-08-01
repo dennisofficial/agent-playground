@@ -1,5 +1,5 @@
 import { Global } from '@nestjs/common';
-import { CreateModule } from '@workspace/nestjs-core';
+import { CreateModule } from '@dltech/nestjs-core';
 import { K8sService } from './k8s.service';
 
 @Global()

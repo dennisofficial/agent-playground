@@ -1,4 +1,4 @@
-import { CreateModule } from '@workspace/nestjs-core';
+import { CreateModule } from '@dltech/nestjs-core';
 import { HostTransportModule } from '../host-transport/host-transport.module';
 import { ProvisionStatusModule } from '../provision-status/provision-status.module';
 import { WorkspaceProfileModule } from '../workspace-profile/workspace-profile.module';

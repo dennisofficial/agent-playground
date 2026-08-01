@@ -1,6 +1,6 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Global, Inject, Logger, type OnApplicationShutdown } from '@nestjs/common';
-import { CreateModule } from '@workspace/nestjs-core';
+import { CreateModule } from '@dltech/nestjs-core';
 import Redis from 'ioredis';
 import { REDIS_CLIENT } from './redis.tokens';
 

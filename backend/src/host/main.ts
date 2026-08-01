@@ -6,7 +6,7 @@ import { ENodeEnv } from '@core/config/env/validation';
 import { setupLogger } from '@core/setup-logger';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
-import { installShutdownGuard } from '@workspace/nestjs-core';
+import { installShutdownGuard } from '@dltech/nestjs-core';
 import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
 

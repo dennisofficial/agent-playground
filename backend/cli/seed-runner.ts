@@ -1,4 +1,4 @@
-import { runSeeds } from '@workspace/nestjs-core';
+import { runSeeds } from '@dltech/nestjs-core';
 import { resolve } from 'path';
 import 'reflect-metadata';
 import { AppDataSource } from './data-source';

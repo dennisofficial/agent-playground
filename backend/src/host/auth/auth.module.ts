@@ -1,7 +1,7 @@
 import { EnvService } from '@core/config/env/env.service';
 import { APP_GUARD } from '@nestjs/core';
-import { JwtModule, type JwtModuleOptions } from '@workspace/auth/server';
-import { CreateModule } from '@workspace/nestjs-core';
+import { JwtModule, type JwtModuleOptions } from '@dltech/jwt-auth/server';
+import { CreateModule } from '@dltech/nestjs-core';
 import { User, UserRepo } from '../../_lib/database/entities/user.entity';
 import { OrgModule } from '../org/org.module';
 import { AuthController } from './auth.controller';

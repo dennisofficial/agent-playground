@@ -12,7 +12,7 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common';
-import { CurrentUser, Public } from '@workspace/auth/server';
+import { CurrentUser, Public } from '@dltech/jwt-auth/server';
 import { IsIn } from 'class-validator';
 import type { Response } from 'express';
 import { GitHubAppTokenService } from '../git/github-app-token.service';

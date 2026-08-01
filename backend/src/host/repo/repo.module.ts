@@ -1,4 +1,4 @@
-import { CreateModule } from '@workspace/nestjs-core';
+import { CreateModule } from '@dltech/nestjs-core';
 import { Repo, RepoRepo } from '../../_lib/database/entities/repo.entity';
 import { GithubModule } from '../github/github.module';
 import { OrgModule } from '../org/org.module';

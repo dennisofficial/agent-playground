@@ -1,5 +1,5 @@
 import { Controller, Get, NotFoundException, Param, Post } from '@nestjs/common';
-import { CurrentUser } from '@workspace/auth/server';
+import { CurrentUser } from '@dltech/jwt-auth/server';
 import type { UserEntity } from '../persistence/entities';
 import { OrganizationService, type InvitePreview } from './organization.service';
 

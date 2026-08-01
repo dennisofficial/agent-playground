@@ -1,6 +1,6 @@
 import { Controller, Get, Res } from '@nestjs/common';
-import { Public } from '@workspace/auth/server';
-import { SkipLogger } from '@workspace/nestjs-core';
+import { Public } from '@dltech/jwt-auth/server';
+import { SkipLogger } from '@dltech/nestjs-core';
 import type { Response } from 'express';
 import { AppVersionService } from './app-version.service';
 import { LeaderElectionService } from './leader-election.service';
