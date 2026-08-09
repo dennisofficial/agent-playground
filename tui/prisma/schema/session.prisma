@@ -1,0 +1,38 @@
+enum ESessionEndReason {
+  context_pressure
+  thread_closed
+  engine_error
+  usage_limit
+  manual
+}
+
+model EngineSession {
+  id              String             @id @default(uuid())
+  threadId        String
+  thread          Thread             @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  ordinal         Int
+
+  accountId       String
+  account         Account            @relation(fields: [accountId], references: [id])
+
+  engine          EEngine
+  model           String
+  engineSessionId String?
+
+  seededFromId    String?
+  handoff         String?
+  endReason       ESessionEndReason?
+
+  /// "<pid>:<epochMs>", stale after LOCK_STALE_MS.
+  lockedBy        String?
+
+  contextPercent  Float?
+
+  messages        ThreadMessage[]
+  turns           Turn[]
+  createdAt       DateTime           @default(now())
+  endedAt         DateTime?
+
+  @@unique([threadId, ordinal])
+  @@index([accountId])
+}

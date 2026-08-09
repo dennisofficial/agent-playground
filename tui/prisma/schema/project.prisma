@@ -1,0 +1,7 @@
+model Project {
+  id           String   @id @default(uuid())
+  path         String   @unique
+  name         String
+  lastOpenedAt DateTime @default(now())
+  jobs         Job[]
+}

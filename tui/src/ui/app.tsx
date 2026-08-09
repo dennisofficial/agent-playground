@@ -1,0 +1,177 @@
+import { useRenderer, useTerminalDimensions } from "@opentui/react";
+import { useInput } from "./hooks/use-input.js";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import type { ProjectRow } from "../app/workspace.service.js";
+import type { JobRow } from "../store/job.repository.js";
+import { CopyNoticeProvider, useCopyOnSelect } from "./copy-on-select.js";
+import { useRunningThreads } from "./hooks/use-conversation.js";
+import { useNavigation } from "./navigation.js";
+import { AccountsPage } from "./pages/accounts.js";
+import { ConversationPage } from "./pages/conversation.js";
+import { JobsPage } from "./pages/jobs.js";
+import { ProjectsPage } from "./pages/projects.js";
+import { useServices } from "./services.js";
+import { glyph, theme } from "./theme.js";
+
+export function App(props: { initialProjectPath?: string }): React.ReactNode {
+  const { workspaceService, conversationService } = useServices();
+  const renderer = useRenderer();
+  const { width: columns, height: rows } = useTerminalDimensions();
+  const nav = useNavigation();
+  const [error, setError] = useState<string | null>(null);
+  const [booting, setBooting] = useState(true);
+  // Quitting with agents still working is the one exit that loses real work, so it asks twice.
+  const running = useRunningThreads();
+  const [armed, setArmed] = useState(false);
+  // Here rather than on a page: we hold the mouse for the whole app, so we owe the clipboard for the
+  // whole app. The composer of whichever page is mounted draws the confirmation.
+  const copied = useCopyOnSelect();
+
+  // Where the cursor was, so coming back from a job lands on the row you left rather than row zero.
+  // A ref rather than route state: it is a hint for the next mount, not part of where you are.
+  const focus = useRef<{ project?: string; job?: string }>({});
+
+  // A failure belongs to the page that produced it. Leaving that page clears it, so an error can
+  // never outlive the thing it was about.
+  useEffect(() => setError(null), [nav.route]);
+
+  // Armed is a moment, not a mode. Left standing it would turn a later, innocent ctrl+c into an
+  // unwarned quit — the exact thing the warning exists to prevent.
+  useEffect(() => {
+    if (!armed) return;
+    const timer = setTimeout(() => setArmed(false), 3000);
+    return () => clearTimeout(timer);
+  }, [armed]);
+
+  // `atlas` inside a folder should land in that folder, not on a picker.
+  useEffect(() => {
+    const path = props.initialProjectPath;
+    if (!path) {
+      setBooting(false);
+      return;
+    }
+    void workspaceService
+      .openFolder(path)
+      .then(async (project) => {
+        const projects = await workspaceService.listProjects();
+        const row = projects.find((r) => r.id === project.id);
+        // Pushed, not replaced: esc from there still reaches the project list.
+        if (row) {
+          focus.current.project = row.id;
+          nav.push({ name: "jobs", project: row });
+        }
+      })
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setBooting(false));
+    // `nav` is deliberately not a dependency: its identity changes on every push, and re-running
+    // this would re-open the folder and push a second jobs page onto the stack.
+  }, [props.initialProjectPath, workspaceService]);
+
+  const openJob = useCallback(
+    async (project: ProjectRow, job: JobRow) => {
+      try {
+        // Nothing runs without auth — send the user to add an account rather than failing a turn.
+        if (!(await workspaceService.hasAccount())) {
+          nav.push({ name: "accounts" });
+          return;
+        }
+        focus.current.job = job.id;
+        const open = await conversationService.openJob(job, project.path);
+        nav.push({ name: "conversation", project, open });
+      } catch (e) {
+        setError((e as Error).message);
+      }
+    },
+    [conversationService, nav, workspaceService],
+  );
+
+  // The soft lock says "another Atlas has this thread", so holding it while the user browses jobs
+  // would wedge a second instance into read-only for no reason. A turn still in flight keeps it.
+  const leaveConversation = useCallback(() => {
+    void conversationService.leave().finally(() => nav.pop());
+  }, [conversationService, nav]);
+
+  useInput((input, key) => {
+    if (key.ctrl && input === "c") {
+      // Turns are subprocesses of this process, so quitting kills them. Say so once before doing it.
+      if (running.length > 0 && !armed) {
+        setArmed(true);
+        return;
+      }
+      void conversationService.release().finally(() => renderer.destroy());
+      return;
+    }
+
+    // Any other key means you are still working — the warning has served its purpose.
+    if (armed) setArmed(false);
+
+    // Toggle rather than push: pressing it twice returns you to where you were instead of stacking
+    // a second accounts page you then have to escape out of twice.
+    if (key.ctrl && input === "a") nav.toggle({ name: "accounts" });
+  });
+
+  // Even the boot frame claims the whole buffer, so the first paint is the app rather than a line
+  // of text that the real layout then shoves around.
+  if (booting) {
+    return (
+      <box flexDirection="column" width={columns} height={rows}>
+        <text fg={theme.dim}>starting atlas…</text>
+      </box>
+    );
+  }
+
+  const route = nav.route;
+
+  return (
+    <CopyNoticeProvider notice={copied}>
+      <box flexDirection="column" width={columns} height={rows}>
+        {/* flexShrink={0}: a page full of transcript would otherwise shrink this to nothing. */}
+        {error ? (
+          <box flexDirection="row" flexShrink={0}>
+            <text fg={theme.error}>{error}</text>
+          </box>
+        ) : null}
+
+        {armed ? (
+          <box flexDirection="row" flexShrink={0}>
+            <text fg={theme.warn}>
+              {glyph.warning} {agentsWorking(running.length)} · ctrl+c again to
+              quit
+            </text>
+          </box>
+        ) : null}
+
+        {route.name === "projects" ? (
+          <ProjectsPage
+            focusId={focus.current.project}
+            onOpen={(project) => {
+              focus.current.project = project.id;
+              nav.push({ name: "jobs", project });
+            }}
+          />
+        ) : null}
+
+        {route.name === "jobs" ? (
+          <JobsPage
+            project={route.project}
+            focusId={focus.current.job}
+            onOpen={(job) => void openJob(route.project, job)}
+            onBack={nav.pop}
+          />
+        ) : null}
+
+        {route.name === "conversation" ? (
+          <ConversationPage open={route.open} onBack={leaveConversation} />
+        ) : null}
+
+        {route.name === "accounts" ? <AccountsPage onBack={nav.pop} /> : null}
+      </box>
+    </CopyNoticeProvider>
+  );
+}
+
+function agentsWorking(count: number): string {
+  return count === 1
+    ? "1 agent still working"
+    : `${count} agents still working`;
+}

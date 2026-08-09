@@ -1,0 +1,34 @@
+enum EThreadStatus {
+  active
+  closed
+}
+
+enum EThreadRole {
+  intake
+  research
+  spike
+  designer
+  planner
+  plan_review
+  builder
+  master_review
+  post_build
+  ci
+}
+
+model Thread {
+  id              String          @id @default(uuid())
+  groupId         String
+  group           ThreadGroup     @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  role            EThreadRole
+  status          EThreadStatus   @default(active)
+  activeSessionId String?
+
+  sessions        EngineSession[]
+  messages        ThreadMessage[]
+  turns           Turn[]
+  createdAt       DateTime        @default(now())
+  closedAt        DateTime?
+
+  @@index([groupId])
+}

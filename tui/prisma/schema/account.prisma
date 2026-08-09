@@ -1,0 +1,36 @@
+enum EEngine {
+  claude
+  codex
+}
+
+enum EAccountStatus {
+  active
+  limited
+  expired
+  revoked
+}
+
+model Account {
+  id               String         @id @default(uuid())
+  engine           EEngine
+  label            String
+  accountEmail     String?
+  subscriptionType String?
+  status           EAccountStatus @default(active)
+
+  /// AES-256-GCM ciphertext; key at ~/.atlas/key (0600).
+  materialEnc      String
+  expiresAt        DateTime?
+  lastRefreshedAt  DateTime?
+
+  fiveHourUtil     Float?
+  fiveHourResetsAt DateTime?
+  sevenDayUtil     Float?
+  sevenDayResetsAt DateTime?
+  usageFetchedAt   DateTime?
+
+  sessions         EngineSession[]
+  createdAt        DateTime       @default(now())
+
+  @@unique([engine, accountEmail])
+}

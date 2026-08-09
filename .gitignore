@@ -48,3 +48,5 @@ ds-bundle/
 
 # design-sync staged scripts + isolated deps (never commit)
 .ds-sync/
+
+.scratch/

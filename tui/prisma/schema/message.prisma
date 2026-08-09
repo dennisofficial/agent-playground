@@ -1,0 +1,24 @@
+enum EMessageType {
+  user
+  assistant
+  thinking
+  tool_call
+  tool_result
+  error
+}
+
+model ThreadMessage {
+  id        String        @id @default(uuid())
+  threadId  String
+  thread    Thread        @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  sessionId String
+  session   EngineSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  ordinal   Int
+  type      EMessageType
+  /// Normalised shape from domain/message.ts, never raw SDK output.
+  payload   Json
+  createdAt DateTime      @default(now())
+
+  @@unique([threadId, ordinal])
+  @@index([sessionId])
+}

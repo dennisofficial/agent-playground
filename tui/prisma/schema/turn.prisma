@@ -1,0 +1,24 @@
+model Turn {
+  id               String        @id @default(uuid())
+  threadId         String
+  thread           Thread        @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  sessionId        String
+  session          EngineSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  /// Wall clock, not the SDK's `duration_ms` — includes credential setup and spawn.
+  durationMs       Int
+  /// Raw input only; cache reads/writes are not folded in.
+  inputTokens      Int           @default(0)
+  outputTokens     Int           @default(0)
+  cacheReadTokens  Int           @default(0)
+  cacheWriteTokens Int           @default(0)
+  costUsd          Float?
+  model            String?
+  ok               Boolean       @default(true)
+
+  startedAt        DateTime
+  endedAt          DateTime      @default(now())
+
+  @@index([threadId, endedAt])
+  @@index([sessionId])
+}

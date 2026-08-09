@@ -1,0 +1,49 @@
+{
+  "name": "@dltech/atlas-harness",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local Atlas \u2014 a terminal harness over the Claude and Codex agent SDKs.",
+  "type": "module",
+  "bin": {
+    "atlas": "./bin/atlas"
+  },
+  "scripts": {
+    "dev": "bun src/main.tsx",
+    "start": "bun src/main.tsx",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev && bun scripts/embed-migrations.ts",
+    "db:migrate:reset": "prisma migrate reset",
+    "db:studio": "prisma studio",
+    "build": "bun scripts/embed-migrations.ts && bun build --compile --external @nestjs/microservices --external @nestjs/websockets src/main.tsx --outfile bin/atlas",
+    "migrations:embed": "bun scripts/embed-migrations.ts",
+    "grammars:update": "bun scripts/update-grammars.ts",
+    "grammars:build-sql": "bun scripts/build-sql-grammar.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.220",
+    "@nestjs/common": "^11.1.6",
+    "@nestjs/core": "^11.1.6",
+    "@opentui/core": "0.4.5",
+    "@opentui/react": "0.4.5",
+    "@prisma/client": "7.9.1",
+    "@workspace/codex-sdk": "workspace:*",
+    "chalk": "^6.0.0",
+    "cli-highlight": "^2.1.11",
+    "marked": "^18.0.7",
+    "prisma-adapter-bun-sqlite": "^0.8.0",
+    "react": "19.2.7",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^25.6.0",
+    "@types/react": "^19",
+    "bun": "^1.3.14",
+    "prisma": "7.9.1",
+    "typescript": "^6.0.3"
+  }
+}

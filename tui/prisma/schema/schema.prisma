@@ -1,0 +1,12 @@
+// SQLite (Prisma 7.9.1): `enum` and `Json` work, `String[]` is rejected, enum values need one
+// per line, and enums compile to bare TEXT with no CHECK constraint.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "sqlite"
+}

@@ -2,6 +2,7 @@ packages:
   - packages/**
   - backend
   - shared
+  - tui
   - web
 # Everything that used to live under submodules/ is now published to npm under @dltech/*.
 # pnpm 11 also uses this file as the workspace settings store:
@@ -31,6 +32,9 @@ allowBuilds:
   sharp: true
   ssh2: false
   unrs-resolver: true
+  # The TUI runs on Bun: OpenTUI's renderer is a Zig native library reachable only through Bun's
+  # FFI. Its postinstall fetches the runtime binary.
+  bun: true
 overrides:
   '@langchain/core': 1.1.48
   typescript: 6.0.3
