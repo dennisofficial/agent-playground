@@ -101,7 +101,7 @@ describe('FencedBlock', () => {
       const scrollTop = outer()?.scrollTop;
 
       // Zed reports no horizontal wheel and drops shift+scroll, so alt is the only spelling that
-      // survives there — measured, see `scripts/mouse-probe.ts`. Up walks forward through the block.
+      // survives there — measured against Zed's raw SGR reports. Up walks forward through the block.
       await setup.mockMouse.scroll(10, codeRow, 'up', { modifiers: { alt: true } });
       await setup.flush();
 
