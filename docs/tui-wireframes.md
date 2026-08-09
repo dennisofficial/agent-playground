@@ -1,18 +1,16 @@
 # Local Atlas TUI — wireframes
 
 Scope: a **fully local** Atlas. No host, no Postgres, no sandboxes, no web. State in a local
-SQLite file; sessions run through the Agent SDK in-process against the real cwd.
+SQLite file; agents run against the real cwd — each turn a subprocess the SDK spawns (Claude
+Code for Claude, `codex app-server` for Codex), so turns run in parallel across threads.
 
 Structure is carried from day one — **Project → Job → ThreadGroup → Thread → EngineSession →
-Message** — but v1 runs one of each. The thing being proven is the **Agent SDK abstraction
-across multiple SDKs**, and that seam lives on `EngineSession`.
+Message** — but v1 runs one of each. The eventual aim is one harness over **multiple agent
+SDKs**; `EngineSession` is where an SDK session is recorded, and `normalise()` is the seam
+that makes two SDKs render identically. See `docs/tui-architecture.md`.
 
-Transition logic is deliberately absent — it is being solved separately. Groups exist as a
-column; nothing advances them.
-
-> Note: `docs/orchestration-shapes.md` lists "local TUI harness" as **Out of scope**. That
-> call was about the TUI as a second delivery surface for *orchestration*. This is a local
-> harness for proving rendering, streaming, steering, and the engine seam.
+Transition logic is deliberately absent — it is being solved separately, in
+`.scratch/session-orchestration/`. Groups exist as a column; nothing advances them.
 
 ## v1 cut line
 
@@ -73,9 +71,6 @@ consecutive messages changing `engineSessionId`. Nothing needs to stitch anythin
 It also means a thread is genuinely "one role, one purpose", which is what `EThreadRole` was
 always trying to say. `builder · leg 2` becomes `builder`, session 2.
 
-> This diverges from `orchestration-shapes.md`, where legs are threads. The local model looks
-> better and is probably worth back-porting, but that is the other chat's call.
-
 ---
 
 ## No permissions
@@ -111,8 +106,10 @@ Four rules that matter more than the glyphs:
 
 1. **No timestamps, no speaker rules.** Density comes from removing chrome. A transcript
    should read like a log, not a chat app.
-2. **Finished output goes to real terminal scrollback** via Ink's `<Static>`; only the live
-   tail re-renders. Native scroll and copy survive, so no alt-screen.
+2. **Atlas runs in the alternate screen buffer and owns its own scrolling.** *(Revised
+   2026-08-02 — this originally said the opposite; see "Resolved: scrollback ownership".)*
+   Launching `atlas` should feel like loading an application, not running a command: the
+   shell disappears, the app fills the terminal, and quitting restores the terminal exactly.
 3. **Overlays open upward.** Command and file pickers render *above* the composer, never
    below it. The composer stays put; the list grows away from it. Anything that moves the
    composer costs the eye a jump on every keystroke.
@@ -133,7 +130,9 @@ throughout). What transfers is the model shape and the Prisma client API.
 - Enum values need **separate lines**; the compact `{ a b }` form is a parse error, reported
   on the *following* enum.
 - Enums render as bare `TEXT`, **no CHECK constraint** — enforcement is Prisma-side.
-- `prisma.config.ts` needs **both** `datasource.url` and `adapter`.
+- `prisma.config.ts` needs **`datasource.url`**. It takes **no `adapter`** — `PrismaConfig` in
+  7.9.1 has no such field, so an `adapter` key is ignored at runtime and a `tsc` error. The
+  runtime adapter is constructed in `PrismaService` instead.
 - **Migrations, not `db push`** — `prisma migrate dev` generates the SQL. Greenfield means
   `migrate reset` is always available, so no schema change ever needs to preserve data.
 
@@ -319,14 +318,14 @@ model ThreadMessage {
 ```ts
 // prisma.config.ts — both fields required
 import { defineConfig } from 'prisma/config'
-import { PrismaBetterSQLite3 } from '@prisma/adapter-better-sqlite3'
+import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3'
 
 const url = `file:${process.env.HOME}/.atlas/atlas.db`
 
 export default defineConfig({
   schema: 'schema.prisma',
   datasource: { url },
-  adapter: async () => new PrismaBetterSQLite3({ url }),
+  adapter: async () => new PrismaBetterSqlite3({ url }),
 })
 ```
 
@@ -426,22 +425,63 @@ to inspect Atlas from outside, not to work inside a job.
 - Target terminal **100×30**, must not break at **80×24**. Wireframes drawn at 72 cols.
 - Full-screen pages, one surface at a time.
 - DB at `~/.atlas/atlas.db`, WAL mode.
-- Finished blocks committed to scrollback; only the live tail re-renders.
+- Alternate screen buffer; the transcript scrolls inside a viewport Atlas drives.
 
 ---
 
 ## Page map
 
 ```
-  atlas ──▶ Projects ──▶ Jobs ──▶ Conversation ──┬──▶ Accounts     (ctrl+a)
-                                      ▲          ├──▶ Context      (ctrl+o)
-                                      │          ├──▶ Thread list  (ctrl+h)
+  atlas ──▶ Projects ──▶ Jobs ──▶ Conversation ──┬──▶ Context      (ctrl+o)
+                                      ▲          ├──▶ Thread list  (ctrl+h)
                                  active thread   ├──▶ Step detail  (⏎ on tool)
-                                                 ├──▶ Transcript   (ctrl+r)
-                                                 └──▶ Help         (?)
+                                                 └──▶ Transcript   (ctrl+r)
+
+  from ANY page ──┬──▶ Accounts  (ctrl+a — press again to come back)
+                  └──▶ Help      (?)
 ```
 
 Fast path is three keystrokes: project, job, live thread.
+
+### Navigation is a stack
+
+Pages are a **stack**, and `esc` is `pop()` — the same key, meaning the same thing, everywhere.
+
+The earlier shape was one current page plus a `back` field on whichever page could be reached
+from more than one place. That worked while `accounts` was the only such page and stops working
+the moment there are several: `help`, `context`, `threads` and `doctor` are all reachable from
+anywhere, and each would need its own return address, set correctly at every call site, or it
+sends you somewhere you were never coming from.
+
+Two consequences worth stating, because they are what make the stack feel like navigation rather
+than bookkeeping:
+
+- **`ctrl+a` toggles.** Pressing it on the Accounts page pops back to where you were, instead of
+  stacking a second Accounts page you then escape out of twice.
+- **The cursor is remembered.** Coming back from a job lands on that job's row, not on row zero.
+  It is a hint for the next mount, not part of where you are, so it never has to be unwound.
+
+**On the Conversation page `←` leaves and `esc` does not.** They are deliberately different keys.
+`esc` means *stop what you are doing* there — it interrupts the turn — and an earlier draft of
+this section had it also fall through to "leave" on an idle empty composer. That is wrong for a
+harness meant to run agents you walk away from: the key you reach for when you want to step out
+of a working thread would be the one that kills it. So:
+
+- **`←` on an empty composer leaves, and never touches the turn.** The agent keeps working.
+- **`esc` interrupts, clears the draft, and never navigates.**
+- `ctrl+h` still leaves directly, draft or no draft.
+
+`←` reads as "out" and `→` reads as "in" for the same reason a column browser trains them: on a
+list there is nothing else for either to mean, and on the conversation both are unreachable while
+you are mid-word, because the composer claims them whenever there is a caret to move. Having the
+pair is what makes the hierarchy navigable without a single chord — `→ → →` walks project, job,
+live thread, and `←` walks back out.
+
+**Leaving a running thread is the point, not an edge case.** Turns run in parallel — one per thread,
+many threads at once — so `←` out of a working conversation, open another job, and start a second
+agent is the intended flow. The jobs list spins for each one. `ctrl+c` names how many are still
+working and quits on the second press, because they are subprocesses of the TUI and quitting kills
+them.
 
 ---
 
@@ -470,7 +510,7 @@ At 80 cols the project segment drops, then the job title truncates.
 ╭──────────────────────────────────────────────────────────────────────╮
 │ > ▌                                                                  │
 ╰──────────────────────────────────────────────────────────────────────╯
-  ? for shortcuts               dennis@…  ctx 12%  5h 34%  wk 61%
+  ? for shortcuts                ctx ▰▱▱▱▱  12%  │  5h ▰▰▱▱▱  34%  wk ▰▰▰▱▱  61%
 ```
 
 The line beneath advertises what is legal on the left, and three meters on the right:
@@ -481,29 +521,51 @@ The line beneath advertises what is legal on the left, and three meters on the r
 | `5h` | the rolling 5-hour subscription window | 70% | 90% |
 | `wk` | the 7-day window | 70% | 95% |
 
-Same two windows the web composer shows. Past the red threshold the window earns its reset
-time, because at that point "when does this clear" is the only question worth answering:
+The meters are **grouped, not listed**. `ctx` is this session's own occupancy; `5h` and `wk`
+are the account's subscription windows, shared by every session running on it. They answer
+different questions, so a divider separates them rather than letting all three read as one
+undifferentiated strip of `xx NN%`.
+
+Each meter is a **gauge first and a number second** — a bar is understood before it is read,
+which is what lets the eye skip the footer entirely when nothing is wrong. Nothing down here
+carries colour until a window crosses amber, so **any** colour in the footer means something
+wants you.
+
+Past the red threshold the window earns its reset time, because at that point "when does this
+clear" is the only question worth answering:
 
 ```
-  ? for shortcuts        dennis@…  ctx 12%  5h 91% · 2h14m  wk 61%
+  ? for shortcuts                ctx ▰▱▱▱▱  12%  │  5h ▰▰▰▰▰  91% 2h14m  wk ▰▰▰▱▱  61%
 ```
 
-**Unknown is a real state, not zero.** Usage is harvested from `rate_limit_event` frames on
-the turn stream, so a freshly opened TUI that has not run a turn yet genuinely does not know:
+**Unknown is a real state, not zero.** `5h`/`wk` are polled from Claude's usage API and `ctx`
+is read off the turn stream, so a freshly opened TUI that has not run a turn yet genuinely
+does not know — and it draws an empty gauge rather than a zeroed one, because "barely started"
+and "no idea" must not be the same picture:
 
 ```
-  ? for shortcuts                          ctx  0%   5h —     wk —
+  ? for shortcuts                ctx ▱▱▱▱▱    —  │  5h ▱▱▱▱▱    —  wk ▱▱▱▱▱    —
 ```
 
 Never show a stale number as if it were current — the web makes the same call (`ok:false` →
-"unknown"). At 80 cols the shortcuts hint drops before any meter does.
+"unknown"). Numbers are padded to the width of `100%` so the right-aligned strip never jitters
+sideways as the values change.
+
+The line **measures itself** rather than trusting a column count: two red windows add twelve
+columns of countdown, which at 80 cols is the difference between "the hint fits beside it" and
+"the line wraps". It sheds the shortcuts hint first (what you can press is guessable, how close
+you are to a wall is not), then the gauges, and never a number:
+
+```
+  (52 cols, both windows red)   ctx  92%  │  5h 100% 2h14m  wk  97% 2h14m
+```
 
 The account chip appears **only when more than one account exists** — with a single login it
 is noise, and the meters already describe the only account there is. When every account is
 walled it replaces itself with the thing you actually want to know:
 
 ```
-  all accounts limited · resumes 21:57            ctx 12%  5h 100%  wk 61%
+  all accounts limited · resumes 21:57   ctx ▰▱▱▱▱  12%  │  5h ▰▰▰▰▰ 100% 2h14m  wk ▰▰▰▱▱  61%
 ```
 
 ---
@@ -519,7 +581,7 @@ walled it replaces itself with the thing you actually want to know:
 
     + open a folder…
 
-  ↑↓ select · ⏎ open · / filter · ctrl+c quit
+  ↑↓ select · →/⏎ open · / filter · n add · x remove · ? keys · ctrl+c quit
 ```
 
 **Empty state** — first run:
@@ -540,6 +602,28 @@ decision rather than a mystery:
     old-thing           ~/Developer/old-thing      ⚠ path missing
 ```
 
+**Filter (`/`)** — the composer *is* the query, so there is no second copy of the text to drift
+out of sync. Arrows still drive the list while filtering, which makes "type three letters, ⏎"
+one gesture rather than a mode change with a keystroke in the middle. The header counts what
+survived; `esc` clears the filter, and clearing it is the only way to leave it:
+
+```
+  atlas                                                                  2/7
+
+  ❯ atlas               ~/Developer/atlas          2 jobs    20:31
+    mls-studio          ~/Developer/mls-studio     —         Jul 28
+```
+
+**Remove (`x`)** — a project row is a bookkeeping entry, so removing it is a bookkeeping change.
+Its jobs and their transcripts go with it; **the folder on disk is never touched**, and the
+confirm says so, because "remove" next to a path is otherwise a genuinely frightening word:
+
+```
+  ⚠ remove “pgbase” from atlas?
+    1 job and their transcripts go with it · the folder on disk is untouched
+  y remove · n cancel
+```
+
 ---
 
 ## Page 2 — Jobs
@@ -552,10 +636,35 @@ decision rather than a mystery:
 
     + new job
 
-  ↑↓ select · ⏎ open active thread · ctrl+h threads · esc back
+  ↑↓ select · ⏎ open · / filter · n new · x delete · ? keys · esc back
 ```
 
 `⏺` is accent for active, dim for shipped. Enter goes to `activeThreadId`, never a picker.
+
+**A job with an agent working in it** replaces the dot with a spinner and says so, because threads
+run in parallel and `←` leaves one running on purpose. Without this, a job you walked away from is
+indistinguishable from one you never started:
+
+```
+  ❯ ⠹ fix steering             working…            claude     20:31
+    ⏺ health endpoint          shipped             claude     Tue
+```
+
+**Delete (`x`)** — unlike removing a project this is real destruction: the transcript, every
+thread and session under the job, and the job's `/context` folder. There is no archive state and
+no undo, so the confirm **quotes what it is about to burn** rather than asking "are you sure?",
+and `y` is the only key that does it — anything else cancels, which makes the safe answer the one
+you get by pressing anything at all:
+
+```
+  ⚠ delete “fix steering”?
+    24 messages · every thread, session and the job’s /context folder go with it
+  y delete · n cancel
+```
+
+A job whose turn is still running refuses to be deleted — the turn holds a thread and session in
+flight and would write rows against a row that no longer exists. The page says so; interrupt
+first.
 
 **New job** — title only. Engine is not an input; it follows role:
 
@@ -615,7 +724,7 @@ Failure is red and keeps its result:
 ╭──────────────────────────────────────────────────────────────────────╮
 │ > ▌                                                                  │
 ╰──────────────────────────────────────────────────────────────────────╯
-  ? for shortcuts                          ctx  0%   5h —     wk —
+  ? for shortcuts                ctx ▱▱▱▱▱    —  │  5h ▱▱▱▱▱    —  wk ▱▱▱▱▱    —
 ```
 
 ### State B — streaming text
@@ -630,7 +739,7 @@ Failure is red and keeps its result:
 ╭──────────────────────────────────────────────────────────────────────╮
 │ > ▌                                                                  │
 ╰──────────────────────────────────────────────────────────────────────╯
-  esc interrupt · type to queue a steer      ctx 12%  5h 34%  wk 61%
+  esc interrupt · type to queue a steer   ctx ▰▱▱▱▱  12%  │  5h ▰▰▱▱▱  34%  wk ▰▰▰▱▱  61%
 ```
 
 ### State C — thinking
@@ -680,7 +789,7 @@ never interrupts. Queued messages render **under the working line**, where the e
 ╭──────────────────────────────────────────────────────────────────────╮
 │ > ▌                                                                  │
 ╰──────────────────────────────────────────────────────────────────────╯
-  ctrl+u clear queue · esc interrupt         ctx 12%  5h 34%  wk 61%
+  ctrl+u clear queue · esc interrupt      ctx ▰▱▱▱▱  12%  │  5h ▰▰▱▱▱  34%  wk ▰▰▰▱▱  61%
 ```
 
 Several stack in delivery order:
@@ -1065,7 +1174,7 @@ Degraded, which is the state that has to read clearly:
 ```
   engines
     ⚠ claude    sdk 0.3.204                    0.3.220 available
-      ⎿  npm i -g @workspace/tui@latest
+      ⎿  npm i -g @dltech/atlas-harness@latest
     ✗ codex     not found on PATH
       ⎿  codex accounts are unusable until it's installed
 ```
@@ -1135,17 +1244,125 @@ source file — and mentioning a spec is how a builder is pointed at the plan.
 
 ## Keymap
 
+**Everywhere** — what these keys mean regardless of which page is up.
+
+Only `ctrl+a` and `ctrl+c` are *implemented* globally, in `App`; the rest are page bindings that
+agree with each other. That split is forced rather than stylistic: every `useKeyboard` listener
+fires for every key (OpenTUI's key handler is a plain emitter, with no propagation to stop), so a
+binding hoisted to `App` must be one no page also claims. `esc` could never be — it interrupts on
+the conversation and pops on a list — and `←` and `?` have to defer to a composer that has a use
+for them.
+
+| Key | Does |
+|---|---|
+| `←` | back one page — on an empty composer, where one exists |
+| `→` | descend, on a list — the mirror of `←` |
+| `esc` | back one page (**not** on the conversation — see below) |
+| `ctrl+a` | accounts — press again to come back |
+| `?` | shortcuts (on an empty composer, where one exists) |
+| `ctrl+c` | quit — asks twice while any agent is still working |
+
+**Lists** — projects, jobs, accounts. One vocabulary across all three:
+
+| Key | Does |
+|---|---|
+| `↑` `↓` | move the selection |
+| `→` `⏎` | open — descend into the selected row |
+| `/` | filter — type to narrow, arrows still select, `⏎` opens the match |
+| `n` | new (a job, a folder, an account) |
+| `x` | delete the selected row — confirms first, `y` is the only key that does it |
+| `←` `esc` | back one page (clears the filter first, if one is open) |
+
+**Conversation:**
+
 | Key | Idle | Busy |
 |---|---|---|
-| `⏎` | send | newline |
+| `⏎` | send | send (queues a steer) |
+| `shift+⏎` | newline | newline |
+| `opt+⏎`, `ctrl+⏎`, `ctrl+j` | newline (fallbacks — see below) | same |
+| `←` | back (empty composer only) — **never interrupts** | back, leaving the turn running |
 | `esc` | clear composer | interrupt (steer-now if composer non-empty) |
 | `ctrl+u` | clear composer | clear queue |
-| `ctrl+a` | accounts | accounts |
 | `ctrl+o` | context | context |
-| `ctrl+h` | thread list | thread list |
+| `ctrl+h` | back to the job list | back to the job list |
 | `ctrl+r` | transcript / expand | transcript / expand |
 | `/` `@` | open overlay (upward) | open overlay (upward) |
-| `ctrl+c` | quit (twice) | interrupt, then quit |
+| `?` | shortcuts (empty composer only) | same |
+
+### Editing the draft
+
+The composer is a real multi-line editor, not an append-only field.
+
+| Key | Does |
+|---|---|
+| `←` `→` | by character |
+| `opt+←` `opt+→` | by word (boundary characters, then the word) |
+| `ctrl+←` `ctrl+→` | by word — what some terminals send instead |
+| `Home` `End` | start / end of the LINE |
+| `cmd+←` `cmd+→` | start / end of the line *(kitty-protocol terminals only — see below)* |
+| `↑` `↓` | previous / next line, keeping the column |
+| `cmd+↑` `cmd+↓`, `ctrl+Home` `ctrl+End` | start / end of the whole draft |
+| `⌫` | one character |
+| `opt+⌫`, `ctrl+w` | one word |
+| `ctrl+k` | to end of line (joins the next line up when already there) |
+
+Paste arrives as one event, so a multi-line paste lands whole.
+
+### Scrolling, and how it shares keys with editing
+
+| Key | Does |
+|---|---|
+| `PgUp` `PgDn` | scroll a page (2 lines of overlap) — **always**, even mid-draft |
+| `↑` `↓` | scroll a line — only when the composer has no use for them |
+| `Home` `End` | jump to top / back to the tail — likewise |
+
+**One rule: the composer gets first refusal, and anything it cannot use falls through to the
+transcript.** An empty composer has nowhere to put a caret, so every navigation key scrolls; a
+caret already on the first line cannot go up, so `↑` scrolls. `PgUp`/`PgDn` never participate,
+which guarantees the transcript stays reachable however long the draft gets.
+
+`↑`/`↓` are not history recall: the alternate buffer took the terminal's own scroll away and
+these had to replace it. Most terminals translate the mouse wheel into arrow keys there, so the
+wheel scrolls for free. While an overlay is open the arrows drive its selection instead.
+
+Scrolled away from the tail is a state the user must not be able to forget they are in, or a
+streaming turn looks frozen — hence the `↓ N more lines · end to jump to the latest` line
+above the composer.
+
+### Why `shift+⏎` takes three bindings
+
+`shift+⏎` is the newline everyone expects and the key terminals agree least about. Measured
+2026-08-02:
+
+| Terminal | Sends | Ink reports |
+|---|---|---|
+| Ghostty / kitty / WezTerm | `ESC[13;2u` | `return` + `shift` ✓ |
+| iTerm2 *(default)* | `ESC[27;2;13~` | **nothing** — no name, no modifier flags |
+| Terminal.app | `CR` | `return`, identical to a plain Return |
+
+All three are handled. The iTerm2 case was a live bug: Ink strips the `ESC` from sequences it
+cannot name and hands the rest over as ordinary input, so an unclaimed `shift+⏎` **typed
+`[27;2;13~` into the draft**. `applyKey` now refuses to insert anything matching the CSI
+grammar, so any future unbound sequence is dropped rather than typed.
+
+**Terminal.app cannot express it at all** — it sends a bare `CR`, so there is nothing to bind.
+`opt+⏎` works there, and `ctrl+j` works in every terminal ever made because it *is* the
+line-feed character. Both are bound.
+
+### Why `cmd` is the awkward one
+
+**Measured 2026-08-02.** Terminal.app and iTerm2 keep `cmd` for their own shortcuts and never
+forward it; iTerm2 can be made to send `ESC[1;9D`, but that decodes to the same `meta` bit as
+`opt`, so it is not even distinguishable. `cmd` becomes a modifier of its own ONLY under the
+kitty keyboard protocol, which reports it as `super` — Ghostty, kitty and WezTerm. Atlas
+enables that protocol in `auto` mode, so it works where it can and silently does nothing where
+it cannot.
+
+`Home`/`End` are bound to the same commands for exactly this reason, and are the binding to
+document for anyone on Terminal.app or iTerm2.
+
+`opt` is fine everywhere: it arrives as `ESC[1;3D` on modern terminals and as `ESC b` / `ESC f`
+under Terminal.app's "Use Option as Meta", and both are bound.
 
 No `shift+tab` — permission modes do not exist.
 
@@ -1177,9 +1394,26 @@ engine switching.
   or does a `/plan` command exist to ask for one?
 - **Context pressure signal.** What actually triggers rotation, and is it forced or offered.
 - **Tool output cap** — how many lines before `… +N`; worth measuring rather than guessing.
-- **Resize.** `<Static>` output is committed and will not reflow. Accept ragged history, or
-  re-render from the model?
+- **Resize.** Everything re-renders from the model now, so history reflows correctly — but the
+  scroll offset is in *lines*, and a reflow changes how many lines the same text occupies.
+  The anchor drifts on resize. Worth fixing if it proves annoying in use.
 
-**Resolved:** scrollback ownership — Ink's `<Static>` commits finished blocks to the real
-terminal buffer while the live region re-renders below, so native scroll and copy survive and
-alt-screen is off the table.
+**Resolved (REVERSED 2026-08-02):** scrollback ownership.
+
+The original call was Ink's `<Static>`: commit finished blocks to the real terminal buffer,
+re-render only the live tail below, keep native scroll and copy, and rule out alt-screen.
+
+Dennis overruled it — starting `atlas` must feel like *deliberately loading an app*, with the
+previous shell contents gone. That forces the alternate buffer, and the two are strictly
+incompatible: Ink prints `<Static>` output **above** the live frame, so once the frame is
+padded to the full terminal height every committed block scrolls the terminal by its own
+height and lands off-screen above the viewport, never to be seen. Full-height and `<Static>`
+cannot both hold.
+
+So `<Static>` is gone. The transcript renders inside a clipped, bottom-anchored viewport that
+Atlas scrolls itself (`↑↓`, `PgUp`/`PgDn`, `Home`/`End`, and the wheel — most terminals
+translate wheel events into arrow keys in the alternate buffer).
+
+**What this costs, accepted knowingly:** no native terminal scroll, no mouse-select-to-copy
+across the transcript, and the transcript vanishes from the terminal on quit. The raw tape at
+`~/.atlas/threads/<id>/raw.jsonl` and the DB remain the durable record.

@@ -30,10 +30,14 @@ The TUI's design is written down and is the source of truth over any inference f
 
 - `docs/tui-wireframes.md` — every page and state, the message grammar, the v1 cut line
 - `docs/tui-architecture.md` — layering, dependency rules, startup/migration, accounts/rotation
-- `docs/tui-handoff.md` — why decisions were made, what was rejected, what is still unverified
+- `docs/tui-decisions.md` — why decisions were made and what was rejected
 
-These predate the OpenTUI/Bun migration in places (they say Ink, Node, `better-sqlite3`). Where a
-doc and the code disagree about _mechanism_, the code wins; where they disagree about _intent_, ask.
+The wireframes and architecture docs predate the OpenTUI/Bun migration in places (they say Ink,
+Node, `better-sqlite3`). Where a doc and the code disagree about _mechanism_, the code wins; where
+they disagree about _intent_, ask.
+
+Orchestration design (phases, transitions, the shared-folder contract) lives in the gitignored
+`.scratch/session-orchestration/`, not in `docs/`.
 
 ## Code style
 

@@ -11,8 +11,8 @@ needs, it declares.
 
 That includes the phase and role vocabulary. Restating nine enum members is cheaper than
 adopting `shared`'s, which is stale anyway — `EThreadGroupKind` there has no `intake` and no
-`design` and still carries `direct_build` / `plan_review`, the exact drift
-`orchestration-shapes.md` lists as open and the orchestration chat is rewriting now.
+`design` and still carries `direct_build` / `plan_review`. The live vocabulary is being settled
+in `.scratch/session-orchestration/`.
 
 It lives at `tui/` in this repo, added to `pnpm-workspace.yaml` alongside `backend` / `web` /
 `shared`.
@@ -38,8 +38,14 @@ interrupt. Turn handlers are `{ onEvent, onApproval }` — and with permissions 
 `onApproval` gets a blanket approve.
 
 **Runtime prerequisite:** it spawns `codex app-server` as a child process, so the `codex`
-binary must be installed and authenticated (`codexHome`). Claude runs in-process; Codex does
-not. That asymmetry is real and belongs in the engine layer, not leaking upward.
+binary must be installed and authenticated (`codexHome`).
+
+*(Corrected 2026-08-02. This paragraph used to claim "Claude runs in-process; Codex does not —
+that asymmetry is real". It is not: the installed `@anthropic-ai/claude-agent-sdk` spawns a
+Claude Code **subprocess** per `query()`, and `Options.env` is documented as replacing that
+subprocess's environment wholesale. Both engines spawn. The asymmetry that survives is narrower —
+Codex needs a binary the user installs and Atlas does not control, Claude's arrives as an npm
+dependency — and it still belongs in the engine layer.)*
 
 The distinction that matters: `codex-sdk` is **in** because it is a vendor client;
 `agent-engine` is **out** because it is the abstraction over vendors, and re-deriving that is
@@ -87,10 +93,9 @@ ever sees an SDK type. Codex gets its own `normalise()`, both feed the same doma
 the interface falls out of the two rather than being invented before either.
 
 With `codex-sdk` already in hand, that second implementation is close — v1.1, not someday. The
-two clients are shaped differently enough to make the point: Claude runs in-process with a
-streaming input generator and `interrupt()` on the query handle; Codex spawns a child process
-and takes explicit `(threadId, turnId)` on `steer` and `interrupt`. An interface guessed from
-only the first would have missed that.
+two clients are shaped differently enough to make the point: Claude takes a streaming input
+generator and hangs `interrupt()` off the query handle; Codex takes explicit `(threadId, turnId)`
+on `steer` and `interrupt`. An interface guessed from only the first would have missed that.
 
 Two lessons worth taking from `agent-engine` without importing it:
 
@@ -109,8 +114,9 @@ One rule: **arrows point inward. `ui` depends on everything, `domain` depends on
 
 ```
   ui/          Ink components, pages, hooks         ← may import anything below
-  app/         turn runner, steer queue, services   ← orchestration; no React
+  app/         turn runner, steer queue, rotation   ← orchestration; no React
   store/       repositories over Prisma             ← no React, no engine
+  auth/        credentials, OAuth, engine homes     ← no React, no engine
   engine/      ClaudeEngine + normalise()           ← no React, no Prisma
   domain/      types, role→engine table, pure rules ← imports NOTHING
 ```
@@ -125,67 +131,108 @@ every interesting bug will live.
 
 ```
 tui/
-  package.json                  @workspace/tui — codex-sdk its only workspace dep
+  package.json                  @dltech/atlas-harness — codex-sdk its only workspace dep
   tsconfig.json
   prisma/
     schema.prisma
     migrations/                 generated, committed
   src/
-    main.tsx                    argv → boot → render <App/>
-    composition.ts              THE composition root — everything constructed here
+    main.tsx                    argv → boot Nest context → resolve → render <App/>
+    app.module.ts               the root module — imports the five feature modules
 
-    domain/                     pure. no I/O, no imports from other layers.
+    domain/                     pure functions. no I/O, no DI, no imports from other layers.
       role-engine.ts            EThreadRole → EEngine table
       message.ts                the normalised payload union
       seam.ts                   derive session seams from a message list
       truncate.ts               "… +N lines" rules
-      paths.ts                  ~/.atlas layout
+      trail.ts                  breadcrumb segments fitted to the width available
+      list-nav.ts               selection clamping + the filter predicate
+      viewport.ts               scroll geometry — offset counts up from the bottom
+      text-editor.ts            the composer buffer: text + cursor, every edit a transition
+      editor-keymap.ts          key chord → edit command (what each terminal actually sends)
+      editor.ts                 one key against the buffer + whether it was consumed
+      composer-layout.ts        wrap + caret placement + windowing
+      paths.ts                  ~/.atlas layout — the one place paths are built
+      semver.ts                 version compare for /doctor
 
     store/
-      client.ts                 PrismaClient + better-sqlite3 adapter, WAL on connect
+      store.module.ts           @Global — every layer above needs repositories
+      prisma.service.ts         PrismaClient + better-sqlite3 adapter, OnModuleDestroy
+      pragmas.ts                WAL + busy_timeout, applied on every connection
+      migrator.service.ts       startup auto-migration, BEGIN IMMEDIATE
+      account.repository.ts
       project.repository.ts
       job.repository.ts
       thread.repository.ts
       session.repository.ts
       message.repository.ts
 
+    auth/
+      auth.module.ts
+      secret-cipher.service.ts  AES-256-GCM over ~/.atlas/key (0600)
+      account-vault.service.ts  decrypt on read, encrypt on write
+      engine-home.service.ts    write active account material into the engine home
+      oauth/
+        claude-oauth.client.ts  PKCE + paste-back code
+        codex-oauth.client.ts   device code                      (v1.1)
+
     engine/
-      claude-engine.ts          concrete. calls sdk.query(). no interface.
-      codex-engine.ts           concrete. wraps CodexClient. (v1.1)
+      engine.module.ts
+      claude-engine.service.ts  concrete. calls sdk.query(). no interface.
+      codex-engine.service.ts   concrete. wraps CodexClient.     (v1.1)
+      claude-sdk.provider.ts    the SDK itself as a token — swappable in tests
       normalise/
-        claude.ts               Claude SDK event → domain payload
-        codex.ts                CodexEvent → domain payload      (v1.1)
-      raw-tape.ts               append-only JSONL per session
+        claude-normaliser.service.ts   Claude SDK event → domain payload
+        codex-normaliser.service.ts    CodexEvent → domain payload    (v1.1)
+      raw-tape.service.ts       append-only JSONL per session
+      version-check.service.ts  codex --version + daily npm check, never blocks
 
     app/
-      turn-runner.ts            run a turn: engine → events → store + sink
-      steer-queue.ts            queue, boundary delivery, interrupt
-      session-manager.ts        open / resume / rotate an EngineSession
-      context-folder.ts         per-job dir, three buckets, path jail
-      usage-store.ts            5h/weekly windows — harvested, JSON-backed
+      app-services.module.ts
+      turn-runner.service.ts    run a turn: engine → events → store + sink
+      steer-queue.service.ts    queue, boundary delivery, interrupt
+      session-manager.service.ts  open / resume / rotate an EngineSession
+      account-rotator.service.ts  pick an account, swap credential at a turn boundary
+      context-folder.service.ts   per-job dir, three buckets, path jail
+      turn-store.ts             the useSyncExternalStore-backed live-turn snapshot
 
     ui/
-      app.tsx                   which page is mounted
+      app.tsx                   which page is mounted + the two global keys
+      navigation.ts             the route stack — push / pop / replace / toggle
       theme.ts                  the one accent colour, dim, red
       pages/
         projects.tsx  jobs.tsx  conversation.tsx
+        accounts.tsx  help.tsx  doctor.tsx
         context.tsx   threads.tsx  step.tsx  transcript.tsx
       components/
+        screen.tsx                header pinned top, footer pinned bottom, body clips
+        scroll-region.tsx         the bottom-anchored transcript viewport
+        page-header.tsx           the trail every page draws; breadcrumb delegates to it
+        confirm-bar.tsx           the destructive-action prompt, in the footer
         breadcrumb.tsx  composer.tsx  hint-line.tsx
+        usage-meters.tsx          ctx / 5h / wk + account chip
         overlay-list.tsx          opens upward
         working-line.tsx          spinner + elapsed + queued items
         blocks/                   the message grammar, one file per glyph
           user-block.tsx  assistant-block.tsx
           tool-block.tsx  thinking-block.tsx  error-block.tsx
+      terminal/
+        alt-screen.ts             enter/restore the alternate buffer
       hooks/
+        use-terminal-size.ts      rows/columns, resubscribed on resize
         use-turn.ts  use-steer-queue.ts  use-key-map.ts
 ```
 
 Naming follows the backend's `<name>.<type>.ts` convention where a type exists
 (`*.repository.ts`), plain kebab otherwise. React files `.tsx`, everything else `.ts`.
 
-Per the v1 cut line in the wireframes, `pages/context.tsx`, `threads.tsx`, `step.tsx`, and
-`transcript.tsx` are deferred — listed so the shape is visible, not so they get written.
+Per the v1 cut line in the wireframes, `pages/context.tsx`, `threads.tsx`, `step.tsx`,
+`transcript.tsx` and `doctor.tsx` are deferred — listed so the shape is visible, not so they get
+written. Files marked `(v1.1)` are the Codex half.
+
+`auth/` is its own top level rather than living under `engine/`. Credentials outlive any one
+engine session and are read by `app/account-rotator.ts` as well as the engines, so filing them
+under `engine/` would invert the dependency the moment rotation exists.
 
 ---
 
@@ -197,15 +244,15 @@ it together**:
 | SDK event | Renders to | Persists to |
 |---|---|---|
 | text / thinking **deltas** | live tail (re-renders) | nothing |
-| text / thinking / tool_use / tool_result **blocks** | `<Static>` (committed) | `ThreadMessage` |
+| text / thinking / tool_use / tool_result **blocks** | transcript viewport | `ThreadMessage` |
 | session id known | breadcrumb | `EngineSession.engineSessionId` |
 | steer ack | removes a queued item | nothing |
 | usage / context breakdown | `ctx %` in the hint line | nothing |
-| rate limit | `5h` / `wk` meters | `~/.atlas/usage.json`, keyed by engine |
+| rate limit | `5h` / `wk` meters | the running `Account` row |
 | *everything* | nothing | `raw.jsonl` |
 
 Deltas are a live view of a block being built; the block is the truth. Persist the truth,
-render the view. One rule, and the Static-vs-live-tail question answers itself.
+render the view. One rule, and the tail-vs-transcript question answers itself.
 
 ---
 
@@ -252,7 +299,7 @@ model Account {
   expiresAt        DateTime?
   lastRefreshedAt  DateTime?
 
-  fiveHourUtil     Float?         // per-account usage — supersedes usage.json
+  fiveHourUtil     Float?         // per-account usage — what the footer meters read
   fiveHourResetsAt DateTime?
   sevenDayUtil     Float?
   sevenDayResetsAt DateTime?
@@ -269,9 +316,10 @@ model Account {
 reason it stores `engine`: history must stay truthful when policy changes. `ESessionEndReason`
 gains `usage_limit`.
 
-This **supersedes `~/.atlas/usage.json`.** That file existed because there was no row to hang
-usage on. Now there is one, and usage is per-account rather than per-engine — matching the
-web, where `usageSnapshot` lives on the credential row.
+Usage lives here rather than in a file: it is **per-account, not per-engine**, matching the
+web where `usageSnapshot` sits on the credential row. An earlier draft put it in
+`~/.atlas/usage.json` purely because no account row existed yet — that file is not part of the
+design.
 
 ### Rotation does not lose context
 
@@ -303,8 +351,8 @@ transcripts.** Per-account home directories fail this on both engines.
   holds `auth.json` **and** session/rollout storage. Per-account `CODEX_HOME` fragments Codex
   threads exactly the same way. Use **one shared** `~/.atlas/codex-home/`, keep account
   material at `~/.atlas/accounts/<id>/auth.json`, and write the active account's `auth.json`
-  into the shared home before starting a turn. The TUI runs one turn at a time, so there is no
-  race.
+  into the shared home before starting a turn. Turns run in parallel, so that write is serialised
+  against the spawn — see "Parallel turns" below.
 
 ### Agent homes are Atlas-owned
 
@@ -330,6 +378,81 @@ turn); the variable name should be confirmed rather than assumed.
 
 ---
 
+## Parallel turns
+
+**Threads run in parallel; the turns inside one thread do not.** A conversation is a sequence — two
+overlapping turns would interleave two sets of frames into one transcript — but two *different*
+threads share nothing that needs serialising.
+
+### Nothing in the SDK required the old behaviour
+
+`sdk.query()` spawns a Claude Code **subprocess** per call, and `Options.env` replaces that
+subprocess's environment wholesale. Every query is therefore an isolated OS process with its own
+environment and its own `resume` id. The one-turn-at-a-time behaviour was three singletons Atlas
+wrote, each holding one turn's worth of state:
+
+| Was | Now |
+|---|---|
+| `ClaudeEngineService` held `input` / `handle` / `interrupted` — a second `run()` overwrote them, so turn A's `interrupt()` reached turn B's query | `start()` returns a `RunningTurn` that owns them. The service is a stateless factory |
+| `TurnRunnerService.queueTurn` awaited the previous turn, globally | One `Lane` per thread: `inFlight`, `chain`, `preflight`, `contextPercent`, `turn`. Queueing is per-lane |
+| One `ConversationStore` for "the" conversation | `ConversationStoreRegistry.for(threadId)` — one store per thread |
+
+That last one was not just a limitation, it was a **live bug**: leaving a running job and opening
+another called `reset()` on the shared store while the first job's turn kept writing into it, so
+job A's assistant blocks rendered inside job B's transcript. The rows were always correct — they
+are keyed by thread — so reopening A showed the truth. On-screen corruption that nothing about the
+screen flags as wrong is worse than a crash.
+
+`enqueue()`'s one-write-at-a-time chain is now **per thread**, which is exactly right: the UNIQUE
+constraint it protects is `(threadId, ordinal)`, so two threads writing at once was never the race.
+
+### Re-entering a running thread
+
+Opening a thread calls `hydrate()`, not `reset()`. `reset()` blanks everything, which is correct
+for a fresh open and wrong for one whose turn is still running — it would clear the spinner, the
+live tail and the steer queue, making a working agent look idle. `hydrate()` replaces only the
+durable half, and keeps any message committed between the caller's read and the call, because the
+read is a snapshot and a turn does not pause for the UI.
+
+### Credentials are the part that had to change
+
+`prepareClaudeHome` wrote one shared `~/.atlas/claude-home/.credentials.json` before every turn.
+Its own comment said why that was safe — "the TUI runs one turn at a time, so there is no race" —
+and that sentence stopped being true. Two concurrent turns on different accounts would have raced
+one file, and the failure is the bad kind: not a crash, but a turn silently billed to the wrong
+account.
+
+The fix is that **auth rides the per-turn env**. `CLAUDE_CODE_OAUTH_TOKEN` is one of the SDK's auth
+sources and is consulted before the fallback that looks for stored credentials, and `env` is
+per-`query()` — so it is genuinely per-turn where a file in a shared directory can never be. That
+also settles the "env var vs config dir" question this doc had left open under *Agent homes are
+Atlas-owned*: **both**, and they carry different halves. `CLAUDE_CONFIG_DIR` still points at the one
+shared home, because session and transcript storage *must* be shared or rotation breaks.
+
+The credential file is still written, and `EngineHomeService.claim()` still holds a mutex across
+write-then-spawn. Belt and braces: the env var should be what authenticates, and if it somehow is
+not, the mutex guarantees no other turn rewrote the file in between. **Worth confirming with one
+real two-account parallel run** — that is the single unverified assumption in this section.
+
+### What the UI owes a background agent
+
+An agent working in a job you are not looking at has to be visible, or leaving one running is
+indistinguishable from not having started it:
+
+- `TurnRunnerService` exposes `subscribe` / `getRunningThreadIds` for `useSyncExternalStore`. The
+  snapshot is cached and only replaced when the set actually changes, or the hook loops forever.
+- The jobs list draws a spinner in place of the status dot and reads `working…`, and re-reads the
+  list when the running set changes so `updatedAt` does not go stale.
+- `ctrl+c` names how many turns are in flight and quits on the second press. Turns are subprocesses
+  of this process, so quitting does kill them.
+
+Two loose ends, both accepted knowingly. Quitting releases only the *open* session's soft lock, so a
+background thread's lock is left behind and clears itself after `LOCK_STALE_MS`. And deleting a job
+asks the runner whether any of its threads are running rather than whether the job is open, because
+a job no longer has to be on screen to be working.
+
+---
+
 ## Startup: migrate, then run
 
 The TUI applies pending migrations **on every start**, against `~/.atlas/atlas.db`. No manual
@@ -345,6 +468,36 @@ Prisma has no supported programmatic migrate API, and shipping the Prisma CLI ju
 
 Greenfield means a failed migration is recoverable by deleting the DB, so the boot path can
 fail loudly rather than attempting repair.
+
+## Deletion
+
+A job and a project both delete, and they are **different kinds of act** — which is the whole
+reason the two confirms read differently.
+
+- **A project row is a bookkeeping entry.** `path` points at the user's own repository, so
+  removing the row must never be able to touch a folder. Nothing under `deleteProject` calls
+  `rmSync` on anything outside `~/.atlas`, and the confirm says "the folder on disk is untouched"
+  because "remove" next to a path is otherwise a frightening word.
+- **A job is real destruction.** Transcript, threads, sessions and the job's `/context` folder,
+  with no archive state and no undo.
+
+Three things have to happen in order, and the order is load-bearing:
+
+1. **Evict.** `ConversationService.evict(jobIds)` refuses while a turn is running into one of
+   them — the turn holds `threadId`/`sessionId` in flight and would write against a row that no
+   longer exists — and otherwise drops the soft lock.
+2. **Read the tape keys.** `engineSessionIdsFor(jobId)` runs **before** the delete. Afterwards
+   there is nothing left to ask, and the tapes become unreachable files nobody will ever remove.
+3. **Delete, then purge.** Rows go by `ON DELETE CASCADE`, which is real here: the Bun SQLite
+   adapter issues `PRAGMA foreign_keys = ON` on every connection it opens (SQLite leaves
+   enforcement off by default, and Prisma does not emulate cascades unless `relationMode` is
+   `"prisma"` — so this is worth knowing rather than assuming). The files the database cannot
+   reach — `~/.atlas/jobs/<jobId>` and `~/.atlas/sessions/<engineSessionId>` — are removed with
+   `force: true`, because a job that never ran has neither and that is not a failure.
+
+Verified end to end against the real database: create a project and a job, delete the project,
+and every table count returns to exactly what it was, the job directory is gone, and the probe
+folder on disk is still there.
 
 ## Staying current with Claude and Codex
 
@@ -500,40 +653,154 @@ Token deltas arrive far faster than a terminal should repaint. Two structural mi
 Not RTK — its wins (devtools, entity adapters, RTK Query) are browser wins; in a terminal it
 is weight without payoff. `web/` staying on RTK is correct and unaffected.
 
-Finished blocks go into an array rendered by Ink's `<Static>`, which prints each item once to
-real scrollback and never re-renders it. That is what preserves native scroll and copy.
+---
+
+## The screen: alternate buffer, Atlas-owned scrolling
+
+*(Revised 2026-08-02. This section previously specified Ink's `<Static>` and ruled out
+alt-screen; see `tui-wireframes.md` → "Resolved: scrollback ownership" for why that reversed
+and what it costs.)*
+
+`main.tsx` enters the **alternate screen buffer** (`ESC[?1049h`) before the first render and
+restores it on every exit path — clean return, signal, uncaught throw. That restore is the
+whole risk: a process that dies without emitting `ESC[?1049l` hands back a terminal with a
+hidden cursor and no scrollback, which reads as a broken machine. `alt-screen.ts` is therefore
+idempotent and registered on `exit` plus `SIGINT`/`SIGTERM`/`SIGHUP`.
+
+The container boots **before** entering the buffer, so a migration that throws prints its stack
+to the user's real terminal instead of into a buffer discarded milliseconds later.
+
+Layout is three components deep:
+
+- **`App`** is the only component that reads `rows`/`columns`, and pins the root frame to
+  exactly the terminal size. Ink notices `outputHeight >= stdout.rows` and drops the trailing
+  newline it would otherwise append, which is what stops the frame scrolling by one line per
+  render.
+- **`Screen`** is one page's chrome: header pinned top, footer pinned bottom, body taking the
+  rest and clipping.
+- **`ScrollRegion`** is the transcript's window. `justifyContent="flex-end"` packs content
+  against the bottom, so *sticking to the newest output is the default state* rather than
+  something maintained on every append; a **negative** `marginBottom` slides content back down
+  to reveal history. `measureElement` supplies the two heights needed to clamp the offset.
+
+**`flexBasis={0}` on every growing box and `flexShrink={0}` on chrome is load-bearing.** Yoga
+otherwise takes the body's flex basis from its own content — hundreds of transcript lines —
+distributes the overflow proportionally, and crushes a one-line footer to **zero height**. The
+composer silently disappears, and only on long transcripts: precisely the case nobody catches
+by hand. `full-screen.spec.tsx` pins this with a 200-line body.
+
+Scroll geometry lives in `domain/viewport.ts` as pure functions. The offset counts lines **up
+from the bottom**, which makes "follow the tail" the zero case; the price is
+`followContentGrowth`, which nudges a scrolled-up reader's offset by however many lines just
+arrived so output landing below them does not drag their view along.
 
 ---
 
-## Composition, not a container
+## The composer is a real editor
 
-`main.tsx` parses argv; `composition.ts` constructs everything once and hands it to `<App/>`.
-Constructor injection throughout, no framework.
+Four pure modules under `domain/`, so the whole thing is testable without a terminal:
 
-Not NestJS, despite it being the house default: a CLI pays framework boot on every
-invocation, there is no HTTP lifecycle to manage, and React already owns the UI lifecycle.
-DI's real win is swappable collaborators in tests, and constructor injection delivers that
-without a container.
+- **`text-editor.ts`** — `{ text, cursor, goalColumn }` and every edit as a transition. The
+  cursor is a flat index; row and column are derived, so an edit can never leave the two halves
+  of the position disagreeing. `goalColumn` is the one non-derivable bit: moving down through a
+  short line and back must return to the ORIGINAL column.
+- **`editor-keymap.ts`** — chord → command, and the record of what each terminal actually sends.
+- **`editor.ts`** — `applyKey(state, input, key) → { next, consumed }`.
+- **`composer-layout.ts`** — wrapping, caret placement, and windowing to `MAX_ROWS`.
+
+**`consumed` is the arbitration rule between editing and scrolling**, and it is why `applyKey`
+is a pure function rather than logic inside the hook. React does not run `setState` updaters
+synchronously, so a flag assigned inside an updater is still false when the handler returns —
+which would have inverted the rule silently while the edit still applied. The hook keeps a ref
+mirroring state so the answer is available immediately.
+
+Wrapping is done in `composer-layout.ts` rather than left to Ink's `<Text>`. Ink would fold the
+string correctly, but the caret is drawn by splitting that string at the cursor, and a split
+computed against unwrapped text lands in the wrong place as soon as a line folds. Cursor
+movement stays on **logical** lines — the same choice vim makes, and what keeps `text-editor.ts`
+independent of terminal width.
+
+The caret is inverse video over the character it sits on, because the terminal's own cursor is
+hidden in the alternate buffer. Note for tests: chalk decides at import time whether a stream
+supports colour and a fake stdout says no, which strips the caret — hence `FORCE_COLOR` in
+`vitest.config.ts`.
+
+---
+
+## Composition: NestJS standalone
+
+`main.tsx` parses argv, boots a **standalone Nest application context**
+(`NestFactory.createApplicationContext`), resolves the root services, and hands them to `<App/>`.
+No HTTP adapter, no controllers — the container is used purely as a DI graph.
+
+**This reverses an earlier decision in this doc.** The original argument was "a CLI pays framework
+boot on every invocation". That is true of `git status`; it is not true of this. The TUI is a
+long-lived interactive process — you launch it once and sit in it — so container boot is paid a
+single time and amortises to nothing. **Measured: 4 ms** to build the context under
+`@swc-node/register`, against a process that lives for hours.
+
+With that objection gone, the house default wins on its merits: the turn runner alone has five
+collaborators, and module boundaries + `overrideProvider` in tests are exactly what this shape
+wants. It also keeps the TUI consistent with the rest of the repo.
+
+**Runner consequence — this is the load-bearing detail.** NestJS needs `emitDecoratorMetadata`
+to reflect constructor parameter types, and **esbuild does not implement it**. That rules out
+`tsx` (and vitest's default transform), and it fails *silently*: decorators still compile, so
+every container-resolved dependency simply arrives `undefined` at runtime instead of erroring at
+build time. So:
+
+- **Runtime:** `node --import @swc-node/register/esm-register src/main.tsx`
+- **Tests:** `unplugin-swc`'s `swc.vite()` plugin, reading `.swcrc` — same as `backend/`
+- `.swcrc` sets `legacyDecorator` + `decoratorMetadata`, and `jsc.transform.react.runtime`
+  `automatic` for Ink's JSX
+
+Verified end to end: Nest resolves a two-level graph with no explicit `@Inject`, and Ink renders
+a live tail driven by a container-provided service, both under that runner. (The original smoke
+test used `<Static>`, which the alternate-buffer decision has since removed.)
+
+### What is and isn't a provider
+
+`domain/` stays **plain pure functions** and is the one deliberate exception to the house "no
+loose exported functions" rule. Those functions have zero collaborators and are called directly
+from React render paths, which cannot inject. Making them services would buy nothing and cost a
+container lookup in the render loop.
+
+Everything with a dependency — repositories, engines, the turn runner, the steer queue, the
+session manager, the account vault — is an `@Injectable` in a module, per house style.
 
 Consistent with **no speculative ports** — v1 has no ports at all. Repositories and
-`ClaudeEngine` are concrete classes injected directly.
+`ClaudeEngine` are concrete classes, registered and injected as themselves.
 
 ---
 
 ## Prisma and migrations
 
 ```
-tui/prisma/schema.prisma        the local schema — shares nothing with backend's
+tui/prisma/schema/              the local schema — shares nothing with backend's
+  schema.prisma                 generator + datasource ONLY (allowed once across the folder)
+  account.prisma                one file per src/store repository; enums live with the models
+  project.prisma                that use them
+  job.prisma                    (Job + ThreadGroup)
+  thread.prisma
+  session.prisma
+  message.prisma
 tui/prisma/migrations/          generated, committed
 tui/src/generated/prisma        client output, matching backend's convention
 ```
 
-- `pnpm --filter @workspace/tui db:migrate` → `prisma migrate dev`, which **generates** the
+- The schema is a **multi-file schema**: `prisma.config.ts` points `schema` at the *directory*, and
+  the CLI concatenates every `.prisma` file in it. Adding a file needs no config change; adding a
+  second `generator`/`datasource` block anywhere in the folder is an error.
+- `migrations.path` is pinned in `prisma.config.ts` so migrations stay at `prisma/migrations`
+  rather than moving under the schema folder — `scripts/embed-migrations.ts` reads that path.
+
+- `pnpm --filter @dltech/atlas-harness db:migrate` → `prisma migrate dev`, which **generates** the
   SQL. Never hand-write a migration. This is an *authoring-time* command; users never run it
   (see Startup above).
 - Greenfield means `migrate reset` is always available, so no schema change ever needs to
   preserve data.
-- `prisma.config.ts` needs **both** `datasource.url` and `adapter`
+- `prisma.config.ts` needs **`datasource.url`** and takes **no `adapter`** (no such field on
+  `PrismaConfig` 7.9.1); the runtime adapter is built in `PrismaService`
   (`@prisma/adapter-better-sqlite3`).
 
 ---
@@ -544,7 +811,7 @@ Deliberately short:
 
 ```
 ink  react  @prisma/client  @prisma/adapter-better-sqlite3
-@anthropic-ai/claude-agent-sdk     vendor SDK — Claude, in-process
+@anthropic-ai/claude-agent-sdk     vendor SDK — Claude, spawns a Claude Code subprocess
 @workspace/codex-sdk               vendor SDK — Codex, spawns `codex app-server`
 dev: prisma  typescript  tsx  tsup  vitest  ink-testing-library
 ```
