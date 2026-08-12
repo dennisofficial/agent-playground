@@ -148,6 +148,9 @@ describe('creating a job', () => {
       {} as unknown as ThreadRepository,
       {} as unknown as AccountRepository,
       {
+        // Resolves: the account preflight in front of creation has its own spec — see
+        // `job-create-preflight.spec.ts`.
+        async assertUsableAccount(): Promise<void> {},
         async openThread(_jobId: string, role: EThreadRole): Promise<Thread> {
           opened.push(role);
           return THREAD;

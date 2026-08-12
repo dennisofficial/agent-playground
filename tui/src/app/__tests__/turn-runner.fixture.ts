@@ -136,11 +136,17 @@ export function build(script: EngineEvent[] = []) {
     // test about rotation overrides it to hand the runner the leg that replaced its copy.
     currentForThread: mock(async (): Promise<EngineSession | null> => null),
   };
-  const vault = { freshCredential: mock(async () => ({ claudeAiOauth: {} })) };
+  const vault = {
+    freshCredential: mock(async () => ({ claudeAiOauth: {} })),
+    adopt: mock(async () => false),
+  };
   const env = { CLAUDE_CONFIG_DIR: '/tmp/claude', CLAUDE_CODE_OAUTH_TOKEN: 'tok' };
   const homes = {
     prepareClaudeHome: mock(() => env),
-    claim: mock(async (_blob: unknown, start: (e: typeof env) => unknown) => start(env)),
+    claim: mock(async (_args: unknown, start: (e: typeof env) => unknown) => start(env)),
+    // Null by default: the engine leaving the credential exactly as Atlas wrote it is the ordinary
+    // case, and a turn must not write material on the strength of an unchanged file.
+    observeClaudeCredential: mock((_accountId: string): unknown => null),
   };
   const rotator = { considerRotation: mock(async () => ({ kind: 'kept' as const })) };
   const turns = {

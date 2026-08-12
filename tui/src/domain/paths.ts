@@ -46,8 +46,13 @@ export function databaseBackupFile(args: {
   return join(databaseBackupDir(args.databaseFile), `atlas-${args.stamp}.db`);
 }
 
-export function claudeCredentialsFile(): string {
-  return join(ATLAS_PATHS.claudeHome, '.credentials.json');
+/**
+ * The file the engine reads its credential from — and writes back to, when it refreshes the token
+ * itself. `home` is a parameter only so a test can point at a temp directory: `ATLAS_PATHS` resolves
+ * the real home at module load, long before a `beforeAll` could redirect it.
+ */
+export function claudeCredentialsFile(home: string = ATLAS_PATHS.claudeHome): string {
+  return join(home, '.credentials.json');
 }
 
 /** Append-only tape of exactly what the SDK emitted. Keyed by session, not thread. */

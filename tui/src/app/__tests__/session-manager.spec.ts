@@ -2,9 +2,9 @@ import { describe, expect, it } from 'bun:test';
 import type { Account, EngineSession, Phase, Thread } from '../../generated/prisma/client.js';
 import {
   EAccountStatus,
+  EEngine,
   EPhaseKind,
   EThreadRole,
-  type EEngine,
 } from '../../generated/prisma/enums.js';
 import { bindingFor, type EngineConfig } from '../../domain/role-engine.js';
 import type { AccountRepository } from '../../store/account.repository.js';
@@ -134,5 +134,86 @@ describe('SessionManagerService.openSession', () => {
     await sessionManagerService.openSession(thread);
 
     expect(opened[0]?.accountId).toBe('claude-account');
+  });
+});
+
+/**
+ * Which account a session opens on, and what is said when none can be.
+ *
+ * The message matters as much as the choice: this is the error a human meets when a job will not
+ * start, and "no usable claude account" told them neither what happened nor what to do about it. It
+ * was also reached far too easily — a single hard refresh failure marked the account `expired`, and
+ * `expired` was filtered out here with nothing anywhere to put it back.
+ */
+describe('SessionManagerService account selection', () => {
+  function buildWith(accounts: Partial<Account>[]): SessionManagerService {
+    const accountRepository = {
+      async listForEngine(): Promise<Account[]> {
+        return accounts.map(
+          (account) =>
+            ({
+              status: EAccountStatus.active,
+              fiveHourUtil: null,
+              fiveHourResetsAt: null,
+              ...account,
+            }) as unknown as Account,
+        );
+      },
+    } as unknown as AccountRepository;
+
+    return new SessionManagerService(
+      { async setActiveSession(): Promise<void> {} } as unknown as ThreadRepository,
+      {
+        async open(args: { accountId: string }): Promise<EngineSession> {
+          return { id: 'session-1', accountId: args.accountId } as unknown as EngineSession;
+        },
+      } as unknown as SessionRepository,
+      accountRepository,
+      {} as unknown as JobRepository,
+    );
+  }
+
+  const thread = { id: 'thread-1', role: EThreadRole.generic } as unknown as Thread;
+
+  it('runs on an expired account rather than refusing — the refresh will heal it or say why', async () => {
+    const manager = buildWith([{ id: 'dead', status: EAccountStatus.expired }]);
+
+    const session = await manager.openSession(thread);
+
+    expect(session.accountId).toBe('dead');
+  });
+
+  it('tells a human with no account at all where to add one', async () => {
+    const manager = buildWith([]);
+
+    await expect(manager.openSession(thread)).rejects.toThrow(/ctrl\+a/);
+  });
+
+  it('says an account needs re-authorising rather than reporting it missing', async () => {
+    // `revoked` is the one status no request can heal, so it reads as an auth problem, not an absence.
+    const manager = buildWith([{ id: 'gone', status: EAccountStatus.revoked }]);
+
+    await expect(manager.openSession(thread)).rejects.toThrow(/re-authoris/);
+  });
+
+  it('says rate-limited, and when the limit lifts, instead of naming the wrong problem', async () => {
+    const manager = buildWith([
+      {
+        id: 'spent',
+        status: EAccountStatus.limited,
+        fiveHourResetsAt: new Date('2026-01-01T10:30:00Z'),
+      },
+    ]);
+
+    await expect(manager.openSession(thread)).rejects.toThrow(/rate-limited/);
+  });
+
+  it('carries the engine on the error, so the caller can name it without parsing the message', async () => {
+    const manager = buildWith([]);
+
+    await expect(manager.openSession(thread)).rejects.toMatchObject({
+      name: 'NoAccountError',
+      engine: EEngine.claude,
+    });
   });
 });

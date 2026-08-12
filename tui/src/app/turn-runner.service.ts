@@ -159,41 +159,45 @@ export class TurnRunnerService {
         session.accountId,
       );
 
-      // Credential write and spawn happen inside one critical section — see EngineHomeService.
-      const turn = await this.engineHomeService.claim(blob, (env) =>
-        this.claudeEngineService.start({
-          prompt: renderPrompt(payload),
-          systemPrompt: buildSystemPrompt({ brief: args.brief }),
-          cwd,
-          model: session.model,
-          resume: session.engineSessionId ?? undefined,
-          env,
-          tools: args.tools,
-          // Atlas's one way into a running turn that costs the agent nothing: it is already waiting
-          // on the tool. Whether anything is said at all is entirely `turn-nudge.ts`'s decision.
-          onToolBoundary: () =>
-            nudgeAtToolBoundary({
-              contextPressureService: this.contextPressureService,
-              events: this.events,
-              store,
-              thread,
-              session,
-              lane,
-              record: (work) => this.record(lane, store, work),
-            }),
-          onEvent: (event) => {
-            if (event.kind === "error" && isContextWall(event)) wall = true;
-            this.record(lane, store, () =>
-              this.events.apply({
-                event,
+      // Credential write and spawn happen inside one critical section — see EngineHomeService. The
+      // account id travels with the blob so the read-back in `finaliseTurn` knows whose file it is.
+      const turn = await this.engineHomeService.claim(
+        { accountId: session.accountId, blob },
+        (env) =>
+          this.claudeEngineService.start({
+            prompt: renderPrompt(payload),
+            systemPrompt: buildSystemPrompt({ brief: args.brief }),
+            cwd,
+            model: session.model,
+            resume: session.engineSessionId ?? undefined,
+            env,
+            tools: args.tools,
+            // Atlas's one way into a running turn that costs the agent nothing: it is already
+            // waiting on the tool. Whether anything is said at all is entirely `turn-nudge.ts`'s
+            // decision.
+            onToolBoundary: () =>
+              nudgeAtToolBoundary({
+                contextPressureService: this.contextPressureService,
+                events: this.events,
                 store,
-                lane,
-                threadId: thread.id,
+                thread,
                 session,
+                lane,
+                record: (work) => this.record(lane, store, work),
               }),
-            );
-          },
-        }),
+            onEvent: (event) => {
+              if (event.kind === "error" && isContextWall(event)) wall = true;
+              this.record(lane, store, () =>
+                this.events.apply({
+                  event,
+                  store,
+                  lane,
+                  threadId: thread.id,
+                  session,
+                }),
+              );
+            },
+          }),
       );
       lane.turn = turn;
       // The handle exists now, so anything typed during setup can go straight into the live query.
@@ -224,6 +228,8 @@ export class TurnRunnerService {
         store,
         events: this.events,
         accountUsageService: this.accountUsageService,
+        engineHomeService: this.engineHomeService,
+        accountVaultService: this.accountVaultService,
         contextPressureService: this.contextPressureService,
         sessionManagerService: this.sessionManagerService,
         threadId: thread.id,

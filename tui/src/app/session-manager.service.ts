@@ -7,14 +7,25 @@ import {
   type EThreadRole,
 } from "../generated/prisma/enums.js";
 import type { EngineSession, Thread } from "../generated/prisma/client.js";
+import { chooseForTurn, noAccountReason } from "../domain/rotation.js";
 import { AccountRepository } from "../store/account.repository.js";
 import { JobRepository } from "../store/job.repository.js";
 import { SessionRepository } from "../store/session.repository.js";
 import { ThreadRepository } from "../store/thread.repository.js";
 
+/**
+ * No account this turn could run on — the error a human actually meets when a job will not start.
+ *
+ * It carries the engine, and it says WHICH of the three quite different situations this is, because
+ * "no usable claude account" was true of all of them and useful for none: nothing added yet, every
+ * credential needing re-authorisation, or a live account that is simply out of quota for now.
+ */
 export class NoAccountError extends Error {
-  constructor(engine: string) {
-    super(`no usable ${engine} account — add one before running a turn`);
+  constructor(
+    readonly engine: EEngine,
+    reason: string,
+  ) {
+    super(reason);
     this.name = "NoAccountError";
   }
 }
@@ -107,15 +118,23 @@ export class SessionManagerService {
     await this.threadRepository.close(thread.id);
   }
 
+  /**
+   * The account this session will run on. Both halves of the decision are pure and live in
+   * `domain/rotation.ts` — which account wins, and the fact that an `expired` one is still worth
+   * trying, because the refresh on the turn path is the only thing that can tell it apart from a live
+   * one.
+   */
+  async assertUsableAccount(role: EThreadRole): Promise<void> {
+    await this.pickAccount(bindingFor(role).engine.kind);
+  }
+
   private async pickAccount(engine: EEngine): Promise<{ id: string }> {
     const accounts = await this.accountRepository.listForEngine(engine);
-    const usable = accounts.filter((a) => a.status === EAccountStatus.active);
-    if (usable.length === 0) throw new NoAccountError(engine);
-
-    const sorted = [...usable].sort(
-      (a, b) => (a.fiveHourUtil ?? 101) - (b.fiveHourUtil ?? 101),
-    );
-    // `?? 101` sorts unknown-usage accounts LAST among actives — see above.
-    return sorted[0] as { id: string };
+    const chosen = chooseForTurn(accounts);
+    // Both halves are pure and live together in `domain/rotation.ts`: which account wins, and what to
+    // tell the human when none does.
+    if (!chosen)
+      throw new NoAccountError(engine, noAccountReason({ engine, accounts }));
+    return chosen;
   }
 }

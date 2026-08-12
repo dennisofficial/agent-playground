@@ -140,6 +140,9 @@ function build(run: (args: RunTurnArgs) => Promise<void> = async () => undefined
     {} as unknown as ThreadRepository,
     {} as unknown as AccountRepository,
     {
+      // Resolves: these cases are about what creation DOES, and the account preflight has its own
+      // spec. See `job-create-preflight.spec.ts` for the refusal.
+      async assertUsableAccount(): Promise<void> {},
       async openThread(_jobId: string, role: EThreadRole): Promise<Thread> {
         openedRoles.push(role);
         return THREAD;

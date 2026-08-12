@@ -1,10 +1,9 @@
 import { Injectable } from "@nestjs/common";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { EPhaseKind, EThreadRole } from "../generated/prisma/enums.js";
 import type { Job, Project, Thread } from "../generated/prisma/client.js";
 import { ELaunchScope, launchScope } from "../domain/launch-scope.js";
-import { jobDir, sessionTapeDir } from "../domain/paths.js";
 import { AccountRepository } from "../store/account.repository.js";
 import { JobRepository, type JobRow } from "../store/job.repository.js";
 import { ProjectRepository } from "../store/project.repository.js";
@@ -12,7 +11,11 @@ import { ThreadRepository, type ThreadRow } from "../store/thread.repository.js"
 import { ContextFolderService } from "./context-folder.service.js";
 import { ConversationService } from "./conversation.service.js";
 import { GitService } from "./git.service.js";
-import { SessionManagerService } from "./session-manager.service.js";
+import {
+  NoAccountError,
+  SessionManagerService,
+} from "./session-manager.service.js";
+import { purgeJobFiles, threadIdsFor } from "./workspace-purge.js";
 import { WorktreeService, type JobWorkspace } from "./worktree.service.js";
 
 export type ProjectRow = Project & { jobCount: number; exists: boolean };
@@ -143,15 +146,20 @@ export class WorkspaceService {
     // separately because they are separate axes, and only their opening values coincide. NOT
     // charting: a job that is one question would otherwise be met by an agent preparing to chart a
     // map, and the stance is meant to be earned by the work rather than assumed at creation.
+    const role = EThreadRole.generic;
+
+    // In FRONT of the first write, because a job that cannot run a turn should not exist. The check
+    // used to happen when the first turn opened its session, by which point there was a job row, a
+    // phase, a thread, a context folder and possibly a worktree — an empty job left in the list for
+    // good, over a credential problem the human could have been told about instead.
+    await this.sessionManagerService.assertUsableAccount(role);
+
     const created = await this.jobRepository.create({
       projectId,
       title,
       kind: EPhaseKind.generic,
     });
-    const thread = await this.sessionManagerService.openThread(
-      created.id,
-      EThreadRole.generic,
-    );
+    const thread = await this.sessionManagerService.openThread(created.id, role);
     this.contextFolderService.ensure(created.id);
     // The branch is named after the job, so the job has to exist first. A worktree that fails to
     // materialise raises here and leaves the job standing in the project path — recoverable
@@ -229,7 +237,7 @@ export class WorkspaceService {
     const engineSessionIds =
       await this.jobRepository.engineSessionIdsFor(jobId);
     await this.jobRepository.remove(jobId);
-    this.purge(jobId, engineSessionIds);
+    purgeJobFiles({ jobId, engineSessionIds });
   }
 
   /**
@@ -251,27 +259,29 @@ export class WorkspaceService {
 
     await this.projectRepository.remove(projectId);
     for (const [jobId, engineSessionIds] of tapes)
-      this.purge(jobId, engineSessionIds);
+      purgeJobFiles({ jobId, engineSessionIds });
   }
 
-  private async threadIdsFor(jobIds: readonly string[]): Promise<string[]> {
-    const ids: string[] = [];
-    for (const jobId of jobIds) {
-      const threads = await this.threadRepository.listForJob(jobId);
-      ids.push(...threads.map((thread) => thread.id));
+  private threadIdsFor(jobIds: readonly string[]): Promise<string[]> {
+    return threadIdsFor({ threadRepository: this.threadRepository, jobIds });
+  }
+
+  /**
+   * Whether a turn could run at all — asked before the new-job page opens, so an account is added
+   * before a paragraph is typed rather than after.
+   *
+   * Usable, not merely present. Counting rows let an account that no turn could open a session on
+   * sail past this check, and the human met the real problem several keystrokes later, on a page whose
+   * draft was about to be thrown away with it.
+   */
+  async hasAccount(role: EThreadRole = EThreadRole.generic): Promise<boolean> {
+    try {
+      await this.sessionManagerService.assertUsableAccount(role);
+      return true;
+    } catch (error: unknown) {
+      if (error instanceof NoAccountError) return false;
+      throw error;
     }
-    return ids;
-  }
-
-  private purge(jobId: string, engineSessionIds: readonly string[]): void {
-    rmSync(jobDir(jobId), { recursive: true, force: true });
-    for (const id of engineSessionIds) {
-      rmSync(sessionTapeDir(id), { recursive: true, force: true });
-    }
-  }
-
-  async hasAccount(): Promise<boolean> {
-    return (await this.accountRepository.count()) > 0;
   }
 
   async touchProject(id: string): Promise<void> {

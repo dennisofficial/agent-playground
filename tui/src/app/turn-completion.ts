@@ -1,4 +1,6 @@
 import type { EngineSession } from "../generated/prisma/client.js";
+import type { AccountVaultService } from "../auth/account-vault.service.js";
+import type { EngineHomeService } from "../auth/engine-home.service.js";
 import type { AccountUsageService } from "./account-usage.service.js";
 import type { ContextPressureService } from "./context-pressure.service.js";
 import type { ConversationStore } from "./conversation.store.js";
@@ -27,6 +29,9 @@ export async function finaliseTurn(args: {
   store: ConversationStore;
   events: TurnEventApplier;
   accountUsageService: AccountUsageService;
+  /** The pair the engine left behind, and the row it belongs to — see `adoptEngineRefresh`. */
+  engineHomeService: EngineHomeService;
+  accountVaultService: AccountVaultService;
   contextPressureService: ContextPressureService;
   sessionManagerService: SessionManagerService;
   threadId: string;
@@ -65,6 +70,14 @@ export async function finaliseTurn(args: {
     threadId,
   });
 
+  // Before the meters are read anywhere else, because everything downstream authenticates with it.
+  await adoptEngineRefresh({
+    engineHomeService: args.engineHomeService,
+    accountVaultService: args.accountVaultService,
+    accountId: session.accountId,
+    onWarn: args.onWarn,
+  });
+
   // The canary is scored per TURN, so its sample closes here — one entry, or none at all when the
   // turn produced no prose to open.
   closeCanaryTurn({
@@ -99,4 +112,38 @@ export async function finaliseTurn(args: {
     args.onWarn(`context-wall rotation failed: ${String(error)}`);
     store.notice("this session is out of context and could not be rotated");
   });
+}
+
+/**
+ * Take up whatever credential the engine left in its home.
+ *
+ * The engine refreshes the credentials file Atlas writes for it — in place, when the access token is
+ * close to expiry — and the server rotates the refresh token as it does. Atlas used to write that file
+ * and never read it back, so its own stored pair became scrap at the engine's first refresh, and the
+ * next refresh Atlas attempted failed with a 4xx that marked a live account `expired` forever.
+ *
+ * Runs on the way out of EVERY turn, including a crashed one: the engine may have refreshed the
+ * credential and then died, and that is precisely the pair worth keeping.
+ *
+ * Failures are a warning, never a throw. This is bookkeeping after the work is done, and a locked
+ * database must not turn a finished turn into a failed one.
+ */
+async function adoptEngineRefresh(args: {
+  engineHomeService: EngineHomeService;
+  accountVaultService: AccountVaultService;
+  accountId: string;
+  onWarn: (message: string) => void;
+}): Promise<void> {
+  try {
+    const observed = args.engineHomeService.observeClaudeCredential(
+      args.accountId,
+    );
+    if (!observed) return;
+    await args.accountVaultService.adopt({
+      accountId: args.accountId,
+      observed,
+    });
+  } catch (error: unknown) {
+    args.onWarn(`could not adopt the engine's credential: ${String(error)}`);
+  }
 }

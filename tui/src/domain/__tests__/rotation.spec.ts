@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'bun:test';
-import { EAccountStatus } from '../../generated/prisma/enums.js';
+import { EAccountStatus, EEngine } from '../../generated/prisma/enums.js';
 import {
   ROTATE_ABOVE,
+  chooseForTurn,
   chooseNext,
   earliestReset,
   isWalled,
+  noAccountReason,
   overThreshold,
   type RotationCandidate,
 } from '../rotation.js';
@@ -117,6 +119,124 @@ describe('chooseNext', () => {
     ];
     chooseNext({ currentId: 'current', accounts });
     expect(accounts.map((a) => a.id)).toEqual(['current', 'b', 'a']);
+  });
+});
+
+/**
+ * Opening a session is not rotating out of one: there is no account to leave, and refusing to run at
+ * all is a worse answer than running on the only credential there is.
+ */
+describe('chooseForTurn', () => {
+  it('takes the active account with the most headroom', () => {
+    const accounts = [account({ id: 'busy', fiveHourUtil: 80 }), account({ id: 'idle', fiveHourUtil: 10 })];
+    expect(chooseForTurn(accounts)).toEqual(accounts[1]!);
+  });
+
+  it('sorts an unmeasured account last among actives — unknown is not idle', () => {
+    const accounts = [account({ id: 'unknown' }), account({ id: 'measured', fiveHourUtil: 90 })];
+    expect(chooseForTurn(accounts)).toEqual(accounts[1]!);
+  });
+
+  /**
+   * The point of the whole change. `expired` records that ONE refresh failed, at some past moment —
+   * usually because the engine rotated the refresh token under us. Trying it costs one HTTP round
+   * trip and either heals the account or fails with a message the human can act on; refusing to try
+   * leaves a working subscription permanently unusable.
+   */
+  it('falls back to an expired account rather than refusing to run', () => {
+    const accounts = [account({ id: 'dead', status: EAccountStatus.expired })];
+    expect(chooseForTurn(accounts)?.id).toBe('dead');
+  });
+
+  it('prefers any active account over an expired one, however spent the active is', () => {
+    const accounts = [
+      account({ id: 'expired', status: EAccountStatus.expired, fiveHourUtil: 0 }),
+      account({ id: 'active', fiveHourUtil: 99 }),
+    ];
+    expect(chooseForTurn(accounts)?.id).toBe('active');
+  });
+
+  it('never picks a limited account — the API has already refused it, and rotation owns that', () => {
+    expect(chooseForTurn([account({ id: 'limited', status: EAccountStatus.limited })])).toBeNull();
+  });
+
+  it('never picks a revoked account — no request will heal it', () => {
+    expect(chooseForTurn([account({ id: 'revoked', status: EAccountStatus.revoked })])).toBeNull();
+  });
+
+  it('is null when there is nothing at all', () => {
+    expect(chooseForTurn([])).toBeNull();
+  });
+
+  it('does not mutate the caller’s list while sorting it', () => {
+    const accounts = [account({ id: 'b', fiveHourUtil: 80 }), account({ id: 'a', fiveHourUtil: 10 })];
+    chooseForTurn(accounts);
+    expect(accounts.map((a) => a.id)).toEqual(['b', 'a']);
+  });
+});
+
+/**
+ * The sentence a human meets when a job will not start. One message ("no usable claude account") used
+ * to cover all three situations, and each of them is a different thing for them to DO.
+ */
+describe('noAccountReason', () => {
+  const engine = EEngine.claude;
+  const at = (time: string): Date => new Date(`2026-01-01T${time}:00Z`);
+  const formatTime = (date: Date): string => date.toISOString().slice(11, 16);
+
+  it('sends someone with no account to the page that adds one', () => {
+    expect(noAccountReason({ engine, accounts: [] })).toBe(
+      'no claude account yet — press ctrl+a to add one',
+    );
+  });
+
+  it('says rate-limited, and when it lifts, rather than naming the wrong problem', () => {
+    const accounts = [
+      account({ id: 'a', status: EAccountStatus.limited, fiveHourResetsAt: at('14:30') }),
+    ];
+
+    expect(noAccountReason({ engine, accounts, formatTime })).toBe(
+      'every claude account is rate-limited until 14:30 — press ctrl+a to add another',
+    );
+  });
+
+  it('quotes the SOONEST reset — that is the one worth waiting for', () => {
+    const accounts = [
+      account({ id: 'a', status: EAccountStatus.limited, fiveHourResetsAt: at('16:00') }),
+      account({ id: 'b', status: EAccountStatus.limited, fiveHourResetsAt: at('14:30') }),
+    ];
+
+    expect(noAccountReason({ engine, accounts, formatTime })).toContain('until 14:30');
+  });
+
+  it('names no time when no reset was ever recorded, rather than inventing one', () => {
+    const accounts = [account({ id: 'a', status: EAccountStatus.limited })];
+
+    expect(noAccountReason({ engine, accounts, formatTime })).toBe(
+      'every claude account is rate-limited — press ctrl+a to add another',
+    );
+  });
+
+  it('asks for a re-authorisation when the credentials are the problem', () => {
+    // `revoked` and `expired` both land here: whatever the status says, the human's move is to add the
+    // account again, which replaces the credential in place.
+    const accounts = [
+      account({ id: 'a', status: EAccountStatus.expired }),
+      account({ id: 'b', status: EAccountStatus.revoked }),
+    ];
+
+    expect(noAccountReason({ engine, accounts, formatTime })).toMatch(/needs re-authorising/);
+  });
+
+  it('does not claim a rate limit when only SOME accounts are limited', () => {
+    // A mixed pool that chose nobody is a credential problem wearing a limit — saying "wait until
+    // 14:30" would send them off to wait for something that will not fix it.
+    const accounts = [
+      account({ id: 'a', status: EAccountStatus.limited, fiveHourResetsAt: at('14:30') }),
+      account({ id: 'b', status: EAccountStatus.revoked }),
+    ];
+
+    expect(noAccountReason({ engine, accounts, formatTime })).toMatch(/needs re-authorising/);
   });
 });
 

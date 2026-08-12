@@ -209,3 +209,62 @@ describe('TurnRunnerService', () => {
     expect(store.getSnapshot().lastTurn?.outputTokens).toBeGreaterThan(0);
   });
 });
+
+/**
+ * The engine refreshes the credentials file Atlas hands it, in place, and the server rotates the
+ * refresh token as it does — so the pair Atlas stored stops working the moment the engine beats it to
+ * a refresh. Reading the file back at the end of every turn is what keeps the two in step; without it
+ * the next refresh Atlas attempts fails with a 4xx and marks a live account dead.
+ */
+describe('TurnRunnerService credential read-back', () => {
+  const ARGS = { thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' } as const;
+  const ROTATED = {
+    claudeAiOauth: { accessToken: 'oat-2', refreshToken: 'ort-2', expiresAt: 9_000, scopes: [] },
+  };
+
+  it('adopts the credential the engine refreshed, for the account that ran the turn', async () => {
+    const { runner, vault, homes } = build();
+    homes.observeClaudeCredential.mockReturnValue(ROTATED);
+
+    await runner.run(ARGS);
+
+    expect(homes.observeClaudeCredential).toHaveBeenCalledWith(SESSION.accountId);
+    expect(vault.adopt).toHaveBeenCalledWith({
+      accountId: SESSION.accountId,
+      observed: ROTATED,
+    });
+  });
+
+  it('writes nothing when the engine left the file as Atlas wrote it', async () => {
+    const { runner, vault } = build();
+
+    await runner.run(ARGS);
+
+    expect(vault.adopt).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A crashed turn is exactly when this matters most: the engine may have refreshed the credential
+   * and THEN failed, and losing that pair is what leaves the account unusable afterwards.
+   */
+  it('adopts even when the turn failed', async () => {
+    const { runner, vault, homes, engine } = build();
+    homes.observeClaudeCredential.mockReturnValue(ROTATED);
+    engine.start = () => {
+      throw new Error('engine died');
+    };
+
+    await expect(runner.run(ARGS)).rejects.toThrow('engine died');
+
+    expect(vault.adopt).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not fail a turn because the adoption failed', async () => {
+    const { runner, vault, homes, store } = build();
+    homes.observeClaudeCredential.mockReturnValue(ROTATED);
+    vault.adopt.mockRejectedValueOnce(new Error('database is locked'));
+
+    await expect(runner.run(ARGS)).resolves.toBeUndefined();
+    expect(store.getSnapshot().running).toBe(false);
+  });
+});
