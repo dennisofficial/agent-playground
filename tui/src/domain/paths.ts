@@ -47,6 +47,15 @@ export function jobContextDir(jobId: string): string {
 }
 
 /**
+ * Which terminal is driving this job. A file rather than a database row precisely so it can be
+ * WATCHED — `fs.watch` gives every other tile the takeover the instant it happens, where a row
+ * would have to be polled.
+ */
+export function jobClaimFile(jobId: string): string {
+  return join(jobDir(jobId), 'claim.json');
+}
+
+/**
  * The three buckets, ordered by the phase that writes them: `intake/` holds the job's map and its
  * ticket files, `specs/` is a planning SET rather than a file, `artifacts/` is things to look at.
  * `generated/` is gone — hand-offs are the next session's first message, not files, so it had no
