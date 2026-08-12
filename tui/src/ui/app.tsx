@@ -79,7 +79,20 @@ export function App(props: {
         // did not gets `project.path` back, exactly as before.
         const cwd = workspaceService.cwdFor({ job, projectPath: project.path });
         const open = await conversationService.openJob(job, cwd);
-        nav.push({ name: "conversation", project, open });
+        // TWO frames, landing on the conversation. Descending skips the thread list because you
+        // almost always want the live thread; ascending walks back through it because that is where
+        // the job itself is managed. Leaving it underneath is what makes `←` mean "manage this job"
+        // rather than "leave it", and `pop` unwinds the circle with no special case anywhere.
+        nav.push(
+          {
+            name: "threads",
+            project,
+            job,
+            cwd,
+            currentThreadId: open.thread.id,
+          },
+          { name: "conversation", project, open },
+        );
       } catch (e) {
         setError((e as Error).message);
       }
@@ -102,8 +115,6 @@ export function App(props: {
   const switchThread = useCallback(
     async (args: { route: ThreadsRoute; thread: Thread }) => {
       const { route, thread } = args;
-      // Choosing the thread you came from is just "back": the page below this one is already it.
-      if (thread.id === route.currentThreadId) return nav.pop();
       try {
         await conversationService.leave();
         const open = await conversationService.openThread(
@@ -111,9 +122,14 @@ export function App(props: {
           thread,
           route.cwd,
         );
-        // Pop AND replace: the switcher hands you back to the conversation level with a different
-        // thread, instead of burying a stale conversation page under the new one.
-        nav.popAndReplace({ name: "conversation", project: route.project, open });
+        // Replace THEN push: the thread list stays underneath, but re-stamped with the thread you
+        // just chose, so coming back lands the cursor where you actually are. A plain push would
+        // leave it naming the thread you opened the job on.
+        //
+        // One conversation frame in the stack, always — guaranteed here by structure rather than by
+        // a special stack op: this page is only ever reached by popping the conversation off first.
+        nav.replace({ ...route, currentThreadId: thread.id });
+        nav.push({ name: "conversation", project: route.project, open });
       } catch (e) {
         setError((e as Error).message);
       }
@@ -194,15 +210,10 @@ export function App(props: {
           <ConversationPage
             open={route.open}
             onBack={leaveConversation}
-            onThreads={() =>
-              nav.push({
-                name: "threads",
-                project: route.project,
-                job: route.open.job,
-                cwd: route.open.cwd,
-                currentThreadId: route.open.thread.id,
-              })
-            }
+            // The same door as `←`, not a second one: the thread list is already the frame beneath
+            // this. Pushing another would stack two of them. It keeps its own key because the
+            // TRIGGERS differ — `←` only leaves on an empty composer, `ctrl+h` always does.
+            onThreads={leaveConversation}
           />
         ) : null}
 

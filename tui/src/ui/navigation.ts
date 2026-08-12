@@ -1,4 +1,10 @@
 import { useCallback, useMemo, useState } from "react";
+import {
+  popFrame,
+  pushFrames,
+  replaceFrame,
+  toggleFrame,
+} from "../domain/nav-stack.js";
 import type { OpenConversation } from "../app/conversation.service.js";
 import type { ProjectRow } from "../app/workspace.service.js";
 import type { Job } from "../generated/prisma/client.js";
@@ -7,13 +13,17 @@ export type Route =
   | { name: "projects" }
   | { name: "jobs"; project: ProjectRow }
   | { name: "conversation"; project: ProjectRow; open: OpenConversation }
-  /** The job's phases and threads. Reached from the conversation, and only from there. */
+  /**
+   * The job's phases and threads — the job's own page, and the frame the conversation sits on top
+   * of. Pushed when the job opens, revealed by popping the conversation off, never reached any
+   * other way.
+   */
   | {
       name: "threads";
       project: ProjectRow;
       job: Job;
       cwd: string;
-      /** The thread you came from — the row the cursor lands on. */
+      /** The thread the conversation above is on — the row the cursor lands on. */
       currentThreadId: string;
     }
   | { name: "accounts" };
@@ -24,20 +34,14 @@ export type Navigation = {
   route: Route;
   /** False at the root, which is what lets a page decide whether to draw the `‹` affordance. */
   canPop: boolean;
-  push: (route: Route) => void;
+  /**
+   * Several at once is the point, not a convenience: opening a job pushes `threads` and then
+   * `conversation`, so you land on the conversation while `←` still walks back through the job.
+   */
+  push: (...routes: Route[]) => void;
   pop: () => void;
   /** Swap the current route without deepening the stack — a redirect, not a step. */
   replace: (route: Route) => void;
-  /**
-   * Pop the current page AND replace the one underneath it: what a SWITCHER does when it hands you
-   * back to the level you came from with a different subject.
-   *
-   * Pushing would be wrong here, and dangerously so. The conversation you left would stay on the
-   * stack under the new one, and `pop()` onto it would draw a page whose `open` snapshot the
-   * conversation service no longer has open — a composer typing into one thread while the transcript
-   * shows another. One conversation page in the stack, always.
-   */
-  popAndReplace: (route: Route) => void;
   /**
    * Push, or pop back off it if it is already the current page. What a toggle key like `ctrl+a`
    * wants: pressing it twice returns you to where you were rather than stacking two accounts pages.
@@ -51,34 +55,20 @@ export function useNavigation(
   const [stack, setStack] = useState<Route[]>([initial]);
 
   const push = useCallback(
-    (route: Route) => setStack((s) => [...s, route]),
+    (...routes: Route[]) => setStack((s) => pushFrames(s, ...routes)),
     [],
   );
 
-  // The root is never popped — there is nothing behind it, and an empty stack has no page to draw.
-  const pop = useCallback(
-    () => setStack((s) => (s.length > 1 ? s.slice(0, -1) : s)),
-    [],
-  );
+  const pop = useCallback(() => setStack((s) => popFrame(s)), []);
 
   const replace = useCallback(
-    (route: Route) => setStack((s) => [...s.slice(0, -1), route]),
-    [],
-  );
-
-  const popAndReplace = useCallback(
-    (route: Route) => setStack((s) => [...s.slice(0, -2), route]),
+    (route: Route) => setStack((s) => replaceFrame(s, route)),
     [],
   );
 
   const toggle = useCallback(
     (route: Route) =>
-      setStack((s) => {
-        const current = s[s.length - 1];
-        if (current?.name === route.name)
-          return s.length > 1 ? s.slice(0, -1) : s;
-        return [...s, route];
-      }),
+      setStack((s) => toggleFrame(s, route, (a, b) => a.name === b.name)),
     [],
   );
 
@@ -91,9 +81,8 @@ export function useNavigation(
       push,
       pop,
       replace,
-      popAndReplace,
       toggle,
     }),
-    [route, stack.length, push, pop, replace, popAndReplace, toggle],
+    [route, stack.length, push, pop, replace, toggle],
   );
 }
