@@ -76,3 +76,23 @@ export function groupJobs<T extends GroupableJob>(args: {
   }
   return entries;
 }
+
+/**
+ * Jobs another terminal is driving sink to the bottom, keeping their order among themselves.
+ *
+ * Sorted rather than hidden, and still selectable: a claim is information, not a permission. And
+ * sorted rather than merely dimmed, because in a six-tile grid the rows you can act on should be
+ * the rows your eye lands on first — dimming alone still makes you read past them.
+ *
+ * Applied BEFORE grouping, so a project's claimed jobs fall to the end of that project's run rather
+ * than to the end of the screen, where they would be separated from the header naming them.
+ */
+export function sortClaimedLast<T>(args: {
+  jobs: readonly T[];
+  isClaimed: (job: T) => boolean;
+}): T[] {
+  const open: T[] = [];
+  const claimed: T[] = [];
+  for (const job of args.jobs) (args.isClaimed(job) ? claimed : open).push(job);
+  return [...open, ...claimed];
+}

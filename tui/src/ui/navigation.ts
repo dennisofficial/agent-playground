@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import {
   popFrame,
+  popToName,
   pushFrames,
   replaceFrame,
   toggleFrame,
@@ -14,6 +15,14 @@ export type Route =
   /** Null is the unscoped master list — every job, grouped by project. It is the root. */
   | { name: "jobs"; project: ProjectRow | null }
   | { name: "conversation"; project: ProjectRow; open: OpenConversation }
+  /**
+   * A job that does not exist yet — one blank composer and nothing else. It carries no job and no
+   * thread because there are none: the pending job lives entirely in the page's own state, so
+   * popping this frame scratches it with nothing to clean up. Sending REPLACES this frame rather
+   * than stacking on it — the blank page was never a place you were, and leaving it in the stack
+   * would put a second conversation-shaped page behind the real one.
+   */
+  | { name: "new-job"; project: ProjectRow }
   /**
    * The job's phases and threads — the job's own page, and the frame the conversation sits on top
    * of. Pushed when the job opens, revealed by popping the conversation off, never reached any
@@ -48,6 +57,11 @@ export type Navigation = {
    * wants: pressing it twice returns you to where you were rather than stacking two accounts pages.
    */
   toggle: (route: Route) => void;
+  /**
+   * Unwind to the named page. For an exit that is not a step back: a tile whose job was taken from
+   * it may be on the conversation or on the job's page, and popping a fixed count would be a guess.
+   */
+  popTo: (name: Route["name"]) => void;
 };
 
 /**
@@ -78,6 +92,12 @@ export function useNavigation(
     [],
   );
 
+  const popTo = useCallback(
+    (name: Route["name"]) =>
+      setStack((s) => popToName(s, name, (frame) => frame.name)),
+    [],
+  );
+
   const route = stack[stack.length - 1] ?? initial;
 
   return useMemo(
@@ -88,7 +108,8 @@ export function useNavigation(
       pop,
       replace,
       toggle,
+      popTo,
     }),
-    [route, stack.length, push, pop, replace, toggle],
+    [route, stack.length, push, pop, replace, toggle, popTo],
   );
 }

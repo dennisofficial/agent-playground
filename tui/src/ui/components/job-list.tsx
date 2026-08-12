@@ -55,6 +55,8 @@ export function JobListRow(props: {
   /** The spinner's current frame, for whichever job has a turn in flight somewhere inside it. */
   frame: string;
   runningThreadIds: readonly string[];
+  /** Another terminal is driving this one. Still openable — it costs one extra keypress. */
+  claimed?: boolean;
 }): React.ReactNode {
   const { job, layout } = props;
   const attention = jobAttention({
@@ -70,11 +72,20 @@ export function JobListRow(props: {
       <span fg={courtColour(attention.court)}>
         {attention.unseen ? glyph.unseen : glyph.seen}{" "}
       </span>
-      <span>{fitColumn(job.title, layout.title)}</span>
+      <span fg={props.claimed ? theme.dim : undefined}>
+        {fitColumn(job.title, layout.title)}
+      </span>
+      {/* A claimed row says WHERE rather than what it owes. Its verb belongs to the terminal that
+          holds it — reporting "reply" for a conversation you cannot see would be an instruction you
+          are not in a position to follow. */}
       {layout.status > 0 ? (
-        <span fg={courtColour(attention.court)}>
-          {fitColumn(statusCell({ attention, frame: props.frame }), layout.status)}
-        </span>
+        props.claimed ? (
+          <span fg={theme.dim}>{fitColumn("elsewhere", layout.status)}</span>
+        ) : (
+          <span fg={courtColour(attention.court)}>
+            {fitColumn(statusCell({ attention, frame: props.frame }), layout.status)}
+          </span>
+        )
       ) : null}
       <span fg={theme.dim}>{formatWhen({ date: job.updatedAt })}</span>
     </text>

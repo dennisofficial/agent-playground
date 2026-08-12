@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { EJobEntry, groupJobs, type JobEntry } from '../job-groups.js';
+import { EJobEntry, groupJobs, sortClaimedLast, type JobEntry } from '../job-groups.js';
 
 type Fake = { id: string; projectId: string; projectName: string };
 
@@ -94,5 +94,30 @@ describe('edges', () => {
   it('returns nothing for no jobs', () => {
     expect(groupJobs({ jobs: [], grouped: true })).toEqual([]);
     expect(groupJobs({ jobs: [], grouped: false })).toEqual([]);
+  });
+});
+
+describe('sortClaimedLast', () => {
+  const isClaimed = (job: Fake): boolean => job.id.startsWith('c');
+
+  it('sinks claimed jobs below the rest', () => {
+    const sorted = sortClaimedLast({
+      jobs: [job('c1', 'atlas'), job('a', 'atlas'), job('c2', 'atlas')],
+      isClaimed,
+    });
+    expect(sorted.map((j) => j.id)).toEqual(['a', 'c1', 'c2']);
+  });
+
+  it('is stable within each half', () => {
+    const sorted = sortClaimedLast({
+      jobs: [job('a', 'x'), job('b', 'x'), job('c1', 'x'), job('c2', 'x')],
+      isClaimed,
+    });
+    expect(sorted.map((j) => j.id)).toEqual(['a', 'b', 'c1', 'c2']);
+  });
+
+  it('leaves a list with nothing claimed exactly as it was', () => {
+    const jobs = [job('a', 'x'), job('b', 'x')];
+    expect(sortClaimedLast({ jobs, isClaimed }).map((j) => j.id)).toEqual(['a', 'b']);
   });
 });

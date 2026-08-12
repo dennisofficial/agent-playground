@@ -6,10 +6,14 @@ import type { Thread } from "../generated/prisma/client.js";
 import type { JobRow } from "../store/job.repository.js";
 import { CopyNoticeProvider, useCopyOnSelect } from "./copy-on-select.js";
 import { useRunningThreads } from "./hooks/use-conversation.js";
+import { useNewJob } from "./hooks/use-new-job.js";
+import { claimService, useClaim } from "./hooks/use-claim.js";
+import { EClaimState } from "../domain/claim.js";
 import { useNavigation, type ThreadsRoute } from "./navigation.js";
 import { AccountsPage } from "./pages/accounts.js";
 import { ConversationPage } from "./pages/conversation.js";
 import { JobsPage } from "./pages/jobs.js";
+import { NewJobPage } from "./pages/new-job.js";
 import { ProjectsPage } from "./pages/projects.js";
 import { ThreadsPage } from "./pages/threads.js";
 import { useServices } from "./services.js";
@@ -35,6 +39,40 @@ export function App(props: {
   // Where the cursor was, so coming back from a job lands on the row you left rather than row zero.
   // A ref rather than route state: it is a hint for the next mount, not part of where you are.
   const focus = useRef<{ project?: string; job?: string }>({});
+
+  // A job another terminal is holding, waiting for a second press to take it.
+  const [takeover, setTakeover] = useState<{
+    jobId: string;
+    tty: string | null;
+  } | null>(null);
+
+  /**
+   * This tile holds the job it has OPEN — the conversation and the job's own page are both inside
+   * it, so `←` between them changes nothing. Browsing holds nothing, which means a job you left ten
+   * seconds ago is immediately takeable: you are demonstrably not in it.
+   */
+  const heldJobId =
+    nav.route.name === "conversation"
+      ? nav.route.open.job.id
+      : nav.route.name === "threads"
+        ? nav.route.job.id
+        : null;
+
+  const handleTakenOver = useCallback(() => {
+    if (!heldJobId) return;
+    // Interrupt FIRST, navigate second. `←` deliberately leaves an agent working, so popping alone
+    // would leave this tile streaming into a transcript the other terminal is now also writing.
+    void conversationService.abandonJob(heldJobId).finally(() => {
+      setError("this job was taken over by another terminal");
+      nav.popTo("jobs");
+    });
+  }, [conversationService, heldJobId, nav]);
+
+  useClaim({ jobId: heldJobId, onTakenOver: handleTakenOver });
+
+  // Creating a job is two moves — a blank page, then the message that makes it real. Both live in
+  // one hook because both are decisions about the STACK, and neither is wiring.
+  const { handleNew, handleStart } = useNewJob({ nav, focus, onError: setError });
 
   // A failure belongs to the page that produced it. Leaving that page clears it, so an error can
   // never outlive the thing it was about.
@@ -75,6 +113,17 @@ export function App(props: {
           nav.push({ name: "accounts" });
           return;
         }
+        // Held elsewhere: arm rather than refuse, and rather than open a modal. One user, one
+        // machine — taking a job back is a keypress, not a negotiation, and the same idiom already
+        // guards quitting. The second press falls through because `takeover` now names this job.
+        if (
+          takeover?.jobId !== job.id &&
+          claimService.stateOf(job.id) === EClaimState.held
+        ) {
+          setTakeover({ jobId: job.id, tty: claimService.read(job.id)?.tty ?? null });
+          return;
+        }
+        setTakeover(null);
         // The unscoped list spans projects, so a row there arrives without one. The scoped list
         // already has it and hands it over rather than paying for the lookup again.
         const project = known ?? (await workspaceService.findProject(job.projectId));
@@ -102,7 +151,7 @@ export function App(props: {
         setError((e as Error).message);
       }
     },
-    [conversationService, nav, workspaceService],
+    [conversationService, nav, takeover, workspaceService],
   );
 
   // The soft lock says "another Atlas has this thread", so holding it while the user browses jobs
@@ -216,6 +265,19 @@ export function App(props: {
           </box>
         ) : null}
 
+        {/* Deliberately not a modal. Taking a job back is one keypress, and a dialog for it would
+            be three. It cannot say whether a turn is running over there — turns are in-process, so
+            this terminal cannot see another's — which is exactly why the displaced tile interrupts
+            its own work rather than being asked to promise it has none. */}
+        {takeover ? (
+          <box flexDirection="row" flexShrink={0}>
+            <text fg={theme.warn}>
+              {glyph.warning} open in another terminal
+              {takeover.tty ? ` (${takeover.tty})` : ""} · ⏎ again to take it
+            </text>
+          </box>
+        ) : null}
+
         {route.name === "projects" ? (
           <ProjectsPage
             focusId={focus.current.project}
@@ -231,8 +293,21 @@ export function App(props: {
             project={route.project}
             focusId={focus.current.job}
             onOpen={(job) => void openJob(job, route.project)}
+            // Unreachable unscoped — the page hides `new job` when it has no project to create it
+            // in — but a job has to be created SOMEWHERE, and the check is what says so.
+            onNew={() => {
+              if (route.project) void handleNew(route.project);
+            }}
             onProjects={() => nav.push({ name: "projects" })}
             onBack={nav.pop}
+          />
+        ) : null}
+
+        {route.name === "new-job" ? (
+          <NewJobPage
+            projectName={route.project.name}
+            onSubmit={(text) => handleStart({ project: route.project, text })}
+            onCancel={nav.pop}
           />
         ) : null}
 

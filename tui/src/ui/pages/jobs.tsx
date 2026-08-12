@@ -10,7 +10,13 @@ import type { ProjectRow } from "../../app/workspace.service.js";
 import type { JobRow } from "../../store/job.repository.js";
 import { clampIndex, matchesQuery } from "../../domain/list-nav.js";
 import { deletionCost, jobSummary, jobsLayout } from "../../domain/jobs-list.js";
-import { EJobEntry, groupJobs } from "../../domain/job-groups.js";
+import {
+  EJobEntry,
+  groupJobs,
+  sortClaimedLast,
+} from "../../domain/job-groups.js";
+import { EClaimState } from "../../domain/claim.js";
+import { claimService } from "../hooks/use-claim.js";
 import { ConfirmBar } from "../components/confirm-bar.js";
 import { ListFooter } from "../components/list-footer.js";
 import { JobGroupHeader, JobListRow } from "../components/job-list.js";
@@ -46,19 +52,22 @@ export function JobsPage(props: {
   /** The job last opened — the cursor lands on it when you come back, not on row zero. */
   focusId?: string | undefined;
   onOpen: (job: JobRow) => void;
+  /** `n` and `+ new job` — a blank conversation, and no job until a message is sent into it. */
+  onNew: () => void;
   onProjects: () => void;
   onBack: () => void;
 }): React.ReactNode {
   const { workspaceService, attentionService } = useServices();
   const projectId = props.project?.id ?? null;
   const [jobs, setJobs] = useState<JobRow[] | null>(null);
+  const [claims, setClaims] = useState<Map<string, EClaimState>>(new Map());
   const [view, setView] = useState<View>("open");
   const [selected, setSelected] = useState(0);
   const [mode, setMode] = useState<Mode>("browse");
   const [shortcuts, setShortcuts] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { width, height } = useTerminalDimensions();
-  // A filter and a job title, never a draft: one line.
+  // A filter, never a draft: one line.
   const composer = useComposer("", { singleLine: true });
 
   // Which of these jobs has an agent working in it right now. Without this a job you walked away
@@ -67,11 +76,14 @@ export function JobsPage(props: {
   const { frame } = useTick(running.length > 0);
 
   const reload = useCallback(async () => {
-    setJobs(
+    const next =
       view === "archived"
         ? await attentionService.listArchivedJobs(projectId)
-        : await workspaceService.listJobs(projectId),
-    );
+        : await workspaceService.listJobs(projectId);
+    setJobs(next);
+    // One stat and one signal per row, on the same beat as the list itself. Cheap enough to do
+    // eagerly, and doing it in the render path instead would put a filesystem read behind a paint.
+    setClaims(claimService.statesFor(next.map((job) => job.id)));
   }, [attentionService, workspaceService, projectId, view]);
 
   useEffect(() => {
@@ -88,11 +100,19 @@ export function JobsPage(props: {
   const query = mode === "filter" ? composer.value : "";
 
   const all = useMemo(() => jobs ?? [], [jobs]);
+  const isClaimed = useCallback(
+    (job: JobRow) => claims.get(job.id) === EClaimState.held,
+    [claims],
+  );
   const rows = useMemo(
     // The phase and the role left the row when the status column became the verb you owe, but they
     // are still the most natural thing to type when hunting for a job by what it was doing.
-    () => all.filter((job) => matchesQuery(query, job.title, jobSummary(job))),
-    [all, query],
+    () =>
+      sortClaimedLast({
+        jobs: all.filter((job) => matchesQuery(query, job.title, jobSummary(job))),
+        isClaimed,
+      }),
+    [all, query, isClaimed],
   );
   // The shelf has no `+ new job`: a job you create is a job you are working on, by definition.
   // Neither does the unscoped list — "new job" needs somewhere to put it, and standing in `~`
@@ -127,19 +147,13 @@ export function JobsPage(props: {
     composer.clear();
   }, [composer]);
 
-  const create = useCallback(
-    (title: string) => {
-      // Unreachable unscoped — `canCreate` gates every door into this mode — but a job has to be
-      // created SOMEWHERE, and the type is what says so.
-      if (title.length === 0 || !projectId) return;
-      leaveMode();
-      void workspaceService
-        .createJob({ projectId, title })
-        .then(() => reload())
-        .catch((e: Error) => setError(e.message));
-    },
-    [leaveMode, projectId, reload, workspaceService],
-  );
+  // No create mode: `n` leaves this page for a blank conversation, and the job is created by the
+  // first message sent there. The title prompt that used to live here was ceremony charged before
+  // anyone knew whether there was a job at all — and it was injected as the opening message anyway.
+  const handleNew = useCallback(() => {
+    leaveMode();
+    props.onNew();
+  }, [leaveMode, props]);
 
   const remove = useCallback(
     (job: JobRow) => {
@@ -179,7 +193,7 @@ export function JobsPage(props: {
     highlighted,
     canCreate,
     leaveMode,
-    create,
+    onNew: handleNew,
     remove,
     shelve,
     setShortcuts,
@@ -233,7 +247,7 @@ export function JobsPage(props: {
       }
     >
       <ListEmpty
-        show={all.length === 0 && mode !== "create"}
+        show={all.length === 0}
         headline={view === "archived" ? "Nothing archived." : "No jobs yet."}
         hint={
           view === "archived"
@@ -263,6 +277,7 @@ export function JobsPage(props: {
             layout={layout}
             frame={frame}
             runningThreadIds={running}
+            claimed={isClaimed(entry.job)}
           />
         ),
       )}

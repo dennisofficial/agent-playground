@@ -2,7 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { existsSync, rmSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { EPhaseKind, EThreadRole } from "../generated/prisma/enums.js";
-import type { Job, Project } from "../generated/prisma/client.js";
+import type { Job, Project, Thread } from "../generated/prisma/client.js";
 import { ELaunchScope, launchScope } from "../domain/launch-scope.js";
 import { jobDir, sessionTapeDir } from "../domain/paths.js";
 import { AccountRepository } from "../store/account.repository.js";
@@ -119,6 +119,16 @@ export class WorkspaceService {
   }
 
   /**
+   * The job and its first thread, created together and handed back together.
+   *
+   * The thread comes back rather than being looked up again because the caller opens the
+   * conversation on it directly: `job.activeThreadId` is stamped by `openThread` AFTER the row this
+   * returns was read, so routing through it would be routing through a stale field.
+   *
+   * Nothing is seeded here. The first thread of a job opens on the human's own words — see
+   * `JobStartService`. `ConversationService.seedThread()` is still how a LATER phase's first thread
+   * opens, where there is no human message to open on.
+   *
    * `worktree` is the first of the three doors onto an isolated branch — the other two are the
    * build confirm and the tool. It is opt-in: a button-colour change does not need a worktree, and
    * a job without one works in the project path exactly as before.
@@ -127,39 +137,29 @@ export class WorkspaceService {
     projectId: string;
     title: string;
     worktree?: boolean;
-  }): Promise<Job> {
+  }): Promise<{ job: Job; thread: Thread }> {
     const { projectId, title } = args;
     // Every job starts in intake with one intake thread — the phase and the role are named
     // separately because they are separate axes, and only their opening values coincide.
-    const job = await this.jobRepository.create({
+    const created = await this.jobRepository.create({
       projectId,
       title,
       kind: EPhaseKind.intake,
     });
     const thread = await this.sessionManagerService.openThread(
-      job.id,
+      created.id,
       EThreadRole.intake,
     );
-    this.contextFolderService.ensure(job.id);
+    this.contextFolderService.ensure(created.id);
     // The branch is named after the job, so the job has to exist first. A worktree that fails to
     // materialise raises here and leaves the job standing in the project path — recoverable
     // through the tool door, where losing the job would not be.
-    if (args.worktree) await this.enterWorktree(job.id);
+    if (args.worktree) await this.enterWorktree(created.id);
 
-    // Seeded LAST, and after the worktree, so the phase's opening words name the directory the
-    // agent is actually standing in. A new job opens onto a thread already clearing fog on what it
-    // is, rather than onto a blank conversation waiting to be told what to do.
-    const seeded = await this.jobRepository.findWithProject(job.id);
-    if (seeded) {
-      const { project, ...reloaded } = seeded;
-      await this.conversationService.seedThread({
-        job: reloaded,
-        thread,
-        cwd: this.cwdFor({ job: reloaded, projectPath: project.path }),
-      });
-      return reloaded;
-    }
-    return job;
+    // Re-read after the worktree: taking one stamps the branch onto the row, and the caller runs
+    // the first turn in the directory that branch implies.
+    const job = (await this.jobRepository.findById(created.id)) ?? created;
+    return { job, thread };
   }
 
   /**

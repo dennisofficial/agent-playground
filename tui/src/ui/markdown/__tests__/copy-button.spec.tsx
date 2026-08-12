@@ -54,9 +54,14 @@ describe('CopyButton', () => {
     );
     try {
       await setup.flush();
+      // Nothing to click until the pointer is in the block, so the button is fetched by hovering the
+      // fence's top border rather than by searching a resting frame that has no button on it.
+      const border = setup.captureCharFrame().split('\n').findIndex((line) => line.includes('╭'));
+      await hover(setup, setup.captureCharFrame().split('\n')[border]?.indexOf('╭') ?? 0, border);
+
       const lines = setup.captureCharFrame().split('\n');
       const row = lines.findIndex((line) => line.includes('copy'));
-      expect(row).toBeGreaterThanOrEqual(0);
+      expect(row).toBe(border);
 
       // On the fence's top border, opposite the language — not on a row of its own. A copy button
       // is on every fence, so a dedicated row would cost a two-line snippet its own height again.
@@ -92,6 +97,9 @@ describe('CopyButton', () => {
     );
     try {
       await setup.flush();
+      const border = setup.captureCharFrame().split('\n').findIndex((line) => line.includes('╭'));
+      await hover(setup, 1, border);
+
       const lines = setup.captureCharFrame().split('\n');
       const row = lines.findIndex((line) => line.includes('copy'));
       const column = lines[row]?.indexOf('⧉') ?? -1;
@@ -110,6 +118,65 @@ describe('CopyButton', () => {
       // row, or every fence would light up whenever the pointer crossed it.
       await hover(setup, 2, row);
       expect(labelColour(setup.captureSpans(), row)?.equals(parseColor(theme.dim))).toBe(true);
+    } finally {
+      setup.renderer.destroy();
+    }
+  }, 30_000);
+
+  it('stays out of the border until the pointer is somewhere in the block', async () => {
+    const setup = await testRender(
+      <box flexDirection="column" width={60} height={12}>
+        <MarkdownView source={FENCE} width={56} />
+      </box>,
+      { width: 60, height: 12 },
+    );
+    try {
+      await setup.flush();
+      const resting = setup.captureCharFrame().split('\n');
+      const border = resting.findIndex((line) => line.includes('╭'));
+      // A transcript is mostly fences; at rest the header carries the language and nothing else.
+      expect(resting[border]).not.toContain('copy');
+      expect(resting[border]).toContain(' ts ');
+
+      // The CODE, not the header: the whole block is the hover target, not just the border the
+      // button is drawn on — reaching it should not require finding the one row it lives on.
+      const code = resting.findIndex((line) => line.includes('const answer'));
+      await hover(setup, 4, code);
+      const shown = setup.captureCharFrame().split('\n');
+      expect(shown[border]).toContain('copy');
+      // Revealing it must not move the fence's corner: the button's columns are always spoken for,
+      // border when it is hidden, label when it is not.
+      expect(shown[border]?.trimEnd().length).toBe(resting[border]?.trimEnd().length);
+
+      // Off the block entirely — the empty rows below it — and the border closes back up.
+      await hover(setup, 40, 11);
+      expect(setup.captureCharFrame().split('\n')[border]).not.toContain('copy');
+    } finally {
+      setup.renderer.destroy();
+    }
+  }, 30_000);
+
+  it('holds its report on screen after the pointer has left the block', async () => {
+    const setup = await testRender(
+      <box flexDirection="column" width={60} height={12}>
+        <MarkdownView source={FENCE} width={56} />
+      </box>,
+      { width: 60, height: 12 },
+    );
+    try {
+      await setup.flush();
+      const border = setup.captureCharFrame().split('\n').findIndex((line) => line.includes('╭'));
+      await hover(setup, 1, border);
+      const column = setup.captureCharFrame().split('\n')[border]?.indexOf('⧉') ?? -1;
+
+      await setup.mockMouse.click(column, border);
+      await setup.flush();
+
+      // Copying is often the last thing done in a block, so the pointer leaves immediately after the
+      // click. Hiding the button on the way out would swallow the only report the click makes.
+      await hover(setup, 40, 11);
+      const after = setup.captureCharFrame().split('\n')[border];
+      expect(after?.includes('copied') || after?.includes('blocked')).toBe(true);
     } finally {
       setup.renderer.destroy();
     }

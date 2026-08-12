@@ -113,6 +113,9 @@ describe('creating a job', () => {
         async create(): Promise<Job> {
           return JOB;
         },
+        async findById(): Promise<Job> {
+          return JOB;
+        },
         async findWithProject(): Promise<Job & { project: Project }> {
           return { ...JOB, project: { path: '/repo' } as Project };
         },
@@ -138,15 +141,21 @@ describe('creating a job', () => {
     return { workspace, seeded, opened };
   }
 
-  it('opens one intake thread and seeds it', async () => {
+  it('opens one intake thread and seeds NOTHING — the human speaks first in a job', async () => {
     const { workspace, seeded, opened } = build();
 
-    await workspace.createJob({ projectId: 'project-1', title: 'add avatar upload' });
+    const { job, thread } = await workspace.createJob({
+      projectId: 'project-1',
+      title: 'add avatar upload',
+    });
 
     expect(opened).toEqual([EThreadRole.intake]);
-    expect(seeded).toHaveLength(1);
-    expect(seeded[0]?.thread.id).toBe(THREAD.id);
-    // The turn runs where the job's work runs — its worktree if it took one, else the project path.
-    expect(seeded[0]?.cwd).toBe('/repo');
+    // The first thread of a job opens on the human's own words — see `job-start.spec.ts`. Seeding
+    // here would put a brief above them in the transcript and start the job in charting posture.
+    expect(seeded).toEqual([]);
+    // The thread comes back with the job because the caller opens the conversation on it directly:
+    // the job row was read before `openThread` stamped `activeThreadId` onto it.
+    expect(job.id).toBe(JOB.id);
+    expect(thread.id).toBe(THREAD.id);
   });
 });

@@ -2,8 +2,13 @@ import type { JobRow } from "../../store/job.repository.js";
 import type { FooterOverlay } from "../components/list-footer.js";
 import type { ComposerControls } from "../hooks/use-composer.js";
 
-/** What the jobs page is waiting for. Exactly one of these owns the keyboard at a time. */
-export type Mode = "browse" | "filter" | "create" | "confirm";
+/**
+ * What the jobs page is waiting for. Exactly one of these owns the keyboard at a time.
+ *
+ * There is no `create`: naming a job is no longer something this page asks for. `n` leaves for a
+ * blank conversation and the first message sent there creates the job and names it.
+ */
+export type Mode = "browse" | "filter" | "confirm";
 
 /**
  * Which shelf you are looking at. Archiving is a pure HIDE — nothing is closed, no file is touched
@@ -50,12 +55,8 @@ export const ARCHIVED_HINTS = [
   "⏎ open · a restore · s open jobs",
 ];
 
-/** Only these two modes borrow the footer's composer. Engine is not an input — it follows the role. */
+/** Only filtering borrows the footer's composer now that a job is never named here. */
 const OVERLAYS: Partial<Record<Mode, { placeholder: string; caption: string }>> = {
-  create: {
-    placeholder: "fix steering",
-    caption: "new job · starts an intake thread on claude          ⏎ create · esc",
-  },
   filter: {
     placeholder: "filter…",
     caption: "↑↓ select · ⏎ open · esc clear",

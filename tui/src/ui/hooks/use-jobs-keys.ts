@@ -7,7 +7,7 @@ import { useInput } from "./use-input.js";
 /**
  * The job list's keyboard contract, in one place.
  *
- * Apart from the page for the same reason the conversation's is: four modes share one listener, and
+ * Apart from the page for the same reason the conversation's is: three modes share one listener, and
  * which of them owns a keypress is the whole of the page's behaviour. Reading that with the JSX in
  * between hides the one thing worth checking — that exactly one mode claims each key.
  *
@@ -27,7 +27,8 @@ export function useJobsKeys(args: {
   /** False on the shelf and on the unscoped list, where there is no "here" to create a job in. */
   canCreate: boolean;
   leaveMode: () => void;
-  create: (title: string) => void;
+  /** Leaves this page for a blank conversation — the job is created by the message sent there. */
+  onNew: () => void;
   remove: (job: JobRow) => void;
   shelve: (job: JobRow) => void;
   setShortcuts: (update: (open: boolean) => boolean) => void;
@@ -36,13 +37,6 @@ export function useJobsKeys(args: {
   onBack: () => void;
 }): void {
   useInput((input, key) => {
-    if (args.mode === "create") {
-      if (key.escape) return args.leaveMode();
-      if (key.return) return args.create(args.composer.value.trim());
-      args.composer.handleKey(input, key);
-      return;
-    }
-
     if (args.mode === "confirm") {
       if (input === "y" && args.highlighted) return args.remove(args.highlighted);
       return args.leaveMode();
@@ -57,8 +51,7 @@ export function useJobsKeys(args: {
           args.leaveMode();
           args.onOpen(args.highlighted);
         } else if (args.canCreate) {
-          args.composer.clear();
-          args.setMode("create");
+          args.onNew();
         }
         return;
       }
@@ -75,11 +68,11 @@ export function useJobsKeys(args: {
     // `→` descends, the exact mirror of `←`.
     if (key.return || key.rightArrow) {
       if (args.highlighted) return args.onOpen(args.highlighted);
-      if (args.canCreate) return args.setMode("create");
+      if (args.canCreate) return args.onNew();
       return;
     }
     if (input === "/") return args.setMode("filter");
-    if (input === "n" && args.canCreate) return args.setMode("create");
+    if (input === "n" && args.canCreate) return args.onNew();
     // Projects are no longer a level you navigate THROUGH — this list already spans them. The page
     // survives as housekeeping: removing a repo you have stopped working on.
     if (input === "p") return args.onProjects();

@@ -9,6 +9,7 @@ import { ContextFolderService } from "./context-folder.service.js";
 import { ConversationService } from "./conversation.service.js";
 import { ConversationStoreRegistry } from "./conversation-store.registry.js";
 import { GitService } from "./git.service.js";
+import { JobStartService } from "./job-start.service.js";
 import { PhaseBriefService } from "./phase-brief.service.js";
 import { SessionManagerService } from "./session-manager.service.js";
 import { TurnRunnerService } from "./turn-runner.service.js";
@@ -31,6 +32,7 @@ import { WorktreeService } from "./worktree.service.js";
     GitService,
     WorktreeService,
     WorkspaceService,
+    JobStartService,
   ],
   exports: [
     ConversationStoreRegistry,
@@ -42,6 +44,7 @@ import { WorktreeService } from "./worktree.service.js";
     ConversationService,
     WorktreeService,
     WorkspaceService,
+    JobStartService,
   ],
 })
 export class AppServicesModule {}

@@ -16,6 +16,7 @@ import { JumpToBottom, NewDivider } from '../components/new-divider.js';
 import { ToolRunningLine } from '../components/blocks/tool-block.js';
 import { WorkingLine } from '../components/working-line.js';
 import { AccountGroup, accountsLayout } from '../components/account-list.js';
+import { NewJobPage } from '../pages/new-job.js';
 import type { AccountRow } from '../../app/accounts.service.js';
 
 /**
@@ -230,6 +231,20 @@ describe('conversation page components mount', () => {
           rows={ACCOUNTS}
           selected={0}
           layout={accountsLayout(width, ACCOUNTS)}
+        />,
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  // A whole page rather than a block, but the mount rule is the same one: a `<text>` inside a
+  // `<text>` only exists once the tree is expanded, and this page draws a composer inside a screen.
+  it('renders the pending-job page', async () => {
+    await expect(
+      mount(
+        <NewJobPage
+          projectName="atlas"
+          onSubmit={async () => undefined}
+          onCancel={() => undefined}
         />,
       ),
     ).resolves.toBeUndefined();

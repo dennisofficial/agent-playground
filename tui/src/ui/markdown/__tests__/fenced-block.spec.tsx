@@ -1,7 +1,7 @@
 import type { ScrollBoxRenderable } from '@opentui/core';
 import { testRender } from '@opentui/react/test-utils';
 import { describe, expect, it } from 'bun:test';
-import React from 'react';
+import React, { act } from 'react';
 import { CONTENT_PADDING } from '../fenced-block.js';
 import { MarkdownView } from '../markdown-view.js';
 
@@ -37,6 +37,21 @@ function codeOf(line: string | undefined): string {
   if (!line) return '';
   const border = line.indexOf('│');
   return border < 0 ? line : line.slice(border + 1 + CONTENT_PADDING);
+}
+
+/**
+ * Put the pointer somewhere in the block and let the frame catch up.
+ *
+ * The copy button only draws itself while the block is hovered, so a claim about the header having
+ * room for it has to be made with the pointer in the block. The `act` and the second flush are the
+ * harness's render loop, not anything about hovering — see `copy-button.spec.tsx`.
+ */
+async function hover(setup: Awaited<ReturnType<typeof mount>>['setup'], x: number, y: number): Promise<void> {
+  await act(async () => {
+    await setup.mockMouse.moveTo(x, y);
+    await setup.flush();
+  });
+  await setup.flush();
 }
 
 async function mount(source: string) {
@@ -213,15 +228,17 @@ describe('FencedBlock', () => {
   it('shrinks a short fence to its content instead of the viewport', async () => {
     const { setup } = await mount(['```ts', 'const x = 1;', '```'].join('\n'));
     try {
+      const top = rowOf(setup.captureCharFrame(), '╭');
+      await hover(setup, 1, top);
+
       const lines = setup.captureCharFrame().split('\n');
       const bottom = lines.find((line) => line.includes('╰'))?.replace(/\s+$/, '') ?? '';
       // `const x = 1;` is twelve columns, plus a border either side — nowhere near the sixty the
       // block used to be drawn at.
       expect(bottom.length).toBeLessThan(WIDTH / 2);
       // The header still carries both of the things that live in it.
-      const top = lines.find((line) => line.includes('╭')) ?? '';
-      expect(top).toContain(' ts ');
-      expect(top).toContain('copy');
+      expect(lines[top]).toContain(' ts ');
+      expect(lines[top]).toContain('copy');
     } finally {
       setup.renderer.destroy();
     }
@@ -231,7 +248,12 @@ describe('FencedBlock', () => {
     // Two columns of content against a header that needs far more than two.
     const { setup } = await mount(['```ts', 'x', '```'].join('\n'));
     try {
-      const top = setup.captureCharFrame().split('\n').find((line) => line.includes('╭')) ?? '';
+      const row = rowOf(setup.captureCharFrame(), '╭');
+      // The button's columns are reserved whether or not it is drawn, so the width claim holds at
+      // rest; hovering is what makes the label itself readable off the frame.
+      await hover(setup, 1, row);
+
+      const top = setup.captureCharFrame().split('\n')[row] ?? '';
       expect(top).toContain(' ts ');
       expect(top).toContain('copy');
     } finally {
