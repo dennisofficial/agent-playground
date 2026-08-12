@@ -46,3 +46,24 @@ export function toggleFrame<T>(
   if (current !== undefined && isSame(current, frame)) return popFrame(stack);
   return pushFrames(stack, frame);
 }
+
+/**
+ * Unwind until the named page is on top, or the root is.
+ *
+ * What a tile does when a job is taken from it: it may be looking at the conversation, or at the
+ * job's own page, and neither knows how deep it is. Popping a fixed number of frames would be a
+ * guess, and a wrong guess strands you on a page whose job somebody else is now driving.
+ */
+export function popToName<T>(
+  stack: readonly T[],
+  name: string,
+  nameOf: (frame: T) => string,
+): T[] {
+  let next = [...stack];
+  while (next.length > 1) {
+    const top = next[next.length - 1];
+    if (top !== undefined && nameOf(top) === name) break;
+    next = next.slice(0, -1);
+  }
+  return next;
+}

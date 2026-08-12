@@ -259,6 +259,25 @@ export class ConversationService {
     await this.release();
   }
 
+  /**
+   * Stop everything this job has in flight, and let go of it.
+   *
+   * What a displaced tile does when its job is taken. Navigating away is NOT enough: `←` out of a
+   * running conversation deliberately leaves the agent working, so a tile that only popped would
+   * keep streaming into a transcript the other terminal is now also writing — two writers, neither
+   * of them on screen. The interrupt is the whole point; the navigation is cosmetic beside it.
+   *
+   * Every thread, not just the open one: a job runs several at once, and the tile taking over is
+   * about to drive all of them.
+   */
+  async abandonJob(jobId: string): Promise<void> {
+    const threads = await this.threadRepository.listForJob(jobId);
+    await Promise.all(
+      threads.map((thread) => this.turnRunnerService.interrupt(thread.id)),
+    );
+    if (this.open?.job.id === jobId) await this.release();
+  }
+
   async evict(
     jobIds: readonly string[],
     threadIds: readonly string[],

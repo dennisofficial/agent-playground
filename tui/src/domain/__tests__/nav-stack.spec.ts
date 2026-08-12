@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { popFrame, pushFrames, replaceFrame, toggleFrame } from '../nav-stack.js';
+import { popFrame, popToName, pushFrames, replaceFrame, toggleFrame } from '../nav-stack.js';
 
 const sameName = (a: string, b: string): boolean => a === b;
 
@@ -64,5 +64,28 @@ describe('toggleFrame', () => {
 
   it('refuses to pop the root, even to toggle', () => {
     expect(toggleFrame(['accounts'], 'accounts', sameName)).toEqual(['accounts']);
+  });
+});
+
+describe('popToName', () => {
+  const nameOf = (frame: string): string => frame;
+
+  it('unwinds from wherever you are to the named page', () => {
+    expect(popToName(['jobs', 'threads', 'conversation'], 'jobs', nameOf)).toEqual(['jobs']);
+    expect(popToName(['jobs', 'threads'], 'jobs', nameOf)).toEqual(['jobs']);
+  });
+
+  it('is a no-op when you are already there', () => {
+    expect(popToName(['jobs'], 'jobs', nameOf)).toEqual(['jobs']);
+  });
+
+  it('stops at the topmost match rather than the deepest', () => {
+    // Two job lists are normal — the unscoped root with a scoped one pushed on top. Being taken
+    // over should drop you onto the scoped list you were using, not all the way to the root.
+    expect(popToName(['jobs', 'jobs', 'threads'], 'jobs', nameOf)).toEqual(['jobs', 'jobs']);
+  });
+
+  it('stops at the root rather than emptying when the name is not there', () => {
+    expect(popToName(['jobs', 'accounts'], 'threads', nameOf)).toEqual(['jobs']);
   });
 });
