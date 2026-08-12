@@ -176,13 +176,18 @@ describe('conversation page components mount', () => {
       mount(
         <>
           <Breadcrumb
-            project="atlas"
-            job="a job"
-            role="intake"
-            sessionOrdinal={1}
-            engine="claude"
-            model="opus"
             width={100}
+            facts={{
+              jobTitle: 'a job',
+              repo: 'atlas',
+              role: 'intake',
+              sessionOrdinal: 1,
+              engine: 'claude',
+              model: 'opus',
+              branch: null,
+              siblings: 0,
+              closed: false,
+            }}
           />
           <HintLine
             hints="? for shortcuts"

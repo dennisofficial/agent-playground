@@ -14,12 +14,16 @@ function state(over: Partial<ConversationHintState> = {}): ConversationHintState
 }
 
 describe('conversationHints', () => {
-  it('offers back and the keymap when there is nothing else going on', () => {
-    expect(conversationHints(state())).toBe('← back · ? for shortcuts');
+  it('offers only the keymap when there is nothing else going on', () => {
+    // `← back` went with the rest of the always-true hints. `?` stays because it is the one thing
+    // you cannot guess: it is how you find every key that is not on this line.
+    expect(conversationHints(state())).toBe('? for shortcuts');
   });
 
-  it('offers send once there is a draft', () => {
-    expect(conversationHints(state({ draftLength: 4 }))).toBe('esc clear · ⏎ send');
+  it('says NOTHING once there is a draft', () => {
+    // `⏎ send` and `esc clear` are true of every draft in every editor ever written. A line that is
+    // always the same is a line you stop reading, which costs the hints that are not always true.
+    expect(conversationHints(state({ draftLength: 4 }))).toBe('');
   });
 
   it('promises leaving does not interrupt, in the state where that matters', () => {
@@ -60,6 +64,9 @@ describe('conversationHints', () => {
       state({ shortcutsOpen: true }),
     ].map(conversationHints);
     for (const form of forms) {
+      // An empty line advertises nothing, which is the point of it — the rule is that a form must
+      // not describe a STATE without naming the key that changes it.
+      if (form.length === 0) continue;
       expect(form).toMatch(/esc|⏎|←|\?|ctrl/);
     }
   });

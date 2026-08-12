@@ -33,6 +33,9 @@ export function conversationHints(state: ConversationHintState): string {
         'esc interrupt · ← leave it running';
   }
 
-  if (state.draftLength > 0) return 'esc clear · ⏎ send';
-  return '← back · ? for shortcuts';
+  // Nothing. `⏎ send` and `esc clear` are true of every draft in every editor ever written, and a
+  // line that is always the same is a line you stop reading — which costs the hints that are NOT
+  // always true the attention they need. `?` still reaches all of it.
+  if (state.draftLength > 0) return '';
+  return '? for shortcuts';
 }

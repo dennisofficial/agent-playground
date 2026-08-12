@@ -10,6 +10,7 @@ import { EMessageType, EThreadStatus } from "../../generated/prisma/enums.js";
 import { CONVERSATION, EDITING, GLOBAL } from "../bindings.js";
 import { glyph, theme } from "../theme.js";
 import { Breadcrumb } from "../components/breadcrumb.js";
+import { useJobSiblings } from "../hooks/use-job-siblings.js";
 import { Composer, composerRows } from "../components/composer.js";
 import { HintLine } from "../components/hint-line.js";
 import { JumpToBottom } from "../components/new-divider.js";
@@ -188,18 +189,30 @@ export function ConversationPage(props: {
     draftLength: composer.value.length,
   });
 
+  // Other threads of this job working behind this one. Not other tiles — those are other tickets.
+  const siblings = useJobSiblings({
+    jobId: props.open.job.id,
+    currentThreadId: props.open.thread.id,
+  });
+
   return (
     <Screen
       header={
         <Breadcrumb
-          project={basename(props.open.cwd)}
-          job={props.open.job.title}
-          role={roleLabel(props.open.thread.role)}
-          sessionOrdinal={props.open.session.ordinal}
-          engine={props.open.session.engine}
-          model={props.open.session.model}
           width={width}
-          closed={props.open.closed}
+          facts={{
+            jobTitle: props.open.job.title,
+            // The repository, not the working directory: a job in a worktree would otherwise be
+            // headed by its own slug, which says nothing you do not already know from the branch.
+            repo: basename(props.open.job.workspacePath ?? props.open.cwd),
+            role: roleLabel(props.open.thread.role),
+            sessionOrdinal: props.open.session.ordinal,
+            engine: props.open.session.engine,
+            model: props.open.session.model,
+            branch: props.open.job.branch,
+            siblings,
+            closed: props.open.closed,
+          }}
         />
       }
       footer={
