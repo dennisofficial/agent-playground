@@ -147,15 +147,57 @@ export async function rotateOnContextWall(args: {
 }
 
 /**
+ * A session with a credential resolved onto it. Only a session in this state can run a turn, so the
+ * turn path takes this rather than `EngineSession` and the compiler carries the guarantee instead of
+ * every reader re-checking for null.
+ */
+export type RunningSession = EngineSession & { accountId: string };
+
+/**
+ * The whole turn boundary in one answer: the live session, the account it runs on, and null when it
+ * cannot run at all.
+ *
+ * Null is the DECLINED turn — no credential to run on — and the reason is put on the store as it is
+ * decided, because the two go together and a caller that had to remember to do it separately would
+ * eventually forget on one of the paths.
+ */
+export async function resolveForTurn(args: {
+  sessionRepository: SessionRepository;
+  sessionManagerService: SessionManagerService;
+  accountRotatorService: AccountRotatorService;
+  store: ConversationStore;
+  threadId: string;
+  session: EngineSession;
+}): Promise<RunningSession | null> {
+  const live = await sessionForTurn(args);
+  if (live.accountId === null) {
+    args.store.setNoAccount(
+      await args.sessionManagerService.whyNoAccount(live.engine),
+    );
+    return null;
+  }
+  // Cleared here rather than only on open: adding an account has to take effect on the next ⏎, not
+  // on a reload.
+  args.store.setNoAccount(null);
+  return { ...live, accountId: live.accountId };
+}
+
+/**
  * Which session and which account a turn actually runs on, resolved at the turn boundary.
  *
  * Both answers can have moved since the caller looked. `rotate` retires a session mid-turn and the
  * UI keeps its copy; another terminal on the same thread rotates without telling this one at all —
  * and resuming a retired leg would re-open precisely the context the rotation existed to leave
  * behind.
+ *
+ * The account is RESOLVED here rather than fixed when the session opened, because a session may hold
+ * none: a job can be created before any credential exists, and forgetting an account nulls the
+ * pointer of every session that was on it. Both are ordinary states, and this is the boundary that
+ * settles them — the same boundary rotation already moves at.
  */
 export async function sessionForTurn(args: {
   sessionRepository: SessionRepository;
+  sessionManagerService: SessionManagerService;
   accountRotatorService: AccountRotatorService;
   store: ConversationStore;
   threadId: string;
@@ -163,6 +205,8 @@ export async function sessionForTurn(args: {
 }): Promise<EngineSession> {
   // Null means the thread has no open session — a closed thread being read. Nothing to correct.
   const live = (await args.sessionRepository.currentForThread(args.threadId)) ?? args.session;
+
+  if (live.accountId === null) return adoptAnAccount({ ...args, live });
 
   // Accounts rotate at a turn BOUNDARY when the active one is near its wall, so no work is lost.
   const outcome = await args.accountRotatorService.considerRotation({
@@ -176,4 +220,28 @@ export async function sessionForTurn(args: {
     `switched to ${outcome.to.label} · ${outcome.from.label} hit its 5-hour limit`,
   );
   return { ...live, accountId: outcome.to.id };
+}
+
+/**
+ * A session holding no credential picks one now and keeps it. Stamped rather than resolved per turn
+ * so the meters, the chip and the ledger all name the same account for the work that follows — and so
+ * a rotation has something to rotate FROM.
+ *
+ * Still null on the way out when there is nothing to pick. That is not an error: it is the state the
+ * conversation renders as "no account selected", and the next turn asks again.
+ */
+async function adoptAnAccount(args: {
+  sessionRepository: SessionRepository;
+  sessionManagerService: SessionManagerService;
+  live: EngineSession;
+}): Promise<EngineSession> {
+  const { live } = args;
+  const chosen = await args.sessionManagerService.usableAccount(live.engine);
+  if (!chosen) return live;
+
+  await args.sessionRepository.setAccount({
+    sessionId: live.id,
+    accountId: chosen.id,
+  });
+  return { ...live, accountId: chosen.id };
 }

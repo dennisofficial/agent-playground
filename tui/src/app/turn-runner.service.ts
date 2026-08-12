@@ -15,7 +15,7 @@ import { AccountUsageService } from "./account-usage.service.js";
 import { ContextPressureService } from "./context-pressure.service.js";
 import { ConversationStoreRegistry } from "./conversation-store.registry.js";
 import type { ConversationStore } from "./conversation.store.js";
-import { sessionForTurn } from "./session-rotation.js";
+import { resolveForTurn } from "./session-rotation.js";
 import { SessionManagerService } from "./session-manager.service.js";
 import { finaliseTurn } from "./turn-completion.js";
 import { TurnEventApplier } from "./turn-events.js";
@@ -113,13 +113,19 @@ export class TurnRunnerService {
     const store = this.stores.for(thread.id);
     // Which session and which account this turn actually runs on: both can have moved since the
     // caller looked, and both move only at a turn boundary. See `session-rotation.ts`.
-    const session = await sessionForTurn({
+    const session = await resolveForTurn({
       sessionRepository: this.sessionRepository,
+      sessionManagerService: this.sessionManagerService,
       accountRotatorService: this.accountRotatorService,
       store,
       threadId: thread.id,
       session: args.session,
     });
+    // No credential to run on. Declined, not failed: nothing persisted, no spinner, no ledger row, and
+    // the conversation is already showing why. This used to throw from `pickAccount` — through job
+    // creation, over rows that had already been written.
+    if (!session) return;
+
     // A turn that fails because the transcript itself no longer fits. Collected as it streams
     // because the engine reports it as an ordinary error event, and acted on in the `finally`.
     let wall = false;

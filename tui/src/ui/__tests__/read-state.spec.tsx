@@ -46,6 +46,7 @@ const STATE: ConversationState = {
   fiveHour: null,
   sevenDay: null,
   notices: [],
+  noAccount: null,
   closed: false,
 };
 

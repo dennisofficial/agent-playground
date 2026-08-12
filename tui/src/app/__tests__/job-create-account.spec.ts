@@ -13,13 +13,13 @@ import { WorkspaceService } from '../workspace.service.js';
 import type { WorktreeService } from '../worktree.service.js';
 
 /**
- * A job that cannot run must not exist.
+ * Creating a job does not depend on having a credential.
  *
- * The account check used to happen when the FIRST TURN opened its session — which is after
- * `createJob` has written a job row, a phase, a thread, a context folder on disk and possibly a git
- * worktree. So an unusable credential left a permanent empty job in the list and an error message
- * with no way back. The check belongs in front of the first write, and the failure has to say what to
- * do about it.
+ * It used to throw when the first turn opened its session — after `createJob` had written a job row, a
+ * phase, a thread, a context folder on disk and possibly a git worktree — so an unusable account left
+ * a permanent empty job behind. Guarding creation instead would have refused work over something one
+ * keypress fixes. Now `EngineSession.accountId` is nullable: the job is created, the session holds no
+ * account, and the conversation says so until one exists.
  */
 function build(accounts: Partial<Account>[]) {
   const created: string[] = [];
@@ -83,16 +83,19 @@ function build(accounts: Partial<Account>[]) {
   return { workspaceService, created, contextFolders };
 }
 
-describe('WorkspaceService.createJob account preflight', () => {
-  it('writes nothing at all when no account can run the job', async () => {
+describe('WorkspaceService.createJob without an account', () => {
+  it('creates the job anyway — it is idle, not broken', async () => {
     const { workspaceService, created, contextFolders } = build([]);
 
-    await expect(
-      workspaceService.createJob({ projectId: 'project-1', title: 'add avatar upload' }),
-    ).rejects.toThrow(/ctrl\+a/);
+    const { job } = await workspaceService.createJob({
+      projectId: 'project-1',
+      title: 'add avatar upload',
+    });
 
-    expect(created).toEqual([]);
-    expect(contextFolders).toEqual([]);
+    expect(job.id).toBe('job-1');
+    expect(created).toEqual(['add avatar upload']);
+    // The folder too: everything a job is made of exists, and only the turn waits.
+    expect(contextFolders).toEqual(['job-1']);
   });
 
   it('creates the job when there is an account to run it on', async () => {
@@ -107,18 +110,6 @@ describe('WorkspaceService.createJob account preflight', () => {
     expect(created).toEqual(['add avatar upload']);
   });
 
-  /**
-   * The preflight asks about the SAME engine the first thread will bind to, not "is there any account
-   * row" — which is what `hasAccount()` asked, and why an expired-only account sailed past it.
-   */
-  it('asks about the engine the first thread will actually run on', async () => {
-    const { workspaceService } = build([{ id: 'a', engine: EEngine.codex }]);
-
-    await expect(
-      workspaceService.createJob({ projectId: 'project-1', title: 'x' }),
-    ).rejects.toThrow(/claude/);
-  });
-
   it('accepts an expired account — the refresh on the turn path is what decides it', async () => {
     const { workspaceService, created } = build([
       { id: 'dead', status: EAccountStatus.expired },
@@ -130,8 +121,13 @@ describe('WorkspaceService.createJob account preflight', () => {
   });
 });
 
+/**
+ * Not a gate on creation — the nudge that sends someone to the accounts page BEFORE they type a
+ * paragraph into a job that cannot answer it. It asks about the engine the first thread will bind to,
+ * which is what counting rows failed to do.
+ */
 describe('WorkspaceService.hasAccount', () => {
-  it('reports usable, not merely present — an unusable account is what the UI must divert on', async () => {
+  it('reports usable, not merely present — an unusable account is what the UI diverts on', async () => {
     const { workspaceService } = build([{ id: 'gone', status: EAccountStatus.revoked }]);
 
     expect(await workspaceService.hasAccount(EThreadRole.generic)).toBe(false);
@@ -141,5 +137,11 @@ describe('WorkspaceService.hasAccount', () => {
     const { workspaceService } = build([{ id: 'dead', status: EAccountStatus.expired }]);
 
     expect(await workspaceService.hasAccount(EThreadRole.generic)).toBe(true);
+  });
+
+  it('does not count another engine’s account as this thread’s', async () => {
+    const { workspaceService } = build([{ id: 'a', engine: EEngine.codex }]);
+
+    expect(await workspaceService.hasAccount(EThreadRole.generic)).toBe(false);
   });
 });

@@ -1,11 +1,10 @@
-import type { EngineSession } from "../generated/prisma/client.js";
 import type { AccountVaultService } from "../auth/account-vault.service.js";
 import type { EngineHomeService } from "../auth/engine-home.service.js";
 import type { AccountUsageService } from "./account-usage.service.js";
 import type { ContextPressureService } from "./context-pressure.service.js";
 import type { ConversationStore } from "./conversation.store.js";
 import type { SessionManagerService } from "./session-manager.service.js";
-import { rotateOnContextWall } from "./session-rotation.js";
+import { rotateOnContextWall, type RunningSession } from "./session-rotation.js";
 import type { TurnEventApplier } from "./turn-events.js";
 import type { Lane, TurnLanes } from "./turn-lanes.js";
 import { closeCanaryTurn } from "./turn-nudge.js";
@@ -35,8 +34,12 @@ export async function finaliseTurn(args: {
   contextPressureService: ContextPressureService;
   sessionManagerService: SessionManagerService;
   threadId: string;
-  /** The session the turn actually RAN on — rotation may have moved it after the caller's copy. */
-  session: EngineSession;
+  /**
+   * The session the turn actually RAN on — rotation may have moved it after the caller's copy. Typed
+   * as running, because a turn that got this far had a credential and the read-back needs to know
+   * whose it was.
+   */
+  session: RunningSession;
   startedAt: Date;
   ok: boolean;
   /** The turn that ran, so a forced rotation can hand its `brief`, `tools` and `cwd` to the successor. */

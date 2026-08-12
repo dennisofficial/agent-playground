@@ -17,13 +17,21 @@ export function HintLine(props: {
   width: number;
   /** Replaces the account chip when every account is walled. */
   allLimitedUntil?: string | undefined;
+  /**
+   * No credential is selected for this conversation, and why. It takes the whole left side because it
+   * is the only thing on this line that stops work — the hints describe keys that will not do anything
+   * until it is resolved, and the meters have nothing to measure.
+   */
+  noAccount?: string | null | undefined;
 }): React.ReactNode {
-  const left = props.allLimitedUntil
-    ? `all accounts limited · resumes ${props.allLimitedUntil}`
-    : props.hints;
+  const left =
+    props.noAccount ??
+    (props.allLimitedUntil
+      ? `all accounts limited · resumes ${props.allLimitedUntil}`
+      : props.hints);
 
   const chip =
-    props.accountLabel && !props.allLimitedUntil
+    props.accountLabel && !props.allLimitedUntil && !props.noAccount
       ? `${props.accountLabel} `
       : "";
 
@@ -57,7 +65,11 @@ export function HintLine(props: {
 
   return (
     <box flexDirection="row" justifyContent="space-between" width={props.width}>
-      <text fg={theme.dim}>{showHint ? left : ""}</text>
+      {/* Never shed: a conversation that cannot run has to say so at every width, where a hint is
+          something you can afford to lose. */}
+      <text fg={props.noAccount ? theme.warn : theme.dim}>
+        {props.noAccount ?? (showHint ? left : "")}
+      </text>
       <box flexDirection="row">
         {/* The account chip appears ONLY when more than one account exists — with a single login
             it is noise, and the meters already describe the only account there is. */}

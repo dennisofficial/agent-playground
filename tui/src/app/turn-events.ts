@@ -11,6 +11,7 @@ import type { MessageRepository } from "../store/message.repository.js";
 import type { SessionRepository } from "../store/session.repository.js";
 import type { TurnRepository } from "../store/turn.repository.js";
 import type { ConversationStore } from "./conversation.store.js";
+import type { RunningSession } from "./session-rotation.js";
 import type { Lane } from "./turn-lanes.js";
 
 type Payload = Parameters<MessageRepository["append"]>[0]["payload"];
@@ -84,7 +85,8 @@ export class TurnEventApplier {
     store: ConversationStore;
     lane: Lane;
     threadId: string;
-    session: EngineSession;
+    /** A rate-limit frame is written onto the account that earned it, so the account is required. */
+    session: RunningSession;
   }): Promise<void> {
     const { event, store, lane, threadId, session } = args;
     switch (event.kind) {

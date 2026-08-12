@@ -99,12 +99,22 @@ export async function loadConversation(
         : { percent: session.contextPercent, signal: EContextSignal.budget },
     );
   }
-  // Nothing will be billed to a closed thread's account, so there is nothing to poll for.
-  if (!closed)
-    deps.accountUsageService.kick({
-      accountId: session.accountId,
-      threadId: thread.id,
-    });
+  // Nothing will be billed to a closed thread's account, so there is nothing to poll for. Nor is
+  // there anything to poll WITH when the session holds no credential — and saying so on open, rather
+  // than waiting for a turn to be attempted, is the whole point of the state being representable.
+  if (!closed) {
+    if (session.accountId === null) {
+      store.setNoAccount(
+        await deps.sessionManagerService.whyNoAccount(session.engine),
+      );
+    } else {
+      store.setNoAccount(null);
+      deps.accountUsageService.kick({
+        accountId: session.accountId,
+        threadId: thread.id,
+      });
+    }
+  }
 
   const contextRoot = deps.contextFolderService.ensure(job.id);
   const [brief, tools] = await Promise.all([

@@ -1,6 +1,17 @@
 import type { ContextReading } from "../domain/context-nudge.js";
 import type { Message, TurnSummary } from "../domain/message.js";
 import type { UsageWindow } from "../domain/usage.js";
+import { EMPTY, type ConversationState, type LiveTail, type QueuedSteer, type RunningTool } from "./conversation-state.js";
+
+// Re-exported: this module is the one every caller already imports, and which half of the pair a type
+// lives in is not their business.
+export {
+  EMPTY,
+  type ConversationState,
+  type LiveTail,
+  type QueuedSteer,
+  type RunningTool,
+} from "./conversation-state.js";
 
 /**
  * One thread's observable state, read through `useSyncExternalStore`. One instance per thread, handed
@@ -21,58 +32,6 @@ const REVEAL_MIN_CHARS = 3;
 
 /** Past this much backlog, reveal everything at once — a replayed or batched burst is not a stream. */
 const REVEAL_BURST_CAP = 600;
-
-export type LiveTail = { kind: "text" | "thinking"; text: string } | null;
-
-export type RunningTool = {
-  toolUseId: string;
-  name: string;
-  target?: string | undefined;
-  startedAt: number;
-  lines: string[];
-} | null;
-
-export type QueuedSteer = { id: string; text: string };
-
-export type ConversationState = {
-  messages: Message[];
-  tail: LiveTail;
-  runningTool: RunningTool;
-  running: boolean;
-  startedAt: number | null;
-  outputTokens: number;
-  lastTurn: TurnSummary | null;
-  interrupting: boolean;
-  queued: QueuedSteer[];
-  /**
-   * The `ctx` reading: a percentage of the rotation BUDGET, which is allowed past 100, plus which
-   * instrument put it there. Not a percentage of the physical window — a builder at 200K of a
-   * million read `20%` green, on a meter that could not warn before the quality was gone.
-   */
-  contextPercent: ContextReading | null;
-  fiveHour: UsageWindow;
-  sevenDay: UsageWindow;
-  notices: string[];
-  /** Set when another instance holds this thread's session lock. */
-  closed: boolean;
-};
-
-const EMPTY: ConversationState = {
-  messages: [],
-  tail: null,
-  runningTool: null,
-  running: false,
-  startedAt: null,
-  outputTokens: 0,
-  lastTurn: null,
-  interrupting: false,
-  queued: [],
-  contextPercent: null,
-  fiveHour: null,
-  sevenDay: null,
-  notices: [],
-  closed: false,
-};
 
 export class ConversationStore {
   private state: ConversationState = EMPTY;
@@ -202,6 +161,15 @@ export class ConversationStore {
 
   setContextPercent(reading: ContextReading | null): void {
     this.patch({ contextPercent: reading });
+  }
+
+  /**
+   * Set on open and at every turn boundary, both ways: adding an account has to clear it without a
+   * reload, and forgetting the last one has to show it the same way.
+   */
+  setNoAccount(reason: string | null): void {
+    if (this.state.noAccount === reason) return;
+    this.patch({ noAccount: reason });
   }
 
   setUsage(window: "fiveHour" | "sevenDay", value: UsageWindow): void {

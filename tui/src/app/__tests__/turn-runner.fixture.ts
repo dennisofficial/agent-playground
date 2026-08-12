@@ -20,9 +20,10 @@ import { TurnRunnerService } from '../turn-runner.service.js';
 
 export const THREAD = { id: 'thread-1', role: 'builder' } as unknown as Thread;
 export const OTHER_THREAD = { id: 'thread-2', role: 'builder' } as unknown as Thread;
+export const ACCOUNT_ID = 'account-1';
 export const SESSION = {
   id: 'session-1',
-  accountId: 'account-1',
+  accountId: ACCOUNT_ID,
   engine: 'claude',
   model: 'claude-opus-5',
   engineSessionId: null,
@@ -132,6 +133,7 @@ export function build(script: EngineEvent[] = []) {
   const sessions = {
     recordEngineSessionId: mock(async () => undefined),
     recordContextPercent: mock(async () => undefined),
+    setAccount: mock(async (_args: { sessionId: string; accountId: string }) => undefined),
     // Null means "this thread has no session but the one you were handed" — the ordinary case. A
     // test about rotation overrides it to hand the runner the leg that replaced its copy.
     currentForThread: mock(async (): Promise<EngineSession | null> => null),
@@ -156,9 +158,12 @@ export function build(script: EngineEvent[] = []) {
   const usage = { track: mock(), stopTracking: mock(), kick: mock() };
 
 
-  // Only the two methods a turn can reach: the runner never opens or closes a session itself, it
-  // only rotates one that hit the context wall.
+  // Only the methods a turn can reach: the runner never opens or closes a session itself, it rotates
+  // one that hit the context wall and resolves an account onto one that holds none.
   const sessionManager = {
+    // An account is available by default — a test about the credential-less state overrides it.
+    usableAccount: mock(async (): Promise<{ id: string } | null> => ({ id: ACCOUNT_ID })),
+    whyNoAccount: mock(async () => 'no claude account yet — press ctrl+a to add one'),
     // Typed with the real signature so a test can read back WHICH session was retired, for what
     // reason, and with what hand-off — the three facts a rotation is.
     rotateSession: mock(

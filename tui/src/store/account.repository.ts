@@ -95,6 +95,18 @@ export class AccountRepository {
     });
   }
 
+  /**
+   * Forgetting a credential, which is an auth operation and nothing more.
+   *
+   * There is deliberately no guard here any more. `EngineSession.accountId` was `RESTRICT`, so an
+   * account became undeletable the moment it ran one turn, and this method translated the raw
+   * foreign-key error into advice to re-add the account instead — a workaround for a constraint that
+   * was defending nothing: rotation overwrites that column at every turn boundary, so it never held
+   * "who paid for this session", and no reader treats it as history.
+   *
+   * It is `SetNull` now. The sessions, their transcripts and their ledger rows all survive with the
+   * pointer cleared, and the next turn resolves an account onto them again.
+   */
   async remove(id: string): Promise<void> {
     await this.prismaService.account.delete({ where: { id } });
   }

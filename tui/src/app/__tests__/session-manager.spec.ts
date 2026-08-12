@@ -164,7 +164,7 @@ describe('SessionManagerService account selection', () => {
     return new SessionManagerService(
       { async setActiveSession(): Promise<void> {} } as unknown as ThreadRepository,
       {
-        async open(args: { accountId: string }): Promise<EngineSession> {
+        async open(args: { accountId: string | null }): Promise<EngineSession> {
           return { id: 'session-1', accountId: args.accountId } as unknown as EngineSession;
         },
       } as unknown as SessionRepository,
@@ -183,37 +183,30 @@ describe('SessionManagerService account selection', () => {
     expect(session.accountId).toBe('dead');
   });
 
-  it('tells a human with no account at all where to add one', async () => {
+  /**
+   * The shape this replaced threw instead — from inside job creation, over a job row, a phase, a
+   * thread and a context folder that were already written. A session holding no credential is a state
+   * the schema can express and the conversation can render, so opening one is not a failure.
+   */
+  it('opens a session with NO account rather than refusing to open one', async () => {
     const manager = buildWith([]);
 
-    await expect(manager.openSession(thread)).rejects.toThrow(/ctrl\+a/);
+    const session = await manager.openSession(thread);
+
+    expect(session.accountId).toBeNull();
   });
 
-  it('says an account needs re-authorising rather than reporting it missing', async () => {
-    // `revoked` is the one status no request can heal, so it reads as an auth problem, not an absence.
+  it('reports no usable account as null, not as a throw', async () => {
     const manager = buildWith([{ id: 'gone', status: EAccountStatus.revoked }]);
 
-    await expect(manager.openSession(thread)).rejects.toThrow(/re-authoris/);
+    expect(await manager.usableAccount(EEngine.claude)).toBeNull();
   });
 
-  it('says rate-limited, and when the limit lifts, instead of naming the wrong problem', async () => {
-    const manager = buildWith([
-      {
-        id: 'spent',
-        status: EAccountStatus.limited,
-        fiveHourResetsAt: new Date('2026-01-01T10:30:00Z'),
-      },
-    ]);
+  it('hands out the sentence for whoever has to show the state', async () => {
+    // The three situations and their wording are pinned in `domain/__tests__/rotation.spec.ts`; this
+    // only asserts the service asks about the right engine's pool.
+    const manager = buildWith([{ id: 'gone', status: EAccountStatus.revoked }]);
 
-    await expect(manager.openSession(thread)).rejects.toThrow(/rate-limited/);
-  });
-
-  it('carries the engine on the error, so the caller can name it without parsing the message', async () => {
-    const manager = buildWith([]);
-
-    await expect(manager.openSession(thread)).rejects.toMatchObject({
-      name: 'NoAccountError',
-      engine: EEngine.claude,
-    });
+    expect(await manager.whyNoAccount(EEngine.claude)).toMatch(/claude/);
   });
 });

@@ -36,7 +36,8 @@ export class SessionRepository {
    */
   async open(args: {
     threadId: string;
-    accountId: string;
+    /** Null when nothing is usable yet — the turn boundary resolves it. See `sessionForTurn`. */
+    accountId: string | null;
     engineConfig: EngineConfig;
     seededFromId?: string;
     handoff?: string;
@@ -106,7 +107,10 @@ export class SessionRepository {
    * else about it changes. The transcript, the resume id and the scroll all survive, because the
    * API is stateless and auth is a per-turn concern.
    */
-  async setAccount(args: { sessionId: string; accountId: string }): Promise<void> {
+  async setAccount(args: {
+    sessionId: string;
+    accountId: string;
+  }): Promise<void> {
     await this.prismaService.engineSession.update({
       where: { id: args.sessionId },
       data: { accountId: args.accountId },

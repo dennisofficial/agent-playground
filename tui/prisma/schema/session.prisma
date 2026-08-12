@@ -17,8 +17,20 @@ model EngineSession {
   thread          Thread             @relation(fields: [threadId], references: [id], onDelete: Cascade)
   ordinal         Int
 
-  accountId       String
-  account         Account            @relation(fields: [accountId], references: [id])
+  /// WHICH CREDENTIAL THIS SESSION IS ON RIGHT NOW — live state, not a ledger entry. Rotation
+  /// overwrites it at a turn boundary, so it never recorded "who paid for this session" in the first
+  /// place; it names whoever paid for the most recent turn. It was `RESTRICT` and non-null, which made
+  /// an auth credential undeletable the moment it ran one turn, in defence of history that is neither
+  /// read anywhere nor accurate.
+  ///
+  /// Nullable because "no account selected" is a real state a session can be in — with no way to say
+  /// it, the only way to report it was to throw. `SetNull` because forgetting a credential is an auth
+  /// operation and must not be blocked by, or destroy, a thread's work. The next turn re-resolves.
+  ///
+  /// Per-account cost attribution, if it is ever wanted, belongs on `Turn` — that is the ledger, and
+  /// its granularity is the one rotation actually moves at.
+  accountId       String?
+  account         Account?           @relation(fields: [accountId], references: [id], onDelete: SetNull)
 
   /// `engine` and `model` stay flat and queryable because they are read well outside the engine
   /// layer — the breadcrumb, the context-limit resolver and the budget lookup all want them

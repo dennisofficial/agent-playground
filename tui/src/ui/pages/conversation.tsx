@@ -160,13 +160,17 @@ export function ConversationPage(props: {
   const submit = useCallback(async () => {
     const text = composer.value.trim();
     if (text.length === 0) return;
+    // Refused with the draft INTACT: there is nothing to send it to, and clearing the composer would
+    // cost the words in exchange for nothing. The hint line already says why, in warn colour, so this
+    // needs no message of its own — press ctrl+a, come back, press ⏎ again.
+    if (state.noAccount !== null) return;
     composer.clear();
     setOverlay("none");
     // A command RUNS rather than going to the model as text — see `runSlashCommand`.
     if (await runSlashCommand({ text, conversation: conversationService })) return;
     // Sending is an implicit "show me what happens next".
     await conversationService.send(text);
-  }, [composer, conversationService]);
+  }, [composer, conversationService, state.noAccount]);
 
   useConversationKeys({
     composer,
@@ -288,6 +292,7 @@ export function ConversationPage(props: {
 
           <HintLine
             hints={hints}
+            noAccount={state.noAccount}
             contextPercent={state.contextPercent}
             fiveHour={state.fiveHour}
             sevenDay={state.sevenDay}

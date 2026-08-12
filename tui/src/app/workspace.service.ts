@@ -4,6 +4,7 @@ import { basename, resolve } from "node:path";
 import { EPhaseKind, EThreadRole } from "../generated/prisma/enums.js";
 import type { Job, Project, Thread } from "../generated/prisma/client.js";
 import { ELaunchScope, launchScope } from "../domain/launch-scope.js";
+import { bindingFor } from "../domain/role-engine.js";
 import { AccountRepository } from "../store/account.repository.js";
 import { JobRepository, type JobRow } from "../store/job.repository.js";
 import { ProjectRepository } from "../store/project.repository.js";
@@ -11,10 +12,7 @@ import { ThreadRepository, type ThreadRow } from "../store/thread.repository.js"
 import { ContextFolderService } from "./context-folder.service.js";
 import { ConversationService } from "./conversation.service.js";
 import { GitService } from "./git.service.js";
-import {
-  NoAccountError,
-  SessionManagerService,
-} from "./session-manager.service.js";
+import { SessionManagerService } from "./session-manager.service.js";
 import { purgeJobFiles, threadIdsFor } from "./workspace-purge.js";
 import { WorktreeService, type JobWorkspace } from "./worktree.service.js";
 
@@ -148,12 +146,10 @@ export class WorkspaceService {
     // map, and the stance is meant to be earned by the work rather than assumed at creation.
     const role = EThreadRole.generic;
 
-    // In FRONT of the first write, because a job that cannot run a turn should not exist. The check
-    // used to happen when the first turn opened its session, by which point there was a job row, a
-    // phase, a thread, a context folder and possibly a worktree — an empty job left in the list for
-    // good, over a credential problem the human could have been told about instead.
-    await this.sessionManagerService.assertUsableAccount(role);
-
+    // No account preflight here, deliberately. It was added when a missing credential threw from the
+    // first turn and destroyed a job that had already been written — but a session may now hold no
+    // account, so such a job is not half-built, it is complete and idle, and the conversation says so.
+    // Guarding creation would instead refuse work over something one keypress fixes.
     const created = await this.jobRepository.create({
       projectId,
       title,
@@ -267,21 +263,16 @@ export class WorkspaceService {
   }
 
   /**
-   * Whether a turn could run at all — asked before the new-job page opens, so an account is added
-   * before a paragraph is typed rather than after.
+   * Whether a turn could run at all — asked before the new-job page opens, so an account gets added
+   * before a paragraph is typed rather than after. Not a gate on creation: a job with no account is
+   * legal, this is only the nudge that saves a draft from being written into one.
    *
-   * Usable, not merely present. Counting rows let an account that no turn could open a session on
-   * sail past this check, and the human met the real problem several keystrokes later, on a page whose
-   * draft was about to be thrown away with it.
+   * Usable, not merely present. Counting rows let an account no turn could open a session on sail past
+   * this check, and the human met the real problem several keystrokes later.
    */
   async hasAccount(role: EThreadRole = EThreadRole.generic): Promise<boolean> {
-    try {
-      await this.sessionManagerService.assertUsableAccount(role);
-      return true;
-    } catch (error: unknown) {
-      if (error instanceof NoAccountError) return false;
-      throw error;
-    }
+    const engine = bindingFor(role).engine.kind;
+    return (await this.sessionManagerService.usableAccount(engine)) !== null;
   }
 
   async touchProject(id: string): Promise<void> {

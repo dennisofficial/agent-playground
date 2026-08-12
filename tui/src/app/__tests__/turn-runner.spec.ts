@@ -3,7 +3,7 @@ import { EMessageType } from '../../generated/prisma/enums.js';
 import { EContextSignal } from '../../domain/context-nudge.js';
 import { EHarnessVariant, type EngineEvent } from '../../domain/message.js';
 import { buildSystemPrompt } from '../../domain/system-prompt.js';
-import { SESSION, THREAD, build } from './turn-runner.fixture.js';
+import { ACCOUNT_ID, SESSION, THREAD, build } from './turn-runner.fixture.js';
 
 describe('TurnRunnerService', () => {
   it('persists the user prompt before the engine runs', async () => {
@@ -207,6 +207,75 @@ describe('TurnRunnerService', () => {
     expect(row.usage).toBeUndefined();
     expect(typeof row.durationMs).toBe('number');
     expect(store.getSnapshot().lastTurn?.outputTokens).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * A session may hold no credential — a job created before any account existed, or one whose account
+ * was forgotten. That is a state, not a failure, so the turn is DECLINED: nothing persisted, no
+ * spinner, no ledger row, and the conversation says why until it is resolved.
+ */
+describe('TurnRunnerService with no account', () => {
+  const ARGS = { thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' } as const;
+  const NO_ACCOUNT = { ...SESSION, accountId: null } as unknown as typeof SESSION;
+
+  it('declines the turn instead of throwing', async () => {
+    const { runner, engine, sessions, sessionManager } = build();
+    sessions.currentForThread.mockResolvedValueOnce(NO_ACCOUNT);
+    sessionManager.usableAccount.mockResolvedValueOnce(null);
+
+    await expect(runner.run(ARGS)).resolves.toBeUndefined();
+
+    expect(engine.runs).toBe(0);
+  });
+
+  it('writes nothing — no message, no turn row, no spinner left running', async () => {
+    const { runner, messages, turns, store, sessions, sessionManager } = build();
+    sessions.currentForThread.mockResolvedValueOnce(NO_ACCOUNT);
+    sessionManager.usableAccount.mockResolvedValueOnce(null);
+
+    await runner.run(ARGS);
+
+    expect(messages.appended).toEqual([]);
+    expect(turns.record).not.toHaveBeenCalled();
+    expect(store.getSnapshot().running).toBe(false);
+  });
+
+  it('shows the reason where the meters would be', async () => {
+    const { runner, store, sessions, sessionManager } = build();
+    sessions.currentForThread.mockResolvedValueOnce(NO_ACCOUNT);
+    sessionManager.usableAccount.mockResolvedValueOnce(null);
+
+    await runner.run(ARGS);
+
+    expect(store.getSnapshot().noAccount).toMatch(/ctrl\+a/);
+  });
+
+  /**
+   * The resolution half: a session holding none takes the account the pool offers and KEEPS it, so the
+   * meters, the chip and the ledger all name the same one for the work that follows.
+   */
+  it('resolves an account onto the session and stamps it', async () => {
+    const { runner, engine, sessions, store } = build();
+    sessions.currentForThread.mockResolvedValueOnce(NO_ACCOUNT);
+
+    await runner.run(ARGS);
+
+    expect(sessions.setAccount).toHaveBeenCalledWith({
+      sessionId: SESSION.id,
+      accountId: ACCOUNT_ID,
+    });
+    expect(engine.runs).toBe(1);
+    expect(store.getSnapshot().noAccount).toBeNull();
+  });
+
+  it('clears a stale notice once an account exists again', async () => {
+    const { runner, store } = build();
+    store.setNoAccount('no claude account yet — press ctrl+a to add one');
+
+    await runner.run(ARGS);
+
+    expect(store.getSnapshot().noAccount).toBeNull();
   });
 });
 

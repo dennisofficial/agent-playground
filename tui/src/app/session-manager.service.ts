@@ -1,12 +1,15 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { bindingFor } from "../domain/role-engine.js";
 import {
-  EAccountStatus,
   ESessionEndReason,
   type EEngine,
   type EThreadRole,
 } from "../generated/prisma/enums.js";
-import type { EngineSession, Thread } from "../generated/prisma/client.js";
+import type {
+  Account,
+  EngineSession,
+  Thread,
+} from "../generated/prisma/client.js";
 import { chooseForTurn, noAccountReason } from "../domain/rotation.js";
 import { AccountRepository } from "../store/account.repository.js";
 import { JobRepository } from "../store/job.repository.js";
@@ -14,21 +17,13 @@ import { SessionRepository } from "../store/session.repository.js";
 import { ThreadRepository } from "../store/thread.repository.js";
 
 /**
- * No account this turn could run on — the error a human actually meets when a job will not start.
- *
- * It carries the engine, and it says WHICH of the three quite different situations this is, because
- * "no usable claude account" was true of all of them and useful for none: nothing added yet, every
- * credential needing re-authorisation, or a live account that is simply out of quota for now.
+ * There is deliberately no `NoAccountError` any more. Having no usable credential is a STATE a
+ * session can be in, not an exceptional event: the schema can hold it (`EngineSession.accountId` is
+ * nullable), the conversation renders it, and the next turn asks again. Throwing was how the old
+ * shape reported something it had no way to represent — and it threw from inside job creation, so a
+ * credential problem cost a permanent half-built job. `noAccountReason` in `domain/rotation.ts` is
+ * the sentence; `usableAccount` returning null is the fact.
  */
-export class NoAccountError extends Error {
-  constructor(
-    readonly engine: EEngine,
-    reason: string,
-  ) {
-    super(reason);
-    this.name = "NoAccountError";
-  }
-}
 
 @Injectable()
 export class SessionManagerService {
@@ -71,10 +66,13 @@ export class SessionManagerService {
     seed?: { seededFromId: string; handoff?: string },
   ): Promise<EngineSession> {
     const binding = bindingFor(thread.role);
-    const account = await this.pickAccount(binding.engine.kind);
+    // Null is allowed all the way through: a session may open before any credential exists, and the
+    // turn boundary resolves it — see `sessionForTurn`. Opening used to throw here instead, which is
+    // why a missing account could destroy a job that had already been written.
+    const account = await this.usableAccount(binding.engine.kind);
     const session = await this.sessionRepository.open({
       threadId: thread.id,
-      accountId: account.id,
+      accountId: account?.id ?? null,
       // The whole resolved config is copied onto the row, so editing the role table next month does
       // not retroactively rewrite what last month's sessions actually ran with.
       engineConfig: binding.engine,
@@ -119,22 +117,20 @@ export class SessionManagerService {
   }
 
   /**
-   * The account this session will run on. Both halves of the decision are pure and live in
-   * `domain/rotation.ts` — which account wins, and the fact that an `expired` one is still worth
-   * trying, because the refresh on the turn path is the only thing that can tell it apart from a live
-   * one.
+   * The account a turn on this engine would run on, or null if none can.
+   *
+   * The decision is pure and lives in `domain/rotation.ts` — actives by headroom, then an `expired`
+   * account as a last resort, because that status records one refresh that failed at some past moment
+   * rather than a fact about the credential now.
    */
-  async assertUsableAccount(role: EThreadRole): Promise<void> {
-    await this.pickAccount(bindingFor(role).engine.kind);
+  async usableAccount(engine: EEngine): Promise<Account | null> {
+    const accounts = await this.accountRepository.listForEngine(engine);
+    return chooseForTurn(accounts);
   }
 
-  private async pickAccount(engine: EEngine): Promise<{ id: string }> {
+  /** Why no account could be chosen, as a sentence for whoever has to show it. */
+  async whyNoAccount(engine: EEngine): Promise<string> {
     const accounts = await this.accountRepository.listForEngine(engine);
-    const chosen = chooseForTurn(accounts);
-    // Both halves are pure and live together in `domain/rotation.ts`: which account wins, and what to
-    // tell the human when none does.
-    if (!chosen)
-      throw new NoAccountError(engine, noAccountReason({ engine, accounts }));
-    return chosen;
+    return noAccountReason({ engine, accounts });
   }
 }
