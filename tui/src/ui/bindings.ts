@@ -25,6 +25,9 @@ export const CONVERSATION: readonly Binding[] = [
   ["←", "leave"],
   ["ctrl+u", "clear draft"],
   ["ctrl+h", "threads"],
+  // `ctrl+b` (jump to bottom) is deliberately NOT listed: a seventeenth row does not fit 60×24, and
+  // the affordance that appears when you are scrolled away spells the key itself, at the only
+  // moment it means anything.
   ["/", "commands"],
   ["x · X", "expand tool block"],
   // Wheel and trackpad only. PgUp/PgDn used to be listed here and never worked: they reached the

@@ -1,25 +1,56 @@
 import { Injectable } from '@nestjs/common';
-import type { EPhaseKind, EThreadRole } from '../generated/prisma/enums.js';
+import { EThreadStatus, type EPhaseKind, type EThreadRole } from '../generated/prisma/enums.js';
 import type { Job, Phase, Project } from '../generated/prisma/client.js';
 import { PrismaService } from './prisma.service.js';
+import type { ThreadFacts } from './thread.repository.js';
 
 export type JobRow = Job & {
   activeRole: EThreadRole | null;
   activePhase: EPhaseKind | null;
   /** Across every thread in the job — what the delete prompt quotes, so the cost of `y` is legible. */
   messageCount: number;
+  /** What the job's condition is derived from — see `jobAttention`. */
+  threads: ThreadFacts[];
 };
 
 @Injectable()
 export class JobRepository {
   constructor(private readonly prismaService: PrismaService) {}
 
+  /** The jobs you are working on. Archived ones are hidden, never deleted — see `listArchived`. */
   async listForProject(projectId: string): Promise<JobRow[]> {
+    return this.list({ projectId, archived: false });
+  }
+
+  /** The shelf. Same rows, same shaping — the only difference is which side of the filter they sit. */
+  async listArchived(projectId: string): Promise<JobRow[]> {
+    return this.list({ projectId, archived: true });
+  }
+
+  /**
+   * `archived` is a filter, not a status: `Job.archivedAt` records WHEN it was shelved, so a job
+   * keeps everything else it says about itself and the two lists are one query with one flag.
+   */
+  private async list(args: { projectId: string; archived: boolean }): Promise<JobRow[]> {
     const jobs = await this.prismaService.job.findMany({
-      where: { projectId },
+      where: {
+        projectId: args.projectId,
+        archivedAt: args.archived ? { not: null } : null,
+      },
       orderBy: { updatedAt: 'desc' },
       include: {
-        phases: { include: { threads: { include: { _count: { select: { messages: true } } } } } },
+        phases: {
+          include: {
+            threads: {
+              include: {
+                _count: { select: { messages: true } },
+                // Newest message per thread, by ordinal: two messages of one turn can share a
+                // millisecond, and the ordinal never ties.
+                messages: { orderBy: { ordinal: 'desc' }, take: 1, select: { createdAt: true } },
+              },
+            },
+          },
+        },
       },
     });
 
@@ -32,7 +63,24 @@ export class JobRepository {
         activeRole: active?.thread.role ?? null,
         activePhase: active?.phase.kind ?? null,
         messageCount: threads.reduce((total, t) => total + t.thread._count.messages, 0),
+        threads: threads.map(({ thread }) => ({
+          id: thread.id,
+          closed: thread.status === EThreadStatus.closed,
+          lastMessageAt: thread.messages[0]?.createdAt ?? null,
+          lastSeenAt: thread.lastSeenAt,
+        })),
       };
+    });
+  }
+
+  /**
+   * Archive HIDES, it does not tear down: no filesystem is touched, no thread is closed, nothing is
+   * reclaimed. That is what keeps restore lossless and leaves delete as the one destructive path.
+   */
+  async setArchived(args: { jobId: string; archived: boolean }): Promise<void> {
+    await this.prismaService.job.update({
+      where: { id: args.jobId },
+      data: { archivedAt: args.archived ? new Date() : null },
     });
   }
 
@@ -152,5 +200,18 @@ export class JobRepository {
     });
     if (!phase) throw new Error(`job ${jobId} has no phase`);
     return phase;
+  }
+
+  /**
+   * The job's whole phase history, oldest first — what a brief is written against. A phase's
+   * predecessor and whether its kind has run before are read off this list rather than stored on
+   * the row: the list is append-only, so it already says both, and a denormalised copy could
+   * disagree with it.
+   */
+  async listPhases(jobId: string): Promise<Phase[]> {
+    return this.prismaService.phase.findMany({
+      where: { jobId },
+      orderBy: { ordinal: 'asc' },
+    });
   }
 }

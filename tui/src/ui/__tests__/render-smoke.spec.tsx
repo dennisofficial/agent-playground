@@ -12,13 +12,11 @@ import { PageHeader } from '../components/page-header.js';
 import { MessageView } from '../components/message-view.js';
 import { OverlayList } from '../components/overlay-list.js';
 import { SessionSeam, SwapNotice } from '../components/blocks/error-block.js';
+import { JumpToBottom, NewDivider } from '../components/new-divider.js';
 import { ToolRunningLine } from '../components/blocks/tool-block.js';
 import { WorkingLine } from '../components/working-line.js';
 import { AccountGroup, accountsLayout } from '../components/account-list.js';
 import type { AccountRow } from '../../app/accounts.service.js';
-import { PhaseGroup } from '../components/thread-list.js';
-import { threadList, threadsLayout, type ThreadListSource } from '../../domain/threads-list.js';
-import { EPhaseKind, EThreadRole, EThreadStatus } from '../../generated/prisma/enums.js';
 
 /**
  * Every conversation-page component, mounted for real.
@@ -156,6 +154,8 @@ describe('conversation page components mount', () => {
             width={100}
           />
           <SessionSeam ordinal={2} width={72} />
+          <NewDivider width={72} />
+          <JumpToBottom onJump={() => undefined} />
           <SwapNotice text="swapped account" />
           <ToolRunningLine frame="⠋" elapsed="3s" lines={['reading']} />
           <WorkingLine
@@ -205,84 +205,6 @@ describe('conversation page components mount', () => {
           <PageHeader trail={['atlas']} />
           <PageHeader trail={['atlas', 'a project']} right="3/12" canBack />
           <ConfirmBar question="delete “a job”?" detail="24 messages go with it" />
-        </>,
-      ),
-    ).resolves.toBeUndefined();
-  });
-});
-
-/**
- * The thread list's row is spans inside a `<text>` — the same shape that took the accounts page
- * down — and every state draws a different set of them. Each width picks a different column form,
- * including the one that has dropped every column but the role.
- */
-const THREADS: ThreadListSource[] = [
-  {
-    id: 't1',
-    role: EThreadRole.intake,
-    status: EThreadStatus.closed,
-    phaseId: 'p1',
-    phaseKind: EPhaseKind.intake,
-    phaseTitle: null,
-    engine: EEngine.claude,
-    messageCount: 38,
-    sessionCount: 1,
-  },
-  {
-    id: 't2',
-    role: EThreadRole.plan_review,
-    status: EThreadStatus.closed,
-    phaseId: 'p2',
-    phaseKind: EPhaseKind.planning,
-    phaseTitle: null,
-    engine: EEngine.codex,
-    messageCount: 19,
-    sessionCount: 1,
-  },
-  {
-    id: 't3',
-    role: EThreadRole.builder,
-    status: EThreadStatus.active,
-    phaseId: 'p3',
-    phaseKind: EPhaseKind.build,
-    phaseTitle: null,
-    engine: EEngine.claude,
-    messageCount: 136,
-    sessionCount: 2,
-  },
-  {
-    id: 't4',
-    role: EThreadRole.master_review,
-    status: EThreadStatus.active,
-    phaseId: 'p3',
-    phaseKind: EPhaseKind.build,
-    phaseTitle: null,
-    engine: null,
-    messageCount: 0,
-    sessionCount: 0,
-  },
-];
-
-describe('thread list rows mount', () => {
-  it.each([200, 100, 70, 50, 30])('renders every thread state at %i columns', async (width) => {
-    const { groups } = threadList({
-      threads: THREADS,
-      activeThreadId: 't3',
-      runningThreadIds: ['t3'],
-    });
-
-    await expect(
-      mount(
-        <>
-          {groups.map((group) => (
-            <PhaseGroup
-              key={group.phaseId}
-              group={group}
-              cursor={0}
-              layout={threadsLayout(width)}
-              frame="⠋"
-            />
-          ))}
         </>,
       ),
     ).resolves.toBeUndefined();

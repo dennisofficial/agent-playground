@@ -1,7 +1,10 @@
 import { affords, elasticColumn } from './list-columns.js';
 
-/** `  ▸ `, and the trailing state — `⚠ path missing` is the widest thing that can land there. */
-export const GUTTER = 4;
+/**
+ * `  ▸ ` + `● `, and the trailing state — `⚠ path missing` is the widest thing that can land there.
+ * The dot arrived with the two attention channels, and costs the same two cells every list pays.
+ */
+export const GUTTER = 6;
 const TAIL = 15;
 const MARGIN = 2;
 const NAME = { min: 12, max: 28 };

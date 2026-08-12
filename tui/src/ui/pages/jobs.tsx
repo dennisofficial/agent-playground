@@ -10,33 +10,25 @@ import React, {
 import type { ProjectRow } from "../../app/workspace.service.js";
 import type { JobRow } from "../../store/job.repository.js";
 import { clampIndex, matchesQuery } from "../../domain/list-nav.js";
-import { fitColumn } from "../../domain/list-columns.js";
-import {
-  deletionCost,
-  formatWhen,
-  jobSummary,
-  jobsLayout,
-} from "../../domain/jobs-list.js";
+import { deletionCost, jobSummary, jobsLayout } from "../../domain/jobs-list.js";
 import { ConfirmBar } from "../components/confirm-bar.js";
-import {
-  ListFooter,
-  type FooterOverlay,
-} from "../components/list-footer.js";
-import {
-  AddRow,
-  Caret,
-  ListEmpty,
-  NoMatch,
-} from "../components/list-parts.js";
+import { ListFooter } from "../components/list-footer.js";
+import { JobListRow } from "../components/job-list.js";
+import { AddRow, ListEmpty, NoMatch } from "../components/list-parts.js";
 import { PageHeader } from "../components/page-header.js";
 import { Screen } from "../components/screen.js";
-import { useComposer, type ComposerControls } from "../hooks/use-composer.js";
+import { useComposer } from "../hooks/use-composer.js";
 import { useRunningThreads, useTick } from "../hooks/use-conversation.js";
 import { useServices } from "../services.js";
-import { glyph, theme } from "../theme.js";
-
-/** What the page is waiting for. Exactly one of these owns the keyboard at a time. */
-type Mode = "browse" | "filter" | "create" | "confirm";
+import { theme } from "../theme.js";
+import {
+  ARCHIVED_HINTS,
+  HINTS,
+  headerRight,
+  overlayFor,
+  type Mode,
+  type View,
+} from "./jobs-chrome.js";
 
 export function JobsPage(props: {
   project: ProjectRow;
@@ -45,8 +37,9 @@ export function JobsPage(props: {
   onOpen: (job: JobRow) => void;
   onBack: () => void;
 }): React.ReactNode {
-  const { workspaceService } = useServices();
+  const { workspaceService, attentionService } = useServices();
   const [jobs, setJobs] = useState<JobRow[] | null>(null);
+  const [view, setView] = useState<View>("open");
   const [selected, setSelected] = useState(0);
   const [mode, setMode] = useState<Mode>("browse");
   const [shortcuts, setShortcuts] = useState(false);
@@ -61,8 +54,12 @@ export function JobsPage(props: {
   const { frame } = useTick(running.length > 0);
 
   const reload = useCallback(async () => {
-    setJobs(await workspaceService.listJobs(props.project.id));
-  }, [workspaceService, props.project.id]);
+    setJobs(
+      view === "archived"
+        ? await attentionService.listArchivedJobs(props.project.id)
+        : await workspaceService.listJobs(props.project.id),
+    );
+  }, [attentionService, workspaceService, props.project.id, view]);
 
   useEffect(() => {
     void reload();
@@ -79,12 +76,14 @@ export function JobsPage(props: {
 
   const all = useMemo(() => jobs ?? [], [jobs]);
   const rows = useMemo(
-    // Filtering matches the summary the row actually draws (`build · builder`), which is the only
-    // thing about a job's condition there is to type at.
+    // The phase and the role left the row when the status column became the verb you owe, but they
+    // are still the most natural thing to type when hunting for a job by what it was doing.
     () => all.filter((job) => matchesQuery(query, job.title, jobSummary(job))),
     [all, query],
   );
-  const total = rows.length + 1; // + "new job"
+  // The shelf has no `+ new job`: a job you create is a job you are working on, by definition.
+  const canCreate = view === "open";
+  const total = rows.length + (canCreate ? 1 : 0);
   const layout = jobsLayout(width);
 
   const cursor = clampIndex(selected, total);
@@ -127,6 +126,20 @@ export function JobsPage(props: {
         .catch((e: Error) => setError(e.message));
     },
     [leaveMode, reload, workspaceService],
+  );
+
+  // No confirm on either of these: archiving destroys nothing and restoring un-destroys nothing,
+  // and one keypress back is the whole point of having a shelf instead of a second delete.
+  const shelve = useCallback(
+    (job: JobRow) => {
+      setError(null);
+      const move =
+        view === "archived"
+          ? attentionService.restoreJob(job.id)
+          : attentionService.archiveJob(job.id);
+      void move.then(() => reload()).catch((e: Error) => setError(e.message));
+    },
+    [attentionService, reload, view],
   );
 
   useInput((input, key) => {
@@ -173,6 +186,13 @@ export function JobsPage(props: {
     if (input === "/") return setMode("filter");
     if (input === "n") return setMode("create");
     if (input === "x" && highlighted) return setMode("confirm");
+    if (input === "a" && highlighted) return shelve(highlighted);
+    // The shelf is a separate list rather than a dimmed section: an archived job is one you have
+    // decided not to look at, and leaving it in the list you scan defeats archiving it.
+    if (input === "s") {
+      setSelected(0);
+      return setView((current) => (current === "open" ? "archived" : "open"));
+    }
     if (input === "?") return setShortcuts((open) => !open);
   });
 
@@ -189,13 +209,7 @@ export function JobsPage(props: {
   return (
     <Screen
       header={
-        <PageHeader
-          trail={trail}
-          canBack
-          {...(query.length > 0
-            ? { right: `${rows.length}/${all.length}` }
-            : {})}
-        />
+        <PageHeader trail={trail} canBack right={headerRight({ view, query, rows, all })} />
       }
       footer={
         <ListFooter
@@ -210,7 +224,7 @@ export function JobsPage(props: {
               />
             ) : null
           }
-          hints={mode === "browse" ? HINTS : undefined}
+          hints={mode === "browse" ? (view === "archived" ? ARCHIVED_HINTS : HINTS) : undefined}
           shortcuts={shortcuts}
           error={error}
         />
@@ -218,72 +232,32 @@ export function JobsPage(props: {
     >
       <ListEmpty
         show={all.length === 0 && mode !== "create"}
-        headline="No jobs yet."
-        hint="A job is one unit of work plus a shared /context folder."
+        headline={view === "archived" ? "Nothing archived." : "No jobs yet."}
+        hint={
+          view === "archived"
+            ? "Archiving hides a job. Nothing is closed and nothing is deleted."
+            : "A job is one unit of work plus a shared /context folder."
+        }
       />
       <NoMatch show={all.length > 0 && rows.length === 0} query={query} />
 
-      {rows.map((job, index) => {
-        const working =
-          job.activeThreadId !== null && running.includes(job.activeThreadId);
-        return (
-          <text key={job.id}>
-            <Caret on={index === cursor} />
-            {/* The spinner replaces the status dot rather than sitting beside it — a working job is
-                a state of the job, not a badge on it. */}
-            <span fg={theme.accent}>{working ? frame : glyph.active} </span>
-            <span>{fitColumn(job.title, layout.title)}</span>
-            {layout.status > 0 ? (
-              working ? (
-                <span fg={theme.accent}>
-                  {fitColumn("working…", layout.status)}
-                </span>
-              ) : (
-                <span fg={theme.dim}>
-                  {fitColumn(jobSummary(job), layout.status)}
-                </span>
-              )
-            ) : null}
-            <span fg={theme.dim}>{formatWhen({ date: job.updatedAt })}</span>
-          </text>
-        );
-      })}
+      {rows.map((job, index) => (
+        <JobListRow
+          key={job.id}
+          job={job}
+          selected={index === cursor}
+          layout={layout}
+          frame={frame}
+          runningThreadIds={running}
+        />
+      ))}
 
-      <text> </text>
-      <AddRow selected={cursor >= rows.length} label="+ new job" />
+      {canCreate ? (
+        <box flexDirection="column">
+          <text> </text>
+          <AddRow selected={cursor >= rows.length} label="+ new job" />
+        </box>
+      ) : null}
     </Screen>
   );
-}
-
-const HINTS = [
-  "↑↓ select · →/⏎ open · / filter · n new · x delete · ? keys · ←/esc back",
-  "↑↓ select · ⏎ open · / filter · n new · x delete · ? keys · esc back",
-  "⏎ open · / filter · n new · ? keys",
-];
-
-/** Only these two modes borrow the footer's composer. Engine is not an input — it follows the role. */
-const OVERLAYS: Partial<Record<Mode, { placeholder: string; caption: string }>> =
-  {
-    create: {
-      placeholder: "fix steering",
-      caption:
-        "new job · starts an intake thread on claude          ⏎ create · esc",
-    },
-    filter: {
-      placeholder: "filter…",
-      caption: "↑↓ select · ⏎ open · esc clear",
-    },
-  };
-
-function overlayFor(args: {
-  mode: Mode;
-  composer: ComposerControls;
-}): FooterOverlay | undefined {
-  const form = OVERLAYS[args.mode];
-  if (!form) return undefined;
-  return {
-    ...form,
-    state: args.composer.state,
-    onCaret: args.composer.setCursor,
-  };
 }

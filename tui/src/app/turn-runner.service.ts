@@ -19,6 +19,7 @@ import { AccountRotatorService } from "./account-rotator.service.js";
 import { AccountUsageService } from "./account-usage.service.js";
 import { ConversationStoreRegistry } from "./conversation-store.registry.js";
 import type { ConversationStore } from "./conversation.store.js";
+import { finaliseTurn } from "./turn-completion.js";
 import { TurnEventApplier } from "./turn-events.js";
 import { TurnLanes, type Lane } from "./turn-lanes.js";
 
@@ -32,6 +33,12 @@ export type RunTurnArgs = {
    * and delivered inside an envelope. Absent means the human typed it, and it goes in bare.
    */
   harnessVariant?: EHarnessVariant;
+  /**
+   * The phase's standing instructions, appended to the envelope vocabulary on this turn's system
+   * prompt. Passed in rather than looked up: the runner deals in threads and sessions, and a phase
+   * read on the hot path would be a database round trip per turn for a string that cannot change.
+   */
+  brief?: string;
 };
 
 @Injectable()
@@ -156,7 +163,7 @@ export class TurnRunnerService {
       const turn = await this.engineHomeService.claim(blob, (env) =>
         this.claudeEngineService.start({
           prompt: renderPrompt(payload),
-          systemPrompt: buildSystemPrompt(),
+          systemPrompt: buildSystemPrompt({ brief: args.brief }),
           cwd,
           model: session.model,
           resume: session.engineSessionId ?? undefined,
@@ -197,36 +204,16 @@ export class TurnRunnerService {
         `turn finished (ok=${result.ok}, interrupted=${result.interrupted})`,
       );
     } finally {
-      // An expired credential throws before the engine ever starts. Without this the store stays
-      // `running` forever — a spinner that never stops, and a composer that steers into nothing.
-      await this.lanes.settle(lane);
-      this.lanes.drop({ lane, dequeue: (id) => store.dequeue(id) });
-
-      const durationMs = Date.now() - startedAt.getTime();
-      // Read through a method rather than off the lane directly: the only assignment TS can see in
-      // this function is the `undefined` reset above — the real one happens inside the event
-      // callback — so a direct read narrows to `never`.
-      const usage = this.lanes.takeUsage(lane);
-      // Real counts if the engine reported any; otherwise the store keeps showing its estimate and
-      // the row records the duration with zero tokens. An estimate is fine on screen and wrong in a
-      // ledger — a number read back tomorrow should be one the engine actually said.
-      store.endTurn(
-        usage ? { durationMs, outputTokens: usage.outputTokens } : undefined,
-      );
-      // The turn's last tokens land after it ends, so this is the reading worth keeping.
-      this.accountUsageService.stopTracking({
-        accountId: session.accountId,
+      await finaliseTurn({
+        lane,
+        lanes: this.lanes,
+        store,
+        events: this.events,
+        accountUsageService: this.accountUsageService,
         threadId: thread.id,
-      });
-
-      await this.events.recordCompletion({
-        threadId: thread.id,
-        sessionId: session.id,
+        session,
         startedAt,
-        durationMs,
         ok,
-        usage,
-        contextPercent: lane.contextPercent,
         onWarn: (message) => this.logger.warn(message),
       });
     }

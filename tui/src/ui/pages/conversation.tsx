@@ -12,6 +12,7 @@ import { glyph, theme } from "../theme.js";
 import { Breadcrumb } from "../components/breadcrumb.js";
 import { Composer, composerRows } from "../components/composer.js";
 import { HintLine } from "../components/hint-line.js";
+import { JumpToBottom } from "../components/new-divider.js";
 import { OverlayList, type OverlayItem } from "../components/overlay-list.js";
 import { Screen } from "../components/screen.js";
 import { Shortcuts, shortcutRows } from "../components/shortcuts.js";
@@ -19,6 +20,7 @@ import { Transcript } from "../components/transcript.js";
 import { useComposer } from "../hooks/use-composer.js";
 import { useConversationKeys } from "../hooks/use-conversation-keys.js";
 import { useConversation, useTick } from "../hooks/use-conversation.js";
+import { useReadState } from "../hooks/use-read-state.js";
 import { useServices } from "../services.js";
 
 const COMMANDS: OverlayItem[] = [
@@ -61,6 +63,15 @@ export function ConversationPage(props: {
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
   const { now, frame } = useTick(state.running);
   const closed = props.open.thread.status === EThreadStatus.closed;
+
+  // Where you land, where the rule goes, and when `lastSeenAt` is written. `lastSeenAt` is read off
+  // the thread as it stood when the conversation opened, on purpose: a live read would move the
+  // boundary out from under you the moment the write-through fired.
+  const readState = useReadState({
+    threadId: props.open.thread.id,
+    lastSeenAt: props.open.thread.lastSeenAt,
+    messages: state.messages,
+  });
 
   const toggleTool = useCallback((toolUseId: string) => {
     setExpandedTools((prev) => {
@@ -165,6 +176,7 @@ export function ConversationPage(props: {
     toggleTool,
     onBack: props.onBack,
     onThreads: props.onThreads,
+    onJumpToBottom: readState.handleJumpToBottom,
   });
 
   const hints = conversationHints({
@@ -202,6 +214,13 @@ export function ConversationPage(props: {
                 : "another atlas has this thread — opened read-only"}
             </text>
           ) : null}
+
+          {/* Landing mid-history needs a way out that you can SEE — the keyboard belongs to the
+              draft here, so a key on its own would be a secret. It goes directly above the composer
+              rather than floating in the transcript, where a scroll would carry it off screen. */}
+          {readState.pinned ? null : (
+            <JumpToBottom onJump={readState.handleJumpToBottom} />
+          )}
 
           {/* Overlays render ABOVE the composer. */}
           {overlay === "command" ? (
@@ -251,6 +270,9 @@ export function ConversationPage(props: {
         frame={frame}
         cwd={props.open.cwd}
         width={width}
+        scroller={readState.scroller}
+        anchorMessageId={readState.anchorMessageId}
+        showDivider={readState.showDivider}
       />
     </Screen>
   );

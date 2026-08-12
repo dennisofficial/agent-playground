@@ -5,13 +5,14 @@ import {
   EThreadRole,
   EThreadStatus,
 } from '../../generated/prisma/enums.js';
+import { EAttentionCourt, EAttentionVerb } from '../attention.js';
 import {
-  EThreadState,
   messagesLabel,
   phaseLabel,
   sessionsLabel,
+  threadAttention,
+  threadFacts,
   threadList,
-  threadState,
   threadsLayout,
   type ThreadListSource,
 } from '../threads-list.js';
@@ -26,51 +27,75 @@ function thread(fields: Partial<ThreadListSource> & { id: string }): ThreadListS
     engine: EEngine.claude,
     messageCount: 0,
     sessionCount: 1,
+    lastMessageAt: null,
+    lastSeenAt: null,
     ...fields,
   };
 }
 
-describe('threadState', () => {
-  const activeThreadId = 'thread-1';
+describe('threadFacts', () => {
+  it('answers 1 or 0 to “are threads open”, which is what lets a job count them', () => {
+    expect(
+      threadFacts({ thread: thread({ id: 't1' }), runningThreadIds: [] }).openThreadCount,
+    ).toBe(1);
+    expect(
+      threadFacts({
+        thread: thread({ id: 't1', status: EThreadStatus.closed }),
+        runningThreadIds: [],
+      }).openThreadCount,
+    ).toBe(0);
+  });
 
+  it('reads unread off the timestamps rather than off who spoke last', () => {
+    const facts = threadFacts({
+      thread: thread({
+        id: 't1',
+        lastMessageAt: new Date('2026-08-11T10:00:00Z'),
+        lastSeenAt: new Date('2026-08-11T09:00:00Z'),
+      }),
+      runningThreadIds: [],
+    });
+
+    expect(facts.unseen).toBe(true);
+  });
+});
+
+describe('threadAttention', () => {
   it('calls a closed thread closed even while the job still points at it', () => {
-    expect(
-      threadState({
-        thread: { id: 'thread-1', status: EThreadStatus.closed },
-        activeThreadId,
-        runningThreadIds: [],
-      }),
-    ).toBe(EThreadState.closed);
+    const attention = threadAttention({
+      thread: thread({ id: 'thread-1', status: EThreadStatus.closed }),
+      runningThreadIds: [],
+    });
+
+    expect(attention.verb).toBe(EAttentionVerb.nothingOpen);
+    expect(attention.label).toBe('closed');
+    expect(attention.court).toBe(EAttentionCourt.none);
   });
 
-  it('lets a running turn outrank the cursor', () => {
-    expect(
-      threadState({
-        thread: { id: 'thread-1', status: EThreadStatus.active },
-        activeThreadId,
-        runningThreadIds: ['thread-1'],
-      }),
-    ).toBe(EThreadState.working);
+  it('says working… with a spinner while a turn is in flight', () => {
+    const attention = threadAttention({
+      thread: thread({ id: 'thread-1' }),
+      runningThreadIds: ['thread-1'],
+    });
+
+    expect(attention.label).toBe('working…');
+    expect(attention.spinner).toBe(true);
   });
 
-  it('marks the cursor thread active', () => {
-    expect(
-      threadState({
-        thread: { id: 'thread-1', status: EThreadStatus.active },
-        activeThreadId,
-        runningThreadIds: [],
-      }),
-    ).toBe(EThreadState.active);
+  it('lets a proposal outrank a running turn even on one row', () => {
+    const attention = threadAttention({
+      thread: thread({ id: 'thread-1' }),
+      runningThreadIds: ['thread-1'],
+      proposalPending: true,
+    });
+
+    expect(attention.label).toBe('confirm');
   });
 
-  it('leaves an open sibling merely open', () => {
-    expect(
-      threadState({
-        thread: { id: 'thread-2', status: EThreadStatus.active },
-        activeThreadId,
-        runningThreadIds: [],
-      }),
-    ).toBe(EThreadState.open);
+  it('asks for a reply on an open, quiet thread', () => {
+    expect(threadAttention({ thread: thread({ id: 't2' }), runningThreadIds: [] }).label).toBe(
+      'reply',
+    );
   });
 });
 
@@ -132,7 +157,36 @@ describe('threadList', () => {
   it('states each row’s condition', () => {
     const { order } = threadList({ threads, activeThreadId: 't4', runningThreadIds: ['t4'] });
 
-    expect(order.map((row) => row.stateLabel)).toEqual(['closed', 'closed', 'closed', 'working…']);
+    expect(order.map((row) => row.attention.label)).toEqual([
+      'closed',
+      'closed',
+      'closed',
+      'working…',
+    ]);
+  });
+
+  it('keeps the job’s cursor off the status column — it is a pointer, not a state', () => {
+    const { order } = threadList({ threads, activeThreadId: 't4', runningThreadIds: [] });
+
+    expect(order.map((row) => row.active)).toEqual([false, false, false, true]);
+    expect(order[3]?.attention.label).toBe('reply');
+  });
+
+  it('draws read state on its own channel, beside the verb', () => {
+    const { order } = threadList({
+      threads: [
+        thread({
+          id: 't9',
+          lastMessageAt: new Date('2026-08-11T10:00:00Z'),
+          lastSeenAt: new Date('2026-08-11T09:00:00Z'),
+        }),
+      ],
+      activeThreadId: null,
+      runningThreadIds: [],
+    });
+
+    expect(order[0]?.attention.unseen).toBe(true);
+    expect(order[0]?.attention.label).toBe('reply');
   });
 
   it('returns nothing at all for a job with no threads', () => {
@@ -187,6 +241,10 @@ describe('threadsLayout', () => {
     expect(layout.messages).toBe(0);
     expect(layout.engine).toBe(0);
     expect(layout.state).toBeGreaterThan(0);
+  });
+
+  it('leaves the state column room for the spinner that moved off the dot', () => {
+    expect(threadsLayout(120).state).toBeGreaterThanOrEqual('⠹ working…'.length + 1);
   });
 
   it('never returns a negative role column, however small the terminal gets', () => {

@@ -1,6 +1,7 @@
 import type { INestApplicationContext } from "@nestjs/common";
 import React, { createContext, useContext, type ReactNode } from "react";
 import { AccountsService } from "../app/accounts.service.js";
+import { AttentionService } from "../app/attention.service.js";
 import { ConversationService } from "../app/conversation.service.js";
 import { ConversationStoreRegistry } from "../app/conversation-store.registry.js";
 import { SessionManagerService } from "../app/session-manager.service.js";
@@ -13,6 +14,7 @@ export type Services = {
   conversationStores: ConversationStoreRegistry;
   turnRunnerService: TurnRunnerService;
   accountsService: AccountsService;
+  attentionService: AttentionService;
   sessionManagerService: SessionManagerService;
 };
 
@@ -23,6 +25,7 @@ export function resolveServices(context: INestApplicationContext): Services {
     conversationStores: context.get(ConversationStoreRegistry),
     turnRunnerService: context.get(TurnRunnerService),
     accountsService: context.get(AccountsService),
+    attentionService: context.get(AttentionService),
     sessionManagerService: context.get(SessionManagerService),
   };
 }

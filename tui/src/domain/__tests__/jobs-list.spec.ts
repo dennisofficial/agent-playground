@@ -1,15 +1,31 @@
 import { describe, expect, it } from 'bun:test';
 import { EPhaseKind, EThreadRole } from '../../generated/prisma/enums.js';
-import { deletionCost, formatWhen, jobSummary, jobsLayout } from '../jobs-list.js';
+import { EAttentionCourt } from '../attention.js';
+import {
+  deletionCost,
+  formatWhen,
+  jobAttention,
+  jobSummary,
+  jobsLayout,
+  type JobThreadSource,
+} from '../jobs-list.js';
+
+function jobThread(fields: Partial<JobThreadSource> & { id: string }): JobThreadSource {
+  return { closed: false, lastMessageAt: null, lastSeenAt: null, ...fields };
+}
 
 describe('jobsLayout', () => {
   it('gives the status its widest form when the terminal can afford it', () => {
-    expect(jobsLayout(120).status).toBe(20);
+    expect(jobsLayout(120).status).toBe(14);
+  });
+
+  it('leaves the widest form room for the longest verb', () => {
+    expect(jobsLayout(120).status).toBeGreaterThanOrEqual('start a phase'.length + 1);
   });
 
   it('steps the status down before it starves the title', () => {
     const wide = jobsLayout(120);
-    const narrow = jobsLayout(48);
+    const narrow = jobsLayout(40);
     expect(narrow.status).toBeLessThan(wide.status);
     expect(narrow.title).toBeGreaterThanOrEqual(16);
   });
@@ -52,6 +68,64 @@ describe('jobSummary', () => {
     expect(
       jobSummary({ activePhase: EPhaseKind.build, activeRole: null }),
     ).toBe('active');
+  });
+});
+
+describe('jobAttention', () => {
+  it('unions its threads: working and owing a confirm at the same time', () => {
+    const attention = jobAttention({
+      threads: [
+        jobThread({ id: 'planner' }),
+        jobThread({ id: 'builder-api' }),
+        jobThread({ id: 'builder-ui', closed: true }),
+      ],
+      runningThreadIds: ['builder-api'],
+      proposalThreadIds: ['planner'],
+    });
+
+    // The word goes to the obligation; the spinner is a separate channel and does not swallow it.
+    expect(attention.label).toBe('confirm');
+    expect(attention.court).toBe(EAttentionCourt.yours);
+  });
+
+  it('asks for a new phase once every thread of the job is closed', () => {
+    const attention = jobAttention({
+      threads: [jobThread({ id: 't1', closed: true }), jobThread({ id: 't2', closed: true })],
+      runningThreadIds: [],
+    });
+
+    expect(attention.label).toBe('start a phase');
+  });
+
+  it('says shipped instead, once a pull request exists', () => {
+    const attention = jobAttention({
+      threads: [jobThread({ id: 't1', closed: true })],
+      runningThreadIds: [],
+      hasPullRequest: true,
+    });
+
+    expect(attention.label).toBe('shipped');
+    expect(attention.court).toBe(EAttentionCourt.external);
+  });
+
+  it('carries unread up from any one thread', () => {
+    const attention = jobAttention({
+      threads: [
+        jobThread({ id: 't1' }),
+        jobThread({
+          id: 't2',
+          lastMessageAt: new Date('2026-08-11T10:00:00Z'),
+          lastSeenAt: new Date('2026-08-11T09:00:00Z'),
+        }),
+      ],
+      runningThreadIds: [],
+    });
+
+    expect(attention.unseen).toBe(true);
+  });
+
+  it('reads a job with no threads at all as one needing a phase', () => {
+    expect(jobAttention({ threads: [], runningThreadIds: [] }).label).toBe('start a phase');
   });
 });
 

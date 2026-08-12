@@ -9,34 +9,21 @@ import React, {
 } from "react";
 import type { ProjectRow } from "../../app/workspace.service.js";
 import { clampIndex, matchesQuery } from "../../domain/list-nav.js";
-import { fitColumn, fitColumnEnd } from "../../domain/list-columns.js";
-import {
-  jobLabel,
-  projectsLayout,
-  removalCost,
-  shortenHome,
-} from "../../domain/projects-list.js";
+import { projectsLayout, removalCost } from "../../domain/projects-list.js";
 import { ConfirmBar } from "../components/confirm-bar.js";
 import {
   ListFooter,
   type FooterOverlay,
 } from "../components/list-footer.js";
-import {
-  AddRow,
-  Caret,
-  ListEmpty,
-  NoMatch,
-} from "../components/list-parts.js";
+import { AddRow, ListEmpty, NoMatch } from "../components/list-parts.js";
+import { ProjectListRow } from "../components/project-list.js";
 import { PageHeader } from "../components/page-header.js";
 import { Screen } from "../components/screen.js";
 import { useComposer, type ComposerControls } from "../hooks/use-composer.js";
-import {
-  useRunningThreads,
-  useTick,
-  useWorkingProjects,
-} from "../hooks/use-conversation.js";
+import { useRunningThreads, useTick } from "../hooks/use-conversation.js";
+import { useProjectAttention } from "../hooks/use-project-attention.js";
 import { useServices } from "../services.js";
-import { glyph, theme } from "../theme.js";
+import { theme } from "../theme.js";
 
 /** What the page is waiting for. Exactly one of these owns the keyboard at a time. */
 type Mode = "browse" | "filter" | "open" | "confirm";
@@ -57,7 +44,9 @@ export function ProjectsPage(props: {
   const composer = useComposer("", { singleLine: true });
 
   const running = useRunningThreads();
-  const working = useWorkingProjects(running);
+  // The same union a job runs over its threads, one level up: a project says what needs you
+  // without your having to open it to find out.
+  const attentionFor = useProjectAttention(running);
   const { frame } = useTick(running.length > 0);
 
   const reload = useCallback(async () => {
@@ -226,27 +215,14 @@ export function ProjectsPage(props: {
       <NoMatch show={all.length > 0 && rows.length === 0} query={query} />
 
       {rows.map((project, index) => (
-        <text key={project.id}>
-          <Caret on={index === cursor} />
-          <span>{fitColumn(project.name, layout.name)}</span>
-          {/* Clipped from the FRONT: `…/work/atlas` says which folder this is, `/Users/dennis/D…`
-              says which machine it is on, and every row would say the same thing. */}
-          {layout.path > 0 ? (
-            <span fg={theme.dim}>
-              {fitColumnEnd(shortenHome({ path: project.path, home: HOME }), layout.path)}
-            </span>
-          ) : null}
-          {/* Working displaces the job count rather than sitting beside it: when an agent is
-              running inside, that is the more useful thing to know, and the columns stay put. */}
-          {working.includes(project.id) ? (
-            <span fg={theme.accent}>{frame} working…</span>
-          ) : project.exists ? (
-            <span fg={theme.dim}>{jobLabel(project.jobCount)}</span>
-          ) : (
-            /* A missing path stays VISIBLE — a moved repo should be a decision, not a mystery. */
-            <span fg={theme.warn}>{glyph.warning} path missing</span>
-          )}
-        </text>
+        <ProjectListRow
+          key={project.id}
+          project={project}
+          attention={attentionFor(project.id)}
+          selected={index === cursor}
+          layout={layout}
+          frame={frame}
+        />
       ))}
 
       <text> </text>
@@ -254,9 +230,6 @@ export function ProjectsPage(props: {
     </Screen>
   );
 }
-
-/** Read once: the home directory cannot change under a running terminal. */
-const HOME = process.env.HOME ?? "";
 
 const HINTS = [
   "↑↓ select · →/⏎ open · / filter · n add · x remove · ? keys · ctrl+c quit",

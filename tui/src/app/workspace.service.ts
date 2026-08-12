@@ -89,14 +89,30 @@ export class WorkspaceService {
       title,
       kind: EPhaseKind.intake,
     });
-    await this.sessionManagerService.openThread(job.id, EThreadRole.intake);
+    const thread = await this.sessionManagerService.openThread(
+      job.id,
+      EThreadRole.intake,
+    );
     this.contextFolderService.ensure(job.id);
     // The branch is named after the job, so the job has to exist first. A worktree that fails to
     // materialise raises here and leaves the job standing in the project path — recoverable
     // through the tool door, where losing the job would not be.
     if (args.worktree) await this.enterWorktree(job.id);
-    const reloaded = await this.jobRepository.findById(job.id);
-    return reloaded ?? job;
+
+    // Seeded LAST, and after the worktree, so the phase's opening words name the directory the
+    // agent is actually standing in. A new job opens onto a thread already clearing fog on what it
+    // is, rather than onto a blank conversation waiting to be told what to do.
+    const seeded = await this.jobRepository.findWithProject(job.id);
+    if (seeded) {
+      const { project, ...reloaded } = seeded;
+      await this.conversationService.seedThread({
+        job: reloaded,
+        thread,
+        cwd: this.cwdFor({ job: reloaded, projectPath: project.path }),
+      });
+      return reloaded;
+    }
+    return job;
   }
 
   /**

@@ -28,4 +28,9 @@ export const EMBEDDED_MIGRATIONS: readonly PendingMigration[] = [
     checksum: "601c1c8c8ee270f388f7cf1cff9e8d4b228d12591ec055d4fe4b2255735751ef",
     sql: "-- AlterTable\nALTER TABLE \"EngineSession\" ADD COLUMN \"engineConfig\" JSONB;\n\n-- AlterTable\nALTER TABLE \"Job\" ADD COLUMN \"branch\" TEXT;\nALTER TABLE \"Job\" ADD COLUMN \"workspacePath\" TEXT;\n",
   },
+  {
+    name: "20260812005309_thread_last_seen",
+    checksum: "1755f9e537a9093d61a4b63d47c34165239e3fdf4765545b6281679019d2a041",
+    sql: "-- AlterTable\nALTER TABLE \"Thread\" ADD COLUMN \"lastSeenAt\" DATETIME;\n",
+  },
 ];

@@ -62,6 +62,26 @@ export const theme = {
    * line, so weight and position tell them apart everywhere they meet.
    */
   codeInline: ACCENT,
+  /**
+   * The second exception to the one-accent rule, and it earns one the same way the blue does: it is
+   * carrying information no other channel can.
+   *
+   * A list row says two independent things — whether you have READ it (the dot's shape) and whose
+   * court it is in (the dot's colour). One accent can only draw one of them, and collapsing them
+   * into a single word was measured to merge four situations you would act on differently. So the
+   * three courts get three hues, and the dot is the only place in the app they appear.
+   *
+   * Amber for yours because it is the one that should catch a glance across a full screen; violet
+   * for external because it must read as *not your move* without reading as failure; the accent
+   * itself for the agent, which is the colour a working row has always been.
+   */
+  court: {
+    agent: ACCENT,
+    yours: "#e3b341",
+    external: "#b392f0",
+    /** History. Nobody's court, so it takes the same weight as everything else that is over. */
+    none: "gray",
+  },
 } as const;
 
 /**
@@ -106,6 +126,13 @@ export const glyph = {
   selected: "❯",
   active: "⏺",
   available: "○",
+  /**
+   * Read state, and ONLY read state. Filled means there is something here you have not seen; the
+   * middle dot means you have. The spinner used to take this cell, which made a row unable to say
+   * "working" and "you owe me a keypress" at once — it lives in the status column now.
+   */
+  unseen: "●",
+  seen: "·",
   warning: "⚠",
   failed: "✗",
   /** The one clickable thing in the transcript: a block's copy button. */

@@ -37,6 +37,8 @@ export function useConversationKeys(args: {
   toggleTool: (toolUseId: string) => void;
   onBack: () => void;
   onThreads: () => void;
+  /** The way back down from a landing on the oldest unseen message. */
+  onJumpToBottom: () => void;
 }): void {
   const {
     composer,
@@ -129,6 +131,11 @@ export function useConversationKeys(args: {
     // The job's OWN threads, not the job list: this is the switcher, and like `←` it never touches
     // the turn — the thread you leave keeps working while you read another one.
     if (key.ctrl && input === "h") return args.onThreads();
+    // Bottom. Opening a thread lands you on the oldest thing you have not seen, which means the
+    // transcript can now start scrolled away from the end — and the wheel is a long way back from
+    // the top of four hundred messages. Ahead of the composer's refusal because ctrl+b is not one
+    // of the readline bindings the editor claims.
+    if (key.ctrl && input === "b") return args.onJumpToBottom();
 
     // `?` on an empty composer TOGGLES the keymap in the footer, where the hint line has always
     // advertised it. Non-empty, it is just a question mark — typing during a turn stays safe.

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import type { Message } from '../../domain/message.js';
+import type { PhaseBrief } from '../../domain/phase-spec.js';
 import { EMessageType, EThreadStatus } from '../../generated/prisma/enums.js';
 import type { EngineSession, Job, Thread } from '../../generated/prisma/client.js';
 import type { MessageRepository } from '../../store/message.repository.js';
@@ -11,6 +12,7 @@ import type { AccountUsageService } from '../account-usage.service.js';
 import type { ContextFolderService } from '../context-folder.service.js';
 import { ConversationStoreRegistry } from '../conversation-store.registry.js';
 import { ConversationService } from '../conversation.service.js';
+import type { PhaseBriefService } from '../phase-brief.service.js';
 import type { SessionManagerService } from '../session-manager.service.js';
 import type { TurnRunnerService } from '../turn-runner.service.js';
 
@@ -109,6 +111,11 @@ function build(args: { running?: string[] } = {}): {
     } as unknown as TurnRunnerService,
     { ensure: (): string => '/tmp/context' } as unknown as ContextFolderService,
     { kick: (): void => undefined } as unknown as AccountUsageService,
+    {
+      async forPhase(): Promise<PhaseBrief> {
+        return { instructions: 'phase instructions', opening: 'phase opening' };
+      },
+    } as unknown as PhaseBriefService,
     stores,
   );
 

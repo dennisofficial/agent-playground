@@ -33,6 +33,11 @@ model Thread {
   turns           Turn[]
   createdAt       DateTime        @default(now())
   closedAt        DateTime?
+  /// When the human last reached the BOTTOM of this thread — not when they mounted it. Read state
+  /// is one of the two independent attention channels (the other is whose court it is in), and it
+  /// is the only one that carries information at rest: an agent works until it responds, so "who
+  /// spoke last" says nothing once a turn has ended.
+  lastSeenAt      DateTime?
 
   @@index([phaseId])
 }

@@ -1,12 +1,13 @@
 import React from "react";
+import { EAttentionCourt, statusCell } from "../../domain/attention.js";
 import { fitColumn } from "../../domain/list-columns.js";
-import {
-  EThreadState,
-  type PhaseGroupView,
-  type ThreadListRow,
-  type ThreadsLayout,
+import type {
+  PhaseGroupView,
+  ThreadListRow,
+  ThreadsLayout,
 } from "../../domain/threads-list.js";
 import { Caret } from "./list-parts.js";
+import { courtColour } from "../court.js";
 import { glyph, theme } from "../theme.js";
 
 /**
@@ -45,19 +46,23 @@ function ThreadRow(props: {
   frame: string;
 }): React.ReactNode {
   const { thread, layout } = props;
-  const closed = thread.state === EThreadState.closed;
-  // Closed rows go dim WHOLESALE rather than earning a badge. A finished leg is most of a mature
+  const { attention } = thread;
+  // History goes dim WHOLESALE rather than earning a badge. A finished leg is most of a mature
   // job's list, and weight — not a word at the end of the line — is what lets the eye skip it and
-  // land on the one or two rows still live.
-  const bodyColour = closed ? theme.dim : theme.hover;
+  // land on the one or two rows still live. `none` is exactly "nobody's court", which is history.
+  const history = attention.court === EAttentionCourt.none;
 
   return (
     <text>
       <Caret on={props.selected} />
-      <span fg={dotColour(thread.state)}>
-        {dot({ state: thread.state, frame: props.frame })}{" "}
+      {/* Two channels in one cell: the SHAPE is read state, the COLOUR is whose court it is in.
+          Never collapse them — an unseen proposal and an unseen question are different rows. */}
+      <span fg={courtColour(attention.court)}>
+        {attention.unseen ? glyph.unseen : glyph.seen}{" "}
       </span>
-      <span fg={bodyColour}>{fitColumn(thread.label, layout.role)}</span>
+      <span fg={nameColour({ active: thread.active, history })}>
+        {fitColumn(thread.label, layout.role)}
+      </span>
       {layout.engine > 0 ? (
         <span fg={theme.dim}>{fitColumn(thread.engine, layout.engine)}</span>
       ) : null}
@@ -68,8 +73,8 @@ function ThreadRow(props: {
         <span fg={theme.dim}>{fitColumn(thread.sessions, layout.sessions)}</span>
       ) : null}
       {layout.state > 0 ? (
-        <span fg={stateColour(thread.state)}>
-          {fitColumn(thread.stateLabel, layout.state)}
+        <span fg={courtColour(attention.court)}>
+          {fitColumn(statusCell({ attention, frame: props.frame }), layout.state)}
         </span>
       ) : null}
     </text>
@@ -77,23 +82,11 @@ function ThreadRow(props: {
 }
 
 /**
- * The dot carries the OPEN/CLOSED axis and nothing else — filled while a thread can still be typed
- * into, hollow once it is history. The spinner replaces it on a working row for the same reason it
- * does on the jobs list: working is a state of the thread, not a badge on it.
+ * Where `ACTIVE` went. It is a pointer — where a `⏎` on the job lands — not something you owe, so
+ * it stopped competing for the status column when that column became the verb. Weight on the name
+ * says the same thing in no columns at all.
  */
-function dot(args: { state: EThreadState; frame: string }): string {
-  if (args.state === EThreadState.working) return args.frame;
-  return args.state === EThreadState.closed ? glyph.available : glyph.active;
-}
-
-function dotColour(state: EThreadState): string {
-  if (state === EThreadState.working || state === EThreadState.active)
-    return theme.accent;
-  return theme.dim;
-}
-
-function stateColour(state: EThreadState): string {
-  return state === EThreadState.working || state === EThreadState.active
-    ? theme.accent
-    : theme.dim;
+function nameColour(args: { active: boolean; history: boolean }): string {
+  if (args.history) return theme.dim;
+  return args.active ? theme.accent : theme.hover;
 }

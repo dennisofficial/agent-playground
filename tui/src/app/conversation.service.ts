@@ -1,5 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
-import type { EHarnessVariant } from "../domain/message.js";
+import { EHarnessVariant } from "../domain/message.js";
 import { bindingFor } from "../domain/role-engine.js";
 import type { SessionRef } from "../domain/seam.js";
 import { EThreadStatus } from "../generated/prisma/enums.js";
@@ -12,6 +12,7 @@ import { TurnRepository } from "../store/turn.repository.js";
 import { AccountUsageService } from "./account-usage.service.js";
 import { ContextFolderService } from "./context-folder.service.js";
 import { ConversationStoreRegistry } from "./conversation-store.registry.js";
+import { PhaseBriefService } from "./phase-brief.service.js";
 import { SessionManagerService } from "./session-manager.service.js";
 import { TurnRunnerService } from "./turn-runner.service.js";
 
@@ -23,6 +24,11 @@ export type OpenConversation = {
   cwd: string;
   contextRoot: string;
   readOnly: boolean;
+  /**
+   * The phase's standing instructions, on every turn's system prompt. Resolved once here rather than
+   * per turn in the runner: it costs a read, and a thread never moves phase.
+   */
+  brief: string;
 };
 
 @Injectable()
@@ -40,6 +46,7 @@ export class ConversationService {
     private readonly turnRunnerService: TurnRunnerService,
     private readonly contextFolderService: ContextFolderService,
     private readonly accountUsageService: AccountUsageService,
+    private readonly phaseBriefService: PhaseBriefService,
     private readonly stores: ConversationStoreRegistry,
   ) {}
 
@@ -93,6 +100,10 @@ export class ConversationService {
       });
 
     const contextRoot = this.contextFolderService.ensure(job.id);
+    const brief = await this.phaseBriefService.forPhase({
+      job,
+      phaseId: thread.phaseId,
+    });
 
     this.open = {
       job,
@@ -102,8 +113,45 @@ export class ConversationService {
       cwd,
       contextRoot,
       readOnly: !claimed,
+      brief: brief.instructions,
     };
     return this.open;
+  }
+
+  /**
+   * Atlas's opening words in a thread nobody has opened yet — how a new job stops landing on a blank
+   * conversation.
+   *
+   * Deliberately NOT `sendHarness()`: at job creation there is no open conversation to speak into,
+   * and there must not be one. The turn is fired against the thread directly, so the agent is
+   * already charting by the time the human walks in, and what it was told is a real `seed` message
+   * in the transcript rather than an assertion.
+   */
+  async seedThread(args: {
+    job: Job;
+    thread: Thread;
+    cwd: string;
+  }): Promise<void> {
+    const brief = await this.phaseBriefService.forPhase({
+      job: args.job,
+      phaseId: args.thread.phaseId,
+    });
+    const session = await this.sessionManagerService.currentSession(args.thread);
+
+    // Not awaited: `run()` resolves when the TURN does, and creating a job must not block behind an
+    // agent thinking. A failure lands in the thread's store as an error block, where the human looks.
+    void this.turnRunnerService
+      .run({
+        thread: args.thread,
+        session,
+        prompt: brief.opening,
+        harnessVariant: EHarnessVariant.seed,
+        brief: brief.instructions,
+        cwd: args.cwd,
+      })
+      .catch((error: unknown) => {
+        this.logger.error(`seed turn failed: ${String(error)}`);
+      });
   }
 
   async send(text: string): Promise<void> {
@@ -123,6 +171,7 @@ export class ConversationService {
       thread: open.thread,
       session: open.session,
       prompt: text,
+      brief: open.brief,
       cwd: open.cwd,
     });
     await this.refreshSessions();
@@ -150,6 +199,7 @@ export class ConversationService {
       session: open.session,
       prompt: args.text,
       harnessVariant: args.variant,
+      brief: open.brief,
       cwd: open.cwd,
     });
     await this.refreshSessions();
@@ -163,6 +213,7 @@ export class ConversationService {
         thread: open.thread,
         session: open.session,
         prompt: text,
+        brief: open.brief,
         cwd: open.cwd,
       });
     }
