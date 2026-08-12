@@ -3,6 +3,7 @@ import { bindingFor } from "../domain/role-engine.js";
 import {
   EAccountStatus,
   ESessionEndReason,
+  type EEngine,
   type EThreadRole,
 } from "../generated/prisma/enums.js";
 import type { EngineSession, Thread } from "../generated/prisma/client.js";
@@ -10,7 +11,6 @@ import { AccountRepository } from "../store/account.repository.js";
 import { JobRepository } from "../store/job.repository.js";
 import { SessionRepository } from "../store/session.repository.js";
 import { ThreadRepository } from "../store/thread.repository.js";
-import { ROLE_GROUP } from "../domain/role-engine.js";
 
 export class NoAccountError extends Error {
   constructor(engine: string) {
@@ -30,10 +30,15 @@ export class SessionManagerService {
     private readonly jobRepository: JobRepository,
   ) {}
 
+  /**
+   * A new thread joins the phase the job is IN — the role does not choose the phase. Phase
+   * boundaries are human boundaries, crossed by a confirmed transition; opening a thread never
+   * moves the job.
+   */
   async openThread(jobId: string, role: EThreadRole): Promise<Thread> {
-    const group = await this.jobRepository.groupFor(jobId, ROLE_GROUP[role]);
+    const phase = await this.jobRepository.currentPhase(jobId);
     const thread = await this.threadRepository.create({
-      groupId: group.id,
+      phaseId: phase.id,
       role,
     });
     await this.jobRepository.setActiveThread(jobId, thread.id);
@@ -55,12 +60,13 @@ export class SessionManagerService {
     seed?: { seededFromId: string; handoff?: string },
   ): Promise<EngineSession> {
     const binding = bindingFor(thread.role);
-    const account = await this.pickAccount(binding.engine);
+    const account = await this.pickAccount(binding.engine.kind);
     const session = await this.sessionRepository.open({
       threadId: thread.id,
       accountId: account.id,
-      engine: binding.engine,
-      model: binding.model,
+      // The whole resolved config is copied onto the row, so editing the role table next month does
+      // not retroactively rewrite what last month's sessions actually ran with.
+      engineConfig: binding.engine,
       ...(seed
         ? {
             seededFromId: seed.seededFromId,
@@ -68,7 +74,10 @@ export class SessionManagerService {
           }
         : {}),
     });
-    await this.threadRepository.setActiveSession(thread.id, session.id);
+    await this.threadRepository.setActiveSession({
+      threadId: thread.id,
+      sessionId: session.id,
+    });
     return session;
   }
 
@@ -98,10 +107,8 @@ export class SessionManagerService {
     await this.threadRepository.close(thread.id);
   }
 
-  private async pickAccount(engine: string): Promise<{ id: string }> {
-    const accounts = await this.accountRepository.listForEngine(
-      engine as never,
-    );
+  private async pickAccount(engine: EEngine): Promise<{ id: string }> {
+    const accounts = await this.accountRepository.listForEngine(engine);
     const usable = accounts.filter((a) => a.status === EAccountStatus.active);
     if (usable.length === 0) throw new NoAccountError(engine);
 

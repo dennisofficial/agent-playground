@@ -24,7 +24,7 @@ export const CONVERSATION: readonly Binding[] = [
   ["esc", "interrupt · clear"],
   ["←", "leave"],
   ["ctrl+u", "clear draft"],
-  ["ctrl+h", "job list"],
+  ["ctrl+h", "threads"],
   ["/", "commands"],
   ["x · X", "expand tool block"],
   // Wheel and trackpad only. PgUp/PgDn used to be listed here and never worked: they reached the

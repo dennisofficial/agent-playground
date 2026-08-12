@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "bun src/main.tsx",
     "start": "bun src/main.tsx",
+    "cli": "bun src/main.tsx",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "test:watch": "bun test --watch",

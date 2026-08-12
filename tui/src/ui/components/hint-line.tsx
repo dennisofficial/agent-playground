@@ -1,6 +1,7 @@
 import React from "react";
 import type { Meter, UsageWindow } from "../../domain/usage.js";
-import { meterStyle, spansWidth, stripSpans } from "../meter-style.js";
+import { meterStyle } from "../meter-style.js";
+import { spansWidth, stripSpans } from "../meter-spans.js";
 import { theme } from "../theme.js";
 import { Spans } from "./spans.js";
 

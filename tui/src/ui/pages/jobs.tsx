@@ -10,20 +10,27 @@ import React, {
 import type { ProjectRow } from "../../app/workspace.service.js";
 import type { JobRow } from "../../store/job.repository.js";
 import { clampIndex, matchesQuery } from "../../domain/list-nav.js";
+import { fitColumn } from "../../domain/list-columns.js";
 import {
-  affords,
-  elasticColumn,
-  fitColumn,
-} from "../../domain/list-columns.js";
-import { fitHints } from "../../domain/hints.js";
-import { roleLabel } from "../../domain/role-engine.js";
-import { EJobStatus } from "../../generated/prisma/enums.js";
-import { Composer } from "../components/composer.js";
+  deletionCost,
+  formatWhen,
+  jobSummary,
+  jobsLayout,
+} from "../../domain/jobs-list.js";
 import { ConfirmBar } from "../components/confirm-bar.js";
+import {
+  ListFooter,
+  type FooterOverlay,
+} from "../components/list-footer.js";
+import {
+  AddRow,
+  Caret,
+  ListEmpty,
+  NoMatch,
+} from "../components/list-parts.js";
 import { PageHeader } from "../components/page-header.js";
 import { Screen } from "../components/screen.js";
-import { ListShortcuts } from "../components/shortcuts.js";
-import { useComposer } from "../hooks/use-composer.js";
+import { useComposer, type ComposerControls } from "../hooks/use-composer.js";
 import { useRunningThreads, useTick } from "../hooks/use-conversation.js";
 import { useServices } from "../services.js";
 import { glyph, theme } from "../theme.js";
@@ -72,7 +79,9 @@ export function JobsPage(props: {
 
   const all = useMemo(() => jobs ?? [], [jobs]);
   const rows = useMemo(
-    () => all.filter((job) => matchesQuery(query, job.title, job.status)),
+    // Filtering matches the summary the row actually draws (`build · builder`), which is the only
+    // thing about a job's condition there is to type at.
+    () => all.filter((job) => matchesQuery(query, job.title, jobSummary(job))),
     [all, query],
   );
   const total = rows.length + 1; // + "new job"
@@ -101,7 +110,7 @@ export function JobsPage(props: {
       if (title.length === 0) return;
       leaveMode();
       void workspaceService
-        .createJob(props.project.id, title)
+        .createJob({ projectId: props.project.id, title })
         .then(() => reload())
         .catch((e: Error) => setError(e.message));
     },
@@ -189,99 +198,40 @@ export function JobsPage(props: {
         />
       }
       footer={
-        <box flexDirection="column">
-          {mode === "create" ? (
-            <box flexDirection="column">
-              <Composer
-                state={composer.state}
-                width={composerWidth(width)}
-                placeholder="fix steering"
-                onCaret={composer.setCursor}
+        <ListFooter
+          width={width}
+          height={height}
+          overlay={overlayFor({ mode, composer })}
+          confirm={
+            mode === "confirm" && highlighted ? (
+              <ConfirmBar
+                question={`delete “${highlighted.title}”?`}
+                detail={deletionCost(highlighted)}
               />
-              {/* Engine is not an input — it follows the role. */}
-              <text fg={theme.dim}>
-                {"  "}new job · starts an intake thread on claude{"          "}⏎
-                create · esc
-              </text>
-            </box>
-          ) : null}
-
-          {mode === "filter" ? (
-            <box flexDirection="column">
-              <Composer
-                state={composer.state}
-                width={composerWidth(width)}
-                placeholder="filter…"
-                onCaret={composer.setCursor}
-              />
-              <text fg={theme.dim}>{"  "}↑↓ select · ⏎ open · esc clear</text>
-            </box>
-          ) : null}
-
-          {mode === "confirm" && highlighted ? (
-            <ConfirmBar
-              question={`delete “${highlighted.title}”?`}
-              detail={deletionCost(highlighted)}
-            />
-          ) : null}
-
-          {mode === "browse" ? (
-            shortcuts ? (
-              <ListShortcuts width={width} height={height} />
-            ) : (
-              <text fg={theme.dim}>{fitHints(width, HINTS)}</text>
-            )
-          ) : null}
-
-          {error ? (
-            <text fg={theme.error}>
-              {"  "}
-              {error}
-            </text>
-          ) : null}
-        </box>
+            ) : null
+          }
+          hints={mode === "browse" ? HINTS : undefined}
+          shortcuts={shortcuts}
+          error={error}
+        />
       }
     >
-      {all.length === 0 && mode !== "create" ? (
-        <box flexDirection="column">
-          <text>No jobs yet.</text>
-          <text fg={theme.dim}>
-            A job is one unit of work plus a shared /context folder.
-          </text>
-          <text> </text>
-        </box>
-      ) : null}
-
-      {all.length > 0 && rows.length === 0 ? (
-        <box flexDirection="column">
-          <text fg={theme.dim}>
-            {"    "}Nothing matches “{query}”.
-          </text>
-          <text> </text>
-        </box>
-      ) : null}
+      <ListEmpty
+        show={all.length === 0 && mode !== "create"}
+        headline="No jobs yet."
+        hint="A job is one unit of work plus a shared /context folder."
+      />
+      <NoMatch show={all.length > 0 && rows.length === 0} query={query} />
 
       {rows.map((job, index) => {
         const working =
           job.activeThreadId !== null && running.includes(job.activeThreadId);
         return (
           <text key={job.id}>
-            {index === cursor ? (
-              <span fg={theme.accent}>{`  ${glyph.selected} `}</span>
-            ) : (
-              "    "
-            )}
+            <Caret on={index === cursor} />
             {/* The spinner replaces the status dot rather than sitting beside it — a working job is
                 a state of the job, not a badge on it. */}
-            <span
-              fg={
-                job.status === EJobStatus.shipped && !working
-                  ? theme.dim
-                  : theme.accent
-              }
-            >
-              {working ? frame : glyph.active}{" "}
-            </span>
+            <span fg={theme.accent}>{working ? frame : glyph.active} </span>
             <span>{fitColumn(job.title, layout.title)}</span>
             {layout.status > 0 ? (
               working ? (
@@ -290,24 +240,17 @@ export function JobsPage(props: {
                 </span>
               ) : (
                 <span fg={theme.dim}>
-                  {fitColumn(describe(job), layout.status)}
+                  {fitColumn(jobSummary(job), layout.status)}
                 </span>
               )
             ) : null}
-            <span fg={theme.dim}>{formatWhen(job.updatedAt)}</span>
+            <span fg={theme.dim}>{formatWhen({ date: job.updatedAt })}</span>
           </text>
         );
       })}
 
       <text> </text>
-      <text>
-        {cursor >= rows.length ? (
-          <span fg={theme.accent}>{`  ${glyph.selected} `}</span>
-        ) : (
-          "    "
-        )}
-        <span fg={theme.dim}>+ new job</span>
-      </text>
+      <AddRow selected={cursor >= rows.length} label="+ new job" />
     </Screen>
   );
 }
@@ -318,51 +261,29 @@ const HINTS = [
   "⏎ open · / filter · n new · ? keys",
 ];
 
-/** A bordered box does not wrap: wider than the terminal and it draws off the edge. */
-function composerWidth(width: number): number {
-  return Math.min(72, width - 2);
-}
+/** Only these two modes borrow the footer's composer. Engine is not an input — it follows the role. */
+const OVERLAYS: Partial<Record<Mode, { placeholder: string; caption: string }>> =
+  {
+    create: {
+      placeholder: "fix steering",
+      caption:
+        "new job · starts an intake thread on claude          ⏎ create · esc",
+    },
+    filter: {
+      placeholder: "filter…",
+      caption: "↑↓ select · ⏎ open · esc clear",
+    },
+  };
 
-/** `  ▸ ` + `⏺ `, and the timestamp at the end — the two columns that are never negotiable. */
-const GUTTER = 6;
-const WHEN = 5;
-const MARGIN = 2;
-/** `build · builder` wants twenty columns; `shipped` and `working…` fit in ten. */
-const STATUS_FORMS = [20, 10, 0];
-const TITLE = { min: 16, max: 56 };
-
-function jobsLayout(width: number): { title: number; status: number } {
-  for (const status of STATUS_FORMS) {
-    const fixed = GUTTER + status + WHEN + MARGIN;
-    if (affords(width, fixed, TITLE.min))
-      return { title: elasticColumn(width, fixed, TITLE), status };
-  }
-  return { title: Math.max(3, width - GUTTER - WHEN - MARGIN), status: 0 };
-}
-
-/** There is no archive state and no undo, so the confirm quotes the transcript it is about to burn. */
-function deletionCost(job: JobRow): string {
-  const messages =
-    job.messageCount === 0
-      ? "nothing said yet"
-      : `${job.messageCount} message${job.messageCount === 1 ? "" : "s"}`;
-  return `${messages} · every thread, session and the job’s /context folder go with it`;
-}
-
-function describe(job: JobRow): string {
-  if (job.status === EJobStatus.shipped) return "shipped";
-  if (!job.activeGroup || !job.activeRole) return "active";
-  return `${job.activeGroup} · ${roleLabel(job.activeRole)}`;
-}
-
-/** Today shows a clock, this week a weekday, older a date — the same shape the wireframes use. */
-function formatWhen(date: Date): string {
-  const now = new Date();
-  const sameDay = date.toDateString() === now.toDateString();
-  if (sameDay) {
-    return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-  }
-  const days = (now.getTime() - date.getTime()) / 86_400_000;
-  if (days < 7) return date.toLocaleDateString(undefined, { weekday: "short" });
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+function overlayFor(args: {
+  mode: Mode;
+  composer: ComposerControls;
+}): FooterOverlay | undefined {
+  const form = OVERLAYS[args.mode];
+  if (!form) return undefined;
+  return {
+    ...form,
+    state: args.composer.state,
+    onCaret: args.composer.setCursor,
+  };
 }

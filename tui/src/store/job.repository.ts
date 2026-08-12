@@ -1,12 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { EGroupKind, EJobStatus, type EThreadRole } from '../generated/prisma/enums.js';
-import type { Job, ThreadGroup } from '../generated/prisma/client.js';
-import { ROLE_GROUP } from '../domain/role-engine.js';
+import type { EPhaseKind, EThreadRole } from '../generated/prisma/enums.js';
+import type { Job, Phase, Project } from '../generated/prisma/client.js';
 import { PrismaService } from './prisma.service.js';
 
 export type JobRow = Job & {
   activeRole: EThreadRole | null;
-  activeGroup: EGroupKind | null;
+  activePhase: EPhaseKind | null;
   /** Across every thread in the job — what the delete prompt quotes, so the cost of `y` is legible. */
   messageCount: number;
 };
@@ -20,18 +19,18 @@ export class JobRepository {
       where: { projectId },
       orderBy: { updatedAt: 'desc' },
       include: {
-        groups: { include: { threads: { include: { _count: { select: { messages: true } } } } } },
+        phases: { include: { threads: { include: { _count: { select: { messages: true } } } } } },
       },
     });
 
     return jobs.map((job) => {
-      const threads = job.groups.flatMap((g) => g.threads.map((t) => ({ thread: t, group: g })));
+      const threads = job.phases.flatMap((p) => p.threads.map((t) => ({ thread: t, phase: p })));
       const active = threads.find((t) => t.thread.id === job.activeThreadId);
-      const { groups: _groups, ...rest } = job;
+      const { phases: _phases, ...rest } = job;
       return {
         ...rest,
         activeRole: active?.thread.role ?? null,
-        activeGroup: active?.group.kind ?? null,
+        activePhase: active?.phase.kind ?? null,
         messageCount: threads.reduce((total, t) => total + t.thread._count.messages, 0),
       };
     });
@@ -45,7 +44,7 @@ export class JobRepository {
   async projectIdsForThreads(threadIds: readonly string[]): Promise<string[]> {
     if (threadIds.length === 0) return [];
     const jobs = await this.prismaService.job.findMany({
-      where: { groups: { some: { threads: { some: { id: { in: [...threadIds] } } } } } },
+      where: { phases: { some: { threads: { some: { id: { in: [...threadIds] } } } } } },
       select: { projectId: true },
     });
     return [...new Set(jobs.map((job) => job.projectId))];
@@ -65,7 +64,7 @@ export class JobRepository {
    */
   async engineSessionIdsFor(jobId: string): Promise<string[]> {
     const sessions = await this.prismaService.engineSession.findMany({
-      where: { thread: { group: { jobId } } },
+      where: { thread: { phase: { jobId } } },
       select: { engineSessionId: true },
     });
     return sessions
@@ -73,7 +72,7 @@ export class JobRepository {
       .filter((id): id is string => id !== null);
   }
 
-  /** Groups, threads, sessions and messages all go with it, by `ON DELETE CASCADE`. */
+  /** Phases, threads, sessions and messages all go with it, by `ON DELETE CASCADE`. */
   async remove(id: string): Promise<void> {
     await this.prismaService.job.delete({ where: { id } });
   }
@@ -83,16 +82,50 @@ export class JobRepository {
   }
 
   /**
-   * A new job starts with one group and one thread — the intake role. Structure is carried from
-   * day one but v1 runs one of each; nothing here advances a group.
+   * A job together with the repository it belongs to — what every worktree operation needs, since
+   * `git worktree` is always run from the main worktree and the job only stores its own path.
    */
-  async create(args: { projectId: string; title: string; role: EThreadRole }): Promise<Job> {
-    const kind = ROLE_GROUP[args.role];
+  async findWithProject(id: string): Promise<(Job & { project: Project }) | null> {
+    return this.prismaService.job.findUnique({ where: { id }, include: { project: true } });
+  }
+
+  /**
+   * The job took a branch and a worktree. Written by every door AND by the Atlas-owned worktree
+   * tool as it moves — that write is precisely why the tool is allowed where Claude Code's native
+   * worktree tool is not, since the native one relocates the work and leaves this field stale.
+   */
+  async setWorkspace(args: {
+    jobId: string;
+    branch: string;
+    workspacePath: string;
+  }): Promise<void> {
+    await this.prismaService.job.update({
+      where: { id: args.jobId },
+      data: { branch: args.branch, workspacePath: args.workspacePath },
+    });
+  }
+
+  /**
+   * The worktree is gone; the job falls back to the project path. `branch` deliberately survives —
+   * the branch is the work and may already carry a pull request, so it outlives its directory.
+   */
+  async clearWorkspace(jobId: string): Promise<void> {
+    await this.prismaService.job.update({
+      where: { id: jobId },
+      data: { workspacePath: null },
+    });
+  }
+
+  /**
+   * A new job starts with one phase at ordinal 0 — the phase the caller names, which is always
+   * `intake` today. Nothing here advances a phase; that is a confirmed transition, not a write.
+   */
+  async create(args: { projectId: string; title: string; kind: EPhaseKind }): Promise<Job> {
     return this.prismaService.job.create({
       data: {
         projectId: args.projectId,
         title: args.title,
-        groups: { create: { kind, ordinal: 0 } },
+        phases: { create: { kind: args.kind, ordinal: 0 } },
       },
     });
   }
@@ -104,21 +137,20 @@ export class JobRepository {
     });
   }
 
-  async setStatus(jobId: string, status: EJobStatus): Promise<void> {
-    await this.prismaService.job.update({ where: { id: jobId }, data: { status } });
-  }
-
-  /** Groups exist as a column; this is the only thing that creates them. */
-  async groupFor(jobId: string, kind: EGroupKind): Promise<ThreadGroup> {
-    const existing = await this.prismaService.threadGroup.findFirst({ where: { jobId, kind } });
-    if (existing) return existing;
-
-    const last = await this.prismaService.threadGroup.findFirst({
+  /**
+   * Where a new thread lands. Phases are appended and never reopened, so the highest ordinal IS the
+   * current phase — no lookup by kind, because the same kind can run twice on one job (a second
+   * `direct_build` chasing a red build is a new phase, not the old one).
+   *
+   * A job is created with its first phase in the same statement, so having none is a broken
+   * invariant rather than a case to paper over.
+   */
+  async currentPhase(jobId: string): Promise<Phase> {
+    const phase = await this.prismaService.phase.findFirst({
       where: { jobId },
       orderBy: { ordinal: 'desc' },
     });
-    return this.prismaService.threadGroup.create({
-      data: { jobId, kind, ordinal: (last?.ordinal ?? -1) + 1 },
-    });
+    if (!phase) throw new Error(`job ${jobId} has no phase`);
+    return phase;
   }
 }

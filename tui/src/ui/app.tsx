@@ -2,14 +2,16 @@ import { useRenderer, useTerminalDimensions } from "@opentui/react";
 import { useInput } from "./hooks/use-input.js";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { ProjectRow } from "../app/workspace.service.js";
+import type { Thread } from "../generated/prisma/client.js";
 import type { JobRow } from "../store/job.repository.js";
 import { CopyNoticeProvider, useCopyOnSelect } from "./copy-on-select.js";
 import { useRunningThreads } from "./hooks/use-conversation.js";
-import { useNavigation } from "./navigation.js";
+import { useNavigation, type ThreadsRoute } from "./navigation.js";
 import { AccountsPage } from "./pages/accounts.js";
 import { ConversationPage } from "./pages/conversation.js";
 import { JobsPage } from "./pages/jobs.js";
 import { ProjectsPage } from "./pages/projects.js";
+import { ThreadsPage } from "./pages/threads.js";
 import { useServices } from "./services.js";
 import { glyph, theme } from "./theme.js";
 
@@ -76,7 +78,10 @@ export function App(props: { initialProjectPath?: string }): React.ReactNode {
           return;
         }
         focus.current.job = job.id;
-        const open = await conversationService.openJob(job, project.path);
+        // A job that took a worktree runs there, not in the tree the editor is open on. A job that
+        // did not gets `project.path` back, exactly as before.
+        const cwd = workspaceService.cwdFor({ job, projectPath: project.path });
+        const open = await conversationService.openJob(job, cwd);
         nav.push({ name: "conversation", project, open });
       } catch (e) {
         setError((e as Error).message);
@@ -90,6 +95,34 @@ export function App(props: { initialProjectPath?: string }): React.ReactNode {
   const leaveConversation = useCallback(() => {
     void conversationService.leave().finally(() => nav.pop());
   }, [conversationService, nav]);
+
+  /**
+   * Switch the conversation to another thread of the same job. Neither side's turn is disturbed:
+   * `leave()` releases the soft lock only when nothing is running, and `openThread()` HYDRATES the
+   * store the destination already has rather than resetting it — a reset would blank a working
+   * agent's spinner, tail and steer queue.
+   */
+  const switchThread = useCallback(
+    async (args: { route: ThreadsRoute; thread: Thread }) => {
+      const { route, thread } = args;
+      // Choosing the thread you came from is just "back": the page below this one is already it.
+      if (thread.id === route.currentThreadId) return nav.pop();
+      try {
+        await conversationService.leave();
+        const open = await conversationService.openThread(
+          route.job,
+          thread,
+          route.cwd,
+        );
+        // Pop AND replace: the switcher hands you back to the conversation level with a different
+        // thread, instead of burying a stale conversation page under the new one.
+        nav.popAndReplace({ name: "conversation", project: route.project, open });
+      } catch (e) {
+        setError((e as Error).message);
+      }
+    },
+    [conversationService, nav],
+  );
 
   useInput((input, key) => {
     if (key.ctrl && input === "c") {
@@ -161,7 +194,29 @@ export function App(props: { initialProjectPath?: string }): React.ReactNode {
         ) : null}
 
         {route.name === "conversation" ? (
-          <ConversationPage open={route.open} onBack={leaveConversation} />
+          <ConversationPage
+            open={route.open}
+            onBack={leaveConversation}
+            onThreads={() =>
+              nav.push({
+                name: "threads",
+                project: route.project,
+                job: route.open.job,
+                cwd: route.open.cwd,
+                currentThreadId: route.open.thread.id,
+              })
+            }
+          />
+        ) : null}
+
+        {route.name === "threads" ? (
+          <ThreadsPage
+            job={route.job}
+            projectName={route.project.name}
+            currentThreadId={route.currentThreadId}
+            onOpen={(thread) => void switchThread({ route, thread })}
+            onBack={nav.pop}
+          />
         ) : null}
 
         {route.name === "accounts" ? <AccountsPage onBack={nav.pop} /> : null}

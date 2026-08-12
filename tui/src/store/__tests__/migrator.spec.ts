@@ -47,7 +47,7 @@ describe('MigratorService', () => {
         'Account',
         'Project',
         'Job',
-        'ThreadGroup',
+        'Phase',
         'Thread',
         'EngineSession',
         'ThreadMessage',

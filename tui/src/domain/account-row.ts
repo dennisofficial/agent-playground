@@ -1,3 +1,5 @@
+import { EAccountStatus } from '../generated/prisma/enums.js';
+
 export type AccountRowLayout = {
   lines: 1 | 2;
   label: number;
@@ -29,6 +31,37 @@ const FORMS: Form[] = [
   { lines: 2, plan: 0, showBar: false, badge: "glyph" },
   { lines: 2, plan: 0, showBar: false, badge: "none" },
 ];
+
+/** `5h ` before the gauge, ` 34%` after it — the fixed cells every meter spends. */
+const METER_LABEL = 3;
+const METER_PERCENT = 4;
+
+/**
+ * The widest ONE meter gets. `gaugeCells: 0` is the gauge-less form, which is narrower by the bar
+ * plus the space in front of it.
+ */
+export function meterColumnWidth(args: { gaugeCells: number }): number {
+  return METER_LABEL + METER_PERCENT + (args.gaugeCells > 0 ? args.gaugeCells + 1 : 0);
+}
+
+/**
+ * What the layout budgets for the 5h/wk pair, so the two forms agree by construction. Taking the
+ * gauge width and the gap as arguments keeps the style tokens in `ui/` — this file must not know
+ * what a meter looks like, only how many cells it costs.
+ */
+export function accountMeterWidths(args: { gaugeCells: number; gap: number }): MeterWidths {
+  return {
+    withGauge: meterColumnWidth({ gaugeCells: args.gaugeCells }) * 2 + args.gap,
+    withoutGauge: meterColumnWidth({ gaugeCells: 0 }) * 2 + args.gap,
+  };
+}
+
+/** The word a status badge carries, or `null` for the statuses that need no announcement. */
+export function badgeText(account: { status: EAccountStatus }): string | null {
+  if (account.status === EAccountStatus.expired) return 'expired';
+  if (account.status === EAccountStatus.limited) return 'limited';
+  return null;
+}
 
 function usageWidth(form: Form, meters: MeterWidths): number {
   return form.plan + (form.showBar ? meters.withGauge : meters.withoutGauge);

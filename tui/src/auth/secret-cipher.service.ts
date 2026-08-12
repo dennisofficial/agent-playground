@@ -1,6 +1,7 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { ATLAS_PATHS } from "../domain/paths.js";
 
 const ALGO = "aes-256-gcm";
@@ -10,6 +11,17 @@ const TAG_LEN = 16;
 @Injectable()
 export class SecretCipherService {
   private key?: Buffer;
+
+  /**
+   * The key file, defaulted rather than injected: Nest constructs this with no arguments and gets
+   * `~/.atlas/key`, while a test can point it at a temp dir. `ATLAS_PATHS` is read at module load,
+   * so a test that moved `HOME` would otherwise be writing to the developer's REAL key file.
+   *
+   * `@Optional()` is load-bearing: `emitDecoratorMetadata` records the parameter as `String`, and
+   * without it Nest tries to inject a `String` provider and the whole container fails to build. A
+   * default value is invisible to the injector.
+   */
+  constructor(@Optional() private readonly keyFile: string = ATLAS_PATHS.key) {}
 
   encrypt(plain: string): string {
     const iv = randomBytes(IV_LEN);
@@ -40,21 +52,21 @@ export class SecretCipherService {
   /** Read the key, creating it on first use. Cached — this is on the per-turn path. */
   private loadKey(): Buffer {
     if (this.key) return this.key;
-    mkdirSync(ATLAS_PATHS.home, { recursive: true });
+    mkdirSync(dirname(this.keyFile), { recursive: true });
     let raw: string;
     try {
-      raw = readFileSync(ATLAS_PATHS.key, "utf8").trim();
+      raw = readFileSync(this.keyFile, "utf8").trim();
     } catch {
       raw = randomBytes(32).toString("hex");
-      writeFileSync(ATLAS_PATHS.key, `${raw}\n`, { mode: 0o600 });
+      writeFileSync(this.keyFile, `${raw}\n`, { mode: 0o600 });
     }
     // Re-assert the mode: an older key, or one restored from a backup, may be world-readable.
-    chmodSync(ATLAS_PATHS.key, 0o600);
+    chmodSync(this.keyFile, 0o600);
 
     const key = Buffer.from(raw, "hex");
     if (key.length !== 32) {
       throw new Error(
-        `~/.atlas/key must be 64 hex chars (32 bytes); got ${key.length} bytes`,
+        `${this.keyFile} must be 64 hex chars (32 bytes); got ${key.length} bytes`,
       );
     }
     this.key = key;

@@ -36,3 +36,14 @@ export function elasticColumn(
 export function affords(available: number, fixed: number, min: number): boolean {
   return available - fixed >= min;
 }
+
+/**
+ * How wide an overlay composer may draw. A bordered box does not wrap: wider than the terminal and
+ * it draws off the edge. The cap keeps a prompt readable on a wide screen rather than stretching a
+ * one-line input across two hundred columns.
+ */
+export const OVERLAY_MAX_WIDTH = 72;
+
+export function overlayWidth(terminalWidth: number): number {
+  return Math.min(OVERLAY_MAX_WIDTH, terminalWidth - 2);
+}

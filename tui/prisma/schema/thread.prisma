@@ -3,10 +3,14 @@ enum EThreadStatus {
   closed
 }
 
+// A role is *what kind of work* a thread does — which prompts, subagents and tools get injected.
+// It says nothing about which phase the thread lives in: `research` and `prototype` are intake
+// work, and a `planning` phase may still host an `intake` thread.
 enum EThreadRole {
   intake
   research
-  spike
+  prototype
+  task
   designer
   planner
   plan_review
@@ -18,8 +22,8 @@ enum EThreadRole {
 
 model Thread {
   id              String          @id @default(uuid())
-  groupId         String
-  group           ThreadGroup     @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  phaseId         String
+  phase           Phase           @relation(fields: [phaseId], references: [id], onDelete: Cascade)
   role            EThreadRole
   status          EThreadStatus   @default(active)
   activeSessionId String?
@@ -30,5 +34,5 @@ model Thread {
   createdAt       DateTime        @default(now())
   closedAt        DateTime?
 
-  @@index([groupId])
+  @@index([phaseId])
 }

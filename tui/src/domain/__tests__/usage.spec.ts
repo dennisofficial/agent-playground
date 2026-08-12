@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'bun:test';
+import { EEngine } from '../../generated/prisma/enums.js';
 import {
+  budgetFor,
   formatCountdown,
   formatPercent,
   isPressured,
@@ -147,5 +149,19 @@ describe('resolveContextLimit', () => {
     expect(resolveContextLimit('claude-haiku-4-5-20251001')).toBe(200_000);
     expect(resolveContextLimit('something-else')).toBe(200_000);
     expect(resolveContextLimit(undefined)).toBe(200_000);
+  });
+});
+
+describe('budgetFor', () => {
+  /**
+   * It is ONE number today, on purpose — the arguments exist so narrowing to per-engine and then
+   * per-model is a function body rather than a call-site refactor. This test pins the shape, not
+   * the values: the values are guesses owned by design ticket 16 and will change.
+   */
+  it('answers with the same budget for every engine and model, for now', () => {
+    const claude = budgetFor({ engine: EEngine.claude, model: 'claude-opus-5' });
+    expect(claude.soft).toBeGreaterThan(0);
+    expect(claude.hard).toBeGreaterThan(claude.soft);
+    expect(budgetFor({ engine: EEngine.codex, model: 'gpt-5.6-sol' })).toEqual(claude);
   });
 });

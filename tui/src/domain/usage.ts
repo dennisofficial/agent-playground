@@ -1,3 +1,4 @@
+import type { EEngine } from '../generated/prisma/enums.js';
 import type { UsageWindowKey } from './message.js';
 
 /** `null` is a REAL state, not zero: usage is unknown until a poll or a turn reports one. */
@@ -104,4 +105,21 @@ export function resolveContextLimit(model: string | undefined): number {
   return LONG_CONTEXT_MODELS.some((re) => re.test(model))
     ? LONG_CONTEXT_LIMIT
     : DEFAULT_CONTEXT_LIMIT;
+}
+
+/**
+ * The rotation budget: how many tokens a session may spend before it should hand off (`soft`) and
+ * before it must (`hard`). Deliberately ONE blanket pair, not a model-keyed table — there is not
+ * enough data to key on the model, and a `MODEL_BUDGETS` table would be eight rows carrying one
+ * number, which dresses a guess as a measurement.
+ *
+ * Both arguments are taken and ignored on purpose, exactly as `resolveContextLimit(model)` shapes
+ * its own future: narrowing to per-engine and then per-model becomes a function body rather than a
+ * call-site refactor. The real numbers are owned by design ticket 16; these are guesses.
+ */
+export function budgetFor(_: {
+  engine: EEngine;
+  model: string;
+}): { soft: number; hard: number } {
+  return { soft: 180_000, hard: 300_000 };
 }

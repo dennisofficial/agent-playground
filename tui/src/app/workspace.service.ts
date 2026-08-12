@@ -1,16 +1,18 @@
 import { Injectable } from "@nestjs/common";
 import { existsSync, rmSync } from "node:fs";
 import { basename, resolve } from "node:path";
-import { EThreadRole } from "../generated/prisma/enums.js";
+import { EPhaseKind, EThreadRole } from "../generated/prisma/enums.js";
 import type { Job, Project } from "../generated/prisma/client.js";
 import { jobDir, sessionTapeDir } from "../domain/paths.js";
 import { AccountRepository } from "../store/account.repository.js";
 import { JobRepository, type JobRow } from "../store/job.repository.js";
 import { ProjectRepository } from "../store/project.repository.js";
-import { ThreadRepository } from "../store/thread.repository.js";
+import { ThreadRepository, type ThreadRow } from "../store/thread.repository.js";
 import { ContextFolderService } from "./context-folder.service.js";
 import { ConversationService } from "./conversation.service.js";
+import { GitService } from "./git.service.js";
 import { SessionManagerService } from "./session-manager.service.js";
+import { WorktreeService, type JobWorkspace } from "./worktree.service.js";
 
 export type ProjectRow = Project & { jobCount: number; exists: boolean };
 
@@ -24,6 +26,8 @@ export class WorkspaceService {
     private readonly sessionManagerService: SessionManagerService,
     private readonly contextFolderService: ContextFolderService,
     private readonly conversationService: ConversationService,
+    private readonly worktreeService: WorktreeService,
+    private readonly gitService: GitService,
   ) {}
 
   async listProjects(): Promise<ProjectRow[]> {
@@ -34,14 +38,31 @@ export class WorkspaceService {
     }));
   }
 
+  /**
+   * A project is identified by its MAIN worktree, whatever corner of the repository you opened
+   * Atlas in. `Project.path` is `@unique`, so without this, opening Atlas inside `.worktrees/foo`
+   * would mint a second project with its own job list — and the whole point of worktrees here is
+   * that the editor lives in one while Atlas keeps working on the same project.
+   */
   async openFolder(path: string): Promise<Project> {
     const absolute = resolve(path);
     if (!existsSync(absolute)) throw new Error(`no such folder: ${absolute}`);
-    return this.projectRepository.open(absolute, basename(absolute));
+    const root = (await this.gitService.mainWorktree(absolute)) ?? absolute;
+    return this.projectRepository.open(root, basename(root));
   }
 
   async listJobs(projectId: string): Promise<JobRow[]> {
     return this.jobRepository.listForProject(projectId);
+  }
+
+  /** Every thread of a job, closed ones included — the list is a record you browse, not a roster. */
+  async listThreads(jobId: string): Promise<ThreadRow[]> {
+    return this.threadRepository.listForJob(jobId);
+  }
+
+  /** A fresh read of one job — the thread list re-reads it because the cursor moves under it. */
+  async findJob(jobId: string): Promise<Job | null> {
+    return this.jobRepository.findById(jobId);
   }
 
   async projectsWithRunningThreads(
@@ -50,19 +71,56 @@ export class WorkspaceService {
     return this.jobRepository.projectIdsForThreads(threadIds);
   }
 
-  async createJob(projectId: string, title: string): Promise<Job> {
+  /**
+   * `worktree` is the first of the three doors onto an isolated branch — the other two are the
+   * build confirm and the tool. It is opt-in: a button-colour change does not need a worktree, and
+   * a job without one works in the project path exactly as before.
+   */
+  async createJob(args: {
+    projectId: string;
+    title: string;
+    worktree?: boolean;
+  }): Promise<Job> {
+    const { projectId, title } = args;
+    // Every job starts in intake with one intake thread — the phase and the role are named
+    // separately because they are separate axes, and only their opening values coincide.
     const job = await this.jobRepository.create({
       projectId,
       title,
-      role: EThreadRole.intake,
+      kind: EPhaseKind.intake,
     });
     await this.sessionManagerService.openThread(job.id, EThreadRole.intake);
     this.contextFolderService.ensure(job.id);
+    // The branch is named after the job, so the job has to exist first. A worktree that fails to
+    // materialise raises here and leaves the job standing in the project path — recoverable
+    // through the tool door, where losing the job would not be.
+    if (args.worktree) await this.enterWorktree(job.id);
     const reloaded = await this.jobRepository.findById(job.id);
     return reloaded ?? job;
   }
 
+  /**
+   * Doors two and three — the build confirm, and the tool at any time — are the same operation as
+   * door one, called later. It is idempotent, so calling it on a job that already has a worktree
+   * reports the one it has.
+   */
+  async enterWorktree(jobId: string): Promise<JobWorkspace> {
+    const job = await this.jobRepository.findWithProject(jobId);
+    if (!job) throw new Error(`no such job: ${jobId}`);
+    return this.worktreeService.enter({ job, projectPath: job.project.path });
+  }
+
+  /** Where this job's turns run — its worktree if it took one, else the project path. */
+  cwdFor(args: { job: Job; projectPath: string }): string {
+    return this.worktreeService.cwdFor(args);
+  }
+
   async deleteJob(jobId: string): Promise<void> {
+    // Before anything is evicted or cascaded: a worktree holding uncommitted work refuses, and the
+    // job survives the refusal intact.
+    const job = await this.jobRepository.findWithProject(jobId);
+    if (job) await this.worktreeService.release({ job, projectPath: job.project.path });
+
     await this.conversationService.evict(
       [jobId],
       await this.threadIdsFor([jobId]),
@@ -74,6 +132,11 @@ export class WorkspaceService {
     this.purge(jobId, engineSessionIds);
   }
 
+  /**
+   * Worktrees are deliberately left on disk. Forgetting a project never touches the folder it
+   * points at (that is the user's repository), and a project-wide sweep would either eat
+   * uncommitted work or refuse to forget a folder over a file Atlas has no business judging.
+   */
   async deleteProject(projectId: string): Promise<void> {
     const jobIds = await this.jobRepository.idsForProject(projectId);
     await this.conversationService.evict(

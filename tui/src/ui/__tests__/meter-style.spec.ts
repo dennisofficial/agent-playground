@@ -1,19 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, setSystemTime } from 'bun:test';
 import { meterBand, type Meter } from '../../domain/usage.js';
 import {
-  bandColour,
   FILL_RAMPS,
   METER_GLYPHS,
   METER_INKS,
   METER_PRESETS,
   METER_SEPARATIONS,
-  meterSpans,
   meterStyle,
-  spansWidth,
-  stripSpans,
   type MeterStyle,
   type Span,
 } from '../meter-style.js';
+import { bandColour, meterSpans, spansWidth, stripSpans } from '../meter-spans.js';
 
 const NOW = Date.parse('2026-08-02T20:00:00Z');
 const RESETS = '2026-08-02T22:14:00Z';

@@ -4,6 +4,8 @@ import { createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
 import React from "react";
 import { AppModule } from "./app.module.js";
+import { isCliInvocation } from "./cli/invocation.js";
+import { runCli } from "./cli/run.js";
 import { App } from "./ui/app.js";
 import { registerGrammars } from "./ui/markdown/grammars/index.js";
 import { ServicesProvider, resolveServices } from "./ui/services.js";
@@ -24,6 +26,15 @@ import { ServicesProvider, resolveServices } from "./ui/services.js";
  * and users never install a runtime.
  */
 async function main(): Promise<void> {
+  // `atlas threads`, `atlas transcript <id>`, `atlas map`, `atlas ticket <n>` — the read half of the
+  // agent surface, served by the SAME binary an agent already has on its PATH. They run headless and
+  // exit; only an exact subcommand name diverts here, so `atlas <path>` still opens the folder.
+  const args = process.argv.slice(2);
+  if (isCliInvocation(args)) {
+    process.exitCode = await runCli(args);
+    return;
+  }
+
   const context = await NestFactory.createApplicationContext(AppModule, {
     // Nest's logger writes straight to stdout, which would corrupt the frame. Errors still throw.
     logger: process.env.ATLAS_DEBUG ? ["log", "warn", "error"] : false,

@@ -1,6 +1,8 @@
 import { Injectable, Logger } from "@nestjs/common";
+import type { EHarnessVariant } from "../domain/message.js";
 import { bindingFor } from "../domain/role-engine.js";
 import type { SessionRef } from "../domain/seam.js";
+import { EThreadStatus } from "../generated/prisma/enums.js";
 import type { EngineSession, Job, Thread } from "../generated/prisma/client.js";
 import { JobRepository } from "../store/job.repository.js";
 import { MessageRepository } from "../store/message.repository.js";
@@ -58,10 +60,17 @@ export class ConversationService {
     thread: Thread,
     cwd: string,
   ): Promise<OpenConversation> {
-    const session = await this.sessionManagerService.currentSession(thread);
+    // A closed thread is a RECORD, not a place to work. Asking the session manager for a current
+    // session would end up minting a fresh one — a junk row on finished history, and an account
+    // demanded of someone who only wanted to read a transcript. So it reopens its last session,
+    // claims nothing, and comes back read-only.
+    const closed = thread.status === EThreadStatus.closed;
+    const session = closed
+      ? await this.lastSession(thread)
+      : await this.sessionManagerService.currentSession(thread);
 
-    const claimed = await this.sessionRepository.claim(session.id);
-    if (!claimed)
+    const claimed = closed ? false : await this.sessionRepository.claim(session.id);
+    if (!claimed && !closed)
       this.logger.warn(`session ${session.id} is locked by another instance`);
 
     const [messages, sessions, lastTurn] = await Promise.all([
@@ -70,11 +79,18 @@ export class ConversationService {
       this.turnRepository.lastForThread(thread.id),
     ]);
 
+    // hydrate(), never reset(): this same path is how a RUNNING thread is reopened, and a reset
+    // would blank a working agent's spinner, live tail and steer queue.
     const store = this.stores.hydrate(thread.id, messages, !claimed, lastTurn);
     if (!this.turnRunnerService.busy(thread.id)) {
       store.setContextPercent(session.contextPercent);
     }
-    this.accountUsageService.kick(session.accountId, thread.id);
+    // Nothing will be billed to a closed thread's account, so there is nothing to poll for.
+    if (!closed)
+      this.accountUsageService.kick({
+        accountId: session.accountId,
+        threadId: thread.id,
+      });
 
     const contextRoot = this.contextFolderService.ensure(job.id);
 
@@ -95,7 +111,11 @@ export class ConversationService {
     if (open.readOnly) return;
 
     if (this.turnRunnerService.busy(open.thread.id)) {
-      this.turnRunnerService.steer(open.thread, open.session, text);
+      this.turnRunnerService.steer({
+        thread: open.thread,
+        session: open.session,
+        text,
+      });
       return;
     }
 
@@ -103,6 +123,33 @@ export class ConversationService {
       thread: open.thread,
       session: open.session,
       prompt: text,
+      cwd: open.cwd,
+    });
+    await this.refreshSessions();
+  }
+
+  /**
+   * Atlas speaking into the open conversation in its own name — a brief, a hand-off, a transition.
+   *
+   * Deliberately NOT the steer path `send()` takes when a turn is running. A steer arrives mid-turn
+   * as unattributed text, which is exactly the impersonation the envelope exists to prevent; `run()`
+   * queues behind the in-flight turn instead, so an injection lands at a turn boundary. That is also
+   * where every harness event already happens — rotation, phase advance — for the same reason: no
+   * work in flight is lost to it.
+   */
+  async sendHarness(args: {
+    variant: EHarnessVariant;
+    text: string;
+  }): Promise<void> {
+    const open = this.requireOpen();
+    // Read-only means another instance owns this session; it will speak for the harness, not us.
+    if (open.readOnly) return;
+
+    await this.turnRunnerService.run({
+      thread: open.thread,
+      session: open.session,
+      prompt: args.text,
+      harnessVariant: args.variant,
       cwd: open.cwd,
     });
     await this.refreshSessions();
@@ -144,7 +191,7 @@ export class ConversationService {
   breadcrumbEngine(): { engine: string; model: string } {
     const open = this.requireOpen();
     const binding = bindingFor(open.thread.role);
-    return { engine: binding.engine, model: open.session.model };
+    return { engine: binding.engine.kind, model: open.session.model };
   }
 
   async release(): Promise<void> {
@@ -172,6 +219,19 @@ export class ConversationService {
     }
     this.stores.forget(threadIds);
     if (this.open && jobIds.includes(this.open.job.id)) await this.release();
+  }
+
+  /**
+   * The last session a closed thread ran on. `activeSessionId` still points at it — closing a thread
+   * ends its session rather than unlinking it, which is what makes the transcript readable after.
+   */
+  private async lastSession(thread: Thread): Promise<EngineSession> {
+    const session = thread.activeSessionId
+      ? await this.sessionRepository.findById(thread.activeSessionId)
+      : null;
+    if (!session)
+      throw new Error("this thread was closed before it ever ran — nothing to read");
+    return session;
   }
 
   private async refreshSessions(): Promise<void> {

@@ -36,11 +36,16 @@ export class ContextFolderService {
     );
   }
 
-  resolveInside(jobId: string, relativePath: string): string {
-    const root = resolve(this.root(jobId));
-    const target = resolve(root, relativePath);
+  /**
+   * An absolute path inside the job's context folder, or a throw. This is the only door into that
+   * folder for anything the agent names, so the containment check lives here rather than at each
+   * call site — `../` and an absolute path both resolve OUT, and neither is a legal mention.
+   */
+  resolveInside(args: { jobId: string; relativePath: string }): string {
+    const root = resolve(this.root(args.jobId));
+    const target = resolve(root, args.relativePath);
     if (target !== root && !target.startsWith(root + sep)) {
-      throw new Error(`path escapes the job context folder: ${relativePath}`);
+      throw new Error(`path escapes the job context folder: ${args.relativePath}`);
     }
     return target;
   }

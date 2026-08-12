@@ -97,6 +97,12 @@ export const glyph = {
   queued: "⤷",
   /** Account swap — a dim inline note, deliberately NOT a seam. */
   swap: "⤿",
+  /**
+   * Atlas's own voice: a rule down the left of an injected message. A rule rather than a bullet
+   * because a harness message can run for pages — a hand-off does — and the eye needs to be able to
+   * see where Atlas stops speaking without reading to find out.
+   */
+  harness: "┃",
   selected: "❯",
   active: "⏺",
   available: "○",

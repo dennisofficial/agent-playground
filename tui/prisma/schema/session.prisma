@@ -15,8 +15,15 @@ model EngineSession {
   accountId       String
   account         Account            @relation(fields: [accountId], references: [id])
 
+  /// `engine` and `model` stay flat and queryable because they are read well outside the engine
+  /// layer — the breadcrumb, the context-limit resolver and the budget lookup all want them
+  /// without parsing JSON.
   engine          EEngine
   model           String
+  /// The full resolved EngineConfig (engine-specific model + effort vocabulary), copied at open.
+  /// History stays truthful when the role table is later edited: this records what this session
+  /// actually ran with, not what the table says today.
+  engineConfig    Json?
   engineSessionId String?
 
   seededFromId    String?

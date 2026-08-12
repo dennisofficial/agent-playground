@@ -3,6 +3,7 @@ import type { Message, ToolResultPayload } from "../../domain/message.js";
 import { EMessageType } from "../../generated/prisma/enums.js";
 import { AssistantBlock } from "./blocks/assistant-block.js";
 import { ErrorBlock } from "./blocks/error-block.js";
+import { HarnessBlock } from "./blocks/harness-block.js";
 import { ThinkingBlock } from "./blocks/thinking-block.js";
 import { ToolBlock } from "./blocks/tool-block.js";
 import { UserBlock } from "./blocks/user-block.js";
@@ -60,5 +61,15 @@ export function MessageView(props: {
           {...(payload.retryable ? { retryable: true } : {})}
         />
       );
+    case EMessageType.harness:
+      return <HarnessBlock variant={payload.variant} text={payload.text} />;
+    default: {
+      // The render map is exhaustive BY CONSTRUCTION: `payload` narrows to `never` only while every
+      // member of the union has a case above, so a new message type fails to compile here rather
+      // than rendering as a silent blank in someone's transcript. `ReactNode` includes `undefined`,
+      // so falling off the end of the switch would otherwise typecheck.
+      const unrendered: never = payload;
+      return unrendered;
+    }
   }
 }

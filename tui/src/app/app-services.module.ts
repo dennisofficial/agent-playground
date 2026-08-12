@@ -7,9 +7,11 @@ import { AccountsService } from "./accounts.service.js";
 import { ContextFolderService } from "./context-folder.service.js";
 import { ConversationService } from "./conversation.service.js";
 import { ConversationStoreRegistry } from "./conversation-store.registry.js";
+import { GitService } from "./git.service.js";
 import { SessionManagerService } from "./session-manager.service.js";
 import { TurnRunnerService } from "./turn-runner.service.js";
 import { WorkspaceService } from "./workspace.service.js";
+import { WorktreeService } from "./worktree.service.js";
 
 @Module({
   imports: [EngineModule, AuthModule],
@@ -22,6 +24,8 @@ import { WorkspaceService } from "./workspace.service.js";
     AccountsService,
     TurnRunnerService,
     ConversationService,
+    GitService,
+    WorktreeService,
     WorkspaceService,
   ],
   exports: [
@@ -31,6 +35,7 @@ import { WorkspaceService } from "./workspace.service.js";
     AccountsService,
     TurnRunnerService,
     ConversationService,
+    WorktreeService,
     WorkspaceService,
   ],
 })

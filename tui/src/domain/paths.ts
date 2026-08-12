@@ -46,6 +46,11 @@ export function jobContextDir(jobId: string): string {
   return join(jobDir(jobId), 'context');
 }
 
-/** `specs/` is a planning SET, not a file. */
-export const CONTEXT_BUCKETS = ['specs', 'generated', 'artifacts'] as const;
+/**
+ * The three buckets, ordered by the phase that writes them: `intake/` holds the job's map and its
+ * ticket files, `specs/` is a planning SET rather than a file, `artifacts/` is things to look at.
+ * `generated/` is gone — hand-offs are the next session's first message, not files, so it had no
+ * writer left.
+ */
+export const CONTEXT_BUCKETS = ['intake', 'specs', 'artifacts'] as const;
 export type ContextBucket = (typeof CONTEXT_BUCKETS)[number];

@@ -17,6 +17,35 @@ export function useRunningThreads(): string[] {
   );
 }
 
+/**
+ * Which projects have an agent working somewhere inside them. Activity two levels down still belongs
+ * at the top: from the project list you should be able to see that something is running without
+ * opening the project to find out.
+ *
+ * `running` is a stable snapshot, so this re-queries only when the set of working threads actually
+ * changes — and the `live` flag drops a resolved answer that arrived after the set moved on.
+ */
+export function useWorkingProjects(running: string[]): string[] {
+  const { workspaceService } = useServices();
+  const [working, setWorking] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (running.length === 0) {
+      setWorking([]);
+      return;
+    }
+    let live = true;
+    void workspaceService.projectsWithRunningThreads(running).then((ids) => {
+      if (live) setWorking(ids);
+    });
+    return () => {
+      live = false;
+    };
+  }, [running, workspaceService]);
+
+  return working;
+}
+
 /** A clock for elapsed time and spinner frames. Only mounted while something is actually running. */
 export function useTick(
   active: boolean,

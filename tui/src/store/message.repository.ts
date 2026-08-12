@@ -1,5 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import type { Message, MessagePayload } from '../domain/message.js';
+import {
+  asMessagePayload,
+  unreadablePayload,
+  type Message,
+  type MessagePayload,
+} from '../domain/message.js';
 import type { EMessageType } from '../generated/prisma/enums.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from './prisma.service.js';
@@ -60,8 +65,12 @@ type Row = {
 };
 
 /**
- * `payload` is stored normalised, never raw, so this is a cast rather than a translation. If it
- * ever needs to become a translation, normalisation has drifted and that is the bug.
+ * `payload` is stored normalised, never raw, so this is a guarded cast rather than a translation. If
+ * it ever needs to become a translation, normalisation has drifted and that is the bug.
+ *
+ * The guard exists for the one case that is not a bug: a row written by an older build, carrying a
+ * `type` this one has never seen. It becomes a single error block instead of an object the renderer
+ * will happily read undefined fields off.
  */
 function toDomain(row: Row): Message {
   return {
@@ -69,7 +78,7 @@ function toDomain(row: Row): Message {
     threadId: row.threadId,
     sessionId: row.sessionId,
     ordinal: row.ordinal,
-    payload: row.payload as unknown as MessagePayload,
+    payload: asMessagePayload(row.payload) ?? unreadablePayload({ id: row.id }),
     createdAt: row.createdAt,
   };
 }

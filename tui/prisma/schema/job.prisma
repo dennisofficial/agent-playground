@@ -1,36 +1,42 @@
-enum EJobStatus {
-  active
-  idle
-  shipped
-}
-
-enum EGroupKind {
+// A job's phase kinds. The pipeline graph (which phase may follow which) is an affordance that
+// lives in code beside the role bindings, not a constraint in the schema — every edge is legal.
+enum EPhaseKind {
   intake
   design
   planning
   build
+  direct_build
   master_review
   post_build
   ci
 }
 
 model Job {
-  id             String        @id @default(uuid())
+  id             String    @id @default(uuid())
   projectId      String
-  project        Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project        Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
   title          String
-  status         EJobStatus    @default(active)
   activeThreadId String?
-  groups         ThreadGroup[]
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  /// Archive is a pure hide, so it stores WHEN rather than a status: it composes with everything
+  /// else a row renders instead of excluding it, and restoring is clearing a timestamp.
+  archivedAt     DateTime?
+  /// A job may take its own branch and its own worktree so Atlas never checks a branch out from
+  /// under the editor Dennis has open on the project path. Both null = the job works in the
+  /// project path exactly as before; the worktree is optional, not the default.
+  branch         String?
+  workspacePath  String?
+  phases         Phase[]
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 }
 
-model ThreadGroup {
+/// One phase instance of a job. `kind` IS the phase; phases are appended, never reordered, so the
+/// highest ordinal is the job's current phase.
+model Phase {
   id      String     @id @default(uuid())
   jobId   String
   job     Job        @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  kind    EGroupKind
+  kind    EPhaseKind
   title   String?
   ordinal Int
   threads Thread[]

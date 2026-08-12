@@ -1,3 +1,5 @@
+/// One flat enum with an exhaustive type → render map, so a new member fails to compile at the
+/// renderer rather than silently rendering as nothing.
 enum EMessageType {
   user
   assistant
@@ -5,6 +7,11 @@ enum EMessageType {
   tool_call
   tool_result
   error
+  /// Anything the harness injects into a session — a phase brief, a rotation handoff, a delegate's
+  /// report, a context nudge. Its *variant* lives in the payload rather than here, so this enum
+  /// stays small and the renderer switches on variant. Dennis's own words are `user` and go in
+  /// bare: if everything were tagged, the tags would signal nothing.
+  harness
 }
 
 model ThreadMessage {

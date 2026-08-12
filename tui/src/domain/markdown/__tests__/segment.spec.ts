@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { segmentMarkdown } from './segment.js';
+import { segmentMarkdown } from '../segment.js';
 
 describe('segmentMarkdown', () => {
   it('is empty for empty input', () => {

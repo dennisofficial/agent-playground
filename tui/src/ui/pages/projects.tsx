@@ -9,20 +9,32 @@ import React, {
 } from "react";
 import type { ProjectRow } from "../../app/workspace.service.js";
 import { clampIndex, matchesQuery } from "../../domain/list-nav.js";
+import { fitColumn, fitColumnEnd } from "../../domain/list-columns.js";
 import {
-  affords,
-  elasticColumn,
-  fitColumn,
-  fitColumnEnd,
-} from "../../domain/list-columns.js";
-import { fitHints } from "../../domain/hints.js";
-import { Composer } from "../components/composer.js";
+  jobLabel,
+  projectsLayout,
+  removalCost,
+  shortenHome,
+} from "../../domain/projects-list.js";
 import { ConfirmBar } from "../components/confirm-bar.js";
+import {
+  ListFooter,
+  type FooterOverlay,
+} from "../components/list-footer.js";
+import {
+  AddRow,
+  Caret,
+  ListEmpty,
+  NoMatch,
+} from "../components/list-parts.js";
 import { PageHeader } from "../components/page-header.js";
 import { Screen } from "../components/screen.js";
-import { ListShortcuts } from "../components/shortcuts.js";
-import { useComposer } from "../hooks/use-composer.js";
-import { useRunningThreads, useTick } from "../hooks/use-conversation.js";
+import { useComposer, type ComposerControls } from "../hooks/use-composer.js";
+import {
+  useRunningThreads,
+  useTick,
+  useWorkingProjects,
+} from "../hooks/use-conversation.js";
 import { useServices } from "../services.js";
 import { glyph, theme } from "../theme.js";
 
@@ -41,11 +53,11 @@ export function ProjectsPage(props: {
   const [shortcuts, setShortcuts] = useState(false);
   const { width, height } = useTerminalDimensions();
   const [error, setError] = useState<string | null>(null);
-  const [working, setWorking] = useState<string[]>([]);
   // A filter and a folder path, never a draft: one line.
   const composer = useComposer("", { singleLine: true });
 
   const running = useRunningThreads();
+  const working = useWorkingProjects(running);
   const { frame } = useTick(running.length > 0);
 
   const reload = useCallback(async () => {
@@ -55,23 +67,6 @@ export function ProjectsPage(props: {
   useEffect(() => {
     void reload();
   }, [reload]);
-
-  // Activity two levels down still belongs at the top: from here you should be able to see that
-  // something is running without opening the project to find out. `running` is a stable snapshot,
-  // so this fires only when the set of working threads actually changes.
-  useEffect(() => {
-    if (running.length === 0) {
-      setWorking([]);
-      return;
-    }
-    let live = true;
-    void workspaceService.projectsWithRunningThreads(running).then((ids) => {
-      if (live) setWorking(ids);
-    });
-    return () => {
-      live = false;
-    };
-  }, [running, workspaceService]);
 
   // A turn finishing changes job counts under us.
   useEffect(() => {
@@ -204,88 +199,41 @@ export function ProjectsPage(props: {
         />
       }
       footer={
-        <box flexDirection="column">
-          {mode === "open" ? (
-            <box flexDirection="column">
-              <Composer
-                state={composer.state}
-                width={composerWidth(width)}
-                placeholder="~/Developer/…"
-                onCaret={composer.setCursor}
+        <ListFooter
+          width={width}
+          height={height}
+          overlay={overlayFor({ mode, composer })}
+          confirm={
+            mode === "confirm" && highlighted ? (
+              <ConfirmBar
+                question={`remove “${highlighted.name}” from atlas?`}
+                detail={removalCost(highlighted.jobCount)}
+                confirmLabel="remove"
               />
-              <text fg={theme.dim}>{"  "}⏎ open · esc cancel</text>
-            </box>
-          ) : null}
-
-          {mode === "filter" ? (
-            <box flexDirection="column">
-              <Composer
-                state={composer.state}
-                width={composerWidth(width)}
-                placeholder="filter…"
-                onCaret={composer.setCursor}
-              />
-              <text fg={theme.dim}>{"  "}↑↓ select · ⏎ open · esc clear</text>
-            </box>
-          ) : null}
-
-          {mode === "confirm" && highlighted ? (
-            <ConfirmBar
-              question={`remove “${highlighted.name}” from atlas?`}
-              detail={removalCost(highlighted.jobCount)}
-              confirmLabel="remove"
-            />
-          ) : null}
-
-          {mode === "browse" ? (
-            shortcuts ? (
-              <ListShortcuts width={width} height={height} />
-            ) : (
-              <text fg={theme.dim}>{fitHints(width, HINTS)}</text>
-            )
-          ) : null}
-
-          {error ? (
-            <text fg={theme.error}>
-              {"  "}
-              {error}
-            </text>
-          ) : null}
-        </box>
+            ) : null
+          }
+          hints={mode === "browse" ? HINTS : undefined}
+          shortcuts={shortcuts}
+          error={error}
+        />
       }
     >
-      {all.length === 0 && mode !== "open" ? (
-        <box flexDirection="column">
-          <text>No projects yet.</text>
-          <text fg={theme.dim}>
-            Atlas works inside a folder — usually a git repo.
-          </text>
-          <text> </text>
-        </box>
-      ) : null}
-
-      {all.length > 0 && rows.length === 0 ? (
-        <box flexDirection="column">
-          <text fg={theme.dim}>
-            {"    "}Nothing matches “{query}”.
-          </text>
-          <text> </text>
-        </box>
-      ) : null}
+      <ListEmpty
+        show={all.length === 0 && mode !== "open"}
+        headline="No projects yet."
+        hint="Atlas works inside a folder — usually a git repo."
+      />
+      <NoMatch show={all.length > 0 && rows.length === 0} query={query} />
 
       {rows.map((project, index) => (
         <text key={project.id}>
-          {index === cursor ? (
-            <span fg={theme.accent}>{`  ${glyph.selected} `}</span>
-          ) : (
-            "    "
-          )}
+          <Caret on={index === cursor} />
           <span>{fitColumn(project.name, layout.name)}</span>
           {/* Clipped from the FRONT: `…/work/atlas` says which folder this is, `/Users/dennis/D…`
               says which machine it is on, and every row would say the same thing. */}
           {layout.path > 0 ? (
             <span fg={theme.dim}>
-              {fitColumnEnd(shortenHome(project.path), layout.path)}
+              {fitColumnEnd(shortenHome({ path: project.path, home: HOME }), layout.path)}
             </span>
           ) : null}
           {/* Working displaces the job count rather than sitting beside it: when an agent is
@@ -302,26 +250,13 @@ export function ProjectsPage(props: {
       ))}
 
       <text> </text>
-      <text>
-        {cursor >= rows.length ? (
-          <span fg={theme.accent}>{`  ${glyph.selected} `}</span>
-        ) : (
-          "    "
-        )}
-        <span fg={theme.dim}>+ open a folder…</span>
-      </text>
+      <AddRow selected={cursor >= rows.length} label="+ open a folder…" />
     </Screen>
   );
 }
 
-/** The confirm has to say what actually goes — and, just as importantly, what does not. */
-function removalCost(jobCount: number): string {
-  const jobs =
-    jobCount === 0
-      ? "no jobs to lose"
-      : `${jobLabel(jobCount)} and their transcripts go with it`;
-  return `${jobs} · the folder on disk is untouched`;
-}
+/** Read once: the home directory cannot change under a running terminal. */
+const HOME = process.env.HOME ?? "";
 
 const HINTS = [
   "↑↓ select · →/⏎ open · / filter · n add · x remove · ? keys · ctrl+c quit",
@@ -329,34 +264,28 @@ const HINTS = [
   "⏎ open · / filter · n add · ? keys",
 ];
 
-/** A bordered box does not wrap: wider than the terminal and it draws off the edge. */
-function composerWidth(width: number): number {
-  return Math.min(72, width - 2);
-}
+/** Only these two modes borrow the footer's composer, and each says something different about ⏎. */
+const OVERLAYS: Partial<Record<Mode, { placeholder: string; caption: string }>> =
+  {
+    open: {
+      placeholder: "~/Developer/…",
+      caption: "⏎ open · esc cancel",
+    },
+    filter: {
+      placeholder: "filter…",
+      caption: "↑↓ select · ⏎ open · esc clear",
+    },
+  };
 
-/** `  ▸ `, and the trailing state — `⚠ path missing` is the widest thing that can land there. */
-const GUTTER = 4;
-const TAIL = 15;
-const MARGIN = 2;
-const NAME = { min: 12, max: 28 };
-const PATH = { min: 16, max: 52 };
-
-function projectsLayout(width: number): { name: number; path: number } {
-  const room = Math.max(0, width - GUTTER - TAIL - MARGIN);
-  // The name grows only while the path can still keep its minimum; past that they share.
-  const name = elasticColumn(room, PATH.min, NAME);
-  if (!affords(room, name, PATH.min)) {
-    return { name: elasticColumn(room, 0, { min: 8, max: 40 }), path: 0 };
-  }
-  return { name, path: elasticColumn(room, name, PATH) };
-}
-
-function jobLabel(count: number): string {
-  if (count === 0) return "—";
-  return count === 1 ? "1 job" : `${count} jobs`;
-}
-
-function shortenHome(path: string): string {
-  const home = process.env.HOME ?? "";
-  return home && path.startsWith(home) ? `~${path.slice(home.length)}` : path;
+function overlayFor(args: {
+  mode: Mode;
+  composer: ComposerControls;
+}): FooterOverlay | undefined {
+  const form = OVERLAYS[args.mode];
+  if (!form) return undefined;
+  return {
+    ...form,
+    state: args.composer.state,
+    onCaret: args.composer.setCursor,
+  };
 }

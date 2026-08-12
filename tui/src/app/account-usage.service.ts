@@ -20,24 +20,26 @@ export class AccountUsageService {
     private readonly stores: ConversationStoreRegistry,
   ) {}
 
-  kick(accountId: string, threadId: string, force = false): void {
-    void this.refresh(accountId, threadId, force);
+  /**
+   * Named arguments throughout: the pair is two opaque ids of the same type, and transposing them
+   * polls the wrong account and writes the reading into a different thread's meters — a wrong number
+   * on screen rather than a crash, which is the kind of bug that survives a release.
+   */
+  kick(args: { accountId: string; threadId: string; force?: boolean }): void {
+    void this.refresh({ ...args, force: args.force ?? false });
   }
 
-  track(accountId: string, threadId: string): void {
-    this.untrack(threadId);
-    this.kick(accountId, threadId);
-    const timer = setInterval(
-      () => this.kick(accountId, threadId),
-      LIVE_POLL_MS,
-    );
+  track(args: { accountId: string; threadId: string }): void {
+    this.untrack(args.threadId);
+    this.kick(args);
+    const timer = setInterval(() => this.kick(args), LIVE_POLL_MS);
     timer.unref();
-    this.timers.set(threadId, timer);
+    this.timers.set(args.threadId, timer);
   }
 
-  stopTracking(accountId: string, threadId: string): void {
-    this.untrack(threadId);
-    this.kick(accountId, threadId, true);
+  stopTracking(args: { accountId: string; threadId: string }): void {
+    this.untrack(args.threadId);
+    this.kick({ ...args, force: true });
   }
 
   private untrack(threadId: string): void {
@@ -47,11 +49,12 @@ export class AccountUsageService {
     this.timers.delete(threadId);
   }
 
-  private async refresh(
-    accountId: string,
-    threadId: string,
-    force: boolean,
-  ): Promise<void> {
+  private async refresh(args: {
+    accountId: string;
+    threadId: string;
+    force: boolean;
+  }): Promise<void> {
+    const { accountId, threadId, force } = args;
     const last = this.polledAt.get(accountId);
     if (!force && last !== undefined && Date.now() - last < POLL_FLOOR_MS)
       return;
