@@ -142,6 +142,30 @@ export function App(props: {
     [conversationService, nav],
   );
 
+  /**
+   * Move a job out of the project path and into its own worktree, at any point in its life.
+   *
+   * The route is REPLACED rather than left alone: `cwd` is where the next thread opened from this
+   * page will run, and after this it is somewhere else. Leaving the old value would open the next
+   * thread in the very tree the worktree was taken to stay out of.
+   */
+  const enterWorktree = useCallback(
+    async (route: ThreadsRoute) => {
+      try {
+        const workspace = await workspaceService.enterWorktree(route.job.id);
+        const job = await workspaceService.findJob(route.job.id);
+        nav.replace({
+          ...route,
+          ...(job ? { job } : {}),
+          cwd: workspace.workspacePath,
+        });
+      } catch (e) {
+        setError((e as Error).message);
+      }
+    },
+    [nav, workspaceService],
+  );
+
   useInput((input, key) => {
     if (key.ctrl && input === "c") {
       // Turns are subprocesses of this process, so quitting kills them. Say so once before doing it.
@@ -229,6 +253,7 @@ export function App(props: {
             projectName={route.project.name}
             currentThreadId={route.currentThreadId}
             onOpen={(thread) => void switchThread({ route, thread })}
+            onEnterWorktree={() => void enterWorktree(route)}
             onBack={nav.pop}
           />
         ) : null}

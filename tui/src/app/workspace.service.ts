@@ -173,6 +173,41 @@ export class WorkspaceService {
     return this.worktreeService.enter({ job, projectPath: job.project.path });
   }
 
+  /**
+   * The facts behind the job page's workspace line. Read here rather than derived in the page
+   * because one of them is a `git` call and the other a `stat`, and neither belongs in a render.
+   */
+  async jobWorkspace(jobId: string): Promise<{
+    branch: string | null;
+    workspacePath: string | null;
+    checkoutBranch: string | null;
+    workspaceExists: boolean;
+  } | null> {
+    const job = await this.jobRepository.findWithProject(jobId);
+    // Null rather than a throw: several terminals share one database, so a job can be deleted out
+    // from under a page that is looking at it. The list beside this line already degrades to "this
+    // job has no threads"; a rejection here would instead wedge the whole page on "loading…".
+    if (!job) return null;
+
+    const workspaceExists = job.workspacePath
+      ? existsSync(job.workspacePath)
+      : false;
+    // Ask wherever the job actually runs: in a worktree that is the worktree's own branch, and in
+    // place it is whatever the editor has checked out — which is the answer that matters, because
+    // that is the branch an agent is about to commit on.
+    const at =
+      job.workspacePath && workspaceExists
+        ? job.workspacePath
+        : job.project.path;
+
+    return {
+      branch: job.branch,
+      workspacePath: job.workspacePath,
+      checkoutBranch: await this.gitService.currentBranch(at),
+      workspaceExists,
+    };
+  }
+
   /** Where this job's turns run — its worktree if it took one, else the project path. */
   cwdFor(args: { job: Job; projectPath: string }): string {
     return this.worktreeService.cwdFor(args);

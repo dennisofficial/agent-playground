@@ -65,6 +65,22 @@ export class GitService {
     return result.ok;
   }
 
+  /**
+   * The branch HEAD is on, or null when there is not one to name — a detached head, or a directory
+   * git has never heard of. Both are ordinary here: plenty of jobs run in folders that are not
+   * repositories, and the caller's job is to say "in place" either way.
+   */
+  async currentBranch(path: string): Promise<string | null> {
+    const result = await this.run({
+      cwd: path,
+      args: ['rev-parse', '--abbrev-ref', 'HEAD'],
+    });
+    if (!result.ok) return null;
+    const branch = result.stdout.trim();
+    // `--abbrev-ref` answers the literal string `HEAD` when detached, which names nothing.
+    return branch.length > 0 && branch !== 'HEAD' ? branch : null;
+  }
+
   /** Uncommitted changes OR untracked files — both are work that a delete would eat. */
   async isDirty(worktreePath: string): Promise<boolean> {
     const result = await this.run({ cwd: worktreePath, args: ['status', '--porcelain'] });

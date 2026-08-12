@@ -2,6 +2,11 @@ import { useTerminalDimensions } from "@opentui/react";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { clampIndex } from "../../domain/list-nav.js";
 import { threadList, threadsLayout } from "../../domain/threads-list.js";
+import {
+  EWorkspaceKind,
+  workspaceState,
+  type WorkspaceState,
+} from "../../domain/worktree.js";
 import type { Job } from "../../generated/prisma/client.js";
 import type { ThreadRow } from "../../store/thread.repository.js";
 import { ListEmpty } from "../components/list-parts.js";
@@ -24,9 +29,10 @@ import { theme } from "../theme.js";
 export function ThreadsPage(props: {
   job: Job;
   projectName: string;
-  /** The thread the conversation underneath is on — where the cursor starts. */
+  /** The thread the conversation above is on — where the cursor starts. */
   currentThreadId: string;
   onOpen: (thread: ThreadRow) => void;
+  onEnterWorktree: () => void;
   onBack: () => void;
 }): React.ReactNode {
   const { workspaceService } = useServices();
@@ -35,6 +41,7 @@ export function ThreadsPage(props: {
     props.job.activeThreadId,
   );
   const [selected, setSelected] = useState<number | null>(null);
+  const [workspace, setWorkspace] = useState<WorkspaceState | null>(null);
   const { width, height } = useTerminalDimensions();
 
   // Which threads have an agent working in them right now — the whole reason to leave one running
@@ -44,11 +51,13 @@ export function ThreadsPage(props: {
   const { frame } = useTick(running.length > 0);
 
   const reload = useCallback(async () => {
-    const [rows, job] = await Promise.all([
+    const [rows, job, facts] = await Promise.all([
       workspaceService.listThreads(props.job.id),
       workspaceService.findJob(props.job.id),
+      workspaceService.jobWorkspace(props.job.id),
     ]);
     setThreads(rows);
+    setWorkspace(facts ? workspaceState(facts) : null);
     // The cursor is orchestration state, not this page's: an agent opening a thread moves it while
     // the list is up, so ACTIVE is re-read rather than taken from the route's snapshot of the job.
     if (job) setActiveThreadId(job.activeThreadId);
@@ -93,6 +102,11 @@ export function ThreadsPage(props: {
       if (thread) props.onOpen(thread);
       return;
     }
+    // Late and reversible, never a fork at creation: a job runs in place until it earns isolation,
+    // and `enter()` is idempotent, so this is safe to press at any point including twice.
+    if (input === "w" && workspace?.kind === EWorkspaceKind.inPlace) {
+      return props.onEnterWorktree();
+    }
     // No `?` panel here on purpose: the shared list keymap advertises `n new` and `x delete`, and a
     // thread is opened by an agent or a phase, never by `n` on this page. Four keys fit in the hint
     // line, so a panel that would have to lie about two of them earns nothing.
@@ -115,12 +129,31 @@ export function ThreadsPage(props: {
         <ListFooter
           width={width}
           height={height}
-          hints={HINTS}
+          hints={
+            workspace?.kind === EWorkspaceKind.inPlace ? IN_PLACE_HINTS : HINTS
+          }
           shortcuts={false}
           error={null}
         />
       }
     >
+      {/* Where this job's agents stand, above the threads rather than beside one, because it is
+          true of the JOB — every thread in it runs in the same tree. */}
+      {workspace ? (
+        <box flexDirection="column">
+          <text>
+            <span
+              fg={
+                workspace.kind === EWorkspaceKind.missing ? theme.warn : theme.dim
+              }
+            >
+              {workspace.glyph} {workspace.label}
+            </span>
+          </text>
+          <text> </text>
+        </box>
+      ) : null}
+
       {/* A job is created with one intake thread, so an empty list means something went wrong
           underneath rather than "nothing here yet" — say so instead of drawing a blank page. */}
       <ListEmpty
@@ -146,4 +179,11 @@ const HINTS = [
   "↑↓ select · →/⏎ open · ←/esc back",
   "↑↓ select · ⏎ open · esc back",
   "⏎ open · esc back",
+];
+
+/** `w` is offered only where it does something — a job already in a worktree cannot take another. */
+const IN_PLACE_HINTS = [
+  "↑↓ select · →/⏎ open · w move to a worktree · ←/esc back",
+  "↑↓ select · ⏎ open · w worktree · esc back",
+  "⏎ open · w worktree · esc",
 ];

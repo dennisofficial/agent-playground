@@ -77,3 +77,57 @@ function slugify(title: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
 }
+
+/** Where a job's turns run, as the job's own page says it. */
+export enum EWorkspaceKind {
+  /** The project path — the tree the editor is probably open on. */
+  inPlace = 'inPlace',
+  worktree = 'worktree',
+  /** Recorded a worktree, but it is not on disk any more. */
+  missing = 'missing',
+}
+
+export type WorkspaceState = {
+  kind: EWorkspaceKind;
+  glyph: string;
+  label: string;
+};
+
+/**
+ * The one line that says where this job's agents are standing.
+ *
+ * In place is the NORMAL state, not a deficiency — a job takes a worktree late, when it earns one,
+ * and most never do. So it is not warned about; it is simply named, along with the branch it will
+ * commit to, because that is the fact you need before letting an agent write.
+ *
+ * A recorded worktree missing from disk IS warned about, and never downgraded to "in place". The
+ * whole reason the worktree existed was to keep the agent out of the tree the fallback would put it
+ * back into, so a quiet downgrade is the one genuinely dangerous answer here.
+ */
+export function workspaceState(args: {
+  branch: string | null;
+  workspacePath: string | null;
+  /** What git says HEAD is on, wherever the job actually runs. Null on a detached head or no repo. */
+  checkoutBranch: string | null;
+  workspaceExists: boolean;
+}): WorkspaceState {
+  if (args.workspacePath && !args.workspaceExists) {
+    return {
+      kind: EWorkspaceKind.missing,
+      glyph: '⚠',
+      label: `worktree missing: ${args.workspacePath}`,
+    };
+  }
+
+  if (args.workspacePath && args.branch) {
+    return { kind: EWorkspaceKind.worktree, glyph: '⑂', label: args.branch };
+  }
+
+  // A branch with no worktree is normal rather than corrupt: `release()` removes the directory and
+  // deliberately leaves the branch, which may be the only copy of the work.
+  return {
+    kind: EWorkspaceKind.inPlace,
+    glyph: '⌂',
+    label: args.checkoutBranch ? `${args.checkoutBranch} · in place` : 'in place',
+  };
+}
