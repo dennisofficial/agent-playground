@@ -5,9 +5,6 @@ import type { EngineConfig } from '../domain/role-engine.js';
 import type { SessionRef } from '../domain/seam.js';
 import { PrismaService } from './prisma.service.js';
 
-/** A soft lock goes stale rather than leaking — a crashed instance must not wedge a thread. */
-export const LOCK_STALE_MS = 60_000;
-
 @Injectable()
 export class SessionRepository {
   constructor(private readonly prismaService: PrismaService) {}
@@ -99,43 +96,8 @@ export class SessionRepository {
   async end(id: string, endReason: ESessionEndReason): Promise<void> {
     await this.prismaService.engineSession.update({
       where: { id },
-      data: { endReason, endedAt: new Date(), lockedBy: null },
+      data: { endReason, endedAt: new Date() },
     });
   }
 
-  /**
-   * Claim a session for this process. Two instances could otherwise run a turn into one
-   * conversation; the loser opens read-only and says so.
-   */
-  async claim(id: string, now = Date.now()): Promise<boolean> {
-    const session = await this.prismaService.engineSession.findUnique({
-      where: { id },
-      select: { lockedBy: true },
-    });
-    if (!session) return false;
-
-    const held = parseLock(session.lockedBy);
-    const mine = held?.pid === process.pid;
-    const stale = held !== null && now - held.at > LOCK_STALE_MS;
-    if (held !== null && !mine && !stale) return false;
-
-    await this.prismaService.engineSession.update({
-      where: { id },
-      data: { lockedBy: `${process.pid}:${now}` },
-    });
-    return true;
-  }
-
-  async release(id: string): Promise<void> {
-    await this.prismaService.engineSession.update({ where: { id }, data: { lockedBy: null } });
-  }
-}
-
-export function parseLock(lockedBy: string | null): { pid: number; at: number } | null {
-  if (!lockedBy) return null;
-  const [pid, at] = lockedBy.split(':');
-  const parsedPid = Number(pid);
-  const parsedAt = Number(at);
-  if (!Number.isFinite(parsedPid) || !Number.isFinite(parsedAt)) return null;
-  return { pid: parsedPid, at: parsedAt };
 }

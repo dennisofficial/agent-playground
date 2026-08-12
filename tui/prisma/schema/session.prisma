@@ -30,9 +30,6 @@ model EngineSession {
   handoff         String?
   endReason       ESessionEndReason?
 
-  /// "<pid>:<epochMs>", stale after LOCK_STALE_MS.
-  lockedBy        String?
-
   contextPercent  Float?
 
   messages        ThreadMessage[]

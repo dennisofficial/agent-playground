@@ -199,19 +199,16 @@ export function ConversationPage(props: {
           engine={props.open.session.engine}
           model={props.open.session.model}
           width={width}
-          readOnly={props.open.readOnly}
+          closed={props.open.closed}
         />
       }
       footer={
         <box flexDirection="column">
-          {/* Read-only has two causes and they are not the same news: a closed thread is finished
-              and always will be, another instance's lock lifts on its own. */}
-          {props.open.readOnly ? (
+          {/* One cause now, and a permanent one. The other used to be another terminal's lock,
+              which lifted on its own and made this line a lie the moment it did. */}
+          {props.open.closed ? (
             <text fg={theme.warn}>
-              {glyph.warning}{" "}
-              {closed
-                ? "this thread is closed — reading its record"
-                : "another atlas has this thread — opened read-only"}
+              {glyph.warning} this thread is closed — reading its record
             </text>
           ) : null}
 

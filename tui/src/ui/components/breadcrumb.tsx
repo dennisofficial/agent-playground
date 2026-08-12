@@ -9,7 +9,8 @@ export function Breadcrumb(props: {
   engine: string;
   model: string;
   width: number;
-  readOnly?: boolean;
+  /** A closed thread — history you are reading. Never anything to do with another terminal. */
+  closed?: boolean;
 }): React.ReactNode {
   const trail = [
     props.project,
@@ -22,7 +23,7 @@ export function Breadcrumb(props: {
   return (
     <PageHeader
       trail={trail}
-      right={`${props.readOnly ? "read-only  " : ""}${props.engine} ${props.model}`}
+      right={`${props.closed ? "closed  " : ""}${props.engine} ${props.model}`}
       width={props.width}
       canBack
     />

@@ -91,7 +91,12 @@ export function NewJobPage(props: {
             placeholder="what do you want to do?"
             onCaret={composer.setCursor}
           />
-          <text fg={theme.dim}>{fitHints(width, hintForms({ armed, sending, draft: composer.value.length }))}</text>
+          <text fg={theme.dim}>
+            {fitHints(
+              width,
+              hintForms({ armed, sending, draft: composer.value.length }),
+            )}
+          </text>
         </box>
       }
     >

@@ -17,11 +17,11 @@ export class ConversationStoreRegistry {
   hydrate(
     threadId: string,
     messages: Message[],
-    readOnly: boolean,
+    closed: boolean,
     lastTurn?: TurnSummary | null,
   ): ConversationStore {
     const store = this.for(threadId);
-    store.hydrate(messages, readOnly, lastTurn);
+    store.hydrate(messages, closed, lastTurn);
     return store;
   }
 

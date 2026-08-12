@@ -23,7 +23,8 @@ export type OpenConversation = {
   sessions: SessionRef[];
   cwd: string;
   contextRoot: string;
-  readOnly: boolean;
+  /** Closed threads are a RECORD, not a place to work. Nothing to do with other terminals. */
+  closed: boolean;
   /**
    * The phase's standing instructions, on every turn's system prompt. Resolved once here rather than
    * per turn in the runner: it costs a read, and a thread never moves phase.
@@ -69,16 +70,15 @@ export class ConversationService {
   ): Promise<OpenConversation> {
     // A closed thread is a RECORD, not a place to work. Asking the session manager for a current
     // session would end up minting a fresh one — a junk row on finished history, and an account
-    // demanded of someone who only wanted to read a transcript. So it reopens its last session,
-    // claims nothing, and comes back read-only.
+    // demanded of someone who only wanted to read a transcript. So it reopens its last session.
+    //
+    // This is the ONLY thing that makes a conversation unwritable. It used to share the flag with a
+    // per-session lock held by another terminal, which is why taking a job over left you looking at
+    // a live thread labelled read-only whose composer silently swallowed everything you typed.
     const closed = thread.status === EThreadStatus.closed;
     const session = closed
       ? await this.lastSession(thread)
       : await this.sessionManagerService.currentSession(thread);
-
-    const claimed = closed ? false : await this.sessionRepository.claim(session.id);
-    if (!claimed && !closed)
-      this.logger.warn(`session ${session.id} is locked by another instance`);
 
     const [messages, sessions, lastTurn] = await Promise.all([
       this.messageRepository.listForThread(thread.id),
@@ -88,7 +88,7 @@ export class ConversationService {
 
     // hydrate(), never reset(): this same path is how a RUNNING thread is reopened, and a reset
     // would blank a working agent's spinner, live tail and steer queue.
-    const store = this.stores.hydrate(thread.id, messages, !claimed, lastTurn);
+    const store = this.stores.hydrate(thread.id, messages, closed, lastTurn);
     if (!this.turnRunnerService.busy(thread.id)) {
       store.setContextPercent(session.contextPercent);
     }
@@ -112,7 +112,7 @@ export class ConversationService {
       sessions,
       cwd,
       contextRoot,
-      readOnly: !claimed,
+      closed,
       brief: brief.instructions,
     };
     return this.open;
@@ -156,7 +156,7 @@ export class ConversationService {
 
   async send(text: string): Promise<void> {
     const open = this.requireOpen();
-    if (open.readOnly) return;
+    if (open.closed) return;
 
     if (this.turnRunnerService.busy(open.thread.id)) {
       this.turnRunnerService.steer({
@@ -192,7 +192,7 @@ export class ConversationService {
   }): Promise<void> {
     const open = this.requireOpen();
     // Read-only means another instance owns this session; it will speak for the harness, not us.
-    if (open.readOnly) return;
+    if (open.closed) return;
 
     await this.turnRunnerService.run({
       thread: open.thread,
@@ -245,17 +245,18 @@ export class ConversationService {
     return { engine: binding.engine.kind, model: open.session.model };
   }
 
+  /**
+   * Forget which conversation is open. Nothing is persisted and nothing is unlocked — which
+   * terminal is driving is a per-JOB claim on disk now, not a per-session row, so leaving a
+   * conversation says nothing about whether you have left the job.
+   *
+   * A turn in flight is undisturbed on purpose: leaving a running thread is the point.
+   */
   async release(): Promise<void> {
-    if (this.open) await this.sessionRepository.release(this.open.session.id);
     this.open = undefined;
   }
 
   async leave(): Promise<void> {
-    if (!this.open) return;
-    if (this.turnRunnerService.busy(this.open.thread.id)) {
-      this.open = undefined;
-      return;
-    }
     await this.release();
   }
 

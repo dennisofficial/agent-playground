@@ -48,7 +48,7 @@ export type ConversationState = {
   sevenDay: UsageWindow;
   notices: string[];
   /** Set when another instance holds this thread's session lock. */
-  readOnly: boolean;
+  closed: boolean;
 };
 
 const EMPTY: ConversationState = {
@@ -65,7 +65,7 @@ const EMPTY: ConversationState = {
   fiveHour: null,
   sevenDay: null,
   notices: [],
-  readOnly: false,
+  closed: false,
 };
 
 export class ConversationStore {
@@ -91,16 +91,16 @@ export class ConversationStore {
     };
   };
 
-  reset(messages: Message[], readOnly = false): void {
+  reset(messages: Message[], closed = false): void {
     this.dropUnrevealed();
-    this.state = { ...EMPTY, messages, readOnly };
+    this.state = { ...EMPTY, messages, closed };
     this.flush();
   }
 
   /** Re-seed the durable half from the database, leaving the live half of a running turn alone. */
   hydrate(
     messages: Message[],
-    readOnly: boolean,
+    closed: boolean,
     lastTurn?: TurnSummary | null,
   ): void {
     const read = new Set(messages.map((message) => message.id));
@@ -112,7 +112,7 @@ export class ConversationStore {
     const memoryKnowsBetter = Boolean(this.state.lastTurn) || this.state.running;
     this.patch({
       messages: [...messages, ...arrivedSinceRead],
-      readOnly,
+      closed,
       ...(lastTurn && !memoryKnowsBetter ? { lastTurn } : {}),
     });
   }
@@ -208,8 +208,8 @@ export class ConversationStore {
     this.patch({ notices: [...this.state.notices, text] });
   }
 
-  setReadOnly(readOnly: boolean): void {
-    this.patch({ readOnly });
+  setClosed(closed: boolean): void {
+    this.patch({ closed });
   }
 
   private patch(partial: Partial<ConversationState>): void {

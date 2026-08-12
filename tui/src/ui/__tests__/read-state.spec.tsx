@@ -46,7 +46,7 @@ const STATE: ConversationState = {
   fiveHour: null,
   sevenDay: null,
   notices: [],
-  readOnly: false,
+  closed: false,
 };
 
 async function mount(args: { anchorMessageId: string | null; showDivider: boolean }) {

@@ -221,7 +221,7 @@ describe('opening a closed thread', () => {
     expect(open.session.id).toBe('session-of-thread-old');
   });
 
-  it('comes back read-only, so nothing can be typed into history', async () => {
+  it('comes back closed, so nothing can be typed into history', async () => {
     const { conversationService } = build();
 
     const open = await conversationService.openThread(
@@ -230,7 +230,7 @@ describe('opening a closed thread', () => {
       '/repo',
     );
 
-    expect(open.readOnly).toBe(true);
+    expect(open.closed).toBe(true);
   });
 
   it('still shows the transcript that made it worth opening', async () => {
