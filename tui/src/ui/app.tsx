@@ -124,6 +124,9 @@ export function App(props: {
           return;
         }
         setTakeover(null);
+        // Acquired HERE, where opening the job is what you meant, rather than in a mount effect
+        // that would take it from whoever had it just because a route appeared.
+        claimService.acquire(job.id);
         // The unscoped list spans projects, so a row there arrives without one. The scoped list
         // already has it and hands it over rather than paying for the lookup again.
         const project = known ?? (await workspaceService.findProject(job.projectId));

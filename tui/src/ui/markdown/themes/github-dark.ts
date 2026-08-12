@@ -22,6 +22,16 @@ const INK = {
   /** `scale.green[9]` / `scale.red[9]` — the diff line backgrounds. */
   addedBg: "#04260f",
   removedBg: "#490202",
+  /**
+   * `scale.green[7]` / `scale.red[7]` — the line-NUMBER cells, which GitHub draws several steps
+   * stronger than the line washes above. A gutter block is chrome at a fixed column with one
+   * number on it, so it can carry saturation the content never could.
+   */
+  addedGutterBg: "#0f5323",
+  removedGutterBg: "#8e1519",
+  /** `scale.green[0]` / `scale.red[0]` — the number itself, on those blocks. */
+  paleGreen: "#aff5b4",
+  palerRed: "#ffdcd7",
 } as const;
 
 export const githubDark: CodeTheme = {
@@ -86,5 +96,20 @@ export const githubDark: CodeTheme = {
     hunk: { fg: INK.purple, bold: true },
     meta: { fg: INK.blue },
     context: { fg: INK.fg },
+  },
+
+  /**
+   * Note what this does NOT reuse: `addedBg`/`removedBg` above. Those washes are correct under the
+   * flat text of a fenced diff and wrong under a syntax-highlighted row — GitHub itself only gets
+   * away with them because it has a full pane's contrast budget and no dim comments to lose.
+   */
+  diffRows: {
+    added: { gutter: { bg: INK.addedGutterBg, fg: INK.paleGreen }, content: {} },
+    removed: {
+      gutter: { bg: INK.removedGutterBg, fg: INK.palerRed },
+      content: { dim: true },
+    },
+    context: { gutter: { fg: INK.grey }, content: {} },
+    gap: { gutter: {}, content: { fg: INK.grey } },
   },
 };

@@ -1,4 +1,4 @@
-import { createTextAttributes, type StyleDefinitionInput } from "@opentui/core";
+import { createTextAttributes } from "@opentui/core";
 import React from "react";
 import {
   type DiffHunk,
@@ -10,8 +10,7 @@ import {
 } from "../../../domain/tool-diff.js";
 import { DIFF_COLLAPSED_LINES, truncate } from "../../../domain/truncate.js";
 import { codeTheme } from "../../markdown/themes/index.js";
-import type { DiffPalette } from "../../markdown/themes/index.js";
-import { theme } from "../../theme.js";
+import type { DiffRowPalette } from "../../markdown/themes/index.js";
 
 /**
  * The patch under a file-editing tool call: what changed, where, in the file's own numbering.
@@ -19,22 +18,21 @@ import { theme } from "../../theme.js";
  * A tool result is otherwise a sentence — "Updated file" — and a sentence about an edit is the one
  * kind of tool output you cannot check. This is the exception that earns its lines on screen.
  *
- * Deliberately NOT syntax-highlighted, unlike the fenced blocks in `markdown/`. A diff already
- * spends colour on the axis that matters here (added / removed), and a second colour system laid
- * over the first turns a glanceable band into a Christmas tree. The web renderer highlights because
- * it has a whole pane; a transcript row has eight lines.
+ * The row is drawn as two columns carrying two different signals, because the code itself is
+ * syntax-highlighted and hue is therefore already spent: a saturated BLOCK behind the line number
+ * says which side the row is on, and removed rows are DIMMED rather than tinted. See `DiffRowStyle`
+ * in `themes/code-theme.ts` for why those two channels and not a background wash.
+ *
+ * The sign lives in that block rather than in front of the text, which is the other half of the
+ * same decision: it keeps the content column a verbatim file line, so indentation reads true and a
+ * highlighter can be handed the row without first being told to ignore a prefix.
  */
-
-/** `EDiffLineKind` values are the palette's keys by design; the map is what makes that a type. */
-const PALETTE_KEY: Record<EDiffLineKind, keyof DiffPalette> = {
-  [EDiffLineKind.added]: "added",
-  [EDiffLineKind.removed]: "removed",
-  [EDiffLineKind.context]: "context",
-  [EDiffLineKind.gap]: "meta",
-};
 
 /** Left of the gutter: the same five columns every other line of tool detail is indented by. */
 const INDENT = "     ";
+
+/** The block is `<number> <sign>`; a plain column then separates it from the code. */
+const SIGN_COLUMNS = 2;
 
 /** Below this there is no room for a diff worth reading, so it does not try. */
 const MIN_BAND = 16;
@@ -51,20 +49,17 @@ export function DiffView(props: {
     ? { shown: rows, notice: null }
     : truncate(rows, DIFF_COLLAPSED_LINES);
 
-  const gutter = gutterWidth(rows);
-  // Indent + number + the space after it; everything left over is the band the code sits in.
+  const numbers = gutterWidth(rows);
+  // Indent + the block + the column that separates it from code; the rest is the band code sits in.
   const band = Math.max(
     MIN_BAND,
-    props.width - INDENT.length - gutter - 1,
+    props.width - INDENT.length - numbers - SIGN_COLUMNS - 1,
   );
 
-  // Padded to the longest line SHOWN, so a tint reads as a band across the block rather than a
-  // smear that stops where the text does — and clipped to the band, because a wrapped diff line
-  // loses the alignment that makes the gutter mean anything.
-  const columns = Math.min(
-    band,
-    Math.max(...shown.map((row) => row.text.length + 2)),
-  );
+  // Clipped to the band, because a wrapped diff line loses the alignment that makes the gutter mean
+  // anything. Padded only to the longest line SHOWN, and only where a theme has set a content
+  // background — neither shipped theme does, so ordinarily this costs nothing.
+  const columns = Math.min(band, Math.max(...shown.map((row) => row.text.length)));
 
   return (
     <box flexDirection="column">
@@ -72,13 +67,13 @@ export function DiffView(props: {
         <DiffLine
           key={index}
           row={row}
-          gutter={gutter}
+          numbers={numbers}
           columns={columns}
-          palette={codeTheme.diff}
+          palette={codeTheme.diffRows}
         />
       ))}
       {notice ? (
-        <text fg={theme.dim}>
+        <text fg={codeTheme.diffRows.gap.content.fg}>
           {INDENT}
           {notice}
         </text>
@@ -89,33 +84,35 @@ export function DiffView(props: {
 
 function DiffLine(props: {
   row: DiffRow;
-  gutter: number;
+  numbers: number;
   columns: number;
-  palette: DiffPalette;
+  palette: DiffRowPalette;
 }): React.ReactNode {
   const { row } = props;
-  const style: StyleDefinitionInput = props.palette[PALETTE_KEY[row.kind]];
+  const { gutter, content } = props.palette[row.kind];
   const number = (row.lineNo === null ? "" : String(row.lineNo)).padStart(
-    props.gutter,
+    props.numbers,
   );
   const body =
     row.kind === EDiffLineKind.gap
       ? "⋯"
-      : fit(`${diffSign(row.kind)} ${row.text}`, props.columns, !!style.bg);
+      : fit(row.text, props.columns, !!content.bg);
 
   return (
     // `wrapMode="none"` for the same reason the fenced diff renderer uses it: a diff line that
     // wraps puts code under the gutter and the block stops being readable as columns.
     <text wrapMode="none">
       {INDENT}
-      <span fg={theme.dim}>{number} </span>
       <span
-        fg={style.fg}
-        bg={style.bg}
+        fg={gutter.fg}
+        bg={gutter.bg}
         // A span takes attributes as a bitmask, not the booleans a style definition carries.
-        attributes={createTextAttributes(style)}
+        attributes={createTextAttributes(gutter)}
       >
-        {body}
+        {number} {diffSign(row.kind)}
+      </span>
+      <span fg={content.fg} bg={content.bg} attributes={createTextAttributes(content)}>
+        {` ${body}`}
       </span>
     </text>
   );

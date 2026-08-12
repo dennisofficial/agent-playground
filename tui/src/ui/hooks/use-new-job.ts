@@ -1,5 +1,6 @@
 import { useCallback, type RefObject } from "react";
 import type { ProjectRow } from "../../app/workspace.service.js";
+import { claimService } from "./use-claim.js";
 import type { Navigation } from "../navigation.js";
 import { useServices } from "../services.js";
 
@@ -59,6 +60,9 @@ export function useNewJob(args: {
           firstMessage: start.text,
         });
         focus.current.job = started.job.id;
+        // Nothing to take — the job did not exist a moment ago — but the claim is acquired at the
+        // sites that MEAN to hold a job rather than in a mount effect, and this is one of them.
+        claimService.acquire(started.job.id);
         nav.replace({
           name: "threads",
           project: start.project,

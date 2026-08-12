@@ -32,9 +32,16 @@ export function useClaim(args: {
 }): void {
   const { jobId, onTakenOver } = args;
 
+  /**
+   * Holds and lets go. It does NOT acquire.
+   *
+   * Taking a job from another terminal is a decision, and decisions do not belong in a mount
+   * effect — a hook that acquired on render would take the job from whoever had it merely because
+   * a route appeared, with no prompt and nobody having pressed anything. Acquisition lives at the
+   * two places that mean it: opening a job, and creating one.
+   */
   useEffect(() => {
     if (!jobId) return;
-    claimService.acquire(jobId);
     return () => claimService.release(jobId);
   }, [jobId]);
 
@@ -43,8 +50,10 @@ export function useClaim(args: {
     // Watching, not polling. A poll interval is exactly the window in which two tiles both believe
     // they are driving, and that window is where the double-writer lives.
     return claimService.watch(jobId, () => {
-      // Our own acquire fires this too — only somebody else's is a takeover.
-      if (claimService.stateOf(jobId) === EClaimState.mine) return;
+      // ONLY a live other holder is a takeover. A claim that reads free is not: that is what we see
+      // if the file is removed by hand, or if our own release races this callback — and demoting on
+      // it would eject you from your own job for no reason.
+      if (claimService.stateOf(jobId) !== EClaimState.held) return;
       onTakenOver();
     });
   }, [jobId, onTakenOver]);

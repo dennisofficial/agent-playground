@@ -54,4 +54,25 @@ export const atlasCode: CodeTheme = {
     meta: { fg: theme.dim },
     context: {},
   },
+
+  /**
+   * The gutter is where the red-only-for-failure rule bends, and it is worth saying why rather than
+   * quietly breaking it. In a tool block the code is syntax-highlighted, so the hue this theme used
+   * above to mean added/removed is no longer free — the sign has to move somewhere. A block behind
+   * the line number is not the theme's failure red doing a second job; it is chrome at a fixed
+   * column, read as a shape down the left edge rather than as a colour applied to content.
+   *
+   * The terminal's own ANSI green and red, because this is the ANSI-native theme and a hard-coded
+   * hex would be the one thing on screen that ignores the user's palette. Black on top: both ANSI
+   * backgrounds are dark enough that a light number greys out against them and light enough that a
+   * black one reads as a solid chip.
+   */
+  diffRows: {
+    added: { gutter: { bg: theme.ok, fg: "black" }, content: {} },
+    // Dim, not red. Removed code is the past, and luminance is the one channel the syntax
+    // highlighting under it has not already spent.
+    removed: { gutter: { bg: theme.error, fg: "black" }, content: { dim: true } },
+    context: { gutter: { fg: theme.dim }, content: {} },
+    gap: { gutter: {}, content: { fg: theme.dim } },
+  },
 };

@@ -1,4 +1,5 @@
 import type { StyleDefinitionInput } from "@opentui/core";
+import type { EDiffLineKind } from "../../../domain/tool-diff.js";
 
 export type CodeRole =
   /** Everything the theme doesn't name: identifiers, whitespace, tokens no grammar captured. */
@@ -55,6 +56,35 @@ export type DiffPalette = {
   readonly context: StyleDefinitionInput;
 };
 
+/**
+ * One row of a TOOL-BLOCK patch, split into the two columns that carry different signals.
+ *
+ * The fenced `DiffPalette` above colours raw diff TEXT, where hue is free because nothing else
+ * wants it. A tool block is the opposite case: the code on the row is syntax-highlighted, so hue is
+ * already spoken for and a second colour system laid over the first turns a glanceable band into a
+ * Christmas tree. The signals are therefore split across three channels that do not compete —
+ *
+ *   gutter block → WHICH SIDE (a saturated bar at a fixed column; only a line number sits on it,
+ *                  and we own that number's colour, so it can be as loud as it needs to be)
+ *   luminance    → STATE (removed code is the past; dimming it is the one channel syntax
+ *                  highlighting never uses, so it costs nothing the grammar wanted)
+ *   hue          → SYNTAX, uncontested
+ *
+ * `content.bg` therefore stays empty in both shipped themes. It is settable because a theme may
+ * disagree, but a background tint fights the foreground it sits under: every theme's contrast is
+ * computed against ONE background, and a dim comment on a green wash is exactly the pairing that
+ * stops being readable.
+ */
+export type DiffRowStyle = {
+  /** The line number and sign, drawn as one block — the only place a background is spent. */
+  readonly gutter: StyleDefinitionInput;
+  /** Laid OVER the syntax colours, so it should set weight and never hue. */
+  readonly content: StyleDefinitionInput;
+};
+
+/** Keyed by the row kinds themselves, so a new kind cannot be added without a theme answering it. */
+export type DiffRowPalette = Readonly<Record<EDiffLineKind, DiffRowStyle>>;
+
 export type CodeTheme = {
   readonly label: string;
   readonly roles: Readonly<Record<CodeRole, StyleDefinitionInput>>;
@@ -62,6 +92,7 @@ export type CodeTheme = {
     Record<string, Partial<Record<CodeRole, StyleDefinitionInput>>>
   >;
   readonly diff: DiffPalette;
+  readonly diffRows: DiffRowPalette;
 };
 
 /** A theme's roles for one filetype, with that filetype's corrections folded in. */

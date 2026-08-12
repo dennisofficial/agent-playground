@@ -2,7 +2,13 @@ import type { CodeTheme } from "./code-theme.js";
 import { atlasCode } from "./atlas.js";
 import { githubDark } from "./github-dark.js";
 
-export type { CodeRole, CodeTheme, DiffPalette } from "./code-theme.js";
+export type {
+  CodeRole,
+  CodeTheme,
+  DiffPalette,
+  DiffRowPalette,
+  DiffRowStyle,
+} from "./code-theme.js";
 export { codeScopes, rolesFor } from "./code-theme.js";
 
 export const CODE_THEMES = {
