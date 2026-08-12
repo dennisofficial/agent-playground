@@ -28,9 +28,19 @@ export function headerRight(args: {
 
 /** Longest-first, as everywhere: the widest form that fits wins. */
 export const HINTS = [
-  "↑↓ select · →/⏎ open · / filter · n new · a archive · s shelf · x delete · ? keys · ←/esc back",
-  "↑↓ select · ⏎ open · / filter · n new · a archive · s shelf · x delete · esc back",
+  "↑↓ select · →/⏎ open · / filter · n new · a archive · s shelf · x delete · p projects · ? keys",
+  "↑↓ select · ⏎ open · / filter · n new · a archive · s shelf · x delete · p projects",
   "⏎ open · / filter · n new · a archive · s shelf",
+];
+
+/**
+ * The unscoped list has no `n new`, and says so rather than advertising a key that does nothing:
+ * a job has to be created somewhere, and standing outside any repository there is no here.
+ */
+export const UNSCOPED_HINTS = [
+  "↑↓ select · →/⏎ open · / filter · a archive · s shelf · x delete · p projects · ? keys",
+  "↑↓ select · ⏎ open · / filter · a archive · s shelf · x delete · p projects",
+  "⏎ open · / filter · a archive · s shelf",
 ];
 
 /** Restore is the same key as archive — one keypress in, the same keypress back out. */

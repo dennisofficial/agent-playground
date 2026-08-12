@@ -3,6 +3,8 @@
  * Codex turn that do the same work have to render byte-identically here. Hence pure and tested.
  */
 
+import { type DiffHunk, diffStat, diffSummary, toolDiff } from './tool-diff.js';
+
 type Input = Record<string, unknown>;
 
 function asInput(input: unknown): Input {
@@ -47,19 +49,29 @@ export function toolTarget(name: string, input: unknown, cwd = ''): string | und
   }
 }
 
-export type ResultSummary = { summary: string; detail: string[] };
+export type ResultSummary = {
+  summary: string;
+  detail: string[];
+  /** Present only for a tool that changed a file, and only when the engine reported how. */
+  diff?: DiffHunk[];
+};
 
 /**
  * The headline is a claim about what happened rather than the first line of output — "Read 210
  * lines" beats echoing the file's first line back at the reader.
+ *
+ * `raw` is the engine's own account of what the tool did (`tool_use_result`), which for an edit is
+ * the only place the patch exists — the tool's textual result is a one-line confirmation that says
+ * nothing about what changed.
  */
 export function summariseToolResult(args: {
   name: string;
   input: unknown;
   lines: string[];
   ok: boolean;
+  raw?: unknown;
 }): ResultSummary {
-  const { name, input, lines, ok } = args;
+  const { name, input, lines, ok, raw } = args;
   const meaningful = lines.filter((l) => l.trim().length > 0);
 
   if (!ok) {
@@ -72,13 +84,23 @@ export function summariseToolResult(args: {
       return { summary: `Read ${countLines(lines)} lines`, detail: lines };
     }
     case 'Write': {
-      const path = str(asInput(input).file_path);
-      return { summary: path ? `Wrote ${countLines(lines)} lines` : 'Wrote file', detail: lines };
+      const diff = toolDiff({ name, raw });
+      // The written file, not the confirmation: `lines` here is "File created successfully at …",
+      // so counting it reported `Wrote 1 lines` for every file the agent has ever written.
+      const written = diffStat(diff).additions;
+      const summary = written > 0 ? `Wrote ${written} line${written === 1 ? '' : 's'}` : 'Wrote file';
+      return { summary, detail: lines, ...(diff.length > 0 ? { diff } : {}) };
     }
     case 'Edit':
     case 'Update':
     case 'MultiEdit':
     case 'NotebookEdit': {
+      const diff = toolDiff({ name, raw });
+      if (diff.length > 0) {
+        return { summary: diffSummary(diffStat(diff)), detail: lines, diff };
+      }
+      // No patch reported — an engine that does not send one, or a shape this build cannot read.
+      // The old scrape stays as the fallback so the block still says something true.
       const patch = editSummary(meaningful);
       return { summary: patch ?? 'Updated file', detail: lines };
     }

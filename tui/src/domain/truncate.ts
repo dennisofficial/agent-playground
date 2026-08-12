@@ -4,17 +4,29 @@ export const TOOL_OUTPUT_LINES = 4;
 /** Lines of a thinking block shown once the turn has moved past it. */
 export const THINKING_COLLAPSED_LINES = 0;
 
-export type Truncated = {
-  shown: string[];
+/**
+ * Rows of a diff shown before it folds.
+ *
+ * Larger than `TOOL_OUTPUT_LINES` because a diff's lines are not interchangeable the way a
+ * command's output lines are: four lines of a build log is a sample, four lines of a patch is
+ * usually the context and the first removal — the edit itself falls below the fold. Eight covers
+ * the ordinary two-or-three-line change with its surrounding context and still stops a rewritten
+ * file from taking the screen.
+ */
+export const DIFF_COLLAPSED_LINES = 8;
+
+export type Truncated<T> = {
+  shown: T[];
   hidden: number;
   notice: string | null;
 };
 
-export function truncate(lines: string[], limit = TOOL_OUTPUT_LINES): Truncated {
-  if (lines.length <= limit) return { shown: lines, hidden: 0, notice: null };
-  const hidden = lines.length - limit;
+/** Generic over the item because a diff folds by ROW, and a row is not a string until it is drawn. */
+export function truncate<T>(items: T[], limit = TOOL_OUTPUT_LINES): Truncated<T> {
+  if (items.length <= limit) return { shown: items, hidden: 0, notice: null };
+  const hidden = items.length - limit;
   return {
-    shown: lines.slice(0, limit),
+    shown: items.slice(0, limit),
     hidden,
     notice: `… +${hidden} line${hidden === 1 ? '' : 's'} (ctrl+r to expand)`,
   };

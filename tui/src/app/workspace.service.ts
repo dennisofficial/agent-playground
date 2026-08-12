@@ -88,7 +88,17 @@ export class WorkspaceService {
     return projects.find((row) => row.id === project.id) ?? null;
   }
 
-  async listJobs(projectId: string): Promise<JobRow[]> {
+  /**
+   * The project a job belongs to. Needed because the unscoped list spans projects, so opening a row
+   * there has to find the path its turns will run in — the list itself only knows the name.
+   */
+  async findProject(id: string): Promise<ProjectRow | null> {
+    const projects = await this.listProjects();
+    return projects.find((project) => project.id === id) ?? null;
+  }
+
+  /** Null spans every project — the unscoped master list, not a special case of one. */
+  async listJobs(projectId: string | null): Promise<JobRow[]> {
     return this.jobRepository.listForProject(projectId);
   }
 

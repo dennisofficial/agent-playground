@@ -1,5 +1,4 @@
 import { useTerminalDimensions } from "@opentui/react";
-import { useInput } from "../hooks/use-input.js";
 import React, {
   useCallback,
   useEffect,
@@ -11,33 +10,47 @@ import type { ProjectRow } from "../../app/workspace.service.js";
 import type { JobRow } from "../../store/job.repository.js";
 import { clampIndex, matchesQuery } from "../../domain/list-nav.js";
 import { deletionCost, jobSummary, jobsLayout } from "../../domain/jobs-list.js";
+import { EJobEntry, groupJobs } from "../../domain/job-groups.js";
 import { ConfirmBar } from "../components/confirm-bar.js";
 import { ListFooter } from "../components/list-footer.js";
-import { JobListRow } from "../components/job-list.js";
+import { JobGroupHeader, JobListRow } from "../components/job-list.js";
+import { useProjectAttention } from "../hooks/use-project-attention.js";
 import { AddRow, ListEmpty, NoMatch } from "../components/list-parts.js";
 import { PageHeader } from "../components/page-header.js";
 import { Screen } from "../components/screen.js";
 import { useComposer } from "../hooks/use-composer.js";
+import { useJobsKeys } from "../hooks/use-jobs-keys.js";
 import { useRunningThreads, useTick } from "../hooks/use-conversation.js";
 import { useServices } from "../services.js";
 import { theme } from "../theme.js";
 import {
   ARCHIVED_HINTS,
   HINTS,
+  UNSCOPED_HINTS,
   headerRight,
   overlayFor,
   type Mode,
   type View,
 } from "./jobs-chrome.js";
 
+/**
+ * Page 1 — every job, or one project's.
+ *
+ * `project` null is the unscoped list: every job you have, grouped by project, which is what you
+ * get launching Atlas anywhere that is not a repository. It is not an error state and not a picker
+ * you pass through — it is the entry point, and the scoped list is the same page with the headers
+ * collapsed away.
+ */
 export function JobsPage(props: {
-  project: ProjectRow;
+  project: ProjectRow | null;
   /** The job last opened — the cursor lands on it when you come back, not on row zero. */
   focusId?: string | undefined;
   onOpen: (job: JobRow) => void;
+  onProjects: () => void;
   onBack: () => void;
 }): React.ReactNode {
   const { workspaceService, attentionService } = useServices();
+  const projectId = props.project?.id ?? null;
   const [jobs, setJobs] = useState<JobRow[] | null>(null);
   const [view, setView] = useState<View>("open");
   const [selected, setSelected] = useState(0);
@@ -56,10 +69,10 @@ export function JobsPage(props: {
   const reload = useCallback(async () => {
     setJobs(
       view === "archived"
-        ? await attentionService.listArchivedJobs(props.project.id)
-        : await workspaceService.listJobs(props.project.id),
+        ? await attentionService.listArchivedJobs(projectId)
+        : await workspaceService.listJobs(projectId),
     );
-  }, [attentionService, workspaceService, props.project.id, view]);
+  }, [attentionService, workspaceService, projectId, view]);
 
   useEffect(() => {
     void reload();
@@ -82,9 +95,19 @@ export function JobsPage(props: {
     [all, query],
   );
   // The shelf has no `+ new job`: a job you create is a job you are working on, by definition.
-  const canCreate = view === "open";
+  // Neither does the unscoped list — "new job" needs somewhere to put it, and standing in `~`
+  // there is no here to create it in. `cd` into a repo, or press `p`.
+  const canCreate = view === "open" && props.project !== null;
   const total = rows.length + (canCreate ? 1 : 0);
   const layout = jobsLayout(width);
+
+  // Grouping follows the SCOPE, never the row count: a list that grew a second project mid-session
+  // must not silently reorganise itself around you.
+  const entries = useMemo(
+    () => groupJobs({ jobs: rows, grouped: props.project === null }),
+    [rows, props.project],
+  );
+  const projectAttention = useProjectAttention(running);
 
   const cursor = clampIndex(selected, total);
   const highlighted = cursor < rows.length ? rows[cursor] : undefined;
@@ -106,14 +129,16 @@ export function JobsPage(props: {
 
   const create = useCallback(
     (title: string) => {
-      if (title.length === 0) return;
+      // Unreachable unscoped — `canCreate` gates every door into this mode — but a job has to be
+      // created SOMEWHERE, and the type is what says so.
+      if (title.length === 0 || !projectId) return;
       leaveMode();
       void workspaceService
-        .createJob({ projectId: props.project.id, title })
+        .createJob({ projectId, title })
         .then(() => reload())
         .catch((e: Error) => setError(e.message));
     },
-    [leaveMode, props.project.id, reload, workspaceService],
+    [leaveMode, projectId, reload, workspaceService],
   );
 
   const remove = useCallback(
@@ -142,61 +167,30 @@ export function JobsPage(props: {
     [attentionService, reload, view],
   );
 
-  useInput((input, key) => {
-    if (mode === "create") {
-      if (key.escape) return leaveMode();
-      if (key.return) return create(composer.value.trim());
-      composer.handleKey(input, key);
-      return;
-    }
-
-    if (mode === "confirm") {
-      if (input === "y" && highlighted) return remove(highlighted);
-      return leaveMode();
-    }
-
-    if (mode === "filter") {
-      if (key.upArrow) return setSelected(clampIndex(cursor - 1, total));
-      if (key.downArrow) return setSelected(clampIndex(cursor + 1, total));
-      if (key.escape) return leaveMode();
-      if (key.return) {
-        if (highlighted) {
-          leaveMode();
-          props.onOpen(highlighted);
-        } else {
-          composer.clear();
-          setMode("create");
-        }
-        return;
-      }
-      composer.handleKey(input, key);
-      return;
-    }
-
-    // `←` and `esc` are the same door. On a list there is nothing for `←` to mean other than "out",
-    // and reaching for it is the reflex a two-pane file browser trains.
-    if (key.escape || key.leftArrow) return props.onBack();
-    if (key.upArrow) return setSelected(clampIndex(cursor - 1, total));
-    if (key.downArrow) return setSelected(clampIndex(cursor + 1, total));
-    // `→` descends, the exact mirror of `←`.
-    if (key.return || key.rightArrow) {
-      if (highlighted) return props.onOpen(highlighted);
-      return setMode("create");
-    }
-    if (input === "/") return setMode("filter");
-    if (input === "n") return setMode("create");
-    if (input === "x" && highlighted) return setMode("confirm");
-    if (input === "a" && highlighted) return shelve(highlighted);
-    // The shelf is a separate list rather than a dimmed section: an archived job is one you have
-    // decided not to look at, and leaving it in the list you scan defeats archiving it.
-    if (input === "s") {
-      setSelected(0);
-      return setView((current) => (current === "open" ? "archived" : "open"));
-    }
-    if (input === "?") return setShortcuts((open) => !open);
+  useJobsKeys({
+    mode,
+    setMode,
+    view,
+    setView,
+    composer,
+    cursor,
+    total,
+    setSelected,
+    highlighted,
+    canCreate,
+    leaveMode,
+    create,
+    remove,
+    shelve,
+    setShortcuts,
+    onOpen: props.onOpen,
+    onProjects: props.onProjects,
+    onBack: props.onBack,
   });
 
-  const trail = ["atlas", props.project.name];
+  // Unscoped, the trail is just the app: there is no one project to name, and naming none of them
+  // is more honest than naming all of them.
+  const trail = props.project ? ["atlas", props.project.name] : ["atlas"];
 
   if (jobs === null) {
     return (
@@ -224,7 +218,15 @@ export function JobsPage(props: {
               />
             ) : null
           }
-          hints={mode === "browse" ? (view === "archived" ? ARCHIVED_HINTS : HINTS) : undefined}
+          hints={
+            mode === "browse"
+              ? view === "archived"
+                ? ARCHIVED_HINTS
+                : canCreate
+                  ? HINTS
+                  : UNSCOPED_HINTS
+              : undefined
+          }
           shortcuts={shortcuts}
           error={error}
         />
@@ -241,16 +243,29 @@ export function JobsPage(props: {
       />
       <NoMatch show={all.length > 0 && rows.length === 0} query={query} />
 
-      {rows.map((job, index) => (
-        <JobListRow
-          key={job.id}
-          job={job}
-          selected={index === cursor}
-          layout={layout}
-          frame={frame}
-          runningThreadIds={running}
-        />
-      ))}
+      {entries.map((entry, position) =>
+        entry.kind === EJobEntry.header ? (
+          <box key={`h:${entry.projectId}`} flexDirection="column">
+            {/* Air above every group but the first — the rule that separates them is whitespace,
+                because a list this dense cannot afford a second kind of line. */}
+            {position > 0 ? <text> </text> : null}
+            <JobGroupHeader
+              name={entry.projectName}
+              attention={projectAttention(entry.projectId)}
+              frame={frame}
+            />
+          </box>
+        ) : (
+          <JobListRow
+            key={entry.job.id}
+            job={entry.job}
+            selected={entry.index === cursor}
+            layout={layout}
+            frame={frame}
+            runningThreadIds={running}
+          />
+        ),
+      )}
 
       {canCreate ? (
         <box flexDirection="column">

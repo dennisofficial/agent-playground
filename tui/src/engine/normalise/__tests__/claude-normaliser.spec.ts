@@ -75,6 +75,34 @@ describe('ClaudeNormaliserService', () => {
     });
   });
 
+  it('carries an edit’s patch through, off the frame rather than the result text', () => {
+    const events = run([
+      assistantToolUse('t1', 'Edit', { file_path: '/repo/a.ts' }),
+      toolResult('t1', ['The file /repo/a.ts has been updated successfully.'], false, {
+        filePath: '/repo/a.ts',
+        structuredPatch: [
+          { oldStart: 12, oldLines: 2, newStart: 12, newLines: 2, lines: [' ok', '-was', '+is'] },
+        ],
+      }),
+    ]);
+    expect(events.at(-1)).toEqual({
+      kind: 'tool_result',
+      toolUseId: 't1',
+      ok: true,
+      summary: 'Updated with 1 addition and 1 removal',
+      detail: ['The file /repo/a.ts has been updated successfully.'],
+      diff: [{ oldStart: 12, newStart: 12, lines: [' ok', '-was', '+is'] }],
+    });
+  });
+
+  it('leaves the diff off a tool that did not edit a file', () => {
+    const events = run([
+      assistantToolUse('t1', 'Bash', { command: 'ls' }),
+      toolResult('t1', ['a.ts'], false, { content: 'a.ts' }),
+    ]);
+    expect(events.at(-1)).not.toHaveProperty('diff');
+  });
+
   it('keeps a failed tool result and marks it not-ok', () => {
     const events = run([
       assistantToolUse('t1', 'Bash', { command: 'pnpm test' }),

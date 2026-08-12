@@ -56,7 +56,8 @@ export function App(props: {
       .resolveLaunch({ explicitPath: props.explicitPath, cwd: props.cwd })
       .then((row) => {
         if (!row) return;
-        // Pushed, not replaced: esc from there still reaches the project list.
+        // Pushed onto the unscoped root, not replacing it: `←` out of the scoped list widens back
+        // to every job rather than dead-ending at the repository you happened to launch in.
         focus.current.project = row.id;
         nav.push({ name: "jobs", project: row });
       })
@@ -67,13 +68,17 @@ export function App(props: {
   }, [props.explicitPath, props.cwd, workspaceService]);
 
   const openJob = useCallback(
-    async (project: ProjectRow, job: JobRow) => {
+    async (job: JobRow, known: ProjectRow | null) => {
       try {
         // Nothing runs without auth — send the user to add an account rather than failing a turn.
         if (!(await workspaceService.hasAccount())) {
           nav.push({ name: "accounts" });
           return;
         }
+        // The unscoped list spans projects, so a row there arrives without one. The scoped list
+        // already has it and hands it over rather than paying for the lookup again.
+        const project = known ?? (await workspaceService.findProject(job.projectId));
+        if (!project) throw new Error(`no project for “${job.title}”`);
         focus.current.job = job.id;
         // A job that took a worktree runs there, not in the tree the editor is open on. A job that
         // did not gets `project.path` back, exactly as before.
@@ -201,7 +206,8 @@ export function App(props: {
           <JobsPage
             project={route.project}
             focusId={focus.current.job}
-            onOpen={(job) => void openJob(route.project, job)}
+            onOpen={(job) => void openJob(job, route.project)}
+            onProjects={() => nav.push({ name: "projects" })}
             onBack={nav.pop}
           />
         ) : null}

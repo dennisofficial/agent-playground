@@ -1,7 +1,12 @@
 import { TextAttributes } from "@opentui/core";
 import React from "react";
+import type { DiffHunk } from "../../../domain/tool-diff.js";
 import { truncate } from "../../../domain/truncate.js";
 import { glyph, theme } from "../../theme.js";
+import { DiffView } from "./diff-view.js";
+
+/** What a diff sizes itself to when the block is drawn outside a measured transcript (tests). */
+const DEFAULT_WIDTH = 80;
 
 export function ToolCallLine(props: {
   name: string;
@@ -60,12 +65,19 @@ export function ToolBlock(props: {
     ok: boolean;
     summary: string;
     detail: string[];
+    diff?: DiffHunk[];
   };
+  /** The transcript's reading width, so a diff can size its gutter and clip its rows. */
+  width?: number;
   expanded?: boolean;
   onToggle?: (toolUseId: string) => void;
 }): React.ReactNode {
   const hasDetail = props.result && props.result.detail.length > 0;
   const expandIndicator = hasDetail ? (props.expanded ? "▼" : "▶") : " ";
+  // A diff shows without being asked. It is the answer to "what did that edit do?", which is a
+  // question the reader always has and the summary line structurally cannot answer; every other
+  // kind of tool detail is output they can go and look at if they want it.
+  const diff = props.result?.diff;
 
   return (
     <box flexDirection="column" marginBottom={1}>
@@ -84,14 +96,20 @@ export function ToolBlock(props: {
               {props.result.summary}
             </span>
           </text>
-          {props.expanded
-            ? props.result.detail.map((line, index) => (
-                <text key={index} fg={theme.dim}>
-                  {"     "}
-                  {line}
-                </text>
-              ))
-            : null}
+          {diff && diff.length > 0 ? (
+            <DiffView
+              hunks={diff}
+              width={props.width ?? DEFAULT_WIDTH}
+              expanded={props.expanded ?? false}
+            />
+          ) : props.expanded ? (
+            props.result.detail.map((line, index) => (
+              <text key={index} fg={theme.dim}>
+                {"     "}
+                {line}
+              </text>
+            ))
+          ) : null}
         </box>
       ) : null}
     </box>

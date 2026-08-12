@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { createCliRenderer } from '@opentui/core';
 import { createRoot } from '@opentui/react';
 import React from 'react';
-import { EHarnessVariant, type Message } from '../../domain/message.js';
+import { EHarnessVariant, type Message, type ToolResultPayload } from '../../domain/message.js';
 import { EAccountStatus, EEngine, EMessageType } from '../../generated/prisma/enums.js';
 import { Breadcrumb } from '../components/breadcrumb.js';
 import { Composer } from '../components/composer.js';
@@ -125,6 +125,43 @@ describe('conversation page components mount', () => {
   it('renders every message type', async () => {
     for (const m of MESSAGES) {
       await expect(mount(<MessageView message={m} />)).resolves.toBeUndefined();
+    }
+  });
+
+  // The diff draws columns inside a `<text>`, which is exactly the shape that throws at mount if a
+  // component underneath it returns `<text>` of its own. Collapsed and expanded are separate paths.
+  it('renders an edit with its diff, folded and open', async () => {
+    const call = message({
+      type: EMessageType.tool_call,
+      toolUseId: 't9',
+      name: 'Edit',
+      target: 'src/a.ts',
+      input: {},
+    });
+    const results = new Map([
+      [
+        't9',
+        {
+          type: EMessageType.tool_result,
+          toolUseId: 't9',
+          ok: true,
+          summary: 'Updated with 2 additions and 1 removal',
+          detail: ['The file has been updated.'],
+          diff: [
+            { oldStart: 47, newStart: 47, lines: [' }', '-  return old;', '+  return next;'] },
+            // A second hunk, a line longer than the viewport, and a wide line number — the three
+            // things that decide the gutter, the gap row and the clip.
+            { oldStart: 900, newStart: 901, lines: [`+${'x'.repeat(200)}`] },
+          ],
+        } as ToolResultPayload,
+      ],
+    ]);
+    for (const expanded of [new Set<string>(), new Set(['t9'])]) {
+      await expect(
+        mount(
+          <MessageView message={call} toolResults={results} expandedTools={expanded} width={100} />,
+        ),
+      ).resolves.toBeUndefined();
     }
   });
 

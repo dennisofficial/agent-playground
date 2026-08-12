@@ -121,7 +121,13 @@ function assistant(
   } as unknown as SDKMessage;
 }
 
-export function toolResult(toolUseId: string, lines: string[], isError = false): SDKMessage {
+/** `toolUseResult` rides on the FRAME, beside `message` — that is where the SDK puts a patch. */
+export function toolResult(
+  toolUseId: string,
+  lines: string[],
+  isError = false,
+  toolUseResult?: unknown,
+): SDKMessage {
   return {
     type: 'user',
     session_id: SESSION_ID,
@@ -133,6 +139,7 @@ export function toolResult(toolUseId: string, lines: string[], isError = false):
         { type: 'tool_result', tool_use_id: toolUseId, content: lines.join('\n'), is_error: isError },
       ],
     },
+    ...(toolUseResult === undefined ? {} : { tool_use_result: toolUseResult }),
   } as unknown as SDKMessage;
 }
 

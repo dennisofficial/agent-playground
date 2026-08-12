@@ -11,7 +11,8 @@ import type { Job } from "../generated/prisma/client.js";
 
 export type Route =
   | { name: "projects" }
-  | { name: "jobs"; project: ProjectRow }
+  /** Null is the unscoped master list — every job, grouped by project. It is the root. */
+  | { name: "jobs"; project: ProjectRow | null }
   | { name: "conversation"; project: ProjectRow; open: OpenConversation }
   /**
    * The job's phases and threads — the job's own page, and the frame the conversation sits on top
@@ -49,8 +50,13 @@ export type Navigation = {
   toggle: (route: Route) => void;
 };
 
+/**
+ * The root is the unscoped job list, never a picker you pass through. Launching inside a repository
+ * pushes the scoped list ON TOP of it, which is what makes `←` widen back out to everything rather
+ * than dead-end at the project you happened to be standing in.
+ */
 export function useNavigation(
-  initial: Route = { name: "projects" },
+  initial: Route = { name: "jobs", project: null },
 ): Navigation {
   const [stack, setStack] = useState<Route[]>([initial]);
 

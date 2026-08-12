@@ -1,5 +1,9 @@
 import React from "react";
-import { statusCell } from "../../domain/attention.js";
+import {
+  EAttentionVerb,
+  statusCell,
+  type Attention,
+} from "../../domain/attention.js";
 import { fitColumn } from "../../domain/list-columns.js";
 import { formatWhen, jobAttention, type JobsLayout } from "../../domain/jobs-list.js";
 import type { JobRow } from "../../store/job.repository.js";
@@ -14,6 +18,36 @@ import { glyph, theme } from "../theme.js";
  * Nothing about a job's condition is stored: it is the union of its threads' facts, run through the
  * same function a thread row runs. See `domain/attention.ts`.
  */
+/**
+ * The project a run of jobs belongs to. Only ever drawn unscoped — launched inside a repository the
+ * header would name the thing you are already standing in.
+ *
+ * It carries a condition of its own, rolled up from every thread in the project by the SAME
+ * function a job and a thread run. That is what lets you scan a grouped list and see which project
+ * wants you without reading any of its rows.
+ */
+export function JobGroupHeader(props: {
+  name: string;
+  attention: Attention;
+  frame: string;
+}): React.ReactNode {
+  // Nothing open anywhere inside is not a project-level verb — a project is not a thing you start a
+  // phase on — so a quiet group says nothing rather than saying "nothing".
+  const quiet = props.attention.verb === EAttentionVerb.nothingOpen;
+
+  return (
+    <text>
+      <span fg={theme.dim}>{props.name}</span>
+      {!quiet ? (
+        <span fg={courtColour(props.attention.court)}>
+          {"  "}
+          {statusCell({ attention: props.attention, frame: props.frame })}
+        </span>
+      ) : null}
+    </text>
+  );
+}
+
 export function JobListRow(props: {
   job: JobRow;
   selected: boolean;

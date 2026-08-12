@@ -127,6 +127,7 @@ describe('thread list rows mount', () => {
 const JOB: JobRow = {
   id: 'j1',
   projectId: 'p1',
+  projectName: 'atlas',
   title: 'add rotation nudges',
   activeThreadId: 't1',
   archivedAt: null,

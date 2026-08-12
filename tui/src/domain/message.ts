@@ -1,4 +1,5 @@
 import { EMessageType } from '../generated/prisma/enums.js';
+import type { DiffHunk } from './tool-diff.js';
 
 export type UserPayload = {
   type: typeof EMessageType.user;
@@ -31,6 +32,12 @@ export type ToolResultPayload = {
   ok: boolean;
   summary: string;
   detail: string[];
+  /**
+   * The hunks a file-editing tool produced, stored rather than re-derived: the patch exists only in
+   * the live SDK frame (the tool's textual result is a one-line confirmation), so a transcript
+   * reopened tomorrow can either have kept it or have lost it. Absent on every other tool.
+   */
+  diff?: DiffHunk[];
 };
 
 export type ErrorPayload = {
@@ -126,7 +133,14 @@ export type EngineEvent =
   | { kind: 'text'; text: string }
   | { kind: 'thinking'; text: string }
   | { kind: 'tool_call'; toolUseId: string; name: string; target?: string; input: unknown }
-  | { kind: 'tool_result'; toolUseId: string; ok: boolean; summary: string; detail: string[] }
+  | {
+      kind: 'tool_result';
+      toolUseId: string;
+      ok: boolean;
+      summary: string;
+      detail: string[];
+      diff?: DiffHunk[];
+    }
   | { kind: 'error'; title: string; detail?: string; retryable?: boolean }
   /**
    * `parentToolUseId` marks a reading that belongs to a SUBAGENT, which runs in its own separate
@@ -246,6 +260,7 @@ export function toPayload(event: EngineEvent): MessagePayload | null {
         ok: event.ok,
         summary: event.summary,
         detail: event.detail,
+        ...(event.diff === undefined ? {} : { diff: event.diff }),
       };
     case 'error':
       return {

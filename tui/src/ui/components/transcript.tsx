@@ -77,6 +77,7 @@ export function Transcript(props: {
             ) : (
               <MessageView
                 message={item.message}
+                width={props.width}
                 toolResults={props.toolResults}
                 expandedTools={props.expandedTools}
                 onToggleTool={props.onToggleTool}

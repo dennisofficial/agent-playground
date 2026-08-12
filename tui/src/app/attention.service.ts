@@ -38,7 +38,7 @@ export class AttentionService {
     await this.jobRepository.setArchived({ jobId, archived: false });
   }
 
-  async listArchivedJobs(projectId: string): Promise<JobRow[]> {
+  async listArchivedJobs(projectId: string | null): Promise<JobRow[]> {
     return this.jobRepository.listArchived(projectId);
   }
 

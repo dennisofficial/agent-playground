@@ -157,13 +157,24 @@ export class ClaudeNormaliserService {
       const call = context.tools.get(toolUseId);
       const ok = block.is_error !== true;
       const lines = flattenResult(block.content);
-      const { summary, detail } = summariseToolResult({
+      // The frame carries a second, richer account of the tool run beside the model-facing text —
+      // for an edit, the structured patch. It sits on the FRAME, not in the content block, which is
+      // why it is read here rather than off `block`.
+      const { summary, detail, diff } = summariseToolResult({
         name: call?.name ?? "Tool",
         input: call?.input,
         lines,
         ok,
+        raw: message.tool_use_result,
       });
-      events.push({ kind: "tool_result", toolUseId, ok, summary, detail });
+      events.push({
+        kind: "tool_result",
+        toolUseId,
+        ok,
+        summary,
+        detail,
+        ...(diff === undefined ? {} : { diff }),
+      });
     }
     return events;
   }

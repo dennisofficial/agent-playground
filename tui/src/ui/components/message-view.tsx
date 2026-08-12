@@ -13,6 +13,8 @@ export function MessageView(props: {
   toolResults?: Map<string, ToolResultPayload>;
   expandedTools?: Set<string>;
   onToggleTool?: (toolUseId: string) => void;
+  /** Reading width, needed only by the blocks that draw columns — today, an edit's diff. */
+  width?: number;
 }): React.ReactNode {
   const payload = props.message.payload;
   switch (payload.type) {
@@ -41,9 +43,11 @@ export function MessageView(props: {
                   ok: result.ok,
                   summary: result.summary,
                   detail: result.detail,
+                  ...(result.diff ? { diff: result.diff } : {}),
                 },
               }
             : {})}
+          {...(props.width === undefined ? {} : { width: props.width })}
           expanded={isExpanded}
           onToggle={props.onToggleTool}
         />
