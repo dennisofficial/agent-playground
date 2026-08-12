@@ -59,7 +59,7 @@ describe('parseInvocation', () => {
   });
 
   it('rejects a ticket that is not a number', () => {
-    const parsed = parseInvocation({ args: ['ticket', 'intake-shape'], env: IN_TURN });
+    const parsed = parseInvocation({ args: ['ticket', 'charting-shape'], env: IN_TURN });
     expect(parsed.ok).toBe(false);
   });
 

@@ -71,7 +71,7 @@ describe('SessionManagerService.openThread', () => {
   it('moves the job’s cursor onto the thread it just opened', async () => {
     const { sessionManagerService, activeThreadIds } = build();
 
-    const thread = await sessionManagerService.openThread('job-1', EThreadRole.intake);
+    const thread = await sessionManagerService.openThread('job-1', EThreadRole.charting);
 
     expect(activeThreadIds).toEqual([thread.id]);
   });

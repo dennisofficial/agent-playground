@@ -1,3 +1,4 @@
+import { testRender } from '@opentui/react/test-utils';
 import { describe, expect, it } from 'bun:test';
 import { createCliRenderer } from '@opentui/core';
 import { createRoot } from '@opentui/react';
@@ -40,10 +41,10 @@ async function mount(node: React.ReactNode): Promise<void> {
 const THREADS: ThreadListSource[] = [
   {
     id: 't1',
-    role: EThreadRole.intake,
+    role: EThreadRole.charting,
     status: EThreadStatus.closed,
     phaseId: 'p1',
-    phaseKind: EPhaseKind.intake,
+    phaseKind: EPhaseKind.charting,
     phaseTitle: null,
     engine: EEngine.claude,
     messageCount: 38,
@@ -133,6 +134,7 @@ const JOB: JobRow = {
   archivedAt: null,
   branch: null,
   workspacePath: null,
+  prNumber: null,
   createdAt: new Date('2026-08-11T09:00:00Z'),
   updatedAt: new Date('2026-08-11T10:00:00Z'),
   activeRole: EThreadRole.builder,
@@ -162,6 +164,55 @@ const COURTS = [
   { ...NO_FACTS, hasPullRequest: true },
 ];
 
+/**
+ * The two facts a job row SOURCES rather than derives, asserted on the drawn frame.
+ *
+ * Both were left as optional named arguments defaulting to empty when the attention system landed,
+ * so both were silently unreachable: the precedence, the colours and the words were all built and
+ * tested, and the row simply never said them. A mount test cannot catch that — the row renders
+ * perfectly well saying the wrong thing — so these read the pixels back.
+ */
+describe('a job row says what it owes', () => {
+  async function frameOf(job: JobRow, proposalThreadIds: string[]): Promise<string> {
+    const setup = await testRender(
+      <box flexDirection="column" width={100} height={3}>
+        <JobListRow
+          job={job}
+          selected={false}
+          layout={jobsLayout(100)}
+          frame="⠋"
+          runningThreadIds={[]}
+          proposalThreadIds={proposalThreadIds}
+        />
+      </box>,
+      { width: 100, height: 3 },
+    );
+    try {
+      await setup.flush();
+      return setup.captureCharFrame();
+    } finally {
+      setup.renderer.destroy();
+    }
+  }
+
+  const QUIET: JobRow = {
+    ...JOB,
+    threads: [{ id: 't1', closed: true, lastMessageAt: null, lastSeenAt: null }],
+  };
+
+  it('says `confirm` when one of its threads is holding a proposal', async () => {
+    expect(await frameOf(JOB, ['t1'])).toContain('confirm');
+  });
+
+  // `shipped` needs BOTH: a pull request, and nothing open. A job with a PR and a live thread still
+  // owes you a reply — the PR is a fact about the work, not a verdict on the conversation.
+  it('says `shipped` for a finished job whose pull request is up', async () => {
+    expect(await frameOf({ ...QUIET, prNumber: 42 }, [])).toContain('shipped');
+    expect(await frameOf(QUIET, [])).toContain('start a phase');
+    expect(await frameOf({ ...JOB, prNumber: 42 }, [])).toContain('reply');
+  });
+});
+
 describe('job and project rows mount', () => {
   it.each([200, 100, 70, 50, 30])('renders a job row at %i columns', async (width) => {
     await expect(
@@ -172,6 +223,24 @@ describe('job and project rows mount', () => {
           layout={jobsLayout(width)}
           frame="⠋"
           runningThreadIds={['t1']}
+        />,
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  // A job waiting on a keypress. The row takes the proposing THREAD rather than a job-level flag,
+  // so `attentionFor` stays the only place `confirm` outranks `working…` — note `t1` is running
+  // here as well, which is exactly the collision that ordering exists to settle.
+  it('renders a job row holding a proposal', async () => {
+    await expect(
+      mount(
+        <JobListRow
+          job={JOB}
+          selected
+          layout={jobsLayout(100)}
+          frame="⠋"
+          runningThreadIds={['t1']}
+          proposalThreadIds={['t1']}
         />,
       ),
     ).resolves.toBeUndefined();

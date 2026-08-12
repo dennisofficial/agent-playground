@@ -44,7 +44,7 @@ export function useNewJob(args: {
   );
 
   /**
-   * The first message, which creates everything: the job, its intake phase, its one thread, and the
+   * The first message, which creates everything: the job, its generic phase, its one thread, and the
    * message itself — in that order, so what the human typed IS the transcript's first line rather
    * than an answer to a brief it never saw.
    *

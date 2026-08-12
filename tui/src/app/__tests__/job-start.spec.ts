@@ -7,6 +7,7 @@ import type { MessageRepository } from '../../store/message.repository.js';
 import type { ProjectRepository } from '../../store/project.repository.js';
 import type { SessionRepository } from '../../store/session.repository.js';
 import type { ThreadRepository } from '../../store/thread.repository.js';
+import type { TransitionRepository } from '../../store/transition.repository.js';
 import type { TurnRepository } from '../../store/turn.repository.js';
 import type { AccountUsageService } from '../account-usage.service.js';
 import type { ContextFolderService } from '../context-folder.service.js';
@@ -16,6 +17,9 @@ import type { GitService } from '../git.service.js';
 import { JobStartService } from '../job-start.service.js';
 import { PhaseBriefService } from '../phase-brief.service.js';
 import type { SessionManagerService } from '../session-manager.service.js';
+import { ThreadSeamService } from '../thread-seam.service.js';
+import { fakeShipService } from './ship.fixture.js';
+import { fakeTaskService } from './tasks.fixture.js';
 import type { RunTurnArgs, TurnRunnerService } from '../turn-runner.service.js';
 import { WorkspaceService } from '../workspace.service.js';
 import type { WorktreeService } from '../worktree.service.js';
@@ -39,8 +43,8 @@ const JOB = {
   projectId: 'project-1',
 } as unknown as Job;
 
-const THREAD = { id: 'thread-1', phaseId: 'phase-1', role: EThreadRole.intake } as unknown as Thread;
-const PHASES = [{ id: 'phase-1', kind: EPhaseKind.intake, ordinal: 0 } as unknown as Phase];
+const THREAD = { id: 'thread-1', phaseId: 'phase-1', role: EThreadRole.charting } as unknown as Thread;
+const PHASES = [{ id: 'phase-1', kind: EPhaseKind.charting, ordinal: 0 } as unknown as Phase];
 const SESSION = { id: 'session-1', accountId: 'account-1' } as unknown as EngineSession;
 
 function build(run: (args: RunTurnArgs) => Promise<void> = async () => undefined) {
@@ -80,6 +84,26 @@ function build(run: (args: RunTurnArgs) => Promise<void> = async () => undefined
     },
   } as unknown as TurnRunnerService;
 
+  const sessionManagerService = {
+    async currentSession(): Promise<EngineSession> {
+      return SESSION;
+    },
+  } as unknown as SessionManagerService;
+
+  // Real, not faked, for the same reason `ConversationService` is: a stray seed would fire a second
+  // turn through this object, and a stub would have swallowed it.
+  const threadSeamService = new ThreadSeamService(
+    jobRepository,
+    {} as unknown as ThreadRepository,
+    {} as unknown as TransitionRepository,
+    sessionManagerService,
+    new PhaseBriefService(jobRepository, contextFolderService),
+    contextFolderService,
+    turnRunnerService,
+    fakeTaskService(),
+    fakeShipService(),
+  );
+
   const conversationService = new ConversationService(
     jobRepository,
     {} as unknown as ThreadRepository,
@@ -101,15 +125,12 @@ function build(run: (args: RunTurnArgs) => Promise<void> = async () => undefined
         return null;
       },
     } as unknown as TurnRepository,
-    {
-      async currentSession(): Promise<EngineSession> {
-        return SESSION;
-      },
-    } as unknown as SessionManagerService,
+    sessionManagerService,
     turnRunnerService,
     contextFolderService,
     { kick: (): void => undefined } as unknown as AccountUsageService,
     new PhaseBriefService(jobRepository, contextFolderService),
+    threadSeamService,
     new ConversationStoreRegistry(),
   );
 
@@ -151,12 +172,13 @@ describe('starting a job from its first message', () => {
     expect(created).toEqual([{ title: 'add avatar upload', projectId: 'project-1' }]);
   });
 
-  it('opens exactly one intake thread, and the job’s context folder with it', async () => {
+  it('opens exactly one generic thread, and the job’s context folder with it', async () => {
     const { jobStartService, openedRoles, contextFolders } = build();
 
     await jobStartService.start({ projectId: 'project-1', firstMessage: 'why is the build red' });
 
-    expect(openedRoles).toEqual([EThreadRole.intake]);
+    // Generic: a job that is one question is met by a coding agent, not by one preparing to chart.
+    expect(openedRoles).toEqual([EThreadRole.generic]);
     expect(contextFolders).toContain(JOB.id);
   });
 

@@ -1,6 +1,8 @@
 import { EPhaseKind, EThreadRole } from "../generated/prisma/enums.js";
-import { intakeBrief } from "./intake-brief.js";
+import { chartingBrief } from "./charting-brief.js";
+import { genericBrief } from "./generic-brief.js";
 import type { ContextBucket } from "./paths.js";
+import type { PhaseBrief, PhaseBriefContext } from "./phase-brief.js";
 import {
   buildBrief,
   ciBrief,
@@ -12,60 +14,18 @@ import {
 } from "./phase-briefs.js";
 
 /**
- * Whether ENTERING this phase waits on the human. Phase boundaries are human boundaries, so every
- * phase asks today — the field exists because entry confirmation is a property of the phase you are
- * entering rather than a global rule, and because a confirmation that never varies is one nobody
- * reads. `auto` is declared so that a phase which earns it later is a one-word edit here, and it is
- * deliberately not a dial anyone can turn from outside this file.
+ * Whether LEAVING this phase waits on the human.
+ *
+ * A property of the phase being left rather than of the one being entered: the question it answers
+ * — *was there a decision to make here* — is settled by the work that just finished. Confirmation is
+ * required only where there is a fork or an artifact to eyeball, and nowhere else, because an ask
+ * that carries no information is the one that trains `y` as a reflex and gets the plan approved
+ * unread. Not a dial anyone can turn from outside this file.
  */
 export enum EPhaseConfirm {
   ask = "ask",
   auto = "auto",
 }
-
-/**
- * What the phase's prose is written against. The same phase kind is reachable from several places —
- * a `direct_build` opened cold to fix a red build and one opened off a fresh plan want different
- * opening words — and this context is what lets the vocabulary stay at eight phase kinds instead of
- * growing a `reship` kind for every re-entry.
- *
- * No pull-request field: nothing writes one yet. `ci` will want it the moment `ship_pr` exists, and
- * adding it then is one line in `phaseBriefContext` — inventing it now would be a field with a
- * reader and no writer, which is how `generated/` and `EThreadStatus.pending` died.
- */
-export type PhaseBriefContext = {
-  kind: EPhaseKind;
-  /** 0 is the phase the job opened in. Phases are appended, never reordered. */
-  ordinal: number;
-  /** The phase this one came out of; absent only on the job's first phase. */
-  previous?: EPhaseKind;
-  /** This kind has run on this job before — a second `ci`, a `direct_build` chasing a red build. */
-  repeat: boolean;
-  /** What the human called the job, which is the only statement of intent that predates every thread. */
-  jobTitle: string;
-  /**
-   * The job's context folder, absolute. Interpolated into the prose rather than left as
-   * `$ATLAS_CONTEXT_DIR`, because `Read`/`Write`/`Edit` take a literal path with no shell expansion
-   * — the agent has to be able to copy a string it can see.
-   */
-  contextRoot: string;
-  /** The job's branch, when it took one. */
-  branch?: string;
-};
-
-/**
- * Two halves with two different lifetimes, deliberately returned together so one function owns the
- * phase's whole voice.
- *
- * `instructions` is standing: it rides the system prompt of EVERY turn in the phase, because the
- * system prompt is the only channel that survives a session rotation without being re-said.
- * `opening` is situational and said once, as the thread's first `harness` seed message — so it is
- * visible in the transcript, which is what makes "what was this thread told" auditable.
- */
-export type PhaseBrief = {
-  instructions: string;
-  opening: string;
-};
 
 /** A file in the job's context folder, named the way the folder names it: bucket plus relative path. */
 export type ContextFileRef = {
@@ -92,7 +52,7 @@ export type PhaseSpec = {
    * offers. A phase that should forbid threads declares none and forbids them by construction, so
    * there is no `allowHumanThreads` flag. `ROLE_GROUP` (role → phase) was deleted for this: it
    * assumed a role belongs to one phase, which stopped being true the moment `planning` could host
-   * an `intake` thread. Do not resurrect the inverse.
+   * a `charting` thread. Do not resurrect the inverse.
    */
   roles: readonly EThreadRole[];
   /**
@@ -136,24 +96,46 @@ function unnumberedIn(bucket: ContextBucket) {
 }
 
 /** `artifacts/` is never floored — nested bundles, inherently situational, always agent-declared. */
-const INTAKE_FLOOR = unnumberedIn("intake");
+const CHARTING_FLOOR = unnumberedIn("charting");
 const SPECS_FLOOR = unnumberedIn("specs");
 
 export const PHASE_SPECS: Record<EPhaseKind, PhaseSpec> = {
-  // Intake is wayfinder: it clears fog on WHAT this is and whether it is worth doing, and ends when
-  // the destination can be written honestly. Its roles are wayfinder's ticket types.
-  intake: {
-    kind: EPhaseKind.intake,
+  // Every job's first phase, and the only kind that names an absence rather than an activity: a
+  // generic coding agent, the way a regular session is. The stance is earned by the work rather than
+  // assumed at creation, and the agent's judgement about WHEN to escalate is the feature.
+  //
+  // NOTHING points at `generic` — no other phase's `next` contains it. Returning to un-postured
+  // conversation is a human judgement, and start-a-phase already reaches any phase; `next` means
+  // "what the agent may propose", never "what is legal". `attach` is the ordinary floor rather than
+  // an empty function: empty by construction on a fresh job, and it hands over `map.md` on a job
+  // re-entered after charting. One rule, two behaviours, no special case.
+  generic: {
+    kind: EPhaseKind.generic,
     roles: [
-      EThreadRole.intake,
+      EThreadRole.generic,
+      EThreadRole.research,
+      EThreadRole.prototype,
+      EThreadRole.task,
+    ],
+    next: [EPhaseKind.charting, EPhaseKind.planning],
+    confirm: EPhaseConfirm.ask,
+    brief: genericBrief,
+    attach: CHARTING_FLOOR,
+  },
+  // Charting is wayfinder: it clears fog on WHAT this is and whether it is worth doing, and ends when
+  // the destination can be written honestly. Its roles are wayfinder's ticket types.
+  charting: {
+    kind: EPhaseKind.charting,
+    roles: [
+      EThreadRole.charting,
       EThreadRole.research,
       EThreadRole.prototype,
       EThreadRole.task,
     ],
     next: [EPhaseKind.planning, EPhaseKind.design],
     confirm: EPhaseConfirm.ask,
-    brief: intakeBrief,
-    attach: INTAKE_FLOOR,
+    brief: chartingBrief,
+    attach: CHARTING_FLOOR,
   },
   // Parked and human-in-the-loop by design: the work happens outside Atlas. A design thread writes
   // a handoff, Dennis runs Claude Design himself, and attaches the bundle back into `artifacts/`.
@@ -163,24 +145,24 @@ export const PHASE_SPECS: Record<EPhaseKind, PhaseSpec> = {
     next: [EPhaseKind.planning],
     confirm: EPhaseConfirm.ask,
     brief: designBrief,
-    attach: INTAKE_FLOOR,
+    attach: CHARTING_FLOOR,
   },
-  // `intake` is in planning's roles on purpose: there is no `planning → intake` back-edge, because
+  // `charting` is in planning's roles on purpose: there is no `planning → charting` back-edge, because
   // `advance_phase` throws unless you are the last open thread — a back-edge would force the planner
-  // to destroy its own context to ask one question. It opens an intake thread beside itself instead.
+  // to destroy its own context to ask one question. It opens a charting thread beside itself instead.
   planning: {
     kind: EPhaseKind.planning,
     roles: [
       EThreadRole.planner,
       EThreadRole.plan_review,
-      EThreadRole.intake,
+      EThreadRole.charting,
       EThreadRole.research,
       EThreadRole.prototype,
     ],
     next: [EPhaseKind.build, EPhaseKind.direct_build, EPhaseKind.design],
     confirm: EPhaseConfirm.ask,
     brief: planningBrief,
-    attach: INTAKE_FLOOR,
+    attach: CHARTING_FLOOR,
   },
   // The thorough path: review children on close, and the wave always goes to master review. The
   // backward edge to planning is for a builder that finds the plan wrong while the discovery is fresh.
@@ -188,7 +170,12 @@ export const PHASE_SPECS: Record<EPhaseKind, PhaseSpec> = {
     kind: EPhaseKind.build,
     roles: [EThreadRole.builder],
     next: [EPhaseKind.master_review, EPhaseKind.planning],
-    confirm: EPhaseConfirm.ask,
+    // Exits on its own: master review is the one natural successor and there is nothing to eyeball
+    // that master review is not about to look at anyway. The back-edge to `planning` rides the same
+    // rule and IS a fork taken without a keypress — the one auto exit that has one. Recorded rather
+    // than special-cased: if a builder re-planning unasked turns out to be wrong, the fix is to make
+    // confirmation a function of the edge, not to bolt a condition onto this phase.
+    confirm: EPhaseConfirm.auto,
     brief: buildBrief,
     attach: SPECS_FLOOR,
   },
@@ -198,7 +185,8 @@ export const PHASE_SPECS: Record<EPhaseKind, PhaseSpec> = {
     kind: EPhaseKind.direct_build,
     roles: [EThreadRole.builder],
     next: [EPhaseKind.post_build],
-    confirm: EPhaseConfirm.ask,
+    // One successor, mechanical signal, nothing to look at yet — the review happens in post_build.
+    confirm: EPhaseConfirm.auto,
     brief: directBuildBrief,
     attach: SPECS_FLOOR,
   },
@@ -206,7 +194,9 @@ export const PHASE_SPECS: Record<EPhaseKind, PhaseSpec> = {
     kind: EPhaseKind.master_review,
     roles: [EThreadRole.master_review],
     next: [EPhaseKind.post_build],
-    confirm: EPhaseConfirm.ask,
+    // Its whole output is a report Dennis is about to read in post_build; asking here would be a
+    // keystroke between him and the same information.
+    confirm: EPhaseConfirm.auto,
     brief: masterReviewBrief,
     attach: SPECS_FLOOR,
   },
@@ -223,7 +213,12 @@ export const PHASE_SPECS: Record<EPhaseKind, PhaseSpec> = {
   // so an empty `next` must be read as "nothing to propose", never as "nothing is legal".
   ci: {
     kind: EPhaseKind.ci,
-    roles: [EThreadRole.ci],
+    // Two roles, and the second one has no writer yet on purpose: `ship_pr` is what the phase opens
+    // with, and `ci` is the thread Dennis opens by hand when something comes back red. `ci` is kept
+    // NAMED rather than folded into `builder` because it is the routing target for when webhooks
+    // eventually land — an event needs a role to be delivered to, and minting one at that point
+    // would be a migration.
+    roles: [EThreadRole.ship_pr, EThreadRole.ci],
     next: [],
     confirm: EPhaseConfirm.ask,
     brief: ciBrief,
@@ -247,43 +242,6 @@ export function nextPhasesFor(kind: EPhaseKind): readonly EPhaseKind[] {
 
 export function phaseLabel(kind: EPhaseKind): string {
   return kind.replace(/_/g, " ");
-}
-
-type PhaseRow = { id: string; kind: EPhaseKind; ordinal: number };
-
-/**
- * The context a brief is written against, assembled from the job's phase list.
- *
- * Pure so the "is this a repeat" and "what preceded it" decisions are testable without a database —
- * they are read off ordinals rather than stored, because a phase list is append-only and therefore
- * already says both.
- */
-export function phaseBriefContext(args: {
-  phases: readonly PhaseRow[];
-  phaseId: string;
-  jobTitle: string;
-  contextRoot: string;
-  branch?: string | null;
-}): PhaseBriefContext {
-  const ordered = [...args.phases].sort((a, b) => a.ordinal - b.ordinal);
-  const index = ordered.findIndex((phase) => phase.id === args.phaseId);
-  const phase = ordered[index];
-  if (!phase) throw new Error(`phase ${args.phaseId} is not on this job`);
-
-  const previous = index > 0 ? ordered[index - 1] : undefined;
-  const repeat = ordered
-    .slice(0, index)
-    .some((earlier) => earlier.kind === phase.kind);
-
-  return {
-    kind: phase.kind,
-    ordinal: phase.ordinal,
-    ...(previous ? { previous: previous.kind } : {}),
-    repeat,
-    jobTitle: args.jobTitle,
-    contextRoot: args.contextRoot,
-    ...(args.branch ? { branch: args.branch } : {}),
-  };
 }
 
 /** The brief for a phase, in one call — the only door the app layer needs. */

@@ -101,7 +101,7 @@ describe('threadAttention', () => {
 
 describe('threadList', () => {
   const threads = [
-    thread({ id: 't1', role: EThreadRole.intake, phaseId: 'p1', phaseKind: EPhaseKind.intake, status: EThreadStatus.closed }),
+    thread({ id: 't1', role: EThreadRole.charting, phaseId: 'p1', phaseKind: EPhaseKind.charting, status: EThreadStatus.closed }),
     thread({ id: 't2', role: EThreadRole.planner, phaseId: 'p2', phaseKind: EPhaseKind.planning, status: EThreadStatus.closed }),
     thread({ id: 't3', role: EThreadRole.plan_review, phaseId: 'p2', phaseKind: EPhaseKind.planning, engine: EEngine.codex, status: EThreadStatus.closed }),
     thread({ id: 't4', role: EThreadRole.builder, phaseId: 'p3', phaseKind: EPhaseKind.build }),
@@ -110,7 +110,7 @@ describe('threadList', () => {
   it('groups by phase in the order the rows arrive', () => {
     const { groups } = threadList({ threads, activeThreadId: 't4', runningThreadIds: [] });
 
-    expect(groups.map((group) => group.label)).toEqual(['intake', 'planning', 'build']);
+    expect(groups.map((group) => group.label)).toEqual(['charting', 'planning', 'build']);
     expect(groups[1]?.threads.map((row) => row.id)).toEqual(['t2', 't3']);
   });
 

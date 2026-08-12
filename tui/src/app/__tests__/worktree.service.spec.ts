@@ -41,7 +41,7 @@ describe('worktrees over a real repository', () => {
   }
 
   async function newJob(title: string) {
-    const job = await jobRepository.create({ projectId, title, kind: EPhaseKind.intake });
+    const job = await jobRepository.create({ projectId, title, kind: EPhaseKind.charting });
     return job;
   }
 

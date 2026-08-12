@@ -60,6 +60,22 @@ export class SessionRepository {
   }
 
   /**
+   * The session a thread is actually on right now, or `null` when it has none open.
+   *
+   * Rotation happens under whoever is holding a session row — the agent calls `rotate` mid-turn, or
+   * another terminal drives the same thread — so a caller that kept its copy would resume the leg
+   * that was just retired, which is the one context the rotation existed to leave behind. Read from
+   * the rows rather than from `Thread.activeSessionId` because it answers the question directly: the
+   * newest session that has not ended.
+   */
+  async currentForThread(threadId: string): Promise<EngineSession | null> {
+    return this.prismaService.engineSession.findFirst({
+      where: { threadId, endedAt: null },
+      orderBy: { ordinal: 'desc' },
+    });
+  }
+
+  /**
    * The SDK's own id, learned from the first frame of the first turn. Needed to resume.
    *
    * Named arguments because both are opaque ids of the same type: our row id and the engine's, which
@@ -76,6 +92,10 @@ export class SessionRepository {
   /**
    * Written once per turn, not once per frame. It exists so reopening a thread shows its real
    * context pressure instead of `—` until the next turn produces a reading.
+   *
+   * The number is a percentage of the rotation BUDGET, not of the physical window, and it may
+   * therefore exceed 100 — see `budgetPercent`. Rows written before that change hold a window
+   * percentage and read low; nothing corrects them, because the next turn overwrites it.
    */
   async recordContextPercent(id: string, contextPercent: number): Promise<void> {
     await this.prismaService.engineSession.update({ where: { id }, data: { contextPercent } });

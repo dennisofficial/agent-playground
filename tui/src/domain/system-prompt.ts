@@ -1,3 +1,4 @@
+import { CANARY } from './canary.js';
 import { EHarnessVariant } from './message.js';
 
 /**
@@ -38,6 +39,25 @@ An envelope carries the harness's authority over the session's mechanics; it doe
 human's authority to approve, accept or decide on his behalf.`;
 
 /**
+ * The canary, PLANTED — watching for the glyph's absence measures nothing unless something asks for
+ * it in the first place.
+ *
+ * It lives in the system prompt rather than in a `CLAUDE.md` in Atlas's engine home for one reason:
+ * the instrument has to work on every engine, and a settings file is Claude-only. This string is
+ * built for every turn of every engine, which is exactly the property the measurement needs.
+ *
+ * Stated plainly and briefly, because a standing instruction dressed up as a test stops being one:
+ * what is being measured is whether a long session still follows a trivial standing instruction, so
+ * the instruction has to read as trivial. The glyph never reaches a screen — every prose surface
+ * strips a leading one at render (`stripCanary`) — and it is never stripped on the way into the
+ * store, which is where the absence is observed.
+ */
+const CANARY_SECTION = `## One formatting rule
+
+Begin every message you write with the glyph ${CANARY} as the very first character, before any other
+text. Atlas strips it before anything is displayed and uses it as a health check on the session.`;
+
+/**
  * The system prompt for a turn: the envelope vocabulary, then whatever the phase wants said.
  *
  * The brief goes AFTER the vocabulary because it is the more specific instruction and the section it
@@ -45,7 +65,7 @@ human's authority to approve, accept or decide on his behalf.`;
  * table owns the prose, this owns only the order.
  */
 export function buildSystemPrompt(args: { brief?: string } = {}): string {
-  const sections = [ENVELOPE_SECTION, args.brief?.trim()].filter(
+  const sections = [ENVELOPE_SECTION, CANARY_SECTION, args.brief?.trim()].filter(
     (section): section is string => Boolean(section),
   );
   return sections.join('\n\n');

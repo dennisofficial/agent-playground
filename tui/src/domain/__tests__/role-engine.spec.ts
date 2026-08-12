@@ -87,7 +87,7 @@ describe('ROLE_BINDINGS', () => {
   it('hands out configs that cannot be mutated through each other', () => {
     // The arms are spread from one shared literal per engine; sharing the OBJECT would let a caller
     // that edits a binding rewrite every other role bound to the same engine.
-    expect(bindingFor(EThreadRole.intake).engine).not.toBe(bindingFor(EThreadRole.task).engine);
+    expect(bindingFor(EThreadRole.charting).engine).not.toBe(bindingFor(EThreadRole.task).engine);
   });
 });
 

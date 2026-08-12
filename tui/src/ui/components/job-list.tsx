@@ -55,6 +55,11 @@ export function JobListRow(props: {
   /** The spinner's current frame, for whichever job has a turn in flight somewhere inside it. */
   frame: string;
   runningThreadIds: readonly string[];
+  /**
+   * Threads of this job holding a pending proposal. The row's whole "waiting on you" signal —
+   * `confirm` outranks `working…` inside `attentionFor`, so nothing is decided here.
+   */
+  proposalThreadIds?: readonly string[];
   /** Another terminal is driving this one. Still openable — it costs one extra keypress. */
   claimed?: boolean;
 }): React.ReactNode {
@@ -62,6 +67,12 @@ export function JobListRow(props: {
   const attention = jobAttention({
     threads: job.threads,
     runningThreadIds: props.runningThreadIds,
+    proposalThreadIds: props.proposalThreadIds ?? [],
+    // The render cache `ship_pr` writes. It only ever changes the row that has NOTHING open — a
+    // shipped job reads `shipped` rather than `start a phase` — and it is not terminal: a later
+    // phase makes the same row active again, which is correct. It is out of this machine's hands,
+    // not finished with.
+    hasPullRequest: job.prNumber !== null,
   });
 
   return (

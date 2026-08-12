@@ -1,21 +1,20 @@
 import { describe, expect, it } from 'bun:test';
 import { EPhaseKind, EThreadRole } from '../../generated/prisma/enums.js';
+import type { PhaseBriefContext } from '../phase-brief.js';
 import {
   EPhaseConfirm,
   PHASE_SPECS,
   briefFor,
   nextPhasesFor,
-  phaseBriefContext,
   rolesFor,
   type ContextFileRef,
-  type PhaseBriefContext,
 } from '../phase-spec.js';
 
 const CONTEXT_ROOT = '/Users/dennis/.atlas/jobs/job-1/context';
 
 function ctx(over: Partial<PhaseBriefContext> = {}): PhaseBriefContext {
   return {
-    kind: EPhaseKind.intake,
+    kind: EPhaseKind.charting,
     ordinal: 0,
     repeat: false,
     jobTitle: 'add avatar upload',
@@ -29,7 +28,8 @@ describe('the phase graph', () => {
   // edge has to be a deliberate two-place edit — this IS the pipeline, and it moving by accident is
   // the failure worth catching.
   const EDGES: Record<EPhaseKind, EPhaseKind[]> = {
-    intake: [EPhaseKind.planning, EPhaseKind.design],
+    generic: [EPhaseKind.charting, EPhaseKind.planning],
+    charting: [EPhaseKind.planning, EPhaseKind.design],
     design: [EPhaseKind.planning],
     planning: [EPhaseKind.build, EPhaseKind.direct_build, EPhaseKind.design],
     build: [EPhaseKind.master_review, EPhaseKind.planning],
@@ -55,25 +55,66 @@ describe('the phase graph', () => {
     expect(nextPhasesFor(EPhaseKind.ci)).toHaveLength(0);
   });
 
-  it('asks before entering every phase — a boundary is a human boundary', () => {
+  /**
+   * Two roles, in this order. `ship_pr` leads because a phase opens with its first role, and `ci` is
+   * kept NAMED rather than folded into `builder` because it is the routing target for when webhooks
+   * eventually land — minting a role at that point would be a migration.
+   */
+  it('declares both ci roles: the shipping one, and the one a red build is handled in', () => {
+    expect(rolesFor(EPhaseKind.ci)).toEqual([EThreadRole.ship_pr, EThreadRole.ci]);
+  });
+
+  /**
+   * `generic` is every job's entry point and nothing else may propose it: dropping a job back into
+   * un-postured conversation is a human judgement, and start-a-phase already reaches any phase. An
+   * edge added here would make it something the agent could do to itself.
+   */
+  it('lets nothing point back at generic — it is entered, never proposed', () => {
     for (const kind of Object.values(EPhaseKind)) {
-      expect(PHASE_SPECS[kind].confirm).toBe(EPhaseConfirm.ask);
+      expect(nextPhasesFor(kind)).not.toContain(EPhaseKind.generic);
+    }
+  });
+
+  /**
+   * Written out rather than derived, for the reason the edges are: which boundaries stop for the
+   * human is the single most consequential thing in this table, and an ask that quietly became an
+   * auto would show up only as a job that had already moved on.
+   */
+  it('asks at every phase boundary except the three that carry no decision', () => {
+    const AUTO: EPhaseKind[] = [
+      EPhaseKind.build,
+      EPhaseKind.direct_build,
+      EPhaseKind.master_review,
+    ];
+    for (const kind of Object.values(EPhaseKind)) {
+      expect(PHASE_SPECS[kind].confirm).toBe(
+        AUTO.includes(kind) ? EPhaseConfirm.auto : EPhaseConfirm.ask,
+      );
     }
   });
 });
 
 describe('roles', () => {
-  it('gives intake wayfinder’s four ticket types', () => {
-    expect(rolesFor(EPhaseKind.intake)).toEqual([
-      EThreadRole.intake,
+  it('gives generic the same four types charting has — research here costs no phase advance', () => {
+    expect(rolesFor(EPhaseKind.generic)).toEqual([
+      EThreadRole.generic,
       EThreadRole.research,
       EThreadRole.prototype,
       EThreadRole.task,
     ]);
   });
 
-  it('lets planning host an intake thread — fog found while planning never goes back a phase', () => {
-    expect(rolesFor(EPhaseKind.planning)).toContain(EThreadRole.intake);
+  it('gives charting wayfinder’s four ticket types', () => {
+    expect(rolesFor(EPhaseKind.charting)).toEqual([
+      EThreadRole.charting,
+      EThreadRole.research,
+      EThreadRole.prototype,
+      EThreadRole.task,
+    ]);
+  });
+
+  it('lets planning host a charting thread — fog found while planning never goes back a phase', () => {
+    expect(rolesFor(EPhaseKind.planning)).toContain(EThreadRole.charting);
   });
 
   it('names a real role everywhere — this is the only role list in the app', () => {
@@ -87,8 +128,8 @@ describe('roles', () => {
 
 describe('attach — the structural floor', () => {
   const files: ContextFileRef[] = [
-    { bucket: 'intake', path: 'map.md' },
-    { bucket: 'intake', path: '03-where-does-crop-run.md' },
+    { bucket: 'charting', path: 'map.md' },
+    { bucket: 'charting', path: '03-where-does-crop-run.md' },
     { bucket: 'specs', path: 'spec.md' },
     { bucket: 'specs', path: 'data-model.md' },
     { bucket: 'specs', path: '01-upload-and-see-it.md' },
@@ -98,7 +139,19 @@ describe('attach — the structural floor', () => {
 
   it('floors planning on the map, not on twelve resolved tickets', () => {
     expect(PHASE_SPECS[EPhaseKind.planning].attach(files)).toEqual([
-      { bucket: 'intake', path: 'map.md' },
+      { bucket: 'charting', path: 'map.md' },
+    ]);
+  });
+
+  /**
+   * One rule, two behaviours: `generic` takes the ordinary floor rather than an empty function, so
+   * a fresh job hands over nothing because the bucket is empty, and a job re-entered after charting
+   * hands over the map without anyone declaring it.
+   */
+  it('floors generic on nothing when the folder is empty, and on the map when it is not', () => {
+    expect(PHASE_SPECS[EPhaseKind.generic].attach([])).toEqual([]);
+    expect(PHASE_SPECS[EPhaseKind.generic].attach(files)).toEqual([
+      { bucket: 'charting', path: 'map.md' },
     ]);
   });
 
@@ -135,9 +188,9 @@ describe('brief(ctx)', () => {
   });
 
   it('names the job and absolute paths — file tools do not expand env vars', () => {
-    const brief = briefFor(ctx({ kind: EPhaseKind.planning, previous: EPhaseKind.intake }));
+    const brief = briefFor(ctx({ kind: EPhaseKind.planning, previous: EPhaseKind.charting }));
     expect(brief.opening).toContain('add avatar upload');
-    expect(brief.instructions).toContain(`${CONTEXT_ROOT}/intake/map.md`);
+    expect(brief.instructions).toContain(`${CONTEXT_ROOT}/charting/map.md`);
     expect(brief.instructions).not.toContain('$ATLAS');
   });
 
@@ -153,53 +206,5 @@ describe('brief(ctx)', () => {
       expect(brief.instructions.trim().length).toBeGreaterThan(0);
       expect(brief.opening.trim().length).toBeGreaterThan(0);
     }
-  });
-});
-
-describe('phaseBriefContext', () => {
-  const phases = [
-    { id: 'p0', kind: EPhaseKind.intake, ordinal: 0 },
-    { id: 'p1', kind: EPhaseKind.planning, ordinal: 1 },
-    { id: 'p2', kind: EPhaseKind.direct_build, ordinal: 2 },
-    { id: 'p3', kind: EPhaseKind.post_build, ordinal: 3 },
-    { id: 'p4', kind: EPhaseKind.ci, ordinal: 4 },
-    { id: 'p5', kind: EPhaseKind.direct_build, ordinal: 5 },
-  ];
-
-  const build = (phaseId: string, branch?: string | null): PhaseBriefContext =>
-    phaseBriefContext({
-      phases,
-      phaseId,
-      jobTitle: 'add avatar upload',
-      contextRoot: CONTEXT_ROOT,
-      ...(branch === undefined ? {} : { branch }),
-    });
-
-  it('reads the predecessor and the repeat off the append-only list', () => {
-    expect(build('p5')).toMatchObject({
-      kind: EPhaseKind.direct_build,
-      ordinal: 5,
-      previous: EPhaseKind.ci,
-      repeat: true,
-    });
-  });
-
-  it('gives the first phase no predecessor — there is nothing it came out of', () => {
-    const first = build('p0');
-    expect(first.previous).toBeUndefined();
-    expect(first.repeat).toBe(false);
-  });
-
-  it('does not call a kind a repeat on its first run', () => {
-    expect(build('p2').repeat).toBe(false);
-  });
-
-  it('omits a branch the job does not have rather than carrying null into the prose', () => {
-    expect(build('p2', null).branch).toBeUndefined();
-    expect(build('p2', 'atlas/x').branch).toBe('atlas/x');
-  });
-
-  it('throws when the phase is not on the job — a brief for nowhere is not a thing', () => {
-    expect(() => build('nope')).toThrow('not on this job');
   });
 });

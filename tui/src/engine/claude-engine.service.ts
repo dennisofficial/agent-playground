@@ -1,10 +1,8 @@
-import type {
-  Options,
-  Query,
-  SDKUserMessage,
-} from "@anthropic-ai/claude-agent-sdk";
+import type { Query, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import type { EngineEvent } from "../domain/message.js";
+import type { EngineTool } from "./atlas-tool-server.js";
+import { claudeOptions } from "./claude-options.js";
 import {
   CLAUDE_AGENT_SDK,
   type ClaudeAgentSdk,
@@ -25,7 +23,22 @@ export type RunArgs = {
   systemPrompt?: string | undefined;
   /** Credential injection — the env bag from EngineHomeService. */
   env: Record<string, string>;
+  /**
+   * Atlas's own tools for this turn, already gated. The engine renders what it is handed and never
+   * decides what is in the list — visibility is one function in `app/tools/`, and a transport that
+   * second-guessed it would be a second place to get gating wrong.
+   */
+  tools?: readonly EngineTool[] | undefined;
   onEvent: (event: EngineEvent) => void;
+  /**
+   * Called after every tool call, and whatever it returns is handed to the model as extra context on
+   * that tool's result. It is how Atlas speaks into a turn WITHOUT interrupting a thought: the agent
+   * is already waiting on the tool, so a message arriving there costs it nothing.
+   *
+   * The engine neither knows nor decides what goes in it — returning `undefined` (the common case)
+   * adds nothing to the frame at all.
+   */
+  onToolBoundary?: (() => Promise<string | undefined>) | undefined;
 };
 
 export type RunResult = {
@@ -60,7 +73,7 @@ export class ClaudeEngineService {
 
     const handle = this.sdk.query({
       prompt: input,
-      options: this.options(args),
+      options: claudeOptions(args),
     });
     const state = { interrupted: false, live: true };
     const done = this.drain(handle, input, args, state);
@@ -130,24 +143,6 @@ export class ClaudeEngineService {
       ok,
       ...(engineSessionId === undefined ? {} : { engineSessionId }),
       interrupted: state.interrupted,
-    };
-  }
-
-  private options(args: RunArgs): Options {
-    return {
-      ...(args.systemPrompt === undefined
-        ? {}
-        : { systemPrompt: args.systemPrompt }),
-      cwd: args.cwd,
-      model: args.model,
-      ...(args.resume === undefined ? {} : { resume: args.resume }),
-      // The live tail exists because of this flag — without it there are no deltas to render.
-      includePartialMessages: true,
-      thinking: { type: "adaptive", display: "summarized" },
-      // Atlas allows everything. No approval card, no permission mode, no `waiting` run state.
-      permissionMode: "bypassPermissions",
-      allowDangerouslySkipPermissions: true,
-      env: { ...process.env, ...args.env },
     };
   }
 }

@@ -56,8 +56,8 @@ describe('meterBand', () => {
   it.each([
     ['ctx', 59, 'normal'],
     ['ctx', 60, 'warn'],
-    ['ctx', 78, 'hot'],
-    ['ctx', 90, 'red'],
+    ['ctx', 90, 'hot'],
+    ['ctx', 100, 'red'],
     ['fiveHour', 82, 'hot'],
     ['fiveHour', 93, 'red'],
     ['sevenDay', 69, 'normal'],
@@ -71,6 +71,14 @@ describe('meterBand', () => {
     // percent and show only the countdown.
     expect(meterBand('fiveHour', 99)).toBe('red');
     expect(meterBand('fiveHour', 100)).toBe('spent');
+  });
+
+  it('never calls ctx spent, because a budget is exceeded rather than emptied', () => {
+    // `spent` is for windows that REFILL. The context budget is advisory: 100% is where Atlas starts
+    // asking for a hand-off, and the meter keeps counting past it because "27% over" is the reading
+    // worth acting on.
+    expect(meterBand('ctx', 100)).toBe('red');
+    expect(meterBand('ctx', 127)).toBe('red');
   });
 
   it('calls everything above normal pressured, so the ink schemes agree with the ramp', () => {
@@ -154,14 +162,49 @@ describe('resolveContextLimit', () => {
 
 describe('budgetFor', () => {
   /**
-   * It is ONE number today, on purpose — the arguments exist so narrowing to per-engine and then
-   * per-model is a function body rather than a call-site refactor. This test pins the shape, not
-   * the values: the values are guesses owned by design ticket 16 and will change.
+   * The VALUES here are seeds, not measurements — design 06 §3's 180K/300K for the Opus class, and
+   * ticket 16 has not reported the real curve yet. What these tests pin is the shape and the two
+   * relations that are not guesses: the smaller models get less runway, and no budget may exceed the
+   * window it is measured against.
    */
-  it('answers with the same budget for every engine and model, for now', () => {
-    const claude = budgetFor({ engine: EEngine.claude, model: 'claude-opus-5' });
-    expect(claude.soft).toBeGreaterThan(0);
-    expect(claude.hard).toBeGreaterThan(claude.soft);
-    expect(budgetFor({ engine: EEngine.codex, model: 'gpt-5.6-sol' })).toEqual(claude);
+  it('gives the Opus class the design seeds', () => {
+    expect(budgetFor({ engine: EEngine.claude, model: 'claude-opus-5' })).toEqual({
+      soft: 180_000,
+      hard: 300_000,
+    });
+  });
+
+  it('halves the runway for the models that degrade earlier', () => {
+    // ~32K vs ~64K effective context is the one relative fact the research supports (06 §5), so
+    // Sonnet and Haiku are budgeted at half of Opus rather than at a separately invented number.
+    const sonnet = budgetFor({ engine: EEngine.claude, model: 'claude-sonnet-5' });
+    expect(sonnet.soft).toBe(90_000);
+    expect(sonnet.hard).toBe(150_000);
+  });
+
+  it('never budgets past the window, because past the window is the wall', () => {
+    // A 200K model cannot spend a 180K soft budget usefully — 90% of the window is not a hand-off
+    // threshold, it is the point where the next request is refused.
+    const haiku = budgetFor({ engine: EEngine.claude, model: 'claude-haiku-4-5-20251001' });
+    expect(haiku.soft).toBeLessThanOrEqual(200_000 * 0.55);
+    expect(haiku.hard).toBeLessThanOrEqual(200_000 * 0.9);
+  });
+
+  it('takes the window the engine REPORTED over anything read off the model name', () => {
+    // Codex's window moves remotely, so the reported number wins. Legacy pinned a constant and had
+    // no way to notice when it stopped being true.
+    const reported = budgetFor({
+      engine: EEngine.codex,
+      model: 'gpt-5.6-sol',
+      contextLimit: 100_000,
+    });
+    expect(reported.soft).toBe(55_000);
+    expect(reported.hard).toBe(90_000);
+  });
+
+  it('gives an unknown model the conservative row rather than the generous one', () => {
+    // Guessing high nudges too late, and too late is the failure this whole mechanism exists for.
+    const unknown = budgetFor({ engine: EEngine.claude, model: 'something-else' });
+    expect(unknown.soft).toBeLessThan(180_000);
   });
 });

@@ -88,6 +88,27 @@ export function jobAttention(args: {
   });
 }
 
+/**
+ * Pending proposals as the rows want them: which threads are waiting, under the job that is waiting.
+ *
+ * The list reads them unscoped in one query — a pending row exists only between an agent asking and
+ * Dennis answering, so there are never many — and this is the whole of the shaping. Keyed by job and
+ * carrying THREADS, because a job's condition is the union of its threads' facts and `jobAttention`
+ * is the only place that ordering lives.
+ */
+export function proposalsByJob(
+  proposals: readonly { jobId: string; raisedByThreadId: string }[],
+): Map<string, string[]> {
+  const grouped = new Map<string, string[]>();
+  for (const proposal of proposals) {
+    grouped.set(proposal.jobId, [
+      ...(grouped.get(proposal.jobId) ?? []),
+      proposal.raisedByThreadId,
+    ]);
+  }
+  return grouped;
+}
+
 /** There is no archive state and no undo, so the confirm quotes the transcript it is about to burn. */
 export function deletionCost(job: { messageCount: number }): string {
   const messages =

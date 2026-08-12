@@ -1,8 +1,13 @@
 import type { EngineSession } from "../generated/prisma/client.js";
 import type { AccountUsageService } from "./account-usage.service.js";
+import type { ContextPressureService } from "./context-pressure.service.js";
 import type { ConversationStore } from "./conversation.store.js";
+import type { SessionManagerService } from "./session-manager.service.js";
+import { rotateOnContextWall } from "./session-rotation.js";
 import type { TurnEventApplier } from "./turn-events.js";
 import type { Lane, TurnLanes } from "./turn-lanes.js";
+import { closeCanaryTurn } from "./turn-nudge.js";
+import type { RunTurnArgs } from "./turn-args.js";
 
 /**
  * Everything a turn does on its way out, whether it succeeded, failed or never started.
@@ -22,11 +27,19 @@ export async function finaliseTurn(args: {
   store: ConversationStore;
   events: TurnEventApplier;
   accountUsageService: AccountUsageService;
+  contextPressureService: ContextPressureService;
+  sessionManagerService: SessionManagerService;
   threadId: string;
   /** The session the turn actually RAN on — rotation may have moved it after the caller's copy. */
   session: EngineSession;
   startedAt: Date;
   ok: boolean;
+  /** The turn that ran, so a forced rotation can hand its `brief`, `tools` and `cwd` to the successor. */
+  turn: RunTurnArgs;
+  /** The transcript itself no longer fits. The ONE rotation Atlas forces — see `rotateOnContextWall`. */
+  wall: boolean;
+  /** `TurnRunnerService.run`, for the successor's first turn. Not awaited: this turn is still ending. */
+  run: (turn: RunTurnArgs) => void;
   onWarn: (message: string) => void;
 }): Promise<void> {
   const { lane, lanes, store, session, threadId } = args;
@@ -52,6 +65,15 @@ export async function finaliseTurn(args: {
     threadId,
   });
 
+  // The canary is scored per TURN, so its sample closes here — one entry, or none at all when the
+  // turn produced no prose to open.
+  closeCanaryTurn({
+    contextPressureService: args.contextPressureService,
+    store,
+    sessionId: session.id,
+    lane,
+  });
+
   await args.events.recordCompletion({
     threadId,
     sessionId: session.id,
@@ -61,5 +83,20 @@ export async function finaliseTurn(args: {
     usage,
     contextPercent: lane.contextPercent,
     onWarn: args.onWarn,
+  });
+
+  // Last, so the seam falls where the failure did and the dead leg's ledger row is already written.
+  // An ordinary engine crash deliberately does NOT reach here: the transcript is intact, `r` restarts
+  // in place, and burning a leg on it would throw away a working context.
+  if (!args.wall) return;
+  args.contextPressureService.forget(session.id);
+  await rotateOnContextWall({
+    turn: args.turn,
+    session,
+    sessionManagerService: args.sessionManagerService,
+    run: args.run,
+  }).catch((error: unknown) => {
+    args.onWarn(`context-wall rotation failed: ${String(error)}`);
+    store.notice("this session is out of context and could not be rotated");
   });
 }

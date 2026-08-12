@@ -6,6 +6,7 @@ import type { AccountRepository } from '../../store/account.repository.js';
 import type { JobRepository } from '../../store/job.repository.js';
 import type { ProjectRepository } from '../../store/project.repository.js';
 import type { ThreadRepository } from '../../store/thread.repository.js';
+import type { TransitionRepository } from '../../store/transition.repository.js';
 import type { AccountUsageService } from '../account-usage.service.js';
 import type { ContextFolderService } from '../context-folder.service.js';
 import { ConversationService } from '../conversation.service.js';
@@ -13,6 +14,9 @@ import { ConversationStoreRegistry } from '../conversation-store.registry.js';
 import type { GitService } from '../git.service.js';
 import type { MessageRepository } from '../../store/message.repository.js';
 import { PhaseBriefService } from '../phase-brief.service.js';
+import { ThreadSeamService } from '../thread-seam.service.js';
+import { fakeShipService } from './ship.fixture.js';
+import { fakeTaskService } from './tasks.fixture.js';
 import type { SessionManagerService } from '../session-manager.service.js';
 import type { SessionRepository } from '../../store/session.repository.js';
 import type { TurnRepository } from '../../store/turn.repository.js';
@@ -22,7 +26,7 @@ import type { WorktreeService } from '../worktree.service.js';
 
 /**
  * A new job must not open onto a blank conversation. These two tests are the whole seam: the phase
- * table supplies the words, and creating a job fires them into the intake thread as Atlas rather
+ * table supplies the words, and creating a job fires them into the charting thread as Atlas rather
  * than as the human.
  */
 
@@ -33,35 +37,56 @@ const JOB = {
   projectId: 'project-1',
 } as unknown as Job;
 
-const THREAD = { id: 'thread-1', phaseId: 'phase-1', role: EThreadRole.intake } as unknown as Thread;
+const THREAD = { id: 'thread-1', phaseId: 'phase-1', role: EThreadRole.charting } as unknown as Thread;
 
 const PHASES = [
-  { id: 'phase-1', kind: EPhaseKind.intake, ordinal: 0 } as unknown as Phase,
+  { id: 'phase-1', kind: EPhaseKind.charting, ordinal: 0 } as unknown as Phase,
 ];
 
+const JOB_REPOSITORY = {
+  async listPhases(): Promise<Phase[]> {
+    return PHASES;
+  },
+} as unknown as JobRepository;
+
+const CONTEXT_FOLDER = {
+  ensure: (): string => '/atlas/jobs/job-1/context',
+} as unknown as ContextFolderService;
+
 function briefService(): PhaseBriefService {
-  return new PhaseBriefService(
-    { async listPhases(): Promise<Phase[]> { return PHASES; } } as unknown as JobRepository,
-    { ensure: (): string => '/atlas/jobs/job-1/context' } as unknown as ContextFolderService,
-  );
+  return new PhaseBriefService(JOB_REPOSITORY, CONTEXT_FOLDER);
 }
 
 function conversation(run: (args: RunTurnArgs) => Promise<void>) {
+  const sessionManagerService = {
+    async currentSession(): Promise<EngineSession> {
+      return { id: 'session-1', accountId: 'account-1' } as unknown as EngineSession;
+    },
+  } as unknown as SessionManagerService;
+  const turnRunnerService = { run } as unknown as TurnRunnerService;
+
   const service = new ConversationService(
     {} as unknown as JobRepository,
     {} as unknown as ThreadRepository,
     {} as unknown as SessionRepository,
     {} as unknown as MessageRepository,
     {} as unknown as TurnRepository,
-    {
-      async currentSession(): Promise<EngineSession> {
-        return { id: 'session-1', accountId: 'account-1' } as unknown as EngineSession;
-      },
-    } as unknown as SessionManagerService,
-    { run } as unknown as TurnRunnerService,
-    { ensure: (): string => '/atlas/jobs/job-1/context' } as unknown as ContextFolderService,
+    sessionManagerService,
+    turnRunnerService,
+    CONTEXT_FOLDER,
     { kick: (): void => undefined } as unknown as AccountUsageService,
     briefService(),
+    new ThreadSeamService(
+      JOB_REPOSITORY,
+      {} as unknown as ThreadRepository,
+      {} as unknown as TransitionRepository,
+      sessionManagerService,
+      briefService(),
+      CONTEXT_FOLDER,
+      turnRunnerService,
+      fakeTaskService(),
+      fakeShipService(),
+  ),
     new ConversationStoreRegistry(),
   );
   return service;
@@ -141,7 +166,7 @@ describe('creating a job', () => {
     return { workspace, seeded, opened };
   }
 
-  it('opens one intake thread and seeds NOTHING — the human speaks first in a job', async () => {
+  it('opens one generic thread and seeds NOTHING — the human speaks first in a job', async () => {
     const { workspace, seeded, opened } = build();
 
     const { job, thread } = await workspace.createJob({
@@ -149,9 +174,11 @@ describe('creating a job', () => {
       title: 'add avatar upload',
     });
 
-    expect(opened).toEqual([EThreadRole.intake]);
+    // `generic`, not `charting`: the stance is earned by the work rather than assumed at creation,
+    // and a job that is one question should not be met by an agent preparing to chart a map.
+    expect(opened).toEqual([EThreadRole.generic]);
     // The first thread of a job opens on the human's own words — see `job-start.spec.ts`. Seeding
-    // here would put a brief above them in the transcript and start the job in charting posture.
+    // here would put a brief above them in the transcript and start the job in a posture.
     expect(seeded).toEqual([]);
     // The thread comes back with the job because the caller opens the conversation on it directly:
     // the job row was read before `openThread` stamped `activeThreadId` onto it.

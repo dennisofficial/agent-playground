@@ -2,15 +2,21 @@ import { useTerminalDimensions } from "@opentui/react";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { basename } from "node:path";
 import type { OpenConversation } from "../../app/conversation.service.js";
-import type { ToolResultPayload } from "../../domain/message.js";
 import { withSeams, type TranscriptItem } from "../../domain/seam.js";
+import {
+  expandableIds,
+  toolResultsById,
+} from "../../domain/transcript-index.js";
 import { conversationHints } from "../../domain/conversation-hints.js";
 import { roleLabel } from "../../domain/role-engine.js";
-import { EMessageType, EThreadStatus } from "../../generated/prisma/enums.js";
+import { EThreadStatus } from "../../generated/prisma/enums.js";
 import { CONVERSATION, EDITING, GLOBAL } from "../bindings.js";
+import { runSlashCommand } from "../commands.js";
 import { glyph, theme } from "../theme.js";
 import { Breadcrumb } from "../components/breadcrumb.js";
 import { useJobSiblings } from "../hooks/use-job-siblings.js";
+import { useTasks } from "../hooks/use-tasks.js";
+import { Checklist } from "../components/checklist.js";
 import { Composer, composerRows } from "../components/composer.js";
 import { HintLine } from "../components/hint-line.js";
 import { JumpToBottom } from "../components/new-divider.js";
@@ -18,7 +24,9 @@ import { OverlayList, type OverlayItem } from "../components/overlay-list.js";
 import { Screen } from "../components/screen.js";
 import { Shortcuts, shortcutRows } from "../components/shortcuts.js";
 import { Transcript } from "../components/transcript.js";
+import { ProposalFooter } from "../components/transition-confirm.js";
 import { useComposer } from "../hooks/use-composer.js";
+import { useProposal } from "../hooks/use-proposal.js";
 import { useConversationKeys } from "../hooks/use-conversation-keys.js";
 import { useConversation, useTick } from "../hooks/use-conversation.js";
 import { useReadState } from "../hooks/use-read-state.js";
@@ -33,11 +41,13 @@ const COMMANDS: OverlayItem[] = [
   {
     id: "/rotate",
     label: "/rotate",
-    hint: "close this session and start the next",
+    hint: "ask this agent to hand over to a fresh session",
   },
   { id: "/context", label: "/context", hint: "the job’s shared folder" },
   { id: "/doctor", label: "/doctor", hint: "is my setup current and working" },
-  { id: "/compact", label: "/compact", hint: "summarise and free context" },
+  // `/compact` is gone rather than renamed: the SDK rejects it outright and auto-compaction is
+  // disabled, so rotation is the only way context is reclaimed. Typing it still works — it is
+  // aliased onto `/rotate` in `parseSlashCommand` — because the fingers that know it want that.
   { id: "/help", label: "/help", hint: "shortcuts" },
   { id: "/quit", label: "/quit", hint: "exit atlas" },
 ];
@@ -92,27 +102,18 @@ export function ConversationPage(props: {
     [state.messages, props.open.sessions],
   );
 
-  // Build a map of toolUseId → result payload so tool calls can render their results inline.
-  const toolResults = useMemo(() => {
-    const map = new Map<string, ToolResultPayload>();
-    for (const msg of state.messages) {
-      if (msg.payload.type === EMessageType.tool_result) {
-        map.set(msg.payload.toolUseId, msg.payload);
-      }
-    }
-    return map;
-  }, [state.messages]);
+  // What a tool call resolved to, so it can draw its result inline beneath itself.
+  const toolResults = useMemo(
+    () => toolResultsById(state.messages),
+    [state.messages],
+  );
 
-  // Collect tool call IDs in order for keyboard navigation.
-  const toolCallIds = useMemo(() => {
-    const ids: string[] = [];
-    for (const msg of state.messages) {
-      if (msg.payload.type === EMessageType.tool_call) {
-        ids.push(msg.payload.toolUseId);
-      }
-    }
-    return ids;
-  }, [state.messages]);
+  // Everything `x` / `X` can open, in the order it was said — tool blocks AND the file chips on a
+  // seam message, which share one expansion set because to a reader they are one gesture.
+  const toolCallIds = useMemo(
+    () => expandableIds(state.messages),
+    [state.messages],
+  );
 
   // One stable key per item.
   const itemKeys = useMemo(
@@ -147,11 +148,22 @@ export function ConversationPage(props: {
     return () => clearTimeout(timer);
   }, [clearArmed]);
 
+  // The job's pending phase advance, job-scoped rather than thread-scoped: the proposer may not be
+  // the thread on screen, and confirming has to stay one keypress from the JOB.
+  const proposal = useProposal({
+    jobId: props.open.job.id,
+    cwd: props.open.cwd,
+    revision: state.messages.length,
+    draftLength: composer.value.length,
+  });
+
   const submit = useCallback(async () => {
     const text = composer.value.trim();
     if (text.length === 0) return;
     composer.clear();
     setOverlay("none");
+    // A command RUNS rather than going to the model as text — see `runSlashCommand`.
+    if (await runSlashCommand({ text, conversation: conversationService })) return;
     // Sending is an implicit "show me what happens next".
     await conversationService.send(text);
   }, [composer, conversationService]);
@@ -178,6 +190,8 @@ export function ConversationPage(props: {
     onBack: props.onBack,
     onThreads: props.onThreads,
     onJumpToBottom: readState.handleJumpToBottom,
+    // While a proposal is up it owns `y`, `n`, `x` and `esc` — see `suspended`.
+    suspended: proposal.open,
   });
 
   const hints = conversationHints({
@@ -188,6 +202,10 @@ export function ConversationPage(props: {
     queuedCount: state.queued.length,
     draftLength: composer.value.length,
   });
+
+  // The agent's plan, if it wrote one down — re-read as the transcript grows (see `useTasks`).
+  const threadId = props.open.thread.id;
+  const tasks = useTasks({ threadId, revision: state.messages.length });
 
   // Other threads of this job working behind this one. Not other tiles — those are other tickets.
   const siblings = useJobSiblings({
@@ -225,12 +243,21 @@ export function ConversationPage(props: {
             </text>
           ) : null}
 
+          {/* Pinned above the composer rather than left in the transcript, where a scroll would
+              carry the one thing you check while it works off the screen. Draws nothing when there
+              are no tasks, so a thread that never wrote a plan pays no rows for it. */}
+          <Checklist tasks={tasks} width={width} />
+
           {/* Landing mid-history needs a way out that you can SEE — the keyboard belongs to the
               draft here, so a key on its own would be a secret. It goes directly above the composer
               rather than floating in the transcript, where a scroll would carry it off screen. */}
           {readState.pinned ? null : (
             <JumpToBottom onJump={readState.handleJumpToBottom} />
           )}
+
+          {/* Above the command palette because it is the only overlay that arrived unbidden — and
+              only ever one of the two is up, since it owns the keyboard while it is. */}
+          <ProposalFooter proposal={proposal} width={width} height={height} />
 
           {/* Overlays render ABOVE the composer. */}
           {overlay === "command" ? (

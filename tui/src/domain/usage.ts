@@ -1,4 +1,4 @@
-import type { EEngine } from '../generated/prisma/enums.js';
+import { EEngine } from '../generated/prisma/enums.js';
 import type { UsageWindowKey } from './message.js';
 
 /** `null` is a REAL state, not zero: usage is unknown until a poll or a turn reports one. */
@@ -14,18 +14,25 @@ export type MeterKey = 'ctx' | 'fiveHour' | 'sevenDay';
 
 /**
  * Thresholds differ per window because the windows mean different things — `ctx` earns attention
- * earliest because you can act on it this second (rotate, compact), and `wk` latest because a
+ * earliest because you can act on it this second (rotate, hand off), and `wk` latest because a
  * two-thirds-spent week is simply Thursday.
+ *
+ * `ctx` is read against the rotation BUDGET rather than the physical window (see `budgetFor`), so
+ * its `red` sits exactly on 100: the point where the meter turns red is the point where Atlas starts
+ * asking for a hand-off, and one number means one thing in two places.
  */
 const BANDS: Record<MeterKey, { warn: number; hot: number; red: number }> = {
-  ctx: { warn: 60, hot: 78, red: 90 },
+  ctx: { warn: 60, hot: 85, red: 100 },
   fiveHour: { warn: 65, hot: 82, red: 93 },
   sevenDay: { warn: 70, hot: 86, red: 95 },
 };
 
 export function meterBand(key: MeterKey, utilization: number | null): MeterBand {
   if (utilization === null) return 'unknown';
-  if (utilization >= 100) return 'spent';
+  // `spent` is for windows that REFILL: at 100% they have nothing left to report and the countdown
+  // becomes the only answer. A context budget is advisory — 100% is where the nudging starts, not
+  // where the session stops — so `ctx` keeps counting and reads `127%` rather than going `full`.
+  if (utilization >= 100 && key !== 'ctx') return 'spent';
   const { warn, hot, red } = BANDS[key];
   if (utilization >= red) return 'red';
   if (utilization >= hot) return 'hot';
@@ -108,18 +115,71 @@ export function resolveContextLimit(model: string | undefined): number {
 }
 
 /**
- * The rotation budget: how many tokens a session may spend before it should hand off (`soft`) and
- * before it must (`hard`). Deliberately ONE blanket pair, not a model-keyed table — there is not
- * enough data to key on the model, and a `MODEL_BUDGETS` table would be eight rows carrying one
- * number, which dresses a guess as a measurement.
- *
- * Both arguments are taken and ignored on purpose, exactly as `resolveContextLimit(model)` shapes
- * its own future: narrowing to per-engine and then per-model becomes a function body rather than a
- * call-site refactor. The real numbers are owned by design ticket 16; these are guesses.
+ * Codex reports its window only on `turn.completed`, and the number MOVES remotely — legacy pinned
+ * `272_000` and had no way to notice when that stopped being true. So this is a fallback for the
+ * first turn of a Codex session and nothing more: `budgetFor` takes a `contextLimit`, and the engine
+ * passes the one the token-count event actually reported the moment it has one.
  */
-export function budgetFor(_: {
+const CODEX_FALLBACK_LIMIT = 272_000;
+
+export type Budget = {
+  /** Where nudging starts, and what the `ctx` meter reads 100% against. */
+  soft: number;
+  /** Where nudging becomes every-turn. NOT a cut — the only forced rotation is the wall. */
+  hard: number;
+};
+
+/**
+ * The rotation budget, keyed by MODEL — because degradation is a property of the model, not of the
+ * job (design 06 §5). A role inherits its budget through its engine binding, so retuning after a
+ * model upgrade is one edit here.
+ *
+ * **These are seeds, not measurements.** Design 06 §3 argued 180K/300K for the Opus class from
+ * first principles — every turn re-sends the transcript, so a 200K session burns the rate-limit
+ * windows ~4× faster than a 50K one — and explicitly rejected the 80K/140K an earlier pass proposed
+ * as extrapolated from a four-generation-stale model. There is no published accuracy-vs-length curve
+ * for any Claude 5 model (ticket 15), so the real numbers can only be measured; ticket 16 is that
+ * measurement and it has not reported yet. The one relative fact worth encoding is that the smaller
+ * models degrade about twice as early (~32K vs ~64K effective), which is where the halved row comes
+ * from.
+ */
+const MODEL_BUDGETS: readonly { match: RegExp; budget: Budget }[] = [
+  { match: /^claude-(?:opus|fable|mythos)-/, budget: { soft: 180_000, hard: 300_000 } },
+  { match: /^claude-(?:sonnet|haiku)-/, budget: { soft: 90_000, hard: 150_000 } },
+];
+
+/** What an unrecognised model gets: the conservative row, because guessing high nudges too late. */
+const DEFAULT_BUDGET: Budget = { soft: 90_000, hard: 150_000 };
+
+/**
+ * Codex sees far less telemetry and its own CLI compacts rather than rotates, so the numbers are
+ * proportions of its window rather than a claim about `gpt-5.6-sol` specifically.
+ */
+const CODEX_BUDGET: Budget = { soft: 150_000, hard: 220_000 };
+
+/**
+ * A budget can never usefully exceed the physical window: past the window is the WALL, which is not
+ * a budget question at all. These caps only ever bind on a small-window model — an Opus session's
+ * budget is a fraction of its million — and they exist so a table row that is generous for one
+ * family cannot silently push a 200K model's soft threshold past the point of no return.
+ */
+const SOFT_CAP = 0.55;
+const HARD_CAP = 0.9;
+
+export function budgetFor(args: {
   engine: EEngine;
   model: string;
-}): { soft: number; hard: number } {
-  return { soft: 180_000, hard: 300_000 };
+  /** The window the engine REPORTED, when it reported one. Beats anything resolved from the name. */
+  contextLimit?: number | undefined;
+}): Budget {
+  const codex = args.engine === EEngine.codex;
+  const limit =
+    args.contextLimit ?? (codex ? CODEX_FALLBACK_LIMIT : resolveContextLimit(args.model));
+  const base = codex
+    ? CODEX_BUDGET
+    : (MODEL_BUDGETS.find((row) => row.match.test(args.model))?.budget ?? DEFAULT_BUDGET);
+  return {
+    soft: Math.min(base.soft, Math.round(limit * SOFT_CAP)),
+    hard: Math.min(base.hard, Math.round(limit * HARD_CAP)),
+  };
 }

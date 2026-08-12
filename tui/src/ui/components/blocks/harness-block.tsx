@@ -1,6 +1,9 @@
 import React from "react";
+import type { AttachmentPart } from "../../../domain/attachments.js";
+import { stripCanary } from "../../../domain/canary.js";
 import { EHarnessVariant } from "../../../domain/message.js";
 import { glyph, theme } from "../../theme.js";
+import { AttachmentChips } from "./attachment-chips.js";
 
 /**
  * What each variant is called on screen. The renderer switches on the VARIANT — that is the whole
@@ -31,22 +34,40 @@ const LABELS: Record<EHarnessVariant, string> = {
 export function HarnessBlock(props: {
   variant: EHarnessVariant;
   text: string;
+  /**
+   * The files this message inlined, as the seam stored them. The prose above never contains their
+   * bodies — that is the whole point of storing the parts — so this is the only thing on screen that
+   * says what the receiving thread was actually handed.
+   */
+  attachments?: readonly AttachmentPart[];
+  expanded?: boolean;
+  width?: number;
 }): React.ReactNode {
   // A row written by another build can carry a variant this one has never heard of. It is still a
   // harness message and still worth showing — the label falls back to what was stored.
   const label = LABELS[props.variant] ?? props.variant;
+  // A hand-off is prose one agent wrote and another was given, so it can carry the canary in front
+  // of it exactly like an assistant block. Stripped for the reader, kept in the store.
+  const text = stripCanary(props.text);
 
   return (
     <box flexDirection="column" marginBottom={1}>
       <text fg={theme.dim}>
         {glyph.harness} atlas · {label}
       </text>
-      {props.text.split("\n").map((line, index) => (
+      {text.split("\n").map((line, index) => (
         <text key={index}>
           <span fg={theme.dim}>{glyph.harness} </span>
           {line}
         </text>
       ))}
+      {props.attachments && props.attachments.length > 0 ? (
+        <AttachmentChips
+          parts={props.attachments}
+          expanded={props.expanded ?? false}
+          {...(props.width === undefined ? {} : { width: props.width })}
+        />
+      ) : null}
     </box>
   );
 }

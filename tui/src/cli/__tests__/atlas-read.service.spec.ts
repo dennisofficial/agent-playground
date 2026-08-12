@@ -56,12 +56,12 @@ describe('AtlasReadService', () => {
     const job = await jobRepository.create({
       projectId: project.id,
       title: 'ship the CLI',
-      kind: EPhaseKind.intake,
+      kind: EPhaseKind.charting,
     });
     jobId = job.id;
 
     const phase = await jobRepository.currentPhase(jobId);
-    const thread = await threadRepository.create({ phaseId: phase.id, role: EThreadRole.intake });
+    const thread = await threadRepository.create({ phaseId: phase.id, role: EThreadRole.charting });
     threadId = thread.id;
 
     const account = await client.account.create({
@@ -102,7 +102,7 @@ describe('AtlasReadService', () => {
     if (!result.ok) return;
 
     expect(result.text).toContain(`job ${jobId}  ship the CLI`);
-    expect(result.text).toContain('phase intake  (current)');
+    expect(result.text).toContain('phase charting  (current)');
     expect(result.text).toContain(`thread ${threadId}`);
     expect(result.text).toContain('messages=2');
     expect(result.text).toContain('session 1  ended=context_pressure');
@@ -152,6 +152,6 @@ describe('AtlasReadService', () => {
     const result = await service.run({ name: ECliCommand.map, jobId: 'typo' });
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.message).not.toContain('intake writes');
+    expect(result.message).not.toContain('charting writes');
   });
 });

@@ -7,14 +7,18 @@ import {
   workspaceState,
   type WorkspaceState,
 } from "../../domain/worktree.js";
-import type { Job } from "../../generated/prisma/client.js";
+import { EThreadStatus } from "../../generated/prisma/enums.js";
+import type { Job, Thread } from "../../generated/prisma/client.js";
 import type { ThreadRow } from "../../store/thread.repository.js";
+import { ConfirmBar } from "../components/confirm-bar.js";
 import { ListEmpty } from "../components/list-parts.js";
 import { ListFooter } from "../components/list-footer.js";
 import { PageHeader } from "../components/page-header.js";
 import { Screen } from "../components/screen.js";
 import { PhaseGroup } from "../components/thread-list.js";
+import { VerbMenu } from "../components/verb-menu.js";
 import { useRunningThreads, useTick } from "../hooks/use-conversation.js";
+import { EHumanVerb, useHumanVerbs } from "../hooks/use-human-verbs.js";
 import { useInput } from "../hooks/use-input.js";
 import { useServices } from "../services.js";
 import { theme } from "../theme.js";
@@ -31,12 +35,19 @@ export function ThreadsPage(props: {
   projectName: string;
   /** The thread the conversation above is on — where the cursor starts. */
   currentThreadId: string;
-  onOpen: (thread: ThreadRow) => void;
+  /**
+   * `Thread` rather than `ThreadRow`: a thread Dennis has just opened by hand is a fresh row with no
+   * list statistics on it yet, and it must take him there without a round trip through this list.
+   */
+  onOpen: (thread: Thread) => void;
+  /** Where a thread opened from here runs — the route's cwd, worktree or not. */
+  cwd: string;
   onEnterWorktree: () => void;
   onBack: () => void;
 }): React.ReactNode {
-  const { workspaceService } = useServices();
+  const { workspaceService, threadSeamService } = useServices();
   const [threads, setThreads] = useState<ThreadRow[] | null>(null);
+  const [proposalThreadIds, setProposalThreadIds] = useState<string[]>([]);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(
     props.job.activeThreadId,
   );
@@ -51,17 +62,25 @@ export function ThreadsPage(props: {
   const { frame } = useTick(running.length > 0);
 
   const reload = useCallback(async () => {
-    const [rows, job, facts] = await Promise.all([
+    const [rows, job, facts, pending] = await Promise.all([
       workspaceService.listThreads(props.job.id),
       workspaceService.findJob(props.job.id),
       workspaceService.jobWorkspace(props.job.id),
+      // Which of these threads is waiting on a keypress. Read on the same beat as the rows, because
+      // a proposal is raised inside a turn and the turn ending is already what re-reads this page.
+      threadSeamService.pendingTransitions(props.job.id),
     ]);
     setThreads(rows);
     setWorkspace(facts ? workspaceState(facts) : null);
+    setProposalThreadIds(
+      pending.flatMap((row) =>
+        row.raisedByThreadId === null ? [] : [row.raisedByThreadId],
+      ),
+    );
     // The cursor is orchestration state, not this page's: an agent opening a thread moves it while
     // the list is up, so ACTIVE is re-read rather than taken from the route's snapshot of the job.
     if (job) setActiveThreadId(job.activeThreadId);
-  }, [workspaceService, props.job.id]);
+  }, [workspaceService, threadSeamService, props.job.id]);
 
   useEffect(() => {
     void reload();
@@ -73,8 +92,9 @@ export function ThreadsPage(props: {
         threads: threads ?? [],
         activeThreadId,
         runningThreadIds: running,
+        proposalThreadIds,
       }),
-    [threads, activeThreadId, running],
+    [threads, activeThreadId, running, proposalThreadIds],
   );
 
   // Null until the list arrives, so the landing row is chosen ONCE — from the thread you came from,
@@ -90,7 +110,44 @@ export function ThreadsPage(props: {
 
   const layout = threadsLayout(width);
 
+  // What `c` would close: whatever the cursor is standing on, plus the two facts that only change
+  // the wording of the question.
+  const target = useMemo(() => {
+    if (!highlighted) return undefined;
+    const row = (threads ?? []).find(
+      (candidate) => candidate.id === highlighted.id,
+    );
+    if (!row) return undefined;
+    const openInPhase = (threads ?? []).filter(
+      (candidate) =>
+        candidate.phaseId === row.phaseId &&
+        candidate.status !== EThreadStatus.closed,
+    );
+    return {
+      id: row.id,
+      role: row.role,
+      closed: row.status === EThreadStatus.closed,
+      running: running.includes(row.id),
+      last: openInPhase.length <= 1,
+    };
+  }, [highlighted, threads, running]);
+
+  // The three moves Dennis makes himself. They own `p`, `n` and `c`, and while a menu is up they own
+  // the whole keyboard — see `handleKey`.
+  const verbs = useHumanVerbs({
+    jobId: props.job.id,
+    cwd: props.cwd,
+    target,
+    revision: (threads ?? []).length,
+    onChanged: () => void reload(),
+    onOpened: props.onOpen,
+  });
+
   useInput((input, key) => {
+    // First refusal, and the page stands down on anything it claims: every `useKeyboard` listener
+    // fires for every key and there is no propagation to stop, so a menu and a list cannot both
+    // answer `↑`.
+    if (verbs.handleKey(input, key)) return;
     // `←` and `esc` are the same door on a list — see the jobs page.
     if (key.escape || key.leftArrow) return props.onBack();
     if (key.upArrow) return setSelected(clampIndex(cursor - 1, order.length));
@@ -107,9 +164,9 @@ export function ThreadsPage(props: {
     if (input === "w" && workspace?.kind === EWorkspaceKind.inPlace) {
       return props.onEnterWorktree();
     }
-    // No `?` panel here on purpose: the shared list keymap advertises `n new` and `x delete`, and a
-    // thread is opened by an agent or a phase, never by `n` on this page. Four keys fit in the hint
-    // line, so a panel that would have to lie about two of them earns nothing.
+    // Still no `?` panel: the keys fit the hint line, which measures rather than thresholds. `n` now
+    // means what the shared list keymap always said it did — a thread IS opened by hand here, since
+    // a job with nothing running has no agent left to open one.
   });
 
   const trail = ["atlas", props.projectName, props.job.title];
@@ -129,11 +186,44 @@ export function ThreadsPage(props: {
         <ListFooter
           width={width}
           height={height}
+          menu={
+            verbs.verb === EHumanVerb.phase || verbs.verb === EHumanVerb.role ? (
+              <VerbMenu
+                title={verbs.title}
+                items={verbs.items}
+                selected={verbs.selected}
+                caption={verbs.caption}
+                error={verbs.error}
+              />
+            ) : null
+          }
+          confirm={
+            verbs.confirm ? (
+              <ConfirmBar
+                question={verbs.confirm.question}
+                detail={verbs.confirm.detail}
+                confirmLabel="close"
+              />
+            ) : null
+          }
+          // A menu owns the footer while it is up, exactly as a mode does on the jobs page: the
+          // hints under it would be advertising keys the menu has taken.
           hints={
-            workspace?.kind === EWorkspaceKind.inPlace ? IN_PLACE_HINTS : HINTS
+            verbs.verb !== EHumanVerb.browse
+              ? undefined
+              : workspace?.kind === EWorkspaceKind.inPlace
+                ? IN_PLACE_HINTS
+                : HINTS
           }
           shortcuts={false}
-          error={null}
+          // A menu draws its own failure inside itself, beneath the list it belongs to. Everywhere
+          // else — including a close that threw, where the bar stays up — it lands in the footer's
+          // one error line rather than a second one nobody knows to look at.
+          error={
+            verbs.verb === EHumanVerb.phase || verbs.verb === EHumanVerb.role
+              ? null
+              : verbs.error
+          }
         />
       }
     >
@@ -154,7 +244,7 @@ export function ThreadsPage(props: {
         </box>
       ) : null}
 
-      {/* A job is created with one intake thread, so an empty list means something went wrong
+      {/* A job is created with one generic thread, so an empty list means something went wrong
           underneath rather than "nothing here yet" — say so instead of drawing a blank page. */}
       <ListEmpty
         show={groups.length === 0}
@@ -175,15 +265,22 @@ export function ThreadsPage(props: {
   );
 }
 
+/**
+ * Longest-first, and the widest that fits wins — these measure, they do not threshold.
+ *
+ * The three human verbs are advertised here rather than in a keymap panel because this page has
+ * never had one: the hint line holds them, and a job with nothing running has to SHOW that `p` and
+ * `n` exist or the state is a dead end that looks like a bug.
+ */
 const HINTS = [
-  "↑↓ select · →/⏎ open · ←/esc back",
-  "↑↓ select · ⏎ open · esc back",
-  "⏎ open · esc back",
+  "↑↓ select · →/⏎ open · p start a phase · n new thread · c close · ←/esc back",
+  "↑↓ select · ⏎ open · p phase · n thread · c close · esc back",
+  "⏎ open · p phase · n thread · esc back",
 ];
 
 /** `w` is offered only where it does something — a job already in a worktree cannot take another. */
 const IN_PLACE_HINTS = [
-  "↑↓ select · →/⏎ open · w move to a worktree · ←/esc back",
-  "↑↓ select · ⏎ open · w worktree · esc back",
-  "⏎ open · w worktree · esc",
+  "↑↓ select · →/⏎ open · p start a phase · n new thread · c close · w worktree · ←/esc back",
+  "↑↓ select · ⏎ open · p phase · n thread · c close · w worktree · esc back",
+  "⏎ open · p phase · n thread · w worktree · esc",
 ];

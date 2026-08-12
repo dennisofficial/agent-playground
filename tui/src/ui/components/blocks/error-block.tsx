@@ -1,4 +1,6 @@
 import React from "react";
+import { seamLabel } from "../../../domain/seam.js";
+import type { ESessionEndReason } from "../../../generated/prisma/enums.js";
 import { glyph, theme } from "../../theme.js";
 
 export function ErrorBlock(props: {
@@ -31,12 +33,19 @@ export function ErrorBlock(props: {
   );
 }
 
-/** The session-rotation divider. Derived from `sessionId` changing — nothing is stitched. */
+/**
+ * The session-rotation divider. Derived from `sessionId` changing — nothing is stitched.
+ *
+ * It names why the PREVIOUS leg ended, because that is the question a break in the page raises and
+ * the answers are not interchangeable: an agent that handed over deliberately and one that ran out
+ * of room before it could are different things to be scrolling past.
+ */
 export function SessionSeam(props: {
   ordinal: number;
+  endReason: ESessionEndReason | null;
   width: number;
 }): React.ReactNode {
-  const label = ` session ${props.ordinal} `;
+  const label = ` ${seamLabel(props)} `;
   const dashes = Math.max(4, Math.floor((props.width - label.length) / 2));
   const rule = "─".repeat(dashes);
   return (

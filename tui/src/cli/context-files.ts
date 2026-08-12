@@ -6,29 +6,29 @@ import { MAP_FILE, matchTicket, ticketIndex } from './tickets.js';
 /**
  * The two cheapest reads there are: the job's map and one numbered ticket. They exist as
  * subcommands so the common case needs no path at all — `Read`/`Write` take a literal absolute path
- * with no shell expansion, so `$ATLAS_JOB_DIR/context/intake/map.md` would be read as a filename
+ * with no shell expansion, so `$ATLAS_JOB_DIR/context/charting/map.md` would be read as a filename
  * containing a `$`.
  *
  * Takes the directory rather than a job id: the fs half is then testable against a temp folder, and
  * resolving a job to its folder stays in one place.
  */
 
-export function readMap(intakeDir: string): CliResult {
-  const path = join(intakeDir, MAP_FILE);
+export function readMap(chartingDir: string): CliResult {
+  const path = join(chartingDir, MAP_FILE);
   const text = read(path);
-  if (text === null) return missing(`no map yet — intake writes it to ${path}`);
+  if (text === null) return missing(`no map yet — charting writes it to ${path}`);
   return found(withPath({ path, text }));
 }
 
-export function readTicket(args: { intakeDir: string; ticketNumber: number }): CliResult {
-  const fileNames = list(args.intakeDir);
+export function readTicket(args: { chartingDir: string; ticketNumber: number }): CliResult {
+  const fileNames = list(args.chartingDir);
   const matches = matchTicket({ fileNames, ticketNumber: args.ticketNumber });
 
   if (matches.length === 0) {
     const index = ticketIndex(fileNames);
     const known =
       index.length === 0
-        ? `no ticket files in ${args.intakeDir}`
+        ? `no ticket files in ${args.chartingDir}`
         : ['tickets in this job:', ...index].join('\n');
     return missing(`no ticket ${args.ticketNumber} — ${known}`);
   }
@@ -41,7 +41,7 @@ export function readTicket(args: { intakeDir: string; ticketNumber: number }): C
     return missing(`ticket ${args.ticketNumber} is ambiguous — more than one file claims it:\n${names}`);
   }
 
-  const path = join(args.intakeDir, ticket.fileName);
+  const path = join(args.chartingDir, ticket.fileName);
   const text = read(path);
   if (text === null) return missing(`cannot read ${path}`);
   return found(withPath({ path, text }));

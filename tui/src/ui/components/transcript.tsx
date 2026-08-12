@@ -72,6 +72,7 @@ export function Transcript(props: {
             {item.kind === "seam" ? (
               <SessionSeam
                 ordinal={item.ordinal}
+                endReason={item.endReason}
                 width={Math.min(props.width, SEAM_MAX)}
               />
             ) : (

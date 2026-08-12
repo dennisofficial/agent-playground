@@ -67,8 +67,17 @@ const CODEX: Omit<Extract<EngineConfig, { kind: typeof EEngine.codex }>, "effort
 };
 
 export const ROLE_BINDINGS: Record<EThreadRole, RoleBinding> = {
-  intake: {
-    role: "intake",
+  // Opus like every other Claude role, for the reason `builder` is: this is the thread that
+  // accumulates the most conversational turns, and its judgement about when the ask has grown big
+  // enough to earn a document IS the feature. A cheap agent that mistimes that proposal is worse
+  // than an expensive one that gets it right.
+  generic: {
+    role: "generic",
+    engine: { ...CLAUDE, effort: EClaudeEffort.high },
+    blurb: "just talk it through",
+  },
+  charting: {
+    role: "charting",
     engine: { ...CLAUDE, effort: EClaudeEffort.high },
     blurb: "scope the work",
   },
@@ -120,6 +129,17 @@ export const ROLE_BINDINGS: Record<EThreadRole, RoleBinding> = {
     engine: { ...CLAUDE, effort: EClaudeEffort.high },
     blurb: "tidy up after the build",
   },
+  // Shipping is a mechanical act with one judgement in it — the pull request description a reviewer
+  // reads cold — so it takes the same binding as everything else rather than a cheaper one: the
+  // description is the last thing written about this work and the first thing anyone else reads.
+  ship_pr: {
+    role: "ship_pr",
+    engine: { ...CLAUDE, effort: EClaudeEffort.high },
+    blurb: "rebase, push, open the PR",
+  },
+  // Kept as a NAMED role rather than folded into `builder`, because it is the routing target for
+  // when webhooks eventually land — an event needs a role to be delivered to, and minting one then
+  // would be a migration. In v1 it is the thread you open by hand when something comes back red.
   ci: {
     role: "ci",
     engine: { ...CLAUDE, effort: EClaudeEffort.high },
@@ -165,8 +185,8 @@ function isMember<T extends Record<string, string>>(
 }
 
 // There is deliberately NO role → phase table here, and re-adding one would be a regression. A role
-// does not imply a phase: `research` and `prototype` are intake work as often as design work, and a
-// `planning` phase can host an `intake` thread. The relation runs the other way — a phase declares
+// does not imply a phase: `research` and `prototype` are charting work as often as design work, and a
+// `planning` phase can host a `charting` thread. The relation runs the other way — a phase declares
 // which roles it may host — and a new thread simply joins the phase the job is currently in.
 
 export function roleLabel(role: EThreadRole): string {

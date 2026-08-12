@@ -6,12 +6,19 @@ import { AccountUsageService } from "./account-usage.service.js";
 import { AccountsService } from "./accounts.service.js";
 import { AttentionService } from "./attention.service.js";
 import { ContextFolderService } from "./context-folder.service.js";
+import { ContextPressureService } from "./context-pressure.service.js";
 import { ConversationService } from "./conversation.service.js";
 import { ConversationStoreRegistry } from "./conversation-store.registry.js";
 import { GitService } from "./git.service.js";
+import { GithubCliService } from "./github-cli.service.js";
+import { HumanVerbsService } from "./human-verbs.service.js";
 import { JobStartService } from "./job-start.service.js";
 import { PhaseBriefService } from "./phase-brief.service.js";
 import { SessionManagerService } from "./session-manager.service.js";
+import { ShipService } from "./ship.service.js";
+import { TaskService } from "./task.service.js";
+import { ThreadSeamService } from "./thread-seam.service.js";
+import { TransitionReviewService } from "./transition-review.service.js";
 import { TurnRunnerService } from "./turn-runner.service.js";
 import { WorkspaceService } from "./workspace.service.js";
 import { WorktreeService } from "./worktree.service.js";
@@ -21,6 +28,7 @@ import { WorktreeService } from "./worktree.service.js";
   providers: [
     ConversationStoreRegistry,
     ContextFolderService,
+    ContextPressureService,
     SessionManagerService,
     AccountRotatorService,
     AccountUsageService,
@@ -28,8 +36,14 @@ import { WorktreeService } from "./worktree.service.js";
     AttentionService,
     PhaseBriefService,
     TurnRunnerService,
+    ThreadSeamService,
+    TransitionReviewService,
+    HumanVerbsService,
     ConversationService,
+    TaskService,
     GitService,
+    GithubCliService,
+    ShipService,
     WorktreeService,
     WorkspaceService,
     JobStartService,
@@ -41,7 +55,11 @@ import { WorktreeService } from "./worktree.service.js";
     AccountsService,
     AttentionService,
     TurnRunnerService,
+    ThreadSeamService,
+    TransitionReviewService,
+    HumanVerbsService,
     ConversationService,
+    TaskService,
     WorktreeService,
     WorkspaceService,
     JobStartService,

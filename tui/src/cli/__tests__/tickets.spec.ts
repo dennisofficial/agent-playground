@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { matchTicket, readTicketFiles, ticketIndex } from '../tickets.js';
 
-const FILES = ['map.md', '01-phase-vocabulary.md', '03-intake-shape.md', 'notes.txt', 'draft.md'];
+const FILES = ['map.md', '01-phase-vocabulary.md', '03-charting-shape.md', 'notes.txt', 'draft.md'];
 
 describe('readTicketFiles', () => {
   it('keeps only NN-<slug>.md and orders by number, not by name', () => {
@@ -19,9 +19,9 @@ describe('readTicketFiles', () => {
 describe('matchTicket', () => {
   it('matches on the number, whatever the padding', () => {
     expect(matchTicket({ fileNames: FILES, ticketNumber: 3 })).toEqual([
-      { fileName: '03-intake-shape.md', number: 3, slug: 'intake-shape' },
+      { fileName: '03-charting-shape.md', number: 3, slug: 'charting-shape' },
     ]);
-    expect(matchTicket({ fileNames: ['3-intake.md'], ticketNumber: 3 })).toHaveLength(1);
+    expect(matchTicket({ fileNames: ['3-charting.md'], ticketNumber: 3 })).toHaveLength(1);
   });
 
   it('returns every claimant so an ambiguous number can be reported, not silently resolved', () => {
@@ -37,6 +37,6 @@ describe('matchTicket', () => {
 
 describe('ticketIndex', () => {
   it('lists the numbers that DO exist — the useful half of a miss', () => {
-    expect(ticketIndex(FILES)).toEqual(['  1  phase-vocabulary', '  3  intake-shape']);
+    expect(ticketIndex(FILES)).toEqual(['  1  phase-vocabulary', '  3  charting-shape']);
   });
 });

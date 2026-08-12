@@ -2,9 +2,27 @@ import { describe, expect, it } from 'bun:test';
 import { createCliRenderer } from '@opentui/core';
 import { createRoot } from '@opentui/react';
 import React from 'react';
+import { attachmentExpandKey } from '../../domain/attachments.js';
+import {
+  openableRoles,
+  openThreadTitle,
+  startPhaseTitle,
+  startablePhases,
+} from '../../domain/human-verbs.js';
+import { DECLINED_NOTICE } from '../../domain/transition-review.js';
+import { EContextSignal } from '../../domain/context-nudge.js';
 import { EHarnessVariant, type Message, type ToolResultPayload } from '../../domain/message.js';
-import { EAccountStatus, EEngine, EMessageType } from '../../generated/prisma/enums.js';
+import type { TaskView } from '../../domain/tasks.js';
+import {
+  EAccountStatus,
+  EEngine,
+  EMessageType,
+  EPhaseKind,
+  ESessionEndReason,
+  ETaskStatus,
+} from '../../generated/prisma/enums.js';
 import { Breadcrumb } from '../components/breadcrumb.js';
+import { Checklist } from '../components/checklist.js';
 import { Composer } from '../components/composer.js';
 import { ConfirmBar } from '../components/confirm-bar.js';
 import { HintLine } from '../components/hint-line.js';
@@ -16,6 +34,12 @@ import { JumpToBottom, NewDivider } from '../components/new-divider.js';
 import { ToolRunningLine } from '../components/blocks/tool-block.js';
 import { WorkingLine } from '../components/working-line.js';
 import { AccountGroup, accountsLayout } from '../components/account-list.js';
+import {
+  ProposalFooter,
+  reviewRows,
+  TransitionConfirm,
+} from '../components/transition-confirm.js';
+import { VerbMenu } from '../components/verb-menu.js';
 import { NewJobPage } from '../pages/new-job.js';
 import type { AccountRow } from '../../app/accounts.service.js';
 
@@ -166,6 +190,32 @@ describe('conversation page components mount', () => {
     }
   });
 
+  // A hand-off with files on it, which is the shape every seam message actually arrives in. Both
+  // states mount, because expanding puts a whole file's lines inside a block that is itself a column
+  // of `<text>` — and one of those files has a line far wider than the viewport.
+  it('renders a hand-off with its attachment chips, collapsed and expanded', async () => {
+    const handoff = message({
+      type: EMessageType.harness,
+      variant: EHarnessVariant.handoff,
+      text: 'Slice 2 is done. I rejected a shared cache.',
+      attachments: [
+        {
+          label: 'context/specs/spec.md',
+          lines: 3,
+          bytes: 5_500,
+          body: `the plan\n${'x'.repeat(400)}\nlast line`,
+        },
+        // A file that was not there: it keeps its chip in red rather than vanishing.
+        { label: 'context/specs/gone.md', lines: 0, bytes: 0, body: null },
+      ],
+    });
+    for (const expanded of [new Set<string>(), new Set([attachmentExpandKey(handoff.id)])]) {
+      await expect(
+        mount(<MessageView message={handoff} expandedTools={expanded} width={100} />),
+      ).resolves.toBeUndefined();
+    }
+  });
+
   it('renders the composer, empty and with a draft', async () => {
     await expect(mount(<Composer value="" width={80} />)).resolves.toBeUndefined();
     await expect(mount(<Composer value={'a draft\nof two lines'} width={80} />)).resolves.toBeUndefined();
@@ -180,7 +230,7 @@ describe('conversation page components mount', () => {
             facts={{
               jobTitle: 'a job',
               repo: 'atlas',
-              role: 'intake',
+              role: 'charting',
               sessionOrdinal: 1,
               engine: 'claude',
               model: 'opus',
@@ -191,12 +241,22 @@ describe('conversation page components mount', () => {
           />
           <HintLine
             hints="? for shortcuts"
-            contextPercent={26}
+            contextPercent={{ percent: 26, signal: EContextSignal.budget }}
             fiveHour={{ utilization: 33, resetsAt: null }}
             sevenDay={null}
             width={100}
           />
-          <SessionSeam ordinal={2} width={72} />
+          {/* Over budget AND with the canary driving: the one state where the meter changes its
+              label rather than only its colour, and the one most likely to break the strip's
+              width arithmetic. */}
+          <HintLine
+            hints="? for shortcuts"
+            contextPercent={{ percent: 127, signal: EContextSignal.canary }}
+            fiveHour={{ utilization: 33, resetsAt: null }}
+            sevenDay={null}
+            width={100}
+          />
+          <SessionSeam ordinal={2} endReason={ESessionEndReason.context_wall} width={72} />
           <NewDivider width={72} />
           <JumpToBottom onJump={() => undefined} />
           <SwapNotice text="swapped account" />
@@ -255,6 +315,28 @@ describe('conversation page components mount', () => {
     ).resolves.toBeUndefined();
   });
 
+  /**
+   * The checklist draws a styled `<span>` inside its row's `<text>`, which is the shape that throws
+   * at mount if it is ever wrapped in another `<text>`. Every status, a windowed long list, and the
+   * empty case that must render nothing at all rather than an empty panel.
+   */
+  it('renders the checklist in every state it has', async () => {
+    const plan: TaskView[] = [
+      { ordinal: 1, text: 'wire the composer', status: ETaskStatus.completed },
+      { ordinal: 2, text: 'render the checklist', status: ETaskStatus.in_progress },
+      { ordinal: 3, text: 'test the exclusion', status: ETaskStatus.pending },
+      { ordinal: 4, text: 'a retired task', status: ETaskStatus.deleted },
+      { ordinal: 5, text: `a task with a name far wider than any terminal ${'x'.repeat(200)}`, status: ETaskStatus.pending },
+    ];
+    for (const width of [100, 40]) {
+      await expect(mount(<Checklist tasks={plan} width={width} />)).resolves.toBeUndefined();
+      await expect(
+        mount(<Checklist tasks={plan} width={width} maxRows={2} />),
+      ).resolves.toBeUndefined();
+      await expect(mount(<Checklist tasks={[]} width={width} />)).resolves.toBeUndefined();
+    }
+  });
+
   it('renders the shared page chrome', async () => {
     await expect(
       mount(
@@ -265,5 +347,109 @@ describe('conversation page components mount', () => {
         </>,
       ),
     ).resolves.toBeUndefined();
+  });
+
+  /**
+   * The human's two creation menus, drawn from the real tables rather than from a literal — a phase
+   * whose `next` is empty is the case the menu exists for, and a menu with more entries than rows is
+   * what makes `OverlayList` window rather than grow the footer.
+   */
+  it('renders the start-a-phase and open-a-thread menus', async () => {
+    const phases = startablePhases(EPhaseKind.ci);
+    const roles = openableRoles(EPhaseKind.planning);
+    await expect(
+      mount(
+        <>
+          <VerbMenu
+            title={startPhaseTitle(EPhaseKind.ci)}
+            items={phases.map((choice) => ({
+              id: choice.kind,
+              label: choice.label,
+              ...(choice.suggested ? { hint: 'proposed from here' } : {}),
+            }))}
+            selected={phases.length - 1}
+            caption="↑↓ select · ⏎ start · esc cancel"
+            error="no job job-1"
+          />
+          <VerbMenu
+            title={openThreadTitle(EPhaseKind.planning)}
+            items={roles.map((choice) => ({ id: choice.role, label: choice.label }))}
+            selected={0}
+            caption="↑↓ select · ⏎ open · esc cancel"
+          />
+          {/* A phase that hosted no roles would forbid human threads by construction. None does. */}
+          <VerbMenu title="open a thread" items={[]} selected={0} caption="esc cancel" />
+          <ConfirmBar
+            question="close the ship pr thread?"
+            detail="recorded as abandoned · nothing else is open in this phase"
+            confirmLabel="close"
+          />
+        </>,
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  /**
+   * The confirm overlay, in both of its shapes and at a width that cannot hold its content.
+   *
+   * It is the densest thing in the footer: markdown inside a box inside a scrollbox, with a file
+   * body that has a line far wider than the terminal. Every one of those is a chance at the nested
+   * `<text>` crash, and the wide line is the case the wide-content rules exist for.
+   */
+  it.each([100, 40])('renders the transition confirm at %i columns', async (width) => {
+    const view = {
+      route: 'planning → build',
+      reason: 'The plan is written. **Three slices**, two of them already scaffolded.',
+      handoff: '## What is done\n\nthe schema\n\n## What is next\n\nthe overlay',
+      files: ['context/specs/plan.md', 'context/specs/gone.md'],
+    };
+    const parts = [
+      {
+        label: 'context/specs/plan.md',
+        lines: 3,
+        bytes: 5_500,
+        body: `# The plan\n\n- slice one\n${'x'.repeat(400)}`,
+      },
+      // Tidied away between the proposal and the keypress: the chip stays, in red.
+      { label: 'context/specs/gone.md', lines: 0, bytes: 0, body: null },
+    ];
+    for (const expanded of [false, true]) {
+      await expect(
+        mount(
+          <TransitionConfirm
+            view={view}
+            parts={parts}
+            expanded={expanded}
+            width={width}
+            maxRows={reviewRows(30)}
+            error="this proposal was already confirmed"
+          />,
+        ),
+      ).resolves.toBeUndefined();
+    }
+
+    // And the footer that decides which of its three states is up — including the two the overlay
+    // itself never draws: the line that brings back a deferred proposal, and the one after `n`.
+    const controls = {
+      view,
+      parts,
+      open: false,
+      waiting: true,
+      expanded: false,
+      busy: false,
+      error: null,
+      notice: DECLINED_NOTICE,
+    };
+    for (const open of [false, true]) {
+      await expect(
+        mount(
+          <ProposalFooter
+            proposal={{ ...controls, open, waiting: !open }}
+            width={width}
+            height={30}
+          />,
+        ),
+      ).resolves.toBeUndefined();
+    }
   });
 });

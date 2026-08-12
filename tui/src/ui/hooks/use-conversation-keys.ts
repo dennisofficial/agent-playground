@@ -39,6 +39,14 @@ export function useConversationKeys(args: {
   onThreads: () => void;
   /** The way back down from a landing on the oldest unseen message. */
   onJumpToBottom: () => void;
+  /**
+   * A confirm overlay is up and owns the keyboard.
+   *
+   * Every `useKeyboard` listener fires for every key and there is no propagation to stop, so the two
+   * contracts cannot both be live: `y` would confirm a phase advance AND type a `y` into the draft.
+   * The page stands down rather than the overlay competing — it is the one asking a question.
+   */
+  suspended?: boolean;
 }): void {
   const {
     composer,
@@ -61,6 +69,9 @@ export function useConversationKeys(args: {
   } = args;
 
   useInput((input, key) => {
+    // Something else is asking a question — see `suspended`.
+    if (args.suspended) return;
+
     // --- overlay navigation (opens upward; the composer never moves) -------------------------
     if (overlay === "command") {
       if (key.upArrow) return setSelected((s) => Math.max(0, s - 1));

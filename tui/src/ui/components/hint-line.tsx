@@ -1,4 +1,6 @@
 import React from "react";
+import { CANARY } from "../../domain/canary.js";
+import { EContextSignal, type ContextReading } from "../../domain/context-nudge.js";
 import type { Meter, UsageWindow } from "../../domain/usage.js";
 import { meterStyle } from "../meter-style.js";
 import { spansWidth, stripSpans } from "../meter-spans.js";
@@ -8,7 +10,8 @@ import { Spans } from "./spans.js";
 export function HintLine(props: {
   hints: string;
   accountLabel?: string | undefined;
-  contextPercent: number | null;
+  /** Against the rotation BUDGET, so it may read past 100 — `127%` is "27% over". */
+  contextPercent: ContextReading | null;
   fiveHour: UsageWindow;
   sevenDay: UsageWindow;
   width: number;
@@ -24,15 +27,20 @@ export function HintLine(props: {
       ? `${props.accountLabel} `
       : "";
 
+  // Two instruments share one meter, so the meter says WHICH it is drawing: a budget overrun and a
+  // session that has stopped following instructions are different situations and want different
+  // answers. The canary takes the label only once it is properly dead — see `canaryHealth`.
+  const canaryDriving = props.contextPercent?.signal === EContextSignal.canary;
+
   const meters: [Meter, Meter, Meter] = [
     // `ctx` has no reset time — a context window is emptied by rotating, not by waiting.
     {
-      label: "ctx",
+      label: canaryDriving ? `ctx${CANARY}` : "ctx",
       key: "ctx",
       window:
         props.contextPercent === null
           ? null
-          : { utilization: props.contextPercent, resetsAt: null },
+          : { utilization: props.contextPercent.percent, resetsAt: null },
     },
     { label: "5h", key: "fiveHour", window: props.fiveHour },
     { label: "wk", key: "sevenDay", window: props.sevenDay },

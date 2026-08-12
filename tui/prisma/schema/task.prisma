@@ -1,0 +1,30 @@
+enum ETaskStatus {
+  pending
+  in_progress
+  completed
+  /// Retiring a task is a status, not a row deletion: the list is the agent's visible plan, and a
+  /// plan that silently loses entries reads as a plan that was never made. A deleted task stops
+  /// rendering; it does not stop having existed.
+  deleted
+}
+
+/// The agent's plan, made visible in the thread. This table exists **for the render** — nothing reads
+/// it back into a decision, and that is what justifies every simplification here: no dependency edges
+/// between tasks, no single-task getter, and tools that never throw. A task list that can fail a turn
+/// is worse than one that is briefly wrong.
+///
+/// It replaces the native todo tool outright rather than sitting beside it, so there is one list and
+/// it is the one Dennis can see.
+model Task {
+  id        String      @id @default(uuid())
+  threadId  String
+  thread    Thread      @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  /// Display order. Not a dependency — tasks have no edges.
+  ordinal   Int
+  text      String
+  status    ETaskStatus @default(pending)
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  @@index([threadId])
+}

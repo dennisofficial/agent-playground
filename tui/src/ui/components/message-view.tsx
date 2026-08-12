@@ -1,4 +1,5 @@
 import React from "react";
+import { attachmentExpandKey } from "../../domain/attachments.js";
 import type { Message, ToolResultPayload } from "../../domain/message.js";
 import { EMessageType } from "../../generated/prisma/enums.js";
 import { AssistantBlock } from "./blocks/assistant-block.js";
@@ -66,7 +67,24 @@ export function MessageView(props: {
         />
       );
     case EMessageType.harness:
-      return <HarnessBlock variant={payload.variant} text={payload.text} />;
+      return (
+        <HarnessBlock
+          variant={payload.variant}
+          text={payload.text}
+          {...(payload.attachments
+            ? { attachments: payload.attachments }
+            : {})}
+          // Attachments share the transcript's ONE expansion set, under a namespaced key: to a
+          // reader, opening a file chip and opening a tool result are the same gesture, and two
+          // mechanisms for it would mean two keys to remember. Per MESSAGE rather than per chip —
+          // a hand-off's files are one thing you either wanted to read or did not.
+          expanded={
+            props.expandedTools?.has(attachmentExpandKey(props.message.id)) ??
+            false
+          }
+          {...(props.width === undefined ? {} : { width: props.width })}
+        />
+      );
     default: {
       // The render map is exhaustive BY CONSTRUCTION: `payload` narrows to `never` only while every
       // member of the union has a case above, so a new message type fails to compile here rather

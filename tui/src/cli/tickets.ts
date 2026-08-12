@@ -1,6 +1,6 @@
 /**
- * `context/intake/` holds a job's map and its ticket files. A ticket is a FILE, never a row — the
- * ticket set is discovered, re-scoped and ruled out of scope constantly during intake, and rows
+ * `context/charting/` holds a job's map and its ticket files. A ticket is a FILE, never a row — the
+ * ticket set is discovered, re-scoped and ruled out of scope constantly during charting, and rows
  * would need reconciling with files on every resolution. So finding ticket 3 is a filename question,
  * and it is pure.
  */

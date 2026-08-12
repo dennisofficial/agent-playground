@@ -1,4 +1,4 @@
-import type { PhaseBrief, PhaseBriefContext } from "./phase-spec.js";
+import type { PhaseBrief, PhaseBriefContext } from "./phase-brief.js";
 
 /**
  * Wayfinder, baked in.
@@ -7,7 +7,7 @@ import type { PhaseBrief, PhaseBriefContext } from "./phase-spec.js";
  * SOURCE copied once and then owned here, not a skill file loaded at runtime. Three reasons it is
  * not a skill: skills are Claude-Code-specific and Atlas is multi-engine; the skill is written for a
  * general issue tracker and a human driver, and half of it is wrong-by-specificity once the tracker
- * is `context/intake/*.md` and the driver is a harness; and the phase's prompt is the tuning surface
+ * is `context/charting/*.md` and the driver is a harness; and the phase's prompt is the tuning surface
  * — if charting comes out badly, this string is the one thing that changes.
  *
  * Drift from the source is expected and must be DELIBERATE. What has deliberately drifted, and why:
@@ -29,8 +29,8 @@ import type { PhaseBrief, PhaseBriefContext } from "./phase-spec.js";
  *   name machinery outside Atlas that an Atlas thread cannot reach.
  */
 function wayfinderInstructions(contextRoot: string): string {
-  const intake = `${contextRoot}/intake`;
-  return `# Intake — chart the way
+  const charting = `${contextRoot}/charting`;
+  return `# Charting — chart the way
 
 A loose idea has arrived, too big to hold in one session and wrapped in fog: the way from here to
 the **destination** is not visible yet. Your job is to find that way, not to charge at the
@@ -42,12 +42,12 @@ It might be a spec to hand off, a decision to lock before planning starts, or a 
 
 ## Plan, don't do
 
-Intake is **planning**. Each ticket resolves a decision, and the map is done when the way is clear —
+Charting is **planning**. Each ticket resolves a decision, and the map is done when the way is clear —
 nothing left to decide before someone goes and does the thing. The pull to just do the work is
 usually the signal you have reached the edge of the map and it is time to move on to \`planning\`.
 Produce decisions, not deliverables.
 
-Intake clears fog on **what this is and whether it is worth doing**. The \`planning\` phase after you
+Charting clears fog on **what this is and whether it is worth doing**. The \`planning\` phase after you
 does the software work — architecture, code design, the spec set. Do not do its job.
 
 ## Refer by name
@@ -61,8 +61,8 @@ the name rather than standing in for it.
 
 Your tracker is a folder, flat, one map per job:
 
-    ${intake}/map.md              the map
-    ${intake}/NN-<slug>.md        one file per ticket; NN is its identity
+    ${charting}/map.md              the map
+    ${charting}/NN-<slug>.md        one file per ticket; NN is its identity
 
 The map is an **index**, not a store. It lists the decisions made and points at the tickets that hold
 their detail; a decision lives in exactly one place — its ticket — so the map never restates it, only
@@ -125,7 +125,7 @@ without him saying a word, it is a teammate.**
 
 | type | worked as | why |
 |---|---|---|
-| grilling | an \`intake\` thread | it *is* the conversation — one question at a time |
+| grilling | a \`charting\` thread | it *is* the conversation — one question at a time |
 | prototype | a \`prototype\` thread | the artifact exists to be reacted to |
 | research | a \`research\` **teammate** | nobody talks to it; the findings doc is the output |
 | task | a thread if the human must do it, a teammate if you can | splits by driver, not by kind |
@@ -134,7 +134,7 @@ Grilling is the default. A **task** ticket is the one type that *does* rather th
 earns its place only by unblocking a decision — signing up for a service so its API can be judged,
 moving data so its shape can be seen.
 
-A research teammate writes its own findings file (\`${intake}/NN-<slug>.md\`); **you own map.md.**
+A research teammate writes its own findings file (\`${charting}/NN-<slug>.md\`); **you own map.md.**
 One writer for the map, no concurrent edits.
 
 ## Fog of war
@@ -176,18 +176,20 @@ only your handoff, so a decision you did not write down is a decision that is lo
 
 Your moves, all of them prose carried to whoever comes next:
 
-- \`advance_thread(role, handoff)\` — this ticket is resolved; close me and open the next one off the
-  frontier. Exactly one successor, even when your resolution graduated three tickets: charting the
-  others is writing files, and the fan-out lives on disk rather than in the tool surface.
+- \`advance_thread(role, handoff, attach)\` — this ticket is resolved; close me and open the next
+  one off the frontier. Exactly one successor, even when your resolution graduated three tickets:
+  charting the others is writing files, and the fan-out lives on disk rather than in the tool
+  surface. \`attach\` is required and \`[]\` is a real answer — the shared files go either way.
 - \`open_thread(role, brief)\` — delegate a ticket while you stay open; it reports back when it closes.
 - \`open_teammate(role, brief)\` — research and anything else nobody needs to talk to.
 - \`complete_thread(condition, resolution)\` — close me, when I am not the last open thread.
-- \`advance_phase(kind, reason, handoff)\` — close me and the phase, and propose what comes next.
+- \`advance_phase(kind, reason, handoff, attach)\` — close me and the phase, and propose what comes
+  next. Raises a proposal and returns; nothing moves until the human confirms it.
 
 If a move above is not in your tool list, say so plainly and let the human make it. Never simulate a
 move you cannot make.
 
-## When intake ends
+## When charting ends
 
 When \`map.md\` has a destination that can be written **honestly** and no open tickets or fog remain.
 Nothing mechanical blocks this — you state it in \`advance_phase\`'s reason and the human confirms.
@@ -197,22 +199,44 @@ Scale rides that handoff, not the graph. A one-line CSS change charts zero ticke
 }
 
 /**
- * The opening words, which vary because the same phase kind is reached from more than one place.
- * A first intake is charting from nothing; a second one on the same job already has a map and a
- * reason it was re-entered, and telling it to "start by naming the destination" would be wrong.
+ * The opening words, in three, because the same phase kind is now reached from three places.
+ *
+ * The branch is `ctx.repeat` ALONE, and the reason it can be is that charting is the only writer of
+ * `map.md` — so "this kind has run on this job before" IS "a map exists", exactly. The old test
+ * (`repeat || previous !== undefined`) was correct only while charting was every job's first phase;
+ * once `generic` sits in front of it, every escalation arrives with a `previous` and would be told
+ * to read a map that has never been written.
+ *
+ * The middle case is keyed on having a predecessor rather than on `previous === generic` because it
+ * is true of every non-repeat arrival: escalation is the common one, but start-a-phase reaches
+ * charting from anywhere, and none of those jobs has a map either.
  */
-export function intakeBrief(ctx: PhaseBriefContext): PhaseBrief {
+export function chartingBrief(ctx: PhaseBriefContext): PhaseBrief {
   const instructions = wayfinderInstructions(ctx.contextRoot);
-  const map = `${ctx.contextRoot}/intake/map.md`;
+  const map = `${ctx.contextRoot}/charting/map.md`;
 
-  if (ctx.repeat || ctx.previous !== undefined) {
+  if (ctx.repeat) {
     return {
       instructions,
-      opening: `Intake, again — on the job "${ctx.jobTitle}", coming out of ${ctx.previous ?? "an earlier phase"}.
+      opening: `Charting, again — on the job "${ctx.jobTitle}", coming out of ${ctx.previous ?? "an earlier phase"}.
 
 There is already a map at ${map}. Read it first, and the handoff that follows this message: the fog
 that sent the job back here is what you are clearing, and the destination on that map may itself be
 what turns out to be wrong. Chart what has changed rather than re-charting what has not.`,
+    };
+  }
+
+  if (ctx.previous !== undefined) {
+    return {
+      instructions,
+      opening: `Charting — "${ctx.jobTitle}", coming out of ${ctx.previous.replace(/_/g, " ")}.
+
+There is no map yet: this job has not been charted, and the handoff that follows this message plus
+whatever it attaches is everything you have. Read it, then chart from it — it is a statement of the
+ask, not a destination, and the questions it leaves open are your first tickets.
+
+Write the map at ${map} as soon as you have a destination worth writing down, even if it carries no
+tickets at all.`,
     };
   }
 

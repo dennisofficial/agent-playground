@@ -1,4 +1,4 @@
-import type { ESessionEndReason } from '../generated/prisma/enums.js';
+import { ESessionEndReason } from '../generated/prisma/enums.js';
 import type { Message } from './message.js';
 
 /**
@@ -48,6 +48,35 @@ export function withSeams(messages: Message[], sessions: SessionRef[]): Transcri
     previousSessionId = message.sessionId;
   }
   return items;
+}
+
+/**
+ * What the divider says, and it is about the leg that ENDED, not the one starting.
+ *
+ * A rule that only counted legs would leave the reader with the one question a seam raises — why is
+ * there a break here — answered nowhere, and the three answers are not interchangeable: an agent
+ * that chose to hand over, an agent that ran out of room before it could, and a session ended by
+ * hand are three different situations to be scrolling past.
+ */
+export function seamLabel(seam: {
+  ordinal: number;
+  endReason: ESessionEndReason | null;
+}): string {
+  // Ordinal 0 means the session refs were read before this leg existed — an agent rotated while the
+  // page was open. The break is real either way, so it is drawn honestly rather than as "session 0".
+  const leg = seam.ordinal > 0 ? `session ${seam.ordinal}` : 'new session';
+  return `${leg} · ${endedBecause(seam.endReason)}`;
+}
+
+function endedBecause(endReason: ESessionEndReason | null): string {
+  if (endReason === ESessionEndReason.context_pressure) return 'previous leg handed over';
+  // The one forced rotation, and worth naming: this leg opened without a hand-off written for it.
+  if (endReason === ESessionEndReason.context_wall) return 'previous leg hit the context wall';
+  if (endReason === ESessionEndReason.manual) return 'previous leg was ended by hand';
+  if (endReason === ESessionEndReason.engine_error) return 'previous leg died in the engine';
+  if (endReason === ESessionEndReason.usage_limit) return 'previous leg hit a usage limit';
+  if (endReason === ESessionEndReason.thread_closed) return 'previous leg closed with its thread';
+  return 'previous leg ended';
 }
 
 /** 1 means "no rotation yet". */

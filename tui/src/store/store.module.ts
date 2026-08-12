@@ -6,7 +6,9 @@ import { MigratorService } from './migrator.service.js';
 import { PrismaService } from './prisma.service.js';
 import { ProjectRepository } from './project.repository.js';
 import { SessionRepository } from './session.repository.js';
+import { TaskRepository } from './task.repository.js';
 import { ThreadRepository } from './thread.repository.js';
+import { TransitionRepository } from './transition.repository.js';
 import { TurnRepository } from './turn.repository.js';
 
 /**
@@ -26,6 +28,8 @@ import { TurnRepository } from './turn.repository.js';
     SessionRepository,
     MessageRepository,
     TurnRepository,
+    TransitionRepository,
+    TaskRepository,
   ],
   exports: [
     PrismaService,
@@ -36,6 +40,8 @@ import { TurnRepository } from './turn.repository.js';
     SessionRepository,
     MessageRepository,
     TurnRepository,
+    TransitionRepository,
+    TaskRepository,
   ],
 })
 export class StoreModule {}

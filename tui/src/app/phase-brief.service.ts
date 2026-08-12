@@ -1,10 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import type { Job } from "../generated/prisma/client.js";
-import {
-  briefFor,
-  phaseBriefContext,
-  type PhaseBrief,
-} from "../domain/phase-spec.js";
+import { phaseBriefContext, type PhaseBrief } from "../domain/phase-brief.js";
+import { briefFor } from "../domain/phase-spec.js";
 import { JobRepository } from "../store/job.repository.js";
 import { ContextFolderService } from "./context-folder.service.js";
 
@@ -35,6 +32,9 @@ export class PhaseBriefService {
         // folder that does not exist yet turns the first `Write` into a failure it has to explain.
         contextRoot: this.contextFolderService.ensure(args.job.id),
         branch: args.job.branch,
+        // The render cache, read as prose: a `ci` phase on a job that already has a pull request is
+        // told so, which is what stops a re-ship opening a second one before `ship_pr` even runs.
+        prNumber: args.job.prNumber,
       }),
     );
   }

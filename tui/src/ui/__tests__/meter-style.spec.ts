@@ -37,7 +37,9 @@ describe('the fill carries the band and the track recedes', () => {
   });
 
   it('walks the ramp as the window fills', () => {
-    const colours = [18, 66, 81, 94].map((util) => bandColour(meterBand('ctx', util), style));
+    // `ctx` reds at 100 because 100 is the budget, and keeps going: the last reading here is a
+    // session 27% over, which is a real state and has to have a colour.
+    const colours = [18, 66, 90, 127].map((util) => bandColour(meterBand('ctx', util), style));
     expect(colours).toEqual([
       FILL_RAMPS.nearWhite.normal,
       FILL_RAMPS.nearWhite.warn,
@@ -61,9 +63,13 @@ describe('a spent window stops being a quantity', () => {
     expect(text(spans)).not.toContain(METER_GLYPHS.fine.filled);
   });
 
-  it('says "full" for ctx, which has no reset time to promise', () => {
-    // A context window is emptied by rotating, not by waiting — a clock there would be a lie.
-    expect(text(meterSpans(meter('ctx', 'ctx', 100), style, true))).toBe('ctx full');
+  it('never says "full" for ctx — a budget is exceeded, not spent', () => {
+    // A refilling window at 100% has no quantity left to report, which is what lets the strip drop
+    // the bar for a countdown. A context BUDGET has no clock (it is emptied by rotating, not by
+    // waiting) and no ceiling either: `127%` is the honest reading and `full` would hide it.
+    expect(text(meterSpans(meter('ctx', 'ctx', 100), style, true))).toContain('100%');
+    expect(text(meterSpans(meter('ctx', 'ctx', 127), style, true))).toContain('127%');
+    expect(text(meterSpans(meter('ctx', 'ctx', 127), style, true))).toContain(METER_GLYPHS.fine.filled);
   });
 
   it('renders each spent form the way its name says', () => {
@@ -79,13 +85,13 @@ describe('ink schemes resolve against the band', () => {
 
   it('echoes the fill in the digits when asked to', () => {
     const echo = { ...style, ink: METER_INKS.digitsEcho };
-    expect(numberOf(meterSpans(meter('ctx', 'ctx', 81), echo, true))?.fg).toBe(FILL_RAMPS.nearWhite.hot);
+    expect(numberOf(meterSpans(meter('ctx', 'ctx', 90), echo, true))?.fg).toBe(FILL_RAMPS.nearWhite.hot);
   });
 
   it('holds the digits gray until the band is pressured', () => {
     const conditional = { ...style, ink: METER_INKS.digitsEchoWhenHot };
     expect(numberOf(meterSpans(meter('ctx', 'ctx', 18), conditional, true))?.fg).toBe(METER_INKS.digitsEchoWhenHot.quiet);
-    expect(numberOf(meterSpans(meter('ctx', 'ctx', 81), conditional, true))?.fg).toBe(FILL_RAMPS.nearWhite.hot);
+    expect(numberOf(meterSpans(meter('ctx', 'ctx', 90), conditional, true))?.fg).toBe(FILL_RAMPS.nearWhite.hot);
   });
 });
 

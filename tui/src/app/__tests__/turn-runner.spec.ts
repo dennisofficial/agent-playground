@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { EMessageType } from '../../generated/prisma/enums.js';
+import { EContextSignal } from '../../domain/context-nudge.js';
 import { EHarnessVariant, type EngineEvent } from '../../domain/message.js';
 import { buildSystemPrompt } from '../../domain/system-prompt.js';
 import { SESSION, THREAD, build } from './turn-runner.fixture.js';
@@ -98,12 +99,17 @@ describe('TurnRunnerService', () => {
     });
   });
 
-  it('turns a usage event into a context percentage', async () => {
+  it('draws a usage event against the BUDGET, not the window', async () => {
+    // The whole point of the meter change: 120K of a million-token window is 12% — green, on a
+    // gauge that could never warn — while 120K of a 180K budget is two thirds gone and climbing.
     const { runner, store } = build([
       { kind: 'usage', contextTokens: 120_000, contextLimit: 1_000_000 },
     ]);
     await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
-    expect(store.getSnapshot().contextPercent).toBe(12);
+    expect(store.getSnapshot().contextPercent).toEqual({
+      percent: 67,
+      signal: EContextSignal.budget,
+    });
   });
 
   it("never lets a subagent's window move the ctx meter", async () => {
@@ -113,8 +119,10 @@ describe('TurnRunnerService', () => {
     ]);
     await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
 
-    expect(store.getSnapshot().contextPercent).toBe(60);
-    expect(sessions.recordContextPercent).toHaveBeenCalledWith('session-1', 60);
+    // 109%, and it is allowed to be: the budget is capped to 110K by the reported 200K window, and a
+    // meter that stopped at 100 would hide exactly the state worth seeing.
+    expect(store.getSnapshot().contextPercent?.percent).toBe(109);
+    expect(sessions.recordContextPercent).toHaveBeenCalledWith('session-1', 109);
   });
 
   it('stores the last context reading so reopening the thread is not blank', async () => {
@@ -124,7 +132,7 @@ describe('TurnRunnerService', () => {
     ]);
     await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
     expect(sessions.recordContextPercent).toHaveBeenCalledTimes(1);
-    expect(sessions.recordContextPercent).toHaveBeenCalledWith('session-1', 30);
+    expect(sessions.recordContextPercent).toHaveBeenCalledWith('session-1', 55);
   });
 
   it('polls usage for the duration of the turn, then once more after it', async () => {

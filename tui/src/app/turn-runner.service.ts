@@ -1,12 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { randomUUID } from "node:crypto";
-import { EMessageType } from "../generated/prisma/enums.js";
 import type { EngineSession, Thread } from "../generated/prisma/client.js";
-import {
-  promptPayload,
-  renderPrompt,
-  type EHarnessVariant,
-} from "../domain/message.js";
+import { promptPayload, renderPrompt } from "../domain/message.js";
+import { isContextWall } from "../domain/rotation-handoff.js";
 import { buildSystemPrompt } from "../domain/system-prompt.js";
 import { AccountVaultService } from "../auth/account-vault.service.js";
 import { EngineHomeService } from "../auth/engine-home.service.js";
@@ -17,29 +12,21 @@ import { SessionRepository } from "../store/session.repository.js";
 import { TurnRepository } from "../store/turn.repository.js";
 import { AccountRotatorService } from "./account-rotator.service.js";
 import { AccountUsageService } from "./account-usage.service.js";
+import { ContextPressureService } from "./context-pressure.service.js";
 import { ConversationStoreRegistry } from "./conversation-store.registry.js";
 import type { ConversationStore } from "./conversation.store.js";
+import { sessionForTurn } from "./session-rotation.js";
+import { SessionManagerService } from "./session-manager.service.js";
 import { finaliseTurn } from "./turn-completion.js";
 import { TurnEventApplier } from "./turn-events.js";
 import { TurnLanes, type Lane } from "./turn-lanes.js";
+import { nudgeAtToolBoundary } from "./turn-nudge.js";
+import { steerTurn } from "./turn-steering.js";
 
-export type RunTurnArgs = {
-  thread: Thread;
-  session: EngineSession;
-  prompt: string;
-  cwd: string;
-  /**
-   * Set when ATLAS is speaking rather than Dennis: the same prompt, persisted as a `harness` message
-   * and delivered inside an envelope. Absent means the human typed it, and it goes in bare.
-   */
-  harnessVariant?: EHarnessVariant;
-  /**
-   * The phase's standing instructions, appended to the envelope vocabulary on this turn's system
-   * prompt. Passed in rather than looked up: the runner deals in threads and sessions, and a phase
-   * read on the hot path would be a database round trip per turn for a string that cannot change.
-   */
-  brief?: string;
-};
+// Re-exported rather than moved outright: half this file's importers want only the argument shape,
+// and every one of them already spells it `from './turn-runner.service.js'`.
+import type { RunTurnArgs } from "./turn-args.js";
+export type { RunTurnArgs };
 
 @Injectable()
 export class TurnRunnerService {
@@ -61,13 +48,23 @@ export class TurnRunnerService {
     private readonly sessionRepository: SessionRepository,
     turnRepository: TurnRepository,
     private readonly stores: ConversationStoreRegistry,
+    // The runner owns the ONE session event it can observe first-hand: the context wall, which
+    // arrives as a failed turn and nowhere else. It still knows nothing about phases or tools — the
+    // successor inherits this turn's `brief`, `tools` and `cwd` unchanged.
+    private readonly sessionManagerService: SessionManagerService,
+    // Held only to pass on: the readings arrive as frames on this turn's stream, and the decision of
+    // what to do about them lives in `turn-nudge.ts`. The runner never learns what a budget is.
+    private readonly contextPressureService: ContextPressureService,
   ) {
-    this.events = new TurnEventApplier({
-      sessionRepository,
-      accountRepository,
-      messageRepository,
-      turnRepository,
-    });
+    this.events = new TurnEventApplier(
+      {
+        sessionRepository,
+        accountRepository,
+        messageRepository,
+        turnRepository,
+      },
+      contextPressureService,
+    );
   }
 
   busy(threadId: string): boolean {
@@ -114,20 +111,18 @@ export class TurnRunnerService {
   private async execute(lane: Lane, args: RunTurnArgs): Promise<void> {
     const { thread, cwd } = args;
     const store = this.stores.for(thread.id);
-    let session = args.session;
-
-    // Rotate at a turn BOUNDARY when the active account is near its wall, so no work is lost.
-    const outcome = await this.accountRotatorService.considerRotation({
-      sessionId: session.id,
-      accountId: session.accountId,
-      engine: session.engine,
+    // Which session and which account this turn actually runs on: both can have moved since the
+    // caller looked, and both move only at a turn boundary. See `session-rotation.ts`.
+    const session = await sessionForTurn({
+      sessionRepository: this.sessionRepository,
+      accountRotatorService: this.accountRotatorService,
+      store,
+      threadId: thread.id,
+      session: args.session,
     });
-    if (outcome.kind === "rotated") {
-      store.notice(
-        `switched to ${outcome.to.label} · ${outcome.from.label} hit its 5-hour limit`,
-      );
-      session = { ...session, accountId: outcome.to.id };
-    }
+    // A turn that fails because the transcript itself no longer fits. Collected as it streams
+    // because the engine reports it as an ordinary error event, and acted on in the `finally`.
+    let wall = false;
 
     store.startTurn();
     // The 5-hour window is burned BY this turn, so the meters follow it rather than waiting for it.
@@ -136,7 +131,11 @@ export class TurnRunnerService {
       threadId: thread.id,
     });
     lane.contextPercent = undefined;
+    lane.contextTokens = undefined;
+    lane.canary = undefined;
     lane.usage = undefined;
+    // The nudge cadence escalates across turns and never within one, so the counter moves here.
+    this.contextPressureService.startTurn(session.id);
     // Wall clock, and deliberately started HERE rather than from the SDK's `duration_ms`: this is
     // the number the working line counted up to, credential fetch and spawn included.
     const startedAt = new Date();
@@ -147,6 +146,7 @@ export class TurnRunnerService {
       const payload = promptPayload({
         text: args.prompt,
         harnessVariant: args.harnessVariant,
+        attachments: args.attachments,
       });
       await this.events.persist({
         store,
@@ -168,7 +168,21 @@ export class TurnRunnerService {
           model: session.model,
           resume: session.engineSessionId ?? undefined,
           env,
+          tools: args.tools,
+          // Atlas's one way into a running turn that costs the agent nothing: it is already waiting
+          // on the tool. Whether anything is said at all is entirely `turn-nudge.ts`'s decision.
+          onToolBoundary: () =>
+            nudgeAtToolBoundary({
+              contextPressureService: this.contextPressureService,
+              events: this.events,
+              store,
+              thread,
+              session,
+              lane,
+              record: (work) => this.record(lane, store, work),
+            }),
           onEvent: (event) => {
+            if (event.kind === "error" && isContextWall(event)) wall = true;
             this.record(lane, store, () =>
               this.events.apply({
                 event,
@@ -210,10 +224,15 @@ export class TurnRunnerService {
         store,
         events: this.events,
         accountUsageService: this.accountUsageService,
+        contextPressureService: this.contextPressureService,
+        sessionManagerService: this.sessionManagerService,
         threadId: thread.id,
         session,
         startedAt,
         ok,
+        turn: args,
+        wall,
+        run: (next) => void this.run(next),
         onWarn: (message) => this.logger.warn(message),
       });
     }
@@ -224,38 +243,15 @@ export class TurnRunnerService {
     session: EngineSession;
     text: string;
   }): boolean {
-    const { thread, session, text } = args;
-    const lane = this.lanes.peek(thread.id);
-    const store = this.stores.for(thread.id);
-    const id = randomUUID();
-    store.enqueue({ id, text });
-
-    const deliver = (): void => {
-      // Fired when the SDK actually PULLED it — the ack, not a hope.
-      store.dequeue(id);
-      if (lane) {
-        this.record(lane, store, () =>
-          this.events.persist({
-            store,
-            threadId: thread.id,
-            sessionId: session.id,
-            payload: { type: EMessageType.user, text },
-          }),
-        );
-      }
-    };
-
-    if (lane?.turn?.steer(text, deliver)) return true;
-
-    // The turn is still in credential setup, so there is no query to push into yet. Hold it rather
-    // than dropping what the user typed — the handle flushes it the moment the query opens.
-    if (lane?.inFlight) {
-      this.lanes.hold({ lane, steer: { id, text, deliver } });
-      return true;
-    }
-
-    store.dequeue(id);
-    return false;
+    const store = this.stores.for(args.thread.id);
+    return steerTurn({
+      lanes: this.lanes,
+      lane: this.lanes.peek(args.thread.id),
+      store,
+      events: this.events,
+      record: ({ lane, work }) => this.record(lane, store, work),
+      ...args,
+    });
   }
 
   /** Esc with an empty composer interrupts bare; with text it is a steer-now (interrupt, then send). */

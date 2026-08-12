@@ -11,7 +11,7 @@ import type { CliJobView, CliThreadView } from '../../views.js';
 function thread(over: Partial<CliThreadView> = {}): CliThreadView {
   return {
     id: 'thread-1',
-    role: EThreadRole.intake,
+    role: EThreadRole.charting,
     status: EThreadStatus.active,
     messageCount: 4,
     createdAt: new Date('2026-08-11T10:00:00.000Z'),
@@ -29,7 +29,7 @@ const JOB: CliJobView = {
   phases: [
     {
       id: 'phase-0',
-      kind: EPhaseKind.intake,
+      kind: EPhaseKind.charting,
       current: false,
       threads: [
         thread({
@@ -62,7 +62,7 @@ describe('formatThreadTree', () => {
 
   it('marks the current phase — the one an agent is standing in', () => {
     expect(text).toContain('phase planning  (current)  id=phase-1');
-    expect(text).toContain('phase intake  id=phase-0');
+    expect(text).toContain('phase charting  id=phase-0');
   });
 
   it('prints thread ids in full, because they are the argument to `atlas transcript`', () => {

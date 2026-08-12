@@ -1,10 +1,12 @@
 import { useRenderer, useTerminalDimensions } from "@opentui/react";
 import { useInput } from "./hooks/use-input.js";
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import type { OpenConversation } from "../app/conversation.service.js";
 import type { ProjectRow } from "../app/workspace.service.js";
 import type { Thread } from "../generated/prisma/client.js";
 import type { JobRow } from "../store/job.repository.js";
 import { CopyNoticeProvider, useCopyOnSelect } from "./copy-on-select.js";
+import { useCursorFollow } from "./hooks/use-cursor-follow.js";
 import { useRunningThreads } from "./hooks/use-conversation.js";
 import { useNewJob } from "./hooks/use-new-job.js";
 import { claimService, useClaim } from "./hooks/use-claim.js";
@@ -136,20 +138,26 @@ export function App(props: {
         // did not gets `project.path` back, exactly as before.
         const cwd = workspaceService.cwdFor({ job, projectPath: project.path });
         const open = await conversationService.openJob(job, cwd);
+        const jobPage = {
+          name: "threads",
+          project,
+          job,
+          cwd,
+          currentThreadId: open.thread.id,
+        } as const;
         // TWO frames, landing on the conversation. Descending skips the thread list because you
         // almost always want the live thread; ascending walks back through it because that is where
         // the job itself is managed. Leaving it underneath is what makes `←` mean "manage this job"
         // rather than "leave it", and `pop` unwinds the circle with no special case anywhere.
-        nav.push(
-          {
-            name: "threads",
-            project,
-            job,
-            cwd,
-            currentThreadId: open.thread.id,
-          },
-          { name: "conversation", project, open },
-        );
+        //
+        // ONE frame where the cursor thread has closed, which is what a shipped job looks like:
+        // there is no live thread to prefer, and landing on a read-only record would put a
+        // transcript between Dennis and the two verbs that re-enter the job. Both live on this page.
+        if (open.closed) {
+          nav.push(jobPage);
+          return;
+        }
+        nav.push(jobPage, { name: "conversation", project, open });
       } catch (e) {
         setError((e as Error).message);
       }
@@ -193,6 +201,34 @@ export function App(props: {
     },
     [conversationService, nav],
   );
+
+  /**
+   * The cursor moved out from under the page, or the thread on it closed mid-turn. Both are one act
+   * — swap the conversation frame for what the job now points at.
+   *
+   * The frame REPLACES rather than pushes, so `←` still walks back to the job. Only the top frame
+   * moves: the thread list underneath re-reads the cursor itself when it mounts.
+   */
+  const showConversation = useCallback(
+    (open: OpenConversation) => {
+      if (nav.route.name !== "conversation") return;
+      nav.replace({ name: "conversation", project: nav.route.project, open });
+    },
+    [nav],
+  );
+
+  useCursorFollow({
+    open: nav.route.name === "conversation" ? nav.route.open : null,
+    onMoved: (thread) => {
+      if (nav.route.name !== "conversation") return;
+      const { job, cwd } = nav.route.open;
+      void conversationService
+        .openThread(job, thread, cwd)
+        .then(showConversation)
+        .catch((e: Error) => setError(e.message));
+    },
+    onRefreshed: showConversation,
+  });
 
   /**
    * Move a job out of the project path and into its own worktree, at any point in its life.
@@ -330,6 +366,10 @@ export function App(props: {
             job={route.job}
             projectName={route.project.name}
             currentThreadId={route.currentThreadId}
+            // Where a thread started from this page runs. The route's, not the project's: a job that
+            // took a worktree must not open its next thread in the tree the worktree exists to
+            // stay out of.
+            cwd={route.cwd}
             onOpen={(thread) => void switchThread({ route, thread })}
             onEnterWorktree={() => void enterWorktree(route)}
             onBack={nav.pop}

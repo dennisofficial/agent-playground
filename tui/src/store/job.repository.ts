@@ -184,8 +184,23 @@ export class JobRepository {
   }
 
   /**
+   * The job has a pull request. A RENDER CACHE and not a parse: it is what the job list clicks
+   * through to without opening a thread, and re-deriving it with `gh pr view` would be a shell call
+   * per row. Written by `ship_pr` on every ship, including the ones that opened nothing new.
+   *
+   * There is deliberately no companion field for whether the pull request is open, merged or closed
+   * — nothing local watches GitHub, so that column would have no writer.
+   */
+  async setPullRequest(args: { jobId: string; prNumber: number }): Promise<void> {
+    await this.prismaService.job.update({
+      where: { id: args.jobId },
+      data: { prNumber: args.prNumber },
+    });
+  }
+
+  /**
    * A new job starts with one phase at ordinal 0 — the phase the caller names, which is always
-   * `intake` today. Nothing here advances a phase; that is a confirmed transition, not a write.
+   * `charting` today. Nothing here advances a phase; that is a confirmed transition, not a write.
    */
   async create(args: { projectId: string; title: string; kind: EPhaseKind }): Promise<Job> {
     return this.prismaService.job.create({
@@ -219,6 +234,40 @@ export class JobRepository {
     });
     if (!phase) throw new Error(`job ${jobId} has no phase`);
     return phase;
+  }
+
+  /**
+   * The next phase, appended. Phases are never reopened and never reordered, so "advance" is only
+   * ever this: one more row at the next ordinal, which `@@unique([jobId, ordinal])` then guarantees
+   * is the current phase for everyone reading `currentPhase`.
+   *
+   * Read-then-write rather than an aggregate in SQL because the only writer is a human confirming a
+   * proposal, one at a time. Two confirmations racing would collide on the unique index and one
+   * would fail loudly, which is the correct outcome for a job whose next phase is ambiguous.
+   */
+  async appendPhase(args: { jobId: string; kind: EPhaseKind }): Promise<Phase> {
+    const current = await this.currentPhase(args.jobId);
+    return this.prismaService.phase.create({
+      data: {
+        jobId: args.jobId,
+        kind: args.kind,
+        ordinal: current.ordinal + 1,
+      },
+    });
+  }
+
+  /**
+   * Which threads are still open in a phase — what `advance_phase`'s last-open-thread rule reads.
+   *
+   * Here rather than on `ThreadRepository` because the question is about a PHASE's occupancy: the
+   * answer decides whether the phase is finished, and the caller is holding a phase, not a thread.
+   */
+  async openThreadIdsInPhase(phaseId: string): Promise<string[]> {
+    const threads = await this.prismaService.thread.findMany({
+      where: { phaseId, status: { not: EThreadStatus.closed } },
+      select: { id: true },
+    });
+    return threads.map((thread) => thread.id);
   }
 
   /**

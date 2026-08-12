@@ -26,6 +26,7 @@ import { PageHeader } from "../components/page-header.js";
 import { Screen } from "../components/screen.js";
 import { useComposer } from "../hooks/use-composer.js";
 import { useJobsKeys } from "../hooks/use-jobs-keys.js";
+import { usePendingProposals } from "../hooks/use-pending-proposals.js";
 import { useRunningThreads, useTick } from "../hooks/use-conversation.js";
 import { useServices } from "../services.js";
 import { theme } from "../theme.js";
@@ -74,6 +75,9 @@ export function JobsPage(props: {
   // from is indistinguishable from an idle one, and the whole point of leaving it running is lost.
   const running = useRunningThreads();
   const { frame } = useTick(running.length > 0);
+  // Which jobs owe you a keypress. The rows read it per job; the group headers roll it up on their
+  // own inside `useProjectAttention`, so there is no third table anywhere.
+  const proposals = usePendingProposals(running);
 
   const reload = useCallback(async () => {
     const next =
@@ -277,6 +281,7 @@ export function JobsPage(props: {
             layout={layout}
             frame={frame}
             runningThreadIds={running}
+            proposalThreadIds={proposals.get(entry.job.id) ?? []}
             claimed={isClaimed(entry.job)}
           />
         ),

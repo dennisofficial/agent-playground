@@ -25,6 +25,9 @@ export const CONVERSATION: readonly Binding[] = [
   ["←", "leave"],
   ["ctrl+u", "clear draft"],
   ["ctrl+h", "threads"],
+  // `ctrl+y` (the pending proposal) is NOT listed either, for the same two reasons as `ctrl+b`
+  // below: the panel has no row to spare at 60×24, and the line that appears when a proposal is
+  // waiting spells the key itself — at the only moment it means anything.
   // `ctrl+b` (jump to bottom) is deliberately NOT listed: a seventeenth row does not fit 60×24, and
   // the affordance that appears when you are scrolled away spells the key itself, at the only
   // moment it means anything.

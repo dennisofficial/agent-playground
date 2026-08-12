@@ -4,6 +4,11 @@ enum ESessionEndReason {
   engine_error
   usage_limit
   manual
+  /// The ONLY forced rotation: context actually ran out. Distinct from `context_pressure`, which is
+  /// a nudge the agent chose to act on. Its fallback stub tells the successor to read its
+  /// predecessor's transcript rather than handing it a lossy host summary — a faithful summary
+  /// carries a poisoned trajectory forward, which is the thing rotation exists to avoid.
+  context_wall
 }
 
 model EngineSession {

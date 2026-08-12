@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'bun:test';
 import { EMessageType } from '../../generated/prisma/enums.js';
 import type { Message } from '../message.js';
-import { currentSessionOrdinal, withSeams, type SessionRef } from '../seam.js';
+import { ESessionEndReason } from '../../generated/prisma/enums.js';
+import { currentSessionOrdinal, seamLabel, withSeams, type SessionRef } from '../seam.js';
 
 function message(id: string, sessionId: string, ordinal: number): Message {
   return {
@@ -51,6 +52,25 @@ describe('withSeams', () => {
     const items = withSeams([message('a', 's1', 0), message('b', 'unknown', 1)], SESSIONS);
     expect(items).toHaveLength(3);
     expect(items[1]).toMatchObject({ kind: 'seam', ordinal: 0 });
+  });
+});
+
+describe('seamLabel', () => {
+  it('explains why the PREVIOUS leg ended, which is the question a break in the page raises', () => {
+    expect(seamLabel({ ordinal: 2, endReason: ESessionEndReason.context_pressure })).toBe(
+      'session 2 · previous leg handed over',
+    );
+    expect(seamLabel({ ordinal: 3, endReason: ESessionEndReason.context_wall })).toBe(
+      'session 3 · previous leg hit the context wall',
+    );
+  });
+
+  it('still says something when the reason is unknown, rather than counting legs silently', () => {
+    expect(seamLabel({ ordinal: 2, endReason: null })).toBe('session 2 · previous leg ended');
+  });
+
+  it('draws a leg it has no metadata for — an agent that rotated while the page was open', () => {
+    expect(seamLabel({ ordinal: 0, endReason: null })).toBe('new session · previous leg ended');
   });
 });
 

@@ -3,11 +3,36 @@ enum EThreadStatus {
   closed
 }
 
+/// HOW a thread closed. A closed thread that cannot say this is a row you have to read a transcript
+/// to interpret. The first three are the AGENT's — they are the enum on `complete_thread`; the last
+/// three are stamped by Atlas and unemittable, because no agent should be able to claim its work was
+/// carried on when it was not.
+enum EThreadCondition {
+  /// The work it was opened for is done.
+  resolved
+  /// It turned out to sit past this job's destination. Closed, not resolved — a mis-scoped ticket is
+  /// closed, not resolved.
+  out_of_scope
+  /// Cannot be finished from here; the resolution says what has to happen first.
+  blocked
+  /// `advance_thread`: a successor is carrying it on.
+  handed_off
+  /// `advance_phase`: the phase moved and took the work with it.
+  phase_advanced
+  /// Dennis closed it himself.
+  abandoned
+}
+
 // A role is *what kind of work* a thread does — which prompts, subagents and tools get injected.
-// It says nothing about which phase the thread lives in: `research` and `prototype` are intake
-// work, and a `planning` phase may still host an `intake` thread.
+// It says nothing about which phase the thread lives in: `research` and `prototype` are charting
+// work, and a `planning` phase may still host a `charting` thread.
 enum EThreadRole {
-  intake
+  /// The un-postured role: a plain coding agent. Bound to the same model as every other role
+  /// because this thread accumulates the most conversational turns and its judgement about *when
+  /// to escalate* is the whole feature — a cheap agent that mistimes the proposal is worse than an
+  /// expensive one that gets it right.
+  generic
+  charting
   research
   prototype
   task
@@ -17,6 +42,12 @@ enum EThreadRole {
   builder
   master_review
   post_build
+  /// Rebases, pushes and opens the PR. Idempotent by design — the red-build loop makes it run more
+  /// than once, and idempotence is why re-shipping needs no second role.
+  ship_pr
+  /// Kept as the routing target for when webhooks eventually land. The `ci` phase SHIPS; it does not
+  /// watch — a watcher earns its keep by noticing things while you are away, and the TUI is a
+  /// terminal you either have open or you don't.
   ci
 }
 
@@ -28,11 +59,26 @@ model Thread {
   status          EThreadStatus   @default(active)
   activeSessionId String?
 
+  /// Two parentage columns that mean DIFFERENT things and must never be conflated.
+  /// `parentThreadId`  = I am a teammate: agent-driven, absent from the thread list.
+  /// `openedByThreadId` = I am a real thread in this phase, and that thread is waiting on me —
+  ///                      when I close, my resolution lands there and the cursor returns to it.
+  /// A phase's first thread has neither. Plain ids rather than self-relations: the audit value is
+  /// in the reference, and a self-relation buys nothing but Prisma ceremony here.
+  parentThreadId   String?
+  openedByThreadId String?
+
   sessions        EngineSession[]
   messages        ThreadMessage[]
   turns           Turn[]
+  tasks           Task[]
   createdAt       DateTime        @default(now())
   closedAt        DateTime?
+  /// Null while open; written exactly once, when it closes.
+  condition       EThreadCondition?
+  /// The closing agent's own words. The opener's copy is a message in ANOTHER thread, so this row is
+  /// the only place that says how this one ended in its own terms.
+  resolution      String?
   /// When the human last reached the BOTTOM of this thread — not when they mounted it. Read state
   /// is one of the two independent attention channels (the other is whose court it is in), and it
   /// is the only one that carries information at rest: an agent works until it responds, so "who

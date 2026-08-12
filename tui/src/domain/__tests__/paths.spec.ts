@@ -3,7 +3,7 @@ import { CONTEXT_BUCKETS, jobContextDir, jobDir } from '../paths.js';
 
 describe('CONTEXT_BUCKETS', () => {
   it('is the three buckets, in the order the phases write them', () => {
-    expect(CONTEXT_BUCKETS).toEqual(['intake', 'specs', 'artifacts']);
+    expect(CONTEXT_BUCKETS).toEqual(['charting', 'specs', 'artifacts']);
   });
 
   // `generated/` lost its writer when hand-offs became the next session's first message rather

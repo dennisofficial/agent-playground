@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
+import { EContextSignal } from '../../domain/context-nudge.js';
 import type { Message } from '../../domain/message.js';
-import type { PhaseBrief } from '../../domain/phase-spec.js';
+import type { PhaseBrief } from '../../domain/phase-brief.js';
 import { EMessageType, EThreadStatus } from '../../generated/prisma/enums.js';
 import type { EngineSession, Job, Thread } from '../../generated/prisma/client.js';
 import type { MessageRepository } from '../../store/message.repository.js';
@@ -14,6 +15,7 @@ import { ConversationStoreRegistry } from '../conversation-store.registry.js';
 import { ConversationService } from '../conversation.service.js';
 import type { PhaseBriefService } from '../phase-brief.service.js';
 import type { SessionManagerService } from '../session-manager.service.js';
+import type { ThreadSeamService } from '../thread-seam.service.js';
 import type { TurnRunnerService } from '../turn-runner.service.js';
 
 /**
@@ -116,6 +118,13 @@ function build(args: { running?: string[] } = {}): {
         return { instructions: 'phase instructions', opening: 'phase opening' };
       },
     } as unknown as PhaseBriefService,
+    // Stubbed: this file is about which store a switch renders into, and the tool surface has no
+    // bearing on that. `toolsFor` is the only method `openThread` reaches for.
+    {
+      async toolsFor(): Promise<[]> {
+        return [];
+      },
+    } as unknown as ThreadSeamService,
     stores,
   );
 
@@ -160,11 +169,11 @@ describe('opening a running thread', () => {
     const { conversationService, stores } = build({ running: ['thread-b'] });
     const store = stores.for('thread-b');
     store.startTurn();
-    store.setContextPercent(87);
+    store.setContextPercent({ percent: 87, signal: EContextSignal.budget });
 
     await conversationService.openThread(JOB, thread('thread-b'), '/repo');
 
-    expect(store.getSnapshot().contextPercent).toBe(87);
+    expect(store.getSnapshot().contextPercent?.percent).toBe(87);
   });
 });
 

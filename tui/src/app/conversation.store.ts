@@ -1,3 +1,4 @@
+import type { ContextReading } from "../domain/context-nudge.js";
 import type { Message, TurnSummary } from "../domain/message.js";
 import type { UsageWindow } from "../domain/usage.js";
 
@@ -43,7 +44,12 @@ export type ConversationState = {
   lastTurn: TurnSummary | null;
   interrupting: boolean;
   queued: QueuedSteer[];
-  contextPercent: number | null;
+  /**
+   * The `ctx` reading: a percentage of the rotation BUDGET, which is allowed past 100, plus which
+   * instrument put it there. Not a percentage of the physical window — a builder at 200K of a
+   * million read `20%` green, on a meter that could not warn before the quality was gone.
+   */
+  contextPercent: ContextReading | null;
   fiveHour: UsageWindow;
   sevenDay: UsageWindow;
   notices: string[];
@@ -194,8 +200,8 @@ export class ConversationStore {
     this.patch({ queued: [] });
   }
 
-  setContextPercent(percent: number | null): void {
-    this.patch({ contextPercent: percent });
+  setContextPercent(reading: ContextReading | null): void {
+    this.patch({ contextPercent: reading });
   }
 
   setUsage(window: "fiveHour" | "sevenDay", value: UsageWindow): void {

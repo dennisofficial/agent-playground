@@ -1,4 +1,5 @@
 import { EMessageType } from '../generated/prisma/enums.js';
+import { renderAttachmentParts, type AttachmentPart } from './attachments.js';
 import type { DiffHunk } from './tool-diff.js';
 
 export type UserPayload = {
@@ -74,7 +75,14 @@ export enum EHarnessVariant {
 export type HarnessPayload = {
   type: typeof EMessageType.harness;
   variant: EHarnessVariant;
+  /**
+   * The PROSE. Where `attachments` is set the file bodies are not in here — the wire string is
+   * assembled from both at send, so the transcript can draw chips without parsing a composed message
+   * back apart, and neither copy can drift from the other. A message stored before this build simply
+   * has no manifest and its text is the whole composition, which still renders.
+   */
   text: string;
+  attachments?: readonly AttachmentPart[];
 };
 
 export type MessagePayload =
@@ -200,6 +208,11 @@ export type PromptPayload = UserPayload | HarnessPayload;
 export function promptPayload(args: {
   text: string;
   harnessVariant?: EHarnessVariant | undefined;
+  /**
+   * The seam's attachment manifest. Only Atlas attaches — a message Dennis typed has no manifest,
+   * so this is dropped rather than mislabelled when no variant came with it.
+   */
+  attachments?: readonly AttachmentPart[] | undefined;
 }): PromptPayload {
   if (args.harnessVariant === undefined)
     return { type: EMessageType.user, text: args.text };
@@ -207,6 +220,11 @@ export function promptPayload(args: {
     type: EMessageType.harness,
     variant: args.harnessVariant,
     text: args.text,
+    // Absent rather than empty when nothing was attached: an empty array would draw an empty chip
+    // list's worth of nothing and would claim, on an old row, that the seam attached nothing.
+    ...(args.attachments && args.attachments.length > 0
+      ? { attachments: args.attachments }
+      : {}),
   };
 }
 
@@ -222,7 +240,13 @@ export function promptPayload(args: {
  */
 export function renderPrompt(payload: PromptPayload): string {
   if (payload.type === EMessageType.user) return payload.text;
-  return `<harness variant="${payload.variant}">${escapeEnvelope(payload.text)}</harness>`;
+  // Prose, then the files, in the order `successorSeed` has always put them: the attachments are the
+  // material and read as nothing until the prose has said what they are for. Composed HERE rather
+  // than stored composed, so the model and the chips are two views of one manifest.
+  const attachments = renderAttachmentParts(payload.attachments ?? []);
+  const body =
+    attachments.length > 0 ? `${payload.text}\n\n${attachments}` : payload.text;
+  return `<harness variant="${payload.variant}">${escapeEnvelope(body)}</harness>`;
 }
 
 /**

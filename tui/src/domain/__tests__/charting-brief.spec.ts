@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'bun:test';
 import { EPhaseKind } from '../../generated/prisma/enums.js';
-import { intakeBrief } from '../intake-brief.js';
-import type { PhaseBriefContext } from '../phase-spec.js';
+import { chartingBrief } from '../charting-brief.js';
+import type { PhaseBriefContext } from '../phase-brief.js';
 
 const CONTEXT_ROOT = '/Users/dennis/.atlas/jobs/job-1/context';
 
 function ctx(over: Partial<PhaseBriefContext> = {}): PhaseBriefContext {
   return {
-    kind: EPhaseKind.intake,
+    kind: EPhaseKind.charting,
     ordinal: 0,
     repeat: false,
     jobTitle: 'add avatar upload',
@@ -17,7 +17,7 @@ function ctx(over: Partial<PhaseBriefContext> = {}): PhaseBriefContext {
 }
 
 /**
- * Intake's instructions are wayfinder, vendored at `.scratch/session-orchestration/sources/
+ * Charting's instructions are wayfinder, vendored at `.scratch/session-orchestration/sources/
  * wayfinder-SKILL.md` and rewritten for Atlas. The rules below are the ones the source calls
  * load-bearing, so a rewrite that quietly drops one is the failure this catches — the prose is a
  * tuning surface and will be edited often, and "still says the thing" is what must survive editing.
@@ -25,8 +25,8 @@ function ctx(over: Partial<PhaseBriefContext> = {}): PhaseBriefContext {
  * It asserts on CONCEPTS, not on sentences: matching the source's wording would make every
  * improvement to the prose a test failure, which is how a test stops being read.
  */
-describe('the intake brief is wayfinder', () => {
-  const { instructions } = intakeBrief(ctx());
+describe('the charting brief is wayfinder', () => {
+  const { instructions } = chartingBrief(ctx());
 
   it('names the destination as what charting is for', () => {
     expect(instructions).toContain('destination');
@@ -100,7 +100,7 @@ describe('the intake brief is wayfinder', () => {
   });
 
   it('points at the job’s own folder, absolutely — file tools do not expand $VARS', () => {
-    expect(instructions).toContain(`${CONTEXT_ROOT}/intake/map.md`);
+    expect(instructions).toContain(`${CONTEXT_ROOT}/charting/map.md`);
     expect(instructions).not.toContain('$ATLAS');
   });
 
@@ -109,18 +109,44 @@ describe('the intake brief is wayfinder', () => {
   });
 });
 
-describe('the intake opening', () => {
-  it('opens a first intake on the job title, with nothing charted yet', () => {
-    const { opening } = intakeBrief(ctx());
-    expect(opening).toContain('add avatar upload');
-    expect(opening).toContain('Nothing has been charted');
+describe('the charting opening', () => {
+  const first = chartingBrief(ctx());
+  const escalated = chartingBrief(ctx({ ordinal: 1, previous: EPhaseKind.generic }));
+  const reentered = chartingBrief(
+    ctx({ ordinal: 3, previous: EPhaseKind.post_build, repeat: true }),
+  );
+
+  it('opens a first charting on the job title, with nothing charted yet', () => {
+    expect(first.opening).toContain('add avatar upload');
+    expect(first.opening).toContain('Nothing has been charted');
   });
 
-  it('opens a re-entered intake on the map that already exists', () => {
-    const { opening } = intakeBrief(
-      ctx({ ordinal: 3, previous: EPhaseKind.post_build, repeat: true }),
+  it('opens a re-entered charting on the map that already exists', () => {
+    expect(reentered.opening).toContain('already a map');
+    expect(reentered.opening).toContain(`${CONTEXT_ROOT}/charting/map.md`);
+  });
+
+  /**
+   * The repair. `repeat` is the ONLY safe test for "a map exists", because charting is the only
+   * writer of one — the old `repeat || previous !== undefined` sent every escalation to read a file
+   * that had never been written.
+   */
+  it('tells a charting escalated out of generic that there is no map, and to chart from the handoff', () => {
+    expect(escalated.opening).toContain('no map');
+    expect(escalated.opening).toContain('handoff');
+    expect(escalated.opening).not.toContain('already a map');
+  });
+
+  /**
+   * Three arrivals, three openings. Asserted as a set so that a fourth phase added in front of this
+   * one collapses two branches loudly rather than quietly lying to one of them.
+   */
+  it('keeps the three openings distinct', () => {
+    const openings = [first.opening, escalated.opening, reentered.opening];
+    expect(new Set(openings).size).toBe(3);
+    // The standing instructions do not move with the entry point — that is the phase's identity.
+    expect(new Set([first.instructions, escalated.instructions, reentered.instructions]).size).toBe(
+      1,
     );
-    expect(opening).toContain('already a map');
-    expect(opening).toContain(`${CONTEXT_ROOT}/intake/map.md`);
   });
 });

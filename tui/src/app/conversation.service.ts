@@ -1,8 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { EHarnessVariant } from "../domain/message.js";
 import { bindingFor } from "../domain/role-engine.js";
-import type { SessionRef } from "../domain/seam.js";
-import { EThreadStatus } from "../generated/prisma/enums.js";
 import type { EngineSession, Job, Thread } from "../generated/prisma/client.js";
 import { JobRepository } from "../store/job.repository.js";
 import { MessageRepository } from "../store/message.repository.js";
@@ -11,26 +9,22 @@ import { ThreadRepository } from "../store/thread.repository.js";
 import { TurnRepository } from "../store/turn.repository.js";
 import { AccountUsageService } from "./account-usage.service.js";
 import { ContextFolderService } from "./context-folder.service.js";
+import {
+  loadConversation,
+  syncCursor,
+  type ConversationDeps,
+  type CursorSync,
+  type OpenConversation,
+} from "./conversation-open.js";
 import { ConversationStoreRegistry } from "./conversation-store.registry.js";
 import { PhaseBriefService } from "./phase-brief.service.js";
 import { SessionManagerService } from "./session-manager.service.js";
+import { ThreadSeamService } from "./thread-seam.service.js";
 import { TurnRunnerService } from "./turn-runner.service.js";
 
-export type OpenConversation = {
-  job: Job;
-  thread: Thread;
-  session: EngineSession;
-  sessions: SessionRef[];
-  cwd: string;
-  contextRoot: string;
-  /** Closed threads are a RECORD, not a place to work. Nothing to do with other terminals. */
-  closed: boolean;
-  /**
-   * The phase's standing instructions, on every turn's system prompt. Resolved once here rather than
-   * per turn in the runner: it costs a read, and a thread never moves phase.
-   */
-  brief: string;
-};
+// Re-exported because this is the door every caller already knocks on: the type moved for length,
+// and moving what imports it would have been a rename dressed up as a refactor.
+export type { OpenConversation } from "./conversation-open.js";
 
 @Injectable()
 export class ConversationService {
@@ -48,6 +42,7 @@ export class ConversationService {
     private readonly contextFolderService: ContextFolderService,
     private readonly accountUsageService: AccountUsageService,
     private readonly phaseBriefService: PhaseBriefService,
+    private readonly threadSeamService: ThreadSeamService,
     private readonly stores: ConversationStoreRegistry,
   ) {}
 
@@ -68,90 +63,45 @@ export class ConversationService {
     thread: Thread,
     cwd: string,
   ): Promise<OpenConversation> {
-    // A closed thread is a RECORD, not a place to work. Asking the session manager for a current
-    // session would end up minting a fresh one — a junk row on finished history, and an account
-    // demanded of someone who only wanted to read a transcript. So it reopens its last session.
-    //
-    // This is the ONLY thing that makes a conversation unwritable. It used to share the flag with a
-    // per-session lock held by another terminal, which is why taking a job over left you looking at
-    // a live thread labelled read-only whose composer silently swallowed everything you typed.
-    const closed = thread.status === EThreadStatus.closed;
-    const session = closed
-      ? await this.lastSession(thread)
-      : await this.sessionManagerService.currentSession(thread);
-
-    const [messages, sessions, lastTurn] = await Promise.all([
-      this.messageRepository.listForThread(thread.id),
-      this.sessionRepository.refsForThread(thread.id),
-      this.turnRepository.lastForThread(thread.id),
-    ]);
-
-    // hydrate(), never reset(): this same path is how a RUNNING thread is reopened, and a reset
-    // would blank a working agent's spinner, live tail and steer queue.
-    const store = this.stores.hydrate(thread.id, messages, closed, lastTurn);
-    if (!this.turnRunnerService.busy(thread.id)) {
-      store.setContextPercent(session.contextPercent);
-    }
-    // Nothing will be billed to a closed thread's account, so there is nothing to poll for.
-    if (!closed)
-      this.accountUsageService.kick({
-        accountId: session.accountId,
-        threadId: thread.id,
-      });
-
-    const contextRoot = this.contextFolderService.ensure(job.id);
-    const brief = await this.phaseBriefService.forPhase({
-      job,
-      phaseId: thread.phaseId,
-    });
-
-    this.open = {
-      job,
-      thread,
-      session,
-      sessions,
-      cwd,
-      contextRoot,
-      closed,
-      brief: brief.instructions,
-    };
+    this.open = await loadConversation(this.deps, { job, thread, cwd });
     return this.open;
   }
 
   /**
-   * Atlas's opening words in a thread nobody has opened yet — how a new job stops landing on a blank
-   * conversation.
+   * Follow the job's cursor: an agent moves it mid-turn, so where the human should be is not where
+   * he was when the page mounted. Called from the renderer on the turn runner's signal.
    *
-   * Deliberately NOT `sendHarness()`: at job creation there is no open conversation to speak into,
-   * and there must not be one. The turn is fired against the thread directly, so the agent is
-   * already charting by the time the human walks in, and what it was told is a real `seed` message
-   * in the transcript rather than an assertion.
+   * `lastCursorThreadId` is the caller's, not ours, and that is the whole mechanism — see
+   * `CursorSync`. Null when nothing is open, which is the ordinary answer while browsing.
+   */
+  async syncCursor(args: {
+    lastCursorThreadId: string | null;
+  }): Promise<CursorSync | null> {
+    const open = this.open;
+    if (!open) return null;
+    const sync = await syncCursor(this.deps, { ...args, open });
+    // A refresh REPLACES what is open — the thread is the same, everything else about it moved.
+    if (sync?.refreshed) this.open = sync.refreshed;
+    return sync;
+  }
+
+  /**
+   * Atlas's opening words in a thread nobody has opened yet — how a later phase's first thread stops
+   * landing on a blank conversation.
+   *
+   * Deliberately NOT `sendHarness()`: the thread being seeded is usually not the open one, and at
+   * job creation there is no open conversation at all. The turn is fired against the thread
+   * directly, so what it was told is a real `seed` message in the transcript rather than an
+   * assertion.
    */
   async seedThread(args: {
     job: Job;
     thread: Thread;
     cwd: string;
   }): Promise<void> {
-    const brief = await this.phaseBriefService.forPhase({
-      job: args.job,
-      phaseId: args.thread.phaseId,
-    });
-    const session = await this.sessionManagerService.currentSession(args.thread);
-
-    // Not awaited: `run()` resolves when the TURN does, and creating a job must not block behind an
-    // agent thinking. A failure lands in the thread's store as an error block, where the human looks.
-    void this.turnRunnerService
-      .run({
-        thread: args.thread,
-        session,
-        prompt: brief.opening,
-        harnessVariant: EHarnessVariant.seed,
-        brief: brief.instructions,
-        cwd: args.cwd,
-      })
-      .catch((error: unknown) => {
-        this.logger.error(`seed turn failed: ${String(error)}`);
-      });
+    // Delegated rather than duplicated: the same act happens when a thread hands over to its
+    // successor, and one of those two paths would drift the moment the seed grew a section.
+    await this.threadSeamService.seed(args);
   }
 
   async send(text: string): Promise<void> {
@@ -172,6 +122,7 @@ export class ConversationService {
       session: open.session,
       prompt: text,
       brief: open.brief,
+      tools: open.tools,
       cwd: open.cwd,
     });
     await this.refreshSessions();
@@ -200,6 +151,7 @@ export class ConversationService {
       prompt: args.text,
       harnessVariant: args.variant,
       brief: open.brief,
+      tools: open.tools,
       cwd: open.cwd,
     });
     await this.refreshSessions();
@@ -214,6 +166,7 @@ export class ConversationService {
         session: open.session,
         prompt: text,
         brief: open.brief,
+        tools: open.tools,
         cwd: open.cwd,
       });
     }
@@ -293,16 +246,24 @@ export class ConversationService {
   }
 
   /**
-   * The last session a closed thread ran on. `activeSessionId` still points at it — closing a thread
-   * ends its session rather than unlinking it, which is what makes the transcript readable after.
+   * The injected collaborators as one bundle, for the functions in `conversation-open.ts`. A getter
+   * rather than a field so nothing can hold a stale one, and it costs an object literal per call.
    */
-  private async lastSession(thread: Thread): Promise<EngineSession> {
-    const session = thread.activeSessionId
-      ? await this.sessionRepository.findById(thread.activeSessionId)
-      : null;
-    if (!session)
-      throw new Error("this thread was closed before it ever ran — nothing to read");
-    return session;
+  private get deps(): ConversationDeps {
+    return {
+      jobRepository: this.jobRepository,
+      threadRepository: this.threadRepository,
+      sessionRepository: this.sessionRepository,
+      messageRepository: this.messageRepository,
+      turnRepository: this.turnRepository,
+      sessionManagerService: this.sessionManagerService,
+      turnRunnerService: this.turnRunnerService,
+      contextFolderService: this.contextFolderService,
+      accountUsageService: this.accountUsageService,
+      phaseBriefService: this.phaseBriefService,
+      threadSeamService: this.threadSeamService,
+      stores: this.stores,
+    };
   }
 
   private async refreshSessions(): Promise<void> {

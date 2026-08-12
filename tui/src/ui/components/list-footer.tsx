@@ -27,6 +27,11 @@ export function ListFooter(props: {
   width: number;
   height: number;
   overlay?: FooterOverlay | undefined;
+  /**
+   * A `VerbMenu`, when the page is offering a choice. Separate from `confirm` because the two are
+   * different questions — one picks, the other agrees — and a page can only ever be asking one.
+   */
+  menu?: React.ReactNode;
   /** A `ConfirmBar`, when the page is asking. */
   confirm?: React.ReactNode;
   /** Longest-first forms; the widest that fits wins. Absent while a mode owns the footer. */
@@ -51,6 +56,7 @@ export function ListFooter(props: {
         </box>
       ) : null}
 
+      {props.menu ?? null}
       {props.confirm ?? null}
 
       {props.hints ? (

@@ -3,6 +3,7 @@ import {
   EThreadStatus,
   type EEngine,
   type EPhaseKind,
+  type EThreadCondition,
   type EThreadRole,
 } from '../generated/prisma/enums.js';
 import type { Thread } from '../generated/prisma/client.js';
@@ -124,6 +125,38 @@ export class ThreadRepository {
     });
   }
 
+  /**
+   * Which threads are still open in a phase, as rows — what the cursor rule reads when one closes.
+   *
+   * Rows rather than ids, unlike `JobRepository.openThreadIdsInPhase`: the question here is *where
+   * does the human go next*, and answering it needs each candidate's opener and age. The two live
+   * apart because they are asked by different holders — that one is asked of a PHASE (is it
+   * finished), this one of the threads inside it.
+   */
+  async openInPhase(phaseId: string): Promise<Thread[]> {
+    return this.prismaService.thread.findMany({
+      where: { phaseId, status: { not: EThreadStatus.closed } },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  /**
+   * Records that one thread is waiting on another — `openedByThreadId`, never `parentThreadId`.
+   * They mean different things: this says *I am a real thread in this phase and X is waiting on me*,
+   * where the other says *I am a teammate*. Conflating them would hide the row from the thread list.
+   *
+   * Returns the updated row so the caller seeds the thread it actually wrote, not the one it read.
+   */
+  async setOpenedBy(args: {
+    threadId: string;
+    openedByThreadId: string;
+  }): Promise<Thread> {
+    return this.prismaService.thread.update({
+      where: { id: args.threadId },
+      data: { openedByThreadId: args.openedByThreadId },
+    });
+  }
+
   /** Named: two ids of the same type, and transposing them writes a thread id into a session slot. */
   async setActiveSession(args: { threadId: string; sessionId: string }): Promise<void> {
     await this.prismaService.thread.update({
@@ -151,6 +184,29 @@ export class ThreadRepository {
     await this.prismaService.thread.update({
       where: { id: threadId },
       data: { status: EThreadStatus.closed, closedAt: new Date() },
+    });
+  }
+
+  /**
+   * HOW it closed, and in whose words. Written beside `close()` rather than through it because the
+   * status is ended by the session manager — which knows about sessions and accounts and nothing
+   * about why a thread is finished — while the condition is known only to the verb that closed it.
+   *
+   * Every close path stamps one: a closed row with a null condition is precisely the row you would
+   * have to read a transcript to interpret, which is what the column exists to prevent.
+   */
+  async recordOutcome(args: {
+    threadId: string;
+    condition: EThreadCondition;
+    /** The closing agent's own words. Absent where nothing was written — never invented. */
+    resolution?: string;
+  }): Promise<void> {
+    await this.prismaService.thread.update({
+      where: { id: args.threadId },
+      data: {
+        condition: args.condition,
+        ...(args.resolution === undefined ? {} : { resolution: args.resolution }),
+      },
     });
   }
 }

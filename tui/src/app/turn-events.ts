@@ -1,9 +1,11 @@
+import { hasCanary } from "../domain/canary.js";
 import {
   toPayload,
   type EngineEvent,
   type TurnUsage,
 } from "../domain/message.js";
 import type { EngineSession } from "../generated/prisma/client.js";
+import type { ContextPressureService } from "./context-pressure.service.js";
 import type { AccountRepository } from "../store/account.repository.js";
 import type { MessageRepository } from "../store/message.repository.js";
 import type { SessionRepository } from "../store/session.repository.js";
@@ -31,6 +33,12 @@ export class TurnEventApplier {
       messageRepository: MessageRepository;
       turnRepository: TurnRepository;
     },
+    /**
+     * The two context instruments. Passed in beside the repositories because the readings arrive as
+     * ordinary frames on this stream — occupancy on an assistant frame's usage, the canary on the
+     * first prose block — and a second reader of the same events would be a second answer.
+     */
+    private readonly contextPressureService: ContextPressureService,
   ) {}
 
   /**
@@ -111,6 +119,14 @@ export class TurnEventApplier {
         return;
 
       case "text":
+        // The canary is read HERE, off the text on its way into the store, because the render layer
+        // strips a leading glyph from every prose surface — a watcher pointed at what is displayed
+        // would see 100% absence and call every session dead. Only the turn's FIRST block counts:
+        // the instruction is about how a message OPENS, and blocks after the first do not open one.
+        lane.canary ??= hasCanary(event.text);
+        await this.persistEvent({ event, store, threadId, sessionId: session.id });
+        return;
+
       case "thinking":
       case "error":
         await this.persistEvent({ event, store, threadId, sessionId: session.id });
@@ -121,11 +137,17 @@ export class TurnEventApplier {
         // between whichever agent spoke last — a real tape has 136 subagent frames reading anywhere
         // from 11k to 122k tokens, interleaved with the main thread's.
         if (event.parentToolUseId) return;
-        const percent = Math.round(
-          (event.contextTokens / event.contextLimit) * 100,
-        );
-        lane.contextPercent = percent;
-        store.setContextPercent(percent);
+        const reading = this.contextPressureService.observe({
+          session,
+          contextTokens: event.contextTokens,
+          contextLimit: event.contextLimit,
+        });
+        lane.contextPercent = reading.percent;
+        // The tokens, not just the percentage: the nudge quotes the count and the budget back, and
+        // the tool-boundary decision is made against them rather than against a rounded ratio.
+        lane.contextTokens = event.contextTokens;
+        lane.contextLimit = event.contextLimit;
+        store.setContextPercent(reading);
         return;
       }
 

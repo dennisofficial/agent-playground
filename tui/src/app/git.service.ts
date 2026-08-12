@@ -97,6 +97,43 @@ export class GitService {
     return this.run({ cwd: args.repoPath, args: ['worktree', 'remove', args.worktreePath] });
   }
 
+  /**
+   * Brings the remote's base branch up to date, and nothing else. A ship turn rebases onto
+   * `origin/<base>` rather than onto a local copy of it — the local copy is whatever was last
+   * fetched, which on a worktree that has been sitting for a day is not the branch the pull request
+   * will actually merge into.
+   */
+  async fetch(args: { cwd: string; remote: string; branch: string }): Promise<GitResult> {
+    return this.run({ cwd: args.cwd, args: ['fetch', args.remote, args.branch] });
+  }
+
+  /**
+   * Rebases the checked-out branch, and **cleans up after itself when it cannot**.
+   *
+   * A stopped rebase leaves the worktree mid-rebase, which is a state the agent has no verb to
+   * leave and a trap for whoever opens the directory next. Aborting restores the branch exactly as
+   * it was, so a conflict costs a sentence rather than a repository somebody has to rescue.
+   */
+  async rebaseOnto(args: { cwd: string; upstream: string }): Promise<GitResult> {
+    const result = await this.run({ cwd: args.cwd, args: ['rebase', args.upstream] });
+    if (result.ok) return result;
+    await this.run({ cwd: args.cwd, args: ['rebase', '--abort'] });
+    return result;
+  }
+
+  /**
+   * `--force-with-lease`, which is not a nicety: a rebase rewrites the branch, so every ship after
+   * the first is a non-fast-forward push. The lease is what makes that safe — it refuses if the
+   * remote moved since the fetch above, which is exactly the case where somebody else's commits
+   * would be the thing being discarded.
+   */
+  async push(args: { cwd: string; remote: string; branch: string }): Promise<GitResult> {
+    return this.run({
+      cwd: args.cwd,
+      args: ['push', '--force-with-lease', '--set-upstream', args.remote, args.branch],
+    });
+  }
+
   async run(args: { cwd: string; args: readonly string[] }): Promise<GitResult> {
     const proc = Bun.spawn({
       cmd: ['git', ...args.args],

@@ -139,16 +139,18 @@ export class WorkspaceService {
     worktree?: boolean;
   }): Promise<{ job: Job; thread: Thread }> {
     const { projectId, title } = args;
-    // Every job starts in intake with one intake thread — the phase and the role are named
-    // separately because they are separate axes, and only their opening values coincide.
+    // Every job starts in `generic` with one generic thread — the phase and the role are named
+    // separately because they are separate axes, and only their opening values coincide. NOT
+    // charting: a job that is one question would otherwise be met by an agent preparing to chart a
+    // map, and the stance is meant to be earned by the work rather than assumed at creation.
     const created = await this.jobRepository.create({
       projectId,
       title,
-      kind: EPhaseKind.intake,
+      kind: EPhaseKind.generic,
     });
     const thread = await this.sessionManagerService.openThread(
       created.id,
-      EThreadRole.intake,
+      EThreadRole.generic,
     );
     this.contextFolderService.ensure(created.id);
     // The branch is named after the job, so the job has to exist first. A worktree that fails to

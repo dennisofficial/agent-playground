@@ -48,12 +48,12 @@ describe('JobRepository phases', () => {
     const job = await jobRepository.create({
       projectId,
       title: 'a job',
-      kind: EPhaseKind.intake,
+      kind: EPhaseKind.charting,
     });
 
     const phases = await client.phase.findMany({ where: { jobId: job.id } });
     expect(phases).toHaveLength(1);
-    expect(phases[0]?.kind).toBe(EPhaseKind.intake);
+    expect(phases[0]?.kind).toBe(EPhaseKind.charting);
     expect(phases[0]?.ordinal).toBe(0);
   });
 
@@ -61,7 +61,7 @@ describe('JobRepository phases', () => {
     const job = await jobRepository.create({
       projectId,
       title: 'a job',
-      kind: EPhaseKind.intake,
+      kind: EPhaseKind.charting,
     });
     const planning = await client.phase.create({
       data: { jobId: job.id, kind: EPhaseKind.planning, ordinal: 1 },
@@ -93,21 +93,21 @@ describe('JobRepository phases', () => {
     const job = await jobRepository.create({
       projectId,
       title: 'a job',
-      kind: EPhaseKind.intake,
+      kind: EPhaseKind.charting,
     });
     const phase = await jobRepository.currentPhase(job.id);
-    await threadRepository.create({ phaseId: phase.id, role: EThreadRole.intake });
+    await threadRepository.create({ phaseId: phase.id, role: EThreadRole.charting });
 
     const threads = await threadRepository.listForJob(job.id);
     expect(threads).toHaveLength(1);
-    expect(threads[0]?.phaseKind).toBe(EPhaseKind.intake);
+    expect(threads[0]?.phaseKind).toBe(EPhaseKind.charting);
   });
 
   it('summarises a job from the phase its active thread sits in', async () => {
     const job = await jobRepository.create({
       projectId,
       title: 'a job',
-      kind: EPhaseKind.intake,
+      kind: EPhaseKind.charting,
     });
     const phase = await jobRepository.currentPhase(job.id);
     const thread = await threadRepository.create({
@@ -117,7 +117,7 @@ describe('JobRepository phases', () => {
     await jobRepository.setActiveThread(job.id, thread.id);
 
     const [row] = await jobRepository.listForProject(projectId);
-    expect(row?.activePhase).toBe(EPhaseKind.intake);
+    expect(row?.activePhase).toBe(EPhaseKind.charting);
     expect(row?.activeRole).toBe(EThreadRole.research);
   });
 });

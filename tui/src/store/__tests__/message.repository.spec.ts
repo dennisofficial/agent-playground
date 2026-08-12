@@ -39,10 +39,10 @@ describe('MessageRepository', () => {
     const project = await client.project.create({ data: { path: dir, name: 'atlas' } });
     const job = await client.job.create({ data: { projectId: project.id, title: 'a job' } });
     const phase = await client.phase.create({
-      data: { jobId: job.id, kind: EPhaseKind.intake, ordinal: 0 },
+      data: { jobId: job.id, kind: EPhaseKind.charting, ordinal: 0 },
     });
     const thread = await client.thread.create({
-      data: { phaseId: phase.id, role: EThreadRole.intake },
+      data: { phaseId: phase.id, role: EThreadRole.charting },
     });
     const account = await client.account.create({
       data: { engine: EEngine.claude, label: 'dennis', materialEnc: 'x' },

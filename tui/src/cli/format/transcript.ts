@@ -1,5 +1,6 @@
 import { EMessageType } from '../../generated/prisma/enums.js';
 import type { EThreadRole, EThreadStatus } from '../../generated/prisma/enums.js';
+import { stripCanary } from '../../domain/canary.js';
 import type { Message, MessagePayload } from '../../domain/message.js';
 import type { TranscriptItem } from '../../domain/seam.js';
 
@@ -65,7 +66,9 @@ function messageBlock(args: { message: Message; full: boolean }): string[] {
     case EMessageType.assistant:
     case EMessageType.thinking:
       // Prose is never trimmed: it is the whole reason a successor reads a predecessor's thread.
-      return [head, payload.text];
+      // The canary comes off here and only here — this command is the second reader of the store
+      // and it shares the TUI's one stripper, because two strippers would drift into two answers.
+      return [head, stripCanary(payload.text)];
 
     case EMessageType.tool_call: {
       const target = payload.target === undefined ? '' : `(${payload.target})`;
@@ -97,7 +100,8 @@ function messageBlock(args: { message: Message; full: boolean }): string[] {
 }
 
 function unknownText(payload: MessagePayload): string[] {
-  if ('text' in payload && typeof payload.text === 'string') return [payload.text];
+  // `harness` lands here today, which is a prose surface — so it strips like the others.
+  if ('text' in payload && typeof payload.text === 'string') return [stripCanary(payload.text)];
   return [JSON.stringify(payload) ?? ''];
 }
 

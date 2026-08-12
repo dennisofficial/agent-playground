@@ -34,11 +34,11 @@ export class AtlasReadService {
       case ECliCommand.transcript:
         return this.transcript({ threadId: command.threadId, full: command.full });
       case ECliCommand.map:
-        return this.inIntake({ jobId: command.jobId, read: readMap });
+        return this.inCharting({ jobId: command.jobId, read: readMap });
       case ECliCommand.ticket:
-        return this.inIntake({
+        return this.inCharting({
           jobId: command.jobId,
-          read: (intakeDir) => readTicket({ intakeDir, ticketNumber: command.ticketNumber }),
+          read: (chartingDir) => readTicket({ chartingDir, ticketNumber: command.ticketNumber }),
         });
       case ECliCommand.help:
         return found('');
@@ -104,18 +104,18 @@ export class AtlasReadService {
   }
 
   /** The job must exist before its folder is consulted, or a typo'd id reads as "no map written yet". */
-  private async inIntake(args: {
+  private async inCharting(args: {
     jobId: string;
-    read: (intakeDir: string) => CliResult;
+    read: (chartingDir: string) => CliResult;
   }): Promise<CliResult> {
     const job = await this.jobRepository.findById(args.jobId);
     if (!job) return missing(jobNotFound(args.jobId));
-    return args.read(join(jobContextDir(args.jobId), INTAKE_BUCKET));
+    return args.read(join(jobContextDir(args.jobId), CHARTING_BUCKET));
   }
 }
 
 /** Where the map and the ticket files live — the bucket named for the phase that writes them. */
-const INTAKE_BUCKET = 'intake';
+const CHARTING_BUCKET = 'charting';
 
 /**
  * Grouped by encounter order, because `listForJob` already returns phase-ordinal ascending and the

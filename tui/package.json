@@ -2,7 +2,7 @@
   "name": "@dltech/atlas-harness",
   "version": "0.1.0",
   "private": true,
-  "description": "Local Atlas \u2014 a terminal harness over the Claude and Codex agent SDKs.",
+  "description": "Local Atlas — a terminal harness over the Claude and Codex agent SDKs.",
   "type": "module",
   "bin": {
     "atlas": "./bin/atlas"
@@ -37,7 +37,8 @@
     "prisma-adapter-bun-sqlite": "^0.8.0",
     "react": "19.2.7",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.2"
+    "rxjs": "^7.8.2",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/bun": "latest",

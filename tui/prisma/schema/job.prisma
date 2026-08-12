@@ -1,7 +1,13 @@
 // A job's phase kinds. The pipeline graph (which phase may follow which) is an affordance that
 // lives in code beside the role bindings, not a constraint in the schema — every edge is legal.
 enum EPhaseKind {
-  intake
+  /// Every job's first phase, and the only kind that names an ABSENCE rather than an activity — a
+  /// reader seeing it correctly infers that nothing has been decided about this job yet. A generic
+  /// coding agent: it answers questions and makes changes in the conversation, and proposes the
+  /// pipeline only when the work turns out to need a document to survive. Nothing points at it;
+  /// re-entry is the human's start-a-phase verb.
+  generic
+  charting
   design
   planning
   build
@@ -25,6 +31,11 @@ model Job {
   /// project path exactly as before; the worktree is optional, not the default.
   branch         String?
   workspacePath  String?
+  /// A RENDER CACHE, not a parse — `shipped` honestly means "a PR exists". Non-terminal: a shipped
+  /// job going back to active on the next phase is correct. There is no second field synced off
+  /// GitHub, because locally it would have no writer.
+  prNumber       Int?
+  transitions    Transition[]
   phases         Phase[]
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt

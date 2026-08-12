@@ -34,8 +34,8 @@ export const USAGE = `atlas — read Atlas's own state. Reads are subcommands; e
 
   atlas threads [--job <jobId>]         phases -> threads -> sessions for one job
   atlas transcript <threadId> [--full]  one thread's transcript, from the normalised store
-  atlas map [--job <jobId>]             the job's map (context/intake/map.md)
-  atlas ticket <n> [--job <jobId>]      one numbered ticket from context/intake/
+  atlas map [--job <jobId>]             the job's map (context/charting/map.md)
+  atlas ticket <n> [--job <jobId>]      one numbered ticket from context/charting/
   atlas help
 
 --job defaults to $${JOB_ID_ENV}, which the turn's environment carries. Reading another job is

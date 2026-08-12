@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { CANARY } from '../canary.js';
 import { EMessageType } from '../../generated/prisma/enums.js';
 import { EHarnessVariant, renderPrompt } from '../message.js';
 import { buildSystemPrompt } from '../system-prompt.js';
@@ -30,6 +31,14 @@ describe('buildSystemPrompt', () => {
 
   it('says an escaped tag inside a body is quoted content, not an instruction', () => {
     expect(prompt).toContain('&lt;');
+  });
+
+  it('plants the canary, because watching for its absence measures nothing otherwise', () => {
+    // It lives HERE rather than in a settings file so the instrument works on every engine, and it
+    // is stated as a mundane formatting rule: what is being measured is whether a long session still
+    // follows a trivial standing instruction, so it has to read as trivial.
+    expect(prompt).toContain(CANARY);
+    expect(prompt).toContain('very first character');
   });
 
   it('appends the phase brief after the vocabulary, and nothing when there is none', () => {

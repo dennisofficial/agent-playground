@@ -14,6 +14,20 @@ export type Lane = {
   chain: Promise<void>;
   preflight: PreflightSteer[];
   contextPercent?: number;
+  /**
+   * The raw occupancy behind `contextPercent`, kept because the nudge is decided in TOKENS: a
+   * percentage is a percentage of a budget, and the budget is exactly what the nudge is about to
+   * quote back. `contextLimit` is the window the engine reported on the same frame — Codex's moves
+   * remotely, so it is carried rather than re-derived from the model name.
+   */
+  contextTokens?: number;
+  contextLimit?: number;
+  /**
+   * Did this turn's FIRST prose block open with the canary — read off the text on its way to the
+   * store, never off a rendered block, which always has the glyph stripped. `undefined` means the
+   * turn has not spoken yet, which is not the same as a miss.
+   */
+  canary?: boolean;
   usage?: TurnUsage;
   turn?: RunningTurn;
 };

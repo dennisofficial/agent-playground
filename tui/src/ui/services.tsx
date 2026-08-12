@@ -4,8 +4,12 @@ import { AccountsService } from "../app/accounts.service.js";
 import { AttentionService } from "../app/attention.service.js";
 import { ConversationService } from "../app/conversation.service.js";
 import { ConversationStoreRegistry } from "../app/conversation-store.registry.js";
+import { HumanVerbsService } from "../app/human-verbs.service.js";
 import { JobStartService } from "../app/job-start.service.js";
 import { SessionManagerService } from "../app/session-manager.service.js";
+import { TaskService } from "../app/task.service.js";
+import { ThreadSeamService } from "../app/thread-seam.service.js";
+import { TransitionReviewService } from "../app/transition-review.service.js";
 import { TurnRunnerService } from "../app/turn-runner.service.js";
 import { WorkspaceService } from "../app/workspace.service.js";
 
@@ -18,6 +22,12 @@ export type Services = {
   accountsService: AccountsService;
   attentionService: AttentionService;
   sessionManagerService: SessionManagerService;
+  taskService: TaskService;
+  /** The two halves of a proposal: the seam DECIDES one, and the review service READS one. */
+  threadSeamService: ThreadSeamService;
+  transitionReviewService: TransitionReviewService;
+  /** The moves Dennis makes himself — start a phase, open a thread, close one. */
+  humanVerbsService: HumanVerbsService;
 };
 
 export function resolveServices(context: INestApplicationContext): Services {
@@ -30,6 +40,10 @@ export function resolveServices(context: INestApplicationContext): Services {
     accountsService: context.get(AccountsService),
     attentionService: context.get(AttentionService),
     sessionManagerService: context.get(SessionManagerService),
+    taskService: context.get(TaskService),
+    threadSeamService: context.get(ThreadSeamService),
+    transitionReviewService: context.get(TransitionReviewService),
+    humanVerbsService: context.get(HumanVerbsService),
   };
 }
 

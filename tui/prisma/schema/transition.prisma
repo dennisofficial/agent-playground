@@ -1,0 +1,60 @@
+/// Who raised the proposal. `gate` exists for a phase whose exit is evaluated rather than asked for;
+/// nothing raises one today, and it is here because the audit log should not need a migration the
+/// first time something does.
+enum ETransitionSource {
+  agent
+  gate
+}
+
+enum ETransitionStatus {
+  pending
+  confirmed
+  declined
+}
+
+/// Phase-level asks need Dennis; thread-level ones do not. Both are recorded, because a record of
+/// what was proposed is worth having even where no confirmation was required.
+enum ETransitionScope {
+  phase
+  thread
+}
+
+/// A proposal to move a job on. `advance_phase` NEVER transitions — it raises one of these and waits.
+///
+/// A real model rather than a `Json?` column on Job, for three reasons that all matter:
+/// declined transitions are recorded nowhere else, and "Atlas asked to build three times and I said
+/// no" is real signal about a bad plan; `status = pending` IS the jobs-list "waiting on you" query;
+/// and `createdPhaseId` makes the phase log and the transition log one audit of the route actually
+/// walked — including the turns not taken.
+///
+/// The proposal is a row rather than a held-open query because HITL here is ASYNC: a parked ask is a
+/// multi-hour event, and a query held open across it is precisely what this design exists to avoid.
+model Transition {
+  id             String            @id @default(uuid())
+  jobId          String
+  job            Job               @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  /// Null for a job's first phase.
+  fromPhaseId    String?
+  /// The thread that raised it — the one that closes when this is confirmed.
+  raisedByThreadId String?
+  to             EPhaseKind
+  scope          ETransitionScope  @default(phase)
+  /// The agent's prose. This is what the overlay shows.
+  reason         String
+  /// The four-section handoff the successor opens with.
+  handoff        String?
+  /// Attachments the outgoing thread declared. An empty array is a statement; an omission is not.
+  attach         Json?
+  raisedBy       ETransitionSource @default(agent)
+  status         ETransitionStatus @default(pending)
+  /// Set on confirm. Not a relation: the phase is created by the confirmation, and a nullable
+  /// self-referencing relation would buy nothing the id does not.
+  createdPhaseId String?
+  /// Why it was declined, in the human's words — the data that would later say this trigger is
+  /// mistuned.
+  declineReason  String?
+  decidedAt      DateTime?
+  createdAt      DateTime          @default(now())
+
+  @@index([jobId, status])
+}
