@@ -139,14 +139,18 @@ describe('watch', () => {
       fired += 1;
     });
 
+    // Polled to a deadline rather than slept past. fs.watch delivery is scheduled by the kernel, so
+    // a fixed sleep is a bet on how loaded the machine is — which is how a real mechanism ends up
+    // with a test that fails only in the full suite.
     service.acquire(jobId);
-    await Bun.sleep(120);
+    const deadline = Date.now() + 2000;
+    while (fired === 0 && Date.now() < deadline) await Bun.sleep(10);
     expect(fired).toBeGreaterThan(0);
 
     stop();
     const after = fired;
     service.release(jobId);
-    await Bun.sleep(120);
+    await Bun.sleep(150);
     expect(fired).toBe(after);
   });
 });

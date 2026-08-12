@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 /**
  * Atlas OWNS everything under `~/.atlas` — it does not read, merge with, or respect the user's
@@ -22,6 +22,29 @@ export const ATLAS_PATHS = {
   /** CODEX_HOME points here. */
   codexHome: join(ATLAS_HOME, 'codex-home'),
 } as const;
+
+/**
+ * Copies of the database taken immediately before a migration is applied.
+ *
+ * The app migrates itself on every start with no undo and no prompt, so the only moment it can
+ * cheaply protect the user is the moment before it changes their data. One dropped column once
+ * cascade-deleted every transcript in the database; this is what makes that recoverable rather
+ * than merely regrettable.
+ */
+export function databaseBackupDir(
+  databaseFile: string = ATLAS_PATHS.database,
+): string {
+  // Beside the database it protects, not under a fixed home: the migrator is handed a file path,
+  // and a backup written somewhere else is one nobody thinks to look for.
+  return join(dirname(databaseFile), 'backups');
+}
+
+export function databaseBackupFile(args: {
+  databaseFile?: string;
+  stamp: string;
+}): string {
+  return join(databaseBackupDir(args.databaseFile), `atlas-${args.stamp}.db`);
+}
 
 export function claudeCredentialsFile(): string {
   return join(ATLAS_PATHS.claudeHome, '.credentials.json');

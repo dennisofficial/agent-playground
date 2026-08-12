@@ -1,9 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Database } from 'bun:sqlite';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
-import { ATLAS_PATHS } from '../domain/paths.js';
+import { mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import {
+  ATLAS_PATHS,
+  databaseBackupDir,
+  databaseBackupFile,
+} from '../domain/paths.js';
 import { EMBEDDED_MIGRATIONS } from './migrations.generated.js';
 import { applyPragmas } from './pragmas.js';
 
@@ -47,7 +51,7 @@ export class MigratorService {
     try {
       applyPragmas(db);
       db.exec(MIGRATIONS_TABLE);
-      this.applyPending(db);
+      this.applyPending(db, databaseFile);
     } finally {
       db.close();
     }
@@ -59,17 +63,31 @@ export class MigratorService {
    * by the time it proceeds the migrations are already recorded as applied and it finds nothing to
    * do. No lock file, no coordination protocol.
    */
-  private applyPending(db: Database): void {
+  private applyPending(db: Database, databaseFile?: string): void {
+    const applied = new Set(
+      db
+        .prepare('SELECT migration_name FROM _prisma_migrations WHERE rolled_back_at IS NULL')
+        .all()
+        .map((row) => (row as { migration_name: string }).migration_name),
+    );
+    const pending = this.readMigrations().filter((m) => !applied.has(m.name));
+    if (pending.length === 0) return;
+
+    if (databaseFile) this.backup(db, databaseFile);
+
+    /**
+     * OUTSIDE the transaction, and this is the whole point.
+     *
+     * `PRAGMA foreign_keys` is a documented no-op inside a transaction. Prisma writes a column drop
+     * as a table REBUILD — create new, copy, `DROP TABLE` the old, rename — and opens the file with
+     * `PRAGMA foreign_keys=OFF` precisely because that `DROP TABLE` would otherwise fire every
+     * `ON DELETE CASCADE` pointing at it. Applying that SQL inside `BEGIN IMMEDIATE` silently
+     * ignored the pragma, so dropping one unused column from `EngineSession` cascade-deleted every
+     * `ThreadMessage` and `Turn` in the database. Nothing errored; the transcripts were simply gone.
+     */
+    db.exec('PRAGMA foreign_keys = OFF');
     db.exec('BEGIN IMMEDIATE');
     try {
-      const applied = new Set(
-        db
-          .prepare('SELECT migration_name FROM _prisma_migrations WHERE rolled_back_at IS NULL')
-          .all()
-          .map((row) => (row as { migration_name: string }).migration_name),
-      );
-
-      const pending = this.readMigrations().filter((m) => !applied.has(m.name));
       for (const migration of pending) {
         this.logger.log(`applying migration ${migration.name}`);
         // Greenfield: a failed migration is recoverable by deleting the DB, so fail loudly rather
@@ -81,11 +99,56 @@ export class MigratorService {
            VALUES (?, ?, ?, ?, NULL, NULL, ?, 1)`,
         ).run(randomUUID(), migration.checksum, Date.now(), migration.name, Date.now());
       }
+
+      // With enforcement off, a migration that genuinely broke a relation would commit quietly. This
+      // is the only chance to notice, and a rebuild that orphaned rows is worth failing the start
+      // over — the backup above is what makes that safe to do.
+      const violations = db.prepare('PRAGMA foreign_key_check').all();
+      if (violations.length > 0) {
+        throw new Error(
+          `migration left ${violations.length} orphaned row(s) — rolled back, database unchanged`,
+        );
+      }
+
       db.exec('COMMIT');
-      if (pending.length > 0) this.logger.log(`applied ${pending.length} migration(s)`);
+      this.logger.log(`applied ${pending.length} migration(s)`);
     } catch (error) {
       db.exec('ROLLBACK');
       throw error;
+    } finally {
+      db.exec('PRAGMA foreign_keys = ON');
+    }
+  }
+
+  /**
+   * A copy of the file before anything touches it. `VACUUM INTO` rather than a filesystem copy: it
+   * is transactionally consistent and folds in the WAL, so the copy is a database rather than a
+   * snapshot of one mid-write.
+   *
+   * Failing to back up must not stop the app starting — an unwritable backup directory is a worse
+   * reason to be unusable than the risk it protects against.
+   */
+  private backup(db: Database, databaseFile: string): void {
+    try {
+      mkdirSync(databaseBackupDir(databaseFile), { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const target = databaseBackupFile({ databaseFile, stamp });
+      db.exec(`VACUUM INTO '${target.replace(/'/g, "''")}'`);
+      this.logger.log(`backed up ${databaseFile} to ${target}`);
+      this.prune(databaseFile);
+    } catch (error) {
+      this.logger.warn(`could not back up before migrating: ${String(error)}`);
+    }
+  }
+
+  /** Keeps the most recent few. They are whole databases, and the old ones stop being useful fast. */
+  private prune(databaseFile: string, keep = 5): void {
+    const dir = databaseBackupDir(databaseFile);
+    const files = readdirSync(dir)
+      .filter((name) => name.startsWith('atlas-') && name.endsWith('.db'))
+      .sort();
+    for (const name of files.slice(0, Math.max(0, files.length - keep))) {
+      rmSync(join(dir, name), { force: true });
     }
   }
 
