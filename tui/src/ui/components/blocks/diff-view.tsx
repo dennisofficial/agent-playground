@@ -1,12 +1,17 @@
 import { createTextAttributes } from "@opentui/core";
 import React from "react";
 import {
+  DIFF_INDENT,
+  DIFF_SEPARATOR,
+  diffGutterText,
+  diffLayout,
+  fitDiffText,
+} from "../../../domain/diff-layout.js";
+import {
   type DiffHunk,
   type DiffRow,
   diffRows,
-  diffSign,
   EDiffLineKind,
-  gutterWidth,
 } from "../../../domain/tool-diff.js";
 import { DIFF_COLLAPSED_LINES, truncate } from "../../../domain/truncate.js";
 import { codeTheme } from "../../markdown/themes/index.js";
@@ -21,21 +26,9 @@ import type { DiffRowPalette } from "../../markdown/themes/index.js";
  * The row is drawn as two columns carrying two different signals, because the code itself is
  * syntax-highlighted and hue is therefore already spent: a saturated BLOCK behind the line number
  * says which side the row is on, and removed rows are DIMMED rather than tinted. See `DiffRowStyle`
- * in `themes/code-theme.ts` for why those two channels and not a background wash.
- *
- * The sign lives in that block rather than in front of the text, which is the other half of the
- * same decision: it keeps the content column a verbatim file line, so indentation reads true and a
- * highlighter can be handed the row without first being told to ignore a prefix.
+ * in `themes/code-theme.ts` for why those two channels and not a background wash, and
+ * `domain/diff-layout.ts` for where the columns fall.
  */
-
-/** Left of the gutter: the same five columns every other line of tool detail is indented by. */
-const INDENT = "     ";
-
-/** The block is `<number> <sign>`; a plain column then separates it from the code. */
-const SIGN_COLUMNS = 2;
-
-/** Below this there is no room for a diff worth reading, so it does not try. */
-const MIN_BAND = 16;
 
 export function DiffView(props: {
   hunks: DiffHunk[];
@@ -49,17 +42,7 @@ export function DiffView(props: {
     ? { shown: rows, notice: null }
     : truncate(rows, DIFF_COLLAPSED_LINES);
 
-  const numbers = gutterWidth(rows);
-  // Indent + the block + the column that separates it from code; the rest is the band code sits in.
-  const band = Math.max(
-    MIN_BAND,
-    props.width - INDENT.length - numbers - SIGN_COLUMNS - 1,
-  );
-
-  // Clipped to the band, because a wrapped diff line loses the alignment that makes the gutter mean
-  // anything. Padded only to the longest line SHOWN, and only where a theme has set a content
-  // background — neither shipped theme does, so ordinarily this costs nothing.
-  const columns = Math.min(band, Math.max(...shown.map((row) => row.text.length)));
+  const layout = diffLayout({ rows, shown, width: props.width });
 
   return (
     <box flexDirection="column">
@@ -67,14 +50,14 @@ export function DiffView(props: {
         <DiffLine
           key={index}
           row={row}
-          numbers={numbers}
-          columns={columns}
+          numbers={layout.numbers}
+          columns={layout.columns}
           palette={codeTheme.diffRows}
         />
       ))}
       {notice ? (
         <text fg={codeTheme.diffRows.gap.content.fg}>
-          {INDENT}
+          {DIFF_INDENT}
           {notice}
         </text>
       ) : null}
@@ -90,36 +73,36 @@ function DiffLine(props: {
 }): React.ReactNode {
   const { row } = props;
   const { gutter, content } = props.palette[row.kind];
-  const number = (row.lineNo === null ? "" : String(row.lineNo)).padStart(
-    props.numbers,
-  );
   const body =
     row.kind === EDiffLineKind.gap
       ? "⋯"
-      : fit(row.text, props.columns, !!content.bg);
+      : fitDiffText({
+          text: row.text,
+          columns: props.columns,
+          padded: !!content.bg,
+        });
 
   return (
     // `wrapMode="none"` for the same reason the fenced diff renderer uses it: a diff line that
     // wraps puts code under the gutter and the block stops being readable as columns.
     <text wrapMode="none">
-      {INDENT}
+      {DIFF_INDENT}
       <span
         fg={gutter.fg}
         bg={gutter.bg}
         // A span takes attributes as a bitmask, not the booleans a style definition carries.
         attributes={createTextAttributes(gutter)}
       >
-        {number} {diffSign(row.kind)}
+        {diffGutterText(row, props.numbers)}
       </span>
-      <span fg={content.fg} bg={content.bg} attributes={createTextAttributes(content)}>
-        {` ${body}`}
+      <span
+        fg={content.fg}
+        bg={content.bg}
+        attributes={createTextAttributes(content)}
+      >
+        {DIFF_SEPARATOR}
+        {body}
       </span>
     </text>
   );
-}
-
-/** Pad to the band (only where a background makes padding visible), clip to it always. */
-function fit(text: string, columns: number, padded: boolean): string {
-  if (text.length > columns) return `${text.slice(0, Math.max(0, columns - 1))}…`;
-  return padded ? text.padEnd(columns) : text;
 }
