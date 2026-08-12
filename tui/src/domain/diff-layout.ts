@@ -23,6 +23,9 @@ export const DIFF_SEPARATOR = ' ';
 /** Below this there is no room for a diff worth reading, so it does not try. */
 const MIN_BAND = 16;
 
+/** Says the line goes on. Shared so a highlighted row clips to the same shape a plain one does. */
+export const DIFF_ELLIPSIS = '…';
+
 export type DiffLayout = {
   /** Width of the line-number field inside the block, so the code column does not step in and out. */
   numbers: number;
@@ -84,7 +87,8 @@ export function fitDiffText(args: {
   padded: boolean;
 }): string {
   if (args.text.length > args.columns) {
-    return `${args.text.slice(0, Math.max(0, args.columns - 1))}…`;
+    const budget = Math.max(0, args.columns - DIFF_ELLIPSIS.length);
+    return `${args.text.slice(0, budget)}${DIFF_ELLIPSIS}`;
   }
   return args.padded ? args.text.padEnd(args.columns) : args.text;
 }

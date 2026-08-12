@@ -101,6 +101,10 @@ export function ToolBlock(props: {
               hunks={diff}
               width={props.width ?? DEFAULT_WIDTH}
               expanded={props.expanded ?? false}
+              // For a file-editing tool the target IS the path — `toolTarget` returns it, relativised,
+              // before it considers any other argument. So the language comes for free, with no new
+              // field threaded down from the engine.
+              path={props.target}
             />
           ) : props.expanded ? (
             props.result.detail.map((line, index) => (
