@@ -15,7 +15,10 @@ import { ThreadsPage } from "./pages/threads.js";
 import { useServices } from "./services.js";
 import { glyph, theme } from "./theme.js";
 
-export function App(props: { initialProjectPath?: string }): React.ReactNode {
+export function App(props: {
+  explicitPath: string | null;
+  cwd: string;
+}): React.ReactNode {
   const { workspaceService, conversationService } = useServices();
   const renderer = useRenderer();
   const { width: columns, height: rows } = useTerminalDimensions();
@@ -45,29 +48,23 @@ export function App(props: { initialProjectPath?: string }): React.ReactNode {
     return () => clearTimeout(timer);
   }, [armed]);
 
-  // `atlas` inside a folder should land in that folder, not on a picker.
+  // `atlas` inside a repository lands on that repository's jobs, not on a picker. Launched anywhere
+  // else — `~`, most often, because the tiles are long-lived and nobody cds between tickets — it
+  // resolves to nothing and the full list stands. cwd biases; it never gates.
   useEffect(() => {
-    const path = props.initialProjectPath;
-    if (!path) {
-      setBooting(false);
-      return;
-    }
     void workspaceService
-      .openFolder(path)
-      .then(async (project) => {
-        const projects = await workspaceService.listProjects();
-        const row = projects.find((r) => r.id === project.id);
+      .resolveLaunch({ explicitPath: props.explicitPath, cwd: props.cwd })
+      .then((row) => {
+        if (!row) return;
         // Pushed, not replaced: esc from there still reaches the project list.
-        if (row) {
-          focus.current.project = row.id;
-          nav.push({ name: "jobs", project: row });
-        }
+        focus.current.project = row.id;
+        nav.push({ name: "jobs", project: row });
       })
       .catch((e: Error) => setError(e.message))
       .finally(() => setBooting(false));
     // `nav` is deliberately not a dependency: its identity changes on every push, and re-running
     // this would re-open the folder and push a second jobs page onto the stack.
-  }, [props.initialProjectPath, workspaceService]);
+  }, [props.explicitPath, props.cwd, workspaceService]);
 
   const openJob = useCallback(
     async (project: ProjectRow, job: JobRow) => {

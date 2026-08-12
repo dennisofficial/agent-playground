@@ -3,6 +3,7 @@ import { existsSync, rmSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { EPhaseKind, EThreadRole } from "../generated/prisma/enums.js";
 import type { Job, Project } from "../generated/prisma/client.js";
+import { ELaunchScope, launchScope } from "../domain/launch-scope.js";
 import { jobDir, sessionTapeDir } from "../domain/paths.js";
 import { AccountRepository } from "../store/account.repository.js";
 import { JobRepository, type JobRow } from "../store/job.repository.js";
@@ -49,6 +50,42 @@ export class WorkspaceService {
     if (!existsSync(absolute)) throw new Error(`no such folder: ${absolute}`);
     const root = (await this.gitService.mainWorktree(absolute)) ?? absolute;
     return this.projectRepository.open(root, basename(root));
+  }
+
+  /**
+   * What `atlas` was pointed at, as a project row or nothing.
+   *
+   * Null is not a failure — it is the normal result of launching from `~`, and it means "show every
+   * job, grouped by project". The asymmetry it encodes is deliberate: a folder NAMED on the command
+   * line becomes a project even if git has never heard of it, while an implicit cwd outside any
+   * repository creates nothing at all. See `domain/launch-scope.ts`.
+   */
+  async resolveLaunch(args: {
+    explicitPath: string | null;
+    cwd: string;
+  }): Promise<ProjectRow | null> {
+    const target = resolve(args.explicitPath ?? args.cwd);
+    // A named folder must exist; a cwd always does, so this only ever fires on `atlas <path>`.
+    if (args.explicitPath && !existsSync(target)) {
+      throw new Error(`no such folder: ${target}`);
+    }
+
+    const gitRoot = await this.gitService.mainWorktree(target);
+    const scope = launchScope({
+      explicitPath: args.explicitPath,
+      cwd: args.cwd,
+      gitRoot,
+    });
+    if (scope.kind === ELaunchScope.global) return null;
+
+    // `scope.path` is already the main worktree, so this opens the project directly rather than
+    // going back through `openFolder` and asking git the same question a second time.
+    const project = await this.projectRepository.open(
+      scope.path,
+      basename(scope.path),
+    );
+    const projects = await this.listProjects();
+    return projects.find((row) => row.id === project.id) ?? null;
   }
 
   async listJobs(projectId: string): Promise<JobRow[]> {

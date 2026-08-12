@@ -42,7 +42,6 @@ async function main(): Promise<void> {
   await context.init();
 
   const services = resolveServices(context);
-  const initialProjectPath = argPath();
 
   // Before the renderer, because the first Tree-sitter client takes the default parser set as it
   // finds it — a grammar registered afterwards would not reach it.
@@ -64,16 +63,19 @@ async function main(): Promise<void> {
 
   createRoot(renderer).render(
     <ServicesProvider services={services}>
-      <App {...(initialProjectPath ? { initialProjectPath } : {})} />
+      <App explicitPath={explicitPath()} cwd={process.cwd()} />
     </ServicesProvider>,
   );
 }
 
-/** `atlas` uses cwd; `atlas <path>` opens that folder. */
-function argPath(): string | undefined {
+/**
+ * `atlas <path>` names a folder. Bare `atlas` names nothing and lets cwd speak — which may be a
+ * repository, a subdirectory of one, a linked worktree, or `~`, and only the first three scope the
+ * job list. `--here` is gone: it existed to opt into the behaviour that is now the default.
+ */
+function explicitPath(): string | null {
   const arg = process.argv[2];
-  if (arg && !arg.startsWith("-")) return arg;
-  return process.argv.includes("--here") ? process.cwd() : undefined;
+  return arg && !arg.startsWith("-") ? arg : null;
 }
 
 main().catch((error: unknown) => {
