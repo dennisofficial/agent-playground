@@ -4,6 +4,8 @@ import {
   NO_TASKS,
   checklistView,
   clipTaskText,
+  ESpineMark,
+  liveTask,
   nextOrdinal,
   renderTaskList,
   taskCreatedReply,
@@ -93,30 +95,49 @@ describe('nextOrdinal', () => {
   });
 });
 
-describe('checklistView', () => {
-  it('shows everything when it fits, and counts what is done', () => {
-    const view = checklistView({ tasks: PLAN, maxRows: 6 });
-    expect(view.rows).toHaveLength(3);
-    expect(view.progress).toBe('1/3 done');
-    expect(view.hiddenAbove).toBe(0);
-    expect(view.hiddenBelow).toBe(0);
+describe('liveTask', () => {
+  it('points at what is running, not at what is next in line', () => {
+    const jumped = [
+      task({ ordinal: 1, status: ETaskStatus.completed }),
+      task({ ordinal: 2, status: ETaskStatus.pending }),
+      task({ ordinal: 3, status: ETaskStatus.in_progress }),
+    ];
+    expect(liveTask(jumped)?.ordinal).toBe(3);
   });
 
-  // The panel obeys the same rule the transcript render does: retired tasks are gone from the view
-  // and gone from the count, and the numbers around them do not move.
-  it('drops retired tasks from the rows and from the count', () => {
-    const view = checklistView({
+  it('falls back to the first unstarted task when nothing is running', () => {
+    expect(liveTask([task({ ordinal: 1, status: ETaskStatus.completed }), task({ ordinal: 2 })])?.ordinal).toBe(2);
+  });
+
+  // No live work is a real answer, and the rail draws it by having no `▶` on it.
+  it('is null once every task is done', () => {
+    expect(liveTask([task({ ordinal: 1, status: ETaskStatus.completed })])).toBeNull();
+  });
+});
+
+describe('checklistView', () => {
+  it('caps the rail at both ends when the whole plan fits', () => {
+    const rows = checklistView({ tasks: PLAN, maxRows: 6 });
+    expect(rows.map((row) => row.mark)).toEqual([
+      ESpineMark.head,
+      ESpineMark.live,
+      ESpineMark.tail,
+    ]);
+    expect(rows.every((row) => row.hidden === 0)).toBe(true);
+  });
+
+  // The panel obeys the same rule the transcript render does: retired tasks are gone from the view,
+  // and the numbers around them do not move.
+  it('drops retired tasks from the rows', () => {
+    const rows = checklistView({
       tasks: [...PLAN, task({ ordinal: 4, text: 'abandoned', status: ETaskStatus.deleted })],
       maxRows: 6,
     });
-    expect(view.rows.map((row) => row.ordinal)).toEqual([1, 2, 3]);
-    expect(view.progress).toBe('1/3 done');
+    expect(rows.map((row) => row.ordinal)).toEqual([1, 2, 3]);
   });
 
   it('is empty for an empty list, so the panel disappears rather than sits there blank', () => {
-    const view = checklistView({ tasks: [], maxRows: 6 });
-    expect(view.rows).toHaveLength(0);
-    expect(view.progress).toBeNull();
+    expect(checklistView({ tasks: [], maxRows: 6 })).toHaveLength(0);
   });
 
   // The window is anchored on the work, not on the top of the list.
@@ -127,24 +148,108 @@ describe('checklistView', () => {
         status: index < 5 ? ETaskStatus.completed : ETaskStatus.pending,
       }),
     );
-    const view = checklistView({ tasks: long, maxRows: 3 });
-    expect(view.rows.map((row) => row.ordinal)).toEqual([5, 6, 7]);
-    expect(view.hiddenAbove).toBe(4);
-    expect(view.hiddenBelow).toBe(3);
+    const rows = checklistView({ tasks: long, maxRows: 3 });
+    expect(rows.map((row) => row.ordinal)).toEqual([5, 6, 7]);
+    expect(rows.map((row) => row.mark)).toEqual([
+      ESpineMark.continues,
+      ESpineMark.live,
+      ESpineMark.continues,
+    ]);
   });
 
-  it('keeps the window full at the end of a finished list', () => {
+  // The count rides the rail's ends: a row of its own is what made the old panel six rows tall.
+  it('hangs the hidden counts on the boundary rows and nowhere else', () => {
+    const long = Array.from({ length: 10 }, (_, index) =>
+      task({
+        ordinal: index + 1,
+        status: index < 5 ? ETaskStatus.completed : ETaskStatus.pending,
+      }),
+    );
+    expect(checklistView({ tasks: long, maxRows: 3 }).map((row) => row.hidden)).toEqual([4, 0, 3]);
+  });
+
+  // The invariant the whole panel rests on: the leading finished row is a nicety, the live row is
+  // the point. At maxRows 1 the two compete, and the nicety lost.
+  it('keeps the live task in the window at every size', () => {
+    const long = Array.from({ length: 12 }, (_, index) =>
+      task({ ordinal: index + 1, status: index < 7 ? ETaskStatus.completed : ETaskStatus.pending }),
+    );
+    for (const maxRows of [1, 2, 3, 4, 5, 12, 20]) {
+      const rows = checklistView({ tasks: long, maxRows });
+      expect(rows.map((row) => row.ordinal)).toContain(8);
+    }
+  });
+
+  // A window that is both ends at once has one gutter cell and two counts to put in it.
+  it('sums both counts when the window is a single row', () => {
+    const long = Array.from({ length: 5 }, (_, index) =>
+      task({ ordinal: index + 1, status: index < 2 ? ETaskStatus.completed : ETaskStatus.pending }),
+    );
+    const rows = checklistView({ tasks: long, maxRows: 1 });
+    expect(rows.map((row) => row.ordinal)).toEqual([3]);
+    expect(rows[0]?.hidden).toBe(4);
+  });
+
+  // A boundary row that is ALSO the live one keeps the arrow; the count renders beside it regardless.
+  it('lets the live mark outrank the boundary mark without losing the count', () => {
+    const long = Array.from({ length: 6 }, (_, index) =>
+      task({ ordinal: index + 1, status: index < 5 ? ETaskStatus.completed : ETaskStatus.pending }),
+    );
+    const rows = checklistView({ tasks: long, maxRows: 2 });
+    expect(rows.map((row) => row.ordinal)).toEqual([5, 6]);
+    expect(rows[1]?.mark).toBe(ESpineMark.live);
+    expect(rows[0]?.hidden).toBe(4);
+  });
+
+  it('anchors on the end of a finished plan, with no live row to point at', () => {
     const long = Array.from({ length: 5 }, (_, index) =>
       task({ ordinal: index + 1, status: ETaskStatus.completed }),
     );
-    const view = checklistView({ tasks: long, maxRows: 3 });
-    expect(view.rows.map((row) => row.ordinal)).toEqual([3, 4, 5]);
-    expect(view.hiddenBelow).toBe(0);
-    expect(view.progress).toBe('5/5 done');
+    const rows = checklistView({ tasks: long, maxRows: 3 });
+    expect(rows.map((row) => row.ordinal)).toEqual([3, 4, 5]);
+    expect(rows.some((row) => row.mark === ESpineMark.live)).toBe(false);
+    expect(rows[2]?.mark).toBe(ESpineMark.tail);
   });
 
   it('never renders more rows than it was given room for', () => {
-    expect(checklistView({ tasks: PLAN, maxRows: 0 }).rows).toHaveLength(0);
+    expect(checklistView({ tasks: PLAN, maxRows: 0 })).toHaveLength(0);
+  });
+
+  // Nothing in Atlas holds the list to one running task: `task_update` sets a row and clears none,
+  // and a Codex plan arrives with whatever statuses it was written with.
+  describe('when several tasks are running at once', () => {
+    const parallel = (running: number[]) =>
+      Array.from({ length: 8 }, (_, index) =>
+        task({
+          ordinal: index + 1,
+          status: running.includes(index + 1)
+            ? ETaskStatus.in_progress
+            : index === 0
+              ? ETaskStatus.completed
+              : ETaskStatus.pending,
+        }),
+      );
+
+    it('marks every running row, not just the one it is anchored on', () => {
+      const rows = checklistView({ tasks: parallel([2, 3]), maxRows: 4 });
+      const live = rows.filter((row) => row.mark === ESpineMark.live).map((row) => row.ordinal);
+      expect(live).toEqual([2, 3]);
+    });
+
+    // The leading finished row is a courtesy; a second running task outranks it.
+    it('gives up the leading finished row to keep the running span in view', () => {
+      const rows = checklistView({ tasks: parallel([2, 5]), maxRows: 4 });
+      expect(rows.map((row) => row.ordinal)).toEqual([2, 3, 4, 5]);
+      expect(rows.filter((row) => row.mark === ESpineMark.live).map((row) => row.ordinal)).toEqual([2, 5]);
+    });
+
+    // Past the window's reach the count is the honest answer — it is what the rail's dashes are for.
+    it('counts a running task it cannot reach rather than pretending it is not there', () => {
+      const rows = checklistView({ tasks: parallel([2, 8]), maxRows: 3 });
+      expect(rows.map((row) => row.ordinal)).toEqual([2, 3, 4]);
+      expect(rows[2]?.mark).toBe(ESpineMark.continues);
+      expect(rows[2]?.hidden).toBe(4);
+    });
   });
 });
 

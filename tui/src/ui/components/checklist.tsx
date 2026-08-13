@@ -1,5 +1,10 @@
 import React from "react";
-import { checklistView, clipTaskText, type TaskView } from "../../domain/tasks.js";
+import {
+  checklistView,
+  clipTaskText,
+  ESpineMark,
+  type TaskView,
+} from "../../domain/tasks.js";
 import { ETaskStatus } from "../../generated/prisma/enums.js";
 import { theme } from "../theme.js";
 
@@ -8,20 +13,39 @@ import { theme } from "../theme.js";
  * transcript and the composer, and a fifteen-step plan would push the conversation it describes off
  * the screen. `checklistView` picks WHICH rows, anchored on the work rather than on the top.
  */
-export const CHECKLIST_ROWS = 5;
+export const CHECKLIST_ROWS = 4;
 
 /**
- * A status, in one cell. Not new glyphs: `○` and `⏺` already mean *available* and *active* in the
- * lists, and a check is the one shape nobody has to be taught. The colour repeats the same fact
- * rather than adding one — a checklist is read at a glance or not at all.
+ * The rail, one cell wide, running down the left of the plan.
+ *
+ * A dashed segment means the list carries on past the window; a cap means it genuinely ends there.
+ * That distinction is the whole reason the panel can be four rows tall without lying about a
+ * fifteen-step plan — and it is drawn, not counted, so it costs a glance rather than a read.
  */
-const STATUS = {
-  [ETaskStatus.pending]: { mark: "○", fg: theme.dim },
-  [ETaskStatus.in_progress]: { mark: "⏺", fg: theme.accent },
-  [ETaskStatus.completed]: { mark: "✓", fg: theme.dim },
-  // Never drawn — `checklistView` filters retired rows out — and present so this map is total.
-  [ETaskStatus.deleted]: { mark: "·", fg: theme.dim },
-} as const;
+const MARK: Record<ESpineMark, string> = {
+  [ESpineMark.live]: "▶",
+  [ESpineMark.continues]: "┆",
+  [ESpineMark.head]: "╷",
+  [ESpineMark.tail]: "╵",
+  [ESpineMark.through]: "│",
+};
+
+/**
+ * Two recessed greys, deliberately the footer meters' own (`meter-style.ts`): the rail and a spent
+ * task are furniture in exactly the way a meter's empty track is, and a checklist that invented its
+ * own greys would read as a second instrument sitting next to the first.
+ *
+ * The live row takes `theme.hover` — the brightest neutral in the app — because the panel's entire
+ * job is to make one row out of four findable without reading the other three.
+ */
+const RAIL = "#343434";
+const PENDING = "#5c5c5c";
+
+/**
+ * Columns before a row's text: a leading space, the rail, three for the count, one of air. Fixed, so
+ * no row's text shifts sideways when a count appears, grows a digit, or drops off the end.
+ */
+const GUTTER = 6;
 
 /**
  * The agent's plan, in the thread, where Dennis is already looking.
@@ -36,29 +60,48 @@ export function Checklist(props: {
   width: number;
   maxRows?: number;
 }): React.ReactNode {
-  const view = checklistView({
+  const rows = checklistView({
     tasks: props.tasks,
     maxRows: props.maxRows ?? CHECKLIST_ROWS,
   });
-  if (view.rows.length === 0) return null;
+  if (rows.length === 0) return null;
 
-  // Every row is `mark #n text`, so the text gets what is left after the widest number in view.
-  const gutter = 4 + String(view.rows[view.rows.length - 1]?.ordinal ?? 1).length;
-  const textWidth = Math.max(8, props.width - gutter);
+  const textWidth = Math.max(8, props.width - GUTTER);
 
   return (
     <box flexDirection="column" width={props.width}>
-      <text fg={theme.dim}>
-        tasks · {view.progress}
-        {view.hiddenAbove > 0 ? ` · ${view.hiddenAbove} above` : ""}
-        {view.hiddenBelow > 0 ? ` · ${view.hiddenBelow} below` : ""}
-      </text>
-      {view.rows.map((row) => (
-        <text key={row.ordinal} fg={STATUS[row.status].fg}>
-          <span fg={STATUS[row.status].fg}>{STATUS[row.status].mark}</span> #
-          {row.ordinal} {clipTaskText(row.text, textWidth)}
-        </text>
-      ))}
+      {rows.map((row) => {
+        const live = row.mark === ESpineMark.live;
+        return (
+          <text key={row.ordinal}>
+            <span> </span>
+            <span fg={live ? theme.accent : RAIL}>{MARK[row.mark]}</span>
+            <span fg={RAIL}>{badge(row.hidden)}</span>
+            <span> </span>
+            <span
+              fg={
+                live
+                  ? theme.hover
+                  : row.status === ETaskStatus.completed
+                    ? RAIL
+                    : PENDING
+              }
+            >
+              {clipTaskText(row.text, textWidth)}
+            </span>
+          </text>
+        );
+      })}
     </box>
   );
+}
+
+/**
+ * The count in the gutter, in exactly three cells or three spaces — never more, or it would push the
+ * text of one row out of line with the rest. A plan long enough to overflow `+99` has bigger
+ * problems than the badge, so it saturates rather than widening.
+ */
+function badge(hidden: number): string {
+  if (hidden <= 0) return "   ";
+  return (hidden > 99 ? "99+" : `+${hidden}`).padEnd(3, " ");
 }

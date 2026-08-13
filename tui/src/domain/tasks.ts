@@ -100,54 +100,144 @@ export function nextOrdinal(tasks: readonly TaskView[]): number {
   return tasks.reduce((highest, task) => Math.max(highest, task.ordinal), 0) + 1;
 }
 
+/**
+ * A row's place on the rail the checklist draws down its left edge.
+ *
+ * A ROLE, not a glyph: which character each one is drawn as is the renderer's business, and keeping
+ * the decision here is what lets the whole rail — including the part that depends on tasks nobody
+ * can see — be table-tested without a terminal.
+ *
+ * `continues` is the load-bearing one. The window is smaller than most plans, so the rail has to
+ * distinguish "the list ends here" from "the list carries on past the edge of what I am showing you"
+ * — a cap that lied about the end of a fifteen-step plan would be worse than no rail at all.
+ */
+export enum ESpineMark {
+  /** Where the work is. The one row the panel exists to point at. */
+  live = 'live',
+  /** The rail runs past the window at this end. */
+  continues = 'continues',
+  /** The list genuinely starts here. */
+  head = 'head',
+  /** The list genuinely ends here. */
+  tail = 'tail',
+  /** A row with list on both sides of it. */
+  through = 'through',
+}
+
 export type ChecklistRow = {
   ordinal: number;
   text: string;
   status: ETaskStatus;
+  mark: ESpineMark;
+  /**
+   * Tasks off the window at THIS row's end, 0 on any row that is not a boundary — so the count is
+   * drawn in the gutter the rail already occupies rather than on a row of its own. A whole row spent
+   * printing `+3` is what made the old panel six rows tall.
+   */
+  hidden: number;
 };
 
 /**
- * The checklist as the SCREEN needs it: a bounded window, and how much it is hiding either side.
+ * The task the panel is ANCHORED on: the first thing running, or what is up next if nothing is.
+ *
+ * `in_progress` beats position, because an agent that starts task #4 before #3 is telling you where
+ * it actually is. `null` once everything is done — there is no live work to point at, and the rail
+ * says so by having no `▶` on it rather than by pointing at a finished row.
+ *
+ * The anchor is where the WINDOW sits, which is a different question from which rows are marked
+ * live: nothing in Atlas holds the list to one running task at a time (`task_update` sets one row
+ * and clears nothing; a Codex plan arrives with whatever statuses it was written with), so several
+ * rows can be running at once and every one of them is marked. See `checklistView`.
+ */
+export function liveTask(tasks: readonly TaskView[]): TaskView | null {
+  return (
+    tasks.find((task) => task.status === ETaskStatus.in_progress) ??
+    tasks.find((task) => task.status === ETaskStatus.pending) ??
+    null
+  );
+}
+
+/**
+ * The checklist as the SCREEN needs it: a bounded window onto the plan, each row already knowing
+ * where it sits on the rail and what it is hiding.
  *
  * Bounded because the panel sits above the composer and a fifteen-step plan would eat the
- * conversation it is describing. Anchored on the first unfinished task rather than on the top,
- * because "what is happening now" is the only reason to glance at it — the finished half is
- * reassurance and scrolls away first.
+ * conversation it is describing. Anchored on the live task rather than on the top, because "what is
+ * happening now" is the only reason to glance at it — the finished half is reassurance and scrolls
+ * away first. A finished plan anchors on its END instead, so the last thing the panel does before it
+ * has nothing left to say is show the work closing out.
  */
-export type ChecklistView = {
-  rows: ChecklistRow[];
-  hiddenAbove: number;
-  hiddenBelow: number;
-  /** `2/5 done`, or null when there is nothing to count. */
-  progress: string | null;
-};
-
 export function checklistView(args: {
   tasks: readonly TaskView[];
   maxRows: number;
-}): ChecklistView {
+}): ChecklistRow[] {
   const visible = visibleTasks(args.tasks);
-  if (visible.length === 0 || args.maxRows <= 0) {
-    return { rows: [], hiddenAbove: 0, hiddenBelow: 0, progress: null };
-  }
+  if (visible.length === 0 || args.maxRows <= 0) return [];
 
-  const done = visible.filter((task) => task.status === ETaskStatus.completed).length;
-  const progress = `${done}/${visible.length} done`;
-  if (visible.length <= args.maxRows) {
-    return { rows: [...visible], hiddenAbove: 0, hiddenBelow: 0, progress };
-  }
+  const live = liveTask(visible);
+  const anchor = live === null ? visible.length - 1 : visible.indexOf(live);
+  // The last row that must be reachable: with several tasks running, the window tries to hold the
+  // whole running span rather than only the one it is anchored on.
+  const lastRunning = visible.reduce(
+    (last, task, index) => (task.status === ETaskStatus.in_progress ? index : last),
+    anchor,
+  );
 
-  // One row of finished work above the live one, so the window reads as a position in a list rather
-  // than as a list. Clamped at the end so the last window is full rather than short.
-  const active = visible.findIndex((task) => task.status !== ETaskStatus.completed);
-  const anchor = active === -1 ? visible.length - args.maxRows : Math.max(0, active - 1);
-  const start = Math.min(anchor, visible.length - args.maxRows);
-  return {
-    rows: visible.slice(start, start + args.maxRows),
-    hiddenAbove: start,
-    hiddenBelow: visible.length - start - args.maxRows,
-    progress,
-  };
+  // One row of finished work above the anchor, so the window reads as a position in a list rather
+  // than as a list. It is a courtesy, and it yields twice: to a second running task that would
+  // otherwise fall off the bottom, and to the anchor itself, which a one-row window would scroll
+  // off in favour of the finished task above it. Clamped at the end too, so the last window is full
+  // rather than short.
+  const courtesy = Math.max(0, anchor - 1);
+  const wanted = lastRunning > courtesy + args.maxRows - 1 ? anchor : courtesy;
+  const start = Math.max(
+    0,
+    Math.min(
+      Math.max(wanted, anchor - args.maxRows + 1),
+      Math.max(0, visible.length - args.maxRows),
+    ),
+  );
+  const rows = visible.slice(start, start + args.maxRows);
+  const below = visible.length - start - rows.length;
+
+  return rows.map((task, index) => {
+    const atTop = index === 0;
+    const atEnd = index === rows.length - 1;
+    return {
+      ...task,
+      // Every running row is marked, not just the anchor — a second `in_progress` drawn in the
+      // pending grey would be the one thing this panel must never do, which is show work that is
+      // happening as work that has not started.
+      mark: spineMark({
+        live: task === live || task.status === ETaskStatus.in_progress,
+        atTop,
+        atEnd,
+        above: start,
+        below,
+      }),
+      // Summed, because a one-row window is both ends at once and "+N you cannot see" is the honest
+      // answer there — two counts in one gutter cell would not be.
+      hidden: (atTop ? start : 0) + (atEnd ? below : 0),
+    };
+  });
+}
+
+function spineMark(args: {
+  live: boolean;
+  atTop: boolean;
+  atEnd: boolean;
+  above: number;
+  below: number;
+}): ESpineMark {
+  // The live row keeps its own mark at a boundary — the count still renders beside it, so nothing is
+  // lost by letting "where the work is" outrank "where the window ends".
+  if (args.live) return ESpineMark.live;
+  if ((args.atTop && args.above > 0) || (args.atEnd && args.below > 0)) {
+    return ESpineMark.continues;
+  }
+  if (args.atTop) return ESpineMark.head;
+  if (args.atEnd) return ESpineMark.tail;
+  return ESpineMark.through;
 }
 
 /**
