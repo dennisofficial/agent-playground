@@ -47,6 +47,24 @@ code cannot show you a road not taken.
    reimplement SDK behaviour, never mirror SDK types into `domain/`. A thin adapter *is* the
    update strategy — when an SDK moves, the blast radius is two files and one fixture.
 
+9. **Atlas's system prompt is APPENDED to Claude Code's, never substituted for it.** The SDK
+   reads a bare `systemPrompt` string as a *custom* prompt and drops the `claude_code` preset
+   entirely; the preset form (`{ type: 'preset', preset: 'claude_code', append }`) keeps it and
+   adds to it. Atlas's own prompt is three short sections about the harness — the envelope
+   vocabulary, the canary, the phase brief — and none of them says anything about how to use
+   `Edit`, how to read a repository, or what the working directory is. Handing an agent those
+   three sections *instead of* the preset takes the coding agent away and leaves the etiquette,
+   and it does so quietly: the session still answers and still calls tools, it is just worse.
+
+   This is a v1-scale decision, not a permanent one. It is right precisely *because* Atlas's own
+   prompt is currently small. If the harness ever grows a full operator manual of its own —
+   enough to stand alone and enough to start contradicting the preset — the argument for
+   appending weakens and this should be revisited deliberately rather than inherited.
+
+   One deliberate exception, in `oneShotOptions`: an ask is the model as a function and is given
+   nothing it does not need, so loading a coding agent's whole manual to title a job would be the
+   opposite policy for no gain.
+
 ## Standing prohibition
 
 **Claude Code's rendered behaviour is the visual target. Do not clone or copy from the

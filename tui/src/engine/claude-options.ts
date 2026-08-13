@@ -34,10 +34,38 @@ function toolBoundaryHook(onToolBoundary: () => Promise<string | undefined>): Ho
  * here is policy the design argued about for a long time, and policy that only exists inside a
  * private method is policy nobody can assert.
  */
+/**
+ * Atlas's prompt as an ADDITION to Claude Code's, never as a replacement.
+ *
+ * A bare string in this option is a *custom* prompt: the SDK drops the entire `claude_code` preset
+ * and the session loses everything that preset is — the tool-use discipline, the file-editing
+ * conventions, the environment and git context, the whole operator manual for the native tools
+ * Atlas hands it in `NATIVE_TOOLS`. Atlas's own prompt is currently three short sections (the
+ * envelope vocabulary, the canary, the phase brief) and was never written to stand in for any of
+ * that; it only ever had opinions about the harness.
+ *
+ * So the preset carries the agent and `append` carries Atlas. The ordering falls out for free and is
+ * the one we want: the general instruction first, the specific one last — the same rule
+ * `buildSystemPrompt` already applies to the brief within Atlas's own sections.
+ *
+ * `undefined` still means "say nothing extra", which is the preset alone rather than no prompt at
+ * all. That is the change: an omitted prompt used to leave the option off entirely, which happened
+ * to give the preset too — now both paths reach it deliberately instead of by accident.
+ *
+ * Deliberately NOT applied to `oneShotOptions`. An ask is the model as a function, given nothing it
+ * does not need; loading the coding agent's whole manual to title a job would be the opposite policy
+ * for no gain.
+ */
+function systemPromptFor(append: string | undefined): Options['systemPrompt'] {
+  const preset = { type: 'preset', preset: 'claude_code' } as const;
+  const trimmed = append?.trim();
+  return trimmed ? { ...preset, append: trimmed } : preset;
+}
+
 export function claudeOptions(args: RunArgs): Options {
   const tools = args.tools ?? [];
   return {
-    ...(args.systemPrompt === undefined ? {} : { systemPrompt: args.systemPrompt }),
+    systemPrompt: systemPromptFor(args.systemPrompt),
     cwd: args.cwd,
     model: args.model,
     ...(args.resume === undefined ? {} : { resume: args.resume }),
