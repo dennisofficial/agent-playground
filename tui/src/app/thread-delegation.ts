@@ -1,4 +1,4 @@
-import { phaseLabel, rolesFor } from '../domain/phase-spec.js';
+import { agentRolesFor, phaseLabel } from '../domain/phase-spec.js';
 import { roleLabel } from '../domain/role-engine.js';
 import { EHandoffKind, type SeedHandoff } from '../domain/thread-handoff.js';
 import {
@@ -233,14 +233,18 @@ export async function completeCallerThread(args: {
  * Belt to the schema's braces, as on `advance_thread`: the enum makes this unemittable, and a stale
  * tool list or a transport that rendered enums less faithfully would otherwise open a thread the
  * phase does not host.
+ *
+ * `agentRolesFor`, not `rolesFor`, so the human-only roles are refused here too. The two have to
+ * agree or the belt is looser than the braces — an agent that got `generic` past the enum would
+ * find nothing here to stop it.
  */
 function requireHostedRole(args: {
   phase: ToolContext['phase'];
   role: EThreadRole;
 }): void {
-  const roles = rolesFor(args.phase);
+  const roles = agentRolesFor(args.phase);
   if (roles.includes(args.role)) return;
   throw new Error(
-    `the ${phaseLabel(args.phase)} phase does not host a ${roleLabel(args.role)} thread — it hosts ${roles.map(roleLabel).join(', ')}`,
+    `the ${phaseLabel(args.phase)} phase does not host a ${roleLabel(args.role)} thread you may open — you may open ${roles.map(roleLabel).join(', ')}`,
   );
 }

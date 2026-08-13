@@ -58,19 +58,26 @@ describe('startablePhases', () => {
 });
 
 describe('openableRoles', () => {
-  // There is exactly one role list in this app: the same `PhaseSpec.roles` the agent's `open_thread`
-  // enum is built from. A parallel list is the thing this asserts can never appear.
-  it.each(EVERY_PHASE)('offers %s exactly the phase table’s roles', (phase) => {
-    expect(openableRoles(phase).map((choice) => choice.role)).toEqual([
-      ...rolesFor(phase),
-    ]);
+  // Still one role TABLE: the menu is `PhaseSpec.roles` in the phase's own order, and the only
+  // thing added is the human-only side channel. A parallel per-phase list is what this asserts can
+  // never appear.
+  it.each(EVERY_PHASE)('offers %s the phase table’s roles, in its order', (phase) => {
+    expect(
+      openableRoles(phase)
+        .map((choice) => choice.role)
+        .slice(0, rolesFor(phase).length),
+    ).toEqual([...rolesFor(phase)]);
   });
 
-  // No `allowHumanThreads` dial anywhere: a phase forbids human threads by declaring none, and the
-  // menu is empty by construction. No phase does today, and this is what would say so if one did.
-  it('forbids by construction rather than by flag', () => {
+  // No `allowHumanThreads` dial anywhere: what a phase hosts is what it declares, and the one role
+  // the human gets over and above that is `generic`, which is not a per-phase decision at all.
+  it('adds the side channel and nothing else', () => {
     for (const spec of Object.values(PHASE_SPECS)) {
-      expect(openableRoles(spec.kind).length).toBe(spec.roles.length);
+      const offered = openableRoles(spec.kind).map((choice) => choice.role);
+      expect(offered).toContain(EThreadRole.generic);
+      expect(offered.filter((role) => role !== EThreadRole.generic)).toEqual(
+        spec.roles.filter((role) => role !== EThreadRole.generic),
+      );
     }
   });
 
@@ -78,7 +85,22 @@ describe('openableRoles', () => {
     expect(openableRoles(EPhaseKind.ci).map((choice) => choice.label)).toEqual([
       'ship pr',
       'ci',
+      'generic',
     ]);
+  });
+
+  // The one row whose presence in a `ci` menu is not self-evident says why it is there. In the
+  // `generic` phase it is the phase's own first role, so captioning it would explain the obvious.
+  it('captions the side channel only where the phase did not ask for it', () => {
+    const inCi = openableRoles(EPhaseKind.ci).find(
+      (choice) => choice.role === EThreadRole.generic,
+    );
+    expect(inCi?.hint).toContain('blank');
+
+    const inGeneric = openableRoles(EPhaseKind.generic).find(
+      (choice) => choice.role === EThreadRole.generic,
+    );
+    expect(inGeneric?.hint).toBeUndefined();
   });
 });
 

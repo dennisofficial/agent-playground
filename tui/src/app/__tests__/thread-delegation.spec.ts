@@ -254,6 +254,25 @@ describe('open_thread', () => {
     ).rejects.toThrow('does not host');
     expect(threads).toHaveLength(1);
   });
+
+  /**
+   * The generic PHASE lists the generic ROLE — it is what its own first thread runs as — and the
+   * agent still may not open a second one. `generic` is Dennis's side channel; an agent able to
+   * mint an un-postured thread would have a door out of whatever stance the phase put it in.
+   */
+  it('refuses the human-only role even in the phase that hosts it', async () => {
+    const { service, ctx, threads } = world();
+
+    await expect(
+      service.openThread({
+        ctx: ctx(threads[0] as Thread),
+        role: EThreadRole.generic,
+        brief: 'quick aside',
+        attach: [],
+      }),
+    ).rejects.toThrow('does not host');
+    expect(threads).toHaveLength(1);
+  });
 });
 
 describe('complete_thread', () => {
@@ -354,6 +373,9 @@ describe('the tools', () => {
     expect(schema.safeParse({ ...call, role: EThreadRole.research }).success).toBe(true);
     // `generic` does not host builders, and the schema is the rail rather than a later refusal.
     expect(schema.safeParse({ ...call, role: EThreadRole.builder }).success).toBe(false);
+    // Nor the human-only role, in the one phase that lists it. The refusal above is the belt; this
+    // is the braces, and the braces are what the agent actually reads.
+    expect(schema.safeParse({ ...call, role: EThreadRole.generic }).success).toBe(false);
     // `attach` is required: an empty array is a statement, an omission is not.
     expect(schema.safeParse({ role: EThreadRole.research, brief: 'why' }).success).toBe(false);
   });

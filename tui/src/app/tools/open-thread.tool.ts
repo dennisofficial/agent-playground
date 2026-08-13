@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { rolesFor } from '../../domain/phase-spec.js';
+import { agentRolesFor } from '../../domain/phase-spec.js';
 import { EAtlasTool, EToolTier, type ToolAudience } from '../../domain/tool-surface.js';
 import type { AtlasTool, ToolActions, ToolContext } from './tool.js';
 
@@ -36,21 +36,23 @@ are attached for you either way, so an empty array costs the new thread nothing.
  * no delegation at all rather than a delegation that refuses.
  */
 const offeredHere = (audience: ToolAudience): boolean =>
-  rolesFor(audience.phase).length > 0;
+  agentRolesFor(audience.phase).length > 0;
 
 /**
  * `open_thread` is a DELEGATION and `advance_thread` is a SUCCESSION — the distinction this pair
  * exists to make. One thread carrying two meanings was the gap design 03 §5 found: a thread that
  * opens its successor and closes wants no answer, and a planner clearing fog requires one.
  *
- * The `role` enum is `PhaseSpec.roles`, the app's only role list, for `advance_thread`'s reason:
- * the schema is the rail, so `planning → builder` is unemittable rather than refused afterwards.
+ * The `role` enum is `agentRolesFor(phase)` for `advance_thread`'s reason: the schema is the rail,
+ * so `planning → builder` is unemittable rather than refused afterwards. That is `PhaseSpec.roles`
+ * minus the human-only ones — `generic` is Dennis's side channel and an agent that could open one
+ * would have a door out of the phase's stance.
  */
 export function openThreadTool(args: {
   ctx: ToolContext;
   actions: ToolActions;
 }): AtlasTool | null {
-  const [first, ...rest] = rolesFor(args.ctx.phase);
+  const [first, ...rest] = agentRolesFor(args.ctx.phase);
   // The same fact as `offeredHere`, evaluated earlier because it must be: zod cannot express an
   // enum with no members, so a phase hosting nothing cannot produce a tool to hide.
   if (!first) return null;

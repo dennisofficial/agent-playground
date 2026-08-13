@@ -1,5 +1,5 @@
-import { EPhaseKind, type EThreadRole } from '../generated/prisma/enums.js';
-import { nextPhasesFor, phaseLabel, rolesFor } from './phase-spec.js';
+import { EPhaseKind, EThreadRole } from '../generated/prisma/enums.js';
+import { humanRolesFor, nextPhasesFor, phaseLabel, rolesFor } from './phase-spec.js';
 import { roleLabel } from './role-engine.js';
 
 /**
@@ -32,6 +32,12 @@ export type PhaseChoice = {
 export type RoleChoice = {
   role: EThreadRole;
   label: string;
+  /**
+   * Shown beside the label where a role needs a word of explanation. Only the human-only ones do:
+   * every other entry is named after the phase you are standing in and reads for itself, while
+   * `generic` in a `build` phase is the one row whose presence is not self-evident.
+   */
+  hint?: string;
 };
 
 /**
@@ -55,12 +61,25 @@ export function startablePhases(current: EPhaseKind): readonly PhaseChoice[] {
 }
 
 /**
- * The roles a thread may be opened with here — `PhaseSpec.roles`, which is the SAME list the agent's
- * `open_thread` enum is built from. There is no second role table in this app, and a phase that
- * should forbid human threads declares no roles and forbids them by construction. No flag.
+ * The roles a thread may be opened with here: `PhaseSpec.roles` plus the human-only ones the phase
+ * did not list. There is still no second role TABLE — `humanRolesFor` reads the same phase spec the
+ * agent's `open_thread` enum is built from, and the two differ only by which side of
+ * `HUMAN_ONLY_ROLES` a role falls on.
+ *
+ * The asymmetry is the point. `generic` is offered in every phase and to nobody but Dennis, so a
+ * question that is not this job's work has somewhere honest to go; every other role is exactly the
+ * phase's own list, so a phase that hosts nothing still forbids threads by construction. No flag.
  */
 export function openableRoles(phase: EPhaseKind): readonly RoleChoice[] {
-  return rolesFor(phase).map((role) => ({ role, label: roleLabel(role) }));
+  return humanRolesFor(phase).map((role) => ({
+    role,
+    label: roleLabel(role),
+    // Only where the phase did not ask for it — in the `generic` phase this row IS the phase, and
+    // captioning it there would explain the obvious.
+    ...(role === EThreadRole.generic && !rolesFor(phase).includes(role)
+      ? { hint: 'yours — opens blank, no brief' }
+      : {}),
+  }));
 }
 
 /**

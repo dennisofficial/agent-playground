@@ -48,12 +48,17 @@ export type ContextFileRef = {
 export type PhaseSpec = {
   kind: EPhaseKind;
   /**
-   * Every role this phase may host — the ONLY list of roles in the app. It is the enum on the
-   * agent's `open_thread`/`advance_thread`, and the same list the human's "open a thread here" menu
-   * offers. A phase that should forbid threads declares none and forbids them by construction, so
-   * there is no `allowHumanThreads` flag. `ROLE_GROUP` (role → phase) was deleted for this: it
-   * assumed a role belongs to one phase, which stopped being true the moment `planning` could host
-   * a `charting` thread. Do not resurrect the inverse.
+   * Every role this phase may host, in menu order — the ONLY per-phase list of roles in the app,
+   * and the first entry is the role the phase's own first thread takes (`firstRoleFor`). A phase
+   * that should forbid threads declares none and forbids them by construction, so there is no
+   * `allowHumanThreads` flag. `ROLE_GROUP` (role → phase) was deleted for this: it assumed a role
+   * belongs to one phase, which stopped being true the moment `planning` could host a `charting`
+   * thread. Do not resurrect the inverse.
+   *
+   * WHO may open one of these is a second axis, and it is carried by the ROLE rather than by a
+   * second list here — see `HUMAN_ONLY_ROLES`, `agentRolesFor` and `humanRolesFor`. Read this field
+   * directly only where the question is *what does this phase host*; every caller asking *what may
+   * be opened, and by whom* goes through one of those two.
    */
   roles: readonly EThreadRole[];
   /**
@@ -221,9 +226,51 @@ export function phaseSpecFor(kind: EPhaseKind): PhaseSpec {
   return PHASE_SPECS[kind];
 }
 
-/** The roles a thread may be opened with here — agent tool enum and human menu, one list. */
+/** What this phase hosts. Not a permission — see `agentRolesFor` / `humanRolesFor` for those. */
 export function rolesFor(kind: EPhaseKind): readonly EThreadRole[] {
   return PHASE_SPECS[kind].roles;
+}
+
+/**
+ * Roles only the HUMAN may open a thread with. One member, and it is the whole reason the set
+ * exists: `generic` is the side channel, the thread Dennis opens beside the work to ask something
+ * that is not the work.
+ *
+ * It is human-only in both directions, and each direction is load-bearing:
+ *
+ * - **The agent can never open one, in any phase.** A charting agent that could mint an
+ *   un-postured thread would have a door out of its own stance, and the stance is the phase.
+ * - **The human can open one in EVERY phase**, including phases whose `roles` do not list it. A
+ *   question that has nothing to do with the job is not a `task`, a `builder` or a `ci` thread, and
+ *   before this the menu forced one of those names onto it — which is what put "install the linear
+ *   CLI" in a thread the harness had labelled as work on the map.
+ *
+ * A set rather than a boolean on the role table because the table is engine binding, and this is
+ * not about engines. If a second human-only role ever appears it joins here and nothing else moves.
+ */
+const HUMAN_ONLY_ROLES: ReadonlySet<EThreadRole> = new Set([EThreadRole.generic]);
+
+/**
+ * The enum on `open_thread` and `advance_thread`. The schema is the rail — a role the agent may not
+ * open should be unemittable rather than refused after the fact — and `requireHostedRole` in
+ * `app/thread-delegation.ts` is the belt to these braces.
+ */
+export function agentRolesFor(kind: EPhaseKind): readonly EThreadRole[] {
+  return PHASE_SPECS[kind].roles.filter((role) => !HUMAN_ONLY_ROLES.has(role));
+}
+
+/**
+ * The human's "open a thread here" menu: what the phase hosts, in the phase's own order, and then
+ * whatever is human-only that the phase did not already list.
+ *
+ * Appended rather than prepended so the phase still leads with the role it is actually for — a
+ * `build` phase offers `builder` first. In the `generic` phase nothing is appended, because
+ * `generic` is already that phase's first role.
+ */
+export function humanRolesFor(kind: EPhaseKind): readonly EThreadRole[] {
+  const hosted = PHASE_SPECS[kind].roles;
+  const extra = [...HUMAN_ONLY_ROLES].filter((role) => !hosted.includes(role));
+  return [...hosted, ...extra];
 }
 
 /** What the agent may propose from here. Empty is a real answer: `ci` proposes nothing. */

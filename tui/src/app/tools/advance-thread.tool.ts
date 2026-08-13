@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { rolesFor } from '../../domain/phase-spec.js';
+import { agentRolesFor } from '../../domain/phase-spec.js';
 import { EAtlasTool, EToolTier, type ToolAudience } from '../../domain/tool-surface.js';
 import type { AtlasTool, ToolActions, ToolContext } from './tool.js';
 
@@ -31,22 +31,23 @@ are attached for you either way, so an empty array costs the successor nothing.`
  * offered no advance at all rather than an advance that refuses.
  */
 const offeredHere = (audience: ToolAudience): boolean =>
-  rolesFor(audience.phase).length > 0;
+  agentRolesFor(audience.phase).length > 0;
 
 /**
  * `advance_thread : thread :: advance_phase : phase` — both are *close me, create the next one,
  * carry a hand-off*. The difference is only who confirms: a phase boundary is a human boundary and
  * a thread boundary is not, so this one takes effect the moment it is called.
  *
- * The `role` enum is built from `PhaseSpec.roles` rather than from `EThreadRole`, because the schema
- * is the only thing railing the agent: `planning → builder` should be unemittable, not rejected
- * after the fact.
+ * The `role` enum is built from `agentRolesFor(phase)` rather than from `EThreadRole`, because the
+ * schema is the only thing railing the agent: `planning → builder` should be unemittable, not
+ * rejected after the fact. Human-only roles are filtered out of it — a successor is the work
+ * carrying on, and `generic` is by definition not the work.
  */
 export function advanceThreadTool(args: {
   ctx: ToolContext;
   actions: ToolActions;
 }): AtlasTool | null {
-  const [first, ...rest] = rolesFor(args.ctx.phase);
+  const [first, ...rest] = agentRolesFor(args.ctx.phase);
   // The same fact as `offeredHere`, evaluated earlier because it must be: zod cannot express an
   // enum with no members, so a phase offering nothing cannot produce a tool to hide.
   if (!first) return null;
