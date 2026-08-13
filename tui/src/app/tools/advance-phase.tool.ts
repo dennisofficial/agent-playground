@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { exitsWithoutAsking } from '../../domain/phase-advance.js';
 import { nextPhasesFor, phaseLabel } from '../../domain/phase-spec.js';
 import { EAtlasTool, EToolTier, type ToolAudience } from '../../domain/tool-surface.js';
 import type { AtlasTool, ToolActions, ToolContext } from './tool.js';
@@ -10,15 +9,6 @@ const ASKS = `Propose that this phase is finished and that the job should move o
 declines, and that may be hours from now — so end your turn the moment it returns. You get no
 further turn in this thread either way: if he confirms, this thread closes; if he declines, he will
 tell you why himself.
-
-Only the LAST open thread in a phase may call it — while a sibling is still working the phase is not
-finished, and this throws. Reach for \`advance_thread\` instead to hand your own work on.`;
-
-const AUTO = `Finish this phase and move the job on.
-
-This exit carries no decision, so it takes effect immediately: this thread closes, the phase you
-name is created, and its first thread opens with your hand-off. Stop the moment it returns — you get
-no further turn in this thread.
 
 Only the LAST open thread in a phase may call it — while a sibling is still working the phase is not
 finished, and this throws. Reach for \`advance_thread\` instead to hand your own work on.`;
@@ -59,9 +49,9 @@ const offeredHere = (audience: ToolAudience): boolean =>
  * carry a hand-off*. The difference is who confirms, and it is the whole of this ticket: a phase
  * boundary is a human boundary.
  *
- * The description is built per phase because the two behaviours are genuinely different from where
- * the agent sits. Telling a builder that Dennis will confirm, when `build` exits on its own, would
- * be a lie about what its next turn is — and there is no next turn to correct it in.
+ * One description for every phase, because there is one behaviour: EVERY transition waits on
+ * Dennis. An earlier cut varied this per phase and had to tell some agents their exit took effect
+ * immediately — a claim with no next turn in which to correct it if it were ever wrong.
  */
 export function advancePhaseTool(args: {
   ctx: ToolContext;
@@ -87,7 +77,7 @@ export function advancePhaseTool(args: {
 
   return {
     name: EAtlasTool.advance_phase,
-    description: `${exitsWithoutAsking(args.ctx.phase) ? AUTO : ASKS}\n\n${NEVER_RETURNS}`,
+    description: `${ASKS}\n\n${NEVER_RETURNS}`,
     // Threads only. A teammate is owned by a thread and never moves Atlas's structure.
     tiers: [EToolTier.thread],
     offeredIn: offeredHere,

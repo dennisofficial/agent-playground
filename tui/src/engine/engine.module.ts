@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { ClaudeEngineService } from "./claude-engine.service.js";
 import { claudeSdkProvider } from "./claude-sdk.provider.js";
 import { ClaudeNormaliserService } from "./normalise/claude-normaliser.service.js";
+import { ClaudeOneShotService } from "./one-shot.service.js";
 import { RawTapeService } from "./raw-tape.service.js";
 
 @Module({
@@ -10,7 +11,13 @@ import { RawTapeService } from "./raw-tape.service.js";
     ClaudeNormaliserService,
     RawTapeService,
     ClaudeEngineService,
+    ClaudeOneShotService,
   ],
-  exports: [ClaudeEngineService, ClaudeNormaliserService, RawTapeService],
+  exports: [
+    ClaudeEngineService,
+    ClaudeOneShotService,
+    ClaudeNormaliserService,
+    RawTapeService,
+  ],
 })
 export class EngineModule {}

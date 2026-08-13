@@ -2,7 +2,6 @@ import { describe, expect, it } from 'bun:test';
 import { EPhaseKind, EThreadRole } from '../../generated/prisma/enums.js';
 import type { PhaseBriefContext } from '../phase-brief.js';
 import {
-  EPhaseConfirm,
   PHASE_SPECS,
   briefFor,
   nextPhasesFor,
@@ -76,20 +75,14 @@ describe('the phase graph', () => {
   });
 
   /**
-   * Written out rather than derived, for the reason the edges are: which boundaries stop for the
-   * human is the single most consequential thing in this table, and an ask that quietly became an
-   * auto would show up only as a job that had already moved on.
+   * The most consequential property of this table is which boundaries stop for the human, and the
+   * answer is now ALL of them. This asserts the absence of the setting rather than its value: a
+   * one-valued `confirm` field would be an invitation to reintroduce the fork, and a job that had
+   * already moved on is how you would find out it came back.
    */
-  it('asks at every phase boundary except the three that carry no decision', () => {
-    const AUTO: EPhaseKind[] = [
-      EPhaseKind.build,
-      EPhaseKind.direct_build,
-      EPhaseKind.master_review,
-    ];
+  it('carries no per-phase confirm setting — every boundary stops for the human', () => {
     for (const kind of Object.values(EPhaseKind)) {
-      expect(PHASE_SPECS[kind].confirm).toBe(
-        AUTO.includes(kind) ? EPhaseConfirm.auto : EPhaseConfirm.ask,
-      );
+      expect(PHASE_SPECS[kind]).not.toHaveProperty('confirm');
     }
   });
 });

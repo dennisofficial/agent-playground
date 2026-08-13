@@ -10,6 +10,7 @@ import {
   resolveContextLimit,
   toPercent,
   windowKeyFor,
+  windowPercent,
 } from '../usage.js';
 
 describe('unknown is a real state, not zero', () => {
@@ -54,10 +55,8 @@ describe('meterFill', () => {
 
 describe('meterBand', () => {
   it.each([
-    ['ctx', 59, 'normal'],
-    ['ctx', 60, 'warn'],
-    ['ctx', 90, 'hot'],
-    ['ctx', 100, 'red'],
+    ['fiveHour', 64, 'normal'],
+    ['fiveHour', 65, 'warn'],
     ['fiveHour', 82, 'hot'],
     ['fiveHour', 93, 'red'],
     ['sevenDay', 69, 'normal'],
@@ -73,19 +72,29 @@ describe('meterBand', () => {
     expect(meterBand('fiveHour', 100)).toBe('spent');
   });
 
-  it('never calls ctx spent, because a budget is exceeded rather than emptied', () => {
-    // `spent` is for windows that REFILL. The context budget is advisory: 100% is where Atlas starts
-    // asking for a hand-off, and the meter keeps counting past it because "27% over" is the reading
-    // worth acting on.
-    expect(meterBand('ctx', 100)).toBe('red');
-    expect(meterBand('ctx', 127)).toBe('red');
+  it('calls everything above normal pressured, so the ink schemes agree with the ramp', () => {
+    expect(isPressured(meterBand('fiveHour', 20))).toBe(false);
+    expect(isPressured(meterBand('fiveHour', null))).toBe(false);
+    expect(isPressured(meterBand('fiveHour', 65))).toBe(true);
+    expect(isPressured(meterBand('fiveHour', 100))).toBe(true);
+  });
+});
+
+describe('windowPercent', () => {
+  it('reads occupancy of the physical window, not of the rotation budget', () => {
+    // The same 228_600-token session the budget meter drew as 127%: against a million-token window
+    // it is 23%, and that is now deliberately what the gauge says.
+    expect(windowPercent({ tokens: 228_600, limit: 1_000_000 })).toBe(23);
+    expect(windowPercent({ tokens: 120_000, limit: 200_000 })).toBe(60);
   });
 
-  it('calls everything above normal pressured, so the ink schemes agree with the ramp', () => {
-    expect(isPressured(meterBand('ctx', 20))).toBe(false);
-    expect(isPressured(meterBand('ctx', null))).toBe(false);
-    expect(isPressured(meterBand('ctx', 60))).toBe(true);
-    expect(isPressured(meterBand('ctx', 100))).toBe(true);
+  it('clamps at the wall, because there is nothing past the window', () => {
+    expect(windowPercent({ tokens: 260_000, limit: 200_000 })).toBe(100);
+    expect(windowPercent({ tokens: -1, limit: 200_000 })).toBe(0);
+  });
+
+  it('reads zero rather than dividing by an unreported window', () => {
+    expect(windowPercent({ tokens: 40_000, limit: 0 })).toBe(0);
   });
 });
 

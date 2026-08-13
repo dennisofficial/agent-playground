@@ -4,6 +4,15 @@ const LINE_FEED = String.fromCharCode(10);
 const MODIFIED_ENTER = /^\[27;\d+;13~$/;
 
 export type KeyChord = {
+  /**
+   * The key's name, when the reporter has one — `left`, `backspace`, or the bare letter.
+   *
+   * Needed because an ESC-prefixed sequence carries no printable input: OpenTUI names `ESC b` as
+   * `b` but hands over an empty string, since anything starting with ESC is navigation and must
+   * never be typed into the draft. Without the name, Option-as-Meta's word bindings below are
+   * unreachable.
+   */
+  name?: string;
   leftArrow?: boolean;
   rightArrow?: boolean;
   upArrow?: boolean;
@@ -54,11 +63,13 @@ export function resolveEditorCommand(
     return key.meta || key.ctrl ? "move-word-right" : "move-right";
   }
 
-  // Terminal.app's Option-as-Meta sends the readline word bindings rather than modified arrows.
+  // Terminal.app's Option-as-Meta sends the readline word bindings rather than modified arrows. The
+  // letter arrives as the key's NAME, not as input — see `KeyChord.name`.
   if (key.meta && !key.ctrl) {
-    if (input === "b") return "move-word-left";
-    if (input === "f") return "move-word-right";
-    if (input === "d") return "delete-word-forward";
+    const letter = input.length > 0 ? input : (key.name ?? "");
+    if (letter === "b") return "move-word-left";
+    if (letter === "f") return "move-word-right";
+    if (letter === "d") return "delete-word-forward";
   }
 
   if (key.home) return key.ctrl ? "move-doc-start" : "move-line-start";

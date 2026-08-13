@@ -15,6 +15,7 @@ import { ConversationService } from '../conversation.service.js';
 import { ConversationStoreRegistry } from '../conversation-store.registry.js';
 import type { GitService } from '../git.service.js';
 import { JobStartService } from '../job-start.service.js';
+import type { JobTitleService } from '../job-title.service.js';
 import { PhaseBriefService } from '../phase-brief.service.js';
 import type { SessionManagerService } from '../session-manager.service.js';
 import { ThreadSeamService } from '../thread-seam.service.js';
@@ -45,13 +46,23 @@ const JOB = {
 
 const THREAD = { id: 'thread-1', phaseId: 'phase-1', role: EThreadRole.charting } as unknown as Thread;
 const PHASES = [{ id: 'phase-1', kind: EPhaseKind.charting, ordinal: 0 } as unknown as Phase];
-const SESSION = { id: 'session-1', accountId: 'account-1' } as unknown as EngineSession;
+// The id is named separately because `EngineSession.accountId` is nullable now — a session is allowed
+// to hold no credential — and an assertion reading it off the cast fixture would widen to `| null`.
+const ACCOUNT_ID = 'account-1';
+const SESSION = { id: 'session-1', accountId: ACCOUNT_ID } as unknown as EngineSession;
 
 function build(run: (args: RunTurnArgs) => Promise<void> = async () => undefined) {
   const created: { title: string; projectId: string }[] = [];
   const openedRoles: EThreadRole[] = [];
   const contextFolders: string[] = [];
   const turns: RunTurnArgs[] = [];
+  const named: {
+    jobId: string;
+    accountId: string;
+    cwd: string;
+    derived: string;
+    firstMessage: string;
+  }[] = [];
 
   const jobRepository = {
     async create(args: { projectId: string; title: string }): Promise<Job> {
@@ -140,9 +151,6 @@ function build(run: (args: RunTurnArgs) => Promise<void> = async () => undefined
     {} as unknown as ThreadRepository,
     {} as unknown as AccountRepository,
     {
-      // Resolves: these cases are about what creation DOES, and the account preflight has its own
-      // spec. See `job-create-preflight.spec.ts` for the refusal.
-      async assertUsableAccount(): Promise<void> {},
       async openThread(_jobId: string, role: EThreadRole): Promise<Thread> {
         openedRoles.push(role);
         return THREAD;
@@ -154,12 +162,32 @@ function build(run: (args: RunTurnArgs) => Promise<void> = async () => undefined
     {} as unknown as GitService,
   );
 
+  // Faked, deliberately: naming spawns a model and this spec is about what a job is made OF. What
+  // it must show is that the call is fire-and-forget — nothing below awaits it.
+  const jobTitleService = {
+    name(args: {
+      jobId: string;
+      accountId: string;
+      cwd: string;
+      derived: string;
+      firstMessage: string;
+    }): void {
+      named.push(args);
+    },
+  } as unknown as JobTitleService;
+
   return {
-    jobStartService: new JobStartService(workspaceService, jobRepository, conversationService),
+    jobStartService: new JobStartService(
+      workspaceService,
+      jobRepository,
+      conversationService,
+      jobTitleService,
+    ),
     created,
     openedRoles,
     contextFolders,
     turns,
+    named,
   };
 }
 
@@ -173,6 +201,27 @@ describe('starting a job from its first message', () => {
     });
 
     expect(created).toEqual([{ title: 'add avatar upload', projectId: 'project-1' }]);
+  });
+
+  it('hands the first message to the titler, on the account the job’s own turn runs on', async () => {
+    const { jobStartService, named } = build();
+
+    await jobStartService.start({
+      projectId: 'project-1',
+      firstMessage: 'add avatar upload\n\nit should resize to 512px and strip exif',
+    });
+
+    // The derived title goes with it: it is the guard the model’s title is written against, so a
+    // rename landing in between wins. See `JobRepository.retitle`.
+    expect(named).toEqual([
+      {
+        jobId: JOB.id,
+        accountId: ACCOUNT_ID,
+        cwd: '/repo',
+        derived: 'add avatar upload',
+        firstMessage: 'add avatar upload\n\nit should resize to 512px and strip exif',
+      },
+    ]);
   });
 
   it('opens exactly one generic thread, and the job’s context folder with it', async () => {
@@ -226,13 +275,14 @@ describe('starting a job from its first message', () => {
   });
 
   it('creates nothing at all from an empty message', async () => {
-    const { jobStartService, created, openedRoles, contextFolders, turns } = build();
+    const { jobStartService, created, named, openedRoles, contextFolders, turns } = build();
 
     expect(
       jobStartService.start({ projectId: 'project-1', firstMessage: '   \n\t ' }),
     ).rejects.toThrow(/starts with a message/);
 
     expect(created).toEqual([]);
+    expect(named).toEqual([]);
     expect(openedRoles).toEqual([]);
     expect(contextFolders).toEqual([]);
     expect(turns).toEqual([]);

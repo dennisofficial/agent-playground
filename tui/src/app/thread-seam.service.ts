@@ -229,7 +229,6 @@ export class ThreadSeamService implements ToolActions {
       jobRepository: this.jobRepository,
       transitionRepository: this.transitionRepository,
       contextFolderService: this.contextFolderService,
-      confirm: (confirming) => this.confirmTransition(confirming),
       ...args,
     });
   }

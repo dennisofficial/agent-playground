@@ -13,19 +13,20 @@ import {
   postBuildBrief,
 } from "./phase-briefs.js";
 
-/**
- * Whether LEAVING this phase waits on the human.
+/*
+ * There is deliberately no per-phase confirm setting.
  *
- * A property of the phase being left rather than of the one being entered: the question it answers
- * — *was there a decision to make here* — is settled by the work that just finished. Confirmation is
- * required only where there is a fork or an artifact to eyeball, and nowhere else, because an ask
- * that carries no information is the one that trains `y` as a reflex and gets the plan approved
- * unread. Not a dial anyone can turn from outside this file.
+ * EVERY phase transition goes through the confirm screen. An earlier cut let `build`,
+ * `direct_build` and `master_review` exit without asking, on the argument that an ask carrying no
+ * information trains `y` as a reflex. What that missed is that the exits it exempted are not all
+ * uninformative: `build → planning` is the plan turning out to be wrong, which is exactly the fork
+ * a human should see, and reading the setting off the phase being LEFT could not tell that edge
+ * apart from `build → master_review`.
+ *
+ * The field is gone rather than set to `ask` everywhere, because a one-valued setting is an
+ * invitation to reintroduce the fork. If confirmation should ever vary again, it varies by EDGE —
+ * not by phase — and that is a different shape.
  */
-export enum EPhaseConfirm {
-  ask = "ask",
-  auto = "auto",
-}
 
 /** A file in the job's context folder, named the way the folder names it: bucket plus relative path. */
 export type ContextFileRef = {
@@ -61,7 +62,6 @@ export type PhaseSpec = {
    * `build → master_review (if …)` was what splitting `build` and `direct_build` bought out.
    */
   next: readonly EPhaseKind[];
-  confirm: EPhaseConfirm;
   brief: (ctx: PhaseBriefContext) => PhaseBrief;
   /**
    * The structural floor of what a thread entering this phase is handed: every UNNUMBERED file in
@@ -118,7 +118,6 @@ export const PHASE_SPECS: Record<EPhaseKind, PhaseSpec> = {
       EThreadRole.task,
     ],
     next: [EPhaseKind.charting, EPhaseKind.planning],
-    confirm: EPhaseConfirm.ask,
     brief: genericBrief,
     attach: CHARTING_FLOOR,
   },
@@ -133,7 +132,6 @@ export const PHASE_SPECS: Record<EPhaseKind, PhaseSpec> = {
       EThreadRole.task,
     ],
     next: [EPhaseKind.planning, EPhaseKind.design],
-    confirm: EPhaseConfirm.ask,
     brief: chartingBrief,
     attach: CHARTING_FLOOR,
   },
@@ -143,7 +141,6 @@ export const PHASE_SPECS: Record<EPhaseKind, PhaseSpec> = {
     kind: EPhaseKind.design,
     roles: [EThreadRole.designer, EThreadRole.prototype],
     next: [EPhaseKind.planning],
-    confirm: EPhaseConfirm.ask,
     brief: designBrief,
     attach: CHARTING_FLOOR,
   },
@@ -160,7 +157,6 @@ export const PHASE_SPECS: Record<EPhaseKind, PhaseSpec> = {
       EThreadRole.prototype,
     ],
     next: [EPhaseKind.build, EPhaseKind.direct_build, EPhaseKind.design],
-    confirm: EPhaseConfirm.ask,
     brief: planningBrief,
     attach: CHARTING_FLOOR,
   },
@@ -175,7 +171,6 @@ export const PHASE_SPECS: Record<EPhaseKind, PhaseSpec> = {
     // rule and IS a fork taken without a keypress — the one auto exit that has one. Recorded rather
     // than special-cased: if a builder re-planning unasked turns out to be wrong, the fix is to make
     // confirmation a function of the edge, not to bolt a condition onto this phase.
-    confirm: EPhaseConfirm.auto,
     brief: buildBrief,
     attach: SPECS_FLOOR,
   },
@@ -186,7 +181,6 @@ export const PHASE_SPECS: Record<EPhaseKind, PhaseSpec> = {
     roles: [EThreadRole.builder],
     next: [EPhaseKind.post_build],
     // One successor, mechanical signal, nothing to look at yet — the review happens in post_build.
-    confirm: EPhaseConfirm.auto,
     brief: directBuildBrief,
     attach: SPECS_FLOOR,
   },
@@ -196,7 +190,6 @@ export const PHASE_SPECS: Record<EPhaseKind, PhaseSpec> = {
     next: [EPhaseKind.post_build],
     // Its whole output is a report Dennis is about to read in post_build; asking here would be a
     // keystroke between him and the same information.
-    confirm: EPhaseConfirm.auto,
     brief: masterReviewBrief,
     attach: SPECS_FLOOR,
   },
@@ -204,7 +197,6 @@ export const PHASE_SPECS: Record<EPhaseKind, PhaseSpec> = {
     kind: EPhaseKind.post_build,
     roles: [EThreadRole.post_build],
     next: [EPhaseKind.planning, EPhaseKind.design, EPhaseKind.ci],
-    confirm: EPhaseConfirm.ask,
     brief: postBuildBrief,
     attach: SPECS_FLOOR,
   },
@@ -220,7 +212,6 @@ export const PHASE_SPECS: Record<EPhaseKind, PhaseSpec> = {
     // would be a migration.
     roles: [EThreadRole.ship_pr, EThreadRole.ci],
     next: [],
-    confirm: EPhaseConfirm.ask,
     brief: ciBrief,
     attach: SPECS_FLOOR,
   },

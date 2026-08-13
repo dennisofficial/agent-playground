@@ -1,29 +1,24 @@
 import { describe, expect, it } from 'bun:test';
 import { EPhaseKind, EThreadRole } from '../../generated/prisma/enums.js';
 import {
-  exitsWithoutAsking,
   firstRoleFor,
   notLastOpenThreadRefusal,
   proposalRaisedReply,
-  transitionedReply,
 } from '../phase-advance.js';
+import { PHASE_SPECS } from '../phase-spec.js';
 
 describe('who waits on the human', () => {
-  it('asks on the boundaries with a fork or an artifact to eyeball', () => {
-    // Planning hands over spec files Dennis reviews, and picks between two kinds of build; charting
-    // picks between planning and design. Both are decisions, so both stop.
-    expect(exitsWithoutAsking(EPhaseKind.planning)).toBe(false);
-    expect(exitsWithoutAsking(EPhaseKind.charting)).toBe(false);
-    expect(exitsWithoutAsking(EPhaseKind.generic)).toBe(false);
-    expect(exitsWithoutAsking(EPhaseKind.post_build)).toBe(false);
-  });
-
-  it('does not ask where the exit carries no decision', () => {
-    // A keystroke here would carry no information, and an ask that carries none is the one that
-    // trains `y` as a reflex — which is how the plan gets approved unread.
-    expect(exitsWithoutAsking(EPhaseKind.build)).toBe(true);
-    expect(exitsWithoutAsking(EPhaseKind.direct_build)).toBe(true);
-    expect(exitsWithoutAsking(EPhaseKind.master_review)).toBe(true);
+  it('waits on EVERY phase — there is no automatic exit and no setting for one', () => {
+    // Confirmation is not a property of the phase being left. An earlier cut made it one and let
+    // `build`, `direct_build` and `master_review` transition unattended, which meant `build →
+    // planning` — the plan turning out to be WRONG, the clearest fork in the graph — moved with no
+    // keypress, indistinguishable from `build → master_review` because both leave `build`.
+    //
+    // Asserted against the spec objects themselves so that reintroducing any per-phase confirm
+    // field fails here rather than quietly re-enabling the branch.
+    for (const spec of Object.values(PHASE_SPECS)) {
+      expect(spec).not.toHaveProperty('confirm');
+    }
   });
 });
 
@@ -85,16 +80,4 @@ describe('what the proposing agent reads back', () => {
     expect(reply).toContain('context/specs/plan.md');
   });
 
-  it('says the opposite where the exit did not wait — the agent must not be told a lie it gets no turn to correct', () => {
-    const reply = transitionedReply({
-      from: EPhaseKind.direct_build,
-      to: EPhaseKind.post_build,
-      role: EThreadRole.post_build,
-      attachments: 'no files attached',
-    });
-
-    expect(reply).toContain('Confirmed');
-    expect(reply).toContain('This thread is closed');
-    expect(reply).not.toContain('NOTHING has moved');
-  });
 });

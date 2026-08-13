@@ -24,6 +24,14 @@ describe('word movement', () => {
     expect(resolveEditorCommand('f', chord({ meta: true }))).toBe('move-word-right');
   });
 
+  // OpenTUI blanks the input of anything ESC-prefixed — `ESC b` arrives named `b` and typed as
+  // nothing — so reading only `input` left this binding unreachable outside Ink.
+  it('binds Meta-b / Meta-f reported as a NAME rather than as input', () => {
+    expect(resolveEditorCommand('', chord({ name: 'b', meta: true }))).toBe('move-word-left');
+    expect(resolveEditorCommand('', chord({ name: 'f', meta: true }))).toBe('move-word-right');
+    expect(resolveEditorCommand('', chord({ name: 'd', meta: true }))).toBe('delete-word-forward');
+  });
+
   it('leaves a plain b or f as ordinary typing', () => {
     expect(resolveEditorCommand('b', chord({}))).toBeNull();
   });

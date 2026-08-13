@@ -212,6 +212,34 @@ export class JobRepository {
     });
   }
 
+  /** A rename, by hand. The last word on what a job is called — nothing overwrites it afterwards. */
+  async setTitle(args: { jobId: string; title: string }): Promise<void> {
+    await this.prismaService.job.update({
+      where: { id: args.jobId },
+      data: { title: args.title },
+    });
+  }
+
+  /**
+   * The model's title, applied only if the job is still wearing the one it was created with.
+   *
+   * ONE statement, and the guard is in the `where` rather than in a read-then-write above it: the
+   * titler runs beside the job's first turn and a rename can land in the middle of it, so anything
+   * with a gap between the check and the write would let a model quietly undo what a human typed.
+   * False means somebody got there first, which is not a failure.
+   */
+  async retitle(args: {
+    jobId: string;
+    title: string;
+    ifTitle: string;
+  }): Promise<boolean> {
+    const { count } = await this.prismaService.job.updateMany({
+      where: { id: args.jobId, title: args.ifTitle },
+      data: { title: args.title },
+    });
+    return count > 0;
+  }
+
   async setActiveThread(jobId: string, threadId: string): Promise<void> {
     await this.prismaService.job.update({
       where: { id: jobId },

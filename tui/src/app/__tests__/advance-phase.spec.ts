@@ -133,17 +133,19 @@ describe('the advance_phase tool', () => {
     );
   });
 
-  it('tells a phase that waits and a phase that does not two different things', () => {
-    const asks = world();
-    const auto = world({ phase: EPhaseKind.build, role: EThreadRole.builder });
+  it('tells every phase the same thing, because every phase waits', () => {
+    const planning = world();
+    const build = world({ phase: EPhaseKind.build, role: EThreadRole.builder });
 
-    const asking = advancePhaseTool({ ctx: asks.ctx, actions: asks.service })?.description ?? '';
-    const going = advancePhaseTool({ ctx: auto.ctx, actions: auto.service })?.description ?? '';
+    const a = advancePhaseTool({ ctx: planning.ctx, actions: planning.service })?.description ?? '';
+    const b = advancePhaseTool({ ctx: build.ctx, actions: build.service })?.description ?? '';
 
-    expect(asking).toContain('Nothing transitions when you call this');
-    // Promising a builder that Dennis will confirm would be a lie it gets no turn to discover.
-    expect(going).toContain('takes effect immediately');
-    expect(going).not.toContain('Nothing transitions when you call this');
+    // An earlier cut varied this per phase and told builders their exit "takes effect immediately".
+    // That claim came with no next turn in which the agent could discover it was wrong.
+    for (const description of [a, b]) {
+      expect(description).toContain('Nothing transitions when you call this');
+      expect(description).not.toContain('takes effect immediately');
+    }
   });
 
   it('routes a parsed call straight through to the seam', async () => {

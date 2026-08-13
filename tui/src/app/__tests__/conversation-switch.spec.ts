@@ -44,7 +44,8 @@ function session(id: string): EngineSession {
     engine: 'claude',
     model: 'claude-opus-5',
     ordinal: 1,
-    contextPercent: 12,
+    contextTokens: 24_000,
+    contextLimit: 200_000,
   } as unknown as EngineSession;
 }
 
@@ -169,11 +170,16 @@ describe('opening a running thread', () => {
     const { conversationService, stores } = build({ running: ['thread-b'] });
     const store = stores.for('thread-b');
     store.startTurn();
-    store.setContextPercent({ percent: 87, signal: EContextSignal.budget });
+    store.setContextReading({
+      tokens: 174_000,
+      percent: 87,
+      band: 'hot',
+      signal: EContextSignal.budget,
+    });
 
     await conversationService.openThread(JOB, thread('thread-b'), '/repo');
 
-    expect(store.getSnapshot().contextPercent?.percent).toBe(87);
+    expect(store.getSnapshot().contextReading?.tokens).toBe(174_000);
   });
 });
 

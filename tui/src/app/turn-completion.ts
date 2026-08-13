@@ -97,7 +97,8 @@ export async function finaliseTurn(args: {
     durationMs,
     ok: args.ok,
     usage,
-    contextPercent: lane.contextPercent,
+    contextTokens: lane.contextTokens,
+    contextLimit: lane.contextLimit,
     onWarn: args.onWarn,
   });
 

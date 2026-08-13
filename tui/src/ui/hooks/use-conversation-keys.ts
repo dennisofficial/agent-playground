@@ -31,10 +31,6 @@ export function useConversationKeys(args: {
   setClearArmed: (armed: boolean) => void;
   setShortcuts: (update: (open: boolean) => boolean) => void;
   submit: () => Promise<void>;
-  toolCallIds: string[];
-  expandedTools: Set<string>;
-  setExpandedTools: (expanded: Set<string>) => void;
-  toggleTool: (toolUseId: string) => void;
   onBack: () => void;
   onThreads: () => void;
   /** The way back down from a landing on the oldest unseen message. */
@@ -61,10 +57,6 @@ export function useConversationKeys(args: {
     setClearArmed,
     setShortcuts,
     submit,
-    toolCallIds,
-    expandedTools,
-    setExpandedTools,
-    toggleTool,
     running,
   } = args;
 
@@ -175,18 +167,10 @@ export function useConversationKeys(args: {
       return;
     }
 
-    // `x` toggles the most recent tool block, `X` toggles all
-    if (input === "x" && !key.ctrl && !key.meta) {
-      const lastToolId = toolCallIds[toolCallIds.length - 1];
-      if (lastToolId) toggleTool(lastToolId);
-      return;
-    }
-    if (input === "X" && !key.ctrl && !key.meta) {
-      // Toggle all: if any are collapsed, expand all; otherwise collapse all
-      const allExpanded = toolCallIds.every((id) => expandedTools.has(id));
-      setExpandedTools(allExpanded ? new Set() : new Set(toolCallIds));
-      return;
-    }
+    // Nothing below the composer's refusal can be a PRINTABLE key. `x` and `X` used to be bound here
+    // to expand tool blocks, and could never once have fired: the composer consumes every printable
+    // character, so the branch was unreachable and typing `x` simply typed an `x`. Expansion is the
+    // pointer's job — see `useClickRegion`.
 
     // ↑↓ deliberately do NOT scroll — they belong to the composer's caret, and past it they are
     // reserved for navigation. Scrolling is the wheel's alone: PgUp/PgDn were claimed here for a

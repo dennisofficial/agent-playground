@@ -13,12 +13,10 @@ export type Lane = {
   inFlight?: Promise<void>;
   chain: Promise<void>;
   preflight: PreflightSteer[];
-  contextPercent?: number;
   /**
-   * The raw occupancy behind `contextPercent`, kept because the nudge is decided in TOKENS: a
-   * percentage is a percentage of a budget, and the budget is exactly what the nudge is about to
-   * quote back. `contextLimit` is the window the engine reported on the same frame — Codex's moves
-   * remotely, so it is carried rather than re-derived from the model name.
+   * The last occupancy this turn reported, in TOKENS — the form the nudge decides in, the meter
+   * prints, and the session row stores. `contextLimit` is the window the engine reported on the
+   * same frame; Codex's moves remotely, so it is carried rather than re-derived from the model name.
    */
   contextTokens?: number;
   contextLimit?: number;

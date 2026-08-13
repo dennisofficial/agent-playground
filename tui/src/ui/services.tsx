@@ -6,6 +6,7 @@ import { ConversationService } from "../app/conversation.service.js";
 import { ConversationStoreRegistry } from "../app/conversation-store.registry.js";
 import { HumanVerbsService } from "../app/human-verbs.service.js";
 import { JobStartService } from "../app/job-start.service.js";
+import { JobTitleService } from "../app/job-title.service.js";
 import { SessionManagerService } from "../app/session-manager.service.js";
 import { TaskService } from "../app/task.service.js";
 import { ThreadSeamService } from "../app/thread-seam.service.js";
@@ -16,6 +17,8 @@ import { WorkspaceService } from "../app/workspace.service.js";
 export type Services = {
   workspaceService: WorkspaceService;
   jobStartService: JobStartService;
+  /** What a job is called: the model naming it, the human renaming it, and the live value. */
+  jobTitleService: JobTitleService;
   conversationService: ConversationService;
   conversationStores: ConversationStoreRegistry;
   turnRunnerService: TurnRunnerService;
@@ -34,6 +37,7 @@ export function resolveServices(context: INestApplicationContext): Services {
   return {
     workspaceService: context.get(WorkspaceService),
     jobStartService: context.get(JobStartService),
+    jobTitleService: context.get(JobTitleService),
     conversationService: context.get(ConversationService),
     conversationStores: context.get(ConversationStoreRegistry),
     turnRunnerService: context.get(TurnRunnerService),

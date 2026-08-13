@@ -132,7 +132,7 @@ export function build(script: EngineEvent[] = []) {
   };
   const sessions = {
     recordEngineSessionId: mock(async () => undefined),
-    recordContextPercent: mock(async () => undefined),
+    recordContextUsage: mock(async () => undefined),
     setAccount: mock(async (_args: { sessionId: string; accountId: string }) => undefined),
     // Null means "this thread has no session but the one you were handed" — the ordinary case. A
     // test about rotation overrides it to hand the runner the leg that replaced its copy.

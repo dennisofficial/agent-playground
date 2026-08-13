@@ -97,7 +97,10 @@ describe('the nudge', () => {
     await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
 
     expect(sessionManager.rotateSession).not.toHaveBeenCalled();
-    expect(sessions.recordContextPercent).toHaveBeenCalledWith('session-1', 222);
+    expect(sessions.recordContextUsage).toHaveBeenCalledWith('session-1', {
+      contextTokens: 400_000,
+      contextLimit: 1_000_000,
+    });
   });
 });
 
@@ -137,9 +140,9 @@ describe('the canary', () => {
       await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
     }
 
-    const reading = store.getSnapshot().contextPercent;
-    // 33% of budget — cheap and confused, which is precisely the state a budget alone cannot see.
-    expect(reading?.percent).toBe(33);
+    const reading = store.getSnapshot().contextReading;
+    // 6% of the window — cheap and confused, which is precisely the state a gauge alone cannot see.
+    expect(reading?.percent).toBe(6);
     expect(reading?.signal).toBe(EContextSignal.canary);
   });
 });

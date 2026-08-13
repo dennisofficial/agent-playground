@@ -32,7 +32,6 @@ export const CONVERSATION: readonly Binding[] = [
   // the affordance that appears when you are scrolled away spells the key itself, at the only
   // moment it means anything.
   ["/", "commands"],
-  ["x · X", "expand tool block"],
   // Wheel and trackpad only. PgUp/PgDn used to be listed here and never worked: they reached the
   // transcript only while it held focus, which also handed it ↑/↓ and scrolled the page under the
   // caret. The keyboard belongs to the draft — see the scrollbox in `pages/conversation.tsx`.

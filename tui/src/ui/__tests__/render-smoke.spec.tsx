@@ -11,7 +11,13 @@ import {
 } from '../../domain/human-verbs.js';
 import { DECLINED_NOTICE } from '../../domain/transition-review.js';
 import { EContextSignal } from '../../domain/context-nudge.js';
-import { EHarnessVariant, type Message, type ToolResultPayload } from '../../domain/message.js';
+import {
+  EDelegateStatus,
+  EHarnessVariant,
+  type Message,
+  type ToolResultPayload,
+} from '../../domain/message.js';
+import type { Delegates } from '../../domain/delegates.js';
 import type { TaskView } from '../../domain/tasks.js';
 import {
   EAccountStatus,
@@ -30,8 +36,13 @@ import { PageHeader } from '../components/page-header.js';
 import { MessageView } from '../components/message-view.js';
 import { OverlayList } from '../components/overlay-list.js';
 import { SessionSeam, SwapNotice } from '../components/blocks/error-block.js';
+import { BackgroundAgents } from '../components/background-agents.js';
 import { JumpToBottom, NewDivider } from '../components/new-divider.js';
-import { ToolRunningLine } from '../components/blocks/tool-block.js';
+import { highlightRows } from '../markdown/highlight-rows.js';
+import { ToolGroupBlock } from '../components/blocks/tool-group-block.js';
+import { ThinkingBlock } from '../components/blocks/thinking-block.js';
+import { EHit, hitKey, type GroupMember, type ToolGroup } from '../../domain/tool-group.js';
+import { presentTool } from '../../domain/tool-view.js';
 import { WorkingLine } from '../components/working-line.js';
 import { AccountGroup, accountsLayout } from '../components/account-list.js';
 import {
@@ -121,6 +132,39 @@ function account(fields: Partial<AccountRow>): AccountRow {
   } as unknown as AccountRow;
 }
 
+/**
+ * Two delegates in the states that draw the most: one background agent still working with a gist to
+ * quote, and one settled — the row that has to STOP saying present-tense things about itself.
+ */
+const DELEGATE_NOW = 1_000_000;
+const DELEGATES: Delegates = [
+  {
+    taskId: 'task-1',
+    toolUseId: 'toolu_parent',
+    agentType: 'Explore',
+    taskType: 'local_agent',
+    description: 'Find transcript markdown rendering',
+    background: true,
+    status: EDelegateStatus.running,
+    toolUses: 14,
+    lastTool: 'Grep',
+    progress: 'Analyzing the markdown layer',
+    startedAt: DELEGATE_NOW - 134_000,
+    contextTokens: 11_511,
+    contextLimit: 200_000,
+  },
+  {
+    taskId: 'task-2',
+    toolUseId: 'toolu_other',
+    taskType: 'local_bash',
+    description: 'pnpm test',
+    background: true,
+    status: EDelegateStatus.running,
+    toolUses: 0,
+    startedAt: DELEGATE_NOW - 41_000,
+  },
+];
+
 const ACCOUNTS: AccountRow[] = [
   // Measured, unknown, spent-with-a-clock, and a label past the column width.
   account({ label: 'measured', isActive: true, fiveHourUtil: 34, sevenDayUtil: 61 }),
@@ -137,13 +181,34 @@ const ACCOUNTS: AccountRow[] = [
 
 async function mount(node: React.ReactNode): Promise<void> {
   const renderer = await createCliRenderer({ width: 100, height: 30, useMouse: false });
+  const root = createRoot(renderer);
   try {
-    createRoot(renderer).render(<>{node}</>);
+    root.render(<>{node}</>);
     // A frame has to actually be built; mounting alone does not append children.
     await new Promise((resolve) => setTimeout(resolve, 30));
   } finally {
+    // Unmount BEFORE destroying the renderer, so effects get their cleanup. Destroying alone left
+    // the tree mounted: anything holding a timer — the working line's shimmer clock — kept ticking
+    // into a dead renderer for the rest of the suite, one orphaned interval per mount.
+    root.unmount();
     renderer.destroy?.();
   }
+}
+
+/**
+ * Highlight the content this file is about to mount, BEFORE mounting it.
+ *
+ * `renderer.destroy()` tears down the process-wide Tree-sitter client, and `useHighlightedRows` starts
+ * its pass in an effect. Mount-then-destroy therefore kills a pass mid-flight, and every LATER spec
+ * file that highlights then fails with `TreeSitter client destroyed` — which is how three unrelated
+ * specs broke while each still passed on its own.
+ *
+ * Warming the cache first makes the mount synchronous: `useHighlightedRows` resolves a cache hit in
+ * its initial state rather than through an effect, so there is no pass left to interrupt. Deterministic,
+ * where a longer settle would only have made the race rarer.
+ */
+async function warm(lines: readonly string[], filetype: string): Promise<void> {
+  await highlightRows({ lines, filetype });
 }
 
 describe('conversation page components mount', () => {
@@ -185,6 +250,37 @@ describe('conversation page components mount', () => {
       await expect(
         mount(
           <MessageView message={call} toolResults={results} expandedTools={expanded} width={100} />,
+        ),
+      ).resolves.toBeUndefined();
+    }
+  });
+
+  // The Agent block with a live delegate under it — the block whose whole job is to say what a
+  // delegate is doing WITHOUT quoting a word of it. Running and settled, because the second state
+  // drops the gist and takes the outcome in the same slot.
+  it('renders an Agent call with its delegate, running and settled', async () => {
+    const call = message({
+      type: EMessageType.tool_call,
+      toolUseId: 'toolu_parent',
+      name: 'Agent',
+      input: { description: 'Find transcript rendering', subagent_type: 'Explore' },
+    });
+    const settled: Delegates = [
+      {
+        ...(DELEGATES[0] as Delegates[number]),
+        status: EDelegateStatus.completed,
+        endedAt: DELEGATE_NOW,
+      },
+    ];
+    for (const delegates of [DELEGATES, settled]) {
+      await expect(
+        mount(
+          <MessageView
+            message={call}
+            delegates={delegates}
+            now={DELEGATE_NOW}
+            width={100}
+          />,
         ),
       ).resolves.toBeUndefined();
     }
@@ -241,29 +337,39 @@ describe('conversation page components mount', () => {
           />
           <HintLine
             hints="? for shortcuts"
-            contextPercent={{ percent: 26, signal: EContextSignal.budget }}
+            contextReading={{ tokens: 52_000, percent: 26, band: 'normal', signal: EContextSignal.budget }}
             fiveHour={{ utilization: 33, resetsAt: null }}
             sevenDay={null}
             width={100}
           />
-          {/* Over budget AND with the canary driving: the one state where the meter changes its
+          {/* Nearly full AND with the canary driving: the one state where the meter changes its
               label rather than only its colour, and the one most likely to break the strip's
               width arithmetic. */}
           <HintLine
             hints="? for shortcuts"
-            contextPercent={{ percent: 127, signal: EContextSignal.canary }}
+            contextReading={{ tokens: 194_000, percent: 97, band: 'red', signal: EContextSignal.canary }}
             fiveHour={{ utilization: 33, resetsAt: null }}
             sevenDay={null}
             width={100}
           />
           <SessionSeam ordinal={2} endReason={ESessionEndReason.context_wall} width={72} />
           <NewDivider width={72} />
-          <JumpToBottom onJump={() => undefined} />
+          <JumpToBottom width={72} onJump={() => undefined} />
           <SwapNotice text="swapped account" />
-          <ToolRunningLine frame="⠋" elapsed="3s" lines={['reading']} />
+          <BackgroundAgents delegates={DELEGATES} width={100} now={DELEGATE_NOW} />
           <WorkingLine
             running
             elapsedMs={3000}
+            frame="⠋"
+            outputTokens={12}
+            queued={[]}
+            interrupting={false}
+          />
+          {/* Held: the model has stopped, the session has not. A third state with its own words. */}
+          <WorkingLine
+            running
+            holding
+            elapsedMs={134_000}
             frame="⠋"
             outputTokens={12}
             queued={[]}
@@ -450,6 +556,151 @@ describe('conversation page components mount', () => {
           />,
         ),
       ).resolves.toBeUndefined();
+    }
+  });
+});
+
+/**
+ * A tool group, in every state it has.
+ *
+ * The group is the densest thing in the transcript: three `<span>` columns inside a row's `<text>`,
+ * an opened body that puts syntax-highlighted chunks inside another `<text>`, and mouse handlers on
+ * both. Each of those is a chance at the nested-`<text>` crash, which only exists once the tree is
+ * expanded and which the type system cannot see.
+ */
+function member(args: {
+  id: string;
+  name: string;
+  input: unknown;
+  ok?: boolean;
+  detail?: string[];
+}): GroupMember {
+  const result =
+    args.detail === undefined && args.ok === undefined
+      ? undefined
+      : ({
+          type: EMessageType.tool_result,
+          toolUseId: args.id,
+          ok: args.ok ?? true,
+          summary: args.ok === false ? 'File does not exist. Note: your cwd is /repo.' : 'done',
+          detail: args.detail ?? [],
+        } as ToolResultPayload);
+  const payload = {
+    type: EMessageType.tool_call,
+    toolUseId: args.id,
+    name: args.name,
+    input: args.input,
+  } as Message['payload'] & { type: typeof EMessageType.tool_call };
+  return {
+    payload,
+    ...(result ? { result } : {}),
+    view: presentTool({ name: args.name, input: args.input, cwd: '/repo', ...(result ? { result } : {}) }),
+  };
+}
+
+const MIXED: GroupMember[] = [
+  member({ id: 'g1', name: 'Read', input: { file_path: '/repo/src/domain/tool-view.ts' }, detail: ['a', 'b'] }),
+  // A failed read: its error lives only in `summary`, and the opened body is the only place it shows.
+  member({ id: 'g2', name: 'Read', input: { file_path: '/repo/gone.ts' }, ok: false }),
+  // A multi-line command with a description — the header shows the words, the body shows the command,
+  // highlighted as bash.
+  member({
+    id: 'g3',
+    name: 'Bash',
+    input: {
+      command: "f=$(ls -S ~/.atlas/*/raw.jsonl | head -1)\npython3 -c 'import json, sys\nprint(json.load(sys.stdin))'",
+      description: 'Inspect result frames in the largest raw tape',
+    },
+    detail: ['line one', `wide ${'x'.repeat(400)}`],
+  }),
+  member({ id: 'g4', name: 'Grep', input: { pattern: 'input_ack|state\\.live' }, detail: ['1', '2', '3'] }),
+  member({ id: 'g5', name: 'Read', input: { file_path: '/repo/src/app/turn-runner.service.ts' }, detail: ['x'] }),
+  member({ id: 'g6', name: 'Read', input: { file_path: '/repo/src/app/turn-lanes.ts' }, detail: ['x'] }),
+  // Past `GROUP_ROWS`, so the elision marker draws.
+  member({ id: 'g7', name: 'Read', input: { file_path: '/repo/src/app/turn-events.ts' }, detail: ['x'] }),
+  // In flight: no result at all.
+  member({ id: 'g8', name: 'Read', input: { file_path: '/repo/src/app/turn-args.ts' } }),
+];
+
+function toolGroup(members: GroupMember[]): ToolGroup {
+  return {
+    kind: 'tool_group',
+    id: members[0]?.payload.toolUseId ?? 'g1',
+    messageIds: members.map((m) => m.payload.toolUseId),
+    members,
+  };
+}
+
+describe('tool group', () => {
+  it.each([120, 80, 40])('renders collapsed, open and streaming at %i columns', async (width) => {
+    const group = toolGroup(MIXED);
+    // Every body this test opens, pre-highlighted — see `warm`.
+    for (const member of MIXED) {
+      if (member.view.command.length > 0) await warm(member.view.command, 'bash');
+      if (member.result) await warm(member.result.detail.slice(0, 6), 'typescript');
+    }
+    const states: ReadonlySet<string>[] = [
+      new Set(),
+      // Open: every row draws.
+      new Set([hitKey(EHit.group, group.id)]),
+      // One row open — including the FAILED one, whose body is its error, and the bash one, whose
+      // body is a highlighted multi-line command with a line far wider than the terminal.
+      new Set([hitKey(EHit.call, 'g2')]),
+      new Set([hitKey(EHit.call, 'g3')]),
+      // Group open AND a row open inside it, which is a body nested two levels down.
+      new Set([hitKey(EHit.group, group.id), hitKey(EHit.call, 'g3')]),
+      // A row open AND all of its output shown — the third level, and the case where a wrapped,
+      // syntax-highlighted command sits above hundreds of plain lines.
+      new Set([hitKey(EHit.call, 'g3'), hitKey(EHit.output, 'g3')]),
+    ];
+    for (const expanded of states) {
+      for (const running of [new Set<string>(), new Set(['g8'])]) {
+        await expect(
+          mount(
+            <ToolGroupBlock
+              group={group}
+              width={width}
+              running={running}
+              expanded={expanded}
+              onToggle={() => undefined}
+              frame="⠋"
+              elapsed="4s"
+            />,
+          ),
+        ).resolves.toBeUndefined();
+      }
+    }
+  });
+
+  // A group of one tool has no verb column; a group that spans tools does. Different span counts per
+  // row, which is the shape that breaks if a column is assembled wrong.
+  it('renders a single-tool group, which draws no verb column', async () => {
+    const group = toolGroup(MIXED.filter((m) => m.payload.name === 'Read'));
+    await expect(
+      mount(
+        <ToolGroupBlock
+          group={group}
+          width={100}
+          expanded={new Set([hitKey(EHit.group, group.id)])}
+          onToggle={() => undefined}
+        />,
+      ),
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe('thinking', () => {
+  it('renders collapsed, expanded and streaming', async () => {
+    const text = ['A first paragraph that runs on for a while and has to wrap somewhere sensible.', '', `wide ${'y'.repeat(300)}`].join('\n');
+    for (const props of [
+      { text },
+      { text, expanded: true },
+      { text, streaming: true },
+      // Long enough to trip the live tail's `… +N lines above` head-cut.
+      { text: Array.from({ length: 40 }, (_, i) => `reasoning line ${i}`).join('\n'), streaming: true },
+      { text, expanded: true, onToggle: () => undefined },
+    ]) {
+      await expect(mount(<ThinkingBlock {...props} width={100} />)).resolves.toBeUndefined();
     }
   });
 });

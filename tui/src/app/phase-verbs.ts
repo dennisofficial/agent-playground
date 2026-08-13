@@ -1,8 +1,4 @@
-import {
-  exitsWithoutAsking,
-  proposalRaisedReply,
-  transitionedReply,
-} from '../domain/phase-advance.js';
+import { proposalRaisedReply } from '../domain/phase-advance.js';
 import type { EPhaseKind } from '../generated/prisma/enums.js';
 import type { Phase, Thread } from '../generated/prisma/client.js';
 import type { JobRepository } from '../store/job.repository.js';
@@ -53,7 +49,6 @@ export async function advancePhaseVerb(args: {
   jobRepository: JobRepository;
   transitionRepository: TransitionRepository;
   contextFolderService: ContextFolderService;
-  confirm: (args: { transitionId: string; cwd: string }) => Promise<{ phase: Phase; thread: Thread }>;
   ctx: ToolContext;
   kind: EPhaseKind;
   reason: string;
@@ -70,17 +65,9 @@ export async function advancePhaseVerb(args: {
     transitionAttachments({ contextFolderService: args.contextFolderService, transition }),
   );
 
-  if (!exitsWithoutAsking(ctx.phase)) {
-    return proposalRaisedReply({ from: ctx.phase, to: args.kind, attachments: declared });
-  }
-
-  const { thread } = await args.confirm({ transitionId: transition.id, cwd: ctx.cwd });
-  return transitionedReply({
-    from: ctx.phase,
-    to: args.kind,
-    role: thread.role,
-    attachments: declared,
-  });
+  // EVERY transition waits. There is no automatic exit and no branch here to grow one back into:
+  // the row is raised, the turn ends, and the phase moves when — and only when — Dennis confirms it.
+  return proposalRaisedReply({ from: ctx.phase, to: args.kind, attachments: declared });
 }
 
 /**

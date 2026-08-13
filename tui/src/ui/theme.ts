@@ -65,6 +65,16 @@ export const theme = {
   caretBg: ACCENT,
   caretFg: "#241f1c",
   /**
+   * Behind something drawn OVER the transcript rather than in it — today, the jump-to-bottom pill.
+   *
+   * The one dark neutral in the palette, the same one the caret paints its character on: an overlay
+   * has to occlude, and occluding means naming a background, because the terminal's own is
+   * transparent to whatever it was already showing. Near-black rather than a lighter surface, so the
+   * float reads as a hole punched in the text rather than as a block of the text lit up — which is
+   * what carries the "this is chrome" for a one-row pill that has no border to say it.
+   */
+  overlayBg: "#241f1c",
+  /**
    * The exception to the one-accent rule, and the reason it earns one: inside rendered markdown,
    * bold and dim are already spoken for by headings and quotes, so a fenced identifier and a URL
    * have no weight left to distinguish them. One blue does both — it reads as "machine text"
@@ -170,6 +180,21 @@ export const SPINNER_FRAMES = [
   "⠇",
   "⠏",
 ] as const;
+
+/** How long the spinner holds a frame. Its own rhythm, deliberately not the shimmer's. */
+export const SPINNER_FRAME_MS = 80;
+
+/**
+ * The spinner's frame for an instant, rather than for a tick.
+ *
+ * Two clocks drive the working line at different rates — the page's, and the line's own, faster one
+ * for the sweep — and a spinner that advanced per RENDER would run at whichever rate happened to be
+ * driving it. Off the wall clock, both agree.
+ */
+export function spinnerFrame(nowMs: number): string {
+  const index = Math.floor(nowMs / SPINNER_FRAME_MS) % SPINNER_FRAMES.length;
+  return SPINNER_FRAMES[index] as string;
+}
 
 /** `4s`, `4m 5s` — the working line's elapsed clock. */
 export function formatElapsed(ms: number): string {

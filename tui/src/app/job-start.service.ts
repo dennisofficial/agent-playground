@@ -6,6 +6,7 @@ import {
   ConversationService,
   type OpenConversation,
 } from "./conversation.service.js";
+import { JobTitleService } from "./job-title.service.js";
 import { WorkspaceService } from "./workspace.service.js";
 
 export type StartedJob = {
@@ -34,6 +35,7 @@ export class JobStartService {
     private readonly workspaceService: WorkspaceService,
     private readonly jobRepository: JobRepository,
     private readonly conversationService: ConversationService,
+    private readonly jobTitleService: JobTitleService,
   ) {}
 
   async start(args: {
@@ -48,10 +50,13 @@ export class JobStartService {
       throw new Error("a job starts with a message");
     }
 
+    // Derived, never asked for. See `domain/job-title.ts` — a pure function, so the job is named
+    // the instant it exists. The model's better title arrives seconds later, over the top of this
+    // one, and only if nothing else has renamed the job by then.
+    const derived = deriveJobTitle(firstMessage);
+
     const { job, thread } = await this.workspaceService.createJob({
-      // Derived, never asked for. See `domain/job-title.ts` — it is a pure function so that a job
-      // never waits on a model to be named.
-      title: deriveJobTitle(firstMessage),
+      title: derived,
       projectId: args.projectId,
       ...(args.worktree ? { worktree: true } : {}),
     });
@@ -66,6 +71,22 @@ export class JobStartService {
     // `openThread` rather than `openJob`: we hold the thread we just made, and it is also what puts
     // `ConversationService` on this conversation so the send below has somewhere to go.
     const open = await this.conversationService.openThread(job, thread, cwd);
+
+    // Named for real, in the background, on the account this job's first turn is about to run on.
+    // Started before the turn rather than after it so the title lands while the agent is still
+    // thinking — a job wears the first line it was given for about two seconds, not for a whole
+    // conversation. It returns nothing and can fail freely; the derived title is the fallback.
+    // Nothing to name it WITH while the session holds no credential. The derived title is already the
+    // fallback this relies on, and the turn boundary is what resolves an account.
+    if (open.session.accountId !== null) {
+      this.jobTitleService.name({
+        jobId: job.id,
+        accountId: open.session.accountId,
+        cwd,
+        firstMessage,
+        derived,
+      });
+    }
 
     // Sent as a plain `user` message — no harness envelope, no `seed`. The transcript opens on what
     // the human actually typed, which is the point: the first thread is a conversation, not a brief.

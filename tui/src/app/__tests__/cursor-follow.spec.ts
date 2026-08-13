@@ -42,7 +42,7 @@ function world(args: { cursor: string; threads: Thread[] }) {
     // conversation every time would re-hydrate a working thread's store on every turn boundary.
     sessionRepository: {
       async findById() {
-        return { id: 'session-1', accountId: 'account-1', contextPercent: 10 };
+        return { id: 'session-1', accountId: 'account-1', contextTokens: null, contextLimit: null };
       },
       async refsForThread() {
         loaded.push('sessions');
@@ -53,7 +53,7 @@ function world(args: { cursor: string; threads: Thread[] }) {
     turnRepository: { async lastForThread() { return null; } },
     sessionManagerService: {
       async currentSession() {
-        return { id: 'session-1', accountId: 'account-1', contextPercent: 10 };
+        return { id: 'session-1', accountId: 'account-1', contextTokens: null, contextLimit: null };
       },
     },
     turnRunnerService: { busy: () => false },
@@ -66,7 +66,7 @@ function world(args: { cursor: string; threads: Thread[] }) {
     },
     threadSeamService: { async toolsFor() { return []; } },
     stores: {
-      hydrate: () => ({ setContextPercent: () => undefined }),
+      hydrate: () => ({ setContextReading: () => undefined }),
     },
   } as unknown as ConversationDeps;
 

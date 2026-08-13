@@ -47,7 +47,15 @@ model EngineSession {
   handoff         String?
   endReason       ESessionEndReason?
 
-  contextPercent  Float?
+  /// The last turn's context occupancy, so reopening a thread shows real pressure instead of `—`.
+  ///
+  /// In TOKENS, with the window the engine reported beside it, because the footer needs both and a
+  /// percentage is lossy for either: the bar wants occupancy of the window, the colour wants tokens
+  /// against the rotation budget, and the budget itself is derived from the window (`budgetFor`).
+  /// `contextLimit` is stored rather than re-derived from `model` because Codex's window moves
+  /// remotely — the only truthful source is the frame that reported it.
+  contextTokens   Int?
+  contextLimit    Int?
 
   messages        ThreadMessage[]
   turns           Turn[]

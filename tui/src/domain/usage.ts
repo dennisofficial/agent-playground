@@ -10,19 +10,19 @@ export type UsageWindow = { utilization: number; resetsAt: string | null } | nul
  */
 export type MeterBand = 'unknown' | 'normal' | 'warn' | 'hot' | 'red' | 'spent';
 
-export type MeterKey = 'ctx' | 'fiveHour' | 'sevenDay';
+/**
+ * The windows whose band falls out of their own fill. `ctx` is deliberately NOT one of them: it is
+ * full of tokens the model can still use, and what makes those tokens worth reacting to is the
+ * rotation budget, not how much of the window is left. It supplies its own band — see `Meter.band`
+ * and `pressureBand`.
+ */
+export type MeterKey = 'fiveHour' | 'sevenDay';
 
 /**
- * Thresholds differ per window because the windows mean different things — `ctx` earns attention
- * earliest because you can act on it this second (rotate, hand off), and `wk` latest because a
- * two-thirds-spent week is simply Thursday.
- *
- * `ctx` is read against the rotation BUDGET rather than the physical window (see `budgetFor`), so
- * its `red` sits exactly on 100: the point where the meter turns red is the point where Atlas starts
- * asking for a hand-off, and one number means one thing in two places.
+ * Thresholds differ per window because the windows mean different things — `wk` earns attention
+ * latest because a two-thirds-spent week is simply Thursday.
  */
 const BANDS: Record<MeterKey, { warn: number; hot: number; red: number }> = {
-  ctx: { warn: 60, hot: 85, red: 100 },
   fiveHour: { warn: 65, hot: 82, red: 93 },
   sevenDay: { warn: 70, hot: 86, red: 95 },
 };
@@ -30,9 +30,8 @@ const BANDS: Record<MeterKey, { warn: number; hot: number; red: number }> = {
 export function meterBand(key: MeterKey, utilization: number | null): MeterBand {
   if (utilization === null) return 'unknown';
   // `spent` is for windows that REFILL: at 100% they have nothing left to report and the countdown
-  // becomes the only answer. A context budget is advisory — 100% is where the nudging starts, not
-  // where the session stops — so `ctx` keeps counting and reads `127%` rather than going `full`.
-  if (utilization >= 100 && key !== 'ctx') return 'spent';
+  // becomes the only answer.
+  if (utilization >= 100) return 'spent';
   const { warn, hot, red } = BANDS[key];
   if (utilization >= red) return 'red';
   if (utilization >= hot) return 'hot';
@@ -70,13 +69,37 @@ export function meterFill(utilization: number | null, cells: number): number {
   return Math.min(cells, Math.max(1, Math.round((utilization / 100) * cells)));
 }
 
-export type Meter = { label: string; key: MeterKey; window: UsageWindow };
+/**
+ * One gauge, ready to draw. The band is passed IN rather than derived here because the two kinds of
+ * meter answer it differently: an account window is coloured by its own fill, and `ctx` is coloured
+ * by budget pressure while its bar draws window occupancy.
+ */
+export type Meter = {
+  label: string;
+  band: MeterBand;
+  window: UsageWindow;
+  /** Printed instead of the percentage. `ctx` reads in tokens — see `formatTokens`. */
+  digits?: string;
+};
 
 /** Normalise the SDK's 0..1-or-0..100 utilisation into a percent. */
 export function toPercent(utilization: number | undefined): number | null {
   if (utilization == null) return null;
   const percent = utilization <= 1 ? utilization * 100 : utilization;
   return Math.round(Math.min(100, Math.max(0, percent)));
+}
+
+/**
+ * The `ctx` meter's number: occupancy of the PHYSICAL window, so `82%` means 82% of the context the
+ * model actually has. Clamped, because there is nothing past the window — that is the wall.
+ *
+ * It deliberately does not read against the rotation budget. The budget is a cost argument and it
+ * still drives every nudge (in tokens, see `decideNudge`), but a meter that reported `127%` was
+ * answering a question nobody asks of a gauge: what is left is what the number should say.
+ */
+export function windowPercent(args: { tokens: number; limit: number }): number {
+  if (args.limit <= 0) return 0;
+  return Math.round(Math.min(100, Math.max(0, (args.tokens / args.limit) * 100)));
 }
 
 export function windowKeyFor(rateLimitType: string | undefined): UsageWindowKey | null {

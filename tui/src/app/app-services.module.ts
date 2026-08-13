@@ -13,6 +13,7 @@ import { GitService } from "./git.service.js";
 import { GithubCliService } from "./github-cli.service.js";
 import { HumanVerbsService } from "./human-verbs.service.js";
 import { JobStartService } from "./job-start.service.js";
+import { JobTitleService } from "./job-title.service.js";
 import { PhaseBriefService } from "./phase-brief.service.js";
 import { SessionManagerService } from "./session-manager.service.js";
 import { ShipService } from "./ship.service.js";
@@ -47,6 +48,7 @@ import { WorktreeService } from "./worktree.service.js";
     WorktreeService,
     WorkspaceService,
     JobStartService,
+    JobTitleService,
   ],
   exports: [
     ConversationStoreRegistry,
@@ -63,6 +65,7 @@ import { WorktreeService } from "./worktree.service.js";
     WorktreeService,
     WorkspaceService,
     JobStartService,
+    JobTitleService,
   ],
 })
 export class AppServicesModule {}

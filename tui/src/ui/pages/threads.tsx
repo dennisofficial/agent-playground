@@ -20,8 +20,10 @@ import { VerbMenu } from "../components/verb-menu.js";
 import { useRunningThreads, useTick } from "../hooks/use-conversation.js";
 import { EHumanVerb, useHumanVerbs } from "../hooks/use-human-verbs.js";
 import { useInput } from "../hooks/use-input.js";
+import { useJobRename } from "../hooks/use-job-rename.js";
 import { useServices } from "../services.js";
 import { theme } from "../theme.js";
+import { HINTS, IN_PLACE_HINTS } from "./threads-chrome.js";
 
 /**
  * Page 6 — the job's phases and the threads inside them.
@@ -143,10 +145,18 @@ export function ThreadsPage(props: {
     onOpened: props.onOpen,
   });
 
+  // The job's name, and the field that changes it. Here rather than on the jobs list because this
+  // is the job's own page: the list is where you find a job, this is where you manage one.
+  const rename = useJobRename(props.job);
+
   useInput((input, key) => {
     // First refusal, and the page stands down on anything it claims: every `useKeyboard` listener
     // fires for every key and there is no propagation to stop, so a menu and a list cannot both
     // answer `↑`.
+    //
+    // Rename asks first because it is the only mode that eats PRINTABLE keys: while it is up, `p`
+    // and `n` are letters in a title rather than verbs, and a menu can never be open behind it.
+    if (rename.handleKey(input, key)) return;
     if (verbs.handleKey(input, key)) return;
     // `←` and `esc` are the same door on a list — see the jobs page.
     if (key.escape || key.leftArrow) return props.onBack();
@@ -164,12 +174,17 @@ export function ThreadsPage(props: {
     if (input === "w" && workspace?.kind === EWorkspaceKind.inPlace) {
       return props.onEnterWorktree();
     }
+    // A job is named by its first message, so this is a correction, not a form to fill in — which
+    // is why it is one key and the field opens on the name it already has.
+    if (input === "r") return rename.begin();
     // Still no `?` panel: the keys fit the hint line, which measures rather than thresholds. `n` now
     // means what the shared list keymap always said it did — a thread IS opened by hand here, since
     // a job with nothing running has no agent left to open one.
   });
 
-  const trail = ["atlas", props.projectName, props.job.title];
+  // The LIVE title: the job may have been named by the titler seconds ago, or renamed on this very
+  // page, and the route's copy of the row predates both.
+  const trail = ["atlas", props.projectName, rename.title];
 
   if (threads === null) {
     return (
@@ -186,6 +201,7 @@ export function ThreadsPage(props: {
         <ListFooter
           width={width}
           height={height}
+          overlay={rename.overlay}
           menu={
             verbs.verb === EHumanVerb.phase || verbs.verb === EHumanVerb.role ? (
               <VerbMenu
@@ -206,10 +222,10 @@ export function ThreadsPage(props: {
               />
             ) : null
           }
-          // A menu owns the footer while it is up, exactly as a mode does on the jobs page: the
-          // hints under it would be advertising keys the menu has taken.
+          // A menu or the rename field owns the footer while it is up, exactly as a mode does on
+          // the jobs page: the hints under it would be advertising keys it has taken.
           hints={
-            verbs.verb !== EHumanVerb.browse
+            rename.active || verbs.verb !== EHumanVerb.browse
               ? undefined
               : workspace?.kind === EWorkspaceKind.inPlace
                 ? IN_PLACE_HINTS
@@ -220,9 +236,10 @@ export function ThreadsPage(props: {
           // else — including a close that threw, where the bar stays up — it lands in the footer's
           // one error line rather than a second one nobody knows to look at.
           error={
-            verbs.verb === EHumanVerb.phase || verbs.verb === EHumanVerb.role
+            rename.error ??
+            (verbs.verb === EHumanVerb.phase || verbs.verb === EHumanVerb.role
               ? null
-              : verbs.error
+              : verbs.error)
           }
         />
       }
@@ -264,23 +281,3 @@ export function ThreadsPage(props: {
     </Screen>
   );
 }
-
-/**
- * Longest-first, and the widest that fits wins — these measure, they do not threshold.
- *
- * The three human verbs are advertised here rather than in a keymap panel because this page has
- * never had one: the hint line holds them, and a job with nothing running has to SHOW that `p` and
- * `n` exist or the state is a dead end that looks like a bug.
- */
-const HINTS = [
-  "↑↓ select · →/⏎ open · p start a phase · n new thread · c close · ←/esc back",
-  "↑↓ select · ⏎ open · p phase · n thread · c close · esc back",
-  "⏎ open · p phase · n thread · esc back",
-];
-
-/** `w` is offered only where it does something — a job already in a worktree cannot take another. */
-const IN_PLACE_HINTS = [
-  "↑↓ select · →/⏎ open · p start a phase · n new thread · c close · w worktree · ←/esc back",
-  "↑↓ select · ⏎ open · p phase · n thread · c close · w worktree · esc back",
-  "⏎ open · p phase · n thread · w worktree · esc",
-];

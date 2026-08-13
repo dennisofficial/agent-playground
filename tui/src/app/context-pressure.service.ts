@@ -2,17 +2,17 @@ import { Injectable } from '@nestjs/common';
 import { canaryHealth, ECanaryHealth } from '../domain/canary.js';
 import {
   audienceFor,
-  budgetPercent,
   decideNudge,
   ENudgeAudience,
   EContextSignal,
   nudgeNotice,
   nudgeReason,
+  pressureBand,
   type ContextReading,
   type NudgeLedger,
 } from '../domain/context-nudge.js';
 import { rotationRequest } from '../domain/rotation-handoff.js';
-import { budgetFor, type Budget } from '../domain/usage.js';
+import { budgetFor, windowPercent, type Budget } from '../domain/usage.js';
 import type { EngineSession } from '../generated/prisma/client.js';
 import type { EThreadRole } from '../generated/prisma/enums.js';
 
@@ -53,7 +53,8 @@ export class ContextPressureService {
   private readonly sessions = new Map<string, SessionPressure>();
 
   /**
-   * The `ctx` meter's reading, against the BUDGET rather than the window.
+   * The `ctx` meter's reading: the token count it prints, the window fill it draws, and the budget
+   * pressure it takes its colour from — see `ContextReading` for why those are three answers.
    *
    * `contextLimit` is the window the engine reported on this frame. It is passed through rather than
    * resolved from the model name because Codex's window moves remotely — legacy pinned a constant
@@ -64,7 +65,8 @@ export class ContextPressureService {
     contextTokens: number;
     contextLimit: number;
   }): ContextReading {
-    const percent = budgetPercent({
+    const percent = windowPercent({ tokens: args.contextTokens, limit: args.contextLimit });
+    const band = pressureBand({
       tokens: args.contextTokens,
       budget: this.budget(args.session, args.contextLimit),
     });
@@ -74,7 +76,7 @@ export class ContextPressureService {
       this.health(args.session.id) === ECanaryHealth.dead
         ? EContextSignal.canary
         : EContextSignal.budget;
-    return { percent, signal };
+    return { tokens: args.contextTokens, percent, band, signal };
   }
 
   /** A new turn on this session. Called at the turn boundary, before anything is asked of it. */

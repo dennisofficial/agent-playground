@@ -127,8 +127,11 @@ describe('declining it', () => {
   });
 });
 
-describe('an exit that carries no decision', () => {
-  it('transitions inside the call, and still leaves the row behind', async () => {
+describe('a phase that used to exit on its own', () => {
+  it('waits like every other one — nothing transitions inside the call', async () => {
+    // `build` was one of three phases that transitioned unattended. That made `build → planning` —
+    // the plan turning out to be WRONG — move with no keypress, because the setting was read off
+    // the phase being LEFT and could not tell that edge from `build → master_review`.
     const { service, ctx, phases, rows, turns, closed } = world({
       phase: EPhaseKind.build,
       role: EThreadRole.builder,
@@ -142,15 +145,14 @@ describe('an exit that carries no decision', () => {
       attach: [],
     });
 
-    expect(phases).toHaveLength(2);
-    expect(phases[1]?.kind).toBe(EPhaseKind.master_review);
-    expect(closed).toEqual([ctx.thread.id]);
-    expect(turns).toHaveLength(1);
-    // Written first either way, so an automatic exit leaves the audit a confirmed one leaves.
+    // The row is raised and NOTHING else happened: no phase, no thread, no turn, nothing closed.
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.status).toBe(ETransitionStatus.confirmed);
-    expect(reply).toContain('Confirmed');
-    expect(reply).toContain('This thread is closed');
+    expect(rows[0]?.status).toBe(ETransitionStatus.pending);
+    expect(phases).toHaveLength(1);
+    expect(turns).toHaveLength(0);
+    expect(closed).toEqual([]);
+    expect(reply).toContain('NOTHING has moved');
+    expect(await service.pendingTransitions(JOB.id)).toHaveLength(1);
   });
 });
 

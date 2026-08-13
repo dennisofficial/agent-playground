@@ -1,6 +1,8 @@
 import { useKeyboard } from "@opentui/react";
 
 export type InputKey = {
+  /** The reporter's name for the key — the only trace of an ESC-prefixed one, whose input is blank. */
+  name: string;
   upArrow: boolean;
   downArrow: boolean;
   leftArrow: boolean;
@@ -41,6 +43,7 @@ export function useInput(
 
     const name = event.name ?? "";
     handler(printable(event), {
+      name,
       upArrow: name === "up",
       downArrow: name === "down",
       leftArrow: name === "left",

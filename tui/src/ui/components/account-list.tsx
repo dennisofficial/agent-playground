@@ -9,7 +9,7 @@ import {
   type AccountRowLayout,
 } from "../../domain/account-row.js";
 import { fitColumn } from "../../domain/list-columns.js";
-import type { Meter, MeterKey } from "../../domain/usage.js";
+import { meterBand, type Meter, type MeterKey } from "../../domain/usage.js";
 import { meterStyle, type Span } from "../meter-style.js";
 import { meterSpans, spansWidth } from "../meter-spans.js";
 import { Caret } from "./list-parts.js";
@@ -171,7 +171,8 @@ function meterFor(
 ): Meter {
   return {
     label,
-    key,
+    // An account window is coloured by its own fill — it is the one thing there is to know about it.
+    band: meterBand(key, util),
     window:
       util === null
         ? null

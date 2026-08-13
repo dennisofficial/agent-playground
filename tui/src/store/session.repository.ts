@@ -94,12 +94,14 @@ export class SessionRepository {
    * Written once per turn, not once per frame. It exists so reopening a thread shows its real
    * context pressure instead of `—` until the next turn produces a reading.
    *
-   * The number is a percentage of the rotation BUDGET, not of the physical window, and it may
-   * therefore exceed 100 — see `budgetPercent`. Rows written before that change hold a window
-   * percentage and read low; nothing corrects them, because the next turn overwrites it.
+   * Tokens and the window they were measured against, because the meter derives three different
+   * things from them and a stored percentage would have thrown away two — see `ContextReading`.
    */
-  async recordContextPercent(id: string, contextPercent: number): Promise<void> {
-    await this.prismaService.engineSession.update({ where: { id }, data: { contextPercent } });
+  async recordContextUsage(
+    id: string,
+    usage: { contextTokens: number; contextLimit: number },
+  ): Promise<void> {
+    await this.prismaService.engineSession.update({ where: { id }, data: usage });
   }
 
   /**

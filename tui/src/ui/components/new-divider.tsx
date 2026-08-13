@@ -44,16 +44,61 @@ export function NewDivider(props: { width: number }): React.ReactNode {
   );
 }
 
+const JUMP_LABEL = "⌄ jump to bottom · ctrl+b";
+
+/** The pill's own width: the label and one column of breathing room each side. */
+const JUMP_WIDTH = JUMP_LABEL.length + 2;
+
 /**
  * `⌄ jump to bottom` — shown only while the transcript is scrolled away from the end.
  *
  * Landing mid-history without an escape hatch is worse than landing at the end, and the escape has
  * to be visible: the keyboard belongs to the draft here, so a key alone would be a secret.
+ *
+ * It FLOATS at the bottom of the transcript's viewport rather than taking a row above the composer.
+ * A row in the footer is a row the transcript never gets back, and the thing it points at — the
+ * bottom of the scroll — was two panels away from the words offering to take you there. As an
+ * overlay it costs nothing when it is absent, and when it is present it sits exactly where the
+ * gesture lands. Absolute rather than last-child so it does not push the working line up a row the
+ * moment you scroll, which read as the transcript twitching.
+ *
+ * It is opaque, because it is drawn OVER live text: a bare label sharing cells with a half-covered
+ * sentence is unreadable. One row and no border — a bordered box is three rows, which is a third of
+ * a short terminal's transcript blanked to say one sentence. What says "chrome, not a message" is
+ * the fill and the lit text on it, which is enough at this size. Centred, so it lands where the eye
+ * already is rather than in a corner it has to be found in.
+ *
+ * `width` is the TERMINAL's; the pill is centred over the column the transcript actually draws in,
+ * which is that much narrower — see `TRANSCRIPT_INSET`.
  */
-export function JumpToBottom(props: { onJump: () => void }): React.ReactNode {
+export function JumpToBottom(props: {
+  width: number;
+  onJump: () => void;
+}): React.ReactNode {
+  const left = Math.max(
+    0,
+    Math.floor((props.width - TRANSCRIPT_INSET - JUMP_WIDTH) / 2),
+  );
   return (
-    <box flexDirection="row" onMouseDown={props.onJump}>
-      <text fg={theme.dim}>{"⌄ jump to bottom · ctrl+b"}</text>
+    <box
+      position="absolute"
+      bottom={0}
+      left={left}
+      // Above the transcript it covers. The scrollbox and its blocks all sit at the default 0.
+      zIndex={10}
+      flexDirection="row"
+      paddingLeft={1}
+      paddingRight={1}
+      // Named rather than inherited: an overlay with a transparent interior shows the text it is
+      // supposed to be covering straight through its own middle.
+      backgroundColor={theme.overlayBg}
+      onMouseDown={props.onJump}
+    >
+      {/* Lit rather than dim, unlike every other hint: dim text on the overlay's own dark fill is
+          two quiet things stacked, and this one is the way out of a place you did not mean to be. */}
+      <text fg={theme.hover} bg={theme.overlayBg}>
+        {JUMP_LABEL}
+      </text>
     </box>
   );
 }

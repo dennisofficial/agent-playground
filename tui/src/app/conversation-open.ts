@@ -1,4 +1,9 @@
-import { EContextSignal } from '../domain/context-nudge.js';
+import {
+  EContextSignal,
+  pressureBand,
+  type ContextReading,
+} from '../domain/context-nudge.js';
+import { budgetFor, windowPercent } from '../domain/usage.js';
 import type { SessionRef } from '../domain/seam.js';
 import { EThreadStatus } from '../generated/prisma/enums.js';
 import type { EngineSession, Job, Thread } from '../generated/prisma/client.js';
@@ -90,14 +95,13 @@ export async function loadConversation(
   // would blank a working agent's spinner, live tail and steer queue.
   const store = deps.stores.hydrate(thread.id, messages, closed, lastTurn);
   if (!deps.turnRunnerService.busy(thread.id)) {
-    // The stored reading is a percentage of the BUDGET, written once per turn. The signal is not
-    // stored with it: the canary is a claim about the last few turns of a live conversation, and a
-    // reopened thread has none until the next turn produces one.
-    store.setContextPercent(
-      session.contextPercent === null
-        ? null
-        : { percent: session.contextPercent, signal: EContextSignal.budget },
-    );
+    // Rebuilt from the stored tokens rather than stored ready-made, because two of the three answers
+    // depend on tables that may have been retuned since — a budget row edited between sessions has
+    // to recolour the history it applies to, not leave it reading against the old one.
+    //
+    // The signal is not stored at all: the canary is a claim about the last few turns of a LIVE
+    // conversation, and a reopened thread has none until the next turn produces one.
+    store.setContextReading(storedReading(session));
   }
   // Nothing will be billed to a closed thread's account, so there is nothing to poll for. Nor is
   // there anything to poll WITH when the session holds no credential — and saying so on open, rather
@@ -134,6 +138,28 @@ export async function loadConversation(
     closed,
     brief: brief.instructions,
     tools,
+  };
+}
+
+/**
+ * The last turn's reading, restored. `null` until a session has reported one — the em dash the
+ * footer draws for it is honest, where a zero would claim an empty context.
+ */
+function storedReading(session: EngineSession): ContextReading | null {
+  const { contextTokens, contextLimit } = session;
+  if (contextTokens === null || contextLimit === null) return null;
+  return {
+    tokens: contextTokens,
+    percent: windowPercent({ tokens: contextTokens, limit: contextLimit }),
+    band: pressureBand({
+      tokens: contextTokens,
+      budget: budgetFor({
+        engine: session.engine,
+        model: session.model,
+        contextLimit,
+      }),
+    }),
+    signal: EContextSignal.budget,
   };
 }
 

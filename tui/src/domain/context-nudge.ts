@@ -1,5 +1,5 @@
 import { EThreadRole } from '../generated/prisma/enums.js';
-import type { Budget } from './usage.js';
+import type { Budget, MeterBand } from './usage.js';
 
 /**
  * When Atlas asks for a hand-off, who it asks, and what it says about why.
@@ -34,8 +34,22 @@ export enum EContextSignal {
   canary = 'canary',
 }
 
-/** What the footer draws: a percentage of the BUDGET, and which instrument put it there. */
-export type ContextReading = { percent: number; signal: EContextSignal };
+/**
+ * Everything the `ctx` meter draws, and they are three different questions on purpose:
+ *
+ * - `tokens` is PRINTED, because it is the only figure that means the same thing on every model. A
+ *   percentage silently changes what it is a percentage of, and the reader has to remember which.
+ * - `percent` fills the BAR — occupancy of the physical window, so the gauge is a picture of how
+ *   much room is left.
+ * - `band` COLOURS it, from the rotation budget (`pressureBand`), because 300K is calm on a
+ *   million-token window and long past the point of handing off.
+ */
+export type ContextReading = {
+  tokens: number;
+  percent: number;
+  band: MeterBand;
+  signal: EContextSignal;
+};
 
 /**
  * Who is told. Derived from ONE rule — *tell whoever acts next* — rather than an auto/ask matrix.
@@ -85,15 +99,25 @@ export function contextBand(args: { tokens: number; budget: Budget }): EContextB
 }
 
 /**
- * The `ctx` meter's number: occupancy against the SOFT budget, and deliberately uncapped.
+ * The `ctx` meter's COLOUR: the same three bands the nudge cadence uses, plus a heads-up before the
+ * first one. Colour and cadence therefore change together — the moment the meter goes orange is the
+ * moment Atlas starts asking, which is one fact for the reader to learn instead of two thresholds
+ * to keep in step.
  *
- * Against the physical window a builder at 200K read `20%` — green, on a meter that could not warn
- * before the quality was already gone. Against the budget the same session reads `111%`, which says
- * "11% over" and is both honest and actionable. 100% is exactly where nudging starts, so the colour
- * change and the first nudge are the same event rather than two thresholds to keep in step.
+ * `warn` is three quarters of the way to the soft budget: the last stretch where a hand-off is
+ * something to plan rather than something being asked for.
  */
-export function budgetPercent(args: { tokens: number; budget: Budget }): number {
-  return Math.round((args.tokens / args.budget.soft) * 100);
+const WARN_FRACTION = 0.75;
+
+export function pressureBand(args: { tokens: number; budget: Budget }): MeterBand {
+  switch (contextBand(args)) {
+    case EContextBand.hard:
+      return 'red';
+    case EContextBand.soft:
+      return 'hot';
+    case EContextBand.normal:
+      return args.tokens >= args.budget.soft * WARN_FRACTION ? 'warn' : 'normal';
+  }
 }
 
 /** What has already been said to this session, so the cadence can escalate rather than repeat. */

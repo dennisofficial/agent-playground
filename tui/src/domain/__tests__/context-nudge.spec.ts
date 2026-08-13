@@ -2,7 +2,6 @@ import { describe, expect, it } from 'bun:test';
 import { EThreadRole } from '../../generated/prisma/enums.js';
 import {
   audienceFor,
-  budgetPercent,
   contextBand,
   decideNudge,
   EContextBand,
@@ -11,8 +10,9 @@ import {
   NUDGE_AUDIENCE,
   nudgeNotice,
   nudgeReason,
+  pressureBand,
 } from '../context-nudge.js';
-import type { Budget } from '../usage.js';
+import { windowPercent, type Budget } from '../usage.js';
 
 const BUDGET: Budget = { soft: 180_000, hard: 300_000 };
 
@@ -29,17 +29,24 @@ describe('the bands', () => {
   });
 });
 
-describe('the meter draws against the budget', () => {
-  it('reads 100% exactly where the nudging starts', () => {
-    expect(budgetPercent({ tokens: 180_000, budget: BUDGET })).toBe(100);
-    expect(contextBand({ tokens: 180_000, budget: BUDGET })).toBe(EContextBand.soft);
+describe('the meter takes its colour from the budget', () => {
+  it.each([
+    [12_000, 'normal'],
+    [134_999, 'normal'],
+    // Three quarters of the way to soft: the last stretch where a hand-off is something to plan.
+    [135_000, 'warn'],
+    // Orange and the first nudge are the same event, by construction — one threshold, not two.
+    [180_000, 'hot'],
+    [300_000, 'red'],
+  ] as const)('%i tokens is %s', (tokens, expected) => {
+    expect(pressureBand({ tokens, budget: BUDGET })).toBe(expected);
   });
 
-  it('goes past 100, because "27% over" is the reading worth acting on', () => {
-    expect(budgetPercent({ tokens: 228_600, budget: BUDGET })).toBe(127);
-    // The same session against a million-token window read 23% — green, on a meter that could not
-    // warn before the quality was gone. That is the bug this replaces.
-    expect(Math.round((228_600 / 1_000_000) * 100)).toBe(23);
+  it('is already orange where a window gauge would still be resting', () => {
+    // 180K of a million-token window is 18% — a bar with four fifths of it left, under a number
+    // Atlas is actively asking to hand off. The bar and the colour answer different questions.
+    expect(windowPercent({ tokens: 180_000, limit: 1_000_000 })).toBe(18);
+    expect(pressureBand({ tokens: 180_000, budget: BUDGET })).toBe('hot');
   });
 });
 

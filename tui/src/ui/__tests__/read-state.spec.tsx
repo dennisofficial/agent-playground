@@ -8,6 +8,7 @@ import type { TranscriptItem } from '../../domain/seam.js';
 import { EMessageType } from '../../generated/prisma/enums.js';
 import { JumpToBottom, NewDivider, UNSEEN_ANCHOR_ID } from '../components/new-divider.js';
 import { Transcript } from '../components/transcript.js';
+import { TRANSCRIPT_INSET } from '../theme.js';
 
 /**
  * The landing mechanic, mounted for real.
@@ -42,15 +43,22 @@ const STATE: ConversationState = {
   lastTurn: null,
   interrupting: false,
   queued: [],
-  contextPercent: null,
+  contextReading: null,
   fiveHour: null,
   sevenDay: null,
   notices: [],
+  delegates: [],
+  holding: false,
   noAccount: null,
   closed: false,
 };
 
-async function mount(args: { anchorMessageId: string | null; showDivider: boolean }) {
+async function mount(args: {
+  anchorMessageId: string | null;
+  showDivider: boolean;
+  /** Mounted the way the page mounts it: absolutely, inside the box the transcript fills. */
+  jump?: boolean;
+}) {
   let scroller: ScrollBoxRenderable | null = null;
   const setup = await testRender(
     <box flexDirection="column" width={WIDTH} height={HEIGHT}>
@@ -61,6 +69,7 @@ async function mount(args: { anchorMessageId: string | null; showDivider: boolea
         toolResults={new Map()}
         expandedTools={new Set()}
         onToggleTool={() => undefined}
+        inFlight={new Set()}
         now={0}
         frame="⠋"
         cwd="/tmp"
@@ -76,6 +85,7 @@ async function mount(args: { anchorMessageId: string | null; showDivider: boolea
         anchorMessageId={args.anchorMessageId}
         showDivider={args.showDivider}
       />
+      {args.jump ? <JumpToBottom width={WIDTH} onJump={() => undefined} /> : null}
     </box>,
     { width: WIDTH, height: HEIGHT },
   );
@@ -148,17 +158,54 @@ describe('the unseen anchor', () => {
 });
 
 describe('the read-state chrome mounts', () => {
-  it('renders the rule and the way back down', async () => {
+  it('renders the rule', async () => {
     const setup = await testRender(
       <box flexDirection="column" width={WIDTH} height={HEIGHT}>
         <NewDivider width={WIDTH} />
-        <JumpToBottom onJump={() => undefined} />
       </box>,
       { width: WIDTH, height: HEIGHT },
     );
     try {
       await setup.flush();
-      expect(setup.captureCharFrame()).toContain('jump to bottom');
+      expect(setup.captureCharFrame()).toContain('new');
+    } finally {
+      setup.renderer.destroy?.();
+    }
+  });
+});
+
+describe('the way back down', () => {
+  it('floats at the bottom of the transcript, centred, taking none of its rows', async () => {
+    const plain = await mount({ anchorMessageId: null, showDivider: false });
+    const rowsWithout = plain.setup.captureCharFrame().split('\n').length;
+    plain.setup.renderer.destroy?.();
+
+    const { setup } = await mount({
+      anchorMessageId: null,
+      showDivider: false,
+      jump: true,
+    });
+    try {
+      const lines = setup.captureCharFrame().split('\n');
+      // Same number of rows either way: an overlay costs the transcript nothing.
+      expect(lines.length).toBe(rowsWithout);
+
+      // ONE row, and it is the last row of the region: the pill sits AT the end of the scroll — the
+      // thing it takes you to — rather than a panel away from it, and it blanks a single line of
+      // transcript to do so.
+      const row = lines.findIndex((line) => line.includes('jump to bottom'));
+      expect(row).toBe(HEIGHT - 1);
+
+      // Centred over the column the transcript actually draws in — which is the terminal less the
+      // scrollbar and its padding, so the two gaps are equal against `WIDTH - TRANSCRIPT_INSET`,
+      // not against `WIDTH`. Off by at most one, since an odd remainder cannot be split evenly.
+      const line = lines[row] ?? '';
+      const left = line.indexOf('⌄');
+      const right = line.lastIndexOf('b');
+      expect(left).toBeGreaterThan(0);
+      expect(Math.abs(left - 1 - (WIDTH - 1 - TRANSCRIPT_INSET - (right + 1)))).toBeLessThanOrEqual(
+        1,
+      );
     } finally {
       setup.renderer.destroy?.();
     }

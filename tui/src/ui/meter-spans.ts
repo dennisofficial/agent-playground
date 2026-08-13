@@ -2,7 +2,6 @@ import {
   formatCountdown,
   formatPercent,
   isPressured,
-  meterBand,
   meterFill,
   type Meter,
   type MeterBand,
@@ -89,12 +88,15 @@ export function meterSpans(
   showBar: boolean,
 ): Span[] {
   const utilization = meter.window?.utilization ?? null;
-  const band = meterBand(meter.key, utilization);
+  const { band } = meter;
   const colour = bandColour(band, style);
 
   if (band === "spent") return spentSpans(meter, style, colour);
 
-  const digits = formatPercent(utilization);
+  // The bar is always the fill; the digits are whatever the meter came to say. `ctx` prints tokens,
+  // which is why the two can disagree — a green bar under an orange `210K` is the honest picture of
+  // a session with plenty of window left that is nonetheless expensive to keep re-sending.
+  const digits = meter.digits ?? formatPercent(utilization);
   const slack = " ".repeat(Math.max(0, 4 - digits.length));
   const filled = meterFill(utilization, style.glyphs.cells);
 

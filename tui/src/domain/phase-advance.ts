@@ -1,16 +1,6 @@
 import type { EPhaseKind, EThreadRole } from '../generated/prisma/enums.js';
-import { EPhaseConfirm, phaseLabel, phaseSpecFor, rolesFor } from './phase-spec.js';
+import { phaseLabel, phaseSpecFor, rolesFor } from './phase-spec.js';
 import { roleLabel } from './role-engine.js';
-
-/**
- * Whether leaving this phase transitions without waiting on the human.
- *
- * Read off the phase being LEFT, because the question it answers — "was there a decision to make
- * here?" — is answered by the work that just finished, not by the work about to start.
- */
-export function exitsWithoutAsking(kind: EPhaseKind): boolean {
-  return phaseSpecFor(kind).confirm === EPhaseConfirm.auto;
-}
 
 /**
  * The exact inverse of `complete_thread`'s rule: you may only move the phase on if you are the last
@@ -61,16 +51,3 @@ export function proposalRaisedReply(args: {
   ].join(' · ');
 }
 
-/** And what it reads back where the phase it is leaving exits on its own — see `exitsWithoutAsking`. */
-export function transitionedReply(args: {
-  from: EPhaseKind;
-  to: EPhaseKind;
-  role: EThreadRole;
-  attachments: string;
-}): string {
-  return [
-    `Confirmed: ${phaseLabel(args.from)} → ${phaseLabel(args.to)} — this exit carries no decision, so it did not wait. This thread is closed and a ${roleLabel(args.role)} thread is open in ${phaseLabel(args.to)} with your hand-off.`,
-    args.attachments,
-    'Stop here — you have no further turn in this thread.',
-  ].join(' · ');
-}

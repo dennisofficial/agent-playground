@@ -42,15 +42,6 @@ const ADVANCE = `When the phase's work is done you propose what comes next with 
 the human confirms it. You never move the job yourself, and a proposal that names what is done and
 what is left is the whole content of that confirmation — it is the only thing he reads before \`y\`.`;
 
-/**
- * The same verb, told truthfully to the three phases whose exit carries no decision. They must not
- * be told to expect a confirmation that will not happen: the call closes them, so there is no later
- * turn in which the agent could discover the difference.
- */
-const ADVANCE_AUTO = `When the phase's work is done you move the job on with \`advance_phase\`. This
-exit carries no fork and no artifact to eyeball, so it does not wait for the human — it closes this
-thread and opens the next phase's first thread on your handoff, which is all that crosses.`;
-
 export function designBrief(ctx: PhaseBriefContext): PhaseBrief {
   return {
     instructions: `# Design
@@ -148,7 +139,7 @@ ${BUILD_CORE(ctx)}
 
 ${branchLine(ctx)}
 
-${ADVANCE_AUTO} From here that is \`master_review\` when the work is ready to be read whole, or
+${ADVANCE} From here that is \`master_review\` when the work is ready to be read whole, or
 \`planning\` when it is not the code that was wrong.`,
     opening: `Build — "${ctx.jobTitle}". ${origin(ctx)}
 
@@ -170,7 +161,7 @@ ${BUILD_CORE(ctx)}
 
 ${branchLine(ctx)}
 
-${ADVANCE_AUTO} From here that is \`post_build\`.`,
+${ADVANCE} From here that is \`post_build\`.`,
     opening: fromCi
       ? `Direct build — "${ctx.jobTitle}", chasing a red build. ${origin(ctx)}
 
@@ -199,7 +190,7 @@ had, attached here unchanged.
   stranger would.
 - Report findings as prose the next phase can act on, ordered by what would hurt to ship.
 
-${ADVANCE_AUTO} From here that is \`post_build\` — you report, you do not rewrite.`,
+${ADVANCE} From here that is \`post_build\` — you report, you do not rewrite.`,
     opening: `Master review — "${ctx.jobTitle}". ${origin(ctx)}
 
 ${branchLine(ctx)} Start from the specs, then read the diff on the branch. The handoff says what the

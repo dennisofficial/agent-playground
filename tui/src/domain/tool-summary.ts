@@ -7,11 +7,12 @@ import { type DiffHunk, diffStat, diffSummary, toolDiff } from './tool-diff.js';
 
 type Input = Record<string, unknown>;
 
-function asInput(input: unknown): Input {
+/** Exported for `tool-view.ts`, which reads the same stored `input` at DRAW time. */
+export function asInput(input: unknown): Input {
   return input && typeof input === 'object' ? (input as Input) : {};
 }
 
-function str(value: unknown): string | undefined {
+export function str(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
@@ -117,8 +118,14 @@ export function summariseToolResult(args: {
   }
 }
 
-function countLines(lines: string[]): number {
-  // A trailing newline yields a final empty element that is not a line of content.
+/**
+ * A trailing newline yields a final empty element that is not a line of content.
+ *
+ * Exported because `tool-view.ts` re-counts a stored result at draw time and has to arrive at the
+ * SAME number this produced at ingest — a row that says `156 l` under a summary that says
+ * `Read 157 lines` is a bug the reader can see.
+ */
+export function countLines(lines: readonly string[]): number {
   const last = lines.at(-1);
   return last !== undefined && last.length === 0 ? lines.length - 1 : lines.length;
 }
