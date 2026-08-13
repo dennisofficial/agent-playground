@@ -4,6 +4,7 @@ import { basename, resolve } from "node:path";
 import { EPhaseKind, EThreadRole } from "../generated/prisma/enums.js";
 import type { Job, Project, Thread } from "../generated/prisma/client.js";
 import { ELaunchScope, launchScope } from "../domain/launch-scope.js";
+import { expandHome } from "../domain/paths.js";
 import { bindingFor } from "../domain/role-engine.js";
 import { AccountRepository } from "../store/account.repository.js";
 import { JobRepository, type JobRow } from "../store/job.repository.js";
@@ -47,7 +48,8 @@ export class WorkspaceService {
    * that the editor lives in one while Atlas keeps working on the same project.
    */
   async openFolder(path: string): Promise<Project> {
-    const absolute = resolve(path);
+    // Typed by hand into Atlas's prompt, so no shell has expanded `~` for us.
+    const absolute = resolve(expandHome(path));
     if (!existsSync(absolute)) throw new Error(`no such folder: ${absolute}`);
     const root = (await this.gitService.mainWorktree(absolute)) ?? absolute;
     return this.projectRepository.open(root, basename(root));
@@ -65,7 +67,10 @@ export class WorkspaceService {
     explicitPath: string | null;
     cwd: string;
   }): Promise<ProjectRow | null> {
-    const target = resolve(args.explicitPath ?? args.cwd);
+    // `atlas '~/foo'` reaches us with the tilde intact — quoting is enough to keep the shell off it.
+    const target = resolve(
+      args.explicitPath ? expandHome(args.explicitPath) : args.cwd,
+    );
     // A named folder must exist; a cwd always does, so this only ever fires on `atlas <path>`.
     if (args.explicitPath && !existsSync(target)) {
       throw new Error(`no such folder: ${target}`);
@@ -73,7 +78,9 @@ export class WorkspaceService {
 
     const gitRoot = await this.gitService.mainWorktree(target);
     const scope = launchScope({
-      explicitPath: args.explicitPath,
+      // The RESOLVED path, not what was typed: outside a repository this becomes `Project.path`
+      // verbatim, and a project stored as `~/foo` or `.` is one nothing can find again.
+      explicitPath: args.explicitPath ? target : null,
       cwd: args.cwd,
       gitRoot,
     });

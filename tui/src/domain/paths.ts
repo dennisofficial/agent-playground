@@ -24,6 +24,26 @@ export const ATLAS_PATHS = {
 } as const;
 
 /**
+ * `~` as the shell would have read it — for the paths the shell never saw.
+ *
+ * A folder typed into Atlas's own prompt (`n` on the projects page) reaches us verbatim, so
+ * `~/Developer/foo` was being handed to `resolve()`, which treats `~` as an ordinary directory name
+ * and produced `<cwd>/~/Developer/foo`. `atlas '~/foo'` had the same hole, quoting having stopped
+ * the shell from expanding it.
+ *
+ * Only a leading bare `~` expands. `~user` is left alone rather than guessed at: resolving another
+ * account's home is a passwd lookup, and silently reading it as the current user's home would open
+ * the wrong folder instead of reporting an honest miss.
+ *
+ * `home` is a parameter so a test can name a home without inheriting the machine's.
+ */
+export function expandHome(path: string, home: string = homedir()): string {
+  if (path === '~') return home;
+  if (path.startsWith('~/')) return join(home, path.slice(2));
+  return path;
+}
+
+/**
  * Copies of the database taken immediately before a migration is applied.
  *
  * The app migrates itself on every start with no undo and no prompt, so the only moment it can

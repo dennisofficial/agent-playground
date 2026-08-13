@@ -1,5 +1,31 @@
 import { describe, expect, it } from 'bun:test';
-import { CONTEXT_BUCKETS, jobContextDir, jobDir } from '../paths.js';
+import { CONTEXT_BUCKETS, expandHome, jobContextDir, jobDir } from '../paths.js';
+
+describe('expandHome', () => {
+  const home = '/Users/someone';
+
+  it('expands a leading ~/, which resolve() would otherwise read as a folder named ~', () => {
+    expect(expandHome('~/Developer/comp-v2', home)).toBe(
+      '/Users/someone/Developer/comp-v2',
+    );
+  });
+
+  it('expands a bare ~', () => {
+    expect(expandHome('~', home)).toBe(home);
+  });
+
+  it('leaves absolute and relative paths alone', () => {
+    expect(expandHome('/tmp/foo', home)).toBe('/tmp/foo');
+    expect(expandHome('../sibling', home)).toBe('../sibling');
+  });
+
+  // A tilde anywhere but the front is a literal character in a folder name, and `~other` is another
+  // account's home — guessing either would open the wrong folder instead of reporting a miss.
+  it('only touches a leading bare tilde', () => {
+    expect(expandHome('~other/foo', home)).toBe('~other/foo');
+    expect(expandHome('/tmp/~/foo', home)).toBe('/tmp/~/foo');
+  });
+});
 
 describe('CONTEXT_BUCKETS', () => {
   it('is the three buckets, in the order the phases write them', () => {
