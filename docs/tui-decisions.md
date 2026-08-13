@@ -62,6 +62,28 @@ erroring at build time. Bun's transpiler honours the `tsconfig.json` flag, so th
 is fine; the trap is any tool that swaps in an esbuild-based transform. If DI "mysteriously"
 returns undefined, this is why — do not go hunting in the module graph.
 
+**The same failure has a second trigger, and it needs no unusual tooling at all: `bun` resolves
+`tsconfig.json` from the process's CWD, not from the entry file.** So running the TUI from source
+against another repository —
+
+```
+cd ~/Developer/comp-v2 && bun ~/Developer/atlas/tui/src/main.tsx
+```
+
+— reads *comp-v2's* tsconfig, which does not set `emitDecoratorMetadata`, and dies on the first
+injected dependency to be dereferenced:
+
+```
+TypeError: undefined is not an object (evaluating 'this.migratorService.migrate')
+```
+
+It reads as a bug in Atlas and is not one; the entry path being absolute is what makes it look like
+cwd should not matter. Two things do not reproduce it and are therefore no evidence that it is
+fixed: the compiled binary (`bun build --compile` applies the transform at build time, from `tui/`),
+and any `atlas <subcommand>` CLI invocation that exits during argument parsing, before a container
+is ever built. Use `scripts/atlas-dev`, which pins the cwd to `tui/` and passes the directory you
+were standing in as an explicit argument.
+
 ## Measured facts
 
 Prisma 7.9.1 against SQLite:

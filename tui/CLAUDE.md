@@ -15,6 +15,7 @@ Run from `tui/` (or `pnpm --filter @dltech/atlas-harness <script>` from the root
 
 ```bash
 pnpm dev                       # launch the TUI (cwd-relative); `bun src/main.tsx <path>` opens a folder
+scripts/atlas-dev [path]       # launch from source ANYWHERE — see the cwd/tsconfig trap below
 ATLAS_DEBUG=1 pnpm dev         # enable Nest logging — OFF by default because stdout corrupts the frame
 pnpm typecheck                 # tsc --noEmit
 pnpm test                      # whole suite
@@ -70,6 +71,14 @@ that throws prints to the user's real terminal.
 **`emitDecoratorMetadata` is load-bearing and esbuild does not implement it.** If an injected
 dependency arrives `undefined` at runtime, this is why — not the module graph. Bun reads
 `tsconfig.json`'s decorator settings; `.swcrc` covers any swc-based path.
+
+**And Bun reads that `tsconfig.json` from the CWD, not from the entry file.** `bun
+/abs/path/to/tui/src/main.tsx` run from another repository picks up *that* repository's tsconfig,
+loses the flag, and dies with `undefined is not an object (evaluating
+'this.migratorService.migrate')`. Run from `tui/`, or use `scripts/atlas-dev`, which pins the cwd
+and passes your directory as an argument. The compiled binary is immune (the transform is baked in
+at build time), and so is any CLI subcommand that exits before building a container — neither is
+evidence the source path works.
 
 ### The seam that matters: `normalise()`
 
