@@ -210,3 +210,121 @@ describe('SessionManagerService account selection', () => {
     expect(await manager.whyNoAccount(EEngine.claude)).toMatch(/claude/);
   });
 });
+
+/**
+ * A `Thread` in hand is a SNAPSHOT, and this is what happens when it is trusted.
+ *
+ * Every path that opens a thread and then seeds it returns the row it created — captured before the
+ * seeding turn opened session 1 — and the UI carries that copy into `loadConversation`, which asks
+ * for the current session. Minting from the snapshot opened a SECOND session on a thread that
+ * already had one, and it showed up twice: the transcript grew a `session 2 · previous leg ended`
+ * divider nobody had rotated through (`withSeams` derives a seam from exactly that disagreement),
+ * and the human's first message ran on an engine session that had never seen the seed turn.
+ */
+describe('SessionManagerService.currentSession', () => {
+  function buildForCurrent(args: {
+    /** What the caller is HOLDING — the row as it was when they got it. */
+    held: string | null;
+    /** What the row says NOW. */
+    stored: string | null;
+    /** Sessions the store knows about, and whether each has ended. */
+    sessions: { id: string; endedAt: Date | null }[];
+  }): { manager: SessionManagerService; opened: string[] } {
+    const opened: string[] = [];
+
+    const sessionRepository = {
+      async findById(id: string): Promise<EngineSession | null> {
+        const found = args.sessions.find((session) => session.id === id);
+        return found ? ({ ...found, accountId: null } as unknown as EngineSession) : null;
+      },
+      async open(): Promise<EngineSession> {
+        const id = `session-${args.sessions.length + opened.length + 1}`;
+        opened.push(id);
+        return { id, accountId: null } as unknown as EngineSession;
+      },
+    } as unknown as SessionRepository;
+
+    const threadRepository = {
+      async findById(): Promise<Thread> {
+        return { id: 'thread-1', activeSessionId: args.stored } as unknown as Thread;
+      },
+      async setActiveSession(): Promise<void> {},
+    } as unknown as ThreadRepository;
+
+    const manager = new SessionManagerService(
+      threadRepository,
+      sessionRepository,
+      {
+        async listForEngine(): Promise<Account[]> {
+          return [];
+        },
+      } as unknown as AccountRepository,
+      {} as unknown as JobRepository,
+    );
+    return { manager, opened };
+  }
+
+  const stale = { id: 'thread-1', activeSessionId: null, role: EThreadRole.task } as unknown as Thread;
+
+  it('finds the session a stale row does not know about, instead of minting a second', async () => {
+    const { manager, opened } = buildForCurrent({
+      held: null,
+      stored: 'session-1',
+      sessions: [{ id: 'session-1', endedAt: null }],
+    });
+
+    const session = await manager.currentSession(stale);
+
+    expect(session.id).toBe('session-1');
+    expect(opened).toEqual([]);
+  });
+
+  it('still opens the first session on a thread that genuinely has none', async () => {
+    const { manager, opened } = buildForCurrent({ held: null, stored: null, sessions: [] });
+
+    const session = await manager.currentSession(stale);
+
+    expect(session.id).toBe('session-1');
+    expect(opened).toEqual(['session-1']);
+  });
+
+  // The same statement covers a snapshot taken before a ROTATION — the pointer resolves to a leg
+  // that has ended, so it is re-read rather than treated as "no session".
+  it('follows a rotation the held row predates', async () => {
+    const preRotation = {
+      id: 'thread-1',
+      activeSessionId: 'session-1',
+      role: EThreadRole.task,
+    } as unknown as Thread;
+    const { manager, opened } = buildForCurrent({
+      held: 'session-1',
+      stored: 'session-2',
+      sessions: [
+        { id: 'session-1', endedAt: new Date(0) },
+        { id: 'session-2', endedAt: null },
+      ],
+    });
+
+    const session = await manager.currentSession(preRotation);
+
+    expect(session.id).toBe('session-2');
+    expect(opened).toEqual([]);
+  });
+
+  it('opens a fresh leg when the row’s own pointer is an ended session', async () => {
+    const ended = {
+      id: 'thread-1',
+      activeSessionId: 'session-1',
+      role: EThreadRole.task,
+    } as unknown as Thread;
+    const { manager, opened } = buildForCurrent({
+      held: 'session-1',
+      stored: 'session-1',
+      sessions: [{ id: 'session-1', endedAt: new Date(0) }],
+    });
+
+    await manager.currentSession(ended);
+
+    expect(opened).toEqual(['session-2']);
+  });
+});

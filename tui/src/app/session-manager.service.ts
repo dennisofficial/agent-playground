@@ -51,14 +51,40 @@ export class SessionManagerService {
     return thread;
   }
 
+  /**
+   * The session this thread's next turn runs on, opening one only if it genuinely has none.
+   *
+   * The re-read is the load-bearing half, and it is there because **a `Thread` in hand is a
+   * snapshot, not a live row.** Every path that opens a thread and then seeds it returns the row it
+   * created — captured before the seeding turn opened session 1 — and the UI carries that copy into
+   * `loadConversation`, which asks this. Trusting the snapshot minted a SECOND session on a thread
+   * that already had one, and the damage was visible twice over: the transcript grew a
+   * `session 2 · previous leg ended` divider nobody had rotated through (`withSeams` derives a seam
+   * from exactly this disagreement), and the human's first message ran on a fresh engine session
+   * that had never seen the seed turn.
+   *
+   * Written as "the pointer I hold did not resolve, so look again" rather than as a null check, so
+   * a snapshot taken before a ROTATION is covered by the same statement.
+   */
   async currentSession(thread: Thread): Promise<EngineSession> {
-    if (thread.activeSessionId) {
-      const existing = await this.sessionRepository.findById(
-        thread.activeSessionId,
-      );
-      if (existing && existing.endedAt === null) return existing;
+    const held = await this.liveSession(thread.activeSessionId);
+    if (held) return held;
+
+    const fresh = await this.threadRepository.findById(thread.id);
+    if (fresh && fresh.activeSessionId !== thread.activeSessionId) {
+      const current = await this.liveSession(fresh.activeSessionId);
+      if (current) return current;
     }
     return this.openSession(thread);
+  }
+
+  /** A session that is still running, or null — an ended one is history, not somewhere to write. */
+  private async liveSession(
+    sessionId: string | null,
+  ): Promise<EngineSession | null> {
+    if (!sessionId) return null;
+    const session = await this.sessionRepository.findById(sessionId);
+    return session && session.endedAt === null ? session : null;
   }
 
   async openSession(
