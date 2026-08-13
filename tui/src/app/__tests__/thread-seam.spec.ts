@@ -6,7 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EHarnessVariant, promptPayload, renderPrompt } from '../../domain/message.js';
 import { EToolTier } from '../../domain/tool-surface.js';
-import { EPhaseKind, EThreadRole } from '../../generated/prisma/enums.js';
+import type { TaskView } from '../../domain/tasks.js';
+import { EPhaseKind, ETaskStatus, EThreadRole } from '../../generated/prisma/enums.js';
 import type { EngineSession, Job, Phase, Thread } from '../../generated/prisma/client.js';
 import type { JobRepository } from '../../store/job.repository.js';
 import type { ThreadRepository } from '../../store/thread.repository.js';
@@ -67,11 +68,12 @@ const LISTING: ContextEntry[] = ['spec.md', '03-slice.md', '04-slice.md'].map(
   }),
 );
 
-function build() {
+function build(tasks: readonly TaskView[] = []) {
   const closed: string[] = [];
   const outcomes: { threadId: string; condition: string; resolution?: string }[] = [];
   const opened: { jobId: string; role: EThreadRole }[] = [];
   const turns: RunTurnArgs[] = [];
+  const taskService = fakeTaskService(tasks, THREAD.id);
 
   const service = new ThreadSeamService(
     { async listPhases(): Promise<Phase[]> { return PHASES; } } as unknown as JobRepository,
@@ -115,7 +117,8 @@ function build() {
         turns.push(args);
       },
     } as unknown as TurnRunnerService,
-    fakeTaskService(),
+    // Seeded on the CALLER, so a carry has somewhere to come from and somewhere else to land.
+    taskService,
     fakeShipService(),
     fakeWorktreeService(),
   );
@@ -128,7 +131,7 @@ function build() {
     tier: EToolTier.thread,
   };
 
-  return { service, ctx, closed, opened, turns, outcomes };
+  return { service, ctx, closed, opened, turns, outcomes, taskService };
 }
 
 describe('advance_thread', () => {
@@ -248,6 +251,84 @@ describe('advance_thread', () => {
 
     expect(reply).toContain('ignored');
     expect(reply).toContain('generated/handoff.md');
+  });
+
+  /**
+   * The plan crosses the boundary with the work.
+   *
+   * It used not to, and the reason given was that a successor handed `#3` could not update a row
+   * living on somebody else's thread. True — but the fix for a number that does not resolve is to
+   * make it resolve, not to drop the checklist on the one seam where the work visibly continues.
+   */
+  describe('the unfinished plan', () => {
+    const PLAN: TaskView[] = [
+      { ordinal: 1, text: 'read the stored check detail', status: ETaskStatus.completed },
+      { ordinal: 3, text: 'run the enforcement experiment', status: ETaskStatus.in_progress },
+      { ordinal: 4, text: 'write up what the card says', status: ETaskStatus.pending },
+    ];
+
+    it('copies onto the successor as ITS rows, renumbered so task_update takes them', async () => {
+      const { service, ctx, taskService } = build(PLAN);
+
+      await service.advanceThread({
+        ctx,
+        role: EThreadRole.builder,
+        handoff: 'done',
+        attach: [],
+      });
+
+      expect(await taskService.rows(SUCCESSOR.id)).toEqual([
+        { ordinal: 1, text: 'run the enforcement experiment', status: ETaskStatus.in_progress },
+        { ordinal: 2, text: 'write up what the card says', status: ETaskStatus.pending },
+      ]);
+      // And the caller keeps its own, gaps and finished work included — closing a thread is not
+      // editing its record.
+      expect(await taskService.rows(THREAD.id)).toEqual(PLAN);
+    });
+
+    it('puts the list in front of the successor, so it does not spend a turn finding it', async () => {
+      const { service, ctx, turns } = build(PLAN);
+
+      await service.advanceThread({
+        ctx,
+        role: EThreadRole.builder,
+        handoff: 'done',
+        attach: [],
+      });
+
+      const seed = turns[0]?.prompt ?? '';
+      expect(seed).toContain('# Your task list');
+      expect(seed).toContain('#1 [in_progress] run the enforcement experiment');
+      // Finished work is not reissued as the successor's own — that is what the hand-off is for.
+      expect(seed).not.toContain('read the stored check detail');
+    });
+
+    it('tells the outgoing agent what went with it — the one thing it cannot predict', async () => {
+      const { service, ctx } = build(PLAN);
+
+      const reply = await service.advanceThread({
+        ctx,
+        role: EThreadRole.builder,
+        handoff: 'done',
+        attach: [],
+      });
+
+      expect(reply).toContain('2 unfinished tasks');
+    });
+
+    it('says nothing at all when there was no plan — a zero is not news', async () => {
+      const { service, ctx, turns } = build();
+
+      const reply = await service.advanceThread({
+        ctx,
+        role: EThreadRole.builder,
+        handoff: 'done',
+        attach: [],
+      });
+
+      expect(reply).not.toContain('unfinished');
+      expect(turns[0]?.prompt).not.toContain('# Your task list');
+    });
   });
 
   it('refuses a role the phase does not host, and closes nothing when it does', async () => {

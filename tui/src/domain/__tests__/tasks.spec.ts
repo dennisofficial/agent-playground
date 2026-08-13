@@ -2,6 +2,8 @@ import { describe, expect, it } from 'bun:test';
 import { ETaskStatus } from '../../generated/prisma/enums.js';
 import {
   NO_TASKS,
+  carriedTaskSection,
+  carriedTasks,
   checklistView,
   clipTaskText,
   ESpineMark,
@@ -67,6 +69,50 @@ describe('taskListSection', () => {
   it('is empty when there is nothing to carry', () => {
     expect(taskListSection([])).toBe('');
     expect(taskListSection([task({ ordinal: 1, status: ETaskStatus.deleted })])).toBe('');
+  });
+});
+
+/**
+ * The other seam. A rotation stays on one thread and inherits the numbers as they stand; a
+ * SUCCESSOR is a new thread, so its list is copied and renumbered rather than described — which is
+ * the whole reason a plan can now cross an `advance_thread` at all.
+ */
+describe('carriedTasks', () => {
+  it('carries the unfinished work and renumbers it from one', () => {
+    expect(carriedTasks(PLAN)).toEqual([
+      { ordinal: 1, text: 'Render the checklist', status: ETaskStatus.in_progress },
+      { ordinal: 2, text: 'Test the exclusion', status: ETaskStatus.pending },
+    ]);
+  });
+
+  // The successor's panel exists to say where the work IS. A planner's finished list shown to a
+  // builder is work it never did, on the one surface that must not lie about that.
+  it('leaves completed and deleted work behind — the hand-off prose is where history goes', () => {
+    expect(
+      carriedTasks([
+        task({ ordinal: 1, status: ETaskStatus.completed }),
+        task({ ordinal: 2, status: ETaskStatus.deleted }),
+      ]),
+    ).toEqual([]);
+  });
+
+  // Renumbering from one is what makes `task_update` work in the successor: `[threadId, ordinal]`
+  // is the key, so a gapped number inherited from another thread would resolve to nothing.
+  it('closes the gaps a retired task left, because the numbers are now the successor’s own', () => {
+    expect(carriedTasks([task({ ordinal: 7 }), task({ ordinal: 9 })]).map((t) => t.ordinal)).toEqual(
+      [1, 2],
+    );
+  });
+
+  it('says plainly that the list is the reader’s to update', () => {
+    const section = carriedTaskSection(carriedTasks(PLAN));
+    expect(section).toContain('# Your task list');
+    expect(section).toContain('now YOURS');
+    expect(section).toContain('#1 [in_progress] Render the checklist');
+  });
+
+  it('is empty when nothing survived the boundary', () => {
+    expect(carriedTaskSection([])).toBe('');
   });
 });
 

@@ -6,8 +6,9 @@ import type { AtlasTool, ToolActions, ToolContext } from './tool.js';
 const DESCRIPTION = `Finish here and hand this job's next piece of work to a fresh thread.
 
 Closes THIS thread — you get no further turn in it — opens exactly one successor in the same phase,
-seeds it with your hand-off, and makes it the job's active thread. Reach for it when the work you
-were opened for is done and what comes next wants a different role or a clean context window.
+seeds it with your hand-off and your unfinished tasks, and makes it the job's active thread. Reach
+for it when the work you were opened for is done and what comes next wants a different role or a
+clean context window.
 
 This does not end the phase: \`advance_phase\` does that and it waits on the human. A thread boundary
 is not a human boundary, so this one takes effect immediately.`;
@@ -17,7 +18,11 @@ and the files you attach — it did not watch you work, and your transcript is n
 
 Write it as prose covering: what you did and where it stands; what you TRIED AND REJECTED, with the
 reason (this is the section that stops your successor repeating your dead ends); anything that
-surprised you about this codebase; and what you would do next.`;
+surprised you about this codebase; and what you would do next.
+
+Your UNFINISHED tasks travel automatically — they are copied onto the successor and renumbered as
+its own list, so do not re-type your checklist here. Prose is for the things a checklist cannot
+hold. Tasks you have already completed do NOT travel: if one of them matters, say so above.`;
 
 const ATTACH = `Files from the job's context folder to inline into your successor's first message,
 named as \`specs/03-slice.md\` or \`charting/map.md\`. They are inlined in full, so it reads them

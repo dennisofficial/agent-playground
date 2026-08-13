@@ -125,6 +125,7 @@ export class ThreadSeamService implements ToolActions {
               fromRole: args.handoff.fromRole,
               attachments: parts ? '' : args.handoff.attachments,
               ...(args.handoff.kind ? { kind: args.handoff.kind } : {}),
+              ...(args.handoff.tasks ? { tasks: args.handoff.tasks } : {}),
             })
           : opening,
     });
@@ -189,6 +190,9 @@ export class ThreadSeamService implements ToolActions {
       sessionManagerService: this.sessionManagerService,
       contextFolderService: this.contextFolderService,
       seed: (seeded) => this.seed(seeded),
+      // The unfinished plan follows the work across the thread boundary — copied onto the successor
+      // as its OWN rows, which is what makes the numbers it reads updatable. See `carriedTasks`.
+      carryTasks: (moved) => this.tasks.carryForward(moved),
       ...args,
     });
   }
@@ -207,10 +211,10 @@ export class ThreadSeamService implements ToolActions {
       sessionManagerService: this.sessionManagerService,
       contextFolderService: this.contextFolderService,
       seed: (seeded) => this.seed(seeded),
-      // The task list rides the ROTATION hand-off, and only that one. A rotation keeps the SAME
-      // thread, so the numbers the next leg inherits are still live and `task_update` still takes
-      // them. An `advance_thread` successor is a NEW thread with an empty list of its own — seeding
-      // it with numbers it cannot update would be a lie, which is why this is not in `seed()`.
+      // The task list rides the rotation hand-off itself, because a rotation keeps the SAME thread
+      // and the numbers the next leg inherits are already live. A successor takes the same list by
+      // the other route — `carryForward` copies the rows onto it — so the two seams both carry the
+      // plan and neither one carries a number that does not resolve.
       tasks: () => this.tasks.section(args.ctx.thread.id),
       ...args,
     });

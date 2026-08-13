@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import {
+  carriedTaskSection,
   renderTaskList,
   taskCreatedReply,
   taskListSection,
@@ -38,12 +39,36 @@ export class TaskService implements TaskActions {
   }
 
   /**
-   * The list as a hand-off section, for the seed a rotation or a successor thread carries.
+   * The list as a hand-off section, for the seed a ROTATION carries — same thread, live numbers.
    *
    * Empty string when there is nothing to carry, so a caller can append it unconditionally.
    */
   async section(threadId: string): Promise<string> {
     return taskListSection(await this.rows(threadId));
+  }
+
+  /**
+   * `advance_thread`'s half: copy the unfinished plan onto the successor and render it for the seed.
+   *
+   * One call rather than a copy and a read, because the two must not be able to disagree — what the
+   * successor is TOLD it has is exactly the rows that were written for it.
+   *
+   * Swallows its failure like everything else here. A hand-off that aborted because the checklist
+   * could not be copied would cost the thread boundary itself, which is far more than the panel is
+   * worth; the successor simply starts with an empty list and the hand-off prose still names the
+   * work.
+   */
+  async carryForward(args: {
+    fromThreadId: string;
+    toThreadId: string;
+  }): Promise<{ tasks: TaskView[]; section: string }> {
+    try {
+      const tasks = await this.taskRepository.carryForward(args);
+      return { tasks, section: carriedTaskSection(tasks) };
+    } catch (error) {
+      this.logger.error(`task carry-forward failed: ${String(error)}`);
+      return { tasks: [], section: '' };
+    }
   }
 
   async create(args: {
