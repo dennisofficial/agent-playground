@@ -1,6 +1,8 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
 import type { ZodRawShape } from 'zod';
+import { classifyToolFault } from '../domain/tool-fault.js';
+import { recordToolFault } from './fault-log.js';
 
 /**
  * The server name, which is also half of every Atlas tool's wire name: the SDK exposes an in-process
@@ -40,7 +42,7 @@ export function atlasToolServer(
     version: '1.0.0',
     tools: tools.map((entry) =>
       tool(entry.name, entry.description, entry.shape, async (args) =>
-        runTool(entry, args),
+        runEngineTool(entry, args),
       ),
     ),
   });
@@ -60,17 +62,26 @@ export function atlasToolNames(tools: readonly EngineTool[]): string[] {
  * turn down. A seam tool refusing — "that role is not offered in this phase" — is ordinary
  * conversation; the agent should get a sentence and another go, which is also why the message is
  * prose rather than a stack.
+ *
+ * What a throw must NOT do any more is arrive looking like that when it isn't. `classifyToolFault`
+ * splits the two, so a harness bug reads as a harness bug and leaves a stack behind; see
+ * `domain/tool-fault.ts` for why the line is drawn where it is.
+ *
+ * Exported because this policy — not the MCP plumbing around it — is the thing worth testing, and
+ * `onFault` is a parameter so a test can watch it fire without writing to the user's real home.
  */
-async function runTool(
+export async function runEngineTool(
   entry: EngineTool,
   args: unknown,
+  onFault: (detail: string) => void = recordToolFault,
 ): Promise<{ content: { type: 'text'; text: string }[]; isError?: boolean }> {
   try {
     const text = await entry.handler(asRecord(args));
     return { content: [{ type: 'text', text }] };
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    return { content: [{ type: 'text', text: detail }], isError: true };
+    const fault = classifyToolFault({ tool: entry.name, error });
+    if (fault.detail !== null) onFault(fault.detail);
+    return { content: [{ type: 'text', text: fault.reply }], isError: true };
   }
 }
 

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   atlasToolNames,
   atlasToolServer,
+  runEngineTool,
   type EngineTool,
 } from '../atlas-tool-server.js';
 import { claudeOptions } from '../claude-options.js';
@@ -84,6 +85,61 @@ describe('the Claude transport', () => {
     // The server object is opaque; what matters is that construction survives a handler that
     // throws — the wrapping itself is asserted through `claudeOptions` and the seam spec.
     expect(server.instance).toBeDefined();
+  });
+});
+
+describe('what the transport does with a throw', () => {
+  it('passes a handler’s answer straight through when nothing goes wrong', async () => {
+    const faults: string[] = [];
+    const result = await runEngineTool(tool(), { role: 'builder' }, (d) => faults.push(d));
+
+    expect(result).toEqual({ content: [{ type: 'text', text: 'opened' }] });
+    expect(faults).toEqual([]);
+  });
+
+  it('hands a refusal back as prose and logs NOTHING — it is not a fault', async () => {
+    const faults: string[] = [];
+    const entry = tool({
+      handler: async () => {
+        throw new Error('the build phase does not host a planner thread');
+      },
+    });
+    const result = await runEngineTool(entry, {}, (d) => faults.push(d));
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toBe('the build phase does not host a planner thread');
+    // A log that filled up with ordinary refusals would be a log nobody reads.
+    expect(faults).toEqual([]);
+  });
+
+  it('logs a stack for a harness fault and tells the agent not to retry it', async () => {
+    const faults: string[] = [];
+    const entry = tool({
+      handler: async () => {
+        throw new ReferenceError('rolesFor is not defined');
+      },
+    });
+    const result = await runEngineTool(entry, {}, (d) => faults.push(d));
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('do not retry it');
+    expect(faults).toHaveLength(1);
+    expect(faults[0]).toContain('advance_thread — ReferenceError: rolesFor is not defined');
+    // The stack is the whole point of the log: the message alone is what we already had.
+    expect(faults[0]).toContain('atlas-tool-server.spec');
+  });
+
+  it('survives a handler that throws something that is not an Error', async () => {
+    const faults: string[] = [];
+    const entry = tool({
+      handler: async () => {
+        throw 'kaboom';
+      },
+    });
+    const result = await runEngineTool(entry, {}, (d) => faults.push(d));
+
+    expect(result.isError).toBe(true);
+    expect(faults).toHaveLength(1);
   });
 });
 
