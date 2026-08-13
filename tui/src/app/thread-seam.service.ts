@@ -184,14 +184,15 @@ export class ThreadSeamService implements ToolActions {
     role: EThreadRole;
     handoff: string;
     attach: readonly string[];
+    carry: readonly number[];
   }): Promise<string> {
     return advanceToSuccessor({
       threadRepository: this.threadRepository,
       sessionManagerService: this.sessionManagerService,
       contextFolderService: this.contextFolderService,
       seed: (seeded) => this.seed(seeded),
-      // The unfinished plan follows the work across the thread boundary — copied onto the successor
-      // as its OWN rows, which is what makes the numbers it reads updatable. See `carriedTasks`.
+      // The tasks the agent named follow the work across the thread boundary — copied onto the
+      // successor as its OWN rows, which is what makes those numbers updatable. See `carriedTasks`.
       carryTasks: (moved) => this.tasks.carryForward(moved),
       ...args,
     });

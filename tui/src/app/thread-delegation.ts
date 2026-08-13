@@ -52,6 +52,8 @@ export async function advanceToSuccessor(args: {
   role: EThreadRole;
   handoff: string;
   attach: readonly string[];
+  /** The `carry` argument: which of this thread's tasks the agent chose to hand on. */
+  carry: readonly number[];
   seed: SeedThread;
   /**
    * `TaskService.carryForward`. A callback for the reason `seed` is one — this file knows what a
@@ -62,7 +64,8 @@ export async function advanceToSuccessor(args: {
   carryTasks?: (moved: {
     fromThreadId: string;
     toThreadId: string;
-  }) => Promise<{ tasks: readonly TaskView[]; section: string }>;
+    declared: readonly number[];
+  }) => Promise<{ carried: readonly TaskView[]; ignored: readonly number[]; section: string }>;
 }): Promise<string> {
   const { ctx } = args;
   requireHostedRole({ phase: ctx.phase, role: args.role });
@@ -89,15 +92,18 @@ export async function advanceToSuccessor(args: {
     args.role,
   );
 
-  // The plan travels with the work. Copied BEFORE the seed and not described to it afterwards: the
-  // successor's first turn can call `task_update` the moment it reads the list, so the rows have to
-  // be in the store by the time that message is composed, not merely by the time it is answered.
-  const carried = args.carryTasks
-    ? await args.carryTasks({
-        fromThreadId: ctx.thread.id,
-        toThreadId: successor.id,
-      })
-    : { tasks: [], section: '' };
+  // The named part of the plan travels with the work. Copied BEFORE the seed and not described to
+  // it afterwards: the successor's first turn can call `task_update` the moment it reads the list,
+  // so the rows have to be in the store by the time that message is composed, not merely by the
+  // time it is answered.
+  const carried =
+    args.carryTasks && args.carry.length > 0
+      ? await args.carryTasks({
+          fromThreadId: ctx.thread.id,
+          toThreadId: successor.id,
+          declared: args.carry,
+        })
+      : { carried: [], ignored: [], section: '' };
 
   await args.seed({
     job: ctx.job,
@@ -117,7 +123,7 @@ export async function advanceToSuccessor(args: {
   return [
     `This thread is closed. A ${roleLabel(args.role)} thread is open with your hand-off and is now the job's active thread.`,
     describeAttachments(gathered),
-    describeCarriedTasks(carried.tasks.length),
+    describeCarriedTasks(carried),
     'Stop here — you have no further turn in this thread.',
   ]
     .filter((part) => part.length > 0)
@@ -125,13 +131,30 @@ export async function advanceToSuccessor(args: {
 }
 
 /**
- * Said back to the OUTGOING agent, because it is the one thing about the hand-off it cannot predict.
- * Silent where nothing moved — an empty list is not news, and "0 tasks carried" would read as a
- * failure rather than as an agent that never wrote a plan.
+ * Said back to the OUTGOING agent. Silent where it carried nothing and named nothing — `carry: []`
+ * is a real answer and does not need acknowledging, and "0 tasks carried" would read as a failure
+ * rather than as a deliberate empty hand.
+ *
+ * A number that resolved to nothing is NAMED rather than refused. It is the same slip a missing
+ * attachment is, but the consequence is not: a checklist may never be what fails a turn, and here
+ * the turn in question is the thread boundary itself. So the agent is told, in the last words it
+ * reads, and the hand-off prose it already wrote is what actually carries the work.
  */
-function describeCarriedTasks(count: number): string {
-  if (count === 0) return '';
-  return `your ${count} unfinished ${count === 1 ? 'task' : 'tasks'} went with it, renumbered as its own`;
+function describeCarriedTasks(resolved: {
+  carried: readonly TaskView[];
+  ignored: readonly number[];
+}): string {
+  const parts: string[] = [];
+  if (resolved.carried.length > 0) {
+    const noun = resolved.carried.length === 1 ? 'task' : 'tasks';
+    parts.push(`${resolved.carried.length} ${noun} went with it, renumbered from #1`);
+  }
+  if (resolved.ignored.length > 0) {
+    parts.push(
+      `ignored ${resolved.ignored.map((ordinal) => `#${ordinal}`).join(', ')} — no such unfinished task (a finished one is history: say what matters about it in your hand-off)`,
+    );
+  }
+  return parts.join('; ');
 }
 
 /**

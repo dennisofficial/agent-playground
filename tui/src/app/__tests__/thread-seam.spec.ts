@@ -143,6 +143,7 @@ describe('advance_thread', () => {
       role: EThreadRole.builder,
       handoff: 'Slice 3 is done.',
       attach: [],
+      carry: [],
     });
 
     expect(closed).toEqual([THREAD.id]);
@@ -170,6 +171,7 @@ describe('advance_thread', () => {
       role: EThreadRole.builder,
       handoff: 'Tried a shared cache and rejected it — the invalidation is per-job.',
       attach: [],
+      carry: [],
     });
 
     const seed = turns[0];
@@ -189,6 +191,7 @@ describe('advance_thread', () => {
       role: EThreadRole.builder,
       handoff: 'done',
       attach: [],
+      carry: [],
     });
 
     expect(turns[0]?.tools?.map((tool) => tool.name)).toEqual([
@@ -218,6 +221,7 @@ describe('advance_thread', () => {
       role: EThreadRole.builder,
       handoff: 'done',
       attach: ['specs/03-slice.md'],
+      carry: [],
     });
 
     // Asked of what the model RECEIVES, not of the prose: the bodies now ride the message's
@@ -247,6 +251,7 @@ describe('advance_thread', () => {
       role: EThreadRole.builder,
       handoff: 'done',
       attach: ['generated/handoff.md'],
+      carry: [],
     });
 
     expect(reply).toContain('ignored');
@@ -254,20 +259,24 @@ describe('advance_thread', () => {
   });
 
   /**
-   * The plan crosses the boundary with the work.
+   * The plan crosses the boundary with the work, but only where the agent SAYS SO.
    *
-   * It used not to, and the reason given was that a successor handed `#3` could not update a row
-   * living on somebody else's thread. True — but the fix for a number that does not resolve is to
-   * make it resolve, not to drop the checklist on the one seam where the work visibly continues.
+   * It used not to cross at all, and the reason given was that a successor handed `#3` could not
+   * update a row living on somebody else's thread. True — but the fix for a number that does not
+   * resolve is to make it resolve, not to drop the checklist on the one seam where the work visibly
+   * continues. `carry` is the other half: Atlas cannot tell a task that is genuinely next from one
+   * this thread learned was unnecessary, and carrying the whole remainder by default would drag a
+   * stale plan through every successor for the rest of the job.
    */
-  describe('the unfinished plan', () => {
+  describe('the plan it hands on', () => {
     const PLAN: TaskView[] = [
       { ordinal: 1, text: 'read the stored check detail', status: ETaskStatus.completed },
       { ordinal: 3, text: 'run the enforcement experiment', status: ETaskStatus.in_progress },
       { ordinal: 4, text: 'write up what the card says', status: ETaskStatus.pending },
+      { ordinal: 5, text: 'chase the legacy policy', status: ETaskStatus.pending },
     ];
 
-    it('copies onto the successor as ITS rows, renumbered so task_update takes them', async () => {
+    it('copies what was named onto the successor as ITS rows, renumbered so task_update takes them', async () => {
       const { service, ctx, taskService } = build(PLAN);
 
       await service.advanceThread({
@@ -275,15 +284,33 @@ describe('advance_thread', () => {
         role: EThreadRole.builder,
         handoff: 'done',
         attach: [],
+        carry: [3, 4],
       });
 
       expect(await taskService.rows(SUCCESSOR.id)).toEqual([
         { ordinal: 1, text: 'run the enforcement experiment', status: ETaskStatus.in_progress },
         { ordinal: 2, text: 'write up what the card says', status: ETaskStatus.pending },
       ]);
-      // And the caller keeps its own, gaps and finished work included — closing a thread is not
-      // editing its record.
+      // And the caller keeps its own, gaps, finished work and the task it chose not to hand on
+      // included — closing a thread is not editing its record.
       expect(await taskService.rows(THREAD.id)).toEqual(PLAN);
+    });
+
+    it('leaves behind what it did not name — the whole point of asking', async () => {
+      const { service, ctx, taskService, turns } = build(PLAN);
+
+      await service.advanceThread({
+        ctx,
+        role: EThreadRole.builder,
+        handoff: 'the legacy policy turned out to be a dead end',
+        attach: [],
+        carry: [3],
+      });
+
+      expect((await taskService.rows(SUCCESSOR.id)).map((row) => row.text)).toEqual([
+        'run the enforcement experiment',
+      ]);
+      expect(turns[0]?.prompt).not.toContain('chase the legacy policy');
     });
 
     it('puts the list in front of the successor, so it does not spend a turn finding it', async () => {
@@ -294,6 +321,7 @@ describe('advance_thread', () => {
         role: EThreadRole.builder,
         handoff: 'done',
         attach: [],
+        carry: [3, 4],
       });
 
       const seed = turns[0]?.prompt ?? '';
@@ -311,23 +339,52 @@ describe('advance_thread', () => {
         role: EThreadRole.builder,
         handoff: 'done',
         attach: [],
+        carry: [3, 4],
       });
 
-      expect(reply).toContain('2 unfinished tasks');
+      expect(reply).toContain('2 tasks went with it');
     });
 
-    it('says nothing at all when there was no plan — a zero is not news', async () => {
-      const { service, ctx, turns } = build();
+    /**
+     * The same slip a missing attachment is, with a different answer. An attachment refuses while
+     * the agent still holds the turn; a checklist may never be what fails a turn, and here the turn
+     * in question is the thread boundary itself. So it is named, and the boundary stands.
+     */
+    it('names a number that resolved to nothing rather than refusing the boundary', async () => {
+      const { service, ctx, closed, taskService } = build(PLAN);
 
       const reply = await service.advanceThread({
         ctx,
         role: EThreadRole.builder,
         handoff: 'done',
         attach: [],
+        // #1 is finished, #9 never existed — and #3 is real, so the carry is partly good.
+        carry: [1, 3, 9],
       });
 
-      expect(reply).not.toContain('unfinished');
+      expect(reply).toContain('ignored #1, #9');
+      expect(reply).toContain('1 task went with it');
+      expect(closed).toEqual([THREAD.id]);
+      expect((await taskService.rows(SUCCESSOR.id)).map((row) => row.text)).toEqual([
+        'run the enforcement experiment',
+      ]);
+    });
+
+    it('says nothing at all when the agent handed nothing on — [] is a real answer', async () => {
+      const { service, ctx, turns, taskService } = build(PLAN);
+
+      const reply = await service.advanceThread({
+        ctx,
+        role: EThreadRole.builder,
+        handoff: 'none of this list is the successor’s',
+        attach: [],
+        carry: [],
+      });
+
+      expect(reply).not.toContain('went with it');
+      expect(reply).not.toContain('ignored #');
       expect(turns[0]?.prompt).not.toContain('# Your task list');
+      expect(await taskService.rows(SUCCESSOR.id)).toEqual([]);
     });
   });
 
@@ -340,6 +397,7 @@ describe('advance_thread', () => {
         role: EThreadRole.planner,
         handoff: 'done',
         attach: [],
+        carry: [],
       }),
     ).rejects.toThrow('does not host');
     expect(closed).toEqual([]);
@@ -354,11 +412,31 @@ describe('the advance_thread tool', () => {
 
     expect(tool).not.toBeNull();
     const schema = z.object(tool?.shape ?? {});
-    const call = { handoff: 'done', attach: [] };
+    // `carry` is required for `attach`'s reason: an empty array is a real answer, and a field the
+    // agent may omit is a field Atlas ends up deciding for it.
+    const call = { handoff: 'done', attach: [], carry: [] };
     // `build` hosts one role. The enum is `PhaseSpec.roles`, so `build → planner` is something the
     // agent cannot emit rather than something it is told off for after the fact.
     expect(schema.safeParse({ ...call, role: EThreadRole.builder }).success).toBe(true);
     expect(schema.safeParse({ ...call, role: EThreadRole.planner }).success).toBe(false);
+  });
+
+  /**
+   * Omitting `carry` must not be spellable. A default — either one — is Atlas deciding: defaulted to
+   * everything it drags a stale plan through every successor, and defaulted to nothing it silently
+   * drops the checklist on the seam this whole thing exists to fix. The agent says which, every time.
+   */
+  it('will not let the agent leave the carry unsaid', () => {
+    const { service, ctx } = build();
+    const schema = z.object(advanceThreadTool({ ctx, actions: service })?.shape ?? {});
+    const call = { role: EThreadRole.builder, handoff: 'done', attach: [] };
+
+    expect(schema.safeParse(call).success).toBe(false);
+    expect(schema.safeParse({ ...call, carry: [] }).success).toBe(true);
+    expect(schema.safeParse({ ...call, carry: [3, 4] }).success).toBe(true);
+    // Ordinals are 1-based and whole — `#0` and `#1.5` name nothing that can exist.
+    expect(schema.safeParse({ ...call, carry: [0] }).success).toBe(false);
+    expect(schema.safeParse({ ...call, carry: [1.5] }).success).toBe(false);
   });
 
   it('routes a parsed call straight through to the seam', async () => {
@@ -369,6 +447,7 @@ describe('the advance_thread tool', () => {
       role: EThreadRole.builder,
       handoff: 'done',
       attach: [],
+      carry: [],
     });
 
     expect(reply).toContain('This thread is closed');

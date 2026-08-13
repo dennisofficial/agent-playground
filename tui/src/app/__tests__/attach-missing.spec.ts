@@ -215,6 +215,7 @@ describe('the seam refuses before it moves anything', () => {
         role: EThreadRole.planner,
         handoff: 'go',
         attach: ['specs/never-written.md'],
+        carry: [],
       }),
     ).rejects.toThrow('cannot attach');
 

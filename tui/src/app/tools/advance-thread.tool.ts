@@ -6,7 +6,7 @@ import type { AtlasTool, ToolActions, ToolContext } from './tool.js';
 const DESCRIPTION = `Finish here and hand this job's next piece of work to a fresh thread.
 
 Closes THIS thread — you get no further turn in it — opens exactly one successor in the same phase,
-seeds it with your hand-off and your unfinished tasks, and makes it the job's active thread. Reach
+seeds it with your hand-off and the tasks you hand on, and makes it the job's active thread. Reach
 for it when the work you were opened for is done and what comes next wants a different role or a
 clean context window.
 
@@ -20,9 +20,23 @@ Write it as prose covering: what you did and where it stands; what you TRIED AND
 reason (this is the section that stops your successor repeating your dead ends); anything that
 surprised you about this codebase; and what you would do next.
 
-Your UNFINISHED tasks travel automatically — they are copied onto the successor and renumbered as
-its own list, so do not re-type your checklist here. Prose is for the things a checklist cannot
-hold. Tasks you have already completed do NOT travel: if one of them matters, say so above.`;
+Do not re-type your checklist here — \`carry\` is how a task travels. Prose is for the things a
+checklist cannot hold.`;
+
+const CARRY = `Which of YOUR tasks the successor should inherit, by number: \`[3, 4]\`.
+
+They are copied onto its list and renumbered from #1 in the order you name them, so they become
+tasks it can actually \`task_update\` — nothing points back at this thread. Naming them in a
+different order re-sequences what remains.
+
+Only UNFINISHED tasks can travel. A completed one is history, and history belongs in the hand-off;
+naming it is ignored rather than refused.
+
+Required, and \`[]\` is a real answer meaning "none of my list is your list" — say that where the
+successor's work is genuinely different from what remained on yours. Do not carry a task you have
+decided should not be done; retire it with \`task_update\` instead, or simply leave it here. This is
+a judgement only you can make: you have just written down where the work stands, and you are the
+only one who knows which lines of your plan survived writing it.`;
 
 const ATTACH = `Files from the job's context folder to inline into your successor's first message,
 named as \`specs/03-slice.md\` or \`charting/map.md\`. They are inlined in full, so it reads them
@@ -61,6 +75,7 @@ export function advanceThreadTool(args: {
     role: z.enum([first, ...rest]).describe('What the successor thread is for.'),
     handoff: z.string().min(1).describe(HANDOFF),
     attach: z.array(z.string()).describe(ATTACH),
+    carry: z.array(z.number().int().positive()).describe(CARRY),
   };
 
   return {
@@ -78,6 +93,7 @@ export function advanceThreadTool(args: {
         role: parsed.role,
         handoff: parsed.handoff,
         attach: parsed.attach,
+        carry: parsed.carry,
       });
     },
   };

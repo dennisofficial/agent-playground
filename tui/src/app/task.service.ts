@@ -48,7 +48,7 @@ export class TaskService implements TaskActions {
   }
 
   /**
-   * `advance_thread`'s half: copy the unfinished plan onto the successor and render it for the seed.
+   * `advance_thread`'s half: copy the named tasks onto the successor and render them for the seed.
    *
    * One call rather than a copy and a read, because the two must not be able to disagree — what the
    * successor is TOLD it has is exactly the rows that were written for it.
@@ -61,13 +61,14 @@ export class TaskService implements TaskActions {
   async carryForward(args: {
     fromThreadId: string;
     toThreadId: string;
-  }): Promise<{ tasks: TaskView[]; section: string }> {
+    declared: readonly number[];
+  }): Promise<{ carried: TaskView[]; ignored: number[]; section: string }> {
     try {
-      const tasks = await this.taskRepository.carryForward(args);
-      return { tasks, section: carriedTaskSection(tasks) };
+      const resolved = await this.taskRepository.carryForward(args);
+      return { ...resolved, section: carriedTaskSection(resolved.carried) };
     } catch (error) {
       this.logger.error(`task carry-forward failed: ${String(error)}`);
-      return { tasks: [], section: '' };
+      return { carried: [], ignored: [], section: '' };
     }
   }
 

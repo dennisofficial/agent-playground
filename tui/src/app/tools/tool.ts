@@ -46,6 +46,8 @@ export type ToolActions = {
     role: EThreadRole;
     handoff: string;
     attach: readonly string[];
+    /** Ordinals in the CALLER's numbering. Empty is a real answer — see the tool's `carry`. */
+    carry: readonly number[];
   }): Promise<string>;
   /**
    * Opens a thread and leaves the caller open. It resolves with an acknowledgement and never with an

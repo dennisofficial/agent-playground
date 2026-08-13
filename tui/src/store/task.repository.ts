@@ -1,5 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { carriedTasks, nextOrdinal, type TaskView } from '../domain/tasks.js';
+import {
+  carriedTasks,
+  nextOrdinal,
+  type CarriedTasks,
+  type TaskView,
+} from '../domain/tasks.js';
 import type { ETaskStatus } from '../generated/prisma/enums.js';
 import { PrismaService } from './prisma.service.js';
 
@@ -48,7 +53,7 @@ export class TaskRepository {
   }
 
   /**
-   * Copy a thread's unfinished plan onto its successor — `advance_thread`'s half of the list.
+   * Copy the tasks an outgoing agent NAMED onto its successor — `advance_thread`'s half of the list.
    *
    * Rows, not a reference: `carriedTasks` renumbers from 1 so the successor owns every number it can
    * see, and `setStatus` keys on `[threadId, ordinal]` and would otherwise be updating history. The
@@ -58,18 +63,22 @@ export class TaskRepository {
   async carryForward(args: {
     fromThreadId: string;
     toThreadId: string;
-  }): Promise<TaskView[]> {
-    const carried = carriedTasks(await this.listForThread(args.fromThreadId));
-    if (carried.length === 0) return [];
+    declared: readonly number[];
+  }): Promise<CarriedTasks> {
+    const resolved = carriedTasks({
+      tasks: await this.listForThread(args.fromThreadId),
+      declared: args.declared,
+    });
+    if (resolved.carried.length === 0) return resolved;
     await this.prismaService.task.createMany({
-      data: carried.map((task) => ({
+      data: resolved.carried.map((task) => ({
         threadId: args.toThreadId,
         ordinal: task.ordinal,
         text: task.text,
         status: task.status,
       })),
     });
-    return carried;
+    return resolved;
   }
 
   /**

@@ -52,10 +52,17 @@ export function fakeTaskRepository(
       if (args.text !== undefined) found.text = args.text;
       return copyOf(args.threadId);
     },
-    carryForward: async (args: { fromThreadId: string; toThreadId: string }) => {
-      const carried = carriedTasks(listOf(args.fromThreadId));
-      listOf(args.toThreadId).push(...carried.map((task) => ({ ...task })));
-      return carried;
+    carryForward: async (args: {
+      fromThreadId: string;
+      toThreadId: string;
+      declared: readonly number[];
+    }) => {
+      const resolved = carriedTasks({
+        tasks: listOf(args.fromThreadId),
+        declared: args.declared,
+      });
+      listOf(args.toThreadId).push(...resolved.carried.map((task) => ({ ...task })));
+      return resolved;
     },
   } as unknown as TaskRepository;
 }

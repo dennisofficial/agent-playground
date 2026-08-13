@@ -73,10 +73,18 @@ export function taskListSection(tasks: readonly TaskView[]): string {
   ].join('\n');
 }
 
+/** What a declared carry resolved to: the rows the successor gets, and the numbers that got it wrong. */
+export type CarriedTasks = {
+  /** Renumbered from 1, in the order they were NAMED. Empty is an ordinary answer. */
+  carried: TaskView[];
+  /** Declared numbers that resolved to nothing carryable, in the order given. */
+  ignored: number[];
+};
+
 /**
- * What an `advance_thread` successor inherits: the work that is NOT done, as its own list.
+ * What an `advance_thread` successor inherits: the tasks the outgoing agent NAMED, as its own list.
  *
- * The old rule was that tasks do not cross a thread boundary at all, and the reason given was
+ * The original rule was that tasks do not cross a thread boundary at all, and the reason given was
  * sound as far as it went — a successor handed `#3` could not update a row that lives on somebody
  * else's thread. But the conclusion did not follow: the fix for numbers that do not resolve is to
  * make them resolve, not to drop the plan. A hand-off is prose, and prose is exactly the wrong
@@ -86,19 +94,53 @@ export function taskListSection(tasks: readonly TaskView[]): string {
  * So the rows are COPIED and renumbered from 1: the numbers are the successor's own, `task_update`
  * takes them, and nothing points across a thread.
  *
+ * **Declared, not inferred**, which is the half `attach` already got right. Atlas cannot tell a
+ * task that is genuinely next from one the thread learned was unnecessary and never got round to
+ * retiring, and carrying the whole remainder by default drags a stale plan through every successor
+ * for the rest of the job. The agent has just written a paragraph about where the work stands; it
+ * is the only party that knows which lines of its list survived that paragraph.
+ *
  * **Unfinished only.** A completed task is history, and history is what the hand-off prose is for;
  * inheriting a planner's finished list would show a builder work it never did, on the one panel
- * whose whole job is to say where the work is now. Statuses are otherwise preserved — a task left
- * `in_progress` is the piece that was in flight when the hand-off happened, and that is precisely
- * the row the successor should be pointed at.
+ * whose whole job is to say where the work is now. Naming one is `ignored` rather than refused, for
+ * the same reason the whole subsystem never throws. Statuses are otherwise preserved — a task left
+ * `in_progress` is the piece that was in flight, and that is precisely the row to point at.
+ *
+ * Named order wins over list order. Naming `[4, 3]` is a re-sequence, and there is no way to read it
+ * as anything else; a hand-off that reorders what remains costs nothing to honour.
  */
-export function carriedTasks(tasks: readonly TaskView[]): TaskView[] {
-  return tasks
-    .filter(
-      (task) =>
-        task.status === ETaskStatus.pending || task.status === ETaskStatus.in_progress,
-    )
-    .map((task, index) => ({ ...task, ordinal: index + 1 }));
+export function carriedTasks(args: {
+  tasks: readonly TaskView[];
+  /** The `carry` argument — ordinals in THIS thread's numbering. */
+  declared: readonly number[];
+}): CarriedTasks {
+  const carryable = new Map(
+    args.tasks
+      .filter(
+        (task) =>
+          task.status === ETaskStatus.pending || task.status === ETaskStatus.in_progress,
+      )
+      .map((task) => [task.ordinal, task]),
+  );
+
+  const carried: TaskView[] = [];
+  const ignored: number[] = [];
+  // Deduped as it goes: naming `#3` twice is a slip, and two rows with the same text would be a
+  // plan the successor has to reconcile before it can start.
+  const taken = new Set<number>();
+
+  for (const ordinal of args.declared) {
+    if (taken.has(ordinal)) continue;
+    taken.add(ordinal);
+    const task = carryable.get(ordinal);
+    if (!task) {
+      ignored.push(ordinal);
+      continue;
+    }
+    carried.push({ ...task, ordinal: carried.length + 1 });
+  }
+
+  return { carried, ignored };
 }
 
 /**
@@ -113,8 +155,9 @@ export function carriedTaskSection(tasks: readonly TaskView[]): string {
   return [
     '# Your task list',
     '',
-    'The unfinished tasks from the thread before you, renumbered and now YOURS — `task_update`',
-    'takes these numbers, and `task_create` adds to them. Finished work is not here; the hand-off',
+    'The tasks the thread before you chose to hand on, renumbered and now YOURS — `task_update`',
+    'takes these numbers, and `task_create` adds to them. It is not everything that was on its',
+    'list: what it finished, and what it decided you should not do, are not here. The hand-off',
     'above is where that is written.',
     '',
     renderTaskList(tasks),
