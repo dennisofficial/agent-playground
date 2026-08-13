@@ -197,12 +197,26 @@ export async function syncCursor(
   // It moved, and it moved off US: the cursor was on this thread the last time we looked and is on
   // another now. A cursor that was already elsewhere is somebody else's frontier — the human is
   // reading this thread on purpose, and following would take the page away from him.
-  if (
-    cursorThreadId &&
+  const movedOff =
+    cursorThreadId !== null &&
     cursorThreadId !== args.lastCursorThreadId &&
     cursorThreadId !== open.thread.id &&
-    args.lastCursorThreadId === open.thread.id
-  ) {
+    args.lastCursorThreadId === open.thread.id;
+
+  // **Never mid-sentence.** Every one of these verbs moves the cursor from INSIDE a tool call, so
+  // the thread being left still owes its last paragraph — `advance_thread`'s sign-off, the one
+  // sentence that says in plain words where the work went. Following the instant the successor's
+  // lane opens takes the page away before that lands, which costs the human the explanation and
+  // leaves the thread they were watching permanently unread: `lastSeenAt` writes through only while
+  // they are AT the bottom of it, and by then they are somewhere else.
+  //
+  // So the move is held, not dropped. `cursorThreadId` is reported as the one we already knew, which
+  // keeps the two-reading mechanism intact — the turn ending is itself a signal, this runs again,
+  // and the same move reads as new because our memory never advanced past it.
+  const stillTalking = movedOff && deps.turnRunnerService.busy(open.thread.id);
+  const remembered = stillTalking ? args.lastCursorThreadId : cursorThreadId;
+
+  if (movedOff && !stillTalking && cursorThreadId) {
     const moved = await deps.threadRepository.findById(cursorThreadId);
     if (moved) return { cursorThreadId, moved, refreshed: null };
   }
@@ -233,11 +247,11 @@ export async function syncCursor(
     const cwd = job.workspacePath ?? open.cwd;
     if (closed !== open.closed || cwd !== open.cwd) {
       const refreshed = await loadConversation(deps, { job, thread: current, cwd });
-      return { cursorThreadId, moved: null, refreshed };
+      return { cursorThreadId: remembered, moved: null, refreshed };
     }
   }
 
-  return { cursorThreadId, moved: null, refreshed: null };
+  return { cursorThreadId: remembered, moved: null, refreshed: null };
 }
 
 /**

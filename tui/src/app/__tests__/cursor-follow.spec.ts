@@ -25,7 +25,13 @@ function thread(args: { id: string; closed?: boolean }): Thread {
   } as unknown as Thread;
 }
 
-function world(args: { cursor: string; threads: Thread[]; workspacePath?: string | null }) {
+function world(args: {
+  cursor: string;
+  threads: Thread[];
+  workspacePath?: string | null;
+  /** Threads whose lane is held — the turn runner's answer, which the follow rule now consults. */
+  busy?: readonly string[];
+}) {
   const loaded: string[] = [];
   const deps = {
     jobRepository: {
@@ -60,7 +66,9 @@ function world(args: { cursor: string; threads: Thread[]; workspacePath?: string
         return { id: 'session-1', accountId: 'account-1', contextTokens: null, contextLimit: null };
       },
     },
-    turnRunnerService: { busy: () => false },
+    turnRunnerService: {
+      busy: (id: string) => (args.busy ?? []).includes(id),
+    },
     contextFolderService: { ensure: () => '/context' },
     accountUsageService: { kick: () => undefined },
     phaseBriefService: {
@@ -149,6 +157,53 @@ describe('syncCursor', () => {
     // Closing also ends the session and takes the tools away — re-reading is what gets all three.
     expect(sync?.refreshed?.tools).toEqual([]);
     expect(loaded).toEqual(['sessions']);
+  });
+
+  /**
+   * `advance_thread` moves the cursor from inside a tool call and THEN lets the caller write its
+   * sign-off — the one sentence that says in plain words where the work went. Following the instant
+   * the successor's lane opens costs the human that sentence, and leaves the thread they were
+   * watching permanently unread, because `lastSeenAt` only writes through while they are on it.
+   */
+  describe('a thread that is still talking', () => {
+    it('holds the move until the turn on screen has ended', async () => {
+      const here = thread({ id: 'thread-1', closed: true });
+      const { deps } = world({
+        cursor: 'thread-2',
+        threads: [here, thread({ id: 'thread-2' })],
+        busy: ['thread-1'],
+      });
+
+      const sync = await syncCursor(deps, {
+        open: open({ thread: here, closed: false }),
+        lastCursorThreadId: 'thread-1',
+      });
+
+      expect(sync?.moved).toBeNull();
+      // The close is still reported — the composer must lock the moment the thread ends, whether or
+      // not the page is about to move.
+      expect(sync?.refreshed?.closed).toBe(true);
+      // And the memory does NOT advance, which is what keeps the move readable next time.
+      expect(sync?.cursorThreadId).toBe('thread-1');
+    });
+
+    it('follows on the next reading, once the lane is free', async () => {
+      const here = thread({ id: 'thread-1', closed: true });
+      const { deps } = world({
+        cursor: 'thread-2',
+        threads: [here, thread({ id: 'thread-2' })],
+      });
+
+      // Exactly what the held reading above handed back: the page is now holding a closed thread,
+      // and its memory of the cursor is still itself.
+      const sync = await syncCursor(deps, {
+        open: open({ thread: here, closed: true }),
+        lastCursorThreadId: 'thread-1',
+      });
+
+      expect(sync?.moved?.id).toBe('thread-2');
+      expect(sync?.cursorThreadId).toBe('thread-2');
+    });
   });
 
   it('does nothing at all when neither the cursor nor the thread moved', async () => {
