@@ -23,8 +23,21 @@ export function MarkdownView(props: {
   source: string;
   width: number;
   streaming?: boolean;
+  /**
+   * The colours the HOST is drawing in, for a block that renders prose over a slab of its own — the
+   * harness's. `proseSyntaxStyle` deliberately leaves `default` unstyled so prose inherits its
+   * foreground, and a wrapped line has to paint the slab under itself rather than leave a hole in
+   * it, so both have to reach `<markdown>` explicitly. Omitted everywhere else, which is the
+   * transcript's normal case: transparent over whatever the terminal already has.
+   */
+  fg?: string;
+  bg?: string;
 }): React.ReactNode {
   const segments = useMemo(() => segmentMarkdown(props.source), [props.source]);
+  const colours = {
+    ...(props.fg === undefined ? {} : { fg: props.fg }),
+    ...(props.bg === undefined ? {} : { bg: props.bg }),
+  };
 
   // A fence and a table are structural: a caret appended to either would be lexed as content — a
   // last line of code, a fourth column — instead of drawn after it. Those two keep the caret on
@@ -46,6 +59,7 @@ export function MarkdownView(props: {
             markdown={segment.markdown}
             width={props.width}
             streaming={live}
+            {...colours}
           />
         ) : segment.kind === "fence" ? (
           <FencedBlock
@@ -61,6 +75,7 @@ export function MarkdownView(props: {
             syntaxStyle={proseSyntaxStyle}
             width={props.width}
             streaming={live}
+            {...colours}
           />
         );
       })}
@@ -77,6 +92,8 @@ function TableBlock(props: {
   markdown: string;
   width: number;
   streaming?: boolean;
+  fg?: string;
+  bg?: string;
 }): React.ReactNode {
   const metrics = useMemo(() => measureTable(props.markdown), [props.markdown]);
   const table = (
@@ -87,6 +104,8 @@ function TableBlock(props: {
       width={metrics.columns}
       flexShrink={0}
       streaming={props.streaming}
+      {...(props.fg === undefined ? {} : { fg: props.fg })}
+      {...(props.bg === undefined ? {} : { bg: props.bg })}
     />
   );
 

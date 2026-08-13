@@ -14,6 +14,15 @@ export const theme = {
   accent: ACCENT,
   dim: "gray",
   hover: "#e6e0da",
+  /**
+   * Behind a hovered, clickable region.
+   *
+   * A wash rather than a brighter foreground because the region is a whole BLOCK — a tool group and its
+   * rows, a thinking block and its body — and recolouring every line's text would fight the dim/measure
+   * distinction those lines already carry. It also has to run the full row width, or the highlight reads
+   * as a selection of the words rather than of the thing a click acts on.
+   */
+  hoverBg: "#2b2724",
   error: "red",
   warn: "yellow",
   ok: "green",
@@ -33,6 +42,20 @@ export const theme = {
    */
   userBg: "#332e2a",
   userFg: "#f0e9e3",
+  /**
+   * Atlas's own injected turns take a slab for the same reason the user's does — "who said this" is
+   * a question the eye should answer before it reads a word, and a hand-off runs for pages, so the
+   * answer has to hold for the whole block rather than sit on its first line.
+   *
+   * Hue is what separates the two, not weight: this is the accent's own hue taken down to slab
+   * darkness, where `userBg` is a near-neutral warm grey. Same loudness, different temperature, so
+   * neither speaker reads as more important than the other and the pair can never be confused for
+   * one. The accent itself runs down the left edge as a rule — the job a per-line `┃` used to do one
+   * character at a time, which is what kept the body a column of prefixed lines rather than a block
+   * that could be laid out.
+   */
+  harnessBg: "#3d2318",
+  harnessFg: "#f3e3d8",
   /**
    * The composer caret. Inverse video looked right in theory and isn't: it hands both colours to the
    * terminal, which on a dark theme paints a white cell under white text and swallows the character
@@ -117,12 +140,6 @@ export const glyph = {
   queued: "⤷",
   /** Account swap — a dim inline note, deliberately NOT a seam. */
   swap: "⤿",
-  /**
-   * Atlas's own voice: a rule down the left of an injected message. A rule rather than a bullet
-   * because a harness message can run for pages — a hand-off does — and the eye needs to be able to
-   * see where Atlas stops speaking without reading to find out.
-   */
-  harness: "┃",
   selected: "❯",
   active: "⏺",
   available: "○",
