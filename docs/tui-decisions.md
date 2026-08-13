@@ -47,23 +47,68 @@ code cannot show you a road not taken.
    reimplement SDK behaviour, never mirror SDK types into `domain/`. A thin adapter *is* the
    update strategy — when an SDK moves, the blast radius is two files and one fixture.
 
-9. **Atlas's system prompt is APPENDED to Claude Code's, never substituted for it.** The SDK
-   reads a bare `systemPrompt` string as a *custom* prompt and drops the `claude_code` preset
-   entirely; the preset form (`{ type: 'preset', preset: 'claude_code', append }`) keeps it and
-   adds to it. Atlas's own prompt is three short sections about the harness — the envelope
-   vocabulary, the canary, the phase brief — and none of them says anything about how to use
-   `Edit`, how to read a repository, or what the working directory is. Handing an agent those
-   three sections *instead of* the preset takes the coding agent away and leaves the etiquette,
-   and it does so quietly: the session still answers and still calls tools, it is just worse.
+9. **Navigation is a ladder, not a hierarchy you walk.** Three decisions, one reasoning: the depth
+   of the stack must equal the depth of the thing.
 
-   This is a v1-scale decision, not a permanent one. It is right precisely *because* Atlas's own
-   prompt is currently small. If the harness ever grows a full operator manual of its own —
-   enough to stand alone and enough to start contradicting the preset — the argument for
-   appending weakens and this should be revisited deliberately rather than inherited.
+   - **The job list is the root, and a project is a SCOPE on it, not a level above it.** One frame,
+     ever; `←` widens it and the switcher rewinds to it. Pushing a scoped list on top of the
+     unscoped one gave two frames that drew identically, so `p` → project produced the same header,
+     the same rows, and a different `←` — a page that lied about where you were. It also put a `‹`
+     on the root, whose `←` had nothing to pop and therefore did nothing.
+   - **The job's own page is ABOVE the conversation, not beneath it.** Opening a job used to push
+     both, so `←` out of a conversation revealed the job on the way past. That made one key mean
+     "leave" everywhere in the app and "manage this job" in exactly one place, and those are
+     opposite intentions — the key you reach for to walk away from a working agent should not be the
+     one that stops to ask you about phases. `→` on an empty composer asks for the job's page now,
+     and `←` is uniformly "the frame below".
+   - **A back affordance appears only where the key goes somewhere.** `‹` is drawn from whether
+     there is anywhere to go, never unconditionally. A promise the keyboard cannot honour is worse
+     than silence, exactly as with a hint line naming a key that does nothing.
 
-   One deliberate exception, in `oneShotOptions`: an ask is the model as a function and is given
-   nothing it does not need, so loading a coding agent's whole manual to title a job would be the
-   opposite policy for no gain.
+   The first-run empty state falls out of the same rule: the unscoped list cannot offer `+ new job`
+   (a job needs somewhere to live), so it offers `+ pick a project…` rather than a blank page under
+   a hint line of verbs that all need a row to act on.
+
+10. **Atlas's system prompt is APPENDED to Claude Code's, never substituted for it.** The SDK
+    reads a bare `systemPrompt` string as a *custom* prompt and drops the `claude_code` preset
+    entirely; the preset form (`{ type: 'preset', preset: 'claude_code', append }`) keeps it and
+    adds to it. Atlas's own prompt is three short sections about the harness — the envelope
+    vocabulary, the canary, the phase brief — and none of them says anything about how to use
+    `Edit`, how to read a repository, or what the working directory is. Handing an agent those
+    three sections *instead of* the preset takes the coding agent away and leaves the etiquette,
+    and it does so quietly: the session still answers and still calls tools, it is just worse.
+
+    This is a v1-scale decision, not a permanent one. It is right precisely *because* Atlas's own
+    prompt is currently small. If the harness ever grows a full operator manual of its own —
+    enough to stand alone and enough to start contradicting the preset — the argument for
+    appending weakens and this should be revisited deliberately rather than inherited.
+
+    One deliberate exception, in `oneShotOptions`: an ask is the model as a function and is given
+    nothing it does not need, so loading a coding agent's whole manual to title a job would be the
+    opposite policy for no gain.
+
+11. **A job takes a worktree through four doors, and all four write `Job.workspacePath`.** Job
+    creation, the build confirm, `enter_worktree`, and adoption from the jobs list. That field is
+    the entire justification for Atlas owning a worktree verb at all when Claude Code ships a
+    native one: the native tool relocates the work and tells Atlas nothing, leaving the job drawn
+    under `⌂ here`, its later turns running in the project tree, and `ship_pr` pointed at the
+    wrong branch.
+
+    Door three went unbuilt for a while and the failure was exactly that, in the wild: asked for a
+    worktree, the agent shelled out to `git worktree add`, and the job kept working in the tree the
+    worktree existed to keep it out of. **A verb an agent needs and does not have is not an absent
+    feature — it is a shell command with no bookkeeping.**
+
+    Two shapes follow from where the tool sits:
+
+    - **It mints; it never adopts.** `WorktreeService.adopt` exists, but choosing which *existing*
+      tree to stand in is a human move made from the jobs list. An agent picking for itself would
+      be picking, with no way to tell, the tree Dennis has an editor open on.
+    - **It cannot move the turn that calls it.** A turn's `cwd` is handed to a subprocess already
+      running in it. So the reply's main content is the warning — *stop writing, you are not there
+      yet* — and the move lands at the next turn boundary, where `syncCursor` notices
+      `workspacePath` changed and reopens the conversation against the new directory. Without that
+      last step the tool would fix the record and reproduce the original bug one layer up.
 
 ## Standing prohibition
 

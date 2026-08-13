@@ -25,12 +25,16 @@ function thread(args: { id: string; closed?: boolean }): Thread {
   } as unknown as Thread;
 }
 
-function world(args: { cursor: string; threads: Thread[] }) {
+function world(args: { cursor: string; threads: Thread[]; workspacePath?: string | null }) {
   const loaded: string[] = [];
   const deps = {
     jobRepository: {
       async findById(): Promise<Job> {
-        return { ...JOB, activeThreadId: args.cursor };
+        return {
+          ...JOB,
+          activeThreadId: args.cursor,
+          workspacePath: args.workspacePath ?? null,
+        };
       },
     },
     threadRepository: {
@@ -66,7 +70,12 @@ function world(args: { cursor: string; threads: Thread[] }) {
     },
     threadSeamService: { async toolsFor() { return []; } },
     stores: {
-      hydrate: () => ({ setContextReading: () => undefined }),
+      // `setNoAccount` is only reached when the refreshed thread is OPEN — the closed-thread case
+      // skips it, which is why a fake without it survived until a live thread had to be re-opened.
+      hydrate: () => ({
+        setContextReading: () => undefined,
+        setNoAccount: () => undefined,
+      }),
     },
   } as unknown as ConversationDeps;
 
@@ -153,5 +162,83 @@ describe('syncCursor', () => {
 
     expect(sync).toEqual({ cursorThreadId: 'thread-1', moved: null, refreshed: null });
     expect(loaded).toEqual([]);
+  });
+
+  /**
+   * The other snapshot that can go stale under an open conversation: WHERE ITS TURNS RUN.
+   *
+   * `enter_worktree` writes `Job.workspacePath` from inside a tool call, and the conversation is
+   * holding the directory it opened with. Without this the tool would create the worktree and every
+   * later turn would keep running in the project tree — which is the bug the tool was built to fix,
+   * moved one layer up and made harder to see.
+   */
+  describe('a worktree taken mid-turn', () => {
+    it('re-opens the conversation against the new directory', async () => {
+      const here = thread({ id: 'thread-1' });
+      const { deps, loaded } = world({
+        cursor: 'thread-1',
+        threads: [here],
+        workspacePath: '/repo/.worktrees/drain-a1b2c3d4',
+      });
+
+      const sync = await syncCursor(deps, {
+        // Opened before the tool call, so it still points at the project tree.
+        open: open({ thread: here, closed: false }),
+        lastCursorThreadId: 'thread-1',
+      });
+
+      expect(sync?.refreshed?.cwd).toBe('/repo/.worktrees/drain-a1b2c3d4');
+      // The tool context is rebuilt with it, which is what makes `ship_pr` reach the right tree.
+      expect(loaded).toEqual(['sessions']);
+    });
+
+    /**
+     * The refreshed conversation must carry the NEW job row. Holding the old one would leave
+     * `workspacePath` disagreeing with `cwd` for ever, and this comparison would re-open the
+     * conversation at every turn boundary from then on.
+     */
+    it('settles — the refreshed conversation does not refresh again', async () => {
+      const here = thread({ id: 'thread-1' });
+      const world1 = world({
+        cursor: 'thread-1',
+        threads: [here],
+        workspacePath: '/repo/.worktrees/drain-a1b2c3d4',
+      });
+      const first = await syncCursor(world1.deps, {
+        open: open({ thread: here, closed: false }),
+        lastCursorThreadId: 'thread-1',
+      });
+      if (!first?.refreshed) throw new Error('the first sync did not refresh');
+
+      const world2 = world({
+        cursor: 'thread-1',
+        threads: [here],
+        workspacePath: '/repo/.worktrees/drain-a1b2c3d4',
+      });
+      const second = await syncCursor(world2.deps, {
+        open: first.refreshed,
+        lastCursorThreadId: 'thread-1',
+      });
+
+      expect(second?.refreshed).toBeNull();
+      expect(world2.loaded).toEqual([]);
+    });
+
+    /**
+     * A job that never took a worktree records null, and null is not a relocation back to the
+     * project path — it is the ordinary state of most jobs, whose cwd is already the project path.
+     */
+    it('leaves a job with no worktree exactly where it is', async () => {
+      const here = thread({ id: 'thread-1' });
+      const { deps, loaded } = world({ cursor: 'thread-1', threads: [here], workspacePath: null });
+
+      const sync = await syncCursor(deps, {
+        open: open({ thread: here, closed: false }),
+        lastCursorThreadId: 'thread-1',
+      });
+
+      expect(sync?.refreshed).toBeNull();
+      expect(loaded).toEqual([]);
+    });
   });
 });

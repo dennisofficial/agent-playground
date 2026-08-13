@@ -1,15 +1,20 @@
 /**
- * The navigation stack, as four pure functions.
+ * The navigation stack, as five pure functions.
  *
  * Generic over the frame because `Route` names types from `app/` and `domain/` imports nothing —
  * the stack does not care what a page is, only that there is an order to them. Here rather than in
- * the hook so the one rule worth asserting can be asserted without a terminal: opening a job pushes
- * TWO frames and `pop` unwinds them one at a time.
+ * the hook so the rules worth asserting can be asserted without a terminal.
  *
- * **Descending may skip levels; ascending never does.** That asymmetry is the whole navigation
- * design. Jumping straight to the conversation is what makes a tile feel like one job rather than a
- * hierarchy to walk, and leaving `threads` underneath is what makes `←` mean "manage this job"
- * instead of "leave it". Neither needs a special case, because the skip happens on the way IN.
+ * **Every frame is one step, and `←` always means the frame below.** The stack is at most three
+ * deep — the job list, the conversation you opened from it, and the job's own page above that —
+ * and no page is ever entered by pushing two frames at once. An earlier design opened a job by
+ * pushing `threads` AND `conversation` so that `←` revealed the job's page on the way out; it made
+ * one keypress mean "leave" on every other page and "manage this job" on that one, which is exactly
+ * the ambiguity this shape removes. Descending to the job's page is now its own key.
+ *
+ * **Scope is state, not depth.** There is exactly one job-list frame and it is the root. Widening
+ * from one project to every project REPLACES it, and the project switcher `resetTo`s back down to
+ * it, so choosing a project can never leave two identical-looking lists stacked on each other.
  */
 
 /**
@@ -28,6 +33,19 @@ export function popFrame<T>(stack: readonly T[]): T[] {
 /** A redirect rather than a step — swap where you are without recording that you were here. */
 export function replaceFrame<T>(stack: readonly T[], frame: T): T[] {
   return [...stack.slice(0, -1), frame];
+}
+
+/**
+ * Throw the stack away and stand on one frame.
+ *
+ * What choosing a project does. The switcher is reached from a list and lands you on a list, so it
+ * is not a level you passed through and must not be left behind you — pushing the new list instead
+ * would put a page identical to the one you are looking at two frames underneath it, which is the
+ * whole confusion. Rewinding is also how the ONE-job-list invariant is kept: there is nothing left
+ * for a second one to stack on.
+ */
+export function resetTo<T>(frame: T): T[] {
+  return [frame];
 }
 
 /**
@@ -53,6 +71,9 @@ export function toggleFrame<T>(
  * What a tile does when a job is taken from it: it may be looking at the conversation, or at the
  * job's own page, and neither knows how deep it is. Popping a fixed number of frames would be a
  * guess, and a wrong guess strands you on a page whose job somebody else is now driving.
+ *
+ * Also how switching threads lands: unwind to the list, then push the conversation you chose. One
+ * conversation frame in the stack, always — by structure rather than by a rule anyone has to keep.
  */
 export function popToName<T>(
   stack: readonly T[],

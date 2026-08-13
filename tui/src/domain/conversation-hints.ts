@@ -20,7 +20,7 @@ export type ConversationHintState = {
 
 export function conversationHints(state: ConversationHintState): string {
   if (state.shortcutsOpen) return '? close';
-  if (state.threadClosed) return '← back · ctrl+h threads';
+  if (state.threadClosed) return '← back · →/ctrl+h threads';
   // Ahead of `running`: the armed prompt is a question the user just asked, and answering it late is
   // the same as not answering it.
   if (state.clearArmed) return 'esc again to clear the draft';

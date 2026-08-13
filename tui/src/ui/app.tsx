@@ -96,10 +96,11 @@ export function App(props: {
       .resolveLaunch({ explicitPath: props.explicitPath, cwd: props.cwd })
       .then((row) => {
         if (!row) return;
-        // Pushed onto the unscoped root, not replacing it: `←` out of the scoped list widens back
-        // to every job rather than dead-ending at the repository you happened to launch in.
+        // REPLACES the root rather than stacking on it. `←` still widens to every job — it swaps the
+        // scope on this one frame — and the list you launched into is therefore the bottom of the
+        // stack, with no `‹` promising an exit that `pop` would have to refuse.
         focus.current.project = row.id;
-        nav.push({ name: "jobs", project: row });
+        nav.replace({ name: "jobs", project: row });
       })
       .catch((e: Error) => setError(e.message))
       .finally(() => setBooting(false));
@@ -138,26 +139,24 @@ export function App(props: {
         // did not gets `project.path` back, exactly as before.
         const cwd = workspaceService.cwdFor({ job, projectPath: project.path });
         const open = await conversationService.openJob(job, cwd);
-        const jobPage = {
-          name: "threads",
-          project,
-          job,
-          cwd,
-          currentThreadId: open.thread.id,
-        } as const;
-        // TWO frames, landing on the conversation. Descending skips the thread list because you
-        // almost always want the live thread; ascending walks back through it because that is where
-        // the job itself is managed. Leaving it underneath is what makes `←` mean "manage this job"
-        // rather than "leave it", and `pop` unwinds the circle with no special case anywhere.
+        // ONE frame: the conversation, which is what opening a job means. The job's own page is
+        // above this, a `→` away, not underneath it — so `←` from here is the list you came from,
+        // the same as `←` on every other page.
         //
-        // ONE frame where the cursor thread has closed, which is what a shipped job looks like:
-        // there is no live thread to prefer, and landing on a read-only record would put a
-        // transcript between Dennis and the two verbs that re-enter the job. Both live on this page.
+        // Unless the cursor thread has CLOSED, which is what a shipped job looks like: there is no
+        // live thread to land on, and a read-only transcript would stand between Dennis and the two
+        // verbs that re-enter the job. Both live on the job's page, so open that instead.
         if (open.closed) {
-          nav.push(jobPage);
+          nav.push({
+            name: "threads",
+            project,
+            job,
+            cwd,
+            currentThreadId: open.thread.id,
+          });
           return;
         }
-        nav.push(jobPage, { name: "conversation", project, open });
+        nav.push({ name: "conversation", project, open });
       } catch (e) {
         setError((e as Error).message);
       }
@@ -170,6 +169,25 @@ export function App(props: {
   const leaveConversation = useCallback(() => {
     void conversationService.leave().finally(() => nav.pop());
   }, [conversationService, nav]);
+
+  /**
+   * Up from the conversation into the job itself — phases, threads, rename, worktree.
+   *
+   * The route is built HERE from the conversation rather than carried on it, so the job's page always
+   * opens on the thread you are actually looking at. It used to be stamped when the job opened and
+   * re-stamped on every thread switch; a frame that has not been pushed yet cannot go stale.
+   */
+  const openThreads = useCallback(() => {
+    if (nav.route.name !== "conversation") return;
+    const { project, open } = nav.route;
+    nav.push({
+      name: "threads",
+      project,
+      job: open.job,
+      cwd: open.cwd,
+      currentThreadId: open.thread.id,
+    });
+  }, [nav]);
 
   /**
    * Switch the conversation to another thread of the same job. Neither side's turn is disturbed:
@@ -187,13 +205,13 @@ export function App(props: {
           thread,
           route.cwd,
         );
-        // Replace THEN push: the thread list stays underneath, but re-stamped with the thread you
-        // just chose, so coming back lands the cursor where you actually are. A plain push would
-        // leave it naming the thread you opened the job on.
-        //
-        // One conversation frame in the stack, always — guaranteed here by structure rather than by
-        // a special stack op: this page is only ever reached by popping the conversation off first.
-        nav.replace({ ...route, currentThreadId: thread.id });
+        // Unwind to the list, then descend into the thread you chose. Choosing a thread is not a step
+        // DEEPER than the job's page — it is the same one move as opening the job, made again with a
+        // different thread — so the stack it leaves behind has to be the same one opening the job
+        // leaves: list, then conversation. Rewinding is also what makes the two arrival paths agree,
+        // since this page is reached both from a conversation and (for a shipped job) straight from
+        // the list, and popping a fixed count would be right for only one of them.
+        nav.popTo("jobs");
         nav.push({ name: "conversation", project: route.project, open });
       } catch (e) {
         setError((e as Error).message);
@@ -233,16 +251,20 @@ export function App(props: {
   /**
    * Move a job out of the project path and into its own worktree, at any point in its life.
    *
-   * The route is REPLACED rather than left alone: `cwd` is where the next thread opened from this
-   * page will run, and after this it is somewhere else. Leaving the old value would open the next
-   * thread in the very tree the worktree was taken to stay out of.
+   * `cwd` is where the next thread opened from this page will run, so this page is re-stamped with
+   * the new tree — leaving the old value would open the next thread in the very tree the worktree was
+   * taken to stay out of. The conversation UNDERNEATH carries the same stale path and cannot be
+   * re-stamped from here, so the stack is rebuilt instead of replaced: taking a worktree is a rare,
+   * deliberate, once-per-job act, and dropping you onto the job's page after it is both honest about
+   * what moved and exactly where the verbs you want next already are.
    */
   const enterWorktree = useCallback(
     async (route: ThreadsRoute) => {
       try {
         const workspace = await workspaceService.enterWorktree(route.job.id);
         const job = await workspaceService.findJob(route.job.id);
-        nav.replace({
+        nav.popTo("jobs");
+        nav.push({
           ...route,
           ...(job ? { job } : {}),
           cwd: workspace.workspacePath,
@@ -320,32 +342,54 @@ export function App(props: {
         {route.name === "projects" ? (
           <ProjectsPage
             focusId={focus.current.project}
+            // A switcher, not a level: this RESETS to the scoped list rather than pushing it, so
+            // choosing the project you are already in cannot leave a second copy of the list you are
+            // looking at two frames below it. That was the whole of the `p` weirdness.
             onOpen={(project) => {
               focus.current.project = project.id;
-              nav.push({ name: "jobs", project });
+              nav.reset({ name: "jobs", project });
             }}
+            onBack={nav.pop}
           />
         ) : null}
 
         {route.name === "jobs" ? (
           <JobsPage
+            // Scope changes by REPLACE, so this page stays mounted across one — and its cursor, its
+            // filter and its shelf all belong to the list it was showing. Remount rather than reset
+            // four pieces of state and have to remember the fifth.
+            key={route.project?.id ?? "all"}
             project={route.project}
             focusId={focus.current.job}
             onOpen={(job) => void openJob(job, route.project)}
             // Unreachable unscoped — the page hides `new job` when it has no project to create it
             // in — but a job has to be created SOMEWHERE, and the check is what says so.
-            onNew={() => {
-              if (route.project) void handleNew(route.project);
+            onNew={(adopt) => {
+              if (route.project) void handleNew(route.project, adopt);
             }}
-            onProjects={() => nav.push({ name: "projects" })}
-            onBack={nav.pop}
+            // Toggle rather than push, the same as `ctrl+a`: `p` twice returns you to the list
+            // instead of stacking a switcher you then have to escape out of.
+            onProjects={() => nav.toggle({ name: "projects" })}
+            // `←` on a scoped list WIDENS it — one frame, one scope swap. At the unscoped list there
+            // is nothing wider, so the key does nothing and the header draws no `‹` to suggest it
+            // might. Popping here would have been the one `←` in the app with nowhere to go.
+            onBack={() => {
+              if (route.project) nav.replace({ name: "jobs", project: null });
+            }}
           />
         ) : null}
 
         {route.name === "new-job" ? (
           <NewJobPage
             projectName={route.project.name}
-            onSubmit={(text) => handleStart({ project: route.project, text })}
+            worktree={route.adopt?.branch}
+            onSubmit={(text) =>
+              handleStart({
+                project: route.project,
+                text,
+                ...(route.adopt ? { adopt: route.adopt } : {}),
+              })
+            }
             onCancel={nav.pop}
           />
         ) : null}
@@ -354,10 +398,10 @@ export function App(props: {
           <ConversationPage
             open={route.open}
             onBack={leaveConversation}
-            // The same door as `←`, not a second one: the thread list is already the frame beneath
-            // this. Pushing another would stack two of them. It keeps its own key because the
-            // TRIGGERS differ — `←` only leaves on an empty composer, `ctrl+h` always does.
-            onThreads={leaveConversation}
+            // A different door from `←`, and now a deeper one: the job's page is above this, so this
+            // pushes where `←` pops. Two keys reach it because the TRIGGERS differ — `→` only
+            // descends on an empty composer, `ctrl+h` always does.
+            onThreads={openThreads}
           />
         ) : null}
 

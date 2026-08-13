@@ -16,6 +16,7 @@ import type { MessageRepository } from '../../store/message.repository.js';
 import { PhaseBriefService } from '../phase-brief.service.js';
 import { ThreadSeamService } from '../thread-seam.service.js';
 import { fakeShipService } from './ship.fixture.js';
+import { fakeWorktreeService } from './worktree.fixture.js';
 import { fakeTaskService } from './tasks.fixture.js';
 import type { SessionManagerService } from '../session-manager.service.js';
 import type { SessionRepository } from '../../store/session.repository.js';
@@ -86,6 +87,7 @@ function conversation(run: (args: RunTurnArgs) => Promise<void>) {
       turnRunnerService,
       fakeTaskService(),
       fakeShipService(),
+      fakeWorktreeService(),
   ),
     new ConversationStoreRegistry(),
   );
@@ -131,6 +133,8 @@ describe('creating a job', () => {
   function build() {
     const seeded: { job: Job; thread: Thread; cwd: string }[] = [];
     const opened: EThreadRole[] = [];
+    const adopted: { branch: string; workspacePath: string }[] = [];
+    const entered: string[] = [];
 
     const workspace = new WorkspaceService(
       {} as unknown as ProjectRepository,
@@ -159,11 +163,19 @@ describe('creating a job', () => {
           seeded.push(args);
         },
       } as unknown as ConversationService,
-      { cwdFor: (): string => '/repo' } as unknown as WorktreeService,
+      {
+        cwdFor: (): string => '/repo',
+        async adopt(args: { branch: string; workspacePath: string }): Promise<void> {
+          adopted.push({ branch: args.branch, workspacePath: args.workspacePath });
+        },
+        async enter(args: { job: Job }): Promise<void> {
+          entered.push(args.job.id);
+        },
+      } as unknown as WorktreeService,
       {} as unknown as GitService,
     );
 
-    return { workspace, seeded, opened };
+    return { workspace, seeded, opened, adopted, entered };
   }
 
   it('opens one generic thread and seeds NOTHING — the human speaks first in a job', async () => {
@@ -184,5 +196,48 @@ describe('creating a job', () => {
     // the job row was read before `openThread` stamped `activeThreadId` onto it.
     expect(job.id).toBe(JOB.id);
     expect(thread.id).toBe(THREAD.id);
+  });
+
+  /**
+   * The fourth door onto a branch. `worktree: true` MINTS one and names it `atlas/…`; `adopt` stands
+   * the job in a tree that was already there, on a branch somebody else named.
+   */
+  it('adopts an existing worktree instead of minting one', async () => {
+    const { workspace, adopted, entered } = build();
+
+    await workspace.createJob({
+      projectId: 'project-1',
+      title: 'risk matrix',
+      adopt: { branch: 'dennis/eng-203', workspacePath: '/repo/.worktrees/eng-203' },
+    });
+
+    expect(adopted).toEqual([
+      { branch: 'dennis/eng-203', workspacePath: '/repo/.worktrees/eng-203' },
+    ]);
+    // Not both. Minting a second worktree for a job that was handed one is the bug this door exists
+    // to avoid, and `enter()` would have named it `atlas/risk-matrix`.
+    expect(entered).toEqual([]);
+  });
+
+  it('takes adoption over `worktree: true` when a caller passes both', async () => {
+    // A caller naming a specific worktree has already answered the question `worktree: true` asks.
+    const { workspace, adopted, entered } = build();
+
+    await workspace.createJob({
+      projectId: 'project-1',
+      title: 'risk matrix',
+      worktree: true,
+      adopt: { branch: 'dennis/eng-203', workspacePath: '/repo/.worktrees/eng-203' },
+    });
+
+    expect(adopted).toHaveLength(1);
+    expect(entered).toEqual([]);
+  });
+
+  it('mints one when asked for a worktree with nothing to adopt', async () => {
+    const { workspace, adopted, entered } = build();
+    await workspace.createJob({ projectId: 'project-1', title: 'x', worktree: true });
+    expect(adopted).toEqual([]);
+    expect(entered).toEqual(['job-1']);
   });
 });

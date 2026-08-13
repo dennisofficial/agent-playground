@@ -16,6 +16,7 @@ import type { PhaseBriefService } from '../phase-brief.service.js';
 import type { SessionManagerService } from '../session-manager.service.js';
 import { ThreadSeamService } from '../thread-seam.service.js';
 import { fakeShipService } from './ship.fixture.js';
+import { fakeWorktreeService } from './worktree.fixture.js';
 import { fakeTaskService } from './tasks.fixture.js';
 import { advanceThreadTool } from '../tools/advance-thread.tool.js';
 import type { ToolContext } from '../tools/tool.js';
@@ -116,6 +117,7 @@ function build() {
     } as unknown as TurnRunnerService,
     fakeTaskService(),
     fakeShipService(),
+    fakeWorktreeService(),
   );
 
   const ctx: ToolContext = {
@@ -198,6 +200,10 @@ describe('advance_thread', () => {
       'task_update',
       'task_list',
       'rotate',
+      // Same argument, and the same fixture wiring: `enter_worktree` exists because the seam holds a
+      // `WorktreeService`. `ship_pr` is absent because this successor is not in `ci` — the one tool
+      // here that is gated on phase, which is the contrast that makes this list worth asserting.
+      'enter_worktree',
     ]);
   });
 

@@ -6,6 +6,7 @@ import {
 } from "../../domain/attention.js";
 import { fitColumn } from "../../domain/list-columns.js";
 import { formatWhen, jobAttention, type JobsLayout } from "../../domain/jobs-list.js";
+import { EWorkspaceKind, type WorktreeGroup } from "../../domain/worktree.js";
 import type { JobRow } from "../../store/job.repository.js";
 import { Caret } from "./list-parts.js";
 import { courtColour } from "../court.js";
@@ -44,6 +45,42 @@ export function JobGroupHeader(props: {
           {statusCell({ attention: props.attention, frame: props.frame })}
         </span>
       ) : null}
+    </text>
+  );
+}
+
+/**
+ * One worktree of the scoped project, above the jobs standing in it.
+ *
+ * It carries no condition, unlike a project header, and that is not an omission: a project is a set
+ * of jobs and can meaningfully want you, but a worktree is a *place*. Rolling its jobs' verbs up here
+ * would say "this directory owes you a reply", which is not a thing a directory can do.
+ *
+ * `no jobs` is the whole reason a group can be empty at all: a LINKED worktree nothing is working in
+ * is a branch left behind by a deleted job, a tree checked out by hand, or work some other tool
+ * relocated — and before this header existed there was nowhere in Atlas it could appear. The main
+ * worktree is exempt, because it is always drawn and its emptiness is not a leak: a project whose
+ * every job took a worktree is working exactly as designed, and saying `no jobs` under the heading
+ * that names where you are standing would read as a problem instead of a fact.
+ */
+export function WorktreeGroupHeader(props: {
+  group: WorktreeGroup;
+  /**
+   * Undefined for a heading the cursor cannot reach. It takes the SAME four-cell caret gutter either
+   * way — an empty worktree is selectable and its neighbours are not, and a caret that only some rows
+   * reserve space for makes the whole column jump as you arrow past them.
+   */
+  selected?: boolean;
+}): React.ReactNode {
+  const missing = props.group.kind === EWorkspaceKind.missing;
+  const leak = props.group.jobCount === 0 && !props.group.here;
+  return (
+    <text>
+      <Caret on={props.selected === true} />
+      <span fg={missing ? theme.warn : theme.dim}>
+        {props.group.glyph} {props.group.label}
+      </span>
+      {leak ? <span fg={theme.dim}>{"  no jobs"}</span> : null}
     </text>
   );
 }

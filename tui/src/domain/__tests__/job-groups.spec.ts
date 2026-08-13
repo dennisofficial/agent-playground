@@ -9,10 +9,14 @@ const job = (id: string, projectId: string): Fake => ({
   projectName: projectId.toUpperCase(),
 });
 
+// `groupJobs` never emits a worktree entry — that is the other axis, in `worktree-groups.spec.ts` —
+// so one appearing here is a bug in the axis choice rather than a shape to render.
 const ids = (entries: readonly JobEntry<Fake>[]): string[] =>
-  entries.map((entry) =>
-    entry.kind === EJobEntry.header ? `# ${entry.projectName}` : entry.job.id,
-  );
+  entries.map((entry) => {
+    if (entry.kind === EJobEntry.header) return `# ${entry.projectName}`;
+    if (entry.kind === EJobEntry.worktree) return `?! ${entry.group.label}`;
+    return entry.job.id;
+  });
 
 describe('groupJobs, ungrouped', () => {
   it('emits no headers at all', () => {

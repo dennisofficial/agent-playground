@@ -2,6 +2,7 @@ import { visibleTools } from '../../domain/tool-surface.js';
 import { advancePhaseTool } from './advance-phase.tool.js';
 import { advanceThreadTool } from './advance-thread.tool.js';
 import { completeThreadTool } from './complete-thread.tool.js';
+import { enterWorktreeTool } from './enter-worktree.tool.js';
 import { openThreadTool } from './open-thread.tool.js';
 import { rotateTool } from './rotate.tool.js';
 import { shipPrTool } from './ship-pr.tool.js';
@@ -35,6 +36,7 @@ const BUILDERS: readonly ((args: {
   taskListTool,
   rotateTool,
   shipPrTool,
+  enterWorktreeTool,
 ];
 
 /**

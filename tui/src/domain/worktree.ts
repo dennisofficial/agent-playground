@@ -55,6 +55,21 @@ export function branchNameFor(args: { title: string; jobId: string }): string {
   return `${BRANCH_PREFIX}${worktreeNameFor(args)}`;
 }
 
+/**
+ * Did Atlas make this branch, or did somebody else?
+ *
+ * This is what `BRANCH_PREFIX` has always been FOR — "so a stray branch is identifiable months
+ * later" — now asked as a question. It is the difference between a worktree Atlas may remove and one
+ * it may only forget: a job adopted into `dennis/eng-203-…` is standing in a tree that existed before
+ * it and must outlive it, and no other fact on the row distinguishes the two.
+ *
+ * Deliberately a prefix test on the BRANCH rather than on the directory. A worktree can be moved on
+ * disk, and `.worktrees/` is only a convention; the branch name is what Atlas actually minted.
+ */
+export function isAtlasBranch(branch: string | null): boolean {
+  return branch !== null && branch.startsWith(BRANCH_PREFIX);
+}
+
 export function worktreePathFor(args: {
   projectPath: string;
   title: string;
@@ -69,6 +84,37 @@ export function worktreePathFor(args: {
  */
 export function jobCwd(args: { projectPath: string; workspacePath: string | null }): string {
   return args.workspacePath ?? args.projectPath;
+}
+
+/**
+ * What `enter_worktree` says back, and the one thing it must not leave out: **this turn is still
+ * standing in the old tree.**
+ *
+ * A turn's `cwd` is fixed when the turn starts — the engine is handed a directory and a subprocess
+ * is already running in it — so nothing this tool does can relocate the agent that called it. The
+ * move lands at the next turn boundary, when `syncCursor` notices `Job.workspacePath` changed and
+ * reopens the conversation against the new directory.
+ *
+ * Saying so is not politeness. An agent told only "you have a worktree at X" will carry straight on
+ * editing through relative paths that still resolve into the project tree, and every one of those
+ * writes lands in the tree the worktree was taken to stay out of — the original bug, reproduced by
+ * the tool built to fix it. Hence the instruction to STOP, stated before the address.
+ */
+export function worktreeTakenReply(args: {
+  branch: string;
+  workspacePath: string;
+  /** False when the job was already standing here — nothing moved, so nothing is stale. */
+  moved: boolean;
+}): string {
+  const where = `\`${args.workspacePath}\`, on branch \`${args.branch}\``;
+  if (!args.moved) {
+    return `Already in this worktree: ${where}. Nothing moved, and your working directory is already it — carry on.`;
+  }
+  return `Worktree taken: ${where}.
+
+**You are not in it yet.** This turn's working directory is still the project tree, and it cannot be changed underneath a running turn — the move takes effect on your next turn, when Atlas reopens this thread against the new directory.
+
+So: **make no further edits this turn.** Finish by saying what you were about to do, and do it next turn, where relative paths will resolve inside the worktree. Anything you write before then lands in the tree this worktree was taken to keep you out of.`;
 }
 
 function slugify(title: string): string {
@@ -91,6 +137,33 @@ export type WorkspaceState = {
   kind: EWorkspaceKind;
   glyph: string;
   label: string;
+};
+
+/**
+ * One worktree of a project, as a heading over the jobs standing in it.
+ *
+ * It is the SAME vocabulary a single job's page uses, deliberately: `⑂` means the same thing above a
+ * run of rows as it does on one job's header, and two glyph tables for one concept would eventually
+ * disagree. See `groupJobsByWorktree` in `worktree-groups.ts` for who builds these.
+ */
+export type WorktreeGroup = WorkspaceState & {
+  path: string;
+  /**
+   * The branch itself, null on a detached head — NOT `label`, which is prose.
+   *
+   * The two are separate because `label` may carry `· locked` or read `detached at abc1234`, and
+   * adoption writes this value into `Job.branch`, which `ShipService` later hands to `git push`. One
+   * field serving both would have shipped a branch called `atlas/held · locked`.
+   */
+  branch: string | null;
+  /** The main worktree — the tree the editor is probably open on, and where jobs run by default. */
+  here: boolean;
+  /**
+   * How many jobs sit under it. Counted where the grouping happens rather than by the component,
+   * because zero is the interesting value and it is the whole reason a group can be empty at all:
+   * a worktree nothing is working in is a leak, and this is the only place it is ever visible.
+   */
+  jobCount: number;
 };
 
 /**

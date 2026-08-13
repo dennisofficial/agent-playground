@@ -10,16 +10,53 @@
  * Headers are furniture. The cursor walks jobs only, which is why each job entry carries the index
  * it will hold once drawn: making a header selectable would put dead stops in the middle of a list
  * whose entire purpose is to be arrowed through.
+ *
+ * There are two axes and the scope picks exactly one: unscoped spends headers on projects, scoped
+ * spends them on worktrees (`groupJobsByWorktree`). Both emit this same entry union so the page has
+ * one list, one cursor and one index rule regardless of which axis it asked for.
  */
+
+import type { WorktreeGroup } from './worktree.js';
 
 export enum EJobEntry {
   header = 'header',
+  /** A worktree of the scoped project. Furniture, exactly like a project header. */
+  worktree = 'worktree',
   job = 'job',
 }
 
 export type JobEntry<T> =
   | { kind: EJobEntry.header; projectId: string; projectName: string }
+  | {
+      kind: EJobEntry.worktree;
+      group: WorktreeGroup;
+      /**
+       * A cursor stop, or null for furniture.
+       *
+       * Only an EMPTY worktree gets one, and the exception proves the rule rather than breaking it:
+       * the reason headers are unselectable is that a stop between two rows is a dead stop in a list
+       * you arrow through, and a heading with nothing under it has no rows to sit between. It is not
+       * a header at that point — it is the whole entry.
+       */
+      index: number | null;
+    }
   | { kind: EJobEntry.job; job: T; index: number };
+
+/**
+ * The entries the cursor can land on, in draw order.
+ *
+ * The single source of the page's `total`, and of what `highlighted` IS — deriving both from one
+ * filtered list is what keeps a stop's position and the `index` stamped on it from ever disagreeing.
+ */
+export function selectableEntries<T>(
+  entries: readonly JobEntry<T>[],
+): JobEntry<T>[] {
+  return entries.filter(
+    (entry) =>
+      entry.kind === EJobEntry.job ||
+      (entry.kind === EJobEntry.worktree && entry.index !== null),
+  );
+}
 
 /** Structural, so `domain/` never learns what a repository row looks like. */
 export type GroupableJob = {

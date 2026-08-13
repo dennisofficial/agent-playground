@@ -8,18 +8,16 @@ import React, {
 } from "react";
 import type { ProjectRow } from "../../app/workspace.service.js";
 import type { JobRow } from "../../store/job.repository.js";
+import type { JobEntry } from "../../domain/job-groups.js";
 import { clampIndex, matchesQuery } from "../../domain/list-nav.js";
-import { deletionCost, jobSummary, jobsLayout } from "../../domain/jobs-list.js";
-import {
-  EJobEntry,
-  groupJobs,
-  sortClaimedLast,
-} from "../../domain/job-groups.js";
+import { jobSummary, jobsLayout } from "../../domain/jobs-list.js";
+import { EJobEntry, selectableEntries, sortClaimedLast } from "../../domain/job-groups.js";
 import { EClaimState } from "../../domain/claim.js";
 import { claimService } from "../hooks/use-claim.js";
-import { ConfirmBar } from "../components/confirm-bar.js";
 import { ListFooter } from "../components/list-footer.js";
-import { JobGroupHeader, JobListRow } from "../components/job-list.js";
+import { JobEntries } from "../components/job-entries.js";
+import { useJobEntries } from "../hooks/use-job-entries.js";
+import { useJobsActions } from "../hooks/use-jobs-actions.js";
 import { useProjectAttention } from "../hooks/use-project-attention.js";
 import { AddRow, ListEmpty, NoMatch } from "../components/list-parts.js";
 import { PageHeader } from "../components/page-header.js";
@@ -31,10 +29,12 @@ import { useRunningThreads, useTick } from "../hooks/use-conversation.js";
 import { useServices } from "../services.js";
 import { theme } from "../theme.js";
 import {
-  ARCHIVED_HINTS,
-  HINTS,
-  UNSCOPED_HINTS,
+  ACTION_LABELS,
+  actionFor,
+  confirmFor,
+  EJobAction,
   headerRight,
+  hintsFor,
   overlayFor,
   type Mode,
   type View,
@@ -53,13 +53,21 @@ export function JobsPage(props: {
   /** The job last opened — the cursor lands on it when you come back, not on row zero. */
   focusId?: string | undefined;
   onOpen: (job: JobRow) => void;
-  /** `n` and `+ new job` — a blank conversation, and no job until a message is sent into it. */
-  onNew: () => void;
+  /**
+   * `n` and `+ new job` — a blank conversation, and no job until a message is sent into it.
+   *
+   * `adopt` is `⏎` on a worktree with no jobs: the same blank page, but the job it creates will stand
+   * in that worktree instead of the project path.
+   */
+  onNew: (adopt?: { branch: string; workspacePath: string }) => void;
   onProjects: () => void;
   onBack: () => void;
 }): React.ReactNode {
-  const { workspaceService, attentionService } = useServices();
+  const { workspaceService, attentionService, worktreeService } = useServices();
   const projectId = props.project?.id ?? null;
+  // One project, or all of them. Read by nearly everything below — the header's `‹`, the verbs, the
+  // hint line — because scoped and unscoped are the same page and this is the whole difference.
+  const scoped = props.project !== null;
   const [jobs, setJobs] = useState<JobRow[] | null>(null);
   const [claims, setClaims] = useState<Map<string, EClaimState>>(new Map());
   const [view, setView] = useState<View>("open");
@@ -121,69 +129,57 @@ export function JobsPage(props: {
   // The shelf has no `+ new job`: a job you create is a job you are working on, by definition.
   // Neither does the unscoped list — "new job" needs somewhere to put it, and standing in `~`
   // there is no here to create it in. `cd` into a repo, or press `p`.
-  const canCreate = view === "open" && props.project !== null;
-  const total = rows.length + (canCreate ? 1 : 0);
+  const canCreate = view === "open" && scoped;
   const layout = jobsLayout(width);
 
-  // Grouping follows the SCOPE, never the row count: a list that grew a second project mid-session
-  // must not silently reorganise itself around you.
-  const entries = useMemo(
-    () => groupJobs({ jobs: rows, grouped: props.project === null }),
-    [rows, props.project],
-  );
+  // Project headers unscoped, worktree headers inside one repository — see `useJobEntries`.
+  const entries = useJobEntries({
+    jobs: rows,
+    project: props.project,
+    filtering: query.length > 0,
+  });
   const projectAttention = useProjectAttention(running);
 
+  // The cursor walks JOBS and empty worktrees, in draw order. Derived from the entries rather than
+  // counted off `rows`, because a worktree with nothing under it is now a stop of its own and
+  // `rows.length` stopped being the number of places the cursor can be.
+  const stops = useMemo(() => selectableEntries(entries), [entries]);
+  // The one row past the end: a new job here, or — with nothing in any project — the switcher, so
+  // the emptiest the app ever looks still has a door on it.
+  const action = actionFor({ view, canCreate, empty: all.length === 0 });
+  const total = stops.length + (action ? 1 : 0);
   const cursor = clampIndex(selected, total);
-  const highlighted = cursor < rows.length ? rows[cursor] : undefined;
+  const highlighted = stops[cursor];
 
   const restored = useRef(false);
   useEffect(() => {
     if (restored.current || jobs === null) return;
     restored.current = true;
+    // Found among the STOPS, not among the jobs: with worktree headings interleaved, a job's position
+    // in the query result is no longer its position under the cursor.
     const index = props.focusId
-      ? jobs.findIndex((job) => job.id === props.focusId)
+      ? stops.findIndex(
+          (entry) =>
+            entry.kind === EJobEntry.job && entry.job.id === props.focusId,
+        )
       : -1;
     if (index >= 0) setSelected(index);
-  }, [jobs, props.focusId]);
+  }, [jobs, stops, props.focusId]);
 
   const leaveMode = useCallback(() => {
     setMode("browse");
     composer.clear();
   }, [composer]);
 
-  // No create mode: `n` leaves this page for a blank conversation, and the job is created by the
-  // first message sent there. The title prompt that used to live here was ceremony charged before
-  // anyone knew whether there was a job at all — and it was injected as the opening message anyway.
-  const handleNew = useCallback(() => {
-    leaveMode();
-    props.onNew();
-  }, [leaveMode, props]);
-
-  const remove = useCallback(
-    (job: JobRow) => {
-      leaveMode();
-      setError(null);
-      void workspaceService
-        .deleteJob(job.id)
-        .then(() => reload())
-        .catch((e: Error) => setError(e.message));
-    },
-    [leaveMode, reload, workspaceService],
-  );
-
-  // No confirm on either of these: archiving destroys nothing and restoring un-destroys nothing,
-  // and one keypress back is the whole point of having a shelf instead of a second delete.
-  const shelve = useCallback(
-    (job: JobRow) => {
-      setError(null);
-      const move =
-        view === "archived"
-          ? attentionService.restoreJob(job.id)
-          : attentionService.archiveJob(job.id);
-      void move.then(() => reload()).catch((e: Error) => setError(e.message));
-    },
-    [attentionService, reload, view],
-  );
+  const { handleNew, handleNewIn, releaseWorktree, remove, shelve } =
+    useJobsActions({
+      project: props.project,
+      view,
+      leaveMode,
+      reload,
+      onError: setError,
+      onNew: props.onNew,
+    });
 
   useJobsKeys({
     mode,
@@ -195,10 +191,12 @@ export function JobsPage(props: {
     total,
     setSelected,
     highlighted,
-    canCreate,
+    action,
     leaveMode,
     onNew: handleNew,
+    onNewIn: handleNewIn,
     remove,
+    releaseWorktree,
     shelve,
     setShortcuts,
     onOpen: props.onOpen,
@@ -206,13 +204,16 @@ export function JobsPage(props: {
     onBack: props.onBack,
   });
 
-  // Unscoped, the trail is just the app: there is no one project to name, and naming none of them
-  // is more honest than naming all of them.
-  const trail = props.project ? ["atlas", props.project.name] : ["atlas"];
+  // No leading "atlas" segment. Every page is atlas, so it identified nothing and cost the line two
+  // segments — and in a repository that happens to be called atlas it drew `atlas › atlas`.
+  //
+  // `‹` follows the SCOPE, because widening is the only thing `←` does here: on one project it goes
+  // to every job, and on every job there is nowhere further out to go.
+  const trail = [props.project ? props.project.name : "all jobs"];
 
   if (jobs === null) {
     return (
-      <Screen header={<PageHeader trail={trail} canBack />}>
+      <Screen header={<PageHeader trail={trail} canBack={scoped} />}>
         <text fg={theme.dim}>loading…</text>
       </Screen>
     );
@@ -221,28 +222,21 @@ export function JobsPage(props: {
   return (
     <Screen
       header={
-        <PageHeader trail={trail} canBack right={headerRight({ view, query, rows, all })} />
+        <PageHeader
+          trail={trail}
+          canBack={scoped}
+          right={headerRight({ view, query, rows, all })}
+        />
       }
       footer={
         <ListFooter
           width={width}
           height={height}
           overlay={overlayFor({ mode, composer })}
-          confirm={
-            mode === "confirm" && highlighted ? (
-              <ConfirmBar
-                question={`delete “${highlighted.title}”?`}
-                detail={deletionCost(highlighted)}
-              />
-            ) : null
-          }
+          confirm={mode === "confirm" ? confirmFor(highlighted) : null}
           hints={
             mode === "browse"
-              ? view === "archived"
-                ? ARCHIVED_HINTS
-                : canCreate
-                  ? HINTS
-                  : UNSCOPED_HINTS
+              ? hintsFor({ view, canCreate, highlighted, action })
               : undefined
           }
           shortcuts={shortcuts}
@@ -250,47 +244,48 @@ export function JobsPage(props: {
         />
       }
     >
+      {/* Three empties, not one. The shelf is empty because you have put nothing away; a project is
+          empty because you have not started here yet; the unscoped list is empty because there is
+          nothing anywhere, and that one is a first run — the only one that has to say where to
+          begin, because the `+ new job` row it would normally point at cannot exist. */}
       <ListEmpty
         show={all.length === 0}
-        headline={view === "archived" ? "Nothing archived." : "No jobs yet."}
+        headline={
+          view === "archived"
+            ? "Nothing archived."
+            : scoped
+              ? "No jobs yet."
+              : "Nothing running anywhere."
+        }
         hint={
           view === "archived"
             ? "Archiving hides a job. Nothing is closed and nothing is deleted."
-            : "A job is one unit of work plus a shared /context folder."
+            : scoped
+              ? "A job is one unit of work plus a shared /context folder."
+              : "A job is one unit of work in one project — pick where to start."
         }
       />
       <NoMatch show={all.length > 0 && rows.length === 0} query={query} />
 
-      {entries.map((entry, position) =>
-        entry.kind === EJobEntry.header ? (
-          <box key={`h:${entry.projectId}`} flexDirection="column">
-            {/* Air above every group but the first — the rule that separates them is whitespace,
-                because a list this dense cannot afford a second kind of line. */}
-            {position > 0 ? <text> </text> : null}
-            <JobGroupHeader
-              name={entry.projectName}
-              attention={projectAttention(entry.projectId)}
-              frame={frame}
-            />
-          </box>
-        ) : (
-          <JobListRow
-            key={entry.job.id}
-            job={entry.job}
-            selected={entry.index === cursor}
-            layout={layout}
-            frame={frame}
-            runningThreadIds={running}
-            proposalThreadIds={proposals.get(entry.job.id) ?? []}
-            claimed={isClaimed(entry.job)}
-          />
-        ),
-      )}
+      <JobEntries
+        entries={entries}
+        cursor={cursor}
+        layout={layout}
+        frame={frame}
+        runningThreadIds={running}
+        proposals={proposals}
+        isClaimed={isClaimed}
+        projectAttention={projectAttention}
+      />
 
-      {canCreate ? (
+
+      {action ? (
         <box flexDirection="column">
           <text> </text>
-          <AddRow selected={cursor >= rows.length} label="+ new job" />
+          <AddRow
+            selected={cursor >= stops.length}
+            label={ACTION_LABELS[action]}
+          />
         </box>
       ) : null}
     </Screen>

@@ -20,6 +20,7 @@ import { PhaseBriefService } from '../phase-brief.service.js';
 import type { SessionManagerService } from '../session-manager.service.js';
 import { ThreadSeamService } from '../thread-seam.service.js';
 import { fakeShipService } from './ship.fixture.js';
+import { fakeWorktreeService } from './worktree.fixture.js';
 import { fakeTaskService } from './tasks.fixture.js';
 import type { RunTurnArgs, TurnRunnerService } from '../turn-runner.service.js';
 import { WorkspaceService } from '../workspace.service.js';
@@ -113,6 +114,7 @@ function build(run: (args: RunTurnArgs) => Promise<void> = async () => undefined
     turnRunnerService,
     fakeTaskService(),
     fakeShipService(),
+    fakeWorktreeService(),
   );
 
   const conversationService = new ConversationService(

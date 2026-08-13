@@ -28,10 +28,19 @@ import { theme } from "../theme.js";
 /** What the page is waiting for. Exactly one of these owns the keyboard at a time. */
 type Mode = "browse" | "filter" | "open" | "confirm";
 
+/**
+ * The project switcher, and the housekeeping that goes with it.
+ *
+ * Not a level you navigate through: the job list already spans every project, so this is opened from
+ * that list and choosing a project puts you back on it, scoped — see `onOpen` at the call site. It
+ * is reached and dismissed by the same `p`, the way the accounts page is by `ctrl+a`.
+ */
 export function ProjectsPage(props: {
   /** The project last opened — the cursor lands on it when you come back, not on row zero. */
   focusId?: string | undefined;
   onOpen: (project: ProjectRow) => void;
+  /** Back to the list this was opened from, with the scope untouched. */
+  onBack: () => void;
 }): React.ReactNode {
   const { workspaceService } = useServices();
   const [projects, setProjects] = useState<ProjectRow[] | null>(null);
@@ -155,6 +164,9 @@ export function ProjectsPage(props: {
       return;
     }
 
+    // Three ways out, all meaning the same thing, because this page is a detour rather than a step:
+    // `←`/`esc` as on every list, and `p` again — the key that opened it.
+    if (key.escape || key.leftArrow || input === "p") return props.onBack();
     if (key.upArrow) return setSelected(clampIndex(cursor - 1, total));
     if (key.downArrow) return setSelected(clampIndex(cursor + 1, total));
     // `→` descends, the exact mirror of `←`. Once the two are a pair the list navigates like a
@@ -171,7 +183,7 @@ export function ProjectsPage(props: {
 
   if (projects === null) {
     return (
-      <Screen header={<PageHeader trail={["atlas"]} />}>
+      <Screen header={<PageHeader trail={["projects"]} canBack />}>
         <text fg={theme.dim}>loading…</text>
       </Screen>
     );
@@ -181,7 +193,10 @@ export function ProjectsPage(props: {
     <Screen
       header={
         <PageHeader
-          trail={["atlas"]}
+          // "projects" rather than "atlas": every page is atlas, and this one is a detour with a way
+          // back, so the `‹` is the honest part of the line.
+          trail={["projects"]}
+          canBack
           {...(query.length > 0
             ? { right: `${rows.length}/${all.length}` }
             : {})}
@@ -232,9 +247,9 @@ export function ProjectsPage(props: {
 }
 
 const HINTS = [
-  "↑↓ select · →/⏎ open · / filter · n add · x remove · ? keys · ctrl+c quit",
-  "↑↓ select · ⏎ open · / filter · n add · x remove · ? keys",
-  "⏎ open · / filter · n add · ? keys",
+  "↑↓ select · →/⏎ switch to · / filter · n add · x remove · ←/esc back · ? keys",
+  "↑↓ select · ⏎ switch to · / filter · n add · x remove · esc back",
+  "⏎ switch · / filter · n add · esc back",
 ];
 
 /** Only these two modes borrow the footer's composer, and each says something different about ⏎. */

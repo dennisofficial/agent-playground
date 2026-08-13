@@ -104,6 +104,27 @@ export type ToolActions = {
    * `ship_pr` is ABSENT from the session rather than present and throwing.
    */
   shipping?: ShipActions;
+  /**
+   * Taking a worktree, held the same way again. Also not structural — the job stays in its phase, on
+   * its thread, with its cursor where it was; only the directory underneath it changes.
+   */
+  worktree?: WorktreeActions;
+};
+
+/**
+ * One verb, and deliberately not two: **take a worktree**, never adopt one.
+ *
+ * `WorktreeService.adopt` exists and is the door onto a tree somebody else made — but choosing WHICH
+ * existing tree is a decision the jobs list already makes, with a human looking at the list of them.
+ * An agent picking for itself would be picking, with no way to tell, the tree Dennis has an editor
+ * open on: the precise state the worktree feature exists to prevent. So adoption stays a human move
+ * and this stays a mint.
+ *
+ * Idempotent, because `enter()` is: a thread that takes a worktree it already has is told about the
+ * one it has, which is what makes the tool safe for an agent that has lost track.
+ */
+export type WorktreeActions = {
+  take(args: { ctx: ToolContext }): Promise<string>;
 };
 
 /**

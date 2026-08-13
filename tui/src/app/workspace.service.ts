@@ -140,11 +140,16 @@ export class WorkspaceService {
    * `worktree` is the first of the three doors onto an isolated branch — the other two are the
    * build confirm and the tool. It is opt-in: a button-colour change does not need a worktree, and
    * a job without one works in the project path exactly as before.
+   *
+   * `adopt` is the fourth, and it is the OPPOSITE operation: `worktree: true` mints a tree and names a
+   * branch, `adopt` stands the job in one that was already there. They are mutually exclusive by
+   * construction — adoption wins, since a caller passing a specific worktree has said which one.
    */
   async createJob(args: {
     projectId: string;
     title: string;
     worktree?: boolean;
+    adopt?: { branch: string; workspacePath: string };
   }): Promise<{ job: Job; thread: Thread }> {
     const { projectId, title } = args;
     // Every job starts in `generic` with one generic thread — the phase and the role are named
@@ -167,7 +172,11 @@ export class WorkspaceService {
     // The branch is named after the job, so the job has to exist first. A worktree that fails to
     // materialise raises here and leaves the job standing in the project path — recoverable
     // through the tool door, where losing the job would not be.
-    if (args.worktree) await this.enterWorktree(created.id);
+    if (args.adopt) {
+      await this.worktreeService.adopt({ job: created, ...args.adopt });
+    } else if (args.worktree) {
+      await this.enterWorktree(created.id);
+    }
 
     // Re-read after the worktree: taking one stamps the branch onto the row, and the caller runs
     // the first turn in the directory that branch implies.

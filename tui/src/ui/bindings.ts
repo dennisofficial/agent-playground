@@ -24,7 +24,9 @@ export const CONVERSATION: readonly Binding[] = [
   ["esc", "interrupt · clear"],
   ["←", "leave"],
   ["ctrl+u", "clear draft"],
-  ["ctrl+h", "threads"],
+  // Two keys, one door, and the pair is the point: `←` and `→` are out of the job and into it. The
+  // job's page is no longer somewhere you pass through, so this row is how you learn it exists.
+  ["→ · ctrl+h", "the job"],
   // `ctrl+y` (the pending proposal) is NOT listed either, for the same two reasons as `ctrl+b`
   // below: the panel has no row to spare at 60×24, and the line that appears when a proposal is
   // waiting spells the key itself — at the only moment it means anything.

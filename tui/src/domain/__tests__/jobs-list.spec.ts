@@ -130,16 +130,47 @@ describe('jobAttention', () => {
 });
 
 describe('deletionCost', () => {
+  /** A job standing in the project path — no worktree, so nothing to say about one. */
+  const inPlace = { branch: null, workspacePath: null };
+
   it('counts the transcript the confirm is about to burn', () => {
-    expect(deletionCost({ messageCount: 12 })).toStartWith('12 messages');
+    expect(deletionCost({ messageCount: 12, ...inPlace })).toStartWith('12 messages');
   });
 
   it('does not pluralise a single message', () => {
-    expect(deletionCost({ messageCount: 1 })).toStartWith('1 message ·');
+    expect(deletionCost({ messageCount: 1, ...inPlace })).toStartWith('1 message ·');
   });
 
   it('says so plainly when there is nothing to lose', () => {
-    expect(deletionCost({ messageCount: 0 })).toStartWith('nothing said yet');
+    expect(deletionCost({ messageCount: 0, ...inPlace })).toStartWith('nothing said yet');
+  });
+
+  it('stays quiet about a worktree for a job that never took one', () => {
+    expect(deletionCost({ messageCount: 1, ...inPlace })).not.toInclude('worktree');
+  });
+
+  // The branch is very possibly the only copy of the work and may already carry a pull request, so
+  // `removeWorktree` never touches it — and the sentence says so rather than leaving it to be hoped.
+  it('promises the branch survives an Atlas worktree', () => {
+    expect(
+      deletionCost({
+        messageCount: 3,
+        branch: 'atlas/fix-the-drain-abcdef12',
+        workspacePath: '/repo/.worktrees/fix-the-drain-abcdef12',
+      }),
+    ).toInclude('the worktree goes, atlas/fix-the-drain-abcdef12 survives');
+  });
+
+  // The one case where `x` could otherwise reach work Atlas did not create. `release()` clears the
+  // field and leaves the directory, so this is a promise the code actually keeps.
+  it('promises an ADOPTED worktree stays, naming whose branch it is', () => {
+    expect(
+      deletionCost({
+        messageCount: 3,
+        branch: 'dennis/eng-203-risk-matrix',
+        workspacePath: '/repo/.worktrees/eng-203',
+      }),
+    ).toInclude('dennis/eng-203-risk-matrix is not Atlas’s, so its worktree stays');
   });
 });
 

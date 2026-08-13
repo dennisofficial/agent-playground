@@ -30,6 +30,7 @@ import { TaskService } from './task.service.js';
 import { toolsForThread } from './tools/context.js';
 import type { AtlasTool, ToolActions, ToolContext } from './tools/tool.js';
 import { TurnRunnerService } from './turn-runner.service.js';
+import { WorktreeService } from './worktree.service.js';
 
 /**
  * The seam: opening a thread's first turn, and moving work from one thread to the next.
@@ -66,6 +67,12 @@ export class ThreadSeamService implements ToolActions {
      * this class carries to the registry rather than a fifth verb it implements.
      */
     readonly shipping: ShipService,
+    /**
+     * `ToolActions.worktree`, held on the same terms. Taking a worktree moves nothing structural
+     * either — same phase, same thread, same cursor — it only changes the directory the job's later
+     * turns run in, and `WorktreeService` is already the one place allowed to write that.
+     */
+    readonly worktree: WorktreeService,
   ) {}
 
   /**

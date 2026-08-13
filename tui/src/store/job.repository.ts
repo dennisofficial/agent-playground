@@ -157,6 +157,31 @@ export class JobRepository {
   }
 
   /**
+   * Which job owns this thread. The turn runner deals in threads and has no reason to learn what a
+   * job is — the same argument `projectIdsForThreads` makes one level up — so the walk back up
+   * `thread → phase → job` is asked of the database at the one moment something needs the answer.
+   *
+   * Null is ordinary rather than exceptional: several terminals share one database, so a thread can
+   * be deleted out from under a turn that had already finished.
+   */
+  async findByThreadId(threadId: string): Promise<Job | null> {
+    return this.prismaService.job.findFirst({
+      where: { phases: { some: { threads: { some: { id: threadId } } } } },
+    });
+  }
+
+  /**
+   * Whichever job is standing in this worktree, ARCHIVED ONES INCLUDED.
+   *
+   * Deliberately unfiltered by `archivedAt`, which is the entire reason it exists: archiving is a
+   * hide, so an archived job still owns its worktree and still has to be able to say so before
+   * something removes the tree out from under it.
+   */
+  async findByWorkspacePath(workspacePath: string): Promise<Job | null> {
+    return this.prismaService.job.findFirst({ where: { workspacePath } });
+  }
+
+  /**
    * The job took a branch and a worktree. Written by every door AND by the Atlas-owned worktree
    * tool as it moves — that write is precisely why the tool is allowed where Claude Code's native
    * worktree tool is not, since the native one relocates the work and leaves this field stale.

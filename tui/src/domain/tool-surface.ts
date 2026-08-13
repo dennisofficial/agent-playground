@@ -45,6 +45,11 @@ export enum EAtlasTool {
    * this machine, and the only one whose whole contract is that calling it twice is harmless.
    */
   ship_pr = 'ship_pr',
+  /**
+   * Take a branch and a worktree of this job's own. The only tool that changes where later turns
+   * RUN, which is why its reply is mostly about the fact that it does not change where this one is.
+   */
+  enter_worktree = 'enter_worktree',
 }
 
 /**

@@ -207,19 +207,34 @@ export async function syncCursor(
     if (moved) return { cursorThreadId, moved, refreshed: null };
   }
 
-  // Same thread, changed row. `closed` is a SNAPSHOT taken when the conversation opened, and a
-  // self-advance closes the caller mid-turn — so without this the composer stays writable in a
-  // thread that has already ended. Re-opened rather than patched: closing also ends the session and
-  // takes the tools away, and re-reading is the one path that gets all three right.
+  // Same thread, changed row. Two things about it can move under an open conversation, and both are
+  // SNAPSHOTS taken when it opened: whether the thread is closed, and where its turns run.
+  //
+  // `closed` — a self-advance closes the caller mid-turn, so without this the composer stays
+  // writable in a thread that has already ended.
+  //
+  // `cwd` — `enter_worktree` writes `Job.workspacePath` mid-turn, and the conversation is holding
+  // the directory it opened with. Without this the tool would create the worktree and every later
+  // turn would keep running in the project tree, which is the whole bug the tool exists to fix,
+  // relocated one layer up. It cannot be applied any sooner than this: a turn's directory is handed
+  // to a subprocess that is already running in it, so a turn boundary is the earliest honest moment.
+  //
+  // Re-opened rather than patched, for both: closing also ends the session and takes the tools away,
+  // moving carries a new `cwd` into the tool context, and re-reading is the one path that gets every
+  // one of those right instead of the two somebody remembered.
   const current = await deps.threadRepository.findById(open.thread.id);
-  const closed = current?.status === EThreadStatus.closed;
-  if (current && closed !== open.closed) {
-    const refreshed = await loadConversation(deps, {
-      job,
-      thread: current,
-      cwd: open.cwd,
-    });
-    return { cursorThreadId, moved: null, refreshed };
+  if (current) {
+    const closed = current.status === EThreadStatus.closed;
+    // Falling back to the CURRENT cwd when the job records no workspace, rather than to the project
+    // path — which is not knowable from here, since this function reads the job and not its project.
+    // That is not a gap: nothing clears `workspacePath` on a job somebody has open (`release()` runs
+    // on the way to deleting the job), so the null-to-null case is a job that never took a worktree
+    // and whose cwd is already the project path.
+    const cwd = job.workspacePath ?? open.cwd;
+    if (closed !== open.closed || cwd !== open.cwd) {
+      const refreshed = await loadConversation(deps, { job, thread: current, cwd });
+      return { cursorThreadId, moved: null, refreshed };
+    }
   }
 
   return { cursorThreadId, moved: null, refreshed: null };

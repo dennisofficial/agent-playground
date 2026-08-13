@@ -22,6 +22,8 @@ import { theme } from "../theme.js";
  */
 export function NewJobPage(props: {
   projectName: string;
+  /** The branch of the worktree this job is being started in, when it is not the project path. */
+  worktree?: string | undefined;
   /** Creates the job and navigates away. Resolves without leaving only if creation failed. */
   onSubmit: (text: string) => Promise<void>;
   onCancel: () => void;
@@ -106,6 +108,22 @@ export function NewJobPage(props: {
         Nothing is saved until you send. Your first message starts the job and
         names it.
       </text>
+      {/* WHERE it will run, but only when that is not the obvious answer. A job created from the
+          list's `+ new job` stands in the project path and saying so would be noise; one started
+          from a worktree row runs on somebody else's branch, and letting the first agent write there
+          without having named it is the one thing this page must not do quietly. */}
+      {props.worktree ? (
+        <box flexDirection="column">
+          <text> </text>
+          <text>
+            <span fg={theme.dim}>{"⑂ "}</span>
+            <span fg={theme.accent}>{props.worktree}</span>
+          </text>
+          <text fg={theme.dim}>
+            This job will run in that worktree, on that branch.
+          </text>
+        </box>
+      ) : null}
     </Screen>
   );
 }
