@@ -5,6 +5,7 @@ import type {
 import { Injectable } from "@nestjs/common";
 import type { EngineEvent, TurnUsage } from "../../domain/message.js";
 import { summariseToolResult, toolTarget } from "../../domain/tool-summary.js";
+import { taskEvents } from "./task-frames.js";
 import {
   resolveContextLimit,
   toPercent,
@@ -68,13 +69,17 @@ export class ClaudeNormaliserService {
         },
       ];
     }
-    return [];
+    return taskEvents(message);
   }
 
   /** Deltas are a live view of a block being built. They render and persist NOTHING. */
   private streamEvent(
     message: Extract<SDKMessage, { type: "stream_event" }>,
   ): EngineEvent[] {
+    // A DELEGATE's deltas would stream into this thread's tail — its prose appearing as the parent's,
+    // mid-sentence. Not currently forwarded (`forwardSubagentText` is off), so this guard is what makes
+    // turning that flag on a rendering decision rather than a regression.
+    if (message.parent_tool_use_id) return [];
     const event = message.event as {
       type?: string;
       delta?: { type?: string; text?: string; thinking?: string };
@@ -136,6 +141,11 @@ export class ClaudeNormaliserService {
           name: block.name,
           ...(target === undefined ? {} : { target }),
           input: block.input,
+          // Carried through, and it is what keeps a DELEGATE's calls out of this thread's transcript.
+          // Without `forwardSubagentText` these tool blocks are the only thing a subagent forwards, so
+          // they were the entire visible symptom: a delegate's fifteen greps, persisted as the
+          // parent's own.
+          ...(parentToolUseId === undefined ? {} : { parentToolUseId }),
         });
       }
     }
@@ -150,6 +160,9 @@ export class ClaudeNormaliserService {
     const content = message.message?.content;
     if (!Array.isArray(content)) return [];
 
+    // Same rule as the assistant frame: a result addressed to a DELEGATE's call is the delegate's, and
+    // is tagged so nothing downstream mistakes it for this thread's.
+    const parentToolUseId = message.parent_tool_use_id ?? undefined;
     const events: EngineEvent[] = [];
     for (const block of content as ContentBlock[]) {
       if (block.type !== "tool_result") continue;
@@ -174,6 +187,7 @@ export class ClaudeNormaliserService {
         summary,
         detail,
         ...(diff === undefined ? {} : { diff }),
+        ...(parentToolUseId === undefined ? {} : { parentToolUseId }),
       });
     }
     return events;

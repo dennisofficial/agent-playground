@@ -1,4 +1,5 @@
 import type { ContextReading } from "../domain/context-nudge.js";
+import { NO_DELEGATES, type Delegates } from "../domain/delegates.js";
 import type { Message, TurnSummary } from "../domain/message.js";
 import type { UsageWindow } from "../domain/usage.js";
 
@@ -32,15 +33,24 @@ export type ConversationState = {
   lastTurn: TurnSummary | null;
   interrupting: boolean;
   queued: QueuedSteer[];
-  /**
-   * The `ctx` reading: a percentage of the rotation BUDGET, which is allowed past 100, plus which
-   * instrument put it there. Not a percentage of the physical window — a builder at 200K of a
-   * million read `20%` green, on a meter that could not warn before the quality was gone.
-   */
-  contextPercent: ContextReading | null;
+  /** Everything the `ctx` meter draws — tokens, window fill, budget pressure, and which instrument. */
+  contextReading: ContextReading | null;
   fiveHour: UsageWindow;
   sevenDay: UsageWindow;
   notices: string[];
+  /**
+   * What this thread DELEGATED, live only. Never persisted: a delegate reports back through its
+   * spawning tool call's result, which is, so the transcript keeps the answer and drops the working.
+   * See `domain/delegates.ts`.
+   */
+  delegates: Delegates;
+  /**
+   * The model has finished speaking but the turn cannot end — a backgrounded delegate is still running
+   * and the session has to stay open to hear it settle. Distinct from `running`, which stays true: the
+   * turn IS still in flight, but nothing is being written, and a shimmer over an idle session reads as
+   * an agent that has hung.
+   */
+  holding: boolean;
   /**
    * Why this conversation cannot run a turn for want of a credential, or null when it can. A STATE
    * rather than an error: a session is allowed to hold no account, and the hint line says so where the
@@ -62,10 +72,12 @@ export const EMPTY: ConversationState = {
   lastTurn: null,
   interrupting: false,
   queued: [],
-  contextPercent: null,
+  contextReading: null,
   fiveHour: null,
   sevenDay: null,
   notices: [],
+  delegates: NO_DELEGATES,
+  holding: false,
   noAccount: null,
   closed: false,
 };

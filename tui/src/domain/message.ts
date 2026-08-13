@@ -1,6 +1,17 @@
 import { EMessageType } from '../generated/prisma/enums.js';
+import type { DelegateEvent } from './delegate-events.js';
 import { renderAttachmentParts, type AttachmentPart } from './attachments.js';
 import type { DiffHunk } from './tool-diff.js';
+
+// Re-exported for the same reason `tool-view.ts` re-exports `tool-shape.ts`: which half of a pair a
+// name lives in is not the caller's business, and every consumer of `EngineEvent` that touches a
+// delegate wants `EDelegateStatus` in the same breath.
+export {
+  EDelegateStatus,
+  type BackgroundTaskRef,
+  type DelegateEvent,
+  type DelegateOutcome,
+} from './delegate-events.js';
 
 export type UserPayload = {
   type: typeof EMessageType.user;
@@ -140,7 +151,19 @@ export type EngineEvent =
   | { kind: 'thinking_delta'; text: string }
   | { kind: 'text'; text: string }
   | { kind: 'thinking'; text: string }
-  | { kind: 'tool_call'; toolUseId: string; name: string; target?: string; input: unknown }
+  /**
+   * `parentToolUseId` marks a call a DELEGATE made, inside its own context window. It is not this
+   * thread's work and never enters this thread's transcript — it is counted against the delegate that
+   * made it and thrown away with the turn. See `domain/delegates.ts`.
+   */
+  | {
+      kind: 'tool_call';
+      toolUseId: string;
+      name: string;
+      target?: string;
+      input: unknown;
+      parentToolUseId?: string;
+    }
   | {
       kind: 'tool_result';
       toolUseId: string;
@@ -148,6 +171,7 @@ export type EngineEvent =
       summary: string;
       detail: string[];
       diff?: DiffHunk[];
+      parentToolUseId?: string;
     }
   | { kind: 'error'; title: string; detail?: string; retryable?: boolean }
   /**
@@ -156,6 +180,8 @@ export type EngineEvent =
    * never move the composer's meter.
    */
   | { kind: 'usage'; contextTokens: number; contextLimit: number; parentToolUseId?: string }
+  /** Everything a run this thread DELEGATED reports about itself — see `delegate-events.ts`. */
+  | DelegateEvent
   | { kind: 'rate_limit'; window: UsageWindowKey; utilization: number; resetsAt?: string }
   /** The engine actually took a queued steer. A queued item leaves the UI on this, not on hope. */
   | { kind: 'input_ack'; text: string }
@@ -183,6 +209,14 @@ export type UsageWindowKey = 'fiveHour' | 'sevenDay';
 
 /** Only these persist; everything else is live-only. */
 export function isAuthoritative(event: EngineEvent): boolean {
+  // A delegate's calls are the one exception with a `kind` on this list. They are authoritative about
+  // the DELEGATE and say nothing about this thread, so persisting them wrote another agent's work
+  // into a transcript that never did it — see `toPayload`.
+  if (
+    (event.kind === 'tool_call' || event.kind === 'tool_result') &&
+    event.parentToolUseId !== undefined
+  )
+    return false;
   return (
     event.kind === 'text' ||
     event.kind === 'thinking' ||
@@ -264,6 +298,16 @@ function escapeEnvelope(text: string): string {
 }
 
 export function toPayload(event: EngineEvent): MessagePayload | null {
+  // A DELEGATE's call, not this thread's. The subagent runs in its own context window and reports back
+  // through the spawning tool's result; its intermediate calls arriving on the same stream is an
+  // accident of transport, not a claim that this thread made them. Persisting them put another agent's
+  // fifteen greps into the transcript of the conversation that delegated precisely to avoid them.
+  if (
+    (event.kind === 'tool_call' || event.kind === 'tool_result') &&
+    event.parentToolUseId !== undefined
+  )
+    return null;
+
   switch (event.kind) {
     case 'text':
       return { type: EMessageType.assistant, text: event.text };

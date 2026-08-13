@@ -99,15 +99,18 @@ describe('TurnRunnerService', () => {
     });
   });
 
-  it('draws a usage event against the BUDGET, not the window', async () => {
-    // The whole point of the meter change: 120K of a million-token window is 12% — green, on a
-    // gauge that could never warn — while 120K of a 180K budget is two thirds gone and climbing.
+  it('draws a usage event against the WINDOW the engine reported', async () => {
+    // The gauge answers "how full is the context": 120K of a million-token window is 12%. The
+    // budget still runs the nudges, in tokens, and can fire while this reads calm.
     const { runner, store } = build([
       { kind: 'usage', contextTokens: 120_000, contextLimit: 1_000_000 },
     ]);
     await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
-    expect(store.getSnapshot().contextPercent).toEqual({
-      percent: 67,
+    expect(store.getSnapshot().contextReading).toEqual({
+      tokens: 120_000,
+      percent: 12,
+      // Two thirds of the way to the 180K budget — the last band before the heads-up.
+      band: 'normal',
       signal: EContextSignal.budget,
     });
   });
@@ -119,10 +122,73 @@ describe('TurnRunnerService', () => {
     ]);
     await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
 
-    // 109%, and it is allowed to be: the budget is capped to 110K by the reported 200K window, and a
-    // meter that stopped at 100 would hide exactly the state worth seeing.
-    expect(store.getSnapshot().contextPercent?.percent).toBe(109);
-    expect(sessions.recordContextPercent).toHaveBeenCalledWith('session-1', 109);
+    // 60% — the main thread's 120K of 200K. The subagent's 11.5K frame would have redrawn it at 6%.
+    expect(store.getSnapshot().contextReading?.percent).toBe(60);
+    expect(sessions.recordContextUsage).toHaveBeenCalledWith('session-1', {
+      contextTokens: 120_000,
+      contextLimit: 200_000,
+    });
+  });
+
+  it("keeps a delegate's calls out of the transcript, and counts them on its row instead", async () => {
+    const { runner, store, messages } = build([
+      { kind: 'tool_call', toolUseId: 'toolu_parent', name: 'Agent', input: {} },
+      {
+        kind: 'task_started',
+        taskId: 'task-1',
+        parentToolUseId: 'toolu_parent',
+        description: 'Find transcript rendering',
+        agentType: 'Explore',
+        taskType: 'local_agent',
+        background: false,
+      },
+      {
+        kind: 'tool_call',
+        toolUseId: 'toolu_sub',
+        name: 'Grep',
+        input: { pattern: 'markdown' },
+        parentToolUseId: 'toolu_parent',
+      },
+      {
+        kind: 'tool_result',
+        toolUseId: 'toolu_sub',
+        ok: true,
+        summary: '6 matches',
+        detail: [],
+        parentToolUseId: 'toolu_parent',
+      },
+    ]);
+    await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
+
+    // The prompt and the Agent call this thread really made — and nothing the delegate did. A real
+    // tape carries 31 subagent tool calls in one turn, every one of which used to be written here.
+    expect(messages.appended.map((m) => m.payload.type)).toEqual([
+      EMessageType.user,
+      EMessageType.tool_call,
+    ]);
+    const delegate = store.getSnapshot().delegates[0];
+    expect(delegate).toMatchObject({
+      toolUseId: 'toolu_parent',
+      agentType: 'Explore',
+      toolUses: 1,
+      lastTool: 'Grep',
+    });
+  });
+
+  it("does not leave a delegate's spinner running over the thread's own tool row", async () => {
+    const { runner, store } = build([
+      {
+        kind: 'tool_call',
+        toolUseId: 'toolu_sub',
+        name: 'Grep',
+        input: {},
+        parentToolUseId: 'toolu_parent',
+      },
+    ]);
+    await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
+    // `startTool` is this thread's "I am running a tool" state. A delegate's call reaching it drew a
+    // spinner in the parent's transcript for work the parent was not doing.
+    expect(store.getSnapshot().runningTool).toBeNull();
   });
 
   it('stores the last context reading so reopening the thread is not blank', async () => {
@@ -131,8 +197,11 @@ describe('TurnRunnerService', () => {
       { kind: 'usage', contextTokens: 60_000, contextLimit: 200_000 },
     ]);
     await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
-    expect(sessions.recordContextPercent).toHaveBeenCalledTimes(1);
-    expect(sessions.recordContextPercent).toHaveBeenCalledWith('session-1', 55);
+    expect(sessions.recordContextUsage).toHaveBeenCalledTimes(1);
+    expect(sessions.recordContextUsage).toHaveBeenCalledWith('session-1', {
+      contextTokens: 60_000,
+      contextLimit: 200_000,
+    });
   });
 
   it('polls usage for the duration of the turn, then once more after it', async () => {

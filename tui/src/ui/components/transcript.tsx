@@ -1,13 +1,13 @@
 import type { ScrollBoxRenderable } from "@opentui/core";
 import React, { type RefObject } from "react";
 import type { ToolResultPayload } from "../../domain/message.js";
-import type { TranscriptItem } from "../../domain/seam.js";
+import type { GroupedItem } from "../../domain/tool-group.js";
 import type { ConversationState } from "../../app/conversation.store.js";
 import { AssistantBlock } from "./blocks/assistant-block.js";
 import { SessionSeam, SwapNotice } from "./blocks/error-block.js";
 import { NewDivider, UNSEEN_ANCHOR_ID } from "./new-divider.js";
 import { ThinkingBlock } from "./blocks/thinking-block.js";
-import { ToolRunningLine } from "./blocks/tool-block.js";
+import { ToolGroupBlock } from "./blocks/tool-group-block.js";
 import { MessageView } from "./message-view.js";
 import { WorkingLine } from "./working-line.js";
 import { formatElapsed, theme, TRANSCRIPT_PADDING } from "../theme.js";
@@ -22,12 +22,14 @@ const SEAM_MAX = 72;
  * none of them is a message, and two of them will never become one.
  */
 export function Transcript(props: {
-  items: TranscriptItem[];
+  items: GroupedItem[];
   itemKeys: string[];
   state: ConversationState;
   toolResults: Map<string, ToolResultPayload>;
   expandedTools: Set<string>;
-  onToggleTool: (toolUseId: string) => void;
+  onToggleTool: (key: string) => void;
+  /** Calls with no result yet, empty outside a running turn. Groups draw these with a spinner. */
+  inFlight: ReadonlySet<string>;
   /** Ticking clock, so the elapsed counters advance without the transcript re-deriving. */
   now: number;
   frame: string;
@@ -58,8 +60,14 @@ export function Transcript(props: {
       {props.items.map((item, index) => {
         // The anchor is hung on a message, never on the rule: a thread you have never opened has
         // everything unseen and so draws no rule, and it still has to land somewhere.
+        // A group swallows several messages, so the anchor can land inside one. It checks membership
+        // rather than identity, or the `─── new ───` rule would silently vanish for a folded run.
         const anchored =
-          item.kind !== "seam" && item.message.id === props.anchorMessageId;
+          props.anchorMessageId !== null &&
+          props.anchorMessageId !== undefined &&
+          (item.kind === "tool_group"
+            ? item.messageIds.includes(props.anchorMessageId)
+            : item.kind === "message" && item.message.id === props.anchorMessageId);
         return (
           <box
             key={props.itemKeys[index] ?? String(index)}
@@ -75,13 +83,32 @@ export function Transcript(props: {
                 endReason={item.endReason}
                 width={Math.min(props.width, SEAM_MAX)}
               />
+            ) : item.kind === "tool_group" ? (
+              <ToolGroupBlock
+                group={item}
+                width={props.width}
+                running={props.inFlight}
+                expanded={props.expandedTools}
+                onToggle={props.onToggleTool}
+                frame={props.frame}
+                elapsed={formatElapsed(
+                  props.now - (state.runningTool?.startedAt ?? props.now),
+                )}
+              />
             ) : (
               <MessageView
                 message={item.message}
                 width={props.width}
+                cwd={props.cwd}
                 toolResults={props.toolResults}
                 expandedTools={props.expandedTools}
                 onToggleTool={props.onToggleTool}
+                // The live delegate index, so a call that spawned one can draw what it is doing. Read
+                // off the state here rather than joined into `items`, because it changes on a cadence
+                // of its own and re-deriving the grouped list every progress frame would reflow the
+                // whole transcript for a tool counter.
+                delegates={state.delegates}
+                now={props.now}
               />
             )}
           </box>
@@ -104,16 +131,17 @@ export function Transcript(props: {
         <AssistantBlock text={state.tail.text} streaming />
       ) : null}
       {state.tail?.kind === "thinking" ? (
-        <ThinkingBlock text={state.tail.text} streaming />
+        // Width is not optional here even though the prop is. `ThinkingBlock` falls back to 80
+        // columns, and the live tail is the one caller that used to take the fallback — so the
+        // streaming block wrapped to 80 while the committed one beside it wrapped to the terminal,
+        // and the same reasoning changed shape the moment the turn ended.
+        <ThinkingBlock text={state.tail.text} streaming width={props.width} />
       ) : null}
 
-      {state.runningTool ? (
-        <ToolRunningLine
-          frame={props.frame}
-          elapsed={formatElapsed(props.now - state.runningTool.startedAt)}
-          lines={state.runningTool.lines}
-        />
-      ) : null}
+      {/* No separate running-tool line any more. The in-flight call is drawn inside the group it
+          belongs to, with the spinner in its measure column — see `ToolGroupBlock`. A second copy
+          pinned down here would render the same call twice. The working line below still holds the
+          bottom of the transcript, so "something is happening" is never only up in the scroll. */}
 
       {/* Running, or the last turn's summary in the same place — the line does not move when a turn
           ends, so the number you were watching stays where you were watching it. */}
@@ -126,6 +154,7 @@ export function Transcript(props: {
             outputTokens={state.outputTokens}
             queued={state.queued}
             interrupting={state.interrupting}
+            holding={state.holding}
           />
         </box>
       ) : state.lastTurn ? (

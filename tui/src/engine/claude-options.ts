@@ -43,6 +43,17 @@ export function claudeOptions(args: RunArgs): Options {
     ...(args.resume === undefined ? {} : { resume: args.resume }),
     // The live tail exists because of this flag — without it there are no deltas to render.
     includePartialMessages: true,
+    // A delegate's prose stays in the delegate's own window. Left OFF deliberately: Atlas counts a
+    // delegate's work rather than quoting it (`domain/delegates.ts`), and forwarding the full nested
+    // conversation would put the context this thread paid to OFFLOAD back on its screen. Its tool
+    // blocks arrive regardless — the SDK forwards those unconditionally — and are what the delegate
+    // row is counted from.
+    forwardSubagentText: false,
+    // The one line a delegate row cannot derive: a periodic present-tense gist of what the subagent is
+    // actually doing ("Analyzing the markdown layer"). The SDK produces it by forking the subagent's
+    // own conversation, reusing its prompt cache, so it costs close to nothing — and without it a
+    // long-running delegate is a tool count that says how BUSY it is and nothing about what it is on.
+    agentProgressSummaries: true,
     thinking: { type: 'adaptive', display: 'summarized' },
     // Atlas allows everything it exposes. No approval card, no permission mode, no `waiting` run
     // state — restriction is done by what EXISTS, never by refusing at call time.

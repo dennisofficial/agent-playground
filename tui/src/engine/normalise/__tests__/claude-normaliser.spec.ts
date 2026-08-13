@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import type { EngineEvent } from '../../../domain/message.js';
+import { EDelegateStatus, type EngineEvent } from '../../../domain/message.js';
 import {
   ClaudeNormaliserService,
   createNormaliseContext,
@@ -8,6 +8,7 @@ import {
 import {
   assistantText,
   assistantToolUse,
+  backgroundTasksChanged,
   init,
   rateLimit,
   rateLimitWithoutUtilisation,
@@ -15,7 +16,12 @@ import {
   scriptedTurn,
   SESSION_ID,
   subagentAssistant,
+  subagentToolResult,
+  subagentToolUse,
   syntheticAssistant,
+  taskNotification,
+  taskProgress,
+  taskStarted,
   textDelta,
   thinkingDelta,
   toolResult,
@@ -255,6 +261,111 @@ describe('ClaudeNormaliserService', () => {
       expect(event).not.toHaveProperty('session_id');
       expect(event).not.toHaveProperty('uuid');
     }
+  });
+});
+
+describe('a delegate on the parent stream', () => {
+  it("tags a subagent's tool call, so nothing downstream can mistake it for this thread's", () => {
+    const events = run([
+      subagentToolUse('toolu_parent', 'toolu_sub', 'Grep', { pattern: 'markdown' }),
+    ]);
+    expect(events).toEqual([
+      {
+        kind: 'tool_call',
+        toolUseId: 'toolu_sub',
+        name: 'Grep',
+        target: 'markdown',
+        input: { pattern: 'markdown' },
+        parentToolUseId: 'toolu_parent',
+      },
+    ]);
+  });
+
+  it("tags a subagent's tool result the same way", () => {
+    const events = run([
+      subagentToolUse('toolu_parent', 'toolu_sub', 'Grep', { pattern: 'markdown' }),
+      subagentToolResult('toolu_parent', 'toolu_sub', ['6 matches']),
+    ]);
+    const settled = events.find((event) => event.kind === 'tool_result');
+    expect(settled).toMatchObject({
+      toolUseId: 'toolu_sub',
+      parentToolUseId: 'toolu_parent',
+    });
+  });
+
+  it("drops a subagent's deltas — its prose must never stream into this thread's tail", () => {
+    const delta = {
+      type: 'stream_event',
+      session_id: SESSION_ID,
+      parent_tool_use_id: 'toolu_parent',
+      uuid: 'u-sub-delta',
+      event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'sub' } },
+    } as unknown as Parameters<ClaudeNormaliserService['normalise']>[0];
+    expect(run([delta])).toEqual([]);
+  });
+
+  it('reads the three task bookends off the system stream', () => {
+    expect(run([taskStarted()])).toEqual([
+      {
+        kind: 'task_started',
+        taskId: 'a6a85ea2f071bc16e',
+        parentToolUseId: 'toolu_parent',
+        description: 'Find transcript markdown rendering',
+        agentType: 'Explore',
+        taskType: 'local_agent',
+        background: false,
+      },
+    ]);
+    expect(run([taskProgress()])).toEqual([
+      {
+        kind: 'task_progress',
+        taskId: 'a6a85ea2f071bc16e',
+        parentToolUseId: 'toolu_parent',
+        toolUses: 14,
+        durationMs: 32_000,
+        lastTool: 'Grep',
+        summary: 'Analyzing the markdown layer',
+      },
+    ]);
+    expect(run([taskNotification()])).toEqual([
+      {
+        kind: 'task_settled',
+        taskId: 'a6a85ea2f071bc16e',
+        parentToolUseId: 'toolu_parent',
+        status: EDelegateStatus.completed,
+        summary: '6 files, 2 gaps found',
+      },
+    ]);
+  });
+
+  it('reads an unrecognised ending as stopped rather than leaving the row running forever', () => {
+    const events = run([taskNotification({ status: 'evicted' })]);
+    expect(events[0]).toMatchObject({ status: EDelegateStatus.stopped });
+  });
+
+  it('drops the ambient tasks the SDK itself asks consumers to hide', () => {
+    expect(run([taskStarted({ skip_transcript: true })])).toEqual([]);
+    expect(run([taskNotification({ skip_transcript: true })])).toEqual([]);
+  });
+
+  it('passes the background membership level through as a whole set', () => {
+    const events = run([
+      backgroundTasksChanged([
+        { task_id: 'a7cafbf786f3aacff', task_type: 'local_agent', description: 'Explore atlas' },
+      ]),
+    ]);
+    expect(events).toEqual([
+      {
+        kind: 'background_tasks',
+        tasks: [
+          {
+            taskId: 'a7cafbf786f3aacff',
+            taskType: 'local_agent',
+            description: 'Explore atlas',
+          },
+        ],
+      },
+    ]);
   });
 });
 

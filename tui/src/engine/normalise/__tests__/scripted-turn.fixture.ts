@@ -198,3 +198,112 @@ export function result(
     ...overrides,
   } as unknown as SDKMessage;
 }
+
+/**
+ * A subagent's TOOL call, which is the only thing a subagent forwards by default.
+ *
+ * The distinction matters and is easy to lose: `forwardSubagentText` is off, so a delegate's prose
+ * never arrives, but its `tool_use` and `tool_result` blocks always do — which made them, for a while,
+ * the entire visible symptom of the leak. A real tape holds 31 of each in one turn.
+ */
+export function subagentToolUse(
+  parentToolUseId: string,
+  toolUseId: string,
+  name: string,
+  input: unknown,
+): SDKMessage {
+  return {
+    type: 'assistant',
+    session_id: SESSION_ID,
+    parent_tool_use_id: parentToolUseId,
+    uuid: `u-sub-${toolUseId}`,
+    message: {
+      role: 'assistant',
+      model: 'claude-opus-5',
+      content: [{ type: 'tool_use', id: toolUseId, name, input }],
+    },
+  } as unknown as SDKMessage;
+}
+
+export function subagentToolResult(
+  parentToolUseId: string,
+  toolUseId: string,
+  lines: string[],
+): SDKMessage {
+  return {
+    type: 'user',
+    session_id: SESSION_ID,
+    parent_tool_use_id: parentToolUseId,
+    uuid: `u-sub-result-${toolUseId}`,
+    message: {
+      role: 'user',
+      content: [{ type: 'tool_result', tool_use_id: toolUseId, content: lines.join('\n') }],
+    },
+  } as unknown as SDKMessage;
+}
+
+/** The SDK's delegate bookkeeping, shaped as the tapes actually hold it. */
+export function taskStarted(
+  overrides: Record<string, unknown> = {},
+): SDKMessage {
+  return {
+    type: 'system',
+    subtype: 'task_started',
+    session_id: SESSION_ID,
+    uuid: 'u-task-started',
+    task_id: 'a6a85ea2f071bc16e',
+    tool_use_id: 'toolu_parent',
+    description: 'Find transcript markdown rendering',
+    subagent_type: 'Explore',
+    task_type: 'local_agent',
+    ...overrides,
+  } as unknown as SDKMessage;
+}
+
+export function taskProgress(
+  overrides: Record<string, unknown> = {},
+): SDKMessage {
+  return {
+    type: 'system',
+    subtype: 'task_progress',
+    session_id: SESSION_ID,
+    uuid: 'u-task-progress',
+    task_id: 'a6a85ea2f071bc16e',
+    tool_use_id: 'toolu_parent',
+    description: 'Find transcript markdown rendering',
+    subagent_type: 'Explore',
+    usage: { total_tokens: 11_511, tool_uses: 14, duration_ms: 32_000 },
+    last_tool_name: 'Grep',
+    summary: 'Analyzing the markdown layer',
+    ...overrides,
+  } as unknown as SDKMessage;
+}
+
+export function taskNotification(
+  overrides: Record<string, unknown> = {},
+): SDKMessage {
+  return {
+    type: 'system',
+    subtype: 'task_notification',
+    session_id: SESSION_ID,
+    uuid: 'u-task-notification',
+    task_id: 'a6a85ea2f071bc16e',
+    tool_use_id: 'toolu_parent',
+    status: 'completed',
+    output_file: '/tmp/tasks/a6a85ea2f071bc16e.output',
+    summary: '6 files, 2 gaps found',
+    ...overrides,
+  } as unknown as SDKMessage;
+}
+
+export function backgroundTasksChanged(
+  tasks: { task_id: string; task_type: string; description: string }[],
+): SDKMessage {
+  return {
+    type: 'system',
+    subtype: 'background_tasks_changed',
+    session_id: SESSION_ID,
+    uuid: 'u-bg-changed',
+    tasks,
+  } as unknown as SDKMessage;
+}

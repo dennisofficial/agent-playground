@@ -1,4 +1,5 @@
 import { hasCanary } from "../domain/canary.js";
+import { isDelegateEvent } from "../domain/delegates.js";
 import {
   toPayload,
   type EngineEvent,
@@ -56,7 +57,8 @@ export class TurnEventApplier {
     durationMs: number;
     ok: boolean;
     usage: TurnUsage | undefined;
-    contextPercent: number | undefined;
+    contextTokens: number | undefined;
+    contextLimit: number | undefined;
     onWarn: (message: string) => void;
   }): Promise<void> {
     await this.repositories.turnRepository
@@ -72,9 +74,14 @@ export class TurnEventApplier {
         args.onWarn(`could not store turn: ${String(error)}`),
       );
 
-    if (args.contextPercent === undefined) return;
+    // Both or neither: they arrive on the same frame, and a token count without the window it was
+    // measured against cannot be coloured or drawn when the thread is reopened.
+    if (args.contextTokens === undefined || args.contextLimit === undefined) return;
     await this.repositories.sessionRepository
-      .recordContextPercent(args.sessionId, args.contextPercent)
+      .recordContextUsage(args.sessionId, {
+        contextTokens: args.contextTokens,
+        contextLimit: args.contextLimit,
+      })
       .catch((error: unknown) =>
         args.onWarn(`could not store ctx: ${String(error)}`),
       );
@@ -89,6 +96,16 @@ export class TurnEventApplier {
     session: RunningSession;
   }): Promise<void> {
     const { event, store, lane, threadId, session } = args;
+
+    // Taken FIRST and by one predicate, because "whose frame is this" has to be answered before "what
+    // does this frame mean". A delegate's tool call is a real tool call — the switch below would
+    // happily start a spinner for it and write it into this thread's transcript, which is precisely the
+    // bug this routing exists to make impossible. See `domain/delegates.ts`.
+    if (isDelegateEvent(event)) {
+      store.observeDelegate(event);
+      return;
+    }
+
     switch (event.kind) {
       case "text_delta":
         return store.appendDelta("text", event.text);
@@ -135,21 +152,20 @@ export class TurnEventApplier {
         return;
 
       case "usage": {
-        // A subagent's window is a SEPARATE context. Letting one move the meter made `ctx` jump
-        // between whichever agent spoke last — a real tape has 136 subagent frames reading anywhere
-        // from 11k to 122k tokens, interleaved with the main thread's.
-        if (event.parentToolUseId) return;
+        // Only THIS thread's readings reach here — a delegate's window is a separate context and its
+        // frames were routed away above. Letting one move the meter made `ctx` jump between whichever
+        // agent spoke last: a real tape has 136 subagent frames reading anywhere from 11k to 122k
+        // tokens, interleaved with the main thread's.
         const reading = this.contextPressureService.observe({
           session,
           contextTokens: event.contextTokens,
           contextLimit: event.contextLimit,
         });
-        lane.contextPercent = reading.percent;
-        // The tokens, not just the percentage: the nudge quotes the count and the budget back, and
-        // the tool-boundary decision is made against them rather than against a rounded ratio.
+        // The tokens and the window, not the reading: the nudge quotes the count and the budget
+        // back, and the tool-boundary decision is made against them rather than a rounded ratio.
         lane.contextTokens = event.contextTokens;
         lane.contextLimit = event.contextLimit;
-        store.setContextPercent(reading);
+        store.setContextReading(reading);
         return;
       }
 

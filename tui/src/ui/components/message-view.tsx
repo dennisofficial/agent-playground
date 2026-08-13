@@ -1,6 +1,9 @@
 import React from "react";
 import { attachmentExpandKey } from "../../domain/attachments.js";
 import type { Message, ToolResultPayload } from "../../domain/message.js";
+import { EHit, hitKey } from "../../domain/tool-group.js";
+import { presentTool } from "../../domain/tool-view.js";
+import { delegateFor, type Delegates } from "../../domain/delegates.js";
 import { EMessageType } from "../../generated/prisma/enums.js";
 import { AssistantBlock } from "./blocks/assistant-block.js";
 import { ErrorBlock } from "./blocks/error-block.js";
@@ -14,8 +17,18 @@ export function MessageView(props: {
   toolResults?: Map<string, ToolResultPayload>;
   expandedTools?: Set<string>;
   onToggleTool?: (toolUseId: string) => void;
-  /** Reading width, needed only by the blocks that draw columns — today, an edit's diff. */
+  /** Reading width, needed by every block that draws columns or wraps prose. */
   width?: number;
+  /** Relativises a tool's path against the project. See `presentTool`. */
+  cwd?: string;
+  /**
+   * The thread's live delegate index. A tool call that spawned a subagent draws its progress from
+   * here; every other block ignores it. Live-only — a reopened transcript has none, which is correct:
+   * the delegate's report is its tool result, and that IS persisted.
+   */
+  delegates?: Delegates;
+  /** Ticking clock for a running delegate's elapsed counter. */
+  now?: number;
 }): React.ReactNode {
   const payload = props.message.payload;
   switch (payload.type) {
@@ -28,16 +41,42 @@ export function MessageView(props: {
           {...(payload.interrupted ? { interrupted: true } : {})}
         />
       );
-    case EMessageType.thinking:
-      return <ThinkingBlock text={payload.text} />;
+    case EMessageType.thinking: {
+      // Expandable under the same rule as a tool group, keyed like one: `hitKey` namespaces it away
+      // from a `toolUseId` so the two share one expansion set without colliding.
+      const key = hitKey(EHit.message, props.message.id);
+      return (
+        <ThinkingBlock
+          text={payload.text}
+          expanded={props.expandedTools?.has(key) ?? false}
+          {...(props.onToggleTool ? { onToggle: () => props.onToggleTool?.(key) } : {})}
+          {...(props.width === undefined ? {} : { width: props.width })}
+        />
+      );
+    }
     case EMessageType.tool_call: {
       const result = props.toolResults?.get(payload.toolUseId);
       const isExpanded = props.expandedTools?.has(payload.toolUseId) ?? false;
+      // Re-derived at draw time off the stored `input`, not read from the stored `target`: that is
+      // what lets a Bash call show its DESCRIPTION and an `mcp__atlas__*` name lose its prefix in a
+      // transcript written before either rule existed. See `tool-view.ts`.
+      const view = presentTool({
+        name: payload.name,
+        input: payload.input,
+        cwd: props.cwd ?? "",
+        ...(result ? { result } : {}),
+      });
+      const delegate = props.delegates
+        ? delegateFor(props.delegates, payload.toolUseId)
+        : undefined;
       return (
         <ToolBlock
-          name={payload.name}
+          name={view.name}
           toolUseId={payload.toolUseId}
-          {...(payload.target ? { target: payload.target } : {})}
+          {...(delegate ? { delegate } : {})}
+          {...(props.now === undefined ? {} : { now: props.now })}
+          {...(view.target ? { target: view.target } : {})}
+          command={view.command}
           {...(result
             ? {
                 result: {
@@ -82,6 +121,12 @@ export function MessageView(props: {
             props.expandedTools?.has(attachmentExpandKey(props.message.id)) ??
             false
           }
+          {...(props.onToggleTool
+            ? {
+                onToggle: () =>
+                  props.onToggleTool?.(attachmentExpandKey(props.message.id)),
+              }
+            : {})}
           {...(props.width === undefined ? {} : { width: props.width })}
         />
       );

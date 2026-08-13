@@ -3,10 +3,8 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { basename } from "node:path";
 import type { OpenConversation } from "../../app/conversation.service.js";
 import { withSeams, type TranscriptItem } from "../../domain/seam.js";
-import {
-  expandableIds,
-  toolResultsById,
-} from "../../domain/transcript-index.js";
+import { inFlightToolIds, toolResultsById } from "../../domain/transcript-index.js";
+import { groupTools, type GroupedItem } from "../../domain/tool-group.js";
 import { conversationHints } from "../../domain/conversation-hints.js";
 import { roleLabel } from "../../domain/role-engine.js";
 import { EThreadStatus } from "../../generated/prisma/enums.js";
@@ -15,8 +13,10 @@ import { runSlashCommand } from "../commands.js";
 import { glyph, theme } from "../theme.js";
 import { Breadcrumb } from "../components/breadcrumb.js";
 import { useJobSiblings } from "../hooks/use-job-siblings.js";
+import { useJobTitle } from "../hooks/use-job-title.js";
 import { useTasks } from "../hooks/use-tasks.js";
 import { Checklist } from "../components/checklist.js";
+import { BackgroundAgents } from "../components/background-agents.js";
 import { Composer, composerRows } from "../components/composer.js";
 import { HintLine } from "../components/hint-line.js";
 import { JumpToBottom } from "../components/new-divider.js";
@@ -31,6 +31,9 @@ import { useConversationKeys } from "../hooks/use-conversation-keys.js";
 import { useConversation, useTick } from "../hooks/use-conversation.js";
 import { useReadState } from "../hooks/use-read-state.js";
 import { useServices } from "../services.js";
+
+/** Nothing is in flight outside a running turn, and a stable identity keeps `useMemo` honest. */
+const EMPTY_IDS: ReadonlySet<string> = new Set();
 
 const COMMANDS: OverlayItem[] = [
   {
@@ -84,42 +87,58 @@ export function ConversationPage(props: {
     messages: state.messages,
   });
 
-  const toggleTool = useCallback((toolUseId: string) => {
+  // One toggle for every kind of thing, because the gesture is one thing. The key is namespaced by
+  // `hitKey`, so a group, one of its rows, a thinking block and a seam's chips share this one set
+  // without colliding — see `EHit`.
+  const toggleTool = useCallback((key: string) => {
     setExpandedTools((prev) => {
       const next = new Set(prev);
-      if (next.has(toolUseId)) {
-        next.delete(toolUseId);
+      if (next.has(key)) {
+        next.delete(key);
       } else {
-        next.add(toolUseId);
+        next.add(key);
       }
       return next;
     });
   }, []);
 
   // Seams are DERIVED from adjacent messages changing session — nothing stitches anything.
-  const items = useMemo<TranscriptItem[]>(
+  const seamed = useMemo<TranscriptItem[]>(
     () => withSeams(state.messages, props.open.sessions),
     [state.messages, props.open.sessions],
   );
 
-  // What a tool call resolved to, so it can draw its result inline beneath itself.
+  // What a tool call resolved to, so it can draw its result inline beneath itself. Computed BEFORE
+  // grouping, because a group needs each member's result to size its row.
   const toolResults = useMemo(
     () => toolResultsById(state.messages),
     [state.messages],
   );
 
-  // Everything `x` / `X` can open, in the order it was said — tool blocks AND the file chips on a
-  // seam message, which share one expansion set because to a reader they are one gesture.
-  const toolCallIds = useMemo(
-    () => expandableIds(state.messages),
-    [state.messages],
+  // Adjacent gathering calls fold into one block — see `EToolShape`. Derived here rather than in the
+  // transcript so the expansion index below is built over the SAME items that get drawn: `x` landing
+  // on a call that a fold has swallowed would toggle something not on screen.
+  const items = useMemo<GroupedItem[]>(
+    () => groupTools({ items: seamed, results: toolResults, cwd: props.open.cwd }),
+    [seamed, toolResults, props.open.cwd],
+  );
+
+  // A call with no result is in flight only while a turn is RUNNING. Outside one it is a call whose
+  // result never came — an interrupt — and a spinner over a dead turn would be a lie.
+  const inFlight = useMemo(
+    () => (state.running ? inFlightToolIds(state.messages) : EMPTY_IDS),
+    [state.running, state.messages],
   );
 
   // One stable key per item.
   const itemKeys = useMemo(
     () =>
       items.map((item, index) =>
-        item.kind === "seam" ? `seam-${index}` : item.message.id,
+        item.kind === "seam"
+          ? `seam-${index}`
+          : item.kind === "tool_group"
+            ? `group-${item.id}`
+            : item.message.id,
       ),
     [items],
   );
@@ -187,10 +206,6 @@ export function ConversationPage(props: {
     setClearArmed,
     setShortcuts,
     submit,
-    toolCallIds,
-    expandedTools,
-    setExpandedTools,
-    toggleTool,
     onBack: props.onBack,
     onThreads: props.onThreads,
     onJumpToBottom: readState.handleJumpToBottom,
@@ -211,6 +226,10 @@ export function ConversationPage(props: {
   const threadId = props.open.thread.id;
   const tasks = useTasks({ threadId, revision: state.messages.length });
 
+  // A job created moments ago is still being named, and a rename on the job's page one frame below
+  // is invisible up here otherwise: both land on this line the moment they happen.
+  const jobTitle = useJobTitle(props.open.job);
+
   // Other threads of this job working behind this one. Not other tiles — those are other tickets.
   const siblings = useJobSiblings({
     jobId: props.open.job.id,
@@ -223,7 +242,7 @@ export function ConversationPage(props: {
         <Breadcrumb
           width={width}
           facts={{
-            jobTitle: props.open.job.title,
+            jobTitle,
             // The repository, not the working directory: a job in a worktree would otherwise be
             // headed by its own slug, which says nothing you do not already know from the branch.
             repo: basename(props.open.job.workspacePath ?? props.open.cwd),
@@ -252,13 +271,6 @@ export function ConversationPage(props: {
               are no tasks, so a thread that never wrote a plan pays no rows for it. */}
           <Checklist tasks={tasks} width={width} />
 
-          {/* Landing mid-history needs a way out that you can SEE — the keyboard belongs to the
-              draft here, so a key on its own would be a secret. It goes directly above the composer
-              rather than floating in the transcript, where a scroll would carry it off screen. */}
-          {readState.pinned ? null : (
-            <JumpToBottom onJump={readState.handleJumpToBottom} />
-          )}
-
           {/* Above the command palette because it is the only overlay that arrived unbidden — and
               only ever one of the two is up, since it owns the keyboard while it is. */}
           <ProposalFooter proposal={proposal} width={width} height={height} />
@@ -282,6 +294,15 @@ export function ConversationPage(props: {
           {/* Below the composer, in the hint line's place: the keymap belongs where "what can I
               press" already lives, and the meter line stays put underneath it so the panel never
               costs you the one thing the footer shows all the time. */}
+          {/* Below the composer, with the meters, because it is not part of the conversation: a
+              backgrounded agent has left the reading order entirely, and this is the only place that
+              says it is still going. Draws nothing when nothing is backgrounded. */}
+          <BackgroundAgents
+            delegates={state.delegates}
+            width={width}
+            now={now}
+          />
+
           {shortcuts ? (
             <Shortcuts
               bindings={[...CONVERSATION, ...EDITING, ...GLOBAL]}
@@ -293,7 +314,7 @@ export function ConversationPage(props: {
           <HintLine
             hints={hints}
             noAccount={state.noAccount}
-            contextPercent={state.contextPercent}
+            contextReading={state.contextReading}
             fiveHour={state.fiveHour}
             sevenDay={state.sevenDay}
             width={width}
@@ -301,21 +322,32 @@ export function ConversationPage(props: {
         </box>
       }
     >
-      <Transcript
-        items={items}
-        itemKeys={itemKeys}
-        state={state}
-        toolResults={toolResults}
-        expandedTools={expandedTools}
-        onToggleTool={toggleTool}
-        now={now}
-        frame={frame}
-        cwd={props.open.cwd}
-        width={width}
-        scroller={readState.scroller}
-        anchorMessageId={readState.anchorMessageId}
-        showDivider={readState.showDivider}
-      />
+      {/* The transcript and the one thing that floats over it. Landing mid-history needs a way out
+          you can SEE — the keyboard belongs to the draft here, so a key on its own would be a
+          secret — and it belongs at the bottom of the SCROLL, which is what it acts on, rather than
+          down in the footer under the task list. It is absolutely positioned inside this box, so it
+          takes no row from the transcript and moves nothing when it appears. */}
+      <box flexDirection="column" flexGrow={1} flexShrink={1} flexBasis={0}>
+        <Transcript
+          items={items}
+          itemKeys={itemKeys}
+          state={state}
+          toolResults={toolResults}
+          expandedTools={expandedTools}
+          onToggleTool={toggleTool}
+          inFlight={inFlight}
+          now={now}
+          frame={frame}
+          cwd={props.open.cwd}
+          width={width}
+          scroller={readState.scroller}
+          anchorMessageId={readState.anchorMessageId}
+          showDivider={readState.showDivider}
+        />
+        {readState.pinned ? null : (
+          <JumpToBottom width={width} onJump={readState.handleJumpToBottom} />
+        )}
+      </box>
     </Screen>
   );
 }

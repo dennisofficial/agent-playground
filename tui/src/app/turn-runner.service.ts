@@ -136,8 +136,8 @@ export class TurnRunnerService {
       accountId: session.accountId,
       threadId: thread.id,
     });
-    lane.contextPercent = undefined;
     lane.contextTokens = undefined;
+    lane.contextLimit = undefined;
     lane.canary = undefined;
     lane.usage = undefined;
     // The nudge cadence escalates across turns and never within one, so the counter moves here.
@@ -191,6 +191,10 @@ export class TurnRunnerService {
                 lane,
                 record: (work) => this.record(lane, store, work),
               }),
+            // Straight to the store, not through the write chain: nothing is persisted and the
+            // working line is the only reader. Queuing it behind the turn's database writes would
+            // land the state change after the frames that made it true.
+            onHold: (value) => store.setHolding(value),
             onEvent: (event) => {
               if (event.kind === "error" && isContextWall(event)) wall = true;
               this.record(lane, store, () =>

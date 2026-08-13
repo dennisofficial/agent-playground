@@ -1,5 +1,6 @@
 import type { ContextReading } from "../domain/context-nudge.js";
-import type { Message, TurnSummary } from "../domain/message.js";
+import { NO_DELEGATES, reduceDelegates, retireRunning } from "../domain/delegates.js";
+import type { EngineEvent, Message, TurnSummary } from "../domain/message.js";
 import type { UsageWindow } from "../domain/usage.js";
 import { EMPTY, type ConversationState, type LiveTail, type QueuedSteer, type RunningTool } from "./conversation-state.js";
 
@@ -109,6 +110,11 @@ export class ConversationStore {
       outputTokens: 0,
       interrupting: false,
       tail: null,
+      // Delegates belong to the CLI process that ran them, and the SDK emits no membership level at
+      // startup. A set carried across a turn boundary is a set that can only be stale — one row per
+      // agent that died with the last process, spinning forever. See `background_tasks`.
+      delegates: NO_DELEGATES,
+      holding: false,
     });
   }
 
@@ -130,8 +136,31 @@ export class ConversationStore {
       tail: null,
       runningTool: null,
       interrupting: false,
+      holding: false,
+      // The turn ending closed the session, which ended the CLI process, which took every delegate
+      // with it. A row still saying `running` under the composer would be a spinner for an agent that
+      // no longer exists — see `retireRunning` for the two ways a turn can end with one still live.
+      delegates: retireRunning(this.state.delegates, Date.now()),
       lastTurn: engineSummary ?? fallback,
     });
+  }
+
+  /**
+   * A delegate frame, folded into the live index. Live-only by construction — nothing here reaches a
+   * repository, which is the whole point: a delegate's work is counted, never quoted.
+   */
+  observeDelegate(event: EngineEvent): void {
+    const delegates = reduceDelegates(this.state.delegates, event, Date.now());
+    // The reducer returns the same array when a frame changed nothing — a `task_progress` repeating a
+    // count arrives every few seconds and must not repaint the transcript for saying nothing new.
+    if (delegates === this.state.delegates) return;
+    this.patch({ delegates });
+  }
+
+  /** The model is done but a backgrounded delegate is not, so the session stays open. See `holding`. */
+  setHolding(holding: boolean): void {
+    if (this.state.holding === holding) return;
+    this.patch({ holding });
   }
 
   startTool(tool: NonNullable<RunningTool>): void {
@@ -159,8 +188,8 @@ export class ConversationStore {
     this.patch({ queued: [] });
   }
 
-  setContextPercent(reading: ContextReading | null): void {
-    this.patch({ contextPercent: reading });
+  setContextReading(reading: ContextReading | null): void {
+    this.patch({ contextReading: reading });
   }
 
   /**
