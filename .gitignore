@@ -50,3 +50,6 @@ ds-bundle/
 .ds-sync/
 
 .scratch/
+
+# Upstream repositories cloned for reference (claude-code, opentui, skills) — read here, never vendored
+.clones/
