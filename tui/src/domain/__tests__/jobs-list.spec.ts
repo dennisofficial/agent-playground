@@ -16,11 +16,14 @@ function jobThread(fields: Partial<JobThreadSource> & { id: string }): JobThread
 
 describe('jobsLayout', () => {
   it('gives the status its widest form when the terminal can afford it', () => {
-    expect(jobsLayout(120).status).toBe(14);
+    expect(jobsLayout(120).status).toBe(16);
   });
 
-  it('leaves the widest form room for the longest verb', () => {
-    expect(jobsLayout(120).status).toBeGreaterThanOrEqual('start a phase'.length + 1);
+  it('leaves the widest form room for the longest verb AND the service mark', () => {
+    // Two columns wider than the verb alone needs: `start a phase ⚙` is what a shelved job that
+    // still owns a dev server says, and truncating that to `start a phase…` would hide the one
+    // signal that the job is holding a process.
+    expect(jobsLayout(120).status).toBeGreaterThanOrEqual('start a phase'.length + 3);
   });
 
   it('steps the status down before it starves the title', () => {

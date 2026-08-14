@@ -5,8 +5,13 @@ export class MessageQueue<T> implements AsyncIterable<T> {
   private waiting?: (result: IteratorResult<Entry<T>>) => void;
   private closed = false;
 
-  push(item: T, onConsumed?: () => void): void {
-    if (this.closed) return;
+  /**
+   * Returns whether the queue took it. Closed, it did NOT — and the caller has to know, because a
+   * message dropped in silence here is a steer whose text is gone and whose queued chip in the UI is
+   * never cleared: only delivery clears one, and nothing will ever deliver this.
+   */
+  push(item: T, onConsumed?: () => void): boolean {
+    if (this.closed) return false;
     const entry: Entry<T> = { item, ...(onConsumed ? { onConsumed } : {}) };
     if (this.waiting) {
       const resolve = this.waiting;
@@ -15,6 +20,7 @@ export class MessageQueue<T> implements AsyncIterable<T> {
     } else {
       this.buffered.push(entry);
     }
+    return true;
   }
 
   /** Queued but not yet pulled by the SDK — what the working line still shows as pending. */

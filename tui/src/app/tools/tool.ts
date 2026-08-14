@@ -104,6 +104,36 @@ export type ToolActions = {
    * `ship_pr` is ABSENT from the session rather than present and throwing.
    */
   shipping?: ShipActions;
+  /**
+   * The job's long-lived processes, held the same way and for the same reason as `tasks` — starting a
+   * dev server moves nothing structural.
+   *
+   * Optional because absent must be a legal state: absent means the three service tools are ABSENT
+   * from the session rather than present and throwing, which is the rule every other tool follows
+   * applied to wiring rather than to phase.
+   */
+  services?: ServiceActions;
+};
+
+/**
+ * Start, stop, list. No completion signal and no report channel, deliberately: a service that
+ * finished would be finite work, and finite work reports back inside its own turn.
+ *
+ * Keyed by `jobId` rather than by `ToolContext` because the job is the scope — a service outlives the
+ * thread that started it, and the UI listing one has no tool call to hand.
+ *
+ * Strings out, like `TaskActions`: the reply IS the rendered answer, which is what makes an unknown
+ * id a sentence rather than an exception.
+ */
+export type ServiceActions = {
+  start(args: {
+    jobId: string;
+    command: string;
+    description: string;
+    cwd: string;
+  }): Promise<string>;
+  stop(args: { jobId: string; id: string }): Promise<string>;
+  list(args: { jobId: string }): Promise<string>;
 };
 
 /**

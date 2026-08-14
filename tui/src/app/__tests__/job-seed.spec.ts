@@ -16,6 +16,7 @@ import type { MessageRepository } from '../../store/message.repository.js';
 import { PhaseBriefService } from '../phase-brief.service.js';
 import { ThreadSeamService } from '../thread-seam.service.js';
 import { fakeShipService } from './ship.fixture.js';
+import { fakeServiceRegistry } from './services.fixture.js';
 import { fakeTaskService } from './tasks.fixture.js';
 import type { SessionManagerService } from '../session-manager.service.js';
 import type { SessionRepository } from '../../store/session.repository.js';
@@ -86,6 +87,7 @@ function conversation(run: (args: RunTurnArgs) => Promise<void>) {
       turnRunnerService,
       fakeTaskService(),
       fakeShipService(),
+      fakeServiceRegistry(),
   ),
     new ConversationStoreRegistry(),
   );
@@ -161,6 +163,7 @@ describe('creating a job', () => {
       } as unknown as ConversationService,
       { cwdFor: (): string => '/repo' } as unknown as WorktreeService,
       {} as unknown as GitService,
+      fakeServiceRegistry(),
     );
 
     return { workspace, seeded, opened };

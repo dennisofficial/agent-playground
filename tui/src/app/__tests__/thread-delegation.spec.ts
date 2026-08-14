@@ -25,6 +25,7 @@ import type { PhaseBriefService } from '../phase-brief.service.js';
 import type { SessionManagerService } from '../session-manager.service.js';
 import { ThreadSeamService } from '../thread-seam.service.js';
 import { fakeShipService } from './ship.fixture.js';
+import { fakeServiceRegistry } from './services.fixture.js';
 import { fakeTaskService } from './tasks.fixture.js';
 import { completeThreadTool } from '../tools/complete-thread.tool.js';
 import { openThreadTool } from '../tools/open-thread.tool.js';
@@ -166,6 +167,7 @@ function world(seed?: { threads?: Thread[] }) {
     } as unknown as TurnRunnerService,
     fakeTaskService(),
     fakeShipService(),
+    fakeServiceRegistry(),
   );
 
   const ctx = (thread: Thread): ToolContext => ({

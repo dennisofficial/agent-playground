@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { EMessageType } from '../../generated/prisma/enums.js';
 import { EContextSignal } from '../../domain/context-nudge.js';
-import { EHarnessVariant, type EngineEvent } from '../../domain/message.js';
+import { EHarnessVariant, type EngineEvent, type TurnUsage } from '../../domain/message.js';
 import { buildSystemPrompt } from '../../domain/system-prompt.js';
 import { ACCOUNT_ID, SESSION, THREAD, build } from './turn-runner.fixture.js';
 
@@ -266,6 +266,66 @@ describe('TurnRunnerService', () => {
     expect(row.usage).toMatchObject({ outputTokens: 4_200, cacheReadTokens: 90_000, costUsd: 0.42 });
 
     expect(store.getSnapshot().lastTurn?.outputTokens).toBe(4_200);
+  });
+
+  /**
+   * A held turn produces one `result` per wake-up, and each is scoped to its own request cycle — the
+   * counters reset between them. Booking the last one alone is what the ledger did before the hold
+   * shipped, when a turn had exactly one result and the two were indistinguishable.
+   */
+  it('books a held turn at what the whole turn cost, not at its final result', async () => {
+    const cycle = (outputTokens: number, costUsd: number): EngineEvent => ({
+      kind: 'result',
+      ok: true,
+      usage: {
+        inputTokens: 10,
+        outputTokens,
+        cacheReadTokens: 1_000,
+        cacheWriteTokens: 100,
+        costUsd,
+        model: 'claude-opus-5',
+      },
+    });
+    const { runner, turns } = build([
+      cycle(4_191, 3.71),
+      { kind: 'text_delta', text: 'the delegate landed' },
+      cycle(2_959, 1.83),
+    ]);
+    await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
+
+    // One row — `finaliseTurn` is still called exactly once — holding the SUM. Asserting only that a
+    // row exists would pass against last-write-wins too.
+    expect(turns.record).toHaveBeenCalledTimes(1);
+    const usage = (turns.record.mock.calls[0]?.[0] ?? {}).usage as TurnUsage | undefined;
+    expect(usage).toMatchObject({
+      inputTokens: 20,
+      outputTokens: 7_150,
+      cacheReadTokens: 2_000,
+      cacheWriteTokens: 200,
+      model: 'claude-opus-5',
+    });
+    expect(usage?.costUsd).toBeCloseTo(5.54, 5);
+  });
+
+  /**
+   * A steer typed into the last sliver of a turn is either delivered or dequeued — never left
+   * standing.
+   *
+   * The engine refuses one once its queue is closing, and `steerTurn` then holds it as a preflight
+   * for a handle that is about to stop existing. `finaliseTurn` drops those, but it drops them EARLY,
+   * and anything that lands after that point (here: from inside the ledger write, which is the last
+   * thing a turn does) has nothing left to clear it. The chip then sits under the composer for the
+   * life of the thread, advertising text that was never sent.
+   */
+  it('clears a steer that arrived too late to be delivered, rather than leaving its chip queued', async () => {
+    const { runner, store, turns } = build();
+    turns.record.mockImplementation(async () => {
+      runner.steer({ thread: THREAD, session: SESSION, text: 'one more thing' });
+    });
+
+    await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
+
+    expect(store.getSnapshot().queued).toEqual([]);
   });
 
   it('records a turn the engine never reported usage for, rather than skipping it', async () => {

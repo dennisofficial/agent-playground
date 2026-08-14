@@ -78,6 +78,35 @@ describe('the context wall', () => {
     });
   });
 
+  /**
+   * A walled session must not be held open on background work, and the reason is sharper than the
+   * wasted wait: while a turn is held the lane stays busy, so every `send()` takes the steer branch —
+   * into a session that is refusing every request. The hold widens that from the tail of a turn to
+   * however long the tasks run, which is text vanishing into a dead session.
+   *
+   * The session with no engine id is used deliberately: no rotation follows it, so `lastArgs` is
+   * still THIS turn's rather than the successor's.
+   */
+  it('bars the turn from holding, so background work cannot keep a dead session open', async () => {
+    const { runner, engine, turns } = build([WALL]);
+
+    await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
+
+    expect(engine.lastArgs?.mayHold?.()).toBe(false);
+    // And still exactly ONE ledger row. A held turn produces several results, so "the turn ended"
+    // has to stay a single event: `Turn` has no unique constraint, `takeUsage` is a destructive read
+    // and `rotateOnContextWall` is not idempotent, so a second pass corrupts all three in silence.
+    expect(turns.record).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves an ordinary engine error free to hold — it is the WALL that bars, not any failure', async () => {
+    const { runner, engine } = build([CRASH]);
+
+    await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
+
+    expect(engine.lastArgs?.mayHold?.()).toBe(true);
+  });
+
   it('does not rotate a leg that never ran — that request was too big on its own, and would be again', async () => {
     const { runner, sessionManager } = build([WALL]);
 

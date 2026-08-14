@@ -6,10 +6,12 @@ import {
   EAttentionVerb,
   isLegal,
   NO_FACTS,
+  SERVICE_MARK,
   statusCell,
   unionFacts,
   type AttentionFacts,
 } from '../attention.js';
+import { jobsLayout } from '../jobs-list.js';
 
 function facts(fields: Partial<AttentionFacts>): AttentionFacts {
   return { ...NO_FACTS, openThreadCount: 1, ...fields };
@@ -166,6 +168,37 @@ describe('statusCell', () => {
     const attention = attentionFor({ facts: facts({ proposalPending: true }), scope: job });
 
     expect(statusCell({ attention, frame: '⠹' })).toBe('confirm');
+  });
+
+  it('marks a job that owns a live service, without touching the verb', () => {
+    const attention = attentionFor({ facts: facts({}), scope: job });
+
+    expect(statusCell({ attention, frame: '⠹', services: 1 })).toBe(`reply ${SERVICE_MARK}`);
+    // The verb is what you OWE and a service owes you nothing: the mark is additive, never a state.
+    expect(attention.verb).toBe(EAttentionVerb.reply);
+  });
+
+  it('says a service is running while a turn is running too', () => {
+    const attention = attentionFor({ facts: facts({ turnRunning: true }), scope: job });
+
+    expect(statusCell({ attention, frame: '⠹', services: 2 })).toBe(`⠹ working… ${SERVICE_MARK}`);
+  });
+
+  it('draws nothing extra for a job with no running service', () => {
+    const attention = attentionFor({ facts: facts({}), scope: job });
+
+    expect(statusCell({ attention, frame: '⠹', services: 0 })).toBe('reply');
+    expect(statusCell({ attention, frame: '⠹' })).toBe('reply');
+  });
+
+  it('fits the longest verb and the mark inside the widest status column', () => {
+    // The one pairing that could overflow: `start a phase` is the longest label there is, and a
+    // shelved job can still own a service. `jobsLayout` reserves the room; this is the other half.
+    const attention = attentionFor({ facts: facts({ openThreadCount: 0 }), scope: job });
+
+    expect(statusCell({ attention, frame: '⠹', services: 1 }).length).toBeLessThanOrEqual(
+      jobsLayout(120).status,
+    );
   });
 });
 

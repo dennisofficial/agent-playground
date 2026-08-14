@@ -77,6 +77,35 @@ export function assistantToolUse(id: string, name: string, input: unknown): SDKM
 }
 
 /**
+ * A DELEGATE's own output, forwarded onto the parent's stream.
+ *
+ * A subagent's tool calls and prose arrive as ordinary `assistant`/`user` frames carrying the
+ * `parent_tool_use_id` of the call that spawned them — they are the bulk of a held turn's traffic, and
+ * they are not the parent model doing anything. Two shapes, because they behave differently
+ * downstream: the tool call normalises to an event that carries `parentToolUseId`, while the prose
+ * normalises to a bare `text` event that does not, so only the FRAME can say whose it is.
+ */
+export function delegateToolUse(
+  id = 'tool-delegate',
+  parentToolUseId = 'toolu_parent',
+): SDKMessage {
+  return {
+    ...(assistant([{ type: 'tool_use', id, name: 'Read', input: {} }]) as object),
+    parent_tool_use_id: parentToolUseId,
+  } as unknown as SDKMessage;
+}
+
+export function delegateText(
+  text = 'searching the repo for the caller',
+  parentToolUseId = 'toolu_parent',
+): SDKMessage {
+  return {
+    ...(assistantText(text) as object),
+    parent_tool_use_id: parentToolUseId,
+  } as unknown as SDKMessage;
+}
+
+/**
  * The all-zero `<synthetic>` frame the SDK emits as a turn unwinds. Real, and the reason `ctx` used
  * to read 0% after every turn.
  */

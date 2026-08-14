@@ -203,9 +203,16 @@ export type EngineEvent =
   | { kind: 'rate_limit'; window: UsageWindowKey; utilization: number; resetsAt?: string }
   /** The engine actually took a queued steer. A queued item leaves the UI on this, not on hope. */
   | { kind: 'input_ack'; text: string }
-  /** `usage` is absent when the turn died before the engine could report — an interrupt, a spawn
-   *  failure. The duration is still real in that case; the tokens simply are not known. */
-  | { kind: 'result'; ok: boolean; text?: string; usage?: TurnUsage };
+  /**
+   * `usage` is absent when the turn died before the engine could report — an interrupt, a spawn
+   * failure. The duration is still real in that case; the tokens simply are not known.
+   *
+   * `nonTerminal` marks the one result shape that does NOT mean the turn is over: a background
+   * notification that woke the session, produced no work at all, and stopped. Everything else,
+   * including every shape nobody has enumerated, is a turn end — see `background-hold.ts` for why
+   * that polarity is not negotiable.
+   */
+  | { kind: 'result'; ok: boolean; text?: string; usage?: TurnUsage; nonTerminal?: boolean };
 
 /**
  * An accounting record taken at the end of a turn, about spend — deliberately not the same shape as

@@ -16,6 +16,7 @@ import type { PhaseBriefService } from '../phase-brief.service.js';
 import type { SessionManagerService } from '../session-manager.service.js';
 import { ThreadSeamService } from '../thread-seam.service.js';
 import { fakeShipService } from './ship.fixture.js';
+import { fakeServiceRegistry } from './services.fixture.js';
 import { fakeTaskService } from './tasks.fixture.js';
 import { advanceThreadTool } from '../tools/advance-thread.tool.js';
 import type { ToolContext } from '../tools/tool.js';
@@ -116,6 +117,7 @@ function build() {
     } as unknown as TurnRunnerService,
     fakeTaskService(),
     fakeShipService(),
+    fakeServiceRegistry(),
   );
 
   const ctx: ToolContext = {
@@ -198,6 +200,12 @@ describe('advance_thread', () => {
       'task_update',
       'task_list',
       'rotate',
+      // And the three service tools for the same reason: the seam HOLDS a `ServiceRegistryService`,
+      // and that wiring is the only thing that makes them exist. They are ungated by phase — a
+      // successor inherits the job's services and needs `service_list` to learn their ids.
+      'service_start',
+      'service_stop',
+      'service_list',
     ]);
   });
 

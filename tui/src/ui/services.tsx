@@ -7,6 +7,7 @@ import { ConversationStoreRegistry } from "../app/conversation-store.registry.js
 import { HumanVerbsService } from "../app/human-verbs.service.js";
 import { JobStartService } from "../app/job-start.service.js";
 import { JobTitleService } from "../app/job-title.service.js";
+import { ServiceRegistryService } from "../app/service-registry.service.js";
 import { SessionManagerService } from "../app/session-manager.service.js";
 import { TaskService } from "../app/task.service.js";
 import { ThreadSeamService } from "../app/thread-seam.service.js";
@@ -26,6 +27,8 @@ export type Services = {
   attentionService: AttentionService;
   sessionManagerService: SessionManagerService;
   taskService: TaskService;
+  /** The job's long-lived processes — what is running, and what has to be reaped when it lets go. */
+  serviceRegistryService: ServiceRegistryService;
   /** The two halves of a proposal: the seam DECIDES one, and the review service READS one. */
   threadSeamService: ThreadSeamService;
   transitionReviewService: TransitionReviewService;
@@ -45,6 +48,7 @@ export function resolveServices(context: INestApplicationContext): Services {
     attentionService: context.get(AttentionService),
     sessionManagerService: context.get(SessionManagerService),
     taskService: context.get(TaskService),
+    serviceRegistryService: context.get(ServiceRegistryService),
     threadSeamService: context.get(ThreadSeamService),
     transitionReviewService: context.get(TransitionReviewService),
     humanVerbsService: context.get(HumanVerbsService),

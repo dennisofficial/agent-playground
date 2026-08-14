@@ -7,6 +7,7 @@ import type { EngineEvent, TurnUsage } from "../../domain/message.js";
 import { stripTerminalControls } from "../../domain/plain-text.js";
 import { summariseToolResult, toolTarget } from "../../domain/tool-summary.js";
 import { taskEvents } from "./task-frames.js";
+import { isWakeUpOnly } from "./result-frames.js";
 import {
   resolveContextLimit,
   toPercent,
@@ -219,8 +220,15 @@ export class ClaudeNormaliserService {
   ): EngineEvent[] {
     const usage = this.turnUsage(message);
     if (message.subtype === "success") {
+      const nonTerminal = isWakeUpOnly(message);
       return [
-        { kind: "result", ok: !message.is_error, text: message.result, usage },
+        {
+          kind: "result",
+          ok: !message.is_error,
+          text: message.result,
+          usage,
+          ...(nonTerminal ? { nonTerminal } : {}),
+        },
       ];
     }
     return [
