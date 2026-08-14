@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { jobDir, jobServicesFile } from '../../domain/paths.js';
 import { EServiceStatus, type ServiceEntry } from '../../domain/services.js';
+import { writeServiceMirror } from '../service-mirror.js';
 import { killGroup } from '../service-process.js';
 import { ServiceRegistryService } from '../service-registry.service.js';
 
@@ -80,7 +81,7 @@ describe('ServiceRegistryService.start', () => {
     );
     expect(readFileSync(entry.logPath, 'utf8')).toContain('out');
 
-    registry.reapJob(jobId);
+    await registry.reapJob(jobId);
   });
 
   /**
@@ -105,7 +106,7 @@ describe('ServiceRegistryService.start', () => {
     expect(entry.pgid).toBe(entry.pid);
     expect(entry.status).toBe(EServiceStatus.running);
 
-    registry.reapJob(jobId);
+    await registry.reapJob(jobId);
   });
 
   it('keeps several services in one job apart', async () => {
@@ -120,7 +121,7 @@ describe('ServiceRegistryService.start', () => {
     expect(new Set(entries.map((row) => row.id)).size).toBe(2);
     expect(new Set(entries.map((row) => row.logPath)).size).toBe(2);
 
-    registry.reapJob(jobId);
+    await registry.reapJob(jobId);
   });
 
   it('is scoped to the job — one job never sees what another job started', async () => {
@@ -133,7 +134,7 @@ describe('ServiceRegistryService.start', () => {
     expect(registry.listFor(theirs)).toHaveLength(0);
     expect(await registry.list({ jobId: theirs })).toContain('No services in this job');
 
-    registry.reapJob(mine);
+    await registry.reapJob(mine);
   });
 });
 
@@ -356,7 +357,7 @@ describe('a command that dies on the spot', () => {
     });
 
     expect(reply).toContain('Started');
-    registry.reapJob(jobId);
+    await registry.reapJob(jobId);
   });
 });
 
@@ -373,6 +374,23 @@ describe('killGroup refuses a group id it must not signal', () => {
   });
 });
 
+describe('the on-disk mirror', () => {
+  /**
+   * A deleted job must stay deleted. A service's exit can land after `purgeJobFiles` has removed the
+   * job directory, and this write is the last thing to touch that path — recreating it leaves an
+   * orphaned folder holding a `services.json` for a job that no longer exists.
+   */
+  it('does not resurrect a job directory that has been purged', () => {
+    const jobId = newJob();
+    const dir = jobDir(jobId);
+    rmSync(dir, { recursive: true, force: true });
+
+    writeServiceMirror({ jobId, entries: [], warn: () => {} });
+
+    expect(existsSync(dir)).toBe(false);
+  });
+});
+
 describe('ServiceRegistryService.reapJob', () => {
   it('kills what is running and forgets the job', async () => {
     const registry = new ServiceRegistryService();
@@ -382,7 +400,7 @@ describe('ServiceRegistryService.reapJob', () => {
     await registry.start({ jobId, command: 'sleep 30', description: 'two', cwd: tmpdir() });
     const pids = registry.listFor(jobId).map((row) => row.pid);
 
-    const killed = registry.reapJob(jobId);
+    const killed = await registry.reapJob(jobId);
 
     expect(killed).toHaveLength(2);
     expect(registry.listFor(jobId)).toHaveLength(0);
@@ -401,14 +419,14 @@ describe('ServiceRegistryService.reapJob', () => {
     const jobId = newJob();
 
     await registry.start({ jobId, command: 'sleep 30', description: 'one', cwd: tmpdir() });
-    registry.reapJob(jobId);
+    await registry.reapJob(jobId);
 
     expect(mirror(jobId).map((row) => row.status)).toEqual([EServiceStatus.killed]);
   });
 
-  it('is safe on a job that never started one', () => {
+  it('is safe on a job that never started one', async () => {
     const registry = new ServiceRegistryService();
-    expect(registry.reapJob(newJob())).toEqual([]);
+    expect(await registry.reapJob(newJob())).toEqual([]);
   });
 
   /**
@@ -434,7 +452,7 @@ describe('ServiceRegistryService.reapJob', () => {
     // the only way to reach this branch without racing the exit watcher.
     entry.pgid = 4_194_303;
 
-    expect(registry.reapJob(jobId)).toEqual([]);
+    expect(await registry.reapJob(jobId)).toEqual([]);
     expect(mirror(jobId)[0]?.status).toBe(EServiceStatus.exited);
     // No code: `exitCode` is written by the exit watcher and nowhere else, so its absence is what
     // distinguishes "the kernel says gone" from "Atlas watched it die".
@@ -462,7 +480,7 @@ describe('ServiceRegistryService.reapJob', () => {
     // the test runner the day someone deleted it. `-5` throws with the floor and throws without it.
     bad.pgid = -5;
 
-    expect(registry.reapJob(jobId)).toEqual([good.id]);
+    expect(await registry.reapJob(jobId)).toEqual([good.id]);
     expect(registry.listFor(jobId)).toHaveLength(0);
     expect(mirror(jobId).map((row) => row.status)).toEqual([
       EServiceStatus.running,
@@ -484,7 +502,7 @@ describe('ServiceRegistryService.reapJob', () => {
     await registry.start({ jobId, command: 'sleep 30', description: 'one', cwd: tmpdir() });
     const [entry] = registry.listFor(jobId);
     if (!entry) throw new Error('no entry recorded');
-    registry.reapJob(jobId);
+    await registry.reapJob(jobId);
     rmSync(jobDir(jobId), { recursive: true, force: true });
 
     await waitFor(() => !alive(entry.pid), 'the service to die');

@@ -164,7 +164,7 @@ describe('reapAll', () => {
       await registry.stop({ jobId, id: entry.id });
       expect(alive(entry.pid)).toBe(true);
 
-      expect(registry.reapJob(jobId)).toEqual([entry.id]);
+      expect(await registry.reapJob(jobId)).toEqual([entry.id]);
       expect(registry.listFor(jobId)).toHaveLength(0);
       // The point of the whole test: forgetting it is only safe because it is genuinely dead.
       await waitFor(() => !alive(entry.pid), 'the forgotten group to be dead');
@@ -191,7 +191,7 @@ describe('reapAll', () => {
       // No `stop()` first — this is a healthy service being reaped out from under itself.
       expect(entry.status).toBe(EServiceStatus.running);
 
-      registry.reapJob(jobId);
+      await registry.reapJob(jobId);
       expect(registry.listFor(jobId)).toHaveLength(0);
       await waitFor(() => !alive(entry.pid), 'the deaf group to be insisted on');
     } finally {
@@ -210,17 +210,85 @@ describe('reapAll', () => {
     const entry = await startService({ registry, jobId, command: DEAF });
 
     try {
-      registry.reapJob(jobId);
+      // NOT awaited: the whole assertion is about what is visible while the grace is still running.
+      const reaped = registry.reapJob(jobId);
 
       // Gone from the job — the UI and the mirror have forgotten it — but not gone from the sweep.
       expect(registry.listFor(jobId)).toHaveLength(0);
       expect(registry.allServices()).toContain(entry);
+      await reaped;
 
       await waitFor(() => !alive(entry.pid), 'the orphan to be killed');
       await waitFor(
         () => !registry.allServices().includes(entry),
         'the orphan to be dropped once it is dead',
       );
+    } finally {
+      killGroup({ pgid: entry.pgid, signal: 'SIGKILL' });
+    }
+  });
+
+  /**
+   * The hole the orphan list was supposed to close and did not: `reapAll` only ever walked `byJob`,
+   * so the graceful quit path — which is what BOTH real quits go through — could not see an orphan
+   * at all. A job deleted 50 ms before a quit therefore leaked its group, and the only thing that
+   * had ever appeared to cover it was an unrelated job's service happening to hold the loop open.
+   */
+  it('sweeps an orphan that is still mid-grace, not just the jobs it still has', async () => {
+    const registry = new ServiceRegistryService();
+    const jobId = newJob();
+    const entry = await startService({ registry, jobId, command: DEAF });
+
+    try {
+      // Deliberately NOT awaited: this is the window between a job deletion and the escalation.
+      void registry.reapJob(jobId);
+      expect(registry.listFor(jobId)).toHaveLength(0);
+
+      expect(registry.reapAll({ signal: 'SIGKILL' })).toContain(entry);
+      await waitFor(() => !alive(entry.pid), 'the orphan to die on the quit path');
+    } finally {
+      killGroup({ pgid: entry.pgid, signal: 'SIGKILL' });
+    }
+  });
+
+  /**
+   * A service that dies POLITELY inside the grace must be seen to have died.
+   *
+   * The exit watcher used to bail on anything absent from `listFor`, which an orphan always is — so
+   * `exitCode` was never written, `mayStillBeAlive` stayed true forever, and the escalation fired a
+   * blind SIGKILL at a pgid that had been free for 300 ms. That is precisely the "signalling a
+   * stranger" hazard `mayStillBeAlive`'s own docstring exists to prevent.
+   */
+  it('records the exit of an orphan that went quietly, and does not insist on it', async () => {
+    const registry = new ServiceRegistryService();
+    const jobId = newJob();
+    const entry = await startService({ registry, jobId, command: 'sleep 30' });
+
+    await registry.reapJob(jobId);
+
+    expect(alive(entry.pid)).toBe(false);
+    // The watched death, not an ESRCH: this one was seen to go, so it carries a code.
+    expect(entry.exitCode).not.toBeUndefined();
+    expect(mayStillBeAlive(entry)).toBe(false);
+  });
+
+  /**
+   * `reapJob` has to be awaitable, and the reason is `deleteJob`: it calls `purgeJobFiles` on the
+   * very next line, which `rmSync`s the job directory — the logs AND the `services.json` that is the
+   * only record a crash-orphan reconcile could ever match against. A fire-and-forget escalation
+   * meant the evidence was destroyed at t=0 while the group lived to t=300, which is the exact
+   * failure the ordering comment in `workspace.service.ts` says the ordering exists to prevent.
+   */
+  it('resolves only once the group it could not ask politely is actually dead', async () => {
+    const registry = new ServiceRegistryService();
+    const jobId = newJob();
+    const entry = await startService({ registry, jobId, command: DEAF });
+
+    try {
+      await registry.reapJob(jobId);
+      // `waitFor`, not a bare assertion: a just-SIGKILLed child is a zombie for a beat and still
+      // answers `kill(pid, 0)`. What is being pinned is that the WAIT happened, not the reaping.
+      await waitFor(() => !alive(entry.pid), 'the insisted-on group to be gone');
     } finally {
       killGroup({ pgid: entry.pgid, signal: 'SIGKILL' });
     }

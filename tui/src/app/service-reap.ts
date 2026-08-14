@@ -4,7 +4,16 @@ import {
   type ServiceEntry,
 } from "../domain/services.js";
 import { killGroup } from "./service-process.js";
-import { REAP_GRACE_MS } from "./service-reaper.js";
+
+/**
+ * How long a group gets between SIGTERM and SIGKILL. Long enough for a node process to run its own
+ * shutdown, short enough that nobody watches Atlas hang on the way out — and it is a ceiling, not a
+ * wait: every escalation only signals what is still alive when it arrives.
+ *
+ * It lives here rather than in `service-reaper.ts` because both halves of the slice need it and the
+ * reaper imports this file, not the other way round.
+ */
+export const REAP_GRACE_MS = 300;
 
 /**
  * The two sweeps, lifted out of the registry so the class stays under the line cap and so the rule
@@ -47,33 +56,31 @@ function recordDenied(entry: ServiceEntry): void {
 
 /**
  * Kill everything one job owns and forget it — a job deletion, or a claim taken over by another
- * Atlas.
+ * Atlas. Asks, waits, then insists.
  *
- * It ASKS, then insists, and it has to do both itself. `reapAll` can afford to hand its list to
- * `reapGracefully` and be awaited; this one cannot be, because it forgets the job on the way out —
- * after `byJob.delete` there is no job left for a later pass to sweep. So the escalation is armed
- * here, and the entries move to `orphans` rather than vanishing, which is what keeps them reachable
- * to the exit backstop for the 300 ms in between.
+ * **It is awaitable, and `deleteJob` must await it.** `purgeJobFiles` runs on the very next line
+ * there and `rmSync`s the job directory — the logs and the `services.json` that is the only thing a
+ * crash-orphan reconcile could ever match against. A fire-and-forget escalation destroyed that
+ * evidence at t=0 while the group lived to t=300, which is the exact failure the ordering comment in
+ * `workspace.service.ts` says the ordering exists to prevent.
  *
- * The polite case needs no watcher: a service that honours SIGTERM dies whether or not anyone is
- * looking. The escalation exists for DEAFNESS, not for slowness, which is why the grace is a
- * timeout rather than something a caller has to await.
+ * The escalation is about DEAFNESS, not slowness: a service that honours SIGTERM dies whether or not
+ * anyone is watching, and the exit watcher records that within the grace, so the insistence below
+ * skips it. What the wait buys is that a group which IGNORES the ask is dead before this resolves.
  *
- * Synchronous, and it stays that way for the callers' sake rather than for an exit path's: a job
- * deletion should not sit for 300 ms per job, and `use-claim`'s takeover callback is not async.
+ * Entries sit in `orphans` for the duration rather than vanishing, so a quit that lands mid-grace
+ * still sweeps them — see `SweepDeps.orphans`.
  */
-export function reapJobEntries(
+export async function reapJobEntries(
   deps: SweepDeps,
-  args: { jobId: string; graceMs?: number },
-): string[] {
+  args: { jobId: string },
+): Promise<string[]> {
   const entries = deps.byJob.get(args.jobId);
   if (!entries) return [];
   const killed: string[] = [];
   for (const entry of entries) {
     if (!mayStillBeAlive(entry)) continue;
     try {
-      // SIGTERM first even here: this is the only chance the service gets to shut down cleanly, and
-      // the insistence below is 300 ms away.
       if (!killGroup({ pgid: entry.pgid, signal: "SIGTERM" })) {
         recordDenied(entry);
         continue;
@@ -93,41 +100,44 @@ export function reapJobEntries(
   deps.byJob.delete(args.jobId);
 
   const pending = entries.filter(mayStillBeAlive);
-  if (pending.length > 0) {
-    deps.orphans.push(...pending);
-    scheduleEscalation({ deps, pending, graceMs: args.graceMs ?? REAP_GRACE_MS });
+  if (pending.length === 0) return killed;
+
+  deps.orphans.push(...pending);
+  try {
+    await Bun.sleep(REAP_GRACE_MS);
+    // Re-asked per entry: anything the exit watcher saw die politely in the meantime is left alone,
+    // because signalling a pgid the kernel has already reclaimed is signalling a stranger.
+    for (const entry of pending) {
+      if (mayStillBeAlive(entry)) insist({ entry, warn: deps.warn });
+    }
+  } finally {
+    // In a `finally` so a throw mid-grace cannot strand entries in `orphans` for the life of the
+    // process — they would be swept forever by every quit after this one.
+    for (const entry of pending) {
+      const at = deps.orphans.indexOf(entry);
+      if (at >= 0) deps.orphans.splice(at, 1);
+    }
   }
   return killed;
 }
 
 /**
- * The second half of `reapJob`, 300 ms later: SIGKILL whatever is still there, then stop tracking it
- * either way.
- *
- * `unref`'d, deliberately. If Atlas is on its way out it must not be held open waiting to be polite
- * to a process it is about to SIGKILL anyway — and it does not need to be, because the orphan is in
- * `allServices()` until this runs, so layer 3 will do exactly this job on the way past.
+ * SIGKILL one group and believe whatever the kernel answers. The one spelling of that, shared by
+ * `reapJob`'s escalation and `reapGracefully`'s.
  */
-function scheduleEscalation(args: {
-  deps: SweepDeps;
-  pending: readonly ServiceEntry[];
-  graceMs: number;
+export function insist(args: {
+  entry: ServiceEntry;
+  warn: (message: string) => void;
 }): void {
-  const timer = setTimeout(() => {
-    for (const entry of args.pending) {
-      if (mayStillBeAlive(entry)) {
-        try {
-          if (!killGroup({ pgid: entry.pgid, signal: "SIGKILL" })) recordDenied(entry);
-          else entry.status = EServiceStatus.killed;
-        } catch (error) {
-          args.deps.warn(`could not kill service ${entry.id}: ${String(error)}`);
-        }
-      }
-      const at = args.deps.orphans.indexOf(entry);
-      if (at >= 0) args.deps.orphans.splice(at, 1);
+  try {
+    if (!killGroup({ pgid: args.entry.pgid, signal: "SIGKILL" })) {
+      recordDenied(args.entry);
+      return;
     }
-  }, args.graceMs);
-  timer.unref?.();
+    args.entry.status = EServiceStatus.killed;
+  } catch (error) {
+    args.warn(`could not kill service ${args.entry.id}: ${String(error)}`);
+  }
 }
 
 /**
@@ -146,26 +156,34 @@ export function reapAllEntries(
   args: { signal: NodeJS.Signals },
 ): ServiceEntry[] {
   const signalled: ServiceEntry[] = [];
+
+  const sweep = (entry: ServiceEntry): boolean => {
+    if (!mayStillBeAlive(entry)) return false;
+    try {
+      if (!killGroup({ pgid: entry.pgid, signal: args.signal })) {
+        recordDenied(entry);
+        return true;
+      }
+      entry.status = EServiceStatus.killed;
+      signalled.push(entry);
+      return true;
+    } catch (error) {
+      // Best-effort, and for a harder reason than `reapJob`'s: this runs on the way out of the
+      // process, where one unsignallable group aborting the loop leaks every service after it.
+      deps.warn(`could not reap service ${entry.id}: ${String(error)}`);
+      return false;
+    }
+  };
+
   for (const [jobId, entries] of deps.byJob) {
     let touched = false;
-    for (const entry of entries) {
-      if (!mayStillBeAlive(entry)) continue;
-      try {
-        if (!killGroup({ pgid: entry.pgid, signal: args.signal })) {
-          recordDenied(entry);
-          touched = true;
-          continue;
-        }
-        entry.status = EServiceStatus.killed;
-        signalled.push(entry);
-        touched = true;
-      } catch (error) {
-        // Best-effort, and for a harder reason than `reapJob`'s: this runs on the way out of the
-        // process, where one unsignallable group aborting the loop leaks every service after it.
-        deps.warn(`could not reap service ${entry.id}: ${String(error)}`);
-      }
-    }
+    for (const entry of entries) touched = sweep(entry) || touched;
     if (touched) deps.persist(jobId);
   }
+  // The orphans, and this is the whole point of their existing: a job deleted moments before a quit
+  // is already out of `byJob`, so without this pass the group it is still waiting on is invisible to
+  // BOTH quit paths — which is what `reapGracefully` and `onModuleDestroy` actually run. There is no
+  // persist here: their job's mirror has been written and, on the deletion path, already deleted.
+  for (const entry of deps.orphans) sweep(entry);
   return signalled;
 }

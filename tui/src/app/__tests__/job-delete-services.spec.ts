@@ -41,7 +41,7 @@ function build() {
   /** What the registry SAW at the moment it was called, not merely that it was called. */
   const sawTree: boolean[] = [];
   const serviceRegistryService = {
-    reapJob(reaped: string): string[] {
+    async reapJob(reaped: string): Promise<string[]> {
       expect(reaped).toBe(jobId);
       sawTree.push(existsSync(jobServicesFile(reaped)));
       return [];

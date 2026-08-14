@@ -38,7 +38,7 @@ export function fakeServiceRegistry(
     },
     // `WorkspaceService` takes the same fixture: deleting a job reaps its services before the tree
     // that holds their logs goes, so a workspace test needs one too.
-    reapJob(jobId: string): string[] {
+    async reapJob(jobId: string): Promise<string[]> {
       calls.push({ verb: 'reap', jobId });
       return [];
     },

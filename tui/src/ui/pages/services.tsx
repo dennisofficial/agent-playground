@@ -6,6 +6,7 @@ import { fitHints } from "../../domain/hints.js";
 import { collapseHome } from "../../domain/paths.js";
 import {
   describeStatus,
+  DETAIL_INDENT,
   EStopAction,
   isRunning,
   mayStillBeAlive,
@@ -170,13 +171,13 @@ function ServiceRow(props: {
         </span>
       </text>
       <text fg={theme.dim}>
-        {"      "}
+        {DETAIL_INDENT}
         {fitColumn(entry.command, layout.detail)}
       </text>
       {/* Clipped from the FRONT: a log path's meaning is its tail, and `…/logs/1f2e.log` still tells
           you which file to open where `/Users/dennis/Deve…` tells you nothing. */}
       <text fg={theme.dim}>
-        {"      log: "}
+        {`${DETAIL_INDENT}log: `}
         {fitColumnEnd(collapseHome(entry.logPath), layout.detail - 5)}
       </text>
     </box>

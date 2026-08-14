@@ -1,5 +1,5 @@
 import { mayStillBeAlive, type ServiceEntry } from "../domain/services.js";
-import { killGroup } from "./service-process.js";
+import { insist, REAP_GRACE_MS } from "./service-reap.js";
 
 /**
  * Nothing outlives Atlas.
@@ -37,12 +37,7 @@ export const REAP_SIGNALS: readonly NodeJS.Signals[] = [
   "SIGHUP",
 ];
 
-/**
- * How long a group gets between SIGTERM and SIGKILL. Long enough for a node process to run its own
- * shutdown, short enough that nobody watches Atlas hang on the way out — and it is a ceiling, not a
- * wait: the escalation only signals what is still alive.
- */
-export const REAP_GRACE_MS = 300;
+export { REAP_GRACE_MS } from "./service-reap.js";
 
 /**
  * What the reaper needs of the registry, and no more — so the layers can be driven by a test with a
@@ -80,12 +75,12 @@ export async function reapGracefully(args: {
   await Bun.sleep(args.graceMs ?? REAP_GRACE_MS);
   for (const entry of signalled) {
     if (!mayStillBeAlive(entry)) continue;
-    hardKill({ entry, warn: args.warn });
+    insist({ entry, warn: args.warn });
   }
 }
 
 /**
- * Layer 3, and the only one that always runs.
+ * Layer 3, the backstop — though not, as this once claimed, the one that always runs.
  *
  * It sweeps by `mayStillBeAlive` rather than by `running`, which is the one place this deviates from
  * the letter of the spec and does so deliberately: a graceful reap has already moved every service
@@ -98,7 +93,7 @@ export async function reapGracefully(args: {
 export function reapNow(args: { target: ReaperTarget; warn: Warn }): void {
   for (const entry of args.target.allServices()) {
     if (!mayStillBeAlive(entry)) continue;
-    hardKill({ entry, warn: args.warn });
+    insist({ entry, warn: args.warn });
   }
 }
 
@@ -191,10 +186,3 @@ export function installReaperHandlers(args: {
   return { disarmSignals, disarmAll };
 }
 
-function hardKill(args: { entry: ServiceEntry; warn: Warn }): void {
-  try {
-    killGroup({ pgid: args.entry.pgid, signal: "SIGKILL" });
-  } catch (error) {
-    args.warn(`could not kill service ${args.entry.id}: ${String(error)}`);
-  }
-}

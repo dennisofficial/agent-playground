@@ -64,7 +64,8 @@ export function useClaim(args: {
       // the top of the navigation stack. Reaping there would let ctrl+a to the accounts page SIGTERM
       // a dev server. Letting go of a claim is cheap and reversible; killing a process group is
       // neither, so they do not share a lifetime.
-      serviceRegistryService.reapJob(jobId);
+      // Voided: the takeover has to hand the UI back at once, and the escalation finishes on its own.
+      void serviceRegistryService.reapJob(jobId);
       onTakenOver();
     });
   }, [jobId, onTakenOver, serviceRegistryService]);

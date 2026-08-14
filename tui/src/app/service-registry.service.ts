@@ -200,7 +200,7 @@ export class ServiceRegistryService
    * the leak this design rejected. The sweep itself, and the reason it escalates where `reapAll`
    * does not, is in `service-reap.ts`.
    */
-  reapJob(jobId: string): string[] {
+  async reapJob(jobId: string): Promise<string[]> {
     return reapJobEntries(this.sweepDeps(), { jobId });
   }
 
@@ -241,16 +241,24 @@ export class ServiceRegistryService
   }): void {
     void args.exited
       .then((code) => {
-        // A job reaped or deleted while this was pending has dropped the entry; writing its mirror
-        // back would resurrect a file the deletion just removed.
-        if (!this.listFor(args.jobId).includes(args.entry)) return;
+        // Orphans count. An entry reaped out of its job is absent from `listFor` but still very much
+        // being waited on, and bailing here left `exitCode` unwritten — so `mayStillBeAlive` stayed
+        // true for a process that had politely died, and the escalation fired a blind SIGKILL at a
+        // pgid the kernel had already reclaimed. Object identity, not id: a job re-created under the
+        // same id must not resurrect the old entry.
+        const tracked =
+          this.listFor(args.jobId).includes(args.entry) ||
+          this.orphans.includes(args.entry);
+        if (!tracked) return;
         args.entry.exitCode = code;
         // Only `running` moves. A stop has already recorded `killed`, which is the more honest
         // account of why the process is gone, and the code is kept beside it either way.
         if (args.entry.status === EServiceStatus.running) {
           args.entry.status = EServiceStatus.exited;
         }
-        this.persist(args.jobId);
+        // Only where the job still exists: an orphan's job has had its mirror written and, on the
+        // deletion path, its whole directory removed — rewriting it would resurrect that file.
+        if (this.byJob.has(args.jobId)) this.persist(args.jobId);
       })
       .catch((error: unknown) => {
         this.logger.warn(`service ${args.entry.id} exit watch failed: ${String(error)}`);

@@ -245,7 +245,9 @@ export class WorkspaceService {
     // Before the tree goes, never after. `jobDir` holds both the logs and the only record of what
     // this job had running, so removing it while a group is alive orphans the tree AND destroys the
     // evidence — a leak with nothing left to reconcile against.
-    this.serviceRegistryService.reapJob(jobId);
+    // AWAITED: `purgeJobFiles` removes `services.json` and the logs, so a reap that has not yet
+    // finished insisting would have its evidence destroyed while its group was still alive.
+    await this.serviceRegistryService.reapJob(jobId);
     purgeJobFiles({ jobId, engineSessionIds });
   }
 
@@ -268,7 +270,7 @@ export class WorkspaceService {
 
     await this.projectRepository.remove(projectId);
     for (const [jobId, engineSessionIds] of tapes) {
-      this.serviceRegistryService.reapJob(jobId);
+      await this.serviceRegistryService.reapJob(jobId);
       purgeJobFiles({ jobId, engineSessionIds });
     }
   }

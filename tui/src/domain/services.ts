@@ -100,6 +100,13 @@ const GUTTER = 4;
 const STATUS = 14;
 const UPTIME = 8;
 const INDENT = 6;
+/**
+ * The literal prefix the page indents a row's detail lines with. Exported so `services.tsx` renders
+ * THIS rather than its own run of spaces — the two drifting apart is what makes a log path draw off
+ * the edge of the terminal, and a comment asking the next editor to keep them in step is not a
+ * mechanism.
+ */
+export const DETAIL_INDENT = " ".repeat(INDENT);
 const DESCRIPTION = { min: 16, max: 48 };
 
 export type ServicesLayout = {

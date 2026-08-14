@@ -43,7 +43,7 @@ afterEach(() => {
 function services(reaped: string[]): Services {
   return {
     serviceRegistryService: {
-      reapJob(jobId: string): string[] {
+      async reapJob(jobId: string): Promise<string[]> {
         reaped.push(jobId);
         return [];
       },

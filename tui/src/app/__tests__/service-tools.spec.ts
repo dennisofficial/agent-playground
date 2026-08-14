@@ -201,7 +201,7 @@ describe('service_start', () => {
     expect(entry?.jobId).toBe(JOB);
     expect(entry?.cwd).toBe(tmpdir());
 
-    registry.reapJob(JOB);
+    await registry.reapJob(JOB);
     rmSync(jobDir(JOB), { recursive: true, force: true });
   });
 });

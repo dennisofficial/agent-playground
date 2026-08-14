@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import {
   describeStatus,
+  DETAIL_INDENT,
   EServiceStatus,
   formatUptime,
   isRunning,
@@ -234,16 +235,23 @@ describe('servicesLayout', () => {
   });
 
   /**
-   * The detail lines' own budget, and it is NOT the tautology it looks like: the assertion hard-codes
-   * 6 while `servicesLayout` uses the named `INDENT`, so it is the constant that is pinned. The page
-   * indents these two lines with a literal six spaces (`services.tsx`), and this is the only thing
-   * holding that literal and the constant together — move one without the other and a log path draws
-   * off the edge of the terminal.
+   * The detail lines get exactly the room their indent leaves — `toBe`, not `toBeLessThanOrEqual`,
+   * which only ever caught the indent GROWING and passed silently when it shrank.
+   *
+   * The relationship to what the page actually draws is held by `DETAIL_INDENT` rather than by this
+   * assertion: the page renders that string, so the width below and the prefix on screen cannot
+   * disagree. What is pinned here is that `detail` is the remainder after it, and never negative.
    */
-  it('keeps the detail lines inside the terminal too, allowing for their indent', () => {
+  it('gives the detail lines exactly what their indent leaves', () => {
     for (let width = 0; width <= 200; width += 1) {
-      expect(servicesLayout(width).detail).toBeLessThanOrEqual(Math.max(0, width - 6));
+      const expected = Math.max(0, width - DETAIL_INDENT.length);
+      expect(servicesLayout(width).detail).toBe(expected);
     }
+  });
+
+  // The indent is a real prefix the page draws, not a number the layout invented.
+  it('leaves room for the indent the page actually renders', () => {
+    expect(DETAIL_INDENT).toBe('      ');
   });
 
   // `exited (127)` is twelve cells and is the widest real status. A narrower column would clip the
