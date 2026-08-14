@@ -235,12 +235,13 @@ describe('servicesLayout', () => {
   });
 
   /**
-   * The detail lines get exactly the room their indent leaves — `toBe`, not `toBeLessThanOrEqual`,
-   * which only ever caught the indent GROWING and passed silently when it shrank.
+   * `detail` is the remainder after the indent, clamped at zero — and that clamp is honestly all this
+   * one still catches, since both sides now derive from the same constant.
    *
-   * The relationship to what the page actually draws is held by `DETAIL_INDENT` rather than by this
-   * assertion: the page renders that string, so the width below and the prefix on screen cannot
-   * disagree. What is pinned here is that `detail` is the remainder after it, and never negative.
+   * The load-bearing pin is the test BELOW it: the page renders `DETAIL_INDENT` itself, so the only
+   * way the layout and the drawn prefix can disagree is if that constant changes, and that is what
+   * gets asserted against a literal. Said plainly because the previous version of this comment
+   * claimed a coupling the assertion did not have.
    */
   it('gives the detail lines exactly what their indent leaves', () => {
     for (let width = 0; width <= 200; width += 1) {

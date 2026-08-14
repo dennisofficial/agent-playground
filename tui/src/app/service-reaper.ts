@@ -37,8 +37,6 @@ export const REAP_SIGNALS: readonly NodeJS.Signals[] = [
   "SIGHUP",
 ];
 
-export { REAP_GRACE_MS } from "./service-reap.js";
-
 /**
  * What the reaper needs of the registry, and no more — so the layers can be driven by a test with a
  * hand-built target rather than a container.

@@ -59,6 +59,8 @@ export class ServiceRegistryService
   private readonly byJob = new Map<string, ServiceEntry[]>();
   /** Signalled, not yet confirmed dead, and no longer owned by a job. See `SweepDeps.orphans`. */
   private readonly orphans: ServiceEntry[] = [];
+  /** Reaps in flight, by job. See `reapJob` — a second caller joins the first rather than missing. */
+  private readonly reaping = new Map<string, Promise<string[]>>();
   private reaperHandles: ReaperHandles | null = null;
 
   /**
@@ -201,7 +203,18 @@ export class ServiceRegistryService
    * does not, is in `service-reap.ts`.
    */
   async reapJob(jobId: string): Promise<string[]> {
-    return reapJobEntries(this.sweepDeps(), { jobId });
+    // Deduped, because the first reap deletes the job from `byJob` BEFORE its grace — so a second
+    // call would miss on `byJob.get` and answer `[]` in no time at all, which reads identically to
+    // "this job has no services". `deleteJob` believes that and runs `purgeJobFiles`, destroying the
+    // logs and `services.json` while the group is still dying. Reachable whenever a claim takeover
+    // and a deletion land within 300 ms of each other.
+    const running = this.reaping.get(jobId);
+    if (running) return running;
+    const started = reapJobEntries(this.sweepDeps(), { jobId }).finally(() => {
+      this.reaping.delete(jobId);
+    });
+    this.reaping.set(jobId, started);
+    return started;
   }
 
   /** Signal every group in every job — quitting Atlas. See `service-reap.ts`. */
@@ -241,24 +254,24 @@ export class ServiceRegistryService
   }): void {
     void args.exited
       .then((code) => {
-        // Orphans count. An entry reaped out of its job is absent from `listFor` but still very much
-        // being waited on, and bailing here left `exitCode` unwritten — so `mayStillBeAlive` stayed
-        // true for a process that had politely died, and the escalation fired a blind SIGKILL at a
-        // pgid the kernel had already reclaimed. Object identity, not id: a job re-created under the
-        // same id must not resurrect the old entry.
-        const tracked =
-          this.listFor(args.jobId).includes(args.entry) ||
-          this.orphans.includes(args.entry);
-        if (!tracked) return;
+        // Recorded unconditionally. This closure captured the ENTRY OBJECT, so the code it is handed
+        // is always this entry's own death — there is no id to confuse and nothing to resurrect.
+        // Gating it on the entry still being findable was wrong twice over: an orphan is absent from
+        // `listFor` by definition, and one that had to be INSISTED on is spliced out of `orphans`
+        // synchronously, before its `exited` resolves. Either way `exitCode` went unwritten,
+        // `mayStillBeAlive` stayed true for a dead process, and the next sweep signalled a pgid the
+        // kernel had already freed — the stranger this whole predicate exists to avoid.
         args.entry.exitCode = code;
         // Only `running` moves. A stop has already recorded `killed`, which is the more honest
         // account of why the process is gone, and the code is kept beside it either way.
         if (args.entry.status === EServiceStatus.running) {
           args.entry.status = EServiceStatus.exited;
         }
-        // Only where the job still exists: an orphan's job has had its mirror written and, on the
-        // deletion path, its whole directory removed — rewriting it would resurrect that file.
-        if (this.byJob.has(args.jobId)) this.persist(args.jobId);
+        // The PERSIST is what needed the guard all along: an orphan's job has had its mirror written
+        // and, on the deletion path, its whole directory removed, so rewriting it would resurrect a
+        // file the deletion just took. Identity, not id — a job re-created under the same id must
+        // not have its fresh mirror rewritten by an old entry's exit.
+        if (this.byJob.get(args.jobId)?.includes(args.entry)) this.persist(args.jobId);
       })
       .catch((error: unknown) => {
         this.logger.warn(`service ${args.entry.id} exit watch failed: ${String(error)}`);
