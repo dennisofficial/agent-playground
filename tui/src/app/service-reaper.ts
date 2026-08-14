@@ -19,8 +19,11 @@ import { killGroup } from "./service-process.js";
  * 2. **`SIGINT` / `SIGTERM` / `SIGHUP`** — a terminal closing, an external `kill`, a ctrl+c that
  *    arrives while the renderer is not listening. None of these touches the renderer, so without a
  *    handler the process dies and the whole tree keeps running.
- * 3. **`exit`** — the backstop, and the only one that always runs. Synchronous work only, which is
- *    fine because `process.kill` is synchronous.
+ * 3. **`exit`** — the backstop. Synchronous work only, which is fine because `process.kill` is
+ *    synchronous. It is NOT "the one that always runs", which this used to claim: layer 2 ends by
+ *    re-raising with the default disposition, and death by signal does not run `exit` handlers at
+ *    all. What it actually covers is the loop draining and an explicit `process.exit` — `main.tsx`'s
+ *    top-level `catch` being the one in the tree today.
  *
  * Still not covered, and accepted: a **SIGKILL of Atlas**. No handler can run, so the tree leaks.
  * `services.json` records the pid and the pgid precisely so the deferred crash-orphan reconcile can
@@ -102,13 +105,17 @@ export function reapNow(args: { target: ReaperTarget; warn: Warn }): void {
 /**
  * What `installReaperHandlers` hands back, and the reason it is two verbs rather than one.
  *
- * The signal handlers and the exit backstop have to come off at DIFFERENT moments. Signals go
- * first, before any reaping starts, so a second ctrl+c reaches the default disposition and kills
- * Atlas outright instead of queueing behind a reap that is stuck. The exit handler has to stay armed
- * straight through the grace window: `main.tsx` `void`s `context.close()`, so the process can reach
- * `exit` while `reapGracefully` is still sleeping between its SIGTERM and its SIGKILL — and that is
- * precisely the window in which every service is signalled but not yet dead. Dropping both up front,
- * as this used to, left that window with nothing armed at all.
+ * The signal handlers and the exit backstop come off at DIFFERENT moments. Signals go first, before
+ * any reaping starts, so a second ctrl+c reaches the default disposition and kills Atlas outright
+ * instead of queueing behind a reap that is stuck. The exit handler stays armed through the grace,
+ * which is the window where every service is signalled and none is confirmed dead — the worst
+ * possible moment to have nothing armed, which is what dropping both up front used to do.
+ *
+ * Honest about what that buys today: it was measured, and the window is not currently REACHABLE.
+ * OpenTUI's `destroy` does not exit the process, and a pending `Bun.sleep` holds the loop open, so
+ * nothing on the quit path can reach `exit` mid-grace. This is insurance against the first
+ * `process.exit` anyone adds to that path, not a race being fixed — kept because the cost is one
+ * extra closure and the failure it would otherwise allow is silent and unrecoverable.
  */
 export type ReaperHandles = {
   /** Layer 2 off. Called before reaping, on both quit paths. */

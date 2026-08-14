@@ -58,10 +58,11 @@ export function isRunning(entry: ServiceEntry): boolean {
  * on every ordinary quit.
  *
  * Death is recorded two ways and this is false for both. `exitCode` is written by the exit watcher
- * and nowhere else, so a code is a death Atlas WATCHED. `exited` without one is written in exactly
- * one place — a kill that came back `ESRCH` — and that is the kernel saying the group is already
- * gone, which is just as final and matters more: a reaped pgid can be reissued to something else
- * entirely, so signalling past this point is signalling a stranger.
+ * and nowhere else, so a code is a death Atlas WATCHED. `exited` WITHOUT one is written only where a
+ * kill came back `ESRCH` — `stop()` and both sweeps, three call sites for one rule — and that is the
+ * kernel saying the group is already gone, which is just as final and matters more: a reaped pgid
+ * can be reissued to something else entirely, so signalling past this point is signalling a
+ * stranger.
  */
 export function mayStillBeAlive(entry: ServiceEntry): boolean {
   return entry.exitCode === undefined && entry.status !== EServiceStatus.exited;

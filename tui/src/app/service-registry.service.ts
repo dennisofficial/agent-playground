@@ -16,7 +16,11 @@ import {
   type ServiceEntry,
 } from "../domain/services.js";
 import { writeServiceMirror } from "./service-mirror.js";
-import { reapAllEntries, reapJobEntries } from "./service-reap.js";
+import {
+  reapAllEntries,
+  reapJobEntries,
+  type SweepDeps,
+} from "./service-reap.js";
 import { killGroup, logTail, spawnService } from "./service-process.js";
 import {
   installReaperHandlers,
@@ -53,6 +57,8 @@ export class ServiceRegistryService
 {
   private readonly logger = new Logger(ServiceRegistryService.name);
   private readonly byJob = new Map<string, ServiceEntry[]>();
+  /** Signalled, not yet confirmed dead, and no longer owned by a job. See `SweepDeps.orphans`. */
+  private readonly orphans: ServiceEntry[] = [];
   private reaperHandles: ReaperHandles | null = null;
 
   /**
@@ -72,9 +78,8 @@ export class ServiceRegistryService
    *
    * The SIGNAL handlers come off first — this reap and theirs are the same act, and leaving them
    * armed would have a quit that re-raises do it twice. The EXIT backstop stays armed until the reap
-   * has finished, because `main.tsx` `void`s `context.close()`: the process can reach `exit` while
-   * the grace below is still sleeping, which is exactly the window where every service has been
-   * signalled and none is confirmed dead.
+   * has finished, covering the window where every service is signalled and none is confirmed dead.
+   * See `ReaperHandles` for what that is and is not worth today.
    */
   async onModuleDestroy(): Promise<void> {
     const handles = this.reaperHandles;
@@ -99,9 +104,12 @@ export class ServiceRegistryService
    * Every service in every job, unfiltered — for the reaper, which asks a different liveness
    * question from the one a human is shown, and for the UI signals that count what a quit would end.
    * Callers filter with the predicates in `domain/services.ts`.
+   *
+   * The orphans are in here and NOT in `listFor`: a reaped job stops being shown at once, but a
+   * group of its that is still dying has to stay sweepable until it is confirmed gone.
    */
   allServices(): readonly ServiceEntry[] {
-    return [...this.byJob.values()].flat();
+    return [...[...this.byJob.values()].flat(), ...this.orphans];
   }
 
   async start(args: {
@@ -201,13 +209,10 @@ export class ServiceRegistryService
     return reapAllEntries(this.sweepDeps(), args);
   }
 
-  private sweepDeps(): {
-    byJob: Map<string, ServiceEntry[]>;
-    persist: (jobId: string) => void;
-    warn: (message: string) => void;
-  } {
+  private sweepDeps(): SweepDeps {
     return {
       byJob: this.byJob,
+      orphans: this.orphans,
       persist: (jobId) => this.persist(jobId),
       warn: (message) => this.logger.warn(message),
     };

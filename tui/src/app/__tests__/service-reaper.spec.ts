@@ -174,6 +174,59 @@ describe('reapAll', () => {
   });
 
   /**
+   * The case the escalation was built for and did not cover: a service nobody ever pressed `k` on.
+   *
+   * `reapJob` is reached from a job deletion and from a claim taken over by another Atlas, and in
+   * BOTH the service is healthy and `running` when the sweep arrives — nobody has stopped it by
+   * hand. A one-shot SIGTERM plus `byJob.delete` was therefore the ordinary path, not the edge: a
+   * deaf dev server survived, was reported as killed, and became unreachable to every later layer.
+   * The escalation has to come from the sweep itself, not from a status a human happened to set.
+   */
+  it('reapJob insists on a running group that never answered its SIGTERM', async () => {
+    const registry = new ServiceRegistryService();
+    const jobId = newJob();
+    const entry = await startService({ registry, jobId, command: DEAF });
+
+    try {
+      // No `stop()` first — this is a healthy service being reaped out from under itself.
+      expect(entry.status).toBe(EServiceStatus.running);
+
+      registry.reapJob(jobId);
+      expect(registry.listFor(jobId)).toHaveLength(0);
+      await waitFor(() => !alive(entry.pid), 'the deaf group to be insisted on');
+    } finally {
+      killGroup({ pgid: entry.pgid, signal: 'SIGKILL' });
+    }
+  });
+
+  /**
+   * The orphan has to stay visible until it is confirmed dead, or the escalation is just a slower
+   * leak: if Atlas goes away inside the grace window, layer 3 is the only thing left that can kill
+   * the group, and it sweeps `allServices()`.
+   */
+  it('keeps a reaped-but-living group reachable to the exit backstop', async () => {
+    const registry = new ServiceRegistryService();
+    const jobId = newJob();
+    const entry = await startService({ registry, jobId, command: DEAF });
+
+    try {
+      registry.reapJob(jobId);
+
+      // Gone from the job — the UI and the mirror have forgotten it — but not gone from the sweep.
+      expect(registry.listFor(jobId)).toHaveLength(0);
+      expect(registry.allServices()).toContain(entry);
+
+      await waitFor(() => !alive(entry.pid), 'the orphan to be killed');
+      await waitFor(
+        () => !registry.allServices().includes(entry),
+        'the orphan to be dropped once it is dead',
+      );
+    } finally {
+      killGroup({ pgid: entry.pgid, signal: 'SIGKILL' });
+    }
+  });
+
+  /**
    * A group that is already gone answers `ESRCH`, which is not a failure — it is the answer. It must
    * not throw, and it must not be recorded as a kill Atlas made.
    */

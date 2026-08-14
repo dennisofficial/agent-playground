@@ -445,8 +445,8 @@ describe('ServiceRegistryService.reapJob', () => {
 
   /**
    * Best-effort, unlike `stop()` where a throw is the model's answer. This runs from a job deletion
-   * that has already removed the row and from a React effect: one unsignallable group must not abort
-   * the loop, skip the persist, or leave the job in the map for a tree that is already gone.
+   * that has already removed the row and from a claim-takeover callback: one unsignallable group
+   * must not abort the loop, skip the persist, or leave the job in the map for a tree already gone.
    */
   it('carries on past a group it cannot signal', async () => {
     const registry = new ServiceRegistryService();

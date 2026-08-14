@@ -233,6 +233,19 @@ describe('servicesLayout', () => {
     }
   });
 
+  /**
+   * The detail lines' own budget, and it is NOT the tautology it looks like: the assertion hard-codes
+   * 6 while `servicesLayout` uses the named `INDENT`, so it is the constant that is pinned. The page
+   * indents these two lines with a literal six spaces (`services.tsx`), and this is the only thing
+   * holding that literal and the constant together — move one without the other and a log path draws
+   * off the edge of the terminal.
+   */
+  it('keeps the detail lines inside the terminal too, allowing for their indent', () => {
+    for (let width = 0; width <= 200; width += 1) {
+      expect(servicesLayout(width).detail).toBeLessThanOrEqual(Math.max(0, width - 6));
+    }
+  });
+
   // `exited (127)` is twelve cells and is the widest real status. A narrower column would clip the
   // exit code, which is the only part of that string anyone reads.
   it('holds the widest real status without clipping it', () => {
