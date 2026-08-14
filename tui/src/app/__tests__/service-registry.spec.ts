@@ -218,10 +218,49 @@ describe('ServiceRegistryService.stop', () => {
     await registry.stop({ jobId, id: entry.id });
     // The mirror moves with the memory, on every status change and not only on membership ones.
     expect(mirror(jobId)[0]?.status).toBe(EServiceStatus.killed);
+    // Once the death Atlas caused has actually been WATCHED there is nothing left to signal, and
+    // only then is "already gone" the honest answer.
+    await waitFor(() => entry.exitCode !== undefined, 'the exit to land');
 
     const second = await registry.stop({ jobId, id: entry.id });
     expect(second).toContain('already gone');
     expect(second).toContain('killed');
+  });
+
+  /**
+   * The one service that needs insisting on, and the reason `stop` asks `stopAction` rather than
+   * `isRunning`.
+   *
+   * `killed` is recorded on signal DELIVERY, not on death, so a group that traps SIGTERM reads as
+   * killed while it still holds its port. A second press answering "already gone" would leave the
+   * only verb that can end a service unable to end this one — a dead end, on exactly the service a
+   * human is most likely to be pressing `k` at twice.
+   */
+  it('escalates to SIGKILL for a group that ignored SIGTERM', async () => {
+    const registry = new ServiceRegistryService();
+    const jobId = newJob();
+
+    // The loop matters: a bare `trap '' TERM; sleep 30` still dies, because the group kill reaps the
+    // `sleep` child and the shell then runs off the end of its script.
+    await registry.start({
+      jobId,
+      command: "trap '' TERM; while true; do sleep 0.2; done",
+      description: 'stubborn',
+      cwd: tmpdir(),
+    });
+    const [entry] = registry.listFor(jobId);
+    if (!entry) throw new Error('no entry recorded');
+
+    const first = await registry.stop({ jobId, id: entry.id });
+    expect(first).toContain('Stopped');
+    expect(first).not.toContain('SIGKILL');
+    // It trapped the signal and is still there. Nothing watched it die, so it has no exit code.
+    expect(entry.exitCode).toBeUndefined();
+    expect(entry.status).toBe(EServiceStatus.killed);
+
+    const second = await registry.stop({ jobId, id: entry.id });
+    expect(second).toContain('SIGKILL');
+    await waitFor(() => entry.exitCode !== undefined, 'the group to actually die');
   });
 
   /**

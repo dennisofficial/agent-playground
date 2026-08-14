@@ -1,14 +1,16 @@
 import { useTerminalDimensions } from "@opentui/react";
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import { fitColumn, fitColumnEnd } from "../../domain/list-columns.js";
 import { clampIndex } from "../../domain/list-nav.js";
 import { fitHints } from "../../domain/hints.js";
 import { collapseHome } from "../../domain/paths.js";
 import {
   describeStatus,
-  formatUptime,
+  EStopAction,
   isRunning,
   servicesLayout,
+  stopAction,
+  uptimeCell,
   type ServiceEntry,
   type ServicesLayout,
 } from "../../domain/services.js";
@@ -40,6 +42,8 @@ export function ServicesPage(props: {
   const { width } = useTerminalDimensions();
   const [selected, setSelected] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
+  /** The id of the stop the notice belongs to — see `kill` below. */
+  const pending = useRef<string | null>(null);
   // One second, matching the coarsest thing `formatUptime` prints. It is also what makes a service
   // that dies on its own turn from `running` to `exited (1)` here without anyone pressing a key.
   const { now } = useTick(true, 1000);
@@ -50,27 +54,42 @@ export function ServicesPage(props: {
 
   const kill = useCallback(
     (entry: ServiceEntry) => {
+      // Two presses on two different services race, and `stop` resolves in whatever order the
+      // signals land — so the notice is written only by the press that is still the latest one.
+      // Without this the slower answer wins and names the service you are no longer stopping.
+      pending.current = entry.id;
       setNotice(`stopping ${entry.id}…`);
+      const answer = (message: string) => {
+        if (pending.current === entry.id) setNotice(message);
+      };
       void serviceRegistryService
         .stop({ jobId: props.jobId, id: entry.id })
-        .then(setNotice)
+        .then(answer)
         // `stop` answers in prose and does not throw for a group that is already gone, so anything
         // arriving here is the unexpected case and is worth showing rather than swallowing.
-        .catch((error: Error) => setNotice(error.message));
+        .catch((error: Error) => answer(error.message));
     },
     [props.jobId, serviceRegistryService],
   );
 
+  const move = (to: number) => {
+    // The notice is about the row you were on. Moving off it makes the sentence unmoored from
+    // anything on screen, and a stale "Stopped a1b2c3d4" under a live service reads as a lie.
+    setNotice(null);
+    setSelected(clampIndex(to, entries.length));
+  };
+
   useInput((input, key) => {
     if (key.escape || key.leftArrow) return props.onBack();
-    if (key.upArrow) return setSelected(clampIndex(cursor - 1, entries.length));
-    if (key.downArrow)
-      return setSelected(clampIndex(cursor + 1, entries.length));
-    // Only a live one. Pressing `k` on a row that already exited would answer "already gone", which
-    // is a correct sentence and a pointless one.
-    if (input === "k" && highlighted && isRunning(highlighted)) {
-      kill(highlighted);
-    }
+    if (key.upArrow) return move(cursor - 1);
+    if (key.downArrow) return move(cursor + 1);
+    // `printable()` hands back the key NAME even when a modifier is held, so `ctrl+k` arrives here
+    // as a bare `k` — and killing a dev server is not something a mistyped chord should do.
+    if (input !== "k" || key.ctrl || key.meta || !highlighted) return;
+    // Not `isRunning`: a group that ignored SIGTERM is recorded `killed` while it still holds its
+    // port, and refusing the second press would leave the one service that needs insisting on the
+    // one this page cannot end. `gone` is the only state with nothing left to signal.
+    if (stopAction(highlighted) !== EStopAction.gone) kill(highlighted);
   });
 
   const layout = servicesLayout(width);
@@ -142,7 +161,7 @@ function ServiceRow(props: {
           {fitColumn(describeStatus(entry), layout.status)}
         </span>
         <span fg={theme.dim}>
-          {fitColumn(uptimeLabel({ entry, now: props.now }), layout.uptime)}
+          {fitColumn(uptimeCell({ entry, now: props.now }), layout.uptime)}
         </span>
       </text>
       <text fg={theme.dim}>
@@ -157,18 +176,6 @@ function ServiceRow(props: {
       </text>
     </box>
   );
-}
-
-/**
- * `up 12m` while it is alive, `started 12m ago` once it is not.
- *
- * Nothing records when a dead service died, so its age is time since it STARTED. Left unlabelled
- * that reads as "it ran for three hours" when it may have fallen over in the first second — the
- * same trap `describeService` calls out for the agent's own view.
- */
-function uptimeLabel(args: { entry: ServiceEntry; now: number }): string {
-  const age = formatUptime(args.now - args.entry.startedAt);
-  return isRunning(args.entry) ? `up ${age}` : `${age} old`;
 }
 
 function countLabel(entries: readonly ServiceEntry[]): string {

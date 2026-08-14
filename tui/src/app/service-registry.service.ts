@@ -5,20 +5,23 @@ import {
   type OnModuleInit,
 } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
+import { jobLogsDir, serviceLogFile } from "../domain/paths.js";
 import {
-  jobDir,
-  jobLogsDir,
-  jobServicesFile,
-  serviceLogFile,
-} from "../domain/paths.js";
-import {
+  describeStatus,
   EServiceStatus,
+  EStopAction,
   isRunning,
   renderServiceList,
+  stopAction,
   type ServiceEntry,
 } from "../domain/services.js";
-import { killGroup, logTail, spawnService } from "./service-process.js";
+import {
+  killGroup,
+  logTail,
+  spawnService,
+  writeServiceMirror,
+} from "./service-process.js";
 import { installReaperHandlers, reapGracefully } from "./service-reaper.js";
 import type { ServiceActions } from "./tools/tool.js";
 
@@ -142,18 +145,27 @@ export class ServiceRegistryService
     if (!entry) {
       return `No service \`${args.id}\` in this job. \`service_list\` shows what there is.`;
     }
-    if (entry.status !== EServiceStatus.running) {
-      return `\`${args.id}\` (${entry.description}) was already gone — it is ${entry.status}. Nothing to stop.`;
+    const action = stopAction(entry);
+    if (action === EStopAction.gone) {
+      return `\`${args.id}\` (${entry.description}) was already gone — it is ${describeStatus(entry)}. Nothing to stop.`;
     }
-    const signalled = killGroup({ pgid: entry.pgid, signal: "SIGTERM" });
+    // SIGTERM first, SIGKILL on every ask after it. `killed` is recorded on DELIVERY, not on death,
+    // so a group that ignored the polite signal reads as killed while it still holds its port —
+    // treating that as "gone" would leave the only verb that can end a service unable to insist.
+    const signal = action === EStopAction.kill ? "SIGKILL" : "SIGTERM";
+    const signalled = killGroup({ pgid: entry.pgid, signal });
     // `killed` only where we actually killed something. A group that was already gone is `exited` —
     // claiming otherwise would be Atlas taking credit for a death it had nothing to do with, and
     // `killed` is the status the human reads as "I stopped this".
     entry.status = signalled ? EServiceStatus.killed : EServiceStatus.exited;
     this.persist(args.jobId);
-    return signalled
-      ? `Stopped \`${args.id}\` — ${entry.description}. Its log is still at ${entry.logPath}.`
-      : `\`${args.id}\` (${entry.description}) had already exited on its own. Its log is still at ${entry.logPath}.`;
+    if (!signalled) {
+      return `\`${args.id}\` (${entry.description}) had already exited on its own. Its log is still at ${entry.logPath}.`;
+    }
+    // The second ask says which signal it took, because "stopped" twice over reads as a verb that
+    // did nothing — and SIGKILL is worth knowing about: the process got no chance to clean up.
+    const insisted = action === EStopAction.kill ? " with SIGKILL, having ignored SIGTERM" : "";
+    return `Stopped \`${args.id}\`${insisted} — ${entry.description}. Its log is still at ${entry.logPath}.`;
   }
 
   async list(args: { jobId: string }): Promise<string> {
@@ -277,24 +289,11 @@ export class ServiceRegistryService
       });
   }
 
-  /**
-   * The mirror. Nothing in this job reads it back — it exists so the deferred crash-orphan reconcile
-   * has a pid and a pgid to match against.
-   *
-   * A failure here is logged and swallowed on purpose: the process is already running, and turning a
-   * successful start into a thrown tool result over a bookkeeping file would lose the id the caller
-   * needs to stop it.
-   */
   private persist(jobId: string): void {
-    try {
-      mkdirSync(jobDir(jobId), { recursive: true });
-      writeFileSync(
-        jobServicesFile(jobId),
-        `${JSON.stringify(this.listFor(jobId), null, 2)}\n`,
-        "utf8",
-      );
-    } catch (error) {
-      this.logger.warn(`could not write services.json for ${jobId}: ${String(error)}`);
-    }
+    writeServiceMirror({
+      jobId,
+      entries: this.listFor(jobId),
+      warn: (message) => this.logger.warn(message),
+    });
   }
 }

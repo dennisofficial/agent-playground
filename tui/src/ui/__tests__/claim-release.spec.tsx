@@ -3,10 +3,14 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import React, { act, useState } from 'react';
+import type { OpenConversation } from '../../app/conversation.service.js';
 import type { ServiceRegistryService } from '../../app/service-registry.service.js';
+import type { ProjectRow } from '../../app/workspace.service.js';
+import type { Job } from '../../generated/prisma/client.js';
 import { serialiseClaim } from '../../domain/claim.js';
 import { jobClaimFile, jobDir } from '../../domain/paths.js';
 import { useClaim } from '../hooks/use-claim.js';
+import { heldJobId } from '../navigation.js';
 import { ServicesProvider, type Services } from '../services.js';
 
 /**
@@ -17,10 +21,13 @@ import { ServicesProvider, type Services } from '../services.js';
  * having anyone watching it: another Atlas is now driving the job, and our children would sit on its
  * ports with nobody to stop them.
  *
- * Merely letting the claim go is NOT that moment. `heldJobId` in `app.tsx` is read off the top of
- * the navigation stack, so pushing any route nulls it and releases the claim — ctrl+a to the accounts
- * page does it, and slice 05's own services page would do it too. Releasing a claim is cheap and
- * reversible; killing a process group is neither, so they must not share a lifetime.
+ * Merely letting the claim go is NOT that moment. `heldJobId` is read off the top of the navigation
+ * stack, so pushing a route that is not inside the job nulls it and releases the claim — ctrl+a to
+ * the accounts page does exactly that. Releasing a claim is cheap and reversible; killing a process
+ * group is neither, so they must not share a lifetime.
+ *
+ * Which routes count as being inside the job is the other half of the same rule, and is asserted at
+ * the bottom of this file.
  */
 
 const WIDTH = 40;
@@ -126,5 +133,50 @@ describe('useClaim', () => {
       leave();
       await setup.flush();
     });
+  });
+});
+
+/**
+ * Which pages hold the job, and the one that was missing.
+ *
+ * The failure here is invisible: the claim is a file and a watcher, nothing on screen draws it, and
+ * a page that quietly drops it lets another terminal take the job out from under you with no notice
+ * at all — the notice is rendered by the very hook the drop unmounts.
+ */
+describe('heldJobId', () => {
+  const job = { id: 'job-1' } as Job;
+
+  it('holds the job from the conversation and from the job page', () => {
+    expect(
+      heldJobId({
+        name: 'conversation',
+        project: {} as ProjectRow,
+        open: { job } as OpenConversation,
+      }),
+    ).toBe('job-1');
+    expect(
+      heldJobId({
+        name: 'threads',
+        project: {} as ProjectRow,
+        job,
+        cwd: '/repo',
+        currentThreadId: 'thread-1',
+      }),
+    ).toBe('job-1');
+  });
+
+  /**
+   * The services page is the page you SIT on — watching a dev server, waiting for a build. Letting
+   * the claim go here would make the one screen you leave open the one that gives the job away.
+   */
+  it('holds the job from the services page, which is where you watch one run', () => {
+    expect(heldJobId({ name: 'services', jobId: 'job-1', jobTitle: 'atlas' })).toBe('job-1');
+  });
+
+  // Browsing holds nothing: a job you left ten seconds ago is immediately takeable, because you are
+  // demonstrably not in it.
+  it('holds nothing from a page that is not inside a job', () => {
+    expect(heldJobId({ name: 'jobs', project: null })).toBeNull();
+    expect(heldJobId({ name: 'accounts' })).toBeNull();
   });
 });

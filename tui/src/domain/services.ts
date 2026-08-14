@@ -92,6 +92,7 @@ const DESCRIPTION = { min: 16, max: 48 };
 
 export type ServicesLayout = {
   description: number;
+  /** Zero where the terminal is too narrow to hold it. `fitColumn` draws nothing at zero. */
   status: number;
   uptime: number;
   /** How wide the dim command and log lines may draw, their indent already taken off. */
@@ -101,18 +102,80 @@ export type ServicesLayout = {
 /**
  * The services page's columns.
  *
- * Fixed-first rather than longest-first, unlike `jobsLayout`: there is no shorter form of an exit
- * code or an uptime worth drawing, and a service whose description is clipped is still identifiable
- * by the command on the line beneath it. The description is the only thing that gives.
+ * Longest-first, the same shape as `jobsLayout`, and for the reason that shape exists: the fixed
+ * columns are 26 cells between them, so a layout that only ever shrank the description would draw
+ * off the edge of a narrow terminal — the "wide blocks escape their container" hazard, which has
+ * shipped a bug here before. Uptime goes first because a dev server's age is the least of what the
+ * row says; the status goes next; the description never goes, because a row that does not say what
+ * the service IS identifies nothing.
  */
 export function servicesLayout(width: number): ServicesLayout {
-  const available = Math.max(0, width - GUTTER - STATUS - UPTIME);
+  const detail = Math.max(0, width - INDENT);
+  for (const [status, uptime] of [
+    [STATUS, UPTIME],
+    [STATUS, 0],
+    [0, 0],
+  ] as const) {
+    const fixed = GUTTER + status + uptime;
+    if (width - fixed < DESCRIPTION.min) continue;
+    return {
+      description: Math.min(DESCRIPTION.max, width - fixed),
+      status,
+      uptime,
+      detail,
+    };
+  }
+  // Narrower than a description's minimum. Everything else is already gone, so the description takes
+  // whatever is left rather than the floor it cannot have.
   return {
-    description: Math.min(DESCRIPTION.max, available),
-    status: STATUS,
-    uptime: UPTIME,
-    detail: Math.max(0, width - INDENT),
+    description: Math.max(0, width - GUTTER),
+    status: 0,
+    uptime: 0,
+    detail,
   };
+}
+
+/**
+ * The uptime column: `up 12m`, or nothing at all.
+ *
+ * Nothing records when a dead service DIED — only when it started — so there is no true short label
+ * for a dead one. `up 12m` beside `exited (127)` claims it ran for twelve minutes when it may have
+ * fallen over in the first second, and `12m old` or `12m ago` read the same wrong way in that
+ * company. So the column empties and `describeStatus` is left to be the whole answer.
+ */
+export function uptimeCell(args: {
+  entry: ServiceEntry;
+  now: number;
+}): string {
+  if (!isRunning(args.entry)) return '';
+  return `up ${formatUptime(args.now - args.entry.startedAt)}`;
+}
+
+export enum EStopAction {
+  /** Never signalled. The polite first ask. */
+  term = 'term',
+  /** Signalled once and still not seen to die — insist. */
+  kill = 'kill',
+  /** Atlas watched this one exit. There is nothing left to signal. */
+  gone = 'gone',
+}
+
+/**
+ * What a stop request should actually do — and the reason it is a function rather than an
+ * `isRunning` check at the call site.
+ *
+ * A service is recorded `killed` the moment a signal is DELIVERED, not when the process dies, so a
+ * group that ignores SIGTERM reads as killed while it still holds its port. Treating that as "gone"
+ * leaves the only verb that can end a service unable to insist on the one service that needs
+ * insisting on. `exitCode` is written by the exit watcher and nowhere else, so its presence is the
+ * one honest record of a death Atlas actually saw — and the only safe reason to stop signalling,
+ * since a reaped pgid can be reissued to something else entirely.
+ *
+ * The escalation is the same one `reapGracefully` performs on the way out; this is its manual half.
+ */
+export function stopAction(entry: ServiceEntry): EStopAction {
+  if (!mayStillBeAlive(entry)) return EStopAction.gone;
+  return isRunning(entry) ? EStopAction.term : EStopAction.kill;
 }
 
 /** `4s`, `12m`, `3h 07m`. Coarse on purpose: nobody reads a dev server's uptime to the second. */

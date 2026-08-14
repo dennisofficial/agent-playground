@@ -8,6 +8,9 @@ import {
   renderServiceList,
   serviceJobIds,
   servicesLayout,
+  stopAction,
+  EStopAction,
+  uptimeCell,
   type ServiceEntry,
 } from '../services.js';
 
@@ -192,15 +195,24 @@ describe('servicesLayout', () => {
     const layout = servicesLayout(100);
     expect(layout.status).toBe(14);
     expect(layout.uptime).toBe(8);
-    expect(layout.description).toBeGreaterThan(16);
+    expect(layout.description).toBe(48);
   });
 
-  // Every column together must not exceed the terminal, or the row wraps and the list turns into
-  // prose. This is the assertion that catches a constant being nudged without the others.
-  it('never draws a row wider than the terminal', () => {
-    for (const width of [40, 60, 80, 100, 200]) {
+  /**
+   * Every column together must not exceed the room the four-cell caret gutter leaves, or the row
+   * escapes its box — the hazard the house has already shipped twice. The narrow widths are the
+   * point: the fixed columns alone are 26 cells, so a layout that only ever shrinks the description
+   * overruns below that and the invariant has to be checked exactly where it is hardest to hold.
+   *
+   * Stated against `width - GUTTER` rather than `width` because the caret is a fixed prefix the
+   * layout does not get to shrink: on a three-column terminal the row is over budget before any
+   * column is chosen, and the terminal clips it. Everything the function DOES control is bounded.
+   */
+  it('never draws a row wider than the terminal, at any width at all', () => {
+    for (let width = 0; width <= 200; width += 1) {
       const layout = servicesLayout(width);
-      expect(4 + layout.description + layout.status + layout.uptime).toBeLessThanOrEqual(width);
+      const columns = layout.description + layout.status + layout.uptime;
+      expect(columns).toBeLessThanOrEqual(Math.max(0, width - 4));
     }
   });
 
@@ -216,9 +228,63 @@ describe('servicesLayout', () => {
     expect(servicesLayout(100).status).toBeGreaterThan('exited (127)'.length);
   });
 
+  /**
+   * Longest-first, like `jobsLayout`: uptime is the first column worth losing, then the status. What
+   * never goes is the description, because a row that does not say what the service IS identifies
+   * nothing — and neither does one that has drawn off the edge of the screen.
+   */
+  it('drops the uptime, then the status, rather than overrunning', () => {
+    expect(servicesLayout(40).uptime).toBe(0);
+    expect(servicesLayout(40).status).toBe(14);
+    expect(servicesLayout(30).status).toBe(0);
+    expect(servicesLayout(30).description).toBeGreaterThan(0);
+  });
+
   it('does not go negative on an absurdly narrow terminal', () => {
-    const layout = servicesLayout(10);
+    const layout = servicesLayout(2);
     expect(layout.description).toBeGreaterThanOrEqual(0);
     expect(layout.detail).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('uptimeCell', () => {
+  it('says how long a live service has been up', () => {
+    expect(uptimeCell({ entry: entry(), now: NOW })).toBe('up 1m');
+  });
+
+  /**
+   * Nothing records when a dead service DIED — only when it started. `up 1m` beside `exited (127)`
+   * would read as "it ran for a minute" when it may have fallen over in the first second, and every
+   * short label for the true fact ("1m old", "1m ago") reads the same wrong way beside that status.
+   * So the column says nothing, and `describeStatus` is left to be the whole of the answer.
+   */
+  it('says nothing at all for a service that is no longer running', () => {
+    expect(uptimeCell({ entry: entry({ status: EServiceStatus.exited, exitCode: 1 }), now: NOW })).toBe('');
+    expect(uptimeCell({ entry: entry({ status: EServiceStatus.killed }), now: NOW })).toBe('');
+  });
+});
+
+describe('stopAction', () => {
+  it('sends SIGTERM to a service nobody has signalled yet', () => {
+    expect(stopAction(entry())).toBe(EStopAction.term);
+  });
+
+  /**
+   * The second press, and the reason this is a function rather than an `isRunning` check.
+   *
+   * `stop` records `killed` the moment the signal is DELIVERED, not when the process dies — so a
+   * group that ignores SIGTERM outright reads as `killed` while it still holds its port. Refusing
+   * the second press would leave the only page that can kill a service unable to insist on the one
+   * service that needs insisting on. This is the same escalation `reapGracefully` performs.
+   */
+  it('escalates to SIGKILL for a signalled group Atlas has never watched die', () => {
+    expect(stopAction(entry({ status: EServiceStatus.killed }))).toBe(EStopAction.kill);
+  });
+
+  // `exitCode` is written by the exit watcher and nowhere else, so its presence is the one honest
+  // record of "we saw this die". Signalling a reaped pgid risks hitting whatever inherited it.
+  it('refuses a service Atlas has watched exit, however it exited', () => {
+    expect(stopAction(entry({ status: EServiceStatus.exited, exitCode: 0 }))).toBe(EStopAction.gone);
+    expect(stopAction(entry({ status: EServiceStatus.killed, exitCode: 143 }))).toBe(EStopAction.gone);
   });
 });

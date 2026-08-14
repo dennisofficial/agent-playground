@@ -13,7 +13,7 @@ import { useQuitGuard } from "./hooks/use-quit-guard.js";
 import { claimService, useClaim } from "./hooks/use-claim.js";
 import { EClaimState } from "../domain/claim.js";
 import { isRunning } from "../domain/services.js";
-import { useNavigation, type ThreadsRoute } from "./navigation.js";
+import { heldJobId, useNavigation, type ThreadsRoute } from "./navigation.js";
 import { AccountsPage } from "./pages/accounts.js";
 import { ConversationPage } from "./pages/conversation.js";
 import { JobsPage } from "./pages/jobs.js";
@@ -58,29 +58,20 @@ export function App(props: {
     tty: string | null;
   } | null>(null);
 
-  /**
-   * This tile holds the job it has OPEN — the conversation and the job's own page are both inside
-   * it, so `←` between them changes nothing. Browsing holds nothing, which means a job you left ten
-   * seconds ago is immediately takeable: you are demonstrably not in it.
-   */
-  const heldJobId =
-    nav.route.name === "conversation"
-      ? nav.route.open.job.id
-      : nav.route.name === "threads"
-        ? nav.route.job.id
-        : null;
+  // Which pages count as being IN a job — see `heldJobId`.
+  const held = heldJobId(nav.route);
 
   const handleTakenOver = useCallback(() => {
-    if (!heldJobId) return;
+    if (!held) return;
     // Interrupt FIRST, navigate second. `←` deliberately leaves an agent working, so popping alone
     // would leave this tile streaming into a transcript the other terminal is now also writing.
-    void conversationService.abandonJob(heldJobId).finally(() => {
+    void conversationService.abandonJob(held).finally(() => {
       setError("this job was taken over by another terminal");
       nav.popTo("jobs");
     });
-  }, [conversationService, heldJobId, nav]);
+  }, [conversationService, held, nav]);
 
-  useClaim({ jobId: heldJobId, onTakenOver: handleTakenOver });
+  useClaim({ jobId: held, onTakenOver: handleTakenOver });
 
   // Creating a job is two moves — a blank page, then the message that makes it real. Both live in
   // one hook because both are decisions about the STACK, and neither is wiring.
@@ -172,6 +163,21 @@ export function App(props: {
   const leaveConversation = useCallback(() => {
     void conversationService.leave().finally(() => nav.pop());
   }, [conversationService, nav]);
+
+  /**
+   * Pushed, not toggled: `/services` is typed from a composer you are coming back to, and the
+   * conversation underneath is exactly where `←` should land you.
+   *
+   * A `useCallback` over the route rather than an inline arrow, because the conversation page memos
+   * its submit handler on this identity — an arrow rebuilt on every delta tick defeats that memo
+   * thirty times a second while an agent is streaming. It reads the route itself for the same
+   * reason `leaveConversation` does: the value it needs is only defined on the route it fires from.
+   */
+  const openServices = useCallback(() => {
+    if (nav.route.name !== "conversation") return;
+    const { job } = nav.route.open;
+    nav.push({ name: "services", jobId: job.id, jobTitle: job.title });
+  }, [nav]);
 
   /**
    * Switch the conversation to another thread of the same job. Neither side's turn is disturbed:
@@ -346,15 +352,7 @@ export function App(props: {
             // this. Pushing another would stack two of them. It keeps its own key because the
             // TRIGGERS differ — `←` only leaves on an empty composer, `ctrl+h` always does.
             onThreads={leaveConversation}
-            // Pushed, not toggled: `/services` is typed from a composer you are coming back to, and
-            // the conversation underneath is exactly where `←` should land you.
-            onServices={() =>
-              nav.push({
-                name: "services",
-                jobId: route.open.job.id,
-                jobTitle: route.open.job.title,
-              })
-            }
+            onServices={openServices}
           />
         ) : null}
 

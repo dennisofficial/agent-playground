@@ -31,16 +31,22 @@ export function useQuitGuard(args: {
    */
   services: () => number;
   onQuit: () => void;
+  /**
+   * How long the arm stands, in ms. Injected only so a test can drive the lapse in real time
+   * instead of waiting three seconds for it — the same shape `useTick` and `expandHome` already use.
+   */
+  armMs?: number;
 }): string | null {
   const [armed, setArmed] = useState<string | null>(null);
+  const armMs = args.armMs ?? ARM_MS;
 
   // Armed is a moment, not a mode. Left standing it would turn a later, innocent ctrl+c into an
   // unwarned quit — the exact thing the warning exists to prevent.
   useEffect(() => {
     if (!armed) return;
-    const timer = setTimeout(() => setArmed(null), ARM_MS);
+    const timer = setTimeout(() => setArmed(null), armMs);
     return () => clearTimeout(timer);
-  }, [armed]);
+  }, [armed, armMs]);
 
   useInput((input, key) => {
     if (key.ctrl && input === "c") {

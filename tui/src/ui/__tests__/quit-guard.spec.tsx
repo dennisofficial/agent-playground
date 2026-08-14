@@ -19,13 +19,20 @@ import { useQuitGuard } from '../hooks/use-quit-guard.js';
 const WIDTH = 80;
 const HEIGHT = 6;
 
-async function open(args: { agents: number; services: number }) {
+async function open(args: {
+  agents: number;
+  services: number;
+  /** Real time, and short: the lapse is only testable if the test does not have to sit out three seconds. */
+  armMs?: number;
+}) {
   let quits = 0;
+  let services = args.services;
 
   function Probe(): React.ReactNode {
     const armed = useQuitGuard({
       agents: args.agents,
-      services: () => args.services,
+      services: () => services,
+      armMs: args.armMs,
       onQuit: () => {
         quits += 1;
       },
@@ -53,7 +60,15 @@ async function open(args: { agents: number; services: number }) {
     await setup.flush();
   };
 
-  return { setup, press, quits: (): number => quits };
+  return {
+    setup,
+    press,
+    quits: (): number => quits,
+    /** Changes the registry's count WITHOUT re-rendering — see the thunk test. */
+    setServices: (count: number): void => {
+      services = count;
+    },
+  };
 }
 
 describe('the ctrl+c guard', () => {
@@ -138,6 +153,47 @@ describe('the ctrl+c guard', () => {
 
       await press(() => setup.mockInput.pressCtrlC());
       expect(quits()).toBe(0);
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
+  /**
+   * The arm lapses on its own, and this is the only thing that says so: with the timer deleted the
+   * whole suite still passes, because every other test presses again within milliseconds. A ctrl+c
+   * ten minutes after the warning has to be warned about again — by then the sentence is gone from
+   * the screen and the user has no idea they are one keystroke from killing a dev server.
+   */
+  it('lapses back to unarmed, so a much later press is warned about again', async () => {
+    const { setup, press, quits } = await open({ agents: 1, services: 1, armMs: 50 });
+    try {
+      await press(() => setup.mockInput.pressCtrlC());
+      expect(setup.captureCharFrame()).toContain('1 agent still working');
+
+      await press(() => new Promise((resolve) => setTimeout(resolve, 120)));
+      expect(setup.captureCharFrame()).toContain('not armed');
+
+      await press(() => setup.mockInput.pressCtrlC());
+      expect(quits()).toBe(0);
+      expect(setup.captureCharFrame()).toContain('1 service running');
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
+  /**
+   * The count is read AT THE MOMENT of the press, not at the last render — which is the whole reason
+   * `services` is a thunk. Nothing renders this number, so a value captured at render time would be
+   * as old as the last unrelated re-render: a service started since would go unwarned, and one that
+   * died would be warned about after it was already gone.
+   */
+  it('counts the services at the press, not at the last render', async () => {
+    const { setup, press, setServices } = await open({ agents: 0, services: 0 });
+    try {
+      setServices(2);
+      await press(() => setup.mockInput.pressCtrlC());
+
+      expect(setup.captureCharFrame()).toContain('2 services running');
     } finally {
       setup.renderer.destroy();
     }

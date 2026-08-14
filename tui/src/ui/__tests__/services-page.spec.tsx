@@ -37,7 +37,7 @@ function entry(overrides: Partial<ServiceEntry> = {}): ServiceEntry {
   };
 }
 
-async function open(entries: ServiceEntry[]) {
+async function open(entries: ServiceEntry[], stopDelays: Record<string, number> = {}) {
   const stopped: { jobId: string; id: string }[] = [];
   let backs = 0;
 
@@ -48,6 +48,10 @@ async function open(entries: ServiceEntry[]) {
       allServices: (): readonly ServiceEntry[] => entries,
       stop: async (args: { jobId: string; id: string }): Promise<string> => {
         stopped.push(args);
+        // Real stops resolve in whatever order the signals land, not in the order they were asked
+        // for — the delay is how the out-of-order case below is made deterministic.
+        const delay = stopDelays[args.id] ?? 0;
+        if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
         return `Stopped \`${args.id}\``;
       },
     },
@@ -138,10 +142,11 @@ describe('the services page', () => {
   });
 
   /**
-   * `k` on a corpse would answer "already gone" — a correct sentence and a pointless one. The guard
-   * is what keeps the page from reporting on kills it did not make.
+   * `k` on a service Atlas WATCHED exit would answer "already gone" — a correct sentence and a
+   * pointless one. An exit code is the only honest record of a death actually seen, and the only
+   * safe reason to stop signalling: a reaped process group can be reissued to something else.
    */
-  it('refuses to stop a service that has already exited', async () => {
+  it('refuses to stop a service it watched exit', async () => {
     const { setup, press, stopped } = await open([
       entry({ status: EServiceStatus.exited, exitCode: 0 }),
     ]);
@@ -149,6 +154,96 @@ describe('the services page', () => {
       await press(() => setup.mockInput.typeText('k'));
 
       expect(stopped).toEqual([]);
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
+  /**
+   * The second press, and the whole reason the guard asks `stopAction` rather than `isRunning`.
+   *
+   * A group that ignores SIGTERM is recorded `killed` on delivery while it is still up and still
+   * holding its port. Refusing here would leave the one service that needs insisting on the one
+   * service this page cannot end — and this page is the only place a human can end one at all.
+   */
+  it('still stops a service that was signalled but has not been seen to die', async () => {
+    const { setup, press, stopped } = await open([
+      entry({ status: EServiceStatus.killed }),
+    ]);
+    try {
+      await press(() => setup.mockInput.typeText('k'));
+
+      expect(stopped).toEqual([{ jobId: 'job-1', id: 'a1b2c3d4' }]);
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
+  /**
+   * `printable()` returns the key NAME with a modifier held, so `ctrl+k` arrives at this handler as a
+   * bare `k`. Killing a dev server is not something a mistyped chord gets to do.
+   */
+  it('does not kill on ctrl+k', async () => {
+    const { setup, press, stopped } = await open([entry()]);
+    try {
+      await press(() => setup.mockInput.pressKey('k', { ctrl: true }));
+
+      expect(stopped).toEqual([]);
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
+  // The notice is about the row you were on. Carried onto another row it reads as a report about a
+  // service nobody touched.
+  it('clears the stop notice when the cursor moves off the row it was about', async () => {
+    const { setup, press } = await open([
+      entry(),
+      entry({ id: 'ffff0000', description: 'prisma studio' }),
+    ]);
+    try {
+      await press(() => setup.mockInput.typeText('k'));
+      expect(setup.captureCharFrame()).toContain('Stopped');
+
+      await press(() => setup.mockInput.pressArrow('down'));
+      expect(setup.captureCharFrame()).not.toContain('Stopped');
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
+  /**
+   * Two kills in flight, answering out of order. Without the pending-id guard the slow answer lands
+   * last and the footer names a service the human is no longer stopping.
+   */
+  it('shows the answer to the latest stop, not the last one to resolve', async () => {
+    const { setup, press } = await open(
+      [entry(), entry({ id: 'ffff0000', description: 'prisma studio' })],
+      { a1b2c3d4: 400 },
+    );
+    try {
+      await press(() => setup.mockInput.typeText('k'));
+      await press(() => setup.mockInput.pressArrow('down'));
+      await press(() => setup.mockInput.typeText('k'));
+      // Past the slow stop's delay, so its answer has definitely arrived — and been discarded.
+      await press(() => new Promise((resolve) => setTimeout(resolve, 400)));
+
+      const frame = setup.captureCharFrame();
+      expect(frame).toContain('Stopped `ffff0000`');
+      expect(frame).not.toContain('Stopped `a1b2c3d4`');
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
+  // The header count is the only place the page says how many of these are actually alive.
+  it('counts the live services apart from the total in its header', async () => {
+    const { setup } = await open([
+      entry(),
+      entry({ id: 'ffff0000', status: EServiceStatus.exited, exitCode: 1 }),
+    ]);
+    try {
+      expect(setup.captureCharFrame()).toContain('1 running · 2 total');
     } finally {
       setup.renderer.destroy();
     }

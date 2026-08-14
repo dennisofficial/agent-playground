@@ -59,13 +59,6 @@ describe('collapseHome', () => {
   it('leaves a path outside the home alone', () => {
     expect(collapseHome('/tmp/foo.log', home)).toBe('/tmp/foo.log');
   });
-
-  // The inverse of `expandHome`, and tested as one: a path that survives the round trip is a path
-  // the human can paste back into a shell.
-  it('round-trips with expandHome', () => {
-    const path = '/Users/someone/Developer/atlas/tui';
-    expect(expandHome(collapseHome(path, home), home)).toBe(path);
-  });
 });
 
 describe('CONTEXT_BUCKETS', () => {

@@ -38,13 +38,35 @@ export type Route =
     }
   /**
    * The job's long-lived processes. It carries the id and the title rather than the `Job` because
-   * that is all the page draws, and a route holding a row would go stale the moment the job is
-   * renamed — and would couple `navigation.ts` to Prisma for a page that never reads the database.
+   * that is all the page draws, and taking the row would couple `navigation.ts` to Prisma for a page
+   * that never reads the database. The title is a snapshot either way — a rename while you sit here
+   * does not reach the trail, exactly as it does not reach the conversation route's copy.
    */
   | { name: "services"; jobId: string; jobTitle: string }
   | { name: "accounts" };
 
 export type ThreadsRoute = Extract<Route, { name: "threads" }>;
+
+/**
+ * The job this tile is IN, and therefore the one it holds the claim on.
+ *
+ * A tile holds the job it has open: the conversation, the job's own page and its services are all
+ * inside it, so `←` between them changes nothing. Browsing holds nothing, which means a job you left
+ * ten seconds ago is immediately takeable — you are demonstrably not in it.
+ *
+ * The services page belongs on this list precisely because it is the page you SIT on, watching
+ * something run. Dropping the claim there would let another terminal take the job silently while you
+ * watch, and the takeover notice you would have got is rendered by the hook that just unmounted.
+ *
+ * A function over the route rather than a chain in `app.tsx` because it is a rule about which pages
+ * mean "in a job" — and the way it fails is silent, in a lock nothing on screen draws.
+ */
+export function heldJobId(route: Route): string | null {
+  if (route.name === "conversation") return route.open.job.id;
+  if (route.name === "threads") return route.job.id;
+  if (route.name === "services") return route.jobId;
+  return null;
+}
 
 export type Navigation = {
   route: Route;
