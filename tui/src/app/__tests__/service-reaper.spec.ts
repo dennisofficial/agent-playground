@@ -3,7 +3,12 @@ import { randomUUID } from 'node:crypto';
 import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { jobDir } from '../../domain/paths.js';
-import { EServiceStatus, type ServiceEntry } from '../../domain/services.js';
+import {
+  EServiceStatus,
+  mayStillBeAlive,
+  type ServiceEntry,
+} from '../../domain/services.js';
+import { killGroup } from '../service-process.js';
 import {
   installReaperHandlers,
   REAP_SIGNALS,
@@ -30,7 +35,7 @@ function newJob(): string {
 }
 
 afterEach(() => {
-  for (const uninstall of cleanups.splice(0)) uninstall();
+  for (const disarm of cleanups.splice(0)) disarm();
   for (const jobId of created.splice(0)) {
     rmSync(jobDir(jobId), { recursive: true, force: true });
   }
@@ -129,33 +134,43 @@ describe('reapAll', () => {
     const jobId = newJob();
     const entry = await startService({ registry, jobId, command: DEAF });
 
-    await registry.stop({ jobId, id: entry.id });
-    expect(entry.status).toBe(EServiceStatus.killed);
-    expect(alive(entry.pid)).toBe(true);
+    try {
+      await registry.stop({ jobId, id: entry.id });
+      expect(entry.status).toBe(EServiceStatus.killed);
+      expect(alive(entry.pid)).toBe(true);
 
-    expect(registry.reapAll({ signal: 'SIGKILL' })).toEqual([entry]);
-    await waitFor(() => !alive(entry.pid), 'the stubborn group to die');
+      expect(registry.reapAll({ signal: 'SIGKILL' })).toEqual([entry]);
+      await waitFor(() => !alive(entry.pid), 'the stubborn group to die');
+    } finally {
+      // A SIGTERM-immune busy loop outlives the runner if an assertion above throws first.
+      killGroup({ pgid: entry.pgid, signal: 'SIGKILL' });
+    }
   });
 
   /**
-   * The same skip in `reapJob`, where it is unrecoverable: this sweep FORGETS the job at the end, so
-   * a group it passes over is orphaned and unrecorded at once — after that even the exit backstop,
-   * which reads the whole map, has nothing left to find it by.
+   * The same skip in `reapJob`, where it is unrecoverable — and where the escalation is not optional.
+   *
+   * This sweep FORGETS the job at the end, so it is the LAST layer that will ever hold this pgid: a
+   * group it merely re-asks is orphaned and unrecorded at once, and no backstop can find it again.
+   * `reapGracefully` can afford to SIGTERM and come back in 300 ms because it runs again; this one
+   * gets no second pass, so a service that has already been asked once must be insisted on NOW.
    */
-  it('reapJob kills a stopped-but-living group rather than forgetting it', async () => {
+  it('reapJob SIGKILLs a group that already ignored its SIGTERM', async () => {
     const registry = new ServiceRegistryService();
     const jobId = newJob();
     const entry = await startService({ registry, jobId, command: DEAF });
 
-    await registry.stop({ jobId, id: entry.id });
-    expect(alive(entry.pid)).toBe(true);
+    try {
+      await registry.stop({ jobId, id: entry.id });
+      expect(alive(entry.pid)).toBe(true);
 
-    expect(registry.reapJob(jobId)).toEqual([entry.id]);
-    // SIGTERM again, which this one ignores — so the assertion is that it was SIGNALLED, not that it
-    // died. `reapGracefully` is what escalates; `reapJob` is a takeover, not a quit.
-    expect(registry.listFor(jobId)).toHaveLength(0);
-
-    process.kill(-entry.pgid, 'SIGKILL');
+      expect(registry.reapJob(jobId)).toEqual([entry.id]);
+      expect(registry.listFor(jobId)).toHaveLength(0);
+      // The point of the whole test: forgetting it is only safe because it is genuinely dead.
+      await waitFor(() => !alive(entry.pid), 'the forgotten group to be dead');
+    } finally {
+      killGroup({ pgid: entry.pgid, signal: 'SIGKILL' });
+    }
   });
 
   /**
@@ -172,7 +187,11 @@ describe('reapAll', () => {
     entry.pgid = 4_194_303;
 
     expect(registry.reapAll({ signal: 'SIGTERM' })).toEqual([]);
-    expect(entry.status).toBe(EServiceStatus.running);
+    // `exited`, not `running`: the kernel has just said this group does not exist, and leaving the
+    // row `running` both re-signals it from the exit backstop and hands the deferred reconcile a
+    // live-looking pgid that the kernel is free to reissue to a stranger.
+    expect(entry.status).toBe(EServiceStatus.exited);
+    expect(mayStillBeAlive(entry)).toBe(false);
 
     process.kill(-realPid, 'SIGKILL');
   });
@@ -225,7 +244,6 @@ describe('reapGracefully', () => {
     registry.reapAll({ signal: 'SIGTERM' });
     await Bun.sleep(150);
     expect(alive(entry.pid)).toBe(true);
-    entry.status = EServiceStatus.running;
 
     await reapGracefully({ target: registry, warn: () => {}, graceMs: 150 });
 
@@ -291,7 +309,9 @@ describe('reapNow — the exit backstop', () => {
 describe('installReaperHandlers', () => {
   it('claims the three catchable death signals and the exit backstop', () => {
     const before = counts();
-    cleanups.push(installReaperHandlers({ target: fakeTarget([]), warn: () => {} }));
+    cleanups.push(
+      installReaperHandlers({ target: fakeTarget([]), warn: () => {} }).disarmAll,
+    );
 
     for (const signal of REAP_SIGNALS) {
       expect(process.listenerCount(signal)).toBe((before.get(signal) ?? 0) + 1);
@@ -301,14 +321,50 @@ describe('installReaperHandlers', () => {
 
   it('gives every listener back, so nothing accumulates across a restart', () => {
     const before = counts();
-    const uninstall = installReaperHandlers({ target: fakeTarget([]), warn: () => {} });
-    uninstall();
+    const handles = installReaperHandlers({ target: fakeTarget([]), warn: () => {} });
+    handles.disarmAll();
     // Twice, because a quit path calls it and then the signal handler calls it again.
-    uninstall();
+    handles.disarmAll();
 
     for (const [event, count] of before) {
       expect(process.listenerCount(event)).toBe(count);
     }
+  });
+
+  /**
+   * The window this used to leave open, and the reason the disarm is two verbs.
+   *
+   * `main.tsx` `void`s `context.close()`, so the process can reach `exit` while `reapGracefully` is
+   * still sleeping between its SIGTERM and its SIGKILL — the one moment when every service has been
+   * signalled and not one is confirmed dead. Dropping the exit handler up front, as the old single
+   * uninstall did, meant nothing at all was armed just then.
+   */
+  it('keeps the exit backstop armed while the grace is still running', async () => {
+    const entry = liveEntry();
+    const exitBefore = process.listenerCount('exit');
+    const sigtermBefore = process.listenerCount('SIGTERM');
+
+    const handles = installReaperHandlers({
+      target: { allServices: () => [entry], reapAll: () => [entry] },
+      warn: () => {},
+      graceMs: 60,
+      terminate: () => {},
+    });
+    cleanups.push(handles.disarmAll);
+
+    const [handler] = process.listeners('SIGTERM').slice(-1);
+    (handler as () => void)();
+
+    // Sampled INSIDE the grace, which is the only moment the two disarms can be told apart.
+    await Bun.sleep(20);
+    expect(process.listenerCount('SIGTERM')).toBe(sigtermBefore);
+    expect(process.listenerCount('exit')).toBe(exitBefore + 1);
+
+    // And it does come off once the reap is finished, or a restart accumulates listeners.
+    await waitFor(
+      () => process.listenerCount('exit') === exitBefore,
+      'the backstop to come off after the reap',
+    );
   });
 
   /**
@@ -336,7 +392,7 @@ describe('installReaperHandlers', () => {
         warn: () => {},
         graceMs: 1,
         terminate: (signal) => terminated.push(signal),
-      }),
+      }).disarmAll,
     );
 
     const [handler] = process.listeners('SIGTERM').slice(-1);

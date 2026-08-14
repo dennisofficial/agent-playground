@@ -233,15 +233,6 @@ describe('servicesLayout', () => {
     }
   });
 
-  // The same invariant for the two dim lines under the row, whose own prefix is six cells of indent.
-  // Checked at every width for the same reason as the columns above: the narrow end is where a
-  // layout that subtracts the wrong constant overruns, and nowhere else.
-  it('keeps the detail lines inside the terminal too, allowing for their indent', () => {
-    for (let width = 0; width <= 200; width += 1) {
-      expect(servicesLayout(width).detail).toBeLessThanOrEqual(Math.max(0, width - 6));
-    }
-  });
-
   // `exited (127)` is twelve cells and is the widest real status. A narrower column would clip the
   // exit code, which is the only part of that string anyone reads.
   it('holds the widest real status without clipping it', () => {

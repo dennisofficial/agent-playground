@@ -412,12 +412,17 @@ describe('ServiceRegistryService.reapJob', () => {
   });
 
   /**
-   * A group that did not actually die stays `running`, and this is the load-bearing half of the
-   * reap: `running` is what slice 05's exit backstop sweeps and what the deferred reconcile matches
-   * against — the whole reason `services.json` records a pgid at all. An optimistic `killed` here
-   * would tell every remaining layer the leak was already handled, and each of them would agree.
+   * Two things that look alike and are not: Atlas must not claim a kill it did not make, and it must
+   * not go on believing in a group the kernel has just denied.
+   *
+   * `killed` is out — that would tell every remaining layer the leak was handled. But `running` is
+   * out too, and that is the half this test used to get wrong: ESRCH is the kernel saying the group
+   * is already gone, which is as final as a watched exit and more urgent, because a reaped pgid can
+   * be reissued to something else entirely. Leaving the row `running` re-signals it from the exit
+   * backstop and hands the deferred reconcile a live-looking pgid pointing at a stranger. `exited`
+   * with no `exitCode` is the honest record: gone, but not by a death Atlas watched.
    */
-  it('does not record a kill it did not make', async () => {
+  it('records a denied group as gone, crediting itself with no kill', async () => {
     const registry = new ServiceRegistryService();
     const jobId = newJob();
 
@@ -430,7 +435,10 @@ describe('ServiceRegistryService.reapJob', () => {
     entry.pgid = 4_194_303;
 
     expect(registry.reapJob(jobId)).toEqual([]);
-    expect(mirror(jobId)[0]?.status).toBe(EServiceStatus.running);
+    expect(mirror(jobId)[0]?.status).toBe(EServiceStatus.exited);
+    // No code: `exitCode` is written by the exit watcher and nowhere else, so its absence is what
+    // distinguishes "the kernel says gone" from "Atlas watched it die".
+    expect(mirror(jobId)[0]?.exitCode).toBeUndefined();
 
     process.kill(-realPid, 'SIGTERM');
   });

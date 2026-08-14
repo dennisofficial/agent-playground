@@ -11,14 +11,18 @@ import {
   describeStatus,
   EServiceStatus,
   EStopAction,
-  mayStillBeAlive,
   renderServiceList,
   stopAction,
   type ServiceEntry,
 } from "../domain/services.js";
 import { writeServiceMirror } from "./service-mirror.js";
+import { reapAllEntries, reapJobEntries } from "./service-reap.js";
 import { killGroup, logTail, spawnService } from "./service-process.js";
-import { installReaperHandlers, reapGracefully } from "./service-reaper.js";
+import {
+  installReaperHandlers,
+  reapGracefully,
+  type ReaperHandles,
+} from "./service-reaper.js";
 import type { ServiceActions } from "./tools/tool.js";
 
 /**
@@ -49,7 +53,7 @@ export class ServiceRegistryService
 {
   private readonly logger = new Logger(ServiceRegistryService.name);
   private readonly byJob = new Map<string, ServiceEntry[]>();
-  private uninstallReaper: (() => void) | null = null;
+  private reaperHandles: ReaperHandles | null = null;
 
   /**
    * The signal and exit handlers — see `service-reaper.ts`. Installed from the registry rather than
@@ -57,24 +61,33 @@ export class ServiceRegistryService
    * its lifetime is exactly the window in which that is true.
    */
   onModuleInit(): void {
-    this.uninstallReaper = installReaperHandlers({
+    this.reaperHandles = installReaperHandlers({
       target: this,
       warn: (message) => this.logger.warn(message),
     });
   }
 
   /**
-   * The graceful path, reached from the in-app quit. The handlers come off first: this reap and the
-   * signal handlers' reap are the same act, and leaving them armed would have a quit that re-raises
-   * do it twice.
+   * The graceful path, reached from the in-app quit.
+   *
+   * The SIGNAL handlers come off first — this reap and theirs are the same act, and leaving them
+   * armed would have a quit that re-raises do it twice. The EXIT backstop stays armed until the reap
+   * has finished, because `main.tsx` `void`s `context.close()`: the process can reach `exit` while
+   * the grace below is still sleeping, which is exactly the window where every service has been
+   * signalled and none is confirmed dead.
    */
   async onModuleDestroy(): Promise<void> {
-    this.uninstallReaper?.();
-    this.uninstallReaper = null;
-    await reapGracefully({
-      target: this,
-      warn: (message) => this.logger.warn(message),
-    });
+    const handles = this.reaperHandles;
+    handles?.disarmSignals();
+    try {
+      await reapGracefully({
+        target: this,
+        warn: (message) => this.logger.warn(message),
+      });
+    } finally {
+      handles?.disarmAll();
+      this.reaperHandles = null;
+    }
   }
 
   /** The rows, for anything rendering them. The tool verbs below answer in prose instead. */
@@ -172,83 +185,32 @@ export class ServiceRegistryService
   }
 
   /**
-   * Kill everything this job owns and forget it.
+   * Kill everything this job owns and forget it — a deletion, or a claim released to another Atlas.
    *
-   * Called when the job is DELETED and when its claim is RELEASED. Deletion removes `jobDir`, which
-   * holds both the logs and the only record of what was running — doing that while a group is alive
-   * orphans the tree and destroys the evidence at the same time, which is the leak this design
-   * rejected. A claim release means another Atlas instance may now be driving the job, and children
-   * left behind would be running with nobody watching them.
-   *
-   * Synchronous, and deliberately: it is also reachable from an exit path where nothing awaits.
+   * Deletion removes `jobDir`, which holds both the logs and the only record of what was running;
+   * doing that while a group is alive orphans the tree and destroys the evidence at once, which is
+   * the leak this design rejected. The sweep itself, and the reason it escalates where `reapAll`
+   * does not, is in `service-reap.ts`.
    */
   reapJob(jobId: string): string[] {
-    const entries = this.byJob.get(jobId);
-    if (!entries) return [];
-    const killed: string[] = [];
-    for (const entry of entries) {
-      // Not `running`: a group that trapped SIGTERM is `killed` in memory and still holding its
-      // port. This sweep FORGETS the job at the end, so anything skipped here is orphaned and
-      // unrecorded at once — the one path in the app from which a leak can never be recovered.
-      if (!mayStillBeAlive(entry)) continue;
-      try {
-        // Only a group we actually signalled becomes `killed`. One that we may not signal stays as
-        // it was — which is what leaves it visible to the deferred reconcile, the entire reason
-        // `services.json` records a pgid. Recording an optimistic `killed` here would tell every
-        // remaining layer the leak was handled.
-        if (!killGroup({ pgid: entry.pgid, signal: "SIGTERM" })) continue;
-        killed.push(entry.id);
-        entry.status = EServiceStatus.killed;
-      } catch (error) {
-        // A best-effort sweep, unlike `stop()` where a throw is the model's answer. This runs from a
-        // job deletion that has already removed the row and from a React effect, and one unkillable
-        // group must not abort the loop, skip the persist below, or leave the job in the map.
-        this.logger.warn(`could not reap service ${entry.id}: ${String(error)}`);
-      }
-    }
-    // Persist BEFORE forgetting, so a mirror left behind by a deletion that then fails still says
-    // these were stopped rather than claiming they are live.
-    this.persist(jobId);
-    this.byJob.delete(jobId);
-    return killed;
+    return reapJobEntries(this.sweepDeps(), { jobId });
   }
 
-  /**
-   * Signal every running group in every job — what quitting Atlas does, as against `reapJob`'s one.
-   *
-   * Returns the entries actually SIGNALLED, which is what makes the SIGTERM → grace → SIGKILL
-   * escalation possible: a group that ignored the first signal is already recorded as `killed`, so
-   * a second sweep of "what is running" would find nothing to insist on.
-   *
-   * The jobs stay in the map, unlike a deletion. Atlas is going away, not forgetting these jobs, and
-   * the exit backstop still has to be able to see them.
-   */
+  /** Signal every group in every job — quitting Atlas. See `service-reap.ts`. */
   reapAll(args: { signal: NodeJS.Signals }): ServiceEntry[] {
-    const signalled: ServiceEntry[] = [];
-    for (const [jobId, entries] of this.byJob) {
-      let touched = false;
-      for (const entry of entries) {
-        // Same question as `reapJob`, and here it is the difference between a graceful quit and a
-        // leak: a group that ignored an earlier SIGTERM is `killed`, and skipping it would keep it
-        // out of the `signalled` list the SIGKILL escalation is driven from.
-        if (!mayStillBeAlive(entry)) continue;
-        try {
-          // Same rule as `reapJob`: only a group we actually signalled becomes `killed`. One that is
-          // already gone is left alone rather than credited to a kill Atlas did not make.
-          if (!killGroup({ pgid: entry.pgid, signal: args.signal })) continue;
-          entry.status = EServiceStatus.killed;
-          signalled.push(entry);
-          touched = true;
-        } catch (error) {
-          // Best-effort, and for a harder reason than `reapJob`'s: this runs on the way out of the
-          // process, where one unsignallable group aborting the loop would leak every service after
-          // it in the map.
-          this.logger.warn(`could not reap service ${entry.id}: ${String(error)}`);
-        }
-      }
-      if (touched) this.persist(jobId);
-    }
-    return signalled;
+    return reapAllEntries(this.sweepDeps(), args);
+  }
+
+  private sweepDeps(): {
+    byJob: Map<string, ServiceEntry[]>;
+    persist: (jobId: string) => void;
+    warn: (message: string) => void;
+  } {
+    return {
+      byJob: this.byJob,
+      persist: (jobId) => this.persist(jobId),
+      warn: (message) => this.logger.warn(message),
+    };
   }
 
   private entriesFor(jobId: string): ServiceEntry[] {

@@ -46,7 +46,11 @@ export const REAP_GRACE_MS = 300;
  * hand-built target rather than a container.
  */
 export type ReaperTarget = {
-  /** SIGTERM every running group, recording the kill. Returns the entries actually signalled. */
+  /**
+   * Signal every group that may still be alive, recording the kill. Returns the entries actually
+   * SIGNALLED — which is what the escalation below comes back to, and is why a group the kernel
+   * denied is not in it.
+   */
   reapAll(args: { signal: NodeJS.Signals }): ServiceEntry[];
   /** Every service in every job. The caller filters — see `domain/services.ts`. */
   allServices(): readonly ServiceEntry[];
@@ -57,10 +61,11 @@ type Warn = (message: string) => void;
 /**
  * Layers 1 and 2: ask, wait, insist.
  *
- * The escalation goes back to the entries it SIGNALLED rather than re-sweeping, because the sweep is
- * the expensive half and the answer cannot have grown: a service started during the grace window is
- * not something a quit already in progress should be signalling. `mayStillBeAlive` is re-asked per
- * entry, so anything that died politely in the meantime is left alone.
+ * The escalation goes back to the entries it SIGNALLED rather than re-sweeping, and the reason is
+ * not cost — a Map walk over a handful of entries is nothing. It is that the answer must not be
+ * allowed to grow: a service started during the grace window is not something a quit already in
+ * progress should be signalling. `mayStillBeAlive` is re-asked per entry, so anything that died
+ * politely in the meantime is left alone.
  */
 export async function reapGracefully(args: {
   target: ReaperTarget;
@@ -95,8 +100,25 @@ export function reapNow(args: { target: ReaperTarget; warn: Warn }): void {
 }
 
 /**
- * Install layers 2 and 3 on the process. Returns the uninstall, which layer 1 calls so a quit that
- * is already reaping does not reap again on its way out.
+ * What `installReaperHandlers` hands back, and the reason it is two verbs rather than one.
+ *
+ * The signal handlers and the exit backstop have to come off at DIFFERENT moments. Signals go
+ * first, before any reaping starts, so a second ctrl+c reaches the default disposition and kills
+ * Atlas outright instead of queueing behind a reap that is stuck. The exit handler has to stay armed
+ * straight through the grace window: `main.tsx` `void`s `context.close()`, so the process can reach
+ * `exit` while `reapGracefully` is still sleeping between its SIGTERM and its SIGKILL — and that is
+ * precisely the window in which every service is signalled but not yet dead. Dropping both up front,
+ * as this used to, left that window with nothing armed at all.
+ */
+export type ReaperHandles = {
+  /** Layer 2 off. Called before reaping, on both quit paths. */
+  disarmSignals: () => void;
+  /** Layers 2 and 3 off. Called once the reap has finished, and idempotent. */
+  disarmAll: () => void;
+};
+
+/**
+ * Install layers 2 and 3 on the process.
  *
  * `terminate` is a real port rather than a test seam: it is "end this process the way the signal
  * asked", and re-raising is the only implementation an app should ever want. It is injectable so a
@@ -107,7 +129,7 @@ export function installReaperHandlers(args: {
   warn: Warn;
   graceMs?: number;
   terminate?: (signal: NodeJS.Signals) => void;
-}): () => void {
+}): ReaperHandles {
   const terminate =
     args.terminate ??
     ((signal: NodeJS.Signals) => {
@@ -121,24 +143,35 @@ export function installReaperHandlers(args: {
     handler: () => void;
   }> = [];
 
-  const uninstall = (): void => {
-    for (const { event, handler } of registered.splice(0)) {
-      process.off(event, handler);
+  const off = (predicate: (event: NodeJS.Signals | "exit") => boolean): void => {
+    for (const entry of registered.splice(0)) {
+      if (!predicate(entry.event)) {
+        registered.push(entry);
+        continue;
+      }
+      process.off(entry.event, entry.handler);
     }
   };
 
+  const disarmSignals = (): void => off((event) => event !== "exit");
+  const disarmAll = (): void => off(() => true);
+
   for (const signal of REAP_SIGNALS) {
     const handler = (): void => {
-      // Uninstalled FIRST, and before anything can fail: a second signal must reach the default
-      // disposition and kill Atlas outright rather than queue behind a reap that is stuck.
-      uninstall();
+      // Signals come off FIRST, before anything can fail: a second signal must reach the default
+      // disposition and kill Atlas outright rather than queue behind a reap that is stuck. The exit
+      // backstop deliberately stays armed until the reap is done — see `ReaperHandles`.
+      disarmSignals();
       void reapGracefully({
         target: args.target,
         warn: args.warn,
         ...(args.graceMs === undefined ? {} : { graceMs: args.graceMs }),
       })
         .catch((error: unknown) => args.warn(`reap on ${signal} failed: ${String(error)}`))
-        .finally(() => terminate(signal));
+        .finally(() => {
+          disarmAll();
+          terminate(signal);
+        });
     };
     process.on(signal, handler);
     registered.push({ event: signal, handler });
@@ -148,7 +181,7 @@ export function installReaperHandlers(args: {
   process.on("exit", onExit);
   registered.push({ event: "exit", handler: onExit });
 
-  return uninstall;
+  return { disarmSignals, disarmAll };
 }
 
 function hardKill(args: { entry: ServiceEntry; warn: Warn }): void {

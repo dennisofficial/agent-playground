@@ -262,7 +262,28 @@ describe('the services page', () => {
       entry({ id: 'ffff0000', status: EServiceStatus.exited, exitCode: 1 }),
     ]);
     try {
-      expect(setup.captureCharFrame()).toContain('1 running · 2 total');
+      expect(setup.captureCharFrame()).toContain('1 live · 2 total');
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
+  /**
+   * The case that tells the two predicates apart, and the reason the header does not say `running`.
+   *
+   * A group that ignored SIGTERM is `killed` in memory and still holding its port. The job list
+   * marks that job with ⚙, so a header reading `0 …` underneath it would read as a broken mark
+   * rather than as the far more interesting truth: this thing will not die.
+   */
+  it('counts a killed-but-not-yet-dead service as live, as the job list does', async () => {
+    const { setup } = await open([
+      entry({ id: 'ffff0000', status: EServiceStatus.killed }),
+    ]);
+    try {
+      const frame = setup.captureCharFrame();
+      expect(frame).toContain('1 live · 1 total');
+      // Still `killed` in its own row — the header counts, the status column distinguishes.
+      expect(frame).toContain('killed');
     } finally {
       setup.renderer.destroy();
     }

@@ -8,6 +8,7 @@ import {
   describeStatus,
   EStopAction,
   isRunning,
+  mayStillBeAlive,
   servicesLayout,
   stopAction,
   uptimeCell,
@@ -182,9 +183,19 @@ function ServiceRow(props: {
   );
 }
 
+/**
+ * `mayStillBeAlive`, and `live` rather than `running`, so this header answers the same question the
+ * job list's ⚙ mark does.
+ *
+ * A service that trapped SIGTERM is `killed` and still holding its port. Counting `isRunning` here
+ * put `0 running · 1 total` under a job the list had just marked as holding something, which reads
+ * as a broken mark rather than as the true and much more interesting "it will not die". The status
+ * column still tells the two apart; this line only has to say how many a quit would have to deal
+ * with — the same number the quit warning gives.
+ */
 function countLabel(entries: readonly ServiceEntry[]): string {
-  const live = entries.filter(isRunning).length;
-  return `${live} running · ${entries.length} total`;
+  const live = entries.filter(mayStillBeAlive).length;
+  return `${live} live · ${entries.length} total`;
 }
 
 /**
