@@ -212,6 +212,25 @@ describe('the services page', () => {
     }
   });
 
+  // The same rule on the slow path: clearing the notice is not enough if the stop that was still in
+  // flight when you moved is allowed to write it back the moment it answers.
+  it('does not let a stop still in flight put its notice back after the cursor moved', async () => {
+    const { setup, press } = await open(
+      [entry(), entry({ id: 'ffff0000', description: 'prisma studio' })],
+      { a1b2c3d4: 300 },
+    );
+    try {
+      await press(() => setup.mockInput.typeText('k'));
+      await press(() => setup.mockInput.pressArrow('down'));
+      // Well past the delay, so the answer has certainly arrived.
+      await press(() => new Promise((resolve) => setTimeout(resolve, 350)));
+
+      expect(setup.captureCharFrame()).not.toContain('Stopped');
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
   /**
    * Two kills in flight, answering out of order. Without the pending-id guard the slow answer lands
    * last and the footer names a service the human is no longer stopping.

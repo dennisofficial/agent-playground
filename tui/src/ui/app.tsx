@@ -12,7 +12,7 @@ import { useNewJob } from "./hooks/use-new-job.js";
 import { useQuitGuard } from "./hooks/use-quit-guard.js";
 import { claimService, useClaim } from "./hooks/use-claim.js";
 import { EClaimState } from "../domain/claim.js";
-import { isRunning } from "../domain/services.js";
+import { mayStillBeAlive } from "../domain/services.js";
 import { heldJobId, useNavigation, type ThreadsRoute } from "./navigation.js";
 import { AccountsPage } from "./pages/accounts.js";
 import { ConversationPage } from "./pages/conversation.js";
@@ -37,10 +37,15 @@ export function App(props: {
   const [booting, setBooting] = useState(true);
   const running = useRunningThreads();
   // Quitting kills every working turn AND every service, so it asks once first. See `useQuitGuard`.
+  //
+  // `mayStillBeAlive`, not `isRunning`: what the warning has to name is what the reaper will have to
+  // kill on the way out, and a group that ignored an earlier SIGTERM is `killed` in memory while it
+  // is very much still there. Counting only `running` would go quiet about the one process the quit
+  // is going to have to insist on.
   const armed = useQuitGuard({
     agents: running.length,
     services: () =>
-      serviceRegistryService.allServices().filter(isRunning).length,
+      serviceRegistryService.allServices().filter(mayStillBeAlive).length,
     onQuit: () =>
       void conversationService.release().finally(() => renderer.destroy()),
   });
@@ -371,9 +376,9 @@ export function App(props: {
           />
         ) : null}
 
-        {/* NO reap keyed off this route. `heldJobId` reads the TOP of the stack, so pushing this
-            page nulls it and releases the claim — reaping on that transition would kill the job's
-            services the moment the human opened the page that lists them. */}
+        {/* NO reap keyed off this route, and none keyed off a claim release either. This page holds
+            the claim (`heldJobId`), but the accounts page does not — and a reap on that transition
+            would SIGTERM a dev server because the human pressed ctrl+a. */}
         {route.name === "services" ? (
           <ServicesPage
             jobId={route.jobId}

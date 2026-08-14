@@ -135,21 +135,38 @@ describe('the two liveness predicates, which are deliberately not the same quest
     expect(mayStillBeAlive(entry({ status: EServiceStatus.killed, exitCode: 143 }))).toBe(false);
     expect(mayStillBeAlive(entry({ status: EServiceStatus.exited, exitCode: 0 }))).toBe(false);
   });
+
+  /**
+   * The other record of a death, and the one with no exit code to show for it: a kill that came back
+   * `ESRCH` is the kernel saying the group is already gone. Left "maybe alive" it would be signalled
+   * for the rest of the session — and a reaped pgid can be reissued, so those signals eventually
+   * reach a stranger. `exited` is written in exactly two places and both of them are deaths.
+   */
+  it('mayStillBeAlive takes an exit with no code as final, because only ESRCH writes one', () => {
+    expect(mayStillBeAlive(entry({ status: EServiceStatus.exited }))).toBe(false);
+    expect(stopAction(entry({ status: EServiceStatus.exited }))).toBe(EStopAction.gone);
+  });
 });
 
 describe('serviceJobIds', () => {
   const previous: ReadonlySet<string> = new Set(['job-1']);
 
-  it('names every job holding a running service, and no others', () => {
+  /**
+   * A job is marked while it may still be holding something, which is not the same as `running`: a
+   * group that trapped SIGTERM is `killed` in memory and still on its port, and taking the mark away
+   * there would remove the human's only sign of it at the moment it has become a problem.
+   */
+  it('names every job that may still be holding a service, and no others', () => {
     const ids = serviceJobIds({
       previous: new Set(),
       entries: [
         entry({ jobId: 'job-1' }),
         entry({ jobId: 'job-2', status: EServiceStatus.exited, exitCode: 0 }),
         entry({ jobId: 'job-3', status: EServiceStatus.killed }),
+        entry({ jobId: 'job-4', status: EServiceStatus.killed, exitCode: 143 }),
       ],
     });
-    expect([...ids]).toEqual(['job-1']);
+    expect([...ids]).toEqual(['job-1', 'job-3']);
   });
 
   it('counts a job once however many services it holds', () => {
@@ -216,9 +233,12 @@ describe('servicesLayout', () => {
     }
   });
 
+  // The same invariant for the two dim lines under the row, whose own prefix is six cells of indent.
+  // Checked at every width for the same reason as the columns above: the narrow end is where a
+  // layout that subtracts the wrong constant overruns, and nowhere else.
   it('keeps the detail lines inside the terminal too, allowing for their indent', () => {
-    for (const width of [40, 80, 200]) {
-      expect(servicesLayout(width).detail).toBeLessThanOrEqual(width - 6);
+    for (let width = 0; width <= 200; width += 1) {
+      expect(servicesLayout(width).detail).toBeLessThanOrEqual(Math.max(0, width - 6));
     }
   });
 

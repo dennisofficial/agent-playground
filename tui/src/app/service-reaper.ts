@@ -57,9 +57,10 @@ type Warn = (message: string) => void;
 /**
  * Layers 1 and 2: ask, wait, insist.
  *
- * The escalation goes back to the entries it SIGNALLED rather than re-reading the registry, because
- * a signalled group is already recorded as `killed` — that is what it means to have signalled it —
- * and a second sweep of "what is still running" would therefore find nothing to insist on.
+ * The escalation goes back to the entries it SIGNALLED rather than re-sweeping, because the sweep is
+ * the expensive half and the answer cannot have grown: a service started during the grace window is
+ * not something a quit already in progress should be signalling. `mayStillBeAlive` is re-asked per
+ * entry, so anything that died politely in the meantime is left alone.
  */
 export async function reapGracefully(args: {
   target: ReaperTarget;

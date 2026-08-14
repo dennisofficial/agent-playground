@@ -106,10 +106,56 @@ describe('reapAll', () => {
   it('is idempotent — a second sweep finds nothing left to signal', async () => {
     const registry = new ServiceRegistryService();
     const jobId = newJob();
-    await startService({ registry, jobId, command: 'sleep 30' });
+    const entry = await startService({ registry, jobId, command: 'sleep 30' });
 
     expect(registry.reapAll({ signal: 'SIGTERM' })).toHaveLength(1);
+    // Once its exit has actually landed there is nothing left to signal. Waiting for the code rather
+    // than sweeping straight away is the honest test: in the millisecond between the signal and the
+    // death this service IS still there, and a sweep that skipped it then would be the leak below.
+    await waitFor(() => entry.exitCode !== undefined, 'the exit to land');
     expect(registry.reapAll({ signal: 'SIGTERM' })).toEqual([]);
+  });
+
+  /**
+   * The service that survives a sweep keyed on `running`, and the reason both sweeps ask
+   * `mayStillBeAlive` instead.
+   *
+   * `stop` records `killed` on signal DELIVERY. Press `k` on a group that traps SIGTERM and it is
+   * `killed` in memory, up, and holding its port — and a quit that skipped it would leave it running
+   * after Atlas was gone, which is the one promise this slice makes.
+   */
+  it('signals a group that was stopped by hand and ignored it', async () => {
+    const registry = new ServiceRegistryService();
+    const jobId = newJob();
+    const entry = await startService({ registry, jobId, command: DEAF });
+
+    await registry.stop({ jobId, id: entry.id });
+    expect(entry.status).toBe(EServiceStatus.killed);
+    expect(alive(entry.pid)).toBe(true);
+
+    expect(registry.reapAll({ signal: 'SIGKILL' })).toEqual([entry]);
+    await waitFor(() => !alive(entry.pid), 'the stubborn group to die');
+  });
+
+  /**
+   * The same skip in `reapJob`, where it is unrecoverable: this sweep FORGETS the job at the end, so
+   * a group it passes over is orphaned and unrecorded at once — after that even the exit backstop,
+   * which reads the whole map, has nothing left to find it by.
+   */
+  it('reapJob kills a stopped-but-living group rather than forgetting it', async () => {
+    const registry = new ServiceRegistryService();
+    const jobId = newJob();
+    const entry = await startService({ registry, jobId, command: DEAF });
+
+    await registry.stop({ jobId, id: entry.id });
+    expect(alive(entry.pid)).toBe(true);
+
+    expect(registry.reapJob(jobId)).toEqual([entry.id]);
+    // SIGTERM again, which this one ignores — so the assertion is that it was SIGNALLED, not that it
+    // died. `reapGracefully` is what escalates; `reapJob` is a takeover, not a quit.
+    expect(registry.listFor(jobId)).toHaveLength(0);
+
+    process.kill(-entry.pgid, 'SIGKILL');
   });
 
   /**
@@ -231,7 +277,9 @@ describe('reapNow — the exit backstop', () => {
   /** Inside an `exit` handler there is nobody left to report to, and a throw drops the rest. */
   it('never throws, whatever the registry hands it', () => {
     const warnings: string[] = [];
-    const poisoned: ServiceEntry = { ...deadEntry(), pgid: -5, exitCode: undefined };
+    // Signalled, never seen to die, and carrying a group id that cannot be signalled — the shape a
+    // stale mirror has. It must reach the kill (and therefore the throw) rather than being skipped.
+    const poisoned: ServiceEntry = liveEntry({ status: EServiceStatus.killed, pgid: -5 });
 
     expect(() =>
       reapNow({ target: fakeTarget([poisoned]), warn: (message) => warnings.push(message) }),

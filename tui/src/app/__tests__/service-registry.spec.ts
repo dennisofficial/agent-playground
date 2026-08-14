@@ -251,16 +251,22 @@ describe('ServiceRegistryService.stop', () => {
     const [entry] = registry.listFor(jobId);
     if (!entry) throw new Error('no entry recorded');
 
-    const first = await registry.stop({ jobId, id: entry.id });
-    expect(first).toContain('Stopped');
-    expect(first).not.toContain('SIGKILL');
-    // It trapped the signal and is still there. Nothing watched it die, so it has no exit code.
-    expect(entry.exitCode).toBeUndefined();
-    expect(entry.status).toBe(EServiceStatus.killed);
+    // A SIGTERM-immune busy loop, forking twice a second: an assertion that threw before the second
+    // stop would leave it running after the test runner had gone.
+    try {
+      const first = await registry.stop({ jobId, id: entry.id });
+      expect(first).toContain('Stopped');
+      expect(first).not.toContain('SIGKILL');
+      // It trapped the signal and is still there. Nothing watched it die, so it has no exit code.
+      expect(entry.exitCode).toBeUndefined();
+      expect(entry.status).toBe(EServiceStatus.killed);
 
-    const second = await registry.stop({ jobId, id: entry.id });
-    expect(second).toContain('SIGKILL');
-    await waitFor(() => entry.exitCode !== undefined, 'the group to actually die');
+      const second = await registry.stop({ jobId, id: entry.id });
+      expect(second).toContain('SIGKILL');
+      await waitFor(() => entry.exitCode !== undefined, 'the group to actually die');
+    } finally {
+      killGroup({ pgid: entry.pgid, signal: 'SIGKILL' });
+    }
   });
 
   /**

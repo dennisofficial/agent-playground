@@ -1,3 +1,5 @@
+import { affords, elasticColumn } from "./list-columns.js";
+
 /**
  * A process the JOB owns rather than a turn.
  *
@@ -47,22 +49,31 @@ export function isRunning(entry: ServiceEntry): boolean {
 }
 
 /**
- * Whether Atlas has ever WATCHED this process end — which is a different question from whether it
- * calls it running, and the one the exit backstop has to ask.
+ * Whether this process might still be out there — a different question from whether Atlas calls it
+ * running, and the one every sweep, every kill and every warning about a quit has to ask.
  *
- * A group that has been signalled is `killed` in memory from the moment the signal is sent, while it
- * may still be dying or ignoring SIGTERM outright. Sweeping only `running` on the way out would drop
- * precisely the services a graceful reap had already started on — which is every service, on every
- * ordinary quit. `exitCode` is written by the exit watcher and nowhere else, so its absence is the
- * one honest record of "we never saw this die".
+ * A group that has been signalled is `killed` in memory from the moment the signal is SENT, while it
+ * may still be dying or ignoring SIGTERM outright. So `killed` is not a death, and sweeping only
+ * `running` would skip precisely the services a reap had already started on — which is every service,
+ * on every ordinary quit.
+ *
+ * Death is recorded two ways and this is false for both. `exitCode` is written by the exit watcher
+ * and nowhere else, so a code is a death Atlas WATCHED. `exited` without one is written in exactly
+ * one place — a kill that came back `ESRCH` — and that is the kernel saying the group is already
+ * gone, which is just as final and matters more: a reaped pgid can be reissued to something else
+ * entirely, so signalling past this point is signalling a stranger.
  */
 export function mayStillBeAlive(entry: ServiceEntry): boolean {
-  return entry.exitCode === undefined;
+  return entry.exitCode === undefined && entry.status !== EServiceStatus.exited;
 }
 
 /**
  * Which jobs are holding a live service — the job list's mark, and a poll rather than a
  * subscription, so the identity rule is load-bearing.
+ *
+ * `mayStillBeAlive`, not `isRunning`: a service that trapped SIGTERM is `killed` in memory and still
+ * holding its port, and dropping the mark there would take away the human's only sign that the job
+ * is holding something at exactly the moment it has become a problem.
  *
  * `previous` comes back UNCHANGED when the membership has not moved. Nothing notifies on a service
  * starting or stopping, so this is read on a one-second timer behind a list that is otherwise
@@ -76,7 +87,7 @@ export function serviceJobIds(args: {
   entries: readonly ServiceEntry[];
 }): ReadonlySet<string> {
   const next = new Set(
-    args.entries.filter(isRunning).map((entry) => entry.jobId),
+    args.entries.filter(mayStillBeAlive).map((entry) => entry.jobId),
   );
   if (next.size !== args.previous.size) return next;
   for (const id of next) if (!args.previous.has(id)) return next;
@@ -117,9 +128,9 @@ export function servicesLayout(width: number): ServicesLayout {
     [0, 0],
   ] as const) {
     const fixed = GUTTER + status + uptime;
-    if (width - fixed < DESCRIPTION.min) continue;
+    if (!affords(width, fixed, DESCRIPTION.min)) continue;
     return {
-      description: Math.min(DESCRIPTION.max, width - fixed),
+      description: elasticColumn(width, fixed, DESCRIPTION),
       status,
       uptime,
       detail,
@@ -147,17 +158,17 @@ export function uptimeCell(args: {
   entry: ServiceEntry;
   now: number;
 }): string {
-  if (!isRunning(args.entry)) return '';
+  if (!isRunning(args.entry)) return "";
   return `up ${formatUptime(args.now - args.entry.startedAt)}`;
 }
 
 export enum EStopAction {
   /** Never signalled. The polite first ask. */
-  term = 'term',
+  term = "term",
   /** Signalled once and still not seen to die — insist. */
-  kill = 'kill',
-  /** Atlas watched this one exit. There is nothing left to signal. */
-  gone = 'gone',
+  kill = "kill",
+  /** This one is provably gone. There is nothing left to signal. */
+  gone = "gone",
 }
 
 /**

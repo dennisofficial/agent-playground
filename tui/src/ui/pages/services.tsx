@@ -75,6 +75,10 @@ export function ServicesPage(props: {
   const move = (to: number) => {
     // The notice is about the row you were on. Moving off it makes the sentence unmoored from
     // anything on screen, and a stale "Stopped a1b2c3d4" under a live service reads as a lie.
+    //
+    // Dropping the pending id with it, or a stop still in flight when you moved would put that same
+    // sentence back on the screen the moment it answered.
+    pending.current = null;
     setNotice(null);
     setSelected(clampIndex(to, entries.length));
   };

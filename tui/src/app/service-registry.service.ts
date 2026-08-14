@@ -11,17 +11,13 @@ import {
   describeStatus,
   EServiceStatus,
   EStopAction,
-  isRunning,
+  mayStillBeAlive,
   renderServiceList,
   stopAction,
   type ServiceEntry,
 } from "../domain/services.js";
-import {
-  killGroup,
-  logTail,
-  spawnService,
-  writeServiceMirror,
-} from "./service-process.js";
+import { writeServiceMirror } from "./service-mirror.js";
+import { killGroup, logTail, spawnService } from "./service-process.js";
 import { installReaperHandlers, reapGracefully } from "./service-reaper.js";
 import type { ServiceActions } from "./tools/tool.js";
 
@@ -191,13 +187,15 @@ export class ServiceRegistryService
     if (!entries) return [];
     const killed: string[] = [];
     for (const entry of entries) {
-      if (entry.status !== EServiceStatus.running) continue;
+      // Not `running`: a group that trapped SIGTERM is `killed` in memory and still holding its
+      // port. This sweep FORGETS the job at the end, so anything skipped here is orphaned and
+      // unrecorded at once — the one path in the app from which a leak can never be recovered.
+      if (!mayStillBeAlive(entry)) continue;
       try {
-        // Only a group we actually signalled becomes `killed`. One that ignored SIGTERM, or that we
-        // may not signal, stays `running` — which is what leaves it visible to the two things that
-        // can still catch it: slice 05's exit backstop, which sweeps `running` entries, and the
-        // deferred reconcile, which is the entire reason `services.json` records a pgid. Recording
-        // an optimistic `killed` here would tell every remaining layer the leak was handled.
+        // Only a group we actually signalled becomes `killed`. One that we may not signal stays as
+        // it was — which is what leaves it visible to the deferred reconcile, the entire reason
+        // `services.json` records a pgid. Recording an optimistic `killed` here would tell every
+        // remaining layer the leak was handled.
         if (!killGroup({ pgid: entry.pgid, signal: "SIGTERM" })) continue;
         killed.push(entry.id);
         entry.status = EServiceStatus.killed;
@@ -230,7 +228,10 @@ export class ServiceRegistryService
     for (const [jobId, entries] of this.byJob) {
       let touched = false;
       for (const entry of entries) {
-        if (!isRunning(entry)) continue;
+        // Same question as `reapJob`, and here it is the difference between a graceful quit and a
+        // leak: a group that ignored an earlier SIGTERM is `killed`, and skipping it would keep it
+        // out of the `signalled` list the SIGKILL escalation is driven from.
+        if (!mayStillBeAlive(entry)) continue;
         try {
           // Same rule as `reapJob`: only a group we actually signalled becomes `killed`. One that is
           // already gone is left alone rather than credited to a kill Atlas did not make.

@@ -60,11 +60,10 @@ export function useClaim(args: {
       // Atlas is now driving, and our children would sit on its ports with nobody to stop them.
       //
       // Here, and NOT in the release above. `release` runs whenever this tile stops holding the job
-      // — which includes merely pushing a route, since `heldJobId` is read off the top of the
-      // navigation stack. Reaping there would let ctrl+a to the accounts page SIGTERM a dev server,
-      // and would make slice 05's own services page kill what it exists to show. Letting go of a
-      // claim is cheap and reversible; killing a process group is neither, so they do not share a
-      // lifetime.
+      // — which includes merely pushing a route that is not inside it, since `heldJobId` is read off
+      // the top of the navigation stack. Reaping there would let ctrl+a to the accounts page SIGTERM
+      // a dev server. Letting go of a claim is cheap and reversible; killing a process group is
+      // neither, so they do not share a lifetime.
       serviceRegistryService.reapJob(jobId);
       onTakenOver();
     });
