@@ -1,6 +1,7 @@
 import { EMessageType } from '../generated/prisma/enums.js';
 import type { DelegateEvent } from './delegate-events.js';
 import { renderAttachmentParts, type AttachmentPart } from './attachments.js';
+import { stripTerminalControls } from './plain-text.js';
 import type { DiffHunk } from './tool-diff.js';
 
 // Re-exported for the same reason `tool-view.ts` re-exports `tool-shape.ts`: which half of a pair a
@@ -120,7 +121,24 @@ export function asMessagePayload(value: unknown): MessagePayload | null {
   if (typeof value !== 'object' || value === null || !('type' in value)) return null;
   const { type } = value;
   if (typeof type !== 'string' || !PAYLOAD_TYPES.has(type)) return null;
-  return value as MessagePayload;
+  const payload = value as MessagePayload;
+  return payload.type === EMessageType.tool_result ? plainResult(payload) : payload;
+}
+
+/**
+ * A stored tool result with the terminal's own bytes taken back out.
+ *
+ * The write path strips them (`flattenResult`), so this is only ever about rows written BEFORE it
+ * did — the same "an older build wrote this" case the guard above exists for. It earns the cost
+ * because one bad row is not one bad row: an escape sequence in a cell desynchronises the renderer
+ * from the screen and smears fragments across the whole frame. See `plain-text.ts`.
+ */
+function plainResult(payload: ToolResultPayload): ToolResultPayload {
+  return {
+    ...payload,
+    summary: stripTerminalControls(payload.summary),
+    detail: payload.detail.map(stripTerminalControls),
+  };
 }
 
 /**

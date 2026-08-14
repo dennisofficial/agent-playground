@@ -375,4 +375,13 @@ describe('flattenResult', () => {
     expect(flattenResult([{ type: 'text', text: 'a\nb' }])).toEqual(['a', 'b']);
     expect(flattenResult(null)).toEqual([]);
   });
+
+  /** A colourised line reaching the cell buffer intact is what smeared the transcript on scroll. */
+  it('leaves no escape byte in a line the renderer will draw', () => {
+    const lines = flattenResult(
+      '\x1b[32m[Nest] 15678\x1b[39m  - \x1b[32mLOG\x1b[39m turn finished\r\n\x1b[31mdone\x1b[0m',
+    );
+    expect(lines).toEqual(['[Nest] 15678  - LOG turn finished', 'done']);
+    expect(lines.join('').includes('\x1b')).toBe(false);
+  });
 });

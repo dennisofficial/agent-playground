@@ -4,6 +4,7 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk";
 import { Injectable } from "@nestjs/common";
 import type { EngineEvent, TurnUsage } from "../../domain/message.js";
+import { stripTerminalControls } from "../../domain/plain-text.js";
 import { summariseToolResult, toolTarget } from "../../domain/tool-summary.js";
 import { taskEvents } from "./task-frames.js";
 import {
@@ -270,20 +271,30 @@ type ContentBlock = {
   is_error?: boolean;
 };
 
-/** Tool result content is a string or a block array; the renderer only ever wants lines. */
+/**
+ * Tool result content is a string or a block array; the renderer only ever wants lines.
+ *
+ * This is where a tool's raw bytes stop being terminal output and become text, so it is where the
+ * escape sequences come off — a `Bash` call that ran a colourising program (any logger, any test
+ * runner) otherwise hands the cell buffer bytes it will draw as characters. See `plain-text.ts`.
+ */
 export function flattenResult(content: unknown): string[] {
   if (content == null) return [];
-  if (typeof content === "string") return content.split("\n");
+  if (typeof content === "string") return toLines(content);
   if (Array.isArray(content)) {
     return content
       .flatMap((block) => {
-        if (typeof block === "string") return block.split("\n");
+        if (typeof block === "string") return toLines(block);
         const text = (block as { text?: unknown }).text;
-        return typeof text === "string" ? text.split("\n") : [];
+        return typeof text === "string" ? toLines(text) : [];
       })
       .filter((line) => line !== undefined);
   }
   return [];
+}
+
+function toLines(text: string): string[] {
+  return stripTerminalControls(text).split("\n");
 }
 
 /** The SDK sends seconds or milliseconds depending on the field; normalise both. */
