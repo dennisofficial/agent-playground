@@ -47,6 +47,11 @@ const COMMANDS: OverlayItem[] = [
     hint: "ask this agent to hand over to a fresh session",
   },
   { id: "/context", label: "/context", hint: "the job’s shared folder" },
+  {
+    id: "/services",
+    label: "/services",
+    hint: "the job’s long-lived processes — and how to stop one",
+  },
   { id: "/doctor", label: "/doctor", hint: "is my setup current and working" },
   // `/compact` is gone rather than renamed: the SDK rejects it outright and auto-compaction is
   // disabled, so rotation is the only way context is reclaimed. Typing it still works — it is
@@ -60,6 +65,8 @@ export function ConversationPage(props: {
   onBack: () => void;
   /** `ctrl+h` — the job's phases and threads, and how you reach a closed one. */
   onThreads: () => void;
+  /** `/services` — the job's long-lived processes. Pushed by `App`, which owns the stack. */
+  onServices: () => void;
 }): React.ReactNode {
   const { conversationService, conversationStores } = useServices();
   const state = useConversation(props.open.thread.id);
@@ -186,10 +193,17 @@ export function ConversationPage(props: {
     composer.clear();
     setOverlay("none");
     // A command RUNS rather than going to the model as text — see `runSlashCommand`.
-    if (await runSlashCommand({ text, conversation: conversationService })) return;
+    if (
+      await runSlashCommand({
+        text,
+        conversation: conversationService,
+        onServices: props.onServices,
+      })
+    )
+      return;
     // Sending is an implicit "show me what happens next".
     await conversationService.send(text);
-  }, [composer, conversationService, state.noAccount]);
+  }, [composer, conversationService, props.onServices, state.noAccount]);
 
   useConversationKeys({
     composer,

@@ -62,6 +62,11 @@ export function JobListRow(props: {
   proposalThreadIds?: readonly string[];
   /** Another terminal is driving this one. Still openable — it costs one extra keypress. */
   claimed?: boolean;
+  /**
+   * Whether this job is holding a live service. A boolean rather than a count: the mark is `⚙` and
+   * says nothing about how many, so a number here would be a fact the row cannot draw.
+   */
+  hasService?: boolean;
 }): React.ReactNode {
   const { job, layout } = props;
   const attention = jobAttention({
@@ -94,7 +99,14 @@ export function JobListRow(props: {
           <span fg={theme.dim}>{fitColumn("elsewhere", layout.status)}</span>
         ) : (
           <span fg={courtColour(attention.court)}>
-            {fitColumn(statusCell({ attention, frame: props.frame }), layout.status)}
+            {fitColumn(
+              statusCell({
+                attention,
+                frame: props.frame,
+                services: props.hasService ? 1 : 0,
+              }),
+              layout.status,
+            )}
           </span>
         )
       ) : null}

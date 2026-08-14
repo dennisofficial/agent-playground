@@ -6,6 +6,8 @@ import {
   isRunning,
   mayStillBeAlive,
   renderServiceList,
+  serviceJobIds,
+  servicesLayout,
   type ServiceEntry,
 } from '../services.js';
 
@@ -129,5 +131,94 @@ describe('the two liveness predicates, which are deliberately not the same quest
     expect(mayStillBeAlive(entry({ status: EServiceStatus.killed }))).toBe(true);
     expect(mayStillBeAlive(entry({ status: EServiceStatus.killed, exitCode: 143 }))).toBe(false);
     expect(mayStillBeAlive(entry({ status: EServiceStatus.exited, exitCode: 0 }))).toBe(false);
+  });
+});
+
+describe('serviceJobIds', () => {
+  const previous: ReadonlySet<string> = new Set(['job-1']);
+
+  it('names every job holding a running service, and no others', () => {
+    const ids = serviceJobIds({
+      previous: new Set(),
+      entries: [
+        entry({ jobId: 'job-1' }),
+        entry({ jobId: 'job-2', status: EServiceStatus.exited, exitCode: 0 }),
+        entry({ jobId: 'job-3', status: EServiceStatus.killed }),
+      ],
+    });
+    expect([...ids]).toEqual(['job-1']);
+  });
+
+  it('counts a job once however many services it holds', () => {
+    const ids = serviceJobIds({
+      previous: new Set(),
+      entries: [entry({ jobId: 'job-1' }), entry({ id: 'other', jobId: 'job-1' })],
+    });
+    expect([...ids]).toEqual(['job-1']);
+  });
+
+  // The identity is the whole point. This is read on a one-second poll behind the job list, and a
+  // fresh Set every tick would repaint every row of it forever.
+  it('returns the PREVIOUS set object when the membership has not moved', () => {
+    const ids = serviceJobIds({ previous, entries: [entry({ jobId: 'job-1' })] });
+    expect(ids).toBe(previous);
+  });
+
+  it('returns a new object the moment a job joins', () => {
+    const ids = serviceJobIds({
+      previous,
+      entries: [entry({ jobId: 'job-1' }), entry({ id: 'other', jobId: 'job-2' })],
+    });
+    expect(ids).not.toBe(previous);
+    expect([...ids].sort()).toEqual(['job-1', 'job-2']);
+  });
+
+  it('returns a new object the moment a job leaves', () => {
+    const ids = serviceJobIds({ previous, entries: [] });
+    expect(ids).not.toBe(previous);
+    expect(ids.size).toBe(0);
+  });
+
+  // Equal SIZE is not equal membership — a swap keeps the count and changes everything.
+  it('returns a new object when one job is swapped for another', () => {
+    const ids = serviceJobIds({ previous, entries: [entry({ jobId: 'job-9' })] });
+    expect(ids).not.toBe(previous);
+    expect([...ids]).toEqual(['job-9']);
+  });
+});
+
+describe('servicesLayout', () => {
+  it('gives the description the room the fixed columns do not want', () => {
+    const layout = servicesLayout(100);
+    expect(layout.status).toBe(14);
+    expect(layout.uptime).toBe(8);
+    expect(layout.description).toBeGreaterThan(16);
+  });
+
+  // Every column together must not exceed the terminal, or the row wraps and the list turns into
+  // prose. This is the assertion that catches a constant being nudged without the others.
+  it('never draws a row wider than the terminal', () => {
+    for (const width of [40, 60, 80, 100, 200]) {
+      const layout = servicesLayout(width);
+      expect(4 + layout.description + layout.status + layout.uptime).toBeLessThanOrEqual(width);
+    }
+  });
+
+  it('keeps the detail lines inside the terminal too, allowing for their indent', () => {
+    for (const width of [40, 80, 200]) {
+      expect(servicesLayout(width).detail).toBeLessThanOrEqual(width - 6);
+    }
+  });
+
+  // `exited (127)` is twelve cells and is the widest real status. A narrower column would clip the
+  // exit code, which is the only part of that string anyone reads.
+  it('holds the widest real status without clipping it', () => {
+    expect(servicesLayout(100).status).toBeGreaterThan('exited (127)'.length);
+  });
+
+  it('does not go negative on an absurdly narrow terminal', () => {
+    const layout = servicesLayout(10);
+    expect(layout.description).toBeGreaterThanOrEqual(0);
+    expect(layout.detail).toBeGreaterThanOrEqual(0);
   });
 });

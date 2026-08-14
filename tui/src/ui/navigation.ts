@@ -36,6 +36,12 @@ export type Route =
       /** The thread the conversation above is on — the row the cursor lands on. */
       currentThreadId: string;
     }
+  /**
+   * The job's long-lived processes. It carries the id and the title rather than the `Job` because
+   * that is all the page draws, and a route holding a row would go stale the moment the job is
+   * renamed — and would couple `navigation.ts` to Prisma for a page that never reads the database.
+   */
+  | { name: "services"; jobId: string; jobTitle: string }
   | { name: "accounts" };
 
 export type ThreadsRoute = Extract<Route, { name: "threads" }>;

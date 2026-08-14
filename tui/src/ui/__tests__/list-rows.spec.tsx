@@ -5,7 +5,7 @@ import { createRoot } from '@opentui/react';
 import React from 'react';
 import type { ProjectRow } from '../../app/workspace.service.js';
 import type { JobRow } from '../../store/job.repository.js';
-import { attentionFor, EAttentionScope, NO_FACTS } from '../../domain/attention.js';
+import { attentionFor, EAttentionScope, NO_FACTS, SERVICE_MARK } from '../../domain/attention.js';
 import { jobsLayout } from '../../domain/jobs-list.js';
 import { projectsLayout } from '../../domain/projects-list.js';
 import { threadList, threadsLayout, type ThreadListSource } from '../../domain/threads-list.js';
@@ -173,7 +173,11 @@ const COURTS = [
  * perfectly well saying the wrong thing — so these read the pixels back.
  */
 describe('a job row says what it owes', () => {
-  async function frameOf(job: JobRow, proposalThreadIds: string[]): Promise<string> {
+  async function frameOf(
+    job: JobRow,
+    proposalThreadIds: string[],
+    hasService = false,
+  ): Promise<string> {
     const setup = await testRender(
       <box flexDirection="column" width={100} height={3}>
         <JobListRow
@@ -183,6 +187,7 @@ describe('a job row says what it owes', () => {
           frame="⠋"
           runningThreadIds={[]}
           proposalThreadIds={proposalThreadIds}
+          hasService={hasService}
         />
       </box>,
       { width: 100, height: 3 },
@@ -210,6 +215,19 @@ describe('a job row says what it owes', () => {
     expect(await frameOf({ ...QUIET, prNumber: 42 }, [])).toContain('shipped');
     expect(await frameOf(QUIET, [])).toContain('start a phase');
     expect(await frameOf({ ...JOB, prNumber: 42 }, [])).toContain('reply');
+  });
+
+  /**
+   * A live service, marked rather than named — and the mark must not replace the verb. Without it
+   * the facility is invisible from the list, and a dev server dies on quit with nothing having said
+   * anywhere that it was there. `⚙` is deliberately not an `EAttentionVerb`: a running server owes
+   * you nothing, and a job can be working, owe a keypress and hold a service all at once.
+   */
+  it('marks a job holding a live service without displacing what it owes', async () => {
+    const marked = await frameOf(JOB, [], true);
+    expect(marked).toContain(SERVICE_MARK);
+    expect(marked).toContain('reply');
+    expect(await frameOf(JOB, [], false)).not.toContain(SERVICE_MARK);
   });
 });
 

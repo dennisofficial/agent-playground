@@ -9,14 +9,17 @@ import { CopyNoticeProvider, useCopyOnSelect } from "./copy-on-select.js";
 import { useCursorFollow } from "./hooks/use-cursor-follow.js";
 import { useRunningThreads } from "./hooks/use-conversation.js";
 import { useNewJob } from "./hooks/use-new-job.js";
+import { useQuitGuard } from "./hooks/use-quit-guard.js";
 import { claimService, useClaim } from "./hooks/use-claim.js";
 import { EClaimState } from "../domain/claim.js";
+import { isRunning } from "../domain/services.js";
 import { useNavigation, type ThreadsRoute } from "./navigation.js";
 import { AccountsPage } from "./pages/accounts.js";
 import { ConversationPage } from "./pages/conversation.js";
 import { JobsPage } from "./pages/jobs.js";
 import { NewJobPage } from "./pages/new-job.js";
 import { ProjectsPage } from "./pages/projects.js";
+import { ServicesPage } from "./pages/services.js";
 import { ThreadsPage } from "./pages/threads.js";
 import { useServices } from "./services.js";
 import { glyph, theme } from "./theme.js";
@@ -25,15 +28,22 @@ export function App(props: {
   explicitPath: string | null;
   cwd: string;
 }): React.ReactNode {
-  const { workspaceService, conversationService } = useServices();
+  const { workspaceService, conversationService, serviceRegistryService } =
+    useServices();
   const renderer = useRenderer();
   const { width: columns, height: rows } = useTerminalDimensions();
   const nav = useNavigation();
   const [error, setError] = useState<string | null>(null);
   const [booting, setBooting] = useState(true);
-  // Quitting with agents still working is the one exit that loses real work, so it asks twice.
   const running = useRunningThreads();
-  const [armed, setArmed] = useState(false);
+  // Quitting kills every working turn AND every service, so it asks once first. See `useQuitGuard`.
+  const armed = useQuitGuard({
+    agents: running.length,
+    services: () =>
+      serviceRegistryService.allServices().filter(isRunning).length,
+    onQuit: () =>
+      void conversationService.release().finally(() => renderer.destroy()),
+  });
   // Here rather than on a page: we hold the mouse for the whole app, so we owe the clipboard for the
   // whole app. The composer of whichever page is mounted draws the confirmation.
   const copied = useCopyOnSelect();
@@ -79,14 +89,6 @@ export function App(props: {
   // A failure belongs to the page that produced it. Leaving that page clears it, so an error can
   // never outlive the thing it was about.
   useEffect(() => setError(null), [nav.route]);
-
-  // Armed is a moment, not a mode. Left standing it would turn a later, innocent ctrl+c into an
-  // unwarned quit — the exact thing the warning exists to prevent.
-  useEffect(() => {
-    if (!armed) return;
-    const timer = setTimeout(() => setArmed(false), 3000);
-    return () => clearTimeout(timer);
-  }, [armed]);
 
   // `atlas` inside a repository lands on that repository's jobs, not on a picker. Launched anywhere
   // else — `~`, most often, because the tiles are long-lived and nobody cds between tickets — it
@@ -255,19 +257,6 @@ export function App(props: {
   );
 
   useInput((input, key) => {
-    if (key.ctrl && input === "c") {
-      // Turns are subprocesses of this process, so quitting kills them. Say so once before doing it.
-      if (running.length > 0 && !armed) {
-        setArmed(true);
-        return;
-      }
-      void conversationService.release().finally(() => renderer.destroy());
-      return;
-    }
-
-    // Any other key means you are still working — the warning has served its purpose.
-    if (armed) setArmed(false);
-
     // Toggle rather than push: pressing it twice returns you to where you were instead of stacking
     // a second accounts page you then have to escape out of twice.
     if (key.ctrl && input === "a") nav.toggle({ name: "accounts" });
@@ -298,8 +287,7 @@ export function App(props: {
         {armed ? (
           <box flexDirection="row" flexShrink={0}>
             <text fg={theme.warn}>
-              {glyph.warning} {agentsWorking(running.length)} · ctrl+c again to
-              quit
+              {glyph.warning} {armed} · ctrl+c again to quit
             </text>
           </box>
         ) : null}
@@ -358,6 +346,15 @@ export function App(props: {
             // this. Pushing another would stack two of them. It keeps its own key because the
             // TRIGGERS differ — `←` only leaves on an empty composer, `ctrl+h` always does.
             onThreads={leaveConversation}
+            // Pushed, not toggled: `/services` is typed from a composer you are coming back to, and
+            // the conversation underneath is exactly where `←` should land you.
+            onServices={() =>
+              nav.push({
+                name: "services",
+                jobId: route.open.job.id,
+                jobTitle: route.open.job.title,
+              })
+            }
           />
         ) : null}
 
@@ -376,14 +373,20 @@ export function App(props: {
           />
         ) : null}
 
+        {/* NO reap keyed off this route. `heldJobId` reads the TOP of the stack, so pushing this
+            page nulls it and releases the claim — reaping on that transition would kill the job's
+            services the moment the human opened the page that lists them. */}
+        {route.name === "services" ? (
+          <ServicesPage
+            jobId={route.jobId}
+            jobTitle={route.jobTitle}
+            onBack={nav.pop}
+          />
+        ) : null}
+
         {route.name === "accounts" ? <AccountsPage onBack={nav.pop} /> : null}
       </box>
     </CopyNoticeProvider>
   );
 }
 
-function agentsWorking(count: number): string {
-  return count === 1
-    ? "1 agent still working"
-    : `${count} agents still working`;
-}

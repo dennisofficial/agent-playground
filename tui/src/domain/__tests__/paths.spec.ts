@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { sep } from 'node:path';
 import {
   CONTEXT_BUCKETS,
+  collapseHome,
   expandHome,
   jobContextDir,
   jobDir,
@@ -33,6 +34,37 @@ describe('expandHome', () => {
   it('only touches a leading bare tilde', () => {
     expect(expandHome('~other/foo', home)).toBe('~other/foo');
     expect(expandHome('/tmp/~/foo', home)).toBe('/tmp/~/foo');
+  });
+});
+
+describe('collapseHome', () => {
+  const home = '/Users/someone';
+
+  it('shortens a path under the home to ~/, which is what the human reads it as', () => {
+    expect(collapseHome('/Users/someone/.atlas/jobs/abc/logs/1f2e.log', home)).toBe(
+      '~/.atlas/jobs/abc/logs/1f2e.log',
+    );
+  });
+
+  it('collapses the home itself', () => {
+    expect(collapseHome(home, home)).toBe('~');
+  });
+
+  // A path merely STARTING with the home string is not inside it. `/Users/someone-else/x` shares a
+  // prefix with `/Users/someone` and collapsing it would name a folder that does not exist.
+  it('does not collapse a sibling whose name starts with the home', () => {
+    expect(collapseHome('/Users/someone-else/x', home)).toBe('/Users/someone-else/x');
+  });
+
+  it('leaves a path outside the home alone', () => {
+    expect(collapseHome('/tmp/foo.log', home)).toBe('/tmp/foo.log');
+  });
+
+  // The inverse of `expandHome`, and tested as one: a path that survives the round trip is a path
+  // the human can paste back into a shell.
+  it('round-trips with expandHome', () => {
+    const path = '/Users/someone/Developer/atlas/tui';
+    expect(expandHome(collapseHome(path, home), home)).toBe(path);
   });
 });
 

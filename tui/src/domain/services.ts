@@ -60,6 +60,61 @@ export function mayStillBeAlive(entry: ServiceEntry): boolean {
   return entry.exitCode === undefined;
 }
 
+/**
+ * Which jobs are holding a live service — the job list's mark, and a poll rather than a
+ * subscription, so the identity rule is load-bearing.
+ *
+ * `previous` comes back UNCHANGED when the membership has not moved. Nothing notifies on a service
+ * starting or stopping, so this is read on a one-second timer behind a list that is otherwise
+ * static; a fresh `Set` every tick would fail every `===` above it and repaint every row of the
+ * screen once a second, forever, for a set that changes a few times a day.
+ *
+ * Membership, not size: a swap keeps the count and changes the answer.
+ */
+export function serviceJobIds(args: {
+  previous: ReadonlySet<string>;
+  entries: readonly ServiceEntry[];
+}): ReadonlySet<string> {
+  const next = new Set(
+    args.entries.filter(isRunning).map((entry) => entry.jobId),
+  );
+  if (next.size !== args.previous.size) return next;
+  for (const id of next) if (!args.previous.has(id)) return next;
+  return args.previous;
+}
+
+/** Caret gutter, `exited (127)` plus its separator, `3h 07m` plus its own, and the detail indent. */
+const GUTTER = 4;
+const STATUS = 14;
+const UPTIME = 8;
+const INDENT = 6;
+const DESCRIPTION = { min: 16, max: 48 };
+
+export type ServicesLayout = {
+  description: number;
+  status: number;
+  uptime: number;
+  /** How wide the dim command and log lines may draw, their indent already taken off. */
+  detail: number;
+};
+
+/**
+ * The services page's columns.
+ *
+ * Fixed-first rather than longest-first, unlike `jobsLayout`: there is no shorter form of an exit
+ * code or an uptime worth drawing, and a service whose description is clipped is still identifiable
+ * by the command on the line beneath it. The description is the only thing that gives.
+ */
+export function servicesLayout(width: number): ServicesLayout {
+  const available = Math.max(0, width - GUTTER - STATUS - UPTIME);
+  return {
+    description: Math.min(DESCRIPTION.max, available),
+    status: STATUS,
+    uptime: UPTIME,
+    detail: Math.max(0, width - INDENT),
+  };
+}
+
 /** `4s`, `12m`, `3h 07m`. Coarse on purpose: nobody reads a dev server's uptime to the second. */
 export function formatUptime(ms: number): string {
   const seconds = Math.max(0, Math.floor(ms / 1000));

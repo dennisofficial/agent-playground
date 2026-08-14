@@ -13,6 +13,11 @@ describe('parseSlashCommand', () => {
     expect(parseSlashCommand('/compact')).toBe(ESlashCommand.rotate);
   });
 
+  it('recognises /services, the only other host act in the menu', () => {
+    expect(parseSlashCommand('/services')).toBe(ESlashCommand.services);
+    expect(parseSlashCommand('  /Services  ')).toBe(ESlashCommand.services);
+  });
+
   it('leaves ordinary prose — and an unrun command — to the agent', () => {
     expect(parseSlashCommand('rotate the log file')).toBeNull();
     expect(parseSlashCommand('what does /rotate do?')).toBeNull();

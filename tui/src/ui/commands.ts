@@ -24,8 +24,17 @@ export type CommandTarget = {
 export async function runSlashCommand(args: {
   text: string;
   conversation: CommandTarget;
+  /** Push the services page. A host act with no message in it — see `ESlashCommand.services`. */
+  onServices: () => void;
 }): Promise<boolean> {
-  if (parseSlashCommand(args.text) !== ESlashCommand.rotate) return false;
+  const command = parseSlashCommand(args.text);
+
+  if (command === ESlashCommand.services) {
+    args.onServices();
+    return true;
+  }
+
+  if (command !== ESlashCommand.rotate) return false;
 
   // A request, not a cut — and the SAME request the context nudge sends, so the manual and the
   // nudged paths are one path and every rotation is the agent's own tool call. Atlas cutting a

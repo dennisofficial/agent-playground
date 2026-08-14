@@ -44,6 +44,23 @@ export function expandHome(path: string, home: string = homedir()): string {
 }
 
 /**
+ * `expandHome` backwards — for the paths the human has to READ.
+ *
+ * A service's log path is the one string on the services page whose whole purpose is to be copied
+ * into an editor, and `~/.atlas/jobs/<uuid>/logs/<id>.log` is a dozen columns shorter than its
+ * absolute form. That is the difference between fitting an 80-column terminal and being clipped.
+ *
+ * A shared prefix is not containment: `/Users/someone-else` starts with `/Users/someone` and
+ * collapsing it would name a folder that does not exist. The separator check is what makes the
+ * round trip through `expandHome` safe.
+ */
+export function collapseHome(path: string, home: string = homedir()): string {
+  if (path === home) return '~';
+  if (path.startsWith(home + sep)) return `~${path.slice(home.length)}`;
+  return path;
+}
+
+/**
  * Copies of the database taken immediately before a migration is applied.
  *
  * The app migrates itself on every start with no undo and no prompt, so the only moment it can
