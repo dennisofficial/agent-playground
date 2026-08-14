@@ -1,5 +1,4 @@
 import React from "react";
-import type { QueuedSteer } from "../../app/conversation.store.js";
 import {
   beaconHeat,
   shimmerCrest,
@@ -34,7 +33,6 @@ export function WorkingLine(props: {
   elapsedMs: number;
   frame: string;
   outputTokens: number;
-  queued: QueuedSteer[];
   interrupting: boolean;
   /**
    * The model has stopped but the session is held open for a backgrounded delegate. A third state,
@@ -77,12 +75,6 @@ export function WorkingLine(props: {
           {props.interrupting ? "Interrupting…" : label}
         </text>
       )}
-      {props.queued.map((steer) => (
-        <text key={steer.id} fg={theme.dim}>
-          {"  "}
-          {glyph.queued} {steer.text}
-        </text>
-      ))}
     </box>
   );
 }

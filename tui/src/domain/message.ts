@@ -221,8 +221,19 @@ export type EngineEvent =
    * server decides, so without this a toggle that never took effect looks exactly like one that did.
    */
   | { kind: 'fast_mode'; state: 'off' | 'cooldown' | 'on'; disabledReason?: string }
-  /** The engine actually took a queued steer. A queued item leaves the UI on this, not on hope. */
-  | { kind: 'input_ack'; text: string }
+  /**
+   * The MODEL took a queued steer — not the harness, not the transport.
+   *
+   * The engine writes a steer into the session the instant it is typed, but the CLI holds it until
+   * the next boundary between tool results and the model's next request, which is often tens of
+   * seconds later. `--replay-user-messages` is what closes that gap: the CLI echoes the message back
+   * at the moment it folds it into the request, carrying the same `id` Atlas stamped on the way out.
+   *
+   * So this is the ack, and `id` is the correlation — a queued item leaves the UI on this, not on
+   * hope, and the transcript row is written HERE so it lands after the tool result the model actually
+   * read it beside.
+   */
+  | { kind: 'input_ack'; id: string }
   /** `usage` is absent when the turn died before the engine could report — an interrupt, a spawn
    *  failure. The duration is still real in that case; the tokens simply are not known. */
   | { kind: 'result'; ok: boolean; text?: string; usage?: TurnUsage };

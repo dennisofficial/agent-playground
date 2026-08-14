@@ -1,8 +1,14 @@
+import type { UUID } from "node:crypto";
 import type { RunningTurn } from "../engine/claude-engine.service.js";
 import type { TurnUsage } from "../domain/message.js";
 
-/** Typed while the query was still being set up, waiting for a handle to push it into. */
-export type PreflightSteer = { id: string; text: string; deliver: () => void };
+/**
+ * Typed while the query was still being set up, waiting for a handle to push it into.
+ *
+ * The id is a real uuid rather than any old string because it leaves the process as the message's
+ * SDK uuid and comes back on the ack — see `RunningTurn.steer`.
+ */
+export type PreflightSteer = { id: UUID; text: string };
 
 /**
  * One thread's slot. Threads run in parallel; turns within a thread do not — so everything that must
@@ -156,7 +162,7 @@ export class TurnLanes {
     const held = args.lane.preflight;
     args.lane.preflight = [];
     for (const steer of held) {
-      if (!args.lane.turn?.steer(steer.text, steer.deliver)) args.dequeue(steer.id);
+      if (!args.lane.turn?.steer(steer)) args.dequeue(steer.id);
     }
   }
 

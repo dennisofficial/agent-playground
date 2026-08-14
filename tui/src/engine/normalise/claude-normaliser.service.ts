@@ -169,6 +169,18 @@ export class ClaudeNormaliserService {
     message: Extract<SDKMessage, { type: "user" }>,
     context: NormaliseContext,
   ): EngineEvent[] {
+    // A REPLAY is the CLI handing back a user message at the moment it goes to the model — the only
+    // signal in the protocol that says "seen", and it is why `--replay-user-messages` is on. It
+    // carries no tool results, so it returns before the loop below rather than beside it.
+    //
+    // Every user message the CLI takes is replayed, including this turn's opening prompt and its own
+    // synthetic ones (`[Request interrupted by user]`). The id is the filter: only a steer Atlas
+    // stamped is one Atlas is holding, and an ack nobody is waiting on is dropped upstairs. Doing the
+    // filtering here would mean the engine knowing what a queued steer is.
+    if ("isReplay" in message && message.isReplay) {
+      return [{ kind: "input_ack", id: message.uuid }];
+    }
+
     const content = message.message?.content;
     if (!Array.isArray(content)) return [];
 

@@ -27,6 +27,7 @@ import {
   textDelta,
   thinkingDelta,
   toolResult,
+  userReplay,
   usingOverage,
 } from './scripted-turn.fixture.js';
 
@@ -68,6 +69,25 @@ describe('ClaudeNormaliserService', () => {
       name: 'Read',
       target: 'backend/src/host/dispatcher.ts',
     });
+  });
+
+  it('turns a replayed user message into the ack that the model has it', () => {
+    // The one frame that says "seen". It arrives on the same `type: 'user'` channel as a tool result
+    // and must not be read as one — `content` is a bare string, so the old code silently dropped it.
+    expect(run([userReplay('11111111-2222-3333-4444-555555555555', 'also check the logs')])).toEqual([
+      { kind: 'input_ack', id: '11111111-2222-3333-4444-555555555555' },
+    ]);
+  });
+
+  it('acks by id and never by text — two identical steers are not hypothetical', () => {
+    const events = run([
+      userReplay('aaaaaaaa-0000-0000-0000-000000000001', 'again'),
+      userReplay('aaaaaaaa-0000-0000-0000-000000000002', 'again'),
+    ]);
+    expect(events.map((event) => (event.kind === 'input_ack' ? event.id : event.kind))).toEqual([
+      'aaaaaaaa-0000-0000-0000-000000000001',
+      'aaaaaaaa-0000-0000-0000-000000000002',
+    ]);
   });
 
   it('summarises a Read result by line count, remembering the call it belongs to', () => {

@@ -1,5 +1,6 @@
 import type { Query, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { Inject, Injectable, Logger } from "@nestjs/common";
+import type { UUID } from "node:crypto";
 import type { EngineEvent } from "../domain/message.js";
 import type { EngineTool } from "./atlas-tool-server.js";
 import {
@@ -84,14 +85,29 @@ export type RunResult = {
 };
 
 export type RunningTurn = {
-  /** Push into the LIVE session. False once the turn has finished and closed its queue. */
-  steer(text: string, onConsumed?: () => void): boolean;
+  /**
+   * Push into the LIVE session. False once the turn has finished and closed its queue.
+   *
+   * The `id` is stamped onto the message as its SDK uuid and comes back verbatim on the replay frame
+   * the CLI emits when the MODEL takes it — an `input_ack` event carrying the same id. That round
+   * trip is the entire point of taking an id here: without it the caller would have to match on text,
+   * and two identical steers are not a hypothetical.
+   */
+  steer(args: { id: UUID; text: string }): boolean;
   interrupt(): Promise<void>;
-  /** Queued but not yet pulled into the session. */
-  readonly pendingSteers: number;
   /** Resolves when every frame has been drained. Never rejects — a crash becomes `ok: false`. */
   readonly done: Promise<RunResult>;
 };
+
+/**
+ * How long the turn stays open, after the model has stopped, for the CLI to take up a steer that
+ * arrived too late for this turn's last boundary.
+ *
+ * The CLI drains one of its own accord as a follow-on turn on the same query — MEASURED at ~2s from
+ * `result` to the fresh `init`. This is the backstop for a CLI that does not, and it is deliberately
+ * short: nothing is running, so the only thing being spent is the human's patience.
+ */
+const STEER_DRAIN_CAP_MS = 15_000;
 
 @Injectable()
 export class ClaudeEngineService {
@@ -105,27 +121,32 @@ export class ClaudeEngineService {
 
   start(args: RunArgs): RunningTurn {
     const input = new MessageQueue<SDKUserMessage>();
+    // The opening prompt is stamped with no id, so its replay — the CLI echoes THAT back too — is an
+    // ack nobody is holding and falls through the match upstairs. It is already in the transcript:
+    // Atlas writes the prompt when the turn starts, because a human's own words appearing only once
+    // the model got round to them would be a worse lie than the one this whole change is fixing.
     input.push(userMessage(args.prompt, args.images));
+    // Steers pushed into the session that the model has not confirmed reading yet. See `drain`: a
+    // non-empty set is what keeps the turn open past `result`.
+    const outstanding = new Set<string>();
 
     const handle = this.sdk.query({
       prompt: input,
       options: claudeOptions(args),
     });
     const state = { interrupted: false, live: true };
-    const done = this.drain(handle, input, args, state);
+    const done = this.drain(handle, input, args, state, outstanding);
 
     return {
-      steer(text: string, onConsumed?: () => void): boolean {
+      steer({ id, text }: { id: UUID; text: string }): boolean {
         if (!state.live) return false;
-        input.push(userMessage(text), onConsumed);
+        outstanding.add(id);
+        input.push(userMessage(text, [], id));
         return true;
       },
       async interrupt(): Promise<void> {
         state.interrupted = true;
         await handle.interrupt().catch(() => {});
-      },
-      get pendingSteers(): number {
-        return input.pending;
       },
       done,
     };
@@ -136,6 +157,7 @@ export class ClaudeEngineService {
     input: MessageQueue<SDKUserMessage>,
     args: RunArgs,
     state: { interrupted: boolean; live: boolean },
+    outstanding: Set<string>,
   ): Promise<RunResult> {
     const context = createNormaliseContext(args.cwd);
     // Learned from the first frame; also the key the raw tape is filed under.
@@ -157,6 +179,17 @@ export class ClaudeEngineService {
       capTimer = undefined;
     };
 
+    // Armed when `result` lands with a steer the model has not taken yet, and disarmed by the next
+    // frame — which is the CLI getting on with it. Closing the input is how the wait is abandoned:
+    // the loop is parked on the output stream, so nothing here can break it, but stdin ending makes
+    // the CLI exit and the iterator finish. See `STEER_DRAIN_CAP_MS`.
+    let drainTimer: NodeJS.Timeout | undefined;
+    const clearDrain = (): void => {
+      if (!drainTimer) return;
+      clearTimeout(drainTimer);
+      drainTimer = undefined;
+    };
+
     try {
       for await (const message of handle) {
         // Tape EVERYTHING, before normalisation can lose anything.
@@ -170,6 +203,9 @@ export class ClaudeEngineService {
         )) {
           if (event.kind === "session") engineSessionId = event.engineSessionId;
           if (event.kind === "result") ok = event.ok;
+          // The model has it. Only ids Atlas stamped are in the set, so the prompt's own replay and
+          // the CLI's synthetic ones fall straight through.
+          if (event.kind === "input_ack") outstanding.delete(event.id);
           hold.observe(event);
           args.onEvent(event);
         }
@@ -178,7 +214,29 @@ export class ClaudeEngineService {
         // the session is being used again, not waited on.
         if (message.type !== "result") {
           clearCap();
+          clearDrain();
           setHolding(false);
+          continue;
+        }
+
+        // A steer that missed this turn's last boundary is not lost — the CLI drains it as a
+        // follow-on turn on the SAME query, fresh `init` and all, and acks it there. Ending here
+        // would kill that turn in its first second and throw away words the human has already been
+        // shown as queued. So the turn is not over while one is outstanding: keep reading.
+        //
+        // Deliberately before the background-hold verdict. Both say "this result does not end the
+        // turn", and the next `result` asks the hold again anyway.
+        if (outstanding.size > 0) {
+          if (!drainTimer) {
+            drainTimer = setTimeout(() => {
+              drainTimer = undefined;
+              this.logger.warn(
+                `steer not taken within ${STEER_DRAIN_CAP_MS}ms; ending the turn`,
+              );
+              input.close();
+            }, STEER_DRAIN_CAP_MS);
+            drainTimer.unref?.();
+          }
           continue;
         }
 
@@ -206,12 +264,16 @@ export class ClaudeEngineService {
       args.onEvent({
         kind: "error",
         title: "Engine error: claude agent sdk exited",
-        detail: `${detail} · Thread preserved · r to restart`,
+        // No "r to restart" any more: `retryable` is what offers the way back, and the block draws
+        // it as a button — see `ErrorBlock`. A detail line advertising a keypress the composer eats
+        // was telling the user to do something that has never worked.
+        detail: `${detail} · Thread preserved`,
         retryable: true,
       });
       ok = false;
     } finally {
       clearCap();
+      clearDrain();
       setHolding(false);
       state.live = false;
       input.close();
@@ -235,10 +297,16 @@ export class ClaudeEngineService {
  *
  * Steers stay text-only: a steer is words pushed into a turn already in flight, and there is no
  * gesture for pasting a picture into one.
+ *
+ * `id` becomes the message's SDK uuid, which the CLI hands back on the replay frame when the model
+ * takes it — MEASURED to round-trip unchanged, including for a steer the CLI deferred to a follow-on
+ * turn. Omitted for anything Atlas is not waiting on: the opening prompt and the engine's own
+ * background-hold nudge, whose replays are then indistinguishable from noise, which is what they are.
  */
 function userMessage(
   text: string,
   images: readonly PromptImage[] = [],
+  id?: UUID,
 ): SDKUserMessage {
   const content =
     images.length === 0
@@ -259,5 +327,6 @@ function userMessage(
     type: "user",
     message: { role: "user", content },
     parent_tool_use_id: null,
+    ...(id === undefined ? {} : { uuid: id }),
   } as SDKUserMessage;
 }

@@ -6,6 +6,7 @@ import type { ConversationState } from "../../app/conversation.store.js";
 import { AssistantBlock } from "./blocks/assistant-block.js";
 import { SessionSeam, SwapNotice } from "./blocks/error-block.js";
 import { NewDivider, UNSEEN_ANCHOR_ID } from "./new-divider.js";
+import { QueuedSteerBlock } from "./blocks/queued-steer-block.js";
 import { ThinkingBlock } from "./blocks/thinking-block.js";
 import { ToolGroupBlock } from "./blocks/tool-group-block.js";
 import { MessageView } from "./message-view.js";
@@ -163,7 +164,6 @@ export function Transcript(props: {
             elapsedMs={props.now - state.startedAt}
             frame={props.frame}
             outputTokens={state.outputTokens}
-            queued={state.queued}
             interrupting={state.interrupting}
             holding={state.holding}
           />
@@ -175,11 +175,17 @@ export function Transcript(props: {
             elapsedMs={state.lastTurn.durationMs}
             frame={props.frame}
             outputTokens={state.lastTurn.outputTokens}
-            queued={state.queued}
             interrupting={false}
           />
         </box>
       ) : null}
+
+      {/* Below the working line, which is the whole of what marks them as waiting — they are drawn
+          by the same block that will draw them once the model takes them, so the ack does not
+          restyle anything, it just moves the message up past the spinner. */}
+      {state.queued.map((steer) => (
+        <QueuedSteerBlock key={steer.id} text={steer.text} width={props.width} />
+      ))}
     </scrollbox>
   );
 }

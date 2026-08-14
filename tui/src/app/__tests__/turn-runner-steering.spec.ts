@@ -7,7 +7,7 @@ import { OTHER_THREAD, SESSION, THREAD, build } from './turn-runner.fixture.js';
 describe('steering', () => {
   const ARGS = { thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' };
 
-  it('queues immediately but only commits when the engine actually pulls it', async () => {
+  it('queues immediately but only commits when the MODEL acknowledges it', async () => {
     const { runner, engine, store, messages } = build();
     let release = (): void => undefined;
     engine.hold = new Promise<void>((resolve) => (release = resolve));
@@ -17,10 +17,15 @@ describe('steering', () => {
 
     runner.steer({ thread: THREAD, session: SESSION, text: 'also check the tool-result path' });
 
+    // Pushed into the session already — and still queued on screen, which is the whole point. The
+    // CLI holds it until the model's next request, so anything committed here would be a claim the
+    // wire has not made yet.
+    expect(engine.steerTexts).toEqual(['also check the tool-result path']);
     expect(store.getSnapshot().queued).toHaveLength(1);
     expect(messages.appended.map((m) => m.payload.type)).toEqual([EMessageType.user]);
 
-    engine.steerCallback?.();
+    engine.ack(engine.steerIds[0] as string);
+    await new Promise((resolve) => setImmediate(resolve));
 
     expect(store.getSnapshot().queued).toHaveLength(0);
     release();
@@ -29,6 +34,74 @@ describe('steering', () => {
       type: EMessageType.user,
       text: 'also check the tool-result path',
     });
+  });
+
+  it('moves the steer into the transcript in ONE patch — never a frame showing neither', async () => {
+    const { runner, engine, store } = build();
+    let release = (): void => undefined;
+    engine.hold = new Promise<void>((resolve) => (release = resolve));
+
+    const turn = runner.run(ARGS);
+    await new Promise((resolve) => setImmediate(resolve));
+    runner.steer({ thread: THREAD, session: SESSION, text: 'and check the logs' });
+
+    // The queued copy and the committed one are the same block, so a frame with the steer in
+    // neither list draws it blinking out and back rather than moving up past the working line.
+    const frames: { queued: number; messages: number }[] = [];
+    const unsubscribe = store.subscribe(() => {
+      const state = store.getSnapshot();
+      frames.push({ queued: state.queued.length, messages: state.messages.length });
+    });
+
+    engine.ack(engine.steerIds[0] as string);
+    await new Promise((resolve) => setImmediate(resolve));
+    unsubscribe();
+
+    // One message is the prompt. Dequeued-but-not-yet-committed is the state that must never exist.
+    expect(frames.some((f) => f.queued === 0 && f.messages === 1)).toBe(false);
+    expect(store.getSnapshot()).toMatchObject({ queued: [] });
+    expect(store.getSnapshot().messages).toHaveLength(2);
+
+    release();
+    await turn;
+  });
+
+  it('ignores an ack for a message nobody is holding — the prompt is replayed too', async () => {
+    const { runner, engine, store, messages } = build();
+    let release = (): void => undefined;
+    engine.hold = new Promise<void>((resolve) => (release = resolve));
+
+    const turn = runner.run(ARGS);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    engine.ack('not-a-steer-atlas-queued');
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(store.getSnapshot().queued).toHaveLength(0);
+    // Still just the prompt. An unmatched ack that wrote a row would duplicate every turn's opening
+    // message, since the CLI replays that one as well.
+    expect(messages.appended.map((m) => m.payload.type)).toEqual([EMessageType.user]);
+
+    release();
+    await turn;
+  });
+
+  it('says so rather than pretending, when a steer outlives the turn unacknowledged', async () => {
+    const { runner, engine, store, messages } = build();
+    let release = (): void => undefined;
+    engine.hold = new Promise<void>((resolve) => (release = resolve));
+
+    const turn = runner.run(ARGS);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    runner.steer({ thread: THREAD, session: SESSION, text: 'one more thing' });
+    release();
+    await turn;
+
+    expect(store.getSnapshot().queued).toHaveLength(0);
+    expect(store.getSnapshot().notices.join()).toMatch(/not delivered.*one more thing/);
+    // Never written. The model did not read it, so the transcript must not say it did.
+    expect(messages.appended.map((m) => m.payload.type)).toEqual([EMessageType.user]);
   });
 
   it('drops the queued item when there is no turn to take it — no ghost entries', () => {

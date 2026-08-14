@@ -56,6 +56,19 @@ export async function finaliseTurn(args: {
   await lanes.settle(lane);
   lanes.drop({ lane, dequeue: (id) => store.dequeue(id) });
 
+  // Whatever is STILL queued was never acknowledged by the model, and now never will be — the turn
+  // is over and the query is closed. In the ordinary case there is nothing here: a late steer keeps
+  // the turn open until the CLI drains it (see `STEER_DRAIN_CAP_MS`), so this is the crash, the
+  // interrupt and the drain that timed out.
+  //
+  // Said out loud rather than swallowed, and NOT resent. The words are the human's and they never
+  // reached the agent; quietly firing them into a fresh turn would be guessing that they still apply
+  // to a conversation that has since died, been interrupted, or rotated. A notice keeps them on
+  // screen to send again.
+  for (const steer of store.drainQueue()) {
+    store.notice(`not delivered — the turn ended first · ${steer.text}`);
+  }
+
   const durationMs = Date.now() - args.startedAt.getTime();
   // Read through a method rather than off the lane directly: the only assignment TS can see in the
   // caller is the `undefined` reset before the turn — the real one happens inside the event callback

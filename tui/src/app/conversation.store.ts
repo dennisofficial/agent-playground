@@ -87,10 +87,22 @@ export class ConversationStore {
     });
   }
 
-  /** A block became authoritative: it leaves the live tail and enters scrollback for good. */
-  commit(message: Message): void {
+  /**
+   * A block became authoritative: it leaves the live tail and enters scrollback for good.
+   *
+   * `dequeueId` is how a steer arrives — leaving the queue and entering the transcript in ONE patch.
+   * Done as two, there is a frame where the message is in neither list, and since both draw it with
+   * the same block the reader would see it blink out and back rather than move.
+   */
+  commit(message: Message, dequeueId?: string): void {
     this.dropUnrevealed();
-    this.patch({ messages: [...this.state.messages, message], tail: null });
+    this.patch({
+      messages: [...this.state.messages, message],
+      tail: null,
+      ...(dequeueId === undefined
+        ? {}
+        : { queued: this.state.queued.filter((q) => q.id !== dequeueId) }),
+    });
   }
 
   appendDelta(kind: "text" | "thinking", text: string): void {
@@ -186,6 +198,23 @@ export class ConversationStore {
 
   dequeue(id: string): void {
     this.patch({ queued: this.state.queued.filter((q) => q.id !== id) });
+  }
+
+  /**
+   * What a queued steer said, without removing it — the ack path needs the text before it can write
+   * the row, and the queue is the only place it exists until then. It leaves on `commit`, once the
+   * row is real. Undefined for an id that is not queued, which is the ordinary answer for the acks
+   * Atlas is not holding (this turn's prompt, the engine's own nudges).
+   */
+  findQueued(id: string): QueuedSteer | undefined {
+    return this.state.queued.find((q) => q.id === id);
+  }
+
+  /** Everything still queued, and the queue emptied. What a turn ending takes with it. */
+  drainQueue(): QueuedSteer[] {
+    const queued = this.state.queued;
+    if (queued.length > 0) this.patch({ queued: [] });
+    return queued;
   }
 
   clearQueue(): void {

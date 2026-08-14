@@ -137,6 +137,22 @@ function assistant(
   } as unknown as SDKMessage;
 }
 
+/**
+ * The CLI handing a user message back at the moment it goes to the model — what
+ * `--replay-user-messages` buys, and the only "seen" signal on the wire. Same `type: 'user'` as a
+ * tool result, told apart by `isReplay`.
+ */
+export function userReplay(uuid: string, text: string): SDKMessage {
+  return {
+    type: 'user',
+    session_id: SESSION_ID,
+    parent_tool_use_id: null,
+    uuid,
+    isReplay: true,
+    message: { role: 'user', content: text },
+  } as unknown as SDKMessage;
+}
+
 /** `toolUseResult` rides on the FRAME, beside `message` — that is where the SDK puts a patch. */
 export function toolResult(
   toolUseId: string,

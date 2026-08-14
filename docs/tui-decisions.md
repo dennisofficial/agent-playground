@@ -110,6 +110,29 @@ code cannot show you a road not taken.
       `workspacePath` changed and reopens the conversation against the new directory. Without that
       last step the tool would fix the record and reproduce the original bug one layer up.
 
+12. **A steer leaves the queue when the MODEL takes it, never when the transport does.** The two
+    are far apart: the CLI holds a mid-turn steer until the boundary between a tool result and the
+    next request, MEASURED at 10.5s on a three-tool turn. Atlas used to commit the steer on the
+    pull — the moment the bytes reached the CLI's stdin — which put the words in the transcript
+    while the agent was still working on something else, and left nothing on screen to say the
+    message was waiting.
+
+    The signal that closes the gap is `--replay-user-messages`, an SDK-untyped CLI flag Atlas
+    passes through `extraArgs`. With it the CLI echoes back every user message it takes, as
+    `isReplay: true` carrying the uuid the sender stamped, at the instant it folds the message into
+    the request. That becomes `input_ack` and it is the only thing that dequeues a steer or writes
+    its transcript row — so the row also lands in its true place, after the tool result the model
+    read it beside, rather than at the top of the turn.
+
+    Two consequences worth keeping:
+
+    - **The turn does not end while a steer is outstanding.** A steer that misses the last boundary
+      is drained by the CLI as a follow-on turn on the same query (fresh `init` and all, ~2s
+      later). Breaking out at `result` would kill that turn in its first second.
+    - **An unacknowledged steer is reported, not resent.** If the turn dies first the words never
+      reached the agent, and quietly firing them into a fresh turn would be guessing that they
+      still apply to a conversation that has since crashed, been interrupted, or rotated.
+
 ## Standing prohibition
 
 **Claude Code's rendered behaviour is the visual target. Do not clone or copy from the
@@ -148,6 +171,24 @@ is ever built. Use `scripts/atlas-dev`, which pins the cwd to `tui/` and passes 
 were standing in as an explicit argument.
 
 ## Measured facts
+
+Claude Agent SDK 0.3.220 / CLI 2.1.x, streaming input, probed live:
+
+- `--replay-user-messages` requires stream-json **in and out** — the CLI refuses to start
+  otherwise, so a regression here is loud. It is not in the SDK's typed `Options`; it rides on
+  `extraArgs`, where `null` means a valueless flag.
+- A client-supplied `uuid` on an outgoing `SDKUserMessage` **round-trips unchanged** on the replay
+  frame — including for a steer the CLI deferred to a follow-on turn.
+- Every user message is replayed, including the turn's own opening prompt and the CLI's synthetic
+  ones (`[Request interrupted by user]`). The uuid is the only way to tell yours apart.
+- `SDKUserMessage.priority` is `'now' | 'next' | 'later'`. Unset behaves as `'next'`: injected at
+  the next tool boundary, which is already Claude Code's steering behaviour. `'later'` is held past
+  the turn's `result` entirely.
+- A steer the CLI has not taken by `result` is **not lost** — it drains as a follow-on turn on the
+  same query, and it is written into the resumed session transcript, so re-sending it would
+  duplicate it.
+- Mid-turn steers reach the model as a `queued_command` **attachment** folded into the following
+  user (tool-result) message, not as a standalone user turn.
 
 Prisma 7.9.1 against SQLite:
 

@@ -8,6 +8,7 @@
  */
 
 import { mock } from 'bun:test';
+import type { UUID } from 'node:crypto';
 import { EHarnessVariant } from '../../domain/message.js';
 import type { EngineEvent, Message, MessagePayload } from '../../domain/message.js';
 import { buildSystemPrompt } from '../../domain/system-prompt.js';
@@ -46,7 +47,12 @@ export type AccountPolicyUpdate = { enabled?: boolean; utilization?: number | nu
 
 export class FakeEngine {
   lastArgs?: RunArgs;
-  steerCallback?: () => void;
+  /**
+   * Ids of steers pushed in and not yet acked, in order. A test acks one by feeding the engine's own
+   * `input_ack` event back through `onEvent` — which is how the real CLI does it, on the output
+   * stream, long after the push.
+   */
+  readonly steerIds: string[] = [];
   interrupted = false;
   script: EngineEvent[] = [];
   readonly steerTexts: string[] = [];
@@ -56,6 +62,14 @@ export class FakeEngine {
   private concurrent = 0;
   maxConcurrent = 0;
   hold?: Promise<void>;
+
+  /**
+   * What the CLI does on its OUTPUT stream when the model finally takes a steer — deliberately a
+   * separate act from the push, because in the real engine they are seconds and a tool call apart.
+   */
+  ack(id: string): void {
+    this.lastArgs?.onEvent({ kind: 'input_ack', id });
+  }
 
   start(args: RunArgs): RunningTurn {
     this.lastArgs = args;
@@ -82,17 +96,14 @@ export class FakeEngine {
     })();
 
     return {
-      steer(text: string, onConsumed?: () => void): boolean {
+      steer({ id, text }: { id: UUID; text: string }): boolean {
         if (!live) return false;
         engine.steerTexts.push(text);
-        engine.steerCallback = onConsumed;
+        engine.steerIds.push(id);
         return true;
       },
       async interrupt(): Promise<void> {
         engine.interrupted = true;
-      },
-      get pendingSteers(): number {
-        return 0;
       },
       done,
     };

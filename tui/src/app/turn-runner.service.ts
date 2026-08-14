@@ -280,13 +280,10 @@ export class TurnRunnerService {
     session: EngineSession;
     text: string;
   }): boolean {
-    const store = this.stores.for(args.thread.id);
     return steerTurn({
       lanes: this.lanes,
       lane: this.lanes.peek(args.thread.id),
-      store,
-      events: this.events,
-      record: ({ lane, work }) => this.record(lane, store, work),
+      store: this.stores.for(args.thread.id),
       ...args,
     });
   }

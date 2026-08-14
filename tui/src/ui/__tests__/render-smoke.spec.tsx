@@ -46,6 +46,7 @@ import { ThinkingBlock } from '../components/blocks/thinking-block.js';
 import { EHit, hitKey, type GroupMember, type ToolGroup } from '../../domain/tool-group.js';
 import { presentTool } from '../../domain/tool-view.js';
 import { WorkingLine } from '../components/working-line.js';
+import { QueuedSteerBlock } from '../components/blocks/queued-steer-block.js';
 import { AccountGroup, accountsLayout } from '../components/account-list.js';
 import {
   ProposalFooter,
@@ -388,7 +389,6 @@ describe('conversation page components mount', () => {
             elapsedMs={3000}
             frame="⠋"
             outputTokens={12}
-            queued={[]}
             interrupting={false}
           />
           {/* Held: the model has stopped, the session has not. A third state with its own words. */}
@@ -398,7 +398,6 @@ describe('conversation page components mount', () => {
             elapsedMs={134_000}
             frame="⠋"
             outputTokens={12}
-            queued={[]}
             interrupting={false}
           />
           <WorkingLine
@@ -406,9 +405,11 @@ describe('conversation page components mount', () => {
             elapsedMs={125_000}
             frame="⠋"
             outputTokens={45_000}
-            queued={[]}
             interrupting={false}
           />
+          {/* Parked under the working line, and drawn by the same block as a committed turn — so
+              this mount is also what catches a `UserBlock` that stops being safe to nest. */}
+          <QueuedSteerBlock text="also check the `logs/` directory" width={100} />
           <OverlayList items={[{ id: '/help', label: '/help', hint: 'shortcuts' }]} selected={0} />
         </>,
       ),

@@ -71,6 +71,20 @@ export function claudeOptions(args: RunArgs): Options {
     ...(args.resume === undefined ? {} : { resume: args.resume }),
     // The live tail exists because of this flag — without it there are no deltas to render.
     includePartialMessages: true,
+    // The ONE signal that says a steer reached the model rather than the transport.
+    //
+    // Writing a message into the session and the model reading it are tens of seconds apart: the CLI
+    // holds a mid-turn steer until the boundary between a tool result and the next request. Without
+    // this flag nothing on the wire marks that moment, so Atlas could only guess — and it guessed by
+    // the pull, which is the wrong end of the wait (MEASURED at 10.5s early on a three-tool turn).
+    // With it the CLI echoes each user message back as `isReplay: true` carrying the uuid Atlas
+    // stamped, at the instant it folds it into the request. See `normalise` → `input_ack`.
+    //
+    // Rides on `extraArgs` because it is a real CLI flag the SDK does not surface as an option. It
+    // requires stream-json in AND out, which streaming-input mode already gives us — the CLI refuses
+    // to start otherwise, so a regression here is loud rather than silent. `null` means a valueless
+    // flag.
+    extraArgs: { 'replay-user-messages': null },
     // A delegate's prose stays in the delegate's own window. Left OFF deliberately: Atlas counts a
     // delegate's work rather than quoting it (`domain/delegates.ts`), and forwarding the full nested
     // conversation would put the context this thread paid to OFFLOAD back on its screen. Its tool

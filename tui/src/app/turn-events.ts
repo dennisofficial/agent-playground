@@ -6,6 +6,7 @@ import {
   type EngineEvent,
   type TurnUsage,
 } from "../domain/message.js";
+import { EMessageType } from "../generated/prisma/enums.js";
 import type { EngineSession } from "../generated/prisma/client.js";
 import type { ContextPressureService } from "./context-pressure.service.js";
 import type { AccountRepository } from "../store/account.repository.js";
@@ -243,8 +244,30 @@ export class TurnEventApplier {
         if (event.usage) lane.usage = event.usage;
         return;
 
-      case "input_ack":
+      case "input_ack": {
+        // The model has read a steer, and this is the first moment anything in the process knows it.
+        //
+        // Unknown ids are the common case and are dropped in silence: the CLI replays EVERY user
+        // message it takes, so this fires for the turn's own prompt and for the engine's background
+        // nudges too. Only what is in the queue is something a human is watching.
+        const steer = store.findQueued(event.id);
+        if (!steer) return;
+        // On the write chain like every other frame, which is what puts the row in its true place —
+        // after the tool result the model read it beside, rather than at the top of the turn where
+        // the old pull-time write used to strand it.
+        //
+        // It leaves the queue as part of the commit rather than before it: one patch, so the message
+        // MOVES from under the working line into the transcript instead of blinking out of one list
+        // and into the other. A failed write leaves it queued, where the turn's end will report it.
+        await this.persist({
+          store,
+          threadId,
+          sessionId: session.id,
+          payload: { type: EMessageType.user, text: steer.text },
+          dequeueId: event.id,
+        });
         return;
+      }
     }
   }
 
@@ -254,13 +277,15 @@ export class TurnEventApplier {
     threadId: string;
     sessionId: string;
     payload: Payload;
+    /** A queued steer this row IS, retired in the same patch that commits it. See `commit`. */
+    dequeueId?: string;
   }): Promise<void> {
     const message = await this.repositories.messageRepository.append({
       threadId: args.threadId,
       sessionId: args.sessionId,
       payload: args.payload,
     });
-    args.store.commit(message);
+    args.store.commit(message, args.dequeueId);
   }
 
   private async persistEvent(args: {
