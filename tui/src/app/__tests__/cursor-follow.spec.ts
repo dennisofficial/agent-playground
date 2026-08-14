@@ -206,6 +206,123 @@ describe('syncCursor', () => {
     });
   });
 
+  /**
+   * The cursor is frequently NOT on the thread you are watching. Opening a thread by hand takes it
+   * and never gives it back, so a builder can run for an hour with the cursor parked on a sibling —
+   * and when it hands off, the move is one frontier to another, which the rule above follows
+   * nowhere. That left the human on a closed transcript while the work went on elsewhere.
+   */
+  describe('a thread that ends under you', () => {
+    it('follows its successor even though the cursor was never here', async () => {
+      const here = thread({ id: 'thread-1', closed: true });
+      const { deps } = world({
+        cursor: 'thread-3',
+        threads: [here, thread({ id: 'thread-3' })],
+      });
+
+      const sync = await syncCursor(deps, {
+        open: open({ thread: here, closed: false }),
+        // Parked on a sibling opened by hand — where it has been all along.
+        lastCursorThreadId: 'thread-2',
+      });
+
+      expect(sync?.moved?.id).toBe('thread-3');
+      expect(sync?.cursorThreadId).toBe('thread-3');
+    });
+
+    /**
+     * The sign-off matters just as much here, and the hold has to survive the refresh that reports
+     * the close — after which the thread has no longer *just* ended, and only the pinned memory says
+     * a move is owed.
+     */
+    it('holds for the sign-off, then follows on the next reading', async () => {
+      const here = thread({ id: 'thread-1', closed: true });
+      const held = await syncCursor(
+        world({
+          cursor: 'thread-3',
+          threads: [here, thread({ id: 'thread-3' })],
+          busy: ['thread-1'],
+        }).deps,
+        {
+          open: open({ thread: here, closed: false }),
+          lastCursorThreadId: 'thread-2',
+        },
+      );
+
+      expect(held?.moved).toBeNull();
+      expect(held?.refreshed?.closed).toBe(true);
+      // Pinned to US, not left on the sibling: it is what makes the next reading a move.
+      expect(held?.cursorThreadId).toBe('thread-1');
+
+      const sync = await syncCursor(
+        world({ cursor: 'thread-3', threads: [here, thread({ id: 'thread-3' })] }).deps,
+        {
+          // Exactly what the held reading handed back.
+          open: open({ thread: here, closed: true }),
+          lastCursorThreadId: held?.cursorThreadId ?? null,
+        },
+      );
+
+      expect(sync?.moved?.id).toBe('thread-3');
+    });
+
+    /**
+     * `complete_thread` can hand the cursor to the very sibling it was already on. Nothing about the
+     * cursor changed — the thread ending is the entire signal.
+     */
+    it('follows a cursor that did not move at all', async () => {
+      const here = thread({ id: 'thread-1', closed: true });
+      const { deps } = world({
+        cursor: 'thread-2',
+        threads: [here, thread({ id: 'thread-2' })],
+      });
+
+      const sync = await syncCursor(deps, {
+        open: open({ thread: here, closed: false }),
+        lastCursorThreadId: 'thread-2',
+      });
+
+      expect(sync?.moved?.id).toBe('thread-2');
+    });
+
+    /**
+     * The guard on all of the above: it is the TRANSITION that follows, not the state. A finished
+     * thread reached from the thread list is history somebody opened on purpose, and it reads
+     * identically on every reading — so it must never fire, once or ever.
+     */
+    it('leaves you in history you opened on purpose', async () => {
+      const here = thread({ id: 'thread-1', closed: true });
+      const { deps, loaded } = world({
+        cursor: 'thread-2',
+        threads: [here, thread({ id: 'thread-2' })],
+      });
+
+      const sync = await syncCursor(deps, {
+        // Loaded closed — this thread ended long before the page opened on it.
+        open: open({ thread: here, closed: true }),
+        lastCursorThreadId: 'thread-2',
+      });
+
+      expect(sync?.moved).toBeNull();
+      expect(sync?.refreshed).toBeNull();
+      expect(loaded).toEqual([]);
+    });
+
+    /** Nothing else is open, so the cursor stays here. There is nowhere to be sent. */
+    it('stays put when the cursor is still this thread', async () => {
+      const here = thread({ id: 'thread-1', closed: true });
+      const { deps } = world({ cursor: 'thread-1', threads: [here] });
+
+      const sync = await syncCursor(deps, {
+        open: open({ thread: here, closed: false }),
+        lastCursorThreadId: 'thread-2',
+      });
+
+      expect(sync?.moved).toBeNull();
+      expect(sync?.refreshed?.closed).toBe(true);
+    });
+  });
+
   it('does nothing at all when neither the cursor nor the thread moved', async () => {
     const here = thread({ id: 'thread-1' });
     const { deps, loaded } = world({ cursor: 'thread-1', threads: [here] });
