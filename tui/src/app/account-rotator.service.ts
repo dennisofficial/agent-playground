@@ -10,6 +10,11 @@ export { ROTATE_ABOVE } from "../domain/rotation.js";
 export type RotationOutcome =
   | { kind: "kept" }
   | { kind: "rotated"; from: Account; to: Account }
+  /**
+   * The turn is about to spend money. `on` may or may not be `from` — staying put is the preferred
+   * spend, but a walled account with no wallet still rotates onto one that has it.
+   */
+  | { kind: "overage"; from: Account; on: Account }
   | { kind: "parked"; resumesAt: Date | null; accounts: Account[] };
 
 /**
@@ -40,6 +45,10 @@ export class AccountRotatorService {
   /**
    * The API refused the turn outright. Record the wall first — including the reset it reported,
    * which is better information than any poll — then rotate on the same rules as a predicted wall.
+   *
+   * `limited` is still the right status for a credits-enabled account: the SUBSCRIPTION really did
+   * wall, which is what the badge says, and `canDrawCredits` admits `limited` precisely so the
+   * rotation below can still land back here on the wallet.
    */
   async rotateAfterLimit(args: {
     sessionId: string;
@@ -72,6 +81,20 @@ export class AccountRotatorService {
 
     if (choice.kind === "parked") {
       return { kind: "parked", resumesAt: choice.resumesAt, accounts };
+    }
+
+    if (choice.kind === "overage") {
+      // Only write when the spender is somewhere else. Re-stamping the session with the account it
+      // already holds is a database round-trip that changes nothing, and it happens at every turn
+      // boundary for as long as the windows stay full.
+      if (choice.on.id !== args.current.id) {
+        await this.sessionRepository.setAccount({
+          sessionId: args.sessionId,
+          accountId: choice.on.id,
+        });
+      }
+      this.logger.log(`extra usage on ${choice.on.label}`);
+      return { kind: "overage", from: args.current, on: choice.on };
     }
 
     await this.sessionRepository.setAccount({

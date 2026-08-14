@@ -17,6 +17,10 @@ function account(over: Partial<RotationCandidate> & { id: string }): RotationCan
     fiveHourUtil: null,
     sevenDayUtil: null,
     fiveHourResetsAt: null,
+    // The default is the shipped default: nothing spends money unless a human said so.
+    extraUsageAllowed: false,
+    extraUsageEnabled: null,
+    extraUsageUtil: null,
     ...over,
   };
 }
@@ -123,6 +127,108 @@ describe('chooseNext', () => {
 });
 
 /**
+ * Credits are a LAST resort, and every one of these is about that ordering. Spending money is a
+ * worse outcome than a cold prompt cache, and both are better than stopping.
+ */
+describe('chooseNext with extra usage', () => {
+  const spender = (over: Partial<RotationCandidate> & { id: string }) =>
+    account({ extraUsageAllowed: true, ...over });
+
+  it('spends nothing while any account still has plan headroom', () => {
+    const accounts = [
+      spender({ id: 'current', fiveHourUtil: 99 }),
+      account({ id: 'fresh', fiveHourUtil: 10 }),
+    ];
+    expect(chooseNext({ currentId: 'current', accounts })).toEqual({
+      kind: 'rotated',
+      to: accounts[1]!,
+    });
+  });
+
+  it('stays put rather than parking, once nothing has headroom', () => {
+    const accounts = [
+      spender({ id: 'current', fiveHourUtil: 99 }),
+      account({ id: 'other', fiveHourUtil: 100 }),
+    ];
+    expect(chooseNext({ currentId: 'current', accounts })).toEqual({
+      kind: 'overage',
+      on: accounts[0]!,
+    });
+  });
+
+  it('prefers the account already in hand — a rotation would buy a cold cache for nothing', () => {
+    const accounts = [
+      spender({ id: 'current', fiveHourUtil: 99, extraUsageUtil: 60 }),
+      spender({ id: 'other', fiveHourUtil: 100, extraUsageUtil: 2 }),
+    ];
+    expect(chooseNext({ currentId: 'current', accounts })).toEqual({
+      kind: 'overage',
+      on: accounts[0]!,
+    });
+  });
+
+  it('rotates onto a wallet when the walled account has none', () => {
+    const accounts = [
+      account({ id: 'current', fiveHourUtil: 99 }),
+      spender({ id: 'rich', fiveHourUtil: 100, extraUsageUtil: 80 }),
+      spender({ id: 'richer', fiveHourUtil: 100, extraUsageUtil: 5 }),
+    ];
+    expect(chooseNext({ currentId: 'current', accounts })).toEqual({
+      kind: 'overage',
+      on: accounts[2]!,
+    });
+  });
+
+  it('parks when permission is there but the credits are not', () => {
+    const accounts = [
+      spender({ id: 'unprovisioned', fiveHourUtil: 99, extraUsageEnabled: false }),
+      spender({ id: 'empty', fiveHourUtil: 100, extraUsageUtil: 100 }),
+    ];
+    expect(chooseNext({ currentId: 'unprovisioned', accounts })).toMatchObject({
+      kind: 'parked',
+    });
+  });
+
+  it('parks rather than spending on an account nobody permitted', () => {
+    const accounts = [
+      account({ id: 'current', fiveHourUtil: 99, extraUsageEnabled: true }),
+      account({ id: 'other', fiveHourUtil: 100, extraUsageEnabled: true }),
+    ];
+    expect(chooseNext({ currentId: 'current', accounts })).toMatchObject({
+      kind: 'parked',
+    });
+  });
+
+  it('spends on an unpolled account — “never asked” is not “no”', () => {
+    const accounts = [spender({ id: 'current', fiveHourUtil: 99, extraUsageEnabled: null })];
+    expect(chooseNext({ currentId: 'current', accounts })).toEqual({
+      kind: 'overage',
+      on: accounts[0]!,
+    });
+  });
+
+  it('will draw credits on a limited account, which is what they are for', () => {
+    const accounts = [
+      account({ id: 'current', fiveHourUtil: 100 }),
+      spender({ id: 'walled', status: EAccountStatus.limited }),
+    ];
+    expect(chooseNext({ currentId: 'current', accounts })).toEqual({
+      kind: 'overage',
+      on: accounts[1]!,
+    });
+  });
+
+  it('will not draw credits on a revoked or expired one — money is not the problem there', () => {
+    const accounts = [
+      account({ id: 'current', fiveHourUtil: 100 }),
+      spender({ id: 'expired', status: EAccountStatus.expired }),
+      spender({ id: 'revoked', status: EAccountStatus.revoked }),
+    ];
+    expect(chooseNext({ currentId: 'current', accounts })).toMatchObject({ kind: 'parked' });
+  });
+});
+
+/**
  * Opening a session is not rotating out of one: there is no account to leave, and refusing to run at
  * all is a worse answer than running on the only credential there is.
  */
@@ -158,6 +264,29 @@ describe('chooseForTurn', () => {
 
   it('never picks a limited account — the API has already refused it, and rotation owns that', () => {
     expect(chooseForTurn([account({ id: 'limited', status: EAccountStatus.limited })])).toBeNull();
+  });
+
+  it('opens on a limited account that may spend, rather than on nothing at all', () => {
+    const accounts = [
+      account({ id: 'limited', status: EAccountStatus.limited, extraUsageAllowed: true }),
+    ];
+    expect(chooseForTurn(accounts)?.id).toBe('limited');
+  });
+
+  it('still prefers a spent active account over any wallet — plan usage is already paid for', () => {
+    const accounts = [
+      account({ id: 'wallet', status: EAccountStatus.limited, extraUsageAllowed: true }),
+      account({ id: 'active', fiveHourUtil: 99 }),
+    ];
+    expect(chooseForTurn(accounts)?.id).toBe('active');
+  });
+
+  it('prefers a wallet over an expired credential — one works, the other might', () => {
+    const accounts = [
+      account({ id: 'expired', status: EAccountStatus.expired }),
+      account({ id: 'wallet', status: EAccountStatus.limited, extraUsageAllowed: true }),
+    ];
+    expect(chooseForTurn(accounts)?.id).toBe('wallet');
   });
 
   it('never picks a revoked account — no request will heal it', () => {

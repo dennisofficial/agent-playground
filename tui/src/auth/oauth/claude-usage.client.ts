@@ -1,5 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
-import type { UsageWindow } from "../../domain/usage.js";
+import type { ExtraUsage, UsageWindow } from "../../domain/usage.js";
 
 /**
  * `GET /api/oauth/usage` — the only source of a real 5-hour / 7-day percentage.
@@ -22,6 +22,12 @@ const FETCH_TIMEOUT_MS = 10_000;
 export type ClaudeUsageWindows = {
   fiveHour: UsageWindow;
   sevenDay: UsageWindow;
+  /**
+   * `null` means the response said nothing about credits — which is NOT the same as "no credits".
+   * An older server, a plan the field does not apply to, and a genuine absence all arrive this way,
+   * so it is left unknown rather than written down as disabled.
+   */
+  extraUsage: ExtraUsage;
 };
 
 @Injectable()
@@ -52,7 +58,7 @@ export class ClaudeUsageClient {
     }
   }
 
-  /** Two meters out; every weekly variant folds onto `wk`. */
+  /** Two meters out; every weekly variant folds onto `wk`. Credits ride alongside as a third fact. */
   parse(body: unknown): ClaudeUsageWindows {
     const root = (body ?? {}) as Record<string, unknown>;
     return {
@@ -62,8 +68,30 @@ export class ClaudeUsageClient {
           readWindow,
         ),
       ),
+      extraUsage: readExtraUsage(root.extra_usage),
     };
   }
+}
+
+/**
+ * The `extra_usage` block: `{ is_enabled, monthly_limit, used_credits, utilization, currency }`.
+ *
+ * Only the first and the last are read. The amounts are the tempting pair — `$12 of $50` says more
+ * than `24%` — but the endpoint does not document their unit and the CLI's own overage code counts
+ * in CENTS (`spendLimitCents`, `monthly_credit_limit`), so rendering them as dollars is a coin-flip
+ * between right and a hundred times wrong. A percentage cannot be misread that way.
+ */
+function readExtraUsage(raw: unknown): ExtraUsage {
+  if (!raw || typeof raw !== "object") return null;
+  const block = raw as { is_enabled?: unknown; utilization?: unknown };
+  if (typeof block.is_enabled !== "boolean") return null;
+  return {
+    enabled: block.is_enabled,
+    utilization:
+      typeof block.utilization === "number"
+        ? Math.round(Math.min(100, Math.max(0, block.utilization)))
+        : null,
+  };
 }
 
 /**

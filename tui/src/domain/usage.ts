@@ -16,16 +16,32 @@ export type MeterBand = 'unknown' | 'normal' | 'warn' | 'hot' | 'red' | 'spent';
  * rotation budget, not how much of the window is left. It supplies its own band — see `Meter.band`
  * and `pressureBand`.
  */
-export type MeterKey = 'fiveHour' | 'sevenDay';
+export type MeterKey = 'fiveHour' | 'sevenDay' | 'extraUsage';
 
 /**
  * Thresholds differ per window because the windows mean different things — `wk` earns attention
  * latest because a two-thirds-spent week is simply Thursday.
+ *
+ * `extraUsage` is the odd one: it is not a window that refills, it is a monthly SPEND limit, and the
+ * quantity behind it is money. So it warns earliest of the three — the point at which a human might
+ * still choose to stop is well before the point at which the server does it for them.
  */
 const BANDS: Record<MeterKey, { warn: number; hot: number; red: number }> = {
   fiveHour: { warn: 65, hot: 82, red: 93 },
   sevenDay: { warn: 70, hot: 86, red: 95 },
+  extraUsage: { warn: 50, hot: 75, red: 90 },
 };
+
+/**
+ * What the server says about an account's credits, as distinct from what Atlas is ALLOWED to do with
+ * them (`Account.extraUsageAllowed`). `enabled: false` means the subscription has no credits
+ * provisioned at all — no toggle in Atlas can conjure them; that is a trip to `/usage-credits`.
+ */
+export type ExtraUsage = {
+  enabled: boolean;
+  /** Percentage of the monthly credit limit spent. `null` when the plan reports no limit. */
+  utilization: number | null;
+} | null;
 
 export function meterBand(key: MeterKey, utilization: number | null): MeterBand {
   if (utilization === null) return 'unknown';
@@ -109,7 +125,15 @@ export function windowKeyFor(rateLimitType: string | undefined): UsageWindowKey 
     case 'seven_day':
     case 'seven_day_opus':
     case 'seven_day_sonnet':
+    // The weekly window as the server draws it for a credits-enabled account. Still the weekly
+    // window: folding it onto `wk` is the same choice `nearestWall` already makes for the variants.
+    case 'seven_day_overage_included':
       return 'sevenDay';
+    // NOT a window. `overage` is the credit balance, and mapping it to `fiveHour` — which is what
+    // the `?? 'fiveHour'` fallback below used to do for it — reported a spent WALLET as a spent
+    // five-hour window and sent rotation looking for headroom that was never the problem.
+    case 'overage':
+      return null;
     default:
       return null;
   }

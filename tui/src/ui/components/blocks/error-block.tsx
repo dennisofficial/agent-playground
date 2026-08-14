@@ -1,13 +1,29 @@
 import React from "react";
 import { seamLabel } from "../../../domain/seam.js";
 import type { ESessionEndReason } from "../../../generated/prisma/enums.js";
+import { useClickRegion } from "../../hooks/use-click-region.js";
 import { glyph, theme } from "../../theme.js";
 
+/**
+ * A turn that ended badly, and — when it is the one you can still act on — the way to send it again.
+ *
+ * Retry is a BUTTON, not a key. It read `r to retry` for months and never once worked: the composer
+ * takes first refusal on every printable character, so `r` typed an `r` into the draft and the hint
+ * was advertising a binding no page could ever claim. That is the same wall `x` for tool expansion
+ * hit — see the note at the bottom of `useConversationKeys` — and the answer is the same one, the
+ * pointer.
+ *
+ * `onRetry` absent means this block is not the one offering it: a retryable error further up the
+ * scrollback has been superseded, and re-sending is decided by `domain/retry.ts`, not by the colour
+ * of a line. Then no affordance is drawn at all, rather than a dead one that lies about what it does.
+ */
 export function ErrorBlock(props: {
   title: string;
   detail?: string;
-  retryable?: boolean;
+  onRetry?: () => void;
 }): React.ReactNode {
+  const retry = useClickRegion(props.onRetry);
+  const label = ` ${glyph.retry} retry `;
   return (
     <box flexDirection="column" marginBottom={1}>
       <text fg={theme.error}>
@@ -21,13 +37,18 @@ export function ErrorBlock(props: {
           <span fg={theme.dim}>{props.detail}</span>
         </text>
       ) : null}
-      {props.retryable ? (
-        <text>
-          {"  "}
-          <span fg={theme.dim}>{glyph.result}</span>
-          {"  "}
-          <span fg={theme.dim}>r to retry</span>
-        </text>
+      {props.onRetry ? (
+        // A row of two renderables, for the reason `CopyButton` splits its pad off its label: with
+        // the gutter inside the clickable text, hovering lights the `⎿` too and the button appears
+        // to start three columns left of where a click is actually taken.
+        <box flexDirection="row">
+          <text fg={theme.dim}>{`  ${glyph.result} `}</text>
+          <text {...retry.handlers}>
+            <span fg={retry.hovered ? theme.hover : theme.dim} {...retry.wash}>
+              {label}
+            </span>
+          </text>
+        </box>
       ) : null}
     </box>
   );

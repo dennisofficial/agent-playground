@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'bun:test';
-import { accountRowLayout, GUTTER, type MeterWidths } from '../account-row.js';
+import {
+  accountRowLayout,
+  extraUsageFlag,
+  FLAGS,
+  GUTTER,
+  policyForms,
+  type MeterWidths,
+} from '../account-row.js';
 
 /** The shipped style's numbers: `5h ▰▰▱▱▱  34%` twice, with the gap between them. */
 const METERS: MeterWidths = { withGauge: 28, withoutGauge: 16 };
@@ -8,7 +15,29 @@ const layout = (width: number, badged = true) => accountRowLayout(width, METERS,
 
 describe('accountRowLayout', () => {
   it('spends a wide terminal on the label, up to the point where more stops helping', () => {
-    expect(layout(200)).toEqual({ lines: 1, label: 40, plan: 10, showBar: true, badge: 'text' });
+    expect(layout(200)).toEqual({
+      lines: 1,
+      label: 40,
+      plan: 10,
+      showBar: true,
+      badge: 'text',
+      flags: FLAGS,
+    });
+  });
+
+  it('buys the policy flags only out of columns the label cannot use', () => {
+    // gutter 6 + plan 10 + meters 28 + flags 12 + badge 12 + margin 2 + a full 40-wide label = 110.
+    expect(layout(110).flags).toBe(FLAGS);
+    expect(layout(110).label).toBe(40);
+    // One column short, and the flags go rather than the label — which still gets its full 40 from
+    // the columns they were asking for.
+    expect(layout(109).flags).toBe(0);
+    expect(layout(109).label).toBe(40);
+  });
+
+  it('sheds the flags before any measurement, at every shape', () => {
+    expect(layout(80)).toMatchObject({ lines: 1, showBar: true, plan: 10, flags: 0 });
+    expect(layout(56)).toMatchObject({ lines: 2, showBar: true, flags: 0 });
   });
 
   it('keeps one line, the plan and the gauges as long as the label still fits beside them', () => {

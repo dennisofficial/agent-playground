@@ -40,6 +40,13 @@ export function Transcript(props: {
   /** The oldest message you have not seen: where opening the thread lands. */
   anchorMessageId?: string | null;
   showDivider?: boolean;
+  /**
+   * The error block that gets the retry button, and what it does. Both or neither: the page hands
+   * them over only while the failed turn is still the last thing that happened AND a new turn can
+   * actually be fired. See `domain/retry.ts`.
+   */
+  retryMessageId?: string | null;
+  onRetry?: () => void;
 }): React.ReactNode {
   const { state } = props;
   return (
@@ -109,6 +116,10 @@ export function Transcript(props: {
                 // whole transcript for a tool counter.
                 delegates={state.delegates}
                 now={props.now}
+                {...(props.onRetry &&
+                props.retryMessageId === item.message.id
+                  ? { onRetry: props.onRetry }
+                  : {})}
               />
             )}
           </box>

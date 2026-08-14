@@ -1,4 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
+import type { DraftImage } from "../domain/draft-images.js";
 import { EHarnessVariant } from "../domain/message.js";
 import { bindingFor } from "../domain/role-engine.js";
 import type { EngineSession, Job, Thread } from "../generated/prisma/client.js";
@@ -16,6 +17,7 @@ import {
   type CursorSync,
   type OpenConversation,
 } from "./conversation-open.js";
+import { retryLastTurn } from "./conversation-retry.js";
 import { ConversationStoreRegistry } from "./conversation-store.registry.js";
 import { PhaseBriefService } from "./phase-brief.service.js";
 import { SessionManagerService } from "./session-manager.service.js";
@@ -104,7 +106,7 @@ export class ConversationService {
     await this.threadSeamService.seed(args);
   }
 
-  async send(text: string): Promise<void> {
+  async send(text: string, images: readonly DraftImage[] = []): Promise<void> {
     const open = this.requireOpen();
     if (open.closed) return;
 
@@ -114,6 +116,19 @@ export class ConversationService {
         session: open.session,
         text,
       });
+      // A steer is words pushed into a turn already in flight, and the SDK's steering channel takes
+      // text — there is nowhere on it to put a picture. Said out loud rather than dropped quietly:
+      // the words arrive without the image they refer to, and the only thing worse than that is not
+      // knowing it happened. The file is still on disk; the token can be pasted into the next turn.
+      if (images.length > 0) {
+        this.stores
+          .for(open.thread.id)
+          .notice(
+            images.length === 1
+              ? "the image did not go with that steer — a running turn takes words only"
+              : `${images.length} images did not go with that steer — a running turn takes words only`,
+          );
+      }
       return;
     }
 
@@ -121,6 +136,7 @@ export class ConversationService {
       thread: open.thread,
       session: open.session,
       prompt: text,
+      ...(images.length > 0 ? { images } : {}),
       brief: open.brief,
       tools: open.tools,
       cwd: open.cwd,
@@ -155,6 +171,16 @@ export class ConversationService {
       cwd: open.cwd,
     });
     await this.refreshSessions();
+  }
+
+  /** The error block's `↻ retry`: the failed turn's prompt, sent again. See `conversation-retry.ts`. */
+  async retry(): Promise<void> {
+    const fired = await retryLastTurn({
+      open: this.requireOpen(),
+      turnRunnerService: this.turnRunnerService,
+      stores: this.stores,
+    });
+    if (fired) await this.refreshSessions();
   }
 
   async interrupt(text?: string): Promise<void> {

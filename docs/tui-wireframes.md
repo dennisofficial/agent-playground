@@ -908,8 +908,16 @@ Terminal:
 
 ```
 ⏺ API Error: 401 unauthenticated
-  ⎿  Run `claude login` to reauthenticate · r to retry
+  ⎿  Run `claude login` to reauthenticate
+  ⎿   ↻ retry 
 ```
+
+`↻ retry` is a **button**, clicked, not a key. This said `r to retry` for a long time and could
+never have worked: the composer takes first refusal on every printable character, so `r` types an
+`r` into the draft — the same wall `x`-to-expand hit, and the same answer. It sends the failed
+turn's prompt again, and it is drawn on **one** block: the error the transcript is currently sitting
+on, while a turn can actually be fired. A retryable error further up the scrollback has been
+superseded and offers nothing.
 
 ### State H — context pressure and session rotation
 
@@ -957,14 +965,16 @@ cache, which is per-account — the first turn after a swap pays uncached input.
 ```
 ⏺ All Claude accounts are at their limit
   ⎿  dennis@personal  resets 2h14m  ·  work@company  resets 41m
-     Resuming automatically at 21:57 · r to retry now
+     Resuming automatically at 21:57
+  ⎿   ↻ retry 
 ```
 
 ### State J — engine down
 
 ```
 ⏺ Engine error: claude agent sdk exited (code 1)
-  ⎿  Thread preserved · r to restart · ctrl+r for transcript
+  ⎿  Thread preserved · ctrl+r for transcript
+  ⎿   ↻ retry 
 ```
 
 Restart opens a **new session under the same thread** with `endReason = engine_error` on the

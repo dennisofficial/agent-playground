@@ -6,6 +6,12 @@ export type AccountRowLayout = {
   plan: number;
   showBar: boolean;
   badge: BadgeForm;
+  /**
+   * Room for the policy flags (`xu 24%  fast`) — 0 when the row is too narrow to afford them. They
+   * are the first thing dropped at every shape, because unlike a meter they are a setting rather
+   * than a measurement, and the footer names the highlighted account's settings regardless.
+   */
+  flags: number;
 };
 
 export type BadgeForm = "text" | "glyph" | "none";
@@ -20,16 +26,25 @@ const LABEL_MAX = 40;
 
 const BADGE: Record<BadgeForm, number> = { text: 12, glyph: 4, none: 0 };
 
+/** `xu 24%` + a gap + `fast` — the widest the flag column ever draws. */
+export const FLAGS = 12;
+
 type Form = Omit<AccountRowLayout, "label">;
 
+/**
+ * Longest-first, and the flag column is paired with each shape rather than appended to the ladder:
+ * at every width the concession made first is the settings, not the numbers.
+ */
 const FORMS: Form[] = [
-  { lines: 1, plan: PLAN, showBar: true, badge: "text" },
-  { lines: 1, plan: PLAN, showBar: true, badge: "glyph" },
-  { lines: 2, plan: PLAN, showBar: true, badge: "text" },
-  { lines: 2, plan: PLAN, showBar: true, badge: "glyph" },
-  { lines: 2, plan: PLAN, showBar: false, badge: "glyph" },
-  { lines: 2, plan: 0, showBar: false, badge: "glyph" },
-  { lines: 2, plan: 0, showBar: false, badge: "none" },
+  { lines: 1, plan: PLAN, showBar: true, badge: "text", flags: FLAGS },
+  { lines: 1, plan: PLAN, showBar: true, badge: "text", flags: 0 },
+  { lines: 1, plan: PLAN, showBar: true, badge: "glyph", flags: 0 },
+  { lines: 2, plan: PLAN, showBar: true, badge: "text", flags: FLAGS },
+  { lines: 2, plan: PLAN, showBar: true, badge: "text", flags: 0 },
+  { lines: 2, plan: PLAN, showBar: true, badge: "glyph", flags: 0 },
+  { lines: 2, plan: PLAN, showBar: false, badge: "glyph", flags: 0 },
+  { lines: 2, plan: 0, showBar: false, badge: "glyph", flags: 0 },
+  { lines: 2, plan: 0, showBar: false, badge: "none", flags: 0 },
 ];
 
 /** `5h ` before the gauge, ` 34%` after it — the fixed cells every meter spends. */
@@ -56,15 +71,79 @@ export function accountMeterWidths(args: { gaugeCells: number; gap: number }): M
   };
 }
 
-/** The word a status badge carries, or `null` for the statuses that need no announcement. */
+/**
+ * The word a status badge carries, or `null` for the statuses that need no announcement.
+ *
+ * `limited` still says `limited` on an account permitted to spend credits, and deliberately: the
+ * SUBSCRIPTION really has walled, which is the fact the badge is about. That the account can keep
+ * working anyway is what the `xu` flag beside it says.
+ */
 export function badgeText(account: { status: EAccountStatus }): string | null {
   if (account.status === EAccountStatus.expired) return 'expired';
   if (account.status === EAccountStatus.limited) return 'limited';
   return null;
 }
 
+/** What the extra-usage flag reads, and why — the colour is `ui`'s to pick from the state. */
+export type ExtraUsageFlag =
+  /** Atlas may spend here. `percent` is what the wallet has already cost. */
+  | { state: 'on'; percent: number | null }
+  /** Permitted, but the subscription has no credits provisioned — a setting away from working. */
+  | { state: 'unavailable' }
+  /** Permitted, and the wallet is empty. This account is genuinely out of everything. */
+  | { state: 'spent' }
+  | { state: 'off' };
+
+export function extraUsageFlag(account: {
+  extraUsageAllowed: boolean;
+  extraUsageEnabled: boolean | null;
+  extraUsageUtil: number | null;
+}): ExtraUsageFlag {
+  if (!account.extraUsageAllowed) return { state: 'off' };
+  if (account.extraUsageEnabled === false) return { state: 'unavailable' };
+  if ((account.extraUsageUtil ?? 0) >= 100) return { state: 'spent' };
+  return { state: 'on', percent: account.extraUsageUtil };
+}
+
+/**
+ * The highlighted account's two settings, spelled out — longest-first for `fitHints`.
+ *
+ * This is what makes the feature discoverable and what makes it legible at any width: the `flags`
+ * column is dropped on a narrow terminal, and the toggles are two unlabelled letters until something
+ * says what they currently are. The `n/a` case earns its own sentence because it is the one the
+ * human cannot fix from this page — no local toggle provisions credits on a subscription.
+ */
+export function policyForms(account: {
+  extraUsageAllowed: boolean;
+  extraUsageEnabled: boolean | null;
+  extraUsageUtil: number | null;
+  fastMode: boolean;
+}): string[] {
+  const flag = extraUsageFlag(account);
+  const extra =
+    flag.state === 'off'
+      ? 'extra usage off'
+      : flag.state === 'unavailable'
+        ? 'extra usage on · none on this plan'
+        : flag.state === 'spent'
+          ? 'extra usage on · credits spent'
+          : flag.percent === null
+            ? 'extra usage on'
+            : `extra usage on · ${flag.percent}% of credits`;
+  const fast = `fast mode ${account.fastMode ? 'on' : 'off'}`;
+  return [
+    `${extra} · ${fast}`,
+    `${flag.state === 'off' ? 'xu off' : 'xu on'} · ${fast}`,
+    `xu ${flag.state === 'off' ? 'off' : 'on'} · fast ${account.fastMode ? 'on' : 'off'}`,
+  ];
+}
+
 function usageWidth(form: Form, meters: MeterWidths): number {
-  return form.plan + (form.showBar ? meters.withGauge : meters.withoutGauge);
+  return (
+    form.plan +
+    (form.showBar ? meters.withGauge : meters.withoutGauge) +
+    form.flags
+  );
 }
 
 function labelRoom(
@@ -90,7 +169,11 @@ export function accountRowLayout(
 ): AccountRowLayout {
   for (const form of FORMS) {
     const room = labelRoom(form, width, meters, anyAccountBadged);
-    if (room !== null && room >= LABEL_MIN)
+    // The flag column is affordable only once the label has everything it can use — the same rule
+    // the badge already follows. Held to `LABEL_MIN` instead it won every width above ~90 and paid
+    // for itself out of the label, which is the one column that is actually identifying the row.
+    const floor = form.flags > 0 ? LABEL_MAX : LABEL_MIN;
+    if (room !== null && room >= floor)
       return { ...form, label: Math.min(LABEL_MAX, room) };
   }
 

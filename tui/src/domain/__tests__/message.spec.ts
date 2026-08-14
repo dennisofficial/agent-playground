@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { EImageDelivery } from '../image-limits.js';
 import { EMessageType } from '../../generated/prisma/enums.js';
 import {
   asMessagePayload,
@@ -46,6 +47,55 @@ describe('asMessagePayload', () => {
 describe('renderPrompt', () => {
   it('sends the human in bare — no envelope, byte for byte', () => {
     expect(renderPrompt({ type: EMessageType.user, text: 'fix the drain' })).toBe('fix the drain');
+  });
+
+  /**
+   * The picture reached the model as a content block; this is what keeps it REACHABLE afterwards.
+   * A rotation gives the successor the transcript but not the block, and a delegate never had it —
+   * the path is how either one gets back to the file.
+   */
+  it('names the pictures after the prose, and leaves the prose bare', () => {
+    const rendered = renderPrompt({
+      type: EMessageType.user,
+      text: 'what is wrong with [Image #1]?',
+      images: [
+        {
+          ordinal: 1,
+          path: '/atlas/jobs/j1/context/uploads/shot.png',
+          mediaType: 'image/png',
+          byteLength: 4096,
+          delivery: EImageDelivery.inline,
+        },
+      ],
+    });
+
+    // The sentence is untouched and still first — the envelope rule is about Atlas speaking, and a
+    // manifest that wrapped a person's words would spend that distinction on a screenshot.
+    expect(rendered.startsWith('what is wrong with [Image #1]?')).toBe(true);
+    expect(rendered).toContain('<image id="1" path="/atlas/jobs/j1/context/uploads/shot.png"');
+  });
+
+  it('tells the agent to go and read the one that was too big to send', () => {
+    const rendered = renderPrompt({
+      type: EMessageType.user,
+      text: 'see [Image #1]',
+      images: [
+        {
+          ordinal: 1,
+          path: '/atlas/jobs/j1/context/uploads/huge.png',
+          mediaType: 'image/png',
+          byteLength: 9_000_000,
+          delivery: EImageDelivery.pathOnly,
+        },
+      ],
+    });
+    expect(rendered).toContain('read it if you need it');
+  });
+
+  it('adds nothing at all to a message with no pictures', () => {
+    expect(renderPrompt({ type: EMessageType.user, text: 'plain words', images: [] })).toBe(
+      'plain words',
+    );
   });
 
   it('wraps a harness message in an envelope naming its variant', () => {
@@ -158,6 +208,39 @@ describe('a seam message and its attachments', () => {
       attachments: parts,
     });
     expect(asMessagePayload(JSON.parse(JSON.stringify(payload)))).toEqual(payload);
+  });
+});
+
+describe("a delegate's frames never persist", () => {
+  // Every tagged kind, because the enumeration is the bug: prose was left off the list, and a
+  // subagent's summarized thinking landed in the parent's transcript as the parent's own.
+  const parented: EngineEvent[] = [
+    { kind: 'thinking', text: 'grepping for minPasswordLength', parentToolUseId: 'toolu_parent' },
+    { kind: 'text', text: 'Found it in checks/index.ts', parentToolUseId: 'toolu_parent' },
+    { kind: 'tool_call', toolUseId: 's1', name: 'Grep', input: {}, parentToolUseId: 'toolu_parent' },
+    {
+      kind: 'tool_result',
+      toolUseId: 's1',
+      ok: true,
+      summary: '6 matches',
+      detail: [],
+      parentToolUseId: 'toolu_parent',
+    },
+  ];
+
+  it('is neither authoritative nor persistable', () => {
+    for (const event of parented) {
+      expect(isAuthoritative(event)).toBe(false);
+      expect(toPayload(event)).toBeNull();
+    }
+  });
+
+  it('leaves the same frames untagged alone — the thread really did produce those', () => {
+    expect(toPayload({ kind: 'thinking', text: 'hmm' })).toEqual({
+      type: EMessageType.thinking,
+      text: 'hmm',
+    });
+    expect(isAuthoritative({ kind: 'text', text: 'hi' })).toBe(true);
   });
 });
 

@@ -87,6 +87,12 @@ export class AccountUsageService {
           resetsAt: windows.sevenDay.resetsAt ?? undefined,
         });
       }
+      // Null is "the response said nothing", not "no credits" — leaving the columns alone keeps
+      // `extraUsageEnabled === null` meaning unpolled, which `canDrawCredits` reads as permission
+      // rather than refusal.
+      if (windows.extraUsage) {
+        await this.accountRepository.recordExtraUsage(accountId, windows.extraUsage);
+      }
     } catch (error) {
       this.logger.warn(
         `usage refresh failed for account ${accountId}: ${String(error)}`,

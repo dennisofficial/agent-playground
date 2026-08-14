@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { theme } from "../theme.js";
+import { usePress, type PressHandlers } from "./use-press.js";
 
 /**
  * A block that opens and closes under the pointer.
@@ -7,6 +8,9 @@ import { theme } from "../theme.js";
  * The interaction rule, in one place: **click a summary to open it, click anywhere in it to close it.**
  * So the handlers go on every line of the region, not just its header, and hover lights all of them —
  * what is lit is what a click is about to collapse.
+ *
+ * A click is press-and-release in one cell, not mouse-down; `usePress` carries why, and it is the whole
+ * reason expanding a block no longer leaves the transcript looking dragged-over.
  *
  * Hover state is LOCAL to the block. It is a pointer position, not something anybody else acts on, and
  * lifting it to the page would re-render every other block in the transcript on every mouse move.
@@ -16,8 +20,7 @@ import { theme } from "../theme.js";
  */
 export function useClickRegion(onToggle?: () => void): {
   hovered: boolean;
-  handlers: {
-    onMouseDown?: () => void;
+  handlers: PressHandlers & {
     onMouseOver?: () => void;
     onMouseOut?: () => void;
   };
@@ -25,11 +28,12 @@ export function useClickRegion(onToggle?: () => void): {
   wash: { bg?: string };
 } {
   const [hovered, setHovered] = useState(false);
+  const press = usePress();
   if (onToggle === undefined) return { hovered: false, handlers: {}, wash: {} };
   return {
     hovered,
     handlers: {
-      onMouseDown: onToggle,
+      ...press(onToggle),
       onMouseOver: () => setHovered(true),
       onMouseOut: () => setHovered(false),
     },

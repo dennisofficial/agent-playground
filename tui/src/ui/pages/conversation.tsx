@@ -6,6 +6,7 @@ import { withSeams, type TranscriptItem } from "../../domain/seam.js";
 import { inFlightToolIds, toolResultsById } from "../../domain/transcript-index.js";
 import { groupTools, type GroupedItem } from "../../domain/tool-group.js";
 import { conversationHints } from "../../domain/conversation-hints.js";
+import { retryTarget } from "../../domain/retry.js";
 import { roleLabel } from "../../domain/role-engine.js";
 import { EThreadStatus } from "../../generated/prisma/enums.js";
 import { CONVERSATION, EDITING, GLOBAL } from "../bindings.js";
@@ -25,7 +26,9 @@ import { Screen } from "../components/screen.js";
 import { Shortcuts, shortcutRows } from "../components/shortcuts.js";
 import { Transcript } from "../components/transcript.js";
 import { ProposalFooter } from "../components/transition-confirm.js";
-import { useComposer } from "../hooks/use-composer.js";
+import { useDraft } from "../hooks/use-draft.js";
+import { readClipboardImage } from "../clipboard.js";
+import { jobUploadFile } from "../../domain/paths.js";
 import { useProposal } from "../hooks/use-proposal.js";
 import { useConversationKeys } from "../hooks/use-conversation-keys.js";
 import { useConversation, useTick } from "../hooks/use-conversation.js";
@@ -68,7 +71,7 @@ export function ConversationPage(props: {
 
   // Seeded from the store, which kept the draft while this page was unmounted. See `store.draft`.
   const store = conversationStores.for(props.open.thread.id);
-  const composer = useComposer(store.draft);
+  const composer = useDraft(store.draft);
   const [overlay, setOverlay] = useState<"none" | "command">("none");
   // Esc is one keystroke away from a paragraph you meant to send, so clearing asks twice. Armed is a
   // moment, not a mode: any other key disarms it, and it lapses on its own.
@@ -183,16 +186,63 @@ export function ConversationPage(props: {
     // cost the words in exchange for nothing. The hint line already says why, in warn colour, so this
     // needs no message of its own — press ctrl+a, come back, press ⏎ again.
     if (state.noAccount !== null) return;
+    // Read BEFORE the clear, and off the buffer rather than the mirror: which pictures go is decided
+    // by which tokens the draft still holds, and the draft is about to stop existing.
+    const images = composer.pending();
     composer.clear();
     setOverlay("none");
     // A command RUNS rather than going to the model as text — see `runSlashCommand`.
     if (await runSlashCommand({ text, conversation: conversationService })) return;
     // Sending is an implicit "show me what happens next".
-    await conversationService.send(text);
+    await conversationService.send(text, images);
   }, [composer, conversationService, state.noAccount]);
+
+  /**
+   * ctrl+v: an image off the system clipboard into the draft.
+   *
+   * Written under the JOB, not into a temp directory — the transcript keeps referring to it long
+   * after the turn. The name carries the thread and a clock reading because a job runs for days and
+   * two drafts must never collide on `1.png`.
+   */
+  const handlePasteImage = useCallback(() => {
+    const image = readClipboardImage(
+      jobUploadFile({
+        jobId: props.open.job.id,
+        name: `${props.open.thread.id}-${Date.now()}.png`,
+      }),
+    );
+    // Nothing on the clipboard that is a picture. Said out loud rather than ignored, because a key
+    // that does nothing silently is indistinguishable from one that is broken.
+    if (!image) {
+      conversationStores.for(props.open.thread.id).notice(
+        "nothing on the clipboard to paste as an image",
+      );
+      return;
+    }
+
+    const placed = composer.addImage(image);
+    // Too heavy to inline. Said out loud, because the difference is invisible in the draft and it
+    // changes what the agent will do — it has to go and read the file rather than just seeing it.
+    if (image.reason) {
+      conversationStores.for(props.open.thread.id).notice(
+        `image ${placed.ordinal} goes by path — ${image.reason}`,
+      );
+    }
+  }, [composer, conversationStores, props.open.job.id, props.open.thread.id]);
+
+  // Is the transcript sitting on a failed turn? The button is drawn only where the answer is yes and
+  // a turn could actually be fired — a running thread, a closed one, or one with no credential has
+  // nothing to retry ONTO, and a button that declines silently is worse than no button.
+  const retry = useMemo(() => retryTarget(state.messages), [state.messages]);
+  const canRetry =
+    retry !== null && !state.running && !closed && state.noAccount === null;
+  const handleRetry = useCallback(() => {
+    void conversationService.retry();
+  }, [conversationService]);
 
   useConversationKeys({
     composer,
+    onPasteImage: handlePasteImage,
     conversationService,
     conversationStores,
     threadId: props.open.thread.id,
@@ -285,10 +335,9 @@ export function ConversationPage(props: {
           ) : null}
 
           <Composer
-            state={composer.state}
+            draft={composer}
             width={width}
             maxRows={composerRows(height)}
-            onCaret={composer.setCursor}
           />
 
           {/* Below the composer, in the hint line's place: the keymap belongs where "what can I
@@ -343,6 +392,8 @@ export function ConversationPage(props: {
           scroller={readState.scroller}
           anchorMessageId={readState.anchorMessageId}
           showDivider={readState.showDivider}
+          retryMessageId={retry?.errorMessageId ?? null}
+          {...(canRetry ? { onRetry: handleRetry } : {})}
         />
         {readState.pinned ? null : (
           <JumpToBottom width={width} onJump={readState.handleJumpToBottom} />

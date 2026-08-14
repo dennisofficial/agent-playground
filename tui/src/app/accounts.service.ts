@@ -100,6 +100,25 @@ export class AccountsService implements OnModuleInit {
     await this.accountRepository.remove(id);
   }
 
+  /**
+   * The two standing decisions, flipped from the accounts page. Toggled rather than set so the UI
+   * never has to hold a stale copy of what it is inverting — the row it read a keypress ago may have
+   * been overwritten by a usage poll or by another Atlas instance.
+   */
+  async toggleExtraUsage(id: string): Promise<void> {
+    const account = await this.accountRepository.findById(id);
+    if (!account) return;
+    await this.accountRepository.setPolicy(id, {
+      extraUsageAllowed: !account.extraUsageAllowed,
+    });
+  }
+
+  async toggleFastMode(id: string): Promise<void> {
+    const account = await this.accountRepository.findById(id);
+    if (!account) return;
+    await this.accountRepository.setPolicy(id, { fastMode: !account.fastMode });
+  }
+
   async listForEngine(engine: EEngine): Promise<Account[]> {
     return this.accountRepository.listForEngine(engine);
   }

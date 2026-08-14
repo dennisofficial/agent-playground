@@ -29,6 +29,19 @@ model Account {
   sevenDayResetsAt DateTime?
   usageFetchedAt   DateTime?
 
+  /// Atlas's PERMISSION to spend credits on this account once its subscription windows are gone —
+  /// not the server's capability, which is `extraUsageEnabled`. Both must be true to draw credits.
+  /// Off by default: nothing bills money because a window filled up.
+  extraUsageAllowed Boolean @default(false)
+  /// Deliberately INDEPENDENT of extra usage. Fast mode is a speed choice, and coupling the two
+  /// would mean "let a stuck job finish on credits" silently also meant "pay more for every turn".
+  fastMode          Boolean @default(false)
+
+  /// Observed from `GET /api/oauth/usage`, not chosen here: whether the account has credits
+  /// provisioned at all, and how much of its monthly limit is gone. `null` = never polled.
+  extraUsageEnabled Boolean?
+  extraUsageUtil    Float?
+
   sessions         EngineSession[]
   createdAt        DateTime       @default(now())
 

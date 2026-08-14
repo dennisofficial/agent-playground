@@ -29,6 +29,12 @@ export function MessageView(props: {
   delegates?: Delegates;
   /** Ticking clock for a running delegate's elapsed counter. */
   now?: number;
+  /**
+   * Send this failed turn's prompt again. Passed to exactly ONE message — the error the transcript
+   * is currently sitting on — and only while a retry is actually possible; every other block, error
+   * or not, gets nothing and draws no button. See `domain/retry.ts`.
+   */
+  onRetry?: () => void;
 }): React.ReactNode {
   const payload = props.message.payload;
   switch (payload.type) {
@@ -36,6 +42,7 @@ export function MessageView(props: {
       return (
         <UserBlock
           text={payload.text}
+          {...(payload.images ? { images: payload.images } : {})}
           {...(props.width === undefined ? {} : { width: props.width })}
         />
       );
@@ -107,7 +114,7 @@ export function MessageView(props: {
         <ErrorBlock
           title={payload.title}
           {...(payload.detail ? { detail: payload.detail } : {})}
-          {...(payload.retryable ? { retryable: true } : {})}
+          {...(props.onRetry ? { onRetry: props.onRetry } : {})}
         />
       );
     case EMessageType.harness:

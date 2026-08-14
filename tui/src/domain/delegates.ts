@@ -1,4 +1,4 @@
-import { EDelegateStatus, type EngineEvent } from './message.js';
+import { EDelegateStatus, isParented, type EngineEvent } from './message.js';
 
 /**
  * What the thread's delegates are doing, derived from frames that belong to nobody else.
@@ -70,12 +70,10 @@ export function isDelegateEvent(event: EngineEvent): boolean {
     case 'task_settled':
     case 'background_tasks':
       return true;
-    case 'tool_call':
-    case 'tool_result':
-    case 'usage':
-      return event.parentToolUseId !== undefined;
+    // Every tagged kind, via one predicate in `message.ts` — the list used to be spelled out here and
+    // omitted prose, which is exactly the shape of bug an enumeration invites. See `isParented`.
     default:
-      return false;
+      return isParented(event);
   }
 }
 

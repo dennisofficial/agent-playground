@@ -19,11 +19,23 @@ export type RotationCandidate = {
   fiveHourUtil: number | null;
   sevenDayUtil: number | null;
   fiveHourResetsAt: Date | null;
+  /** Atlas's permission to spend credits here. See `canDrawCredits` for why it is not enough alone. */
+  extraUsageAllowed: boolean;
+  /** The server's answer: are credits provisioned at all. `null` = never polled. */
+  extraUsageEnabled: boolean | null;
+  /** How much of the monthly credit limit is gone. */
+  extraUsageUtil: number | null;
 };
 
 export type RotationChoice<T> =
   | { kind: 'rotated'; to: T }
-  /** Nothing has headroom. `resumesAt` is what the UI counts down to. */
+  /**
+   * Every subscription window is gone and this account is permitted to keep going on credits. A
+   * separate kind from `rotated` because it is a spending decision, not a routing one — the caller
+   * has to be able to say so out loud, and `on` is very often the account already in hand.
+   */
+  | { kind: 'overage'; on: T }
+  /** Nothing has headroom and nothing may spend. `resumesAt` is what the UI counts down to. */
   | { kind: 'parked'; resumesAt: Date | null };
 
 /**
@@ -46,6 +58,37 @@ export function isWalled(account: RotationCandidate): boolean {
 }
 
 /**
+ * May this account keep working on money once its subscription windows are gone?
+ *
+ * Three facts, and all three are required. Atlas's own permission (`extraUsageAllowed`) is the one a
+ * human sets and is off by default — no window filling up may ever start a bill on its own. The
+ * server's `extraUsageEnabled` is a capability, not a preference: `false` means the subscription has
+ * no credits provisioned and there is nothing to spend, which no local toggle can change. `null` is
+ * treated as permission enough — it means "never polled", and refusing on an unpolled account would
+ * make the feature depend on a successful usage fetch that a fresh install has not made yet; the
+ * turn simply fails the same way it does today if the server disagrees.
+ *
+ * A spent wallet (`>= 100`) is a wall like any other. `expired` and `revoked` are excluded because
+ * credits are not what is wrong with them — `limited` is included precisely BECAUSE it is: a
+ * subscription wall is the exact moment credits are for.
+ */
+export function canDrawCredits(account: RotationCandidate): boolean {
+  if (!account.extraUsageAllowed) return false;
+  if (account.extraUsageEnabled === false) return false;
+  if (
+    account.status !== EAccountStatus.active &&
+    account.status !== EAccountStatus.limited
+  )
+    return false;
+  return (account.extraUsageUtil ?? 0) < 100;
+}
+
+/** Least credit spent first — the same "most headroom" rule, applied to the wallet. */
+function byCredit(a: RotationCandidate, b: RotationCandidate): number {
+  return (a.extraUsageUtil ?? 0) - (b.extraUsageUtil ?? 0);
+}
+
+/**
  * Most headroom first. Unknown usage sorts LAST (`?? 101`, above any real percentage): usage is polled
  * per account, so a null reading means "not measured recently", not "idle" — and choosing an
  * unmeasured account over a measured one can land straight back on a wall.
@@ -57,7 +100,15 @@ function byHeadroom(a: RotationCandidate, b: RotationCandidate): number {
   return (a.fiveHourUtil ?? 101) - (b.fiveHourUtil ?? 101);
 }
 
-/** The next account to run on, or `parked` when every account is spent. */
+/**
+ * The next account to run on, or `parked` when every account is spent.
+ *
+ * Credits are a LAST resort and the tiers say so. Subscription headroom on any other account beats
+ * spending money on this one — a rotation costs a cold prompt cache and nothing else, so there is no
+ * argument for reaching for the wallet while a paid-for window sits unused somewhere. Only when no
+ * account has headroom does the second tier open, and it prefers the CURRENT account over any other:
+ * once the decision is "spend", staying put is strictly cheaper than paying for a cold cache too.
+ */
 export function chooseNext<T extends RotationCandidate>(args: {
   currentId: string;
   accounts: readonly T[];
@@ -70,9 +121,15 @@ export function chooseNext<T extends RotationCandidate>(args: {
   );
 
   const [next] = [...candidates].sort(byHeadroom);
+  if (next) return { kind: 'rotated', to: next };
 
-  if (!next) return { kind: 'parked', resumesAt: earliestReset(args.accounts) };
-  return { kind: 'rotated', to: next };
+  const current = args.accounts.find((account) => account.id === args.currentId);
+  const spender =
+    (current && canDrawCredits(current) ? current : undefined) ??
+    [...args.accounts].filter(canDrawCredits).sort(byCredit)[0];
+  if (spender) return { kind: 'overage', on: spender };
+
+  return { kind: 'parked', resumesAt: earliestReset(args.accounts) };
 }
 
 /**
@@ -86,8 +143,11 @@ export function chooseNext<T extends RotationCandidate>(args: {
  * expired account as the last resort — the refresh on the turn path either heals it or fails with
  * something a human can act on.
  *
- * `limited` and `revoked` are excluded on purpose. A limit is the API's own answer and belongs to
- * `chooseNext`; a revocation is not healed by trying.
+ * `revoked` is excluded on purpose: a revocation is not healed by trying. `limited` is excluded from
+ * the first tier for the same reason it always was — a limit is the API's own answer — but it comes
+ * back in the middle tier when the human has permitted credits, because a limited account with a
+ * wallet is not out of anything. That tier sits BELOW every active account, headroom or not, so it
+ * only ever catches a session that would otherwise have had nowhere to open at all.
  */
 export function chooseForTurn<T extends RotationCandidate>(
   accounts: readonly T[],
@@ -95,8 +155,13 @@ export function chooseForTurn<T extends RotationCandidate>(
   const inTier = (status: EAccountStatus): T[] =>
     accounts.filter((account) => account.status === status).sort(byHeadroom);
 
+  const spenders = accounts.filter(canDrawCredits).sort(byCredit);
+
   return (
-    inTier(EAccountStatus.active)[0] ?? inTier(EAccountStatus.expired)[0] ?? null
+    inTier(EAccountStatus.active)[0] ??
+    spenders[0] ??
+    inTier(EAccountStatus.expired)[0] ??
+    null
   );
 }
 

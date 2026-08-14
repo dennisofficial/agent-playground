@@ -2,7 +2,7 @@ import React from "react";
 import type { EditorState } from "../../domain/text-editor.js";
 import { fitHints } from "../../domain/hints.js";
 import { overlayWidth } from "../../domain/list-columns.js";
-import { Composer } from "./composer.js";
+import { LineInput } from "./line-input.js";
 import { ListShortcuts } from "./shortcuts.js";
 import { theme } from "../theme.js";
 
@@ -43,7 +43,7 @@ export function ListFooter(props: {
     <box flexDirection="column">
       {props.overlay ? (
         <box flexDirection="column">
-          <Composer
+          <LineInput
             state={props.overlay.state}
             width={overlayWidth(props.width)}
             placeholder={props.overlay.placeholder}

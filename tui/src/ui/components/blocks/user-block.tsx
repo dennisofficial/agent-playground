@@ -1,6 +1,7 @@
 import { useTerminalDimensions } from "@opentui/react";
 import React from "react";
 import type { DraftImage } from "../../../domain/draft-images.js";
+import { EImageDelivery } from "../../../domain/image-limits.js";
 import { MarkdownView } from "../../markdown/markdown-view.js";
 import { glyph, theme, TRANSCRIPT_INSET } from "../../theme.js";
 
@@ -67,11 +68,11 @@ export function UserBlock(props: {
 
           The terminal cannot draw the image, and the `[Image #1]` token in the prose above is not
           evidence that anything was actually sent — someone can type those characters. This is: it
-          says a real file went with the message, and how big it was.
+          says a real file went with the message, how big it was, and what it cost.
         */}
         {(props.images ?? []).map((image) => (
           <text key={image.ordinal} fg={theme.dim}>
-            {`${glyph.image} image ${image.ordinal} · ${kilobytes(image.byteLength)}`}
+            {`${glyph.image} attached ${image.ordinal} · ${describe(image)}`}
           </text>
         ))}
       </box>
@@ -79,6 +80,23 @@ export function UserBlock(props: {
   );
 }
 
-function kilobytes(bytes: number): string {
-  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+/**
+ * `1440×900 · 47 KB · 1560 tokens`, or `· by path` when it was too heavy to inline.
+ *
+ * The token count earns its place: an image is the one thing in a transcript whose cost is
+ * invisible and nothing like intuition — a retina screenshot is not a few hundred tokens, it is
+ * nearly five thousand — and this is the only place a person can see what a paste actually spent.
+ */
+function describe(image: DraftImage): string {
+  const parts: string[] = [];
+  if (image.width !== undefined && image.height !== undefined) {
+    parts.push(`${image.width}×${image.height}`);
+  }
+  parts.push(`${Math.max(1, Math.round(image.byteLength / 1024))} KB`);
+  if (image.delivery === EImageDelivery.pathOnly) {
+    parts.push("by path");
+  } else if (image.tokens !== undefined) {
+    parts.push(`${image.tokens} tokens`);
+  }
+  return parts.join(" · ");
 }

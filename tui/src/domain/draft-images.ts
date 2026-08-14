@@ -1,3 +1,5 @@
+import { EImageDelivery } from './image-limits.js';
+
 /**
  * Images pasted into a draft.
  *
@@ -13,10 +15,22 @@
 export type DraftImage = {
   /** The number in this image's token. Stable for the life of the draft. */
   readonly ordinal: number;
-  /** Where the bytes were written when the clipboard was read. */
+  /** Where the bytes were written when the clipboard was read — under `context/uploads/`. */
   readonly path: string;
   readonly mediaType: string;
   readonly byteLength: number;
+  readonly width?: number | undefined;
+  readonly height?: number | undefined;
+  /**
+   * Inline as a content block, or by path alone.
+   *
+   * Inline is the default and the point: the model sees the picture whether or not it thinks to
+   * look. `path-only` is the fallback for something too heavy to send, and the manifest still
+   * names it — see `domain/image-limits.ts`.
+   */
+  readonly delivery: EImageDelivery;
+  /** Visual tokens it will cost the turn, when the dimensions were readable. */
+  readonly tokens?: number | undefined;
 };
 
 const TOKEN = /\[Image #(\d+)\]/g;

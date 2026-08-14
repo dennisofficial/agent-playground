@@ -24,7 +24,7 @@ const WALL: EngineEvent = {
 const CRASH: EngineEvent = {
   kind: 'error',
   title: 'Engine error: claude agent sdk exited',
-  detail: 'spawn ENOENT · Thread preserved · r to restart',
+  detail: 'spawn ENOENT · Thread preserved',
   retryable: true,
 };
 

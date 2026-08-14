@@ -4,7 +4,7 @@ import { fitHints } from "../../domain/hints.js";
 import { Composer, composerRows } from "../components/composer.js";
 import { PageHeader } from "../components/page-header.js";
 import { Screen } from "../components/screen.js";
-import { useComposer } from "../hooks/use-composer.js";
+import { useDraft } from "../hooks/use-draft.js";
 import { useInput } from "../hooks/use-input.js";
 import { theme } from "../theme.js";
 
@@ -29,7 +29,7 @@ export function NewJobPage(props: {
   onCancel: () => void;
 }): React.ReactNode {
   const { width, height } = useTerminalDimensions();
-  const composer = useComposer();
+  const composer = useDraft();
   const [sending, setSending] = useState(false);
   // Esc is one keystroke away from a paragraph you meant to send, so discarding a draft asks twice —
   // the same rule the conversation composer follows. Armed is a moment, not a mode.
@@ -58,6 +58,7 @@ export function NewJobPage(props: {
     if (sending) return;
 
     if (key.escape) {
+      key.preventDefault();
       if (composer.value.trim().length === 0 || armed) return props.onCancel();
       setArmed(true);
       return;
@@ -67,16 +68,21 @@ export function NewJobPage(props: {
     if (armed) setArmed(false);
 
     // `←` on an empty composer is back, exactly as it is in a real conversation.
-    if (key.leftArrow && composer.value.length === 0) return props.onCancel();
+    if (key.leftArrow && composer.value.length === 0) {
+      key.preventDefault();
+      return props.onCancel();
+    }
 
-    // Plain Return sends. Return with ANY modifier falls through as a newline — a first message is
-    // often a paragraph, and this is where it gets written.
+    // Plain Return sends. Return with ANY modifier falls through to the editor as a newline — a
+    // first message is often a paragraph, and this is where it gets written.
     if (key.return && !key.shift && !key.meta && !key.ctrl) {
+      key.preventDefault();
       void handleSubmit();
       return;
     }
 
-    composer.handleKey(input, key);
+    // Everything else is the editor's, and reaches it because nothing above stopped it. There is no
+    // `handleKey` any more: the buffer behind the composer answers the key itself.
   });
 
   return (
@@ -87,11 +93,10 @@ export function NewJobPage(props: {
       footer={
         <box flexDirection="column">
           <Composer
-            state={composer.state}
+            draft={composer}
             width={width}
             maxRows={composerRows(height)}
             placeholder="what do you want to do?"
-            onCaret={composer.setCursor}
           />
           <text fg={theme.dim}>
             {fitHints(

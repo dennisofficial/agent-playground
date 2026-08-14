@@ -40,6 +40,10 @@ export const NEXT_SESSION = {
   ordinal: 2,
 } as unknown as EngineSession;
 
+/** Just the two standing decisions the runner reads off the row before it opens a query. */
+export type AccountPolicy = { fastMode: boolean; extraUsageAllowed: boolean };
+export type AccountPolicyUpdate = { enabled?: boolean; utilization?: number | null };
+
 export class FakeEngine {
   lastArgs?: RunArgs;
   steerCallback?: () => void;
@@ -126,9 +130,14 @@ export function build(script: EngineEvent[] = []) {
   const stores = new ConversationStoreRegistry();
   const store = stores.for(THREAD.id);
 
+  /**
+   * `findById` answers null by default, which the runner reads as an account permitted nothing —
+   * the shipped default, and the one every test that is not about a policy should run under.
+   */
   const accounts = {
     recordUsage: mock(async () => undefined),
-    findById: mock(async () => null),
+    recordExtraUsage: mock(async (_id: string, _update: AccountPolicyUpdate) => undefined),
+    findById: mock(async (): Promise<AccountPolicy | null> => null),
   };
   const sessions = {
     recordEngineSessionId: mock(async () => undefined),

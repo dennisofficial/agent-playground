@@ -102,6 +102,22 @@ export function subagentAssistant(
   } as unknown as SDKMessage;
 }
 
+/**
+ * A subagent's SUMMARIZED THINKING block — the frame that proved `forwardSubagentText: false` is not a
+ * guarantee about prose.
+ *
+ * Copied from a real tape: 19 of these arrived on one thread's stream under a single `Agent` call, and
+ * every one was persisted as the parent's own reasoning, because the assistant loop tagged `tool_use`
+ * and dropped the tag on `thinking`. The visible symptom was five consecutive "Thinking…" blocks in a
+ * thread that had produced one.
+ */
+export function subagentThinking(parentToolUseId: string, thinking: string): SDKMessage {
+  return {
+    ...(assistant([{ type: 'thinking', thinking }]) as object),
+    parent_tool_use_id: parentToolUseId,
+  } as unknown as SDKMessage;
+}
+
 function assistant(
   content: unknown[],
   usage?: Record<string, number>,
@@ -175,6 +191,41 @@ export function rateLimitWithoutUtilisation(status = 'allowed'): SDKMessage {
   } as unknown as SDKMessage;
 }
 
+/**
+ * The wallet itself refusing: `rateLimitType: 'overage'` with a top-level rejection. The turn is
+ * refused over MONEY, and no subscription window is implicated — which is exactly the distinction
+ * the normaliser has to keep.
+ */
+export function overageRejected(): SDKMessage {
+  return {
+    type: 'rate_limit_event',
+    session_id: SESSION_ID,
+    uuid: 'u-rl-overage',
+    rate_limit_info: {
+      status: 'rejected',
+      rateLimitType: 'overage',
+      utilization: 100,
+      overageStatus: 'rejected',
+      errorCode: 'credits_required',
+    },
+  } as unknown as SDKMessage;
+}
+
+/** The five-hour window is gone and the turn is being served on credits anyway. */
+export function usingOverage(): SDKMessage {
+  return {
+    type: 'rate_limit_event',
+    session_id: SESSION_ID,
+    uuid: 'u-rl-using',
+    rate_limit_info: {
+      status: 'rejected',
+      rateLimitType: 'five_hour',
+      overageStatus: 'allowed',
+      isUsingOverage: true,
+    },
+  } as unknown as SDKMessage;
+}
+
 export function result(
   text: string,
   isError = false,
@@ -202,9 +253,9 @@ export function result(
 /**
  * A subagent's TOOL call, which is the only thing a subagent forwards by default.
  *
- * The distinction matters and is easy to lose: `forwardSubagentText` is off, so a delegate's prose
- * never arrives, but its `tool_use` and `tool_result` blocks always do — which made them, for a while,
- * the entire visible symptom of the leak. A real tape holds 31 of each in one turn.
+ * A delegate's `tool_use` and `tool_result` blocks always arrive, whatever `forwardSubagentText` says —
+ * which made them, for a while, the entire visible symptom of the leak. A real tape holds 31 of each in
+ * one turn. What that flag does NOT suppress is summarized thinking; see `subagentThinking`.
  */
 export function subagentToolUse(
   parentToolUseId: string,

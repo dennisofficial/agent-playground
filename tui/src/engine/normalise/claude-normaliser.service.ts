@@ -127,10 +127,22 @@ export class ClaudeNormaliserService {
     }
 
     for (const block of inner.content as ContentBlock[]) {
+      // Prose carries the tag for the same reason a call does. `forwardSubagentText` being off is not
+      // the guarantee it reads like: a subagent's SUMMARIZED thinking arrives regardless, and untagged
+      // it was persisted as the parent's own reasoning — five of a delegate's thoughts in a row, in a
+      // thread that had made one.
       if (block.type === "text" && block.text) {
-        events.push({ kind: "text", text: block.text });
+        events.push({
+          kind: "text",
+          text: block.text,
+          ...(parentToolUseId === undefined ? {} : { parentToolUseId }),
+        });
       } else if (block.type === "thinking" && block.thinking) {
-        events.push({ kind: "thinking", text: block.thinking });
+        events.push({
+          kind: "thinking",
+          text: block.thinking,
+          ...(parentToolUseId === undefined ? {} : { parentToolUseId }),
+        });
       } else if (block.type === "tool_use" && block.name) {
         const toolUseId = block.id ?? "";
         context.tools.set(toolUseId, { name: block.name, input: block.input });
@@ -193,36 +205,84 @@ export class ClaudeNormaliserService {
     return events;
   }
 
+  /**
+   * One frame, up to two facts: how full a subscription window is, and whether this turn is being
+   * billed to credits. They were one before extra usage existed, and conflating them meant a spent
+   * WALLET (`rateLimitType: 'overage'`) fell through the `?? 'fiveHour'` fallback and was written
+   * down as a spent five-hour window — sending rotation to look for headroom that was never gone.
+   */
   private rateLimit(
     message: Extract<SDKMessage, { type: "rate_limit_event" }>,
   ): EngineEvent[] {
     const info = message.rate_limit_info;
-    const rejected = info.status === "rejected";
+    const events: EngineEvent[] = [];
+
+    // The wallet is what was refused, rather than a window: the turn is over money.
+    const walletRefused =
+      info.rateLimitType === "overage" && info.status === "rejected";
+    // `overageStatus: 'rejected'` alone is NOT news — it rides ordinary allowed frames on every
+    // account that has no credits configured (see `rateLimitWithoutUtilisation`, taken from a real
+    // tape), and reporting it would tell every user on every turn about a feature they never asked
+    // for. Only a stated reason, a refusal of the wallet itself, or the wallet actually being in use.
+    const disabledReason =
+      info.overageDisabledReason ??
+      (walletRefused ? (info.errorCode ?? "out_of_credits") : undefined);
+    const inUse = info.isUsingOverage === true || info.overageInUse === true;
+    if (inUse || disabledReason !== undefined) {
+      events.push({
+        kind: "extra_usage",
+        inUse,
+        ...(info.rateLimitType === "overage" && info.utilization !== undefined
+          ? { utilization: toPercent(info.utilization) ?? 100 }
+          : {}),
+        ...(disabledReason === undefined ? {} : { disabledReason }),
+      });
+    }
+
+    // `rejected` on a WINDOW means that window is full; `rejected` on the wallet says nothing about
+    // any window, so it must not be allowed to write 100 into one.
+    const rejected = info.status === "rejected" && !walletRefused;
     const window =
       windowKeyFor(info.rateLimitType) ?? (rejected ? "fiveHour" : null);
     const utilization = rejected ? 100 : toPercent(info.utilization);
-    if (!window || utilization === null) return [];
+    if (!window || utilization === null) return events;
     const resetsAt = epochToIso(info.resetsAt);
-    return [
-      {
-        kind: "rate_limit",
-        window,
-        utilization,
-        ...(resetsAt === null ? {} : { resetsAt }),
-      },
-    ];
+    events.push({
+      kind: "rate_limit",
+      window,
+      utilization,
+      ...(resetsAt === null ? {} : { resetsAt }),
+    });
+    return events;
   }
 
   private result(
     message: Extract<SDKMessage, { type: "result" }>,
   ): EngineEvent[] {
     const usage = this.turnUsage(message);
+    // Emitted BEFORE the result, so a listener that treats `result` as the end of the turn has
+    // already seen it. Only when the server said something: `undefined` is an ordinary turn on a
+    // model that has no opinion about speed, not a fast mode that failed.
+    const fastMode: EngineEvent[] =
+      message.fast_mode_state === undefined
+        ? []
+        : [
+            {
+              kind: "fast_mode",
+              state: message.fast_mode_state,
+              ...(message.fast_mode_disabled_reason === undefined
+                ? {}
+                : { disabledReason: message.fast_mode_disabled_reason }),
+            },
+          ];
     if (message.subtype === "success") {
       return [
+        ...fastMode,
         { kind: "result", ok: !message.is_error, text: message.result, usage },
       ];
     }
     return [
+      ...fastMode,
       {
         kind: "error",
         title: `Turn ended: ${message.subtype}`,

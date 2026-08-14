@@ -95,6 +95,34 @@ export function jobDir(jobId: string): string {
   return join(ATLAS_HOME, 'jobs', jobId);
 }
 
+/**
+ * Where a file pasted into a draft is written: `context/uploads/`, beside the job's other material.
+ *
+ * Inside the CONTEXT folder rather than off to one side, because the agent already knows that
+ * folder and already has a Read tool pointed at it — so a picture that was too big to inline, or a
+ * session that rotated past the one that saw it, is still reachable by path instead of lost. This
+ * is the arrangement the paused cloud harness used (`context/uploads/`), and it was right.
+ *
+ * Deliberately NOT one of `CONTEXT_BUCKETS`: those three are a phase hand-off's material, with
+ * rules about what belongs in each. This is a person pasting a screenshot.
+ *
+ * Under the JOB, not in a temp dir: the transcript keeps referring to it long after the turn, and
+ * `/tmp` is swept out from under it. Deleting the job takes its uploads with it, which is the
+ * promise `jobDir` already makes about everything else in there.
+ */
+export function jobUploadFile(args: {
+  jobId: string;
+  /** Unique within the job — a draft's ordinal is not, across two drafts. */
+  name: string;
+}): string {
+  return join(jobContextDir(args.jobId), 'uploads', args.name);
+}
+
+/** What the agent is told to call an upload — the same `context/…` shape as everything else. */
+export function uploadLabel(name: string): string {
+  return `context/uploads/${name}`;
+}
+
 /** The job-scoped folder every thread in the job reads and writes. */
 export function jobContextDir(jobId: string): string {
   return join(jobDir(jobId), 'context');

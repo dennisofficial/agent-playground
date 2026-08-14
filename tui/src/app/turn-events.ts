@@ -1,5 +1,6 @@
 import { hasCanary } from "../domain/canary.js";
 import { isDelegateEvent } from "../domain/delegates.js";
+import { fastModeNotice } from "../domain/fast-mode.js";
 import {
   toPayload,
   type EngineEvent,
@@ -12,10 +13,13 @@ import type { MessageRepository } from "../store/message.repository.js";
 import type { SessionRepository } from "../store/session.repository.js";
 import type { TurnRepository } from "../store/turn.repository.js";
 import type { ConversationStore } from "./conversation.store.js";
-import type { RunningSession } from "./session-rotation.js";
+import { EXTRA_USAGE_NOTICE, type RunningSession } from "./session-rotation.js";
 import type { Lane } from "./turn-lanes.js";
 
 type Payload = Parameters<MessageRepository["append"]>[0]["payload"];
+
+/** The `noticeOnce` key family for "fast mode is not serving", one key per reason. */
+const FAST_MODE_NOTICE = "fast-mode:";
 
 /**
  * One engine event → the store, the database, or the lane. This is the table the delta-vs-
@@ -179,6 +183,57 @@ export class TurnEventApplier {
           utilization: event.utilization,
           resetsAt: event.resetsAt,
         });
+        return;
+      }
+
+      case "extra_usage": {
+        // A refusal is written down; a success is NOT. `extraUsageEnabled: true` is the usage
+        // endpoint's to say — it polls the provisioning directly — and inferring it from a turn
+        // that merely went through would overwrite a real `false` with a guess. A refusal is the
+        // other way round: it is first-hand, and recording it stops rotation choosing this wallet
+        // again on the next turn boundary.
+        if (event.disabledReason !== undefined || event.utilization !== undefined) {
+          await this.repositories.accountRepository.recordExtraUsage(session.accountId, {
+            ...(event.disabledReason === undefined ? {} : { enabled: false }),
+            ...(event.utilization === undefined ? {} : { utilization: event.utilization }),
+          });
+        }
+        // The same standing condition the turn boundary already announces, under the same key — so
+        // whichever of the two notices it first is the only one that draws a row. This is the
+        // confirmed half (the server says it is billing) and the boundary's is the predicted half;
+        // they must not both speak.
+        if (event.inUse)
+          store.noticeOnce(
+            `${EXTRA_USAGE_NOTICE}${session.accountId}`,
+            "this turn is billed to extra usage",
+          );
+        // Only when Atlas asked. An account nobody permitted to spend is not owed an explanation of
+        // why it could not.
+        if (event.disabledReason !== undefined && lane.extraUsageAllowed)
+          store.noticeOnce(
+            `extra-usage-refused:${event.disabledReason}`,
+            `extra usage unavailable · ${event.disabledReason}`,
+          );
+        return;
+      }
+
+      case "fast_mode": {
+        // Only worth a word when Atlas ASKED. Every other session gets `sdk_opt_in_required` on
+        // every turn, which is not news — it is the default this feature exists to override.
+        if (!lane.fastModeRequested) return;
+        if (event.state === "on") {
+          // It works now, so a later refusal is worth hearing about again.
+          store.forgetNotices(FAST_MODE_NOTICE);
+          return;
+        }
+        const text = fastModeNotice(event);
+        if (text === null) return;
+        // Once per reason, not once per frame. A turn that holds for a background delegate produces
+        // several `result` frames and therefore several of these, and `preference` (the org has
+        // switched fast mode off) is not going to change between two of them — nor between turns,
+        // which is how it came to print a pair of identical rows every single time.
+        const reason = event.state === "cooldown" ? "cooldown" : (event.disabledReason ?? "unknown");
+        store.noticeOnce(`${FAST_MODE_NOTICE}${reason}`, text);
         return;
       }
 

@@ -124,7 +124,15 @@ export function claudeOptions(args: RunArgs): Options {
     // `String(value)` unless the `sandbox` option is also set, so an object arrives at the CLI as
     // the literal `[object Object]` and the setting is silently lost. MEASURED on 0.3.220; the
     // CLI's own help says "a settings JSON file or a JSON string".
-    settings: JSON.stringify({ autoCompactEnabled: false } satisfies Settings),
+    //
+    // `fastMode` rides the same string, and it MUST be sent explicitly: the CLI reads the persisted
+    // preference for a human at a terminal but not for an SDK host — it reports
+    // `sdk_opt_in_required` and serves at standard speed unless this key says otherwise. Omitted
+    // rather than sent as `false` when off, so the account's own setting is what applies.
+    settings: JSON.stringify({
+      autoCompactEnabled: false,
+      ...(args.fastMode ? { fastMode: true } : {}),
+    } satisfies Settings),
     // Explicit for stability rather than rescue: omitting this already loads every source on
     // 0.3.220. `user` resolves to Atlas's own `CLAUDE_CONFIG_DIR`, never the human's `~/.claude`.
     settingSources: ['user', 'project'],

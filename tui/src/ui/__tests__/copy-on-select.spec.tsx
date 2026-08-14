@@ -16,27 +16,33 @@ void mock.module("../clipboard.js", () => ({
 const { Composer } = await import("../components/composer.js");
 const { CopyNoticeProvider, useCopyOnSelect } =
   await import("../copy-on-select.js");
-const { EMPTY_EDITOR } = await import("../../domain/text-editor.js");
+const { useDraft } = await import("../hooks/use-draft.js");
 
 const WIDTH = 40;
 const HEIGHT = 8;
 
-function Harness(): React.ReactNode {
+function Harness(props: { seed?: string }): React.ReactNode {
   const notice = useCopyOnSelect();
+  const draft = useDraft(props.seed ?? "");
   return (
     <CopyNoticeProvider notice={notice}>
       <box flexDirection="column" width={WIDTH} height={HEIGHT}>
         <text>alpha beta gamma</text>
         <text>delta epsilon</text>
-        <Composer state={EMPTY_EDITOR} width={WIDTH} />
+        <Composer draft={draft} width={WIDTH} />
       </box>
     </CopyNoticeProvider>
   );
 }
 
-async function mount() {
-  const setup = await testRender(<Harness />, { width: WIDTH, height: HEIGHT });
-  await setup.flush();
+async function mount(seed?: string) {
+  const setup = await testRender(
+    <Harness {...(seed === undefined ? {} : { seed })} />,
+    { width: WIDTH, height: HEIGHT },
+  );
+  await act(async () => {
+    await setup.flush();
+  });
   return setup;
 }
 
@@ -93,6 +99,26 @@ describe("copy on select", () => {
         await setup.flush();
       });
       expect(copies.length).toBe(2);
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
+  /**
+   * Highlighting inside the composer copies too.
+   *
+   * Worth its own case because the native editor has a selection of its own — `shouldStartSelection`
+   * and a local highlight it paints itself — and a renderable that answered only that would leave a
+   * drag over the draft looking selected while the clipboard kept whatever it held before.
+   */
+  it("copies a selection dragged through the draft itself", async () => {
+    const setup = await mount("selectable draft text");
+    try {
+      // Row 3: two `<text>` rows, the composer's top border on row 2, the draft under it. Column 4
+      // is the first character after `│ > `.
+      await drag(setup, [4, 3], [20, 3]);
+      expect(copies.length).toBe(1);
+      expect(copies[0]).toContain("selectable draft");
     } finally {
       setup.renderer.destroy();
     }

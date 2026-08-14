@@ -4,6 +4,7 @@ import { asInput, str } from "../../../domain/tool-summary.js";
 import { EHit, hitKey, type GroupMember } from "../../../domain/tool-group.js";
 import { wrapRanges } from "../../../domain/truncate.js";
 import { useHighlightedRows } from "../../hooks/use-highlighted-rows.js";
+import type { PressHandlers } from "../../hooks/use-press.js";
 import { theme } from "../../theme.js";
 
 /** Source lines of output a closed body shows before offering the rest. */
@@ -24,6 +25,15 @@ export type DetailInteraction = {
   setHovered: (key: string | null) => void;
   onToggle: (key: string) => void;
   expanded: ReadonlySet<string>;
+  /**
+   * The block's press factory, borrowed rather than built here.
+   *
+   * A body is a target INSIDE a target: `… +N lines` sits within the call's region, whose own handlers
+   * are on the box around it. Sharing one origin is what lets the inner release stop there — with two,
+   * the release would bubble and opening the rest of the output would collapse the call in the same
+   * gesture.
+   */
+  press: (onPress?: () => void) => PressHandlers;
 };
 
 /**
@@ -71,7 +81,7 @@ export function ToolDetail(props: {
   });
 
   const handlers = {
-    onMouseDown: () => ui.onToggle(outputKey),
+    ...ui.press(() => ui.onToggle(outputKey)),
     onMouseOver: () => ui.setHovered(outputKey),
     onMouseOut: () => ui.setHovered(null),
   };

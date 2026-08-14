@@ -1,6 +1,8 @@
 import { EMessageType } from '../generated/prisma/enums.js';
 import type { DelegateEvent } from './delegate-events.js';
 import { renderAttachmentParts, type AttachmentPart } from './attachments.js';
+import type { DraftImage } from './draft-images.js';
+import { EImageDelivery } from './image-limits.js';
 import type { DiffHunk } from './tool-diff.js';
 
 // Re-exported for the same reason `tool-view.ts` re-exports `tool-shape.ts`: which half of a pair a
@@ -16,6 +18,14 @@ export {
 export type UserPayload = {
   type: typeof EMessageType.user;
   text: string;
+  /**
+   * Pictures pasted into the draft, in the order the text mentions them.
+   *
+   * Persisted with the message rather than derived, because the draft they came from is gone by the
+   * time anything reads this back — and a transcript that showed the `[Image #1]` token with nothing
+   * behind it would be a record of a message that never happened. See `domain/draft-images.ts`.
+   */
+  images?: readonly DraftImage[];
 };
 
 export type AssistantPayload = {
@@ -56,7 +66,11 @@ export type ErrorPayload = {
   type: typeof EMessageType.error;
   title: string;
   detail?: string;
-  /** Terminal errors offer `r to retry`; transient ones are just a record that it happened. */
+  /**
+   * Terminal errors offer a retry button; transient ones are just a record that it happened. Which
+   * block actually draws the button is `domain/retry.ts`'s call — being retryable is a property of
+   * the failure, being retry_able_ RIGHT NOW is a property of where the transcript has got to.
+   */
   retryable?: boolean;
 };
 
@@ -149,8 +163,15 @@ export type EngineEvent =
   | { kind: 'session'; engineSessionId: string; model?: string }
   | { kind: 'text_delta'; text: string }
   | { kind: 'thinking_delta'; text: string }
-  | { kind: 'text'; text: string }
-  | { kind: 'thinking'; text: string }
+  /**
+   * `parentToolUseId` marks prose a DELEGATE produced. `forwardSubagentText` is off, so a subagent's
+   * text and thinking are not supposed to arrive at all — but summarized thinking blocks do, and one
+   * of them read as the parent's own reasoning in the transcript. The field is here so the same
+   * routing that keeps a delegate's fifteen greps out also keeps its fifteen thoughts out: authorship
+   * is decided by the frame, never by which flag happened to suppress it.
+   */
+  | { kind: 'text'; text: string; parentToolUseId?: string }
+  | { kind: 'thinking'; text: string; parentToolUseId?: string }
   /**
    * `parentToolUseId` marks a call a DELEGATE made, inside its own context window. It is not this
    * thread's work and never enters this thread's transcript — it is counted against the delegate that
@@ -183,6 +204,23 @@ export type EngineEvent =
   /** Everything a run this thread DELEGATED reports about itself — see `delegate-events.ts`. */
   | DelegateEvent
   | { kind: 'rate_limit'; window: UsageWindowKey; utilization: number; resetsAt?: string }
+  /**
+   * The credits half of a rate-limit frame, split off because it is a different quantity: a monthly
+   * wallet, not a window that refills. `inUse` is the one the human needs — it is the difference
+   * between "this turn is included" and "this turn is billed".
+   */
+  | {
+      kind: 'extra_usage';
+      inUse: boolean;
+      utilization?: number;
+      /** Set when the server refuses to bill: out of credits, org policy, no payment method. */
+      disabledReason?: string;
+    }
+  /**
+   * What fast mode actually did, reported once per turn. Atlas asks for it per account and the
+   * server decides, so without this a toggle that never took effect looks exactly like one that did.
+   */
+  | { kind: 'fast_mode'; state: 'off' | 'cooldown' | 'on'; disabledReason?: string }
   /** The engine actually took a queued steer. A queued item leaves the UI on this, not on hope. */
   | { kind: 'input_ack'; text: string }
   /** `usage` is absent when the turn died before the engine could report — an interrupt, a spawn
@@ -207,16 +245,33 @@ export type TurnSummary = { durationMs: number; outputTokens: number };
 
 export type UsageWindowKey = 'fiveHour' | 'sevenDay';
 
+/**
+ * Did a DELEGATE produce this frame, rather than this thread?
+ *
+ * One predicate over every kind that can carry the tag, because the question is asked in three places
+ * that must agree — what persists, what renders, and what the delegate row counts. It lives here rather
+ * than beside the delegate join because `domain/delegates.ts` imports this module, and the answer is a
+ * property of the event shape either way.
+ */
+export function isParented(event: EngineEvent): boolean {
+  switch (event.kind) {
+    case 'text':
+    case 'thinking':
+    case 'tool_call':
+    case 'tool_result':
+    case 'usage':
+      return event.parentToolUseId !== undefined;
+    default:
+      return false;
+  }
+}
+
 /** Only these persist; everything else is live-only. */
 export function isAuthoritative(event: EngineEvent): boolean {
-  // A delegate's calls are the one exception with a `kind` on this list. They are authoritative about
-  // the DELEGATE and say nothing about this thread, so persisting them wrote another agent's work
-  // into a transcript that never did it — see `toPayload`.
-  if (
-    (event.kind === 'tool_call' || event.kind === 'tool_result') &&
-    event.parentToolUseId !== undefined
-  )
-    return false;
+  // A delegate's frames are the exception with a `kind` on this list. They are authoritative about the
+  // DELEGATE and say nothing about this thread, so persisting them wrote another agent's work into a
+  // transcript that never did it — see `toPayload`.
+  if (isParented(event)) return false;
   return (
     event.kind === 'text' ||
     event.kind === 'thinking' ||
@@ -242,6 +297,8 @@ export type PromptPayload = UserPayload | HarnessPayload;
 export function promptPayload(args: {
   text: string;
   harnessVariant?: EHarnessVariant | undefined;
+  /** Only a person pastes a picture; Atlas's own injected turns never carry one. */
+  images?: readonly DraftImage[] | undefined;
   /**
    * The seam's attachment manifest. Only Atlas attaches — a message Dennis typed has no manifest,
    * so this is dropped rather than mislabelled when no variant came with it.
@@ -249,7 +306,12 @@ export function promptPayload(args: {
   attachments?: readonly AttachmentPart[] | undefined;
 }): PromptPayload {
   if (args.harnessVariant === undefined)
-    return { type: EMessageType.user, text: args.text };
+    return {
+      type: EMessageType.user,
+      text: args.text,
+      // Absent rather than empty, so an old row and a message with no pictures read identically.
+      ...(args.images && args.images.length > 0 ? { images: args.images } : {}),
+    };
   return {
     type: EMessageType.harness,
     variant: args.harnessVariant,
@@ -273,7 +335,8 @@ export function promptPayload(args: {
  * says nothing. (Claude Code does the same thing to itself with `<system-reminder>`.)
  */
 export function renderPrompt(payload: PromptPayload): string {
-  if (payload.type === EMessageType.user) return payload.text;
+  if (payload.type === EMessageType.user)
+    return appendImageManifest(payload.text, payload.images ?? []);
   // Prose, then the files, in the order `successorSeed` has always put them: the attachments are the
   // material and read as nothing until the prose has said what they are for. Composed HERE rather
   // than stored composed, so the model and the chips are two views of one manifest.
@@ -281,6 +344,33 @@ export function renderPrompt(payload: PromptPayload): string {
   const body =
     attachments.length > 0 ? `${payload.text}\n\n${attachments}` : payload.text;
   return `<harness variant="${payload.variant}">${escapeEnvelope(body)}</harness>`;
+}
+
+/**
+ * The pictures, named, AFTER the prose.
+ *
+ * After, and never wrapped around it: `renderPrompt` above documents why Dennis's words go in bare,
+ * and the `<harness>` envelope means "Atlas is speaking" — a manifest that enclosed a person's
+ * sentence would spend that distinction on a picture. This is the same prose-then-material order
+ * `renderAttachmentParts` uses for a seam's files, for the same reason.
+ *
+ * The paths are the point. An inline image already reached the model as a content block, so the tag
+ * is not how it gets seen — it is how it stays reachable: after a rotation the successor's context
+ * has the transcript but not the block, and a delegate never had it. Twenty tokens buys a picture
+ * the agent can go back and Read for the rest of the job.
+ */
+function appendImageManifest(text: string, images: readonly DraftImage[]): string {
+  if (images.length === 0) return text;
+
+  const rows = images
+    .map(
+      (image) =>
+        `  <image id="${image.ordinal}" path="${image.path}" media-type="${image.mediaType}"` +
+        `${image.delivery === EImageDelivery.inline ? '' : ' note="too large to attach — read it if you need it"'} />`,
+    )
+    .join('\n');
+
+  return `${text}\n\n<attached-images>\n${rows}\n</attached-images>`;
 }
 
 /**
@@ -298,15 +388,12 @@ function escapeEnvelope(text: string): string {
 }
 
 export function toPayload(event: EngineEvent): MessagePayload | null {
-  // A DELEGATE's call, not this thread's. The subagent runs in its own context window and reports back
+  // A DELEGATE's frame, not this thread's. The subagent runs in its own context window and reports back
   // through the spawning tool's result; its intermediate calls arriving on the same stream is an
   // accident of transport, not a claim that this thread made them. Persisting them put another agent's
-  // fifteen greps into the transcript of the conversation that delegated precisely to avoid them.
-  if (
-    (event.kind === 'tool_call' || event.kind === 'tool_result') &&
-    event.parentToolUseId !== undefined
-  )
-    return null;
+  // fifteen greps — and, until this covered prose too, its reasoning — into the transcript of the
+  // conversation that delegated precisely to avoid them.
+  if (isParented(event)) return null;
 
   switch (event.kind) {
     case 'text':

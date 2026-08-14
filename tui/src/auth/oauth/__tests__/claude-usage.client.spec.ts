@@ -18,7 +18,26 @@ describe('ClaudeUsageClient', () => {
     expect(client.parse(LIVE_BODY)).toEqual({
       fiveHour: { utilization: 20, resetsAt: '2026-08-02T19:30:00.764178+00:00' },
       sevenDay: { utilization: 7, resetsAt: '2026-08-05T10:00:00.764198+00:00' },
+      extraUsage: { enabled: false, utilization: null },
     });
+  });
+
+  it('reads the credit balance, and a plan with no limit as unknown rather than zero', () => {
+    expect(client.parse({ extra_usage: { is_enabled: true, utilization: 24.4 } }).extraUsage).toEqual(
+      { enabled: true, utilization: 24 },
+    );
+    expect(client.parse({ extra_usage: { is_enabled: true } }).extraUsage).toEqual({
+      enabled: true,
+      utilization: null,
+    });
+  });
+
+  it('says NOTHING about credits when the response does not', () => {
+    // `null` has to survive as "unpolled". Writing `enabled: false` here would tell rotation the
+    // subscription has no credits provisioned, on the evidence of a field that was simply absent.
+    expect(client.parse({}).extraUsage).toBeNull();
+    expect(client.parse({ extra_usage: null }).extraUsage).toBeNull();
+    expect(client.parse({ extra_usage: { utilization: 12 } }).extraUsage).toBeNull();
   });
 
   it('does NOT apply the 0..1 heuristic — this endpoint already speaks percent', () => {
@@ -38,10 +57,11 @@ describe('ClaudeUsageClient', () => {
   });
 
   it('reports a missing window as unknown rather than as zero', () => {
-    expect(client.parse({})).toEqual({ fiveHour: null, sevenDay: null });
+    expect(client.parse({})).toEqual({ fiveHour: null, sevenDay: null, extraUsage: null });
     expect(client.parse({ five_hour: null, seven_day: { utilization: null } })).toEqual({
       fiveHour: null,
       sevenDay: null,
+      extraUsage: null,
     });
   });
 });

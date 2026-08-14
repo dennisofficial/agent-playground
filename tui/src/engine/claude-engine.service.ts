@@ -20,8 +20,25 @@ import {
 } from "./normalise/claude-normaliser.service.js";
 import { RawTapeService } from "./raw-tape.service.js";
 
+/**
+ * A picture on its way to the model, already read off disk.
+ *
+ * The engine is handed bytes rather than a path on purpose: reading a file is the app layer's job,
+ * and an engine that opened one would be a second place that has to know where Atlas keeps things.
+ */
+export type PromptImage = {
+  mediaType: string;
+  /** base64, as `ImageBlockParam` wants it. */
+  data: string;
+};
+
 export type RunArgs = {
   prompt: string;
+  /**
+   * Images the prompt refers to. Their `[Image #N]` tokens are already in the text, so the model
+   * reads the sentence and sees the picture in the same turn.
+   */
+  images?: readonly PromptImage[] | undefined;
   cwd: string;
   model: string;
   /** The SDK's own session id. Resuming continues the same conversation. */
@@ -29,6 +46,12 @@ export type RunArgs = {
   systemPrompt?: string | undefined;
   /** Credential injection — the env bag from EngineHomeService. */
   env: Record<string, string>;
+  /**
+   * Ask for fast mode on this turn. A property of the ACCOUNT paying for it, resolved by the app
+   * layer — the engine only forwards it, and the server is still free to refuse (it reports what it
+   * did on the result frame, which `normalise` turns into a `fast_mode` event).
+   */
+  fastMode?: boolean | undefined;
   /**
    * Atlas's own tools for this turn, already gated. The engine renders what it is handed and never
    * decides what is in the list — visibility is one function in `app/tools/`, and a transport that
@@ -82,7 +105,7 @@ export class ClaudeEngineService {
 
   start(args: RunArgs): RunningTurn {
     const input = new MessageQueue<SDKUserMessage>();
-    input.push(userMessage(args.prompt));
+    input.push(userMessage(args.prompt, args.images));
 
     const handle = this.sdk.query({
       prompt: input,
@@ -202,10 +225,39 @@ export class ClaudeEngineService {
   }
 }
 
-function userMessage(text: string): SDKUserMessage {
+/**
+ * A bare string while there are no pictures, and content BLOCKS the moment there are.
+ *
+ * Both are `MessageParam.content`, and the string form is kept for the overwhelmingly common case
+ * because it is what every existing tape, fixture and normaliser test already contains — switching
+ * unconditionally to a one-element block array would rewrite the wire format of every turn Atlas has
+ * ever sent to buy nothing.
+ *
+ * Steers stay text-only: a steer is words pushed into a turn already in flight, and there is no
+ * gesture for pasting a picture into one.
+ */
+function userMessage(
+  text: string,
+  images: readonly PromptImage[] = [],
+): SDKUserMessage {
+  const content =
+    images.length === 0
+      ? text
+      : [
+          { type: "text" as const, text },
+          ...images.map((image) => ({
+            type: "image" as const,
+            source: {
+              type: "base64" as const,
+              media_type: image.mediaType,
+              data: image.data,
+            },
+          })),
+        ];
+
   return {
     type: "user",
-    message: { role: "user", content: text },
+    message: { role: "user", content },
     parent_tool_use_id: null,
   } as SDKUserMessage;
 }

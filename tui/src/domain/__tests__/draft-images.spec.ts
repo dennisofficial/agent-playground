@@ -5,6 +5,7 @@ import {
   nextOrdinal,
   type DraftImage,
 } from '../draft-images.js';
+import { EImageDelivery } from '../image-limits.js';
 
 function image(ordinal: number): DraftImage {
   return {
@@ -12,6 +13,7 @@ function image(ordinal: number): DraftImage {
     path: `/tmp/atlas-paste-${ordinal}.png`,
     mediaType: 'image/png',
     byteLength: 100 + ordinal,
+    delivery: EImageDelivery.inline,
   };
 }
 

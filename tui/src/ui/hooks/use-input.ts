@@ -3,6 +3,17 @@ import { useKeyboard } from "@opentui/react";
 export type InputKey = {
   /** The reporter's name for the key — the only trace of an ESC-prefixed one, whose input is blank. */
   name: string;
+  /**
+   * Stop the key reaching the focused renderable.
+   *
+   * OpenTUI dispatches these global handlers BEFORE the focused renderable's own, and skips the
+   * renderable when one of them has called this. It is how a page keeps a key the composer's editor
+   * would otherwise answer — see `domain/composer-veto.ts`. Pages with no editor on them never need
+   * it, which is why it arrives as a method rather than a return value nobody would remember to send.
+   */
+  preventDefault: () => void;
+  /** ⌘ on macOS. Reported only by terminals that speak the kitty protocol. */
+  super: boolean;
   upArrow: boolean;
   downArrow: boolean;
   leftArrow: boolean;
@@ -42,8 +53,11 @@ export function useInput(
     if (event.eventType === "release") return;
 
     const name = event.name ?? "";
+    const raw = event as { super?: boolean; option?: boolean };
     handler(printable(event), {
       name,
+      preventDefault: () => event.preventDefault(),
+      super: Boolean(raw.super),
       upArrow: name === "up",
       downArrow: name === "down",
       leftArrow: name === "left",

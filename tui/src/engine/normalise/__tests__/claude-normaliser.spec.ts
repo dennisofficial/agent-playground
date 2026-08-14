@@ -10,12 +10,14 @@ import {
   assistantToolUse,
   backgroundTasksChanged,
   init,
+  overageRejected,
   rateLimit,
   rateLimitWithoutUtilisation,
   result,
   scriptedTurn,
   SESSION_ID,
   subagentAssistant,
+  subagentThinking,
   subagentToolResult,
   subagentToolUse,
   syntheticAssistant,
@@ -25,6 +27,7 @@ import {
   textDelta,
   thinkingDelta,
   toolResult,
+  usingOverage,
 } from './scripted-turn.fixture.js';
 
 /**
@@ -137,8 +140,40 @@ describe('ClaudeNormaliserService', () => {
     expect(run([rateLimit('seven_day_sonnet', 0.5)])[0]).toMatchObject({ window: 'sevenDay' });
   });
 
-  it('drops rate-limit windows it does not model rather than inventing one', () => {
+  it('reads an allowed overage frame as a wallet reading and NOT as a window', () => {
+    // `overage` used to fall through to the `fiveHour` fallback, which wrote a spent wallet down as
+    // a spent five-hour window and sent rotation hunting for headroom that had never gone.
     expect(run([rateLimit('overage', 0.5)])).toEqual([]);
+  });
+
+  it('splits a wallet refusal off from the windows entirely', () => {
+    const events = run([overageRejected()]);
+    expect(events).toEqual([
+      { kind: 'extra_usage', inUse: false, utilization: 100, disabledReason: 'credits_required' },
+    ]);
+    // The critical half: no `rate_limit` event, so no window is marked spent by this frame.
+    expect(events.some((e) => e.kind === 'rate_limit')).toBe(false);
+  });
+
+  it('says nothing about credits on the frames that merely mention them', () => {
+    // A real tape's ordinary frame carries `overageStatus: 'rejected'` on every account with no
+    // credits configured. Surfacing that would tell every user, every turn, about a feature they
+    // have not asked for.
+    expect(run([rateLimitWithoutUtilisation()])).toEqual([]);
+  });
+
+  it('reports the wallet once it is actually paying for the turn', () => {
+    expect(run([usingOverage()])).toEqual([
+      { kind: 'extra_usage', inUse: true },
+      { kind: 'rate_limit', window: 'fiveHour', utilization: 100 },
+    ]);
+  });
+
+  it('folds the credits-enabled weekly window onto the weekly meter', () => {
+    expect(run([rateLimit('seven_day_overage_included', 0.4)])[0]).toMatchObject({
+      kind: 'rate_limit',
+      window: 'sevenDay',
+    });
   });
 
   it('drops a rate-limit frame that carries no utilisation — the common real shape', () => {
@@ -291,6 +326,17 @@ describe('a delegate on the parent stream', () => {
       toolUseId: 'toolu_sub',
       parentToolUseId: 'toolu_parent',
     });
+  });
+
+  it("tags a subagent's thinking — `forwardSubagentText: false` does not stop summarized blocks", () => {
+    const events = run([subagentThinking('toolu_parent', 'Grepping for configurable minPasswordLength')]);
+    expect(events).toEqual([
+      {
+        kind: 'thinking',
+        text: 'Grepping for configurable minPasswordLength',
+        parentToolUseId: 'toolu_parent',
+      },
+    ]);
   });
 
   it("drops a subagent's deltas — its prose must never stream into this thread's tail", () => {

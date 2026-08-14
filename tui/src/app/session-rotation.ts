@@ -17,6 +17,19 @@ import type { ToolContext } from './tools/tool.js';
 import type { RunTurnArgs } from './turn-runner.service.js';
 
 /**
+ * The `noticeOnce` key family for "this thread is spending credits". Shared with `turn-events.ts`,
+ * which confirms the same condition off the wire — one condition must not produce two rows, and the
+ * boundary's version arrives first and names the account.
+ *
+ * Deliberately never forgotten. The obvious place to clear it is a boundary that comes back `kept`,
+ * meaning the account has headroom again — but `kept` is a PREDICTION from polled numbers that lag,
+ * while the wire's `inUse` is first-hand, and letting the former erase the latter put the row back
+ * on screen once per turn. The cost is that a thread which outlives a window reset and later falls
+ * onto credits a second time says so only the first time; the noise was the worse of the two.
+ */
+export const EXTRA_USAGE_NOTICE = 'extra-usage:';
+
+/**
  * Everything a session rotation DOES, as functions over their collaborators — the shape
  * `phase-transition.ts` already uses beside `ThreadSeamService`.
  *
@@ -214,6 +227,20 @@ export async function sessionForTurn(args: {
     accountId: live.accountId,
     engine: live.engine,
   });
+  // Money is never spent quietly — but "spending" is a STATE, and the boundary re-decides it before
+  // every turn. Said once per entry into it and not again while it holds: a long job pinned on the
+  // wallet used to stack an identical row per turn, which is a wall of text saying one thing.
+  // Keyed by account, so a rotation onto a different wallet is still news.
+  if (outcome.kind === 'overage') {
+    args.store.noticeOnce(
+      `${EXTRA_USAGE_NOTICE}${outcome.on.id}`,
+      outcome.on.id === outcome.from.id
+        ? `${outcome.on.label} is out of plan usage · continuing on extra usage`
+        : `switched to ${outcome.on.label} · every account is out of plan usage · continuing on extra usage`,
+    );
+    return { ...live, accountId: outcome.on.id };
+  }
+
   if (outcome.kind !== 'rotated') return live;
 
   args.store.notice(

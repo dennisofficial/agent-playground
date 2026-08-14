@@ -40,6 +40,8 @@ export class ConversationStore {
   private timer: NodeJS.Timeout | undefined;
   private unrevealed = "";
   private unrevealedKind: "text" | "thinking" | null = null;
+  /** Which standing conditions have already had their say. See `noticeOnce`. */
+  private readonly announced = new Set<string>();
 
   /**
    * Deliberately outside `state`: the composer already holds the text it is editing, and routing every
@@ -59,6 +61,8 @@ export class ConversationStore {
 
   reset(messages: Message[], closed = false): void {
     this.dropUnrevealed();
+    // The notices these guarded are gone with the state, so the conditions get to speak again.
+    this.announced.clear();
     this.state = { ...EMPTY, messages, closed };
     this.flush();
   }
@@ -209,6 +213,32 @@ export class ConversationStore {
 
   notice(text: string): void {
     this.patch({ notices: [...this.state.notices, text] });
+  }
+
+  /**
+   * A notice about a CONDITION rather than an event — said when it starts, and not again while it
+   * holds.
+   *
+   * Notices accumulate into the transcript forever, so a line re-emitted at every turn boundary
+   * builds a wall of identical rows. Both of this method's callers describe standing states ("this
+   * account is spending credits", "the server will not serve fast mode"), and the server restates
+   * them on every request; whether they are worth a row is a question about the state changing, not
+   * about a frame arriving.
+   *
+   * The keys live outside `state` for the same reason `draft` does: they are bookkeeping about what
+   * has been said, not something anything renders.
+   */
+  noticeOnce(key: string, text: string): void {
+    if (this.announced.has(key)) return;
+    this.announced.add(key);
+    this.notice(text);
+  }
+
+  /** The condition lifted: let it announce itself again if it comes back. Prefix, so a family clears together. */
+  forgetNotices(prefix: string): void {
+    for (const key of this.announced) {
+      if (key.startsWith(prefix)) this.announced.delete(key);
+    }
   }
 
   setClosed(closed: boolean): void {

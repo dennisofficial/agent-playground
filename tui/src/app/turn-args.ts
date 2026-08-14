@@ -1,4 +1,5 @@
 import type { AttachmentPart } from "../domain/attachments.js";
+import type { DraftImage } from "../domain/draft-images.js";
 import type { EHarnessVariant } from "../domain/message.js";
 import type { EngineTool } from "../engine/atlas-tool-server.js";
 import type { EngineSession, Thread } from "../generated/prisma/client.js";
@@ -26,6 +27,14 @@ export type RunTurnArgs = {
    * file and the model still receives every byte. Only a seam sets it; an ordinary turn has none.
    */
   attachments?: readonly AttachmentPart[];
+  /**
+   * Pictures pasted into the draft this prompt came from, as paths. Read off disk on the way to the
+   * engine and stored on the message as-is, so reopening the thread a week later still finds them.
+   *
+   * Nothing like `attachments` above, which is a seam's inlined FILES: these are images a person
+   * pasted, and the two share only the fact that a message can carry something besides prose.
+   */
+  images?: readonly DraftImage[];
   /**
    * The phase's standing instructions, appended to the envelope vocabulary on this turn's system
    * prompt. Passed in rather than looked up: the runner deals in threads and sessions, and a phase

@@ -30,6 +30,8 @@ import {
 import { Breadcrumb } from '../components/breadcrumb.js';
 import { Checklist } from '../components/checklist.js';
 import { Composer } from '../components/composer.js';
+import { LineInput } from '../components/line-input.js';
+import { useDraft } from '../hooks/use-draft.js';
 import { ConfirmBar } from '../components/confirm-bar.js';
 import { HintLine } from '../components/hint-line.js';
 import { PageHeader } from '../components/page-header.js';
@@ -218,6 +220,20 @@ describe('conversation page components mount', () => {
     }
   });
 
+  // The retry button is a second renderable inside the error block, which is the arrangement that
+  // throws at mount if it is nested wrong — and it is a path `MESSAGES` cannot reach, because a
+  // block only draws it when the page hands one down.
+  it('renders a failed turn with its retry button', async () => {
+    const failed = message({
+      type: EMessageType.error,
+      title: 'Turn ended: error_during_execution',
+      retryable: true,
+    });
+    await expect(
+      mount(<MessageView message={failed} onRetry={() => undefined} />),
+    ).resolves.toBeUndefined();
+  });
+
   // The diff draws columns inside a `<text>`, which is exactly the shape that throws at mount if a
   // component underneath it returns `<text>` of its own. Collapsed and expanded are separate paths.
   it('renders an edit with its diff, folded and open', async () => {
@@ -313,8 +329,18 @@ describe('conversation page components mount', () => {
   });
 
   it('renders the composer, empty and with a draft', async () => {
-    await expect(mount(<Composer value="" width={80} />)).resolves.toBeUndefined();
-    await expect(mount(<Composer value={'a draft\nof two lines'} width={80} />)).resolves.toBeUndefined();
+    // The draft lives in the native buffer behind the composer, so it arrives through the hook that
+    // owns the handle rather than as a prop — hence the wrapper.
+    function Draft(props: { seed: string }): React.ReactNode {
+      return <Composer draft={useDraft(props.seed)} width={80} />;
+    }
+    await expect(mount(<Draft seed="" />)).resolves.toBeUndefined();
+    await expect(mount(<Draft seed={'a draft\nof two lines'} />)).resolves.toBeUndefined();
+  });
+
+  it('renders the one-line input a list page borrows its footer for', async () => {
+    await expect(mount(<LineInput value="" width={80} placeholder="filter" />)).resolves.toBeUndefined();
+    await expect(mount(<LineInput value="a typed filter" width={80} />)).resolves.toBeUndefined();
   });
 
   it('renders the chrome', async () => {

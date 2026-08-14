@@ -99,7 +99,7 @@ describe('isContextWall', () => {
    * context for free.
    */
   const survivors = [
-    'claude agent sdk exited · Thread preserved · r to restart',
+    'claude agent sdk exited · Thread preserved',
     'API Error: 529 overloaded_error',
     'rate limit reached for this account · 5-hour window',
     'spawn ENOENT',

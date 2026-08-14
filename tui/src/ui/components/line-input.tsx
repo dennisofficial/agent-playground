@@ -5,13 +5,23 @@ import { EMPTY_EDITOR, type EditorState } from "../../domain/text-editor.js";
 import { useCopyNotice } from "../copy-on-select.js";
 import { theme } from "../theme.js";
 
+/**
+ * The one-line box a list page borrows its footer for — a filter, a job's new name, an OAuth code.
+ *
+ * This is the composer Atlas shipped first, kept for the inputs it is still right for. It draws over
+ * the pure `domain/` editor, and its caret moves over LOGICAL lines: correct here, because none of
+ * these inputs has a second line to move to. `↑`/`↓` are refused outright and reach the list behind
+ * the box, which is the whole reason these pages can filter and navigate with one keyboard.
+ *
+ * The prompt composer is `composer.tsx` and shares nothing with this: it is the native editor, and it
+ * moves over the rows the user can SEE, because a draft wraps and a filter does not. Two components
+ * because they answer to two different keyboards, not because one is a leftover.
+ */
+
+/** A path or a long job name can wrap; nothing here ever gets close to eight rows of it. */
 const DEFAULT_MAX_ROWS = 8;
 
-export function composerRows(height: number): number {
-  return Math.max(DEFAULT_MAX_ROWS, Math.floor(height / 2) - 2);
-}
-
-export function Composer(props: {
+export function LineInput(props: {
   state?: EditorState;
   value?: string;
   placeholder?: string;

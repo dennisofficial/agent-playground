@@ -52,6 +52,15 @@ describe('what counts as a delegate frame', () => {
     );
     expect(isDelegateEvent({ kind: 'text', text: 'hi' })).toBe(false);
   });
+
+  it("is PROSE too, when it carries a parent — a delegate's reasoning is not this thread's", () => {
+    expect(isDelegateEvent({ kind: 'thinking', text: 'grepping', parentToolUseId: 'toolu_parent' })).toBe(
+      true,
+    );
+    expect(isDelegateEvent({ kind: 'text', text: 'done', parentToolUseId: 'toolu_parent' })).toBe(true);
+    // The thread's own thinking still belongs to it. This is the half a blanket filter would break.
+    expect(isDelegateEvent({ kind: 'thinking', text: 'hmm' })).toBe(false);
+  });
 });
 
 describe('reconciling the two identities', () => {

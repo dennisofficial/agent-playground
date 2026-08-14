@@ -45,9 +45,18 @@ export const CONVERSATION: readonly Binding[] = [
 ];
 
 /** Only shown where there is a draft to edit, and only the keys a terminal reliably delivers. */
+/**
+ * The composer's editor keeps this list, not Atlas — see `components/composer.tsx`. Selection and
+ * undo are new here because they came with the native buffer; the rest read the same as they always
+ * did and now actually behave the way a text box does, over the rows on screen rather than over
+ * `\n`-separated lines.
+ */
 export const EDITING: readonly Binding[] = [
   [`${ALT}+← →`, "by word"],
   [`${ALT}+⌫ · ctrl+w`, "rub out a word"],
   ["ctrl+k", "to end of line"],
   ["Home End", "line start · end"],
+  // One row, read positionally, the way `Home End` already is. The panel has a row budget the
+  // smallest terminal has to fit inside — 60×24 gets eight — and these three arrived together.
+  ["⇧arrows ⌘z ctrl+v", "select · undo · paste an image"],
 ];

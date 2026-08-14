@@ -15,6 +15,7 @@ import {
   type GroupMember,
   type ToolGroup,
 } from "../../../domain/tool-group.js";
+import { usePress } from "../../hooks/use-press.js";
 import { glyph, theme, TRANSCRIPT_INSET } from "../../theme.js";
 import { ToolDetail, type DetailInteraction } from "./tool-detail.js";
 
@@ -35,6 +36,10 @@ const DEFAULT_WIDTH = 80;
  * already reads as one thing. Hover changes COLOUR only — never text, never width. A `click to expand`
  * label that appeared under the pointer would reflow the thing being pointed at, which is the lesson
  * `markdown/copy-button.tsx` already carries.
+ *
+ * A click is press-and-release in the same cell — see `usePress`. Opening a block reflows everything
+ * under it, and acting on the mouse-DOWN left the renderer holding a selection anchor inside the rows
+ * that were about to move.
  *
  * ## Wide content
  *
@@ -79,8 +84,11 @@ export function ToolGroupBlock(props: {
    * the words rather than of the row, which is not what a click acts on.
    */
   const fill = (used: number): string => " ".repeat(Math.max(0, inner - used));
+  // One press origin for the whole block, so a release anywhere in a region is measured against the
+  // press that any of its lines took — and so the body's own targets nest inside the row's.
+  const press = usePress();
   const handlers = (key: string) => ({
-    onMouseDown: () => props.onToggle(key),
+    ...press(() => props.onToggle(key)),
     onMouseOver: () => setHovered(key),
     onMouseOut: () => setHovered((current) => (current === key ? null : current)),
   });
@@ -91,6 +99,7 @@ export function ToolGroupBlock(props: {
     setHovered,
     onToggle: props.onToggle,
     expanded: props.expanded,
+    press,
   };
 
   return (

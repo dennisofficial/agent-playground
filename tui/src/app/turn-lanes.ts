@@ -27,6 +27,17 @@ export type Lane = {
    */
   canary?: boolean;
   usage?: TurnUsage;
+  /**
+   * May this turn's account spend credits. Read from the row at spawn, for the same reason
+   * `fastModeRequested` is: the frames that report on the wallet arrive later and carry no account.
+   */
+  extraUsageAllowed?: boolean;
+  /**
+   * Did Atlas ask for fast mode on this turn. Carried here because the answer comes back on the
+   * result frame, by which point the applier no longer has the account row that asked — and an
+   * unrequested `sdk_opt_in_required` is the default, not a failure worth reporting.
+   */
+  fastModeRequested?: boolean;
   turn?: RunningTurn;
 };
 

@@ -4,6 +4,7 @@ import {
   accountMeterWidths,
   accountRowLayout,
   badgeText,
+  extraUsageFlag,
   GUTTER,
   meterColumnWidth,
   type AccountRowLayout,
@@ -11,7 +12,7 @@ import {
 import { fitColumn } from "../../domain/list-columns.js";
 import { meterBand, type Meter, type MeterKey } from "../../domain/usage.js";
 import { meterStyle, type Span } from "../meter-style.js";
-import { meterSpans, spansWidth } from "../meter-spans.js";
+import { bandColour, meterSpans, spansWidth } from "../meter-spans.js";
 import { Caret } from "./list-parts.js";
 import { Spans } from "./spans.js";
 import { glyph, theme } from "../theme.js";
@@ -87,6 +88,7 @@ function AccountRowView(props: {
         </span>
       ) : null}
       <Spans spans={usageSpans(account, layout.showBar)} />
+      {layout.flags > 0 ? <Spans spans={flagSpans(account, layout.flags)} /> : null}
     </>
   );
 
@@ -161,6 +163,44 @@ function usageSpans(account: AccountRow, showBar: boolean): Span[] {
       showBar,
     ),
   ];
+}
+
+/**
+ * `xu 24%  fast` — the two standing decisions, in the same column on every row.
+ *
+ * Words rather than symbols. The obvious glyph for fast mode is a lightning bolt, and every emoji in
+ * a terminal is double-width — a cell count that is right on one terminal and wrong on the next
+ * drags the whole table out of alignment, which is the same reason `glyph.image` is geometric.
+ *
+ * An account with neither setting on draws nothing but padding: the flags exist to mark the
+ * exceptions, and a list where every row says `off` twice is a list that has stopped pointing.
+ */
+function flagSpans(account: AccountRow, width: number): Span[] {
+  const flag = extraUsageFlag(account);
+  const extra: Span | null =
+    flag.state === "off"
+      ? null
+      : flag.state === "on"
+        ? {
+            text: flag.percent === null ? "xu" : `xu ${flag.percent}%`,
+            fg: bandColour(meterBand("extraUsage", flag.percent), meterStyle),
+          }
+        : {
+            // Permitted but unusable, which is a state worth a colour: the human has said yes and
+            // the account cannot honour it.
+            text: flag.state === "spent" ? "xu —" : "xu n/a",
+            fg: theme.warn,
+          };
+
+  const spans: Span[] = [
+    { text: " " },
+    ...(extra ? [extra] : []),
+    ...(account.fastMode
+      ? [{ text: `${extra ? " " : ""}fast`, fg: theme.accent }]
+      : []),
+  ];
+  const short = Math.max(0, width - spansWidth(spans));
+  return short > 0 ? [...spans, { text: " ".repeat(short) }] : spans;
 }
 
 function meterFor(

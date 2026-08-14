@@ -25,6 +25,9 @@ import { steerTurn } from "./turn-steering.js";
 
 // Re-exported rather than moved outright: half this file's importers want only the argument shape,
 // and every one of them already spells it `from './turn-runner.service.js'`.
+import type { DraftImage } from "../domain/draft-images.js";
+import { EImageDelivery } from "../domain/image-limits.js";
+import type { PromptImage } from "../engine/claude-engine.service.js";
 import type { RunTurnArgs } from "./turn-args.js";
 export type { RunTurnArgs };
 
@@ -41,9 +44,12 @@ export class TurnRunnerService {
     private readonly engineHomeService: EngineHomeService,
     private readonly accountRotatorService: AccountRotatorService,
     private readonly accountUsageService: AccountUsageService,
-    // Not kept as fields: these three are the applier's, handed straight to it below. Nest still
+    // Also the applier's, but kept: the runner reads the row itself to learn what the paying
+    // account has been permitted to do — currently fast mode, which has to be asked for before the
+    // query opens rather than discovered from a frame.
+    private readonly accountRepository: AccountRepository,
+    // Not kept as fields: these two are the applier's, handed straight to it below. Nest still
     // injects them here because that is where the container can see them.
-    accountRepository: AccountRepository,
     messageRepository: MessageRepository,
     private readonly sessionRepository: SessionRepository,
     turnRepository: TurnRepository,
@@ -153,6 +159,7 @@ export class TurnRunnerService {
         text: args.prompt,
         harnessVariant: args.harnessVariant,
         attachments: args.attachments,
+        images: args.images,
       });
       await this.events.persist({
         store,
@@ -161,9 +168,19 @@ export class TurnRunnerService {
         payload,
       });
 
+      // Before the credential critical section, deliberately: reading a few hundred kilobytes off
+      // disk inside the lock would hold every other thread's spawn behind this turn's pictures.
+      const promptImages = await readPromptImages(args.images ?? []);
+
       const blob = await this.accountVaultService.freshCredential(
         session.accountId,
       );
+
+      // Read rather than carried down from `resolveForTurn`, because rotation can have moved the
+      // account since — and fast mode is the paying account's setting, not the session's.
+      const account = await this.accountRepository.findById(session.accountId);
+      lane.fastModeRequested = account?.fastMode === true;
+      lane.extraUsageAllowed = account?.extraUsageAllowed === true;
 
       // Credential write and spawn happen inside one critical section — see EngineHomeService. The
       // account id travels with the blob so the read-back in `finaliseTurn` knows whose file it is.
@@ -172,11 +189,15 @@ export class TurnRunnerService {
         (env) =>
           this.claudeEngineService.start({
             prompt: renderPrompt(payload),
+            // Read by the app layer, not the engine: the bytes are Atlas's to find, and an
+            // unreadable file drops its picture rather than failing the turn its words were for.
+            images: promptImages,
             systemPrompt: buildSystemPrompt({ brief: args.brief }),
             cwd,
             model: session.model,
             resume: session.engineSessionId ?? undefined,
             env,
+            fastMode: lane.fastModeRequested,
             tools: args.tools,
             // Atlas's one way into a running turn that costs the agent nothing: it is already
             // waiting on the tool. Whether anything is said at all is entirely `turn-nudge.ts`'s
@@ -296,4 +317,35 @@ export class TurnRunnerService {
       },
     });
   }
+}
+
+/**
+ * Pictures off disk, base64'd for the wire.
+ *
+ * An image that will not read is DROPPED rather than thrown: the file was written by a paste that
+ * may have been days ago, the words around it are the point of the turn, and failing the whole
+ * message over a missing picture would lose the one thing that cannot be recovered. The `[Image #N]`
+ * token stays in the text either way, so the model is told a picture was meant to be there.
+ */
+async function readPromptImages(
+  images: readonly DraftImage[],
+): Promise<readonly PromptImage[]> {
+  const read = await Promise.all(
+    // Only the ones meant to travel as bytes. A `path-only` image was already judged too heavy to
+    // inline — the manifest in the prompt names it, and the agent can Read it.
+    images
+      .filter((image) => image.delivery === EImageDelivery.inline)
+      .map(async (image) => {
+        try {
+          const bytes = await Bun.file(image.path).arrayBuffer();
+          return {
+            mediaType: image.mediaType,
+            data: Buffer.from(bytes).toString("base64"),
+          };
+        } catch {
+          return null;
+        }
+      }),
+  );
+  return read.filter((image): image is PromptImage => image !== null);
 }

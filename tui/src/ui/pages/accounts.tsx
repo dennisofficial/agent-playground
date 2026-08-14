@@ -3,6 +3,7 @@ import { useInput } from "../hooks/use-input.js";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import type { AccountRow, ClaudeLogin } from "../../app/accounts.service.js";
 import { clampIndex } from "../../domain/list-nav.js";
+import { policyForms } from "../../domain/account-row.js";
 import { fitHints } from "../../domain/hints.js";
 import {
   AccountGroup,
@@ -10,7 +11,7 @@ import {
 } from "../components/account-list.js";
 import { AddRow } from "../components/list-parts.js";
 import { EAccountStatus, EEngine } from "../../generated/prisma/enums.js";
-import { Composer } from "../components/composer.js";
+import { LineInput } from "../components/line-input.js";
 import { ConfirmBar } from "../components/confirm-bar.js";
 import { PageHeader } from "../components/page-header.js";
 import { Screen } from "../components/screen.js";
@@ -120,6 +121,22 @@ export function AccountsPage(props: { onBack: () => void }): React.ReactNode {
       return;
     }
     if (input === "x" && highlighted) return setMode("confirm");
+    // Both reload rather than patching local state: the row also carries polled columns, and an
+    // optimistic flip would have to decide what to do with a usage refresh that landed in between.
+    if (input === "e" && highlighted) {
+      void accountsService
+        .toggleExtraUsage(highlighted.id)
+        .then(() => reload())
+        .catch((e: Error) => setError(e.message));
+      return;
+    }
+    if (input === "f" && highlighted) {
+      void accountsService
+        .toggleFastMode(highlighted.id)
+        .then(() => reload())
+        .catch((e: Error) => setError(e.message));
+      return;
+    }
     if (input === "?") return setShortcuts((open) => !open);
   });
 
@@ -144,7 +161,7 @@ export function AccountsPage(props: { onBack: () => void }): React.ReactNode {
         footer={
           <box flexDirection="column">
             {/* A bordered box does not wrap: wider than the terminal and it draws off the edge. */}
-            <Composer
+            <LineInput
               state={composer.state}
               width={Math.min(72, width - 2)}
               placeholder="code#state"
@@ -192,7 +209,15 @@ export function AccountsPage(props: { onBack: () => void }): React.ReactNode {
           ) : shortcuts ? (
             <ListShortcuts width={width} height={height} />
           ) : (
-            <text fg={theme.dim}>{fitHints(width, HINTS)}</text>
+            <box flexDirection="column">
+              <text fg={theme.dim}>{fitHints(width, HINTS)}</text>
+              {highlighted ? (
+                <text fg={theme.dim}>
+                  {"  "}
+                  {fitHints(width - 2, policyForms(highlighted))}
+                </text>
+              ) : null}
+            </box>
           )}
           {error ? (
             <text fg={theme.error}>
@@ -243,7 +268,8 @@ export function AccountsPage(props: { onBack: () => void }): React.ReactNode {
  * recoverable, so it is the last one worth dropping.
  */
 const HINTS = [
-  "↑↓ select · ⏎ add · n add · x remove · ? keys · ←/esc back",
-  "↑↓ select · ⏎ add · x remove · ? keys · esc back",
-  "⏎ add · x remove · ? keys",
+  "↑↓ select · ⏎ add · e extra usage · f fast mode · x remove · ? keys · ←/esc back",
+  "↑↓ select · ⏎ add · e extra usage · f fast mode · x remove · ? keys",
+  "↑↓ select · ⏎ add · e extra · f fast · x remove · ? keys",
+  "⏎ add · e extra · f fast · x remove · ? keys",
 ];

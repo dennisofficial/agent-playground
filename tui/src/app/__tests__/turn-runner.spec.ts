@@ -234,6 +234,150 @@ describe('TurnRunnerService', () => {
     });
   });
 
+  /**
+   * Extra usage and fast mode are per-account permissions, and every one of these is about the
+   * difference between a turn Atlas ASKED to be different and one the server merely commented on.
+   */
+  describe('extra usage and fast mode', () => {
+    const allowed = { fastMode: false, extraUsageAllowed: true };
+
+    it('says once that a thread is being billed — not per frame, and not per turn', async () => {
+      const { runner, store, accounts } = build([
+        { kind: 'extra_usage', inUse: true },
+        { kind: 'extra_usage', inUse: true },
+      ]);
+      accounts.findById.mockResolvedValue(allowed);
+      await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
+      await runner.run({ thread: THREAD, session: SESSION, prompt: 'again', cwd: '/repo' });
+
+      // Four frames across two turns. Spending is a STATE, and it entered it once.
+      expect(store.getSnapshot().notices).toEqual(['this turn is billed to extra usage']);
+    });
+
+    it('announces the fall onto credits once, not at every turn boundary', async () => {
+      // The reported bug. `considerRotation` re-decides before EVERY turn, and while the windows
+      // stay full it answers `overage` every time — which stacked an identical row per turn.
+      const { runner, rotator, store } = build();
+      const label = 'dennis@trycomp.ai';
+      rotator.considerRotation.mockResolvedValue({
+        kind: 'overage',
+        from: { id: ACCOUNT_ID, label },
+        on: { id: ACCOUNT_ID, label },
+      } as never);
+
+      await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
+      await runner.run({ thread: THREAD, session: SESSION, prompt: 'again', cwd: '/repo' });
+      await runner.run({ thread: THREAD, session: SESSION, prompt: 'more', cwd: '/repo' });
+
+      expect(store.getSnapshot().notices).toEqual([
+        `${label} is out of plan usage · continuing on extra usage`,
+      ]);
+    });
+
+    it('still speaks when the wallet it lands on is a different account', async () => {
+      const { runner, rotator, store } = build();
+      rotator.considerRotation.mockResolvedValue({
+        kind: 'overage',
+        from: { id: ACCOUNT_ID, label: 'first' },
+        on: { id: 'account-2', label: 'second' },
+      } as never);
+      await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
+
+      expect(store.getSnapshot().notices).toEqual([
+        'switched to second · every account is out of plan usage · continuing on extra usage',
+      ]);
+    });
+
+    it('writes a refusal onto the row, so the next boundary does not choose this wallet again', async () => {
+      const { runner, accounts } = build([
+        { kind: 'extra_usage', inUse: false, disabledReason: 'out_of_credits' },
+      ]);
+      accounts.findById.mockResolvedValue(allowed);
+      await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
+
+      expect(accounts.recordExtraUsage).toHaveBeenCalledWith(ACCOUNT_ID, { enabled: false });
+    });
+
+    it('never writes `enabled: true` off a turn that merely worked — the poll owns that', async () => {
+      const { runner, accounts } = build([{ kind: 'extra_usage', inUse: true }]);
+      accounts.findById.mockResolvedValue(allowed);
+      await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
+
+      expect(accounts.recordExtraUsage).not.toHaveBeenCalled();
+    });
+
+    it('does not explain extra usage to an account nobody permitted to spend', async () => {
+      const { runner, store } = build([
+        { kind: 'extra_usage', inUse: false, disabledReason: 'overage_not_provisioned' },
+      ]);
+      await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
+
+      expect(store.getSnapshot().notices).toEqual([]);
+    });
+
+    it('asks for fast mode only when the paying account has it on', async () => {
+      const { runner, engine, accounts } = build();
+      await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
+      expect(engine.lastArgs?.fastMode).toBe(false);
+
+      accounts.findById.mockResolvedValue({ fastMode: true, extraUsageAllowed: false });
+      await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
+      expect(engine.lastArgs?.fastMode).toBe(true);
+    });
+
+    it('reports a fast mode that did not take — a silent no-op is indistinguishable from working', async () => {
+      const { runner, store, accounts } = build([
+        { kind: 'fast_mode', state: 'off', disabledReason: 'model_not_allowed' },
+      ]);
+      accounts.findById.mockResolvedValue({ fastMode: true, extraUsageAllowed: false });
+      await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
+
+      expect(store.getSnapshot().notices).toEqual([
+        'fast mode not supported by this model',
+      ]);
+    });
+
+    it('reports the same refusal exactly once, however many frames and turns carry it', async () => {
+      // What this fixes, verbatim: a turn holding for a delegate emits several `result` frames, so
+      // `preference` printed twice per turn and again on the next one.
+      const { runner, store, accounts } = build([
+        { kind: 'fast_mode', state: 'off', disabledReason: 'preference' },
+        { kind: 'fast_mode', state: 'off', disabledReason: 'preference' },
+      ]);
+      accounts.findById.mockResolvedValue({ fastMode: true, extraUsageAllowed: false });
+      await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
+      await runner.run({ thread: THREAD, session: SESSION, prompt: 'again', cwd: '/repo' });
+
+      expect(store.getSnapshot().notices).toEqual(['fast mode disabled by your organization']);
+    });
+
+    it('speaks again about a refusal that changed, and after fast mode has worked once', async () => {
+      const { runner, store, accounts } = build([
+        { kind: 'fast_mode', state: 'off', disabledReason: 'network_error' },
+        { kind: 'fast_mode', state: 'on' },
+        { kind: 'fast_mode', state: 'off', disabledReason: 'network_error' },
+      ]);
+      accounts.findById.mockResolvedValue({ fastMode: true, extraUsageAllowed: false });
+      await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
+
+      expect(store.getSnapshot().notices).toEqual([
+        'fast mode unavailable — network trouble',
+        'fast mode unavailable — network trouble',
+      ]);
+    });
+
+    it('stays quiet about fast mode when it was never asked for', async () => {
+      // `sdk_opt_in_required` rides EVERY turn of a session that did not opt in. It is the default
+      // this feature overrides, not news.
+      const { runner, store } = build([
+        { kind: 'fast_mode', state: 'off', disabledReason: 'sdk_opt_in_required' },
+      ]);
+      await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
+
+      expect(store.getSnapshot().notices).toEqual([]);
+    });
+  });
+
   it('clears the running state when the turn ends', async () => {
     const { runner, store } = build();
     await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
