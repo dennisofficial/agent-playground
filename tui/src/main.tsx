@@ -7,6 +7,7 @@ import { AppModule } from "./app.module.js";
 import { isCliInvocation } from "./cli/invocation.js";
 import { runCli } from "./cli/run.js";
 import { App } from "./ui/app.js";
+import { applySettings } from "./ui/apply-settings.js";
 import { registerGrammars } from "./ui/markdown/grammars/index.js";
 import { ServicesProvider, resolveServices } from "./ui/services.js";
 
@@ -42,6 +43,11 @@ async function main(): Promise<void> {
   await context.init();
 
   const services = resolveServices(context);
+
+  // Before the renderer, for the same reason the migration runs before it: the first frame should
+  // already be the user's theme. Reading this after the tree mounted would paint the shipped
+  // colours and correct them a beat later, which is a flash on every single launch.
+  applySettings(services.settingsService.load());
 
   // Before the renderer, because the first Tree-sitter client takes the default parser set as it
   // finds it — a grammar registered afterwards would not reach it.

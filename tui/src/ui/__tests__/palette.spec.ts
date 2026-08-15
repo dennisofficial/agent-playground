@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { ECourtToken, EPaletteToken } from "../../domain/settings.js";
 import { ACCENT, CODE_BLUE, theme } from "../palette.js";
 import { glyph, SPINNER_FRAMES, spinnerFrame } from "../glyphs.js";
 import {
@@ -119,6 +120,36 @@ describe("palette", () => {
     };
     expect(lightness(theme.rule)).toBeLessThan(lightness(theme.meta));
     expect(lightness(theme.meta)).toBeLessThan(lightness(theme.hover));
+  });
+});
+
+describe("the palette and the settings vocabulary agree", () => {
+  // `domain/` imports nothing, so it cannot read the palette to find out what a token is called —
+  // it declares the names and `ui/palette.ts` supplies the values. That split is only safe while
+  // the two lists are identical, and nothing but this test makes them so. Without it, adding a
+  // colour to the palette would compile, render, and quietly be unthemeable: the editor would not
+  // offer it and a settings file naming it would have the key dropped on load.
+  const flat = Object.entries(theme)
+    .filter(([, value]) => typeof value === "string")
+    .map(([key]) => key)
+    .sort();
+
+  it("names every flat palette token, and no token the palette lacks", () => {
+    const tokens: string[] = Object.values(EPaletteToken);
+    expect(tokens.sort()).toEqual(flat);
+  });
+
+  it("names every court", () => {
+    const courts: string[] = Object.values(ECourtToken);
+    expect(courts.sort()).toEqual(Object.keys(theme.court).sort());
+  });
+
+  it("has a court group and nothing else nested, which is what the codec assumes", () => {
+    // `parsePalette` special-cases exactly one nested key. A second group would be silently dropped.
+    const nested = Object.entries(theme)
+      .filter(([, value]) => typeof value !== "string")
+      .map(([key]) => key);
+    expect(nested).toEqual(["court"]);
   });
 });
 

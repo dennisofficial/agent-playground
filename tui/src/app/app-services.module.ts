@@ -10,14 +10,14 @@ import { ContextPressureService } from "./context-pressure.service.js";
 import { ConversationService } from "./conversation.service.js";
 import { ConversationStoreRegistry } from "./conversation-store.registry.js";
 import { GitService } from "./git.service.js";
-import { GithubCliService } from "./github-cli.service.js";
 import { HumanVerbsService } from "./human-verbs.service.js";
 import { JobStartService } from "./job-start.service.js";
 import { JobTitleService } from "./job-title.service.js";
+import { SettingsService } from "./settings.service.js";
 import { PhaseBriefService } from "./phase-brief.service.js";
+import { PullRequestService } from "./pull-request.service.js";
 import { ServiceRegistryService } from "./service-registry.service.js";
 import { SessionManagerService } from "./session-manager.service.js";
-import { ShipService } from "./ship.service.js";
 import { TaskService } from "./task.service.js";
 import { ThreadSeamService } from "./thread-seam.service.js";
 import { TransitionReviewService } from "./transition-review.service.js";
@@ -45,12 +45,12 @@ import { WorktreeService } from "./worktree.service.js";
     ConversationService,
     TaskService,
     GitService,
-    GithubCliService,
-    ShipService,
+    PullRequestService,
     WorktreeService,
     WorkspaceService,
     JobStartService,
     JobTitleService,
+    SettingsService,
   ],
   exports: [
     ConversationStoreRegistry,
@@ -73,6 +73,7 @@ import { WorktreeService } from "./worktree.service.js";
     WorkspaceService,
     JobStartService,
     JobTitleService,
+    SettingsService,
   ],
 })
 export class AppServicesModule {}

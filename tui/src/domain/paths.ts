@@ -18,6 +18,15 @@ export const ATLAS_PATHS = {
   key: join(ATLAS_HOME, 'key'),
   versionCheck: join(ATLAS_HOME, 'version-check.json'),
   /**
+   * How Atlas should look — the theme, and whatever else joins it.
+   *
+   * A file rather than a row, and the reason is that a human is invited to open it: it diffs, it
+   * copies between machines, and a theme someone likes can be pasted into a chat. The cost is that
+   * several instances will not see each other's edit until they restart, which is the right trade
+   * for a preference and would be the wrong one for state.
+   */
+  settings: join(ATLAS_HOME, 'settings.json'),
+  /**
    * Where a harness fault goes to be read later. A file rather than the Nest logger because that
    * logger is `false` unless `ATLAS_DEBUG` is set — stdout corrupts the frame — so the default
    * install has nowhere for a stack to land, and a fault nobody can see is one nobody can fix.
