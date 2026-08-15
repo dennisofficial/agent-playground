@@ -1,106 +1,126 @@
 import { describe, expect, it } from 'bun:test';
-import { fitHeader, headerForms, type HeaderFacts } from '../conversation-header.js';
+import { EAttentionCourt } from '../attention.js';
+import {
+  DETACHED,
+  EHeaderChip,
+  ELSEWHERE_GLYPH,
+  IN_PLACE_GLYPH,
+  chipsWidth,
+  fitHeaderChips,
+  headerChipForms,
+  headerPlace,
+  headerStatusText,
+  type HeaderFacts,
+  type HeaderGit,
+} from '../conversation-header.js';
 
 const facts = (over: Partial<HeaderFacts> = {}): HeaderFacts => ({
   jobTitle: 'fix steering on rotation',
   repo: 'atlas',
   role: 'builder',
-  sessionOrdinal: 1,
-  engine: 'claude',
-  model: 'opus-5',
-  branch: 'atlas/fix-steering',
   siblings: 0,
   closed: false,
+  status: { label: 'reply', court: EAttentionCourt.yours, spinner: false },
+  git: { cwdLabel: null, checkoutBranch: 'main' },
   ...over,
 });
 
-const at = (width: number, over: Partial<HeaderFacts> = {}): string => {
-  const form = fitHeader({ facts: facts(over), width, gutter: 2 });
-  return `${form.left}|${form.right}`;
-};
+const git = (over: Partial<HeaderGit> = {}): HeaderGit => ({
+  cwdLabel: null,
+  checkoutBranch: 'main',
+  ...over,
+});
 
-describe('what survives at width', () => {
-  it('shows everything when there is room', () => {
-    expect(at(120)).toBe('atlas › fix steering on rotation  ⑂ atlas/fix-steering|builder  claude opus-5');
+describe('where the agent is standing', () => {
+  it('says the branch out loud when turns run in the repository root', () => {
+    // The case worth flinching at: this is the tree the human has an editor open on, and `main` is
+    // what a commit is about to land on.
+    const place = headerPlace(git());
+    expect(place.glyph).toBe(IN_PLACE_GLYPH);
+    expect(place.branch).toBe('main');
+    expect(place.path).toBeNull();
   });
 
-  it('drops the model and engine before anything else', () => {
-    // They are fixed by the role and cannot be changed from here, so they are the least useful
-    // characters on the line — see the role→engine binding table.
-    expect(at(70)).not.toContain('opus-5');
-    expect(at(70)).toContain('fix steering on rotation');
+  it('marks a directory that is not the root, whoever created it', () => {
+    const place = headerPlace(
+      git({ cwdLabel: '.worktrees/eng-203', checkoutBranch: 'dennis/eng-203' }),
+    );
+    expect(place.glyph).toBe(ELSEWHERE_GLYPH);
   });
 
-  it('keeps the job title at a tile width, and drops the repo to do it', () => {
-    // The inversion. One full-width terminal wanted the project first; six tiles of six unrelated
-    // tickets want the only string that tells them apart.
-    const narrow = at(48);
-    expect(narrow).toContain('fix steering on rotation');
-    expect(narrow).not.toContain('atlas ›');
+  it('drops the path when it only repeats the branch', () => {
+    // An Atlas-minted worktree is `.worktrees/<slug>-<id8>` on branch `atlas/<slug>-<id8>`. Printing
+    // both is printing it twice, and the pair is nearly a hundred columns.
+    const place = headerPlace(
+      git({
+        cwdLabel: '.worktrees/fix-steering-a1b2c3d4',
+        checkoutBranch: 'atlas/fix-steering-a1b2c3d4',
+      }),
+    );
+    expect(place.path).toBeNull();
+    expect(place.branch).toBe('atlas/fix-steering-a1b2c3d4');
   });
 
-  it('never sheds the job title, even when nothing else fits', () => {
-    expect(at(10)).toContain('fix steering on rotation');
+  it('keeps the path when the directory and the branch genuinely differ', () => {
+    const place = headerPlace(
+      git({ cwdLabel: '.worktrees/eng-203', checkoutBranch: 'dennis/eng-203-header' }),
+    );
+    expect(place.path).toBe('.worktrees/eng-203');
+  });
+
+  it('says detached rather than inventing a branch', () => {
+    expect(headerPlace(git({ checkoutBranch: null })).branch).toBe(DETACHED);
   });
 });
 
-describe('the workspace glyph', () => {
-  it('names the branch while there is room for it', () => {
-    expect(at(120)).toContain('⑂ atlas/fix-steering');
+describe('what is happening', () => {
+  it('carries the clock only while a turn is actually running', () => {
+    const running = facts({
+      status: { label: 'working…', court: EAttentionCourt.agent, spinner: true },
+    });
+    expect(headerStatusText({ facts: running, elapsed: '1m 12s' })).toBe('working… 1m 12s');
+    expect(headerStatusText({ facts: facts(), elapsed: '1m 12s' })).toBe('reply');
   });
 
-  it('keeps the glyph after the branch name has gone', () => {
-    // Whether an agent is writing into the tree your editor has open survives longer than which
-    // branch it is doing it on — one character, and it is the one that can hurt you.
-    const narrow = at(44);
-    expect(narrow).toContain('⑂');
-    expect(narrow).not.toContain('atlas/fix-steering');
+  it('lets closed outrank whose turn it is', () => {
+    // A closed thread cannot be acted on at all — the composer will not send — which is a different
+    // kind of fact from whose move it is.
+    const shut = facts({ closed: true });
+    expect(headerStatusText({ facts: shut, elapsed: null })).toBe('closed');
   });
 
-  it('says in place when the job never took a worktree', () => {
-    expect(at(120, { branch: null })).toContain('⌂');
-  });
-});
-
-describe('siblings', () => {
-  it('says nothing when this is the only live thread', () => {
-    expect(at(120)).not.toContain('+');
-  });
-
-  it('counts other live threads of this job', () => {
-    // Not other tiles. Six unrelated tickets means another tile's state is noise; another thread of
-    // the job you are IN is the agent about to finish behind your back.
-    expect(at(120, { siblings: 2 })).toContain('+2');
-  });
-
-  it('outlives the role', () => {
-    const narrow = at(40, { siblings: 1, branch: null });
-    expect(narrow).toContain('+1');
-    expect(narrow).not.toContain('builder');
+  it('speaks whatever word attentionFor chose, rather than a second vocabulary', () => {
+    const waiting = facts({
+      status: { label: 'confirm', court: EAttentionCourt.yours, spinner: false },
+    });
+    expect(headerStatusText({ facts: waiting, elapsed: null })).toBe('confirm');
   });
 });
 
-describe('session ordinal', () => {
-  it('is invisible until rotation has happened', () => {
-    expect(at(120)).not.toContain('session');
+describe('row two, on the right', () => {
+  it('says nothing about siblings when this is the only live thread', () => {
+    expect(headerChipForms(facts())).toEqual([[{ kind: EHeaderChip.role, text: 'builder' }]]);
   });
 
-  it('appears once there is more than one leg', () => {
-    expect(at(120, { sessionOrdinal: 2 })).toContain('session 2');
-  });
-});
-
-describe('closed threads', () => {
-  it('say so, and keep saying so when everything else has gone', () => {
-    expect(at(120, { closed: true })).toContain('closed');
-    expect(at(20, { closed: true })).toContain('closed');
-  });
-});
-
-describe('headerForms', () => {
   it('is ordered longest-first, so the first that fits is the widest that fits', () => {
-    const forms = headerForms(facts({ siblings: 1, sessionOrdinal: 3 }));
-    const widths = forms.map((f) => f.left.length + f.right.length);
+    const widths = headerChipForms(facts({ siblings: 2 })).map((form) => chipsWidth(form));
     expect(widths).toEqual([...widths].sort((a, b) => b - a));
+  });
+
+  it('sheds the sibling count’s word before its number', () => {
+    const mid = fitHeaderChips({ facts: facts({ siblings: 2 }), room: 14 });
+    expect(mid.map((chip) => chip.text)).toEqual(['builder', '+2']);
+  });
+
+  it('never sheds the role, even when nothing fits', () => {
+    // What this agent will DO. A thread whose role you cannot see is one you have to guess about,
+    // so this is clipped by the renderer rather than dropped here.
+    const squeezed = fitHeaderChips({ facts: facts({ siblings: 9 }), room: 1 });
+    expect(squeezed).toEqual([{ kind: EHeaderChip.role, text: 'builder' }]);
+  });
+
+  it('keeps the sibling count while there is room for all of it', () => {
+    const roomy = fitHeaderChips({ facts: facts({ siblings: 2 }), room: 40 });
+    expect(roomy.map((chip) => chip.text)).toEqual(['builder', '+2 threads']);
   });
 });

@@ -152,8 +152,9 @@ export type WorktreeGroup = WorkspaceState & {
    * The branch itself, null on a detached head — NOT `label`, which is prose.
    *
    * The two are separate because `label` may carry `· locked` or read `detached at abc1234`, and
-   * adoption writes this value into `Job.branch`, which `ShipService` later hands to `git push`. One
-   * field serving both would have shipped a branch called `atlas/held · locked`.
+   * adoption writes this value into `Job.branch`, which the `ci` brief later names to the agent as
+   * the branch to push. One field serving both would have shipped a branch called
+   * `atlas/held · locked`.
    */
   branch: string | null;
   /** The main worktree — the tree the editor is probably open on, and where jobs run by default. */

@@ -1,109 +1,158 @@
 /**
- * The one line a tile is identified by.
+ * The two lines a conversation is identified by, and what they shed as the terminal narrows.
  *
  * Six tiles in one terminal tab means the header is not decoration — it is the only thing telling
- * you which of six unrelated tickets you are looking at. So the shed order INVERTS what a single
- * full-width terminal wanted: the job title is the last thing to go, not the first, and the model
- * and engine go first because they are fixed by the role and you cannot change them from here.
+ * you which of six unrelated tickets you are looking at, and whether the one in front of you is
+ * waiting on you. Each row has exactly one job:
  *
- * Forms are enumerated longest-first and the widest that fits wins, the same rule the hint line and
- * the trail already use. Thresholds would need a number per breakpoint; measuring needs none.
+ *   row 1   WHAT this is, and WHAT IS HAPPENING     title · status + clock
+ *   row 2   WHERE it lives, and WHO is on it        repo · place  ·  role · siblings
+ *
+ * The model and the session ordinal are deliberately NOT here. They live in the footer beside the
+ * `ctx` meter, because that meter is the model's own window and the ordinal is why it last reset;
+ * on this line's right edge they were two orphans crowding out the status.
+ *
+ * Everything below is pure text: no colours, no spans, no terminal. Forms are enumerated
+ * longest-first and the widest that fits wins — the same rule the hint line and the trail use.
+ * Thresholds would need a number per breakpoint; measuring needs none.
  */
+
+import type { EAttentionCourt } from './attention.js';
+
+/** Where a job's turns run, as GIT answers it — never as Atlas recorded it. */
+export type HeaderGit = {
+  /**
+   * The directory turns run in, relative to the repository root. Null means the root itself.
+   *
+   * Relative rather than absolute because the only question this answers is "is the agent writing
+   * into the tree I have an editor open on", and an absolute path buries that under a home
+   * directory.
+   */
+  cwdLabel: string | null;
+  /** What `git branch --show-current` answers there. Null is a detached HEAD, or no repository. */
+  checkoutBranch: string | null;
+};
+
+/** Whose move it is, in the vocabulary `attentionFor` already fixed for the job and thread lists. */
+export type HeaderStatus = {
+  label: string;
+  court: EAttentionCourt;
+  spinner: boolean;
+};
 
 export type HeaderFacts = {
   jobTitle: string;
   repo: string;
   role: string;
-  /** Shown only past the first — rotation is invisible until it has happened. */
-  sessionOrdinal: number;
-  engine: string;
-  model: string;
-  /** The job's branch when it took a worktree. Null means it works in the project path. */
-  branch: string | null;
   /** Other threads of THIS job with a turn in flight. Never other tiles — that is not your business. */
   siblings: number;
   closed: boolean;
+  status: HeaderStatus;
+  git: HeaderGit;
 };
 
-export type HeaderForm = { left: string; right: string };
-
 /**
- * `⑂` says this job has a tree of its own; `⌂` says it is working in the project path, where your
- * editor is. One character each, because at sixty columns the difference has to cost almost nothing
- * to be worth saying at all.
+ * Turns run in the repository root — the tree the human has an editor open on. This is the one
+ * case worth flinching at, which is why it gets a glyph of its own rather than an absence.
  */
-export const WORKTREE_GLYPH = '⑂';
 export const IN_PLACE_GLYPH = '⌂';
+/**
+ * Turns run somewhere else.
+ *
+ * Deliberately NOT "Atlas gave this job a worktree". Atlas orchestrates agents; it does not run the
+ * repository. The directory may be a worktree Atlas minted, one the agent made with `git worktree
+ * add`, or somewhere nobody planned — a distinction this line cannot honestly draw and has no
+ * business drawing. All it claims is: not the tree your editor is on.
+ */
+export const ELSEWHERE_GLYPH = '⑂';
 
-function workspace(facts: HeaderFacts, withBranch: boolean): string {
-  if (!facts.branch) return IN_PLACE_GLYPH;
-  return withBranch ? `${WORKTREE_GLYPH} ${facts.branch}` : WORKTREE_GLYPH;
-}
+/** What git says, when git has not been asked yet or has no answer. */
+export const DETACHED = 'detached';
 
-function siblings(facts: HeaderFacts): string {
-  // A background thread of your own job finishing unnoticed is the failure this prevents. It is
-  // deliberately not a count of other TILES: six unrelated tickets, and that would be noise.
-  return facts.siblings > 0 ? `+${facts.siblings}` : '';
-}
+export type HeaderPlace = {
+  glyph: string;
+  /** Dropped when it repeats the branch — see `headerPlace`. */
+  path: string | null;
+  branch: string;
+};
 
-function role(facts: HeaderFacts): string {
-  return facts.sessionOrdinal > 1
-    ? `${facts.role} · session ${facts.sessionOrdinal}`
-    : facts.role;
-}
+/**
+ * Row 2's left: where this agent is standing, and what it will commit onto.
+ *
+ * The path is dropped when it says nothing the branch has not. An Atlas-minted worktree lives at
+ * `.worktrees/<slug>-<id8>` on branch `atlas/<slug>-<id8>`, so printing both prints it twice — and
+ * the pair is nearly a hundred columns. A worktree whose directory and branch actually differ keeps
+ * both, because then each is news.
+ */
+export function headerPlace(git: HeaderGit): HeaderPlace {
+  const branch = git.checkoutBranch ?? DETACHED;
+  if (git.cwdLabel === null) return { glyph: IN_PLACE_GLYPH, path: null, branch };
 
-function join(...parts: (string | null | undefined)[]): string {
-  return parts.filter((part) => part && part.length > 0).join('  ');
+  const leaf = git.cwdLabel.split('/').filter(Boolean).pop();
+  const tail = branch.split('/').pop();
+  const repeats = leaf !== undefined && leaf === tail;
+  return {
+    glyph: ELSEWHERE_GLYPH,
+    path: repeats ? null : git.cwdLabel,
+    branch,
+  };
 }
 
 /**
- * Longest-first. The order below IS the shed order, read top to bottom:
- * model → engine → session ordinal → repo → role → branch → worktree glyph → the title truncates.
+ * Row 1's right: what is happening, or that nothing can.
+ *
+ * `closed` outranks the court because a closed thread cannot be acted on at all — the composer will
+ * not send — and that is a different kind of fact from whose turn it is.
+ *
+ * `elapsed` arrives pre-formatted so this module stays free of the renderer's clock helpers.
  */
-export function headerForms(facts: HeaderFacts): HeaderForm[] {
-  const closed = facts.closed ? 'closed' : '';
-  const withRepo = `${facts.repo} › ${facts.jobTitle}`;
-  const full = workspace(facts, true);
-  const short = workspace(facts, false);
+export function headerStatusText(args: {
+  facts: Pick<HeaderFacts, 'closed' | 'status'>;
+  elapsed: string | null;
+}): string {
+  if (args.facts.closed) return 'closed';
+  const { label, spinner } = args.facts.status;
+  return spinner && args.elapsed !== null ? `${label} ${args.elapsed}` : label;
+}
 
+export enum EHeaderChip {
+  role = 'role',
+  siblings = 'siblings',
+}
+
+export type HeaderChip = { kind: EHeaderChip; text: string };
+
+/**
+ * Row 2's right, longest-first.
+ *
+ * The role never goes: it is what this agent will DO, and a thread whose role you cannot see is a
+ * thread you have to guess about. The sibling count sheds its word before it sheds its number,
+ * because a background thread of your own job finishing unnoticed is the failure this prevents and
+ * `+2` still prevents it.
+ */
+export function headerChipForms(facts: Pick<HeaderFacts, 'role' | 'siblings'>): HeaderChip[][] {
+  const role: HeaderChip = { kind: EHeaderChip.role, text: facts.role };
+  if (facts.siblings === 0) return [[role]];
   return [
-    { left: join(withRepo, full), right: join(closed, role(facts), siblings(facts), `${facts.engine} ${facts.model}`) },
-    { left: join(withRepo, full), right: join(closed, role(facts), siblings(facts), facts.engine) },
-    { left: join(withRepo, full), right: join(closed, role(facts), siblings(facts)) },
-    { left: join(withRepo, full), right: join(closed, facts.role, siblings(facts)) },
-    { left: join(facts.jobTitle, full), right: join(closed, facts.role, siblings(facts)) },
-    { left: join(facts.jobTitle, full), right: join(closed, siblings(facts)) },
-    { left: join(facts.jobTitle, short), right: join(closed, siblings(facts)) },
-    { left: facts.jobTitle, right: join(closed, siblings(facts)) },
-    { left: facts.jobTitle, right: closed },
+    [role, { kind: EHeaderChip.siblings, text: `+${facts.siblings} threads` }],
+    [role, { kind: EHeaderChip.siblings, text: `+${facts.siblings}` }],
+    [role],
   ];
 }
 
-/**
- * The widest form that fits, or the last one — which is the title alone and will be clipped by the
- * renderer rather than dropped. A header with no job title identifies nothing, so there is no form
- * below that one.
- */
-export function fitHeader(args: {
-  facts: HeaderFacts;
-  width: number;
-  /** The accent gutter and the space after it, which every form pays for. */
-  gutter: number;
-}): HeaderForm {
-  const forms = headerForms(args.facts);
-  const room = args.width - args.gutter;
-  const fitting = forms.find(
-    (form) => form.left.length + form.right.length + 2 <= room,
-  );
-  return fitting ?? forms[forms.length - 1] ?? { left: args.facts.jobTitle, right: '' };
+/** How wide a set of chips draws, joined by the renderer's ` · `. */
+export function chipsWidth(chips: HeaderChip[], separator = 3): number {
+  if (chips.length === 0) return 0;
+  const text = chips.reduce((sum, chip) => sum + chip.text.length, 0);
+  return text + separator * (chips.length - 1);
 }
 
-/**
- * There is deliberately NO per-project accent here.
- *
- * A hashed hue per repository was the first idea and it is the wrong one twice over. The theme
- * holds one accent on purpose, and the only exception it grants is the three court colours — which
- * carry whose move it is, the highest-value signal in the app. A second palette sitting beside them
- * would dilute exactly the thing it sat next to. And it is not needed: one tile is one job, so the
- * job title already identifies the tile, which is why it is the last thing this line will shed.
- */
+/** The widest set that fits, or the role alone — which is clipped by the renderer, never dropped. */
+export function fitHeaderChips(args: {
+  facts: Pick<HeaderFacts, 'role' | 'siblings'>;
+  room: number;
+}): HeaderChip[] {
+  const forms = headerChipForms(args.facts);
+  const fitting = forms.find((form) => chipsWidth(form) <= args.room);
+  return fitting ?? forms[forms.length - 1] ?? [];
+}

@@ -116,7 +116,7 @@ export class WorktreeService implements WorktreeActions {
    * The fourth door, and the only one that mints nothing. It needs no git call at all, which is the
    * whole argument for it: `enter()` opens by asking `existingWorkspace()` whether the job is already
    * in a live worktree and hands it straight back if so, `cwdFor` runs turns wherever the field
-   * points, and `ShipService` rebases and pushes whatever `Job.branch` says. Every one of those was
+   * points, and the `ci` brief tells the agent to push whatever `Job.branch` says. Every one of those was
    * already true of a branch called `dennis/eng-203-…`; nothing could ever WRITE one.
    *
    * The directory must be there now. Recording a workspace that does not exist would hand the job the

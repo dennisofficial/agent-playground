@@ -5,6 +5,7 @@ import type { OpenConversation } from "../../app/conversation.service.js";
 import { withSeams, type TranscriptItem } from "../../domain/seam.js";
 import { inFlightToolIds, toolResultsById } from "../../domain/transcript-index.js";
 import { groupTools, type GroupedItem } from "../../domain/tool-group.js";
+import { attentionFor, EAttentionScope } from "../../domain/attention.js";
 import { conversationHints } from "../../domain/conversation-hints.js";
 import { retryTarget } from "../../domain/retry.js";
 import { roleLabel } from "../../domain/role-engine.js";
@@ -12,7 +13,8 @@ import { EThreadStatus } from "../../generated/prisma/enums.js";
 import { CONVERSATION, EDITING, GLOBAL } from "../bindings.js";
 import { runSlashCommand } from "../commands.js";
 import { glyph, theme } from "../theme.js";
-import { Breadcrumb } from "../components/breadcrumb.js";
+import { ConversationHeader } from "../components/conversation-header.js";
+import { useGitView } from "../hooks/use-git-view.js";
 import { useJobSiblings } from "../hooks/use-job-siblings.js";
 import { useJobTitle } from "../hooks/use-job-title.js";
 import { useTasks } from "../hooks/use-tasks.js";
@@ -300,23 +302,48 @@ export function ConversationPage(props: {
     currentThreadId: props.open.thread.id,
   });
 
+  // Whose court the thread is in, derived with the same function the job and thread lists use — so
+  // the header, the job list and the thread list can never disagree about what a thread is doing.
+  const attention = useMemo(
+    () =>
+      attentionFor({
+        facts: {
+          turnRunning: state.running,
+          proposalPending: proposal.open,
+          openThreadCount: closed ? 0 : 1,
+          // The header sits above the transcript you are looking at, so "unseen" is never its news.
+          unseen: false,
+          hasPullRequest: false,
+        },
+        scope: EAttentionScope.thread,
+      }),
+    [state.running, proposal.open, closed],
+  );
+
+  // What git says about the directory this job's turns run in, rather than what `Job.branch` last
+  // recorded. See `use-git-view.ts` for why the difference matters.
+  const gitView = useGitView({
+    jobId: props.open.job.id,
+    revision: state.messages.length,
+  });
+
   return (
     <Screen
       header={
-        <Breadcrumb
+        <ConversationHeader
           width={width}
+          elapsedMs={state.startedAt === null ? null : now - state.startedAt}
+          frame={frame}
           facts={{
             jobTitle,
-            // The repository, not the working directory: a job in a worktree would otherwise be
-            // headed by its own slug, which says nothing you do not already know from the branch.
-            repo: basename(props.open.job.workspacePath ?? props.open.cwd),
+            // The REPOSITORY, from the project row — not `basename(cwd)`, which for a job in a
+            // worktree is the worktree's own slug and says nothing the branch beside it does not.
+            repo: gitView.repo ?? basename(props.open.cwd),
             role: roleLabel(props.open.thread.role),
-            sessionOrdinal: props.open.session.ordinal,
-            engine: props.open.session.engine,
-            model: props.open.session.model,
-            branch: props.open.job.branch,
             siblings,
             closed: props.open.closed,
+            status: attention,
+            git: gitView.git,
           }}
         />
       }
@@ -374,7 +401,11 @@ export function ConversationPage(props: {
             />
           ) : null}
 
+          {/* The model and the session ordinal live HERE, not in the header: the `ctx` meter two
+              columns along is this model's own window, and the ordinal is why it last reset. */}
           <HintLine
+            model={props.open.session.model}
+            sessionOrdinal={props.open.session.ordinal}
             hints={hints}
             noAccount={state.noAccount}
             contextReading={state.contextReading}

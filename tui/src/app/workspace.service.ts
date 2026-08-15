@@ -206,6 +206,8 @@ export class WorkspaceService {
     workspacePath: string | null;
     checkoutBranch: string | null;
     workspaceExists: boolean;
+    /** The repository. Callers rendering a path want it relative to this, not absolute. */
+    projectPath: string;
   } | null> {
     const job = await this.jobRepository.findWithProject(jobId);
     // Null rather than a throw: several terminals share one database, so a job can be deleted out
@@ -229,6 +231,7 @@ export class WorkspaceService {
       workspacePath: job.workspacePath,
       checkoutBranch: await this.gitService.currentBranch(at),
       workspaceExists,
+      projectPath: job.project.path,
     };
   }
 

@@ -27,6 +27,15 @@ export function HintLine(props: {
    * until it is resolved, and the meters have nothing to measure.
    */
   noAccount?: string | null | undefined;
+  /**
+   * Which model is running, and how many sessions this thread has been through.
+   *
+   * They sit beside `ctx` rather than in the header because that meter IS this model's window and
+   * the ordinal is WHY it last reset — the three are one instrument. On the header's right edge
+   * they were two orphans crowding out the status.
+   */
+  model?: string | undefined;
+  sessionOrdinal?: number | undefined;
 }): React.ReactNode {
   const left =
     props.noAccount ??
@@ -69,11 +78,20 @@ export function HintLine(props: {
   // Everything the line can shed, in the order it sheds it. The gauges go before any number does —
   // a number is the part you cannot reconstruct by looking. The hint goes first of all, because what
   // you can press is guessable and how close you are to a wall is not.
-  const available = props.width - chip.length;
+  // Sheds before any gauge does: which model is running is the one thing on this line you could
+  // also find out just by asking the agent. `claude-opus-5` is shortened because the engine is
+  // already in the model's name, and printing both says neither.
+  const engine = props.model
+    ? `${props.model.replace(/^claude-/, "")}${(props.sessionOrdinal ?? 1) > 1 ? ` s${props.sessionOrdinal}` : ""} `
+    : "";
+  const available = props.width - chip.length - engine.length;
   const showBar = spansWidth(stripSpans(meters, meterStyle, true)) <= available;
   const spans = stripSpans(meters, meterStyle, showBar);
+  const showEngine =
+    engine.length + chip.length + spansWidth(spans) <= props.width;
   const showHint =
-    left.length + 2 + chip.length + spansWidth(spans) <= props.width;
+    left.length + 2 + chip.length + (showEngine ? engine.length : 0) + spansWidth(spans) <=
+    props.width;
 
   return (
     <box flexDirection="row" justifyContent="space-between" width={props.width}>
@@ -86,6 +104,8 @@ export function HintLine(props: {
         {/* The account chip appears ONLY when more than one account exists — with a single login
             it is noise, and the meters already describe the only account there is. */}
         {chip ? <text fg={theme.dim}>{chip}</text> : null}
+        {/* `opus-5 s2`, in front of the meters it explains. */}
+        {engine && showEngine ? <text fg={theme.dim}>{engine}</text> : null}
         <text>
           <Spans spans={spans} />
         </text>

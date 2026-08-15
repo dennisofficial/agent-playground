@@ -11,6 +11,7 @@ import {
 } from '../../domain/human-verbs.js';
 import { DECLINED_NOTICE } from '../../domain/transition-review.js';
 import { EContextSignal } from '../../domain/context-nudge.js';
+import { EAttentionCourt } from '../../domain/attention.js';
 import {
   EDelegateStatus,
   EHarnessVariant,
@@ -27,7 +28,7 @@ import {
   ESessionEndReason,
   ETaskStatus,
 } from '../../generated/prisma/enums.js';
-import { Breadcrumb } from '../components/breadcrumb.js';
+import { ConversationHeader } from '../components/conversation-header.js';
 import { Checklist } from '../components/checklist.js';
 import { Composer } from '../components/composer.js';
 import { LineInput } from '../components/line-input.js';
@@ -351,18 +352,18 @@ describe('conversation page components mount', () => {
     await expect(
       mount(
         <>
-          <Breadcrumb
+          <ConversationHeader
             width={100}
+            elapsedMs={null}
+            frame="⠋"
             facts={{
               jobTitle: 'a job',
               repo: 'atlas',
               role: 'charting',
-              sessionOrdinal: 1,
-              engine: 'claude',
-              model: 'opus',
-              branch: null,
               siblings: 0,
               closed: false,
+              status: { label: 'reply', court: EAttentionCourt.yours, spinner: false },
+              git: { cwdLabel: null, checkoutBranch: 'main' },
             }}
           />
           <HintLine
