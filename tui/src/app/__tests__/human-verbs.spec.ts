@@ -130,10 +130,57 @@ describe('open a thread in the current phase', () => {
     // No `openedByThreadId`: a human-opened thread reports to no one, so when it closes it hands the
     // cursor on by the sibling rule rather than firing a report into an opener that does not exist.
     expect(thread.openedByThreadId).toBeNull();
+  });
+
+  /**
+   * The bug this closes: pressing `n` in a charting phase was answered by an agent that had read
+   * `map.md`, listed the frontier and proposed a ticket — all before Dennis had typed anything.
+   * The phase's opening words orient a thread nobody is there to brief, and here somebody is.
+   */
+  it('fires NOTHING — it opens blank, on whatever he types', async () => {
+    const w = world({ phase: EPhaseKind.charting, role: EThreadRole.charting });
+    await w.humanVerbs.openThread({
+      jobId: 'job-1',
+      role: EThreadRole.task,
+      cwd: '/repo',
+    });
+
+    expect(w.turns).toEqual([]);
+  });
+
+  // The contrast, and the reason this is a property of the VERB rather than of the role: a phase
+  // started by hand still opens on the phase's own words, because its first thread genuinely has
+  // nothing else to go on.
+  it('leaves start-a-phase seeding, which is the case an opening is for', async () => {
+    const w = world({ phase: EPhaseKind.charting, role: EThreadRole.charting });
+    await w.humanVerbs.startPhase({
+      jobId: 'job-1',
+      kind: EPhaseKind.planning,
+      cwd: '/repo',
+    });
+
     expect(w.turns.at(-1)?.harnessVariant).toBe(EHarnessVariant.seed);
   });
 
-  it('refuses a role the phase does not host', async () => {
+  /**
+   * `generic` in a phase whose table does not list it. The role exists so a question that is not
+   * this job's work has somewhere honest to go — before it, the menu forced `task` or `builder`
+   * onto it and the thread list then read as though the job had grown a piece of work.
+   */
+  it('opens the human’s side channel in a phase that hosts no generic role', async () => {
+    const w = world({ phase: EPhaseKind.direct_build, role: EThreadRole.builder });
+    const thread = await w.humanVerbs.openThread({
+      jobId: 'job-1',
+      role: EThreadRole.generic,
+      cwd: '/repo',
+    });
+
+    expect(thread.role).toBe(EThreadRole.generic);
+    expect(thread.phaseId).toBe('phase-1');
+    expect(w.turns).toEqual([]);
+  });
+
+  it('refuses a role neither the phase nor the side channel offers', async () => {
     const w = world({ phase: EPhaseKind.ci, role: EThreadRole.ship_pr });
     // Unreachable through the menu, which is built from the same list — this is the belt to its
     // braces, for a page holding a phase the job has since left.

@@ -66,8 +66,25 @@ export function useReadState(args: {
   const landed = useRef(false);
   const writtenFor = useRef<number | null>(null);
   const hasAnchor = anchor !== null;
+  /**
+   * The last thing the poll SAW, which is a different question from `pinned` — `null` means it has
+   * not looked yet. The leaving write below turns on it, and a boolean seeded `true` would claim a
+   * bottom nobody had measured on a page closed inside the first tick.
+   */
+  const atBottom = useRef<boolean | null>(null);
 
   useEffect(() => {
+    const write = (): void => {
+      const newest = messagesRef.current[messagesRef.current.length - 1];
+      if (!newest) return;
+      const at = newest.createdAt.getTime();
+      if (writtenFor.current === at) return;
+      writtenFor.current = at;
+      // Stamped now rather than at the message: `now` is when you were observed at the bottom, and
+      // a message that lands a millisecond later is genuinely unseen.
+      void attentionService.markSeen({ threadId: args.threadId, at: new Date() });
+    };
+
     const timer = setInterval(() => {
       const box = scroller.current;
       if (!box) return;
@@ -82,25 +99,28 @@ export function useReadState(args: {
         return;
       }
 
-      const atBottom = isPinnedToBottom({
+      const bottom = isPinnedToBottom({
         scrollTop: box.scrollTop,
         scrollHeight: box.scrollHeight,
         viewportHeight: box.viewport.height,
       });
-      setPinned(atBottom);
-      if (!atBottom) return;
-
-      const newest = messagesRef.current[messagesRef.current.length - 1];
-      if (!newest) return;
-      const at = newest.createdAt.getTime();
-      if (writtenFor.current === at) return;
-      writtenFor.current = at;
-      // Stamped now rather than at the message: `now` is when you were observed at the bottom, and
-      // a message that lands a millisecond later is genuinely unseen.
-      void attentionService.markSeen({ threadId: args.threadId, at: new Date() });
+      atBottom.current = bottom;
+      setPinned(bottom);
+      if (bottom) write();
     }, POLL_MS);
 
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      // Written on the way OUT as well, because the poll's last tick is up to 250 ms behind the
+      // last message and leaving is frequently what happens in between: a thread that advances
+      // itself puts its sign-off on screen and then hands the cursor on, and without this the
+      // record you just read would carry an unread dot for a paragraph you watched arrive.
+      //
+      // Off the last OBSERVED position rather than a fresh measurement — the scrollbox is being
+      // torn down and its geometry is no longer trustworthy — so scrolling up and leaving still
+      // leaves the thread unread, which is the honest answer.
+      if (atBottom.current === true) write();
+    };
   }, [attentionService, args.threadId, hasAnchor]);
 
   const handleJumpToBottom = useCallback(() => {

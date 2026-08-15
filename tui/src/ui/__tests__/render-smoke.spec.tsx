@@ -29,7 +29,7 @@ import {
 } from '../../generated/prisma/enums.js';
 import { Breadcrumb } from '../components/breadcrumb.js';
 import { Checklist } from '../components/checklist.js';
-import { Composer } from '../components/composer.js';
+import { Composer } from '../components/line-input.js';
 import { ConfirmBar } from '../components/confirm-bar.js';
 import { HintLine } from '../components/hint-line.js';
 import { PageHeader } from '../components/page-header.js';

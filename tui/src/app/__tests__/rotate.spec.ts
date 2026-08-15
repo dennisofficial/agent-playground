@@ -22,6 +22,7 @@ import type { SessionManagerService } from '../session-manager.service.js';
 import { ThreadSeamService } from '../thread-seam.service.js';
 import { fakeShipService } from './ship.fixture.js';
 import { fakeServiceRegistry } from './services.fixture.js';
+import { fakeWorktreeService } from './worktree.fixture.js';
 import { fakeTaskService } from './tasks.fixture.js';
 import { atlasToolsFor } from '../tools/registry.js';
 import { rotateTool } from '../tools/rotate.tool.js';
@@ -132,6 +133,7 @@ function build(tasks: readonly TaskView[] = []) {
     fakeTaskService(tasks),
     fakeShipService(),
     fakeServiceRegistry(),
+    fakeWorktreeService(),
   );
 
   const ctx: ToolContext = {
@@ -265,10 +267,10 @@ describe('the rotate tool', () => {
    * The task list rides the rotation hand-off — ticket 14's one non-cosmetic consequence of Atlas
    * owning tasks instead of `TodoWrite`.
    *
-   * ROTATION only, and the distinction is load-bearing: a rotation keeps the SAME thread, so the
-   * numbers the next leg inherits are still live and `task_update` still takes them. An
-   * `advance_thread` successor is a NEW thread with an empty list of its own, so seeding it with
-   * numbers it cannot update would be a lie — which is why this is not in the generic seed.
+   * The hand-off carries it because a rotation keeps the SAME thread: the numbers the next leg
+   * inherits are still live, gaps and all, and `task_update` still takes them. A SUCCESSOR gets the
+   * same plan by the other route — `carryForward` copies the unfinished rows onto its own thread and
+   * renumbers them — so neither seam ever hands an agent a number that resolves to nothing.
    */
   it('carries the rendered task list, so the next leg inherits numbers it has never seen', async () => {
     const harness = build([

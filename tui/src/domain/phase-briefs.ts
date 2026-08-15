@@ -31,10 +31,18 @@ function origin(ctx: PhaseBriefContext): string {
   return `You are phase ${ctx.ordinal} on this job, arriving from ${ctx.previous.replace(/_/g, " ")}${again}.`;
 }
 
-/** Named so the branch is copyable; a job without a worktree works in the project path. */
+/**
+ * Named so the branch is copyable; a job without a worktree works in the project path.
+ *
+ * The no-branch case NAMES THE VERB, and that is the load-bearing half. Working in the project path
+ * is a real state and not a deficiency — most jobs never leave it — but an agent that decides it
+ * should leave has to be told what to call, or it reaches for `git worktree add` in the shell, which
+ * creates the directory and tells Atlas nothing. Saying "you are in the project path" without saying
+ * how to leave is exactly the gap that produced that.
+ */
 function branchLine(ctx: PhaseBriefContext): string {
   return ctx.branch === undefined
-    ? `This job has no branch of its own — you are working in the project path.`
+    ? `This job has no branch of its own — you are working in the project path, which is the tree the human has his editor open on. Before you start writing anything that will leave commits behind, call \`enter_worktree\`: it gives this job a branch and a worktree of its own. Never \`git worktree add\` by hand — Atlas would not know where the job went.`
     : `This job's branch is \`${ctx.branch}\`.`;
 }
 

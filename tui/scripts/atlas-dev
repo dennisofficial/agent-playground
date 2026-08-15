@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+#
+# Run the TUI from source, from anywhere.
+#
+# `bun src/main.tsx` only works from `tui/`, and the failure when it does not is the worst kind:
+# **Bun resolves `tsconfig.json` from the process's cwd, not from the entry file.** Run the absolute
+# entry path from another repository and Bun reads THAT repository's tsconfig, which almost certainly
+# does not set `emitDecoratorMetadata` — so Nest's decorators compile, every injected dependency
+# arrives `undefined`, and the first one dereferenced throws:
+#
+#   TypeError: undefined is not an object (evaluating 'this.migratorService.migrate')
+#
+# That reads as a bug in Atlas and is not one. See the silent-failure section of
+# `docs/tui-decisions.md`.
+#
+# So this script pins the cwd to `tui/` (which is what makes the right tsconfig win) and passes the
+# directory you were standing in as an explicit argument (which is what makes the job list scope to
+# it). `launch-scope.ts` treats a named folder as a statement of intent, so this is not merely a
+# reconstruction of the cwd hint — it is slightly stronger, and deliberately so: you asked for here.
+#
+# Install:  ln -s "$PWD/scripts/atlas-dev" /usr/local/bin/atlas-dev
+# Use:      atlas-dev            # opens the repo you are standing in
+#           atlas-dev ~/some/repo
+#
+# For daily use prefer the compiled binary (`pnpm build` → `bin/atlas`), which bakes the transform in
+# at build time and has no cwd sensitivity at all. This script is for when you want your edits live.
+
+set -euo pipefail
+
+# The script's own location, following symlinks, so installing it on PATH does not break it.
+source="${BASH_SOURCE[0]}"
+while [ -L "$source" ]; do
+  dir="$(cd -P "$(dirname "$source")" && pwd)"
+  source="$(readlink "$source")"
+  [[ $source != /* ]] && source="$dir/$source"
+done
+tui="$(cd -P "$(dirname "$source")/.." && pwd)"
+
+# Resolved BEFORE the cd, because it is the whole point of the script.
+target="$(cd "${1:-$PWD}" && pwd)"
+
+cd "$tui"
+exec bun src/main.tsx "$target"

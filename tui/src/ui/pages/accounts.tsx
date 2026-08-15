@@ -10,7 +10,7 @@ import {
 } from "../components/account-list.js";
 import { AddRow } from "../components/list-parts.js";
 import { EAccountStatus, EEngine } from "../../generated/prisma/enums.js";
-import { Composer } from "../components/composer.js";
+import { Composer } from "../components/line-input.js";
 import { ConfirmBar } from "../components/confirm-bar.js";
 import { PageHeader } from "../components/page-header.js";
 import { Screen } from "../components/screen.js";

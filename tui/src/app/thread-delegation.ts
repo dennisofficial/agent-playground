@@ -1,4 +1,4 @@
-import { phaseLabel, rolesFor } from '../domain/phase-spec.js';
+import { agentRolesFor, phaseLabel } from '../domain/phase-spec.js';
 import { roleLabel } from '../domain/role-engine.js';
 import { EHandoffKind, type SeedHandoff } from '../domain/thread-handoff.js';
 import {
@@ -8,6 +8,7 @@ import {
   lastOpenThreadRefusal,
   resolutionReport,
 } from '../domain/thread-delegation.js';
+import type { TaskView } from '../domain/tasks.js';
 import { EThreadCondition, type EThreadRole } from '../generated/prisma/enums.js';
 import type { Job, Thread } from '../generated/prisma/client.js';
 import type { JobRepository } from '../store/job.repository.js';
@@ -51,7 +52,20 @@ export async function advanceToSuccessor(args: {
   role: EThreadRole;
   handoff: string;
   attach: readonly string[];
+  /** The `carry` argument: which of this thread's tasks the agent chose to hand on. */
+  carry: readonly number[];
   seed: SeedThread;
+  /**
+   * `TaskService.carryForward`. A callback for the reason `seed` is one — this file knows what a
+   * hand-off carries, not who owns the list — and optional because absent has to be a legal state:
+   * a caller with no task store still has to be able to advance a thread, and absent means the
+   * successor starts with an empty list rather than that the boundary fails.
+   */
+  carryTasks?: (moved: {
+    fromThreadId: string;
+    toThreadId: string;
+    declared: readonly number[];
+  }) => Promise<{ carried: readonly TaskView[]; ignored: readonly number[]; section: string }>;
 }): Promise<string> {
   const { ctx } = args;
   requireHostedRole({ phase: ctx.phase, role: args.role });
@@ -78,6 +92,19 @@ export async function advanceToSuccessor(args: {
     args.role,
   );
 
+  // The named part of the plan travels with the work. Copied BEFORE the seed and not described to
+  // it afterwards: the successor's first turn can call `task_update` the moment it reads the list,
+  // so the rows have to be in the store by the time that message is composed, not merely by the
+  // time it is answered.
+  const carried =
+    args.carryTasks && args.carry.length > 0
+      ? await args.carryTasks({
+          fromThreadId: ctx.thread.id,
+          toThreadId: successor.id,
+          declared: args.carry,
+        })
+      : { carried: [], ignored: [], section: '' };
+
   await args.seed({
     job: ctx.job,
     thread: successor,
@@ -89,14 +116,45 @@ export async function advanceToSuccessor(args: {
       // The manifest rides along so the successor's first message stores the files as rows and the
       // transcript can draw a chip per file. The wire form is composed back from these at send.
       parts: gathered.parts,
+      ...(carried.section ? { tasks: carried.section } : {}),
     },
   });
 
   return [
     `This thread is closed. A ${roleLabel(args.role)} thread is open with your hand-off and is now the job's active thread.`,
     describeAttachments(gathered),
+    describeCarriedTasks(carried),
     'Stop here — you have no further turn in this thread.',
-  ].join(' · ');
+  ]
+    .filter((part) => part.length > 0)
+    .join(' · ');
+}
+
+/**
+ * Said back to the OUTGOING agent. Silent where it carried nothing and named nothing — `carry: []`
+ * is a real answer and does not need acknowledging, and "0 tasks carried" would read as a failure
+ * rather than as a deliberate empty hand.
+ *
+ * A number that resolved to nothing is NAMED rather than refused. It is the same slip a missing
+ * attachment is, but the consequence is not: a checklist may never be what fails a turn, and here
+ * the turn in question is the thread boundary itself. So the agent is told, in the last words it
+ * reads, and the hand-off prose it already wrote is what actually carries the work.
+ */
+function describeCarriedTasks(resolved: {
+  carried: readonly TaskView[];
+  ignored: readonly number[];
+}): string {
+  const parts: string[] = [];
+  if (resolved.carried.length > 0) {
+    const noun = resolved.carried.length === 1 ? 'task' : 'tasks';
+    parts.push(`${resolved.carried.length} ${noun} went with it, renumbered from #1`);
+  }
+  if (resolved.ignored.length > 0) {
+    parts.push(
+      `ignored ${resolved.ignored.map((ordinal) => `#${ordinal}`).join(', ')} — no such unfinished task (a finished one is history: say what matters about it in your hand-off)`,
+    );
+  }
+  return parts.join('; ');
 }
 
 /**
@@ -233,14 +291,18 @@ export async function completeCallerThread(args: {
  * Belt to the schema's braces, as on `advance_thread`: the enum makes this unemittable, and a stale
  * tool list or a transport that rendered enums less faithfully would otherwise open a thread the
  * phase does not host.
+ *
+ * `agentRolesFor`, not `rolesFor`, so the human-only roles are refused here too. The two have to
+ * agree or the belt is looser than the braces — an agent that got `generic` past the enum would
+ * find nothing here to stop it.
  */
 function requireHostedRole(args: {
   phase: ToolContext['phase'];
   role: EThreadRole;
 }): void {
-  const roles = rolesFor(args.phase);
+  const roles = agentRolesFor(args.phase);
   if (roles.includes(args.role)) return;
   throw new Error(
-    `the ${phaseLabel(args.phase)} phase does not host a ${roleLabel(args.role)} thread — it hosts ${roles.map(roleLabel).join(', ')}`,
+    `the ${phaseLabel(args.phase)} phase does not host a ${roleLabel(args.role)} thread you may open — you may open ${roles.map(roleLabel).join(', ')}`,
   );
 }

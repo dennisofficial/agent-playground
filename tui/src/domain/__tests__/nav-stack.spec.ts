@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'bun:test';
-import { popFrame, popToName, pushFrames, replaceFrame, toggleFrame } from '../nav-stack.js';
+import {
+  popFrame,
+  popToName,
+  pushFrames,
+  replaceFrame,
+  resetTo,
+  toggleFrame,
+} from '../nav-stack.js';
 
 const sameName = (a: string, b: string): boolean => a === b;
 
@@ -8,14 +15,15 @@ describe('pushFrames', () => {
     expect(pushFrames(['jobs'], 'conversation')).toEqual(['jobs', 'conversation']);
   });
 
-  it('pushes several frames at once, landing on the last', () => {
-    // The whole mechanism behind "descending may skip levels, ascending never does": opening a job
-    // goes straight to the conversation, but threads is really underneath it, so `pop` unwinds the
-    // circle for free and no page needs a double-pop rule.
-    expect(pushFrames(['jobs'], 'threads', 'conversation')).toEqual([
+  it('can still push several frames at once, though nothing does any more', () => {
+    // Opening a job used to push `threads` AND `conversation` so that `←` revealed the job's page on
+    // the way out. It made one key mean "leave" everywhere and "manage this job" in one place; the
+    // job's page moved ABOVE the conversation and every arrival is one frame now. The variadic form
+    // survives because a caller with two frames to push should not have to sequence two setStates.
+    expect(pushFrames(['jobs'], 'conversation', 'threads')).toEqual([
       'jobs',
-      'threads',
       'conversation',
+      'threads',
     ]);
   });
 
@@ -26,7 +34,7 @@ describe('pushFrames', () => {
 
 describe('popFrame', () => {
   it('unwinds one frame at a time', () => {
-    expect(popFrame(['jobs', 'threads', 'conversation'])).toEqual(['jobs', 'threads']);
+    expect(popFrame(['jobs', 'conversation', 'threads'])).toEqual(['jobs', 'conversation']);
   });
 
   it('never empties the stack — an empty stack has no page to draw', () => {
@@ -34,16 +42,31 @@ describe('popFrame', () => {
   });
 });
 
-describe('the circle', () => {
-  it('walks jobs → conversation → threads → jobs', () => {
-    const opened = pushFrames(['jobs'], 'threads', 'conversation');
-    expect(opened.at(-1)).toBe('conversation');
+describe('the ladder', () => {
+  it('descends jobs → conversation → the job, and `←` walks back down it', () => {
+    // Every step is one frame and `←` is its exact inverse, at every level. That is the whole of the
+    // navigation design now: no page is entered by pushing two frames, so no page has to explain why
+    // going back from it lands somewhere you were never taken.
+    const conversation = pushFrames(['jobs'], 'conversation');
+    const job = pushFrames(conversation, 'threads');
 
-    const back = popFrame(opened);
-    expect(back.at(-1)).toBe('threads');
+    expect(popFrame(job)).toEqual(['jobs', 'conversation']);
+    expect(popFrame(popFrame(job))).toEqual(['jobs']);
+  });
 
-    const home = popFrame(back);
-    expect(home).toEqual(['jobs']);
+  it('leaves the job list at the bottom, where `←` has nothing left to do', () => {
+    // The scoped and unscoped lists are ONE frame whose scope is state, so the root is the root
+    // whichever one you are looking at — and a page with nothing behind it must not draw a `‹`.
+    expect(popFrame(['jobs'])).toEqual(['jobs']);
+  });
+});
+
+describe('resetTo', () => {
+  it('throws away everything and stands on one frame', () => {
+    // Choosing a project from the switcher. Pushing the scoped list instead put a page identical to
+    // the one you were looking at two frames underneath it — the same header, the same rows, a
+    // different `←` — which is exactly the confusion this removes.
+    expect(resetTo('jobs')).toEqual(['jobs']);
   });
 });
 
@@ -71,7 +94,9 @@ describe('popToName', () => {
   const nameOf = (frame: string): string => frame;
 
   it('unwinds from wherever you are to the named page', () => {
-    expect(popToName(['jobs', 'threads', 'conversation'], 'jobs', nameOf)).toEqual(['jobs']);
+    // The two arrival paths at the job's page: from a conversation, and straight from the list when
+    // the job is shipped. Switching threads rewinds through either without counting frames.
+    expect(popToName(['jobs', 'conversation', 'threads'], 'jobs', nameOf)).toEqual(['jobs']);
     expect(popToName(['jobs', 'threads'], 'jobs', nameOf)).toEqual(['jobs']);
   });
 
@@ -80,8 +105,9 @@ describe('popToName', () => {
   });
 
   it('stops at the topmost match rather than the deepest', () => {
-    // Two job lists are normal — the unscoped root with a scoped one pushed on top. Being taken
-    // over should drop you onto the scoped list you were using, not all the way to the root.
+    // Generic behaviour, asserted because the alternative is worse: unwinding to the DEEPEST match
+    // would walk past pages you were still using. Two job lists no longer happen — scope is state on
+    // one frame — but nothing here knows that, and it should not have to.
     expect(popToName(['jobs', 'jobs', 'threads'], 'jobs', nameOf)).toEqual(['jobs', 'jobs']);
   });
 

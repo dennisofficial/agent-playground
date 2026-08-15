@@ -25,12 +25,22 @@ function thread(args: { id: string; closed?: boolean }): Thread {
   } as unknown as Thread;
 }
 
-function world(args: { cursor: string; threads: Thread[] }) {
+function world(args: {
+  cursor: string;
+  threads: Thread[];
+  workspacePath?: string | null;
+  /** Threads whose lane is held — the turn runner's answer, which the follow rule now consults. */
+  busy?: readonly string[];
+}) {
   const loaded: string[] = [];
   const deps = {
     jobRepository: {
       async findById(): Promise<Job> {
-        return { ...JOB, activeThreadId: args.cursor };
+        return {
+          ...JOB,
+          activeThreadId: args.cursor,
+          workspacePath: args.workspacePath ?? null,
+        };
       },
     },
     threadRepository: {
@@ -56,7 +66,9 @@ function world(args: { cursor: string; threads: Thread[] }) {
         return { id: 'session-1', accountId: 'account-1', contextTokens: null, contextLimit: null };
       },
     },
-    turnRunnerService: { busy: () => false },
+    turnRunnerService: {
+      busy: (id: string) => (args.busy ?? []).includes(id),
+    },
     contextFolderService: { ensure: () => '/context' },
     accountUsageService: { kick: () => undefined },
     phaseBriefService: {
@@ -66,7 +78,12 @@ function world(args: { cursor: string; threads: Thread[] }) {
     },
     threadSeamService: { async toolsFor() { return []; } },
     stores: {
-      hydrate: () => ({ setContextReading: () => undefined }),
+      // `setNoAccount` is only reached when the refreshed thread is OPEN — the closed-thread case
+      // skips it, which is why a fake without it survived until a live thread had to be re-opened.
+      hydrate: () => ({
+        setContextReading: () => undefined,
+        setNoAccount: () => undefined,
+      }),
     },
   } as unknown as ConversationDeps;
 
@@ -142,6 +159,170 @@ describe('syncCursor', () => {
     expect(loaded).toEqual(['sessions']);
   });
 
+  /**
+   * `advance_thread` moves the cursor from inside a tool call and THEN lets the caller write its
+   * sign-off — the one sentence that says in plain words where the work went. Following the instant
+   * the successor's lane opens costs the human that sentence, and leaves the thread they were
+   * watching permanently unread, because `lastSeenAt` only writes through while they are on it.
+   */
+  describe('a thread that is still talking', () => {
+    it('holds the move until the turn on screen has ended', async () => {
+      const here = thread({ id: 'thread-1', closed: true });
+      const { deps } = world({
+        cursor: 'thread-2',
+        threads: [here, thread({ id: 'thread-2' })],
+        busy: ['thread-1'],
+      });
+
+      const sync = await syncCursor(deps, {
+        open: open({ thread: here, closed: false }),
+        lastCursorThreadId: 'thread-1',
+      });
+
+      expect(sync?.moved).toBeNull();
+      // The close is still reported — the composer must lock the moment the thread ends, whether or
+      // not the page is about to move.
+      expect(sync?.refreshed?.closed).toBe(true);
+      // And the memory does NOT advance, which is what keeps the move readable next time.
+      expect(sync?.cursorThreadId).toBe('thread-1');
+    });
+
+    it('follows on the next reading, once the lane is free', async () => {
+      const here = thread({ id: 'thread-1', closed: true });
+      const { deps } = world({
+        cursor: 'thread-2',
+        threads: [here, thread({ id: 'thread-2' })],
+      });
+
+      // Exactly what the held reading above handed back: the page is now holding a closed thread,
+      // and its memory of the cursor is still itself.
+      const sync = await syncCursor(deps, {
+        open: open({ thread: here, closed: true }),
+        lastCursorThreadId: 'thread-1',
+      });
+
+      expect(sync?.moved?.id).toBe('thread-2');
+      expect(sync?.cursorThreadId).toBe('thread-2');
+    });
+  });
+
+  /**
+   * The cursor is frequently NOT on the thread you are watching. Opening a thread by hand takes it
+   * and never gives it back, so a builder can run for an hour with the cursor parked on a sibling —
+   * and when it hands off, the move is one frontier to another, which the rule above follows
+   * nowhere. That left the human on a closed transcript while the work went on elsewhere.
+   */
+  describe('a thread that ends under you', () => {
+    it('follows its successor even though the cursor was never here', async () => {
+      const here = thread({ id: 'thread-1', closed: true });
+      const { deps } = world({
+        cursor: 'thread-3',
+        threads: [here, thread({ id: 'thread-3' })],
+      });
+
+      const sync = await syncCursor(deps, {
+        open: open({ thread: here, closed: false }),
+        // Parked on a sibling opened by hand — where it has been all along.
+        lastCursorThreadId: 'thread-2',
+      });
+
+      expect(sync?.moved?.id).toBe('thread-3');
+      expect(sync?.cursorThreadId).toBe('thread-3');
+    });
+
+    /**
+     * The sign-off matters just as much here, and the hold has to survive the refresh that reports
+     * the close — after which the thread has no longer *just* ended, and only the pinned memory says
+     * a move is owed.
+     */
+    it('holds for the sign-off, then follows on the next reading', async () => {
+      const here = thread({ id: 'thread-1', closed: true });
+      const held = await syncCursor(
+        world({
+          cursor: 'thread-3',
+          threads: [here, thread({ id: 'thread-3' })],
+          busy: ['thread-1'],
+        }).deps,
+        {
+          open: open({ thread: here, closed: false }),
+          lastCursorThreadId: 'thread-2',
+        },
+      );
+
+      expect(held?.moved).toBeNull();
+      expect(held?.refreshed?.closed).toBe(true);
+      // Pinned to US, not left on the sibling: it is what makes the next reading a move.
+      expect(held?.cursorThreadId).toBe('thread-1');
+
+      const sync = await syncCursor(
+        world({ cursor: 'thread-3', threads: [here, thread({ id: 'thread-3' })] }).deps,
+        {
+          // Exactly what the held reading handed back.
+          open: open({ thread: here, closed: true }),
+          lastCursorThreadId: held?.cursorThreadId ?? null,
+        },
+      );
+
+      expect(sync?.moved?.id).toBe('thread-3');
+    });
+
+    /**
+     * `complete_thread` can hand the cursor to the very sibling it was already on. Nothing about the
+     * cursor changed — the thread ending is the entire signal.
+     */
+    it('follows a cursor that did not move at all', async () => {
+      const here = thread({ id: 'thread-1', closed: true });
+      const { deps } = world({
+        cursor: 'thread-2',
+        threads: [here, thread({ id: 'thread-2' })],
+      });
+
+      const sync = await syncCursor(deps, {
+        open: open({ thread: here, closed: false }),
+        lastCursorThreadId: 'thread-2',
+      });
+
+      expect(sync?.moved?.id).toBe('thread-2');
+    });
+
+    /**
+     * The guard on all of the above: it is the TRANSITION that follows, not the state. A finished
+     * thread reached from the thread list is history somebody opened on purpose, and it reads
+     * identically on every reading — so it must never fire, once or ever.
+     */
+    it('leaves you in history you opened on purpose', async () => {
+      const here = thread({ id: 'thread-1', closed: true });
+      const { deps, loaded } = world({
+        cursor: 'thread-2',
+        threads: [here, thread({ id: 'thread-2' })],
+      });
+
+      const sync = await syncCursor(deps, {
+        // Loaded closed — this thread ended long before the page opened on it.
+        open: open({ thread: here, closed: true }),
+        lastCursorThreadId: 'thread-2',
+      });
+
+      expect(sync?.moved).toBeNull();
+      expect(sync?.refreshed).toBeNull();
+      expect(loaded).toEqual([]);
+    });
+
+    /** Nothing else is open, so the cursor stays here. There is nowhere to be sent. */
+    it('stays put when the cursor is still this thread', async () => {
+      const here = thread({ id: 'thread-1', closed: true });
+      const { deps } = world({ cursor: 'thread-1', threads: [here] });
+
+      const sync = await syncCursor(deps, {
+        open: open({ thread: here, closed: false }),
+        lastCursorThreadId: 'thread-2',
+      });
+
+      expect(sync?.moved).toBeNull();
+      expect(sync?.refreshed?.closed).toBe(true);
+    });
+  });
+
   it('does nothing at all when neither the cursor nor the thread moved', async () => {
     const here = thread({ id: 'thread-1' });
     const { deps, loaded } = world({ cursor: 'thread-1', threads: [here] });
@@ -153,5 +334,83 @@ describe('syncCursor', () => {
 
     expect(sync).toEqual({ cursorThreadId: 'thread-1', moved: null, refreshed: null });
     expect(loaded).toEqual([]);
+  });
+
+  /**
+   * The other snapshot that can go stale under an open conversation: WHERE ITS TURNS RUN.
+   *
+   * `enter_worktree` writes `Job.workspacePath` from inside a tool call, and the conversation is
+   * holding the directory it opened with. Without this the tool would create the worktree and every
+   * later turn would keep running in the project tree — which is the bug the tool was built to fix,
+   * moved one layer up and made harder to see.
+   */
+  describe('a worktree taken mid-turn', () => {
+    it('re-opens the conversation against the new directory', async () => {
+      const here = thread({ id: 'thread-1' });
+      const { deps, loaded } = world({
+        cursor: 'thread-1',
+        threads: [here],
+        workspacePath: '/repo/.worktrees/drain-a1b2c3d4',
+      });
+
+      const sync = await syncCursor(deps, {
+        // Opened before the tool call, so it still points at the project tree.
+        open: open({ thread: here, closed: false }),
+        lastCursorThreadId: 'thread-1',
+      });
+
+      expect(sync?.refreshed?.cwd).toBe('/repo/.worktrees/drain-a1b2c3d4');
+      // The tool context is rebuilt with it, which is what makes `ship_pr` reach the right tree.
+      expect(loaded).toEqual(['sessions']);
+    });
+
+    /**
+     * The refreshed conversation must carry the NEW job row. Holding the old one would leave
+     * `workspacePath` disagreeing with `cwd` for ever, and this comparison would re-open the
+     * conversation at every turn boundary from then on.
+     */
+    it('settles — the refreshed conversation does not refresh again', async () => {
+      const here = thread({ id: 'thread-1' });
+      const world1 = world({
+        cursor: 'thread-1',
+        threads: [here],
+        workspacePath: '/repo/.worktrees/drain-a1b2c3d4',
+      });
+      const first = await syncCursor(world1.deps, {
+        open: open({ thread: here, closed: false }),
+        lastCursorThreadId: 'thread-1',
+      });
+      if (!first?.refreshed) throw new Error('the first sync did not refresh');
+
+      const world2 = world({
+        cursor: 'thread-1',
+        threads: [here],
+        workspacePath: '/repo/.worktrees/drain-a1b2c3d4',
+      });
+      const second = await syncCursor(world2.deps, {
+        open: first.refreshed,
+        lastCursorThreadId: 'thread-1',
+      });
+
+      expect(second?.refreshed).toBeNull();
+      expect(world2.loaded).toEqual([]);
+    });
+
+    /**
+     * A job that never took a worktree records null, and null is not a relocation back to the
+     * project path — it is the ordinary state of most jobs, whose cwd is already the project path.
+     */
+    it('leaves a job with no worktree exactly where it is', async () => {
+      const here = thread({ id: 'thread-1' });
+      const { deps, loaded } = world({ cursor: 'thread-1', threads: [here], workspacePath: null });
+
+      const sync = await syncCursor(deps, {
+        open: open({ thread: here, closed: false }),
+        lastCursorThreadId: 'thread-1',
+      });
+
+      expect(sync?.refreshed).toBeNull();
+      expect(loaded).toEqual([]);
+    });
   });
 });

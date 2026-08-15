@@ -65,6 +65,10 @@ import { WorktreeService } from "./worktree.service.js";
     HumanVerbsService,
     ConversationService,
     TaskService,
+    // Exported for the jobs list, which reads `git worktree list` to group by worktree. The only
+    // place the UI touches git directly, and it is a read — every WRITE still goes through
+    // `WorktreeService`, because that is the rule that keeps `Job.workspacePath` true.
+    GitService,
     WorktreeService,
     WorkspaceService,
     JobStartService,

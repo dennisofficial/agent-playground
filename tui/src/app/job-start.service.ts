@@ -42,6 +42,8 @@ export class JobStartService {
     projectId: string;
     firstMessage: string;
     worktree?: boolean;
+    /** An existing worktree to stand the job in, from the jobs list. See `WorktreeService.adopt`. */
+    adopt?: { branch: string; workspacePath: string };
   }): Promise<StartedJob> {
     const firstMessage = args.firstMessage.trim();
     // The guard is the invariant, not a validation: a job with no first message is precisely the
@@ -59,6 +61,7 @@ export class JobStartService {
       title: derived,
       projectId: args.projectId,
       ...(args.worktree ? { worktree: true } : {}),
+      ...(args.adopt ? { adopt: args.adopt } : {}),
     });
 
     const row = await this.jobRepository.findWithProject(job.id);

@@ -46,6 +46,8 @@ export type ToolActions = {
     role: EThreadRole;
     handoff: string;
     attach: readonly string[];
+    /** Ordinals in the CALLER's numbering. Empty is a real answer — see the tool's `carry`. */
+    carry: readonly number[];
   }): Promise<string>;
   /**
    * Opens a thread and leaves the caller open. It resolves with an acknowledgement and never with an
@@ -113,6 +115,11 @@ export type ToolActions = {
    * applied to wiring rather than to phase.
    */
   services?: ServiceActions;
+  /**
+   * Taking a worktree, held the same way again. Also not structural — the job stays in its phase, on
+   * its thread, with its cursor where it was; only the directory underneath it changes.
+   */
+  worktree?: WorktreeActions;
 };
 
 /**
@@ -134,6 +141,22 @@ export type ServiceActions = {
   }): Promise<string>;
   stop(args: { jobId: string; id: string }): Promise<string>;
   list(args: { jobId: string }): Promise<string>;
+};
+
+/**
+ * One verb, and deliberately not two: **take a worktree**, never adopt one.
+ *
+ * `WorktreeService.adopt` exists and is the door onto a tree somebody else made — but choosing WHICH
+ * existing tree is a decision the jobs list already makes, with a human looking at the list of them.
+ * An agent picking for itself would be picking, with no way to tell, the tree Dennis has an editor
+ * open on: the precise state the worktree feature exists to prevent. So adoption stays a human move
+ * and this stays a mint.
+ *
+ * Idempotent, because `enter()` is: a thread that takes a worktree it already has is told about the
+ * one it has, which is what makes the tool safe for an agent that has lost track.
+ */
+export type WorktreeActions = {
+  take(args: { ctx: ToolContext }): Promise<string>;
 };
 
 /**

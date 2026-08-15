@@ -31,6 +31,7 @@ import { fireHarnessTurn, seedThread, type SeedDeps } from './thread-seed.js';
 import { toolsForThread } from './tools/context.js';
 import type { AtlasTool, ToolActions, ToolContext } from './tools/tool.js';
 import { TurnRunnerService } from './turn-runner.service.js';
+import { WorktreeService } from './worktree.service.js';
 
 /**
  * The seam: opening a thread's first turn, and moving work from one thread to the next.
@@ -73,6 +74,12 @@ export class ThreadSeamService implements ToolActions {
      * it is a job-keyed singleton carried to the registry rather than anything a tool closure holds.
      */
     readonly services: ServiceRegistryService,
+    /**
+     * `ToolActions.worktree`, held on the same terms. Taking a worktree moves nothing structural
+     * either — same phase, same thread, same cursor — it only changes the directory the job's later
+     * turns run in, and `WorktreeService` is already the one place allowed to write that.
+     */
+    readonly worktree: WorktreeService,
   ) {}
 
   /** What `thread-seed.ts` needs from the container. One place, because two call sites want it. */
@@ -170,12 +177,16 @@ export class ThreadSeamService implements ToolActions {
     role: EThreadRole;
     handoff: string;
     attach: readonly string[];
+    carry: readonly number[];
   }): Promise<string> {
     return advanceToSuccessor({
       threadRepository: this.threadRepository,
       sessionManagerService: this.sessionManagerService,
       contextFolderService: this.contextFolderService,
       seed: (seeded) => this.seed(seeded),
+      // The tasks the agent named follow the work across the thread boundary — copied onto the
+      // successor as its OWN rows, which is what makes those numbers updatable. See `carriedTasks`.
+      carryTasks: (moved) => this.tasks.carryForward(moved),
       ...args,
     });
   }
@@ -199,10 +210,10 @@ export class ThreadSeamService implements ToolActions {
       sessionManagerService: this.sessionManagerService,
       contextFolderService: this.contextFolderService,
       seed: (seeded) => this.seed(seeded),
-      // The task list rides the ROTATION hand-off, and only that one. A rotation keeps the SAME
-      // thread, so the numbers the next leg inherits are still live and `task_update` still takes
-      // them. An `advance_thread` successor is a NEW thread with an empty list of its own — seeding
-      // it with numbers it cannot update would be a lie, which is why this is not in `seed()`.
+      // The task list rides the rotation hand-off itself, because a rotation keeps the SAME thread
+      // and the numbers the next leg inherits are already live. A successor takes the same list by
+      // the other route — `carryForward` copies the rows onto it — so the two seams both carry the
+      // plan and neither one carries a number that does not resolve.
       tasks: () => this.tasks.section(args.ctx.thread.id),
       ...args,
     });

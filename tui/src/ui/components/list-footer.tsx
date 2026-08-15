@@ -2,7 +2,7 @@ import React from "react";
 import type { EditorState } from "../../domain/text-editor.js";
 import { fitHints } from "../../domain/hints.js";
 import { overlayWidth } from "../../domain/list-columns.js";
-import { Composer } from "./composer.js";
+import { Composer } from "./line-input.js";
 import { ListShortcuts } from "./shortcuts.js";
 import { theme } from "../theme.js";
 

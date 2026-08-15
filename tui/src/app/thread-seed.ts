@@ -56,6 +56,7 @@ export async function seedThread(
             fromRole: args.handoff.fromRole,
             attachments: parts ? "" : args.handoff.attachments,
             ...(args.handoff.kind ? { kind: args.handoff.kind } : {}),
+            ...(args.handoff.tasks ? { tasks: args.handoff.tasks } : {}),
           })
         : opening,
   });

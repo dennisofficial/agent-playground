@@ -44,6 +44,16 @@ export type SeedHandoff = {
    * made three existing call sites repeat the word.
    */
   kind?: EHandoffKind;
+  /**
+   * The successor's OWN task list, already written to its thread — `carriedTaskSection`, empty
+   * string where nothing was carried.
+   *
+   * A field of its own rather than something appended to `text`, because `text` is the outgoing
+   * agent's words and Atlas does not write into those. Only `advance_thread` sets it: a rotation
+   * folds its list into the hand-off itself (`renderRotationHandoff`), and a delegate is opened for
+   * a brief of its own rather than to continue somebody's plan.
+   */
+  tasks?: string;
 };
 
 /**
@@ -67,6 +77,8 @@ export function successorSeed(args: {
   /** Already rendered by `renderAttachments`; empty when nothing was attached and the floor is bare. */
   attachments: string;
   kind?: EHandoffKind;
+  /** The successor's inherited checklist, already its own rows. See `SeedHandoff.tasks`. */
+  tasks?: string;
 }): string {
   const sections = [
     args.opening.trim(),
@@ -75,6 +87,9 @@ export function successorSeed(args: {
       '',
       args.handoff.trim(),
     ].join('\n'),
+    // Between the prose and the material, which is where it belongs on both counts: the plan only
+    // makes sense once you know why you exist, and it is the thing the attachments are read FOR.
+    (args.tasks ?? '').trim(),
     args.attachments.trim(),
   ];
   return sections.filter((section) => section.length > 0).join('\n\n');

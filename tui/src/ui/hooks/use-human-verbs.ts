@@ -226,7 +226,11 @@ export function useHumanVerbs(args: {
       }));
     }
     if (verb === EHumanVerb.role) {
-      return roles.map((choice) => ({ id: choice.role, label: choice.label }));
+      return roles.map((choice) => ({
+        id: choice.role,
+        label: choice.label,
+        ...(choice.hint ? { hint: choice.hint } : {}),
+      }));
     }
     return [];
   }, [phases, roles, verb]);

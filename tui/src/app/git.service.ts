@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { WORKTREES_DIR, mainWorktreeFromCommonDir } from '../domain/worktree.js';
+import { parseWorktreeList, type GitWorktree } from '../domain/worktree-list.js';
 
 export type GitResult = { ok: boolean; stdout: string; stderr: string };
 
@@ -29,6 +30,22 @@ export class GitService {
 
   async isRepository(path: string): Promise<boolean> {
     return (await this.mainWorktree(path)) !== null;
+  }
+
+  /**
+   * Every worktree of the repository containing `path`, main one first, as git lists them.
+   *
+   * An empty array for a folder that is not a repository — and for a git that failed for any other
+   * reason too. The caller cannot tell those apart and does not need to: both mean "no worktrees to
+   * show", and the job list falls back to an ungrouped run of rows either way.
+   *
+   * Deliberately NOT pruned first, unlike `addWorktree`. A record whose directory is gone is exactly
+   * what the list wants to report; pruning would delete the evidence on the way to displaying it.
+   */
+  async worktrees(path: string): Promise<GitWorktree[]> {
+    const result = await this.run({ cwd: path, args: ['worktree', 'list', '--porcelain'] });
+    if (!result.ok) return [];
+    return parseWorktreeList(result.stdout);
   }
 
   /**

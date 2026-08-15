@@ -194,35 +194,88 @@ export async function syncCursor(
   if (!job) return null;
   const cursorThreadId = job.activeThreadId;
 
-  // It moved, and it moved off US: the cursor was on this thread the last time we looked and is on
+  // The thread on screen as it stands NOW. Read before either question below, because whether it is
+  // still open is half of both of them.
+  const current = await deps.threadRepository.findById(open.thread.id);
+  const closedNow = current ? current.status === EThreadStatus.closed : open.closed;
+
+  // The work is not here. Necessary for both reasons to follow, and on its own enough for neither.
+  const elsewhere = cursorThreadId !== null && cursorThreadId !== open.thread.id;
+
+  // Reason one: the cursor MOVED off us — it was on this thread the last time we looked and is on
   // another now. A cursor that was already elsewhere is somebody else's frontier — the human is
   // reading this thread on purpose, and following would take the page away from him.
-  if (
-    cursorThreadId &&
+  const cursorMovedOff =
+    elsewhere &&
     cursorThreadId !== args.lastCursorThreadId &&
-    cursorThreadId !== open.thread.id &&
-    args.lastCursorThreadId === open.thread.id
-  ) {
+    args.lastCursorThreadId === open.thread.id;
+
+  // Reason two: WE ENDED, and the job went on without us. Reason one cannot see this, because it
+  // infers "the work left" from the cursor having been here — and the cursor is frequently NOT here
+  // while you watch a thread work: opening a thread by hand takes it, an agent's verbs take it, and
+  // nothing ever hands it back to the thread you chose to sit on. `advance_thread` then closes this
+  // thread and points the cursor at its successor, which reads as one frontier moving to another and
+  // is followed nowhere. That is the whole bug: the transcript stays on a finished thread while the
+  // work carries on somewhere the human was never sent.
+  //
+  // It is the TRANSITION that follows, never the state — `!open.closed` is what keeps this from
+  // dragging him out of history he opened deliberately. A closed thread reached from the thread list
+  // loads closed, reads the same on every reading, and fires this never.
+  const endedUnderUs = elsewhere && closedNow && !open.closed;
+
+  const follow = cursorMovedOff || endedUnderUs;
+
+  // **Never mid-sentence.** Every one of these verbs moves the cursor from INSIDE a tool call, so
+  // the thread being left still owes its last paragraph — `advance_thread`'s sign-off, the one
+  // sentence that says in plain words where the work went. Following the instant the successor's
+  // lane opens takes the page away before that lands, which costs the human the explanation and
+  // leaves the thread they were watching permanently unread: `lastSeenAt` writes through only while
+  // they are AT the bottom of it, and by then they are somewhere else.
+  //
+  // So the move is held, not dropped. The memory is pinned to THIS thread, which keeps the
+  // two-reading mechanism intact — the turn ending is itself a signal, this runs again, and the move
+  // reads as new because our memory never advanced past it. Pinned to the thread rather than left at
+  // `lastCursorThreadId` because reason two's evidence does not survive the reading that saw it: the
+  // refresh below is about to make `open.closed` true, and the next reading has to recognise the
+  // held move as reason one instead.
+  const stillTalking = follow && deps.turnRunnerService.busy(open.thread.id);
+  const remembered = follow ? open.thread.id : cursorThreadId;
+
+  if (follow && !stillTalking && cursorThreadId) {
     const moved = await deps.threadRepository.findById(cursorThreadId);
     if (moved) return { cursorThreadId, moved, refreshed: null };
   }
 
-  // Same thread, changed row. `closed` is a SNAPSHOT taken when the conversation opened, and a
-  // self-advance closes the caller mid-turn — so without this the composer stays writable in a
-  // thread that has already ended. Re-opened rather than patched: closing also ends the session and
-  // takes the tools away, and re-reading is the one path that gets all three right.
-  const current = await deps.threadRepository.findById(open.thread.id);
-  const closed = current?.status === EThreadStatus.closed;
-  if (current && closed !== open.closed) {
-    const refreshed = await loadConversation(deps, {
-      job,
-      thread: current,
-      cwd: open.cwd,
-    });
-    return { cursorThreadId, moved: null, refreshed };
+  // Same thread, changed row. Two things about it can move under an open conversation, and both are
+  // SNAPSHOTS taken when it opened: whether the thread is closed, and where its turns run.
+  //
+  // `closed` — a self-advance closes the caller mid-turn, so without this the composer stays
+  // writable in a thread that has already ended.
+  //
+  // `cwd` — `enter_worktree` writes `Job.workspacePath` mid-turn, and the conversation is holding
+  // the directory it opened with. Without this the tool would create the worktree and every later
+  // turn would keep running in the project tree, which is the whole bug the tool exists to fix,
+  // relocated one layer up. It cannot be applied any sooner than this: a turn's directory is handed
+  // to a subprocess that is already running in it, so a turn boundary is the earliest honest moment.
+  //
+  // Re-opened rather than patched, for both: closing also ends the session and takes the tools away,
+  // moving carries a new `cwd` into the tool context, and re-reading is the one path that gets every
+  // one of those right instead of the two somebody remembered.
+  if (current) {
+    const closed = closedNow;
+    // Falling back to the CURRENT cwd when the job records no workspace, rather than to the project
+    // path — which is not knowable from here, since this function reads the job and not its project.
+    // That is not a gap: nothing clears `workspacePath` on a job somebody has open (`release()` runs
+    // on the way to deleting the job), so the null-to-null case is a job that never took a worktree
+    // and whose cwd is already the project path.
+    const cwd = job.workspacePath ?? open.cwd;
+    if (closed !== open.closed || cwd !== open.cwd) {
+      const refreshed = await loadConversation(deps, { job, thread: current, cwd });
+      return { cursorThreadId: remembered, moved: null, refreshed };
+    }
   }
 
-  return { cursorThreadId, moved: null, refreshed: null };
+  return { cursorThreadId: remembered, moved: null, refreshed: null };
 }
 
 /**

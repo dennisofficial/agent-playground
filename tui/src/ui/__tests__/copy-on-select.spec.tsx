@@ -13,7 +13,7 @@ void mock.module("../clipboard.js", () => ({
 }));
 
 // Imported after the mock is registered, so the module under test binds to it.
-const { Composer } = await import("../components/composer.js");
+const { Composer } = await import("../components/line-input.js");
 const { CopyNoticeProvider, useCopyOnSelect } =
   await import("../copy-on-select.js");
 const { EMPTY_EDITOR } = await import("../../domain/text-editor.js");

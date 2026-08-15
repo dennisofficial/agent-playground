@@ -4,6 +4,9 @@ import { claimService } from "./use-claim.js";
 import type { Navigation } from "../navigation.js";
 import { useServices } from "../services.js";
 
+/** An existing worktree, as the jobs list names one. See `WorktreeService.adopt`. */
+type Adopt = { branch: string; workspacePath: string };
+
 /**
  * Creating a job, in the two moves it now takes: open a blank page, and send a message into it.
  *
@@ -17,8 +20,12 @@ export function useNewJob(args: {
   focus: RefObject<{ project?: string; job?: string }>;
   onError: (message: string) => void;
 }): {
-  handleNew: (project: ProjectRow) => Promise<void>;
-  handleStart: (start: { project: ProjectRow; text: string }) => Promise<void>;
+  handleNew: (project: ProjectRow, adopt?: Adopt) => Promise<void>;
+  handleStart: (start: {
+    project: ProjectRow;
+    text: string;
+    adopt?: Adopt;
+  }) => Promise<void>;
 } {
   const { workspaceService, jobStartService } = useServices();
   const { nav, focus, onError } = args;
@@ -29,13 +36,13 @@ export function useNewJob(args: {
    * after you have typed a paragraph would unmount the page and take the paragraph with it.
    */
   const handleNew = useCallback(
-    async (project: ProjectRow) => {
+    async (project: ProjectRow, adopt?: Adopt) => {
       try {
         if (!(await workspaceService.hasAccount())) {
           nav.push({ name: "accounts" });
           return;
         }
-        nav.push({ name: "new-job", project });
+        nav.push({ name: "new-job", project, ...(adopt ? { adopt } : {}) });
       } catch (e) {
         onError((e as Error).message);
       }
@@ -48,29 +55,27 @@ export function useNewJob(args: {
    * message itself — in that order, so what the human typed IS the transcript's first line rather
    * than an answer to a brief it never saw.
    *
-   * Replace THEN push, the same shape as switching threads: the blank page leaves the stack
-   * entirely, so `←` out of the new conversation reaches the job's threads and then the list, and
-   * there is never a second conversation-shaped frame to escape past.
+   * REPLACES the blank page rather than stacking on it — the page you were never really on leaves the
+   * stack entirely, so `←` out of the new conversation reaches the list it was created from and there
+   * is never a second conversation-shaped frame to escape past. One frame, exactly as opening an
+   * existing job pushes one: a job created is a job opened, and the two must not land differently.
    */
   const handleStart = useCallback(
-    async (start: { project: ProjectRow; text: string }) => {
+    async (start: { project: ProjectRow; text: string; adopt?: Adopt }) => {
       try {
         const started = await jobStartService.start({
           projectId: start.project.id,
           firstMessage: start.text,
+          // Adoption happens INSIDE creation, between the row and the first turn, so the opening
+          // message already runs in the worktree. Entering afterwards would run turn one in the
+          // project path — the exact tree the worktree was chosen to stay out of.
+          ...(start.adopt ? { adopt: start.adopt } : {}),
         });
         focus.current.job = started.job.id;
         // Nothing to take — the job did not exist a moment ago — but the claim is acquired at the
         // sites that MEAN to hold a job rather than in a mount effect, and this is one of them.
         claimService.acquire(started.job.id);
         nav.replace({
-          name: "threads",
-          project: start.project,
-          job: started.job,
-          cwd: started.cwd,
-          currentThreadId: started.open.thread.id,
-        });
-        nav.push({
           name: "conversation",
           project: start.project,
           open: started.open,

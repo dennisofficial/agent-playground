@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { cursorAfterClose } from '../domain/thread-delegation.js';
-import { phaseLabel, rolesFor } from '../domain/phase-spec.js';
+import { humanRolesFor, phaseLabel } from '../domain/phase-spec.js';
 import { roleLabel } from '../domain/role-engine.js';
 import {
   EThreadCondition,
@@ -88,19 +88,34 @@ export class HumanVerbsService {
    * **Open a thread in the current phase.** No hand-off and no `openedByThreadId`: a thread Dennis
    * opened has nobody waiting on it, so it hands the cursor on by the sibling rule when it closes
    * rather than reporting back to an opener that does not exist.
+   *
+   * **And nothing is seeded — it opens BLANK, on whatever he types.** This used to fire the phase's
+   * opening words as a `seed` turn, which meant pressing `n` inside a charting phase was answered
+   * by an agent that had read `map.md`, listed the frontier and proposed a ticket, all before he
+   * had said a word. That is right for a thread that arrives with a hand-off and wrong for one a
+   * human opened: the opening exists to orient a thread nobody is there to brief, and here somebody
+   * is — he is about to type. `JobStartService` already settles this for a job's first thread ("the
+   * transcript opens on what the human actually typed"), and a thread opened by hand is the same
+   * act one level down.
+   *
+   * The phase's standing `instructions` still ride every turn, deliberately: the phase is still the
+   * phase. `generic` is the role for work that is not this job's work — see `HUMAN_ONLY_ROLES`.
+   *
+   * A consequence worth naming: no session is opened here either, because nothing runs. The thread
+   * mints its first session when the conversation opens on it, which is also what stops it growing
+   * a rotation seam between the seed and his first message.
    */
   async openThread(args: {
     jobId: string;
     role: EThreadRole;
     cwd: string;
   }): Promise<Thread> {
-    const job = await this.jobRepository.findById(args.jobId);
-    if (!job) throw new Error(`no job ${args.jobId}`);
-
     const phase = await this.jobRepository.currentPhase(args.jobId);
     // Belt to the menu's braces, exactly as the tool paths do it: the menu is built from
-    // `rolesFor`, so this can only fire against a page holding a phase the job has since left.
-    const roles = rolesFor(phase.kind);
+    // `humanRolesFor`, so this can only fire against a page holding a phase the job has since left.
+    // It is the HUMAN's list — wider than the agent's by the human-only roles, which is the one
+    // asymmetry between these two doors.
+    const roles = humanRolesFor(phase.kind);
     if (!roles.includes(args.role)) {
       throw new Error(
         `the ${phaseLabel(phase.kind)} phase does not host a ${roleLabel(args.role)} thread`,
@@ -108,12 +123,7 @@ export class HumanVerbsService {
     }
 
     // Joins the current phase and becomes `Job.activeThreadId` — the cursor follows the work.
-    const thread = await this.sessionManagerService.openThread(
-      args.jobId,
-      args.role,
-    );
-    await this.threadSeamService.seed({ job, thread, cwd: args.cwd });
-    return thread;
+    return this.sessionManagerService.openThread(args.jobId, args.role);
   }
 
   /**

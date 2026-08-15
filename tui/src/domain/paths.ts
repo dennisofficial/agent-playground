@@ -17,6 +17,12 @@ export const ATLAS_PATHS = {
   /** AES-256-GCM key for `Account.materialEnc`, mode 0600. */
   key: join(ATLAS_HOME, 'key'),
   versionCheck: join(ATLAS_HOME, 'version-check.json'),
+  /**
+   * Where a harness fault goes to be read later. A file rather than the Nest logger because that
+   * logger is `false` unless `ATLAS_DEBUG` is set — stdout corrupts the frame — so the default
+   * install has nowhere for a stack to land, and a fault nobody can see is one nobody can fix.
+   */
+  faults: join(ATLAS_HOME, 'faults.log'),
   /** CLAUDE_CONFIG_DIR points here. */
   claudeHome: join(ATLAS_HOME, 'claude-home'),
   /** CODEX_HOME points here. */

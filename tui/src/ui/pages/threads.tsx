@@ -158,7 +158,9 @@ export function ThreadsPage(props: {
     // and `n` are letters in a title rather than verbs, and a menu can never be open behind it.
     if (rename.handleKey(input, key)) return;
     if (verbs.handleKey(input, key)) return;
-    // `←` and `esc` are the same door on a list — see the jobs page.
+    // `←` and `esc` are the same door on a list — see the jobs page. It leads back DOWN to the
+    // conversation this page was opened from, or to the job list when the job was opened shipped and
+    // there is no conversation behind it. Both are "the frame below", so neither needs a case here.
     if (key.escape || key.leftArrow) return props.onBack();
     if (key.upArrow) return setSelected(clampIndex(cursor - 1, order.length));
     if (key.downArrow) return setSelected(clampIndex(cursor + 1, order.length));
@@ -184,7 +186,10 @@ export function ThreadsPage(props: {
 
   // The LIVE title: the job may have been named by the titler seconds ago, or renamed on this very
   // page, and the route's copy of the row predates both.
-  const trail = ["atlas", props.projectName, rename.title];
+  //
+  // No leading "atlas": every page is atlas, and the two segments that say where you are — which
+  // project, which job — are the two that get dropped first when the line runs out of room.
+  const trail = [props.projectName, rename.title];
 
   if (threads === null) {
     return (

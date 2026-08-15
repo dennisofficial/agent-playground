@@ -432,16 +432,26 @@ to inspect Atlas from outside, not to work inside a job.
 ## Page map
 
 ```
-  atlas ──▶ Projects ──▶ Jobs ──▶ Conversation ──┬──▶ Context      (ctrl+o)
-                                      ▲          ├──▶ Thread list  (ctrl+h)
-                                 active thread   ├──▶ Step detail  (⏎ on tool)
-                                                 └──▶ Transcript   (ctrl+r)
+  atlas ──▶ Jobs ──▶ Conversation ──┬──▶ Context      (ctrl+o)
+              ▲          ▲          ├──▶ The job      (→ · ctrl+h)
+              │     active thread  ├──▶ Step detail  (⏎ on tool)
+              │                    └──▶ Transcript   (ctrl+r)
+              │
+              └──▶ Projects  (p — a switcher, not a level; press again to come back)
 
   from ANY page ──┬──▶ Accounts  (ctrl+a — press again to come back)
                   └──▶ Help      (?)
 ```
 
-Fast path is three keystrokes: project, job, live thread.
+Fast path is two keystrokes: job, live thread. **Jobs is the root, not projects.** The list spans
+every project you have, and one project's list is the same page with the group headers collapsed
+away — so a project is a SCOPE on the root page rather than a level above it. Nothing is behind the
+job list; `←` on it widens to every job and then stops.
+
+Projects therefore is not somewhere you pass through. `p` opens it from the job list, choosing one
+puts you back on the job list scoped to it, and `p` again dismisses it — the same shape as `ctrl+a`.
+Pushing it as a level meant choosing a project stacked a second job list identical to the one you
+were already looking at, with a different `←` behind it: the page lied about where you were.
 
 ### Navigation is a stack
 
@@ -461,6 +471,21 @@ than bookkeeping:
 - **The cursor is remembered.** Coming back from a job lands on that job's row, not on row zero.
   It is a hint for the next mount, not part of where you are, so it never has to be unwound.
 
+**Every push is one frame, and `←` is its exact inverse.** The stack is at most three deep — the job
+list, the conversation you opened from it, the job's own page above that. An earlier version opened a
+job by pushing the job's page AND the conversation, so that `←` out of the conversation revealed the
+job underneath on the way past. It read well on paper and badly in the hand: `←` meant "leave" on
+every page in the app and "manage this job" on exactly one, and the two are opposite intentions. The
+job's page moved above the conversation, where `→` asks for it — see Page 6.
+
+Two invariants fall out of that, and both are worth keeping:
+
+- **One job-list frame, ever.** Scope is state on it, not depth. `←` scoped widens by swapping the
+  scope; the switcher rewinds to it. Two job lists in the stack is a bug, not a state.
+- **`‹` appears only where `←` goes somewhere.** A back affordance the key cannot honour is worse
+  than none, and the unscoped job list — the root, where `←` has nothing left to widen to — is the
+  one page that has to say so by drawing nothing.
+
 **On the Conversation page `←` leaves and `esc` does not.** They are deliberately different keys.
 `esc` means *stop what you are doing* there — it interrupts the turn — and an earlier draft of
 this section had it also fall through to "leave" on an idle empty composer. That is wrong for a
@@ -468,14 +493,15 @@ harness meant to run agents you walk away from: the key you reach for when you w
 of a working thread would be the one that kills it. So:
 
 - **`←` on an empty composer leaves, and never touches the turn.** The agent keeps working.
+- **`→` on an empty composer descends into the job** — its phases, threads, name and worktree.
 - **`esc` interrupts, clears the draft, and never navigates.**
-- `ctrl+h` still leaves directly, draft or no draft.
+- `ctrl+h` reaches the job's page directly, draft or no draft.
 
 `←` reads as "out" and `→` reads as "in" for the same reason a column browser trains them: on a
 list there is nothing else for either to mean, and on the conversation both are unreachable while
 you are mid-word, because the composer claims them whenever there is a caret to move. Having the
-pair is what makes the hierarchy navigable without a single chord — `→ → →` walks project, job,
-live thread, and `←` walks back out.
+pair is what makes the hierarchy navigable without a single chord — `→ →` walks job, live thread,
+a third `→` reaches the job's own page, and `←` walks back out through all of them.
 
 **Leaving a running thread is the point, not an edge case.** Turns run in parallel — one per thread,
 many threads at once — so `←` out of a working conversation, open another job, and start a second
@@ -493,16 +519,20 @@ Dim, unboxed, one line. Atlas needs location context that Claude Code doesn't, b
 not become a status bar. Session ordinal appears only past the first.
 
 ```
-  atlas › fix steering › builder · session 2              claude opus-5
+  ‹ fix steering › builder · session 2                    claude opus-5
 ```
 
 Codex-bound review thread — engine legible without being a control:
 
 ```
-  atlas › fix steering › master review                    codex gpt-5.4
+  ‹ fix steering › master review                          codex gpt-5.4
 ```
 
 At 80 cols the project segment drops, then the job title truncates.
+
+**No leading `atlas` segment.** Every page is atlas, so it identified nothing while costing the line
+its two widest-priority columns — and in a repository that happens to be called atlas it drew
+`atlas › atlas`. The trail names where you are inside the app, and the app is not one of the places.
 
 ### Composer
 
@@ -572,8 +602,12 @@ walled it replaces itself with the thing you actually want to know:
 
 ## Page 1 — Projects
 
+Opened with `p` from the job list and dismissed with `p`, `←` or `esc`. A **switcher plus
+housekeeping**, not a level: `⏎` scopes the job list to a project rather than descending into it, so
+this page is never behind you while you work.
+
 ```
-  atlas
+  ‹ projects
 
   ❯ atlas               ~/Developer/atlas          2 jobs    20:31
     pgbase              ~/Developer/pgbase         1 job     Tue
@@ -581,13 +615,13 @@ walled it replaces itself with the thing you actually want to know:
 
     + open a folder…
 
-  ↑↓ select · →/⏎ open · / filter · n add · x remove · ? keys · ctrl+c quit
+  ↑↓ select · →/⏎ switch to · / filter · n add · x remove · ←/esc back · ? keys
 ```
 
 **Empty state** — first run:
 
 ```
-  atlas
+  ‹ projects
 
   No projects yet.
   Atlas works inside a folder — usually a git repo.
@@ -608,7 +642,7 @@ one gesture rather than a mode change with a keystroke in the middle. The header
 survived; `esc` clears the filter, and clearing it is the only way to leave it:
 
 ```
-  atlas                                                                  2/7
+  ‹ projects                                                             2/7
 
   ❯ atlas               ~/Developer/atlas          2 jobs    20:31
     mls-studio          ~/Developer/mls-studio     —         Jul 28
@@ -628,6 +662,8 @@ confirm says so, because "remove" next to a path is otherwise a genuinely fright
 
 ## Page 2 — Jobs
 
+The root, in two scopes. Scoped to one project — what launching inside a repository gives you:
+
 ```
   ‹ atlas
 
@@ -636,10 +672,41 @@ confirm says so, because "remove" next to a path is otherwise a genuinely fright
 
     + new job
 
-  ↑↓ select · ⏎ open · / filter · n new · x delete · ? keys · esc back
+  ↑↓ select · ⏎ open · / filter · n new · x delete · ← all jobs · p projects
+```
+
+Unscoped — every job you have, grouped by project. `←` widens to this; there is nothing behind it,
+so it draws no `‹`, and `n new` is absent because a job needs somewhere to live and standing outside
+every repository there is no here:
+
+```
+  all jobs
+
+    atlas
+  ❯ ⏺ fix steering             build · builder     claude     20:31
+    pgbase
+    ⏺ health endpoint          shipped             claude     Tue
+
+  ↑↓ select · ⏎ open · / filter · a archive · s shelf · x delete · p projects
 ```
 
 `⏺` is accent for active, dim for shipped. Enter goes to `activeThreadId`, never a picker.
+
+**First run — no jobs in any project.** The one empty state that cannot offer `+ new job`, so it
+offers the honest first step instead. Without a row here the widest list in the app had no action on
+it at all: a blank page with a hint line of keys that each needed a row to act on, which reads as a
+failure rather than a beginning:
+
+```
+  all jobs
+
+  Nothing running anywhere.
+  A job is one unit of work in one project — pick where to start.
+
+  ❯ + pick a project…
+
+  ⏎ pick a project · p projects · ? keys
+```
 
 **A job with an agent working in it** replaces the dot with a spinner and says so, because threads
 run in parallel and `←` leaves one running on purpose. Without this, a job you walked away from is
@@ -1044,10 +1111,21 @@ rather than rendering something useless:
 
 ---
 
-## Page 6 — Thread list
+## Page 6 — Thread list, and the job itself
 
-`ctrl+h`. One row per thread — per *role*, now that legs are sessions. A timeline, because
-threads are sequential history and only the last is live.
+`→` on an empty composer, or `ctrl+h`. One row per thread — per *role*, now that legs are sessions. A
+timeline, because threads are sequential history and only the last is live.
+
+**The deepest page, above the conversation rather than beneath it**, and the only page reached two
+ways: by descending from a conversation, and directly from the job list when the job is shipped —
+its cursor thread closed, so there is no live conversation to land on and no reason to put a
+read-only transcript between you and the verbs that re-enter the job. `←` goes back to whichever
+you came from, with no case for either, because both are simply the frame below.
+
+It is also **where a job is managed rather than read**: `p` starts a phase, `n` opens a thread, `c`
+closes one, `r` renames the job, `w` moves it into a worktree. That is why it is somewhere you ask
+for and not somewhere you land — those are deliberate acts, and none of them is on the way out of a
+conversation.
 
 ```
   ‹ fix steering                                                threads

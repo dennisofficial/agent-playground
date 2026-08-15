@@ -3,7 +3,9 @@ import { EPhaseKind, EThreadRole } from '../../generated/prisma/enums.js';
 import type { PhaseBriefContext } from '../phase-brief.js';
 import {
   PHASE_SPECS,
+  agentRolesFor,
   briefFor,
+  humanRolesFor,
   nextPhasesFor,
   rolesFor,
   type ContextFileRef,
@@ -116,6 +118,55 @@ describe('roles', () => {
       expect(rolesFor(kind).length).toBeGreaterThan(0);
       for (const role of rolesFor(kind)) expect(roles.has(role)).toBe(true);
     }
+  });
+});
+
+/**
+ * Who may open which role. One list per phase, read through two lenses — the asymmetry is the whole
+ * feature, so both directions of it are asserted rather than the difference being left implied.
+ */
+describe('generic is the human’s side channel', () => {
+  it('never offers the agent a generic thread, in any phase', () => {
+    for (const kind of Object.values(EPhaseKind)) {
+      expect(agentRolesFor(kind)).not.toContain(EThreadRole.generic);
+    }
+  });
+
+  it('offers the human one in every phase, including phases that do not host it', () => {
+    for (const kind of Object.values(EPhaseKind)) {
+      expect(humanRolesFor(kind)).toContain(EThreadRole.generic);
+    }
+    // The case that motivated it: a `build` phase hosts one role, and "install the linear CLI" is
+    // not a builder thread. Appended, so the phase still leads with the role it is actually for.
+    expect(humanRolesFor(EPhaseKind.build)).toEqual([
+      EThreadRole.builder,
+      EThreadRole.generic,
+    ]);
+  });
+
+  it('adds nothing in the generic phase, which already leads with it', () => {
+    expect(humanRolesFor(EPhaseKind.generic)).toEqual([
+      ...rolesFor(EPhaseKind.generic),
+    ]);
+  });
+
+  // The two lenses differ by exactly the human-only set and by nothing else: a role dropped from
+  // one list and not the other would be a second role table, which is what this table exists to
+  // avoid.
+  it('differs from the agent’s list by generic alone', () => {
+    for (const kind of Object.values(EPhaseKind)) {
+      const human = humanRolesFor(kind).filter(
+        (role) => role !== EThreadRole.generic,
+      );
+      expect([...agentRolesFor(kind)]).toEqual(human);
+    }
+  });
+
+  // `firstRoleFor` reads the hosted list, so a generic phase entered by a confirmed transition
+  // still opens with a `generic` thread. Filtering the role out of the table itself — the obvious
+  // alternative — would have opened that phase with a `research` thread instead.
+  it('still opens the generic phase with a generic thread', () => {
+    expect(rolesFor(EPhaseKind.generic)[0]).toBe(EThreadRole.generic);
   });
 });
 

@@ -4,6 +4,7 @@ import { AccountsService } from "../app/accounts.service.js";
 import { AttentionService } from "../app/attention.service.js";
 import { ConversationService } from "../app/conversation.service.js";
 import { ConversationStoreRegistry } from "../app/conversation-store.registry.js";
+import { GitService } from "../app/git.service.js";
 import { HumanVerbsService } from "../app/human-verbs.service.js";
 import { JobStartService } from "../app/job-start.service.js";
 import { JobTitleService } from "../app/job-title.service.js";
@@ -14,6 +15,7 @@ import { ThreadSeamService } from "../app/thread-seam.service.js";
 import { TransitionReviewService } from "../app/transition-review.service.js";
 import { TurnRunnerService } from "../app/turn-runner.service.js";
 import { WorkspaceService } from "../app/workspace.service.js";
+import { WorktreeService } from "../app/worktree.service.js";
 
 export type Services = {
   workspaceService: WorkspaceService;
@@ -34,6 +36,10 @@ export type Services = {
   transitionReviewService: TransitionReviewService;
   /** The moves Dennis makes himself — start a phase, open a thread, close one. */
   humanVerbsService: HumanVerbsService;
+  /** Read-only, for the jobs list's worktree grouping. Writes go through `WorktreeService`. */
+  gitService: GitService;
+  /** The jobs list's one write: removing a worktree no job is standing in. */
+  worktreeService: WorktreeService;
 };
 
 export function resolveServices(context: INestApplicationContext): Services {
@@ -52,6 +58,8 @@ export function resolveServices(context: INestApplicationContext): Services {
     threadSeamService: context.get(ThreadSeamService),
     transitionReviewService: context.get(TransitionReviewService),
     humanVerbsService: context.get(HumanVerbsService),
+    gitService: context.get(GitService),
+    worktreeService: context.get(WorktreeService),
   };
 }
 

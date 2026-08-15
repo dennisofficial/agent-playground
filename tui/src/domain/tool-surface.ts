@@ -56,6 +56,11 @@ export enum EAtlasTool {
   service_start = 'service_start',
   service_stop = 'service_stop',
   service_list = 'service_list',
+  /**
+   * Take a branch and a worktree of this job's own. The only tool that changes where later turns
+   * RUN, which is why its reply is mostly about the fact that it does not change where this one is.
+   */
+  enter_worktree = 'enter_worktree',
 }
 
 /**

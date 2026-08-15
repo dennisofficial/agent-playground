@@ -2,6 +2,8 @@ import { describe, expect, it } from 'bun:test';
 import { ETaskStatus } from '../../generated/prisma/enums.js';
 import {
   NO_TASKS,
+  carriedTaskSection,
+  carriedTasks,
   checklistView,
   clipTaskText,
   ESpineMark,
@@ -67,6 +69,85 @@ describe('taskListSection', () => {
   it('is empty when there is nothing to carry', () => {
     expect(taskListSection([])).toBe('');
     expect(taskListSection([task({ ordinal: 1, status: ETaskStatus.deleted })])).toBe('');
+  });
+});
+
+/**
+ * The other seam. A rotation stays on one thread and inherits the numbers as they stand; a
+ * SUCCESSOR is a new thread, so the rows it is given are copied and renumbered rather than
+ * described — which is the whole reason a plan can cross an `advance_thread` at all.
+ *
+ * DECLARED, not inferred, for `attach`'s reason: Atlas cannot tell a task that is genuinely next
+ * from one the thread learned was unnecessary and never retired, and the outgoing agent has just
+ * written the paragraph that settles which is which.
+ */
+describe('carriedTasks', () => {
+  it('carries what was named, renumbered from one', () => {
+    expect(carriedTasks({ tasks: PLAN, declared: [2, 3] })).toEqual({
+      carried: [
+        { ordinal: 1, text: 'Render the checklist', status: ETaskStatus.in_progress },
+        { ordinal: 2, text: 'Test the exclusion', status: ETaskStatus.pending },
+      ],
+      ignored: [],
+    });
+  });
+
+  // `[]` is a real answer, not a forgotten field — the successor's work is sometimes genuinely not
+  // the remainder of yours.
+  it('carries nothing when nothing was named', () => {
+    expect(carriedTasks({ tasks: PLAN, declared: [] })).toEqual({ carried: [], ignored: [] });
+  });
+
+  // The one thing Atlas still decides, and it decides it the same way every time: the successor's
+  // panel exists to say where the work IS, and a planner's finished list shown to a builder is work
+  // it never did. Named rather than refused — a checklist may never be what fails a turn.
+  it('refuses to carry finished or retired work, and says which numbers it dropped', () => {
+    expect(
+      carriedTasks({
+        tasks: [
+          task({ ordinal: 1, status: ETaskStatus.completed }),
+          task({ ordinal: 2, status: ETaskStatus.deleted }),
+        ],
+        declared: [1, 2, 9],
+      }),
+    ).toEqual({ carried: [], ignored: [1, 2, 9] });
+  });
+
+  // Renumbering from one is what makes `task_update` work in the successor: `[threadId, ordinal]`
+  // is the key, so a gapped number inherited from another thread would resolve to nothing.
+  it('closes the gaps a retired task left, because the numbers are now the successor’s own', () => {
+    const resolved = carriedTasks({
+      tasks: [task({ ordinal: 7 }), task({ ordinal: 9 })],
+      declared: [7, 9],
+    });
+    expect(resolved.carried.map((t) => t.ordinal)).toEqual([1, 2]);
+  });
+
+  // There is no way to read `[4, 3]` as anything but a re-sequence, and honouring it costs nothing.
+  it('takes the named order, so a hand-off can re-sequence what remains', () => {
+    const resolved = carriedTasks({ tasks: PLAN, declared: [3, 2] });
+    expect(resolved.carried.map((t) => t.text)).toEqual([
+      'Test the exclusion',
+      'Render the checklist',
+    ]);
+  });
+
+  // A slip, not an intent: two rows with the same text would be a plan the successor has to
+  // reconcile before it can start.
+  it('deduplicates a number named twice', () => {
+    expect(carriedTasks({ tasks: PLAN, declared: [3, 3] }).carried.length).toBe(1);
+  });
+
+  it('says plainly that the list is the reader’s to update, and that it is not everything', () => {
+    const section = carriedTaskSection(carriedTasks({ tasks: PLAN, declared: [2] }).carried);
+    expect(section).toContain('# Your task list');
+    expect(section).toContain('now YOURS');
+    expect(section).toContain('what it decided you should not do, are not here');
+    expect(section).toContain('#1 [in_progress] Render the checklist');
+  });
+
+  it('is empty when nothing crossed the boundary', () => {
+    expect(carriedTaskSection([])).toBe('');
   });
 });
 

@@ -92,6 +92,15 @@ export function useConversationKeys(args: {
       return;
     }
 
+    // `→` on an empty composer is the mirror: DOWN into the job itself — its phases, its threads, its
+    // name, its worktree. The job's page used to be the frame beneath this one, revealed by `←`, so
+    // walking away from a conversation and managing the job it belongs to were the same keypress.
+    // They are opposite intentions, and they now travel in opposite directions.
+    if (key.rightArrow && composer.value.length === 0) {
+      args.onThreads();
+      return;
+    }
+
     // --- interrupt, or discard the draft ----------------------------------------------------------
     if (key.escape) {
       // Esc with an empty composer interrupts bare. Esc with text is a STEER-NOW: interrupt, then

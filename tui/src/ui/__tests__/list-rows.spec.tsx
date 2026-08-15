@@ -10,7 +10,8 @@ import { jobsLayout } from '../../domain/jobs-list.js';
 import { projectsLayout } from '../../domain/projects-list.js';
 import { threadList, threadsLayout, type ThreadListSource } from '../../domain/threads-list.js';
 import { EEngine, EPhaseKind, EThreadRole, EThreadStatus } from '../../generated/prisma/enums.js';
-import { JobListRow } from '../components/job-list.js';
+import { EWorkspaceKind, type WorktreeGroup } from '../../domain/worktree.js';
+import { JobListRow, WorktreeGroupHeader } from '../components/job-list.js';
 import { ProjectListRow } from '../components/project-list.js';
 import { PhaseGroup } from '../components/thread-list.js';
 
@@ -281,5 +282,76 @@ describe('job and project rows mount', () => {
         </>,
       ),
     ).resolves.toBeUndefined();
+  });
+});
+
+/**
+ * The worktree header, drawn. It is spans inside a `<text>` like every row above it, and its whole
+ * job is to SAY something — a header that mounted cleanly while naming no branch would be indis-
+ * tinguishable from a working one, so the frame is read back rather than the mount asserted.
+ */
+describe('a worktree header names the tree its jobs stand in', () => {
+  async function frameOf(group: WorktreeGroup): Promise<string> {
+    const setup = await testRender(
+      <box flexDirection="column" width={100} height={3}>
+        <WorktreeGroupHeader group={group} />
+      </box>,
+      { width: 100, height: 3 },
+    );
+    try {
+      await setup.flush();
+      return setup.captureCharFrame();
+    } finally {
+      setup.renderer.destroy();
+    }
+  }
+
+  const HERE: WorktreeGroup = {
+    kind: EWorkspaceKind.inPlace,
+    glyph: '⌂',
+    label: 'main · here',
+    path: '/repo',
+    branch: 'main',
+    here: true,
+    jobCount: 2,
+  };
+
+  it('names the main worktree as where you are standing', async () => {
+    const frame = await frameOf(HERE);
+    expect(frame).toContain('main · here');
+    expect(frame).not.toContain('no jobs');
+  });
+
+  // A project whose every job took a worktree is working exactly as designed. `no jobs` under the
+  // heading that names where you are standing would read as a problem instead of a fact.
+  it('stays silent about an empty MAIN worktree, whose emptiness is not a leak', async () => {
+    expect(await frameOf({ ...HERE, jobCount: 0 })).not.toContain('no jobs');
+  });
+
+  it('says `no jobs` for a linked worktree nothing is working in — the whole reason it is listed', async () => {
+    expect(
+      await frameOf({
+        ...HERE,
+        kind: EWorkspaceKind.worktree,
+        glyph: '⑂',
+        label: 'atlas/drain-abcdef12',
+        branch: 'atlas/drain-abcdef12',
+        here: false,
+        jobCount: 0,
+      }),
+    ).toContain('no jobs');
+  });
+
+  it('names a missing worktree by the path it is missing from', async () => {
+    expect(
+      await frameOf({
+        ...HERE,
+        kind: EWorkspaceKind.missing,
+        glyph: '⚠',
+        label: 'worktree missing: /repo/.worktrees/gone',
+        branch: null,
+        here: false,
+      }),
+    ).toContain('/repo/.worktrees/gone');
   });
 });

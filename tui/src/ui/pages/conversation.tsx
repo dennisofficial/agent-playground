@@ -17,7 +17,7 @@ import { useJobTitle } from "../hooks/use-job-title.js";
 import { useTasks } from "../hooks/use-tasks.js";
 import { Checklist } from "../components/checklist.js";
 import { BackgroundAgents } from "../components/background-agents.js";
-import { Composer, composerRows } from "../components/composer.js";
+import { Composer, composerRows } from "../components/line-input.js";
 import { HintLine } from "../components/hint-line.js";
 import { JumpToBottom } from "../components/new-divider.js";
 import { OverlayList, type OverlayItem } from "../components/overlay-list.js";

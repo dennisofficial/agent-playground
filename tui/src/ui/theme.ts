@@ -162,8 +162,17 @@ export const glyph = {
   seen: "·",
   warning: "⚠",
   failed: "✗",
+  /**
+   * A picture that went with a message. The terminal cannot draw it; this says it exists.
+   *
+   * Geometric rather than the obvious emoji: every emoji in a terminal is double-width, and a cell
+   * count that is right on one terminal and wrong on the next drags the whole row out of alignment.
+   */
+  image: "▣",
   /** The one clickable thing in the transcript: a block's copy button. */
   copy: "⧉",
+  /** Send the failed turn's prompt again — the error block's button. */
+  retry: "↻",
   /** The live tail's cursor — sits at the end of the text it is writing, never on its own line. */
   caret: "▌",
 } as const;

@@ -9,6 +9,7 @@ import {
 import { affords, elasticColumn } from './list-columns.js';
 import { hasUnseen } from './read-state.js';
 import { roleLabel } from './role-engine.js';
+import { isAtlasBranch } from './worktree.js';
 
 /** `  ▸ ` + `● `, and the timestamp at the end — the two columns that are never negotiable. */
 export const GUTTER = 6;
@@ -114,13 +115,42 @@ export function proposalsByJob(
   return grouped;
 }
 
-/** There is no archive state and no undo, so the confirm quotes the transcript it is about to burn. */
-export function deletionCost(job: { messageCount: number }): string {
+/**
+ * There is no archive state and no undo, so the confirm quotes the transcript it is about to burn.
+ *
+ * It also names what happens to the WORKTREE, because that is the half of the cost the job's own row
+ * never mentions and the half that can reach work Atlas did not create. The three outcomes are
+ * genuinely different and the sentence has to say which one you are buying — a confirm that reads the
+ * same whether or not your hand-made tree survives is a confirm that lies once.
+ */
+export function deletionCost(job: {
+  messageCount: number;
+  branch: string | null;
+  workspacePath: string | null;
+}): string {
   const messages =
     job.messageCount === 0
       ? 'nothing said yet'
       : `${job.messageCount} message${job.messageCount === 1 ? '' : 's'}`;
-  return `${messages} · every thread, session and the job’s /context folder go with it`;
+  const base = `${messages} · every thread, session and the job’s /context folder go with it`;
+  if (job.workspacePath === null) return base;
+  if (!isAtlasBranch(job.branch)) {
+    // Adopted. `release()` clears the field and leaves the directory, so the promise is keepable.
+    return `${base} · ${job.branch ?? 'the branch'} is not Atlas’s, so its worktree stays`;
+  }
+  // The branch outliving its directory is not a detail: it may already carry a pull request.
+  return `${base} · the worktree goes, ${job.branch ?? 'its branch'} survives`;
+}
+
+/**
+ * What `x` costs on a worktree nothing is working in.
+ *
+ * Deliberately quiet about the branch surviving being a *consolation* — for an `atlas/` worktree the
+ * branch is very possibly the only copy of a deleted job's work, which is exactly why
+ * `removeWorktree` never touches it.
+ */
+export function releaseCost(group: { label: string; path: string }): string {
+  return `the directory goes, ${group.label} survives · ${group.path}`;
 }
 
 /**

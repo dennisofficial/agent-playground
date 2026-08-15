@@ -33,7 +33,12 @@ export function MessageView(props: {
   const payload = props.message.payload;
   switch (payload.type) {
     case EMessageType.user:
-      return <UserBlock text={payload.text} />;
+      return (
+        <UserBlock
+          text={payload.text}
+          {...(props.width === undefined ? {} : { width: props.width })}
+        />
+      );
     case EMessageType.assistant:
       return (
         <AssistantBlock

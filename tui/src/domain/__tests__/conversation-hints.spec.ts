@@ -44,7 +44,10 @@ describe('conversationHints', () => {
   it('never advertises send in a closed thread, whatever is in the draft', () => {
     const closed = conversationHints(state({ threadClosed: true, draftLength: 20 }));
     expect(closed).not.toContain('send');
-    expect(closed).toBe('← back · ctrl+h threads');
+    // Both keys into the job's page, because a closed thread is the one conversation you reach it
+    // from without having gone through it: opening a shipped job lands on the job's page, but
+    // switching to a closed thread from there drops you here, and this line is the way back up.
+    expect(closed).toBe('← back · →/ctrl+h threads');
   });
 
   it('lets the open keymap outrank everything — it is covering the screen', () => {
