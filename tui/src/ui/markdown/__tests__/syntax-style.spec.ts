@@ -1,23 +1,32 @@
 import { SyntaxStyle } from '@opentui/core';
-import { describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it } from 'bun:test';
+import { applyPalette, resetPalette } from '../../palette-store.js';
 import { theme } from '../../theme.js';
 import { codeSyntaxStyleFor, proseScopes, proseSyntaxStyle } from '../syntax-style.js';
 import {
-  CODE_THEMES,
   codeScopes,
+  codeTheme,
+  codeThemeNames,
   DEFAULT_CODE_THEME,
   resolveCodeTheme,
   rolesFor,
+  selectedCodeTheme,
+  setCodeTheme,
 } from '../themes/index.js';
+
+afterEach(() => {
+  setCodeTheme(DEFAULT_CODE_THEME);
+  resetPalette();
+});
 
 describe('syntax styles', () => {
   it('construct without throwing and are SyntaxStyle instances', () => {
-    expect(proseSyntaxStyle).toBeInstanceOf(SyntaxStyle);
+    expect(proseSyntaxStyle()).toBeInstanceOf(SyntaxStyle);
     expect(codeSyntaxStyleFor('typescript')).toBeInstanceOf(SyntaxStyle);
   });
 
   it('are two handles, not one — prose answers to the app theme, code to the selected theme', () => {
-    expect(codeSyntaxStyleFor('typescript')).not.toBe(proseSyntaxStyle);
+    expect(codeSyntaxStyleFor('typescript')).not.toBe(proseSyntaxStyle());
   });
 
   it('caches one style per filetype rather than building one per block', () => {
@@ -25,28 +34,62 @@ describe('syntax styles', () => {
     expect(codeSyntaxStyleFor('python')).not.toBe(codeSyntaxStyleFor('yaml'));
   });
 
+  it('caches the prose style too, rather than recompiling it every render', () => {
+    // `<markdown>` takes the result on every render; compiling a Zig-side object per frame would be
+    // a real cost, so the cache is not an optimisation detail — it is the reason this can be called
+    // from a render path at all.
+    expect(proseSyntaxStyle()).toBe(proseSyntaxStyle());
+  });
+
   it('is a shared module instance — importing prose twice yields the same reference', async () => {
     const again = await import('../syntax-style.js');
-    expect(again.proseSyntaxStyle).toBe(proseSyntaxStyle);
+    expect(again.proseSyntaxStyle()).toBe(proseSyntaxStyle());
   });
 
   it('draws inline code in the accent, and fenced machine text in the blue', () => {
     // The distinction this pins: a backticked word mid-sentence is prose the eye should catch,
     // while a fence is a quotation that should sit still. They stopped sharing a colour, and a
     // future edit that collapses them again should have to argue with this line.
-    expect(proseScopes['markup.raw']).toEqual({ fg: theme.accent });
-    expect(proseScopes['markup.raw.block']).toEqual({ fg: theme.code });
+    expect(proseScopes()['markup.raw']).toEqual({ fg: theme.accent });
+    expect(proseScopes()['markup.raw.block']).toEqual({ fg: theme.code });
     expect(theme.codeInline).not.toBe(theme.code);
     // Headings are the accent too — weight is what keeps them apart from an inline identifier.
-    expect(proseScopes['markup.heading.2']).toMatchObject({ fg: theme.accent, bold: true });
-    expect(proseScopes['markup.raw']).not.toHaveProperty('bold');
+    expect(proseScopes()['markup.heading.2']).toMatchObject({ fg: theme.accent, bold: true });
+    expect(proseScopes()['markup.raw']).not.toHaveProperty('bold');
+  });
+});
+
+describe('syntax styles follow the palette', () => {
+  // These are the tests the theme editor exists for. Every one of them failed before the caches
+  // learned to invalidate: the transcript's own glyphs repainted instantly and everything compiled
+  // into a SyntaxStyle kept the colours it was born with.
+
+  it('rebuilds the prose scopes when a colour moves', () => {
+    expect(proseScopes()['markup.raw']).toEqual({ fg: '#d97757' });
+    applyPalette({ codeInline: '#00ff00' });
+    expect(proseScopes()['markup.raw']).toEqual({ fg: '#00ff00' });
+  });
+
+  it('drops the compiled prose style, so <markdown> is handed a new one', () => {
+    const before = proseSyntaxStyle();
+    applyPalette({ accent: '#00ff00' });
+    expect(proseSyntaxStyle()).not.toBe(before);
+  });
+
+  it('clears the per-filetype cache — the bug this would otherwise ship', () => {
+    // Without the invalidation, a filetype you had already opened kept its old palette for the rest
+    // of the session while a filetype you had not yet opened came out in the new one, so two fences
+    // on one screen disagreed about the theme.
+    const before = codeSyntaxStyleFor('typescript');
+    applyPalette({ accent: '#00ff00' });
+    expect(codeSyntaxStyleFor('typescript')).not.toBe(before);
   });
 });
 
 describe('code themes', () => {
   it('every registered theme builds a style, and none of them sets `default`', () => {
-    for (const [name, theme] of Object.entries(CODE_THEMES)) {
-      const scopes = codeScopes(theme);
+    for (const name of codeThemeNames()) {
+      const scopes = codeScopes(resolveCodeTheme(name));
       // `default` belongs to whoever builds the style, never to a theme's scope map: the prose
       // style merges these scopes in, and a `default` here would recolour every word of English.
       expect(scopes.default, name).toBeUndefined();
@@ -55,7 +98,7 @@ describe('code themes', () => {
   });
 
   it('applies per-filetype overrides over the base roles, and only for that filetype', () => {
-    const gh = CODE_THEMES['github-dark'];
+    const gh = resolveCodeTheme('github-dark');
     // The bug this exists for: a YAML key is `@property`, the same capture as JS member access.
     expect(rolesFor(gh, 'yaml').property).not.toEqual(rolesFor(gh, 'javascript').property);
     expect(rolesFor(gh, 'javascript').property).toEqual(gh.roles.property);
@@ -64,8 +107,36 @@ describe('code themes', () => {
   });
 
   it('resolves an unknown or missing name to the default rather than throwing', () => {
-    expect(resolveCodeTheme('solarized-mauve')).toBe(CODE_THEMES[DEFAULT_CODE_THEME]);
-    expect(resolveCodeTheme(null)).toBe(CODE_THEMES[DEFAULT_CODE_THEME]);
-    expect(resolveCodeTheme('atlas')).toBe(CODE_THEMES.atlas);
+    const fallback = resolveCodeTheme(DEFAULT_CODE_THEME);
+    expect(resolveCodeTheme('solarized-mauve')).toEqual(fallback);
+    expect(resolveCodeTheme(null)).toEqual(fallback);
+    expect(resolveCodeTheme('atlas').label).toBe('Atlas');
+  });
+
+  it('selects by name at runtime, which the frozen const could not do', () => {
+    expect(selectedCodeTheme()).toBe(DEFAULT_CODE_THEME);
+    setCodeTheme('atlas');
+    expect(selectedCodeTheme()).toBe('atlas');
+    expect(codeTheme().label).toBe('Atlas');
+  });
+
+  it('falls back rather than throwing when handed a name it does not know', () => {
+    setCodeTheme('solarized-mauve');
+    expect(selectedCodeTheme()).toBe(DEFAULT_CODE_THEME);
+  });
+
+  it('rebuilds `atlas` from the palette, because that theme IS a view of it', () => {
+    setCodeTheme('atlas');
+    // `toMatchObject`, not `toEqual`: a keyword also carries weight, and this test is about the hue
+    // following the palette — not about pinning atlas.ts's typography.
+    expect(codeTheme().roles.keyword).toMatchObject({ fg: '#d97757' });
+    applyPalette({ accent: '#00ff00' });
+    expect(codeTheme().roles.keyword).toMatchObject({ fg: '#00ff00' });
+  });
+
+  it('leaves `github-dark` alone when the palette moves — it is not a view of anything', () => {
+    const before = resolveCodeTheme('github-dark').roles.keyword;
+    applyPalette({ accent: '#00ff00' });
+    expect(resolveCodeTheme('github-dark').roles.keyword).toEqual(before);
   });
 });

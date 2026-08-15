@@ -72,7 +72,7 @@ export function MarkdownView(props: {
           <markdown
             key={index}
             content={live ? withCaret(segment.text) : segment.text}
-            syntaxStyle={proseSyntaxStyle}
+            syntaxStyle={proseSyntaxStyle()}
             width={props.width}
             streaming={live}
             {...colours}
@@ -99,7 +99,7 @@ function TableBlock(props: {
   const table = (
     <markdown
       content={props.markdown}
-      syntaxStyle={proseSyntaxStyle}
+      syntaxStyle={proseSyntaxStyle()}
       tableOptions={TABLE_OPTIONS}
       width={metrics.columns}
       flexShrink={0}

@@ -23,7 +23,55 @@ export const ACCENT = "#d97757";
  */
 export const CODE_BLUE = "#7cbdff";
 
-export const theme = {
+/**
+ * Every colour the app can be themed with.
+ *
+ * Deliberately NOT `as const` any more. The literal types were never used — nothing in the tree
+ * says `typeof theme` — and keeping them would mean `theme.dim` had the type `"gray"`, which a
+ * user-supplied palette can obviously not satisfy.
+ */
+export type Palette = {
+  accent: string;
+  dim: string;
+  hover: string;
+  rule: string;
+  meta: string;
+  hoverBg: string;
+  error: string;
+  warn: string;
+  ok: string;
+  okBright: string;
+  userBg: string;
+  userFg: string;
+  harnessBg: string;
+  harnessFg: string;
+  caretBg: string;
+  caretFg: string;
+  overlayBg: string;
+  code: string;
+  link: string;
+  codeInline: string;
+  court: {
+    agent: string;
+    yours: string;
+    external: string;
+    none: string;
+  };
+};
+
+/**
+ * The live palette. MUTATED IN PLACE by `applyPalette` — never reassigned.
+ *
+ * That is the whole reason a theme editor can exist here: ~60 modules already hold this exact
+ * object from a module-scope `import`, and a mutable singleton is the only shape that lets all of
+ * them see a new colour without a single call site changing. Rebinding this would strand every one
+ * of them on the old object.
+ *
+ * Reading `theme.x` inside a render or a function body is therefore always current. Reading it at
+ * MODULE scope — `const FOO = theme.accent` — captures a value that will never update again; those
+ * sites register with `onPaletteChange` instead. See `palette-store.ts`.
+ */
+export const theme: Palette = {
   accent: ACCENT,
   dim: "gray",
   hover: "#e6e0da",
@@ -144,4 +192,13 @@ export const theme = {
     /** History. Nobody's court, so it takes the same weight as everything else that is over. */
     none: "gray",
   },
-} as const;
+};
+
+/**
+ * The palette as shipped, captured before anything can mutate `theme`.
+ *
+ * Cloned rather than aliased: `theme` is about to be written to in place, and a reference here
+ * would be written to with it — leaving "restore the defaults" restoring whatever the user last
+ * typed. This is also what makes a test able to undo itself.
+ */
+export const SHIPPED_PALETTE: Palette = structuredClone(theme);

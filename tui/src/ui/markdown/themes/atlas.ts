@@ -1,7 +1,14 @@
 import { theme } from "../../theme.js";
 import type { CodeTheme } from "./code-theme.js";
 
-export const atlasCode: CodeTheme = {
+/**
+ * The one code theme that is a VIEW of the UI palette rather than a palette of its own — every
+ * colour below is a `theme.*` leaf, so selecting it is what makes a fenced block follow the accent.
+ *
+ * A builder rather than a const because of that: as a module-level object it captured the palette
+ * at import and could never follow it again, which is the whole thing this theme exists to do.
+ */
+export const buildAtlasCode = (): CodeTheme => ({
   label: "Atlas",
   roles: {
     plain: {},
@@ -75,4 +82,4 @@ export const atlasCode: CodeTheme = {
     context: { gutter: { fg: theme.dim }, content: {} },
     gap: { gutter: {}, content: { fg: theme.dim } },
   },
-};
+});

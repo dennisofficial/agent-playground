@@ -64,7 +64,7 @@ describe('measureTable', () => {
             styled table would agree about nothing that matters. */}
         <markdown
           content={WIDE_TABLE}
-          syntaxStyle={proseSyntaxStyle}
+          syntaxStyle={proseSyntaxStyle()}
           tableOptions={TABLE_OPTIONS}
           width={metrics.columns}
         />

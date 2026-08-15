@@ -67,5 +67,6 @@ export const diffRenderer: FencedRenderer = {
   name: "diff",
   // `patch` is the other name the same content arrives under.
   handles: (language) => language === "diff" || language === "patch",
-  render: (source, _language, width) => view(source, width, codeTheme.diff),
+  // Read per render, not once: `codeTheme()` recompiles when the palette or the selection moves.
+  render: (source, _language, width) => view(source, width, codeTheme().diff),
 };

@@ -10,6 +10,7 @@ import { useCursorFollow } from "./hooks/use-cursor-follow.js";
 import { useTurnNotifications } from "./hooks/use-turn-notifications.js";
 import { useRunningThreads } from "./hooks/use-conversation.js";
 import { useNewJob } from "./hooks/use-new-job.js";
+import { usePaletteVersion } from "./hooks/use-palette.js";
 import { useQuitGuard } from "./hooks/use-quit-guard.js";
 import { claimService, useClaim } from "./hooks/use-claim.js";
 import { EClaimState } from "../domain/claim.js";
@@ -34,6 +35,10 @@ export function App(props: {
   const renderer = useRenderer();
   const { width: columns, height: rows } = useTerminalDimensions();
   const nav = useNavigation();
+  // The app's ONE palette subscription. Colours are a mutable singleton every component already
+  // reads at render, so the only thing missing is a reason to render — this is it, and it belongs
+  // here because a repaint of the root is a repaint of everything a colour could appear in.
+  usePaletteVersion();
   const [error, setError] = useState<string | null>(null);
   const [booting, setBooting] = useState(true);
   const running = useRunningThreads();

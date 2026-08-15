@@ -67,11 +67,11 @@ export function DiffView(props: {
           chunks={highlighted?.[index] ?? null}
           numbers={layout.numbers}
           columns={layout.columns}
-          palette={codeTheme.diffRows}
+          palette={codeTheme().diffRows}
         />
       ))}
       {notice ? (
-        <text fg={codeTheme.diffRows.gap.content.fg}>
+        <text fg={codeTheme().diffRows.gap.content.fg}>
           {DIFF_INDENT}
           {notice}
         </text>

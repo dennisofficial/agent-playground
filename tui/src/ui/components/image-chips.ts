@@ -1,5 +1,6 @@
 import { SyntaxStyle, type TextareaRenderable } from "@opentui/core";
 import { imageToken, type DraftImage } from "../../domain/draft-images.js";
+import { onPaletteChange } from "../palette-store.js";
 import { theme } from "../theme.js";
 
 /**
@@ -29,7 +30,20 @@ const TYPE_NAME = "atlas.image";
 /** Registered once per editor; the id is the handle every mark refers back to. */
 type ChipStyle = { styleId: number; typeId: number };
 
-const registered = new WeakMap<TextareaRenderable, ChipStyle>();
+let registered = new WeakMap<TextareaRenderable, ChipStyle>();
+
+/**
+ * A chip's colours are compiled into a `SyntaxStyle` and pushed into the editor's NATIVE buffer, so
+ * they outlive any re-render — the chip on a composer you have already used would keep the old
+ * accent for the life of that editor.
+ *
+ * A fresh WeakMap rather than `.delete()` per key: entries are keyed by editor and a WeakMap cannot
+ * be enumerated, so replacing the map wholesale is the only way to forget all of them. The old one
+ * is garbage once nothing points at it.
+ */
+onPaletteChange(() => {
+  registered = new WeakMap<TextareaRenderable, ChipStyle>();
+});
 
 function ensureStyle(editor: TextareaRenderable): ChipStyle | null {
   const existing = registered.get(editor);

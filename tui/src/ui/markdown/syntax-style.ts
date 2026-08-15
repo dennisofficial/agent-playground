@@ -1,4 +1,5 @@
 import { SyntaxStyle, type StyleDefinitionInput } from "@opentui/core";
+import { onPaletteChange } from "../palette-store.js";
 import { theme } from "../theme.js";
 import {
   codeScopes,
@@ -7,7 +8,14 @@ import {
   type CodeTheme,
 } from "./themes/index.js";
 
-export const proseScopes: Record<string, StyleDefinitionInput> = {
+/**
+ * Built on demand rather than at import, because every `fg` below reads the live palette.
+ *
+ * As a module-level const this was a photograph of the theme taken once, and the `SyntaxStyle`
+ * compiled from it was handed to the Zig renderer — so an edited colour reached the transcript's
+ * `⏺` immediately and never reached a single heading, link or backtick.
+ */
+const buildProseScopes = (): Record<string, StyleDefinitionInput> => ({
   // No colour, no weight. Prose renders in whatever foreground the host component already set, the
   // same "spend colour only where it carries meaning" rule `theme.ts` states for the ANSI renderer.
   default: {},
@@ -86,12 +94,36 @@ export const proseScopes: Record<string, StyleDefinitionInput> = {
   // (`conceal: true`); when concealment is off they should not compete with real content.
   label: { fg: theme.dim },
   "character.special": {},
-};
-
-export const proseSyntaxStyle: SyntaxStyle = SyntaxStyle.fromStyles({
-  ...codeScopes(codeTheme),
-  ...proseScopes,
 });
+
+/**
+ * Everything below caches a compiled `SyntaxStyle`, which is a Zig-side object built from colours
+ * that were current when it was compiled. None of it can re-read the palette, so all of it is
+ * dropped on a change — see the `onPaletteChange` registration at the bottom of the file.
+ */
+let proseScopesCache: Record<string, StyleDefinitionInput> | null = null;
+let proseSyntaxStyleCache: SyntaxStyle | null = null;
+const byFiletype = new Map<string, SyntaxStyle>();
+
+export function proseScopes(): Record<string, StyleDefinitionInput> {
+  proseScopesCache ??= buildProseScopes();
+  return proseScopesCache;
+}
+
+/**
+ * The prose style, compiled once per palette.
+ *
+ * A function rather than a const now: the value has to be able to change, and a const exported at
+ * import time is precisely what could not. Callers pass the RESULT to `<markdown syntaxStyle=…>`,
+ * so they re-read it on every render and pick up a rebuild for free.
+ */
+export function proseSyntaxStyle(): SyntaxStyle {
+  proseSyntaxStyleCache ??= SyntaxStyle.fromStyles({
+    ...codeScopes(codeTheme()),
+    ...proseScopes(),
+  });
+  return proseSyntaxStyleCache;
+}
 
 export function buildCodeSyntaxStyle(
   selected: CodeTheme,
@@ -103,12 +135,24 @@ export function buildCodeSyntaxStyle(
   });
 }
 
-const byFiletype = new Map<string, SyntaxStyle>();
-
 export function codeSyntaxStyleFor(filetype: string): SyntaxStyle {
   const cached = byFiletype.get(filetype);
   if (cached) return cached;
-  const built = buildCodeSyntaxStyle(codeTheme, filetype);
+  const built = buildCodeSyntaxStyle(codeTheme(), filetype);
   byFiletype.set(filetype, built);
   return built;
 }
+
+/**
+ * Throw away everything compiled from the old colours.
+ *
+ * This is the single most load-bearing invalidation in the theme editor. `byFiletype` in particular
+ * memoises per filetype FOREVER — without this, a user who edits a colour after opening one
+ * TypeScript fence keeps that fence's old palette for the rest of the session, while every fence in
+ * a language they had not yet opened comes out in the new one.
+ */
+onPaletteChange(() => {
+  proseScopesCache = null;
+  proseSyntaxStyleCache = null;
+  byFiletype.clear();
+});
