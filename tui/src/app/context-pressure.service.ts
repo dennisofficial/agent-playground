@@ -2,7 +2,9 @@ import { Injectable } from '@nestjs/common';
 import { canaryHealth, ECanaryHealth } from '../domain/canary.js';
 import {
   audienceFor,
+  contextBand,
   decideNudge,
+  EContextBand,
   ENudgeAudience,
   EContextSignal,
   nudgeNotice,
@@ -11,7 +13,7 @@ import {
   type ContextReading,
   type NudgeLedger,
 } from '../domain/context-nudge.js';
-import { rotationRequest } from '../domain/rotation-handoff.js';
+import { handoffAdvisory, rotationRequest } from '../domain/rotation-handoff.js';
 import { budgetFor, windowPercent, type Budget } from '../domain/usage.js';
 import type { EngineSession } from '../generated/prisma/client.js';
 import type { EThreadRole } from '../generated/prisma/enums.js';
@@ -109,12 +111,15 @@ export class ContextPressureService {
     if (audience === ENudgeAudience.human) {
       return { audience, text: nudgeNotice({ tokens: args.tokens, budget }) };
     }
-    // The SAME request `/rotate` sends, with one sentence prepended saying why Atlas is asking now.
-    // One wording of what a rotation is, and the act itself is always the agent's own tool call.
-    return {
-      audience,
-      text: rotationRequest({ reason: nudgeReason({ tokens: args.tokens, budget }) }),
-    };
+    // Two speech acts on one threshold ladder, and the band chooses between them. `soft` advises and
+    // leaves the timing to the agent: a budget crossing lands wherever it lands, and an agent that
+    // stops dead mid-edit hands over a half-applied change. `hard` is the point where that discretion
+    // has been exercised for tens of thousands of tokens, so Atlas stops deferring to it and sends
+    // the same request `/rotate` does. Both prepend one sentence saying why it is asking now, and
+    // neither cuts — the act is always the agent's own tool call.
+    const reason = nudgeReason({ tokens: args.tokens, budget });
+    const hard = contextBand({ tokens: args.tokens, budget }) === EContextBand.hard;
+    return { audience, text: hard ? rotationRequest({ reason }) : handoffAdvisory({ reason }) };
   }
 
   /**

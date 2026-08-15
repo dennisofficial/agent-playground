@@ -109,7 +109,7 @@ describe('TurnRunnerService', () => {
     expect(store.getSnapshot().contextReading).toEqual({
       tokens: 120_000,
       percent: 12,
-      // Two thirds of the way to the 180K budget — the last band before the heads-up.
+      // Well short of the 300K budget's 225K heads-up, so the meter is still resting.
       band: 'normal',
       signal: EContextSignal.budget,
     });

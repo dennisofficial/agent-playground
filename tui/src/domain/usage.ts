@@ -77,12 +77,18 @@ export function formatPercent(utilization: number | null): string {
 
 /**
  * Filled cells, left for the caller to colour — the fill carries the band and the track recedes.
- * A non-zero window always fills at least one: rounding 1% down to an empty bar would draw "barely
- * started" and "unknown" identically.
+ *
+ * Rounds UP, because a five-cell bar quantises 20% at a time and the two directions are not equally
+ * wrong on a pressure gauge: rounding down draws headroom that is not there, and the whole point of
+ * the meter is to be glanced at rather than read. Overstating costs a cell of alarm; understating
+ * costs the glance that would have caught a window filling. The digits beside it carry the precision.
+ *
+ * A non-zero window therefore always fills at least one cell — "barely started" and "unknown" must
+ * not draw identically, and rounding up gets that for free rather than needing a floor.
  */
 export function meterFill(utilization: number | null, cells: number): number {
   if (utilization === null || utilization <= 0) return 0;
-  return Math.min(cells, Math.max(1, Math.round((utilization / 100) * cells)));
+  return Math.min(cells, Math.ceil((utilization / 100) * cells));
 }
 
 /**
@@ -186,12 +192,26 @@ export type Budget = {
  * windows ~4× faster than a 50K one — and explicitly rejected the 80K/140K an earlier pass proposed
  * as extrapolated from a four-generation-stale model. There is no published accuracy-vs-length curve
  * for any Claude 5 model (ticket 15), so the real numbers can only be measured; ticket 16 is that
- * measurement and it has not reported yet. The one relative fact worth encoding is that the smaller
- * models degrade about twice as early (~32K vs ~64K effective), which is where the halved row comes
- * from.
+ * measurement and it has not reported yet.
+ *
+ * **The Opus row is deliberately ABOVE design 06's seed — 300K/420K, being tried in anger.** The doc
+ * reasoned from cost alone, and against a million-token window 180K asked for a hand-off at 18%
+ * occupancy: often several times a working session, and often while the agent was still sharp. Since
+ * the soft tier now advises rather than orders (`handoffAdvisory`), the cost of nudging LATE is one
+ * more expensive turn, while the cost of nudging early is a seam the work did not need. That trade
+ * moved, so the threshold moved with it. Revert here if quality falls off before 300K in practice —
+ * this is the number ticket 16 is meant to replace, not a second theory to defend.
+ *
+ * The gap to `hard` is held at 120K rather than scaled with `soft`: it is the runway the agent gets
+ * to pick its own seam, and at the +30K/+20K cadence 120K is already ~6 escalating asks. Widening it
+ * would only delay the escalation, not learn anything more from it.
  */
 const MODEL_BUDGETS: readonly { match: RegExp; budget: Budget }[] = [
-  { match: /^claude-(?:opus|fable|mythos)-/, budget: { soft: 180_000, hard: 300_000 } },
+  { match: /^claude-(?:opus|fable|mythos)-/, budget: { soft: 300_000, hard: 420_000 } },
+  // NOT "half the Opus row" any more, and that relation is not worth restoring by arithmetic: this
+  // row stands on its own claim — the smaller models degrade about twice as early (~32K vs ~64K
+  // effective), which is the one relative fact the research supports. The Opus bump above is a trial
+  // of a cost trade-off; nothing about it says these models hold their quality any longer.
   { match: /^claude-(?:sonnet|haiku)-/, budget: { soft: 90_000, hard: 150_000 } },
 ];
 

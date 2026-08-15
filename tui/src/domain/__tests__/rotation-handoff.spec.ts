@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import {
   contextWallStub,
+  handoffAdvisory,
   isContextWall,
   renderRotationHandoff,
   rotationRequest,
@@ -52,8 +53,35 @@ describe('renderRotationHandoff', () => {
   });
 });
 
+describe('handoffAdvisory', () => {
+  /**
+   * The whole point of the soft tier: an agent stopped mid-edit hands over a half-applied change,
+   * which is a worse thing for the successor to inherit than the twenty thousand tokens saved by
+   * stopping now. Only the agent can see where its own seam is, so the advisory says so out loud.
+   */
+  it('grants the timing to the agent instead of demanding the tool call now', () => {
+    const text = handoffAdvisory();
+
+    expect(text).toContain('`rotate`');
+    expect(text).not.toContain('Call `rotate` now');
+    expect(text).toContain('Finish what you are in the middle of');
+  });
+
+  it('names what ignoring it costs, so the discretion is informed rather than open-ended', () => {
+    // Without this the soft tier reads as "whenever you like", and the wall is the one rotation
+    // nobody gets to write a hand-off for.
+    expect(handoffAdvisory()).toContain('refuses');
+  });
+
+  it('leads with the reason it was sent, exactly as the request does', () => {
+    expect(handoffAdvisory({ reason: 'This session is at 190K of a 180K budget.' })).toStartWith(
+      'This session is at 190K of a 180K budget.',
+    );
+  });
+});
+
 describe('rotationRequest', () => {
-  it('asks for the tool call rather than announcing a cut — the manual and nudged paths are one', () => {
+  it('asks for the tool call rather than announcing a cut — /rotate and the hard nudge are one', () => {
     const text = rotationRequest();
 
     expect(text).toContain('`rotate`');
@@ -64,6 +92,12 @@ describe('rotationRequest', () => {
     expect(rotationRequest({ reason: 'This session is 92% of its budget.' })).toStartWith(
       'This session is 92% of its budget.',
     );
+  });
+
+  /** The two speech acts must not converge — the soft one stops being soft the moment it does. */
+  it('is insistent where the advisory is not', () => {
+    expect(rotationRequest()).toContain('before doing any more work');
+    expect(handoffAdvisory()).not.toContain('before doing any more work');
   });
 });
 

@@ -27,9 +27,11 @@ export async function runSlashCommand(args: {
 }): Promise<boolean> {
   if (parseSlashCommand(args.text) !== ESlashCommand.rotate) return false;
 
-  // A request, not a cut — and the SAME request the context nudge sends, so the manual and the
-  // nudged paths are one path and every rotation is the agent's own tool call. Atlas cutting a
-  // session itself would hand the successor a hand-off nobody wrote.
+  // A request, not a cut — and the SAME request the escalated nudge sends, so every rotation is the
+  // agent's own tool call. Atlas cutting a session itself would hand the successor a hand-off nobody
+  // wrote. Deliberately the imperative wording rather than `handoffAdvisory`: the soft tier exists to
+  // defer to an agent's judgement about its own seam, and Dennis typing `/rotate` has already made
+  // that call.
   await args.conversation.sendHarness({
     variant: EHarnessVariant.transition,
     text: rotationRequest(),

@@ -1,6 +1,7 @@
 /**
- * The words of the session seam: what a rotating agent writes, what Atlas asks it for, and what the
- * successor is told when the wall arrived before the hand-off did.
+ * The words of the session seam: what a rotating agent writes, the two things Atlas says to get it
+ * (`handoffAdvisory` then `rotationRequest`), and what the successor is told when the wall arrived
+ * before the hand-off did.
  *
  * All pure, because every one of them is a string a test can read back. Nothing here knows what a
  * session is — `app/session-rotation.ts` owns the act, this owns the payload.
@@ -59,12 +60,52 @@ export function renderRotationHandoff(args: {
 }
 
 /**
- * What Atlas says when it wants a hand-off — `/rotate`, and (ticket 13) the context nudge.
+ * The SOFT tier: Atlas has noticed, and the agent picks the moment.
  *
- * The manual path and the nudged path are ONE path deliberately: both ask the agent to call
+ * This exists because "rotate now, before doing any more work" is the wrong first thing to say. A
+ * budget crossing lands wherever it lands — mid-edit, between a change and the test that proves it,
+ * three files into a refactor — and an agent that obeys immediately hands its successor a
+ * half-applied change, which is a strictly worse inheritance than the twenty thousand tokens
+ * stopping early saved. Only the agent can see where its own seam is, so the timing is given to it.
+ *
+ * It is deliberately NOT a rewording of `rotationRequest`. It is a different speech act: no action
+ * is demanded on this turn, and the escalation to the imperative version at `hard` is what keeps the
+ * discretion from being open-ended. The cost of ignoring it is named for the same reason — advice
+ * without a consequence is a suggestion the model is right to deprioritise.
+ *
+ * The four sections are not restated here; `rotate`'s own tool description carries them, and a short
+ * advisory is what makes this read as advice rather than a quieter order.
+ */
+export function handoffAdvisory(args?: { reason?: string }): string {
+  const reason = args?.reason?.trim();
+  return [
+    reason ??
+      'This session is approaching the point where handing over costs less than another turn.',
+    '',
+    'You are not being asked to stop. Finish what you are in the middle of — an interrupted edit or a',
+    'change you have not verified yet is a worse thing to hand over than a few thousand extra tokens,',
+    'and you are the only one who can see where the seam is.',
+    '',
+    'When you reach it — a task done, a test green, a question answered — call `rotate` before',
+    'starting the next thing, rather than opening work you would not want to hand over mid-flight.',
+    '',
+    'Nothing is lost by rotating: the work, the files and the thread all continue. Only the window',
+    'turns over. If you keep going instead, Atlas will ask again and more insistently, and past a',
+    'point the API refuses the request outright — that is the one hand-off nobody gets to write.',
+  ].join('\n');
+}
+
+/**
+ * The HARD tier, and what `/rotate` sends: the advice has not been taken, so Atlas asks plainly.
+ *
+ * The manual path and the escalated nudge are ONE path deliberately: both ask the agent to call
  * `rotate`, so there is a single implementation of what a rotation is and a single place its
  * wording can be got right. Atlas never cuts the session out from under a working agent — the
  * request is the mechanism, and the tool call is the act.
+ *
+ * Typing `/rotate` starts HERE rather than at the advisory, and that asymmetry is the point: the
+ * meter guessing at pressure earns a suggestion, a human asking for a hand-off has already made the
+ * judgement call the advisory exists to defer to.
  */
 export function rotationRequest(args?: { reason?: string }): string {
   const reason = args?.reason?.trim();

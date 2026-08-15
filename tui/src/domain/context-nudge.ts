@@ -127,7 +127,9 @@ export type NudgeLedger = { atTokens: number; onTurn: number } | null;
  * The escalating cadence: first at `soft`, then +30K, then every +20K, then every turn past `hard`.
  *
  * It tightens rather than repeating at a fixed interval because a nudge that has been ignored twice
- * is not working and the answer to that is more insistence, not the same insistence. It is also
+ * is not working and the answer to that is more insistence, not the same insistence. The WORDING
+ * escalates on the same ladder — advice through the soft band, the plain request past `hard` — so
+ * frequency and register move together rather than one nagging in the other's voice. It is also
  * self-limiting in the way a mute button is not: the interval can only shrink to "once a turn", and
  * a session that keeps working through it is one the human can see on the meter.
  */
@@ -161,11 +163,12 @@ export function formatTokens(tokens: number): string {
 }
 
 /**
- * The one sentence that changes between a manual `/rotate` and a nudged one.
+ * The one sentence prepended to whichever thing Atlas is saying — `handoffAdvisory` at `soft`,
+ * `rotationRequest` at `hard`.
  *
- * It is a REASON, not an instruction: everything about what to do lives in `rotationRequest`, which
- * both paths call, so there is exactly one wording of what a rotation is and one place to get it
- * right. This says only why Atlas is asking now.
+ * It is a REASON, not an instruction: everything about what to do lives in those two, so there is
+ * one wording of each speech act and one place to get each right. This says only why Atlas is
+ * speaking now, and its own escalation at `hard` is the reason line matching the harder ask.
  */
 export function nudgeReason(args: { tokens: number; budget: Budget }): string {
   const at = `This session is at ${formatTokens(args.tokens)} of a ${formatTokens(args.budget.soft)} budget`;
