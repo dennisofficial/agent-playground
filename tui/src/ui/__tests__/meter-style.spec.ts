@@ -7,6 +7,7 @@ import {
   METER_INKS,
   METER_PRESETS,
   METER_SEPARATIONS,
+  footerStyle,
   meterStyle,
   type MeterStyle,
   type Span,
@@ -121,43 +122,107 @@ describe('the strip measures what it draws', () => {
 
   it('reports the width of the rendered spans, not of a parallel string', () => {
     // Measuring one representation and drawing another is how this line silently wrapped before.
-    const spans = stripSpans(meters, style, true);
+    const spans = stripSpans(meters, style);
     expect(spansWidth(spans)).toBe([...text(spans)].length);
   });
 
-  it('sheds the gauges before it sheds a number', () => {
-    const withBars = spansWidth(stripSpans(meters, style, true));
-    const without = spansWidth(stripSpans(meters, style, false));
-    expect(withBars - without).toBe(3 * (METER_GLYPHS.fine.cells + 1));
-    expect(text(stripSpans(meters, style, false))).toContain('24K');
+  it('draws no gauge at any style — the strip is the footer, and the footer is barless', () => {
+    // `meterSpans` can still draw one, because the accounts table still wants one. `stripSpans`
+    // cannot, and that is the difference between the two surfaces expressed as a signature.
+    for (const preset of Object.values(METER_PRESETS) as MeterStyle[]) {
+      const drawn = text(stripSpans(meters, preset));
+      expect(drawn).not.toContain(preset.glyphs.filled);
+      expect(drawn).not.toContain(preset.glyphs.empty);
+    }
+    expect(text(stripSpans(meters, footerStyle))).toContain('24K');
+  });
+
+  it('halves the footer against the gauged style it replaced', () => {
+    // The number the change exists for. 48 columns of meters at 80 left 22 for a hint that needed
+    // 34, so the hint never drew; the barless strip has to be dramatically cheaper, not marginally.
+    const gauged = spansWidth([
+      ...meterSpans(meters[0], meterStyle, true),
+      ...meterSpans(meters[1], meterStyle, true),
+      ...meterSpans(meters[2], meterStyle, true),
+    ]);
+    expect(spansWidth(stripSpans(meters, footerStyle))).toBeLessThan(gauged / 1.5);
   });
 
   it('keeps the digits column-aligned when slack sits inside the meter', () => {
     const inside = { ...style, separation: METER_SEPARATIONS.distance };
-    const wide = stripSpans([ctx(99, 178_000), meters[1], meters[2]], inside, true);
-    const narrow = stripSpans([ctx(4, 7_000), meters[1], meters[2]], inside, true);
+    const wide = stripSpans([ctx(99, 178_000), meters[1], meters[2]], inside);
+    const narrow = stripSpans([ctx(4, 7_000), meters[1], meters[2]], inside);
     // `178K` and `7K` both occupy four columns, so the right-aligned strip stays put as they change.
     expect(spansWidth(wide)).toBe(spansWidth(narrow));
   });
 
-  it('does shrink when a window goes spent — the bar and the percent are gone', () => {
-    // The one width change padding cannot absorb, and the reason it is worth knowing about: the
-    // neighbours slide the moment a window walls. `5h ▰▰▱▱▱  34%` → `5h 2h14m`.
-    const live = spansWidth(stripSpans(meters, style, true));
-    const spent = spansWidth(stripSpans([meters[0], meter('fiveHour', '5h', 100, RESETS), meters[2]], style, true));
-    expect(live - spent).toBe(5);
+  it('lets the digits size themselves once the slack is gone', () => {
+    // The four columns per meter the footer bought back. Nothing is aligning to a bar any more, so
+    // the strip is allowed to breathe with its numbers — and being right-flush, only its left edge moves.
+    const wide = stripSpans([ctx(99, 178_000), meters[1], meters[2]], footerStyle);
+    const narrow = stripSpans([ctx(4, 7_000), meters[1], meters[2]], footerStyle);
+    expect(spansWidth(wide)).toBeGreaterThan(spansWidth(narrow));
+  });
+
+  it('sheds a whole meter when the footer drops one', () => {
+    const three = spansWidth(stripSpans(meters, footerStyle));
+    const two = spansWidth(stripSpans([meters[0], meters[1]], footerStyle));
+    // `  wk 61%` — the gap plus the meter itself.
+    expect(three - two).toBe(footerStyle.separation.gap + 'wk 61%'.length);
+  });
+
+  it('draws no divider when only one meter is left', () => {
+    const alone = stripSpans([meters[0]], footerStyle);
+    expect(text(alone)).toBe('ctx 24K');
+  });
+
+  it('GROWS when a window goes spent, now that the bar is not there to lose', () => {
+    // Worth pinning because it reverses: gauged, `5h ▰▰▱▱▱  34%` → `5h 2h14m` was a shrink. Barless,
+    // a countdown is simply longer than a percent, so the strip's left edge steps out instead of in.
+    const live = spansWidth(stripSpans(meters, footerStyle));
+    const spent = spansWidth(
+      stripSpans([meters[0], meter('fiveHour', '5h', 100, RESETS), meters[2]], footerStyle),
+    );
+    expect(spent - live).toBe('2h14m'.length - '34%'.length);
   });
 
   it('costs the same across every separation except the margin and the rule', () => {
-    const ruled = spansWidth(stripSpans(meters, { ...style, separation: METER_SEPARATIONS.rule }, true));
-    const roomy = spansWidth(stripSpans(meters, { ...style, separation: METER_SEPARATIONS.roomy }, true));
+    const ruled = spansWidth(stripSpans(meters, { ...style, separation: METER_SEPARATIONS.rule }));
+    const roomy = spansWidth(stripSpans(meters, { ...style, separation: METER_SEPARATIONS.roomy }));
     expect(roomy).toBeGreaterThan(ruled);
   });
 });
 
-describe('the active style is a preset', () => {
+describe('the barless footer keeps its alarm', () => {
+  const meters = (util: number): Meter[] => [ctx(12, 24_000), meter('fiveHour', '5h', util, RESETS)];
+  const digits = (util: number): Span | undefined =>
+    stripSpans(meters(util), footerStyle).filter((span) => span.text.includes('%')).at(-1);
+
+  it('puts the band on the digits, because there is no fill left to put it on', () => {
+    // The trap this guards. `numberLeads` — the gauged style — hands the digits a flat `#c0c0c0` and
+    // paints the band on the bar cells only. Ship that ink with no bar and `5h 96%` renders in
+    // exactly the same grey as `5h 12%`: a footer that has quietly stopped being able to warn you.
+    expect(digits(90)?.fg).toBe(FILL_RAMPS.nearWhite.hot);
+    expect(digits(96)?.fg).toBe(FILL_RAMPS.nearWhite.red);
+  });
+
+  it('stays gray while nothing is wrong, so colour down here always means something', () => {
+    expect(digits(18)?.fg).toBe(METER_INKS.digitsEchoWhenHot.quiet);
+  });
+});
+
+describe('the active styles are presets', () => {
   it('so a change is one line and the preview shows what ships', () => {
     const presets: MeterStyle[] = Object.values(METER_PRESETS);
     expect(presets).toContain(meterStyle);
+    expect(presets).toContain(footerStyle);
+  });
+
+  it('leaves the accounts table its gauge and its slack', () => {
+    // `meterColumnWidth` budgets each column as label + a four-cell percent + the gauge. Both of
+    // those are properties of THIS style, and the table silently loses its alignment without them.
+    expect(meterStyle.separation.slack).toBe('inside');
+    expect(meterStyle.glyphs.cells).toBeGreaterThan(0);
+    expect(footerStyle.separation.slack).toBe('none');
   });
 });

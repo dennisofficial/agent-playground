@@ -173,6 +173,20 @@ export const METER_SEPARATIONS = {
     marginRight: 2,
     slack: "inside",
   },
+  /**
+   * The composer footer's own, and the only one with no slack.
+   *
+   * Slack exists to stop digits jittering UNDER a fixed-width bar — `34%` and `7%` have to occupy
+   * the same cells or the gauge above them walks sideways. With no bar there is nothing to align
+   * to, and on a right-flush strip only the last meter could move at all. So the four reserved
+   * columns per meter go back to the hint, which is what the footer was short of.
+   */
+  compact: {
+    divider: { pad: [2, 0] },
+    gap: 2,
+    marginRight: 0,
+    slack: "none",
+  },
 } as const satisfies Record<string, MeterSeparation>;
 
 /** The rule glyph is furniture, so it sits below even the label. */
@@ -216,6 +230,42 @@ export const METER_PRESETS = {
     separation: METER_SEPARATIONS.rule,
     spent: "verb",
   },
+  /**
+   * Barless: what the composer footer draws now. See `footerStyle`.
+   *
+   * `glyphs` is still `fine` and that is not vestigial — `spentSpans` reads `glyphs.clock`, and a
+   * window that fills is the one case this style still draws a symbol for.
+   */
+  barless: {
+    ramp: FILL_RAMPS.nearWhite,
+    // The load-bearing half of dropping the bar. `numberLeads` paints the band on the FILL CELLS and
+    // hands the digits a flat `#c0c0c0`, so a barless meter under that ink would render `wk 96%` in
+    // exactly the same grey as `wk 12%` — the alarm lived entirely in the gauge. `fill-when-pressured`
+    // moves it onto the digits, which also buys the thing the footer wanted anyway: colour down here
+    // now means something is wrong, rather than being on all the time.
+    ink: METER_INKS.digitsEchoWhenHot,
+    glyphs: METER_GLYPHS.fine,
+    separation: METER_SEPARATIONS.compact,
+    spent: "bare",
+  },
 } as const satisfies Record<string, MeterStyle>;
 
+/**
+ * The ACCOUNTS PAGE's meters, which keep their gauges.
+ *
+ * It is a table you go to in order to read numbers, it has its own width ladder for when to drop the
+ * bar (`domain/account-row.ts`), and — the constraint that actually pins this — `meterColumnWidth`
+ * budgets each column as label + a four-cell percent + the gauge. Take the slack away here and every
+ * percentage in the table stops being right-aligned in its column.
+ */
 export const meterStyle: MeterStyle = METER_PRESETS.instrument;
+
+/**
+ * The composer footer's meters.
+ *
+ * A second style rather than a second use of the first, because the two surfaces stopped wanting the
+ * same thing: the accounts page is read deliberately, and the footer is chrome that sits under every
+ * turn of every conversation. Three gauges cost 48 columns there and left 22 for the hint at 80 —
+ * which is to say the meters were pushing the line that names your keys off the screen.
+ */
+export const footerStyle: MeterStyle = METER_PRESETS.barless;

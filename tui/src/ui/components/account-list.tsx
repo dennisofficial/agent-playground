@@ -134,9 +134,16 @@ function fit(value: string, width: number, ragged: boolean): string {
 }
 
 /**
- * `5h ▰▰▱▱▱  34%  wk ▰▰▰▱▱  61%` — the SAME meters the composer footer draws, from the same
- * `meterSpans`. One account's usage must not read as a different quantity depending on which page is
- * showing it, and the whole look lives in one line of `ui/meter-style.ts`.
+ * `5h ▰▰▱▱▱  34%  wk ▰▰▰▱▱  61%` — the same `meterSpans` the composer footer draws through, so one
+ * account's usage never reads as a different QUANTITY depending on which page is showing it: same
+ * digits, same bands, same ramp.
+ *
+ * The gauges are now this page's alone (`meterStyle` vs `footerStyle`), and the split is not
+ * cosmetic drift. This is a table you come to in order to read numbers, it has a width ladder for
+ * when to drop the bar, and `meterColumnWidth` budgets every column as label + a four-cell percent
+ * + the gauge — take the slack away here and the percentages stop lining up. The footer is chrome
+ * under every turn of every conversation, where three gauges cost 48 columns and pushed the hint
+ * off the line. Different jobs, so different styles; the reading they produce is still the same one.
  *
  * `—` instead of `0%` is honest: usage is polled per account, so one that has not run recently has
  * UNKNOWN usage, not idle usage. Rotation prefers known headroom over unknown.

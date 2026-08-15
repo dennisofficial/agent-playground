@@ -123,27 +123,37 @@ export function meterSpans(
   return spans;
 }
 
-/** The whole `ctx │ 5h wk` strip, ready to render or measure. */
-export function stripSpans(
-  meters: [Meter, Meter, Meter],
-  style: MeterStyle,
-  showBar: boolean,
-): Span[] {
+/**
+ * The whole `ctx  5h wk` strip, ready to render or measure.
+ *
+ * Always BARLESS. This is the composer footer's function and nothing else's — the accounts page
+ * calls `meterSpans` per column so it can pad each one to a table width — so rather than thread a
+ * `showBar` nobody passes true for, the one caller that draws gauges keeps the flag and this one
+ * states the fact.
+ *
+ * The list is variable-length because shedding a meter is how the footer narrows: `ctx` leads, the
+ * divider follows it, and whatever account windows are left share the gap. One meter draws no
+ * divider — there is nothing on the other side of it to separate.
+ */
+export function stripSpans(meters: readonly Meter[], style: MeterStyle): Span[] {
   const { divider, gap, marginRight } = style.separation;
-  return [
-    ...meterSpans(meters[0], style, showBar),
-    { text: " ".repeat(divider.pad[0]) },
-    ...(divider.rule
-      ? [
-          { text: divider.rule, fg: RULE_FG },
-          { text: " ".repeat(divider.pad[1]) },
-        ]
-      : []),
-    ...meterSpans(meters[1], style, showBar),
-    { text: " ".repeat(gap) },
-    ...meterSpans(meters[2], style, showBar),
-    ...(marginRight > 0 ? [{ text: " ".repeat(marginRight) }] : []),
-  ];
+  const [first, ...rest] = meters;
+  if (!first) return [];
+
+  const spans: Span[] = [...meterSpans(first, style, false)];
+  if (rest.length > 0) {
+    spans.push({ text: " ".repeat(divider.pad[0]) });
+    if (divider.rule) {
+      spans.push({ text: divider.rule, fg: RULE_FG });
+      spans.push({ text: " ".repeat(divider.pad[1]) });
+    }
+    for (const [index, meter] of rest.entries()) {
+      if (index > 0) spans.push({ text: " ".repeat(gap) });
+      spans.push(...meterSpans(meter, style, false));
+    }
+  }
+  if (marginRight > 0) spans.push({ text: " ".repeat(marginRight) });
+  return spans;
 }
 
 /** Columns a span run occupies. Code points, not UTF-16 units — the glyphs are astral-adjacent. */

@@ -406,6 +406,7 @@ export function ConversationPage(props: {
           <HintLine
             model={props.open.session.model}
             sessionOrdinal={props.open.session.ordinal}
+            prNumber={props.open.job.prNumber}
             hints={hints}
             noAccount={state.noAccount}
             contextReading={state.contextReading}
