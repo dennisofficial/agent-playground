@@ -20,6 +20,7 @@ import { PhaseBriefService } from '../phase-brief.service.js';
 import type { SessionManagerService } from '../session-manager.service.js';
 import { ThreadSeamService } from '../thread-seam.service.js';
 import { fakeShipService } from './ship.fixture.js';
+import { fakeServiceRegistry } from './services.fixture.js';
 import { fakeWorktreeService } from './worktree.fixture.js';
 import { fakeTaskService } from './tasks.fixture.js';
 import type { RunTurnArgs, TurnRunnerService } from '../turn-runner.service.js';
@@ -114,6 +115,7 @@ function build(run: (args: RunTurnArgs) => Promise<void> = async () => undefined
     turnRunnerService,
     fakeTaskService(),
     fakeShipService(),
+    fakeServiceRegistry(),
     fakeWorktreeService(),
   );
 
@@ -162,6 +164,7 @@ function build(run: (args: RunTurnArgs) => Promise<void> = async () => undefined
     conversationService,
     { cwdFor: (): string => '/repo' } as unknown as WorktreeService,
     {} as unknown as GitService,
+    fakeServiceRegistry(),
   );
 
   // Faked, deliberately: naming spawns a model and this spec is about what a job is made OF. What

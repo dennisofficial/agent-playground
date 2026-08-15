@@ -18,8 +18,13 @@ const MARGIN = 2;
 /**
  * `⠹ start a phase` wants fifteen columns. The old twenty held `build · builder`, which left the
  * row when the column became the verb you owe rather than where the job happens to be standing.
+ *
+ * Two columns wider than the verbs alone need, because the status cell also carries `SERVICE_MARK`
+ * for a job holding a live process. Reserved in the LAYOUT rather than taken out of the margin at
+ * draw time: the mark is the only thing telling a scanning eye that a dev server is up, and a form
+ * that fits the verb but truncates the mark hides exactly the row that is holding something.
  */
-const STATUS_FORMS = [14, 11, 0];
+const STATUS_FORMS = [16, 13, 0];
 const TITLE = { min: 16, max: 56 };
 
 export type JobsLayout = { title: number; status: number };

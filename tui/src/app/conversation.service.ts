@@ -205,19 +205,6 @@ export class ConversationService {
     );
   }
 
-  async rotate(
-    endReason: Parameters<SessionManagerService["rotateSession"]>[2],
-  ): Promise<void> {
-    const open = this.requireOpen();
-    const next = await this.sessionManagerService.rotateSession(
-      open.thread,
-      open.session,
-      endReason,
-    );
-    this.open = { ...open, session: next };
-    await this.refreshSessions();
-  }
-
   breadcrumbEngine(): { engine: string; model: string } {
     const open = this.requireOpen();
     const binding = bindingFor(open.thread.role);

@@ -13,6 +13,7 @@ import { ThreadRepository, type ThreadRow } from "../store/thread.repository.js"
 import { ContextFolderService } from "./context-folder.service.js";
 import { ConversationService } from "./conversation.service.js";
 import { GitService } from "./git.service.js";
+import { ServiceRegistryService } from "./service-registry.service.js";
 import { SessionManagerService } from "./session-manager.service.js";
 import { purgeJobFiles, threadIdsFor } from "./workspace-purge.js";
 import { WorktreeService, type JobWorkspace } from "./worktree.service.js";
@@ -31,6 +32,7 @@ export class WorkspaceService {
     private readonly conversationService: ConversationService,
     private readonly worktreeService: WorktreeService,
     private readonly gitService: GitService,
+    private readonly serviceRegistryService: ServiceRegistryService,
   ) {}
 
   async listProjects(): Promise<ProjectRow[]> {
@@ -249,6 +251,12 @@ export class WorkspaceService {
     const engineSessionIds =
       await this.jobRepository.engineSessionIdsFor(jobId);
     await this.jobRepository.remove(jobId);
+    // Before the tree goes, never after. `jobDir` holds both the logs and the only record of what
+    // this job had running, so removing it while a group is alive orphans the tree AND destroys the
+    // evidence — a leak with nothing left to reconcile against.
+    // AWAITED: `purgeJobFiles` removes `services.json` and the logs, so a reap that has not yet
+    // finished insisting would have its evidence destroyed while its group was still alive.
+    await this.serviceRegistryService.reapJob(jobId);
     purgeJobFiles({ jobId, engineSessionIds });
   }
 
@@ -270,8 +278,10 @@ export class WorkspaceService {
     }
 
     await this.projectRepository.remove(projectId);
-    for (const [jobId, engineSessionIds] of tapes)
+    for (const [jobId, engineSessionIds] of tapes) {
+      await this.serviceRegistryService.reapJob(jobId);
       purgeJobFiles({ jobId, engineSessionIds });
+    }
   }
 
   private threadIdsFor(jobIds: readonly string[]): Promise<string[]> {

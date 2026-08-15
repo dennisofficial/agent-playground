@@ -1,8 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
-import type { AttachmentPart } from '../domain/attachments.js';
 import { EHarnessVariant } from '../domain/message.js';
 import type { RotationSections } from '../domain/rotation-handoff.js';
-import { successorSeed, type SeedHandoff } from '../domain/thread-handoff.js';
+import type { SeedHandoff } from '../domain/thread-handoff.js';
 import type {
   EPhaseKind,
   EThreadCondition,
@@ -24,9 +23,11 @@ import {
   completeCallerThread,
   openDelegateThread,
 } from './thread-delegation.js';
+import { ServiceRegistryService } from './service-registry.service.js';
 import { SessionManagerService } from './session-manager.service.js';
 import { ShipService } from './ship.service.js';
 import { TaskService } from './task.service.js';
+import { fireHarnessTurn, seedThread, type SeedDeps } from './thread-seed.js';
 import { toolsForThread } from './tools/context.js';
 import type { AtlasTool, ToolActions, ToolContext } from './tools/tool.js';
 import { TurnRunnerService } from './turn-runner.service.js';
@@ -68,12 +69,29 @@ export class ThreadSeamService implements ToolActions {
      */
     readonly shipping: ShipService,
     /**
+     * `ToolActions.services`, and the third of these. A dev server outliving a turn moves nothing
+     * structural either — and unlike the other two it is not even thread-scoped, which is exactly why
+     * it is a job-keyed singleton carried to the registry rather than anything a tool closure holds.
+     */
+    readonly services: ServiceRegistryService,
+    /**
      * `ToolActions.worktree`, held on the same terms. Taking a worktree moves nothing structural
      * either — same phase, same thread, same cursor — it only changes the directory the job's later
      * turns run in, and `WorktreeService` is already the one place allowed to write that.
      */
     readonly worktree: WorktreeService,
   ) {}
+
+  /** What `thread-seed.ts` needs from the container. One place, because two call sites want it. */
+  private get seedDeps(): SeedDeps {
+    return {
+      phaseBriefService: this.phaseBriefService,
+      sessionManagerService: this.sessionManagerService,
+      turnRunnerService: this.turnRunnerService,
+      toolsFor: (args) => this.toolsFor(args),
+      onError: (message) => this.logger.error(message),
+    };
+  }
 
   /**
    * The tools a thread's turns may call. Resolved when the thread is opened, not per turn: a thread
@@ -93,11 +111,8 @@ export class ThreadSeamService implements ToolActions {
   }
 
   /**
-   * Atlas's opening words in a thread nobody has opened yet.
-   *
-   * The turn is deliberately NOT awaited: `run()` resolves when the turn does, and neither creating
-   * a job nor closing a thread may block behind an agent thinking. A failure lands in the thread's
-   * own store as an error block, which is where the human is already looking.
+   * Atlas's opening words in a thread nobody has opened yet. The turn is fired, not awaited — see
+   * `thread-seed.ts`.
    */
   async seed(args: {
     job: Job;
@@ -105,30 +120,7 @@ export class ThreadSeamService implements ToolActions {
     cwd: string;
     handoff?: SeedHandoff;
   }): Promise<void> {
-    // The manifest, where the caller has one. It is what the message STORES, and `renderPrompt`
-    // composes the same bytes back onto the wire — so the prose must not also carry the bodies, or
-    // the successor would read every attachment twice.
-    const parts = args.handoff?.parts;
-    await this.fireHarnessTurn({
-      ...args,
-      ...(parts && parts.length > 0 ? { attachments: parts } : {}),
-      // `handoff` where one was carried, `seed` where the thread simply began: the variant is what
-      // the renderer labels and what the system prompt teaches the agent to read.
-      harnessVariant: args.handoff
-        ? EHarnessVariant.handoff
-        : EHarnessVariant.seed,
-      prompt: (opening) =>
-        args.handoff
-          ? successorSeed({
-              opening,
-              handoff: args.handoff.text,
-              fromRole: args.handoff.fromRole,
-              attachments: parts ? '' : args.handoff.attachments,
-              ...(args.handoff.kind ? { kind: args.handoff.kind } : {}),
-              ...(args.handoff.tasks ? { tasks: args.handoff.tasks } : {}),
-            })
-          : opening,
-    });
+    return seedThread({ ...this.seedDeps, ...args });
   }
 
   /**
@@ -166,7 +158,8 @@ export class ThreadSeamService implements ToolActions {
       // A boundary the opener has to act on, delivered where every harness event already lands: at
       // a turn boundary, in its own name, as a message its transcript keeps.
       report: (reported) =>
-        this.fireHarnessTurn({
+        fireHarnessTurn({
+          ...this.seedDeps,
           ...reported,
           harnessVariant: EHarnessVariant.handoff,
           prompt: () => reported.prompt,
@@ -208,6 +201,11 @@ export class ThreadSeamService implements ToolActions {
     sections: RotationSections;
     attach: readonly string[];
   }): Promise<string> {
+    // Alone among the five seam tools, `rotate`'s successor runs on the CALLER's lane and queues
+    // behind the whole of its `execute` — so a turn held on background work stalls the next session's
+    // first turn for as long as that work runs, which is the window this tool exists to close. It buys
+    // nothing either: rotation tears the CLI down and takes the tasks with it regardless.
+    this.turnRunnerService.stopHolding(args.ctx.thread.id);
     return rotateForHandoff({
       sessionManagerService: this.sessionManagerService,
       contextFolderService: this.contextFolderService,
@@ -281,48 +279,5 @@ export class ThreadSeamService implements ToolActions {
     reason?: string;
   }): Promise<void> {
     return declinePhaseVerb({ transitionRepository: this.transitionRepository, ...args });
-  }
-
-  /**
-   * Atlas speaking first in a thread: the seed, a hand-off, a delegate's report back.
-   *
-   * The turn is deliberately NOT awaited: `run()` resolves when the turn does, and neither creating
-   * a job nor closing a thread may block behind an agent thinking. A failure lands in the thread's
-   * own store as an error block, which is where the human is already looking.
-   *
-   * `prompt` is a function of the phase's opening words rather than a string because only this
-   * method has resolved them — a caller that wanted them would have to read the brief a second time,
-   * for a value that cannot differ.
-   */
-  private async fireHarnessTurn(args: {
-    job: Job;
-    thread: Thread;
-    cwd: string;
-    harnessVariant: EHarnessVariant;
-    prompt: (opening: string) => string;
-    /** The seam's inlined files, stored as a manifest beside the prose. See `RunTurnArgs`. */
-    attachments?: readonly AttachmentPart[];
-  }): Promise<void> {
-    const brief = await this.phaseBriefService.forPhase({
-      job: args.job,
-      phaseId: args.thread.phaseId,
-    });
-    const session = await this.sessionManagerService.currentSession(args.thread);
-    const tools = await this.toolsFor(args);
-
-    void this.turnRunnerService
-      .run({
-        thread: args.thread,
-        session,
-        prompt: args.prompt(brief.opening),
-        harnessVariant: args.harnessVariant,
-        ...(args.attachments ? { attachments: args.attachments } : {}),
-        brief: brief.instructions,
-        cwd: args.cwd,
-        tools,
-      })
-      .catch((error: unknown) => {
-        this.logger.error(`harness turn failed: ${String(error)}`);
-      });
   }
 }

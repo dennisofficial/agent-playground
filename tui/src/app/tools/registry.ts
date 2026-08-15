@@ -5,6 +5,9 @@ import { completeThreadTool } from './complete-thread.tool.js';
 import { enterWorktreeTool } from './enter-worktree.tool.js';
 import { openThreadTool } from './open-thread.tool.js';
 import { rotateTool } from './rotate.tool.js';
+import { serviceListTool } from './service-list.tool.js';
+import { serviceStartTool } from './service-start.tool.js';
+import { serviceStopTool } from './service-stop.tool.js';
 import { shipPrTool } from './ship-pr.tool.js';
 import { taskCreateTool } from './task-create.tool.js';
 import { taskListTool } from './task-list.tool.js';
@@ -36,6 +39,9 @@ const BUILDERS: readonly ((args: {
   taskListTool,
   rotateTool,
   shipPrTool,
+  serviceStartTool,
+  serviceStopTool,
+  serviceListTool,
   enterWorktreeTool,
 ];
 

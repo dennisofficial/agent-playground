@@ -10,14 +10,17 @@ import { useCursorFollow } from "./hooks/use-cursor-follow.js";
 import { useTurnNotifications } from "./hooks/use-turn-notifications.js";
 import { useRunningThreads } from "./hooks/use-conversation.js";
 import { useNewJob } from "./hooks/use-new-job.js";
+import { useQuitGuard } from "./hooks/use-quit-guard.js";
 import { claimService, useClaim } from "./hooks/use-claim.js";
 import { EClaimState } from "../domain/claim.js";
-import { useNavigation, type ThreadsRoute } from "./navigation.js";
+import { mayStillBeAlive } from "../domain/services.js";
+import { heldJobId, useNavigation, type ThreadsRoute } from "./navigation.js";
 import { AccountsPage } from "./pages/accounts.js";
 import { ConversationPage } from "./pages/conversation.js";
 import { JobsPage } from "./pages/jobs.js";
 import { NewJobPage } from "./pages/new-job.js";
 import { ProjectsPage } from "./pages/projects.js";
+import { ServicesPage } from "./pages/services.js";
 import { ThreadsPage } from "./pages/threads.js";
 import { useServices } from "./services.js";
 import { glyph, theme } from "./theme.js";
@@ -26,15 +29,27 @@ export function App(props: {
   explicitPath: string | null;
   cwd: string;
 }): React.ReactNode {
-  const { workspaceService, conversationService } = useServices();
+  const { workspaceService, conversationService, serviceRegistryService } =
+    useServices();
   const renderer = useRenderer();
   const { width: columns, height: rows } = useTerminalDimensions();
   const nav = useNavigation();
   const [error, setError] = useState<string | null>(null);
   const [booting, setBooting] = useState(true);
-  // Quitting with agents still working is the one exit that loses real work, so it asks twice.
   const running = useRunningThreads();
-  const [armed, setArmed] = useState(false);
+  // Quitting kills every working turn AND every service, so it asks once first. See `useQuitGuard`.
+  //
+  // `mayStillBeAlive`, not `isRunning`: what the warning has to name is what the reaper will have to
+  // kill on the way out, and a group that ignored an earlier SIGTERM is `killed` in memory while it
+  // is very much still there. Counting only `running` would go quiet about the one process the quit
+  // is going to have to insist on.
+  const armed = useQuitGuard({
+    agents: running.length,
+    services: () =>
+      serviceRegistryService.allServices().filter(mayStillBeAlive).length,
+    onQuit: () =>
+      void conversationService.release().finally(() => renderer.destroy()),
+  });
   // Here rather than on a page: we hold the mouse for the whole app, so we owe the clipboard for the
   // whole app. The composer of whichever page is mounted draws the confirmation.
   const copied = useCopyOnSelect();
@@ -49,29 +64,20 @@ export function App(props: {
     tty: string | null;
   } | null>(null);
 
-  /**
-   * This tile holds the job it has OPEN — the conversation and the job's own page are both inside
-   * it, so `←` between them changes nothing. Browsing holds nothing, which means a job you left ten
-   * seconds ago is immediately takeable: you are demonstrably not in it.
-   */
-  const heldJobId =
-    nav.route.name === "conversation"
-      ? nav.route.open.job.id
-      : nav.route.name === "threads"
-        ? nav.route.job.id
-        : null;
+  // Which pages count as being IN a job — see `heldJobId`.
+  const held = heldJobId(nav.route);
 
   const handleTakenOver = useCallback(() => {
-    if (!heldJobId) return;
+    if (!held) return;
     // Interrupt FIRST, navigate second. `←` deliberately leaves an agent working, so popping alone
     // would leave this tile streaming into a transcript the other terminal is now also writing.
-    void conversationService.abandonJob(heldJobId).finally(() => {
+    void conversationService.abandonJob(held).finally(() => {
       setError("this job was taken over by another terminal");
       nav.popTo("jobs");
     });
-  }, [conversationService, heldJobId, nav]);
+  }, [conversationService, held, nav]);
 
-  useClaim({ jobId: heldJobId, onTakenOver: handleTakenOver });
+  useClaim({ jobId: held, onTakenOver: handleTakenOver });
 
   // Creating a job is two moves — a blank page, then the message that makes it real. Both live in
   // one hook because both are decisions about the STACK, and neither is wiring.
@@ -80,14 +86,6 @@ export function App(props: {
   // A failure belongs to the page that produced it. Leaving that page clears it, so an error can
   // never outlive the thing it was about.
   useEffect(() => setError(null), [nav.route]);
-
-  // Armed is a moment, not a mode. Left standing it would turn a later, innocent ctrl+c into an
-  // unwarned quit — the exact thing the warning exists to prevent.
-  useEffect(() => {
-    if (!armed) return;
-    const timer = setTimeout(() => setArmed(false), 3000);
-    return () => clearTimeout(timer);
-  }, [armed]);
 
   // `atlas` inside a repository lands on that repository's jobs, not on a picker. Launched anywhere
   // else — `~`, most often, because the tiles are long-lived and nobody cds between tickets — it
@@ -191,6 +189,21 @@ export function App(props: {
   }, [nav]);
 
   /**
+   * Pushed, not toggled: `/services` is typed from a composer you are coming back to, and the
+   * conversation underneath is exactly where `←` should land you.
+   *
+   * A `useCallback` over the route rather than an inline arrow, because the conversation page memos
+   * its submit handler on this identity — an arrow rebuilt on every delta tick defeats that memo
+   * thirty times a second while an agent is streaming. It reads the route itself for the same
+   * reason `leaveConversation` does: the value it needs is only defined on the route it fires from.
+   */
+  const openServices = useCallback(() => {
+    if (nav.route.name !== "conversation") return;
+    const { job } = nav.route.open;
+    nav.push({ name: "services", jobId: job.id, jobTitle: job.title });
+  }, [nav]);
+
+  /**
    * Switch the conversation to another thread of the same job. Neither side's turn is disturbed:
    * `leave()` releases the soft lock only when nothing is running, and `openThread()` HYDRATES the
    * store the destination already has rather than resetting it — a reset would blank a working
@@ -285,19 +298,6 @@ export function App(props: {
   );
 
   useInput((input, key) => {
-    if (key.ctrl && input === "c") {
-      // Turns are subprocesses of this process, so quitting kills them. Say so once before doing it.
-      if (running.length > 0 && !armed) {
-        setArmed(true);
-        return;
-      }
-      void conversationService.release().finally(() => renderer.destroy());
-      return;
-    }
-
-    // Any other key means you are still working — the warning has served its purpose.
-    if (armed) setArmed(false);
-
     // Toggle rather than push: pressing it twice returns you to where you were instead of stacking
     // a second accounts page you then have to escape out of twice.
     if (key.ctrl && input === "a") nav.toggle({ name: "accounts" });
@@ -328,8 +328,7 @@ export function App(props: {
         {armed ? (
           <box flexDirection="row" flexShrink={0}>
             <text fg={theme.warn}>
-              {glyph.warning} {agentsWorking(running.length)} · ctrl+c again to
-              quit
+              {glyph.warning} {armed} · ctrl+c again to quit
             </text>
           </box>
         ) : null}
@@ -410,6 +409,7 @@ export function App(props: {
             // pushes where `←` pops. Two keys reach it because the TRIGGERS differ — `→` only
             // descends on an empty composer, `ctrl+h` always does.
             onThreads={openThreads}
+            onServices={openServices}
           />
         ) : null}
 
@@ -428,14 +428,20 @@ export function App(props: {
           />
         ) : null}
 
+        {/* NO reap keyed off this route, and none keyed off a claim release either. This page holds
+            the claim (`heldJobId`), but the accounts page does not — and a reap on that transition
+            would SIGTERM a dev server because the human pressed ctrl+a. */}
+        {route.name === "services" ? (
+          <ServicesPage
+            jobId={route.jobId}
+            jobTitle={route.jobTitle}
+            onBack={nav.pop}
+          />
+        ) : null}
+
         {route.name === "accounts" ? <AccountsPage onBack={nav.pop} /> : null}
       </box>
     </CopyNoticeProvider>
   );
 }
 
-function agentsWorking(count: number): string {
-  return count === 1
-    ? "1 agent still working"
-    : `${count} agents still working`;
-}

@@ -12,6 +12,12 @@
 export enum ESlashCommand {
   /** Ask the agent for its hand-off. Never a cut — see `rotationRequest`. */
   rotate = 'rotate',
+  /**
+   * Open the job's services. A page rather than a message, and the first command here that sends
+   * the agent nothing at all: the model already has `service_list`, and this is the human's half of
+   * the same facts — the half that can kill one.
+   */
+  services = 'services',
 }
 
 /**
@@ -26,6 +32,7 @@ export enum ESlashCommand {
 const ALIASES: Readonly<Record<string, ESlashCommand>> = {
   '/rotate': ESlashCommand.rotate,
   '/compact': ESlashCommand.rotate,
+  '/services': ESlashCommand.services,
 };
 
 /**

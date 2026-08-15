@@ -21,6 +21,7 @@ import type { PhaseBriefService } from '../phase-brief.service.js';
 import type { SessionManagerService } from '../session-manager.service.js';
 import { ThreadSeamService } from '../thread-seam.service.js';
 import { fakeShipService } from './ship.fixture.js';
+import { fakeServiceRegistry } from './services.fixture.js';
 import { fakeWorktreeService } from './worktree.fixture.js';
 import { fakeTaskService } from './tasks.fixture.js';
 import { atlasToolsFor } from '../tools/registry.js';
@@ -80,6 +81,8 @@ function build(tasks: readonly TaskView[] = []) {
   }[] = [];
   const turns: RunTurnArgs[] = [];
   const closedThreads: string[] = [];
+  /** What the rotation did, in order — the only thing that can prove one act happened before another. */
+  const acts: string[] = [];
 
   const service = new ThreadSeamService(
     { async listPhases(): Promise<Phase[]> { return PHASES; } } as unknown as JobRepository,
@@ -97,6 +100,7 @@ function build(tasks: readonly TaskView[] = []) {
         endReason: ESessionEndReason,
         handoff?: string,
       ): Promise<EngineSession> {
+        acts.push('rotateSession');
         rotations.push({ thread, current, endReason, ...(handoff ? { handoff } : {}) });
         return NEXT;
       },
@@ -119,11 +123,16 @@ function build(tasks: readonly TaskView[] = []) {
     } as unknown as ContextFolderService,
     {
       async run(args: RunTurnArgs): Promise<void> {
+        acts.push('run');
         turns.push(args);
+      },
+      stopHolding(threadId: string): void {
+        acts.push(`stopHolding:${threadId}`);
       },
     } as unknown as TurnRunnerService,
     fakeTaskService(tasks),
     fakeShipService(),
+    fakeServiceRegistry(),
     fakeWorktreeService(),
   );
 
@@ -135,7 +144,7 @@ function build(tasks: readonly TaskView[] = []) {
     tier: EToolTier.thread,
   };
 
-  return { service, ctx, rotations, turns, closedThreads };
+  return { service, ctx, rotations, turns, closedThreads, acts };
 }
 
 async function rotate(harness: ReturnType<typeof build>, attach: string[] = []) {
@@ -156,6 +165,23 @@ describe('rotate', () => {
     expect(harness.turns).toHaveLength(1);
     expect(reply).toContain('Session 3 is closed');
     expect(reply).toContain('Session 4 is open');
+  });
+
+  /**
+   * `rotate` is the ONE seam tool whose successor runs on the caller's own lane, and `queueTurn`
+   * awaits the predecessor's whole `execute` — `turn.done` included. So a turn held open on
+   * background work does not stall a race here, it stalls the successor's first turn for as long as
+   * the work runs, which is exactly the window this tool's contract says must not exist.
+   *
+   * The ordering is the assertion, not the eventual outcome: the successor being fired at all is
+   * already true today, and would stay true with the bar deleted.
+   */
+  it('bars the held turn from holding BEFORE it retires the session or fires the successor', async () => {
+    const harness = build();
+
+    await rotate(harness);
+
+    expect(harness.acts).toEqual([`stopHolding:${THREAD.id}`, 'rotateSession', 'run']);
   });
 
   it('keeps the thread — a rotation is not a succession', async () => {

@@ -6,6 +6,7 @@ import {
   type EngineEvent,
   type TurnUsage,
 } from "../domain/message.js";
+import { addTurnUsage } from "../domain/turn-usage.js";
 import { EMessageType } from "../generated/prisma/enums.js";
 import type { EngineSession } from "../generated/prisma/client.js";
 import type { ContextPressureService } from "./context-pressure.service.js";
@@ -241,7 +242,11 @@ export class TurnEventApplier {
       case "result":
         // The only frame carrying real token counts. It is not persisted here — the row is written
         // once, at the end of the turn, where the duration is also known.
-        if (event.usage) lane.usage = event.usage;
+        //
+        // ACCUMULATED, not assigned. A held turn produces one result per wake-up and each is scoped
+        // to its own request cycle, so the last one is a fraction of the bill rather than the bill.
+        // See `domain/turn-usage.ts`.
+        lane.usage = addTurnUsage({ total: lane.usage, next: event.usage });
         return;
 
       case "input_ack": {

@@ -24,6 +24,7 @@ import { PageHeader } from "../components/page-header.js";
 import { Screen } from "../components/screen.js";
 import { useComposer } from "../hooks/use-composer.js";
 import { useJobsKeys } from "../hooks/use-jobs-keys.js";
+import { useServiceJobIds } from "../hooks/use-job-services.js";
 import { usePendingProposals } from "../hooks/use-pending-proposals.js";
 import { useRunningThreads, useTick } from "../hooks/use-conversation.js";
 import { useServices } from "../services.js";
@@ -86,6 +87,9 @@ export function JobsPage(props: {
   // Which jobs owe you a keypress. The rows read it per job; the group headers roll it up on their
   // own inside `useProjectAttention`, so there is no third table anywhere.
   const proposals = usePendingProposals(running);
+  // Polled rather than pushed — the registry has no notify machinery. The hook hands back the same
+  // Set object while the membership holds, so the list only repaints when a service actually moves.
+  const serviceJobIds = useServiceJobIds();
 
   const reload = useCallback(async () => {
     const next =
@@ -276,8 +280,8 @@ export function JobsPage(props: {
         proposals={proposals}
         isClaimed={isClaimed}
         projectAttention={projectAttention}
+        serviceJobIds={serviceJobIds}
       />
-
 
       {action ? (
         <box flexDirection="column">

@@ -170,15 +170,37 @@ export function unionFacts(facts: readonly AttentionFacts[]): AttentionFacts {
 }
 
 /**
+ * A job holding a live service, marked rather than named.
+ *
+ * Deliberately NOT an `EAttentionVerb`. The verb is what you OWE — `isLegal` is written around that
+ * reading, and the ranking above spends its whole argument on which owed thing wins — and a running
+ * dev server owes you nothing. It is also orthogonal: a job can be working, owe you a keypress and
+ * hold three services at once, and a verb can only say one of those.
+ */
+export const SERVICE_MARK = '⚙';
+
+/**
  * `⠹ working…` — the status column's whole content, built the same way at both levels.
  *
  * The spinner is IN FRONT OF the verb rather than in the dot's place, which is what lets a job say
  * "something is running here" and "you owe a keypress" at the same time. While it replaced the dot,
  * those two were the same pixel and one of them had to lose.
+ *
+ * The service mark goes AFTER the label for the same reason in reverse: it is the least urgent thing
+ * in the cell, and a prefix would push the verb — the thing being scanned for — out of alignment
+ * down the column. `jobsLayout`'s widest form reserves the two columns it costs.
  */
-export function statusCell(args: { attention: Attention; frame: string }): string {
+export function statusCell(args: {
+  attention: Attention;
+  frame: string;
+  /** How many of this job's services are running. Absent at thread scope, which owns none. */
+  services?: number;
+}): string {
   const { attention } = args;
-  return attention.spinner ? `${args.frame} ${attention.label}` : attention.label;
+  const cell = attention.spinner
+    ? `${args.frame} ${attention.label}`
+    : attention.label;
+  return (args.services ?? 0) > 0 ? `${cell} ${SERVICE_MARK}` : cell;
 }
 
 /**

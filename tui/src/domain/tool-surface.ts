@@ -46,6 +46,17 @@ export enum EAtlasTool {
    */
   ship_pr = 'ship_pr',
   /**
+   * Processes the JOB owns, split from the native background tools by LIFETIME and by nothing else.
+   * `Bash(run_in_background)` is untouched and still right for finite work, which reports back inside
+   * its own turn; these three are for what must still be running after the turn ends.
+   *
+   * Start, stop, list — and no `service_output`, because a service's output is a log file the agent
+   * already knows how to read.
+   */
+  service_start = 'service_start',
+  service_stop = 'service_stop',
+  service_list = 'service_list',
+  /**
    * Take a branch and a worktree of this job's own. The only tool that changes where later turns
    * RUN, which is why its reply is mostly about the fact that it does not change where this one is.
    */

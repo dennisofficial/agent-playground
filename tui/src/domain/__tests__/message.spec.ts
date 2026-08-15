@@ -244,6 +244,26 @@ describe("a delegate's frames never persist", () => {
   });
 });
 
+describe('asMessagePayload, on a tool result', () => {
+  /** Rows written before `flattenResult` learned to strip still hold the terminal's own bytes. */
+  it('takes escape sequences back out of a row an older build wrote', () => {
+    const payload = asMessagePayload({
+      type: EMessageType.tool_result,
+      toolUseId: 't-1',
+      ok: true,
+      summary: '\x1b[32m[Nest] 15678\x1b[39m  - LOG',
+      detail: ['\x1b[33mturn finished\x1b[39m'],
+    });
+    expect(payload).toEqual({
+      type: EMessageType.tool_result,
+      toolUseId: 't-1',
+      ok: true,
+      summary: '[Nest] 15678  - LOG',
+      detail: ['turn finished'],
+    });
+  });
+});
+
 describe('unreadablePayload', () => {
   it('is a renderable error block, so one bad row costs one block and not the transcript', () => {
     const payload = unreadablePayload({ id: 'm-9' });

@@ -55,6 +55,9 @@ import {
 } from '../components/transition-confirm.js';
 import { VerbMenu } from '../components/verb-menu.js';
 import { NewJobPage } from '../pages/new-job.js';
+import { ServicesPage } from '../pages/services.js';
+import { ServicesProvider, type Services } from '../services.js';
+import { EServiceStatus, type ServiceEntry } from '../../domain/services.js';
 import type { AccountRow } from '../../app/accounts.service.js';
 
 /**
@@ -729,5 +732,77 @@ describe('thinking', () => {
     ]) {
       await expect(mount(<ThinkingBlock {...props} width={100} />)).resolves.toBeUndefined();
     }
+  });
+});
+
+/**
+ * The services page, mounted for real against a fake registry.
+ *
+ * It is three `<text>` lines per row with a `<Caret>` span inside the first — the exact shape that
+ * throws at mount when it is ever wrapped in another `<text>` — and its EMPTY state is a separate
+ * tree, drawn by `ListEmpty` rather than by the row. Both are mounted here because the empty page is
+ * the one a human sees first and the one no other test would ever reach.
+ */
+function registry(entries: ServiceEntry[]): Services {
+  return {
+    serviceRegistryService: {
+      listFor: () => entries,
+      allServices: () => entries,
+      stop: async () => 'stopped',
+    },
+  } as unknown as Services;
+}
+
+function serviceEntry(overrides: Partial<ServiceEntry> = {}): ServiceEntry {
+  return {
+    id: 'a1b2c3d4',
+    jobId: 'job-1',
+    command: 'pnpm --filter @dltech/atlas-harness dev',
+    description: 'web dev server',
+    cwd: '/repo',
+    pid: 4321,
+    pgid: 4321,
+    logPath: '/Users/someone/.atlas/jobs/job-1/logs/a1b2c3d4.log',
+    startedAt: Date.now() - 90_000,
+    status: EServiceStatus.running,
+    ...overrides,
+  };
+}
+
+describe('the services page', () => {
+  it('renders the empty state, which has to name the tool services come from', async () => {
+    await expect(
+      mount(
+        <ServicesProvider services={registry([])}>
+          <ServicesPage jobId="job-1" jobTitle="atlas" onBack={() => undefined} />
+        </ServicesProvider>,
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it('renders a running service, a dead one and one whose every column overflows', async () => {
+    const entries = [
+      serviceEntry(),
+      serviceEntry({
+        id: 'ffff0000',
+        description: 'prisma studio',
+        status: EServiceStatus.exited,
+        exitCode: 127,
+      }),
+      serviceEntry({
+        id: '00001111',
+        description: `a description far wider than any terminal ${'x'.repeat(200)}`,
+        command: `pnpm ${'y'.repeat(300)}`,
+        logPath: `/Users/someone/.atlas/jobs/${'z'.repeat(200)}/logs/00001111.log`,
+        status: EServiceStatus.killed,
+      }),
+    ];
+    await expect(
+      mount(
+        <ServicesProvider services={registry(entries)}>
+          <ServicesPage jobId="job-1" jobTitle="atlas" onBack={() => undefined} />
+        </ServicesProvider>,
+      ),
+    ).resolves.toBeUndefined();
   });
 });

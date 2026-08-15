@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { ClaimService } from "../../app/claim.service.js";
 import { EClaimState } from "../../domain/claim.js";
+import { useServices } from "../services.js";
 
 /**
  * One instance for the process, constructed here rather than injected.
@@ -31,6 +32,7 @@ export function useClaim(args: {
   onTakenOver: () => void;
 }): void {
   const { jobId, onTakenOver } = args;
+  const { serviceRegistryService } = useServices();
 
   /**
    * Holds and lets go. It does NOT acquire.
@@ -54,7 +56,17 @@ export function useClaim(args: {
       // if the file is removed by hand, or if our own release races this callback — and demoting on
       // it would eject you from your own job for no reason.
       if (claimService.stateOf(jobId) !== EClaimState.held) return;
+      // A takeover is the one moment a job's services stop having anyone watching them: another
+      // Atlas is now driving, and our children would sit on its ports with nobody to stop them.
+      //
+      // Here, and NOT in the release above. `release` runs whenever this tile stops holding the job
+      // — which includes merely pushing a route that is not inside it, since `heldJobId` is read off
+      // the top of the navigation stack. Reaping there would let ctrl+a to the accounts page SIGTERM
+      // a dev server. Letting go of a claim is cheap and reversible; killing a process group is
+      // neither, so they do not share a lifetime.
+      // Voided: the takeover has to hand the UI back at once, and the escalation finishes on its own.
+      void serviceRegistryService.reapJob(jobId);
       onTakenOver();
     });
-  }, [jobId, onTakenOver]);
+  }, [jobId, onTakenOver, serviceRegistryService]);
 }

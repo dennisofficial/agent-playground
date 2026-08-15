@@ -21,6 +21,8 @@ export function JobEntries(props: {
   proposals: Map<string, string[]>;
   isClaimed: (job: JobRow) => boolean;
   projectAttention: (projectId: string) => Attention;
+  /** The jobs holding a live service, by id — a set because the row only asks whether it is in it. */
+  serviceJobIds: ReadonlySet<string>;
 }): React.ReactNode {
   return (
     <>
@@ -58,6 +60,7 @@ export function JobEntries(props: {
             runningThreadIds={props.runningThreadIds}
             proposalThreadIds={props.proposals.get(entry.job.id) ?? []}
             claimed={props.isClaimed(entry.job)}
+            hasService={props.serviceJobIds.has(entry.job.id)}
           />
         );
       })}

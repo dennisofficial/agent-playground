@@ -1,8 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
 import type { EngineSession, Thread } from "../generated/prisma/client.js";
-import { promptPayload, renderPrompt } from "../domain/message.js";
-import { isContextWall } from "../domain/rotation-handoff.js";
-import { buildSystemPrompt } from "../domain/system-prompt.js";
 import { AccountVaultService } from "../auth/account-vault.service.js";
 import { EngineHomeService } from "../auth/engine-home.service.js";
 import { ClaudeEngineService } from "../engine/claude-engine.service.js";
@@ -20,7 +17,7 @@ import { SessionManagerService } from "./session-manager.service.js";
 import { finaliseTurn } from "./turn-completion.js";
 import { TurnEventApplier } from "./turn-events.js";
 import { TurnLanes, type Lane } from "./turn-lanes.js";
-import { nudgeAtToolBoundary } from "./turn-nudge.js";
+import { startEngineTurn } from "./turn-start.js";
 import { steerTurn } from "./turn-steering.js";
 
 // Re-exported rather than moved outright: half this file's importers want only the argument shape,
@@ -105,17 +102,17 @@ export class TurnRunnerService {
       // Cleared here rather than off the returned promise, so `busy` is already false by the time
       // the caller's `await` resumes. Only the LAST turn clears it — an earlier one finishing must
       // not report idle while a queued turn is still waiting to start.
-      if (lane.turnSeq === seq) {
-        lane.inFlight = undefined;
-        lane.turn = undefined;
-        this.lanes.reap(args.thread.id);
-        this.lanes.announce();
-      }
+      if (lane.turnSeq === seq)
+        this.lanes.retire({
+          lane,
+          threadId: args.thread.id,
+          dequeue: (id) => this.stores.for(args.thread.id).dequeue(id),
+        });
     }
   }
 
   private async execute(lane: Lane, args: RunTurnArgs): Promise<void> {
-    const { thread, cwd } = args;
+    const { thread } = args;
     const store = this.stores.for(thread.id);
     // Which session and which account this turn actually runs on: both can have moved since the
     // caller looked, and both move only at a turn boundary. See `session-rotation.ts`.
@@ -146,6 +143,9 @@ export class TurnRunnerService {
     lane.contextLimit = undefined;
     lane.canary = undefined;
     lane.usage = undefined;
+    // Per TURN, not per lane: a session barred from holding once must not bar every turn that follows
+    // it on the same thread. Safe here because `queueTurn` awaits the whole of the previous `execute`.
+    lane.noHold = false;
     // The nudge cadence escalates across turns and never within one, so the counter moves here.
     this.contextPressureService.startTurn(session.id);
     // Wall clock, and deliberately started HERE rather than from the SDK's `duration_ms`: this is
@@ -153,83 +153,28 @@ export class TurnRunnerService {
     const startedAt = new Date();
     let ok = false;
     try {
-      // The payload is written first and rendered second, so the transcript records WHO spoke and
-      // the model receives the envelope that says the same thing. One source, two directions.
-      const payload = promptPayload({
-        text: args.prompt,
-        harnessVariant: args.harnessVariant,
-        attachments: args.attachments,
-        images: args.images,
-      });
-      await this.events.persist({
+      const turn = await startEngineTurn({
+        turn: args,
+        session,
+        lane,
         store,
-        threadId: thread.id,
-        sessionId: session.id,
-        payload,
+        events: this.events,
+        claudeEngineService: this.claudeEngineService,
+        accountVaultService: this.accountVaultService,
+        engineHomeService: this.engineHomeService,
+        contextPressureService: this.contextPressureService,
+        // Fast mode and the credit permission are read from the account row at spawn, inside
+        // `startEngineTurn` — see there for why it cannot be carried down from `resolveForTurn`.
+        accountRepository: this.accountRepository,
+        record: (work) => this.record(lane, store, work),
+        onWall: () => {
+          wall = true;
+          // The session is finished, so nothing held on it is worth having — and while it is held the
+          // lane stays busy, which routes every keystroke through `send()`'s steer branch into a
+          // session that is refusing every request. Text vanishing into a dead session.
+          lane.noHold = true;
+        },
       });
-
-      // Before the credential critical section, deliberately: reading a few hundred kilobytes off
-      // disk inside the lock would hold every other thread's spawn behind this turn's pictures.
-      const promptImages = await readPromptImages(args.images ?? []);
-
-      const blob = await this.accountVaultService.freshCredential(
-        session.accountId,
-      );
-
-      // Read rather than carried down from `resolveForTurn`, because rotation can have moved the
-      // account since — and fast mode is the paying account's setting, not the session's.
-      const account = await this.accountRepository.findById(session.accountId);
-      lane.fastModeRequested = account?.fastMode === true;
-      lane.extraUsageAllowed = account?.extraUsageAllowed === true;
-
-      // Credential write and spawn happen inside one critical section — see EngineHomeService. The
-      // account id travels with the blob so the read-back in `finaliseTurn` knows whose file it is.
-      const turn = await this.engineHomeService.claim(
-        { accountId: session.accountId, blob },
-        (env) =>
-          this.claudeEngineService.start({
-            prompt: renderPrompt(payload),
-            // Read by the app layer, not the engine: the bytes are Atlas's to find, and an
-            // unreadable file drops its picture rather than failing the turn its words were for.
-            images: promptImages,
-            systemPrompt: buildSystemPrompt({ brief: args.brief }),
-            cwd,
-            model: session.model,
-            resume: session.engineSessionId ?? undefined,
-            env,
-            fastMode: lane.fastModeRequested,
-            tools: args.tools,
-            // Atlas's one way into a running turn that costs the agent nothing: it is already
-            // waiting on the tool. Whether anything is said at all is entirely `turn-nudge.ts`'s
-            // decision.
-            onToolBoundary: () =>
-              nudgeAtToolBoundary({
-                contextPressureService: this.contextPressureService,
-                events: this.events,
-                store,
-                thread,
-                session,
-                lane,
-                record: (work) => this.record(lane, store, work),
-              }),
-            // Straight to the store, not through the write chain: nothing is persisted and the
-            // working line is the only reader. Queuing it behind the turn's database writes would
-            // land the state change after the frames that made it true.
-            onHold: (value) => store.setHolding(value),
-            onEvent: (event) => {
-              if (event.kind === "error" && isContextWall(event)) wall = true;
-              this.record(lane, store, () =>
-                this.events.apply({
-                  event,
-                  store,
-                  lane,
-                  threadId: thread.id,
-                  session,
-                }),
-              );
-            },
-          }),
-      );
       lane.turn = turn;
       // The handle exists now, so anything typed during setup can go straight into the live query.
       this.lanes.flush({ lane, dequeue: (id) => store.dequeue(id) });
@@ -297,6 +242,21 @@ export class TurnRunnerService {
   }
 
   /**
+   * This turn may not hold open past the model's `result`. Sticky, evaluated at the next result, and
+   * safe to call at any time — before the query exists, twice, or after the loop has already exited.
+   *
+   * Deliberately NOT a close of the engine's input, and not only because that loses a steer (see
+   * `turn-waker.ts`). Atlas's tools are in-process SDK MCP servers and its `PostToolUse` hook is an
+   * SDK callback: **both are answered by writing back over the CLI's stdin.** Closing it under the
+   * very tool call that asked for this would break the control channel, not just the background work.
+   */
+  stopHolding(threadId: string): void {
+    const lane = this.lanes.peek(threadId);
+    if (!lane) return;
+    lane.noHold = true;
+  }
+
+  /**
    * Queue a database write behind this lane's chain. A failure is an inline notice rather than an
    * unhandled rejection — see `TurnLanes.enqueue` for why the chain exists at all.
    */
@@ -316,33 +276,3 @@ export class TurnRunnerService {
   }
 }
 
-/**
- * Pictures off disk, base64'd for the wire.
- *
- * An image that will not read is DROPPED rather than thrown: the file was written by a paste that
- * may have been days ago, the words around it are the point of the turn, and failing the whole
- * message over a missing picture would lose the one thing that cannot be recovered. The `[Image #N]`
- * token stays in the text either way, so the model is told a picture was meant to be there.
- */
-async function readPromptImages(
-  images: readonly DraftImage[],
-): Promise<readonly PromptImage[]> {
-  const read = await Promise.all(
-    // Only the ones meant to travel as bytes. A `path-only` image was already judged too heavy to
-    // inline — the manifest in the prompt names it, and the agent can Read it.
-    images
-      .filter((image) => image.delivery === EImageDelivery.inline)
-      .map(async (image) => {
-        try {
-          const bytes = await Bun.file(image.path).arrayBuffer();
-          return {
-            mediaType: image.mediaType,
-            data: Buffer.from(bytes).toString("base64"),
-          };
-        } catch {
-          return null;
-        }
-      }),
-  );
-  return read.filter((image): image is PromptImage => image !== null);
-}

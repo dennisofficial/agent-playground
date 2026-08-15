@@ -15,6 +15,7 @@ import { HumanVerbsService } from "./human-verbs.service.js";
 import { JobStartService } from "./job-start.service.js";
 import { JobTitleService } from "./job-title.service.js";
 import { PhaseBriefService } from "./phase-brief.service.js";
+import { ServiceRegistryService } from "./service-registry.service.js";
 import { SessionManagerService } from "./session-manager.service.js";
 import { ShipService } from "./ship.service.js";
 import { TaskService } from "./task.service.js";
@@ -30,6 +31,7 @@ import { WorktreeService } from "./worktree.service.js";
     ConversationStoreRegistry,
     ContextFolderService,
     ContextPressureService,
+    ServiceRegistryService,
     SessionManagerService,
     AccountRotatorService,
     AccountUsageService,
@@ -53,6 +55,7 @@ import { WorktreeService } from "./worktree.service.js";
   exports: [
     ConversationStoreRegistry,
     ContextFolderService,
+    ServiceRegistryService,
     SessionManagerService,
     AccountsService,
     AttentionService,

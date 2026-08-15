@@ -44,6 +44,15 @@ export type Lane = {
    * unrequested `sdk_opt_in_required` is the default, not a failure worth reporting.
    */
   fastModeRequested?: boolean;
+  /**
+   * This turn may not hold open past the model's `result`, whatever background work is still live.
+   *
+   * Sticky for the rest of the turn and reset per turn beside the other fields above, because the two
+   * things that set it — a `rotate` tool call, a context wall — both fire mid-stream, long before
+   * there is a hold to end. On the LANE rather than on `turn` so it can be set before a handle exists
+   * at all, which takes the whole question of when `lane.turn` is assigned out of the design.
+   */
+  noHold?: boolean;
   turn?: RunningTurn;
 };
 
@@ -170,5 +179,29 @@ export class TurnLanes {
   drop(args: { lane: Lane; dequeue: (id: string) => void }): void {
     for (const steer of args.lane.preflight) args.dequeue(steer.id);
     args.lane.preflight = [];
+  }
+
+  /**
+   * The lane's last turn is over and the lane is about to stop existing.
+   *
+   * Four steps, in this order and only this order: `reap` refuses to delete a lane still holding a
+   * preflight steer, so a drop that ran after it would leave the lane in the map with nothing left
+   * that could ever run it.
+   *
+   * That drop is the SECOND one — `finaliseTurn` already dropped, and earlier. A steer typed in the
+   * sliver after that is refused by the engine (the turn's `state.live` is false by then), held here
+   * as a preflight instead, and has nothing left to flush it: its chip sits under the composer for
+   * the life of the thread. Nothing can arrive after this one.
+   */
+  retire(args: {
+    lane: Lane;
+    threadId: string;
+    dequeue: (id: string) => void;
+  }): void {
+    args.lane.inFlight = undefined;
+    args.lane.turn = undefined;
+    this.drop(args);
+    this.reap(args.threadId);
+    this.announce();
   }
 }

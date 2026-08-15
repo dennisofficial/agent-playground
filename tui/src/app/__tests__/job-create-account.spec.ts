@@ -9,6 +9,7 @@ import type { ContextFolderService } from '../context-folder.service.js';
 import type { ConversationService } from '../conversation.service.js';
 import type { GitService } from '../git.service.js';
 import { SessionManagerService } from '../session-manager.service.js';
+import { fakeServiceRegistry } from './services.fixture.js';
 import { WorkspaceService } from '../workspace.service.js';
 import type { WorktreeService } from '../worktree.service.js';
 
@@ -78,6 +79,7 @@ function build(accounts: Partial<Account>[]) {
     {} as unknown as ConversationService,
     {} as unknown as WorktreeService,
     {} as unknown as GitService,
+    fakeServiceRegistry(),
   );
 
   return { workspaceService, created, contextFolders };

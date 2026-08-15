@@ -3,6 +3,7 @@ import type { DelegateEvent } from './delegate-events.js';
 import { renderAttachmentParts, type AttachmentPart } from './attachments.js';
 import type { DraftImage } from './draft-images.js';
 import { EImageDelivery } from './image-limits.js';
+import { stripTerminalControls } from './plain-text.js';
 import type { DiffHunk } from './tool-diff.js';
 
 // Re-exported for the same reason `tool-view.ts` re-exports `tool-shape.ts`: which half of a pair a
@@ -134,7 +135,24 @@ export function asMessagePayload(value: unknown): MessagePayload | null {
   if (typeof value !== 'object' || value === null || !('type' in value)) return null;
   const { type } = value;
   if (typeof type !== 'string' || !PAYLOAD_TYPES.has(type)) return null;
-  return value as MessagePayload;
+  const payload = value as MessagePayload;
+  return payload.type === EMessageType.tool_result ? plainResult(payload) : payload;
+}
+
+/**
+ * A stored tool result with the terminal's own bytes taken back out.
+ *
+ * The write path strips them (`flattenResult`), so this is only ever about rows written BEFORE it
+ * did — the same "an older build wrote this" case the guard above exists for. It earns the cost
+ * because one bad row is not one bad row: an escape sequence in a cell desynchronises the renderer
+ * from the screen and smears fragments across the whole frame. See `plain-text.ts`.
+ */
+function plainResult(payload: ToolResultPayload): ToolResultPayload {
+  return {
+    ...payload,
+    summary: stripTerminalControls(payload.summary),
+    detail: payload.detail.map(stripTerminalControls),
+  };
 }
 
 /**
@@ -234,9 +252,16 @@ export type EngineEvent =
    * read it beside.
    */
   | { kind: 'input_ack'; id: string }
-  /** `usage` is absent when the turn died before the engine could report — an interrupt, a spawn
-   *  failure. The duration is still real in that case; the tokens simply are not known. */
-  | { kind: 'result'; ok: boolean; text?: string; usage?: TurnUsage };
+  /**
+   * `usage` is absent when the turn died before the engine could report — an interrupt, a spawn
+   * failure. The duration is still real in that case; the tokens simply are not known.
+   *
+   * `nonTerminal` marks the one result shape that does NOT mean the turn is over: a background
+   * notification that woke the session, produced no work at all, and stopped. Everything else,
+   * including every shape nobody has enumerated, is a turn end — see `background-hold.ts` for why
+   * that polarity is not negotiable.
+   */
+  | { kind: 'result'; ok: boolean; text?: string; usage?: TurnUsage; nonTerminal?: boolean };
 
 /**
  * An accounting record taken at the end of a turn, about spend — deliberately not the same shape as

@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 
 /**
  * Atlas OWNS everything under `~/.atlas` — it does not read, merge with, or respect the user's
@@ -46,6 +46,23 @@ export const ATLAS_PATHS = {
 export function expandHome(path: string, home: string = homedir()): string {
   if (path === '~') return home;
   if (path.startsWith('~/')) return join(home, path.slice(2));
+  return path;
+}
+
+/**
+ * `expandHome` backwards — for the paths the human has to READ.
+ *
+ * A service's log path is the one string on the services page whose whole purpose is to be copied
+ * into an editor, and `~/.atlas/jobs/<uuid>/logs/<id>.log` is a dozen columns shorter than its
+ * absolute form. That is the difference between fitting an 80-column terminal and being clipped.
+ *
+ * A shared prefix is not containment: `/Users/someone-else` starts with `/Users/someone` and
+ * collapsing it would name a folder that does not exist. The separator check is what makes the
+ * round trip through `expandHome` safe.
+ */
+export function collapseHome(path: string, home: string = homedir()): string {
+  if (path === home) return '~';
+  if (path.startsWith(home + sep)) return `~${path.slice(home.length)}`;
   return path;
 }
 
@@ -135,6 +152,44 @@ export function jobContextDir(jobId: string): string {
  */
 export function jobClaimFile(jobId: string): string {
   return join(jobDir(jobId), 'claim.json');
+}
+
+/**
+ * The registry of job-owned services, mirrored to disk beside `claim.json` and for the same reason:
+ * a job's services belong to the instance holding it, and both facts have to survive a process that
+ * dies without running a handler.
+ *
+ * Written on every membership or status change and **not read back** — nothing in this job reconciles
+ * against it. It exists so the deferred crash-orphan-hygiene job has something to reconcile against,
+ * which is the whole reason `pid` and `pgid` are both recorded.
+ */
+export function jobServicesFile(jobId: string): string {
+  return join(jobDir(jobId), 'services.json');
+}
+
+/** Combined stdout+stderr, one file per service. Inside `jobDir`, so deleting a job takes the logs. */
+export function jobLogsDir(jobId: string): string {
+  return join(jobDir(jobId), 'logs');
+}
+
+/**
+ * Where one service's output lands, or a throw.
+ *
+ * The containment check is not defensive theatre: a service id becomes a filename, and the only thing
+ * standing between "ids are minted by Atlas" and "an id names `../../../.ssh/id_rsa`" is this
+ * function. Same rule and same shape as `ContextFolderService.resolveInside` — `../` and an absolute
+ * path both resolve OUT, and neither is a legal id.
+ */
+export function serviceLogFile(args: {
+  jobId: string;
+  serviceId: string;
+}): string {
+  const root = resolve(jobLogsDir(args.jobId));
+  const target = resolve(root, `${args.serviceId}.log`);
+  if (!target.startsWith(root + sep)) {
+    throw new Error(`service id escapes the job folder: ${args.serviceId}`);
+  }
+  return target;
 }
 
 /**
