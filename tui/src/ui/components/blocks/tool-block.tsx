@@ -63,7 +63,12 @@ export function ToolBlock(props: {
   const { handlers, wash } = useClickRegion(
     hasDetail && toggle ? () => toggle(props.toolUseId) : undefined,
   );
-  const expandIndicator = hasDetail ? (props.expanded ? "▼" : "▶") : " ";
+  // No disclosure triangle. Every tool call in the transcript carried one, which made a column of
+  // `▶` the most repeated glyph on screen — and it was pointing at something the reader already had
+  // two better cues for: `useClickRegion`'s hover wash says the row acts on a click, and an open
+  // block is self-evidently open because its detail is underneath it. The two columns stay so the
+  // `⎿` result line below still hangs off the same left edge.
+  const gutter = "  ";
   // A diff shows without being asked. It is the answer to "what did that edit do?", which is a
   // question the reader always has and the summary line structurally cannot answer; every other
   // kind of tool detail is output they can go and look at if they want it.
@@ -72,9 +77,7 @@ export function ToolBlock(props: {
   return (
     <box flexDirection="column" marginBottom={1}>
       <text wrapMode="none" {...handlers}>
-        <span fg={hasDetail ? theme.dim : undefined} {...wash}>
-          {expandIndicator}{" "}
-        </span>
+        <span {...wash}>{gutter}</span>
         <span attributes={TextAttributes.BOLD} {...wash}>
           {props.name}
         </span>

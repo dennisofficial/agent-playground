@@ -108,9 +108,13 @@ export function ToolGroupBlock(props: {
           whole extra ROW and jumps every line below it — and the heading GROWS while a turn runs.
           `groupHeadline` reserves the suffix and clips the sentence so the row count never changes. */}
       <text wrapMode="none" width={inner} flexShrink={0} {...handlers(groupKey)}>
-        {/* The gutter says whether the group is still happening, and whether it is open. */}
-        <span fg={headline.live > 0 ? theme.accent : theme.dim} {...wash(groupKey)}>
-          {headline.live > 0 ? `${props.frame ?? "⠋"} ` : earlier > 0 ? "▶ " : "▼ "}
+        {/* The gutter says whether the group is still happening, and nothing else now. It used to
+            also carry `▶`/`▼` for whether rows were hidden, which was the `… +N earlier` line
+            directly below saying the same thing in words — and a triangle on every settled group
+            made the transcript a column of arrows. Two columns when idle, so the title sits where
+            the spinner leaves it rather than sliding left the moment a group finishes. */}
+        <span fg={theme.accent} {...wash(groupKey)}>
+          {headline.live > 0 ? `${props.frame ?? "⠋"} ` : "  "}
         </span>
         <span attributes={TextAttributes.BOLD} {...wash(groupKey)}>
           {headline.title}
