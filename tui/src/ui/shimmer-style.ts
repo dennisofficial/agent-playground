@@ -12,10 +12,22 @@ import { theme } from "./theme.js";
 
 /**
  * The line at rest. `theme.dim` is the terminal's own `gray`, which is a name rather than a value
- * and so cannot be interpolated — a fade needs a real hex to fade FROM. This sits at the same
- * weight the working line has always had when nothing is passing over it.
+ * and so cannot be interpolated — a fade needs a real hex to fade FROM.
+ *
+ * ABOVE dim, deliberately, and that is the whole point of the value. This was `#6d6862` — rgb(109,
+ * 104, 98) — while ANSI `gray` sits near rgb(128, 128, 128) in most palettes, so a turn that was
+ * actively running rendered DARKER than the finished transcript above it. The duty cycle made it
+ * worse: at `WORKING_SHIMMER`'s 18ms/cell and 1500ms rest, a ~50-cell label spends roughly 60% of
+ * every cycle sitting at exactly this colour, so this — not the crest — is what "working" mostly
+ * looks like. It read as a line that had stalled.
+ *
+ * It sits BETWEEN `theme.meta` and `theme.hover` on the neutral ramp, and is deliberately not either
+ * of them: `meta` is level with `dim` once you measure it, so it would not have fixed anything, and
+ * `hover` is bright enough to compete with the crest this ramp is supposed to travel towards. Like
+ * `SHIMMER_CREST` below, it is therefore off-palette on purpose — worth knowing before a theme
+ * editor tries to claim every hex in the app.
  */
-export const SHIMMER_REST = "#6d6862";
+export const SHIMMER_REST = "#9c948c";
 
 /** The top of the crest. Warm near-white — the accent with the lights turned up, not a second hue. */
 export const SHIMMER_CREST = "#ffd9c4";
