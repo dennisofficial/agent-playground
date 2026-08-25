@@ -42,8 +42,10 @@ enum EThreadRole {
   builder
   master_review
   post_build
-  /// Rebases, pushes and opens the PR. Idempotent by design — the red-build loop makes it run more
-  /// than once, and idempotence is why re-shipping needs no second role.
+  /// Pushes the branch and opens the PR — with git and `gh`, in the shell, following the `ci` brief.
+  /// Atlas used to do this itself behind a `ship_pr` tool and no longer runs git on the agent's
+  /// behalf; the role name outlived the tool. Re-runnable by design — the red-build loop makes it
+  /// run more than once, which is why re-shipping needs no second role.
   ship_pr
   /// Kept as the routing target for when webhooks eventually land. The `ci` phase SHIPS; it does not
   /// watch — a watcher earns its keep by noticing things while you are away, and the TUI is a

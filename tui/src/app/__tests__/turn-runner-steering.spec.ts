@@ -268,7 +268,12 @@ describe('turn integrity', () => {
 });
 
 describe('account rotation at a turn boundary', () => {
-  it('notes the swap inline and runs the turn on the new account', async () => {
+  /**
+   * The swap is SILENT now, on both channels. Which account is live is a standing fact the
+   * conversation header already carries; a row announcing each change of it is bookkeeping the
+   * transcript keeps forever, long outliving the reason anyone cared.
+   */
+  it('swaps accounts without a word, and runs the turn on the new one', async () => {
     const { runner, rotator, store, engine, messages } = build();
     rotator.considerRotation.mockResolvedValue({
       kind: 'rotated',
@@ -278,14 +283,9 @@ describe('account rotation at a turn boundary', () => {
 
     await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
 
-    expect(store.getSnapshot().notices).toEqual([
-      'switched to work@company · dennis@personal hit its 5-hour limit',
-    ]);
+    expect(store.getSnapshot().notices).toEqual([]);
     expect(engine.lastArgs?.model).toBe('claude-opus-5');
-    // The swap note is LIVE-ONLY and stays that way. It is Atlas talking to the human about its own
-    // bookkeeping — it persists to nothing and never reaches the model, which is the opposite of a
-    // harness `notice`. Collapsing the two would silently start billing the agent for rotation
-    // chatter and put a note in the transcript that outlives the reason for it.
+    // And nothing reaches the MODEL either — the agent is never billed for Atlas's bookkeeping.
     expect(messages.appended.map((m) => m.payload.type)).toEqual([EMessageType.user]);
   });
 });

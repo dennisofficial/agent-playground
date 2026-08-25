@@ -7,7 +7,7 @@ export type ServiceCall =
   | { verb: 'reap'; jobId: string };
 
 /**
- * A seam fixture's tenth constructor argument, and the same bargain as `fakeShipService`:
+ * A seam fixture's tenth constructor argument, and the same bargain as `fakePullRequestService`:
  * `ThreadSeamService` holds a `ServiceRegistryService` so the registry can offer the three service
  * tools, so every seam fixture needs one whether or not the test starts a process — and a fixture
  * that stopped passing one would make those tools vanish silently.

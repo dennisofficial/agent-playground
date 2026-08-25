@@ -129,13 +129,15 @@ export const ROLE_BINDINGS: Record<EThreadRole, RoleBinding> = {
     engine: { ...CLAUDE, effort: EClaudeEffort.high },
     blurb: "tidy up after the build",
   },
-  // Shipping is a mechanical act with one judgement in it — the pull request description a reviewer
-  // reads cold — so it takes the same binding as everything else rather than a cheaper one: the
-  // description is the last thing written about this work and the first thing anyone else reads.
+  // Shipping is git work the agent does itself in the shell — Atlas stopped doing it — plus one
+  // judgement: the pull request description a reviewer reads cold. That, and a phase whose whole
+  // rule set is "never force-push, never rewrite a pushed branch", is why it keeps the same binding
+  // as everything else rather than a cheaper one. A model that improvises around a rejected push is
+  // the expensive failure here.
   ship_pr: {
     role: "ship_pr",
     engine: { ...CLAUDE, effort: EClaudeEffort.high },
-    blurb: "rebase, push, open the PR",
+    blurb: "push and open the PR",
   },
   // Kept as a NAMED role rather than folded into `builder`, because it is the routing target for
   // when webhooks eventually land — an event needs a role to be delivered to, and minting one then

@@ -229,24 +229,57 @@ ${branchLine(ctx)} Read the review findings in the handoff first and treat them 
 /** The pull request this job already has, when it has one — a cached number, not a live state. */
 function pullRequestLine(ctx: PhaseBriefContext): string {
   return ctx.prNumber === undefined
-    ? `No pull request has been opened for this job yet.`
-    : `This job already has pull request #${ctx.prNumber}; \`ship_pr\` will update it rather than open a second.`;
+    ? `No pull request has been recorded for this job yet — check anyway, with \`gh pr list --head <branch> --state open\`, because the record is only as good as the last time somebody wrote it.`
+    : `This job has pull request #${ctx.prNumber} recorded against it; pushing updates that one, and you should not open a second.`;
 }
 
+/**
+ * `ci`'s brief carries the whole shipping procedure, and that is a deliberate reversal.
+ *
+ * Atlas used to ship for the agent — one `ship_pr` tool that fetched, rebased onto the default
+ * branch, force-pushed with a lease and called `gh pr create`, with this brief saying "do not run
+ * git or gh yourself". The harness was doing the agent's work, and the unconditional rebase made a
+ * force push Atlas's standing decision rather than a judgement anybody made per-ship.
+ *
+ * So the procedure moved here, into prose, where the agent can read it, weigh it, and depart from it
+ * with a reason. **The force-push rule is prose too, and that is the honest place for it**: with
+ * `Bash` in every thread's native kit there was never a structural guarantee to be had, and pretending
+ * otherwise is worse than saying it plainly. Restriction in Atlas is by what EXISTS, never by
+ * refusing at call time — and what exists here is an instruction.
+ */
 export function ciBrief(ctx: PhaseBriefContext): PhaseBrief {
   return {
     instructions: `# CI
 
-You ship, and **shipping is one tool call**: \`ship_pr\` rebases this branch onto the repository's
-default branch, pushes it, and opens a pull request if none is open. Do not run git or gh yourself —
-the base branch, the force-with-lease and the does-one-already-exist check are all in that call.
+You ship. Atlas does not: it runs no git and no \`gh\` on your behalf, so every command below is
+yours to run in the shell and to read the output of.
 
-- What you write is the title and the body. A reviewer reads the body cold: what changed, why, and
-  how it was verified. The specs and the handoff are what it should be written from.
-- Calling it again is harmless and is the intended way to re-ship: an existing pull request is
-  updated by the push, and no second one is opened. Say which happened.
-- If it comes back refusing — uncommitted work, a rebase conflict, a branch that is not checked out
-  — that is the message, not a puzzle to work around. Report it and close.
+**Never force-push.** Not \`--force\`, not \`--force-with-lease\`, not \`+refs/\`. A push that is
+rejected as non-fast-forward is information — something is on the remote that you do not have — and
+the answer is to look at what, never to overwrite it. Never push to the repository's default branch
+either; you push this job's branch and open a pull request from it.
+
+Rebasing is **not** part of shipping. Do it only when there is a reason you can name — GitHub reports
+a conflict, or the base moved under something you need — and understand that rebasing a pushed branch
+is what creates the force-push you are not allowed to do. A branch that is merely behind is fine;
+GitHub merges it.
+
+The shape of a ship:
+
+1. \`git status\` — commit or discard anything outstanding. Nothing ships uncommitted.
+2. \`git push -u origin <branch>\` — plain, no flags beyond that. If it is rejected, stop and read
+   why; do not reach for a flag that makes the rejection go away.
+3. \`gh pr list --head <branch> --state open\` — if one is open, your push just updated it and you are
+   done. Only if it comes back \`[]\` do you \`gh pr create\`.
+4. \`record_pr\` with the URL, every time, including the ships that opened nothing new. That is the
+   one thing Atlas does here, and it is bookkeeping: it writes the number onto the job.
+
+The pull request body is the judgement in this phase and the only part of it that is writing. A
+reviewer reads it cold: what changed, why, and how it was verified. The specs and the handoff are
+what it should be written from — not this thread's memory of the work.
+
+If something refuses — a conflict, a rejected push, a branch that is not checked out here — that is a
+report, not a puzzle to work around. Say what happened and close.
 
 **Nothing here watches GitHub.** Atlas polls nothing and receives no webhooks, so no part of this
 phase may wait for a build, a review or a merge. This phase proposes nothing either: when the pull
@@ -255,11 +288,12 @@ build is the human's cue to start a new phase, and fixing it is that phase's wor
     opening: ctx.repeat
       ? `CI — "${ctx.jobTitle}", again. ${origin(ctx)}
 
-${branchLine(ctx)} ${pullRequestLine(ctx)} Call \`ship_pr\` with a title and a body; the handoff says
-what changed since the last ship, and that is what the description should lead with.`
+${branchLine(ctx)} ${pullRequestLine(ctx)} Push, then \`record_pr\`; the handoff says what changed
+since the last ship, and that is what the description should lead with if you are opening one.`
       : `CI — "${ctx.jobTitle}". ${origin(ctx)}
 
-${branchLine(ctx)} ${pullRequestLine(ctx)} Call \`ship_pr\`. The handoff and ${map(ctx)} between them
-are what the description should be written from — a reviewer reading it has none of this context.`,
+${branchLine(ctx)} ${pullRequestLine(ctx)} Push it, open the pull request, then \`record_pr\`. The
+handoff and ${map(ctx)} between them are what the description should be written from — a reviewer
+reading it has none of this context.`,
   };
 }

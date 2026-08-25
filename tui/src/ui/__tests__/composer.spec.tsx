@@ -203,6 +203,46 @@ describe("Return", () => {
   });
 });
 
+describe("⌘⌫", () => {
+  it("rubs out everything to the left of the caret on its line", async () => {
+    const { setup, editor } = await mount({ seed: "first line\nsecond line" });
+    try {
+      await press(setup, () => setup.mockInput.pressBackspace({ super: true }));
+      // The caret opens at the end of the draft, so the second line goes and the first stays. The
+      // editor takes the newline with it — an emptied line and the caret at the end of the one above
+      // it are the same place, and this is what its own ctrl+u does too.
+      expect(editor().plainText).toBe("first line");
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
+  it("keeps what is to the RIGHT of the caret", async () => {
+    const { setup, editor } = await mount({ seed: "keep this" });
+    try {
+      await press(setup, () => setup.mockInput.pressArrow("left"));
+      await press(setup, () => setup.mockInput.pressArrow("left"));
+      await press(setup, () => setup.mockInput.pressArrow("left"));
+      await press(setup, () => setup.mockInput.pressBackspace({ super: true }));
+      expect(editor().plainText).toBe("his");
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
+  it("leaves ⌥⌫ deleting a word, and a bare ⌫ a character", async () => {
+    const { setup, editor } = await mount({ seed: "one two" });
+    try {
+      await press(setup, () => setup.mockInput.pressBackspace({ meta: true }));
+      expect(editor().plainText).toBe("one ");
+      await press(setup, () => setup.mockInput.pressBackspace());
+      expect(editor().plainText).toBe("one");
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+});
+
 function borderRows(frame: string): number {
   return frame.split("\n").filter((line) => /[╭│╰]/.test(line)).length;
 }

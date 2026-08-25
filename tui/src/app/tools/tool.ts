@@ -97,15 +97,15 @@ export type ToolActions = {
    */
   tasks?: TaskActions;
   /**
-   * Shipping, held the same way and for the same reason as `tasks`: rebasing and opening a pull
-   * request moves nothing structural — no phase, no thread, no cursor — so it keeps its own owner
-   * rather than becoming a fifth verb on the seam.
+   * Recording the job's pull request, held the same way and for the same reason as `tasks`: it moves
+   * nothing structural — no phase, no thread, no cursor — so it keeps its own owner rather than
+   * becoming a fifth verb on the seam.
    *
-   * Optional because absent must be a legal state: a caller with no git — a test, a build where the
-   * wiring has not landed — still has to be able to construct these actions, and absent means
-   * `ship_pr` is ABSENT from the session rather than present and throwing.
+   * Optional because absent must be a legal state: a caller with no store — a test, a build where
+   * the wiring has not landed — still has to be able to construct these actions, and absent means
+   * `record_pr` is ABSENT from the session rather than present and throwing.
    */
-  shipping?: ShipActions;
+  pullRequest?: PullRequestActions;
   /**
    * The job's long-lived processes, held the same way and for the same reason as `tasks` — starting a
    * dev server moves nothing structural.
@@ -160,12 +160,16 @@ export type WorktreeActions = {
 };
 
 /**
- * One verb, because there is only one: *make the pull request exist*. There is no `ship_status` and
- * no `pr_get` — nothing local watches GitHub, so a getter could only answer with what this call
- * already returned.
+ * One verb, because there is only one: *write down which pull request this job has*.
+ *
+ * It used to be `ship(title, body)`, and Atlas did the rebasing, the force-pushing and the
+ * `gh pr create` — the harness doing git on the agent's behalf, which is not the harness's business
+ * and made a branch rewrite Atlas's unilateral decision. Shipping is prose now; this records the
+ * result. There is no getter beside it: nothing local watches GitHub, so one could only answer with
+ * what was last passed in.
  */
-export type ShipActions = {
-  ship(args: { ctx: ToolContext; title: string; body: string }): Promise<string>;
+export type PullRequestActions = {
+  record(args: { ctx: ToolContext; url: string }): Promise<string>;
 };
 
 /**

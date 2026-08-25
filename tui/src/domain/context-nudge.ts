@@ -57,8 +57,13 @@ export type ContextReading = {
  * In `builder`, `task` and the review roles Dennis is not watching: a warning above his composer is
  * noise he reads twenty minutes late, so the nudge goes into the conversation and the agent decides.
  * In the conversational roles the CONVERSATION IS THE ARTIFACT — only the human knows whether the
- * current thread of thought survives a seam — so the nudge is surfaced to him and nothing is said to
- * the agent, which would otherwise volunteer a hand-off in the middle of his sentence.
+ * current thread of thought survives a seam — so nothing is said to the agent, which would otherwise
+ * volunteer a hand-off in the middle of his sentence.
+ *
+ * `human` therefore means "say nothing in the transcript": his channel is the `ctx` meter in the
+ * footer, which carries the same fact continuously and is always there to be read. It used to be a
+ * notice row per crossing, and a row that repeats what a gauge already shows is the definition of
+ * noise.
  *
  * An exhaustive record rather than a lookup with a default: a new role must not silently inherit
  * someone else's audience, and here it fails to compile instead.
@@ -176,21 +181,4 @@ export function nudgeReason(args: { tokens: number; budget: Budget }): string {
     return `${at} — well past the point where a hand-off is cheaper than another turn, and every turn from here re-sends the whole transcript.`;
   }
   return `${at}.`;
-}
-
-/**
- * Said to the HUMAN, once, whatever the thread's audience is — and never to the agent.
- *
- * A dead canary is the one reading that says asking may no longer work: the session has stopped
- * following a trivial standing instruction, and the request to rotate is a standing instruction too.
- * Telling the agent louder is the one response that certainly does not help, and Atlas still does
- * not cut. So the person who can act is told, and given the verb.
- */
-export const CANARY_NOTICE =
-  'this session has stopped following a standing instruction — three of its last five turns · /rotate opens a fresh one on the same work';
-
-/** The same fact for the human, who is looking at a meter rather than reading a paragraph. */
-export function nudgeNotice(args: { tokens: number; budget: Budget }): string {
-  const over = contextBand(args) === EContextBand.hard ? ' · well over' : '';
-  return `context ${formatTokens(args.tokens)} of ${formatTokens(args.budget.soft)}${over} · /rotate hands this thread to a fresh session`;
 }

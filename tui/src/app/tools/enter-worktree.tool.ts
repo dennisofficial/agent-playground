@@ -9,7 +9,8 @@ leave commits behind. Dennis has an editor open on the project tree; a branch ch
 branch yanked out from under him mid-thought, and a worktree is how Atlas never touches it.
 
 One call does all of it: the branch is named after this job, the worktree is created under
-\`.worktrees/\`, and Atlas records both so that every later turn, and \`ship_pr\`, use them.
+\`.worktrees/\`, and Atlas records both so that every later turn runs there — including the \`ci\`
+thread that eventually pushes this branch.
 
 **Safe to call again.** A job already standing in a worktree is told so and nothing is created.
 
@@ -23,9 +24,8 @@ directory cannot be changed underneath a running turn, so the move lands on your
 /**
  * `enter_worktree` — door three, and the reason the other two were not enough.
  *
- * Ungated on phase, deliberately, where `ship_pr` is gated hard to `ci`. Shipping is the end of a
- * pipeline and only means something at the end; taking a worktree is a *precondition* for writing at
- * all, and every phase from `generic` up can turn out to need one — the whole design is that a job
+ * Ungated on phase, deliberately, where `record_pr` is gated to `ci`. Recording a pull request only
+ * means anything at the end of a pipeline; taking a worktree is a *precondition* for writing at all, and every phase from `generic` up can turn out to need one — the whole design is that a job
  * takes a worktree LATE, when the work earns it, which is a moment no phase table can predict.
  *
  * Threads only. A teammate is owned by a thread and shares its directory; letting one relocate the

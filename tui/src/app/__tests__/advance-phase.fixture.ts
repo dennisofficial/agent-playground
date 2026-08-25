@@ -26,7 +26,7 @@ import { HumanVerbsService } from '../human-verbs.service.js';
 import type { PhaseBriefService } from '../phase-brief.service.js';
 import type { SessionManagerService } from '../session-manager.service.js';
 import { ThreadSeamService } from '../thread-seam.service.js';
-import { fakeShipService } from './ship.fixture.js';
+import { fakePullRequestService } from './pull-request.fixture.js';
 import { fakeServiceRegistry } from './services.fixture.js';
 import { fakeWorktreeService } from './worktree.fixture.js';
 import { fakeTaskService } from './tasks.fixture.js';
@@ -256,7 +256,7 @@ export function world(args: { phase?: EPhaseKind; role?: EThreadRole } = {}) {
     } as unknown as ContextFolderService,
     turnRunnerService,
     fakeTaskService(),
-    fakeShipService(),
+    fakePullRequestService(),
     fakeServiceRegistry(),
     fakeWorktreeService(),
   );

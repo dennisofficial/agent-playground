@@ -211,7 +211,8 @@ export class JobRepository {
   /**
    * The job has a pull request. A RENDER CACHE and not a parse: it is what the job list clicks
    * through to without opening a thread, and re-deriving it with `gh pr view` would be a shell call
-   * per row. Written by `ship_pr` on every ship, including the ones that opened nothing new.
+   * per row. Written by `record_pr`, which the agent calls on every ship — including the ones that
+ * opened nothing new — because Atlas no longer ships and has no other way to learn this.
    *
    * There is deliberately no companion field for whether the pull request is open, merged or closed
    * — nothing local watches GitHub, so that column would have no writer.

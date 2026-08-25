@@ -145,11 +145,31 @@ export function claudeOptions(args: RunArgs): Options {
     // rather than sent as `false` when off, so the account's own setting is what applies.
     settings: JSON.stringify({
       autoCompactEnabled: false,
+      // The repository's own MCP servers, connected rather than merely discovered.
+      //
+      // `.mcp.json` servers arrive UNAPPROVED: Claude Code asks a human once per repo and records
+      // the answer as `enabledMcpjsonServers` in `.claude/settings.local.json`. There is nobody to
+      // ask on an SDK session, so without this the server is listed in the `init` frame as
+      // `pending` and its tools never reach the model — MEASURED on comp-v3, whose `trigger` server
+      // sat pending for a whole job while `mcp__atlas__*` connected beside it.
+      //
+      // Blanket approval is the same policy Atlas already applies everywhere else: it runs
+      // `bypassPermissions` and restricts by what EXISTS rather than by refusing at call time. The
+      // servers here are the ones the repository the user opened declares in a checked-in file —
+      // the same set a bare `claude` in that directory would offer, which is the whole intent.
+      enableAllProjectMcpServers: true,
       ...(args.fastMode ? { fastMode: true } : {}),
     } satisfies Settings),
-    // Explicit for stability rather than rescue: omitting this already loads every source on
-    // 0.3.220. `user` resolves to Atlas's own `CLAUDE_CONFIG_DIR`, never the human's `~/.claude`.
-    settingSources: ['user', 'project'],
+    // Everything Claude Code itself would read in this directory, so a repository configured for
+    // `claude` is configured for Atlas: `.mcp.json`, `.claude/settings.json` and the gitignored
+    // `.claude/settings.local.json` where per-machine choices — including any MCP server the human
+    // has already approved or rejected by hand — are kept.
+    //
+    // `user` is the one that does NOT mean what it says: it resolves against `CLAUDE_CONFIG_DIR`,
+    // which is Atlas's own `~/.atlas/claude-home`, never the human's `~/.claude`. So a server added
+    // with `claude mcp add -s user` is still invisible here, by the same isolation that keeps
+    // credentials apart.
+    settingSources: ['user', 'project', 'local'],
     skills: 'all',
     env: { ...process.env, ...args.env },
   };

@@ -41,10 +41,11 @@ export enum EAtlasTool {
    */
   rotate = 'rotate',
   /**
-   * Ship: rebase, push, open the pull request if none is open. The only tool that reaches outside
-   * this machine, and the only one whose whole contract is that calling it twice is harmless.
+   * Record which pull request this job has, once the agent has opened one with git and `gh`. NOT a
+   * ship verb: it was one, and the harness doing the rebasing and force-pushing behind it is exactly
+   * what this replaced. Nothing in Atlas reaches outside this machine any more.
    */
-  ship_pr = 'ship_pr',
+  record_pr = 'record_pr',
   /**
    * Processes the JOB owns, split from the native background tools by LIFETIME and by nothing else.
    * `Bash(run_in_background)` is untouched and still right for finite work, which reports back inside

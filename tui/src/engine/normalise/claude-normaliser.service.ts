@@ -56,6 +56,9 @@ export class ClaudeNormaliserService {
           kind: "session",
           engineSessionId: message.session_id,
           model: message.model,
+          // Verbatim. Which of these rows deserves to be said out loud is a rule, and it lives in
+          // `domain/mcp-servers.ts` with the rest of the rules — the normaliser only carries facts.
+          mcpServers: message.mcp_servers,
         },
       ];
     }

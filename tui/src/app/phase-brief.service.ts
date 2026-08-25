@@ -33,7 +33,8 @@ export class PhaseBriefService {
         contextRoot: this.contextFolderService.ensure(args.job.id),
         branch: args.job.branch,
         // The render cache, read as prose: a `ci` phase on a job that already has a pull request is
-        // told so, which is what stops a re-ship opening a second one before `ship_pr` even runs.
+        // told so, which is what stops a re-ship opening a second one. Prose is all it can be — the
+        // agent opens the pull request itself now, so nothing structural could enforce it.
         prNumber: args.job.prNumber,
       }),
     );

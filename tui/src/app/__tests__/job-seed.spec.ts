@@ -15,7 +15,7 @@ import type { GitService } from '../git.service.js';
 import type { MessageRepository } from '../../store/message.repository.js';
 import { PhaseBriefService } from '../phase-brief.service.js';
 import { ThreadSeamService } from '../thread-seam.service.js';
-import { fakeShipService } from './ship.fixture.js';
+import { fakePullRequestService } from './pull-request.fixture.js';
 import { fakeServiceRegistry } from './services.fixture.js';
 import { fakeWorktreeService } from './worktree.fixture.js';
 import { fakeTaskService } from './tasks.fixture.js';
@@ -87,7 +87,7 @@ function conversation(run: (args: RunTurnArgs) => Promise<void>) {
       CONTEXT_FOLDER,
       turnRunnerService,
       fakeTaskService(),
-      fakeShipService(),
+      fakePullRequestService(),
       fakeServiceRegistry(),
       fakeWorktreeService(),
   ),

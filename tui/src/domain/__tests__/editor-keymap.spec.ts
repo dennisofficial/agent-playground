@@ -117,6 +117,16 @@ describe('deletion', () => {
     );
   });
 
+  // Same pairing as macOS and as the composer's native editor: cmd rubs out the line, opt the word.
+  it('binds cmd+backspace to the whole line when the terminal reports super', () => {
+    expect(resolveEditorCommand('', chord({ backspace: true, super: true }))).toBe(
+      'delete-to-line-start',
+    );
+    expect(resolveEditorCommand('', chord({ delete: true, super: true }))).toBe(
+      'delete-to-line-start',
+    );
+  });
+
   it('binds ctrl+w and ctrl+k', () => {
     expect(resolveEditorCommand('w', chord({ ctrl: true }))).toBe('delete-word-backward');
     expect(resolveEditorCommand('k', chord({ ctrl: true }))).toBe('delete-to-line-end');

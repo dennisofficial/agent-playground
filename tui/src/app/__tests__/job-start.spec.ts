@@ -19,7 +19,7 @@ import type { JobTitleService } from '../job-title.service.js';
 import { PhaseBriefService } from '../phase-brief.service.js';
 import type { SessionManagerService } from '../session-manager.service.js';
 import { ThreadSeamService } from '../thread-seam.service.js';
-import { fakeShipService } from './ship.fixture.js';
+import { fakePullRequestService } from './pull-request.fixture.js';
 import { fakeServiceRegistry } from './services.fixture.js';
 import { fakeWorktreeService } from './worktree.fixture.js';
 import { fakeTaskService } from './tasks.fixture.js';
@@ -114,7 +114,7 @@ function build(run: (args: RunTurnArgs) => Promise<void> = async () => undefined
     contextFolderService,
     turnRunnerService,
     fakeTaskService(),
-    fakeShipService(),
+    fakePullRequestService(),
     fakeServiceRegistry(),
     fakeWorktreeService(),
   );

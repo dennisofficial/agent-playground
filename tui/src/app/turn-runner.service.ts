@@ -1,4 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { EMessageType } from "../generated/prisma/enums.js";
 import type { EngineSession, Thread } from "../generated/prisma/client.js";
 import { AccountVaultService } from "../auth/account-vault.service.js";
 import { EngineHomeService } from "../auth/engine-home.service.js";
@@ -12,7 +13,7 @@ import { AccountUsageService } from "./account-usage.service.js";
 import { ContextPressureService } from "./context-pressure.service.js";
 import { ConversationStoreRegistry } from "./conversation-store.registry.js";
 import type { ConversationStore } from "./conversation.store.js";
-import { resolveForTurn } from "./session-rotation.js";
+import { resolveForTurn, type RunningSession } from "./session-rotation.js";
 import { SessionManagerService } from "./session-manager.service.js";
 import { finaliseTurn } from "./turn-completion.js";
 import { TurnEventApplier } from "./turn-events.js";
@@ -197,6 +198,9 @@ export class TurnRunnerService {
       this.logger.log(
         `turn finished (ok=${result.ok}, interrupted=${result.interrupted})`,
       );
+    } catch (error) {
+      await this.reportSetupFailure({ store, threadId: thread.id, session, error });
+      throw error;
     } finally {
       await finaliseTurn({
         lane,
@@ -217,6 +221,48 @@ export class TurnRunnerService {
         run: (next) => void this.run(next),
         onWarn: (message) => this.logger.warn(message),
       });
+    }
+  }
+
+  /**
+   * A turn that threw on its way in, said out loud in the one place the human is already looking.
+   *
+   * Everything that fails INSIDE the engine already writes its own block from `drain()`'s catch.
+   * This is the other half: an expired credential, a home that will not take the credentials file, a
+   * `query()` that throws before it opens. Those all land here as an exception with nothing on
+   * screen to explain them — the prompt is in the transcript, the spinner has stopped, and that is
+   * the whole of what the user is told. `JobStartService` catches it into a logger that is off
+   * unless `ATLAS_DEBUG`, so a job's first turn could die completely silently.
+   *
+   * `retryable`, because the prompt row is already above it: `↻ retry` sends the same words again,
+   * which for a transient credential failure is exactly the right next move.
+   *
+   * The original error is rethrown by the caller either way — this is a courtesy to the transcript,
+   * not a place to swallow a failure, and a database that will not take the row must not be the
+   * reason the real error goes missing.
+   */
+  private async reportSetupFailure(args: {
+    store: ConversationStore;
+    threadId: string;
+    session: RunningSession;
+    error: unknown;
+  }): Promise<void> {
+    const detail =
+      args.error instanceof Error ? args.error.message : String(args.error);
+    try {
+      await this.events.persist({
+        store: args.store,
+        threadId: args.threadId,
+        sessionId: args.session.id,
+        payload: {
+          type: EMessageType.error,
+          title: "the turn could not be started",
+          detail,
+          retryable: true,
+        },
+      });
+    } catch (failure: unknown) {
+      this.logger.error(`could not record a failed turn: ${String(failure)}`);
     }
   }
 

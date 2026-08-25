@@ -91,7 +91,7 @@ code cannot show you a road not taken.
     creation, the build confirm, `enter_worktree`, and adoption from the jobs list. That field is
     the entire justification for Atlas owning a worktree verb at all when Claude Code ships a
     native one: the native tool relocates the work and tells Atlas nothing, leaving the job drawn
-    under `⌂ here`, its later turns running in the project tree, and `ship_pr` pointed at the
+    under `⌂ here`, its later turns running in the project tree, and the `ci` thread pushing the
     wrong branch.
 
     Door three went unbuilt for a while and the failure was exactly that, in the wild: asked for a
@@ -132,6 +132,35 @@ code cannot show you a road not taken.
     - **An unacknowledged steer is reported, not resent.** If the turn dies first the words never
       reached the agent, and quietly firing them into a fresh turn would be guessing that they
       still apply to a conversation that has since crashed, been interrupted, or rotated.
+
+13. **The harness runs no git on the agent's behalf, and never force-pushes.** Atlas shipped for
+    the agent once: a `ship_pr` tool that read the default branch from `gh`, fetched, rebased onto
+    `origin/<base>`, pushed with `--force-with-lease` and called `gh pr create` — the agent
+    supplying a title and a body and nothing else. It was idempotent, well-guarded and wrong.
+
+    Wrong on capability, first: `Bash` is in the native kit for every thread, so the tool was never
+    providing the ability to ship, only a particular way of doing it. What it actually provided was
+    a decision — *rebase every time* — and because a rebase rewrites a branch, that decision made
+    every re-ship a force push. Nobody chose that per-ship; the harness chose it once, in a
+    constructor, invisibly, on a branch that may already have had a reviewer on it.
+
+    Two things follow, and the second is the uncomfortable one:
+
+    - **The procedure moved into the `ci` brief, as prose.** Push plain, read a rejection instead of
+      flagging past it, rebase only for a nameable reason, ask `gh pr list` before `gh pr create`.
+      Prose the agent can read, weigh, and depart from with a stated reason — which is what the
+      tool call could never be.
+    - **There is no structural guarantee against a force push, and there was never going to be
+      one.** With a shell in every thread, the only enforcement available is an instruction. This
+      is decision 7 applied honestly rather than reached for as a comfort: Atlas restricts by what
+      EXISTS, never by refusing at call time, so a `PreToolUse` deny hook was considered and
+      rejected. A rule that is prose should look like prose.
+
+    What is left in the harness is `record_pr`: the agent tells Atlas which pull request the job
+    has, and Atlas writes the number on the row. Bookkeeping, in the same category as
+    `Job.workspacePath` — a fact only Atlas can store, reported by the party that knows it. The
+    `ship_pr` ROLE keeps its name; it names who does the work, and the work did not move, only the
+    hands doing it.
 
 ## Standing prohibition
 

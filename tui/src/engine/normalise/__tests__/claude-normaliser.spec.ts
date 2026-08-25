@@ -44,8 +44,31 @@ function run(messages: Parameters<ClaudeNormaliserService['normalise']>[0][], cw
 describe('ClaudeNormaliserService', () => {
   it('reports the session id from the init frame', () => {
     expect(run([init()])).toEqual([
-      { kind: 'session', engineSessionId: SESSION_ID, model: 'claude-opus-5' },
+      { kind: 'session', engineSessionId: SESSION_ID, model: 'claude-opus-5', mcpServers: [] },
     ]);
+  });
+
+  /**
+   * The MCP roster rides the same event, verbatim. It is the ONLY place a server that will not serve
+   * is ever mentioned — no tool call fails, because the tool was never there — and deciding which
+   * rows are worth saying out loud is `domain/mcp-servers.ts`'s, not this file's.
+   */
+  it('carries the MCP roster through untouched, statuses and all', () => {
+    const frame = {
+      ...init(),
+      mcp_servers: [
+        { name: 'atlas', status: 'connected' },
+        { name: 'trigger', status: 'failed' },
+      ],
+    } as ReturnType<typeof init>;
+
+    expect(run([frame])[0]).toMatchObject({
+      kind: 'session',
+      mcpServers: [
+        { name: 'atlas', status: 'connected' },
+        { name: 'trigger', status: 'failed' },
+      ],
+    });
   });
 
   it('maps text and thinking deltas to live-only events', () => {

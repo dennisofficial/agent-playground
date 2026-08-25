@@ -8,7 +8,6 @@ import {
   ENudgeAudience,
   formatTokens,
   NUDGE_AUDIENCE,
-  nudgeNotice,
   nudgeReason,
   pressureBand,
 } from '../context-nudge.js';
@@ -116,11 +115,5 @@ describe('what it says', () => {
     const insistent = nudgeReason({ tokens: 310_000, budget: BUDGET });
     expect(insistent).toContain('310K of a 180K budget');
     expect(insistent).toContain('re-sends the whole transcript');
-  });
-
-  it('gives the human the verb rather than a paragraph', () => {
-    expect(nudgeNotice({ tokens: 190_000, budget: BUDGET })).toBe(
-      'context 190K of 180K · /rotate hands this thread to a fresh session',
-    );
   });
 });

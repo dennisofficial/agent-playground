@@ -110,7 +110,7 @@ export function JobListRow(props: {
     threads: job.threads,
     runningThreadIds: props.runningThreadIds,
     proposalThreadIds: props.proposalThreadIds ?? [],
-    // The render cache `ship_pr` writes. It only ever changes the row that has NOTHING open — a
+    // The render cache `record_pr` writes. It only ever changes the row that has NOTHING open — a
     // shipped job reads `shipped` rather than `start a phase` — and it is not terminal: a later
     // phase makes the same row active again, which is correct. It is out of this machine's hands,
     // not finished with.

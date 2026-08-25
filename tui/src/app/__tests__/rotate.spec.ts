@@ -20,7 +20,7 @@ import type { ContextEntry, ContextFolderService } from '../context-folder.servi
 import type { PhaseBriefService } from '../phase-brief.service.js';
 import type { SessionManagerService } from '../session-manager.service.js';
 import { ThreadSeamService } from '../thread-seam.service.js';
-import { fakeShipService } from './ship.fixture.js';
+import { fakePullRequestService } from './pull-request.fixture.js';
 import { fakeServiceRegistry } from './services.fixture.js';
 import { fakeWorktreeService } from './worktree.fixture.js';
 import { fakeTaskService } from './tasks.fixture.js';
@@ -131,7 +131,7 @@ function build(tasks: readonly TaskView[] = []) {
       },
     } as unknown as TurnRunnerService,
     fakeTaskService(tasks),
-    fakeShipService(),
+    fakePullRequestService(),
     fakeServiceRegistry(),
     fakeWorktreeService(),
   );

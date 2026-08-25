@@ -16,6 +16,7 @@ import {
 } from '../store/transition.repository.js';
 import { ContextFolderService } from './context-folder.service.js';
 import { PhaseBriefService } from './phase-brief.service.js';
+import { PullRequestService } from './pull-request.service.js';
 import { advancePhaseVerb, confirmPhaseVerb, declinePhaseVerb } from './phase-verbs.js';
 import { rotateForHandoff } from './session-rotation.js';
 import {
@@ -25,7 +26,6 @@ import {
 } from './thread-delegation.js';
 import { ServiceRegistryService } from './service-registry.service.js';
 import { SessionManagerService } from './session-manager.service.js';
-import { ShipService } from './ship.service.js';
 import { TaskService } from './task.service.js';
 import { fireHarnessTurn, seedThread, type SeedDeps } from './thread-seed.js';
 import { toolsForThread } from './tools/context.js';
@@ -63,11 +63,11 @@ export class ThreadSeamService implements ToolActions {
      */
     readonly tasks: TaskService,
     /**
-     * `ToolActions.shipping`, held for the same reason and in the same way. Rebasing and opening a
-     * pull request moves nothing structural — no phase, no thread, no cursor — so it is a service
-     * this class carries to the registry rather than a fifth verb it implements.
+     * `ToolActions.pullRequest`, held for the same reason and in the same way. Writing down the
+     * job's pull request number moves nothing structural — no phase, no thread, no cursor — so it is
+     * a service this class carries to the registry rather than a fifth verb it implements.
      */
-    readonly shipping: ShipService,
+    readonly pullRequest: PullRequestService,
     /**
      * `ToolActions.services`, and the third of these. A dev server outliving a turn moves nothing
      * structural either — and unlike the other two it is not even thread-scoped, which is exactly why

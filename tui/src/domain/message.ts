@@ -1,4 +1,5 @@
 import { EMessageType } from '../generated/prisma/enums.js';
+import type { McpServerReport } from './mcp-servers.js';
 import type { DelegateEvent } from './delegate-events.js';
 import { renderAttachmentParts, type AttachmentPart } from './attachments.js';
 import type { DraftImage } from './draft-images.js';
@@ -178,7 +179,16 @@ export type Message = {
 };
 
 export type EngineEvent =
-  | { kind: 'session'; engineSessionId: string; model?: string }
+  | {
+      kind: 'session';
+      engineSessionId: string;
+      model?: string;
+      /**
+       * The MCP roster the CLI reports at `init`, passed through untouched. Read for what is NOT
+       * working — see `domain/mcp-servers.ts`; the healthy case is silence.
+       */
+      mcpServers?: readonly McpServerReport[];
+    }
   | { kind: 'text_delta'; text: string }
   | { kind: 'thinking_delta'; text: string }
   /**

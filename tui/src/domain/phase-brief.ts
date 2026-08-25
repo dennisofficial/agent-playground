@@ -33,7 +33,7 @@ export type PhaseBriefContext = {
   /** The job's branch, when it took one. */
   branch?: string;
   /**
-   * The pull request this job already has — the render cache `ship_pr` writes, not a live state.
+   * The pull request this job already has — the render cache `record_pr` writes, not a live state.
    * Present means one was opened at some point, which is what makes a second `ci` phase's opening
    * words say *check before you open one*; it says nothing about whether it is still open or green,
    * because nothing local watches GitHub.

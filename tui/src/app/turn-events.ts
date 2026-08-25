@@ -1,12 +1,12 @@
 import { hasCanary } from "../domain/canary.js";
 import { isDelegateEvent } from "../domain/delegates.js";
-import { fastModeNotice } from "../domain/fast-mode.js";
 import {
   toPayload,
   type EngineEvent,
   type TurnUsage,
 } from "../domain/message.js";
 import { addTurnUsage } from "../domain/turn-usage.js";
+import { mcpServerNotices } from "../domain/mcp-servers.js";
 import { EMessageType } from "../generated/prisma/enums.js";
 import type { EngineSession } from "../generated/prisma/client.js";
 import type { ContextPressureService } from "./context-pressure.service.js";
@@ -15,13 +15,12 @@ import type { MessageRepository } from "../store/message.repository.js";
 import type { SessionRepository } from "../store/session.repository.js";
 import type { TurnRepository } from "../store/turn.repository.js";
 import type { ConversationStore } from "./conversation.store.js";
-import { EXTRA_USAGE_NOTICE, type RunningSession } from "./session-rotation.js";
+import type { RunningSession } from "./session-rotation.js";
 import type { Lane } from "./turn-lanes.js";
 
 type Payload = Parameters<MessageRepository["append"]>[0]["payload"];
 
 /** The `noticeOnce` key family for "fast mode is not serving", one key per reason. */
-const FAST_MODE_NOTICE = "fast-mode:";
 
 /**
  * One engine event → the store, the database, or the lane. This is the table the delta-vs-
@@ -125,6 +124,12 @@ export class TurnEventApplier {
             engineSessionId: event.engineSessionId,
           });
         }
+        // An MCP server that will not serve is otherwise perfectly silent — no tool call fails,
+        // because the tool was never there to call. `noticeOnce`, keyed by server AND status, so a
+        // repository with one broken server costs one row per job rather than one per turn.
+        for (const notice of mcpServerNotices(event.mcpServers ?? [])) {
+          store.noticeOnce(notice.key, notice.text);
+        }
         return;
 
       case "tool_call":
@@ -200,44 +205,18 @@ export class TurnEventApplier {
             ...(event.utilization === undefined ? {} : { utilization: event.utilization }),
           });
         }
-        // The same standing condition the turn boundary already announces, under the same key — so
-        // whichever of the two notices it first is the only one that draws a row. This is the
-        // confirmed half (the server says it is billing) and the boundary's is the predicted half;
-        // they must not both speak.
-        if (event.inUse)
-          store.noticeOnce(
-            `${EXTRA_USAGE_NOTICE}${session.accountId}`,
-            "this turn is billed to extra usage",
-          );
-        // Only when Atlas asked. An account nobody permitted to spend is not owed an explanation of
-        // why it could not.
-        if (event.disabledReason !== undefined && lane.extraUsageAllowed)
-          store.noticeOnce(
-            `extra-usage-refused:${event.disabledReason}`,
-            `extra usage unavailable · ${event.disabledReason}`,
-          );
+        // Written down, never announced. Both halves of this used to draw a transcript row — "this
+        // turn is billed to extra usage", and the refusal beside it — and a row per standing
+        // condition is what turned a working transcript into a column of harness commentary. The
+        // account row is the record, and the accounts page (ctrl+a) is where it is read.
         return;
       }
 
-      case "fast_mode": {
-        // Only worth a word when Atlas ASKED. Every other session gets `sdk_opt_in_required` on
-        // every turn, which is not news — it is the default this feature exists to override.
-        if (!lane.fastModeRequested) return;
-        if (event.state === "on") {
-          // It works now, so a later refusal is worth hearing about again.
-          store.forgetNotices(FAST_MODE_NOTICE);
-          return;
-        }
-        const text = fastModeNotice(event);
-        if (text === null) return;
-        // Once per reason, not once per frame. A turn that holds for a background delegate produces
-        // several `result` frames and therefore several of these, and `preference` (the org has
-        // switched fast mode off) is not going to change between two of them — nor between turns,
-        // which is how it came to print a pair of identical rows every single time.
-        const reason = event.state === "cooldown" ? "cooldown" : (event.disabledReason ?? "unknown");
-        store.noticeOnce(`${FAST_MODE_NOTICE}${reason}`, text);
+      // Fast mode reports its state on every turn of every session, and Atlas used to relay the
+      // refusals. Whether the paying account HAS fast mode is a fact about the account, and the
+      // accounts page holds it; a per-turn row about it is commentary.
+      case "fast_mode":
         return;
-      }
 
       case "result":
         // The only frame carrying real token counts. It is not persisted here — the row is written

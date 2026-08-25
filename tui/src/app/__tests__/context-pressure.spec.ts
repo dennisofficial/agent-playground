@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { CANARY, ECanaryHealth } from '../../domain/canary.js';
-import { CANARY_NOTICE, EContextSignal } from '../../domain/context-nudge.js';
+import { EContextSignal } from '../../domain/context-nudge.js';
 import type { EngineEvent } from '../../domain/message.js';
 import { EMessageType } from '../../generated/prisma/enums.js';
 import type { Thread } from '../../generated/prisma/client.js';
@@ -78,17 +78,21 @@ describe('the nudge', () => {
     expect(harness[0]?.payload).toMatchObject({ variant: 'transition' });
   });
 
-  it('tells the HUMAN instead where he is the one having the conversation', async () => {
+  /**
+   * The conversational roles are told NOTHING, on either channel. Not the agent — volunteering a
+   * hand-off mid-sentence is the interruption the audience rule exists to prevent — and not the
+   * transcript either, because the human's channel is the `ctx` meter, which carries the same fact
+   * continuously instead of pushing a row in at every crossing.
+   */
+  it('says nothing at all where the human is the one having the conversation', async () => {
     const { runner, engine, stores, messages } = build([usage(310_000), toolResult()]);
     await runner.run({ thread: CHARTING, session: SESSION, prompt: 'go', cwd: '/repo' });
 
-    // Nothing reaches the model: an agent volunteering a hand-off mid-sentence is exactly the
-    // interruption this avoids in a thread where the human is driving turn by turn.
     expect(engine.toolBoundaries).toEqual([undefined]);
     expect(messages.appended.some((m) => m.payload.type === EMessageType.harness)).toBe(false);
-    expect(stores.for(CHARTING.id).getSnapshot().notices).toEqual([
-      'context 310K of 300K · /rotate hands this thread to a fresh session',
-    ]);
+    expect(stores.for(CHARTING.id).getSnapshot().notices).toEqual([]);
+    // The meter is where it went: same crossing, a reading rather than a row.
+    expect(stores.for(CHARTING.id).getSnapshot().contextReading?.tokens).toBe(310_000);
   });
 
   it('never nudges twice in one turn, however many tools the agent calls', async () => {
@@ -135,16 +139,19 @@ describe('the canary', () => {
     expect(pressure.health('session-1')).toBe(ECanaryHealth.unknown);
   });
 
-  it('warns the human, once, when it has died', async () => {
-    const { runner, store } = build([spoke('no glyph here')]);
+  /**
+   * A dead canary is a READING, not an announcement. It used to also write a row into the
+   * transcript; the meter's signal is the whole of it now — see the test below, which is the one
+   * that proves the measurement still works.
+   */
+  it('says nothing in the transcript when it dies', async () => {
+    const { runner, store, pressure } = build([spoke('no glyph here')]);
     for (let turn = 0; turn < 4; turn += 1) {
       await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
     }
 
-    // Three misses in five turns is the threshold; the fourth turn must not say it again. Nothing
-    // is said to the AGENT: a session that has stopped following standing instructions may not act
-    // on being asked either, and asking louder is not the answer.
-    expect(store.getSnapshot().notices.filter((n) => n === CANARY_NOTICE)).toHaveLength(1);
+    expect(store.getSnapshot().notices).toEqual([]);
+    expect(pressure.health('session-1')).toBe(ECanaryHealth.dead);
   });
 
   it('takes the ctx label once it is dead, because it is a different situation', async () => {

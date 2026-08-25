@@ -7,7 +7,6 @@ import {
   EContextBand,
   ENudgeAudience,
   EContextSignal,
-  nudgeNotice,
   nudgeReason,
   pressureBand,
   type ContextReading,
@@ -27,8 +26,6 @@ type SessionPressure = {
   last: NudgeLedger;
   /** One entry per turn: did that turn's first message open with the canary. */
   canary: boolean[];
-  /** The dead-canary warning is worth saying once per session and then never again. */
-  deadAnnounced: boolean;
 };
 
 /**
@@ -107,10 +104,13 @@ export class ContextPressureService {
     }
     state.last = { atTokens: args.tokens, onTurn: state.turn };
 
+    // Nobody is told. In the conversational roles the human is the one who acts next, and he is
+    // looking at the `ctx` meter in the footer — which carries the same fact continuously and does
+    // not push a row into the middle of the transcript every time the threshold is re-crossed. The
+    // agent is deliberately still not told: volunteering a hand-off mid-sentence is the interruption
+    // this whole audience rule exists to prevent.
     const audience = audienceFor(args.role);
-    if (audience === ENudgeAudience.human) {
-      return { audience, text: nudgeNotice({ tokens: args.tokens, budget }) };
-    }
+    if (audience === ENudgeAudience.human) return null;
     // Two speech acts on one threshold ladder, and the band chooses between them. `soft` advises and
     // leaves the timing to the agent: a budget crossing lands wherever it lands, and an agent that
     // stops dead mid-edit hands over a half-applied change. `hard` is the point where that discretion
@@ -127,18 +127,13 @@ export class ContextPressureService {
    * tool turn, or one that failed before it spoke — and is recorded as NOTHING rather than as a
    * miss: a session cannot fail to follow a formatting rule in a message it never wrote.
    *
-   * Returns the health only when it has just crossed into `dead`, because that transition is the one
-   * moment worth telling the human about: a session that has stopped obeying standing instructions
-   * may also not act on being asked to rotate, and asking louder is not the answer to that.
+   * It returns nothing: the sample's only reader is `observe`, which turns a dead canary into the
+   * `ctx` meter's `canary` signal. The crossing into `dead` used to be announced in the transcript
+   * as well, and the once-per-session bookkeeping that took has gone with the row.
    */
-  endTurn(args: { sessionId: string; canary: boolean | undefined }): ECanaryHealth | null {
-    const state = this.for(args.sessionId);
-    if (args.canary === undefined) return null;
-    state.canary.push(args.canary);
-    if (state.deadAnnounced) return null;
-    if (canaryHealth(state.canary) !== ECanaryHealth.dead) return null;
-    state.deadAnnounced = true;
-    return ECanaryHealth.dead;
+  endTurn(args: { sessionId: string; canary: boolean | undefined }): void {
+    if (args.canary === undefined) return;
+    this.for(args.sessionId).canary.push(args.canary);
   }
 
   health(sessionId: string): ECanaryHealth {
@@ -162,7 +157,7 @@ export class ContextPressureService {
   private for(sessionId: string): SessionPressure {
     const existing = this.sessions.get(sessionId);
     if (existing) return existing;
-    const state: SessionPressure = { turn: 0, last: null, canary: [], deadAnnounced: false };
+    const state: SessionPressure = { turn: 0, last: null, canary: [] };
     this.sessions.set(sessionId, state);
     // Insertion order, so the oldest session is the first key. Bounded rather than cleared: the
     // sessions still running are the recent ones, and dropping them would reset a live cadence.

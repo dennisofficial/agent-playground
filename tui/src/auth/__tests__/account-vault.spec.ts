@@ -168,6 +168,79 @@ describe('AccountVaultService.freshCredential', () => {
     cleanup();
   });
 
+  /**
+   * The race that killed a job's first turn.
+   *
+   * Starting a job fires the titler and the first turn in the same tick, and both ask for the same
+   * credential. Inside the skew window that used to be two refreshes of one refresh token — the
+   * server rotates it on first use, so the second request came back 400, which `isHardAuthFailure`
+   * reads as a dead account: status `expired`, and a throw that took the turn with it.
+   */
+  it('refreshes ONCE for callers that arrive together', async () => {
+    let release = (): void => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { vault, updates, refresh, cleanup } = build({
+      accounts: [{ id: 'a', blob: blob({ expiresAt: Date.now() + 60_000 }) }],
+      refresh: async () => {
+        await gate;
+        return REFRESHED;
+      },
+    });
+
+    const both = Promise.all([vault.freshCredential('a'), vault.freshCredential('a')]);
+    release();
+    const [first, second] = await both;
+
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(updates).toHaveLength(1);
+    // And both callers hold the pair that works, rather than one holding a token already rotated.
+    expect(first?.claudeAiOauth.accessToken).toBe('oat-2');
+    expect(second?.claudeAiOauth.accessToken).toBe('oat-2');
+    cleanup();
+  });
+
+  it('shares the failure too, and refreshes again the next time it is asked', async () => {
+    let attempts = 0;
+    const { vault, refresh, cleanup } = build({
+      accounts: [{ id: 'a', blob: blob({ expiresAt: Date.now() - HOUR }) }],
+      refresh: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new ClaudeOAuthHttpError(400);
+        return REFRESHED;
+      },
+    });
+
+    const results = await Promise.allSettled([
+      vault.freshCredential('a'),
+      vault.freshCredential('a'),
+    ]);
+
+    expect(results.map((result) => result.status)).toEqual(['rejected', 'rejected']);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    // The in-flight promise is not a cache: a later turn asks the server again rather than being
+    // told about a failure that has since been fixed by a fresh login.
+    await expect(vault.freshCredential('a')).resolves.toBeDefined();
+    expect(refresh).toHaveBeenCalledTimes(2);
+    cleanup();
+  });
+
+  it('does not make two accounts wait on each other', async () => {
+    const { vault, refresh, cleanup } = build({
+      accounts: [
+        { id: 'a', blob: blob({ expiresAt: Date.now() + 60_000 }) },
+        { id: 'b', blob: blob({ expiresAt: Date.now() + 60_000 }) },
+      ],
+      refresh: async () => REFRESHED,
+    });
+
+    await Promise.all([vault.freshCredential('a'), vault.freshCredential('b')]);
+
+    expect(refresh).toHaveBeenCalledTimes(2);
+    cleanup();
+  });
+
   it('falls back to the existing token on a network blip — it may still have minutes on it', async () => {
     const { vault, statuses, cleanup } = build({
       accounts: [{ id: 'a', blob: blob({ expiresAt: Date.now() + 60_000 }) }],

@@ -54,7 +54,9 @@ export const CONVERSATION: readonly Binding[] = [
 export const EDITING: readonly Binding[] = [
   [`${ALT}+← →`, "by word"],
   [`${ALT}+⌫ · ctrl+w`, "rub out a word"],
-  ["ctrl+k", "to end of line"],
+  // Positional, like the row below it: ⌘⌫ rubs out to the line's start, ctrl+k to its end. The
+  // panel has a row budget the smallest terminal has to fit inside, so the pair shares one line.
+  ["⌘⌫ · ctrl+k", "rub out to line start · end"],
   ["Home End", "line start · end"],
   // One row, read positionally, the way `Home End` already is. The panel has a row budget the
   // smallest terminal has to fit inside — 60×24 gets eight — and these three arrived together.

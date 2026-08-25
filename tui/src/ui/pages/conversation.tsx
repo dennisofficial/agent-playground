@@ -210,7 +210,11 @@ export function ConversationPage(props: {
     )
       return;
     // Sending is an implicit "show me what happens next".
-    await conversationService.send(text, images);
+    //
+    // Swallowed here, and only here: a turn that fails now writes its own error block into the
+    // transcript — see `TurnRunnerService.reportSetupFailure` — so there is nothing left for this
+    // call site to say, and an unhandled rejection out of a key handler prints over the frame.
+    await conversationService.send(text, images).catch(() => undefined);
   }, [composer, conversationService, props.onServices, state.noAccount]);
 
   /**

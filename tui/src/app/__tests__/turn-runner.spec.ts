@@ -3,6 +3,7 @@ import { EMessageType } from '../../generated/prisma/enums.js';
 import { EContextSignal } from '../../domain/context-nudge.js';
 import { EHarnessVariant, type EngineEvent, type TurnUsage } from '../../domain/message.js';
 import { buildSystemPrompt } from '../../domain/system-prompt.js';
+import { retryTarget } from '../../domain/retry.js';
 import { ACCOUNT_ID, SESSION, THREAD, build } from './turn-runner.fixture.js';
 
 describe('TurnRunnerService', () => {
@@ -235,57 +236,37 @@ describe('TurnRunnerService', () => {
   });
 
   /**
-   * Extra usage and fast mode are per-account permissions, and every one of these is about the
-   * difference between a turn Atlas ASKED to be different and one the server merely commented on.
+   * Extra usage and fast mode are STANDING CONDITIONS — which wallet is paying, and whether the
+   * server honoured the speed request. Both used to draw a transcript row and neither does any
+   * more: a row per condition is harness commentary, and the facts live on the account row and the
+   * accounts page. What survives here is the half with consequences — what gets WRITTEN DOWN, which
+   * is what stops rotation choosing a refused wallet again on the next boundary.
    */
   describe('extra usage and fast mode', () => {
     const allowed = { fastMode: false, extraUsageAllowed: true };
 
-    it('says once that a thread is being billed — not per frame, and not per turn', async () => {
+    it('says nothing about being billed to extra usage', async () => {
       const { runner, store, accounts } = build([
         { kind: 'extra_usage', inUse: true },
         { kind: 'extra_usage', inUse: true },
       ]);
       accounts.findById.mockResolvedValue(allowed);
       await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
-      await runner.run({ thread: THREAD, session: SESSION, prompt: 'again', cwd: '/repo' });
 
-      // Four frames across two turns. Spending is a STATE, and it entered it once.
-      expect(store.getSnapshot().notices).toEqual(['this turn is billed to extra usage']);
+      expect(store.getSnapshot().notices).toEqual([]);
     });
 
-    it('announces the fall onto credits once, not at every turn boundary', async () => {
-      // The reported bug. `considerRotation` re-decides before EVERY turn, and while the windows
-      // stay full it answers `overage` every time — which stacked an identical row per turn.
-      const { runner, rotator, store } = build();
-      const label = 'dennis@trycomp.ai';
-      rotator.considerRotation.mockResolvedValue({
-        kind: 'overage',
-        from: { id: ACCOUNT_ID, label },
-        on: { id: ACCOUNT_ID, label },
-      } as never);
-
-      await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
-      await runner.run({ thread: THREAD, session: SESSION, prompt: 'again', cwd: '/repo' });
-      await runner.run({ thread: THREAD, session: SESSION, prompt: 'more', cwd: '/repo' });
-
-      expect(store.getSnapshot().notices).toEqual([
-        `${label} is out of plan usage · continuing on extra usage`,
-      ]);
-    });
-
-    it('still speaks when the wallet it lands on is a different account', async () => {
+    it('says nothing when the wallet falls onto credits, or lands on another account', async () => {
       const { runner, rotator, store } = build();
       rotator.considerRotation.mockResolvedValue({
         kind: 'overage',
         from: { id: ACCOUNT_ID, label: 'first' },
         on: { id: 'account-2', label: 'second' },
       } as never);
+
       await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
 
-      expect(store.getSnapshot().notices).toEqual([
-        'switched to second · every account is out of plan usage · continuing on extra usage',
-      ]);
+      expect(store.getSnapshot().notices).toEqual([]);
     });
 
     it('writes a refusal onto the row, so the next boundary does not choose this wallet again', async () => {
@@ -306,15 +287,6 @@ describe('TurnRunnerService', () => {
       expect(accounts.recordExtraUsage).not.toHaveBeenCalled();
     });
 
-    it('does not explain extra usage to an account nobody permitted to spend', async () => {
-      const { runner, store } = build([
-        { kind: 'extra_usage', inUse: false, disabledReason: 'overage_not_provisioned' },
-      ]);
-      await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
-
-      expect(store.getSnapshot().notices).toEqual([]);
-    });
-
     it('asks for fast mode only when the paying account has it on', async () => {
       const { runner, engine, accounts } = build();
       await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
@@ -325,53 +297,11 @@ describe('TurnRunnerService', () => {
       expect(engine.lastArgs?.fastMode).toBe(true);
     });
 
-    it('reports a fast mode that did not take — a silent no-op is indistinguishable from working', async () => {
+    it('says nothing when a fast mode Atlas asked for did not take', async () => {
       const { runner, store, accounts } = build([
         { kind: 'fast_mode', state: 'off', disabledReason: 'model_not_allowed' },
       ]);
       accounts.findById.mockResolvedValue({ fastMode: true, extraUsageAllowed: false });
-      await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
-
-      expect(store.getSnapshot().notices).toEqual([
-        'fast mode not supported by this model',
-      ]);
-    });
-
-    it('reports the same refusal exactly once, however many frames and turns carry it', async () => {
-      // What this fixes, verbatim: a turn holding for a delegate emits several `result` frames, so
-      // `preference` printed twice per turn and again on the next one.
-      const { runner, store, accounts } = build([
-        { kind: 'fast_mode', state: 'off', disabledReason: 'preference' },
-        { kind: 'fast_mode', state: 'off', disabledReason: 'preference' },
-      ]);
-      accounts.findById.mockResolvedValue({ fastMode: true, extraUsageAllowed: false });
-      await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
-      await runner.run({ thread: THREAD, session: SESSION, prompt: 'again', cwd: '/repo' });
-
-      expect(store.getSnapshot().notices).toEqual(['fast mode disabled by your organization']);
-    });
-
-    it('speaks again about a refusal that changed, and after fast mode has worked once', async () => {
-      const { runner, store, accounts } = build([
-        { kind: 'fast_mode', state: 'off', disabledReason: 'network_error' },
-        { kind: 'fast_mode', state: 'on' },
-        { kind: 'fast_mode', state: 'off', disabledReason: 'network_error' },
-      ]);
-      accounts.findById.mockResolvedValue({ fastMode: true, extraUsageAllowed: false });
-      await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
-
-      expect(store.getSnapshot().notices).toEqual([
-        'fast mode unavailable — network trouble',
-        'fast mode unavailable — network trouble',
-      ]);
-    });
-
-    it('stays quiet about fast mode when it was never asked for', async () => {
-      // `sdk_opt_in_required` rides EVERY turn of a session that did not opt in. It is the default
-      // this feature overrides, not news.
-      const { runner, store } = build([
-        { kind: 'fast_mode', state: 'off', disabledReason: 'sdk_opt_in_required' },
-      ]);
       await runner.run({ thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' });
 
       expect(store.getSnapshot().notices).toEqual([]);
@@ -608,5 +538,148 @@ describe('TurnRunnerService credential read-back', () => {
 
     await expect(runner.run(ARGS)).resolves.toBeUndefined();
     expect(store.getSnapshot().running).toBe(false);
+  });
+});
+
+/**
+ * A turn that dies on its way IN — before the engine, and therefore before anything that would
+ * normally write an error block.
+ *
+ * The failure Dennis actually hit: a job's first turn threw out of `freshCredential` 270ms in,
+ * `JobStartService` caught it into a logger that is off unless `ATLAS_DEBUG`, and the transcript was
+ * left showing the message he typed with nothing under it and nothing running. The one place that
+ * can say so is here — every caller of `run()` either logs invisibly or drops it, and only the
+ * runner holds the store, the thread and the session at once.
+ */
+describe('TurnRunnerService when the turn never starts', () => {
+  const ARGS = { thread: THREAD, session: SESSION, prompt: 'read this handoff', cwd: '/repo' } as const;
+
+  it('writes the failure into the transcript, under the prompt it killed', async () => {
+    const { runner, messages, vault } = build();
+    vault.freshCredential.mockRejectedValueOnce(new Error('HTTP 400'));
+
+    await expect(runner.run(ARGS)).rejects.toThrow('HTTP 400');
+
+    expect(messages.appended.map((row) => row.payload.type)).toEqual([
+      EMessageType.user,
+      EMessageType.error,
+    ]);
+    expect(messages.appended[1]?.payload).toMatchObject({
+      type: EMessageType.error,
+      retryable: true,
+    });
+    expect(String((messages.appended[1]?.payload as { detail?: string }).detail)).toContain(
+      'HTTP 400',
+    );
+  });
+
+  it('offers the retry that re-sends the very prompt that was lost', async () => {
+    const { runner, store, vault } = build();
+    vault.freshCredential.mockRejectedValueOnce(new Error('HTTP 400'));
+
+    await expect(runner.run(ARGS)).rejects.toThrow('HTTP 400');
+
+    const target = retryTarget(store.getSnapshot().messages);
+    expect(target?.prompt).toMatchObject({ type: EMessageType.user, text: 'read this handoff' });
+  });
+
+  it('leaves nothing running, and still records the dead turn in the ledger', async () => {
+    const { runner, store, turns, vault } = build();
+    vault.freshCredential.mockRejectedValueOnce(new Error('HTTP 400'));
+
+    await expect(runner.run(ARGS)).rejects.toThrow('HTTP 400');
+
+    expect(store.getSnapshot().running).toBe(false);
+    expect(turns.record).toHaveBeenCalledTimes(1);
+    expect(turns.record.mock.calls[0]?.[0]).toMatchObject({ ok: false });
+  });
+
+  /** The error block is a courtesy. A database that will not take it must not eat the real failure. */
+  it('rethrows the original failure even when the block cannot be written', async () => {
+    const { runner, messages, vault } = build();
+    vault.freshCredential.mockRejectedValueOnce(new Error('HTTP 400'));
+    // Only the block itself: the prompt above it was written before anything went wrong, and a
+    // fake that refused both would be testing a different failure.
+    const append = messages.append.bind(messages);
+    messages.append = async (args) => {
+      if (args.payload.type === EMessageType.error) throw new Error('database is locked');
+      return append(args);
+    };
+
+    await expect(runner.run(ARGS)).rejects.toThrow('HTTP 400');
+  });
+
+  /**
+   * An engine that opened and then crashed already writes its own block, from inside `drain()`.
+   * Writing a second one here would draw two red rows for one failure.
+   */
+  it('does not double-report a crash the engine already reported', async () => {
+    const { runner, messages, engine } = build();
+    engine.start = (args) => {
+      args.onEvent({ kind: 'error', title: 'Engine error: claude agent sdk exited', retryable: true });
+      return {
+        steer: (): boolean => false,
+        interrupt: async (): Promise<void> => undefined,
+        done: Promise.resolve({ ok: false, interrupted: false }),
+      };
+    };
+
+    await runner.run(ARGS);
+
+    expect(messages.appended.filter((row) => row.payload.type === EMessageType.error)).toHaveLength(
+      1,
+    );
+  });
+});
+
+/**
+ * A server the repository declares but the CLI could not stand up.
+ *
+ * Nothing else in the app can see this: the tools simply are not there, no call fails, and the
+ * agent does the job the long way round without ever knowing it was short a tool. The `init` frame's
+ * roster is the only mention, and it arrives once per turn.
+ */
+describe('TurnRunnerService and the MCP roster', () => {
+  const ARGS = { thread: THREAD, session: SESSION, prompt: 'go', cwd: '/repo' } as const;
+
+  const roster = (servers: { name: string; status: string }[]): EngineEvent => ({
+    kind: 'session',
+    engineSessionId: 'sdk-session-1',
+    mcpServers: servers,
+  });
+
+  it('says which server is not serving, and stays quiet about the ones that are', async () => {
+    const { runner, store } = build([
+      roster([
+        { name: 'atlas', status: 'connected' },
+        { name: 'trigger', status: 'pending' },
+        { name: 'linear', status: 'failed' },
+      ]),
+    ]);
+
+    await runner.run(ARGS);
+
+    const notices = store.getSnapshot().notices;
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain('linear');
+    expect(notices.join(' ')).not.toContain('trigger');
+  });
+
+  /** Once per job, not once per turn: the roster is re-sent with every `init`. */
+  it('does not repeat itself on the next turn', async () => {
+    const { runner, store } = build([roster([{ name: 'linear', status: 'failed' }])]);
+
+    await runner.run(ARGS);
+    await runner.run(ARGS);
+
+    expect(store.getSnapshot().notices).toHaveLength(1);
+  });
+
+  it('writes nothing at all when every server is up', async () => {
+    const { runner, store } = build([roster([{ name: 'atlas', status: 'connected' }])]);
+
+    await runner.run(ARGS);
+
+    expect(store.getSnapshot().notices).toEqual([]);
   });
 });

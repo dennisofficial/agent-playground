@@ -10,6 +10,13 @@ export type GitResult = { ok: boolean; stdout: string; stderr: string };
  * The only place in the TUI that shells out to `git`. Thin on purpose: it runs commands and reports
  * what happened, and every decision about WHICH command to run for a job lives in
  * `WorktreeService` — so the job-shaped rules stay testable against a plain temporary repository.
+ *
+ * **Its scope is Atlas's own workspace, and nothing else.** Worktrees, because Atlas is the one that
+ * has to know where a job's turns run, and reads — is this a repository, what is checked out, is it
+ * dirty — that the UI and the purge path need. It used to also `fetch`, `rebase` and
+ * `push --force-with-lease`, on the agent's behalf, behind a `ship_pr` tool. That is gone: the agent
+ * has a shell, shipping is its work, and a harness that silently rewrites a branch is making a call
+ * that is not its to make. Nothing here pushes, and nothing here talks to a remote.
  */
 @Injectable()
 export class GitService {
@@ -115,42 +122,13 @@ export class GitService {
   }
 
   /**
-   * Brings the remote's base branch up to date, and nothing else. A ship turn rebases onto
-   * `origin/<base>` rather than onto a local copy of it — the local copy is whatever was last
-   * fetched, which on a worktree that has been sitting for a day is not the branch the pull request
-   * will actually merge into.
-   */
-  async fetch(args: { cwd: string; remote: string; branch: string }): Promise<GitResult> {
-    return this.run({ cwd: args.cwd, args: ['fetch', args.remote, args.branch] });
-  }
-
-  /**
-   * Rebases the checked-out branch, and **cleans up after itself when it cannot**.
+   * Generic escape hatch, and the reason there is no `push` beside it.
    *
-   * A stopped rebase leaves the worktree mid-rebase, which is a state the agent has no verb to
-   * leave and a trap for whoever opens the directory next. Aborting restores the branch exactly as
-   * it was, so a conflict costs a sentence rather than a repository somebody has to rescue.
+   * `fetch`, `rebaseOnto` and `push --force-with-lease` used to live here as named methods, called
+   * by `ShipService` inside a `ship_pr` tool call. Deleting them is the point of that change rather
+   * than a side effect of it: a named `push` on this class is an invitation to ship from the harness
+   * again, and the next person to add one should have to argue for it.
    */
-  async rebaseOnto(args: { cwd: string; upstream: string }): Promise<GitResult> {
-    const result = await this.run({ cwd: args.cwd, args: ['rebase', args.upstream] });
-    if (result.ok) return result;
-    await this.run({ cwd: args.cwd, args: ['rebase', '--abort'] });
-    return result;
-  }
-
-  /**
-   * `--force-with-lease`, which is not a nicety: a rebase rewrites the branch, so every ship after
-   * the first is a non-fast-forward push. The lease is what makes that safe — it refuses if the
-   * remote moved since the fetch above, which is exactly the case where somebody else's commits
-   * would be the thing being discarded.
-   */
-  async push(args: { cwd: string; remote: string; branch: string }): Promise<GitResult> {
-    return this.run({
-      cwd: args.cwd,
-      args: ['push', '--force-with-lease', '--set-upstream', args.remote, args.branch],
-    });
-  }
-
   async run(args: { cwd: string; args: readonly string[] }): Promise<GitResult> {
     const proc = Bun.spawn({
       cmd: ['git', ...args.args],

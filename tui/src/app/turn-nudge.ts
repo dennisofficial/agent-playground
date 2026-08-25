@@ -1,4 +1,3 @@
-import { CANARY_NOTICE, ENudgeAudience } from '../domain/context-nudge.js';
 import { EHarnessVariant, promptPayload, renderPrompt } from '../domain/message.js';
 import type { EngineSession, Thread } from '../generated/prisma/client.js';
 import type { ContextPressureService } from './context-pressure.service.js';
@@ -56,13 +55,6 @@ export async function nudgeAtToolBoundary(args: {
   });
   if (!nudge) return undefined;
 
-  // The human's copy never enters the conversation: in the threads where he acts next, the agent
-  // volunteering a hand-off mid-sentence is exactly the interruption this is trying to avoid.
-  if (nudge.audience === ENudgeAudience.human) {
-    store.notice(nudge.text);
-    return undefined;
-  }
-
   const payload = promptPayload({
     text: nudge.text,
     harnessVariant: EHarnessVariant.transition,
@@ -81,20 +73,21 @@ export async function nudgeAtToolBoundary(args: {
 }
 
 /**
- * The canary's turn-boundary bookkeeping: record whether this turn opened with the glyph, and tell
- * the human if the instrument has just died.
+ * The canary's turn-boundary bookkeeping: record whether this turn opened with the glyph.
  *
- * The warning goes to Dennis regardless of the thread's audience — see `CANARY_NOTICE`.
+ * The sample is the whole point — a dead canary is what turns the `ctx` meter's signal from `budget`
+ * to `canary` (`ContextPressureService.observe`), and the meter is where the human reads it. It used
+ * to also draw a transcript row saying the session had stopped following a standing instruction;
+ * that row is gone with the rest of the harness commentary, and nothing about the MEASUREMENT
+ * changed with it.
  */
 export function closeCanaryTurn(args: {
   contextPressureService: ContextPressureService;
-  store: ConversationStore;
   sessionId: string;
   lane: Lane;
 }): void {
-  const died = args.contextPressureService.endTurn({
+  args.contextPressureService.endTurn({
     sessionId: args.sessionId,
     canary: args.lane.canary,
   });
-  if (died) args.store.notice(CANARY_NOTICE);
 }

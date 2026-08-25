@@ -98,7 +98,6 @@ export async function finaliseTurn(args: {
   // turn produced no prose to open.
   closeCanaryTurn({
     contextPressureService: args.contextPressureService,
-    store,
     sessionId: session.id,
     lane,
   });

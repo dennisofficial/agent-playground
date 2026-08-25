@@ -147,8 +147,10 @@ describe('the session options', () => {
   it('disables SDK auto-compaction outright — rotation owns context', () => {
     const options = claudeOptions(RUN);
     // A JSON string rather than an object: the SDK stringifies this option with `String()`, so an
-    // object would reach the CLI as `[object Object]` and compaction would quietly stay ON.
-    expect(options.settings).toBe('{"autoCompactEnabled":false}');
+    // object would reach the CLI as `[object Object]` and compaction would quietly stay ON. Asserted
+    // as the string it must be, then read key-wise — the file's other settings are other tests'.
+    expect(typeof options.settings).toBe('string');
+    expect(JSON.parse(String(options.settings))).toMatchObject({ autoCompactEnabled: false });
   });
 
   it('asks for NO betas, because an unrecognised one fails the whole request', () => {

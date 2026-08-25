@@ -30,20 +30,35 @@ export function composerRows(height: number): number {
 }
 
 /**
- * The default keymap has no `shift+⏎`, and unbound it does NOTHING.
+ * What Atlas adds to the native keymap, and why each one is missing from it.
  *
- * Bindings are looked up by an exact `name:ctrl:shift:meta:super` key, so the default `return →
- * newline` does not answer a shifted Return — which is why OpenTUI's own defaults spell out
- * `shift+backspace` and `shift+delete` by hand. Unbound, a shifted Return falls through to the
- * printable path, where `\r` is under charcode 32 and is dropped on the floor.
+ * Bindings are looked up by an exact `name:ctrl:shift:meta:super` key, so a default binding on the
+ * bare key does not answer a modified one — which is why OpenTUI's own defaults spell out
+ * `shift+backspace` and `shift+delete` by hand.
  *
- * `meta+⏎` is remapped off its default `submit` because in Atlas the PAGE owns submit, on a plain
- * `⏎`, and every modified Return is a newline.
+ * **Return.** The default keymap has no `shift+⏎`, and unbound it does NOTHING: it falls through to
+ * the printable path, where `\r` is under charcode 32 and is dropped on the floor. `meta+⏎` is
+ * remapped off its default `submit` because in Atlas the PAGE owns submit, on a plain `⏎`, and every
+ * modified Return is a newline.
+ *
+ * **⌘⌫.** The macOS rub-out-the-line gesture, and the one hole in the defaults' otherwise complete
+ * set of ⌘ bindings — they ship `⌘←`/`⌘→` and `⌘↑`/`⌘↓`, but nothing on backspace, so ⌘⌫ fell
+ * through to the plain `backspace` binding and ate a single character. ⌥⌫ stays
+ * `delete-word-backward`, which is what macOS does with it everywhere else.
+ *
+ * `delete-to-line-start` is the LOGICAL line, where `⌘←` is the visual one. It is the only
+ * delete-leftwards action the editor exposes, and the difference shows only in a wrapped paragraph
+ * — where rubbing out to the paragraph's start is the likelier intent anyway.
+ *
+ * ⌘ reaches a terminal application only under the kitty keyboard protocol, which reports it as
+ * `super`. The renderer asks for that protocol by default; a terminal that does not speak it sends
+ * a bare `\x7f` and gets the ordinary backspace, which is the right thing to degrade to.
  */
-const MODIFIED_RETURN_IS_NEWLINE: KeyBinding[] = [
+const ATLAS_BINDINGS: KeyBinding[] = [
   { name: "return", shift: true, action: "newline" },
   { name: "return", ctrl: true, action: "newline" },
   { name: "return", meta: true, action: "newline" },
+  { name: "backspace", super: true, action: "delete-to-line-start" },
 ];
 
 export function Composer(props: {
@@ -146,7 +161,7 @@ export function Composer(props: {
           height={metrics.rows}
           textColor={theme.userFg}
           cursorColor={theme.caretBg}
-          keyBindings={MODIFIED_RETURN_IS_NEWLINE}
+          keyBindings={ATLAS_BINDINGS}
           {...(props.placeholder ? { placeholder: props.placeholder } : {})}
           placeholderColor={theme.dim}
           onContentChange={handleChange}

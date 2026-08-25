@@ -19,6 +19,22 @@ const REFRESH_SKEW_MS = 5 * 60 * 1000;
 @Injectable()
 export class AccountVaultService {
   private readonly logger = new Logger(AccountVaultService.name);
+  /**
+   * The refresh each account has in flight, so simultaneous callers share one request.
+   *
+   * A refresh token is single-use: the server rotates it and the old one is dead the moment the
+   * first request lands. Two callers refreshing the same account at once therefore do not race to
+   * the same answer — the loser gets a 400, which `refresh()` reads as a dead account and writes
+   * `expired` over a live one before rethrowing.
+   *
+   * That is not hypothetical. Starting a job fires the titler and the thread's first turn in the
+   * same tick (`JobStartService.start`), both on the same account, and a job started inside the skew
+   * window lost its first turn to exactly this — silently, because nothing was on screen yet.
+   *
+   * Keyed by account, so two accounts never wait on each other. NOT a cache: the entry is dropped
+   * the moment the request settles, success or failure, so the next turn asks the server again.
+   */
+  private readonly refreshing = new Map<string, Promise<ClaudeCredentialBlob>>();
 
   constructor(
     private readonly accountRepository: AccountRepository,
@@ -47,7 +63,16 @@ export class AccountVaultService {
     const expiresAt = blob.claudeAiOauth.expiresAt;
     if (expiresAt - Date.now() > REFRESH_SKEW_MS) return blob;
 
-    return this.refresh(account, blob);
+    const inFlight = this.refreshing.get(account.id);
+    if (inFlight) return inFlight;
+
+    // Registered before it is awaited, or a second caller arriving in the same tick would find the
+    // map empty and start its own — which is the whole race this exists to close.
+    const work = this.refresh(account, blob).finally(() => {
+      this.refreshing.delete(account.id);
+    });
+    this.refreshing.set(account.id, work);
+    return work;
   }
 
   /**

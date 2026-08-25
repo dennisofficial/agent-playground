@@ -87,6 +87,10 @@ export function resolveEditorCommand(
   // Ink reports plain Backspace as `delete`, so both flags mean "rub out backwards" here. Forward
   // delete is not separable in the legacy encoding: it reports identically.
   if (key.backspace || key.delete) {
+    // ⌘⌫ rubs out the line, ⌥⌫ rubs out a word — macOS everywhere else, and the composer's native
+    // editor answers the same pair. ⌘ is asked first because a terminal that reports it also reports
+    // meta, and the line is the wider gesture of the two.
+    if (key.super) return "delete-to-line-start";
     if (key.meta || key.ctrl) return "delete-word-backward";
     return "delete-backward";
   }
