@@ -14,10 +14,10 @@ function channels(hex: string): [number, number, number] {
   ]
 }
 
-export function mixHex(from: string, to: string, amount: number): string {
-  const t = Math.max(0, Math.min(1, amount))
-  const [fromRed, fromGreen, fromBlue] = channels(from)
-  const [toRed, toGreen, toBlue] = channels(to)
+export function mixHex(args: { from: string; to: string; amount: number }): string {
+  const t = Math.max(0, Math.min(1, args.amount))
+  const [fromRed, fromGreen, fromBlue] = channels(args.from)
+  const [toRed, toGreen, toBlue] = channels(args.to)
   const channel = (a: number, b: number): string =>
     Math.round(a + (b - a) * t)
       .toString(16)
@@ -29,25 +29,31 @@ const CREST_SHOULDER = 0.6
 
 export function shimmerColour(heat: number): string {
   if (heat > CREST_SHOULDER) {
-    return mixHex(theme.accent, SHIMMER_CREST, (heat - CREST_SHOULDER) / (1 - CREST_SHOULDER))
+    return mixHex({
+      from: theme.accent,
+      to: SHIMMER_CREST,
+      amount: (heat - CREST_SHOULDER) / (1 - CREST_SHOULDER),
+    })
   }
-  return mixHex(SHIMMER_REST, theme.accent, heat / CREST_SHOULDER)
+  return mixHex({ from: SHIMMER_REST, to: theme.accent, amount: heat / CREST_SHOULDER })
 }
 
 export function beaconColour(heat: number): string {
-  return mixHex(theme.accent, SHIMMER_CREST, heat)
+  return mixHex({ from: theme.accent, to: SHIMMER_CREST, amount: heat })
 }
 
-export function shimmerSpans(
-  text: string,
-  crest: number,
-  spec: ShimmerSpec,
-  offset = 0,
-): Span[] {
+export function shimmerSpans(args: {
+  text: string
+  crest: number
+  spec: ShimmerSpec
+  offset?: number
+}): Span[] {
+  const offset = args.offset ?? 0
   const spans: Span[] = []
 
-  for (const [index, character] of [...text].entries()) {
-    const fg = shimmerColour(shimmerHeat(index + offset, crest, spec))
+  for (const [index, character] of [...args.text].entries()) {
+    const heat = shimmerHeat({ index: index + offset, crest: args.crest, spec: args.spec })
+    const fg = shimmerColour(heat)
     const last = spans[spans.length - 1]
     if (last && last.fg === fg) {
       last.text += character

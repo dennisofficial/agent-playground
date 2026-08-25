@@ -12,8 +12,7 @@ const JUMP = 'jump to bottom'
 
 const SHORT = 12
 
-/** Long enough for `useTranscriptFollow`'s poll to have looked at least once. */
-const POLL_SETTLE_MS = 400
+const LONGER_THAN_ONE_FOLLOW_POLL_MS = 400
 
 describe('the transcript reflows', () => {
   it('survives being resized under a mounted transcript', async () => {
@@ -78,7 +77,7 @@ describe('the transcript follows the newest output', () => {
     try {
       await drawn(setup)
       for (let wheel = 0; wheel < 6; wheel += 1) await setup.mockMouse.scroll(20, 5, 'up')
-      await settle(POLL_SETTLE_MS)
+      await settle(LONGER_THAN_ONE_FOLLOW_POLL_MS)
       const scrolled = await drawn(setup)
 
       expect(scrolled).not.toContain(LAST_WORDS)

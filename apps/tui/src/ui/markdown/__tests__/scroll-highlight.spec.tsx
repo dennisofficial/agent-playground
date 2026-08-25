@@ -23,15 +23,18 @@ const HEIGHT = 12
 const LINE = `export const wide: string = ${"'chunk'.concat(".repeat(12)}'end');`
 const FENCE = ['```ts', LINE, '```'].join('\n')
 
-/** Cells before the code starts: the left border, then the block's own padding. */
-const CHROME_CELLS = 1 + CONTENT_PADDING
+const CELLS_BEFORE_CODE = 1 + CONTENT_PADDING
+
+const CELLS_AFTER_CODE = 8
 
 type Spans = {
   lines: { spans: { text: string; fg?: { buffer?: Record<number, number> } }[] }[]
 }
 
-/** The fence's row as `r,g,b:char` per cell, which is what "the colours are right" means here. */
-function cells(setup: { captureSpans: () => unknown; captureCharFrame: () => string }): string[] {
+function colouredCellsOfFenceRow(setup: {
+  captureSpans: () => unknown
+  captureCharFrame: () => string
+}): string[] {
   const row = setup
     .captureCharFrame()
     .split('\n')
@@ -61,7 +64,7 @@ async function pannedTo(args: { width: number; offset: number }): Promise<string
 
     for (let i = 0; i < args.offset; i++) await setup.mockMouse.scroll(4, 2, 'right')
     await setup.flush()
-    return cells(setup)
+    return colouredCellsOfFenceRow(setup)
   } finally {
     await teardown(setup)
   }
@@ -74,9 +77,11 @@ describe('a panned fence', () => {
 
     for (const offset of [1, 7, 13, 40]) {
       const panned = await pannedTo({ width: 60, offset })
-      // Both ends are the block's chrome — border, padding, and the fold beyond it.
-      const shown = panned.slice(CHROME_CELLS, panned.length - 8)
-      const expected = whole.slice(CHROME_CELLS + offset, CHROME_CELLS + offset + shown.length)
+      const shown = panned.slice(CELLS_BEFORE_CODE, panned.length - CELLS_AFTER_CODE)
+      const expected = whole.slice(
+        CELLS_BEFORE_CODE + offset,
+        CELLS_BEFORE_CODE + offset + shown.length,
+      )
       expect({ offset, shown }).toEqual({ offset, shown: expected })
     }
   }, 120_000)

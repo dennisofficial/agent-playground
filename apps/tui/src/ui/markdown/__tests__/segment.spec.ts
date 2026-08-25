@@ -25,8 +25,6 @@ describe('segmentMarkdown', () => {
       text: '## A heading\n\nProse with `code` and a [link](https://example.com).\n\n',
     })
     expect(segments[1]).toEqual({ kind: 'fence', language: 'ts', source: 'const x = 1;' })
-    // The blank line closing the fence belongs to the prose that follows it, so the fence and the
-    // paragraph after it are not run together.
     expect(segments[2]).toEqual({ kind: 'prose', text: '\n\nTrailing prose.\n' })
   })
 

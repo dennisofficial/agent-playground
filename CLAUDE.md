@@ -138,8 +138,10 @@ binary. The package manager has simply stopped being a second tool.
   typecheck, and the topological edge is what makes it do so.
 - `tsconfig.base.json` is in `globalDependencies`; editing it busts every cache entry.
 
-Nest's optional peers need `--external` flags to bundle and every Nest upgrade can add another, so
-**CI must actually build the binary**, not merely typecheck.
+**CI must actually build the binary**, not merely typecheck. Bundling a Bun binary surfaces failures a
+typecheck cannot: runtime assets loaded by path, and optional peer dependencies that need `--external`.
+Nest was the original reason for that warning and now lives only under `deprecated/`, but the class of
+failure is not specific to it — the tree-sitter grammars are the live example.
 
 ## Agent skills
 

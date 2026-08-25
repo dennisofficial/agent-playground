@@ -7,11 +7,6 @@ import { CONTENT_PADDING } from '../fenced-block'
 import { MarkdownView } from '../markdown-view'
 import { grammarsReady, teardown } from './harness'
 
-/**
- * Every claim here is about what the WHEEL does when two scroll containers are nested, which nothing
- * short of a real renderer knows. Coordinates are terminal cells.
- */
-
 await grammarsReady()
 
 const WIDTH = 60
@@ -29,7 +24,6 @@ function rowOf(frame: string, needle: string): number {
   return frame.split('\n').findIndex((line) => line.includes(needle))
 }
 
-/** The code on a fence row, past the left border and the block's padding. */
 function codeOf(line: string | undefined): string {
   if (!line) return ''
   const border = line.indexOf('│')
@@ -59,15 +53,12 @@ async function mount(source: string) {
   return { setup, outer: () => outer as ScrollBoxRenderable | null }
 }
 
-/**
- * `testRender` renders inside `act`, so a `setState` from a hover handler commits only when the event
- * is dispatched inside `act` too — and the committed tree reaches the buffer on the flush after that.
- */
-async function hover(
-  setup: Awaited<ReturnType<typeof mount>>['setup'],
-  x: number,
-  y: number,
-): Promise<void> {
+async function hover(args: {
+  setup: Awaited<ReturnType<typeof mount>>['setup']
+  x: number
+  y: number
+}): Promise<void> {
+  const { setup, x, y } = args
   await act(async () => {
     await setup.mockMouse.moveTo(x, y)
     await setup.flush()
@@ -214,7 +205,7 @@ describe('FencedBlock', () => {
     const { setup } = await mount(['```ts', 'const x = 1;', '```'].join('\n'))
     try {
       const top = rowOf(setup.captureCharFrame(), '╭')
-      await hover(setup, 1, top)
+      await hover({ setup, x: 1, y: top })
 
       const lines = setup.captureCharFrame().split('\n')
       const bottom = lines.find((line) => line.includes('╰'))?.replace(/\s+$/, '') ?? ''
@@ -230,7 +221,7 @@ describe('FencedBlock', () => {
     const { setup } = await mount(['```ts', 'x', '```'].join('\n'))
     try {
       const row = rowOf(setup.captureCharFrame(), '╭')
-      await hover(setup, 1, row)
+      await hover({ setup, x: 1, y: row })
 
       const top = setup.captureCharFrame().split('\n')[row] ?? ''
       expect(top).toContain(' ts ')
@@ -255,12 +246,11 @@ describe('FencedBlock', () => {
     }
   }, 30_000)
 
-  it('falls back to plain text for an unlabelled fence rather than guessing a grammar', async () => {
+  it('falls back to plain text for an unlabelled fence, and labels its header with nothing', async () => {
     const { setup } = await mount('```\nno language here\n```')
     try {
       const lines = setup.captureCharFrame().split('\n')
       expect(lines.some((line) => line.includes('no language here'))).toBe(true)
-      // No language in the header, so nothing between the corner and the fill.
       const top = lines.find((line) => line.includes('╭'))
       expect(top).not.toContain(' ts ')
     } finally {

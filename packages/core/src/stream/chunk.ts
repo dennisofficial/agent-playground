@@ -22,3 +22,8 @@ export type Chunk =
   | { type: 'error'; message: string }
 
 export type ChunkType = Chunk['type']
+
+export enum EBlockKind {
+  Text = 'text',
+  Reasoning = 'reasoning',
+}

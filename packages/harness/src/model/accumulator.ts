@@ -1,4 +1,5 @@
 import {
+  EBlockKind,
   EFinishReason,
   type AssistantPart,
   type Chunk,
@@ -8,11 +9,6 @@ import {
 } from '@dltech/atlas-core'
 
 import { carriedProviderOptions, mergeProviderOptions } from './provider-options'
-
-enum EBlockKind {
-  Text = 'text',
-  Reasoning = 'reasoning',
-}
 
 type OpenBlock = { kind: EBlockKind; text: string; providerOptions: ProviderOptions | undefined }
 

@@ -1,10 +1,5 @@
-import type { Chunk, Event, EventRef } from '@dltech/atlas-core'
+import { EBlockKind, type Chunk, type Event, type EventRef } from '@dltech/atlas-core'
 import { EStepEnd, type ChannelSignal, type StepId } from '@dltech/atlas-harness'
-
-export enum EBlockKind {
-  Text = 'text',
-  Reasoning = 'reasoning',
-}
 
 export type StepBlock = { id: string; kind: EBlockKind; text: string }
 

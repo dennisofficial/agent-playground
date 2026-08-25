@@ -1,7 +1,7 @@
 export { createConversationStore, type ConversationStore } from './conversation-store'
 export { deriveTranscript } from './derive-transcript'
 export { durableEntries } from './durable-entries'
-export { liveSteps, prunedSignals, stepsOfSignals, EBlockKind, type InFlightStep, type StepBlock } from './in-flight-steps'
+export { liveSteps, prunedSignals, stepsOfSignals, type InFlightStep, type StepBlock } from './in-flight-steps'
 export {
   EAuthor,
   EEntryKind,

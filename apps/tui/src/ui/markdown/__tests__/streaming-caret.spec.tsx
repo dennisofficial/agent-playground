@@ -6,14 +6,6 @@ import { glyph } from '../../theme'
 import { MarkdownView } from '../markdown-view'
 import { grammarsReady, teardown } from './harness'
 
-/**
- * The caret is a claim about a ROW, so it is tested against drawn rows.
- *
- * A caret rendered beside `<markdown>` rather than inside it looks correct in a component tree and
- * wrong on screen: it becomes its own flex child and lands on the line below the text it is meant to
- * be trailing. Nothing short of reading the frame catches that.
- */
-
 await grammarsReady()
 
 const WIDTH = 60
@@ -39,17 +31,15 @@ async function frame(args: { source: string; streaming: boolean }): Promise<stri
 }
 
 describe('streaming caret', () => {
-  it('sits on the same row as the last word', async () => {
+  it('sits on the same row as the last word, and on no other row', async () => {
     const lines = await frame({ source: 'Draining the queue', streaming: true })
     const row = lines.find((line) => line.includes('Draining the queue'))
 
     expect(row).toContain(`queue${glyph.caret}`)
-    // And nowhere else: a stray second caret would mean the sibling render came back.
     expect(lines.filter((line) => line.includes(glyph.caret))).toHaveLength(1)
   }, 30_000)
 
-  it('holds against the last word instead of following a trailing newline', async () => {
-    // The shape a model actually emits: the paragraph break arrives before the next word does.
+  it('holds against the last word when a paragraph break arrives before the next one', async () => {
     const lines = await frame({ source: 'Draining the queue.\n\n', streaming: true })
     const row = lines.findIndex((line) => line.includes(glyph.caret))
 
@@ -67,7 +57,6 @@ describe('streaming caret', () => {
     const caret = lines.findIndex((line) => line.includes(glyph.caret))
     const code = lines.findIndex((line) => line.includes('const x = 1;'))
 
-    // Inside the fence it would read as a line of code; below it, it reads as what comes next.
     expect(code).toBeGreaterThanOrEqual(0)
     expect(caret).toBeGreaterThan(code)
     expect(lines[caret]?.trim()).toBe(glyph.caret)

@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react'
 
 const SHIMMER_FRAME_MS = 40
 
-export function useShimmerClock(active: boolean, intervalMs = SHIMMER_FRAME_MS): number {
+export function useShimmerClock(args: { active: boolean; intervalMs?: number }): number {
+  const { active } = args
+  const intervalMs = args.intervalMs ?? SHIMMER_FRAME_MS
   const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {

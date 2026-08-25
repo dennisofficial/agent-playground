@@ -11,7 +11,7 @@ import { segmentMarkdown } from './segment'
 import { proseSyntaxStyle } from './syntax-style'
 import { measureTable, TABLE_OPTIONS } from './table-metrics'
 
-// Registration order is precedence, and `codeRenderer` claims any labelled fence.
+// Registration order is precedence.
 registerFencedRenderer(diffRenderer)
 registerFencedRenderer(codeRenderer)
 registerFallbackRenderer(plainRenderer)

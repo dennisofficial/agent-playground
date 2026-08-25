@@ -7,12 +7,6 @@ import { theme } from '../../theme'
 import { MarkdownView } from '../markdown-view'
 import { grammarsReady, teardown } from './harness'
 
-/**
- * The claim under test is that the button is REACHABLE — that a `<text>` nested several boxes deep
- * inside a scrolling transcript receives a mouse press at its own coordinates. The label is the only
- * evidence a reader gets that a copy happened, so the label is what this asserts on.
- */
-
 await grammarsReady()
 
 const FENCE = ['```ts', 'const answer = 42;', '```'].join('\n')
@@ -21,18 +15,15 @@ function labelColour(frame: CapturedFrame, row: number): RGBA | undefined {
   return frame.lines[row]?.spans.find((span) => span.text.includes('copy'))?.fg
 }
 
-/**
- * `testRender` renders inside `act`, so a `setState` from a hover handler commits only when the event
- * is dispatched inside `act` too — and the committed tree reaches the buffer on the flush after that.
- */
-async function hover(
+async function hover(args: {
   setup: {
     mockMouse: { moveTo: (x: number, y: number) => Promise<void> }
     flush: () => Promise<void>
-  },
-  x: number,
-  y: number,
-): Promise<void> {
+  }
+  x: number
+  y: number
+}): Promise<void> {
+  const { setup, x, y } = args
   await act(async () => {
     await setup.mockMouse.moveTo(x, y)
     await setup.flush()
@@ -57,7 +48,7 @@ function mount(args: { scrolling: boolean }) {
 }
 
 describe('CopyButton', () => {
-  it('copies the block on a click, and says so', async () => {
+  it('copies on a click, and says so on the top border beside the language', async () => {
     const setup = await mount({ scrolling: true })
     try {
       await setup.flush()
@@ -65,13 +56,16 @@ describe('CopyButton', () => {
         .captureCharFrame()
         .split('\n')
         .findIndex((line) => line.includes('╭'))
-      await hover(setup, setup.captureCharFrame().split('\n')[border]?.indexOf('╭') ?? 0, border)
+      await hover({
+        setup,
+        x: setup.captureCharFrame().split('\n')[border]?.indexOf('╭') ?? 0,
+        y: border,
+      })
 
       const lines = setup.captureCharFrame().split('\n')
       const row = lines.findIndex((line) => line.includes('copy'))
       expect(row).toBe(border)
 
-      // On the fence's top border, opposite the language — not on a row of its own.
       expect(lines[row]).toContain('╭')
       expect(lines[row]).toContain(' ts ')
 
@@ -92,7 +86,7 @@ describe('CopyButton', () => {
     }
   }, 30_000)
 
-  it('brightens under the pointer and settles back when it leaves', async () => {
+  it('brightens under the pointer and settles back off it, not across the row', async () => {
     const setup = await mount({ scrolling: false })
     try {
       await setup.flush()
@@ -100,7 +94,7 @@ describe('CopyButton', () => {
         .captureCharFrame()
         .split('\n')
         .findIndex((line) => line.includes('╭'))
-      await hover(setup, 1, border)
+      await hover({ setup, x: 1, y: border })
 
       const lines = setup.captureCharFrame().split('\n')
       const row = lines.findIndex((line) => line.includes('copy'))
@@ -112,12 +106,10 @@ describe('CopyButton', () => {
       const resting = labelColour(setup.captureSpans(), row)
       expect(resting?.equals(parseColor(theme.dim))).toBe(true)
 
-      await hover(setup, column, row)
+      await hover({ setup, x: column, y: row })
       expect(labelColour(setup.captureSpans(), row)?.equals(parseColor(theme.hover))).toBe(true)
 
-      // Off the button but still on the same border line: the brightening tracks the button, not
-      // the row, or every fence would light up whenever the pointer crossed it.
-      await hover(setup, 2, row)
+      await hover({ setup, x: 2, y: row })
       expect(labelColour(setup.captureSpans(), row)?.equals(parseColor(theme.dim))).toBe(true)
     } finally {
       await teardown(setup)
@@ -133,14 +125,13 @@ describe('CopyButton', () => {
       expect(resting[border]).not.toContain('copy')
       expect(resting[border]).toContain(' ts ')
 
-      // The CODE, not the header: the whole block is the hover target.
       const code = resting.findIndex((line) => line.includes('const answer'))
-      await hover(setup, 4, code)
+      await hover({ setup, x: 4, y: code })
       const shown = setup.captureCharFrame().split('\n')
       expect(shown[border]).toContain('copy')
       expect(shown[border]?.trimEnd().length).toBe(resting[border]?.trimEnd().length)
 
-      await hover(setup, 40, 11)
+      await hover({ setup, x: 40, y: 11 })
       expect(setup.captureCharFrame().split('\n')[border]).not.toContain('copy')
     } finally {
       await teardown(setup)
@@ -155,15 +146,13 @@ describe('CopyButton', () => {
         .captureCharFrame()
         .split('\n')
         .findIndex((line) => line.includes('╭'))
-      await hover(setup, 1, border)
+      await hover({ setup, x: 1, y: border })
       const column = setup.captureCharFrame().split('\n')[border]?.indexOf('⧉') ?? -1
 
       await setup.mockMouse.click(column, border)
       await setup.flush()
 
-      // Copying is often the last thing done in a block, so the pointer leaves right after the
-      // click. Hiding the button on the way out would swallow the only report the click makes.
-      await hover(setup, 40, 11)
+      await hover({ setup, x: 40, y: 11 })
       const after = setup.captureCharFrame().split('\n')[border]
       expect(after?.includes('copied') || after?.includes('blocked')).toBe(true)
     } finally {

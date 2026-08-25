@@ -4,8 +4,8 @@ import { classifyDiffLine, diffRenderer } from '../renderers/diff'
 
 describe('classifyDiffLine', () => {
   it('claims file headers before it claims added and removed lines', () => {
-    // `---`/`+++` start with the same characters as a change, and misreading them opens every diff
-    // with a false pair — which is why this is ordered rather than a lookup table.
+    // `---`/`+++` in a unified diff start with the same characters as a change, so misreading them
+    // opens every diff with a false pair.
     expect(classifyDiffLine('--- a/src/app.ts')).toBe('meta')
     expect(classifyDiffLine('+++ b/src/app.ts')).toBe('meta')
     expect(classifyDiffLine('-  const x = 1;')).toBe('removed')

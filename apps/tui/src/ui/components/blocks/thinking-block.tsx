@@ -42,7 +42,7 @@ function HeaderRow(props: { label: string; inner: number; wash: Wash }): React.R
       <span fg={theme.dim} {...props.wash}>
         {props.label}
       </span>
-      <span {...props.wash}>{fill(props.inner, props.label.length)}</span>
+      <span {...props.wash}>{fill({ inner: props.inner, used: props.label.length })}</span>
     </text>
   )
 }
@@ -66,15 +66,10 @@ function OpenedDocument(props: { text: string; inner: number; wash: Wash }): Rea
   )
 }
 
-/**
- * The live block tails rather than growing a row per token: reasoning runs for pages and would walk
- * the working line off the bottom of the screen. It keeps hand-wrapped rows where the finished block
- * renders markdown, because a document sliced at the top is not one.
- */
 function LiveTail(props: { text: string; inner: number; wash: Wash }): React.ReactNode {
   const band = Math.max(NARROWEST_BAND - BODY_INDENT, props.inner - BODY_INDENT)
-  const rows = props.text.split('\n').flatMap((line) => wrapWords(line, band))
-  const view = tail(rows, THINKING_TAIL_LINES)
+  const rows = props.text.split('\n').flatMap((line) => wrapWords({ text: line, width: band }))
+  const view = tail({ items: rows, limit: THINKING_TAIL_LINES })
 
   return (
     <>
@@ -109,12 +104,14 @@ function BodyRow(props: {
         {indent}
         {props.text}
       </span>
-      <span {...props.wash}>{fill(props.inner, BODY_INDENT + props.text.length)}</span>
+      <span {...props.wash}>
+        {fill({ inner: props.inner, used: BODY_INDENT + props.text.length })}
+      </span>
       {props.caret ? <span>{glyph.caret}</span> : null}
     </text>
   )
 }
 
-function fill(inner: number, used: number): string {
-  return ' '.repeat(Math.max(0, inner - used))
+function fill(args: { inner: number; used: number }): string {
+  return ' '.repeat(Math.max(0, args.inner - args.used))
 }

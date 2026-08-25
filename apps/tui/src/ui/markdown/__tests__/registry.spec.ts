@@ -10,15 +10,14 @@ import {
 import { codeRenderer, plainRenderer } from '../renderers/code'
 import { diffRenderer } from '../renderers/diff'
 
-// The registry is module state and `markdown-view.tsx` fills it from a module-scope side effect that
-// cannot run twice, so a spec that empties it has to put the production set back for the spec files
-// after it in the same process.
-afterAll(() => {
+function restoreProductionRenderersForLaterSpecFilesInThisProcess(): void {
   resetFencedRenderers()
   registerFencedRenderer(diffRenderer)
   registerFencedRenderer(codeRenderer)
   registerFallbackRenderer(plainRenderer)
-})
+}
+
+afterAll(restoreProductionRenderersForLaterSpecFilesInThisProcess)
 
 function renderer(args: { name: string; handles: (language: string) => boolean }): FencedRenderer {
   return {

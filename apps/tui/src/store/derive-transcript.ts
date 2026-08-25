@@ -1,11 +1,10 @@
-import type { Event } from '@dltech/atlas-core'
+import { EBlockKind, type Event } from '@dltech/atlas-core'
 import { EStepEnd, type ChannelSignal } from '@dltech/atlas-harness'
 
 import { durableEntries } from './durable-entries'
-import { EBlockKind, liveSteps, stepsOfSignals, type InFlightStep } from './in-flight-steps'
+import { liveSteps, stepsOfSignals, type InFlightStep } from './in-flight-steps'
+import { modelEntries } from './model-entries'
 import {
-  EAuthor,
-  EEntryKind,
   EMPTY_TRANSCRIPT,
   type StepFailure,
   type TranscriptEntry,
@@ -18,18 +17,14 @@ const failureOf = (steps: readonly InFlightStep[]): StepFailure | null => {
 }
 
 function entriesOfStep(step: InFlightStep): TranscriptEntry[] {
-  return step.blocks.map((block, index) => {
-    const shared = {
-      author: EAuthor.Model,
+  return modelEntries({
+    runs: step.blocks.map((block) => ({
       key: `${step.stepId}:${block.kind}:${block.id}`,
       text: block.text,
-      streaming: step.end === null,
-      interrupted: step.end === EStepEnd.Interrupted && index === step.blocks.length - 1,
-    } as const
-
-    return block.kind === EBlockKind.Reasoning
-      ? { kind: EEntryKind.ModelThought, ...shared }
-      : { kind: EEntryKind.ModelSaid, ...shared }
+      isReasoning: block.kind === EBlockKind.Reasoning,
+    })),
+    streaming: step.end === null,
+    interruptedAtEnd: step.end === EStepEnd.Interrupted,
   })
 }
 

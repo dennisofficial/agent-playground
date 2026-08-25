@@ -1,9 +1,10 @@
+import type { Renderable } from '@opentui/core'
 import React, { useRef, useState } from 'react'
 
 import { theme } from '../theme'
 import { useWheelAxis } from './wheel-axis'
 
-type Pannable = { scrollX: number; maxScrollX: number }
+type Pannable = Renderable & { scrollX: number; maxScrollX: number }
 
 export function TextPanner(props: {
   columns: number
@@ -21,8 +22,7 @@ export function TextPanner(props: {
       if (!node) return
       // `TextBufferRenderable` maps a horizontal report onto its own `scrollX` before this listener
       // runs, so re-applying that one spelling would move the block twice per report.
-      const alreadyMoved =
-        sideways.source === 'wheel' && event.target === (node as unknown as object)
+      const alreadyMoved = sideways.source === 'wheel' && event.target === node
       if (!alreadyMoved) node.scrollX += sideways.direction === 'left' ? -1 : 1
       setOffset(node.scrollX)
     },

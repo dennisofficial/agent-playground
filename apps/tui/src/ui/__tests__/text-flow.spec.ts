@@ -4,39 +4,46 @@ import { tail, thinkingSummary, wrapWords } from '../text-flow'
 
 describe('wrapping prose', () => {
   it('breaks on words and never past the band', () => {
-    const rows = wrapWords('the quick brown fox jumped over the lazy dog', 12)
+    const rows = wrapWords({ text: 'the quick brown fox jumped over the lazy dog', width: 12 })
     for (const row of rows) expect(row.length).toBeLessThanOrEqual(12)
     expect(rows.join(' ')).toBe('the quick brown fox jumped over the lazy dog')
   })
 
   it('hard-splits a word wider than the band rather than clipping it', () => {
-    const rows = wrapWords('/Users/dennis/Developer/atlas/apps/tui/src/ui/theme.ts', 16)
+    const rows = wrapWords({
+      text: '/Users/dennis/Developer/atlas/apps/tui/src/ui/theme.ts',
+      width: 16,
+    })
     expect(rows.join('')).toBe('/Users/dennis/Developer/atlas/apps/tui/src/ui/theme.ts')
   })
 
   it('keeps a blank line as a blank row, because it is a paragraph break', () => {
-    expect(wrapWords('', 40)).toEqual([''])
+    expect(wrapWords({ text: '', width: 40 })).toEqual([''])
   })
 
   it('gives up on a band too narrow to wrap in', () => {
-    expect(wrapWords('unwrappable', 4)).toEqual(['unwr'])
+    expect(wrapWords({ text: 'unwrappable', width: 4 })).toEqual(['unwr'])
   })
 })
 
 describe('tailing a stream', () => {
   it('keeps everything when it fits', () => {
-    expect(tail(['a', 'b'], 4)).toEqual({ shown: ['a', 'b'], hidden: 0, notice: null })
+    expect(tail({ items: ['a', 'b'], limit: 4 })).toEqual({
+      shown: ['a', 'b'],
+      hidden: 0,
+      notice: null,
+    })
   })
 
   it('keeps the newest rows and counts what fell off the top', () => {
-    const view = tail(['a', 'b', 'c', 'd'], 2)
+    const view = tail({ items: ['a', 'b', 'c', 'd'], limit: 2 })
     expect(view.shown).toEqual(['c', 'd'])
     expect(view.hidden).toBe(2)
     expect(view.notice).toBe('… +2 lines above')
   })
 
   it('says line, singular, for one', () => {
-    expect(tail(['a', 'b'], 1).notice).toBe('… +1 line above')
+    expect(tail({ items: ['a', 'b'], limit: 1 }).notice).toBe('… +1 line above')
   })
 })
 

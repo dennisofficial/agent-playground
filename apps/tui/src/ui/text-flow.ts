@@ -6,7 +6,8 @@ export type Tailed<T> = {
   notice: string | null
 }
 
-export function tail<T>(items: readonly T[], limit: number): Tailed<T> {
+export function tail<T>(args: { items: readonly T[]; limit: number }): Tailed<T> {
+  const { items, limit } = args
   if (items.length <= limit) return { shown: [...items], hidden: 0, notice: null }
   const hidden = items.length - limit
   return {
@@ -18,7 +19,8 @@ export function tail<T>(items: readonly T[], limit: number): Tailed<T> {
 
 const NARROWEST_WRAP = 8
 
-export function wrapWords(text: string, width: number): string[] {
+export function wrapWords(args: { text: string; width: number }): string[] {
+  const { text, width } = args
   if (width < NARROWEST_WRAP) return [text.slice(0, Math.max(1, width))]
 
   const rows: string[] = []

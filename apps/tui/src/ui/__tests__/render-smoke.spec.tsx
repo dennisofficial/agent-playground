@@ -9,13 +9,10 @@ import { grammarsReady, teardown } from '../markdown/__tests__/harness'
 import { theme } from '../theme'
 
 /**
- * Every ported surface, mounted for real at several terminal widths.
- *
  * OpenTUI's `<text>` accepts strings, text nodes and styled text — NOT nested `<text>` elements. A
  * component that returns `<text>` and is rendered inside another `<text>` therefore throws at mount,
  * and nothing in the type system catches it: the nesting only exists once the component has been
- * expanded. That shipped twice during the previous migration, both times found by a user opening a
- * page. Mounting here turns it into a test failure instead.
+ * expanded.
  */
 
 await grammarsReady()

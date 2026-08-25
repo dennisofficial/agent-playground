@@ -9,13 +9,13 @@ export type HighlightedRows = readonly (readonly TextChunk[])[] | null
 const CACHE = new Map<string, HighlightedRows>()
 const CACHE_LIMIT = 128
 
-function remember(key: string, value: HighlightedRows): HighlightedRows {
+function remember(args: { key: string; value: HighlightedRows }): HighlightedRows {
   if (CACHE.size >= CACHE_LIMIT) {
     const oldest = CACHE.keys().next()
     if (!oldest.done) CACHE.delete(oldest.value)
   }
-  CACHE.set(key, value)
-  return value
+  CACHE.set(args.key, args.value)
+  return args.value
 }
 
 function cacheKey(args: { lines: readonly string[]; filetype: string }): string {
@@ -47,7 +47,7 @@ export async function highlightRows(args: {
   if (result === null) return null
 
   const highlights = result.highlights ?? []
-  if (highlights.length === 0) return remember(key, null)
+  if (highlights.length === 0) return remember({ key, value: null })
 
   const chunks = treeSitterToTextChunks(
     content,
@@ -57,7 +57,7 @@ export async function highlightRows(args: {
     // numbering it beside it.
     { enabled: false },
   )
-  return remember(key, chunksByLine({ chunks, lines: args.lines.length }))
+  return remember({ key, value: chunksByLine({ chunks, lines: args.lines.length }) })
 }
 
 export function chunksByLine(args: {
