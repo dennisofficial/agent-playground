@@ -60,3 +60,16 @@ export function inputForCall({
 
   return eventsOfType({ events, type: 'tool-called' }).find((event) => event.callId === callId)?.input
 }
+
+const TURN_TAKING: readonly EventType[] = [
+  'user-said',
+  'assistant-said',
+  'tool-result',
+  'tool-denied',
+  'nudge',
+]
+
+export function awaitsReply(events: readonly Event[]): boolean {
+  const lastTurn = events.filter((event) => TURN_TAKING.includes(event.type)).at(-1)
+  return lastTurn !== undefined && lastTurn.type !== 'assistant-said'
+}
