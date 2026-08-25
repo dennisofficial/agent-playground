@@ -21,8 +21,8 @@ import { toToolSet } from './tool-set'
 
 export type { ChunkFilter }
 
-// streamText's default onError writes the error to the console. The error chunk is already turned
-// into a thrown ModelStreamError below, and a stray console write corrupts the terminal renderer.
+// streamText's default onError writes the error to the console, and a stray console write corrupts
+// the terminal renderer.
 const reportNothing = () => {}
 
 export async function runModelStream(args: {
@@ -48,15 +48,15 @@ export async function runModelStream(args: {
 
   try {
     for await (const part of stream.fullStream) {
-      if (part.type === 'error') {
-        throw new ModelStreamError({ message: getErrorMessage(part.error), cause: part.error })
-      }
-
       const chunk = toCoreChunk(part)
       if (chunk === null) continue
 
       const kept = args.onChunk ? args.onChunk(chunk) : chunk
       if (kept !== null) accumulator.handle(kept)
+
+      if (part.type === 'error') {
+        throw new ModelStreamError({ message: getErrorMessage(part.error), cause: part.error })
+      }
     }
   } catch (error) {
     if (!args.signal.aborted) throw error

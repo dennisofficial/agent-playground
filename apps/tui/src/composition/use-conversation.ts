@@ -1,4 +1,5 @@
 import type { BranchId } from '@dltech/atlas-core'
+import { ETurnStatus } from '@dltech/atlas-harness'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 
 import { createConversationStore, type TranscriptModel } from '../store'
@@ -107,7 +108,11 @@ export function useConversation(args: {
             drafts: [{ type: 'user-said', text: said }],
           })
           await refresh()
-          await app.runner.runTurn({ branchId: opened.branchId, signal: controller.signal })
+          const outcome = await app.runner.runTurn({
+            branchId: opened.branchId,
+            signal: controller.signal,
+          })
+          if (outcome.status === ETurnStatus.Failed) setFailure(outcome.message)
         } catch (error) {
           setFailure(messageOf(error))
         } finally {

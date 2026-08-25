@@ -113,6 +113,38 @@ describe('createAiSdkModelPort', () => {
     await expect(step({ model })).rejects.toThrow(ModelStreamError)
   })
 
+  it('hands the error chunk on before it fails, so a subscriber is told why', async () => {
+    const seen: Chunk[] = []
+    const model = scriptedModel({ script: [{ error: 'overloaded_error' }] })
+
+    await step({
+      model,
+      onChunk: (chunk) => {
+        seen.push(chunk)
+        return chunk
+      },
+    }).catch(() => undefined)
+
+    expect(seen.filter((chunk) => chunk.type === 'error')).toEqual([
+      { type: 'error', message: 'overloaded_error' },
+    ])
+  })
+
+  it('hands the error chunk on after the text it interrupted', async () => {
+    const seen: Chunk[] = []
+    const model = scriptedModel({ script: [{ text: 'partial', error: 'overloaded_error' }] })
+
+    await step({
+      model,
+      onChunk: (chunk) => {
+        seen.push(chunk)
+        return chunk
+      },
+    }).catch(() => undefined)
+
+    expect(seen.map((chunk) => chunk.type)).toEqual(['text-start', 'text-delta', 'text-end', 'error'])
+  })
+
   it('reports the tool calls the model asked for', async () => {
     const model = scriptedModel({
       script: [{ text: 'reading', calls: [{ callId: 'call-1', name: 'read_file', input: { path: 'a.ts' } }] }],

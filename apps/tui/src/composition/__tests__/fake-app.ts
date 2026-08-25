@@ -11,6 +11,7 @@ import {
 import {
   createDeltaChannel,
   createPublishingTurnRunner,
+  ModelStreamError,
   RandomIds,
   type DeltaChannel,
 } from '@dltech/atlas-harness'
@@ -88,6 +89,16 @@ export function scriptedModelPort(args: {
       }
 
       return { parts: partsOf(said), toolCalls: [], finishReason: EFinishReason.Stop }
+    },
+  }
+}
+
+export function failingModelPort(args: { message: string }): ModelPort {
+  return {
+    identity: { id: 'failing', modelId: 'failing' },
+
+    step(): Promise<ModelStepResult> {
+      return Promise.reject(new ModelStreamError({ message: args.message }))
     },
   }
 }

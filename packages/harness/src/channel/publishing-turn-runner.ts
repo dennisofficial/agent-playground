@@ -5,8 +5,11 @@ import type { BranchPublisher, DeltaChannel } from './delta-channel'
 import { withDeltaPublishing } from './publishing-event-log'
 import { EStepEnd } from './signal'
 
-const endFor = (outcome: TurnOutcome): EStepEnd =>
-  outcome.status === ETurnStatus.Failed ? EStepEnd.Failed : EStepEnd.Interrupted
+const endFor = (outcome: TurnOutcome): EStepEnd => {
+  if (outcome.status === ETurnStatus.Failed) return EStepEnd.Failed
+  if (outcome.status === ETurnStatus.Interrupted) return EStepEnd.Interrupted
+  return EStepEnd.Completed
+}
 
 async function publishing(args: {
   publisher: BranchPublisher

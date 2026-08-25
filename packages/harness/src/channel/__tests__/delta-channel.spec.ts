@@ -186,7 +186,46 @@ describe('a step that never commits', () => {
     expect(channel.snapshot({ branchId })).toEqual([])
   })
 
+  it('opens and ends a step for a failure that never streamed, so it is not silence', () => {
+    const channel = createDeltaChannel()
+    const { seen, listener } = recorder()
+    channel.subscribe({ branchId, listener })
+
+    channel.publisherFor({ branchId }).close({ end: EStepEnd.Failed })
+
+    expect(seen.map((signal) => signal.type)).toEqual(['step-started', 'step-ended'])
+    expect(seen.at(-1)).toEqual({
+      type: 'step-ended',
+      stepId: firstStepId(seen),
+      end: EStepEnd.Failed,
+      supersededBy: null,
+    })
+  })
+
+  it('says nothing when a turn that streamed nothing closes without failing', () => {
+    const channel = createDeltaChannel()
+    const { seen, listener } = recorder()
+    channel.subscribe({ branchId, listener })
+
+    channel.publisherFor({ branchId }).close({ end: EStepEnd.Completed })
+
+    expect(seen).toEqual([])
+  })
+
   it('is closed idempotently, so a committed step is not ended twice', () => {
+    const channel = createDeltaChannel()
+    const { seen, listener } = recorder()
+    channel.subscribe({ branchId, listener })
+    const publisher = channel.publisherFor({ branchId })
+    publisher.onChunk({ type: 'text-delta', id: 't1', text: 'auth' })
+    publisher.settleAppend({ events: [assistantSaid({ seq: 2, text: 'auth' })] })
+
+    publisher.close({ end: EStepEnd.Completed })
+
+    expect(seen.filter((signal) => signal.type === 'step-ended')).toHaveLength(1)
+  })
+
+  it('gives a failure after the last commit a step of its own rather than swallowing it', () => {
     const channel = createDeltaChannel()
     const { seen, listener } = recorder()
     channel.subscribe({ branchId, listener })
@@ -196,7 +235,9 @@ describe('a step that never commits', () => {
 
     publisher.close({ end: EStepEnd.Failed })
 
-    expect(seen.filter((signal) => signal.type === 'step-ended')).toHaveLength(1)
+    const ends = seen.filter((signal) => signal.type === 'step-ended')
+    expect(ends.map((signal) => signal.end)).toEqual([EStepEnd.Completed, EStepEnd.Failed])
+    expect(ends[0]?.stepId).not.toBe(ends[1]?.stepId)
   })
 })
 

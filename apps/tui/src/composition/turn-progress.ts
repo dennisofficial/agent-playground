@@ -1,7 +1,7 @@
 import type { Chunk } from '@dltech/atlas-core'
 import type { ChannelSignal } from '@dltech/atlas-harness'
 
-import type { TranscriptModel } from '../store'
+import type { StepFailure, TranscriptModel } from '../store'
 import { IDLE_TURN, type TurnClock } from '../ui/components/transcript'
 
 const CHARACTERS_PER_TOKEN = 4
@@ -58,14 +58,22 @@ export function turnSettled(args: { progress: TurnProgress; now: number }): Turn
 export const clockReadableAt = (args: { now: number; clock: TurnClock }): number =>
   args.clock.startedAt === null ? args.now : Math.max(args.now, args.clock.startedAt)
 
+const failureNaming = (args: {
+  reported: StepFailure | null
+  said: string | null
+}): StepFailure | null => {
+  if (typeof args.reported?.message === 'string') return args.reported
+  if (args.said !== null) return { message: args.said }
+  return args.reported
+}
+
 export function transcriptOfTurn(args: {
   model: TranscriptModel
   working: boolean
   failure: string | null
 }): TranscriptModel {
   const streaming = args.model.streaming || args.working
-  const failure =
-    args.model.failure ?? (args.failure === null ? null : { message: args.failure })
+  const failure = failureNaming({ reported: args.model.failure, said: args.failure })
 
   if (streaming === args.model.streaming && failure === args.model.failure) return args.model
   return { ...args.model, streaming, failure }

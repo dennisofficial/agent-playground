@@ -1,4 +1,4 @@
-import type { SharedV4ProviderMetadata } from '@ai-sdk/provider'
+import { getErrorMessage, type SharedV4ProviderMetadata } from '@ai-sdk/provider'
 import type { FinishReason, TextStreamPart, ToolSet } from 'ai'
 
 import { EFinishReason, toCallId, type Chunk } from '@dltech/atlas-core'
@@ -35,6 +35,8 @@ export function toCoreChunk(part: TextStreamPart<ToolSet>): Chunk | null {
   }
 
   if (part.type === 'finish') return { type: 'finish', reason: toFinishReason(part.finishReason) }
+
+  if (part.type === 'error') return { type: 'error', message: getErrorMessage(part.error) }
 
   return null
 }

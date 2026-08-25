@@ -5,7 +5,7 @@ import React from 'react'
 
 import { grammarsReady, settle, teardown } from '../../ui/markdown/__tests__/harness'
 import { App } from '../app'
-import { FAKE_CONFIG, fakeApp, scriptedModelPort, type FakeApp } from './fake-app'
+import { FAKE_CONFIG, fakeApp, failingModelPort, scriptedModelPort, type FakeApp } from './fake-app'
 
 await grammarsReady()
 
@@ -18,6 +18,8 @@ const BRANCH = toBranchId('opened-branch')
 const THINKING = 'The loop reads the log, so position is derived rather than remembered.'
 
 const REPLY = 'Atlas derives every prompt from the event log.'
+
+const PROVIDER_ERROR = 'overloaded_error'
 
 type Mounted = {
   app: FakeApp
@@ -183,6 +185,29 @@ describe('the app you can actually open', () => {
       const last = events.at(-1)
       expect(last?.type).toBe('assistant-said')
       expect(last?.type === 'assistant-said' ? last.interrupted : false).toBe(true)
+    } finally {
+      await mounted.done()
+    }
+  }, 60_000)
+
+  it('names the model error rather than falling silent when the turn failed before any reply', async () => {
+    const mounted = await open({
+      app: fakeApp({ model: failingModelPort({ message: PROVIDER_ERROR }) }),
+    })
+
+    try {
+      await mounted.typeText('what changed?')
+      mounted.pressEnter()
+
+      const blamed = await until({
+        holds: async () => (await mounted.frame()).includes(PROVIDER_ERROR),
+        within: 20_000,
+      })
+
+      expect(blamed).toBe(true)
+      const frame = await mounted.frame()
+      expect(frame).toContain('The turn failed')
+      expect(frame).not.toContain('The model reported no reason.')
     } finally {
       await mounted.done()
     }

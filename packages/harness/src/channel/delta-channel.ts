@@ -34,6 +34,9 @@ const durableAssistantEvent = (events: readonly Event[]): EventOfType<'assistant
 const refOf = (event: EventOfType<'assistant-said'> | undefined): EventRef | null =>
   event === undefined ? null : { eventId: event.id, seq: event.seq }
 
+const needsAStepToFailIn = (args: { state: BranchState; end: EStepEnd }): boolean =>
+  args.state.stepId === undefined && args.end === EStepEnd.Failed
+
 const endOf = (event: EventOfType<'assistant-said'> | undefined): EStepEnd =>
   event?.interrupted === true ? EStepEnd.Interrupted : EStepEnd.Completed
 
@@ -135,6 +138,8 @@ export function createDeltaChannel(): DeltaChannel {
         close({ end }) {
           const state = branches.get(branchId)
           if (state === undefined) return
+
+          if (needsAStepToFailIn({ state, end })) startStep({ branchId, state })
           endStep({ branchId, state, end, supersededBy: null })
         },
       }

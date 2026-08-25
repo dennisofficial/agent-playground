@@ -42,6 +42,11 @@ const deltasOf = (signals: readonly ChannelSignal[], kind: 'text-delta' | 'reaso
     .flatMap((signal) => (signal.type === 'chunk' && signal.chunk.type === kind ? [signal.chunk.text] : []))
     .join('')
 
+const errorsOf = (signals: readonly ChannelSignal[]): string[] =>
+  signals.flatMap((signal) =>
+    signal.type === 'chunk' && signal.chunk.type === 'error' ? [signal.chunk.message] : [],
+  )
+
 const textOf = (event: EventOfType<'assistant-said'>): string =>
   event.parts.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('')
 
@@ -127,6 +132,41 @@ describe('running a turn', () => {
       supersededBy: null,
     })
     expect(channel.snapshot({ branchId: branch.id })).toEqual([])
+  })
+
+  it('ends the step and names the reason when the model fails before it streamed anything', async () => {
+    const harness = await openHarness([{ error: 'overloaded_error' }])
+    const branch = await harness.branches.create({})
+    const channel = createDeltaChannel()
+    const { seen, listener } = recorder()
+    channel.subscribe({ branchId: branch.id, listener })
+    const runner = createPublishingTurnRunner({ channel, deps: depsOf(harness) })
+
+    const outcome = await runner.say({ branchId: branch.id, text: 'what changed?' })
+
+    expect(outcome.status).toBe(ETurnStatus.Failed)
+    expect(errorsOf(seen)).toEqual(['overloaded_error'])
+    expect(seen.at(-1)).toEqual({
+      type: 'step-ended',
+      stepId: firstStepId(seen),
+      end: EStepEnd.Failed,
+      supersededBy: null,
+    })
+    expect(channel.snapshot({ branchId: branch.id })).toEqual([])
+  })
+
+  it('closes a step that completed with nothing to commit as completed, not interrupted', async () => {
+    const harness = await openHarness([{}])
+    const branch = await harness.branches.create({})
+    const channel = createDeltaChannel()
+    const { seen, listener } = recorder()
+    channel.subscribe({ branchId: branch.id, listener })
+    const runner = createPublishingTurnRunner({ channel, deps: depsOf(harness) })
+
+    const outcome = await runner.say({ branchId: branch.id, text: 'what changed?' })
+
+    expect(outcome.status).toBe(ETurnStatus.Completed)
+    expect(stepEnded(seen).end).toBe(EStepEnd.Completed)
   })
 
   it('publishes only to the branch it was asked to run', async () => {

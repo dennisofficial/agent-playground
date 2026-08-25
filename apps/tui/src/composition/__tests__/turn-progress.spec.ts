@@ -147,4 +147,18 @@ describe('what the transcript is shown while a turn is in flight', () => {
       transcriptOfTurn({ model: reported, working: false, failure: 'something else' }).failure,
     ).toEqual({ message: 'overloaded_error' })
   })
+
+  it('names the reason the turn reported when the channel failed without one', () => {
+    const unexplained: TranscriptModel = { ...EMPTY_TRANSCRIPT, failure: { message: null } }
+
+    expect(
+      transcriptOfTurn({ model: unexplained, working: false, failure: 'overloaded_error' }).failure,
+    ).toEqual({ message: 'overloaded_error' })
+  })
+
+  it('keeps a failure the channel reported without a reason when nothing else knows one', () => {
+    const unexplained: TranscriptModel = { ...EMPTY_TRANSCRIPT, failure: { message: null } }
+
+    expect(transcriptOfTurn({ model: unexplained, working: false, failure: null })).toBe(unexplained)
+  })
 })
