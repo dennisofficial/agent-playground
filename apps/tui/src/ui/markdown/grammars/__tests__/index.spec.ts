@@ -57,6 +57,26 @@ const SAMPLES: Record<string, { source: string; expect: string[] }> = {
       '#include <string>\n\n// hello\nnamespace demo {\nstd::string greet(const std::string &name) {\n  return "hi " + name;\n}\n}\n',
     expect: ['keyword', 'comment', 'string', 'type', 'function'],
   },
+  javascript: {
+    source:
+      'import fs from "fs";\n\n// hello\nexport const greet = (name) => {\n  const n = 1;\n  return `hi ${name} ${n}`;\n};\n',
+    expect: ['keyword', 'comment', 'string', 'number', 'function'],
+  },
+  typescript: {
+    source:
+      'import type { Stats } from "fs";\n\n// hello\ninterface User {\n  id: number;\n}\nexport const greet = (u: User): string => `hi ${u.id}`;\n',
+    expect: ['keyword', 'comment', 'string', 'type', 'type.builtin', 'variable.parameter'],
+  },
+  typescriptreact: {
+    source:
+      'interface Props {\n  name: string;\n}\n\n// hello\nexport const Hello = ({ name }: Props) => (\n  <div className="greeting">Hello, {name}!</div>\n);\n',
+    expect: ['keyword', 'comment', 'string', 'type', 'tag', 'attribute'],
+  },
+  html: {
+    source:
+      '<!DOCTYPE html>\n<html lang="en">\n  <!-- hello -->\n  <body>\n    <h1 class="title">Hello</h1>\n  </body>\n</html>\n',
+    expect: ['tag', 'attribute', 'string', 'comment', 'constant'],
+  },
 }
 
 describe('vendored tree-sitter grammars', () => {
@@ -116,6 +136,26 @@ describe('vendored tree-sitter grammars', () => {
     }
 
     expect(failures).toEqual([])
+  }, 60_000)
+
+  it('leaves a lowercase binding plain rather than colouring it a constant', async () => {
+    await client.initialize()
+    for (const parser of await getParsers()) {
+      client.addFiletypeParser(parser)
+    }
+
+    const source = 'const users = 1;'
+    const start = source.indexOf('users')
+
+    for (const filetype of ['typescript', 'typescriptreact', 'javascript']) {
+      const result = await client.highlightOnce(source, filetype)
+      const onUsers = (result.highlights ?? [])
+        .filter(([from]) => from === start)
+        .map(([, , group]) => group)
+
+      expect(onUsers, `${filetype} miscaptured a lowercase binding`).not.toContain('constant')
+      expect(onUsers, `${filetype} miscaptured a lowercase binding`).not.toContain('type')
+    }
   }, 60_000)
 
   it('covers the languages the samples claim to cover', () => {

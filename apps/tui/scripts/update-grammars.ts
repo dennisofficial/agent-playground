@@ -41,4 +41,11 @@ writeFileSync(
   generated.replace(UPSTREAM_HEADER, '// GENERATED from parsers-config.json — do not edit.'),
 )
 
+const formatted = Bun.spawnSync(
+  ['bunx', 'prettier', '--single-quote', '--no-semi', '--print-width', '100', '--write', outFile],
+  { stdout: 'inherit', stderr: 'inherit' },
+)
+
+if (formatted.exitCode !== 0) throw new Error(`prettier exited with ${formatted.exitCode}`)
+
 console.log('vendored grammars → src/ui/markdown/grammars/')

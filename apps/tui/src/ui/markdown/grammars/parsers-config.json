@@ -115,6 +115,59 @@
         ]
       },
       "$comment": "C++'s published highlights.scm is a DELTA on tree-sitter-c's \u2014 alone it colours nothing but C++-only syntax. nvim-treesitter expresses this as `; inherits: c`; here the base query is listed first and the generator concatenates them. This is the one place grammar and query versions deliberately differ, because the C++ grammar is a superset of C's node types."
+    },
+    {
+      "filetype": "javascript",
+      "aliases": [
+        "javascriptreact",
+        "jsx"
+      ],
+      "$comment": "One grammar for both: tree-sitter-javascript parses JSX natively, so `jsx` is the same parser with the JSX query appended. The query is inert on plain JS \u2014 no jsx nodes, no matches. Registering `javascript` here REPLACES the parser OpenTUI bundles, whose query gates two `(identifier)` patterns behind nvim's `#lua-match?`; the worker files unknown predicates as non-text predicates and never evaluates them, so every identifier matched @constant and rendered blue.",
+      "wasm": "https://cdn.jsdelivr.net/npm/tree-sitter-javascript@0.25.0/tree-sitter-javascript.wasm",
+      "queries": {
+        "highlights": [
+          "https://cdn.jsdelivr.net/npm/tree-sitter-javascript@0.25.0/queries/highlights.scm",
+          "https://cdn.jsdelivr.net/npm/tree-sitter-javascript@0.25.0/queries/highlights-jsx.scm"
+        ]
+      }
+    },
+    {
+      "filetype": "typescript",
+      "$comment": "Layered like cpp: this grammar's published highlights.scm is a DELTA and colours nothing on its own. nvim-treesitter writes `; inherits: javascript`; here the base queries are listed first and the generator concatenates them.",
+      "wasm": "https://cdn.jsdelivr.net/npm/tree-sitter-typescript@0.23.2/tree-sitter-typescript.wasm",
+      "queries": {
+        "highlights": [
+          "https://cdn.jsdelivr.net/npm/tree-sitter-javascript@0.25.0/queries/highlights.scm",
+          "https://cdn.jsdelivr.net/npm/tree-sitter-typescript@0.23.2/queries/highlights.scm"
+        ]
+      }
+    },
+    {
+      "filetype": "typescriptreact",
+      "aliases": [
+        "tsx"
+      ],
+      "$comment": "Layered like cpp: this grammar's published highlights.scm is a DELTA and colours nothing on its own. nvim-treesitter writes `; inherits: javascript`; here the base queries are listed first and the generator concatenates them. Its own wasm, not typescript's: the two grammars disagree on `<T>expr`, which is a type assertion in .ts and JSX in .tsx.",
+      "wasm": "https://cdn.jsdelivr.net/npm/tree-sitter-typescript@0.23.2/tree-sitter-tsx.wasm",
+      "queries": {
+        "highlights": [
+          "https://cdn.jsdelivr.net/npm/tree-sitter-javascript@0.25.0/queries/highlights.scm",
+          "https://cdn.jsdelivr.net/npm/tree-sitter-javascript@0.25.0/queries/highlights-jsx.scm",
+          "https://cdn.jsdelivr.net/npm/tree-sitter-typescript@0.23.2/queries/highlights.scm"
+        ]
+      }
+    },
+    {
+      "filetype": "html",
+      "aliases": [
+        "htm"
+      ],
+      "wasm": "https://cdn.jsdelivr.net/npm/tree-sitter-html@0.23.2/tree-sitter-html.wasm",
+      "queries": {
+        "highlights": [
+          "https://cdn.jsdelivr.net/npm/tree-sitter-html@0.23.2/queries/highlights.scm"
+        ]
+      }
     }
   ]
 }
