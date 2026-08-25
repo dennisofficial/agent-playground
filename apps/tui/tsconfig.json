@@ -2,7 +2,8 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "lib": ["ES2023", "DOM"],
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "jsxImportSource": "@opentui/react"
   },
   "include": ["src", "scripts"]
 }

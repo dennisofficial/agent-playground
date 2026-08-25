@@ -1,0 +1,66 @@
+{
+  "$comment": [
+    "Input to `pnpm grammars:update`, which is OpenTUI's own asset-update script pointed at this app.",
+    "Grammar and queries come from the SAME published package version so they cannot drift: a query",
+    "written against a newer grammar fails to compile and the language silently loses its parser.",
+    "Measured: nvim-treesitter's python query against tree-sitter-python 0.25.0 does exactly that.",
+    "Only .wasm builds shipped by the grammar's own maintainers are used — tree-sitter-wasms@0.1.13",
+    "is built with the 0.20 CLI and its yaml grammar imports symbols web-tree-sitter 0.25 does not",
+    "export, which crashes the parser worker mid-parse rather than failing to load.",
+    "SQL is the one exception, and a `wasm` here may be a LOCAL PATH for exactly that case: nobody",
+    "publishes a SQL wasm, so `pnpm grammars:build-sql` compiles one with the CLI pinned to the same",
+    "web-tree-sitter the runtime bundles — which is what the maintainer-built rule was protecting.",
+    "Adding a language is one entry here plus `pnpm grammars:update`; the wasm is the cost (~0.5-1.5MB,",
+    "and 2.4MB for SQL — its grammar covers every dialect, and it is by far the largest asset here)."
+  ],
+  "parsers": [
+    {
+      "filetype": "python",
+      "wasm": "https://cdn.jsdelivr.net/npm/tree-sitter-python@0.25.0/tree-sitter-python.wasm",
+      "queries": {
+        "highlights": ["https://cdn.jsdelivr.net/npm/tree-sitter-python@0.25.0/queries/highlights.scm"]
+      }
+    },
+    {
+      "filetype": "bash",
+      "aliases": ["shell"],
+      "wasm": "https://cdn.jsdelivr.net/npm/tree-sitter-bash@0.25.1/tree-sitter-bash.wasm",
+      "queries": {
+        "highlights": ["https://cdn.jsdelivr.net/npm/tree-sitter-bash@0.25.1/queries/highlights.scm"]
+      }
+    },
+    {
+      "filetype": "json",
+      "wasm": "https://cdn.jsdelivr.net/npm/tree-sitter-json@0.24.8/tree-sitter-json.wasm",
+      "queries": {
+        "highlights": ["https://cdn.jsdelivr.net/npm/tree-sitter-json@0.24.8/queries/highlights.scm"]
+      }
+    },
+    {
+      "filetype": "css",
+      "wasm": "https://cdn.jsdelivr.net/npm/tree-sitter-css@0.25.0/tree-sitter-css.wasm",
+      "queries": {
+        "highlights": ["https://cdn.jsdelivr.net/npm/tree-sitter-css@0.25.0/queries/highlights.scm"]
+      }
+    },
+    {
+      "filetype": "sql",
+      "$comment": "Built locally — see scripts/build-sql-grammar.ts. Path is relative to the tui/ package root, which is where pnpm runs the script from.",
+      "wasm": "src/ui/markdown/grammars/vendor/tree-sitter-sql.wasm",
+      "queries": {
+        "highlights": [
+          "https://cdn.jsdelivr.net/npm/@derekstride/tree-sitter-sql@0.3.11/queries/highlights.scm"
+        ]
+      }
+    },
+    {
+      "filetype": "yaml",
+      "wasm": "https://cdn.jsdelivr.net/npm/@tree-sitter-grammars/tree-sitter-yaml@0.7.1/tree-sitter-yaml.wasm",
+      "queries": {
+        "highlights": [
+          "https://cdn.jsdelivr.net/npm/@tree-sitter-grammars/tree-sitter-yaml@0.7.1/queries/highlights.scm"
+        ]
+      }
+    }
+  ]
+}
