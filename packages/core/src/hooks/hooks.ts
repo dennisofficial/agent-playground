@@ -1,0 +1,36 @@
+import type { Assembled } from '../assembly/assembled'
+import type { ProviderPrompt } from '../assembly/provider-prompt'
+import type { EventDraft } from '../events/body'
+import type { BranchId } from '../events/ids'
+import type { BeforeToolOutcome } from '../policy/before-tool'
+import type { Chunk } from '../stream/chunk'
+import type { ToolCall, ToolOutcome } from '../tools/tool'
+
+export enum EStage {
+  Guard = 'guard',
+  Policy = 'policy',
+  Observe = 'observe',
+}
+
+export enum EHookPhase {
+  BeforeStep = 'before-step',
+  BeforeRequest = 'before-request',
+  BeforeTool = 'before-tool',
+  AfterTool = 'after-tool',
+  OnChunk = 'on-chunk',
+  AfterTurn = 'after-turn',
+}
+
+export type HookOrder = { stage: EStage; nudge: number }
+
+export type BeforeStep = (assembled: Assembled) => Promise<Assembled>
+
+export type BeforeRequest = (prompt: ProviderPrompt) => Promise<ProviderPrompt>
+
+export type BeforeTool = (args: { call: ToolCall }) => Promise<BeforeToolOutcome>
+
+export type AfterTool = (args: { call: ToolCall; result: ToolOutcome }) => Promise<EventDraft[]>
+
+export type OnChunk = (chunk: Chunk) => Promise<Chunk | null>
+
+export type AfterTurn = (args: { branchId: BranchId }) => Promise<EventDraft[]>
