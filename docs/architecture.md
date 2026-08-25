@@ -111,11 +111,12 @@ atlas/
   apps/
     tui/        OpenTUI + React, and the composition root
   docs/
-  deprecated/   frozen reference: the previous TUI, and the paused backend/web/shared cloud stack
+  deprecated/   frozen reference: the previous TUI, the never-run agent-engine and the codex-sdk
+                client, and the paused backend/web/shared cloud stack with its CI and infra
   .spikes/      four reference implementations (gitignored)
 ```
 
-`deprecated/` is not a pnpm workspace member. It is read for prior art and never imported.
+`deprecated/` is not a Bun workspace member. It is read for prior art and never imported.
 
 `core` performs **no I/O**. When something is hard to test, that is the signal to move the decision
 into `core`, not to add a mock. `tui` never imports `store` or `providers` directly — it talks to
@@ -177,8 +178,8 @@ Max 300 lines per file. Tests in a sibling `__tests__/` as `*.spec.ts`.
 | DI | **NestJS standalone** |
 | Hook discovery | Glob at dev time, generated manifest for `--compile` |
 | Packages | `core`, `harness`, `apps/tui` — raw TS source, no build step |
-| Runtime | Bun; pnpm is the package manager |
-| Turborepo | Deferred |
+| Runtime | Bun — runtime, package manager and test runner |
+| Task runner | **Turborepo.** `turbo run typecheck \| test \| build`; per-package scripts stay `tsc` / `bun test` |
 
 **`core` owns its own message type.** `Assembled` cannot hold `ModelMessage` without `core` depending
 on the AI SDK, which would make model-agnosticism aspirational rather than real — and AI SDK ships

@@ -36,7 +36,7 @@ root in `apps/tui/src/composition` is the only place that knows which implementa
 
 ## `deprecated/`
 
-`deprecated/` holds frozen reference code and is **not a pnpm workspace member**:
+`deprecated/` holds frozen reference code and is **not a Bun workspace member**:
 
 | Path                      | What it was                                                            |
 | ------------------------- | ---------------------------------------------------------------------- |
@@ -106,19 +106,37 @@ This rule is inverted from what `deprecated/` does. Do not carry that density fo
 
 ## Workspace mechanics
 
-**pnpm is the package manager.** pnpm 11 workspace (`pnpm-workspace.yaml`), Node 22.13 (`.nvmrc`),
-pinned via `packageManager` in the root `package.json`. Install and link with pnpm only — never
-`bun install` / `npm install` / `yarn`.
+**Bun is both the package manager and the runtime.** `bun install` from the repo root installs the
+whole workspace; `bun.lock` is committed. Workspace members are declared in the root
+`package.json` → `workspaces` (`packages/*`, `apps/*`). Never `pnpm install` / `npm install` /
+`yarn`. `.nvmrc` still pins Node 22.13, for the node-based CLIs in root `devDependencies`.
 
-- Run scripts as `pnpm --filter <pkg> <script>` from the root, or `pnpm run <script>` in the package.
-- Native/postinstall builds must be allowlisted in `pnpm-workspace.yaml` → `allowBuilds`.
-- `typescript` and `react` are pinned repo-wide via `overrides`; don't bump them in one package.
-- `injectWorkspacePackages` + `nodeLinker: isolated` keep single instances of peer deps. Changing
-  either is a repo-wide decision.
+The runtime was already Bun and still is, for the reasons it always was: OpenTUI's renderer is a
+Zig library reachable only through Bun's FFI, and `bun build --compile` produces the shipped
+binary. The package manager has simply stopped being a second tool.
 
-**Bun is the runtime, not the package manager.** `dev` / `test` / `build` shell out to `bun`
-because OpenTUI's renderer is a Zig library reachable only through Bun's FFI, and because
-`bun build --compile` produces the shipped binary. Dependencies still come from pnpm.
+- `typescript`, `react`, `react-dom`, and their `@types` are pinned repo-wide via root
+  `package.json` → `overrides`; don't bump them in one package. Those pins are the only thing
+  keeping a single instance of each — Bun's isolated linker does not dedupe across versions.
+- `bunfig.toml` pins the **isolated** linker: real packages live in `node_modules/.bun/` and each
+  member's `node_modules` holds symlinks to exactly its declared dependencies, so a package you did
+  not declare will not resolve. Bun 1.3 already defaults to this for workspaces; the file makes it
+  a decision rather than a default we inherited.
+- Lifecycle scripts run only for packages on Bun's default allowlist. Nothing in the live workspace
+  currently needs more; if `bun pm untrusted` ever reports a blocked postinstall, add that package
+  to root `package.json` → `trustedDependencies` and say why.
+
+**Turborepo runs the tasks.** `bun run typecheck` / `test` / `build` at the root are
+`turbo run <task>`; `turbo.json` holds the graph. Per-package scripts still call `tsc` and
+`bun test` directly — turbo orchestrates, it is not the runner.
+
+- Run one package with `turbo run <task> --filter @dltech/atlas-core`, or `bun run <script>` inside
+  the package.
+- `typecheck` and `test` declare `outputs: []` — they produce no artifacts, only an exit code.
+- Every task declares `dependsOn: ["^<task>"]`. That is load-bearing, not ordering garnish: the
+  packages are raw TS with no build step, so a change in `core` must invalidate `tui`'s cached
+  typecheck, and the topological edge is what makes it do so.
+- `tsconfig.base.json` is in `globalDependencies`; editing it busts every cache entry.
 
 Nest's optional peers need `--external` flags to bundle and every Nest upgrade can add another, so
 **CI must actually build the binary**, not merely typecheck.
