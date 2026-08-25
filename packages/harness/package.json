@@ -1,0 +1,32 @@
+{
+  "name": "@dltech/atlas-harness",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev"
+  },
+  "dependencies": {
+    "@dltech/atlas-core": "workspace:*",
+    "@ai-sdk/anthropic": "^4.0.41",
+    "@ai-sdk/provider": "4.0.7",
+    "@nestjs/common": "^11.1.6",
+    "@nestjs/core": "^11.1.6",
+    "@prisma/client": "7.9.1",
+    "ai": "^7.0.77",
+    "prisma-adapter-bun-sqlite": "^0.8.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "prisma": "7.9.1"
+  }
+}

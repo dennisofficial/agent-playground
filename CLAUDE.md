@@ -1,43 +1,56 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code (claude.ai/code) working in this repository.
 
-Additional claude.md files exist in `tui/`, `backend/`, and `web/`.
+## What this repo is
 
-## What this repo is right now
+Atlas is a **coding-agent harness**. Not a wrapper around someone else's harness — the agentic
+loop is ours. We make raw LLM calls through the Vercel AI SDK and own every decision the loop
+makes: what context the model sees, which tools it may call, when a human is asked, what happens
+on rewind.
 
-Atlas is an agent-orchestration harness. It exists in two forms, and **only one of them is
-active**:
+Because we make raw model calls, Atlas is model-agnostic by construction. Claude and Codex
+subscription credentials are one provider implementation among several, not a foundation.
 
-| Workspace               | Status                                | Notes                                                                                                    |
-| ----------------------- | ------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `tui/`                  | **ACTIVE — this is the priority app** | `@dltech/atlas-harness`, a local terminal harness over the Claude/Codex agent SDKs. See `tui/CLAUDE.md`. |
-| `backend/`              | **paused**                            | NestJS cloud harness. Reference/prior art only.                                                          |
-| `web/`                  | **paused**                            | Next.js front end for the cloud harness. Reference/prior art only.                                       |
-| `shared/`               | paused                                | `@workspace/shared` — DTOs/enums for backend+web. The TUI deliberately does **not** import it.           |
-| `packages/codex-sdk`    | active dependency                     | `@workspace/codex-sdk` — typed Codex client. The TUI's only workspace dep.                               |
-| `packages/agent-engine` | **do not use**                        | An engine abstraction that has never been run. Read as prior art; never import.                          |
+Read `docs/architecture.md` before changing anything structural. It is the source of truth over
+any inference from code, and `docs/core-contract.md` holds the seams it depends on.
+`docs/research/` holds the primary-source investigation both were derived from.
 
-Default assumption for any new work: it happens in `tui/`. Do not touch `backend/`, `web/`, or
-`shared/` unless explicitly asked — changes there are unverified and unrunnable in practice.
+## Package layout
 
-`backend/src/**_old*` directories and `web/src/lib/api/` are legacy-by-designation: read for
-reference, never extend.
+| Package                      | Depends on     | Owns                                                          |
+| ---------------------------- | -------------- | ------------------------------------------------------------- |
+| `@dltech/atlas-core`         | `zod` only     | Events, IDs, context assembly, hook and port contracts. Pure.  |
+| `@dltech/atlas-harness`      | core           | The loop, hooks, tools, model adapters, credentials, store.    |
+| `@dltech/atlas` (`apps/tui`) | core, harness  | OpenTUI + React terminal app and the composition root.         |
 
-## Design docs
+Three packages, not five. A package boundary is worth it only where the compiler should enforce a
+dependency rule.
 
-The TUI's design is written down and is the source of truth over any inference from code:
+**`core` performs no I/O.** No filesystem, no network, no database, no clock, no randomness. It is
+pure functions and types. When something is hard to test, that is the signal to move the decision
+into `core`, not to add a mock.
 
-- `docs/tui-wireframes.md` — every page and state, the message grammar, the v1 cut line
-- `docs/tui-architecture.md` — layering, dependency rules, startup/migration, accounts/rotation
-- `docs/tui-decisions.md` — why decisions were made and what was rejected
+**`tui` never reaches past `harness`.** It talks to `harness` through its ports. The composition
+root in `apps/tui/src/composition` is the only place that knows which implementation is bound.
 
-The wireframes and architecture docs predate the OpenTUI/Bun migration in places (they say Ink,
-Node, `better-sqlite3`). Where a doc and the code disagree about _mechanism_, the code wins; where
-they disagree about _intent_, ask.
+`packages/codex-sdk` and `packages/pg-realtime` are pre-existing workspace packages.
+`packages/agent-engine` has never been run — read as prior art, never import.
 
-Orchestration design (phases, transitions, the shared-folder contract) lives in the gitignored
-`.scratch/session-orchestration/`, not in `docs/`.
+## `deprecated/`
+
+`deprecated/` holds frozen reference code and is **not a pnpm workspace member**:
+
+| Path                | What it was                                                              |
+| ------------------- | ------------------------------------------------------------------------ |
+| `deprecated/tui`    | The previous Atlas TUI, built over the Claude and Codex agent SDKs.      |
+| `deprecated/backend`| Paused NestJS cloud harness.                                             |
+| `deprecated/web`    | Paused Next.js front end for the cloud harness.                          |
+| `deprecated/shared` | `@workspace/shared` — DTOs and enums for backend + web.                  |
+| `deprecated/docs`   | The design docs for the above: wireframes, architecture, decisions.      |
+
+Read it for prior art. Never import from it, never extend it, and do not fix it. It does not
+install and is not expected to build.
 
 ## Code style
 
@@ -48,20 +61,40 @@ Orchestration design (phases, transitions, the shared-folder contract) lives in 
 - **Early returns** over nested conditionals.
 - **Named parameters** for functions with 2+ arguments.
 - **Event handlers** prefixed with `handle`.
-- **`E`-prefixed real TS enums** for value unions (`EEngine`, `EThreadRole`), not const-tuple + type.
-- **Comments explain _why_.** The existing code carries dense rationale comments on load-bearing
-  decisions — match that density rather than stripping or padding it.
+- **`E`-prefixed real TS enums** for value unions (`EEngine`, `EHookPhase`), not const-tuple + type.
 
-## Naming
+## Comments
 
-- Tests live in a sibling `__tests__/` directory as `*.spec.ts(x)`.
+**Don't write them.** A comment is a second thing to maintain that the compiler cannot check, and
+it silently rots the moment the code beneath it changes. Two artifacts, one truth, no enforcement.
+
+Make the code say it instead:
+
+- Rename the variable, function, or type until the line explains itself.
+- Extract a well-named function rather than heading a block with a comment.
+- Encode the constraint in the type system, where it is checked.
+- Put the scenario in a test, where it is executed.
+
+The one exception is a fact that **lives outside this repository** and therefore cannot drift when
+the code is refactored: a provider's undocumented protocol quirk, a spec section number, a
+deliberate deviation from a library's intended use and the bug that forced it. Those are durable,
+so they are worth writing down. Link the source when there is one.
+
+Never write a comment that restates the code, labels a section, marks a step number, or explains a
+language feature. Delete those on sight when you encounter them.
+
+No JSDoc on internal code. Exported API of a package may carry a one-line description where the
+name genuinely cannot carry it alone.
+
+This rule is inverted from what `deprecated/` does. Do not carry that density forward.
 
 ## Testing
 
 - **Every new feature includes tests.** TDD preferred.
-- `tui/` runs `bun test`; `backend/` and `web/` run `vitest run` (paused, so rarely relevant).
-- Pure logic goes in `domain/` precisely so it can be tested without a terminal or a container —
-  when something is hard to test, that is usually the signal to move the decision into `domain/`.
+- Tests live in a sibling `__tests__/` directory as `*.spec.ts(x)`.
+- `bun test` everywhere.
+- Context assembly, hook resolution, and policy decisions are pure and belong to `core` — test them
+  with plain data, never with a live model, a terminal, or a database.
 
 ## Git
 
@@ -72,17 +105,32 @@ Orchestration design (phases, transitions, the shared-folder contract) lives in 
 
 ## Workspace mechanics
 
-**pnpm is the package manager everywhere.** pnpm 11 workspace (`pnpm-workspace.yaml`), Node 22.13
-(`.nvmrc`), pinned via `packageManager` in the root `package.json`. Install and link with pnpm only
-— never `bun install` / `npm install` / `yarn`.
+**pnpm is the package manager.** pnpm 11 workspace (`pnpm-workspace.yaml`), Node 22.13 (`.nvmrc`),
+pinned via `packageManager` in the root `package.json`. Install and link with pnpm only — never
+`bun install` / `npm install` / `yarn`.
 
 - Run scripts as `pnpm --filter <pkg> <script>` from the root, or `pnpm run <script>` in the package.
 - Native/postinstall builds must be allowlisted in `pnpm-workspace.yaml` → `allowBuilds`.
 - `typescript` and `react` are pinned repo-wide via `overrides`; don't bump them in one package.
-- `injectWorkspacePackages` + `nodeLinker: isolated` keep single instances of peer deps
-  (`@nestjs/*`, `@langchain/core`, `react`). Changing either is a repo-wide decision.
+- `injectWorkspacePackages` + `nodeLinker: isolated` keep single instances of peer deps. Changing
+  either is a repo-wide decision.
 
-**Bun is a runtime, not the package manager, and only `tui/` uses it.** The TUI's `dev` / `test` /
-`build` scripts shell out to `bun` because OpenTUI's renderer is a Zig library reachable only
-through Bun's FFI. Dependencies still come from pnpm. Nothing outside `tui/` runs on Bun — don't
-introduce `bun:*` imports or `bun test` into `backend/`, `web/`, `shared/`, or `packages/`.
+**Bun is the runtime, not the package manager.** `dev` / `test` / `build` shell out to `bun`
+because OpenTUI's renderer is a Zig library reachable only through Bun's FFI, and because
+`bun build --compile` produces the shipped binary. Dependencies still come from pnpm.
+
+Nest's optional peers need `--external` flags to bundle and every Nest upgrade can add another, so
+**CI must actually build the binary**, not merely typecheck.
+
+## Agent skills
+
+### Issue tracker
+
+Specs and issues live as markdown under `.scratch/<feature-slug>/`, which is gitignored. One
+directory per effort: `spec.md` plus `issues/NN-<slug>.md` numbered from `01`, each carrying a
+`Status:` line.
+
+### Triage labels
+
+The five canonical roles, verbatim: `needs-triage`, `needs-info`, `ready-for-agent`,
+`ready-for-human`, `wontfix`.

@@ -1,0 +1,28 @@
+{
+  "name": "@dltech/atlas",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Atlas — a coding-agent harness in the shape of Claude Code.",
+  "type": "module",
+  "bin": {
+    "atlas": "./bin/atlas"
+  },
+  "scripts": {
+    "dev": "bun src/main.tsx",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "build": "bun scripts/generate-manifest.ts && bun build --compile --external class-validator --external class-transformer --external @nestjs/microservices --external @nestjs/websockets --external @nestjs/websockets/socket-module --external @nestjs/platform-express src/main.tsx --outfile bin/atlas"
+  },
+  "dependencies": {
+    "@dltech/atlas-core": "workspace:*",
+    "@dltech/atlas-harness": "workspace:*",
+    "@opentui/core": "0.4.5",
+    "@opentui/react": "0.4.5",
+    "react": "19.2.7",
+    "reflect-metadata": "^0.2.2"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/react": "^19"
+  }
+}

@@ -53,3 +53,7 @@ ds-bundle/
 
 # Upstream repositories cloned for reference (claude-code, opentui, skills) — read here, never vendored
 .clones/
+
+# Four reference implementations from the architecture effort. Kept out of git deliberately —
+# they are evidence, not code we maintain.
+.spikes/
