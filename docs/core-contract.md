@@ -105,9 +105,9 @@ type RuleContext = {
   previous?: Assembled
 }
 
-function assemble(args: { events: readonly Event[]; rules: readonly Rule[]
-                          annotators: readonly Annotator[]; ctx: RuleContext
-                          onRuleFailure: ERuleFailurePolicy }): { assembled: Assembled; trace: AssemblyTrace }
+function assemble(args: { rules: readonly Rule[]; annotators?: readonly Annotator[]
+                          ctx: RuleContext
+                          onRuleFailure?: ERuleFailurePolicy }): { assembled: Assembled; trace: AssemblyTrace }
 ```
 
 **Rules are pure and synchronous.** Not for testability — because re-running a cheap pure pipeline is
@@ -125,7 +125,17 @@ at escalating pressure and truncates only if the whole ladder fails. In-pipeline
 a pure function is dropping a whole turn group. The controller kept 26 messages where the rule kept 7.
 
 **`onRuleFailure`.** One throwing rule must not kill the turn; under `SkipRule` its input passes
-through and the failure is recorded on the trace. Degraded context beats a dead turn.
+through and the failure is recorded on the trace. Degraded context beats a dead turn. It defaults to
+`SkipRule`, and it governs **annotators too** — a throwing annotator killing a turn that a throwing
+rule survives would be indefensible.
+
+**`assemble` takes no `events` of its own.** Rules can only read `ctx.events`, so a second copy at the
+top level could do nothing but drift from the one rules actually see. An earlier revision of this
+document specified it; the implementation dropped it.
+
+**`Rule` and `Annotator` carry their own name.** The trace needs one, and the arrow a rule factory
+returns has an empty `fn.name`. This is the one place the repo's named-parameters rule does not apply:
+both stay positional, because the contract specifies that shape and it is the seam.
 
 **The trace is required, not optional.** At six rules you already cannot answer "which rule dropped
 that message?", and annotators need it.
@@ -173,14 +183,23 @@ type ToolCall = { callId: string; name: string; input: unknown; effect: EToolEff
 Known gaps, accepted for now: a hook cannot fail the turn or annul a tool result, and hooks see one
 call at a time rather than a batch.
 
-## Open decision
+## Settled: core owns its message type
 
-**`Assembled` holds `ModelMessage`, so `core` cannot depend on nothing but zod.** Either `core` owns
-its own message type and `providers` converts, or `core` depends on the AI SDK.
+`Assembled` holds **core's own** message type, not the AI SDK's `ModelMessage`, and `harness/model/`
+converts. This was the leaning; it is now implemented. Swapping the model layer leaves the domain
+untouched, which is the difference between model-agnostic being true and aspirational.
 
-Leaning toward core owning its own type: it is the only version where swapping the model layer leaves
-the domain untouched, which is the difference between model-agnostic being true and aspirational.
-The cost is a conversion layer and a second vocabulary. **Not yet decided.**
+Three consequences worth knowing before touching it:
+
+- **`providerOptions` is `Record<string, Record<string, JsonValue>>`, not `Record<string, unknown>`.**
+  The looser form is not assignable to the SDK's provider options, so conversion would need either a
+  cast or a validator — and a validator over the thinking-signature bag is precisely where the silent
+  mangling this document warns about would happen. The structural form is assignable both ways with no
+  cast, and `core` still inspects nothing inside it.
+- **There is no `system` role on a message.** System text exists only as a `SystemBlock`. This encodes
+  ai@7's prohibition in the type rather than in prose.
+- **Message content is always a parts array**, never the `string` shorthand. That removes the union
+  re-narrowing named above as the place a tired engineer writes `as any`.
 
 ## Environment facts
 
