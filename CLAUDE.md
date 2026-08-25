@@ -34,22 +34,21 @@ into `core`, not to add a mock.
 **`tui` never reaches past `harness`.** It talks to `harness` through its ports. The composition
 root in `apps/tui/src/composition` is the only place that knows which implementation is bound.
 
-`packages/codex-sdk` is a pre-existing workspace package.
-`packages/agent-engine` has never been run — read as prior art, never import.
-
 ## `deprecated/`
 
 `deprecated/` holds frozen reference code and is **not a pnpm workspace member**:
 
-| Path                | What it was                                                              |
-| ------------------- | ------------------------------------------------------------------------ |
-| `deprecated/tui`    | The previous Atlas TUI, built over the Claude and Codex agent SDKs.      |
-| `deprecated/backend`| Paused NestJS cloud harness.                                             |
-| `deprecated/web`    | Paused Next.js front end for the cloud harness.                          |
-| `deprecated/shared` | `@workspace/shared` — DTOs and enums for backend + web.                  |
-| `deprecated/docs`   | The design docs for the above: wireframes, architecture, decisions.      |
-| `deprecated/.github`| The CI and blue/green deploy workflows for the cloud stack.              |
-| `deprecated/infra`  | Dockerfiles, Caddy, deploy scripts, prod compose.                        |
+| Path                      | What it was                                                            |
+| ------------------------- | ---------------------------------------------------------------------- |
+| `deprecated/tui`          | The previous Atlas TUI, built over the Claude and Codex agent SDKs.    |
+| `deprecated/agent-engine` | `@workspace/agent-engine` — never-run EngineAdapter port. Prior art.   |
+| `deprecated/codex-sdk`    | `@workspace/codex-sdk` — JSON-RPC client for the `codex app-server`.   |
+| `deprecated/backend`      | Paused NestJS cloud harness.                                           |
+| `deprecated/web`          | Paused Next.js front end for the cloud harness.                        |
+| `deprecated/shared`       | `@workspace/shared` — DTOs and enums for backend + web.                |
+| `deprecated/docs`         | The design docs for the above: wireframes, architecture, decisions.    |
+| `deprecated/.github`      | The CI and blue/green deploy workflows for the cloud stack.            |
+| `deprecated/infra`        | Dockerfiles, Caddy, deploy scripts, prod compose.                      |
 
 Read it for prior art. Never import from it, never extend it, and do not fix it. It does not
 install and is not expected to build.
