@@ -26,6 +26,9 @@ importers:
       tsup:
         specifier: ^8.5.1
         version: 8.5.1(@swc/core@1.15.40)(jiti@2.7.0)(postcss@8.5.15)(supports-color@8.1.1)(tsx@4.22.4)(typescript@6.0.3)(yaml@2.9.0)
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
 
   apps/tui:
     dependencies:
@@ -54,6 +57,9 @@ importers:
       '@types/react':
         specifier: ^19
         version: 19.2.17
+      bun-types:
+        specifier: 1.4.0
+        version: 1.4.0
 
   packages/core:
     dependencies:
@@ -63,6 +69,9 @@ importers:
     devDependencies:
       '@types/bun':
         specifier: latest
+        version: 1.4.0
+      bun-types:
+        specifier: 1.4.0
         version: 1.4.0
 
   packages/harness:
@@ -103,6 +112,9 @@ importers:
     devDependencies:
       '@types/bun':
         specifier: latest
+        version: 1.4.0
+      bun-types:
+        specifier: 1.4.0
         version: 1.4.0
       prisma:
         specifier: 7.9.1
