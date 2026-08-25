@@ -2,7 +2,6 @@ import React, { useCallback, useState } from 'react'
 
 import type { TranscriptModel } from '../../store'
 import { useTranscriptFollow } from '../hooks/use-transcript-follow'
-import { readingColumn } from '../reading-column'
 import { theme, TRANSCRIPT_PADDING } from '../theme'
 import { ErrorBlock } from './blocks/error-block'
 import { EntryView } from './entry-view'
@@ -39,7 +38,6 @@ export function Transcript(props: {
 }): React.ReactNode {
   const { model } = props
   const turn = props.turn ?? IDLE_TURN
-  const column = readingColumn(props.width)
   const anchorKey = props.anchorKey ?? null
   const anchorIndex = model.entries.findIndex((entry) => entry.key === anchorKey)
   const follow = useTranscriptFollow({ anchorId: anchorIndex >= 0 ? UNSEEN_ANCHOR_ID : null })
@@ -60,7 +58,6 @@ export function Transcript(props: {
         flexGrow={1}
         flexShrink={1}
         flexBasis={0}
-        width={column}
         focusable={false}
         stickyScroll
         stickyStart="bottom"
@@ -73,10 +70,10 @@ export function Transcript(props: {
             flexDirection="column"
             {...(index === anchorIndex ? { id: UNSEEN_ANCHOR_ID } : {})}
           >
-            {index === anchorIndex && index > 0 ? <NewDivider width={column} /> : null}
+            {index === anchorIndex && index > 0 ? <NewDivider width={props.width} /> : null}
             <EntryView
               entry={entry}
-              width={column}
+              width={props.width}
               expanded={opened.has(entry.key)}
               onToggle={handleToggle}
             />
@@ -120,7 +117,7 @@ export function Transcript(props: {
       </scrollbox>
 
       {follow.pinned ? null : (
-        <JumpToBottom width={column} onJump={follow.handleJumpToBottom} />
+        <JumpToBottom width={props.width} onJump={follow.handleJumpToBottom} />
       )}
     </box>
   )

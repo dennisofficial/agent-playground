@@ -3,7 +3,6 @@ import { describe, expect, it } from 'bun:test'
 import React from 'react'
 
 import { grammarsReady, settle, teardown } from '../markdown/__tests__/harness'
-import { READING_COLUMN } from '../reading-column'
 import { drawn, HEIGHT, LAST_WORDS, SETTLED, SizedTranscript } from './transcript-fixture'
 
 await grammarsReady()
@@ -11,6 +10,8 @@ await grammarsReady()
 const JUMP = 'jump to bottom'
 
 const SHORT = 12
+
+const WIDE = 240
 
 const LONGER_THAN_ONE_FOLLOW_POLL_MS = 400
 
@@ -38,16 +39,16 @@ describe('the transcript reflows', () => {
     }
   }, 60_000)
 
-  it('holds the reply inside a reading column on a very wide terminal', async () => {
+  it('takes the whole terminal rather than stopping at a fixed column', async () => {
     const setup = await testRender(<SizedTranscript model={SETTLED} />, {
-      width: 240,
+      width: WIDE,
       height: HEIGHT,
     })
     try {
       const rows = (await drawn(setup)).split('\n')
       const rightmost = Math.max(...rows.map((row) => row.replace(/\s+$/, '').length))
-      expect(rightmost).toBeGreaterThan(READING_COLUMN / 2)
-      expect(rightmost).toBeLessThanOrEqual(READING_COLUMN)
+      expect(rightmost).toBeGreaterThan(WIDE / 2)
+      expect(rightmost).toBeLessThanOrEqual(WIDE)
     } finally {
       await teardown(setup)
     }
