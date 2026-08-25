@@ -2,6 +2,7 @@ import React, { useCallback, useState } from 'react'
 
 import type { TranscriptModel } from '../../store'
 import { useTranscriptFollow } from '../hooks/use-transcript-follow'
+import { useProportionalThumb } from '../scrollbar-thumb'
 import { theme, TRANSCRIPT_PADDING } from '../theme'
 import { ErrorBlock } from './blocks/error-block'
 import { EntryView } from './entry-view'
@@ -41,6 +42,7 @@ export function Transcript(props: {
   const anchorKey = props.anchorKey ?? null
   const anchorIndex = model.entries.findIndex((entry) => entry.key === anchorKey)
   const follow = useTranscriptFollow({ anchorId: anchorIndex >= 0 ? UNSEEN_ANCHOR_ID : null })
+  const handleScroller = useProportionalThumb(follow.scroller)
 
   const [opened, setOpened] = useState<ReadonlySet<string>>(() => new Set<string>())
   const handleToggle = useCallback((key: string) => {
@@ -54,7 +56,7 @@ export function Transcript(props: {
   return (
     <box flexDirection="column" flexGrow={1} flexShrink={1} flexBasis={0}>
       <scrollbox
-        ref={follow.scroller}
+        ref={handleScroller}
         flexGrow={1}
         flexShrink={1}
         flexBasis={0}

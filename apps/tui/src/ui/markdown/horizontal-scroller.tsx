@@ -1,6 +1,7 @@
 import type { ScrollBoxRenderable } from '@opentui/core'
 import React, { useRef } from 'react'
 
+import { useProportionalThumb } from '../scrollbar-thumb'
 import { theme } from '../theme'
 import { useWheelAxis } from './wheel-axis'
 
@@ -10,7 +11,8 @@ export function HorizontalScroller(props: {
   rows: number
   children: React.ReactNode
 }): React.ReactNode {
-  const scroller = useRef<ScrollBoxRenderable>(null)
+  const scroller = useRef<ScrollBoxRenderable | null>(null)
+  const handleScroller = useProportionalThumb(scroller)
 
   const handleWheel = useWheelAxis({
     canPan: () => {
@@ -28,7 +30,7 @@ export function HorizontalScroller(props: {
 
   return (
     <scrollbox
-      ref={scroller}
+      ref={handleScroller}
       scrollX
       scrollY={false}
       flexShrink={0}
