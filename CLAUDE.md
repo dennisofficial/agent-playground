@@ -34,7 +34,7 @@ into `core`, not to add a mock.
 **`tui` never reaches past `harness`.** It talks to `harness` through its ports. The composition
 root in `apps/tui/src/composition` is the only place that knows which implementation is bound.
 
-`packages/codex-sdk` and `packages/pg-realtime` are pre-existing workspace packages.
+`packages/codex-sdk` is a pre-existing workspace package.
 `packages/agent-engine` has never been run — read as prior art, never import.
 
 ## `deprecated/`

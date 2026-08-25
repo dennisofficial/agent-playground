@@ -2,6 +2,13 @@
 
 Research date: 2026-08-24. The installed package inspected alongside the official documentation is `ai@7.0.77`.
 
+> **Superseded in part.** This document's recommendation to put a thin LangGraph graph under the loop
+> was overturned by the four spikes. The event log already provides durable resume, so a checkpointer
+> would be bought twice, and a second record of loop position has to be kept from drifting on rewind
+> forever. The loop is hand-rolled. See `docs/architecture.md` and `docs/research/spike-core-loop-findings.md`.
+> Everything below about the AI SDK's own capabilities still holds and is why the SDK stays as the
+> model and tool protocol layer.
+
 ## Conclusion
 
 AI SDK Core is low-level enough to be the **model and tool protocol layer**, but `ToolLoopAgent` should not own a full Claude Code-parity loop. Use `streamText()` one model step at a time and keep the transcript, event log, approvals, workspace snapshots, retry policy, and scheduling in Atlas.
