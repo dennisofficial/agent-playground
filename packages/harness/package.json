@@ -7,8 +7,8 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit",
-    "test": "bun test",
+    "typecheck": "bun prisma/ensure-client.ts && tsc --noEmit",
+    "test": "bun prisma/ensure-client.ts && bun test",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev"
   },

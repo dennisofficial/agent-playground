@@ -6,6 +6,8 @@ export interface EventLogPort {
   append(args: {
     branchId: BranchId
     runId: RunId
+    parentRunId?: RunId | undefined
+    depth?: number | undefined
     drafts: readonly EventDraft[]
   }): Promise<Event[]>
 

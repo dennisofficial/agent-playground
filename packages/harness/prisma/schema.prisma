@@ -1,0 +1,44 @@
+// A SQLite UNIQUE index treats NULLs as distinct, which is what lets
+// (branchId, contextSlot, contextKey) constrain `context-loaded` rows while leaving every other
+// event kind unconstrained. https://www.sqlite.org/lang_createindex.html#uniqueidx
+
+generator client {
+  provider     = "prisma-client"
+  output       = "./generated"
+  moduleFormat = "esm"
+  runtime      = "bun"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Branch {
+  id        String  @id
+  title     String?
+  head      Int     @default(0)
+  createdAt String
+  updatedAt String
+  events    Event[]
+
+  @@index([updatedAt])
+}
+
+model Event {
+  id          String  @id
+  branchId    String
+  seq         Int
+  runId       String
+  parentRunId String?
+  depth       Int
+  at          String
+  type        String
+  body        String
+  contextSlot String?
+  contextKey  String?
+  branch      Branch  @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@unique([branchId, seq])
+  @@unique([branchId, contextSlot, contextKey])
+  @@index([branchId, type])
+}
