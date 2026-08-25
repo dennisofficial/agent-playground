@@ -1,0 +1,72 @@
+import type { Chunk } from '@dltech/atlas-core'
+import type { ChannelSignal } from '@dltech/atlas-harness'
+
+import type { TranscriptModel } from '../store'
+import { IDLE_TURN, type TurnClock } from '../ui/components/transcript'
+
+const CHARACTERS_PER_TOKEN = 4
+
+export type TurnProgress = { characters: number; clock: TurnClock }
+
+export const IDLE_PROGRESS: TurnProgress = { characters: 0, clock: IDLE_TURN }
+
+const tokensOf = (characters: number): number => Math.ceil(characters / CHARACTERS_PER_TOKEN)
+
+const deltaTextOf = (chunk: Chunk): string =>
+  chunk.type === 'text-delta' || chunk.type === 'reasoning-delta' ? chunk.text : ''
+
+export const turnStarted = (args: { now: number }): TurnProgress => ({
+  characters: 0,
+  clock: { startedAt: args.now, outputTokens: 0, interrupting: false, completed: null },
+})
+
+export const turnInterrupting = (progress: TurnProgress): TurnProgress =>
+  progress.clock.startedAt === null
+    ? progress
+    : { ...progress, clock: { ...progress.clock, interrupting: true } }
+
+export function turnAdvanced(args: {
+  progress: TurnProgress
+  signal: ChannelSignal
+}): TurnProgress {
+  if (args.signal.type !== 'chunk') return args.progress
+
+  const text = deltaTextOf(args.signal.chunk)
+  if (text.length === 0) return args.progress
+
+  const characters = args.progress.characters + text.length
+  return { characters, clock: { ...args.progress.clock, outputTokens: tokensOf(characters) } }
+}
+
+export function turnSettled(args: { progress: TurnProgress; now: number }): TurnProgress {
+  const { startedAt, outputTokens } = args.progress.clock
+  if (startedAt === null) return IDLE_PROGRESS
+
+  return {
+    characters: 0,
+    clock: {
+      startedAt: null,
+      outputTokens: 0,
+      interrupting: false,
+      completed: { durationMs: Math.max(0, args.now - startedAt), outputTokens },
+    },
+  }
+}
+
+// OpenTUI paints frames on its own loop, so one lands between a React state update and the effect
+// that would have caught the clock up — leaving `now` behind `startedAt` for a frame.
+export const clockReadableAt = (args: { now: number; clock: TurnClock }): number =>
+  args.clock.startedAt === null ? args.now : Math.max(args.now, args.clock.startedAt)
+
+export function transcriptOfTurn(args: {
+  model: TranscriptModel
+  working: boolean
+  failure: string | null
+}): TranscriptModel {
+  const streaming = args.model.streaming || args.working
+  const failure =
+    args.model.failure ?? (args.failure === null ? null : { message: args.failure })
+
+  if (streaming === args.model.streaming && failure === args.model.failure) return args.model
+  return { ...args.model, streaming, failure }
+}
