@@ -42,6 +42,11 @@ const DEFAULT_MAX_STEPS = 16
 
 type SteppedTurn = { ok: true; result: ModelStepResult } | { ok: false; message: string; cause: unknown }
 
+function interruptedDraft(result: ModelStepResult): EventDraft | undefined {
+  if (result.parts.length === 0) return undefined
+  return { type: 'assistant-said', parts: result.parts, interrupted: true }
+}
+
 function draftsFor(result: ModelStepResult): EventDraft[] {
   const drafts: EventDraft[] = []
   if (result.parts.length > 0) drafts.push({ type: 'assistant-said', parts: result.parts })
@@ -131,6 +136,12 @@ export function createTurnRunner(deps: TurnDeps): TurnRunner {
 
       if (!stepped.ok) {
         return { status: ETurnStatus.Failed, runId, message: stepped.message, cause: stepped.cause }
+      }
+
+      if (abortSignal.aborted) {
+        const interrupted = interruptedDraft(stepped.result)
+        if (interrupted !== undefined) await deps.log.append({ branchId, runId, drafts: [interrupted] })
+        return { status: ETurnStatus.Interrupted, runId }
       }
 
       const drafts = draftsFor(stepped.result)

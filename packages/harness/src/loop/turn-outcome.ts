@@ -5,6 +5,7 @@ export enum ETurnStatus {
   Paused = 'paused',
   Exhausted = 'exhausted',
   Idle = 'idle',
+  Interrupted = 'interrupted',
   Failed = 'failed',
 }
 
@@ -13,4 +14,5 @@ export type TurnOutcome =
   | { status: ETurnStatus.Paused; runId: RunId; callId: CallId; reason: string }
   | { status: ETurnStatus.Exhausted; runId: RunId }
   | { status: ETurnStatus.Idle; runId: RunId }
+  | { status: ETurnStatus.Interrupted; runId: RunId }
   | { status: ETurnStatus.Failed; runId: RunId; message: string; cause: unknown }

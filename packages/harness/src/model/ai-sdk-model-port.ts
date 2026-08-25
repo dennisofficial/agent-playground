@@ -46,16 +46,20 @@ export async function runModelStream(args: {
 
   const accumulator = createPartAccumulator()
 
-  for await (const part of stream.fullStream) {
-    if (part.type === 'error') {
-      throw new ModelStreamError({ message: getErrorMessage(part.error), cause: part.error })
+  try {
+    for await (const part of stream.fullStream) {
+      if (part.type === 'error') {
+        throw new ModelStreamError({ message: getErrorMessage(part.error), cause: part.error })
+      }
+
+      const chunk = toCoreChunk(part)
+      if (chunk === null) continue
+
+      const kept = args.onChunk ? args.onChunk(chunk) : chunk
+      if (kept !== null) accumulator.handle(kept)
     }
-
-    const chunk = toCoreChunk(part)
-    if (chunk === null) continue
-
-    const kept = args.onChunk ? args.onChunk(chunk) : chunk
-    if (kept !== null) accumulator.handle(kept)
+  } catch (error) {
+    if (!args.signal.aborted) throw error
   }
 
   return accumulator.finish()
