@@ -184,9 +184,12 @@ Max 300 lines per file. Tests in a sibling `__tests__/` as `*.spec.ts`.
 **`core` owns its own message type.** `Assembled` cannot hold `ModelMessage` without `core` depending
 on the AI SDK, which would make model-agnosticism aspirational rather than real — and AI SDK ships
 V2/V3/V4 simultaneously, so `core` would churn on their versioning. The type is deliberately *thin*
-and structurally close to `ModelMessage`, with `providerOptions: Record<string, unknown>` passed
-through opaquely, so conversion in `harness/model/` is near-identity and no provider capability needs
-modelling in `core`. **That passthrough must never be dropped** — Anthropic thinking signatures ride
+and structurally close to `ModelMessage`, with
+`providerOptions: Record<string, Record<string, JsonValue>>` passed through opaquely, so conversion in
+`harness/model/` is near-identity and no provider capability needs modelling in `core`. The nesting is
+load-bearing rather than incidental: a flat `Record<string, unknown>` is not assignable to the SDK's
+provider options, so conversion would need a cast or a validator, and it leaves the metadata merge
+ill-defined at exactly the depth where the signature lives. **That passthrough must never be dropped** — Anthropic thinking signatures ride
 in it, and losing them fails silently.
 
 ## Adopted from the rejected options

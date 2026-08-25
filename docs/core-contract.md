@@ -212,8 +212,21 @@ Three consequences worth knowing before touching it:
   choice. This is a Bun bundling fact.
 - **`--minify` destroys class names**, degrading anything name-derived (audit trails, ordering
   tiebreaks, config keys). Use explicit names on decorators, or do not minify.
-- `ai` does not export `ProviderOptions` or the message part interfaces; they live in
-  `@ai-sdk/provider-utils`.
+- `ai` **does** re-export the message types — `ModelMessage`, `SystemModelMessage`, `TextPart`,
+  `ToolCallPart`, `ToolResultPart`, `AssistantContent`, `UserContent`, `ToolContent` — as of ai@7.0.78.
+  It does **not** re-export `ProviderOptions` or `ReasoningPart`. `@ai-sdk/provider` covers the rest
+  (`SharedV4ProviderMetadata`, `JSONValue`, `LanguageModelV4StreamPart`, `getErrorMessage`), so the
+  conversion layer needs no dependency beyond what `harness` already declares.
+- **`@ai-sdk/provider`'s `JSONObject` admits `undefined`; core's `JsonValue` does not.** SDK provider
+  metadata is therefore not assignable to core's provider options, and the conversion strips undefined
+  values recursively. This is what keeps the boundary cast-free.
+- **Provider metadata must be merged two levels deep, not one.** It is
+  `Record<namespace, Record<key, value>>`, so a shallow spread at the namespace level silently discards
+  everything the start chunk carried in a namespace the end chunk also writes — which is exactly the
+  namespace Anthropic puts the thinking signature in. Union the namespaces, then union the keys within
+  each. Deeper would be wrong: a nested object under a key is one opaque provider value.
+- **`streamText`'s default `onError` writes to the console**, which both duplicates a thrown error and
+  corrupts a terminal renderer. Pass a no-op and surface the error chunk yourself.
 - ai@7 ships its own in-band approval mechanism. Ignore it deliberately — it cannot survive process
   death — but expect the accumulator to see approval parts.
 

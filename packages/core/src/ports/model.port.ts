@@ -7,6 +7,8 @@ import type { ToolDeclaration } from '../tools/tool'
 
 export type ModelToolCall = { callId: CallId; name: string; input: unknown }
 
+export type ChunkFilter = (chunk: Chunk) => Chunk | null
+
 export type ModelStepResult = {
   parts: readonly AssistantPart[]
   toolCalls: readonly ModelToolCall[]
@@ -20,6 +22,6 @@ export interface ModelPort {
     assembled: Assembled
     tools: readonly ToolDeclaration[]
     signal: AbortSignal
-    onChunk?: (chunk: Chunk) => void
+    onChunk?: ChunkFilter
   }): Promise<ModelStepResult>
 }
