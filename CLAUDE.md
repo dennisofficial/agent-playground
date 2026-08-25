@@ -48,6 +48,8 @@ root in `apps/tui/src/composition` is the only place that knows which implementa
 | `deprecated/web`    | Paused Next.js front end for the cloud harness.                          |
 | `deprecated/shared` | `@workspace/shared` — DTOs and enums for backend + web.                  |
 | `deprecated/docs`   | The design docs for the above: wireframes, architecture, decisions.      |
+| `deprecated/.github`| The CI and blue/green deploy workflows for the cloud stack.              |
+| `deprecated/infra`  | Dockerfiles, Caddy, deploy scripts, prod compose.                        |
 
 Read it for prior art. Never import from it, never extend it, and do not fix it. It does not
 install and is not expected to build.
