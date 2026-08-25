@@ -37,6 +37,26 @@ const SAMPLES: Record<string, { source: string; expect: string[] }> = {
     source: 'SELECT id, COUNT(m.id) AS n\nFROM sessions s\nWHERE s.ended_at IS NULL;\n',
     expect: ['keyword', 'field', 'function.call'],
   },
+  java: {
+    source:
+      'package demo;\n\n// hello\npublic class Greeter {\n  public static void main(String[] args) {\n    System.out.println("hi");\n  }\n}\n',
+    expect: ['keyword', 'comment', 'string', 'type', 'function.method'],
+  },
+  go: {
+    source:
+      'package main\n\nimport "fmt"\n\n// hello\nfunc greet(name string) string {\n  return fmt.Sprintf("hi %s", name)\n}\n',
+    expect: ['keyword', 'comment', 'string', 'type', 'function'],
+  },
+  rust: {
+    source:
+      'use std::fmt;\n\n// hello\nfn greet(name: &str) -> String {\n  let n: u32 = 1;\n  format!("hi {name} {n}")\n}\n',
+    expect: ['keyword', 'comment', 'string', 'type', 'function.macro'],
+  },
+  cpp: {
+    source:
+      '#include <string>\n\n// hello\nnamespace demo {\nstd::string greet(const std::string &name) {\n  return "hi " + name;\n}\n}\n',
+    expect: ['keyword', 'comment', 'string', 'type', 'function'],
+  },
 }
 
 describe('vendored tree-sitter grammars', () => {

@@ -1,51 +1,61 @@
 {
   "$comment": [
-    "Input to `pnpm grammars:update`, which is OpenTUI's own asset-update script pointed at this app.",
+    "Input to `bun run grammars:update`, which wraps OpenTUI's own update-assets script.",
     "Grammar and queries come from the SAME published package version so they cannot drift: a query",
     "written against a newer grammar fails to compile and the language silently loses its parser.",
     "Measured: nvim-treesitter's python query against tree-sitter-python 0.25.0 does exactly that.",
-    "Only .wasm builds shipped by the grammar's own maintainers are used — tree-sitter-wasms@0.1.13",
+    "Only .wasm builds shipped by the grammar's own maintainers are used \u2014 tree-sitter-wasms@0.1.13",
     "is built with the 0.20 CLI and its yaml grammar imports symbols web-tree-sitter 0.25 does not",
     "export, which crashes the parser worker mid-parse rather than failing to load.",
     "SQL is the one exception, and a `wasm` here may be a LOCAL PATH for exactly that case: nobody",
-    "publishes a SQL wasm, so `pnpm grammars:build-sql` compiles one with the CLI pinned to the same",
-    "web-tree-sitter the runtime bundles — which is what the maintainer-built rule was protecting.",
-    "Adding a language is one entry here plus `pnpm grammars:update`; the wasm is the cost (~0.5-1.5MB,",
-    "and 2.4MB for SQL — its grammar covers every dialect, and it is by far the largest asset here)."
+    "publishes a SQL wasm, so the committed one was compiled with the CLI pinned to the same",
+    "web-tree-sitter the runtime bundles \u2014 which is what the maintainer-built rule was protecting.",
+    "Adding a language is one entry here plus `bun run grammars:update`; the wasm is the cost",
+    "(~0.2-1.1MB, and 2.3MB for SQL and 3.3MB for C++, by far the largest assets here)."
   ],
   "parsers": [
     {
       "filetype": "python",
       "wasm": "https://cdn.jsdelivr.net/npm/tree-sitter-python@0.25.0/tree-sitter-python.wasm",
       "queries": {
-        "highlights": ["https://cdn.jsdelivr.net/npm/tree-sitter-python@0.25.0/queries/highlights.scm"]
+        "highlights": [
+          "https://cdn.jsdelivr.net/npm/tree-sitter-python@0.25.0/queries/highlights.scm"
+        ]
       }
     },
     {
       "filetype": "bash",
-      "aliases": ["shell"],
+      "aliases": [
+        "shell"
+      ],
       "wasm": "https://cdn.jsdelivr.net/npm/tree-sitter-bash@0.25.1/tree-sitter-bash.wasm",
       "queries": {
-        "highlights": ["https://cdn.jsdelivr.net/npm/tree-sitter-bash@0.25.1/queries/highlights.scm"]
+        "highlights": [
+          "https://cdn.jsdelivr.net/npm/tree-sitter-bash@0.25.1/queries/highlights.scm"
+        ]
       }
     },
     {
       "filetype": "json",
       "wasm": "https://cdn.jsdelivr.net/npm/tree-sitter-json@0.24.8/tree-sitter-json.wasm",
       "queries": {
-        "highlights": ["https://cdn.jsdelivr.net/npm/tree-sitter-json@0.24.8/queries/highlights.scm"]
+        "highlights": [
+          "https://cdn.jsdelivr.net/npm/tree-sitter-json@0.24.8/queries/highlights.scm"
+        ]
       }
     },
     {
       "filetype": "css",
       "wasm": "https://cdn.jsdelivr.net/npm/tree-sitter-css@0.25.0/tree-sitter-css.wasm",
       "queries": {
-        "highlights": ["https://cdn.jsdelivr.net/npm/tree-sitter-css@0.25.0/queries/highlights.scm"]
+        "highlights": [
+          "https://cdn.jsdelivr.net/npm/tree-sitter-css@0.25.0/queries/highlights.scm"
+        ]
       }
     },
     {
       "filetype": "sql",
-      "$comment": "Built locally — see scripts/build-sql-grammar.ts. Path is relative to the tui/ package root, which is where pnpm runs the script from.",
+      "$comment": "Built locally rather than downloaded \u2014 no SQL wasm is published. The build script that produced this artefact is deprecated/tui/scripts/build-sql-grammar.ts; it needs Docker and only runs when the wasm is missing, which for a normal checkout is never.",
       "wasm": "src/ui/markdown/grammars/vendor/tree-sitter-sql.wasm",
       "queries": {
         "highlights": [
@@ -61,6 +71,50 @@
           "https://cdn.jsdelivr.net/npm/@tree-sitter-grammars/tree-sitter-yaml@0.7.1/queries/highlights.scm"
         ]
       }
+    },
+    {
+      "filetype": "java",
+      "wasm": "https://cdn.jsdelivr.net/npm/tree-sitter-java@0.23.5/tree-sitter-java.wasm",
+      "queries": {
+        "highlights": [
+          "https://cdn.jsdelivr.net/npm/tree-sitter-java@0.23.5/queries/highlights.scm"
+        ]
+      }
+    },
+    {
+      "filetype": "go",
+      "wasm": "https://cdn.jsdelivr.net/npm/tree-sitter-go@0.25.0/tree-sitter-go.wasm",
+      "queries": {
+        "highlights": [
+          "https://cdn.jsdelivr.net/npm/tree-sitter-go@0.25.0/queries/highlights.scm"
+        ]
+      },
+      "aliases": [
+        "golang"
+      ]
+    },
+    {
+      "filetype": "rust",
+      "wasm": "https://cdn.jsdelivr.net/npm/tree-sitter-rust@0.24.0/tree-sitter-rust.wasm",
+      "queries": {
+        "highlights": [
+          "https://cdn.jsdelivr.net/npm/tree-sitter-rust@0.24.0/queries/highlights.scm"
+        ]
+      }
+    },
+    {
+      "filetype": "cpp",
+      "aliases": [
+        "c++"
+      ],
+      "wasm": "https://cdn.jsdelivr.net/npm/tree-sitter-cpp@0.23.4/tree-sitter-cpp.wasm",
+      "queries": {
+        "highlights": [
+          "https://cdn.jsdelivr.net/npm/tree-sitter-c@0.24.1/queries/highlights.scm",
+          "https://cdn.jsdelivr.net/npm/tree-sitter-cpp@0.23.4/queries/highlights.scm"
+        ]
+      },
+      "$comment": "C++'s published highlights.scm is a DELTA on tree-sitter-c's \u2014 alone it colours nothing but C++-only syntax. nvim-treesitter expresses this as `; inherits: c`; here the base query is listed first and the generator concatenates them. This is the one place grammar and query versions deliberately differ, because the C++ grammar is a superset of C's node types."
     }
   ]
 }
