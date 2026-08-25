@@ -15,6 +15,13 @@ export * from './message/parts'
 
 export * from './assembly/assembled'
 export * from './assembly/provider-prompt'
+export * from './assembly/rule'
+export * from './assembly/trace'
+export * from './assembly/tokens'
+export * from './assembly/assemble'
+export * from './assembly/pipeline'
+export * from './assembly/rules/messages-from-events'
+export * from './assembly/rules/system-preamble'
 
 export * from './stream/chunk'
 
