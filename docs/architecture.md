@@ -175,7 +175,7 @@ Max 300 lines per file. Tests in a sibling `__tests__/` as `*.spec.ts`.
 | Model layer | AI SDK, `streamText` one step, as normalization only |
 | Provider interface | `LanguageModelV4` |
 | Context operations | Ours, model-agnostic |
-| DI | **NestJS standalone** |
+| DI | **NestJS standalone**, once discovery exists. Slice 1 ships a plain async factory |
 | Hook discovery | Glob at dev time, generated manifest for `--compile` |
 | Packages | `core`, `harness`, `apps/tui` — raw TS source, no build step |
 | Runtime | Bun — runtime, package manager and test runner |
@@ -199,6 +199,18 @@ in it, and losing them fails silently.
 - Mastra's approval-suspend payload shape.
 - LangGraph's hard lesson: nothing derivable goes in durable state. Its predecessor in this codebase
   had a `@deprecated` field it could not delete because live checkpoints contained it.
+
+## Why slice 1's composition root is not Nest yet
+
+The DI decision stands, and it is not yet exercised. Slice 1 binds seven things in a **chain** — clock,
+keychain reader, credential port, provider, harness, delta channel, publishing runner — where every link
+is either async or configured. In a container each becomes a factory provider with an inject array,
+which is more code, and token-based resolution *loses* the type checking a direct call gives for free.
+
+Nest earns its weight on **discovery and many-to-many edges**, which is exactly what the hooks-di spike
+demonstrated and exactly what this slice ships none of: no tool registry, no hook dispatch, no
+glob-or-manifest discovery. It arrives with them in slice 2, and swapping the factory is one file
+because the factory is still the only place a binding is chosen.
 
 ## Deferred, deliberately
 
