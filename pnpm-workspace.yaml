@@ -1,9 +1,9 @@
 packages:
   - packages/**
-  - backend
-  - shared
-  - tui
-  - web
+  - apps/*
+# deprecated/ is deliberately not a workspace member. backend, web, shared and the previous TUI
+# are frozen reference copies; leaving them out keeps their dependency trees from constraining
+# the live workspace's resolution.
 # Everything that used to live under submodules/ is now published to npm under @dltech/*.
 # pnpm 11 also uses this file as the workspace settings store:
 #   - injectWorkspacePackages + nodeLinker: isolated — inject workspace packages the way `pnpm install`

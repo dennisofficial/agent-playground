@@ -1,5 +1,5 @@
 {
-  "name": "@dltech/atlas-harness",
+  "name": "@dltech/atlas-harness-legacy",
   "version": "0.1.0",
   "private": true,
   "description": "Local Atlas — a terminal harness over the Claude and Codex agent SDKs.",
