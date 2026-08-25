@@ -1,8 +1,8 @@
 # Driving a raw AI SDK call with a Claude subscription OAuth token
 
 Research date: 2026-08-25. Read from installed source and from first-party reference text embedded in
-the Claude Code binary. **No live call had been made at the time of writing** — see "What is still
-unverified".
+the Claude Code binary. **Verified live on 2026-08-25** — see "Verified live" below; the sections after
+it were written before any call had been made and are corrected there where observation disagreed.
 
 This is the kind of fact `CLAUDE.md`'s no-comments rule exempts: undocumented provider behaviour that
 lives outside this repository and cannot drift when our code is refactored.
@@ -55,11 +55,56 @@ anthropic-beta: oauth-2025-04-20
 content-type: application/json
 ```
 
-**The beta header is mandatory on `/v1/messages` specifically.** Some Anthropic endpoints accept an
-OAuth token without it; this one does not. That is stated in first-party reference text embedded in the
-Claude Code binary, on a curl example against `/v1/messages`, which is also where the exact value
-`oauth-2025-04-20` comes from. The same binary carries that value as a module constant beside the OAuth
-scope constants `user:inference`, `user:profile` and `org:create_api_key`.
+The exact beta value `oauth-2025-04-20` comes from first-party reference text embedded in the Claude
+Code binary, on a curl example against `/v1/messages`. The same binary carries that value as a module
+constant beside the OAuth scope constants `user:inference`, `user:profile` and `org:create_api_key`.
+
+**Correction, 2026-08-25: the beta header is not mandatory on `/v1/messages` for a claude.ai
+subscription token.** An earlier draft of this document called it mandatory on that endpoint. Live
+observation contradicts that: the same request succeeded with the header and without it. `anthropic-version`
+*is* mandatory — omitting it answers `400 invalid_request_error: "anthropic-version: header is required"`.
+Keep sending the beta anyway: it costs nothing, the first-party example carries it, and the claim may
+still hold for tokens issued by the platform OAuth CLI path, which is a different issuer.
+
+The `anthropic-beta` value is also *not* what gates the model. See "Verified live".
+
+## Verified live
+
+Observed 2026-08-25 from `packages/harness/src/providers/__tests__/anthropic-live.spec.ts`, through
+`@ai-sdk/anthropic@4.0.41`, our own `runTurn` loop, and the keychain credential port. The credential was
+a `subscriptionType: "team"` claude.ai token carrying the scopes `user:inference`, `user:profile`,
+`user:file_upload`, `user:mcp_servers`, `user:sessions:claude_code`.
+
+**A claude.ai subscription token is entitled to `/v1/messages` on a raw third-party call.** The header
+set above returned `200` and a real assistant reply. A real extended-thinking signature came back, was
+stored in the durable event log under `providerOptions.anthropic.signature`, and was re-sent byte-for-byte
+as a `thinking` block on the next turn's request, which Anthropic also answered `200`.
+
+**Entitlement is per model, not per endpoint — and refusal arrives as `429`, not `401` or `403`.** In the
+same session, with the same credential and the same headers:
+
+| Model | Result |
+| --- | --- |
+| `claude-haiku-4-5-20251001` | `200`, real reply |
+| `claude-sonnet-5` | `429` `rate_limit_error`, `message: "Error"` |
+| `claude-opus-5` | `429` `rate_limit_error`, `message: "Error"` |
+| `/v1/messages/count_tokens`, `claude-sonnet-5` | `200` |
+
+The `429` responses carried **no `retry-after` and no `anthropic-ratelimit-*` headers**, and
+`GET /api/oauth/usage` reported the five-hour window at 82%, the seven-day window at 16%, and extra usage
+enabled with credits remaining — so this was not an ordinary quota exhaustion, and **the response alone
+cannot be told apart from one.** Treat a `429` from this path as "this model is not available to this
+credential right now" rather than as a retryable rate limit.
+
+Two consequences for our code:
+
+- **The AI SDK retries a `429` three times before giving up**, so a per-model refusal costs about seven
+  seconds and surfaces as `AI_RetryError: Failed after 3 attempts. Last error: AI_APICallError: Error`.
+  That message names neither the status nor the model, which makes it a bad first thing for a user to see.
+- Whether an identity gate (`user-agent: claude-cli/…`, `x-app: cli`, the Claude Code system prompt, or
+  the `claude-code-20250219` beta) lifts the per-model refusal was **deliberately not tested**. Sending
+  those from a third-party harness is claiming to be the first-party client, which is a decision about
+  Anthropic's terms rather than a transport detail. Nothing in `packages/harness` sends them.
 
 ## Provenance, graded — this part matters
 
@@ -70,11 +115,14 @@ usage call proves nothing about whether inference accepts the token.**
 | --- | --- | --- |
 | The provider sends `Bearer` via `authToken`, and merges the beta header | **Very high** | Installed package source, both branches and the merge path |
 | The four headers, and the exact beta value | **High** | First-party reference text, on a `/v1/messages` example |
-| That a **claude.ai subscription** token is entitled to `/v1/messages` | **Medium** | Inferred. See below |
+| That a **claude.ai subscription** token is entitled to `/v1/messages` | **Verified** | Live `200` and a real reply, 2026-08-25. See "Verified live" |
+| That every model is available to that token | **False** | `claude-sonnet-5` and `claude-opus-5` answered `429` while `claude-haiku-4-5-20251001` answered `200` |
+| That the beta header is required on `/v1/messages` | **False for a subscription token** | Live `200` without it |
 
 The first-party text concerns tokens from Anthropic's platform OAuth CLI, not specifically claude.ai
 subscription tokens. Same transport contract, different issuing path. No first-party statement was found
-that a subscription token is accepted on `/v1/messages`.
+that a subscription token is accepted on `/v1/messages` — the live call is what settled it, and it
+settled transport compatibility today, not a supported contract.
 
 **This repository contains no prior art for an inference call.** Every OAuth header in `deprecated/` is
 on a refresh endpoint or the usage endpoint. The one supporting signal is that the login flow already
@@ -90,12 +138,14 @@ and the header set it passed with was never written down. Do not treat it as ver
 
 ## What is still unverified
 
-- **Whether a subscription token is entitled to `/v1/messages` today.** Anthropic's supported surface
-  for subscription credentials is Claude Code and the Agent SDK. A raw third-party loop depends on
-  current OAuth behaviour and is not a supported contract. This is present-day transport compatibility,
-  not an entitlement.
-- Whether any user-agent or system-prompt identity gate applies. The first-party curl example sends no
-  user-agent and is presented as working, which is mild evidence against a UA gate.
+- **Why `claude-sonnet-5` and `claude-opus-5` answer `429` while `claude-haiku-4-5-20251001` answers
+  `200`.** Observed, not explained. A per-model entitlement, a per-model quota, and a plan-tier gate all
+  look identical from the response. Re-measure before designing around it, and note that the account's
+  usage windows had headroom at the time.
+- Whether any user-agent or system-prompt identity gate applies, and whether it is what separates those
+  two outcomes. Not tested, on purpose — see the last bullet of "Verified live".
+- Anthropic's supported surface for subscription credentials is still Claude Code and the Agent SDK. The
+  live `200` establishes present-day transport compatibility, not an entitlement, and not a contract.
 - **Endpoint drift.** The deprecated TUI used `platform.claude.com/v1/oauth/token` with authorization at
   `claude.com/cai/oauth/authorize`; the current binary carries a `claude.ai` client-metadata URL.
   Re-verify rather than copying the deprecated constants.
