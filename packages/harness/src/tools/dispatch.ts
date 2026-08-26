@@ -1,5 +1,6 @@
 import {
   EBeforeToolDecision,
+  EToolEffect,
   resolveBeforeTool,
   type AfterTool,
   type BeforeTool,
@@ -8,9 +9,11 @@ import {
   type ConsultedHook,
   type EventDraft,
   type RunId,
+  type SnapshotId,
   type ToolCall,
   type ToolDefinition,
   type ToolOutcome,
+  type WorkspacePort,
 } from '@dltech/atlas-core'
 
 import type { HookRegistry, RegisteredHook } from '../hooks/registry'
@@ -126,7 +129,33 @@ async function observeAfterTool(args: {
   return observed
 }
 
-function resultDraft(args: { call: ToolCall; result: ToolOutcome }): EventDraft {
+const changesTheWorld = (effect: EToolEffect): boolean =>
+  effect === EToolEffect.Write || effect === EToolEffect.Destructive
+
+async function snapshotBeforeInvoking(args: {
+  workspace: WorkspacePort | undefined
+  call: ToolCall
+  idempotencyKey: string
+}): Promise<SnapshotId | undefined> {
+  if (args.workspace === undefined) return undefined
+  if (!changesTheWorld(args.call.effect)) return undefined
+
+  try {
+    return await args.workspace.snapshot({
+      label: `${args.call.name} for ${args.idempotencyKey}`,
+    })
+  } catch {
+    return undefined
+  }
+}
+
+function resultDraft(args: {
+  call: ToolCall
+  result: ToolOutcome
+  snapshotId: SnapshotId | undefined
+}): EventDraft {
+  const taken = args.snapshotId === undefined ? {} : { snapshotId: args.snapshotId }
+
   if (args.result.ok) {
     return {
       type: 'tool-result',
@@ -134,6 +163,7 @@ function resultDraft(args: { call: ToolCall; result: ToolOutcome }): EventDraft 
       name: args.call.name,
       output: args.result.output,
       modelText: args.result.modelText,
+      ...taken,
     }
   }
 
@@ -143,10 +173,15 @@ function resultDraft(args: { call: ToolCall; result: ToolOutcome }): EventDraft 
     name: args.call.name,
     output: undefined,
     error: { message: args.result.reason },
+    ...taken,
   }
 }
 
-export function createDispatch(deps: { registry: ToolRegistry; hooks: HookRegistry }): Dispatch {
+export function createDispatch(deps: {
+  registry: ToolRegistry
+  hooks: HookRegistry
+  workspace?: WorkspacePort | undefined
+}): Dispatch {
   return async ({ call, signal }) => {
     const definition = deps.registry.find(call.name)
     if (definition === undefined) {
@@ -182,15 +217,16 @@ export function createDispatch(deps: { registry: ToolRegistry; hooks: HookRegist
     }
 
     const allowed: ToolCall = { ...candidate, input: outcome.input }
-    const result = await invokeTool({
-      definition,
+    const idempotencyKey = `${call.runId}:${call.callId}`
+    const snapshotId = await snapshotBeforeInvoking({
+      workspace: deps.workspace,
       call: allowed,
-      signal,
-      idempotencyKey: `${call.runId}:${call.callId}`,
+      idempotencyKey,
     })
+    const result = await invokeTool({ definition, call: allowed, signal, idempotencyKey })
 
     return [
-      resultDraft({ call: allowed, result }),
+      resultDraft({ call: allowed, result, snapshotId }),
       ...(await observeAfterTool({ hooks: deps.hooks.afterTool, call: allowed, result })),
     ]
   }
