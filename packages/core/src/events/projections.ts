@@ -1,8 +1,8 @@
 import { EDecision, type EventType } from './body'
 import type { Event, EventOfType } from './envelope'
-import type { CallId } from './ids'
+import type { CallId, RunId } from './ids'
 
-export type PendingCall = { callId: CallId; name: string; input: unknown; ordinal: number }
+export type PendingCall = { callId: CallId; name: string; input: unknown; ordinal: number; runId: RunId }
 
 export function eventsOfType<TType extends EventType>({
   events,
@@ -27,6 +27,7 @@ export function pendingCalls(events: readonly Event[]): PendingCall[] {
       name: event.name,
       input: event.input,
       ordinal: event.ordinal,
+      runId: event.runId,
     }))
 }
 

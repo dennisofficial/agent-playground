@@ -15,6 +15,7 @@ import {
 } from '@dltech/atlas-core'
 
 import { createAiSdkModelPort } from '../model/ai-sdk-model-port'
+import type { Dispatch } from '../tools/dispatch'
 import { openAtlasDatabase, PrismaBranchStore, PrismaEventLog, RandomIds, SystemClock } from '../store'
 import type { BranchStorePort } from '../store'
 import { createTurnRunner, type TurnDeps, type TurnRunner } from './run-turn'
@@ -37,6 +38,7 @@ export type BuildHarnessArgs = {
   rules?: readonly Rule[] | undefined
   annotators?: readonly Annotator[] | undefined
   tools?: readonly ToolDeclaration[] | undefined
+  dispatch?: Dispatch | undefined
   maxSteps?: number | undefined
   countTokens?: ((assembled: Assembled) => number) | undefined
   clock?: ClockPort | undefined
@@ -71,6 +73,7 @@ export async function buildHarness(args: BuildHarnessArgs): Promise<AtlasHarness
     rules: args.rules ?? defaultRules(),
     annotators: args.annotators,
     tools: args.tools,
+    dispatch: args.dispatch,
     maxSteps: args.maxSteps,
     countTokens: args.countTokens,
     onChunk: args.onChunk,

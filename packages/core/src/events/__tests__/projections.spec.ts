@@ -27,7 +27,29 @@ const called = (args: { callId: string; ordinal: number; input?: unknown }): Eve
   ordinal: args.ordinal,
 })
 
+const eventsAcrossRuns = (entries: readonly { draft: EventDraft; runId: string }[]): Event[] =>
+  stampDrafts({
+    drafts: entries.map((entry) => entry.draft),
+    envelopes: entries.map((entry, index) => ({
+      id: toEventId(`evt-${index + 1}`),
+      seq: index + 1,
+      branchId: toBranchId('branch-1'),
+      runId: toRunId(entry.runId),
+      depth: 0,
+      at: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
+    })),
+  })
+
 describe('pendingCalls', () => {
+  it('names the run that emitted each call, so a resume keys the tool the same way', () => {
+    const events = eventsAcrossRuns([
+      { draft: called({ callId: 'call-1', ordinal: 0 }), runId: 'run-1' },
+      { draft: called({ callId: 'call-2', ordinal: 0 }), runId: 'run-2' },
+    ])
+
+    expect(pendingCalls(events).map((call) => call.runId)).toEqual([toRunId('run-1'), toRunId('run-2')])
+  })
+
   it('is empty for a conversation of spoken turns only', () => {
     const events = eventsFrom([
       { type: 'user-said', text: 'hello' },
@@ -41,7 +63,7 @@ describe('pendingCalls', () => {
     const events = eventsFrom([called({ callId: 'call-1', ordinal: 0 })])
 
     expect(pendingCalls(events)).toEqual([
-      { callId: toCallId('call-1'), name: 'read_file', input: { path: '/a' }, ordinal: 0 },
+      { callId: toCallId('call-1'), name: 'read_file', input: { path: '/a' }, ordinal: 0, runId: toRunId('run-1') },
     ])
   })
 

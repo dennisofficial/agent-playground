@@ -19,4 +19,12 @@ describe('defaultRules', () => {
     expect(assembled.messages.map((entry) => entry.origin.seq)).toEqual([1, 2, 3])
     expect(trace.map((step) => step.name)).toEqual(['systemPreamble', 'messagesFromEvents'])
   })
+
+  it('threads a workspace through to the preamble the composition root wires', () => {
+    const rules = defaultRules({ root: '/w', tools: [] })
+
+    const { assembled } = assemble({ rules, ctx: contextFor({ events: log([]) }) })
+
+    expect(assembled.system[0]?.text).toContain('The workspace root is /w.')
+  })
 })

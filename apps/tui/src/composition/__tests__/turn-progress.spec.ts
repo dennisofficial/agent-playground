@@ -1,10 +1,13 @@
 import type { Chunk } from '@dltech/atlas-core'
-import { EStepEnd, toStepId, type ChannelSignal } from '@dltech/atlas-harness'
+import { ETurnStatus, toStepId, EStepEnd, type ChannelSignal } from '@dltech/atlas-harness'
 import { describe, expect, it } from 'bun:test'
 
 import { EMPTY_TRANSCRIPT, type TranscriptModel } from '../../store'
+import { toCallId, toRunId } from '@dltech/atlas-core'
+
 import {
   clockReadableAt,
+  stoppageOf,
   IDLE_PROGRESS,
   transcriptOfTurn,
   turnAdvanced,
@@ -160,5 +163,45 @@ describe('what the transcript is shown while a turn is in flight', () => {
     const unexplained: TranscriptModel = { ...EMPTY_TRANSCRIPT, failure: { message: null } }
 
     expect(transcriptOfTurn({ model: unexplained, working: false, failure: null })).toBe(unexplained)
+  })
+})
+
+describe('what a turn outcome tells the user', () => {
+  const runId = toRunId('run-1')
+
+  it('says nothing about a turn that completed, went idle, or was interrupted', () => {
+    expect(stoppageOf({ status: ETurnStatus.Completed, runId })).toBeNull()
+    expect(stoppageOf({ status: ETurnStatus.Idle, runId })).toBeNull()
+    expect(stoppageOf({ status: ETurnStatus.Interrupted, runId })).toBeNull()
+  })
+
+  it('passes a failure through in the words the loop used', () => {
+    expect(stoppageOf({ status: ETurnStatus.Failed, runId, message: 'overloaded_error', cause: undefined })).toBe(
+      'overloaded_error',
+    )
+  })
+
+  it('says what a paused turn is waiting on rather than dropping the pause', () => {
+    const said = stoppageOf({
+      status: ETurnStatus.Paused,
+      runId,
+      callId: toCallId('call-1'),
+      reason: 'awaiting approval',
+    })
+
+    expect(said).toContain('awaiting approval')
+  })
+
+  it('names the step ceiling distinctly from a pause, so the two are not debugged as one', () => {
+    const exhausted = stoppageOf({ status: ETurnStatus.Exhausted, runId })
+    const paused = stoppageOf({
+      status: ETurnStatus.Paused,
+      runId,
+      callId: toCallId('call-1'),
+      reason: 'awaiting read',
+    })
+
+    expect(exhausted).toContain('step')
+    expect(exhausted).not.toBe(paused)
   })
 })

@@ -6,11 +6,7 @@ import type { BeforeToolOutcome } from '../policy/before-tool'
 import type { Chunk } from '../stream/chunk'
 import type { ToolCall, ToolOutcome } from '../tools/tool'
 
-export enum EStage {
-  Guard = 'guard',
-  Policy = 'policy',
-  Observe = 'observe',
-}
+export * from './order'
 
 export enum EHookPhase {
   BeforeStep = 'before-step',
@@ -20,8 +16,6 @@ export enum EHookPhase {
   OnChunk = 'on-chunk',
   AfterTurn = 'after-turn',
 }
-
-export type HookOrder = { stage: EStage; nudge: number }
 
 export type BeforeStep = (assembled: Assembled) => Promise<Assembled>
 

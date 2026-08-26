@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 
 import { assemble } from '../assemble'
+import { defaultRules } from '../pipeline'
 import { defineAnnotator, defineRule } from '../rule'
 import { messagesFromEvents } from '../rules/messages-from-events'
 import { MINIMAL_PREAMBLE, systemPreamble } from '../rules/system-preamble'
@@ -63,6 +64,29 @@ describe('assemble', () => {
       ['exploding', 'rule blew up'],
       ['systemPreamble', undefined],
     ])
+  })
+
+  it('drops the whole conversation when the last rule is the one that throws', () => {
+    const exploding = defineRule({
+      name: 'explodingMessages',
+      apply: () => {
+        throw new Error('output was not renderable')
+      },
+    })
+
+    const { assembled, trace } = assemble({
+      rules: [systemPreamble(), exploding],
+      ctx: contextFor({ events: exchange }),
+    })
+
+    expect(defaultRules().at(-1)?.ruleName).toBe('messagesFromEvents')
+    expect(assembled.system.map((block) => block.text)).toEqual([MINIMAL_PREAMBLE])
+    expect(assembled.messages).toEqual([])
+    expect(trace.at(-1)).toMatchObject({
+      name: 'explodingMessages',
+      messages: 0,
+      failure: 'output was not renderable',
+    })
   })
 
   it('rethrows under the throwing failure policy', () => {

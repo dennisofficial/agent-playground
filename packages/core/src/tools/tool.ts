@@ -10,7 +10,9 @@ export enum EToolEffect {
 
 export type ToolCall = { callId: CallId; name: string; input: unknown; effect: EToolEffect }
 
-export type ToolOutcome = { ok: true; output: unknown } | { ok: false; reason: string }
+export type ToolOutcome =
+  | { ok: true; output: unknown; modelText: string }
+  | { ok: false; reason: string }
 
 export type ToolDeclaration = {
   name: string

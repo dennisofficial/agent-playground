@@ -43,7 +43,7 @@ describe('hook types', () => {
       { type: 'context-loaded', slot: 'claude-md', key: candidate.name, content: '# rules' },
     ]
 
-    expect(await loadNeighbouringContext({ call, result: { ok: true, output: 'written' } })).toEqual([
+    expect(await loadNeighbouringContext({ call, result: { ok: true, output: 'written', modelText: 'written' } })).toEqual([
       { type: 'context-loaded', slot: 'claude-md', key: 'write_file', content: '# rules' },
     ])
   })

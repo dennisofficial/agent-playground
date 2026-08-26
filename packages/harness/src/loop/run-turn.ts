@@ -19,6 +19,8 @@ import {
 } from '@dltech/atlas-core'
 
 import { ModelStreamError } from '../model/errors'
+import type { Dispatch } from '../tools/dispatch'
+import { createSettlePending } from './settle-pending'
 import { ETurnStatus, type TurnOutcome } from './turn-outcome'
 
 export type TurnDeps = {
@@ -31,6 +33,7 @@ export type TurnDeps = {
   maxSteps?: number | undefined
   countTokens?: ((assembled: Assembled) => number) | undefined
   onChunk?: ChunkFilter | undefined
+  dispatch?: Dispatch | undefined
 }
 
 export type TurnRunner = {
@@ -83,6 +86,10 @@ export function createTurnRunner(deps: TurnDeps): TurnRunner {
   const tools = deps.tools ?? []
   const maxSteps = deps.maxSteps ?? DEFAULT_MAX_STEPS
   const countTokens = deps.countTokens ?? estimateTokens
+  const settlePending =
+    deps.dispatch === undefined
+      ? undefined
+      : createSettlePending({ log: deps.log, dispatch: deps.dispatch })
 
   const runTurn = async ({
     branchId,
@@ -105,7 +112,14 @@ export function createTurnRunner(deps: TurnDeps): TurnRunner {
 
       const pending = pendingCalls(events)[0]
       if (pending !== undefined) {
-        return { status: ETurnStatus.Paused, runId, callId: pending.callId, reason: `awaiting ${pending.name}` }
+        if (settlePending === undefined) {
+          return { status: ETurnStatus.Paused, runId, callId: pending.callId, reason: `awaiting ${pending.name}` }
+        }
+
+        const settled = await settlePending({ branchId, signal: abortSignal })
+        if (settled.paused !== undefined) return { status: ETurnStatus.Paused, runId, ...settled.paused }
+        if (abortSignal.aborted) return { status: ETurnStatus.Interrupted, runId }
+        continue
       }
 
       if (!awaitsReply(events)) return { status: ETurnStatus.Idle, runId }

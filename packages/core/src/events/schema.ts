@@ -51,6 +51,7 @@ export const eventBodySchema: z.ZodType<EventBody> = z.discriminatedUnion('type'
     callId: callIdSchema,
     name: z.string(),
     output: z.unknown(),
+    modelText: z.string().optional(),
     error: z.object({ message: z.string() }).optional(),
     snapshotId: snapshotIdSchema.optional(),
   }),

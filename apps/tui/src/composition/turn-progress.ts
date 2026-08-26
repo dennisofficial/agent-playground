@@ -1,5 +1,5 @@
 import type { Chunk } from '@dltech/atlas-core'
-import type { ChannelSignal } from '@dltech/atlas-harness'
+import { ETurnStatus, type ChannelSignal, type TurnOutcome } from '@dltech/atlas-harness'
 
 import type { StepFailure, TranscriptModel } from '../store'
 import { IDLE_TURN, type TurnClock } from '../ui/components/transcript'
@@ -57,6 +57,15 @@ export function turnSettled(args: { progress: TurnProgress; now: number }): Turn
 // that would have caught the clock up — leaving `now` behind `startedAt` for a frame.
 export const clockReadableAt = (args: { now: number; clock: TurnClock }): number =>
   args.clock.startedAt === null ? args.now : Math.max(args.now, args.clock.startedAt)
+
+const STEP_CEILING = 'The turn hit the step ceiling with work still outstanding. Send it on to continue.'
+
+export function stoppageOf(outcome: TurnOutcome): string | null {
+  if (outcome.status === ETurnStatus.Failed) return outcome.message
+  if (outcome.status === ETurnStatus.Paused) return `The turn is waiting: ${outcome.reason}.`
+  if (outcome.status === ETurnStatus.Exhausted) return STEP_CEILING
+  return null
+}
 
 const failureNaming = (args: {
   reported: StepFailure | null

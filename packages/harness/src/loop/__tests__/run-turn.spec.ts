@@ -1,11 +1,17 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import type { MockLanguageModelV4 } from 'ai/test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { z } from 'zod'
 
-import { EToolEffect, MINIMAL_PREAMBLE, toCallId } from '@dltech/atlas-core'
+import { defaultRules, EToolEffect, MINIMAL_PREAMBLE, toCallId, type ToolDefinition } from '@dltech/atlas-core'
 
-import { buildHarness, ETurnStatus, type AtlasHarness } from '..'
+import { buildHarness, createTurnRunner, ETurnStatus, type AtlasHarness, type TurnRunner } from '..'
 import { scriptedModel, type ScriptedStep } from '../../model/testing/scripted-model'
+import { createHookRegistry } from '../../hooks/registry'
+import { createDispatch, type Dispatch } from '../../tools/dispatch'
+import { createToolRegistry } from '../../tools/registry'
 import { createTempDatabase, type TempDatabase } from './temp-database'
 
 const opened: { harness: AtlasHarness; temp: TempDatabase }[] = []
@@ -148,5 +154,118 @@ describe('position derived from the log', () => {
     expect(outcome.status === ETurnStatus.Paused ? outcome.callId : '').toBe(toCallId('call-1'))
     const events = await harness.log.read({ branchId: branch.id })
     expect(events.map((event) => event.type)).toEqual(['user-said', 'assistant-said', 'tool-called'])
+  })
+})
+
+const writeToolInput = z.object({ path: z.string(), content: z.string() })
+
+function writeToolIn(root: string): ToolDefinition {
+  return {
+    name: 'write',
+    description: 'write a file',
+    effect: EToolEffect.Write,
+    inputSchema: writeToolInput,
+    invoke: async ({ input }) => {
+      const parsed = writeToolInput.safeParse(input)
+      if (!parsed.success) return { ok: false, reason: 'write needs a path and content' }
+
+      await Bun.write(join(root, parsed.data.path), parsed.data.content)
+      return { ok: true, output: { path: parsed.data.path }, modelText: `wrote ${parsed.data.path}` }
+    },
+  }
+}
+
+describe('a turn that settles its own tool call', () => {
+  it('runs a real tool against the workspace and completes on the next step', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'atlas-workspace-'))
+    const temp = createTempDatabase()
+    const harness = await buildHarness({
+      databaseUrl: temp.databaseUrl,
+      model: scriptedModel({
+        script: [
+          {
+            text: 'writing it',
+            calls: [{ callId: 'call-1', name: 'write', input: { path: 'notes.md', content: '# hello' } }],
+          },
+          { text: 'written' },
+        ],
+      }),
+    })
+    opened.push({ harness, temp })
+
+    const registry = createToolRegistry([writeToolIn(root)])
+    const runner = createTurnRunner({
+      log: harness.log,
+      model: harness.model,
+      ids: harness.ids,
+      rules: defaultRules(),
+      tools: registry.declarations(),
+      dispatch: createDispatch({ registry, hooks: createHookRegistry({}) }),
+    })
+    const branch = await harness.branches.create({})
+
+    const outcome = await runner.say({ branchId: branch.id, text: 'write notes.md' })
+
+    expect(outcome.status).toBe(ETurnStatus.Completed)
+    const events = await harness.log.read({ branchId: branch.id })
+    expect(events.map((event) => event.type)).toEqual([
+      'user-said',
+      'assistant-said',
+      'tool-called',
+      'tool-result',
+      'assistant-said',
+    ])
+    expect(await Bun.file(join(root, 'notes.md')).text()).toBe('# hello')
+    rmSync(root, { recursive: true, force: true })
+  })
+})
+
+async function runnerDispatchingWith(dispatch: Dispatch): Promise<{ runner: TurnRunner; harness: AtlasHarness }> {
+  const temp = createTempDatabase()
+  const harness = await buildHarness({
+    databaseUrl: temp.databaseUrl,
+    model: scriptedModel({
+      script: [{ text: 'reading', calls: [{ callId: 'call-1', name: 'read', input: { path: 'a.ts' } }] }, { text: 'read it' }],
+    }),
+  })
+  opened.push({ harness, temp })
+
+  return {
+    harness,
+    runner: createTurnRunner({
+      log: harness.log,
+      model: harness.model,
+      ids: harness.ids,
+      rules: defaultRules(),
+      dispatch,
+    }),
+  }
+}
+
+describe('a turn whose settlement does not finish', () => {
+  it('pauses on the call the settlement asked a human about', async () => {
+    const { runner, harness } = await runnerDispatchingWith(async ({ call }) => [
+      { type: 'approval-requested', callId: call.callId, reason: 'read needs a human' },
+    ])
+    const branch = await harness.branches.create({})
+
+    const outcome = await runner.say({ branchId: branch.id, text: 'read a.ts' })
+
+    expect(outcome.status).toBe(ETurnStatus.Paused)
+    expect(outcome.status === ETurnStatus.Paused ? outcome.reason : '').toBe('read needs a human')
+    expect(outcome.status === ETurnStatus.Paused ? outcome.callId : '').toBe(toCallId('call-1'))
+  })
+
+  it('reports an interruption rather than spinning when the settlement was cut short', async () => {
+    const controller = new AbortController()
+    const { runner, harness } = await runnerDispatchingWith(async ({ call }) => {
+      controller.abort()
+      return [{ type: 'tool-result', callId: call.callId, name: call.name, output: 'read', modelText: 'read' }]
+    })
+    const branch = await harness.branches.create({})
+
+    const outcome = await runner.say({ branchId: branch.id, text: 'read a.ts', signal: controller.signal })
+
+    expect(outcome.status).toBe(ETurnStatus.Interrupted)
   })
 })

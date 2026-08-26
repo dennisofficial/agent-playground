@@ -17,6 +17,7 @@ export type EventBody =
       callId: CallId
       name: string
       output: unknown
+      modelText?: string | undefined
       error?: { message: string } | undefined
       snapshotId?: SnapshotId | undefined
     }
