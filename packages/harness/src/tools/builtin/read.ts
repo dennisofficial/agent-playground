@@ -97,7 +97,7 @@ export function createReadTool(): ToolDefinition {
     inputSchema,
     async invoke({ input }) {
       const parsed = inputSchema.safeParse(input)
-      if (!parsed.success) return { ok: false, reason: `read received invalid input: ${parsed.error.message}` }
+      if (!parsed.success) return { ok: false, reason: `read was called with invalid input: ${z.prettifyError(parsed.error)}` }
 
       const { path, offset, limit } = parsed.data
       const stats = await stat(path).catch(() => null)

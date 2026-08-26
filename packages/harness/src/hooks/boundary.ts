@@ -31,6 +31,15 @@ type Denial =
 
 const ABSENT = Symbol('absent')
 
+const SCAN_PATTERN_TOOLS: readonly string[] = ['glob']
+
+function scanPatternOf({ call, input }: { call: ToolCall; input: unknown }): string | undefined {
+  if (!SCAN_PATTERN_TOOLS.includes(call.name)) return undefined
+  if (typeof input !== 'object' || input === null) return undefined
+  if (!('pattern' in input)) return undefined
+  return typeof input.pattern === 'string' ? input.pattern : undefined
+}
+
 function pathFieldOf(input: unknown): unknown {
   if (typeof input !== 'object' || input === null) return ABSENT
   if (!('path' in input)) return ABSENT
@@ -76,38 +85,67 @@ function reasonFor({ call, denial, root }: { call: ToolCall; denial: Denial; roo
 export function createBoundaryHook(args: { root: string }): RegisteredHook<BeforeTool> {
   const root = resolve(args.root)
 
-  const denialFor = async (call: ToolCall): Promise<Denial | undefined> => {
+  const escapeeOf = async (candidate: string): Promise<string | undefined> => {
+    const [realRoot, realTarget] = await Promise.all([
+      realpathOfNearestExisting(root),
+      realpathOfNearestExisting(candidate),
+    ])
+    return contains({ root: realRoot, target: realTarget }) ? undefined : realTarget
+  }
+
+  const escapeDenial = async (args: { declared: string; candidate: string }): Promise<Denial | undefined> => {
+    const escapee = await escapeeOf(args.candidate)
+    if (escapee === undefined) return undefined
+
+    return {
+      kind: EDenial.Escapes,
+      path: args.declared,
+      ...(escapee === args.declared ? {} : { resolvesTo: escapee }),
+    }
+  }
+
+  const declaredPathDenial = async (
+    call: ToolCall,
+  ): Promise<{ denial: Denial } | { base: string } | undefined> => {
     const requirement = PATH_FIELD_BY_TOOL[call.name]
     if (requirement === undefined) return undefined
 
     const field = pathFieldOf(call.input)
     if (field === ABSENT) {
-      if (requirement === EPathField.Optional) return undefined
-      return { kind: EDenial.Uncheckable, found: 'missing' }
+      if (requirement === EPathField.Optional) return { base: root }
+      return { denial: { kind: EDenial.Uncheckable, found: 'missing' } }
     }
 
     if (typeof field !== 'string') {
-      return { kind: EDenial.Uncheckable, found: `not a string but a ${typeof field}` }
+      return { denial: { kind: EDenial.Uncheckable, found: `not a string but a ${typeof field}` } }
     }
 
     if (field.includes('\0')) {
-      return { kind: EDenial.Malformed, path: field, fault: 'a path containing a NUL byte' }
+      return { denial: { kind: EDenial.Malformed, path: field, fault: 'a path containing a NUL byte' } }
     }
 
     if (!isAbsolute(field)) {
-      return { kind: EDenial.Malformed, path: field, fault: 'a path that is not absolute' }
+      return { denial: { kind: EDenial.Malformed, path: field, fault: 'a path that is not absolute' } }
     }
 
-    const literal = resolve(field)
-    if (!contains({ root, target: literal })) return { kind: EDenial.Escapes, path: field }
+    const base = resolve(field)
+    const denial = await escapeDenial({ declared: field, candidate: base })
+    return denial === undefined ? { base } : { denial }
+  }
 
-    const [realRoot, realTarget] = await Promise.all([
-      realpathOfNearestExisting(root),
-      realpathOfNearestExisting(literal),
-    ])
-    if (contains({ root: realRoot, target: realTarget })) return undefined
+  const denialFor = async (call: ToolCall): Promise<Denial | undefined> => {
+    const declared = await declaredPathDenial(call)
+    if (declared === undefined) return undefined
+    if ('denial' in declared) return declared.denial
 
-    return { kind: EDenial.Escapes, path: field, resolvesTo: realTarget }
+    const pattern = scanPatternOf({ call, input: call.input })
+    if (pattern === undefined) return undefined
+
+    if (pattern.includes('\0')) {
+      return { kind: EDenial.Malformed, path: pattern, fault: 'a glob pattern containing a NUL byte' }
+    }
+
+    return escapeDenial({ declared: pattern, candidate: resolve(declared.base, pattern) })
   }
 
   return {

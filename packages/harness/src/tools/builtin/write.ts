@@ -26,7 +26,7 @@ export function createWriteTool(): ToolDefinition {
     inputSchema,
     async invoke({ input }) {
       const parsed = inputSchema.safeParse(input)
-      if (!parsed.success) return { ok: false, reason: `write received invalid input: ${parsed.error.message}` }
+      if (!parsed.success) return { ok: false, reason: `write was called with invalid input: ${z.prettifyError(parsed.error)}` }
 
       const { path, content } = parsed.data
       const stats = await stat(path).catch(() => null)

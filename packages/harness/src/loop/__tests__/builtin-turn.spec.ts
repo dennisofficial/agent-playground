@@ -130,7 +130,7 @@ describe('a turn that drives a real builtin tool', () => {
     ])
   })
 
-  it('opens and ends one step per model step, and none for the settlement', async () => {
+  it('publishes one step-started and one step-ended per model step, and none for the settlement', async () => {
     const { runner, workspace, branchId, seen } = await openWorkspace((root) => [
       { calls: [{ callId: 'call-1', name: 'read', input: { path: join(root, 'gamma.ts') } }] },
       { text: 'one export' },

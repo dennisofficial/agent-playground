@@ -38,6 +38,19 @@ function toolCallPart(event: EventOfType<'tool-called'>): ToolCallPart {
 
 type Settlement = EventOfType<'tool-result'> | EventOfType<'tool-denied'>
 
+type SettledCall = { part: ToolResultPart; origin: EventRef }
+
+const UNSETTLED_CALL = 'This tool call did not complete and produced no result.'
+
+function unsettledResult(call: ToolCallPart): ToolResultPart {
+  return {
+    type: 'tool-result',
+    toolCallId: call.toolCallId,
+    toolName: call.toolName,
+    output: { type: 'error-text', value: UNSETTLED_CALL },
+  }
+}
+
 function settlementOutput(event: Settlement): ToolResultPart['output'] {
   if (event.type === 'tool-denied') return { type: 'error-text', value: event.reason }
   if (event.error !== undefined) return { type: 'error-text', value: event.error.message }
@@ -54,32 +67,25 @@ function toolResultPart(event: Settlement): ToolResultPart {
   }
 }
 
-function appendCall({ groups, event }: { groups: Group[]; event: EventOfType<'tool-called'> }): void {
-  const open = groups.at(-1)
+function appendCall({ groups, event, open }: { groups: Group[]; event: EventOfType<'tool-called'>; open: Group | undefined }): Group {
   const part = toolCallPart(event)
 
-  if (open?.message.role === 'assistant') {
+  if (open !== undefined && open.message.role === 'assistant') {
     open.message.content.push(part)
-    return
+    return open
   }
 
-  groups.push({ message: { role: 'assistant', content: [part] }, origin: originOf(event) })
+  const group: Group = { message: { role: 'assistant', content: [part] }, origin: originOf(event) }
+  groups.push(group)
+  return group
 }
 
-function appendSettlement({ groups, event }: { groups: Group[]; event: Settlement }): void {
-  const open = groups.at(-1)
-  const part = toolResultPart(event)
+type Walk = { groups: readonly Group[]; settlements: ReadonlyMap<string, SettledCall> }
 
-  if (open?.message.role === 'tool') {
-    open.message.content.push(part)
-    return
-  }
-
-  groups.push({ message: { role: 'tool', content: [part] }, origin: originOf(event) })
-}
-
-function groupsFromEvents(events: readonly Event[]): Group[] {
+function walkEvents(events: readonly Event[]): Walk {
   const groups: Group[] = []
+  const settlements = new Map<string, SettledCall>()
+  let openAssistant: Group | undefined
 
   for (const event of events) {
     if (event.type === 'user-said') {
@@ -87,35 +93,62 @@ function groupsFromEvents(events: readonly Event[]): Group[] {
         message: { role: 'user', content: [{ type: 'text', text: event.text }] },
         origin: originOf(event),
       })
+      openAssistant = undefined
       continue
     }
 
     if (event.type === 'assistant-said') {
-      groups.push({ message: { role: 'assistant', content: [...event.parts] }, origin: originOf(event) })
+      openAssistant = { message: { role: 'assistant', content: [...event.parts] }, origin: originOf(event) }
+      groups.push(openAssistant)
       continue
     }
 
     if (event.type === 'tool-called') {
-      appendCall({ groups, event })
+      openAssistant = appendCall({ groups, event, open: openAssistant })
       continue
     }
 
     if (event.type === 'tool-result' || event.type === 'tool-denied') {
-      appendSettlement({ groups, event })
+      settlements.set(event.callId, { part: toolResultPart(event), origin: originOf(event) })
+      openAssistant = undefined
     }
   }
 
-  return groups
+  return { groups, settlements }
+}
+
+function messagesForGroup({
+  group,
+  settlements,
+}: {
+  group: Group
+  settlements: ReadonlyMap<string, SettledCall>
+}): AssembledMessage[] {
+  if (group.message.content.length === 0) return []
+
+  const self: AssembledMessage = { message: group.message, origin: group.origin }
+  if (group.message.role !== 'assistant') return [self]
+
+  const calls = group.message.content.flatMap((part) => (part.type === 'tool-call' ? [part] : []))
+  if (calls.length === 0) return [self]
+
+  const answers = calls.map((call) => settlements.get(call.toolCallId))
+  const content = calls.map((call, index) => answers[index]?.part ?? unsettledResult(call))
+  const origin = answers.find((answer) => answer !== undefined)?.origin ?? group.origin
+
+  return [self, { message: { role: 'tool', content }, origin }]
 }
 
 export function messagesFromEvents(): Rule {
   return defineRule({
     name: 'messagesFromEvents',
-    apply: (input, ctx) => ({
-      system: input.system,
-      messages: groupsFromEvents(ctx.events)
-        .filter((group) => group.message.content.length > 0)
-        .map((group): AssembledMessage => ({ message: group.message, origin: group.origin })),
-    }),
+    apply: (input, ctx) => {
+      const { groups, settlements } = walkEvents(ctx.events)
+
+      return {
+        system: input.system,
+        messages: groups.flatMap((group) => messagesForGroup({ group, settlements })),
+      }
+    },
   })
 }

@@ -40,3 +40,19 @@ export function splitLines(content: string): string[] {
 
   return lines
 }
+
+export const isNewlineTerminated = (content: string): boolean =>
+  content === '' || content.endsWith('\n')
+
+const PATTERN_METACHARACTERS = /[.*+?^${}()|[\]\\]/g
+
+export function lineEndingAgnosticPattern(target: string): string {
+  return toLf(target).replace(PATTERN_METACHARACTERS, '\\$&').replaceAll('\n', '\\r?\\n')
+}
+
+export function endingOfRegion(args: { region: string; fallback: ELineEnding }): ELineEnding {
+  if (args.region.includes('\r\n')) return ELineEnding.Crlf
+  if (args.region.includes('\n')) return ELineEnding.Lf
+
+  return args.fallback
+}

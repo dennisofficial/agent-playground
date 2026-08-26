@@ -1,8 +1,8 @@
-import { resolve } from 'node:path'
-
 import { z } from 'zod'
 
 import { EToolEffect, type ToolDefinition, type ToolOutcome } from '@dltech/atlas-core'
+
+import { absolutePathSchema } from './file-text'
 
 const DEFAULT_HEAD_LIMIT = 250
 const MAXIMUM_HEAD_LIMIT = 1_000
@@ -14,7 +14,7 @@ const DIRECTORIES_RIPGREP_SKIPS_BY_GITIGNORE = ['node_modules'] as const
 
 const inputSchema = z.strictObject({
   pattern: z.string().min(1),
-  path: z.string().optional(),
+  path: absolutePathSchema.optional(),
   glob: z.string().optional(),
   caseInsensitive: z.boolean().optional(),
   context: z.number().int().min(0).max(20).optional(),
@@ -24,7 +24,7 @@ const inputSchema = z.strictObject({
 
 const description = [
   'Search file contents by regular expression and return the matching lines, each prefixed with its absolute path and line number.',
-  'Searches the workspace root unless path names a narrower file or directory, and glob narrows further by file name.',
+  'Searches the workspace root unless path names a narrower file or directory, which must be absolute, and glob narrows further by file name.',
   `Returns at most ${DEFAULT_HEAD_LIMIT} lines unless headLimit says otherwise; when more match, the result says so and offset asks for the next page.`,
   'Version control directories are never searched, and long lines are cut short.',
 ].join(' ')
@@ -147,7 +147,7 @@ export function createGrepTool(args: { root: string }): ToolDefinition {
       const { pattern, path, glob, caseInsensitive, context, headLimit, offset } = parsed.data
       const searcher = searcherFor({
         pattern,
-        searchPath: resolve(args.root, path ?? '.'),
+        searchPath: path ?? args.root,
         glob,
         caseInsensitive: caseInsensitive ?? false,
         context,
@@ -164,12 +164,17 @@ export function createGrepTool(args: { root: string }): ToolDefinition {
           stdout: 'pipe',
           stderr: 'pipe',
         })
-        signal.addEventListener('abort', () => search.kill('SIGTERM'), { once: true })
-        ;[stdout, stderr, exitCode] = await Promise.all([
-          new Response(search.stdout).text(),
-          new Response(search.stderr).text(),
-          search.exited,
-        ])
+        const handleAbort = (): void => void search.kill('SIGTERM')
+        signal.addEventListener('abort', handleAbort, { once: true })
+        try {
+          ;[stdout, stderr, exitCode] = await Promise.all([
+            new Response(search.stdout).text(),
+            new Response(search.stderr).text(),
+            search.exited,
+          ])
+        } finally {
+          signal.removeEventListener('abort', handleAbort)
+        }
       } catch (error) {
         return { ok: false, reason: `could not run ${searcher.name}: ${messageOf(error)}` }
       }

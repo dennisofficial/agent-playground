@@ -2,6 +2,7 @@ import {
   assemble,
   awaitsReply,
   estimateTokens,
+  exchangeFaults,
   outstandingApproval,
   pendingCalls,
   type Annotator,
@@ -13,6 +14,7 @@ import {
   type IdPort,
   type ModelPort,
   type ModelStepResult,
+  type ExchangeFault,
   type Rule,
   type RuleContext,
   type ToolDeclaration,
@@ -43,6 +45,8 @@ export type TurnRunner = {
 
 const DEFAULT_MAX_STEPS = 16
 
+const ITERATIONS_PER_MODEL_STEP = 2
+
 type SteppedTurn = { ok: true; result: ModelStepResult } | { ok: false; message: string; cause: unknown }
 
 function interruptedDraft(result: ModelStepResult): EventDraft | undefined {
@@ -60,6 +64,12 @@ function draftsFor(result: ModelStepResult): EventDraft[] {
 
   return drafts
 }
+
+const faultLine = (fault: ExchangeFault): string =>
+  `message ${fault.messageIndex}: ${fault.detail} (event ${fault.origin.eventId})`
+
+const faultReport = (faults: readonly ExchangeFault[]): string =>
+  `the assembled prompt would be rejected by the provider — ${faults.map(faultLine).join('; ')}`
 
 async function takeModelStep(args: {
   model: ModelPort
@@ -86,6 +96,7 @@ export function createTurnRunner(deps: TurnDeps): TurnRunner {
   const tools = deps.tools ?? []
   const maxSteps = deps.maxSteps ?? DEFAULT_MAX_STEPS
   const countTokens = deps.countTokens ?? estimateTokens
+  const iterationBackstop = maxSteps * ITERATIONS_PER_MODEL_STEP + 1
   const settlePending =
     deps.dispatch === undefined
       ? undefined
@@ -101,8 +112,9 @@ export function createTurnRunner(deps: TurnDeps): TurnRunner {
     const runId = deps.ids.nextRunId()
     const abortSignal = signal ?? new AbortController().signal
     let previous: Assembled | undefined
+    let modelSteps = 0
 
-    for (let step = 0; step < maxSteps; step += 1) {
+    for (let iteration = 0; iteration < iterationBackstop; iteration += 1) {
       const events = await deps.log.read({ branchId })
 
       const waiting = outstandingApproval(events)
@@ -123,11 +135,12 @@ export function createTurnRunner(deps: TurnDeps): TurnRunner {
       }
 
       if (!awaitsReply(events)) return { status: ETurnStatus.Idle, runId }
+      if (modelSteps >= maxSteps) return { status: ETurnStatus.Exhausted, runId }
 
       const ctx: RuleContext = {
         events,
         branchId,
-        step,
+        step: modelSteps,
         provider: deps.model.identity,
         countTokens,
         ...(previous === undefined ? {} : { previous }),
@@ -140,6 +153,11 @@ export function createTurnRunner(deps: TurnDeps): TurnRunner {
       })
       previous = assembled
 
+      const faults = exchangeFaults(assembled)
+      if (faults.length > 0) {
+        return { status: ETurnStatus.Failed, runId, message: faultReport(faults), cause: faults }
+      }
+
       const stepped = await takeModelStep({
         model: deps.model,
         assembled,
@@ -147,6 +165,8 @@ export function createTurnRunner(deps: TurnDeps): TurnRunner {
         signal: abortSignal,
         onChunk: deps.onChunk,
       })
+
+      modelSteps += 1
 
       if (!stepped.ok) {
         return { status: ETurnStatus.Failed, runId, message: stepped.message, cause: stepped.cause }

@@ -1,10 +1,14 @@
-import { splitLines } from './file-text'
+import { isNewlineTerminated, splitLines } from './file-text'
 
 const CONTEXT_LINES = 3
+
+const NO_NEWLINE_MARKER = '\\ No newline at end of file'
 
 type LineGroup = { from: number; to: number; lines: readonly string[] }
 
 type LinePair = { oldLines: readonly string[]; newLines: readonly string[] }
+
+type Termination = { oldTerminated: boolean; newTerminated: boolean }
 
 function commonHeadLength(pair: LinePair): number {
   const shortest = Math.min(pair.oldLines.length, pair.newLines.length)
@@ -45,7 +49,7 @@ function alignedGroups(args: LinePair & { from: number; to: number }): LineGroup
   return groups
 }
 
-function changedGroups(pair: LinePair): LineGroup[] {
+function textualGroups(pair: LinePair): LineGroup[] {
   const head = commonHeadLength(pair)
   const tail = commonTailLength({ ...pair, head })
   const oldTo = pair.oldLines.length - 1 - tail
@@ -55,6 +59,32 @@ function changedGroups(pair: LinePair): LineGroup[] {
   if (oldTo === newTo) return alignedGroups({ ...pair, from: head, to: oldTo })
 
   return [{ from: head, to: oldTo, lines: pair.newLines.slice(head, newTo + 1) }]
+}
+
+function coveringFinalLine(args: {
+  oldLines: readonly string[]
+  groups: readonly LineGroup[]
+}): LineGroup[] {
+  const lastOld = args.oldLines.length - 1
+  const finalLine = args.oldLines[lastOld]
+  if (finalLine === undefined) return [...args.groups]
+
+  const last = args.groups.at(-1)
+  if (last !== undefined && last.from <= lastOld && lastOld <= last.to) return [...args.groups]
+
+  if (last !== undefined && last.from === lastOld + 1) {
+    const merged = { from: lastOld, to: lastOld, lines: [finalLine, ...last.lines] }
+    return [...args.groups.slice(0, -1), merged]
+  }
+
+  return [...args.groups, { from: lastOld, to: lastOld, lines: [finalLine] }]
+}
+
+function changedGroups(args: LinePair & Termination): LineGroup[] {
+  const groups = textualGroups(args)
+  if (args.oldTerminated === args.newTerminated) return groups
+
+  return coveringFinalLine({ oldLines: args.oldLines, groups })
 }
 
 function clusterGroups(groups: readonly LineGroup[]): LineGroup[][] {
@@ -78,8 +108,10 @@ const context = (line: string): string => ` ${line}`
 const removal = (line: string): string => `-${line}`
 const addition = (line: string): string => `+${line}`
 
-function renderHunk(args: { oldLines: readonly string[]; cluster: readonly LineGroup[]; delta: number }): string {
-  const { oldLines, cluster, delta } = args
+function renderHunk(
+  args: { oldLines: readonly string[]; cluster: readonly LineGroup[]; delta: number } & Termination,
+): string {
+  const { oldLines, cluster, delta, oldTerminated, newTerminated } = args
   const first = cluster[0]
   const last = cluster.at(-1)
   if (first === undefined || last === undefined) return ''
@@ -93,14 +125,24 @@ function renderHunk(args: { oldLines: readonly string[]; cluster: readonly LineG
   )
   const oldStart = oldCount === 0 ? start : start + 1
   const newStart = newCount === 0 ? start + delta : start + 1 + delta
+  const reachesFileEnd = last.to === oldLines.length - 1 || last.from === oldLines.length
 
   const body = oldLines.slice(start, first.from).map(context)
   for (const [index, group] of cluster.entries()) {
-    body.push(...oldLines.slice(group.from, group.to + 1).map(removal))
+    const removed = oldLines.slice(group.from, group.to + 1)
+    const atFileEnd = reachesFileEnd && index === cluster.length - 1
+
+    body.push(...removed.map(removal))
+    if (atFileEnd && !oldTerminated && removed.length > 0) body.push(NO_NEWLINE_MARKER)
+
     body.push(...group.lines.map(addition))
+    if (atFileEnd && !newTerminated && group.lines.length > 0) body.push(NO_NEWLINE_MARKER)
+
     const nextFrom = cluster[index + 1]?.from ?? end + 1
     body.push(...oldLines.slice(group.to + 1, nextFrom).map(context))
   }
+
+  if (!reachesFileEnd && end === oldLines.length - 1 && !oldTerminated) body.push(NO_NEWLINE_MARKER)
 
   return [`@@ -${oldStart},${oldCount} +${newStart},${newCount} @@`, ...body].join('\n')
 }
@@ -112,16 +154,20 @@ export function renderUnifiedDiff(args: {
 }): string {
   const newLines = splitLines(args.newContent)
   const oldLines = args.oldContent === null ? [] : splitLines(args.oldContent)
+  const oldTerminated = args.oldContent === null ? true : isNewlineTerminated(args.oldContent)
+  const newTerminated = isNewlineTerminated(args.newContent)
+
   const oldLabel = args.oldContent === null ? '/dev/null' : args.path
   const header = `--- ${oldLabel}\n+++ ${args.path}`
 
-  const clusters = clusterGroups(changedGroups({ oldLines, newLines }))
+  const groups = changedGroups({ oldLines, newLines, oldTerminated, newTerminated })
+  const clusters = clusterGroups(groups)
   if (clusters.length === 0) return `${header}\n`
 
   const hunks: string[] = []
   let delta = 0
   for (const cluster of clusters) {
-    hunks.push(renderHunk({ oldLines, cluster, delta }))
+    hunks.push(renderHunk({ oldLines, cluster, delta, oldTerminated, newTerminated }))
     delta = cluster.reduce((total, group) => total + group.lines.length - (group.to - group.from + 1), delta)
   }
 

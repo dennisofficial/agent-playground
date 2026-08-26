@@ -4,7 +4,14 @@ import { dirname } from 'node:path'
 import { EToolEffect, type ToolDefinition, type ToolOutcome } from '@dltech/atlas-core'
 import { z } from 'zod'
 
-import { absolutePathSchema, detectLineEnding, toLf, withLineEnding } from './file-text'
+import {
+  absolutePathSchema,
+  detectLineEnding,
+  endingOfRegion,
+  lineEndingAgnosticPattern,
+  toLf,
+  withLineEnding,
+} from './file-text'
 import { renderUnifiedDiff } from './unified-diff'
 
 const inputSchema = z.strictObject({
@@ -19,7 +26,7 @@ const description = [
   'The path must be absolute.',
   'oldString must match the file exactly, including indentation, and must be unique unless replaceAll is true.',
   'An empty oldString creates the file with newString as its whole content.',
-  'The file keeps the line endings it already had.',
+  'Lines the edit does not touch keep their exact bytes, line endings included.',
 ].join(' ')
 
 const updated = (path: string): string => `The file ${path} has been updated successfully.`
@@ -31,6 +38,14 @@ async function createFile(args: {
   newString: string
   existing: string | null
 }): Promise<ToolOutcome> {
+  if (args.newString === '') {
+    return {
+      ok: false,
+      reason:
+        'An empty oldString with an empty newString names nothing to replace and nothing to write. Use the write tool with an empty content to create or empty a file.',
+    }
+  }
+
   if (args.existing !== null && args.existing.trim() !== '') {
     return { ok: false, reason: 'Cannot create new file - file already exists.' }
   }
@@ -52,11 +67,6 @@ async function createFile(args: {
   }
 }
 
-const replaceFirst = (args: { content: string; target: string; replacement: string }): string => {
-  const at = args.content.indexOf(args.target)
-  return args.content.slice(0, at) + args.replacement + args.content.slice(at + args.target.length)
-}
-
 async function replaceInFile(args: {
   path: string
   oldString: string
@@ -64,12 +74,9 @@ async function replaceInFile(args: {
   replaceAll: boolean
 }): Promise<ToolOutcome> {
   const raw = await Bun.file(args.path).text()
-  const ending = detectLineEnding(raw)
-  const oldContent = toLf(raw)
-  const target = toLf(args.oldString)
-  const replacement = toLf(args.newString)
+  const pattern = lineEndingAgnosticPattern(args.oldString)
 
-  const matches = oldContent.split(target).length - 1
+  const matches = [...raw.matchAll(new RegExp(pattern, 'g'))].length
   if (matches === 0) {
     return { ok: false, reason: `String to replace not found in file.\nString: ${args.oldString}` }
   }
@@ -80,19 +87,28 @@ async function replaceInFile(args: {
     }
   }
 
-  const newContent = args.replaceAll
-    ? oldContent.split(target).join(replacement)
-    : replaceFirst({ content: oldContent, target, replacement })
+  const fallback = detectLineEnding(raw)
+  const replacement = toLf(args.newString)
+  const rewritten = raw.replace(new RegExp(pattern, args.replaceAll ? 'g' : ''), (region) =>
+    withLineEnding({ content: replacement, ending: endingOfRegion({ region, fallback }) }),
+  )
 
-  if (newContent === oldContent) {
+  if (rewritten === raw) {
     return { ok: false, reason: 'oldString and newString are identical; the file would not change.' }
   }
 
-  await Bun.write(args.path, withLineEnding({ content: newContent, ending }))
+  await Bun.write(args.path, rewritten)
 
   return {
     ok: true,
-    output: { path: args.path, diff: renderUnifiedDiff({ path: args.path, oldContent, newContent }) },
+    output: {
+      path: args.path,
+      diff: renderUnifiedDiff({
+        path: args.path,
+        oldContent: toLf(raw),
+        newContent: toLf(rewritten),
+      }),
+    },
     modelText: updated(args.path),
   }
 }
@@ -105,7 +121,7 @@ export function createEditTool(): ToolDefinition {
     inputSchema,
     async invoke({ input }) {
       const parsed = inputSchema.safeParse(input)
-      if (!parsed.success) return { ok: false, reason: `edit received invalid input: ${parsed.error.message}` }
+      if (!parsed.success) return { ok: false, reason: `edit was called with invalid input: ${z.prettifyError(parsed.error)}` }
 
       const { path, oldString, newString, replaceAll } = parsed.data
       const stats = await stat(path).catch(() => null)

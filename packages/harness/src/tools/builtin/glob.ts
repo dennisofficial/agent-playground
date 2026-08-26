@@ -1,20 +1,21 @@
 import { statSync } from 'node:fs'
-import { resolve } from 'node:path'
 
 import { z } from 'zod'
 
 import { EToolEffect, type ToolDefinition, type ToolOutcome } from '@dltech/atlas-core'
 
+import { absolutePathSchema } from './file-text'
+
 const RESULT_LIMIT = 100
 
 const inputSchema = z.strictObject({
   pattern: z.string().min(1),
-  path: z.string().optional(),
+  path: absolutePathSchema.optional(),
 })
 
 const description = [
   'Find files by glob pattern and return their absolute paths, most recently modified first.',
-  'Matches against the workspace root unless path names a different directory.',
+  'Matches against the workspace root unless path names a different directory, which must be absolute.',
   `Returns at most ${RESULT_LIMIT} paths; when more match, the result says how many were left out.`,
   'Hidden files and directories are not matched.',
 ].join(' ')
@@ -59,7 +60,7 @@ export function createGlobTool(args: { root: string }): ToolDefinition {
       }
 
       const { pattern, path } = parsed.data
-      const from = resolve(args.root, path ?? '.')
+      const from = path ?? args.root
 
       const found: DatedPath[] = []
       try {

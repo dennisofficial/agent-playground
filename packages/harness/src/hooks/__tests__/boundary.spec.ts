@@ -1,4 +1,4 @@
-import { mkdtemp, symlink } from 'node:fs/promises'
+import { mkdtemp, realpath, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import { beforeAll, describe, expect, it } from 'bun:test'
@@ -171,5 +171,47 @@ describe('createBoundaryHook', () => {
 
     expect(outcome.decision).toBe(EBeforeToolDecision.Deny)
     expect(outcome).toMatchObject({ reason: expect.stringContaining('absolute') })
+  })
+
+  it('allows a path written through the real path of a root that is itself a symlink', async () => {
+    const realRoot = await realpath(root)
+    const throughRealRoot = join(realRoot, 'src', 'a.ts')
+
+    expect(realRoot).not.toBe(root)
+    expect(throughRealRoot.startsWith(`${root}${sep}`)).toBe(false)
+
+    const outcome = await decide({ name: 'read', input: { path: throughRealRoot } })
+
+    expect(outcome.decision).toBe(EBeforeToolDecision.Allow)
+  })
+
+  it('denies a glob pattern that climbs out of the workspace with ..', async () => {
+    const outcome = await decide({ name: 'glob', input: { pattern: '../*.txt' } })
+
+    expect(outcome.decision).toBe(EBeforeToolDecision.Deny)
+  })
+
+  it('denies an absolute glob pattern, which ignores the scan root entirely', async () => {
+    const outcome = await decide({ name: 'glob', input: { pattern: '/etc/hos*' } })
+
+    expect(outcome.decision).toBe(EBeforeToolDecision.Deny)
+  })
+
+  it('denies a glob pattern that escapes from the path it was given', async () => {
+    const outcome = await decide({
+      name: 'glob',
+      input: { path: join(root, 'src'), pattern: '../../../etc/*' },
+    })
+
+    expect(outcome.decision).toBe(EBeforeToolDecision.Deny)
+  })
+
+  it('allows a glob pattern whose .. cancels back inside the workspace', async () => {
+    expect((await decide({ name: 'glob', input: { pattern: 'sub/../*.ts' } })).decision).toBe(
+      EBeforeToolDecision.Allow,
+    )
+    expect((await decide({ name: 'glob', input: { pattern: '**/*.ts' } })).decision).toBe(
+      EBeforeToolDecision.Allow,
+    )
   })
 })
