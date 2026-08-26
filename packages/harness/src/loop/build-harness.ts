@@ -14,6 +14,7 @@ import {
   type ToolDeclaration,
 } from '@dltech/atlas-core'
 
+import type { HookRegistry } from '../hooks/registry'
 import { createAiSdkModelPort } from '../model/ai-sdk-model-port'
 import type { Dispatch } from '../tools/dispatch'
 import { openAtlasDatabase, PrismaBranchStore, PrismaEventLog, RandomIds, SystemClock } from '../store'
@@ -44,6 +45,7 @@ export type BuildHarnessArgs = {
   clock?: ClockPort | undefined
   ids?: IdPort | undefined
   onChunk?: ChunkFilter | undefined
+  hooks?: HookRegistry | undefined
 }
 
 export function providerIdentityOf(model: LanguageModel): ProviderIdentity {
@@ -64,6 +66,7 @@ export async function buildHarness(args: BuildHarnessArgs): Promise<AtlasHarness
   const model = createAiSdkModelPort({
     model: args.model,
     identity: args.identity ?? providerIdentityOf(args.model),
+    hooks: args.hooks,
   })
 
   const turnDeps: TurnDeps = {
@@ -77,6 +80,7 @@ export async function buildHarness(args: BuildHarnessArgs): Promise<AtlasHarness
     maxSteps: args.maxSteps,
     countTokens: args.countTokens,
     onChunk: args.onChunk,
+    hooks: args.hooks,
   }
 
   return {

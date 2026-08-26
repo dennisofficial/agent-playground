@@ -6,11 +6,13 @@ import type {
   ChunkFilter,
   ModelPort,
   ModelStepResult,
+  OnChunk,
   ProviderIdentity,
   ProviderPrompt,
   ToolDeclaration,
 } from '@dltech/atlas-core'
 
+import { runBeforeRequest, runOnChunk, type HookRegistry, type RegisteredHook } from '../hooks/registry'
 import { createPartAccumulator } from './accumulator'
 import { toCoreChunk } from './chunk-conversion'
 import { ModelStreamError } from './errors'
@@ -25,12 +27,24 @@ export type { ChunkFilter }
 // the terminal renderer.
 const reportNothing = () => {}
 
+async function keptChunk(args: {
+  chunk: Chunk
+  hooks: readonly RegisteredHook<OnChunk>[]
+  filter?: ChunkFilter | undefined
+}): Promise<Chunk | null> {
+  const observed = await runOnChunk({ hooks: args.hooks, chunk: args.chunk })
+  if (observed === null) return null
+  if (args.filter === undefined) return observed
+  return args.filter(observed)
+}
+
 export async function runModelStream(args: {
   model: LanguageModel
   prompt: ProviderPrompt
   tools: readonly ToolDeclaration[]
   signal: AbortSignal
   onChunk?: ChunkFilter
+  onChunkHooks?: readonly RegisteredHook<OnChunk>[] | undefined
 }): Promise<ModelStepResult> {
   const instructions = toInstructions(args.prompt.instructions)
 
@@ -51,7 +65,7 @@ export async function runModelStream(args: {
       const chunk = toCoreChunk(part)
       if (chunk === null) continue
 
-      const kept = args.onChunk ? args.onChunk(chunk) : chunk
+      const kept = await keptChunk({ chunk, hooks: args.onChunkHooks ?? [], filter: args.onChunk })
       if (kept !== null) accumulator.handle(kept)
 
       if (part.type === 'error') {
@@ -65,16 +79,24 @@ export async function runModelStream(args: {
   return accumulator.finish()
 }
 
-export function createAiSdkModelPort(args: { model: LanguageModel; identity: ProviderIdentity }): ModelPort {
+export function createAiSdkModelPort(args: {
+  model: LanguageModel
+  identity: ProviderIdentity
+  hooks?: HookRegistry | undefined
+}): ModelPort {
   return {
     identity: args.identity,
 
-    step: ({ assembled, tools, signal, onChunk }) =>
+    step: async ({ assembled, tools, signal, onChunk }) =>
       runModelStream({
         model: args.model,
-        prompt: toProviderPrompt({ assembled, provider: args.identity }),
+        prompt: await runBeforeRequest({
+          hooks: args.hooks?.beforeRequest ?? [],
+          prompt: toProviderPrompt({ assembled, provider: args.identity }),
+        }),
         tools,
         signal,
+        onChunkHooks: args.hooks?.onChunk,
         ...(onChunk === undefined ? {} : { onChunk }),
       }),
   }
