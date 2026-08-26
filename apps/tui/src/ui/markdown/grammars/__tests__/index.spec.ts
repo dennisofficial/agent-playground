@@ -52,6 +52,11 @@ const SAMPLES: Record<string, { source: string; expect: string[] }> = {
       'use std::fmt;\n\n// hello\nfn greet(name: &str) -> String {\n  let n: u32 = 1;\n  format!("hi {name} {n}")\n}\n',
     expect: ['keyword', 'comment', 'string', 'type', 'function.macro'],
   },
+  c: {
+    source:
+      '#include <stdio.h>\n\n// hello\nint add(int a, int b) {\n  return a + b;\n}\n\nint main(void) {\n  printf("%d\\n", add(5, 3));\n  return 0;\n}\n',
+    expect: ['keyword', 'comment', 'string', 'type', 'function'],
+  },
   cpp: {
     source:
       '#include <string>\n\n// hello\nnamespace demo {\nstd::string greet(const std::string &name) {\n  return "hi " + name;\n}\n}\n',
@@ -71,6 +76,21 @@ const SAMPLES: Record<string, { source: string; expect: string[] }> = {
     source:
       'interface Props {\n  name: string;\n}\n\n// hello\nexport const Hello = ({ name }: Props) => (\n  <div className="greeting">Hello, {name}!</div>\n);\n',
     expect: ['keyword', 'comment', 'string', 'type', 'tag', 'attribute'],
+  },
+  php: {
+    source:
+      '<?php\n\n// hello\nfunction add(int $a, int $b): int {\n  return $a + $b;\n}\n\necho add(5, 3);\n',
+    expect: ['tag', 'keyword', 'comment', 'variable', 'type.builtin', 'function'],
+  },
+  lua: {
+    source:
+      '-- hello\nlocal function add(a, b)\n  return a + b\nend\n\nlocal Calculator = {}\nfunction Calculator:multiply(x, y)\n  return x * y\nend\n\nprint(add(5, 3))\n',
+    expect: ['comment', 'keyword', 'function', 'number', 'variable'],
+  },
+  toml: {
+    source:
+      '# hello\n[package]\nname = "atlas"\nversion = "0.1.0"\nenabled = true\ncount = 3\n\n[deps.zod]\nversion = "3.0"\n',
+    expect: ['comment', 'property', 'string', 'boolean', 'number', 'type'],
   },
   html: {
     source:

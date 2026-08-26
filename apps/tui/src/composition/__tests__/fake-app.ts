@@ -1,4 +1,6 @@
 import {
+  ATLAS_SETTINGS,
+  EEffort,
   defaultRules,
   EFinishReason,
   type Chunk,
@@ -7,17 +9,21 @@ import {
   type CredentialPort,
   type ModelPort,
   type ModelStepResult,
+  type SettingsDocument,
 } from '@dltech/atlas-core'
 import {
   createDeltaChannel,
   createPublishingTurnRunner,
+  createSettingsService,
+  MemorySettingsStore,
   ModelStreamError,
   RandomIds,
   type DeltaChannel,
 } from '@dltech/atlas-harness'
 
 import type { AtlasApp } from '../compose'
-import type { AtlasConfig } from '../config'
+import { heldChoice } from '../model-selection'
+import { DEFAULT_MODEL_ID, type AtlasConfig } from '../config'
 import { fakeBranchStore, fakeEventLog, type FakeBranchStore, type FakeEventLog } from './fake-backend'
 
 export const FAKE_CONFIG: AtlasConfig = {
@@ -109,7 +115,7 @@ export type FakeApp = AtlasApp & {
   branches: FakeBranchStore
 }
 
-export function fakeApp(args: { model: ModelPort }): FakeApp {
+export function fakeApp(args: { model: ModelPort; settings?: SettingsDocument }): FakeApp {
   const channel = createDeltaChannel()
   const log = fakeEventLog()
   const branches = fakeBranchStore()
@@ -122,6 +128,14 @@ export function fakeApp(args: { model: ModelPort }): FakeApp {
     log,
     branches,
     ids,
+    model: heldChoice({ modelId: FAKE_CONFIG.modelId ?? DEFAULT_MODEL_ID, effort: EEffort.Medium }),
+    settings: createSettingsService({
+      definitions: ATLAS_SETTINGS,
+      user: new MemorySettingsStore({
+        label: '~/.atlas/settings.json',
+        ...(args.settings === undefined ? {} : { document: args.settings }),
+      }),
+    }),
     close: async () => {},
     runner: createPublishingTurnRunner({
       channel,

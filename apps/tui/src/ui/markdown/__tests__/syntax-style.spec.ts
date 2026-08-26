@@ -44,20 +44,27 @@ describe('syntax styles', () => {
     expect(again.proseSyntaxStyle()).toBe(proseSyntaxStyle())
   })
 
-  it('draws inline code in the accent, and fenced machine text in the blue', () => {
-    expect(proseScopes()['markup.raw']).toEqual({ fg: theme.accent })
+  it('slabs inline code rather than tinting it accent, so identifiers stop reading as headings', () => {
+    expect(proseScopes()['markup.raw']).toEqual({ fg: theme.hover, bg: theme.userBg })
     expect(proseScopes()['markup.raw.block']).toEqual({ fg: theme.code })
-    expect(theme.codeInline).not.toBe(theme.code)
-    expect(proseScopes()['markup.heading.2']).toMatchObject({ fg: theme.accent, bold: true })
     expect(proseScopes()['markup.raw']).not.toHaveProperty('bold')
+  })
+
+  it('spends no accent on a table: the box is rule, the header meta, the cells body', () => {
+    expect(proseScopes().conceal).toEqual({ fg: theme.rule })
+    expect(proseScopes()['markup.heading']).toEqual({ fg: theme.meta })
+    expect(proseScopes().default).toEqual({ fg: theme.hover })
+    for (const style of Object.values(proseScopes())) {
+      expect(style.fg).not.toBe(theme.accent)
+    }
   })
 })
 
 describe('syntax styles follow the palette', () => {
   it('rebuilds the prose scopes when a colour moves', () => {
-    expect(proseScopes()['markup.raw']).toEqual({ fg: '#d97757' })
-    applyPalette({ codeInline: '#00ff00' })
-    expect(proseScopes()['markup.raw']).toEqual({ fg: '#00ff00' })
+    expect(proseScopes().conceal).toEqual({ fg: '#3a3532' })
+    applyPalette({ rule: '#00ff00' })
+    expect(proseScopes().conceal).toEqual({ fg: '#00ff00' })
   })
 
   it('drops the compiled prose style, so <markdown> is handed a new one', () => {

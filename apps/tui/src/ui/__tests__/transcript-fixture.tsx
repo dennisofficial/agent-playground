@@ -17,6 +17,10 @@ export const HEIGHT = 30
 
 export const CWD = '/Users/dennis/Developer/atlas'
 
+export const HOME = '/Users/dennis'
+
+export const MODEL_ID = 'claude-opus-5'
+
 const LONG_REPLY = [
   '## What I found',
   '',
@@ -139,6 +143,7 @@ export function transcript(args: {
   width: number
   turn?: TurnClock
   anchorKey?: string
+  onRetry?: () => void
 }): React.ReactNode {
   return (
     <Transcript
@@ -146,8 +151,11 @@ export function transcript(args: {
       width={args.width}
       now={NOW}
       cwd={CWD}
+      home={HOME}
+      modelId={MODEL_ID}
       {...(args.turn ? { turn: args.turn } : {})}
       {...(args.anchorKey ? { anchorKey: args.anchorKey } : {})}
+      {...(args.onRetry ? { onRetry: args.onRetry } : {})}
     />
   )
 }

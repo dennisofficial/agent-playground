@@ -2,6 +2,7 @@ import { useRenderer } from '@opentui/react'
 import React, { useEffect, useRef, useState } from 'react'
 
 import { copyToClipboard } from '../clipboard'
+import { useClickRegion } from '../hooks/use-click-region'
 import { glyph, theme } from '../theme'
 
 const CONFIRM_MS = 1500
@@ -17,12 +18,11 @@ export const COPY_BUTTON_WIDTH =
 
 export function CopyButton(props: {
   text: string
-  pad?: string
+  bg?: string
   revealed?: boolean
 }): React.ReactNode {
   const renderer = useRenderer()
   const [state, setState] = useState<keyof typeof LABELS>('idle')
-  const [hovered, setHovered] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
@@ -37,22 +37,26 @@ export function CopyButton(props: {
     timer.current = setTimeout(() => setState('idle'), CONFIRM_MS)
   }
 
+  const { handlers, hovered } = useClickRegion(handleCopy)
+
   const fg = restingColour({ state, hovered })
 
   const shown = (props.revealed ?? true) || state !== 'idle'
   const label = shown ? ` ${LABELS[state]} ` : ''
 
   return (
-    <box flexDirection="row" width={COPY_BUTTON_WIDTH} flexShrink={0}>
-      <text fg={theme.dim}>
-        {(props.pad ?? ' ').repeat(Math.max(0, COPY_BUTTON_WIDTH - label.length))}
-      </text>
+    <box
+      flexDirection="row"
+      justifyContent="flex-end"
+      width={COPY_BUTTON_WIDTH}
+      flexShrink={0}
+    >
       {shown ? (
         <text
           fg={fg}
-          onMouseDown={handleCopy}
-          onMouseOver={() => setHovered(true)}
-          onMouseOut={() => setHovered(false)}
+          selectable={false}
+          {...(props.bg === undefined ? {} : { bg: props.bg })}
+          {...handlers}
         >
           {label}
         </text>

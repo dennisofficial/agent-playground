@@ -11,6 +11,13 @@ await grammarsReady()
 
 const FENCE = ['```ts', 'const answer = 42;', '```'].join('\n')
 
+/** The fence's header row: full height, language on the left, the copy button on the right. */
+const headerRow = (setup: { captureCharFrame: () => string }): number =>
+  setup
+    .captureCharFrame()
+    .split('\n')
+    .findIndex((line) => line.includes(' ts'))
+
 function labelColour(frame: CapturedFrame, row: number): RGBA | undefined {
   return frame.lines[row]?.spans.find((span) => span.text.includes('copy'))?.fg
 }
@@ -48,26 +55,18 @@ function mount(args: { scrolling: boolean }) {
 }
 
 describe('CopyButton', () => {
-  it('copies on a click, and says so on the top border beside the language', async () => {
+  it('copies on a click, and says so in the header beside the language', async () => {
     const setup = await mount({ scrolling: true })
     try {
       await setup.flush()
-      const border = setup
-        .captureCharFrame()
-        .split('\n')
-        .findIndex((line) => line.includes('╭'))
-      await hover({
-        setup,
-        x: setup.captureCharFrame().split('\n')[border]?.indexOf('╭') ?? 0,
-        y: border,
-      })
+      const border = headerRow(setup)
+      await hover({ setup, x: 1, y: border })
 
       const lines = setup.captureCharFrame().split('\n')
       const row = lines.findIndex((line) => line.includes('copy'))
       expect(row).toBe(border)
 
-      expect(lines[row]).toContain('╭')
-      expect(lines[row]).toContain(' ts ')
+      expect(lines[row]).toContain(' ts')
 
       const column = lines[row]?.indexOf('⧉') ?? -1
       expect(column).toBeGreaterThanOrEqual(0)
@@ -80,7 +79,25 @@ describe('CopyButton', () => {
       // than always claiming success.
       const after = setup.captureCharFrame().split('\n')
       expect(after[row]?.includes('copied') || after[row]?.includes('blocked')).toBe(true)
-      expect(after[row]?.replace(/\s+$/, '').length).toBe(lines[row]?.replace(/\s+$/, '').length)
+    } finally {
+      await teardown(setup)
+    }
+  }, 30_000)
+
+  it('leaves no selection behind when its label reflows under the click', async () => {
+    const setup = await mount({ scrolling: false })
+    try {
+      await setup.flush()
+      const border = headerRow(setup)
+      await hover({ setup, x: 1, y: border })
+      const column = setup.captureCharFrame().split('\n')[border]?.indexOf('⧉') ?? -1
+
+      await setup.mockMouse.click(column, border)
+      await setup.flush()
+
+      expect(setup.renderer.hasSelection).toBe(false)
+      const after = setup.captureCharFrame().split('\n')[border]
+      expect(after?.includes('copied') || after?.includes('blocked')).toBe(true)
     } finally {
       await teardown(setup)
     }
@@ -90,10 +107,7 @@ describe('CopyButton', () => {
     const setup = await mount({ scrolling: false })
     try {
       await setup.flush()
-      const border = setup
-        .captureCharFrame()
-        .split('\n')
-        .findIndex((line) => line.includes('╭'))
+      const border = headerRow(setup)
       await hover({ setup, x: 1, y: border })
 
       const lines = setup.captureCharFrame().split('\n')
@@ -101,7 +115,7 @@ describe('CopyButton', () => {
       const column = lines[row]?.indexOf('⧉') ?? -1
       expect(column).toBeGreaterThanOrEqual(0)
 
-      expect(lines[row]?.trimEnd().endsWith('copy ─╮')).toBe(true)
+      expect(lines[row]?.trimEnd().endsWith('copy')).toBe(true)
 
       const resting = labelColour(setup.captureSpans(), row)
       expect(resting?.equals(parseColor(theme.dim))).toBe(true)
@@ -121,15 +135,15 @@ describe('CopyButton', () => {
     try {
       await setup.flush()
       const resting = setup.captureCharFrame().split('\n')
-      const border = resting.findIndex((line) => line.includes('╭'))
+      const border = headerRow(setup)
       expect(resting[border]).not.toContain('copy')
-      expect(resting[border]).toContain(' ts ')
+      expect(resting[border]).toContain(' ts')
 
       const code = resting.findIndex((line) => line.includes('const answer'))
       await hover({ setup, x: 4, y: code })
       const shown = setup.captureCharFrame().split('\n')
       expect(shown[border]).toContain('copy')
-      expect(shown[border]?.trimEnd().length).toBe(resting[border]?.trimEnd().length)
+      expect(shown[border]).toContain(' ts')
 
       await hover({ setup, x: 40, y: 11 })
       expect(setup.captureCharFrame().split('\n')[border]).not.toContain('copy')
@@ -142,10 +156,7 @@ describe('CopyButton', () => {
     const setup = await mount({ scrolling: false })
     try {
       await setup.flush()
-      const border = setup
-        .captureCharFrame()
-        .split('\n')
-        .findIndex((line) => line.includes('╭'))
+      const border = headerRow(setup)
       await hover({ setup, x: 1, y: border })
       const column = setup.captureCharFrame().split('\n')[border]?.indexOf('⧉') ?? -1
 

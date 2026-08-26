@@ -31,7 +31,7 @@ export async function bootAtlas(args: {
 }): Promise<number> {
   const config = resolveConfig({ ...args, defaultDatabaseUrl: devDatabaseUrl() })
 
-  const app = await composeAtlas({ config })
+  const app = await composeAtlas({ config, env: args.env })
 
   const refused = await credentialRefusal(app)
   if (refused !== null) {

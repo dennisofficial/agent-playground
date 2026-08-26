@@ -43,6 +43,7 @@ function view(args: { source: string; width: number; palette: DiffPalette }): Fe
     ),
     columns,
     rows: lines.length,
+    numbered: false,
   }
 }
 

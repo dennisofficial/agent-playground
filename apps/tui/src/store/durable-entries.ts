@@ -1,7 +1,8 @@
 import type { AssistantPart, Event, EventOfType } from '@dltech/atlas-core'
 
 import { modelEntries } from './model-entries'
-import { EAuthor, EEntryKind, type TranscriptEntry } from './transcript-model'
+import { toolGroups, type ToolGroup } from './tool-groups'
+import { EAuthor, EEntryKind, toolsRanEntry, type TranscriptEntry } from './transcript-model'
 
 type PartRun = { type: AssistantPart['type']; text: string }
 
@@ -30,12 +31,21 @@ function entriesOfAssistantEvent(event: EventOfType<'assistant-said'>): Transcri
 }
 
 export function durableEntries(events: readonly Event[]): TranscriptEntry[] {
+  const opened = new Map<string, ToolGroup>(
+    toolGroups(events).map((group) => [group.openedBy, group]),
+  )
+
   return events.flatMap((event) => {
     if (event.type === 'user-said') {
       return [{ kind: EEntryKind.OperatorSaid, author: EAuthor.Operator, key: event.id, text: event.text }]
     }
 
     if (event.type === 'assistant-said') return entriesOfAssistantEvent(event)
+
+    if (event.type === 'tool-called') {
+      const group = opened.get(event.callId)
+      return group === undefined ? [] : [toolsRanEntry(group)]
+    }
 
     return []
   })

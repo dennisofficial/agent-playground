@@ -4,12 +4,14 @@ export type FencedBlockView = {
   readonly node: React.ReactNode
   readonly columns: number
   readonly rows: number
+  readonly numbered?: boolean
 }
 
 export type FencedRenderArgs = {
   readonly source: string
   readonly language: string
   readonly width: number
+  readonly streaming: boolean
 }
 
 export type FencedRenderer = {

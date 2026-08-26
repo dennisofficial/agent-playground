@@ -22,8 +22,8 @@ const resolve = (args: {
   })
 
 describe('the launch configuration', () => {
-  it('defaults to the only model a subscription credential answered 200 for', () => {
-    expect(resolve({}).modelId).toBe('claude-haiku-4-5-20251001')
+  it('names no model unless the launch asked for one, so a remembered pick can answer', () => {
+    expect(resolve({}).modelId).toBeUndefined()
     expect(DEFAULT_MODEL_ID).toBe('claude-haiku-4-5-20251001')
   })
 
@@ -32,8 +32,8 @@ describe('the launch configuration', () => {
     expect(devDatabaseUrl()).not.toContain('harness.db')
   })
 
-  it('turns extended thinking on with a budget', () => {
-    expect(resolve({}).thinkingBudgetTokens).toBe(DEFAULT_THINKING_BUDGET_TOKENS)
+  it('names no thinking budget unless the environment asked for one', () => {
+    expect(resolve({}).thinkingBudgetTokens).toBeUndefined()
     expect(DEFAULT_THINKING_BUDGET_TOKENS).toBeGreaterThan(0)
   })
 
@@ -51,8 +51,8 @@ describe('the launch configuration', () => {
   })
 
   it('ignores a --model with no model after it', () => {
-    expect(resolve({ argv: ['--model'] }).modelId).toBe(DEFAULT_MODEL_ID)
-    expect(resolve({ argv: ['--model', '--new'] }).modelId).toBe(DEFAULT_MODEL_ID)
+    expect(resolve({ argv: ['--model'] }).modelId).toBeUndefined()
+    expect(resolve({ argv: ['--model', '--new'] }).modelId).toBeUndefined()
   })
 
   it('takes an explicit database url from the environment', () => {
@@ -62,12 +62,8 @@ describe('the launch configuration', () => {
   })
 
   it('ignores a thinking budget that is not a positive integer', () => {
-    expect(resolve({ env: { ATLAS_THINKING_BUDGET: 'lots' } }).thinkingBudgetTokens).toBe(
-      DEFAULT_THINKING_BUDGET_TOKENS,
-    )
-    expect(resolve({ env: { ATLAS_THINKING_BUDGET: '0' } }).thinkingBudgetTokens).toBe(
-      DEFAULT_THINKING_BUDGET_TOKENS,
-    )
+    expect(resolve({ env: { ATLAS_THINKING_BUDGET: 'lots' } }).thinkingBudgetTokens).toBeUndefined()
+    expect(resolve({ env: { ATLAS_THINKING_BUDGET: '0' } }).thinkingBudgetTokens).toBeUndefined()
     expect(resolve({ env: { ATLAS_THINKING_BUDGET: '4096' } }).thinkingBudgetTokens).toBe(4096)
   })
 

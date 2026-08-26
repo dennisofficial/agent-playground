@@ -1,10 +1,11 @@
 import React, { useCallback, useState } from 'react'
 
-import type { TranscriptModel } from '../../store'
+import { EEntryKind, type TranscriptModel } from '../../store'
 import { useTranscriptFollow } from '../hooks/use-transcript-follow'
-import { useProportionalThumb } from '../scrollbar-thumb'
-import { theme, TRANSCRIPT_PADDING } from '../theme'
+import { useHiddenVerticalScrollbar } from '../hide-scrollbar'
+import { TRANSCRIPT_PADDING } from '../theme'
 import { ErrorBlock } from './blocks/error-block'
+import { WelcomeBlock } from './blocks/welcome-block'
 import { EntryView } from './entry-view'
 import { JumpToBottom, NewDivider, UNSEEN_ANCHOR_ID } from './new-divider'
 import { WorkingLine } from './working-line'
@@ -23,35 +24,39 @@ export const IDLE_TURN: TurnClock = {
   completed: null,
 }
 
-const FAILURE_TITLE = 'The turn failed'
-
 const FAILURE_WITHOUT_A_REASON = 'The model reported no reason.'
-
-const EMPTY_HINT = 'Describe the work.'
 
 export function Transcript(props: {
   model: TranscriptModel
   width: number
   now: number
   cwd: string
+  home: string
+  modelId: string
   turn?: TurnClock
   anchorKey?: string | null
+  onRetry?: () => void
+  opened?: ReadonlySet<string>
+  onToggle?: (key: string) => void
 }): React.ReactNode {
   const { model } = props
   const turn = props.turn ?? IDLE_TURN
   const anchorKey = props.anchorKey ?? null
   const anchorIndex = model.entries.findIndex((entry) => entry.key === anchorKey)
   const follow = useTranscriptFollow({ anchorId: anchorIndex >= 0 ? UNSEEN_ANCHOR_ID : null })
-  const handleScroller = useProportionalThumb(follow.scroller)
+  const handleScroller = useHiddenVerticalScrollbar(follow.scroller)
 
-  const [opened, setOpened] = useState<ReadonlySet<string>>(() => new Set<string>())
-  const handleToggle = useCallback((key: string) => {
-    setOpened((current) => {
+  const [ownOpened, setOwnOpened] = useState<ReadonlySet<string>>(() => new Set<string>())
+  const handleOwnToggle = useCallback((key: string) => {
+    setOwnOpened((current) => {
       const next = new Set(current)
       if (!next.delete(key)) next.add(key)
       return next
     })
   }, [])
+
+  const opened = props.opened ?? ownOpened
+  const handleToggle = props.onToggle ?? handleOwnToggle
 
   return (
     <box flexDirection="column" flexGrow={1} flexShrink={1} flexBasis={0}>
@@ -78,26 +83,34 @@ export function Transcript(props: {
               width={props.width}
               expanded={opened.has(entry.key)}
               onToggle={handleToggle}
+              attached={model.entries[index + 1]?.kind === EEntryKind.ToolsRan}
             />
           </box>
         ))}
 
         {model.isEmpty && !model.streaming ? (
-          <box flexDirection="column" marginBottom={1}>
-            <text fg={theme.dim}>{props.cwd}</text>
-            <text> </text>
-            <text fg={theme.dim}>{EMPTY_HINT}</text>
-          </box>
+          <WelcomeBlock
+            cwd={props.cwd}
+            home={props.home}
+            modelId={props.modelId}
+          />
         ) : null}
 
         {model.failure ? (
           <ErrorBlock
-            title={FAILURE_TITLE}
-            detail={model.failure.message ?? FAILURE_WITHOUT_A_REASON}
+            message={model.failure.message ?? FAILURE_WITHOUT_A_REASON}
+            width={props.width}
+            {...(turn.completed === null
+              ? {}
+              : {
+                  durationMs: turn.completed.durationMs,
+                  outputTokens: turn.completed.outputTokens,
+                })}
+            {...(props.onRetry === undefined ? {} : { onRetry: props.onRetry })}
           />
         ) : null}
 
-        {model.streaming && turn.startedAt !== null ? (
+        {model.failure !== null ? null : model.streaming && turn.startedAt !== null ? (
           <box flexDirection="row" marginTop={1} marginBottom={1}>
             <WorkingLine
               running

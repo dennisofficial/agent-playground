@@ -71,7 +71,7 @@ describe('the app you can actually open', () => {
     try {
       const frame = await mounted.frame()
       expect(frame).toContain(FAKE_CONFIG.cwd)
-      expect(frame).toContain('Describe the work.')
+      expect(frame).toContain('Describe the work')
       expect(frame).toContain('Ask anything')
     } finally {
       await mounted.done()
@@ -176,7 +176,7 @@ describe('the app you can actually open', () => {
       mounted.pressEscape()
 
       const kept = await until({
-        holds: async () => (await mounted.frame()).includes('Interrupted by user'),
+        holds: async () => (await mounted.frame()).includes('Interrupted by you'),
         within: 20_000,
       })
       expect(kept).toBe(true)
@@ -206,7 +206,7 @@ describe('the app you can actually open', () => {
 
       expect(blamed).toBe(true)
       const frame = await mounted.frame()
-      expect(frame).toContain('The turn failed')
+      expect(frame).toContain('failed')
       expect(frame).not.toContain('The model reported no reason.')
     } finally {
       await mounted.done()

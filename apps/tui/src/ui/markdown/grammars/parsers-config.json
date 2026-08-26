@@ -103,6 +103,19 @@
       }
     },
     {
+      "filetype": "c",
+      "aliases": [
+        "h"
+      ],
+      "$comment": "The cpp entry already vendors this query as its base layer; this is the same query against C's own, much smaller grammar. Its first pattern is `(identifier) @variable`, so every name is coloured \u2014 that is upstream's choice, not a misconfiguration.",
+      "wasm": "https://cdn.jsdelivr.net/npm/tree-sitter-c@0.24.1/tree-sitter-c.wasm",
+      "queries": {
+        "highlights": [
+          "https://cdn.jsdelivr.net/npm/tree-sitter-c@0.24.1/queries/highlights.scm"
+        ]
+      }
+    },
+    {
       "filetype": "cpp",
       "aliases": [
         "c++"
@@ -166,6 +179,48 @@
       "queries": {
         "highlights": [
           "https://cdn.jsdelivr.net/npm/tree-sitter-html@0.23.2/queries/highlights.scm"
+        ]
+      }
+    },
+    {
+      "filetype": "php",
+      "aliases": [
+        "php5",
+        "php7",
+        "php8",
+        "phtml"
+      ],
+      "$comment": "tree-sitter-php ships two grammars: `php` opens in HTML and enters PHP at `<?php`, `php_only` assumes the whole file is PHP. A fenced block is written as a file, opening tag included, so `php` is the one that parses it.",
+      "wasm": "https://cdn.jsdelivr.net/npm/tree-sitter-php@0.24.2/tree-sitter-php.wasm",
+      "queries": {
+        "highlights": [
+          "https://cdn.jsdelivr.net/npm/tree-sitter-php@0.24.2/queries/highlights.scm"
+        ]
+      }
+    },
+    {
+      "filetype": "lua",
+      "aliases": [
+        "luau"
+      ],
+      "$comment": "49KB \u2014 an order of magnitude smaller than any other grammar here, because Lua's own is a small language. At that price the parse is strictly better than lexing it.",
+      "wasm": "https://cdn.jsdelivr.net/npm/@tree-sitter-grammars/tree-sitter-lua@0.4.1/tree-sitter-lua.wasm",
+      "queries": {
+        "highlights": [
+          "https://cdn.jsdelivr.net/npm/@tree-sitter-grammars/tree-sitter-lua@0.4.1/queries/highlights.scm"
+        ]
+      }
+    },
+    {
+      "filetype": "toml",
+      "aliases": [
+        "tml"
+      ],
+      "$comment": "24KB. The @tree-sitter-grammars build is the one with a wasm; plain tree-sitter-toml publishes queries only.",
+      "wasm": "https://cdn.jsdelivr.net/npm/@tree-sitter-grammars/tree-sitter-toml@0.7.0/tree-sitter-toml.wasm",
+      "queries": {
+        "highlights": [
+          "https://cdn.jsdelivr.net/npm/@tree-sitter-grammars/tree-sitter-toml@0.7.0/queries/highlights.scm"
         ]
       }
     }

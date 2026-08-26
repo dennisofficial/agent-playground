@@ -60,3 +60,4 @@ export function thinkingSummary(text: string): string {
       : `${Math.max(10, Math.round(tokens / 10) * 10)}`
   return `Thinking… (~${count} tokens)`
 }
+

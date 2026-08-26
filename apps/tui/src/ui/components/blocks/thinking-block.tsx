@@ -9,7 +9,7 @@ const NARROWEST_BAND = 24
 
 const BODY_INDENT = 2
 
-type Wash = { bg?: string }
+const INTERRUPTED = 'Interrupted by you'
 
 export function ThinkingBlock(props: {
   text: string
@@ -20,98 +20,83 @@ export function ThinkingBlock(props: {
   interrupted?: boolean
 }): React.ReactNode {
   const inner = Math.max(NARROWEST_BAND, props.width - TRANSCRIPT_INSET)
-  const { handlers, wash } = useClickRegion(props.streaming ? undefined : props.onToggle)
+  const { handlers, hovered } = useClickRegion(props.streaming ? undefined : props.onToggle)
 
   return (
-    <box flexDirection="column" marginBottom={1} {...handlers}>
+    <box flexDirection="column" marginBottom={1} flexShrink={0} {...handlers}>
       {props.streaming ? (
-        <LiveTail text={props.text} inner={inner} wash={wash} />
+        <LiveTail text={props.text} inner={inner} />
       ) : props.expanded ? (
-        <OpenedDocument text={props.text} inner={inner} wash={wash} />
+        <OpenedDocument text={props.text} inner={inner} />
       ) : (
-        <HeaderRow label={`${glyph.thinking} ${thinkingSummary(props.text)}`} inner={inner} wash={wash} />
+        <CollapsedRow text={props.text} inner={inner} hovered={hovered} />
       )}
-      {props.interrupted ? <text fg={theme.dim}> Interrupted by user</text> : null}
+      {props.interrupted ? <text fg={theme.hint}>{`  ${INTERRUPTED}`}</text> : null}
     </box>
   )
 }
 
-function HeaderRow(props: { label: string; inner: number; wash: Wash }): React.ReactNode {
+function CollapsedRow(props: { text: string; inner: number; hovered: boolean }): React.ReactNode {
   return (
     <text wrapMode="none" width={props.inner} flexShrink={0}>
-      <span fg={theme.dim} {...props.wash}>
-        {props.label}
+      <span fg={props.hovered ? theme.meta : theme.hint}>
+        {`${glyph.thinking} ${thinkingSummary(props.text)}`}
       </span>
-      <span {...props.wash}>{fill({ inner: props.inner, used: props.label.length })}</span>
     </text>
   )
 }
 
-function OpenedDocument(props: { text: string; inner: number; wash: Wash }): React.ReactNode {
-  const band = Math.max(NARROWEST_BAND - BODY_INDENT, props.inner - BODY_INDENT)
+function HeaderRow(props: { inner: number }): React.ReactNode {
+  return (
+    <text wrapMode="none" width={props.inner} flexShrink={0}>
+      <span fg={theme.hint}>{`${glyph.thinking} Thinking…`}</span>
+    </text>
+  )
+}
+
+function OpenedDocument(props: { text: string; inner: number }): React.ReactNode {
+  const band = Math.max(1, props.inner - BODY_INDENT)
+
   return (
     <>
-      <HeaderRow label={`${glyph.thinking} Thinking…`} inner={props.inner} wash={props.wash} />
+      <HeaderRow inner={props.inner} />
       <text> </text>
       <box
         flexDirection="column"
         width={props.inner}
         flexShrink={0}
         paddingLeft={BODY_INDENT}
-        {...(props.wash.bg === undefined ? {} : { backgroundColor: props.wash.bg })}
       >
-        <MarkdownView source={props.text} width={band} fg={theme.dim} {...props.wash} />
+        <MarkdownView source={props.text} width={band} fg={theme.hint} />
       </box>
     </>
   )
 }
 
-function LiveTail(props: { text: string; inner: number; wash: Wash }): React.ReactNode {
-  const band = Math.max(NARROWEST_BAND - BODY_INDENT, props.inner - BODY_INDENT)
+function LiveTail(props: { text: string; inner: number }): React.ReactNode {
+  const band = Math.max(1, props.inner - BODY_INDENT)
   const rows = props.text.split('\n').flatMap((line) => wrapWords({ text: line, width: band }))
   const view = tail({ items: rows, limit: THINKING_TAIL_LINES })
 
   return (
     <>
-      <HeaderRow label={`${glyph.thinking} Thinking…`} inner={props.inner} wash={props.wash} />
+      <HeaderRow inner={props.inner} />
       <text> </text>
-      {view.notice === null ? null : (
-        <BodyRow text={view.notice} inner={props.inner} wash={props.wash} />
-      )}
+      {view.notice === null ? null : <BodyRow text={view.notice} inner={props.inner} />}
       {view.shown.map((row, index) => (
-        <BodyRow
-          key={index}
-          text={row}
-          inner={props.inner}
-          wash={props.wash}
-          caret={index === view.shown.length - 1}
-        />
+        <BodyRow key={index} text={row} inner={props.inner} />
       ))}
     </>
   )
 }
 
-function BodyRow(props: {
-  text: string
-  inner: number
-  wash: Wash
-  caret?: boolean
-}): React.ReactNode {
-  const indent = ' '.repeat(BODY_INDENT)
+function BodyRow(props: { text: string; inner: number }): React.ReactNode {
   return (
     <text wrapMode="none" width={props.inner} flexShrink={0}>
-      <span fg={theme.dim} {...props.wash}>
-        {indent}
+      <span fg={theme.hint}>
+        {' '.repeat(BODY_INDENT)}
         {props.text}
       </span>
-      <span {...props.wash}>
-        {fill({ inner: props.inner, used: BODY_INDENT + props.text.length })}
-      </span>
-      {props.caret ? <span>{glyph.caret}</span> : null}
     </text>
   )
-}
-
-function fill(args: { inner: number; used: number }): string {
-  return ' '.repeat(Math.max(0, args.inner - args.used))
 }

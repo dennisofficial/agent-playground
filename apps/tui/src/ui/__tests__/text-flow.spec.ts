@@ -60,3 +60,4 @@ describe('summarising thinking', () => {
     expect(thinkingSummary('   ')).toBe('Thinking…')
   })
 })
+

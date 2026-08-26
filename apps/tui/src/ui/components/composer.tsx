@@ -3,12 +3,28 @@ import React, { useCallback, useLayoutEffect, useState } from 'react'
 
 import type { DraftControls } from '../hooks/use-draft'
 import { theme } from '../theme'
+import { Panel, PANEL_INSET, PANEL_PAD } from './panel'
 
 const DEFAULT_MAX_ROWS = 8
 
 export function composerRows(height: number): number {
   return Math.max(DEFAULT_MAX_ROWS, Math.floor(height / 2) - 2)
 }
+
+export enum EComposerTone {
+  Idle = 'idle',
+  Working = 'working',
+  Interrupting = 'interrupting',
+}
+
+export function composerTone(args: { working: boolean; interrupting: boolean }): EComposerTone {
+  if (args.interrupting) return EComposerTone.Interrupting
+  if (args.working) return EComposerTone.Working
+  return EComposerTone.Idle
+}
+
+const railColour = (tone: EComposerTone): string =>
+  tone === EComposerTone.Interrupting ? theme.warn : theme.accent
 
 /**
  * What Atlas adds to OpenTUI's own keymap. Bindings are looked up by an exact
@@ -27,17 +43,22 @@ const ATLAS_BINDINGS: KeyBinding[] = [
   { name: 'backspace', super: true, action: 'delete-to-line-start' },
 ]
 
-const CHROME_COLUMNS = 6
+const CHROME_COLUMNS = PANEL_INSET + PANEL_PAD
 
 const UNBOUNDED = 10_000
+
+const overflowBadge = (hidden: number): string =>
+  hidden === 1 ? '⋯ 1 more row' : `⋯ ${hidden} more rows`
 
 export function Composer(props: {
   draft: DraftControls
   width: number
+  tone?: EComposerTone
   placeholder?: string
   maxRows?: number
   focused?: boolean
 }): React.ReactNode {
+  const tone = props.tone ?? EComposerTone.Idle
   const maxRows = props.maxRows ?? DEFAULT_MAX_ROWS
   const [metrics, setMetrics] = useState({ rows: 1, total: 1 })
 
@@ -78,39 +99,36 @@ export function Composer(props: {
     measure()
   }, [editor, measure, sync])
 
-  return (
-    <box
-      flexDirection="column"
-      width={props.width}
-      flexShrink={0}
-      borderStyle="rounded"
-      borderColor={theme.dim}
-      paddingX={1}
-    >
-      <box flexDirection="row">
-        <text fg={theme.dim} flexShrink={0}>
-          {'> '}
-        </text>
-        <textarea
-          ref={editor}
-          initialValue={props.draft.initial}
-          focused={props.focused !== false}
-          flexGrow={1}
-          wrapMode="word"
-          height={metrics.rows}
-          textColor={theme.userFg}
-          cursorColor={theme.caretBg}
-          keyBindings={ATLAS_BINDINGS}
-          {...(props.placeholder === undefined ? {} : { placeholder: props.placeholder })}
-          placeholderColor={theme.dim}
-          onContentChange={handleChange}
-          onCursorChange={measure}
-        />
-      </box>
+  const hidden = metrics.total - metrics.rows
 
-      {metrics.total > metrics.rows ? (
-        <text fg={theme.dim}>{`  ⋯ ${metrics.total} rows, ${metrics.rows} shown`}</text>
-      ) : null}
-    </box>
+  return (
+    <Panel
+      width={props.width}
+      rail={railColour(tone)}
+      fill={theme.panelBg}
+      {...(hidden > 0
+        ? {
+            badge: (
+              <text fg={theme.hint} bg={theme.panelBg}>{` ${overflowBadge(hidden)} `}</text>
+            ),
+          }
+        : {})}
+    >
+      <textarea
+        ref={editor}
+        initialValue={props.draft.initial}
+        focused={props.focused !== false}
+        flexGrow={1}
+        wrapMode="word"
+        height={metrics.rows}
+        textColor={theme.userFg}
+        cursorColor={theme.caretBg}
+        keyBindings={ATLAS_BINDINGS}
+        {...(props.placeholder === undefined ? {} : { placeholder: props.placeholder })}
+        placeholderColor={theme.hint}
+        onContentChange={handleChange}
+        onCursorChange={measure}
+      />
+    </Panel>
   )
 }

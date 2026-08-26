@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import { segmentMarkdown } from '../segment'
+import { EFenceState, segmentMarkdown, steadySegments } from '../segment'
 
 describe('segmentMarkdown', () => {
   it('hands prose across verbatim, never reflowed or re-rendered', () => {
@@ -24,13 +24,27 @@ describe('segmentMarkdown', () => {
       kind: 'prose',
       text: '## A heading\n\nProse with `code` and a [link](https://example.com).\n\n',
     })
-    expect(segments[1]).toEqual({ kind: 'fence', language: 'ts', source: 'const x = 1;' })
+    expect(segments[1]).toEqual({
+      kind: 'fence',
+      language: 'ts',
+      filename: '',
+      source: 'const x = 1;',
+      state: EFenceState.Closed,
+    })
     expect(segments[2]).toEqual({ kind: 'prose', text: '\n\nTrailing prose.\n' })
   })
 
   it('pulls a top-level fence out with its language lowercased', () => {
     const segments = segmentMarkdown('```TypeScript\nconst x = 1;\n```')
-    expect(segments).toEqual([{ kind: 'fence', language: 'typescript', source: 'const x = 1;' }])
+    expect(segments).toEqual([
+      {
+        kind: 'fence',
+        language: 'typescript',
+        filename: '',
+        source: 'const x = 1;',
+        state: EFenceState.Closed,
+      },
+    ])
   })
 
   it('takes only the first word of an info string as the language', () => {
@@ -42,7 +56,9 @@ describe('segmentMarkdown', () => {
     expect(segmentMarkdown('```\nplain\n```')[0]).toEqual({
       kind: 'fence',
       language: '',
+      filename: '',
       source: 'plain',
+      state: EFenceState.Closed,
     })
   })
 
@@ -52,7 +68,9 @@ describe('segmentMarkdown', () => {
     expect(segmentMarkdown('    indented code\n')[0]).toEqual({
       kind: 'fence',
       language: '',
+      filename: '',
       source: 'indented code',
+      state: EFenceState.Closed,
     })
   })
 
@@ -78,5 +96,62 @@ describe('segmentMarkdown', () => {
 
   it('returns nothing at all for an empty document', () => {
     expect(segmentMarkdown('')).toEqual([])
+  })
+})
+
+describe('steadySegments', () => {
+  const steady = (source: string) => steadySegments({ segments: segmentMarkdown(source) })
+
+  const shapeOf = (source: string) =>
+    steady(source).map((segment) =>
+      segment.kind === 'fence' ? `fence(${segment.language}):${segment.source}` : segment.kind,
+    )
+
+  it('withholds a fence whose info string is still being typed', () => {
+    expect(shapeOf('Here:\n\n``')).toEqual(['prose'])
+    expect(shapeOf('Here:\n\n```')).toEqual(['prose'])
+    expect(shapeOf('Here:\n\n```t')).toEqual(['prose'])
+    expect(shapeOf('Here:\n\n```ts')).toEqual(['prose'])
+  })
+
+  it('shows a fence only once its language is settled', () => {
+    expect(shapeOf('```ts\nconst a = 1\n')).toEqual(['fence(ts):const a = 1'])
+  })
+
+  it('withholds the line still being written, so the highlighter sees whole lines', () => {
+    expect(shapeOf('```ts\nconst a = 1\nconst b')).toEqual(['fence(ts):const a = 1'])
+    expect(shapeOf('```ts\nconst a = 1\nconst b = 2')).toEqual(['fence(ts):const a = 1'])
+    expect(shapeOf('```ts\nconst a = 1\nconst b = 2\n')).toEqual([
+      'fence(ts):const a = 1\nconst b = 2',
+    ])
+  })
+
+  it('holds an open fence back entirely until its first line lands', () => {
+    expect(shapeOf('```ts\n')).toEqual([])
+    expect(shapeOf('```ts\nconst')).toEqual([])
+  })
+
+  it('leaves a closed fence whole, last line and all', () => {
+    expect(shapeOf('```ts\nconst a = 1\nconst b = 2\n```')).toEqual([
+      'fence(ts):const a = 1\nconst b = 2',
+    ])
+  })
+
+  it('leaves a fence that is no longer the trailing segment alone', () => {
+    expect(shapeOf('```ts\nconst a = 1\n```\n\nAnd then.')).toEqual([
+      'fence(ts):const a = 1',
+      'prose',
+    ])
+  })
+
+  it('touches nothing when the document ends in prose or a table', () => {
+    const table = ['| a | b |', '| --- | --- |', '| 1 | 2 |'].join('\n')
+    expect(shapeOf('just prose')).toEqual(['prose'])
+    expect(shapeOf(table)).toEqual(['table'])
+  })
+
+  it('recognises a tilde fence and a closer longer than its opener', () => {
+    expect(shapeOf('~~~ts\nconst a = 1\nconst b')).toEqual(['fence(ts):const a = 1'])
+    expect(shapeOf('```ts\nconst a = 1\n`````')).toEqual(['fence(ts):const a = 1'])
   })
 })

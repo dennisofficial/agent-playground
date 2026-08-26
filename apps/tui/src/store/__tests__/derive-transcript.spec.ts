@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'bun:test'
 
+import { EStepEnd, type ChannelSignal, type StepId } from '@dltech/atlas-harness'
+
 import { deriveTranscript } from '../derive-transcript'
+import { EGroupState } from '../tool-groups'
 import { EAuthor, EEntryKind } from '../transcript-model'
-import { fromTheModel, log, reasoningDelta, started, stepOne, textDelta } from './fixture'
+import { ended, fromTheModel, log, reasoningDelta, refTo, started, stepOne, textDelta } from './fixture'
+import { called, callId, result } from './tool-fixture'
 
 describe('an empty branch', () => {
   it('derives a usable empty transcript rather than an error', () => {
@@ -102,6 +106,26 @@ describe('deltas in flight', () => {
     ])
   })
 
+  it('settles the thinking the moment the answer starts arriving after it', () => {
+    const thinkingAlone = deriveTranscript({
+      events: [],
+      signals: [started(stepOne), reasoningDelta({ stepId: stepOne, blockId: 'r1', text: 'hmm' })],
+    })
+    expect(fromTheModel(thinkingAlone).at(-1)?.streaming).toBe(true)
+
+    const answered = deriveTranscript({
+      events: [],
+      signals: [
+        started(stepOne),
+        reasoningDelta({ stepId: stepOne, blockId: 'r1', text: 'hmm' }),
+        textDelta({ stepId: stepOne, blockId: 't1', text: 'yes' }),
+      ],
+    })
+
+    expect(fromTheModel(answered).map((entry) => entry.streaming)).toEqual([false, true])
+    expect(answered.streaming).toBe(true)
+  })
+
   it('is streaming from the moment a step starts, before any delta arrives', () => {
     const model = deriveTranscript({ events: [], signals: [started(stepOne)] })
 
@@ -111,3 +135,171 @@ describe('deltas in flight', () => {
   })
 })
 
+const toolCall = (args: { stepId: StepId; n: number; name: string }): ChannelSignal => ({
+  type: 'chunk',
+  stepId: args.stepId,
+  chunk: { type: 'tool-call', callId: callId(args.n), name: args.name, input: {} },
+})
+
+const shapeOf = (model: ReturnType<typeof deriveTranscript>) =>
+  model.entries.map((entry) => [entry.kind, entry.text] as const)
+
+describe('tool calls in the transcript', () => {
+  it('stands the group where it ran, between the sentence before it and the one after', () => {
+    const events = log([
+      { type: 'user-said', text: 'find the loop' },
+      { type: 'assistant-said', parts: [{ type: 'text', text: 'Looking.' }] },
+      called({ n: 1, name: 'read' }),
+      result({ n: 1, name: 'read' }),
+      called({ n: 2, name: 'read' }),
+      result({ n: 2, name: 'read' }),
+      { type: 'assistant-said', parts: [{ type: 'text', text: 'It lives in run-turn.' }] },
+    ])
+
+    expect(shapeOf(deriveTranscript({ events, signals: [] }))).toEqual([
+      [EEntryKind.OperatorSaid, 'find the loop'],
+      [EEntryKind.ModelSaid, 'Looking.'],
+      [EEntryKind.ToolsRan, 'Read 2 files'],
+      [EEntryKind.ModelSaid, 'It lives in run-turn.'],
+    ])
+  })
+
+  it('draws one entry for the group, not one per call', () => {
+    const events = log([
+      called({ n: 1, name: 'read' }),
+      called({ n: 2, name: 'read' }),
+      called({ n: 3, name: 'read' }),
+      result({ n: 1, name: 'read' }),
+      result({ n: 2, name: 'read' }),
+      result({ n: 3, name: 'read' }),
+    ])
+
+    const entries = deriveTranscript({ events, signals: [] }).entries
+    expect(entries.length).toBe(1)
+    expect(entries[0]?.kind).toBe(EEntryKind.ToolsRan)
+  })
+
+  it('keys the entry off the call that opened the group, so every entry stays distinct', () => {
+    const events = log([
+      called({ n: 1, name: 'read' }),
+      called({ n: 2, name: 'bash' }),
+      called({ n: 3, name: 'read' }),
+    ])
+
+    const keys = deriveTranscript({ events, signals: [] }).entries.map((entry) => entry.key)
+    expect(new Set(keys).size).toBe(keys.length)
+  })
+})
+
+describe('a tool call that has only been streamed', () => {
+  it('renders before any durable event exists for it', () => {
+    const signals = [
+      started(stepOne),
+      textDelta({ stepId: stepOne, blockId: 't1', text: 'let me look' }),
+      toolCall({ stepId: stepOne, n: 1, name: 'read' }),
+    ]
+
+    const model = deriveTranscript({ events: [], signals })
+
+    expect(shapeOf(model)).toEqual([
+      [EEntryKind.ModelSaid, 'let me look'],
+      [EEntryKind.ToolsRan, 'Reading files'],
+    ])
+    expect(fromTheModel(model).at(-1)?.streaming).toBe(true)
+  })
+
+  it('sits after the text that streamed before it and before the text that followed', () => {
+    const signals = [
+      started(stepOne),
+      textDelta({ stepId: stepOne, blockId: 't1', text: 'first' }),
+      toolCall({ stepId: stepOne, n: 1, name: 'read' }),
+      textDelta({ stepId: stepOne, blockId: 't2', text: 'second' }),
+      toolCall({ stepId: stepOne, n: 2, name: 'read' }),
+    ]
+
+    expect(shapeOf(deriveTranscript({ events: [], signals }))).toEqual([
+      [EEntryKind.ModelSaid, 'first'],
+      [EEntryKind.ToolsRan, 'Reading files'],
+      [EEntryKind.ModelSaid, 'second'],
+      [EEntryKind.ToolsRan, 'Reading files'],
+    ])
+  })
+
+  it('absorbs a repeated chunk for the same call without counting it twice', () => {
+    const signals = [
+      started(stepOne),
+      toolCall({ stepId: stepOne, n: 1, name: 'read' }),
+      toolCall({ stepId: stepOne, n: 1, name: 'read' }),
+    ]
+
+    const entries = deriveTranscript({ events: [], signals }).entries
+    expect(entries.length).toBe(1)
+    expect(entries[0]?.text).toBe('Reading files')
+  })
+
+  it('hands over to the durable event without drawing the group twice', () => {
+    const durable = log([
+      { type: 'assistant-said', parts: [{ type: 'text', text: 'let me look' }] },
+      called({ n: 1, name: 'read' }),
+    ])
+    const reply = durable[0]
+    if (reply === undefined) throw new Error('fixture lost its reply')
+
+    const streamed = [
+      started(stepOne),
+      textDelta({ stepId: stepOne, blockId: 't1', text: 'let me look' }),
+      toolCall({ stepId: stepOne, n: 1, name: 'read' }),
+    ]
+    const endSignal = ended({ stepId: stepOne, end: EStepEnd.Completed, supersededBy: refTo(reply) })
+
+    const frames = [
+      { events: [], signals: streamed },
+      { events: [], signals: [...streamed, endSignal] },
+      { events: durable, signals: [...streamed, endSignal] },
+      { events: durable, signals: [] },
+    ]
+
+    const once: (readonly [EEntryKind, string])[] = [
+      [EEntryKind.ModelSaid, 'let me look'],
+      [EEntryKind.ToolsRan, 'Reading files'],
+    ]
+
+    expect(frames.map((frame) => shapeOf(deriveTranscript(frame)))).toEqual([
+      once,
+      once,
+      once,
+      once,
+    ])
+  })
+
+  it('drops the streamed group with nothing replacing it when the step committed nothing', () => {
+    const signals = [
+      started(stepOne),
+      toolCall({ stepId: stepOne, n: 1, name: 'read' }),
+      ended({ stepId: stepOne, end: EStepEnd.Completed, supersededBy: null }),
+    ]
+
+    expect(deriveTranscript({ events: [], signals }).entries).toEqual([])
+  })
+
+  it('keeps the same key across the handoff, so the row is never remounted', () => {
+    const durable = log([called({ n: 1, name: 'read' })])
+    const streamed = [started(stepOne), toolCall({ stepId: stepOne, n: 1, name: 'read' })]
+
+    const live = deriveTranscript({ events: [], signals: streamed }).entries[0]
+    const held = deriveTranscript({ events: durable, signals: [] }).entries[0]
+
+    expect(live?.key).toBe(held?.key)
+    expect(held?.kind).toBe(EEntryKind.ToolsRan)
+  })
+
+  it('is still live once the durable call exists but its result does not', () => {
+    const events = log([called({ n: 1, name: 'bash' })])
+    const entry = deriveTranscript({ events, signals: [] }).entries[0]
+
+    expect(entry?.kind).toBe(EEntryKind.ToolsRan)
+    if (entry?.kind !== EEntryKind.ToolsRan) throw new Error('the group was not projected')
+    expect(entry.group.state).toBe(EGroupState.Live)
+    expect(entry.streaming).toBe(true)
+  })
+})

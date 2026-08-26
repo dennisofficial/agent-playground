@@ -1,9 +1,23 @@
-import type { ScrollBoxRenderable } from '@opentui/core'
+import { parseColor, type ScrollBoxRenderable } from '@opentui/core'
 import { testRender } from '@opentui/react/test-utils'
 import { describe, expect, it } from 'bun:test'
 import React, { act } from 'react'
 
-import { CONTENT_PADDING } from '../fenced-block'
+import {
+  PANEL_BOTTOM_EDGE,
+  PANEL_TOP_EDGE,
+  RAIL,
+  RAIL_HEAD,
+  RAIL_TAIL,
+} from '../../borders'
+import { PANEL_INSET } from '../../components/panel'
+import {
+  applyBlockDensity,
+  EBlockDensity,
+  SHIPPED_DENSITY,
+} from '../../density-store'
+import { theme } from '../../theme'
+import { CONTENT_PADDING, gutterWidth } from '../fenced-block'
 import { MarkdownView } from '../markdown-view'
 import { grammarsReady, teardown } from './harness'
 
@@ -12,12 +26,12 @@ await grammarsReady()
 const WIDTH = 60
 const HEIGHT = 20
 
-const WIDE_FENCE = [
-  '```ts',
-  `const wide = ${"'x'".repeat(40)};`,
-  'const last = 2;',
-  '```',
-].join('\n')
+const WIDE_CODE = [`const wide = ${"'x'".repeat(40)};`, 'const last = 2;'].join('\n')
+
+const WIDE_FENCE = ['```ts', WIDE_CODE, '```'].join('\n')
+
+const CODE_INSET = CONTENT_PADDING + gutterWidth(WIDE_CODE)
+
 const FILLER = Array.from({ length: 25 }, (_, i) => `filler line ${i}`).join('\n\n')
 
 function rowOf(frame: string, needle: string): number {
@@ -26,8 +40,8 @@ function rowOf(frame: string, needle: string): number {
 
 function codeOf(line: string | undefined): string {
   if (!line) return ''
-  const border = line.indexOf('│')
-  return border < 0 ? line : line.slice(border + 1 + CONTENT_PADDING)
+  const rail = line.indexOf(RAIL)
+  return rail < 0 ? line : line.slice(rail + 1 + CODE_INSET)
 }
 
 async function mount(source: string) {
@@ -124,7 +138,7 @@ describe('FencedBlock', () => {
       const before = lines[codeRow]
       const scrollTop = outer()?.scrollTop
 
-      await setup.mockMouse.drag(3, barRow, 30, barRow)
+      await setup.mockMouse.drag((lines[barRow]?.indexOf('━') ?? 0) + 1, barRow, 30, barRow)
       await setup.flush()
 
       expect(setup.captureCharFrame().split('\n')[codeRow]).not.toBe(before)
@@ -204,13 +218,13 @@ describe('FencedBlock', () => {
   it('shrinks a short fence to its content instead of the viewport', async () => {
     const { setup } = await mount(['```ts', 'const x = 1;', '```'].join('\n'))
     try {
-      const top = rowOf(setup.captureCharFrame(), '╭')
+      const top = rowOf(setup.captureCharFrame(), ' ts')
       await hover({ setup, x: 1, y: top })
 
       const lines = setup.captureCharFrame().split('\n')
-      const bottom = lines.find((line) => line.includes('╰'))?.replace(/\s+$/, '') ?? ''
+      const bottom = lines.find((line) => line.includes(RAIL_TAIL))?.replace(/\s+$/, '') ?? ''
       expect(bottom.length).toBeLessThan(WIDTH / 2)
-      expect(lines[top]).toContain(' ts ')
+      expect(lines[top]).toContain(' ts')
       expect(lines[top]).toContain('copy')
     } finally {
       await teardown(setup)
@@ -220,11 +234,11 @@ describe('FencedBlock', () => {
   it('never shrinks below the header, which would cost it the copy button', async () => {
     const { setup } = await mount(['```ts', 'x', '```'].join('\n'))
     try {
-      const row = rowOf(setup.captureCharFrame(), '╭')
+      const row = rowOf(setup.captureCharFrame(), ' ts')
       await hover({ setup, x: 1, y: row })
 
       const top = setup.captureCharFrame().split('\n')[row] ?? ''
-      expect(top).toContain(' ts ')
+      expect(top).toContain(' ts')
       expect(top).toContain('copy')
     } finally {
       await teardown(setup)
@@ -246,13 +260,95 @@ describe('FencedBlock', () => {
     }
   }, 30_000)
 
+  it('opens on a half cell, bands the header, then seams into the code', async () => {
+    const { setup } = await mount(['```ts', 'const x = 1;', '```'].join('\n'))
+    try {
+      const rows = setup.captureCharFrame().split('\n')
+      const spans = setup.captureSpans()
+      const cellAt = (row: number) => {
+        let column = 0
+        for (const span of spans.lines[row]?.spans ?? []) {
+          for (const _char of span.text) {
+            if (column === PANEL_INSET) return span
+            column += 1
+          }
+        }
+        return undefined
+      }
+      const band = parseColor(theme.panelBand)
+      const fill = parseColor(theme.panelBg)
+
+      const header = rowOf(setup.captureCharFrame(), ' ts')
+      const code = rows.findIndex((line) => line.includes('const x = 1;'))
+      const tail = rows.findIndex((line) => line.startsWith(RAIL_TAIL))
+
+      expect(rows[header - 1]?.startsWith(RAIL_HEAD)).toBe(true)
+      expect(rows[header - 1]?.[PANEL_INSET]).toBe(PANEL_TOP_EDGE)
+      expect(cellAt(header - 1)?.fg.equals(band)).toBe(true)
+
+      expect(cellAt(header)?.bg.equals(band)).toBe(true)
+
+      expect(code - header).toBe(2)
+      expect(rows[header + 1]?.startsWith(RAIL)).toBe(true)
+      expect(rows[header + 1]?.[PANEL_INSET]).toBe(PANEL_BOTTOM_EDGE)
+      expect(cellAt(header + 1)?.fg.equals(band)).toBe(true)
+      expect(cellAt(header + 1)?.bg.equals(fill)).toBe(true)
+
+      expect(cellAt(code)?.bg.equals(fill)).toBe(true)
+      expect(cellAt(tail)?.fg.equals(fill)).toBe(true)
+    } finally {
+      await teardown(setup)
+    }
+  }, 30_000)
+
+  it('drops both caps and the seam when blocks are set compact', async () => {
+    applyBlockDensity(EBlockDensity.Compact)
+    try {
+      const { setup } = await mount(['```ts', 'const x = 1;', '```'].join('\n'))
+      try {
+        const rows = setup.captureCharFrame().split('\n')
+        const header = rowOf(setup.captureCharFrame(), ' ts')
+        const code = rows.findIndex((line) => line.includes('const x = 1;'))
+
+        expect(code - header).toBe(1)
+        expect(rows[header - 1]?.includes(PANEL_TOP_EDGE) ?? false).toBe(false)
+        expect(rows.some((line) => line.startsWith(RAIL_TAIL))).toBe(false)
+        expect(rows.some((line) => line.includes(PANEL_BOTTOM_EDGE))).toBe(false)
+      } finally {
+        await teardown(setup)
+      }
+    } finally {
+      applyBlockDensity(SHIPPED_DENSITY)
+    }
+  }, 30_000)
+
+  it('spends no band on a fence with nothing to name, and sets copy into its cap', async () => {
+    const { setup } = await mount('```\nplain text\n```')
+    try {
+      const rows = setup.captureCharFrame().split('\n')
+      const code = rows.findIndex((line) => line.includes('plain text'))
+
+      expect(rows[code - 1]?.startsWith(RAIL_HEAD)).toBe(true)
+      expect(rows[code - 1]?.includes(PANEL_TOP_EDGE)).toBe(true)
+      expect(rows[code + 1]?.startsWith(RAIL_TAIL)).toBe(true)
+      expect(rows[code - 1]).not.toContain('copy')
+
+      await hover({ setup, x: 4, y: code })
+
+      const hovered = setup.captureCharFrame().split('\n')
+      expect(hovered[code - 1]).toContain('copy')
+      expect(hovered[code]).toContain('plain text')
+    } finally {
+      await teardown(setup)
+    }
+  }, 30_000)
+
   it('falls back to plain text for an unlabelled fence, and labels its header with nothing', async () => {
     const { setup } = await mount('```\nno language here\n```')
     try {
       const lines = setup.captureCharFrame().split('\n')
       expect(lines.some((line) => line.includes('no language here'))).toBe(true)
-      const top = lines.find((line) => line.includes('╭'))
-      expect(top).not.toContain(' ts ')
+      expect(lines.some((line) => line.includes(' ts'))).toBe(false)
     } finally {
       await teardown(setup)
     }

@@ -27,8 +27,8 @@ export const buildAtlasCode = (): CodeTheme => ({
     quote: { fg: theme.dim, italic: true },
     listMarker: { fg: theme.dim },
     link: { fg: theme.link, underline: true },
-    rawInline: { fg: theme.codeInline },
-    strikethrough: { dim: true },
+    rawInline: { fg: theme.hover, bg: theme.userBg },
+    strikethrough: { fg: theme.hint },
   },
 
   diff: {

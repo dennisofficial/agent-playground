@@ -2,7 +2,7 @@ import { testRender } from '@opentui/react/test-utils'
 import { describe, expect, it } from 'bun:test'
 import React from 'react'
 
-import { CONTENT_PADDING } from '../fenced-block'
+import { CONTENT_PADDING, gutterWidth } from '../fenced-block'
 import { MarkdownView } from '../markdown-view'
 import { grammarsReady, teardown } from './harness'
 
@@ -23,7 +23,7 @@ const HEIGHT = 12
 const LINE = `export const wide: string = ${"'chunk'.concat(".repeat(12)}'end');`
 const FENCE = ['```ts', LINE, '```'].join('\n')
 
-const CELLS_BEFORE_CODE = 1 + CONTENT_PADDING
+const CELLS_BEFORE_CODE = 1 + CONTENT_PADDING + gutterWidth(LINE)
 
 const CELLS_AFTER_CODE = 8
 
@@ -31,14 +31,18 @@ type Spans = {
   lines: { spans: { text: string; fg?: { buffer?: Record<number, number> } }[] }[]
 }
 
+function fenceRow(setup: { captureCharFrame: () => string }): number {
+  return setup
+    .captureCharFrame()
+    .split('\n')
+    .findIndex((line) => /export|chunk|concat/.test(line))
+}
+
 function colouredCellsOfFenceRow(setup: {
   captureSpans: () => unknown
   captureCharFrame: () => string
 }): string[] {
-  const row = setup
-    .captureCharFrame()
-    .split('\n')
-    .findIndex((line) => /export|chunk|concat/.test(line))
+  const row = fenceRow(setup)
   const out: string[] = []
   for (const span of (setup.captureSpans() as Spans).lines[row]?.spans ?? []) {
     const fg = span.fg?.buffer ?? {}
@@ -62,7 +66,10 @@ async function pannedTo(args: { width: number; offset: number }): Promise<string
     await new Promise((resolve) => setTimeout(resolve, 1500))
     await setup.flush()
 
-    for (let i = 0; i < args.offset; i++) await setup.mockMouse.scroll(4, 2, 'right')
+    const row = fenceRow(setup)
+    for (let i = 0; i < args.offset; i++) {
+      await setup.mockMouse.scroll(CELLS_BEFORE_CODE + 2, row, 'right')
+    }
     await setup.flush()
     return colouredCellsOfFenceRow(setup)
   } finally {

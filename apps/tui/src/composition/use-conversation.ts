@@ -1,14 +1,19 @@
-import type { BranchId } from '@dltech/atlas-core'
-import { ETurnStatus } from '@dltech/atlas-harness'
+import {
+  contextTokens,
+  type BranchId,
+  type Event,
+  type ModelUsage,
+} from '@dltech/atlas-core'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 
-import { createConversationStore, type TranscriptModel } from '../store'
+import { createConversationStore, type SidebarModel, type TranscriptModel } from '../store'
 import type { TurnClock } from '../ui/components/transcript'
 import type { AtlasApp } from './compose'
 import type { OpenedConversation } from './open-conversation'
 import {
   clockReadableAt,
   IDLE_PROGRESS,
+  stoppageOf,
   transcriptOfTurn,
   turnAdvanced,
   turnInterrupting,
@@ -26,10 +31,13 @@ const messageOf = (error: unknown): string => (error instanceof Error ? error.me
 export type Conversation = {
   branchId: BranchId
   model: TranscriptModel
+  sidebar: SidebarModel
   turn: TurnClock
   now: number
   working: boolean
+  contextTokens: number
   handleSend: (text: string) => void
+  handleRetry: () => void
   handleInterrupt: () => void
   handleNewConversation: () => void
 }
@@ -37,12 +45,15 @@ export type Conversation = {
 export function useConversation(args: {
   app: AtlasApp
   opened: OpenedConversation
+  paceReveal: boolean
 }): Conversation {
-  const { app } = args
+  const { app, paceReveal } = args
   const [opened, setOpened] = useState<OpenedConversation>(args.opened)
   const [progress, setProgress] = useState<TurnProgress>(IDLE_PROGRESS)
   const [failure, setFailure] = useState<string | null>(null)
   const [working, setWorking] = useState(false)
+  const [events, setEvents] = useState<readonly Event[]>(args.opened.events)
+  const [reported, setReported] = useState<ModelUsage | null>(null)
   const abort = useRef<AbortController | null>(null)
 
   const store = useMemo(
@@ -51,16 +62,24 @@ export function useConversation(args: {
         channel: app.channel,
         branchId: opened.branchId,
         events: opened.events,
+        paceReveal,
       }),
-    [app.channel, opened],
+    [app.channel, paceReveal, opened],
   )
 
   useEffect(() => () => store.dispose(), [store])
 
+  const turn = progress.clock
+
+  useEffect(() => store.setTurn(turn), [store, turn])
+
   const derived = useSyncExternalStore(store.subscribe, store.getSnapshot)
+  const sidebar = useSyncExternalStore(store.subscribe, store.getSidebar)
 
   const refresh = useCallback(async () => {
-    store.setEvents(await app.log.read({ branchId: opened.branchId }))
+    const read: readonly Event[] = await app.log.read({ branchId: opened.branchId })
+    store.setEvents(read)
+    setEvents(read)
   }, [app.log, opened.branchId, store])
 
   useEffect(
@@ -69,6 +88,10 @@ export function useConversation(args: {
         branchId: opened.branchId,
         listener: (signal) => {
           setProgress((current) => turnAdvanced({ progress: current, signal }))
+          if (signal.type === 'chunk' && signal.chunk.type === 'finish') {
+            const usage = signal.chunk.usage
+            if (usage !== undefined) setReported(usage)
+          }
           if (signal.type === 'step-ended') void refresh()
         },
       }),
@@ -86,13 +109,8 @@ export function useConversation(args: {
     return () => clearInterval(timer)
   }, [streaming])
 
-  const handleSend = useCallback(
-    (text: string) => {
-      if (working) return
-
-      const said = text.trim()
-      if (said.length === 0) return
-
+  const drive = useCallback(
+    (drafts: readonly { type: 'user-said'; text: string }[]) => {
       const controller = new AbortController()
 
       abort.current = controller
@@ -102,17 +120,19 @@ export function useConversation(args: {
 
       void (async () => {
         try {
-          await app.log.append({
-            branchId: opened.branchId,
-            runId: app.ids.nextRunId(),
-            drafts: [{ type: 'user-said', text: said }],
-          })
-          await refresh()
+          if (drafts.length > 0) {
+            await app.log.append({
+              branchId: opened.branchId,
+              runId: app.ids.nextRunId(),
+              drafts,
+            })
+            await refresh()
+          }
           const outcome = await app.runner.runTurn({
             branchId: opened.branchId,
             signal: controller.signal,
           })
-          if (outcome.status === ETurnStatus.Failed) setFailure(outcome.message)
+          setFailure(stoppageOf(outcome))
         } catch (error) {
           setFailure(messageOf(error))
         } finally {
@@ -123,8 +143,29 @@ export function useConversation(args: {
         }
       })()
     },
-    [app, opened.branchId, refresh, working],
+    [app, opened.branchId, refresh],
   )
+
+  const handleSend = useCallback(
+    (text: string) => {
+      if (working) return
+
+      const said = text.trim()
+      if (said.length === 0) return
+
+      drive([{ type: 'user-said', text: said }])
+    },
+    [drive, working],
+  )
+
+  /**
+   * A failed turn leaves its events durable, so retrying is the same turn run again with nothing
+   * appended — the loop picks up from the last event rather than replaying what already landed.
+   */
+  const handleRetry = useCallback(() => {
+    if (working) return
+    drive([])
+  }, [drive, working])
 
   const handleInterrupt = useCallback(() => {
     const controller = abort.current
@@ -140,19 +181,26 @@ export function useConversation(args: {
     void app.branches.create({}).then((branch) => {
       setProgress(IDLE_PROGRESS)
       setFailure(null)
+      setReported(null)
+      setEvents([])
       setOpened({ branchId: branch.id, events: [] })
     })
   }, [app.branches, working])
+
+  const used = useMemo(() => contextTokens({ reported, events }), [reported, events])
 
   const model = transcriptOfTurn({ model: derived, working, failure })
 
   return {
     branchId: opened.branchId,
     model,
-    turn: progress.clock,
-    now: clockReadableAt({ now, clock: progress.clock }),
+    sidebar,
+    turn,
+    now: clockReadableAt({ now, clock: turn }),
     working,
+    contextTokens: used,
     handleSend,
+    handleRetry,
     handleInterrupt,
     handleNewConversation,
   }

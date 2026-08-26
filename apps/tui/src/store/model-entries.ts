@@ -8,12 +8,13 @@ export function modelEntries(args: {
   interruptedAtEnd: boolean
 }): TranscriptEntry[] {
   return args.runs.map((run, index) => {
+    const last = index === args.runs.length - 1
     const shared = {
       author: EAuthor.Model,
       key: run.key,
       text: run.text,
-      streaming: args.streaming,
-      interrupted: args.interruptedAtEnd && index === args.runs.length - 1,
+      streaming: args.streaming && last,
+      interrupted: args.interruptedAtEnd && last,
     } as const
 
     return run.isReasoning

@@ -9,6 +9,8 @@
   },
   "scripts": {
     "dev": "bun src/main.tsx",
+    "proto:shell": "bun prototype/shell.tsx",
+    "proto:round2": "bun prototype/round2.tsx",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "grammars:update": "bun scripts/update-grammars.ts",

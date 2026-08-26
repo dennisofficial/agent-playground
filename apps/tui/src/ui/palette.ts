@@ -2,11 +2,23 @@ export const ACCENT = '#d97757'
 
 export const CODE_BLUE = '#7cbdff'
 
+export type DiffTints = {
+  addBg: string
+  removeBg: string
+  wordBg: string
+  bandBg: string
+  gutterFg: string
+}
+
 export type Palette = {
+  appBg: string
   accent: string
   dim: string
   hover: string
+  bright: string
+  body: string
   rule: string
+  hint: string
   meta: string
   hoverBg: string
   error: string
@@ -20,6 +32,8 @@ export type Palette = {
   caretBg: string
   caretFg: string
   overlayBg: string
+  panelBg: string
+  panelBand: string
   code: string
   link: string
   codeInline: string
@@ -29,18 +43,23 @@ export type Palette = {
     external: string
     none: string
   }
+  diff: DiffTints
 }
 
 export const theme: Palette = {
+  appBg: '#282422',
   accent: ACCENT,
-  dim: 'gray',
+  dim: '#6b625c',
   hover: '#e6e0da',
+  bright: '#f0e9e3',
+  body: '#c8b5ad',
   rule: '#3a3532',
+  hint: '#6b625c',
   meta: '#8a8078',
   hoverBg: '#2b2724',
-  error: 'red',
-  warn: 'yellow',
-  ok: 'green',
+  error: '#e5534b',
+  warn: '#e3b341',
+  ok: '#57ab5a',
   okBright: '#7ee787',
   userBg: '#332e2a',
   userFg: '#f0e9e3',
@@ -49,6 +68,8 @@ export const theme: Palette = {
   caretBg: ACCENT,
   caretFg: '#241f1c',
   overlayBg: '#241f1c',
+  panelBg: '#1e1a17',
+  panelBand: '#241f1c',
   code: CODE_BLUE,
   link: CODE_BLUE,
   codeInline: ACCENT,
@@ -56,7 +77,18 @@ export const theme: Palette = {
     agent: ACCENT,
     yours: '#e3b341',
     external: '#b392f0',
-    none: 'gray',
+    none: '#6b625c',
+  },
+  /**
+   * A terminal cell has no alpha, so the design's `rgba(87,171,90,.13)` over `#1e1a17` is stored
+   * pre-composited against the panel ground it is specified over.
+   */
+  diff: {
+    addBg: '#252d20',
+    removeBg: '#322020',
+    wordBg: '#335030',
+    bandBg: '#241f1c',
+    gutterFg: '#8a8078',
   },
 }
 

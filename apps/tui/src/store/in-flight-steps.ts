@@ -1,11 +1,17 @@
 import { EBlockKind, type Chunk, type Event, type EventRef } from '@dltech/atlas-core'
 import { EStepEnd, type ChannelSignal, type StepId } from '@dltech/atlas-harness'
 
+import type { LiveToolCall } from './tool-groups'
+
 export type StepBlock = { id: string; kind: EBlockKind; text: string }
+
+export const runKey = (args: { stepId: StepId; kind: EBlockKind; id: string }): string =>
+  `${args.stepId}:${args.kind}:${args.id}`
 
 export type InFlightStep = {
   stepId: StepId
   blocks: StepBlock[]
+  calls: LiveToolCall[]
   end: EStepEnd | null
   supersededBy: EventRef | null
   errorMessage: string | null
@@ -14,6 +20,7 @@ export type InFlightStep = {
 const emptyStep = (stepId: StepId): InFlightStep => ({
   stepId,
   blocks: [],
+  calls: [],
   end: null,
   supersededBy: null,
   errorMessage: null,
@@ -48,6 +55,15 @@ function absorbChunk(args: { step: InFlightStep; chunk: Chunk }) {
       return
     case 'reasoning-delta':
       blockFor({ step, kind: EBlockKind.Reasoning, id: chunk.id }).text += chunk.text
+      return
+    case 'tool-call':
+      if (step.calls.some((call) => call.callId === chunk.callId)) return
+      step.calls.push({
+        callId: chunk.callId,
+        name: chunk.name,
+        input: chunk.input,
+        precededByBlocks: step.blocks.length,
+      })
       return
     default:
       return

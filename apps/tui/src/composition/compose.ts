@@ -1,7 +1,6 @@
 import { defaultRules, type CredentialPort, type EventLogPort, type IdPort } from '@dltech/atlas-core'
 import {
   buildHarness,
-  createAnthropicOauthModel,
   createDeltaChannel,
   createPublishingTurnRunner,
   createSecurityKeychainReader,
@@ -9,10 +8,15 @@ import {
   SystemClock,
   type BranchStorePort,
   type DeltaChannel,
+  type SettingsService,
   type TurnRunner,
 } from '@dltech/atlas-harness'
 
 import type { AtlasConfig } from './config'
+import { launchSelection, rememberSelection } from './model-preference'
+import { selectableModel, type ModelChoice } from './model-selection'
+import { bindSettings } from './settings-binding'
+import { bindTools } from './tool-binding'
 
 export type AtlasApp = {
   config: AtlasConfig
@@ -22,10 +26,15 @@ export type AtlasApp = {
   log: EventLogPort
   branches: BranchStorePort
   ids: IdPort
+  model: ModelChoice
+  settings: SettingsService
   close: () => Promise<void>
 }
 
-export async function composeAtlas(args: { config: AtlasConfig }): Promise<AtlasApp> {
+export async function composeAtlas(args: {
+  config: AtlasConfig
+  env: Record<string, string | undefined>
+}): Promise<AtlasApp> {
   const { config } = args
 
   const clock = new SystemClock()
@@ -35,27 +44,31 @@ export async function composeAtlas(args: { config: AtlasConfig }): Promise<Atlas
     ...(config.keychainService === undefined ? {} : { service: config.keychainService }),
   })
 
-  const harness = await buildHarness({
-    databaseUrl: config.databaseUrl,
-    clock,
-    model: createAnthropicOauthModel({
-      credentials,
-      modelId: config.modelId,
-      providerOptions: {
-        anthropic: { thinking: { type: 'enabled', budgetTokens: config.thinkingBudgetTokens } },
-      },
+  const settings = bindSettings({ env: args.env, cwd: config.cwd })
+
+  const model = selectableModel({
+    credentials,
+    initial: launchSelection({
+      requested: { modelId: config.modelId, thinkingBudgetTokens: config.thinkingBudgetTokens },
+      remembered: settings.snapshot().document,
     }),
+    remember: (selection) => rememberSelection({ settings, selection }),
   })
 
+  const harness = await buildHarness({ databaseUrl: config.databaseUrl, clock, model: model.model })
+
   const channel = createDeltaChannel()
+  const tools = bindTools({ root: config.cwd })
 
   return {
     config,
+    settings,
     credentials,
     channel,
     log: harness.log,
     branches: harness.branches,
     ids: harness.ids,
+    model,
     close: harness.close,
     runner: createPublishingTurnRunner({
       channel,
@@ -63,7 +76,9 @@ export async function composeAtlas(args: { config: AtlasConfig }): Promise<Atlas
         log: harness.log,
         model: harness.model,
         ids: harness.ids,
-        rules: defaultRules(),
+        rules: defaultRules({ root: config.cwd, tools: tools.declarations }),
+        tools: tools.declarations,
+        dispatch: tools.dispatch,
       },
     }),
   }

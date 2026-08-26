@@ -8,6 +8,14 @@ export const TRANSCRIPT_PADDING = 1
 
 export const TRANSCRIPT_INSET = 1 + TRANSCRIPT_PADDING
 
+export const SIDEBAR_WIDTH = 42
+
+export const SIDEBAR_GUTTER = 2
+
+export const SIDEBAR_MIN_TERMINAL_WIDTH = 120
+
+export const SIDE_BY_SIDE_MIN_TERMINAL_WIDTH = 140
+
 export function formatElapsed(ms: number): string {
   const seconds = Math.floor(ms / 1000)
   if (seconds < 60) return `${seconds}s`

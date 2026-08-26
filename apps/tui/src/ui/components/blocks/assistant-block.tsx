@@ -3,20 +3,25 @@ import React from 'react'
 import { MarkdownView } from '../../markdown/markdown-view'
 import { glyph, theme, TRANSCRIPT_INSET } from '../../theme'
 
-const GUTTER = 2
+const MARK_COLUMNS = 2
 
-const RESERVED = GUTTER + TRANSCRIPT_INSET
+const RESERVED = MARK_COLUMNS + TRANSCRIPT_INSET
+
+const INTERRUPTED = 'Interrupted by you'
 
 export function AssistantBlock(props: {
   text: string
   width: number
   streaming?: boolean
   interrupted?: boolean
+  attached?: boolean
 }): React.ReactNode {
   return (
-    <box flexDirection="column" marginBottom={1}>
+    <box flexDirection="column" marginBottom={props.attached === true ? 0 : 1} flexShrink={0}>
       <box flexDirection="row">
-        <text fg={theme.accent}>{glyph.block} </text>
+        <text fg={theme.accent} flexShrink={0}>
+          {`${glyph.block} `}
+        </text>
         <box flexDirection="column" flexGrow={1} flexShrink={1} flexBasis={0}>
           <MarkdownView
             source={props.text}
@@ -25,7 +30,7 @@ export function AssistantBlock(props: {
           />
         </box>
       </box>
-      {props.interrupted ? <text fg={theme.dim}> Interrupted by user</text> : null}
+      {props.interrupted ? <text fg={theme.hint}>{`  ${INTERRUPTED}`}</text> : null}
     </box>
   )
 }

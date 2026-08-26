@@ -99,7 +99,7 @@ describe('the markdown surface mounts', () => {
     }, 120_000)
   }
 
-  it('renders every document while streaming, caret and all', async () => {
+  it('renders every document while it is still streaming', async () => {
     for (const source of Object.values(DOCUMENTS)) {
       await expect(
         mount(<MarkdownView source={source} width={56} streaming />, 60),

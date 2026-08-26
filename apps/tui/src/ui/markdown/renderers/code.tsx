@@ -11,7 +11,16 @@ function highlightedView(args: FencedRenderArgs): FencedBlockView {
 
   return {
     node: (
+      // A CodeRenderable clears itself to plain text the instant `content` changes and only paints
+      // the highlight a round trip later, which reads as a flash on every keystroke of a streamed
+      // block. `streaming` with `drawUnstyledText` off takes the branch that leaves the previous
+      // styled buffer up until the new highlight lands instead — at the cost of drawing nothing at
+      // all until the FIRST highlight lands, which is why settled blocks keep the default.
+      // @opentui/core 0.4.5 assigns element properties in JSX attribute order, so both must be
+      // declared before `content`.
       <code
+        streaming={args.streaming}
+        drawUnstyledText={!args.streaming}
         content={args.source}
         filetype={filetype}
         syntaxStyle={codeSyntaxStyleFor(filetype)}

@@ -1,5 +1,6 @@
 import React from 'react'
 
+import { useClickRegion } from '../hooks/use-click-region'
 import { theme, TRANSCRIPT_INSET } from '../theme'
 
 export const UNSEEN_ANCHOR_ID = 'atlas-unseen-anchor'
@@ -28,7 +29,7 @@ export function NewDivider(props: { width: number }): React.ReactNode {
   )
 }
 
-const JUMP_LABEL = '⌄ jump to bottom · ctrl+b'
+const JUMP_LABEL = '⌄ jump to bottom'
 
 const JUMP_WIDTH = JUMP_LABEL.length + 2
 
@@ -39,6 +40,8 @@ const JUMP_WIDTH = JUMP_LABEL.length + 2
  */
 export function JumpToBottom(props: { width: number; onJump: () => void }): React.ReactNode {
   const left = Math.max(0, Math.floor((props.width - TRANSCRIPT_INSET - JUMP_WIDTH) / 2))
+  const { hovered, handlers } = useClickRegion(props.onJump)
+  const ground = hovered ? theme.hoverBg : theme.overlayBg
 
   return (
     <box
@@ -49,10 +52,10 @@ export function JumpToBottom(props: { width: number; onJump: () => void }): Reac
       flexDirection="row"
       paddingLeft={1}
       paddingRight={1}
-      backgroundColor={theme.overlayBg}
-      onMouseDown={props.onJump}
+      backgroundColor={ground}
+      {...handlers}
     >
-      <text fg={theme.hover} bg={theme.overlayBg}>
+      <text fg={hovered ? theme.bright : theme.hover} bg={ground}>
         {JUMP_LABEL}
       </text>
     </box>

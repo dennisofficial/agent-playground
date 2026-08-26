@@ -44,6 +44,10 @@ const bundledAssetLoaders: Record<string, () => Promise<FileImportModule>> = {
     import('./assets/rust/highlights.scm' as string, { with: { type: 'file' } }),
   'assets/rust/tree-sitter-rust.wasm': () =>
     import('./assets/rust/tree-sitter-rust.wasm' as string, { with: { type: 'file' } }),
+  'assets/c/highlights.scm': () =>
+    import('./assets/c/highlights.scm' as string, { with: { type: 'file' } }),
+  'assets/c/tree-sitter-c.wasm': () =>
+    import('./assets/c/tree-sitter-c.wasm' as string, { with: { type: 'file' } }),
   'assets/cpp/highlights.scm': () =>
     import('./assets/cpp/highlights.scm' as string, { with: { type: 'file' } }),
   'assets/cpp/tree-sitter-cpp.wasm': () =>
@@ -64,6 +68,18 @@ const bundledAssetLoaders: Record<string, () => Promise<FileImportModule>> = {
     import('./assets/html/highlights.scm' as string, { with: { type: 'file' } }),
   'assets/html/tree-sitter-html.wasm': () =>
     import('./assets/html/tree-sitter-html.wasm' as string, { with: { type: 'file' } }),
+  'assets/php/highlights.scm': () =>
+    import('./assets/php/highlights.scm' as string, { with: { type: 'file' } }),
+  'assets/php/tree-sitter-php.wasm': () =>
+    import('./assets/php/tree-sitter-php.wasm' as string, { with: { type: 'file' } }),
+  'assets/lua/highlights.scm': () =>
+    import('./assets/lua/highlights.scm' as string, { with: { type: 'file' } }),
+  'assets/lua/tree-sitter-lua.wasm': () =>
+    import('./assets/lua/tree-sitter-lua.wasm' as string, { with: { type: 'file' } }),
+  'assets/toml/highlights.scm': () =>
+    import('./assets/toml/highlights.scm' as string, { with: { type: 'file' } }),
+  'assets/toml/tree-sitter-toml.wasm': () =>
+    import('./assets/toml/tree-sitter-toml.wasm' as string, { with: { type: 'file' } }),
 }
 
 interface DefaultParserDescriptor {
@@ -144,6 +160,14 @@ const defaultParserDescriptors: readonly DefaultParserDescriptor[] = [
     wasm: 'assets/rust/tree-sitter-rust.wasm',
   },
   {
+    filetype: 'c',
+    aliases: ['h'],
+    queries: {
+      highlights: ['assets/c/highlights.scm'],
+    },
+    wasm: 'assets/c/tree-sitter-c.wasm',
+  },
+  {
     filetype: 'cpp',
     aliases: ['c++'],
     queries: {
@@ -181,6 +205,30 @@ const defaultParserDescriptors: readonly DefaultParserDescriptor[] = [
       highlights: ['assets/html/highlights.scm'],
     },
     wasm: 'assets/html/tree-sitter-html.wasm',
+  },
+  {
+    filetype: 'php',
+    aliases: ['php5', 'php7', 'php8', 'phtml'],
+    queries: {
+      highlights: ['assets/php/highlights.scm'],
+    },
+    wasm: 'assets/php/tree-sitter-php.wasm',
+  },
+  {
+    filetype: 'lua',
+    aliases: ['luau'],
+    queries: {
+      highlights: ['assets/lua/highlights.scm'],
+    },
+    wasm: 'assets/lua/tree-sitter-lua.wasm',
+  },
+  {
+    filetype: 'toml',
+    aliases: ['tml'],
+    queries: {
+      highlights: ['assets/toml/highlights.scm'],
+    },
+    wasm: 'assets/toml/tree-sitter-toml.wasm',
   },
 ]
 

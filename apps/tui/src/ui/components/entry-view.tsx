@@ -3,6 +3,7 @@ import React from 'react'
 import { EEntryKind, type TranscriptEntry } from '../../store'
 import { AssistantBlock } from './blocks/assistant-block'
 import { ThinkingBlock } from './blocks/thinking-block'
+import { ToolGroupBlock } from './blocks/tool-group-block'
 import { UserBlock } from './blocks/user-block'
 
 export function EntryView(props: {
@@ -10,6 +11,7 @@ export function EntryView(props: {
   width: number
   expanded?: boolean
   onToggle?: (key: string) => void
+  attached?: boolean
 }): React.ReactNode {
   const { entry, onToggle } = props
 
@@ -24,6 +26,7 @@ export function EntryView(props: {
           width={props.width}
           streaming={entry.streaming}
           interrupted={entry.interrupted}
+          {...(props.attached === undefined ? {} : { attached: props.attached })}
         />
       )
 
@@ -34,6 +37,16 @@ export function EntryView(props: {
           width={props.width}
           streaming={entry.streaming}
           interrupted={entry.interrupted}
+          expanded={props.expanded ?? false}
+          {...(onToggle ? { onToggle: () => onToggle(entry.key) } : {})}
+        />
+      )
+
+    case EEntryKind.ToolsRan:
+      return (
+        <ToolGroupBlock
+          group={entry.group}
+          width={props.width}
           expanded={props.expanded ?? false}
           {...(onToggle ? { onToggle: () => onToggle(entry.key) } : {})}
         />

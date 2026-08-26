@@ -2,15 +2,17 @@ import { describe, expect, it } from 'bun:test'
 import React from 'react'
 
 import { EMPTY_TRANSCRIPT, type TranscriptModel } from '../../store'
+import { RAIL, RAIL_HEAD, RAIL_TAIL } from '../borders'
 import { Composer } from '../components/composer'
 import { JumpToBottom, NewDivider } from '../components/new-divider'
 import type { TurnClock } from '../components/transcript'
 import { WorkingLine } from '../components/working-line'
 import { useDraft } from '../hooks/use-draft'
 import { grammarsReady } from '../markdown/__tests__/harness'
+import { deriveTranscript } from '../../store'
+import { called, clocked, result, said } from '../../store/__tests__/tool-fixture'
 import { glyph } from '../theme'
 import {
-  CWD,
   FAILED_SILENTLY,
   FAILED_WITH_A_REASON,
   FINISHED,
@@ -18,6 +20,7 @@ import {
   INTERRUPTED,
   INTERRUPTING,
   LAST_WORDS,
+  MODEL_ID,
   mount,
   PARTIAL_REPLY,
   RUNNING,
@@ -36,6 +39,8 @@ import {
  */
 
 await grammarsReady()
+
+const AT = '2026-08-26T12:00:00.000Z'
 
 const CASES: Record<string, { model: TranscriptModel; turn?: TurnClock; anchorKey?: string }> = {
   'a settled conversation': { model: SETTLED },
@@ -66,10 +71,13 @@ describe('what the transcript actually says', () => {
     expect(frame).toContain(LAST_WORDS)
   })
 
-  it('marks the operator and the model with different glyphs', async () => {
+  it('gives the operator a railed panel and leaves the model as prose', async () => {
     const frame = await frameOf(transcript({ model: SETTLED, width: 80 }), 80)
-    expect(frame).toContain(glyph.user)
-    expect(frame).toContain(glyph.block)
+    const rows = frame.split('\n')
+    expect(rows.some((row) => row.startsWith(RAIL_HEAD))).toBe(true)
+    expect(rows.some((row) => row.startsWith(RAIL_TAIL))).toBe(true)
+    expect(rows.some((row) => row.startsWith(`${RAIL}  ${LAST_WORDS}`))).toBe(false)
+    expect(rows.some((row) => row.startsWith(`${glyph.block} ${LAST_WORDS}`))).toBe(true)
   })
 
   it('keeps thinking visibly apart from the answer while it streams', async () => {
@@ -81,13 +89,53 @@ describe('what the transcript actually says', () => {
 
   it('renders a failure alongside the partial reply, never as silence', async () => {
     const named = await frameOf(transcript({ model: FAILED_WITH_A_REASON, width: 80 }), 80)
-    expect(named).toContain('The turn failed')
+    expect(named).toContain(`${glyph.failed} failed`)
     expect(named).toContain('overloaded')
     expect(named).toContain(PARTIAL_REPLY)
 
     const unnamed = await frameOf(transcript({ model: FAILED_SILENTLY, width: 80 }), 80)
-    expect(unnamed).toContain('The turn failed')
+    expect(unnamed).toContain(`${glyph.failed} failed`)
     expect(unnamed).toContain('partial')
+  })
+
+  it('offers the one key that gets the turn moving again, and only when it is wired', async () => {
+    const offered = await frameOf(
+      transcript({ model: FAILED_WITH_A_REASON, width: 80, onRetry: () => undefined }),
+      80,
+    )
+    expect(offered).toContain(`${glyph.retry} r`)
+    expect(offered).toContain('retry')
+
+    const bare = await frameOf(transcript({ model: FAILED_WITH_A_REASON, width: 80 }), 80)
+    expect(bare).not.toContain(`${glyph.retry} r`)
+  })
+
+  it('lets the failed slab carry the cost rather than repeating it in a working line', async () => {
+    const frame = await frameOf(
+      transcript({ model: FAILED_WITH_A_REASON, width: 80, turn: FINISHED }),
+      80,
+    )
+    expect(frame).not.toContain('Worked for')
+  })
+
+  it('attaches a tool group to the reply that asked for it, and spaces the groups apart', async () => {
+    const events = clocked([
+      { draft: said('Reading the pieces that already exist.'), at: AT },
+      { draft: called({ n: 1, name: 'read', input: { path: 'a.ts' } }), at: AT },
+      { draft: result({ n: 1, name: 'read', output: { lines: 10 } }), at: AT },
+      { draft: said('Editing in one pass.'), at: AT },
+      { draft: called({ n: 2, name: 'edit', input: { path: 'a.ts' } }), at: AT },
+      { draft: result({ n: 2, name: 'edit', output: { added: 4, removed: 1 } }), at: AT },
+    ])
+    const model = deriveTranscript({ events, signals: [] })
+    const rows = (await frameOf(transcript({ model, width: 100 }), 100)).split('\n')
+
+    const reply = rows.findIndex((row) => row.includes('Reading the pieces'))
+    const group = rows.findIndex((row) => row.includes('Read 1 file'))
+    expect(group).toBe(reply + 1)
+
+    const next = rows.findIndex((row) => row.includes('Editing in one pass'))
+    expect(rows[next - 1]?.trim()).toBe('')
   })
 
   it('rules off the first thing the operator has not seen', async () => {
@@ -95,10 +143,12 @@ describe('what the transcript actually says', () => {
     expect(frame).toContain(' new ')
   })
 
-  it('offers somewhere to start when there is nothing there yet', async () => {
+  it('names itself, where it is and what answers when there is nothing there yet', async () => {
     const frame = await frameOf(transcript({ model: EMPTY_TRANSCRIPT, width: 80 }), 80)
-    expect(frame).toContain(CWD)
-    expect(frame).toContain('Describe the work.')
+    expect(frame).toContain('atlas')
+    expect(frame).toContain('~/Developer/atlas')
+    expect(frame).toContain(MODEL_ID)
+    expect(frame).toContain('Describe the work')
   })
 })
 

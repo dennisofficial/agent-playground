@@ -1,8 +1,21 @@
 import { marked, type Tokens } from 'marked'
 
+export enum EFenceState {
+  Naming = 'naming',
+  Writing = 'writing',
+  Resting = 'resting',
+  Closed = 'closed',
+}
+
 export type MarkdownSegment =
   | { readonly kind: 'prose'; readonly text: string }
-  | { readonly kind: 'fence'; readonly language: string; readonly source: string }
+  | {
+      readonly kind: 'fence'
+      readonly language: string
+      readonly filename: string
+      readonly source: string
+      readonly state: EFenceState
+    }
   | { readonly kind: 'table'; readonly markdown: string }
 
 export function segmentMarkdown(source: string): readonly MarkdownSegment[] {
@@ -34,11 +47,57 @@ export function segmentMarkdown(source: string): readonly MarkdownSegment[] {
   return segments
 }
 
+/**
+ * A fence that is still arriving changes shape under the renderer: its info string types out one
+ * character at a time, so the language reads `t` then `ts`, and its last line is a fragment that
+ * parses differently from the line it becomes. Both make the highlighter throw away a good answer
+ * for a worse one. Hold the unsettled part back and it never renders at all.
+ */
+export function steadySegments(args: {
+  segments: readonly MarkdownSegment[]
+}): readonly MarkdownSegment[] {
+  const last = args.segments.at(-1)
+  if (last === undefined || last.kind !== 'fence' || last.state === EFenceState.Closed) {
+    return args.segments
+  }
+
+  const settled = args.segments.slice(0, -1)
+  if (last.state === EFenceState.Naming) return settled
+
+  const body = last.state === EFenceState.Resting ? last.source : wholeLinesOf(last.source)
+  return body.length === 0 ? settled : [...settled, { ...last, source: body }]
+}
+
+function wholeLinesOf(source: string): string {
+  const lastLineBreak = source.lastIndexOf('\n')
+  return lastLineBreak <= 0 ? '' : source.slice(0, lastLineBreak)
+}
+
+const FENCE_OPENER = /^ {0,3}(`{3,}|~{3,})/
+
 function fenceSegment(token: Tokens.Code): MarkdownSegment {
+  const info = token.lang?.trim().split(/\s+/) ?? []
   return {
     kind: 'fence',
-    language: token.lang?.trim().split(/\s+/)[0]?.toLowerCase() ?? '',
+    language: info[0]?.toLowerCase() ?? '',
+    filename: info[1] ?? '',
     // marked leaves a trailing newline on 4-space-indented blocks but not on backtick fences.
     source: token.text.replace(/\n$/, ''),
+    state: fenceState(token.raw),
   }
+}
+
+function fenceState(raw: string): EFenceState {
+  const opener = FENCE_OPENER.exec(raw)?.[1]
+  if (opener === undefined) return EFenceState.Closed
+  if (!raw.includes('\n')) return EFenceState.Naming
+
+  const lines = raw.trimEnd().split('\n')
+  const closer = lines.length > 1 ? (lines[lines.length - 1]?.trim() ?? '') : ''
+  const isClosingFence =
+    closer.length >= opener.length && closer === opener.charAt(0).repeat(closer.length)
+
+  if (isClosingFence) return EFenceState.Closed
+
+  return raw.endsWith('\n') ? EFenceState.Resting : EFenceState.Writing
 }

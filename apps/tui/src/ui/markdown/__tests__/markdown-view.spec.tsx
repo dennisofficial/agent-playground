@@ -105,7 +105,7 @@ describe('MarkdownView tables', () => {
     const { setup, outer } = await mount(`${WIDE_TABLE}\n\ntail prose`)
     try {
       const before = frameLines(setup.captureCharFrame())
-      const row = before.findIndex((line) => line.includes('Engine'))
+      const row = before.findIndex((line) => line.includes('ENGINE'))
       const scrollTop = outer()?.scrollTop
 
       await setup.mockMouse.scroll(10, row, 'right')
@@ -122,7 +122,7 @@ describe('MarkdownView tables', () => {
     const { setup, outer } = await mount(`${WIDE_TABLE}\n\ntail prose`)
     try {
       const before = frameLines(setup.captureCharFrame())
-      const row = before.findIndex((line) => line.includes('Engine'))
+      const row = before.findIndex((line) => line.includes('ENGINE'))
       const scrollTop = outer()?.scrollTop
 
       await setup.mockMouse.scroll(10, row, 'up', { modifiers: { alt: true } })
@@ -155,11 +155,41 @@ describe('MarkdownView tables', () => {
     }
   }, 30_000)
 
+  it('opens flush against whatever precedes it and closes with a row of air', async () => {
+    const { setup } = await mount(`lead prose\n\n${NARROW_TABLE}\n\n${NARROW_TABLE}\n\ntail prose`)
+    try {
+      const drawn = frameLines(setup.captureCharFrame())
+      const tops = drawn.flatMap((line, row) => (line.includes('┌') ? [row] : []))
+      const bottoms = drawn.flatMap((line, row) => (line.includes('└') ? [row] : []))
+
+      expect(tops).toHaveLength(2)
+      // The prose above spends no row on the gap; the row above the second table is the first
+      // table's own closing air, which is what keeps the two from reading as one.
+      expect(drawn[(tops[0] ?? 0) - 1]).toContain('lead prose')
+      expect(drawn[(tops[1] ?? 0) - 1]).toBe('')
+      for (const bottom of bottoms) expect(drawn[bottom + 1], `below row ${bottom}`).toBe('')
+    } finally {
+      await teardown(setup)
+    }
+  }, 30_000)
+
+  it('keeps a fence from spending its own row on the gap above a table', async () => {
+    const { setup } = await mount(`\`\`\`ts\nconst x = 1\n\`\`\`\n\n${NARROW_TABLE}`)
+    try {
+      const drawn = frameLines(setup.captureCharFrame())
+      const top = drawn.findIndex((line) => line.includes('┌'))
+      expect(top).toBeGreaterThan(0)
+      expect(drawn[top - 1]).toContain('▀')
+    } finally {
+      await teardown(setup)
+    }
+  }, 30_000)
+
   it('gives every cell a column of air, so the data is not flush against the rules', async () => {
     const { setup } = await mount(NARROW_TABLE)
     try {
-      const row = frameLines(setup.captureCharFrame()).find((line) => /│\s*a/.test(line))
-      expect(row?.trim()).toBe('│ a │ b │')
+      const row = frameLines(setup.captureCharFrame()).find((line) => /│\s*A/.test(line))
+      expect(row?.trim()).toBe('│ A │ B │')
     } finally {
       await teardown(setup)
     }
