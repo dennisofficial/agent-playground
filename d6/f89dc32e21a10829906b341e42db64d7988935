@@ -1,0 +1,64 @@
+packages/harness/src/loop/__tests__/builtin-turn.spec.ts
+  s_ed3588bb0efbeb::t_d5d5a9a7d1228b 133
+packages/harness/src/tools/builtin/bash.ts
+  s_ed3588bb0efbeb::t_a1bdbbf756fcb3 20-21,24,31,33,35-37,41-42,62-64,78-105,111,117,119,124,142-143,154,157-158,160-163,166-167,173-186,223,227,229,238,245,251-255,258-263
+packages/core/src/assembly/rules/__tests__/messages-from-events-pairing.spec.ts
+  s_ed3588bb0efbeb::t_eee7f2415c831a 3,193-226
+  s_ed3588bb0efbeb::t_f7ec1f11a57653 1-2,4-192,227-229
+packages/harness/src/tools/builtin/unified-diff.ts
+  s_ed3588bb0efbeb::t_90b72eaeefbf7b 1,5-6,11-12,52,64-89,111-114,128,132-137,139-140,145-146,157-159,163-164,170
+packages/core/src/assembly/rules/__tests__/messages-from-events.spec.ts
+  s_ed3588bb0efbeb::t_ec2c43262b0a88 58-64,66-68
+packages/harness/src/tools/builtin/file-text.ts
+  s_ed3588bb0efbeb::t_3862c7d060cf2b 43-58
+packages/harness/src/tools/builtin/read.ts
+  s_ed3588bb0efbeb::t_060bac9c7c1421 100
+packages/core/src/assembly/rules/__tests__/messages-from-events-output.spec.ts
+  s_ed3588bb0efbeb::t_b656060e50cf38 1-151
+packages/harness/src/loop/run-turn.ts
+  s_ed3588bb0efbeb::t_bfa4c292efcf9c 49,115,138,143,169
+  s_ed3588bb0efbeb::t_d2c83c042c7f93 5,17,48,68-73,99,117,156-159
+packages/harness/src/loop/__tests__/model-steps.spec.ts
+  s_ed3588bb0efbeb::t_ee6364d733a64d 1-152
+packages/harness/src/tools/builtin/grep.ts
+  s_ed3588bb0efbeb::t_48784b6036556c 5-6,17,27,150,167-177
+packages/core/src/assembly/rules/messages-from-events.ts
+  s_ed3588bb0efbeb::t_9a1be7e89054e6 41-53,70,73,75,78-80,83,85,87-88,96,101-102,107,112-113,117-139,145-152
+packages/core/src/assembly/__tests__/exchange-shape.spec.ts
+  s_ed3588bb0efbeb::t_31d180946bfd93 1-240
+packages/harness/src/hooks/__tests__/boundary.spec.ts
+  s_ed3588bb0efbeb::t_c51a1647d21651 187-216
+  s_ed3588bb0efbeb::t_7263db544d1139 1,175-185
+packages/harness/src/hooks/boundary.ts
+  s_ed3588bb0efbeb::t_e3d07cc9a4fbc5 88-109,115-116,120,124,128,131-134,136-145,148
+  s_ed3588bb0efbeb::t_0aab41a210b347 34-42
+  s_ed3588bb0efbeb::t_ee7d51dbaebf8e 146
+packages/harness/src/tools/builtin/write.ts
+  s_ed3588bb0efbeb::t_060bac9c7c1421 29
+packages/harness/src/tools/builtin/edit.ts
+  s_ed3588bb0efbeb::t_cc2d6ee94f5f40 29
+  s_ed3588bb0efbeb::t_060bac9c7c1421 124
+  s_ed3588bb0efbeb::t_794154e16d743f 77,79,90-94,96,100,104-111
+  s_ed3588bb0efbeb::t_1b8f310b5c4596 7-14
+  s_ed3588bb0efbeb::t_0595e7e7d01b4f 41-48
+packages/core/src/assembly/exchange-shape.ts
+  s_ed3588bb0efbeb::t_eccdcef0afaf8d 1-248
+packages/harness/src/tools/builtin/glob.ts
+  s_ed3588bb0efbeb::t_48784b6036556c 7-8,13,18,63
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "d6f89dc32e21a10829906b341e42db64d7988935",
+  "prompts": {},
+  "sessions": {
+    "s_ed3588bb0efbeb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b1f24252-ac33-4c97-9ba3-ca59d69b0a62",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
