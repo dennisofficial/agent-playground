@@ -37,6 +37,7 @@ type EventBody =
   | { type: 'assistant-said';     parts: AssistantPart[]; interrupted?: boolean }
   | { type: 'tool-called';        callId: string; name: string; input: unknown; ordinal: number }
   | { type: 'tool-result';        callId: string; name: string; output: unknown
+                                  modelText?: string
                                   error?: { message: string }; snapshotId?: string }
   | { type: 'tool-denied';        callId: string; name: string; reason: string }
   | { type: 'approval-requested'; callId: string; reason: string }
@@ -48,6 +49,14 @@ type EventBody =
 - **`tool-result.error` distinguishes a crash from a denial.** *Denied* means policy said no; a
   missing file is not a denial. Without this, assembly renders a crash to the model as a successful
   JSON result.
+- **`tool-result.modelText` is what the model reads; `output` is what the log and the UI read.** One
+  channel where two are needed: `edit` puts a unified diff in `output`, which is what gives
+  `core/diff` and the transcript's diff blocks a producer, and puts one sentence in `modelText`,
+  because the model authored the change and echoing the diff back is pure token waste. Adopted from
+  Claude Code, whose `ToolResult.data` is the structured domain object and whose
+  `mapToolResultToToolResultBlockParam` produces a separate, usually tiny, model-facing string.
+  `ToolOutcome` makes it **required** on success so no tool author defaults to dumping an internal
+  shape at the model; the event keeps it optional so historical events still parse.
 - **`tool-result.name` is duplicated deliberately.** The SDK requires `toolName` on a
   `ToolResultPart`, and joining back to `tool-called` for it produced an `?? 'unknown'` fallback that
   can emit a malformed prompt.
@@ -182,6 +191,67 @@ type ToolCall = { callId: string; name: string; input: unknown; effect: EToolEff
 
 Known gaps, accepted for now: a hook cannot fail the turn or annul a tool result, and hooks see one
 call at a time rather than a batch.
+
+**Implemented in slice 2.** `resolveBeforeTool` in `core/policy` is the severity resolution above:
+every hook is consulted, none short-circuits, deny > ask > allow, `dissenters` names every hook that
+returned Ask or Deny, and input threads sequentially so the winning Allow carries the last Allow's
+input. `orderHooks` in `core/hooks` is the stage-then-nudge-then-**name** ordering; the name tiebreak
+is not garnish, it is what stops two authors both picking nudge 50 and getting an ordering decided by
+array-literal position. `harness/tools/dispatch.ts` is the only caller of either, and it dispatches
+`BeforeTool` and `AfterTool` only — the other four phases stay typed and unwired.
+
+**`dissenters` is computed and currently discarded.** `tool-denied` carries only `reason`, so the
+"UI can say who blocked what" purpose is unmet until that event grows a field. Recorded so it reads
+as a known gap rather than an oversight.
+
+**Tool input is validated twice, and neither is redundant.** `dispatch` parses `call.input` against
+the declaration's schema *before* the `BeforeTool` chain, which turns a malformed call into one
+correctable `tool-result` and means a guard hook never does input archaeology. Each tool re-parses
+inside `invoke`, which is **structurally forced**: `ToolInvocation.input` is `unknown`, so parsing is
+the only route to typed input without a cast, and what reaches `invoke` is `outcome.input` from the
+winning Allow — the post-hook value dispatch never saw. So dispatch validates what the *model* sent
+and the tool validates what the *hooks* produced.
+
+**The AI SDK validates too, and its verdict is discarded.** `doParseToolCall` in `ai@7` parses the
+model's arguments against the declared schema and throws `InvalidToolInputError`, but
+`parseToolCall`'s outer catch swallows it and emits a normal `tool-call` part carrying
+`invalid: true`, `error`, and the raw input — or the raw *string*, when the arguments were not valid
+JSON. `harness/model/chunk-conversion.ts` then maps the valid and invalid branches identically. So
+Atlas's parse is not the first validation, it is the first **enforcement**, and the SDK is not a line
+of defence to lean on while discarding its output. Carrying `invalid`/`error` through `Chunk` would
+fail the call at the boundary instead of re-deriving the verdict; `repairToolCall` is also available
+and unset.
+
+## The assembled exchange is checked before it is sent
+
+`exchangeFaults(assembled): readonly ExchangeFault[]` in `core/assembly` reports the shapes the
+provider rejects. Empty means well-formed. Each fault carries the offending `messageIndex`, a
+`detail`, and the `origin` `EventRef` — so a rejection names the log event that produced it rather
+than a prompt position. `runTurn` calls it between `assemble` and the model step and fails the turn
+on any fault, because the request would be rejected anyway and a named fault beats an opaque 400 one
+round trip later.
+
+**The contract is deliberately narrow: every fault is a request the provider will reject.** That is
+what makes it safe to wire to a refusal, and it is why `toolName` mismatch between a result and its
+call is *not* checked — a genuine projection bug that will corrupt the TUI, but not a rejection.
+
+It was written against `@ai-sdk/anthropic`'s own converter, which corrected two invariants that
+looked obvious and were wrong:
+
+- **`groupIntoBlocks` maps a `tool` message into a `user` block**, and consecutive `user`/`tool`
+  messages append to the same open block. The provider never sees our message list; it sees merged
+  turns. So "no `tool` message except directly after an assistant turn" is a false positive —
+  `assistant[c0,c1] / tool[r0] / tool[r1]` merges into one accepted turn. The real property is that
+  within a merged turn no `tool_result` may follow a non-result part, which is why Anthropic requires
+  results at the beginning of a turn.
+- **`moveToolUseBlocksToEnd` hoists `tool_use` after text within an assistant message**, so
+  `assistant[call, text]` is provider-repaired and must **not** be flagged. There is a passing test
+  pinning that non-check so nobody adds it later.
+
+Also unchecked, deliberately: result *order* within a turn (Anthropic keys on `tool_use_id`, not
+position), blank `reasoning` parts and signature validity (provider-opaque, and a false positive in a
+validator is worse than a gap), and whether `ToolCallPart.input` is JSON-serialisable — a real 400
+class, but proving it needs the `unknown`-to-`JsonValue` validator this document refuses to invent.
 
 ## Settled: core owns its message type
 
