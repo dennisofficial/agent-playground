@@ -9,6 +9,8 @@
   ],
   "scripts": {
     "typecheck": "turbo run typecheck",
+    "proto:shell": "bun apps/tui/prototype/shell.tsx",
+    "proto:round2": "bun apps/tui/prototype/round2.tsx",
     "test": "turbo run test",
     "build": "turbo run build"
   },
