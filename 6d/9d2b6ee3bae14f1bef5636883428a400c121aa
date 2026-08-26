@@ -1,0 +1,19 @@
+packages/core/src/assembly/rules/__tests__/messages-from-events-fuzz.spec.ts
+  s_ed3588bb0efbeb::t_8aa7ef6425452b 1-77
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "6d9d2b6ee3bae14f1bef5636883428a400c121aa",
+  "prompts": {},
+  "sessions": {
+    "s_ed3588bb0efbeb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b1f24252-ac33-4c97-9ba3-ca59d69b0a62",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
