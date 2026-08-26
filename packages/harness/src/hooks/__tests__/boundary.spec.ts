@@ -2,6 +2,7 @@ import { mkdtemp, realpath, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import { beforeAll, describe, expect, it } from 'bun:test'
+import { z } from 'zod'
 
 import {
   EBeforeToolDecision,
@@ -10,8 +11,15 @@ import {
   toCallId,
   type BeforeTool,
   type ToolCall,
+  type ToolDeclaration,
 } from '@dltech/atlas-core'
 
+import { createBashTool } from '../../tools/builtin/bash'
+import { createEditTool } from '../../tools/builtin/edit'
+import { createGlobTool } from '../../tools/builtin/glob'
+import { createGrepTool } from '../../tools/builtin/grep'
+import { createReadTool } from '../../tools/builtin/read'
+import { createWriteTool } from '../../tools/builtin/write'
 import { createBoundaryHook } from '../boundary'
 import { createHookRegistry } from '../registry'
 
@@ -22,6 +30,23 @@ beforeAll(async () => {
   await symlink('/etc', join(root, 'link-to-etc'))
 })
 
+const undeclaredTool: ToolDeclaration = {
+  name: 'mcp-filesystem',
+  description: 'an MCP tool that never said which of its inputs hold paths',
+  effect: EToolEffect.Write,
+  inputSchema: z.strictObject({ path: z.string() }),
+}
+
+const toolsRootedAt = (workspace: string): readonly ToolDeclaration[] => [
+  createReadTool(),
+  createWriteTool(),
+  createEditTool(),
+  createBashTool({ root: workspace }),
+  createGrepTool({ root: workspace }),
+  createGlobTool({ root: workspace }),
+  undeclaredTool,
+]
+
 const callTo = ({ name, input }: { name: string; input: unknown }): ToolCall => ({
   callId: toCallId('call-1'),
   name,
@@ -29,8 +54,10 @@ const callTo = ({ name, input }: { name: string; input: unknown }): ToolCall => 
   effect: EToolEffect.Read,
 })
 
+const boundary = () => createBoundaryHook({ root, tools: toolsRootedAt(root) })
+
 const decide = async ({ name, input }: { name: string; input: unknown }) =>
-  createBoundaryHook({ root }).run({ call: callTo({ name, input }) })
+  boundary().run({ call: callTo({ name, input }) })
 
 describe('createBoundaryHook', () => {
   it('allows a read inside the workspace, passing the input through untouched', async () => {
@@ -89,16 +116,23 @@ describe('createBoundaryHook', () => {
     expect(outcome.decision).toBe(EBeforeToolDecision.Allow)
   })
 
-  it('allows bash, whose command this hook deliberately does not inspect', async () => {
+  it('allows bash, which declares no path fields and whose command this hook does not inspect', async () => {
     const outcome = await decide({ name: 'bash', input: { command: 'cat /etc/passwd' } })
 
     expect(outcome.decision).toBe(EBeforeToolDecision.Allow)
   })
 
-  it('allows a tool it does not recognise, paths being all it claims to police', async () => {
-    const outcome = await decide({ name: 'some-mcp-tool', input: { path: '/etc/passwd' } })
+  it('denies a tool it has no declaration for at all', async () => {
+    const outcome = await decide({ name: 'some-mcp-tool', input: { path: join(root, 'a.ts') } })
 
-    expect(outcome.decision).toBe(EBeforeToolDecision.Allow)
+    expect(outcome.decision).toBe(EBeforeToolDecision.Deny)
+  })
+
+  it('denies a tool that has not declared its path fields, even for a path inside the workspace', async () => {
+    const outcome = await decide({ name: 'mcp-filesystem', input: { path: join(root, 'a.ts') } })
+
+    expect(outcome.decision).toBe(EBeforeToolDecision.Deny)
+    expect(outcome).toMatchObject({ reason: expect.stringContaining('declare') })
   })
 
   it('allows grep and glob to omit their optional path, which means the root', async () => {
@@ -136,7 +170,7 @@ describe('createBoundaryHook', () => {
       beforeTool: [
         { name: 'approvalPolicy', order: { stage: EStage.Policy, nudge: 0 }, run: permissive },
         { name: 'anotherGuard', order: { stage: EStage.Guard, nudge: 10 }, run: permissive },
-        createBoundaryHook({ root }),
+        boundary(),
       ],
     })
 

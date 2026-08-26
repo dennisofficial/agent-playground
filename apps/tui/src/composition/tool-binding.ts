@@ -25,7 +25,9 @@ export function bindTools({ root }: { root: string }): ToolBinding {
     createGlobTool({ root }),
   ])
 
-  const hooks = createHookRegistry({ beforeTool: [createBoundaryHook({ root })] })
+  const hooks = createHookRegistry({
+    beforeTool: [createBoundaryHook({ root, tools: registry.declarations() })],
+  })
 
   return { dispatch: createDispatch({ registry, hooks }), declarations: registry.declarations() }
 }

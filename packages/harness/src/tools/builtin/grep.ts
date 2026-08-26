@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { EToolEffect, type ToolDefinition, type ToolOutcome } from '@dltech/atlas-core'
+import { EPathForm, EPathPresence, EToolEffect, type ToolDefinition, type ToolOutcome } from '@dltech/atlas-core'
 
 import { absolutePathSchema } from './file-text'
 
@@ -138,6 +138,7 @@ export function createGrepTool(args: { root: string }): ToolDefinition {
     description,
     effect: EToolEffect.Read,
     inputSchema,
+    pathFields: [{ field: 'path', presence: EPathPresence.Optional, form: EPathForm.Absolute }],
     invoke: async ({ input, signal }): Promise<ToolOutcome> => {
       const parsed = inputSchema.safeParse(input)
       if (!parsed.success) {

@@ -1,4 +1,5 @@
 export * from './registry'
+export * from './containment'
 export * from './dispatch'
 export * from './builtin/read'
 export * from './builtin/write'

@@ -1,79 +1,66 @@
-import { realpath } from 'node:fs/promises'
-import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
+import { isAbsolute, resolve } from 'node:path'
 
-import { EBeforeToolDecision, EStage, type BeforeTool, type ToolCall } from '@dltech/atlas-core'
+import { z } from 'zod'
 
+import {
+  EBeforeToolDecision,
+  EPathForm,
+  EPathPresence,
+  EStage,
+  type BeforeTool,
+  type DeclaredPathField,
+  type ToolCall,
+  type ToolDeclaration,
+} from '@dltech/atlas-core'
+
+import { createWorkspaceContainment } from '../tools/containment'
 import type { RegisteredHook } from './registry'
 
-enum EPathField {
-  Required = 'required',
-  Optional = 'optional',
-}
-
 enum EDenial {
+  Unregistered = 'unregistered',
+  Undeclared = 'undeclared',
   Escapes = 'escapes',
   Uncheckable = 'uncheckable',
   Malformed = 'malformed',
 }
 
-const PATH_FIELD_BY_TOOL: Readonly<Record<string, EPathField>> = {
-  read: EPathField.Required,
-  write: EPathField.Required,
-  edit: EPathField.Required,
-  grep: EPathField.Optional,
-  glob: EPathField.Optional,
-}
-
 type Denial =
+  | { kind: EDenial.Unregistered }
+  | { kind: EDenial.Undeclared }
   | { kind: EDenial.Escapes; path: string; resolvesTo?: string | undefined }
-  | { kind: EDenial.Uncheckable; found: string }
-  | { kind: EDenial.Malformed; path: string; fault: string }
+  | { kind: EDenial.Uncheckable; field: string; found: string }
+  | { kind: EDenial.Malformed; field: string; path: string; fault: string }
 
 const ABSENT = Symbol('absent')
 
-const SCAN_PATTERN_TOOLS: readonly string[] = ['glob']
+const inputRecordSchema = z.record(z.string(), z.unknown())
 
-function scanPatternOf({ call, input }: { call: ToolCall; input: unknown }): string | undefined {
-  if (!SCAN_PATTERN_TOOLS.includes(call.name)) return undefined
-  if (typeof input !== 'object' || input === null) return undefined
-  if (!('pattern' in input)) return undefined
-  return typeof input.pattern === 'string' ? input.pattern : undefined
+function inputFieldOf({ input, field }: { input: unknown; field: string }): unknown {
+  const parsed = inputRecordSchema.safeParse(input)
+  if (!parsed.success) return ABSENT
+
+  const value = parsed.data[field]
+  return value === undefined ? ABSENT : value
 }
 
-function pathFieldOf(input: unknown): unknown {
-  if (typeof input !== 'object' || input === null) return ABSENT
-  if (!('path' in input)) return ABSENT
-  return input.path === undefined ? ABSENT : input.path
-}
-
-function contains({ root, target }: { root: string; target: string }): boolean {
-  if (target === root) return true
-  return target.startsWith(root.endsWith(sep) ? root : `${root}${sep}`)
-}
-
-async function realpathOfNearestExisting(target: string): Promise<string> {
-  const missing: string[] = []
-  let current = target
-
-  for (;;) {
-    try {
-      return join(await realpath(current), ...missing)
-    } catch {
-      const parent = dirname(current)
-      if (parent === current) return target
-      missing.unshift(basename(current))
-      current = parent
-    }
-  }
-}
+const isUsableBase = (value: unknown): value is string =>
+  typeof value === 'string' && isAbsolute(value) && !value.includes('\0')
 
 function reasonFor({ call, denial, root }: { call: ToolCall; denial: Denial; root: string }): string {
+  if (denial.kind === EDenial.Unregistered) {
+    return `${call.name} is not a registered tool, so it cannot be checked against the workspace root`
+  }
+
+  if (denial.kind === EDenial.Undeclared) {
+    return `${call.name} has not declared which of its inputs hold filesystem paths, so it cannot be checked against the workspace root ${root}`
+  }
+
   if (denial.kind === EDenial.Uncheckable) {
-    return `${call.name} cannot be checked against the workspace root: its path is ${denial.found}`
+    return `${call.name} cannot be checked against the workspace root: its ${denial.field} is ${denial.found}`
   }
 
   if (denial.kind === EDenial.Malformed) {
-    return `${call.name} was given ${denial.fault}: ${denial.path}`
+    return `${call.name} was given a ${denial.field} ${denial.fault}: ${denial.path}`
   }
 
   const destination =
@@ -82,19 +69,19 @@ function reasonFor({ call, denial, root }: { call: ToolCall; denial: Denial; roo
   return `${call.name} would reach ${destination}, outside the workspace root ${root}`
 }
 
-export function createBoundaryHook(args: { root: string }): RegisteredHook<BeforeTool> {
-  const root = resolve(args.root)
-
-  const escapeeOf = async (candidate: string): Promise<string | undefined> => {
-    const [realRoot, realTarget] = await Promise.all([
-      realpathOfNearestExisting(root),
-      realpathOfNearestExisting(candidate),
-    ])
-    return contains({ root: realRoot, target: realTarget }) ? undefined : realTarget
-  }
+export function createBoundaryHook({
+  root: workspace,
+  tools,
+}: {
+  root: string
+  tools: readonly ToolDeclaration[]
+}): RegisteredHook<BeforeTool> {
+  const containment = createWorkspaceContainment({ root: workspace })
+  const root = containment.root
+  const pathFieldsByTool = new Map(tools.map((tool) => [tool.name, tool.pathFields]))
 
   const escapeDenial = async (args: { declared: string; candidate: string }): Promise<Denial | undefined> => {
-    const escapee = await escapeeOf(args.candidate)
+    const escapee = await containment.escapeeOf(args.candidate)
     if (escapee === undefined) return undefined
 
     return {
@@ -104,48 +91,76 @@ export function createBoundaryHook(args: { root: string }): RegisteredHook<Befor
     }
   }
 
-  const declaredPathDenial = async (
-    call: ToolCall,
-  ): Promise<{ denial: Denial } | { base: string } | undefined> => {
-    const requirement = PATH_FIELD_BY_TOOL[call.name]
-    if (requirement === undefined) return undefined
+  const fieldDenial = async (args: {
+    input: unknown
+    declared: DeclaredPathField
+    base: string
+  }): Promise<Denial | undefined> => {
+    const { field, presence, form } = args.declared
+    const value = inputFieldOf({ input: args.input, field })
 
-    const field = pathFieldOf(call.input)
-    if (field === ABSENT) {
-      if (requirement === EPathField.Optional) return { base: root }
-      return { denial: { kind: EDenial.Uncheckable, found: 'missing' } }
+    if (value === ABSENT) {
+      if (presence === EPathPresence.Optional) return undefined
+      return { kind: EDenial.Uncheckable, field, found: 'missing' }
     }
 
-    if (typeof field !== 'string') {
-      return { denial: { kind: EDenial.Uncheckable, found: `not a string but a ${typeof field}` } }
+    if (typeof value !== 'string') {
+      return { kind: EDenial.Uncheckable, field, found: `not a string but a ${typeof value}` }
     }
 
-    if (field.includes('\0')) {
-      return { denial: { kind: EDenial.Malformed, path: field, fault: 'a path containing a NUL byte' } }
+    if (value.includes('\0')) {
+      return { kind: EDenial.Malformed, field, path: value, fault: 'containing a NUL byte' }
     }
 
-    if (!isAbsolute(field)) {
-      return { denial: { kind: EDenial.Malformed, path: field, fault: 'a path that is not absolute' } }
+    if (form === EPathForm.Absolute && !isAbsolute(value)) {
+      return { kind: EDenial.Malformed, field, path: value, fault: 'that is not absolute' }
     }
 
-    const base = resolve(field)
-    const denial = await escapeDenial({ declared: field, candidate: base })
-    return denial === undefined ? { base } : { denial }
+    const candidate = form === EPathForm.Absolute ? resolve(value) : resolve(args.base, value)
+    return escapeDenial({ declared: value, candidate })
+  }
+
+  const baseOf = (args: { input: unknown; declared: readonly DeclaredPathField[] }): string => {
+    for (const declared of args.declared) {
+      if (declared.form !== EPathForm.Absolute) continue
+
+      const value = inputFieldOf({ input: args.input, field: declared.field })
+      if (isUsableBase(value)) return resolve(value)
+    }
+
+    return root
+  }
+
+  const declaredFieldsFor = (
+    name: string,
+  ): { denial: Denial } | { declared: readonly DeclaredPathField[] } => {
+    if (!pathFieldsByTool.has(name)) return { denial: { kind: EDenial.Unregistered } }
+
+    const declared = pathFieldsByTool.get(name)
+    if (declared === undefined) return { denial: { kind: EDenial.Undeclared } }
+
+    return { declared }
   }
 
   const denialFor = async (call: ToolCall): Promise<Denial | undefined> => {
-    const declared = await declaredPathDenial(call)
-    if (declared === undefined) return undefined
-    if ('denial' in declared) return declared.denial
+    const found = declaredFieldsFor(call.name)
+    if ('denial' in found) return found.denial
 
-    const pattern = scanPatternOf({ call, input: call.input })
-    if (pattern === undefined) return undefined
+    const byForm = (form: EPathForm) => found.declared.filter((declared) => declared.form === form)
 
-    if (pattern.includes('\0')) {
-      return { kind: EDenial.Malformed, path: pattern, fault: 'a glob pattern containing a NUL byte' }
+    for (const declared of byForm(EPathForm.Absolute)) {
+      const denial = await fieldDenial({ input: call.input, declared, base: root })
+      if (denial !== undefined) return denial
     }
 
-    return escapeDenial({ declared: pattern, candidate: resolve(declared.base, pattern) })
+    const base = baseOf({ input: call.input, declared: found.declared })
+
+    for (const declared of byForm(EPathForm.RelativeToBase)) {
+      const denial = await fieldDenial({ input: call.input, declared, base })
+      if (denial !== undefined) return denial
+    }
+
+    return undefined
   }
 
   return {

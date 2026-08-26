@@ -49,7 +49,9 @@ async function openWorkspace(scriptFor: (workspace: string) => readonly Scripted
       tools: registry.declarations(),
       dispatch: createDispatch({
         registry,
-        hooks: createHookRegistry({ beforeTool: [createBoundaryHook({ root: workspace })] }),
+        hooks: createHookRegistry({
+          beforeTool: [createBoundaryHook({ root: workspace, tools: registry.declarations() })],
+        }),
       }),
     },
   })

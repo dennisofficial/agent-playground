@@ -2,8 +2,9 @@ import { statSync } from 'node:fs'
 
 import { z } from 'zod'
 
-import { EToolEffect, type ToolDefinition, type ToolOutcome } from '@dltech/atlas-core'
+import { EPathForm, EPathPresence, EToolEffect, type ToolDefinition, type ToolOutcome } from '@dltech/atlas-core'
 
+import { createWorkspaceContainment } from '../containment'
 import { absolutePathSchema } from './file-text'
 
 const RESULT_LIMIT = 100
@@ -48,11 +49,17 @@ function renderModelText(args: { paths: readonly string[]; total: number }): str
 }
 
 export function createGlobTool(args: { root: string }): ToolDefinition {
+  const containment = createWorkspaceContainment({ root: args.root })
+
   return {
     name: 'glob',
     description,
     effect: EToolEffect.Read,
     inputSchema,
+    pathFields: [
+      { field: 'path', presence: EPathPresence.Optional, form: EPathForm.Absolute },
+      { field: 'pattern', presence: EPathPresence.Required, form: EPathForm.RelativeToBase },
+    ],
     invoke: async ({ input, signal }): Promise<ToolOutcome> => {
       const parsed = inputSchema.safeParse(input)
       if (!parsed.success) {
@@ -67,6 +74,7 @@ export function createGlobTool(args: { root: string }): ToolDefinition {
         const scan = new Bun.Glob(pattern).scan({ cwd: from, absolute: true, onlyFiles: true })
         for await (const match of scan) {
           if (signal.aborted) return { ok: false, reason: 'the turn was abandoned while scanning for files' }
+          if (!(await containment.contains(match))) continue
           found.push({ path: match, modifiedAt: modifiedAt(match) })
         }
       } catch (error) {

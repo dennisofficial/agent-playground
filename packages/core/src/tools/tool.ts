@@ -8,6 +8,24 @@ export enum EToolEffect {
   Destructive = 'destructive',
 }
 
+export enum EPathPresence {
+  Required = 'required',
+  Optional = 'optional',
+}
+
+export enum EPathForm {
+  Absolute = 'absolute',
+  RelativeToBase = 'relative-to-base',
+}
+
+export type DeclaredPathField = {
+  field: string
+  presence: EPathPresence
+  form: EPathForm
+}
+
+export const TAKES_NO_PATHS: readonly DeclaredPathField[] = []
+
 export type ToolCall = { callId: CallId; name: string; input: unknown; effect: EToolEffect }
 
 export type ToolOutcome =
@@ -19,6 +37,7 @@ export type ToolDeclaration = {
   description: string
   effect: EToolEffect
   inputSchema: ZodType
+  pathFields?: readonly DeclaredPathField[]
 }
 
 export type ToolInvocation = { input: unknown; signal: AbortSignal; idempotencyKey: string }

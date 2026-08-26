@@ -1,7 +1,7 @@
 import { mkdir, stat } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
-import { EToolEffect, type ToolDefinition, type ToolOutcome } from '@dltech/atlas-core'
+import { EPathForm, EPathPresence, EToolEffect, type ToolDefinition, type ToolOutcome } from '@dltech/atlas-core'
 import { z } from 'zod'
 
 import {
@@ -119,6 +119,7 @@ export function createEditTool(): ToolDefinition {
     description,
     effect: EToolEffect.Write,
     inputSchema,
+    pathFields: [{ field: 'path', presence: EPathPresence.Required, form: EPathForm.Absolute }],
     async invoke({ input }) {
       const parsed = inputSchema.safeParse(input)
       if (!parsed.success) return { ok: false, reason: `edit was called with invalid input: ${z.prettifyError(parsed.error)}` }

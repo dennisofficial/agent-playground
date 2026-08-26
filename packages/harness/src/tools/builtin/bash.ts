@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { EToolEffect, type ToolDefinition, type ToolOutcome } from '@dltech/atlas-core'
+import { EToolEffect, TAKES_NO_PATHS, type ToolDefinition, type ToolOutcome } from '@dltech/atlas-core'
 
 const DEFAULT_TIMEOUT_MS = 120_000
 const MAXIMUM_TIMEOUT_MS = 600_000
@@ -206,6 +206,7 @@ export function createBashTool(args: { root: string }): ToolDefinition {
     description,
     effect: EToolEffect.Destructive,
     inputSchema,
+    pathFields: TAKES_NO_PATHS,
     invoke: async ({ input, signal }): Promise<ToolOutcome> => {
       const parsed = inputSchema.safeParse(input)
       if (!parsed.success) {

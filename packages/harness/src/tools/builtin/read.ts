@@ -1,6 +1,6 @@
 import { stat } from 'node:fs/promises'
 
-import { EToolEffect, type ToolDefinition } from '@dltech/atlas-core'
+import { EPathForm, EPathPresence, EToolEffect, type ToolDefinition } from '@dltech/atlas-core'
 import { z } from 'zod'
 
 import { absolutePathSchema } from './file-text'
@@ -95,6 +95,7 @@ export function createReadTool(): ToolDefinition {
     description,
     effect: EToolEffect.Read,
     inputSchema,
+    pathFields: [{ field: 'path', presence: EPathPresence.Required, form: EPathForm.Absolute }],
     async invoke({ input }) {
       const parsed = inputSchema.safeParse(input)
       if (!parsed.success) return { ok: false, reason: `read was called with invalid input: ${z.prettifyError(parsed.error)}` }
