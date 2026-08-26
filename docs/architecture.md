@@ -183,7 +183,7 @@ packages/harness/src/
 
 apps/tui/src/
   main.tsx
-  composition/   the Nest module graph — the only place bindings are chosen
+  composition/   the container bootstrap — the only place bindings are chosen
   store/         ConversationStore: log + delta channel → useSyncExternalStore
   ui/            components, pages
   ui/markdown/            segmenter, prose, tables, fenced blocks; the renderer registry
@@ -207,7 +207,7 @@ Max 300 lines per file. Tests in a sibling `__tests__/` as `*.spec.ts`.
 | Model layer | AI SDK, `streamText` one step, as normalization only |
 | Provider interface | `LanguageModelV4` |
 | Context operations | Ours, model-agnostic |
-| DI | **NestJS standalone**, once discovery exists. Slice 1 ships a plain async factory |
+| DI | **tsyringe.** Class tokens, `@injectAll` for the hook and tool sets — see `.scratch/tsyringe-di/spec.md` |
 | Hook discovery | Glob at dev time, generated manifest for `--compile` |
 | Packages | `core`, `harness`, `apps/tui` — raw TS source, no build step |
 | Runtime | Bun — runtime, package manager and test runner |
@@ -257,17 +257,30 @@ has no round trip to wait for.
 - LangGraph's hard lesson: nothing derivable goes in durable state. Its predecessor in this codebase
   had a `@deprecated` field it could not delete because live checkpoints contained it.
 
-## Why slice 1's composition root is not Nest yet
+## Why tsyringe and not Nest
 
-The DI decision stands, and it is not yet exercised. Slice 1 binds seven things in a **chain** — clock,
-keychain reader, credential port, provider, harness, delta channel, publishing runner — where every link
-is either async or configured. In a container each becomes a factory provider with an inject array,
-which is more code, and token-based resolution *loses* the type checking a direct call gives for free.
+The extension domain is **sets** — hooks per phase, tools in a registry — and tsyringe has `@injectAll`
+as a primitive. Nest has no multi-provider, so a set is emulated with
+`{ provide: HOOKS, useFactory: (...i) => i, inject: classes }`: untyped, order-coupled, and edited once
+per set member, which is exactly the one-file property the hooks spike was measuring. Module
+encapsulation would redraw a boundary `core` / `harness` / `apps/tui` and their barrels already enforce.
+And Nest's optional peers do not bundle — `bun build --compile` needs eight `--external` flags, and each
+upgrade can add another.
 
-Nest earns its weight on **discovery and many-to-many edges**, which is exactly what the hooks-di spike
-demonstrated and exactly what this slice ships none of: no tool registry, no hook dispatch, no
-glob-or-manifest discovery. It arrives with them in slice 2, and swapping the factory is one file
-because the factory is still the only place a binding is chosen.
+Startup cost is not the argument. The spike measured ~50 ms for the Nest import, and Atlas is a
+long-lived process that amortises it away.
+
+What Nest would have given us is ordered teardown. tsyringe has no lifecycle at all, so disposal is an
+explicit registry the composition root owns.
+
+**Ports are `abstract class`, not `interface`,** so the token *is* the contract — no symbol table, no
+stringly-typed `@inject`. `core` therefore emits runtime values, which costs it nothing: still zero
+dependencies, still no I/O.
+
+**The one async edge stays outside the container.** `container.resolve()` is synchronous and tsyringe
+has no async provider. The graph has exactly one await — `openAtlasDatabase` in
+`harness/loop/build-harness.ts` — so the root opens the database, registers it and the config as
+`useValue` tokens, and resolves the rest in one synchronous call.
 
 ## Deferred, deliberately
 
