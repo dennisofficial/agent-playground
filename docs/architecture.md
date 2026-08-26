@@ -35,7 +35,8 @@ event log already provides durable resume, so it would be bought twice.
 
 ```ts
 async function runTurn({ branchId, signal }: { branchId: string; signal: AbortSignal }) {
-  for (let step = 0; step < maxSteps; step += 1) {
+  let modelSteps = 0
+  while (modelSteps < maxSteps) {
     const events = await log.read({ branchId })
 
     const waiting = outstandingApproval(events)
@@ -48,6 +49,11 @@ async function runTurn({ branchId, signal }: { branchId: string; signal: AbortSi
     }
 
     const assembled = await hooks.beforeStep(assemble({ events, rules, annotators, ctx }))
+
+    const faults = exchangeFaults(assembled)
+    if (faults.length > 0) return { status: Failed, message: report(faults) }
+
+    modelSteps += 1
     const { parts, toolCalls } = await modelStep({ assembled, tools, signal })
 
     if (parts.length > 0) await log.append({ branchId, drafts: [{ type: 'assistant-said', parts }] })
@@ -64,6 +70,23 @@ async function runTurn({ branchId, signal }: { branchId: string; signal: AbortSi
 
 const resume = runTurn
 ```
+
+**`maxSteps` counts model steps, not loop iterations.** A settlement is work the harness does between
+model calls, so charging it against the ceiling made the advertised budget depend on whether the model
+happened to use tools — halving it for a coding agent, which uses them constantly. A separate
+iteration backstop remains, as a spin guard rather than a budget. `ctx.step` handed to rules is the
+model-step index for the same reason: `nudge.lifetimeSteps` is specified in model steps.
+
+**`settlePending` is built by the loop, not injected into it.** `TurnDeps` takes `dispatch`; the loop
+constructs `settlePending` from `dispatch` and the log it already holds. Injecting a pre-built
+`settlePending` meant it closed over a *different* log than the loop wrote through — two logs writing
+one branch in a single turn, which the delta-publishing wrapper makes reachable. Absent `dispatch`,
+the loop pauses on a pending call exactly as it did before tools existed, which is what a subagent
+given no tools needs.
+
+**Tool results are stamped with the run that emitted the call**, not the run that settles it. That is
+what makes a turn which paused and resumed produce a log identical to one that completed in a single
+pass — the property the whole event-log design exists to protect.
 
 **Resume is not implemented.** `resume` *is* `runTurn`, because position is a pure function of the
 log. Proven by serializing the log, discarding every in-memory object, rebuilding with a different
@@ -134,13 +157,16 @@ packages/core/src/
   events/        Event union, EventDraft, envelope, branded ids
   events/        projections: pendingCalls, outstandingApproval, answeredApproval
   assembly/      Assembled, Rule, Annotator, RuleContext, assemble, trace
+  assembly/      exchange-shape: the faults a provider would reject, reported not thrown
   assembly/rules/        content policy — thinking tail, loaded context, ephemeral, images
   assembly/annotators/   cache breakpoints, provenance
   budget/        the fixpoint controller (pure: takes a rebuild function)
   hooks/         phase types and outcome types only — no container
   policy/        BeforeTool severity resolution, the approval resolver
   tools/         ToolCall, ToolOutcome, EToolEffect, definition types
-  ports/         EventLogPort, ModelPort, WorkspacePort, CredentialPort, ClockPort, IdPort
+  ports/         EventLogPort, ModelPort, WorkspacePort, CredentialPort, ClockPort, IdPort,
+                 SettingsStorePort
+  settings/      definitions, layered resolution with provenance, edit operations, the registry
   message/       Atlas's own message type (see below)
 
 packages/harness/src/
@@ -151,6 +177,7 @@ packages/harness/src/
   store/         Prisma event log, branch heads, workspace snapshots
   tools/         registry, dispatcher, builtin tools
   hooks/         hook implementations — claude-md injection, workspace boundary, approval policy
+  settings/      SettingsStorePort backends: user and project files, in memory; the layer service
   workspace/     git snapshot and restore
   discovery/     glob at dev time, generated manifest for --compile
 
@@ -159,6 +186,11 @@ apps/tui/src/
   composition/   the Nest module graph — the only place bindings are chosen
   store/         ConversationStore: log + delta channel → useSyncExternalStore
   ui/            components, pages
+  ui/markdown/            segmenter, prose, tables, fenced blocks; the renderer registry
+  ui/markdown/renderers/  one FencedRenderer per fence kind: diff, lexical, code, plain
+  ui/markdown/grammars/   tier-1 highlighting: parsers-config.json, vendored wasm, generated loader
+  ui/markdown/lexical/    tier-2 highlighting: the scanner, the rule primitives, one spec per language
+  ui/markdown/themes/     capture name → semantic role → colour, for both tiers
 ```
 
 Max 300 lines per file. Tests in a sibling `__tests__/` as `*.spec.ts`.
@@ -180,6 +212,7 @@ Max 300 lines per file. Tests in a sibling `__tests__/` as `*.spec.ts`.
 | Packages | `core`, `harness`, `apps/tui` — raw TS source, no build step |
 | Runtime | Bun — runtime, package manager and test runner |
 | Task runner | **Turborepo.** `turbo run typecheck \| test \| build`; per-package scripts stay `tsc` / `bun test` |
+| Fenced-code highlighting | **Two tiers.** tree-sitter wasm where a small maintainer build exists; a declarative lexer for the long tail |
 
 **`core` owns its own message type.** `Assembled` cannot hold `ModelMessage` without `core` depending
 on the AI SDK, which would make model-agnosticism aspirational rather than real — and AI SDK ships
@@ -191,6 +224,30 @@ load-bearing rather than incidental: a flat `Record<string, unknown>` is not ass
 provider options, so conversion would need a cast or a validator, and it leaves the metadata merge
 ill-defined at exactly the depth where the signature lives. **That passthrough must never be dropped** — Anthropic thinking signatures ride
 in it, and losing them fails silently.
+
+**Syntax highlighting is two tiers, and the tiers must not overlap.** A tree-sitter language costs
+0.2–3.3 MB of `.wasm`, committed and embedded in `bin/atlas` by `bun build --compile`. That price is
+worth paying where a parse tells you something a token stream cannot — which type a name refers to,
+whether `<T>` opens a generic or a JSX element. It is not worth paying forty more times for languages
+whose highlighting is entirely lexical, and for most of them the question is moot: their maintainers
+publish no `.wasm` at all.
+
+So `apps/tui/src/ui/markdown/lexical/` holds a second highlighter — a pure single-pass scanner over a
+declarative `LanguageSpec` of comment forms, string forms, keyword sets and an identifier alphabet,
+about a kilobyte of source per language. It is not a fallback for tier 1's failures; it is the right
+answer for a token-shaped language.
+
+The seam that makes this cheap already existed. A tree-sitter highlight pass returns
+`[start, end, captureName]` triples and the theme maps `captureName` to a colour, so the lexer emits
+the same triples under the same nvim-treesitter names and inherits every theme unchanged. Adding a
+theme still means editing one file. `lexicalRenderer` is registered ahead of `codeRenderer` in the
+fenced-renderer registry, because the code renderable claims every non-empty language; a test in
+`lexical/__tests__/registry.spec.ts` holds the two language sets disjoint so a lexical spec can never
+silently outrank a real grammar.
+
+The lexer is also synchronous, which the tree-sitter path is not. A `CodeRenderable` clears to plain
+text and paints its highlight a worker round trip later, so a streaming fence flashes; a lexical fence
+has no round trip to wait for.
 
 ## Adopted from the rejected options
 
