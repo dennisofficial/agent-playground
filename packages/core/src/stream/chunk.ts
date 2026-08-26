@@ -10,6 +10,8 @@ export enum EFinishReason {
   Other = 'other',
 }
 
+export type ModelUsage = { inputTokens: number; outputTokens: number }
+
 export type Chunk =
   | { type: 'text-start'; id: string; providerMetadata?: ProviderOptions }
   | { type: 'text-delta'; id: string; text: string; providerMetadata?: ProviderOptions }
@@ -18,7 +20,7 @@ export type Chunk =
   | { type: 'reasoning-delta'; id: string; text: string; providerMetadata?: ProviderOptions }
   | { type: 'reasoning-end'; id: string; providerMetadata?: ProviderOptions }
   | { type: 'tool-call'; callId: CallId; name: string; input: unknown }
-  | { type: 'finish'; reason: EFinishReason }
+  | { type: 'finish'; reason: EFinishReason; usage?: ModelUsage }
   | { type: 'error'; message: string }
 
 export type ChunkType = Chunk['type']
