@@ -1,0 +1,47 @@
+packages/harness/src/tools/builtin/glob.ts
+  s_ed3588bb0efbeb::t_135d7aa04666db 7,52-53,77
+  s_ed3588bb0efbeb::t_5fa3a1511882a7 5,59-62
+packages/harness/src/tools/builtin/__tests__/glob.spec.ts
+  s_ed3588bb0efbeb::t_2ec2801b57d37d 1-61
+packages/harness/src/tools/builtin/read.ts
+  s_ed3588bb0efbeb::t_5fa3a1511882a7 3,98
+packages/harness/src/hooks/boundary.ts
+  s_ed3588bb0efbeb::t_1e92a2cd17b1cb 38,72-75,79,81,100,127
+  s_ed3588bb0efbeb::t_f5e8faa45f7cf4 1-16,20-21,28-29,31-32,36,39-40,42-43,46-47,49-55,59,63,76-78,80,84,94-99,101-105,107-108,111-112,115-116,119-126,128,131-142,146-154,156,158-160,163
+packages/harness/src/tools/builtin/bash.ts
+  s_ed3588bb0efbeb::t_0d894a1099cd4f 209
+packages/harness/src/tools/index.ts
+  s_ed3588bb0efbeb::t_1e92a2cd17b1cb 2
+packages/harness/src/hooks/__tests__/boundary.spec.ts
+  s_ed3588bb0efbeb::t_27c3cf796b5884 5,14,17-22,33-49,57-58,60,119,125-126,128-135,173
+packages/harness/src/tools/containment.ts
+  s_ed3588bb0efbeb::t_5e9ec95a44e06d 1-33,37-38,40-51
+  s_ed3588bb0efbeb::t_1e92a2cd17b1cb 34-36,39
+packages/harness/src/tools/builtin/edit.ts
+  s_ed3588bb0efbeb::t_5fa3a1511882a7 4,122
+packages/harness/src/tools/builtin/grep.ts
+  s_ed3588bb0efbeb::t_5fa3a1511882a7 3,141
+packages/harness/src/tools/builtin/write.ts
+  s_ed3588bb0efbeb::t_5fa3a1511882a7 4,27
+packages/harness/src/tools/__tests__/containment.spec.ts
+  s_ed3588bb0efbeb::t_c496b87483c260 1-55
+packages/core/src/tools/tool.ts
+  s_ed3588bb0efbeb::t_0d894a1099cd4f 27-28
+  s_ed3588bb0efbeb::t_0623c514b73f1f 11-26,40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "1d15e01d8e96cfe090367212b7ddeda7641de45e",
+  "prompts": {},
+  "sessions": {
+    "s_ed3588bb0efbeb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b1f24252-ac33-4c97-9ba3-ca59d69b0a62",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
