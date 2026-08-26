@@ -1,0 +1,35 @@
+packages/core/src/assembly/rules/__tests__/messages-from-events-pairing.spec.ts
+  s_ed3588bb0efbeb::t_09967e58087b5e 6,230-288
+packages/harness/src/model/accumulator.ts
+  s_ed3588bb0efbeb::t_087a000ccb59de 15-16,54-55
+docs/core-contract.md
+  s_ed3588bb0efbeb::t_69f695f3d3eb02 251-282
+packages/core/src/assembly/exchange-shape.ts
+  s_ed3588bb0efbeb::t_7454e330d3c4e6 109,114
+packages/core/src/assembly/__tests__/exchange-shape.spec.ts
+  s_ed3588bb0efbeb::t_b1be7eb705263c 176-177,180-185,188
+packages/harness/src/model/__tests__/accumulator.spec.ts
+  s_ed3588bb0efbeb::t_8c755099ec234c 119-175
+packages/core/src/assembly/rules/messages-from-events.ts
+  s_ed3588bb0efbeb::t_7db13ec57c1820 108-109
+  s_ed3588bb0efbeb::t_4047e6bc315469 88
+packages/harness/src/loop/__tests__/model-steps.spec.ts
+  s_ed3588bb0efbeb::t_bd7f138cab1e05 153-194
+  s_ed3588bb0efbeb::t_6d42d5416bf06c 195-225
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "39617640e5464845f941d58df59778cef2e9d66a",
+  "prompts": {},
+  "sessions": {
+    "s_ed3588bb0efbeb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b1f24252-ac33-4c97-9ba3-ca59d69b0a62",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
