@@ -1,0 +1,781 @@
+apps/tui/src/ui/markdown/renderers/diff.tsx
+  ai_agent 46
+apps/tui/src/ui/markdown/lexical/languages/__tests__/prolog.spec.ts
+  s_f41506dfe83f81::t_ecfed49a7d6288 29-31,112-127,148-151
+  s_f41506dfe83f81::t_21a745f373027e 1-28,32-111,128-147,152-157
+apps/tui/src/ui/markdown/lexical/languages/vim.ts
+  s_f41506dfe83f81::t_82239b229f3513 4-5,16-17
+  s_f41506dfe83f81::t_b76a080f35890e 1-3,6-15,18-46
+apps/tui/src/composition/settings-binding.ts
+  s_3c5c6e6e101e43::t_83efb85f67ae1e 1-37
+apps/tui/src/ui/markdown/lexical/registry.ts
+  s_f41506dfe83f81::t_30a14ba1fb57fd 1-27,31-43
+  s_f41506dfe83f81::t_a08cd58e00fba2 28-30
+apps/tui/src/ui/markdown/lexical/languages/pascal.ts
+  s_f41506dfe83f81::t_cd8a5ce7db907e 1-8,10-16,21-34,36-44
+  s_f41506dfe83f81::t_80b98897a102b2 18-19
+  s_f41506dfe83f81::t_41290a424fd6b2 9,17,20,35
+apps/tui/src/ui/__tests__/context-bar.spec.ts
+  ai_agent 1-85
+apps/tui/src/ui/text-flow.ts
+  ai_agent 63
+apps/tui/src/ui/markdown/lexical/languages/__tests__/sass.spec.ts
+  s_f41506dfe83f81::t_a885b51b27713a 39
+  s_f41506dfe83f81::t_65df4fdb15d9cc 1-9,12-13,15-27,31-38,40-88,109-110,117-127,133-136,146,155-156,162-168,170-173,182-198
+  s_f41506dfe83f81::t_c8686c5bed3173 10-11,14,28-30,89-108,111-116,128-132,137-145,147-154,157-161,169,174-181
+apps/tui/src/ui/markdown/lexical/languages/__tests__/elixir.spec.ts
+  s_f41506dfe83f81::t_9e5529c9a3d84b 30
+  s_f41506dfe83f81::t_0918e1673a12c6 15-17,38,45-48,80-103,138,140-142,161-164,167-168
+  s_f41506dfe83f81::t_d72361c7a47407 157-160,165-166
+  s_f41506dfe83f81::t_11a5c4e22dfe5b 1-14,18-29,31-37,39-44,49-79,104-137,139,143-156,169-182
+apps/tui/src/ui/components/settings.tsx
+  s_3c5c6e6e101e43::t_4b3dd8509e974e 7,13,27-28,61,71-72,134
+  s_3c5c6e6e101e43::t_f30c4c4c675528 1-6,8-12,14-23,25-26,29-60,62-70,73-133,135-139
+  s_3c5c6e6e101e43::t_0830ac3e258270 24
+apps/tui/src/ui/markdown/lexical/languages/__tests__/fortran.spec.ts
+  s_f41506dfe83f81::t_0e1cc483dcd2ff 142-156,180-185
+  s_f41506dfe83f81::t_3507ec10f87495 1-141,157-177,191-200
+  s_f41506dfe83f81::t_01292725c31588 178-179,186-190
+apps/tui/src/composition/__tests__/app-switcher.spec.tsx
+  ai_agent 1-185
+apps/tui/src/ui/markdown/lexical/languages/haskell.ts
+  s_f41506dfe83f81::t_14d1d540bd395f 1-43
+apps/tui/prototype/session.ts
+  ai_agent 1-22
+apps/tui/src/ui/components/switcher.tsx
+  ai_agent 1-250
+apps/tui/src/ui/components/settings/detail.tsx
+  s_3c5c6e6e101e43::t_1d51cc505e2d72 1-71
+apps/tui/src/store/transcript-model.ts
+  ai_agent 1-2,12,40-64
+apps/tui/src/ui/__tests__/settings-model.spec.ts
+  s_3c5c6e6e101e43::t_3a1338b65359e3 1-38,46-91
+  s_2a29fbdb626561::t_8793c534d4dbf7 39-45
+apps/tui/src/ui/__tests__/switcher-model.spec.ts
+  ai_agent 1-164
+apps/tui/src/ui/tool-group-spans.ts
+  ai_agent 1-141
+apps/tui/prototype/sidebars.tsx
+  ai_agent 1-127
+apps/tui/src/ui/components/footer.tsx
+  ai_agent 1-97
+apps/tui/src/ui/markdown/lexical/languages/__tests__/commonlisp.spec.ts
+  s_f41506dfe83f81::t_9ef60285d88c13 141
+  s_f41506dfe83f81::t_9d2d59f15257a4 1-48,50-71,85-112,121-129,137-139,142-151
+  s_f41506dfe83f81::t_9ede63ae0b82f0 49,72-84,113-120,130-136,140
+apps/tui/src/ui/components/diff/diff-header.tsx
+  ai_agent 1-67
+apps/tui/src/ui/markdown/grammars/__tests__/index.spec.ts
+  s_f41506dfe83f81::t_615606b5d7ced6 85-89
+  s_f41506dfe83f81::t_ef8ea13f977f4d 90-94
+  s_f41506dfe83f81::t_801a05205a21eb 55-59,80-83
+apps/tui/src/ui/markdown/lexical/languages/__tests__/dart.spec.ts
+  s_f41506dfe83f81::t_e94aea2313b0fa 154
+  s_f41506dfe83f81::t_abb9fef5f3e25f 1-34,37,39-75,78,82-88,109-129,131-149,155-156
+  s_f41506dfe83f81::t_4a9888d4d8fb7a 35-36,38,76-77,79-81,89-108,130,150-153
+apps/tui/src/ui/__tests__/shortcuts-render.spec.tsx
+  ai_agent 1-54
+apps/tui/src/ui/markdown/lexical/__tests__/scanner.spec.ts
+  s_f41506dfe83f81::t_f1e1f77a7d4296 1-72,79-80,82-99,101-137,139-171,173,180-181
+  s_f41506dfe83f81::t_59526d6d31a47d 73-78,81,100,138,172,174-179
+apps/tui/src/composition/__tests__/app-mount.spec.tsx
+  ai_agent 74,179,209
+apps/tui/src/store/in-flight-steps.ts
+  ai_agent 4-5,8-10,14,23,59-66
+apps/tui/src/ui/markdown/lexical/languages/rebol.ts
+  s_f41506dfe83f81::t_35946c0a7553b7 20,23
+  s_f41506dfe83f81::t_4e094f23d938de 1-19,21-22,24-37
+apps/tui/src/ui/__tests__/paths.spec.ts
+  ai_agent 1-47
+apps/tui/src/ui/markdown/lexical/languages/xml.ts
+  s_f41506dfe83f81::t_b9f1e14ed72b09 4-6,14-15,17-18,21-24,26
+  s_f41506dfe83f81::t_81b47d55ebc5b5 1-3,7-13,16,19-20,25,27-28
+apps/tui/src/ui/markdown/lexical/languages/clojure.ts
+  s_f41506dfe83f81::t_9c99799e907794 4-5,8,12,17,23
+  s_f41506dfe83f81::t_c4c714c9135cba 1-3,6-7,9-11,13-16,18-22,24-50
+apps/tui/src/ui/components/diff/__tests__/inline-diff.spec.tsx
+  s_f41506dfe83f81::t_2491de09221a5c 1-152
+apps/tui/src/ui/components/diff/diff-row.tsx
+  ai_agent 1-134
+apps/tui/src/ui/markdown/lexical/languages/fortran.ts
+  s_f41506dfe83f81::t_e81d7073bbaa8b 1,33-34
+  s_f41506dfe83f81::t_194e4a15e06bdb 4-15,18,43-53
+  s_f41506dfe83f81::t_575e7c7d21d7b6 3,22-30,35-42,54-62
+  s_f41506dfe83f81::t_778dac4a12b0e8 2,16-17,19-21,31-32
+apps/tui/src/ui/theme.ts
+  ai_agent 11-18
+apps/tui/src/ui/__tests__/density-store.spec.ts
+  s_2a29fbdb626561::t_91ca436ae2166e 1-65
+apps/tui/src/ui/markdown/lexical/languages/delphi.ts
+  s_f41506dfe83f81::t_7102a70a84ecd7 1-53
+apps/tui/src/ui/markdown/lexical/languages/powershell.ts
+  s_f41506dfe83f81::t_9f18e72ff91daa 1-8,11-14,17-27,30-34,36-39,41-43,46-65
+  s_f41506dfe83f81::t_695604d747656e 9-10,15-16,28-29,35,40,44-45
+apps/tui/src/ui/components/settings/rows.tsx
+  ai_agent 1-105
+apps/tui/src/ui/__tests__/footer-render.spec.tsx
+  ai_agent 1-79
+apps/tui/src/ui/markdown/lexical/languages/verilog.ts
+  s_f41506dfe83f81::t_6eca6b77f03067 5-6,14,18,23-29,34-38
+  s_f41506dfe83f81::t_887a2c77e07973 1-4,7-13,15-17,19-22,30-33,39-41
+apps/tui/src/ui/markdown/lexical/__tests__/harness.ts
+  s_f41506dfe83f81::t_d89ba36db3b366 1-2,14-15,24-27,29-41,43-45,47,49-50,52-55,59-62,64-70,72
+  s_f41506dfe83f81::t_0dee22a02dca18 3-13,16-23,28,42,46,48,51,56-58,63,71
+apps/tui/src/ui/markdown/lexical/languages/__tests__/scheme.spec.ts
+  s_f41506dfe83f81::t_50501b9b03a0ca 46,95,128-149,152-158,182-189
+  s_f41506dfe83f81::t_9469ef4a18115d 1-45,47-94,96-127,150-151,159-181,190-196
+apps/tui/src/ui/components/diff/__tests__/chunk-styling.spec.ts
+  ai_agent 1-79
+apps/tui/src/ui/hint-layout.ts
+  ai_agent 1-35
+apps/tui/src/ui/tool-verbs.ts
+  ai_agent 1-165
+apps/tui/src/ui/markdown/lexical/languages/__tests__/powershell.spec.ts
+  s_f41506dfe83f81::t_42b2f3ff15eb6e 85-89,137-141
+  s_f41506dfe83f81::t_4f759f59772f8c 1-11,13,15,17-19,21-43,51-84,90-111,124-125,151-152,154-155,159-163,170-177,182-183,186-191
+  s_f41506dfe83f81::t_c80eb13e8a2604 12,14,16,20,44-50,112-123,126-136,142-150,153,156-158,164-169,178-181,184-185
+apps/tui/src/ui/density-store.ts
+  s_2a29fbdb626561::t_e7fe49cc64ec36 1-33
+apps/tui/src/ui/markdown/prose/blocks.ts
+  ai_agent 1-239
+apps/tui/src/ui/markdown/lexical/languages/autohotkey.ts
+  s_f41506dfe83f81::t_dc379997c8828e 1-3,10-18,25-27,32-43
+  s_f41506dfe83f81::t_f06be3eff17f7e 4-9,19-24,30-31
+  s_f41506dfe83f81::t_280df9d7871773 28
+  s_f41506dfe83f81::t_bc4f54fcc1205f 29
+apps/tui/src/store/index.ts
+  ai_agent 4-35,40,45,49-62
+apps/tui/src/ui/__tests__/sidebar-render.spec.tsx
+  ai_agent 1-184
+apps/tui/src/ui/markdown/lexical/languages/groovy.ts
+  s_f41506dfe83f81::t_02ac359a957172 3-4,17,23
+  s_f41506dfe83f81::t_1799679d686e4f 1-2,5-16,18-22,24-40
+apps/tui/src/ui/markdown/lexical/languages/__tests__/rebol.spec.ts
+  s_f41506dfe83f81::t_6540937273c058 1-10,12-28,30-58,60-82,84-94,112-128,133-138
+  s_ed3588bb0efbeb::t_dbd3fba60eb3a0 11,29,59,83,95-111,129-132
+apps/tui/src/ui/__tests__/transcript-follow.spec.tsx
+  ai_agent 1,4,7,20-37,110-161
+apps/tui/src/ui/markdown/lexical/languages/__tests__/forth.spec.ts
+  s_f41506dfe83f81::t_a3e4158c4c019e 1-30,37-56,58-65,68-77,79-80,89-99,102,125,132-134,139-140,143-145,147-151,153-167,178-187
+  s_f41506dfe83f81::t_a7afbe8e3c7c27 31-36,57,66-67,78,81-88,100-101,103-124,126-131,135-138,141-142,146,152,168-177
+apps/tui/src/ui/markdown/lexical/languages/__tests__/d.spec.ts
+  s_f41506dfe83f81::t_34e5a3c9529f72 1-159,190-195
+  s_f41506dfe83f81::t_60935087374f82 160-189
+apps/tui/src/ui/markdown/table-block.tsx
+  s_d9be5f328f490e::t_f01761528bfc7a 41
+apps/tui/src/ui/markdown/__tests__/lexical-render.spec.tsx
+  s_f41506dfe83f81::t_aa39420b5e732a 1-4,6-18,50-62,69-74
+  s_f41506dfe83f81::t_bcbf4a9a32142a 5,19-36,38
+  s_f41506dfe83f81::t_1b0c818507093b 37,39-49
+  s_f41506dfe83f81::t_b7fbb08f016347 63-68
+apps/tui/src/ui/diff-layout.ts
+  ai_agent 1-144
+apps/tui/src/ui/markdown/lexical/languages/__tests__/fsharp.spec.ts
+  s_f41506dfe83f81::t_6b67d94f4a4d3b 64,165,172-200
+  s_f41506dfe83f81::t_7a9ab10cad0dcf 18
+  s_f41506dfe83f81::t_f8c5dda4fda0ff 143-145
+  s_f41506dfe83f81::t_3bb755e5f4190a 148,163-164,166-171,201-202,205-208
+  s_f41506dfe83f81::t_0b71bcdfb75c39 1-17,19-43,46-63,65-142,146-147,203-204,209-214
+  s_f41506dfe83f81::t_53f7bb9d439cf0 44-45,149-162
+apps/tui/src/ui/palette.ts
+  s_2a29fbdb626561::t_20c4fd0b4f09bd 36,46,50,52,54-55,57,60-62,71-72
+apps/tui/src/ui/switcher-model.ts
+  ai_agent 1-85
+apps/tui/src/ui/markdown/lexical/languages/graphql.ts
+  s_f41506dfe83f81::t_89fdc07f9360c6 1-5,7-11,14-19,21-36
+  s_f41506dfe83f81::t_e92d319efb9939 6,12-13,20
+apps/tui/src/ui/markdown/lexical/languages/matlab.ts
+  s_f41506dfe83f81::t_bfed35add8fb4f 1,4-6,13-20,25-26,28-29
+  s_f41506dfe83f81::t_0723e9facb3e36 2-3,7-12,21-24,27,30-46
+apps/tui/src/ui/__tests__/transcript-render.spec.tsx
+  ai_agent 5,12-13,23,43-44,74,76-80,92,97,101-140,146,148-151
+apps/tui/src/ui/components/new-divider.tsx
+  ai_agent 3,32,43-44,55-56,58
+apps/tui/src/ui/markdown/lexical/languages/sass.ts
+  s_f41506dfe83f81::t_98a17e5274abf9 1-3,5,8-9,12-19,26,32,34-39,41,46-48,50,55-65,68-79,81-88
+  s_f41506dfe83f81::t_11fe01dc6261e9 4,6-7,10-11,20-25,27-31,33,40,42-45,49,51-54,66-67,80
+apps/tui/src/ui/markdown/lexical/languages/swift.ts
+  s_f41506dfe83f81::t_3ba1b09d5b22d7 1-6,9-20,22-24,27-31,33-34,40-43
+  s_f41506dfe83f81::t_319552461c9278 7-8,21,25-26,35-39
+  s_f41506dfe83f81::t_cae1fa445fc710 32
+apps/tui/src/ui/markdown/lexical/languages/__tests__/smalltalk.spec.ts
+  s_f41506dfe83f81::t_baae3f0209d1a1 209-212
+  s_f41506dfe83f81::t_d20f1601f3a652 197-208,213-249
+  s_f41506dfe83f81::t_d74747b6e76d61 1-196,250-253
+apps/tui/src/store/__tests__/tool-groups.spec.ts
+  ai_agent 1-141
+apps/tui/src/ui/markdown/grammars/assets/php/highlights.scm
+  s_ed3588bb0efbeb::t_33123967d6e25a 1-204
+apps/tui/package.json
+  ai_agent 12-13
+apps/tui/src/ui/markdown/lexical/languages/scala.ts
+  s_f41506dfe83f81::t_5b2dc3b1fae3d0 1-2,4,6-11,14-16,20-21,23,25,28-40,44-48
+  s_f41506dfe83f81::t_1ec0669d9e83f7 3,5,12-13,17-19,22,24,26-27,41-43
+apps/tui/src/store/expandable.ts
+  ai_agent 1-22
+apps/tui/src/composition/__tests__/app-sidebar.spec.tsx
+  ai_agent 1-142
+apps/tui/src/ui/markdown/lexical/languages/__tests__/asm.spec.ts
+  s_f41506dfe83f81::t_cbc9ed5e352f36 1-10,12-59,65-69,71-81,83-131,133-142,154-156,158,161-170,178-193,199-200,207-208,213-223
+  s_f41506dfe83f81::t_ffcb99790030f0 11,70,82,143-153,157,159-160,171-177,194-198,201-206,209-212
+  s_f41506dfe83f81::t_13564978b45909 60-64,132
+apps/tui/src/ui/markdown/grammars/assets/c/highlights.scm
+  s_ed3588bb0efbeb::t_33123967d6e25a 1-82
+apps/tui/src/ui/markdown/lexical/languages/asm.ts
+  s_f41506dfe83f81::t_e412c526bf649b 1-8,21,50-51
+  s_f41506dfe83f81::t_1b394a8bcb0ac0 9-20,22-49,52-54
+apps/tui/src/ui/markdown/lexical/languages/__tests__/less.spec.ts
+  s_f41506dfe83f81::t_727c7efafdf586 161-167,175-218
+  s_f41506dfe83f81::t_5921077978b0ad 1-160,168-174,219-226
+apps/tui/src/ui/components/blocks/tool-group-block.tsx
+  ai_agent 1-185
+apps/tui/src/ui/footer-layout.ts
+  ai_agent 1-118
+apps/tui/src/ui/markdown/lexical/languages/__tests__/kotlin.spec.ts
+  s_f41506dfe83f81::t_9515e46a330e0d 35-36,39,76,90-93,100-105,114-135,138-143,145,147-150
+  s_f41506dfe83f81::t_2cb580e0d92849 113
+  s_2a29fbdb626561::t_fe366244b566cf 1-34,37-38,40-75,77-89,94-99,106-112,136-137,144,146,151-156
+apps/tui/src/ui/markdown/__tests__/copy-button.spec.tsx
+  s_f41506dfe83f81::t_ec58891ef9f8ef 14-20,58,62-63,69,82-100,110,118,138,140,146,159
+apps/tui/src/ui/markdown/lexical/languages/__tests__/ocaml.spec.ts
+  s_f41506dfe83f81::t_119ead4ce62ec9 1-14,17-34,36-74,77,79-80,86-87,101-111,123-129,131-136,143-150,160-162,165-166,169-186
+  s_f41506dfe83f81::t_324598ee0e3f64 15-16,35,75-76,78,81-85,88-100,112-122,130,137-142,151-159,163-164
+  s_f41506dfe83f81::t_04c0f9f2d1d384 167-168
+apps/tui/src/ui/markdown/prose/__tests__/blocks.spec.ts
+  ai_agent 1-132
+apps/tui/src/ui/shortcuts.ts
+  s_3c5c6e6e101e43::t_3910571ebe8aff 22
+apps/tui/src/ui/components/diff/diff-footer.tsx
+  ai_agent 1-73
+apps/tui/src/ui/markdown/lexical/languages/__tests__/c_sharp.spec.ts
+  s_f41506dfe83f81::t_9e8449e662eacf 113-146
+  s_2a29fbdb626561::t_7ea4c657f49ab7 1-112,147-196,202-213
+  s_f41506dfe83f81::t_5f5e4b73f10bd4 197-201
+apps/tui/src/composition/model-preference.ts
+  s_7458f8085fa8b5::t_2bc24490c14771 1-45
+apps/tui/src/ui/markdown/lexical/languages/dart.ts
+  s_f41506dfe83f81::t_e887dd92b5a476 1-18,21-27,30-40,42-43
+  s_ed3588bb0efbeb::t_62fa8733f5bcce 19-20,28-29,41
+apps/tui/src/composition/__tests__/app-settings.spec.tsx
+  s_3c5c6e6e101e43::t_cd1f88c986adcb 134-137
+apps/tui/src/ui/glyphs.ts
+  ai_agent 9
+apps/tui/src/ui/markdown/lexical/languages/commonlisp.ts
+  s_f41506dfe83f81::t_34b7d69b0737c7 1-3,5,7,15-16,20-23,25-30,33-34,36-41,52-54,56-66
+  s_f41506dfe83f81::t_d1109537917200 4,6,8-14,17-19,24,31-32,35,42-51,55
+apps/tui/src/ui/__tests__/tool-verbs.spec.ts
+  ai_agent 1-118
+apps/tui/src/ui/components/diff/inline-diff.tsx
+  ai_agent 1-94
+apps/tui/src/ui/markdown/lexical/languages/__tests__/xml.spec.ts
+  s_f41506dfe83f81::t_198df4f33d5977 1-18,20-24,27-28,34-41,52,57,59-60,62-64,66-79,82-83,96-121,124-131,138-139,141,143-149
+  s_f41506dfe83f81::t_b1b80dc065bde9 19,25-26,29-33,42-51,53-56,58,61,65,80-81,84-95,122-123,132-137,140,142
+apps/tui/src/ui/__tests__/hide-scrollbar.spec.tsx
+  ai_agent 1-58
+apps/tui/src/composition/app.tsx
+  s_f41506dfe83f81::t_75301edd63d728 19,52
+  s_3c5c6e6e101e43::t_fabb056159ebf2 12,21,39,53,60,118-139,144-147,151,153-165,170-209,215-216,218-220,322-323,327,332-333
+  s_3c5c6e6e101e43::t_15ad65fa0cbeea 4-6,29,31,34,54,56-59,69,210-211,217,290,313-321,325-326,328-331
+  s_3c5c6e6e101e43::t_4b3dd8509e974e 301,324
+apps/tui/src/ui/components/transcript.tsx
+  ai_agent 3,5-6,8,34-35,38-40,47,49-51,58-60,86,92-96,101-109,113
+apps/tui/src/ui/markdown/lexical/languages/perl.ts
+  s_f41506dfe83f81::t_88afe55a194c32 34
+  s_f41506dfe83f81::t_02760826455a19 65
+  s_f41506dfe83f81::t_00a2b6d63a485d 1,4-9,12-23,25-33,35-38,42,49-59
+  s_f41506dfe83f81::t_df673548f4ddf4 2-3,10-11,24,39-41,43-48,60-64,66-74
+apps/tui/src/ui/markdown/lexical/languages/__tests__/delphi.spec.ts
+  s_f41506dfe83f81::t_ae9390d98e2701 1-13,17-49,51-87,97-101,109-111,123-128,134-149,153-156,164-169
+  s_f41506dfe83f81::t_60bed7fbd66b23 150-152
+  s_f41506dfe83f81::t_d873cd8ca0f574 14-16,50,88-96,102-108,112-122,129-133,157-163
+apps/tui/src/ui/__tests__/hint-layout.spec.ts
+  ai_agent 1-57
+apps/tui/src/ui/__tests__/model-label.spec.ts
+  ai_agent 1-21
+apps/tui/src/ui/markdown/themes/atlas.ts
+  ai_agent 30-31
+apps/tui/tsconfig.json
+  ai_agent 8
+apps/tui/src/ui/__tests__/transcript-fixture.tsx
+  ai_agent 20-23,146,154-155,158
+apps/tui/src/ui/markdown/__tests__/markdown-view.spec.tsx
+  ai_agent 108,125,158-187,191-192
+apps/tui/src/ui/markdown/lexical/languages/__tests__/clojure.spec.ts
+  s_f41506dfe83f81::t_d91f2802f9b9a6 15-18,64-71,136,143-148,150-152,161-164,180-188
+  s_f41506dfe83f81::t_89a125780c2cf7 1-14,19-63,72-135,137-142,149,153-160,165-179,189-194
+apps/tui/src/ui/markdown/lexical/languages/scss.ts
+  s_f41506dfe83f81::t_e8785e91f73953 1-8,10-26,29-33,35-38,40-45
+  s_f41506dfe83f81::t_cd08d1957fe28e 9,27,34,39
+  s_f41506dfe83f81::t_6219fba5452b3b 28
+apps/tui/src/ui/markdown/lexical/languages/__tests__/vhdl.spec.ts
+  s_f41506dfe83f81::t_f79e7794c67c5c 39-40,49,66-67,71,100-104,114-119,135-138,141,143-147,150-166,176-179
+  s_f41506dfe83f81::t_d6fdf0fd45de0d 1-38,41-48,50-65,68-70,72-99,105-113,120-134,139-140,142,148-149,167-175,180-185
+apps/tui/src/store/__tests__/tool-group-totals.spec.ts
+  ai_agent 1-175
+apps/tui/src/ui/components/blocks/thinking-block.tsx
+  ai_agent 12,23,26,28,30,32,34,39,42-43,49-59,62,70,76-77,83,85,87,93,96-97
+apps/tui/src/ui/markdown/prose/__tests__/inline.spec.ts
+  s_d9be5f328f490e::t_82bd88b24d8299 1-103
+apps/tui/src/ui/markdown/lexical/languages/__tests__/erlang.spec.ts
+  s_f41506dfe83f81::t_7ccdebac955114 128
+  s_f41506dfe83f81::t_fc851fae895b4f 9-10,14,16-18,28-30,42-43,46,96,100,124,126-127,131-151,164-168
+  s_f41506dfe83f81::t_05f60b1ad7afbe 1-8,11-13,15,19-27,31-41,44-45,47-95,97-99,101-123,125,129-130,152-163,169-174
+apps/tui/src/ui/markdown/lexical/languages/__tests__/perl.spec.ts
+  s_f41506dfe83f81::t_a4afe58d4774fe 1-112,143-146,154,156-157,159-160,163-170,180-181,190-195,206-219,221-226,229-230
+  s_f41506dfe83f81::t_899f90d168dde7 113-142,147-153,155,158,161-162,171-179,182-189,196-205,220,227-228
+apps/tui/src/store/tool-groups.ts
+  ai_agent 1-287
+apps/tui/src/store/reveal.ts
+  ai_agent 1-74
+apps/tui/src/ui/components/diff/side-by-side-diff.tsx
+  ai_agent 1-117
+apps/tui/src/composition/use-conversation.ts
+  s_ed3588bb0efbeb::t_9e82ebad44638c 16
+  s_ed3588bb0efbeb::t_d60d0feaece5fa 135
+apps/tui/src/ui/markdown/lexical/languages/ruby.ts
+  s_f41506dfe83f81::t_aac62c06eec245 1-36
+apps/tui/src/ui/markdown/lexical/languages/fsharp.ts
+  s_f41506dfe83f81::t_e555e91c4d7a5d 1-26,30-33,35-55
+  s_f41506dfe83f81::t_fb7b7136a130e8 27-29,34
+apps/tui/src/ui/components/diff/__tests__/harness.tsx
+  ai_agent 1-54
+apps/tui/src/ui/components/diff/diff-patch.ts
+  ai_agent 1-29
+apps/tui/src/ui/markdown/lexical/languages/__tests__/ada.spec.ts
+  s_f41506dfe83f81::t_83276de4335973 3,16,48,87-93,117,143-157,170-173
+  s_f41506dfe83f81::t_c63c531d628673 1-2,4-15,17-47,49-86,94-116,118-142,158-169,174-179
+apps/tui/src/ui/markdown/lexical/languages/crystal.ts
+  s_f41506dfe83f81::t_f97f46dbe7bd5a 1-13,18-22,25-26,34-35,37-38
+  s_f41506dfe83f81::t_91dccfaf8566f5 14-17,23-24,27-33,36
+apps/tui/src/ui/markdown/grammars/assets/toml/highlights.scm
+  s_f41506dfe83f81::t_c6b4d81122e1fe 1-54
+apps/tui/src/ui/components/diff/diff-style.ts
+  ai_agent 1-102
+apps/tui/src/ui/components/screen.tsx
+  ai_agent 3-4,11-17
+apps/tui/src/ui/model-label.ts
+  ai_agent 1-9
+apps/tui/src/ui/markdown/lexical/languages/__tests__/cobol.spec.ts
+  s_f41506dfe83f81::t_6343fbbf77dd21 118
+  s_f41506dfe83f81::t_5e48dbda893618 21-23,25,61,65,76-81,109-114,124-131,134-138
+  s_f41506dfe83f81::t_c37a1c915f437d 1-20,24,26-60,62-64,66-75,82-108,115-117,119-123,132-133,139-145
+apps/tui/src/ui/markdown/lexical/spec.ts
+  s_f41506dfe83f81::t_b10f1d0c16d9ac 1-56
+apps/tui/src/composition/use-settings.ts
+  s_f41506dfe83f81::t_75301edd63d728 15,67-76
+  s_3c5c6e6e101e43::t_bdc3ed94a9fb5b 1-14,16-66,77-158
+apps/tui/src/store/durable-entries.ts
+  ai_agent 4-5,34-37,45-48
+apps/tui/src/ui/components/composer-hints.tsx
+  ai_agent 1-44
+apps/tui/src/ui/markdown/lexical/languages/__tests__/vim.spec.ts
+  s_f41506dfe83f81::t_6d12a3d875fd43 37,39-40,54,85-104,107-110,118-119,138-143
+  s_f41506dfe83f81::t_e4553a59ae663c 69
+  s_f41506dfe83f81::t_8c960aaf88d26b 1-36,38,41-53,55-68,70-84,105-106,111-117,120-137,144-164
+apps/tui/src/ui/components/blocks/welcome-block.tsx
+  ai_agent 1-29
+apps/tui/src/ui/markdown/lexical/languages/icon.ts
+  s_f41506dfe83f81::t_8ae506d0d61ce3 1-11,14-15,18-28,39-41
+  s_f41506dfe83f81::t_0fa3f9ab0a122c 12
+  s_f41506dfe83f81::t_ededb0e758a703 13,16-17,29-38
+apps/tui/src/ui/markdown/lexical/languages/ocaml.ts
+  s_f41506dfe83f81::t_1833328f8a7709 2-16,18-49
+  s_f41506dfe83f81::t_c454b034b62573 1,17
+apps/tui/scratch2.json
+  s_ed3588bb0efbeb::t_b564adcc132b54 1-5
+apps/tui/src/ui/markdown/__tests__/fenced-block.spec.tsx
+  s_d9be5f328f490e::t_953a595d40b735 6-12,20,29-34,43-44,141,221,225,227,237,241,351
+  s_2a29fbdb626561::t_ad3e2338c1fa69 263,268,270,278-283,285-345
+  s_ed3588bb0efbeb::t_9fc282a3e1064b 1,272
+  s_2a29fbdb626561::t_6e0d51b385f2a0 13-19,264-267,269,271,273-277,284
+apps/tui/src/ui/components/entry-view.tsx
+  ai_agent 6,14,29,45-49
+apps/tui/src/ui/markdown/lexical/languages/less.ts
+  s_f41506dfe83f81::t_7f0edd984b3120 1-8,13-48,50-63
+  s_f41506dfe83f81::t_0817ddbc3ae29d 9-12,49
+apps/tui/src/ui/markdown/lexical/languages/__tests__/vbnet.spec.ts
+  s_f41506dfe83f81::t_bef5136ef3e363 144,146-148
+  s_f41506dfe83f81::t_f1583756c6a12b 1-15,17-22,24-27,29-39,41-46,48,54-70,72-96,99,106-107,126-138,142-143,145,153-156,158-163
+  s_f41506dfe83f81::t_7b66fda3361bc0 109-112
+  s_f41506dfe83f81::t_3506e0b2ac783e 16,23,28,40,47,49-53,71,97-98,100-105,108,113-125,139-141,149-152,157
+apps/tui/src/ui/markdown/lexical/languages/__tests__/julia.spec.ts
+  s_f41506dfe83f81::t_17128b6987f25c 1-15,18-24,26-55,57-84,89-109,111-117,124-127,130-137,150-153,158-167
+  s_ed3588bb0efbeb::t_5d19afe9645c9b 16-17,25,56,85-88,118-123,128-129,138-149,154-157
+  s_f41506dfe83f81::t_358357d5d18cb2 110
+apps/tui/src/ui/markdown/lexical/languages/__tests__/verilog.spec.ts
+  s_f41506dfe83f81::t_c59564aae8dd72 1-48,68-83,85-101,110-119,130-131,138-144,147-151,158-161,166-171
+  s_f41506dfe83f81::t_d6da5e7da20db6 49-67,84,102-109,120-129,132-137,145-146,152-157,162-165
+apps/tui/src/ui/components/sidebar/crew.tsx
+  ai_agent 1-57
+apps/tui/src/ui/hide-scrollbar.ts
+  ai_agent 1-18
+apps/tui/src/ui/markdown/segment.ts
+  ai_agent 3-9,12-18,50-77,79,82-83,86,89-102
+apps/tui/src/ui/paths.ts
+  ai_agent 1-18
+apps/tui/src/ui/markdown/lexical/languages/d.ts
+  s_f41506dfe83f81::t_8c55d3d59ccb0e 6,12,19-20,40-43
+  s_f41506dfe83f81::t_e5e30fb318a51b 1-5,7-11,13-18,21-39,44-48
+apps/tui/src/ui/components/diff/__tests__/fixtures.ts
+  ai_agent 1-99
+apps/tui/src/composition/__tests__/fake-app.ts
+  s_3c5c6e6e101e43::t_929b58fab44680 2-3,12
+  s_7458f8085fa8b5::t_2faa4093364377 26,118,131-138
+apps/tui/src/ui/components/diff/chunk-styling.ts
+  ai_agent 1-59
+apps/tui/src/ui/markdown/__tests__/syntax-style.spec.ts
+  ai_agent 47-48,52-60,65-67
+apps/tui/src/ui/components/settings/head.tsx
+  s_3c5c6e6e101e43::t_1d51cc505e2d72 1-62
+apps/tui/src/ui/__tests__/text-flow.spec.ts
+  ai_agent 63
+apps/tui/src/ui/markdown/lexical/languages/__tests__/racket.spec.ts
+  s_f41506dfe83f81::t_8bd474b3cc7ec4 10,32,60,87-90,115,127-149
+  s_f41506dfe83f81::t_0ab54a49c5a983 1-9,11-31,33-59,61-86,91-114,116-126,150-159
+apps/tui/src/ui/markdown/__tests__/prose-steadiness.spec.tsx
+  ai_agent 1-75
+apps/tui/src/ui/markdown/lexical/languages/r.ts
+  s_f41506dfe83f81::t_4f252730aa7ea4 1-13,15-16,19-32
+  s_f41506dfe83f81::t_89a5cd0974cd57 14,17-18
+apps/tui/src/composition/boot.tsx
+  s_3c5c6e6e101e43::t_83efb85f67ae1e 34
+apps/tui/src/composition/effort-budget.ts
+  ai_agent 1-9
+apps/tui/src/ui/markdown/lexical/languages/vbnet.ts
+  s_f41506dfe83f81::t_923aee5d06a54c 13-18,20-22,28-30,32-35,43
+  s_f41506dfe83f81::t_f36e9d4a466fa5 1-12,23-27,31,40-42,44-47
+  s_f41506dfe83f81::t_928f9b91a780f7 36-39
+  s_f41506dfe83f81::t_54c0953a1d02c1 19
+apps/tui/src/store/__tests__/tool-fixture.ts
+  ai_agent 1-63
+apps/tui/src/ui/components/diff/diff-cells.tsx
+  ai_agent 1-95
+apps/tui/src/ui/components/sidebar/cells.ts
+  ai_agent 1-45
+apps/tui/src/composition/__tests__/app-shortcuts.spec.tsx
+  ai_agent 1-93
+apps/tui/src/ui/markdown/lexical/languages/index.ts
+  s_f41506dfe83f81::t_aac62c06eec245 1,36,49
+  s_f41506dfe83f81::t_0c3b6f444626e7 2-23,25-35,38-39,41-47,50-76,78-89,91-92,94-100,102
+  s_f41506dfe83f81::t_38696542cb6513 24,37,40,48,77,90,93,101
+apps/tui/src/ui/markdown/lexical/languages/cobol.ts
+  s_f41506dfe83f81::t_0ed8ac6962d83b 14,22-43
+  s_f41506dfe83f81::t_f947964fcf7dc0 1-13,15-21,44-51
+apps/tui/src/ui/__tests__/diff-layout.spec.ts
+  ai_agent 1-138
+apps/tui/src/ui/components/sidebar/turn.tsx
+  ai_agent 1-109
+apps/tui/src/composition/__tests__/config.spec.ts
+  s_7458f8085fa8b5::t_616fc3423c4cb4 25-26,35-36,54-55,65-66
+apps/tui/src/ui/markdown/lexical/rules.ts
+  s_f41506dfe83f81::t_a293c8bc0ae181 1-119
+apps/tui/src/ui/markdown/lexical/languages/__tests__/tcl.spec.ts
+  s_f41506dfe83f81::t_07eb44aea600b1 7,28-30,34-36,80,91,94,110,115-120,123-126
+  s_f41506dfe83f81::t_9b323dd992a992 1-6,8-27,31-33,37-79,81,83-90,92-93,95-109,111-114,121-122,130-135
+  s_f41506dfe83f81::t_2bf49a8084d5d7 82
+  s_f41506dfe83f81::t_7273b65cece435 127-129
+apps/tui/src/ui/markdown/grammars/parsers-config.json
+  s_f41506dfe83f81::t_8c11127c4ed141 106-117,184-197
+  s_f41506dfe83f81::t_cfc932e8f97a17 200-212
+apps/tui/src/ui/components/sidebar.tsx
+  ai_agent 1-74
+apps/tui/src/ui/markdown/lexical/languages/vhdl.ts
+  s_f41506dfe83f81::t_144fe5e85c84b6 1,12-13,19
+  s_f41506dfe83f81::t_3fedac19a7c675 2-11,14-18,20-48
+apps/tui/src/ui/context-bar.ts
+  ai_agent 1-38
+apps/tui/src/ui/markdown/prose/prose-view.tsx
+  ai_agent 1-270
+apps/tui/src/ui/markdown/grammars/parsers.generated.ts
+  ai_agent 47-50,71-82,162-169,209-231
+apps/tui/src/ui/__tests__/composer-render.spec.tsx
+  ai_agent 1-113
+apps/tui/src/ui/__tests__/tool-group-render.spec.tsx
+  ai_agent 1-241
+apps/tui/src/ui/markdown/lexical/languages/__tests__/groovy.spec.ts
+  s_f41506dfe83f81::t_8d0badd886ea7d 1-6,8-81,97-134,141-150
+  s_f41506dfe83f81::t_112317a96d0f23 7,82-96,135-140
+apps/tui/src/ui/__tests__/thinking-render.spec.tsx
+  ai_agent 1-68
+apps/tui/src/ui/markdown/renderers/lexical.tsx
+  s_f41506dfe83f81::t_7c7d080082d85c 1-59
+apps/tui/src/ui/markdown/lexical/languages/__tests__/graphql.spec.ts
+  s_f41506dfe83f81::t_4297f8f059f44a 8-12,40-44,46,50-54,65-68,109-110,130-131,134,137-147,161-169,172,176-182
+  s_f41506dfe83f81::t_cdb19f158e86a8 21,118-122
+  s_f41506dfe83f81::t_98a9c7f83e59ba 1-7,13-20,22-39,45,47-49,55-64,69-108,111-117,123-129,132-133,135-136,148-160,170-171,173-175,183-189
+apps/tui/src/ui/markdown/lexical/languages/__tests__/matlab.spec.ts
+  s_f41506dfe83f81::t_5a18089d7d113d 8,21-24,29-42,48-53,75,78-89,91,102-111,114-115,127-132,134,138-147,150-154,159-160
+  s_f41506dfe83f81::t_c24a1cd63afa91 1-7,9-20,25-28,43-47,54-74,76-77,90,92-101,112-113,116-126,133,135-137,148-149,155-158,161-166
+apps/tui/prototype/shell.tsx
+  ai_agent 1-301
+apps/tui/src/store/__tests__/paced-reveal.spec.ts
+  ai_agent 1-118
+apps/tui/src/ui/markdown/lexical/languages/racket.ts
+  s_f41506dfe83f81::t_984f32b5c96609 15,17-21
+  s_f41506dfe83f81::t_464e3c009d3b44 1-14,16,23-44
+  s_f41506dfe83f81::t_37479465cc25d6 22
+apps/tui/src/composition/config.ts
+  s_7458f8085fa8b5::t_e82b31160091d6 12,15,26-27,29,50,53
+apps/tui/src/ui/components/diff/__tests__/side-by-side-diff.spec.tsx
+  ai_agent 1-131
+apps/tui/src/ui/components/panel.tsx
+  s_2a29fbdb626561::t_e7fe49cc64ec36 11,162-165,169-177,183,189
+  s_2a29fbdb626561::t_439e94dd553e39 1-10,12-161,166-168,178-182,184-188,190-200
+apps/tui/src/store/__tests__/derive-transcript.spec.ts
+  s_d9be5f328f490e::t_fedfaa3c007357 114-125
+apps/tui/src/ui/markdown/fenced-block.tsx
+  s_2a29fbdb626561::t_61397b303092be 119-126,128,151
+  s_d9be5f328f490e::t_f01761528bfc7a 127
+  s_d9be5f328f490e::t_adf6e2bc517ce3 17-40,44,47-49,54,61-62,64,67-70
+  s_2a29fbdb626561::t_413c3ee0ff64d8 87-114,133-143,146-147,150,153-156
+apps/tui/prototype/round2-data.ts
+  ai_agent 1-57
+apps/tui/src/ui/components/blocks/assistant-block.tsx
+  ai_agent 6,8-10,17,20,22-24,33
+apps/tui/src/ui/markdown/lexical/languages/erlang.ts
+  s_f41506dfe83f81::t_e3543b2eb824b1 1-5,7-16,18,20-27,29-30,34-43,47-49
+  s_f41506dfe83f81::t_1524b9ab7e3f12 6,17,19,28,31-33,44-46
+apps/tui/src/ui/markdown/lexical/languages/elixir.ts
+  s_f41506dfe83f81::t_8bb9d17aa28a86 10-11,14,16-22,24,27-30,32-39,44-56
+  s_f41506dfe83f81::t_18ef6f8e529461 1-9,12-13,15,23,25-26,40-43
+  s_f41506dfe83f81::t_18c5bce7be05fc 31
+apps/tui/src/ui/__tests__/settings-render.spec.tsx
+  s_3c5c6e6e101e43::t_0830ac3e258270 14,79-80,87-89
+  s_f41506dfe83f81::t_ace98e4c9035d8 1-13,15-78,81-86,90-115,117-166
+  s_3c5c6e6e101e43::t_f12bc1db95d184 116
+apps/tui/src/ui/markdown/__tests__/segment.spec.ts
+  ai_agent 3,27-33,39-47,59,61,71,73,101-155
+apps/tui/src/ui/markdown/__tests__/fence-level.spec.tsx
+  s_d9be5f328f490e::t_aaf0e3c994277e 5,7,11,13,15-21,23-24,26,30-45,51-62
+apps/tui/src/ui/markdown/renderers/code.tsx
+  ai_agent 14-20,22-23
+apps/tui/src/composition/compose.ts
+  s_3c5c6e6e101e43::t_83efb85f67ae1e 11,17-19,29-30,34-37,49-50,58,71
+  s_7458f8085fa8b5::t_d4501fee91b84c 16,47-48,51-53,55,65,79-81
+apps/tui/src/composition/model-selection.ts
+  s_7458f8085fa8b5::t_d4501fee91b84c 1-70
+apps/tui/src/ui/markdown/lexical/languages/smalltalk.ts
+  s_f41506dfe83f81::t_f1c9023f71ceb4 1,12-17,73
+  s_f41506dfe83f81::t_a4dd28d26cbd0f 2-11,18-34,36-72,74-90
+  s_f41506dfe83f81::t_f4d7292a798506 35
+apps/tui/src/ui/markdown/lexical/languages/__tests__/haskell.spec.ts
+  s_f41506dfe83f81::t_7162bf6805b9fc 139-142
+  s_f41506dfe83f81::t_2f37ae3a79146d 1-111,145-148
+  s_f41506dfe83f81::t_d27e01e4597b95 112-138,143-144
+apps/tui/src/store/model-entries.ts
+  ai_agent 11,16-17
+apps/tui/src/ui/markdown/lexical/languages/prolog.ts
+  s_f41506dfe83f81::t_30e7e5cc8b7b39 21,27
+  s_f41506dfe83f81::t_fb20458a783672 1-20,22-26,28-39
+apps/tui/src/ui/components/sidebar/row.tsx
+  ai_agent 1-48
+apps/tui/src/ui/markdown/__tests__/diff-renderer.spec.ts
+  ai_agent 36
+apps/tui/src/composition/__tests__/model-preference.spec.ts
+  s_7458f8085fa8b5::t_7d117ca415489d 1-102
+apps/tui/src/ui/markdown/lexical/languages/__tests__/objc.spec.ts
+  s_f41506dfe83f81::t_900579f8df0804 97
+  s_f41506dfe83f81::t_ee1e20d361cf22 1-96,98-117,119-146,148-153,178-181
+  s_f41506dfe83f81::t_e2de3ba6ec6d71 118,147
+  s_f41506dfe83f81::t_240ac529ca6cec 154-171,176-177
+  s_ed3588bb0efbeb::t_c64a4b3c0a7c3b 172-175
+apps/tui/src/ui/markdown/grammars/assets/lua/highlights.scm
+  ai_agent 1-202
+apps/tui/src/ui/markdown/syntax-style.ts
+  ai_agent 7-11,13-20,22,24,26,28,30,34,38-42,63
+apps/tui/src/ui/hooks/__tests__/press-discipline.spec.ts
+  s_2a29fbdb626561::t_78fcbaa5b3a015 7
+  s_2a29fbdb626561::t_cd140a298dcc0c 1-6,8-30
+apps/tui/src/ui/components/sidebar/head.tsx
+  ai_agent 1-96
+apps/tui/src/ui/markdown/prose/inline.ts
+  ai_agent 1-221
+apps/tui/src/ui/markdown/lexical/languages/__tests__/scala.spec.ts
+  s_f41506dfe83f81::t_c501fa41c5e316 14,19,64,67,73-78,83-89,91,111-119,132-137,140,142
+  s_f41506dfe83f81::t_ba958cefbe6a6d 1-13,15-18,20-63,65-66,68-72,79-82,90,92-110,120-131,138-139,141,143-144
+apps/tui/src/store/__tests__/sidebar-model.spec.ts
+  ai_agent 1-164
+apps/tui/src/ui/settings-model.ts
+  s_3c5c6e6e101e43::t_109a7e7b30e3c8 1-129
+apps/tui/src/ui/accents.ts
+  s_3c5c6e6e101e43::t_109a7e7b30e3c8 1-21
+apps/tui/src/ui/markdown/lexical/languages/c_sharp.ts
+  s_f41506dfe83f81::t_7409595cbfbe03 22-23,31
+  s_f41506dfe83f81::t_cb95c5f018159c 33
+  s_f41506dfe83f81::t_d6593242c6d212 1-21,24-30,32,34-61
+apps/tui/src/ui/settings-format.ts
+  s_3c5c6e6e101e43::t_109a7e7b30e3c8 1-50
+apps/tui/src/ui/markdown/__tests__/scroll-highlight.spec.tsx
+  s_f41506dfe83f81::t_a434d5ace15249 5,26,34-40,45,69-72
+apps/tui/src/ui/markdown/lexical/__tests__/registry.spec.ts
+  s_f41506dfe83f81::t_ecf3f4cc9b704a 1,3-22,25,44-79
+  s_f41506dfe83f81::t_0e5a207ead0ca5 2,23-24,26-43
+apps/tui/src/ui/markdown/lexical/languages/forth.ts
+  s_f41506dfe83f81::t_4206d2269c3f14 1,4,6,8,13-17,34,36,43-46,53,55
+  s_f41506dfe83f81::t_d7840cbad77075 2-3,5,7,9-12,18-33,35,37-42,47-52,54,56-64
+apps/tui/src/ui/markdown/lexical/languages/__tests__/swift.spec.ts
+  s_ed3588bb0efbeb::t_5f980d850139ea 37-40,42,44,46,67,74-77,97-121,150,152,154-157
+  s_f41506dfe83f81::t_595d392bbe0a54 1-36,41,43,45,47-66,68-73,78-96,122-149,151,153,158-166
+apps/tui/src/ui/markdown/lexical/languages/__tests__/autohotkey.spec.ts
+  s_f41506dfe83f81::t_9ae968e3423f73 33,36-41,64-71,74-75,84-100,108-114,118,126-133,135,140-143
+  s_f41506dfe83f81::t_06c46ae5a2c534 1-32,34-35,42-63,72-73,76-83,101-107,115-117,119-125,134,136-139,144-149
+apps/tui/src/ui/__tests__/footer-layout.spec.ts
+  ai_agent 1-133
+apps/tui/src/ui/markdown/lexical/languages/ada.ts
+  s_f41506dfe83f81::t_dcc7b6472967b5 1-11,13-35
+  s_f41506dfe83f81::t_4e25dc98755478 12
+apps/tui/src/ui/markdown/lexical/__tests__/scopes.spec.ts
+  s_f41506dfe83f81::t_14826d7f14e28e 1-42,47-49
+  s_f41506dfe83f81::t_2ab338ecb1e32a 45
+apps/tui/src/ui/__tests__/render-smoke.spec.tsx
+  ai_agent 102
+apps/tui/src/ui/markdown/lexical/scanner.ts
+  s_f41506dfe83f81::t_edae1ede96ad5e 9-160,162-187,189-243
+  s_f41506dfe83f81::t_f94958078658fe 1-8,161,188
+apps/tui/src/store/derive-transcript.ts
+  ai_agent 5-6,8,11,22,24-57,64,66,68-71
+apps/tui/src/ui/components/blocks/user-block.tsx
+  ai_agent 4-5,7,15-16,18
+apps/tui/src/ui/markdown/lexical/languages/objc.ts
+  s_f41506dfe83f81::t_4b9ab5b268eda8 1-4,6-11,16-27,29-31,33-41,43-45,47-54
+  s_f41506dfe83f81::t_a0dbe5ac3eb7f8 5
+  s_f41506dfe83f81::t_403bbebce1002e 12-15,28,32,42,46
+apps/tui/src/ui/markdown/lexical/languages/scheme.ts
+  s_f41506dfe83f81::t_9aaa72200d96df 9-12
+  s_f41506dfe83f81::t_7c155181087844 18
+apps/tui/src/ui/markdown/lexical/languages/__tests__/icon.spec.ts
+  s_f41506dfe83f81::t_45cea1ef17b672 1-34,36-37,39-57,59-66,68-72,74,76-77,91-119,121-124,142-157
+  s_f41506dfe83f81::t_a8f3559d7b4461 35,38,58,67,73,75,78-90,120,125-141
+apps/tui/src/store/sidebar-model.ts
+  ai_agent 1-113
+apps/tui/src/ui/markdown/prose/inline-view.tsx
+  ai_agent 1-80
+apps/tui/src/ui/markdown/lexical/languages/__tests__/scss.spec.ts
+  s_f41506dfe83f81::t_3e80163f817d1d 1-29,31-37,42-43,48-170,187,218-221,223-228
+  s_f41506dfe83f81::t_3f810ef16ea13d 30,38-41,44-47,171-186,188-217,222
+apps/tui/src/ui/markdown/copy-button.tsx
+  s_2a29fbdb626561::t_cd140a298dcc0c 5,40-41
+  s_2a29fbdb626561::t_58cf692d7944ce 21,48-53,57-59
+apps/tui/src/ui/markdown/markdown-view.tsx
+  s_d9be5f328f490e::t_3e70af53e8ac74 48-71,75-86,91-100,102-122
+  s_d9be5f328f490e::t_0021221b7c9237 4
+apps/tui/src/ui/components/composer.tsx
+  ai_agent 6,14-28,46,50-52,56,61,102-103,105,107-115,117-132
+apps/tui/src/ui/markdown/lexical/languages/__tests__/ruby.spec.ts
+  s_f41506dfe83f81::t_0874b92da8fe2c 4,30,48,56,64,68,72,75-76
+  s_f41506dfe83f81::t_15a9a5945bc092 1-3,5-16,19-29,31-47,49-55,57-63,65-67,69-71,73-74,77-78
+  s_f41506dfe83f81::t_f33b93d1e678db 17-18
+apps/tui/src/ui/__tests__/switcher-render.spec.tsx
+  ai_agent 1-180
+apps/tui/src/ui/markdown/prose/prose-style.ts
+  ai_agent 1-75
+apps/tui/src/ui/markdown/registry.ts
+  ai_agent 7,14
+apps/tui/src/ui/markdown/prose/unicode.ts
+  ai_agent 1-77
+apps/tui/src/ui/components/blocks/error-block.tsx
+  ai_agent 4-7,9-46,48-51,57-66,68-70,72-73
+apps/tui/src/ui/markdown/lexical/languages/julia.ts
+  s_f41506dfe83f81::t_f407d6d0dd4358 1-3,10-18,20-28,30-35,37-45
+  s_f41506dfe83f81::t_818b99c22bfbf1 4-5,7-9,19,29
+  s_f41506dfe83f81::t_475dd8028df3d5 6,36
+apps/tui/src/ui/markdown/lexical/languages/__tests__/nim.spec.ts
+  s_f41506dfe83f81::t_97e5ca70f72567 7-11,37,41,70,72-77,80-87,92-93,96-102,123-126
+  s_f41506dfe83f81::t_4054114167003b 109,111
+  s_f41506dfe83f81::t_a79ca1de7c8225 1-6,12-36,38-40,42-69,71,78-79,88-91,94-95,103-108,110,112-122,127-138
+apps/tui/src/ui/components/sidebar/todo.tsx
+  ai_agent 1-45
+apps/tui/prototype/round2.tsx
+  ai_agent 1-151
+apps/tui/src/ui/markdown/lexical/languages/__tests__/crystal.spec.ts
+  s_f41506dfe83f81::t_a4b9588f68e1c4 25,40-43,54-55,96,101,103-112,126,130-131,136-165
+  s_f41506dfe83f81::t_cba28b8123b0c3 1-24,26-39,44-53,56-95,97-100,102,113-125,127-129,132-135,166-183
+apps/tui/src/ui/borders.ts
+  ai_agent 1-30
+apps/tui/src/ui/markdown/lexical/languages/nim.ts
+  s_f41506dfe83f81::t_8d8ded3ff19729 4,13,18
+  s_f41506dfe83f81::t_41327d87897988 1-3,5-12,14-17,19-38
+apps/tui/scratch3.md
+  s_ed3588bb0efbeb::t_b564adcc132b54 1-7
+apps/tui/src/ui/markdown/prose/__tests__/prose-render.spec.tsx
+  ai_agent 1-184
+apps/tui/scratch1.txt
+  s_ed3588bb0efbeb::t_b564adcc132b54 1-2
+apps/tui/src/ui/markdown/lexical/languages/__tests__/r.spec.ts
+  s_f41506dfe83f81::t_0b75a8e9bb4a0e 1-34,37-92,94-98,115-130,135-159
+  s_f41506dfe83f81::t_e96c5b0808e677 35-36,93,99-114,131-134
+apps/tui/src/store/__tests__/expandable.spec.ts
+  ai_agent 1-89
+apps/tui/src/ui/components/shortcuts.tsx
+  ai_agent 1-70
+apps/tui/src/store/conversation-store.ts
+  ai_agent 4,7-15,21,23,33,35,38-40,42,48-49,53-64,67-75,91-92,98-102,104-105
+apps/tui/src/ui/markdown/lexical/languages/__tests__/pascal.spec.ts
+  s_f41506dfe83f81::t_865b18d03cae9e 1-91,114-158
+  s_f41506dfe83f81::t_8f64e392dde3bd 92-113
+apps/tui/src/ui/markdown/lexical/languages/kotlin.ts
+  s_f41506dfe83f81::t_2bb104d888484f 1-2,4,6-17,20,23-36,38-47
+  s_f41506dfe83f81::t_6a0261f3838125 3,5,18-19,21-22
+  s_f41506dfe83f81::t_410a64e59ba689 37
+apps/tui/src/ui/markdown/lexical/rows.ts
+  s_f41506dfe83f81::t_9f53e0f99cfa79 1-64
+apps/tui/src/ui/markdown/lexical/languages/tcl.ts
+  s_f41506dfe83f81::t_e51b017b747706 11
+  s_f41506dfe83f81::t_80535824cff38f 1-10,12-28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "d93895f0be38b5601ea013dc422819760c0cd793",
+  "prompts": {},
+  "sessions": {
+    "s_2a29fbdb626561": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "34594f70-ba61-4595-a323-ff35ac846cc5",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_3c5c6e6e101e43": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c92d248c-a8ed-4639-b523-aadc7013b3d1",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_7458f8085fa8b5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "82e22701-aa74-4b45-8c15-1336ff9a8c6b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_d9be5f328f490e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6cfbd639-9045-46d7-a518-bf48e50c8609",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_ed3588bb0efbeb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b1f24252-ac33-4c97-9ba3-ca59d69b0a62",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_f41506dfe83f81": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2ad7a75d-37fd-43f7-8dcb-723fb4e651de",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
