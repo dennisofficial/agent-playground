@@ -1,0 +1,65 @@
+packages/harness/src/settings/__tests__/settings-service.spec.ts
+  s_3c5c6e6e101e43::t_d98ea0710f6220 1,9,12,23,26,41,79-85,92,102-106
+  s_3c5c6e6e101e43::t_5016d2ff7065ef 2-8,10-11,13-22,24-25,27-40,42-78,86-91,93-101,107-138
+packages/harness/src/settings/index.ts
+  s_3c5c6e6e101e43::t_d98ea0710f6220 3
+  s_3c5c6e6e101e43::t_cff80d87f20aa5 1-2,4-10
+packages/harness/src/index.ts
+  s_3c5c6e6e101e43::t_cff80d87f20aa5 8
+packages/harness/src/settings/environment.ts
+  s_3c5c6e6e101e43::t_bf9c6b8c656725 1-28
+packages/harness/src/model/index.ts
+  ai_agent 10
+packages/harness/src/providers/anthropic-oauth.ts
+  ai_agent 10-11,75-77,80-82
+packages/harness/src/model/switchable-model.ts
+  ai_agent 1-52
+packages/harness/src/providers/__tests__/recording-fetch.ts
+  ai_agent 53-64,74,88
+packages/harness/src/settings/memory-store.ts
+  s_3c5c6e6e101e43::t_d98ea0710f6220 1-41
+packages/harness/src/providers/__tests__/anthropic-oauth.spec.ts
+  ai_agent 2,8,44-110
+packages/harness/src/channel/__tests__/settled-tool-results.spec.ts
+  s_ed3588bb0efbeb::t_71ef3161161109 1-95
+packages/harness/src/providers/anthropic-subscription-attribution.ts
+  ai_agent 1-36
+packages/harness/src/settings/service.ts
+  s_3c5c6e6e101e43::t_5016d2ff7065ef 104
+  s_3c5c6e6e101e43::t_929b58fab44680 17,71
+  s_3c5c6e6e101e43::t_cff80d87f20aa5 1-16,18-70,72-103,105-108
+packages/harness/src/settings/file-store.ts
+  s_3c5c6e6e101e43::t_bf9c6b8c656725 1-59
+packages/harness/src/model/chunk-conversion.ts
+  ai_agent 2,4,22-32,48-54
+packages/harness/src/model/testing/scripted-model.ts
+  ai_agent 15-16,24,30-35,90
+packages/harness/src/settings/paths.ts
+  s_3c5c6e6e101e43::t_bf9c6b8c656725 1-13
+packages/harness/src/model/__tests__/model-port.spec.ts
+  ai_agent 181-200
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "50612169ccb60cd225515a299e7e4295f557cc3a",
+  "prompts": {},
+  "sessions": {
+    "s_3c5c6e6e101e43": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c92d248c-a8ed-4639-b523-aadc7013b3d1",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_ed3588bb0efbeb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b1f24252-ac33-4c97-9ba3-ca59d69b0a62",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
