@@ -248,10 +248,38 @@ looked obvious and were wrong:
   `assistant[call, text]` is provider-repaired and must **not** be flagged. There is a passing test
   pinning that non-check so nobody adds it later.
 
-Also unchecked, deliberately: result *order* within a turn (Anthropic keys on `tool_use_id`, not
-position), blank `reasoning` parts and signature validity (provider-opaque, and a false positive in a
-validator is worse than a gap), and whether `ToolCallPart.input` is JSON-serialisable — a real 400
-class, but proving it needs the `unknown`-to-`JsonValue` validator this document refuses to invent.
+### Known gaps, and the division they share
+
+A fault that is not certain is worse than a missing one, because the loop refuses the step on it. So
+the validator declines to guess, and these stay unchecked:
+
+1. **A whitespace-only text part.** An *empty* text block is rejected; whether a whitespace-only one
+   is, is unverified. This was briefly checked as `text.trim() === ''` and it hard-failed ordinary
+   turns — Claude commonly emits a whitespace-only text block after a thinking block — so it is now
+   `text === ''` only.
+2. **Reasoning parts replayed without a signature.** Provider-opaque; `core` cannot know what a valid
+   signature looks like. This is a shape the validator does not fault and the provider *does* reject,
+   and it is the only one known.
+3. **`ToolCallPart.input` that is not JSON-serialisable.** A real 400 class, but proving it needs the
+   `unknown`-to-`JsonValue` validator this document refuses to invent.
+4. **`toolName` disagreeing between a result and its call.** A genuine projection bug that will
+   corrupt the TUI, but not a provider rejection, so checking it here would break the contract that
+   makes the module safe to wire to a refusal.
+5. **Result order within a turn.** Anthropic keys on `tool_use_id`, not position; checking order would
+   reject working prompts.
+6. **Token budget, message count, empty `system`, alternation past the first message.** Not
+   structural, or repaired by the provider's block merging.
+
+Gaps 1 and 2 share a shape worth stating once: the **producer** emits something questionable and the
+validator declines to guess. That is the intended division of labour. The accumulator should not create
+shapes that never made sense — it now drops empty and whitespace-only text parts at the source — and
+the validator asserts only what is certain. Every gap on this list resolves at the producer, not by
+loosening the check.
+
+**One fault is latent rather than live.** `OpensWithAssistant` is unreachable today, because `say`
+always appends `user-said` first and a log of only `assistant-said` makes `awaitsReply` false. It
+becomes reachable when `forkFrom` lands, which makes it a constraint on the rewind slice: **a fork
+point must never leave a branch whose first event is `assistant-said` or `tool-called`.**
 
 ## Settled: core owns its message type
 

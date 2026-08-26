@@ -173,14 +173,19 @@ describe('content the provider rejects outright', () => {
     expect(faults[0]).toMatchObject({ messageIndex: 1, origin: originAt(1) })
   })
 
-  it('faults a text part holding only whitespace', () => {
-    expect(kindsOf(exchange([user('   \n  ')]))).toEqual([EExchangeFault.BlankText])
+  it('faults a text part holding no text', () => {
+    expect(kindsOf(exchange([user('')]))).toEqual([EExchangeFault.BlankText])
   })
 
-  it('faults every blank text part in one message', () => {
+  it('leaves a whitespace-only text part alone, which the provider is not known to refuse', () => {
+    expect(kindsOf(exchange([user('   \n  ')]))).toEqual([])
+    expect(kindsOf(exchange([user('go'), assistant([text('\t')])]))).toEqual([])
+  })
+
+  it('faults every empty text part in one message', () => {
     const assembled = exchange([
       user('go'),
-      assistant([text(''), text('real'), text('\t')]),
+      assistant([text(''), text('real'), text('')]),
     ])
 
     expect(kindsOf(assembled)).toEqual([EExchangeFault.BlankText, EExchangeFault.BlankText])

@@ -106,12 +106,12 @@ function contentFaults(placed: Placed): ExchangeFault[] {
   }
 
   return parts.flatMap((part, position) =>
-    part.type === 'text' && part.text.trim() === ''
+    part.type === 'text' && part.text === ''
       ? [
           faultAt({
             fault: EExchangeFault.BlankText,
             placed,
-            detail: `part ${position} of the ${message.role} message is a text block holding no readable text`,
+            detail: `part ${position} of the ${message.role} message is a text block holding no text`,
           }),
         ]
       : [],

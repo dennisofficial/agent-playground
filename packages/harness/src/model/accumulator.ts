@@ -12,6 +12,8 @@ import { carriedProviderOptions, mergeProviderOptions } from './provider-options
 
 type OpenBlock = { kind: EBlockKind; text: string; providerOptions: ProviderOptions | undefined }
 
+const saysNothing = (text: string): boolean => text.trim() === ''
+
 export type PartAccumulator = {
   handle(chunk: Chunk): void
   finish(): ModelStepResult
@@ -49,6 +51,8 @@ export function createPartAccumulator(): PartAccumulator {
       parts.push({ type: 'reasoning', text: block.text, ...carried })
       return
     }
+    if (saysNothing(block.text)) return
+
     parts.push({ type: 'text', text: block.text, ...carried })
   }
 

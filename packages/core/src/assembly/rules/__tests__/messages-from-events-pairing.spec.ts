@@ -3,6 +3,7 @@ import { describe, expect, it } from 'bun:test'
 import { EDecision, type EventDraft } from '../../../events/body'
 import { toCallId, toEventId } from '../../../events/ids'
 import type { Assembled } from '../../assembled'
+import { exchangeFaults } from '../../exchange-shape'
 import { contextFor, log } from '../../__tests__/log-fixture'
 import { messagesFromEvents } from '../messages-from-events'
 
@@ -225,5 +226,65 @@ describe('messagesFromEvents pairing every call with a result', () => {
       const toolIndex = messages.findIndex((entry) => entry.message.role === 'tool')
       expect(messages[toolIndex - 1]?.message.role).toBe('assistant')
     }
+  })
+
+  it('projects one tool_use per call id however many times the log repeats it', () => {
+    const events = log([
+      { type: 'user-said', text: 'go' },
+      { type: 'assistant-said', parts: [{ type: 'text', text: 'working' }] },
+      { type: 'tool-called', callId: toCallId('call-0'), name: 'read', input: { path: 'a' }, ordinal: 0 },
+      { type: 'tool-called', callId: toCallId('call-0'), name: 'read', input: { path: 'b' }, ordinal: 1 },
+      { type: 'tool-result', callId: toCallId('call-0'), name: 'read', output: 'a', modelText: 'a' },
+    ])
+
+    const assembled = messagesFromEvents()(empty, contextFor({ events }))
+
+    const calls = assembled.messages.flatMap((entry) =>
+      entry.message.content.flatMap((part) => (part.type === 'tool-call' ? [part] : [])),
+    )
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toMatchObject({ toolCallId: 'call-0', input: { path: 'a' } })
+    expect(exchangeFaults(assembled)).toEqual([])
+  })
+
+  it('keeps a repeated call in the assistant turn that first emitted it', () => {
+    const events = log([
+      { type: 'user-said', text: 'go' },
+      { type: 'assistant-said', parts: [{ type: 'text', text: 'first' }] },
+      { type: 'tool-called', callId: toCallId('call-0'), name: 'read', input: { path: 'a' }, ordinal: 0 },
+      { type: 'tool-result', callId: toCallId('call-0'), name: 'read', output: 'a', modelText: 'a' },
+      { type: 'assistant-said', parts: [{ type: 'text', text: 'second' }] },
+      { type: 'tool-called', callId: toCallId('call-0'), name: 'read', input: { path: 'a' }, ordinal: 0 },
+    ])
+
+    const assembled = messagesFromEvents()(empty, contextFor({ events }))
+
+    expect(assembled.messages.map((entry) => entry.message.role)).toEqual([
+      'user',
+      'assistant',
+      'tool',
+      'assistant',
+    ])
+    expect(assembled.messages[3]?.message.content).toEqual([{ type: 'text', text: 'second' }])
+    expect(exchangeFaults(assembled)).toEqual([])
+  })
+
+  it('lets the latest settlement of a call supersede an earlier one', () => {
+    const events = log([
+      { type: 'user-said', text: 'go' },
+      { type: 'assistant-said', parts: [{ type: 'text', text: 'working' }] },
+      { type: 'tool-called', callId: toCallId('call-0'), name: 'bash', input: { command: 'x' }, ordinal: 0 },
+      { type: 'tool-denied', callId: toCallId('call-0'), name: 'bash', reason: 'needs approval' },
+      { type: 'tool-result', callId: toCallId('call-0'), name: 'bash', output: 'ran', modelText: 'ran' },
+    ])
+
+    const assembled = messagesFromEvents()(empty, contextFor({ events }))
+
+    const results = assembled.messages.flatMap((entry) =>
+      entry.message.content.flatMap((part) => (part.type === 'tool-result' ? [part] : [])),
+    )
+    expect(results).toHaveLength(1)
+    expect(results[0]?.output).toEqual({ type: 'text', value: 'ran' })
+    expect(exchangeFaults(assembled)).toEqual([])
   })
 })

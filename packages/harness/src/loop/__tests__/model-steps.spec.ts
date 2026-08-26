@@ -150,3 +150,76 @@ describe('the shape of the prompt the loop is about to send', () => {
     expect(model.doStreamCalls).toHaveLength(2)
   })
 })
+
+describe('a thinking turn whose text block arrives blank', () => {
+  it('completes the turn Claude opens a blank text block in, and records only what was said', async () => {
+    const { runner, harness, model } = await openBudgeted({
+      maxSteps: 4,
+      script: [
+        { reasoning: { text: 'the file needs touching' }, text: '  \n ', calls: [{ callId: 'call-1', name: 'touch', input: {} }] },
+        { text: 'touched it' },
+      ],
+    })
+    const branch = await harness.branches.create({})
+
+    const outcome = await runner.say({ branchId: branch.id, text: 'touch things' })
+
+    expect(outcome.status).toBe(ETurnStatus.Completed)
+    expect(model.doStreamCalls).toHaveLength(2)
+    const events = await harness.log.read({ branchId: branch.id })
+    const spoken = events.flatMap((event) =>
+      event.type === 'assistant-said' ? [event.parts.map((part) => part.type)] : [],
+    )
+    expect(spoken).toEqual([['reasoning'], ['text']])
+  })
+
+  it('appends no assistant turn at all when the only thing said was blank', async () => {
+    const { runner, harness } = await openBudgeted({
+      maxSteps: 4,
+      script: [{ text: '   ', calls: [{ callId: 'call-1', name: 'touch', input: {} }] }, { text: 'touched it' }],
+    })
+    const branch = await harness.branches.create({})
+
+    const outcome = await runner.say({ branchId: branch.id, text: 'touch things' })
+
+    expect(outcome.status).toBe(ETurnStatus.Completed)
+    const events = await harness.log.read({ branchId: branch.id })
+    expect(events.map((event) => event.type)).toEqual([
+      'user-said',
+      'tool-called',
+      'tool-result',
+      'assistant-said',
+    ])
+  })
+})
+
+describe('a dispatch that settles nothing', () => {
+  it('gives up rather than spinning on a call that never leaves the pending list', async () => {
+    const temp = createTempDatabase()
+    const model = scriptedModel({ script: [callingStep(1)] })
+    const harness = await buildHarness({ databaseUrl: temp.databaseUrl, model })
+    opened.push({ harness, temp })
+
+    const registry = createToolRegistry([touchTool])
+    let dispatched = 0
+    const runner = createTurnRunner({
+      log: harness.log,
+      model: harness.model,
+      ids: harness.ids,
+      rules: defaultRules(),
+      tools: registry.declarations(),
+      dispatch: async () => {
+        dispatched += 1
+        return []
+      },
+      maxSteps: 3,
+    })
+    const branch = await harness.branches.create({})
+
+    const outcome = await runner.say({ branchId: branch.id, text: 'touch things' })
+
+    expect(outcome.status).toBe(ETurnStatus.Exhausted)
+    expect(dispatched).toBeGreaterThan(0)
+    expect(dispatched).toBeLessThanOrEqual(7)
+  })
+})

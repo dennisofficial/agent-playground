@@ -116,4 +116,61 @@ describe('createPartAccumulator', () => {
       EFinishReason.Other,
     )
   })
+
+  it('drops a text block the provider opened and closed without saying anything', () => {
+    const result = drive([
+      { type: 'reasoning-start', id: 'r0' },
+      { type: 'reasoning-delta', id: 'r0', text: 'thinking' },
+      { type: 'reasoning-end', id: 'r0' },
+      { type: 'text-start', id: 't0' },
+      { type: 'text-end', id: 't0' },
+      { type: 'finish', reason: EFinishReason.Stop },
+    ])
+
+    expect(result.parts).toEqual([{ type: 'reasoning', text: 'thinking' }])
+  })
+
+  it('drops a text block holding nothing but whitespace, as Claude sends after thinking', () => {
+    const result = drive([
+      { type: 'text-start', id: 't0' },
+      { type: 'text-delta', id: 't0', text: '  \n ' },
+      { type: 'text-end', id: 't0' },
+      { type: 'finish', reason: EFinishReason.Stop },
+    ])
+
+    expect(result.parts).toEqual([])
+  })
+
+  it('keeps the whitespace inside a text block that says something', () => {
+    const result = drive([
+      { type: 'text-start', id: 't0' },
+      { type: 'text-delta', id: 't0', text: '  two files\n' },
+      { type: 'text-end', id: 't0' },
+      { type: 'finish', reason: EFinishReason.Stop },
+    ])
+
+    expect(result.parts).toEqual([{ type: 'text', text: '  two files\n' }])
+  })
+
+  it('keeps a reply cut off mid-sentence, since a partial reply is not a blank one', () => {
+    const result = drive([
+      { type: 'text-start', id: 't0' },
+      { type: 'text-delta', id: 't0', text: 'two files cha' },
+      { type: 'finish', reason: EFinishReason.Length },
+    ])
+
+    expect(result.parts).toEqual([{ type: 'text', text: 'two files cha' }])
+  })
+
+  it('keeps a reasoning block the provider closed empty, whose signature still has to round-trip', () => {
+    const result = drive([
+      { type: 'reasoning-start', id: 'r0' },
+      { type: 'reasoning-end', id: 'r0', providerMetadata: { anthropic: { signature: 'sig-abc' } } },
+      { type: 'finish', reason: EFinishReason.Stop },
+    ])
+
+    expect(result.parts).toEqual([
+      { type: 'reasoning', text: '', providerOptions: { anthropic: { signature: 'sig-abc' } } },
+    ])
+  })
 })

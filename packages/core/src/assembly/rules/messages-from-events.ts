@@ -85,6 +85,7 @@ type Walk = { groups: readonly Group[]; settlements: ReadonlyMap<string, Settled
 function walkEvents(events: readonly Event[]): Walk {
   const groups: Group[] = []
   const settlements = new Map<string, SettledCall>()
+  const claimedCallIds = new Set<string>()
   let openAssistant: Group | undefined
 
   for (const event of events) {
@@ -104,6 +105,8 @@ function walkEvents(events: readonly Event[]): Walk {
     }
 
     if (event.type === 'tool-called') {
+      if (claimedCallIds.has(event.callId)) continue
+      claimedCallIds.add(event.callId)
       openAssistant = appendCall({ groups, event, open: openAssistant })
       continue
     }
