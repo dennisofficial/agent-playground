@@ -1,7 +1,7 @@
 import { getErrorMessage, type SharedV4ProviderMetadata } from '@ai-sdk/provider'
-import type { FinishReason, TextStreamPart, ToolSet } from 'ai'
+import type { FinishReason, LanguageModelUsage, TextStreamPart, ToolSet } from 'ai'
 
-import { EFinishReason, toCallId, type Chunk } from '@dltech/atlas-core'
+import { EFinishReason, toCallId, type Chunk, type ModelUsage } from '@dltech/atlas-core'
 
 import { toCoreProviderOptions } from './provider-options'
 
@@ -19,6 +19,17 @@ const carriedMetadata = (part: { providerMetadata?: SharedV4ProviderMetadata }) 
   return providerMetadata === undefined ? {} : { providerMetadata }
 }
 
+/**
+ * `inputTokens` is the whole prompt in AI SDK 7 — cache reads and writes are broken out under
+ * `inputTokenDetails` rather than added on top — so the two totals are the context as billed.
+ */
+const carriedUsage = (usage: LanguageModelUsage | undefined): { usage?: ModelUsage } => {
+  if (usage === undefined) return {}
+  const { inputTokens, outputTokens } = usage
+  if (inputTokens === undefined && outputTokens === undefined) return {}
+  return { usage: { inputTokens: inputTokens ?? 0, outputTokens: outputTokens ?? 0 } }
+}
+
 export function toCoreChunk(part: TextStreamPart<ToolSet>): Chunk | null {
   if (part.type === 'text-start') return { type: 'text-start', id: part.id, ...carriedMetadata(part) }
   if (part.type === 'text-delta') return { type: 'text-delta', id: part.id, text: part.text, ...carriedMetadata(part) }
@@ -34,7 +45,13 @@ export function toCoreChunk(part: TextStreamPart<ToolSet>): Chunk | null {
     return { type: 'tool-call', callId: toCallId(part.toolCallId), name: part.toolName, input: part.input }
   }
 
-  if (part.type === 'finish') return { type: 'finish', reason: toFinishReason(part.finishReason) }
+  if (part.type === 'finish') {
+    return {
+      type: 'finish',
+      reason: toFinishReason(part.finishReason),
+      ...carriedUsage(part.totalUsage),
+    }
+  }
 
   if (part.type === 'error') return { type: 'error', message: getErrorMessage(part.error) }
 

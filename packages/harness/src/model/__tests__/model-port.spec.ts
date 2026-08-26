@@ -178,6 +178,26 @@ describe('createAiSdkModelPort', () => {
     ])
   })
 
+  it('carries the tokens the provider counted onto the finish chunk', async () => {
+    const seen: Chunk[] = []
+
+    await step({
+      model: scriptedModel({
+        script: [{ text: 'answer', usage: { inputTokens: 41_000, outputTokens: 900 } }],
+      }),
+      onChunk: (chunk) => {
+        seen.push(chunk)
+        return chunk
+      },
+    })
+
+    expect(seen.find((chunk) => chunk.type === 'finish')).toEqual({
+      type: 'finish',
+      reason: EFinishReason.Stop,
+      usage: { inputTokens: 41_000, outputTokens: 900 },
+    })
+  })
+
   it('closes a block the stream left open', async () => {
     const result = await step({ model: scriptedModel({ script: [{ text: 'half an answ', leaveTextOpen: true }] }) })
 

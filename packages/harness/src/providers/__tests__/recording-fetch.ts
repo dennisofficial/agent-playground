@@ -50,6 +50,18 @@ export const streamedText = (text: string): string =>
     { type: 'message_stop' },
   ])
 
+export const generatedText = (text: string): string =>
+  JSON.stringify({
+    id: 'msg_stub',
+    type: 'message',
+    role: 'assistant',
+    model: 'stub',
+    content: [{ type: 'text', text }],
+    stop_reason: 'end_turn',
+    stop_sequence: null,
+    usage: { input_tokens: 1, output_tokens: 1 },
+  })
+
 const parsedBody = (body: unknown): unknown => {
   if (typeof body !== 'string') return undefined
   try {
@@ -59,7 +71,7 @@ const parsedBody = (body: unknown): unknown => {
   }
 }
 
-export function recordingFetch(args: { body: string }): RecordingFetch {
+export function recordingFetch(args: { body: string; contentType?: string }): RecordingFetch {
   const requests: RecordedRequest[] = []
 
   return {
@@ -73,7 +85,7 @@ export function recordingFetch(args: { body: string }): RecordingFetch {
 
       return new Response(args.body, {
         status: 200,
-        headers: { 'content-type': 'text/event-stream' },
+        headers: { 'content-type': args.contentType ?? 'text/event-stream' },
       })
     }),
   }

@@ -7,6 +7,8 @@ import type {
 
 import type { CredentialPort } from '@dltech/atlas-core'
 
+import { withAnthropicSubscriptionAttribution } from './anthropic-subscription-attribution'
+
 export type AnthropicFetch = NonNullable<AnthropicProviderSettings['fetch']>
 
 export const ANTHROPIC_OAUTH_BETA = 'oauth-2025-04-20'
@@ -70,9 +72,13 @@ export function createAnthropicOauthModel(args: AnthropicOauthModelArgs): Langua
     supportedUrls: supportedUrlsWithoutACredential(args.modelId),
 
     doGenerate: async (options) =>
-      (await authorizedModel()).doGenerate(withDefaultProviderOptions(options)),
+      (await authorizedModel()).doGenerate(
+        withAnthropicSubscriptionAttribution(withDefaultProviderOptions(options)),
+      ),
 
     doStream: async (options) =>
-      (await authorizedModel()).doStream(withDefaultProviderOptions(options)),
+      (await authorizedModel()).doStream(
+        withAnthropicSubscriptionAttribution(withDefaultProviderOptions(options)),
+      ),
   }
 }

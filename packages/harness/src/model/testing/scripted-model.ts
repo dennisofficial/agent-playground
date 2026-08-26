@@ -12,6 +12,8 @@ export type ScriptedReasoning = {
 
 export type ScriptedCall = { callId: string; name: string; input: unknown }
 
+export type ScriptedUsage = { inputTokens: number; outputTokens: number }
+
 export type ScriptedStep = {
   reasoning?: ScriptedReasoning
   text?: string
@@ -19,14 +21,18 @@ export type ScriptedStep = {
   calls?: readonly ScriptedCall[]
   error?: unknown
   finishReason?: EFinishReason
+  usage?: ScriptedUsage
 }
 
 const REASONING_BLOCK_ID = 'scripted-reasoning'
 const TEXT_BLOCK_ID = 'scripted-text'
 
-const scriptedUsage: LanguageModelV4Usage = {
-  inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
-  outputTokens: { total: 1, text: 1, reasoning: 0 },
+const usageOf = (step: ScriptedStep): LanguageModelV4Usage => {
+  const { inputTokens, outputTokens } = step.usage ?? { inputTokens: 1, outputTokens: 1 }
+  return {
+    inputTokens: { total: inputTokens, noCache: inputTokens, cacheRead: 0, cacheWrite: 0 },
+    outputTokens: { total: outputTokens, text: outputTokens, reasoning: 0 },
+  }
 }
 
 const carriedMetadata = (metadata: ProviderOptions | undefined) =>
@@ -81,7 +87,7 @@ export function providerPartsFor(step: ScriptedStep): LanguageModelV4StreamPart[
 
   parts.push({
     type: 'finish',
-    usage: scriptedUsage,
+    usage: usageOf(step),
     finishReason: { unified: unifiedFinishReason(step), raw: undefined },
   })
 

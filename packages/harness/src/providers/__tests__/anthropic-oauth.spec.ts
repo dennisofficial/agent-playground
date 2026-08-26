@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'bun:test'
-import { streamText } from 'ai'
+import { generateText, streamText } from 'ai'
 
 import type { Credential, CredentialPort } from '@dltech/atlas-core'
 
 import { CredentialError, ECredentialFailure } from '../../credentials'
 import { ANTHROPIC_OAUTH_BETA, createAnthropicOauthModel } from '../anthropic-oauth'
-import { recordingFetch, streamedText } from './recording-fetch'
+import { generatedText, recordingFetch, streamedText } from './recording-fetch'
 
 const inAnHour = (): string => new Date(Date.now() + 3_600_000).toISOString()
 
@@ -39,6 +39,75 @@ describe('the anthropic model authenticated by a subscription credential', () =>
     expect(request?.headers.get('anthropic-version')).toBe('2023-06-01')
     expect(request?.headers.get('anthropic-beta')?.split(',')).toContain(ANTHROPIC_OAUTH_BETA)
     expect(request?.headers.has('x-api-key')).toBe(false)
+  })
+
+  it('prepends Atlas subscription attribution ahead of caller instructions', async () => {
+    const recorder = recordingFetch({ body: streamedText('pong') })
+    const model = createAnthropicOauthModel({
+      credentials: credentialsReturning('token-one'),
+      modelId: 'claude-sonnet-5',
+      fetch: recorder.fetch,
+    })
+
+    await streamText({ model, system: 'You are Atlas.', prompt: 'ping' }).text
+
+    expect(recorder.requests[0]?.body).toMatchObject({
+      system: [
+        {
+          type: 'text',
+          text: 'x-anthropic-billing-header: cc_version=0.1.0.05b; cc_entrypoint=atlas;',
+        },
+        { type: 'text', text: 'You are Atlas.' },
+      ],
+    })
+  })
+
+  it('fingerprints the first user text even when an assistant message precedes it', async () => {
+    const recorder = recordingFetch({ body: streamedText('pong') })
+    const model = createAnthropicOauthModel({
+      credentials: credentialsReturning('token-one'),
+      modelId: 'claude-sonnet-5',
+      fetch: recorder.fetch,
+    })
+
+    await streamText({
+      model,
+      messages: [
+        { role: 'assistant', content: 'Earlier reply.' },
+        { role: 'user', content: 'what changed?' },
+      ],
+    }).text
+
+    expect(recorder.requests[0]?.body).toMatchObject({
+      system: [
+        {
+          type: 'text',
+          text: 'x-anthropic-billing-header: cc_version=0.1.0.18f; cc_entrypoint=atlas;',
+        },
+      ],
+    })
+  })
+
+  it('attributes non-streaming generation through the same provider interface', async () => {
+    const recorder = recordingFetch({
+      body: generatedText('pong'),
+      contentType: 'application/json',
+    })
+    const model = createAnthropicOauthModel({
+      credentials: credentialsReturning('token-one'),
+      modelId: 'claude-sonnet-5',
+      fetch: recorder.fetch,
+    })
+
+    expect((await generateText({ model, prompt: 'ping' })).text).toBe('pong')
+    expect(recorder.requests[0]?.body).toMatchObject({
+      system: [
+        {
+          type: 'text',
+          text: 'x-anthropic-billing-header: cc_version=0.1.0.05b; cc_entrypoint=atlas;',
+        },
+      ],
+    })
   })
 
   it('reads the credential again for every request, so a refreshed token needs no rebuild', async () => {

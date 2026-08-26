@@ -11,8 +11,6 @@ export const LIVE_ANTHROPIC_FLAG = 'ATLAS_LIVE_ANTHROPIC'
 
 const liveRunRequested = (): boolean => process.env[LIVE_ANTHROPIC_FLAG] === '1'
 
-// A subscription credential is entitled per model, not per endpoint: sonnet-5 and opus-5 answered 429
-// while haiku-4-5 answered 200 on 2026-08-25. docs/research/anthropic-oauth-transport.md records it.
 const liveModelId = (): string =>
   process.env.ATLAS_LIVE_ANTHROPIC_MODEL ?? 'claude-haiku-4-5-20251001'
 
