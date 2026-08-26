@@ -1,0 +1,19 @@
+docs/core-contract.md
+  s_ed3588bb0efbeb::t_b0c9024c56b15d 40,52-59,195-254
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "0fdcfe1ade3b398a3ae7021e3c6ecfb9a18a223a",
+  "prompts": {},
+  "sessions": {
+    "s_ed3588bb0efbeb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b1f24252-ac33-4c97-9ba3-ca59d69b0a62",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
