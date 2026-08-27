@@ -14,11 +14,11 @@ import {
   OnChunkHook,
   toCallId,
   toRunId,
-  ToolDefinition,
   type BeforeTool,
   type Chunk,
   type HookOrder,
   type OnChunk,
+  type ToolDefinition,
 } from '@dltech/atlas-core'
 
 import { createIsolatedContainer, portToken, type DependencyContainer } from '../../container/injection'
@@ -157,8 +157,9 @@ describe('the boundary hook threaded ahead of a second hook', () => {
 
     const child = createIsolatedContainer()
     child.register(WorkspaceRoot, { useValue: link })
-    child.register(portToken(ToolDefinition), { useValue: touch })
-    child.register(portToken(BeforeToolHook), { useClass: WorkspaceBoundaryHook })
+    child.register(portToken(BeforeToolHook), {
+      useFactory: (resolver) => new WorkspaceBoundaryHook(resolver.resolve(WorkspaceRoot), [touch]),
+    })
     child.register(portToken(BeforeToolHook), { useValue: witness })
 
     const dispatch = createDispatch({
@@ -184,8 +185,9 @@ describe('the boundary hook threaded ahead of a second hook', () => {
 
     const child = createIsolatedContainer()
     child.register(WorkspaceRoot, { useValue: link })
-    child.register(portToken(ToolDefinition), { useValue: touch })
-    child.register(portToken(BeforeToolHook), { useClass: WorkspaceBoundaryHook })
+    child.register(portToken(BeforeToolHook), {
+      useFactory: (resolver) => new WorkspaceBoundaryHook(resolver.resolve(WorkspaceRoot), [touch]),
+    })
 
     const dispatch = createDispatch({
       registry: createToolRegistry([touch]),
