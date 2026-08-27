@@ -1,0 +1,99 @@
+packages/harness/src/loop/step-drafts.ts
+  s_ed3588bb0efbeb::t_281dceba212416 1-39
+packages/harness/src/loop/__tests__/steerable-turn.ts
+  s_ed3588bb0efbeb::t_b85c88d4ff50fd 1-162
+packages/harness/src/loop/__tests__/interruption.spec.ts
+  s_ed3588bb0efbeb::t_9cf382db5b0558 5-13
+  s_ed3588bb0efbeb::t_9980b568bb82e1 3
+  s_ed3588bb0efbeb::t_e39e0c7bd7844a 228
+  s_ed3588bb0efbeb::t_2815649842f41a 74
+  s_ed3588bb0efbeb::t_9afcb733054df5 106-167
+  s_ed3588bb0efbeb::t_50eb189f3c90c4 188-219
+  s_ed3588bb0efbeb::t_c7c0318509f3d7 70-73,75-103
+packages/harness/src/store/rewind.ts
+  s_ed3588bb0efbeb::t_ca5a5b27dab7f0 1-27
+packages/harness/src/store/__tests__/rewind.spec.ts
+  s_ed3588bb0efbeb::t_79a8fe9d13b03f 59
+  s_ed3588bb0efbeb::t_09c3fd41e1e986 1-58,60-88
+packages/harness/src/store/index.ts
+  s_ed3588bb0efbeb::t_35b1ea960f6634 6
+packages/harness/src/loop/__tests__/steering.spec.ts
+  s_ed3588bb0efbeb::t_5491510196b267 8-9,11,15,23-32,34-47,53,66,74-96,101-118,124,126,139,148-151,154-160,162
+  s_ed3588bb0efbeb::t_b61deadf495ba8 152-153,161,163-166
+  s_ed3588bb0efbeb::t_6b4f90b65e22dd 13
+  s_ed3588bb0efbeb::t_b85c88d4ff50fd 1,3,5-7
+  s_ed3588bb0efbeb::t_777eb163269f2e 2,4,10,12,14,16-22,33,48-52,54-61,98-100,119-123,125,127-138,140-147,167-168
+  s_ed3588bb0efbeb::t_99a2b424526249 62-65,67-73,97
+packages/core/src/index.ts
+  s_ed3588bb0efbeb::t_e826dd84578536 10
+packages/harness/src/loop/turn-outcome.ts
+  s_ed3588bb0efbeb::t_f110ed60e1de9b 17
+packages/core/src/events/rewind-target.ts
+  s_ed3588bb0efbeb::t_e826dd84578536 48
+  s_ed3588bb0efbeb::t_82aa98226317fd 1-47,49
+packages/core/src/events/__tests__/rewind-target.spec.ts
+  s_ed3588bb0efbeb::t_79a8fe9d13b03f 45
+  s_ed3588bb0efbeb::t_6b79ab84e7a862 1-44,46-106
+packages/harness/src/store/__tests__/harness.ts
+  s_ed3588bb0efbeb::t_441990a7021961 105,109-115
+  s_ed3588bb0efbeb::t_05136511714af4 8,15,83
+packages/core/src/assembly/__tests__/exchange-shape.spec.ts
+  s_ed3588bb0efbeb::t_2b73a677d0b4bf 201-207
+  s_ed3588bb0efbeb::t_af7683f9e3ba67 47-49,58,128,132-136,175,188,195,209,245,255
+packages/harness/src/store/branch-store.ts
+  s_ed3588bb0efbeb::t_8cd297c1d6415d 20
+  s_ed3588bb0efbeb::t_57af676b6d783c 65-67,72
+  s_ed3588bb0efbeb::t_aa2d56d7f06f59 68-71
+packages/harness/src/loop/turn-position.ts
+  s_ed3588bb0efbeb::t_586e163b8f1e53 1-24
+packages/harness/src/loop/run-turn.ts
+  s_3d83af59050d52::t_7a19d476900133 27-28
+  s_ed3588bb0efbeb::t_346a16460c5795 149-151,154
+  s_ed3588bb0efbeb::t_4bcf4d839b6d58 143
+  s_ed3588bb0efbeb::t_a06e2cf4ca61b6 61
+  s_ed3588bb0efbeb::t_47e9616a2b4639 204-205,207
+  s_ed3588bb0efbeb::t_579481b172e57f 147-148
+  s_ed3588bb0efbeb::t_9112de6600fcd2 121-125
+  s_ed3588bb0efbeb::t_ff67b52ba923c8 43
+  s_ed3588bb0efbeb::t_0b9bd25786dec3 194-196
+  s_ed3588bb0efbeb::t_e36469d11078de 94-107
+  s_ed3588bb0efbeb::t_9188facb26fe7b 128,130,135
+  s_ed3588bb0efbeb::t_66fbf7a037eaac 119
+  s_ed3588bb0efbeb::t_d42637e7b40207 206
+packages/core/src/assembly/exchange-shape.ts
+  s_ed3588bb0efbeb::t_be19fd3364540c 8
+  s_ed3588bb0efbeb::t_3af73d9ecd3ccc 226-239
+  s_ed3588bb0efbeb::t_9639b4a4835117 246
+packages/core/src/assembly/rules/__tests__/messages-from-events-pairing.spec.ts
+  s_ed3588bb0efbeb::t_24effedfcdf33c 258,268
+packages/harness/src/store/__tests__/branch-store.spec.ts
+  s_ed3588bb0efbeb::t_441990a7021961 6,158-172,174-178
+  s_ed3588bb0efbeb::t_05136511714af4 5,13-19,149,152,154
+  s_3d83af59050d52::t_3ddce54cdd6c7e 122,173
+  s_ed3588bb0efbeb::t_ad96cdb71dfece 97-121,180
+  s_ed3588bb0efbeb::t_992e977346391d 123-148,150-151,153,155-157,179
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "42de2f3260c20eac27045509943a32ab6c503a92",
+  "prompts": {},
+  "sessions": {
+    "s_3d83af59050d52": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "576fc6c5-ff3a-40f0-b80e-172325e4141c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_ed3588bb0efbeb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b1f24252-ac33-4c97-9ba3-ca59d69b0a62",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
