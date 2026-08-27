@@ -12,6 +12,9 @@ import {
   type RunId,
 } from '@dltech/atlas-core'
 
+import { injectable } from '../container/injection'
+
+@injectable()
 export class RandomIds implements IdPort {
   nextBranchId(): BranchId {
     return toBranchId(`brn_${randomUUID()}`)

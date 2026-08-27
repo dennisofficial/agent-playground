@@ -11,12 +11,15 @@ import {
   type SettingsStorePort,
 } from '@dltech/atlas-core'
 
+import { injectable } from '../container/injection'
+
 const missing = (error: unknown): boolean =>
   typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT'
 
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : 'unreadable'
 
+@injectable()
 export class FileSettingsStore implements SettingsStorePort {
   constructor(private readonly args: { file: string; label: string }) {}
 

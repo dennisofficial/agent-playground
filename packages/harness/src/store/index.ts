@@ -1,7 +1,7 @@
-export { BranchStorePort, PrismaBranchStore, type BranchStoreDeps, type BranchSummary } from './branch-store'
+export { BranchStorePort, PrismaBranchStore, type BranchSummary } from './branch-store'
 export { SystemClock } from './clock'
 export { openAtlasDatabase, type AtlasDatabase } from './database'
-export { PrismaEventLog, type AppendArgs, type EventLogDeps } from './event-log'
+export { PrismaEventLog, type AppendArgs } from './event-log'
 export { RandomIds } from './ids'
 export { atlasMigrationsDirectory, loadAtlasMigrations } from './migrations'
 export {

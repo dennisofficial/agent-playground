@@ -1,25 +1,21 @@
 import {
+  ClockPort,
+  IdPort,
   stampDrafts,
   type BranchId,
-  type ClockPort,
   type Event,
   type EventDraft,
   type EventEnvelope,
   type EventLogPort,
-  type IdPort,
   type RunId,
 } from '@dltech/atlas-core'
 
 import type { Prisma, PrismaClient } from '../../prisma/generated/client'
+import { inject, injectable } from '../container/injection'
+import { PrismaClientToken } from '../container/tokens'
 import { contextIdentityOf, planAppend, type ContextIdentity } from './append-plan'
 import { toEventRow, toEvents } from './event-row'
 import { retryOnWriteConflict } from './retry'
-
-export type EventLogDeps = {
-  prisma: PrismaClient
-  clock: ClockPort
-  ids: IdPort
-}
 
 export type AppendArgs = {
   branchId: BranchId
@@ -29,8 +25,13 @@ export type AppendArgs = {
   depth?: number | undefined
 }
 
+@injectable()
 export class PrismaEventLog implements EventLogPort {
-  constructor(private readonly deps: EventLogDeps) {}
+  constructor(
+    @inject(PrismaClientToken) private readonly prisma: PrismaClient,
+    private readonly clock: ClockPort,
+    private readonly ids: IdPort,
+  ) {}
 
   async append(args: AppendArgs): Promise<Event[]> {
     if (args.drafts.length === 0) return []
@@ -38,7 +39,7 @@ export class PrismaEventLog implements EventLogPort {
   }
 
   async read({ branchId, upTo }: { branchId: BranchId; upTo?: number }): Promise<Event[]> {
-    const rows = await this.deps.prisma.event.findMany({
+    const rows = await this.prisma.event.findMany({
       where: { branchId, ...(upTo === undefined ? {} : { seq: { lte: upTo } }) },
       orderBy: { seq: 'asc' },
     })
@@ -46,7 +47,7 @@ export class PrismaEventLog implements EventLogPort {
   }
 
   async head({ branchId }: { branchId: BranchId }): Promise<number> {
-    const branch = await this.deps.prisma.branch.findUnique({
+    const branch = await this.prisma.branch.findUnique({
       where: { id: branchId },
       select: { head: true },
     })
@@ -60,8 +61,8 @@ export class PrismaEventLog implements EventLogPort {
   }
 
   private appendOnce(args: AppendArgs): Promise<Event[]> {
-    return this.deps.prisma.$transaction(async (tx) => {
-      const at = this.deps.clock.now()
+    return this.prisma.$transaction(async (tx) => {
+      const at = this.clock.now()
       await claimBranch({ tx, branchId: args.branchId, at })
 
       const reusable = await loadReusableContext({ tx, branchId: args.branchId, drafts: args.drafts })
@@ -73,7 +74,7 @@ export class PrismaEventLog implements EventLogPort {
 
       const prepared = plan.fresh.map((draft, index) => {
         const envelope: EventEnvelope = {
-          id: this.deps.ids.nextEventId(),
+          id: this.ids.nextEventId(),
           seq: firstSeq + index,
           branchId: args.branchId,
           runId: args.runId,

@@ -60,9 +60,7 @@ export async function buildHarness(args: BuildHarnessArgs): Promise<AtlasHarness
 
   const clock = args.clock ?? new SystemClock()
   const ids = args.ids ?? new RandomIds()
-  const storeDeps = { prisma: database.prisma, clock, ids }
-
-  const log = new PrismaEventLog(storeDeps)
+  const log = new PrismaEventLog(database.prisma, clock, ids)
   const model = createAiSdkModelPort({
     model: args.model,
     identity: args.identity ?? providerIdentityOf(args.model),
@@ -86,7 +84,7 @@ export async function buildHarness(args: BuildHarnessArgs): Promise<AtlasHarness
   return {
     runner: createTurnRunner(turnDeps),
     log,
-    branches: new PrismaBranchStore(storeDeps),
+    branches: new PrismaBranchStore(database.prisma, clock, ids),
     model,
     ids,
     clock,

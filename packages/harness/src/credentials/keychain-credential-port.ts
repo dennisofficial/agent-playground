@@ -1,11 +1,13 @@
 import type { ClockPort, Credential, CredentialPort } from '@dltech/atlas-core'
 
+import { injectable } from '../container/injection'
 import { parseClaudeCredentialBlob } from './claude-credential-blob'
 import { assertCredentialIsUnexpired } from './expiry'
 import type { KeychainReader } from './keychain-reader'
 
 export const CLAUDE_CODE_CREDENTIAL_SERVICE = 'Claude Code-credentials'
 
+@injectable()
 export class KeychainCredentialPort implements CredentialPort {
   private readonly reader: KeychainReader
   private readonly clock: ClockPort

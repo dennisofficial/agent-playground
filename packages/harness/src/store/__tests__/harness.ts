@@ -75,13 +75,12 @@ async function attach({
   const database: AtlasDatabase = await openAtlasDatabase({ databaseUrl })
   const clock = new SteppingClock()
   const ids = new CountingIds(idPrefix)
-  const deps = { prisma: database.prisma, clock, ids }
 
   return {
     databaseUrl,
     clock,
-    log: new PrismaEventLog(deps),
-    branches: new PrismaBranchStore(deps),
+    log: new PrismaEventLog(database.prisma, clock, ids),
+    branches: new PrismaBranchStore(database.prisma, clock, ids),
     reopen: async () => {
       await database.close()
       return attach({ databaseUrl, discard, idPrefix: `${idPrefix}b` })
@@ -103,10 +102,6 @@ export async function openSecondWriter(fixture: StoreFixture): Promise<{
   close: () => Promise<void>
 }> {
   const database = await openAtlasDatabase({ databaseUrl: fixture.databaseUrl })
-  const log = new PrismaEventLog({
-    prisma: database.prisma,
-    clock: new SteppingClock(),
-    ids: new CountingIds('w2'),
-  })
+  const log = new PrismaEventLog(database.prisma, new SteppingClock(), new CountingIds('w2'))
   return { log, close: () => database.close() }
 }
