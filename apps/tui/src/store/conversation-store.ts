@@ -1,4 +1,4 @@
-import type { BranchId, Event } from '@dltech/atlas-core'
+import type { ThreadId, Event } from '@dltech/atlas-core'
 import type { ChannelSignal, DeltaChannel, StepSignal, Unsubscribe } from '@dltech/atlas-harness'
 
 import { IDLE_TURN, type TurnClock } from '../ui/components/transcript'
@@ -32,7 +32,7 @@ const NO_SIGNALS: readonly StepSignal[] = Object.freeze([])
 
 export function createConversationStore(args: {
   channel: DeltaChannel
-  branchId: BranchId
+  threadId: ThreadId
   events?: readonly Event[]
   paceReveal?: boolean
   thinking?: EThinkingVisibility
@@ -86,7 +86,7 @@ export function createConversationStore(args: {
   }
 
   let unsubscribeFromChannel: Unsubscribe | undefined = args.channel.subscribe({
-    branchId: args.branchId,
+    threadId: args.threadId,
     listener: handleSignal,
   })
 

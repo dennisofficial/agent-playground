@@ -2,14 +2,14 @@ import { afterEach, describe, expect, it } from "bun:test";
 
 import {
   EForkMode,
-  toBranchId,
+  toThreadId,
   toRunId,
-  type BranchId,
+  type ThreadId,
   type EventDraft,
 } from "@dltech/atlas-core";
 
 import { ForkSeqOutOfRange, ForkSourceMissing } from "../fork";
-import { rewindBranch } from "../rewind";
+import { rewindThread } from "../rewind";
 import { openStoreFixture, type StoreFixture } from "./harness";
 
 let fixture: StoreFixture;
@@ -23,12 +23,12 @@ const replied = (text: string): EventDraft => ({
 
 const openParent = async (): Promise<{
   store: StoreFixture;
-  parentId: BranchId;
+  parentId: ThreadId;
 }> => {
   fixture = await openStoreFixture();
-  const branch = await fixture.branches.create({ title: "work" });
+  const thread = await fixture.threads.create({ title: "work" });
   await fixture.log.append({
-    branchId: branch.id,
+    threadId: thread.id,
     runId,
     drafts: [
       said("one"),
@@ -38,11 +38,11 @@ const openParent = async (): Promise<{
       said("five"),
     ],
   });
-  return { store: fixture, parentId: branch.id };
+  return { store: fixture, parentId: thread.id };
 };
 
-const rowsUnder = (store: StoreFixture, branchId: BranchId): Promise<number> =>
-  store.prisma.event.count({ where: { branchId } });
+const rowsUnder = (store: StoreFixture, threadId: ThreadId): Promise<number> =>
+  store.prisma.event.count({ where: { threadId } });
 
 const shapeOf = (
   events: readonly { seq: number; type: string }[],
@@ -53,21 +53,21 @@ afterEach(async () => {
 });
 
 describe("a copy fork", () => {
-  it("lands its own rows under the new branch and leaves the parent untouched", async () => {
+  it("lands its own rows under the new thread and leaves the parent untouched", async () => {
     const { store, parentId } = await openParent();
 
-    const child = await store.branches.fork({
+    const child = await store.threads.fork({
       from: parentId,
       seq: 3,
       mode: EForkMode.Copy,
     });
 
     expect(child.head).toBe(3);
-    expect(child.parent).toEqual({ branchId: parentId, forkSeq: 3 });
+    expect(child.parent).toEqual({ threadId: parentId, forkSeq: 3 });
     expect(await rowsUnder(store, child.id)).toBe(3);
     expect(await rowsUnder(store, parentId)).toBe(5);
-    expect(await store.log.head({ branchId: parentId })).toBe(5);
-    expect(shapeOf(await store.log.read({ branchId: parentId }))).toHaveLength(
+    expect(await store.log.head({ threadId: parentId })).toBe(5);
+    expect(shapeOf(await store.log.read({ threadId: parentId }))).toHaveLength(
       5,
     );
   });
@@ -75,14 +75,14 @@ describe("a copy fork", () => {
   it("reads back the parent prefix verbatim under fresh event ids", async () => {
     const { store, parentId } = await openParent();
 
-    const child = await store.branches.fork({
+    const child = await store.threads.fork({
       from: parentId,
       seq: 3,
       mode: EForkMode.Copy,
     });
 
-    const prefix = await store.log.read({ branchId: parentId, upTo: 3 });
-    const copied = await store.log.read({ branchId: child.id });
+    const prefix = await store.log.read({ threadId: parentId, upTo: 3 });
+    const copied = await store.log.read({ threadId: child.id });
 
     expect(shapeOf(copied)).toEqual(shapeOf(prefix));
     expect(copied.map((event) => event.id)).not.toEqual(
@@ -94,12 +94,12 @@ describe("a copy fork", () => {
   it("carries the bodies across, not just the shape", async () => {
     const { store, parentId } = await openParent();
 
-    const child = await store.branches.fork({
+    const child = await store.threads.fork({
       from: parentId,
       seq: 2,
       mode: EForkMode.Copy,
     });
-    const copied = await store.log.read({ branchId: child.id });
+    const copied = await store.log.read({ threadId: child.id });
 
     expect(copied[0]).toMatchObject({ type: "user-said", text: "one" });
     expect(copied[1]).toMatchObject({
@@ -113,7 +113,7 @@ describe("a copy fork", () => {
 
     const stale = {
       id: "stale-row",
-      branchId: parentId,
+      threadId: parentId,
       seq: 6,
       runId,
       parentRunId: null,
@@ -126,19 +126,19 @@ describe("a copy fork", () => {
       contextDigest: null,
     };
     await store.prisma.event.create({ data: stale });
-    await store.prisma.branch.update({
+    await store.prisma.thread.update({
       where: { id: parentId },
       data: { head: 6 },
     });
 
-    const child = await store.branches.fork({
+    const child = await store.threads.fork({
       from: parentId,
       seq: 6,
       mode: EForkMode.Copy,
     });
 
     const copied = await store.prisma.event.findMany({
-      where: { branchId: child.id },
+      where: { threadId: child.id },
       orderBy: { seq: "asc" },
     });
     expect(copied).toHaveLength(6);
@@ -150,22 +150,22 @@ describe("a copy fork", () => {
     expect(copied[5]?.id).not.toBe("stale-row");
   });
 
-  it("continues the sequence above the fork point when the branch is used", async () => {
+  it("continues the sequence above the fork point when the thread is used", async () => {
     const { store, parentId } = await openParent();
 
-    const child = await store.branches.fork({
+    const child = await store.threads.fork({
       from: parentId,
       seq: 3,
       mode: EForkMode.Copy,
     });
     const appended = await store.log.append({
-      branchId: child.id,
+      threadId: child.id,
       runId,
       drafts: [said("elsewhere")],
     });
 
     expect(appended.map((event) => event.seq)).toEqual([4]);
-    expect(shapeOf(await store.log.read({ branchId: child.id }))).toEqual([
+    expect(shapeOf(await store.log.read({ threadId: child.id }))).toEqual([
       [1, "user-said"],
       [2, "assistant-said"],
       [3, "user-said"],
@@ -179,14 +179,14 @@ describe("a reference fork", () => {
   it("copies no rows yet reads the inherited prefix", async () => {
     const { store, parentId } = await openParent();
 
-    const child = await store.branches.fork({
+    const child = await store.threads.fork({
       from: parentId,
       seq: 3,
       mode: EForkMode.Reference,
     });
 
     expect(await rowsUnder(store, child.id)).toBe(0);
-    expect(shapeOf(await store.log.read({ branchId: child.id }))).toEqual([
+    expect(shapeOf(await store.log.read({ threadId: child.id }))).toEqual([
       [1, "user-said"],
       [2, "assistant-said"],
       [3, "user-said"],
@@ -196,21 +196,21 @@ describe("a reference fork", () => {
   it("owns nothing of its own until it is written to", async () => {
     const { store, parentId } = await openParent();
 
-    const child = await store.branches.fork({
+    const child = await store.threads.fork({
       from: parentId,
       seq: 3,
       mode: EForkMode.Reference,
     });
 
-    expect(await store.log.readOwn({ branchId: child.id })).toEqual([]);
+    expect(await store.log.readOwn({ threadId: child.id })).toEqual([]);
 
     await store.log.append({
-      branchId: child.id,
+      threadId: child.id,
       runId,
       drafts: [said("sub-agent turn")],
     });
 
-    expect(shapeOf(await store.log.readOwn({ branchId: child.id }))).toEqual([
+    expect(shapeOf(await store.log.readOwn({ threadId: child.id }))).toEqual([
       [4, "user-said"],
     ]);
   });
@@ -218,19 +218,19 @@ describe("a reference fork", () => {
   it("numbers its own rows above the fork point and stays ordered when composed", async () => {
     const { store, parentId } = await openParent();
 
-    const child = await store.branches.fork({
+    const child = await store.threads.fork({
       from: parentId,
       seq: 3,
       mode: EForkMode.Reference,
     });
     const appended = await store.log.append({
-      branchId: child.id,
+      threadId: child.id,
       runId,
       drafts: [said("sub-agent turn"), replied("sub-agent answer")],
     });
 
     expect(appended.map((event) => event.seq)).toEqual([4, 5]);
-    expect(shapeOf(await store.log.read({ branchId: child.id }))).toEqual([
+    expect(shapeOf(await store.log.read({ threadId: child.id }))).toEqual([
       [1, "user-said"],
       [2, "assistant-said"],
       [3, "user-said"],
@@ -243,19 +243,19 @@ describe("a reference fork", () => {
   it("clamps the inherited prefix to the upTo the caller asked for", async () => {
     const { store, parentId } = await openParent();
 
-    const child = await store.branches.fork({
+    const child = await store.threads.fork({
       from: parentId,
       seq: 3,
       mode: EForkMode.Reference,
     });
     await store.log.append({
-      branchId: child.id,
+      threadId: child.id,
       runId,
       drafts: [said("sub-agent turn")],
     });
 
     expect(
-      shapeOf(await store.log.read({ branchId: child.id, upTo: 2 })),
+      shapeOf(await store.log.read({ threadId: child.id, upTo: 2 })),
     ).toEqual([
       [1, "user-said"],
       [2, "assistant-said"],
@@ -265,34 +265,34 @@ describe("a reference fork", () => {
   it("composes through a short chain of forks", async () => {
     const { store, parentId } = await openParent();
 
-    const first = await store.branches.fork({
+    const first = await store.threads.fork({
       from: parentId,
       seq: 2,
       mode: EForkMode.Reference,
     });
     await store.log.append({
-      branchId: first.id,
+      threadId: first.id,
       runId,
       drafts: [said("nested once")],
     });
-    const second = await store.branches.fork({
+    const second = await store.threads.fork({
       from: first.id,
       seq: 3,
       mode: EForkMode.Reference,
     });
     await store.log.append({
-      branchId: second.id,
+      threadId: second.id,
       runId,
       drafts: [said("nested twice")],
     });
 
-    expect(shapeOf(await store.log.read({ branchId: second.id }))).toEqual([
+    expect(shapeOf(await store.log.read({ threadId: second.id }))).toEqual([
       [1, "user-said"],
       [2, "assistant-said"],
       [3, "user-said"],
       [4, "user-said"],
     ]);
-    expect(shapeOf(await store.log.readOwn({ branchId: second.id }))).toEqual([
+    expect(shapeOf(await store.log.readOwn({ threadId: second.id }))).toEqual([
       [4, "user-said"],
     ]);
   });
@@ -302,7 +302,7 @@ describe("a reference fork", () => {
 
     let from = parentId;
     for (let depth = 0; depth < 9; depth += 1) {
-      const forked = await store.branches.fork({
+      const forked = await store.threads.fork({
         from,
         seq: 1,
         mode: EForkMode.Reference,
@@ -310,19 +310,19 @@ describe("a reference fork", () => {
       from = forked.id;
     }
 
-    await expect(store.log.read({ branchId: from })).rejects.toThrow(
+    await expect(store.log.read({ threadId: from })).rejects.toThrow(
       /reference forks/i,
     );
   });
 });
 
 describe("forking refuses what it cannot honour", () => {
-  it("rejects a source branch that does not exist", async () => {
+  it("rejects a source thread that does not exist", async () => {
     const { store } = await openParent();
 
     await expect(
-      store.branches.fork({
-        from: toBranchId("no-such-branch"),
+      store.threads.fork({
+        from: toThreadId("no-such-thread"),
         seq: 0,
         mode: EForkMode.Copy,
       }),
@@ -333,7 +333,7 @@ describe("forking refuses what it cannot honour", () => {
     const { store, parentId } = await openParent();
 
     await expect(
-      store.branches.fork({
+      store.threads.fork({
         from: parentId,
         seq: 9,
         mode: EForkMode.Reference,
@@ -346,56 +346,56 @@ describe("rewinding a fork", () => {
   it("truncates the fork and leaves the parent whole", async () => {
     const { store, parentId } = await openParent();
 
-    const child = await store.branches.fork({
+    const child = await store.threads.fork({
       from: parentId,
       seq: 3,
       mode: EForkMode.Copy,
     });
     await store.log.append({
-      branchId: child.id,
+      threadId: child.id,
       runId,
       drafts: [said("elsewhere")],
     });
 
-    const result = await rewindBranch({
+    const result = await rewindThread({
       log: store.log,
-      branches: store.branches,
-      branchId: child.id,
+      threads: store.threads,
+      threadId: child.id,
       toSeq: 2,
     });
 
     expect(result).toEqual({ ok: true, discarded: 2 });
-    expect(shapeOf(await store.log.read({ branchId: child.id }))).toEqual([
+    expect(shapeOf(await store.log.read({ threadId: child.id }))).toEqual([
       [1, "user-said"],
       [2, "assistant-said"],
     ]);
     expect(await rowsUnder(store, parentId)).toBe(5);
-    expect(await store.log.head({ branchId: parentId })).toBe(5);
+    expect(await store.log.head({ threadId: parentId })).toBe(5);
   });
 
   it("leaves a reference fork holding only the inherited prefix", async () => {
     const { store, parentId } = await openParent();
 
-    const child = await store.branches.fork({
+    const child = await store.threads.fork({
       from: parentId,
       seq: 3,
       mode: EForkMode.Reference,
     });
     await store.log.append({
-      branchId: child.id,
+      threadId: child.id,
       runId,
       drafts: [said("sub-agent turn")],
     });
 
-    await rewindBranch({
+    await rewindThread({
       log: store.log,
-      branches: store.branches,
-      branchId: child.id,
+      threads: store.threads,
+      threadId: child.id,
       toSeq: 3,
     });
 
-    expect(await store.log.readOwn({ branchId: child.id })).toEqual([]);
-    expect(shapeOf(await store.log.read({ branchId: child.id }))).toHaveLength(
+    expect(await store.log.readOwn({ threadId: child.id })).toEqual([]);
+    expect(shapeOf(await store.log.read({ threadId: child.id }))).toHaveLength(
       3,
     );
     expect(await rowsUnder(store, parentId)).toBe(5);

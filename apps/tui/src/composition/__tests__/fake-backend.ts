@@ -1,25 +1,25 @@
 import {
   stampEvent,
-  toBranchId,
+  toThreadId,
   toEventId,
   toRunId,
-  type BranchId,
+  type ThreadId,
   type Event,
   type EventLogPort,
 } from '@dltech/atlas-core'
-import type { BranchStorePort, BranchSummary } from '@dltech/atlas-harness'
+import type { ThreadStorePort, ThreadSummary } from '@dltech/atlas-harness'
 
 const AT = '2026-08-25T00:00:00.000Z'
 
-export type FakeBranchStore = BranchStorePort & {
+export type FakeThreadStore = ThreadStorePort & {
   readonly created: number
-  readonly renames: readonly { branchId: BranchId; title: string }[]
+  readonly renames: readonly { threadId: ThreadId; title: string }[]
 }
 
-export function fakeBranchStore(
-  args: { existing?: readonly BranchId[]; log?: FakeEventLog } = {},
-): FakeBranchStore {
-  const rows: BranchSummary[] = (args.existing ?? []).map((id) => ({
+export function fakeThreadStore(
+  args: { existing?: readonly ThreadId[]; log?: FakeEventLog } = {},
+): FakeThreadStore {
+  const rows: ThreadSummary[] = (args.existing ?? []).map((id) => ({
     id,
     head: 0,
     createdAt: AT,
@@ -27,7 +27,7 @@ export function fakeBranchStore(
   }))
 
   let created = 0
-  const renames: { branchId: BranchId; title: string }[] = []
+  const renames: { threadId: ThreadId; title: string }[] = []
 
   return {
     get created() {
@@ -38,18 +38,18 @@ export function fakeBranchStore(
       return renames
     },
 
-    async compact({ branchId, throughSeq, summary }) {
-      return args.log?.replaceWithSummary({ branchId, throughSeq, summary }) ?? 0
+    async compact({ threadId, throughSeq, summary }) {
+      return args.log?.replaceWithSummary({ threadId, throughSeq, summary }) ?? 0
     },
 
     async fork({ from, seq, title }) {
       created += 1
-      const row: BranchSummary = {
-        id: toBranchId(`forked-${created}`),
+      const row: ThreadSummary = {
+        id: toThreadId(`forked-${created}`),
         head: seq,
         createdAt: AT,
         updatedAt: AT,
-        parent: { branchId: from, forkSeq: seq },
+        parent: { threadId: from, forkSeq: seq },
         ...(title === undefined ? {} : { title }),
       }
       rows.push(row)
@@ -58,8 +58,8 @@ export function fakeBranchStore(
 
     async create() {
       created += 1
-      const row: BranchSummary = {
-        id: toBranchId(`made-${created}`),
+      const row: ThreadSummary = {
+        id: toThreadId(`made-${created}`),
         head: 0,
         createdAt: AT,
         updatedAt: AT,
@@ -68,40 +68,40 @@ export function fakeBranchStore(
       return row
     },
 
-    async find({ branchId }) {
-      return rows.find((row) => row.id === branchId)
+    async find({ threadId }) {
+      return rows.find((row) => row.id === threadId)
     },
 
     async mostRecent() {
       return rows.at(-1)
     },
 
-    async rename({ branchId, title }) {
-      renames.push({ branchId, title })
-      const row = rows.find((held) => held.id === branchId)
+    async rename({ threadId, title }) {
+      renames.push({ threadId, title })
+      const row = rows.find((held) => held.id === threadId)
       if (row !== undefined) row.title = title
     },
 
-    async rewind({ branchId, toSeq }) {
-      const row = rows.find((held) => held.id === branchId)
+    async rewind({ threadId, toSeq }) {
+      const row = rows.find((held) => held.id === threadId)
       if (row !== undefined) row.head = toSeq
-      args.log?.truncate({ branchId, toSeq })
+      args.log?.truncate({ threadId, toSeq })
     },
   }
 }
 
 export type FakeEventLog = EventLogPort & {
-  readonly branchesRead: readonly BranchId[]
-  truncate(args: { branchId: BranchId; toSeq: number }): void
-  replaceWithSummary(args: { branchId: BranchId; throughSeq: number; summary: string }): number
+  readonly branchesRead: readonly ThreadId[]
+  truncate(args: { threadId: ThreadId; toSeq: number }): void
+  replaceWithSummary(args: { threadId: ThreadId; throughSeq: number; summary: string }): number
 }
 
 export function fakeEventLog(seeded: readonly Event[] = []): FakeEventLog {
-  const byBranch = new Map<BranchId, Event[]>()
-  const branchesRead: BranchId[] = []
+  const byThread = new Map<ThreadId, Event[]>()
+  const branchesRead: ThreadId[] = []
 
   for (const event of seeded) {
-    byBranch.set(event.branchId, [...(byBranch.get(event.branchId) ?? []), event])
+    byThread.set(event.threadId, [...(byThread.get(event.threadId) ?? []), event])
   }
 
   let stamped = 0
@@ -109,8 +109,8 @@ export function fakeEventLog(seeded: readonly Event[] = []): FakeEventLog {
   return {
     branchesRead,
 
-    async append({ branchId, runId, drafts }) {
-      const held = byBranch.get(branchId) ?? []
+    async append({ threadId, runId, drafts }) {
+      const held = byThread.get(threadId) ?? []
 
       const written = drafts.map((draft, index) => {
         stamped += 1
@@ -119,7 +119,7 @@ export function fakeEventLog(seeded: readonly Event[] = []): FakeEventLog {
           envelope: {
             id: toEventId(`event-${stamped}`),
             seq: held.length + index + 1,
-            branchId,
+            threadId,
             runId,
             depth: 0,
             at: AT,
@@ -127,12 +127,12 @@ export function fakeEventLog(seeded: readonly Event[] = []): FakeEventLog {
         })
       })
 
-      byBranch.set(branchId, [...held, ...written])
+      byThread.set(threadId, [...held, ...written])
       return written
     },
 
-    replaceWithSummary({ branchId, throughSeq, summary }) {
-      const held = byBranch.get(branchId) ?? []
+    replaceWithSummary({ threadId, throughSeq, summary }) {
+      const held = byThread.get(threadId) ?? []
       const compactable = held.filter(
         (event) => event.seq <= throughSeq && event.type !== 'context-loaded',
       )
@@ -146,14 +146,14 @@ export function fakeEventLog(seeded: readonly Event[] = []): FakeEventLog {
         envelope: {
           id: toEventId(`event-${stamped}`),
           seq: throughSeq,
-          branchId,
+          threadId,
           runId: toRunId('run-compaction'),
           depth: 0,
           at: AT,
         },
       })
 
-      byBranch.set(branchId, [
+      byThread.set(threadId, [
         ...spared,
         watermark,
         ...held.filter((event) => event.seq > throughSeq),
@@ -161,25 +161,25 @@ export function fakeEventLog(seeded: readonly Event[] = []): FakeEventLog {
       return compactable.length
     },
 
-    truncate({ branchId, toSeq }) {
-      const held = byBranch.get(branchId) ?? []
-      byBranch.set(
-        branchId,
+    truncate({ threadId, toSeq }) {
+      const held = byThread.get(threadId) ?? []
+      byThread.set(
+        threadId,
         held.filter((event) => event.seq <= toSeq),
       )
     },
 
-    async read({ branchId }) {
-      branchesRead.push(branchId)
-      return [...(byBranch.get(branchId) ?? [])]
+    async read({ threadId }) {
+      branchesRead.push(threadId)
+      return [...(byThread.get(threadId) ?? [])]
     },
 
-    async head({ branchId }) {
-      return byBranch.get(branchId)?.length ?? 0
+    async head({ threadId }) {
+      return byThread.get(threadId)?.length ?? 0
     },
 
-    async readOwn({ branchId, upTo }) {
-      return this.read({ branchId, ...(upTo === undefined ? {} : { upTo }) })
+    async readOwn({ threadId, upTo }) {
+      return this.read({ threadId, ...(upTo === undefined ? {} : { upTo }) })
     },
   }
 }

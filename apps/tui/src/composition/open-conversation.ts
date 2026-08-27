@@ -1,23 +1,23 @@
-import type { BranchId, Event, EventLogPort } from '@dltech/atlas-core'
-import type { BranchStorePort } from '@dltech/atlas-harness'
+import type { ThreadId, Event, EventLogPort } from '@dltech/atlas-core'
+import type { ThreadStorePort } from '@dltech/atlas-harness'
 
 export type OpenedConversation = {
-  branchId: BranchId
+  threadId: ThreadId
   events: readonly Event[]
   name: string | null
 }
 
 export async function openConversation(args: {
-  branches: BranchStorePort
+  threads: ThreadStorePort
   log: EventLogPort
   fresh: boolean
 }): Promise<OpenedConversation> {
-  const existing = args.fresh ? undefined : await args.branches.mostRecent()
-  const branch = existing ?? (await args.branches.create({}))
+  const existing = args.fresh ? undefined : await args.threads.mostRecent()
+  const thread = existing ?? (await args.threads.create({}))
 
   return {
-    branchId: branch.id,
-    events: await args.log.read({ branchId: branch.id }),
-    name: branch.title ?? null,
+    threadId: thread.id,
+    events: await args.log.read({ threadId: thread.id }),
+    name: thread.title ?? null,
   }
 }

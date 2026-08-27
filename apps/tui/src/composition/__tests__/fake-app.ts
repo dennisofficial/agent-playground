@@ -29,7 +29,7 @@ import { createPendingQueue } from '../../store'
 import type { AtlasApp } from '../compose'
 import { heldChoice } from '../model-selection'
 import { DEFAULT_MODEL_ID, type AtlasConfig } from '../config'
-import { fakeBranchStore, fakeEventLog, type FakeBranchStore, type FakeEventLog } from './fake-backend'
+import { fakeThreadStore, fakeEventLog, type FakeThreadStore, type FakeEventLog } from './fake-backend'
 
 export const FAKE_CONFIG: AtlasConfig = {
   modelId: 'claude-haiku-4-5-20251001',
@@ -234,7 +234,7 @@ export type FakeApp = AtlasApp & {
   channel: DeltaChannel
   shells: FakeShells
   log: FakeEventLog
-  branches: FakeBranchStore
+  threads: FakeThreadStore
   readonly turnsDriven: number
   readonly titled: readonly string[]
 }
@@ -247,7 +247,7 @@ export function fakeApp(args: {
 }): FakeApp {
   const channel = createDeltaChannel()
   const log = fakeEventLog()
-  const branches = fakeBranchStore({ log })
+  const threads = fakeThreadStore({ log })
   const ids = new RandomIds()
   const pending = createPendingQueue()
   const shells = fakeShellRegistry()
@@ -275,7 +275,7 @@ export function fakeApp(args: {
       return titled
     },
 
-    markActiveBranch: () => undefined,
+    markActiveThread: () => undefined,
 
     titler: async ({ text }) => {
       titled.push(text)
@@ -288,7 +288,7 @@ export function fakeApp(args: {
     credentials: alwaysAuthorised(),
     channel,
     log,
-    branches,
+    threads,
     ids,
     pending,
     shells,

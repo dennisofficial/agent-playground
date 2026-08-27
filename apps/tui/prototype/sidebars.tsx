@@ -4,7 +4,7 @@ import React from 'react'
 
 import { BLANK_BORDER } from '../src/ui/borders'
 import { formatElapsed, formatTokens, glyph, theme, SIDEBAR_WIDTH } from '../src/ui/theme'
-import { BRANCH_LABEL, MODEL, WHERE } from './session'
+import { THREAD_LABEL, MODEL, WHERE } from './session'
 
 /** A column divider, deliberately lighter than the ┃ that marks what the operator wrote. */
 const DIVIDER = '│'
@@ -78,7 +78,7 @@ export function QuietSidebar(props: { working: boolean }): React.ReactNode {
     <Column>
       <Section label="Session">
         <text fg={theme.hover}>{MODEL}</text>
-        <text fg={theme.hint}>{BRANCH_LABEL}</text>
+        <text fg={theme.hint}>{THREAD_LABEL}</text>
       </Section>
       <Section label="Turn">
         <TurnLines working={props.working} />
@@ -112,7 +112,7 @@ export function RailedSidebar(props: { working: boolean }): React.ReactNode {
     <Column seamed>
       <Section label="Session">
         <text fg={theme.hover}>{MODEL}</text>
-        <text fg={theme.hint}>{BRANCH_LABEL}</text>
+        <text fg={theme.hint}>{THREAD_LABEL}</text>
       </Section>
       <Section label="Turn">
         <TurnLines working={props.working} />

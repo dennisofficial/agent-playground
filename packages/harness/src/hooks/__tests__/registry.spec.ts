@@ -4,7 +4,7 @@ import {
   EBeforeToolDecision,
   EStage,
   HOOK_CONTEXT_KEY,
-  toBranchId,
+  toThreadId,
   type AfterTool,
   type AfterTurn,
   type Assembled,
@@ -31,7 +31,7 @@ const observe = (nudge: number): HookOrder => ({ stage: EStage.Observe, nudge })
 const assembled: Assembled = { system: [], messages: [] }
 const prompt: ProviderPrompt = { instructions: [], messages: [], provider: { id: 'test', modelId: 'test' } }
 const delta: Chunk = { type: 'text-delta', id: 'block-1', text: 'hello' }
-const branchId = toBranchId('branch-1')
+const threadId = toThreadId('thread-1')
 
 const noting = (args: { name: string; seen: string[] }): void => {
   args.seen.push(args.name)
@@ -134,11 +134,11 @@ describe('HookChain', () => {
       ],
     })
 
-    await chain.beforeTurn({ branchId })
+    await chain.beforeTurn({ threadId })
     await chain.beforeStep({ assembled, trace: [] })
     await chain.beforeRequest({ prompt })
     await chain.onChunk({ chunk: delta })
-    await chain.afterTurn({ branchId })
+    await chain.afterTurn({ threadId })
 
     expect(seen).toEqual([
       'first-opener',
@@ -192,7 +192,7 @@ describe('HookChain', () => {
     expect(seen).toEqual([])
   })
 
-  it('gathers the drafts every branch-scoped hook returns', async () => {
+  it('gathers the drafts every thread-scoped hook returns', async () => {
     const chain = new HookChain({
       afterTurn: [
         {
@@ -208,7 +208,7 @@ describe('HookChain', () => {
       ],
     })
 
-    expect(await chain.afterTurn({ branchId })).toEqual([
+    expect(await chain.afterTurn({ threadId })).toEqual([
       { type: 'nudge', text: 'one', lifetimeSteps: 1 },
       { type: 'nudge', text: 'two', lifetimeSteps: 1 },
     ])
@@ -221,7 +221,7 @@ describe('HookChain', () => {
       ],
     })
 
-    expect(await chain.beforeTurn({ branchId })).toEqual([
+    expect(await chain.beforeTurn({ threadId })).toEqual([
       { type: 'context-loaded', slot: 'gitState', key: HOOK_CONTEXT_KEY, content: '3 files dirty' },
     ])
   })
@@ -240,7 +240,7 @@ describe('HookChain', () => {
       ],
     })
 
-    expect((await chain.afterTurn({ branchId })).map((draft) => draft.type)).toEqual([
+    expect((await chain.afterTurn({ threadId })).map((draft) => draft.type)).toEqual([
       'context-loaded',
       'nudge',
     ])
@@ -254,7 +254,7 @@ describe('HookChain', () => {
     expect(await chain.beforeStep({ assembled, trace: [] })).toBe(assembled)
     expect(await chain.beforeRequest({ prompt })).toBe(prompt)
     expect(await chain.onChunk({ chunk: delta })).toBe(delta)
-    expect(await chain.beforeTurn({ branchId })).toEqual([])
-    expect(await chain.afterTurn({ branchId })).toEqual([])
+    expect(await chain.beforeTurn({ threadId })).toEqual([])
+    expect(await chain.afterTurn({ threadId })).toEqual([])
   })
 })

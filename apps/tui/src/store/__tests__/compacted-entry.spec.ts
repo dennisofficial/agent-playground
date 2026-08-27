@@ -23,7 +23,7 @@ describe('the transcript across a compaction', () => {
     ])
   })
 
-  it('counts how much of the branch the summary stands in for', () => {
+  it('counts how much of the thread the summary stands in for', () => {
     const events = log([
       { type: 'user-said', text: 'first' },
       { type: 'assistant-said', parts: [{ type: 'text', text: 'one' }] },

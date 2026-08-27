@@ -34,14 +34,14 @@ event log already provides durable resume, so it would be bought twice.
 ## The loop
 
 ```ts
-async function runTurn({ branchId, signal }: { branchId: string; signal: AbortSignal }) {
+async function runTurn({ threadId, signal }: { threadId: string; signal: AbortSignal }) {
   let modelSteps = 0
   let settleAttempted: string | undefined
 
-  await log.append({ branchId, drafts: await hooks.beforeTurn({ branchId }) })
+  await log.append({ threadId, drafts: await hooks.beforeTurn({ threadId }) })
 
   for (;;) {
-    const events = await log.read({ branchId })
+    const events = await log.read({ threadId })
 
     const waiting = outstandingApproval(events)
     if (waiting) return { status: Paused, callId: waiting }
@@ -51,13 +51,13 @@ async function runTurn({ branchId, signal }: { branchId: string; signal: AbortSi
       if (pending.callId === settleAttempted) return { status: Failed, message: stalled(pending) }
 
       settleAttempted = pending.callId
-      const settled = await settlePending({ branchId, signal })
+      const settled = await settlePending({ threadId, signal })
       if (settled.paused) return settled.paused
       continue
     }
 
     const waiting = await drainPending()
-    if (waiting.length > 0) await log.append({ branchId, drafts: waiting })
+    if (waiting.length > 0) await log.append({ threadId, drafts: waiting })
 
     const { assembled: projected, trace } = assemble({ events, rules, annotators, ctx })
     const assembled = await hooks.beforeStep({ assembled: projected, trace })
@@ -69,14 +69,14 @@ async function runTurn({ branchId, signal }: { branchId: string; signal: AbortSi
     settleAttempted = undefined
     const { parts, toolCalls } = await modelStep({ assembled, tools, signal })
 
-    if (parts.length > 0) await log.append({ branchId, drafts: [{ type: 'assistant-said', parts }] })
+    if (parts.length > 0) await log.append({ threadId, drafts: [{ type: 'assistant-said', parts }] })
     for (const [ordinal, call] of toolCalls.entries()) {
-      await log.append({ branchId, drafts: [{ type: 'tool-called', ordinal, ...call }] })
+      await log.append({ threadId, drafts: [{ type: 'tool-called', ordinal, ...call }] })
     }
     if (toolCalls.length > 0) continue
     if (arrivedUnseen() || (await drainPending()).length > 0) continue
 
-    await log.append({ branchId, drafts: await hooks.afterTurn({ branchId }) })
+    await log.append({ threadId, drafts: await hooks.afterTurn({ threadId }) })
     return { status: Completed }
   }
 }
@@ -115,7 +115,7 @@ model calls rather than loop iterations because `nudge.lifetimeSteps` is specifi
 **`settlePending` is built by the loop, not injected into it.** `TurnDeps` takes `dispatch`; the loop
 constructs `settlePending` from `dispatch` and the log it already holds. Injecting a pre-built
 `settlePending` meant it closed over a *different* log than the loop wrote through — two logs writing
-one branch in a single turn, which the delta-publishing wrapper makes reachable. Absent `dispatch`,
+one thread in a single turn, which the delta-publishing wrapper makes reachable. Absent `dispatch`,
 the loop pauses on a pending call exactly as it did before tools existed, which is what a subagent
 given no tools needs.
 
@@ -228,9 +228,9 @@ turn that dies before its first drain from spinning there.
 
 **Teardown records what it kills.** Closing the session kills every background shell, and those endings
 are worth keeping — reopening the conversation should say where the dev server went. Nothing is left
-running to drain them, so `close()` runs `closeAll()`, drains, and appends to the branch the session was
-last on before the database goes. This is the one place the registry's branch-blindness shows: endings
-carry no branch, so opening a new conversation forgets what is queued rather than landing it in a
+running to drain them, so `close()` runs `closeAll()`, drains, and appends to the thread the session was
+last on before the database goes. This is the one place the registry's thread-blindness shows: endings
+carry no thread, so opening a new conversation forgets what is queued rather than landing it in a
 conversation that did not start the shell.
 
 **Reaping is by spawner, not by process tree.** A backgrounded shell is meant to outlive its turn, so
@@ -239,7 +239,7 @@ whole group. Shells do not survive the process — the registry is memory — wh
 place this deliberately stops short of Claude Code, whose tasks survive a session and a `/clear`.
 
 **A sub-agent is this function called recursively** with different arguments — tools, policy, budget,
-branch. Nothing per-run belongs in the DI container; wanting a child container is a smell that
+thread. Nothing per-run belongs in the DI container; wanting a child container is a smell that
 run-varying config got injected instead of passed. Every event carries `runId`, `parentRunId`, and
 `depth` so nesting is never foreclosed.
 
@@ -260,17 +260,17 @@ site, and `EForkMode` is the vocabulary for it.
 
 **Forking is the only operation that copies**, because it is the only one whose output is a second
 conversation the user can reach and keep. Copying anywhere else buys storage nobody can navigate to:
-thirty rewinds of a multi-megabyte branch is tens of megabytes of rows with no way to reference them.
-So the operation is `BranchStorePort.fork({ from, seq, mode, title })`, returning the new branch. It sits
-on the branch store rather than the event log because it has to write the branch row and the event rows in
+thirty rewinds of a multi-megabyte thread is tens of megabytes of rows with no way to reference them.
+So the operation is `ThreadStorePort.fork({ from, seq, mode, title })`, returning the new thread. It sits
+on the thread store rather than the event log because it has to write the thread row and the event rows in
 one transaction, which is the same reason `rewind` lives there. `EventLogPort.forkFrom` — which only ever
 threw — is gone, and `readOwn` takes its place beside `read`: `read` returns the composed view a reference
-fork implies, `readOwn` returns only the rows the branch itself holds.
+fork implies, `readOwn` returns only the rows the thread itself holds.
 
 **A reference fork is not safe to hand a sub-agent yet, and this is the list.** The substrate works and
 is tested, but two invariants the rest of the harness relies on stop holding the moment a child inherits
-rows it does not own: `seq` no longer starts at 1, and `read({ branchId })` can return events whose
-`branchId` is a different branch. An audit of every consumer found these, and the first two are the ones
+rows it does not own: `seq` no longer starts at 1, and `read({ threadId })` can return events whose
+`threadId` is a different thread. An audit of every consumer found these, and the first two are the ones
 that corrupt rather than merely mislead:
 
 1. **The loop must read `readOwn` for control flow.** `pendingCalls` and `outstandingApproval` over a
@@ -284,18 +284,18 @@ that corrupt rather than merely mislead:
    last turn-taking event of the composed list, so a child forked after the parent's `assistant-said`
    returns `Idle` without taking a single model step.
 3. **Rewinding a parent below a live child's fork point punches a hole in that child.** Nothing refuses it
-   and nothing queries `@@index([parentBranchId])`. Either refuse the rewind or materialise the child's
+   and nothing queries `@@index([parentThreadId])`. Either refuse the rewind or materialise the child's
    prefix first.
-4. **`Branch.parentBranchId` is a bare column with no self-relation.** There is no branch-delete path
+4. **`Thread.parentThreadId` is a bare column with no self-relation.** There is no thread-delete path
    today; when one lands, a cascade would strip the parent's rows and the child would silently read as
    though it never had a parent. `onDelete: Restrict` costs nothing while there is no data.
 5. **The TUI's fake event log cannot represent a fork**, so no composition test can catch any of this — it
-   derives `seq` from array length and returns one branch's own rows.
+   derives `seq` from array length and returns one thread's own rows.
 6. Cosmetics, worth knowing: an untitled child's sidebar title, turn count and live tool calls all describe
    the parent, because `deriveSidebar` reads the composed list.
 
 Rewind is already guarded: `rewindTarget` takes a `floorSeq` and refuses `BelowInheritedPrefix`, which
-`rewindBranch` derives from the branch's own first sequence — not from `forkSeq`, because a **copy** fork
+`rewindThread` derives from the thread's own first sequence — not from `forkSeq`, because a **copy** fork
 records a parent link yet owns every row it holds and may legitimately rewind past the fork point.
 
 **It does. Compaction deletes the rows it compacts and puts one `history-compacted` event carrying
@@ -309,7 +309,7 @@ watermark is not a recovery path. The guard is the only protection, which is why
 truncates when a range is unsafe.
 
 **`context-loaded` is exempt from the delete.** It means "here is the current content of X", not history,
-so compacting it away would strip a branch's `CLAUDE.md` permanently — and `append`'s content-keyed
+so compacting it away would strip a thread's `CLAUDE.md` permanently — and `append`'s content-keyed
 idempotency means an unchanged re-offer resolves to the row that is no longer there. The delete therefore
 spares `context-loaded`, the assembly rule renders those messages *ahead* of the summary, and the
 summariser's transcript render leaves them out so they are not duplicated into the prose. Instructions,
@@ -348,15 +348,15 @@ wanted, and would then work on every provider.
 
 | Timeline | Owner | Restored by |
 | --- | --- | --- |
-| **Conversation** — messages, reasoning, tool calls, approvals | EventLog (SQLite) | move the branch head |
+| **Conversation** — messages, reasoning, tool calls, approvals | EventLog (SQLite) | move the thread head |
 | **Control** — pending tool, retries, interrupt reason | *derived from the log* | re-read the log |
 | **World** — files, git index, worktree, subprocesses | Workspace snapshots (git objects) | restore the snapshot on the event |
 
 The middle row is where frameworks want to sell you a checkpointer. We don't have one because we
 don't need one.
 
-`rewind(eventId)` resolves the event's `snapshotId`, restores the workspace, and moves the branch
-head. Fork is the same operation writing to a new `branchId` — one row, because context is derived.
+`rewind(eventId)` resolves the event's `snapshotId`, restores the workspace, and moves the thread
+head. Fork is the same operation writing to a new `threadId` — one row, because context is derived.
 
 Snapshots cannot undo non-filesystem effects, so tool dispatch takes
 `idempotencyKey: ${runId}:${callId}`.
@@ -453,7 +453,7 @@ packages/harness/src/
   model/providers/   LanguageModelV4 impls: claude-oauth, codex-oauth, api-key
   credentials/   CredentialPort backends: macOS Keychain, auth.json file, encrypted vault
   files/         what the model has seen of each file on disk, for the read-before-write guard
-  store/         Prisma event log, branch heads, workspace snapshots
+  store/         Prisma event log, thread heads, workspace snapshots
   tools/         registry, dispatcher, builtin tools
   shells/        background shell registry, process-group lifecycle, delta output buffers
   hooks/         hook implementations — claude-md injection, workspace boundary, read-before-write,

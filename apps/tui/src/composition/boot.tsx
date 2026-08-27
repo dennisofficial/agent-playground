@@ -45,7 +45,7 @@ export async function bootAtlas(args: {
   await registerGrammars()
 
   const opened = await openConversation({
-    branches: app.branches,
+    threads: app.threads,
     log: app.log,
     fresh: config.freshConversation,
   })

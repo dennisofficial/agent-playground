@@ -66,10 +66,10 @@ async function openWorkspace(scriptFor: (workspace: string) => readonly Scripted
     },
   })
 
-  const branch = await harness.branches.create({})
-  channel.subscribe({ branchId: branch.id, listener: (signal) => void seen.push(signal) })
+  const thread = await harness.threads.create({})
+  channel.subscribe({ threadId: thread.id, listener: (signal) => void seen.push(signal) })
 
-  return { harness, workspace, runner, branchId: branch.id, seen }
+  return { harness, workspace, runner, threadId: thread.id, seen }
 }
 
 const resultOf = (args: {
@@ -92,14 +92,14 @@ const denialOf = (events: readonly Event[]): EventOfType<'tool-denied'> => {
 
 describe('a turn that drives a real builtin tool', () => {
   it('reads a file off the developer disk and completes on the following step', async () => {
-    const { harness, workspace, runner, branchId } = await openWorkspace((root) => [
+    const { harness, workspace, runner, threadId } = await openWorkspace((root) => [
       { calls: [{ callId: 'call-1', name: 'read', input: { path: join(root, 'alpha.ts') } }] },
       { text: 'alpha.ts declares one export' },
     ])
     writeFileSync(join(workspace, 'alpha.ts'), 'export const alpha = 1\n')
 
-    const outcome = await runner.say({ branchId, text: 'what is in alpha.ts?' })
-    const events = await harness.log.read({ branchId })
+    const outcome = await runner.say({ threadId, text: 'what is in alpha.ts?' })
+    const events = await harness.log.read({ threadId })
 
     expect(outcome.status).toBe(ETurnStatus.Completed)
     expect(events.map((event) => event.type)).toEqual([
@@ -112,7 +112,7 @@ describe('a turn that drives a real builtin tool', () => {
   })
 
   it('edits a file on disk and records a diff the transcript can render', async () => {
-    const { harness, workspace, runner, branchId } = await openWorkspace((root) => [
+    const { harness, workspace, runner, threadId } = await openWorkspace((root) => [
       { calls: [{ callId: 'call-1', name: 'read', input: { path: join(root, 'beta.ts') } }] },
       {
         calls: [
@@ -127,8 +127,8 @@ describe('a turn that drives a real builtin tool', () => {
     ])
     writeFileSync(join(workspace, 'beta.ts'), 'let x = 1\n')
 
-    const outcome = await runner.say({ branchId, text: 'make x a const' })
-    const events = await harness.log.read({ branchId })
+    const outcome = await runner.say({ threadId, text: 'make x a const' })
+    const events = await harness.log.read({ threadId })
     const output = resultOf({ events, name: 'edit' }).output as { diff: string }
 
     expect(outcome.status).toBe(ETurnStatus.Completed)
@@ -146,7 +146,7 @@ describe('a turn that drives a real builtin tool', () => {
   })
 
   it('refuses to overwrite a file the model never read, and leaves its bytes untouched', async () => {
-    const { harness, workspace, runner, branchId } = await openWorkspace((root) => [
+    const { harness, workspace, runner, threadId } = await openWorkspace((root) => [
       {
         calls: [
           {
@@ -160,8 +160,8 @@ describe('a turn that drives a real builtin tool', () => {
     ])
     writeFileSync(join(workspace, 'delta.ts'), 'export const delta = 1\n')
 
-    const outcome = await runner.say({ branchId, text: 'make delta 2' })
-    const events = await harness.log.read({ branchId })
+    const outcome = await runner.say({ threadId, text: 'make delta 2' })
+    const events = await harness.log.read({ threadId })
 
     expect(outcome.status).toBe(ETurnStatus.Completed)
     expect(events.map((event) => event.type)).toEqual([
@@ -175,7 +175,7 @@ describe('a turn that drives a real builtin tool', () => {
   })
 
   it('lets the overwrite through once the whole file has been read in the same turn', async () => {
-    const { harness, workspace, runner, branchId } = await openWorkspace((root) => [
+    const { harness, workspace, runner, threadId } = await openWorkspace((root) => [
       { calls: [{ callId: 'call-1', name: 'read', input: { path: join(root, 'epsilon.ts') } }] },
       {
         calls: [
@@ -190,8 +190,8 @@ describe('a turn that drives a real builtin tool', () => {
     ])
     writeFileSync(join(workspace, 'epsilon.ts'), 'export const epsilon = 1\n')
 
-    const outcome = await runner.say({ branchId, text: 'make epsilon 2' })
-    const events = await harness.log.read({ branchId })
+    const outcome = await runner.say({ threadId, text: 'make epsilon 2' })
+    const events = await harness.log.read({ threadId })
 
     expect(outcome.status).toBe(ETurnStatus.Completed)
     expect(events.map((event) => event.type)).toEqual([
@@ -206,13 +206,13 @@ describe('a turn that drives a real builtin tool', () => {
   })
 
   it('records the guard denial rather than touching a file outside the workspace', async () => {
-    const { harness, runner, branchId } = await openWorkspace(() => [
+    const { harness, runner, threadId } = await openWorkspace(() => [
       { calls: [{ callId: 'call-1', name: 'read', input: { path: '/etc/passwd' } }] },
       { text: 'I cannot read outside the workspace' },
     ])
 
-    const outcome = await runner.say({ branchId, text: 'read /etc/passwd' })
-    const events = await harness.log.read({ branchId })
+    const outcome = await runner.say({ threadId, text: 'read /etc/passwd' })
+    const events = await harness.log.read({ threadId })
 
     expect(outcome.status).toBe(ETurnStatus.Completed)
     expect(events.map((event) => event.type)).toEqual([
@@ -224,13 +224,13 @@ describe('a turn that drives a real builtin tool', () => {
   })
 
   it('settles a tool that failed, so the turn finishes instead of stalling on the call', async () => {
-    const { harness, runner, branchId } = await openWorkspace((root) => [
+    const { harness, runner, threadId } = await openWorkspace((root) => [
       { calls: [{ callId: 'call-1', name: 'read', input: { path: join(root, 'missing.ts') } }] },
       { text: 'missing.ts is not there' },
     ])
 
-    const outcome = await runner.say({ branchId, text: 'read missing.ts' })
-    const events = await harness.log.read({ branchId })
+    const outcome = await runner.say({ threadId, text: 'read missing.ts' })
+    const events = await harness.log.read({ threadId })
 
     expect(outcome.status).toBe(ETurnStatus.Completed)
     expect(events.map((event) => event.type)).toEqual([
@@ -243,13 +243,13 @@ describe('a turn that drives a real builtin tool', () => {
   })
 
   it('publishes one step-started and one step-ended per model step, and none for the settlement', async () => {
-    const { runner, workspace, branchId, seen } = await openWorkspace((root) => [
+    const { runner, workspace, threadId, seen } = await openWorkspace((root) => [
       { calls: [{ callId: 'call-1', name: 'read', input: { path: join(root, 'gamma.ts') } }] },
       { text: 'one export' },
     ])
     writeFileSync(join(workspace, 'gamma.ts'), 'export const gamma = 1\n')
 
-    await runner.say({ branchId, text: 'what is in gamma.ts?' })
+    await runner.say({ threadId, text: 'what is in gamma.ts?' })
 
     const started = seen.filter((signal) => signal.type === 'step-started').length
     const ended = seen.filter((signal) => signal.type === 'step-ended').length

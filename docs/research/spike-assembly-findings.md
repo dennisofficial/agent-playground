@@ -57,7 +57,7 @@ pipeline is free, so a controller can search over assembly parameters until the 
 
 ```ts
 for (const [rung, pressure] of ladder.entries()) {
-  const run = assembleWithTrace({ events, rules: [...buildRules(pressure), ...finishers], branchId, budget })
+  const run = assembleWithTrace({ events, rules: [...buildRules(pressure), ...finishers], threadId, budget })
   if (estimateTokens(run.assembled) <= budget.maxTokens) return { ...run, rung, truncated: false }
 }
 ```
@@ -82,7 +82,7 @@ controller above the pipeline.
    principle.
 5. **One home for `maxTokens`**, which currently lives in both `ctx.budget` and the rule's argument.
 
-`assemble(events, rules)` also cannot build a `RuleContext` — no `branchId`, no `budget`. Named
+`assemble(events, rules)` also cannot build a `RuleContext` — no `threadId`, no `budget`. Named
 parameters, per the repo's own 2+-args rule.
 
 ## Keep the signature pure and synchronous, with two amendments

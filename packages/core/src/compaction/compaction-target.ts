@@ -53,7 +53,7 @@ export function compactionTarget({
     return {
       allowed: false,
       refusal: ECompactionRefusal.NoSuchTarget,
-      reason: `${throughSeq} is not a compaction target on a branch holding sequences ${firstSeq} through ${lastSeq}`,
+      reason: `${throughSeq} is not a compaction target on a thread holding sequences ${firstSeq} through ${lastSeq}`,
     }
   }
 
@@ -62,7 +62,7 @@ export function compactionTarget({
     return {
       allowed: false,
       refusal: ECompactionRefusal.AlreadyCompacted,
-      reason: `this branch is already compacted through ${already}`,
+      reason: `this thread is already compacted through ${already}`,
     }
   }
 

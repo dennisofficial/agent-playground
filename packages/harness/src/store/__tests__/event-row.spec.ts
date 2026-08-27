@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'bun:test'
 
 import {
   pendingCalls,
-  toBranchId,
+  toThreadId,
   toCallId,
   toEventId,
   toRunId,
@@ -13,14 +13,14 @@ import {
 import { toEventRow, UnreadableWrite } from '../event-row'
 import { openStoreFixture, type StoreFixture } from './harness'
 
-const branchId = toBranchId('branch-1')
+const threadId = toThreadId('thread-1')
 const runId = toRunId('run-1')
 const callId = toCallId('call-1')
 
 const envelope: EventEnvelope = {
   id: toEventId('event-1'),
   seq: 1,
-  branchId,
+  threadId,
   runId,
   depth: 0,
   at: '2026-01-01T00:00:00.000Z',
@@ -61,14 +61,14 @@ describe('a tool result that carries an error rather than an output', () => {
     fixture = await openStoreFixture()
 
     await fixture.log.append({
-      branchId,
+      threadId,
       runId,
       drafts: [
         { type: 'tool-called', callId, name: 'shell_output', input: { shellId: 'bash_2' }, ordinal: 0 },
         failed,
       ],
     })
-    const events = await fixture.log.read({ branchId })
+    const events = await fixture.log.read({ threadId })
 
     expect(events.map((event) => event.type)).toEqual(['tool-called', 'tool-result'])
     expect(pendingCalls(events)).toEqual([])

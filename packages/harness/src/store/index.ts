@@ -1,19 +1,19 @@
-export { BranchStorePort, PrismaBranchStore, type BranchSummary } from './branch-store'
+export { ThreadStorePort, PrismaThreadStore, type ThreadSummary } from './thread-store'
 export {
-  compactBranch,
+  compactThread,
   ECompactionFailure,
   type CompactionOutcome,
   type Summarise,
 } from './compact'
 export { SystemClock } from './clock'
-export { ForkChainTooDeep, readComposedRows, readOwnRows } from './compose-branch'
-export { ForkSeqOutOfRange, ForkSourceMissing, forkBranch, type ForkedBranchRow } from './fork'
+export { ForkChainTooDeep, readComposedRows, readOwnRows } from './compose-thread'
+export { ForkSeqOutOfRange, ForkSourceMissing, forkThread, type ForkedThreadRow } from './fork'
 export { forkConversation, type ForkResult } from './guarded-fork'
 export { openAtlasDatabase, type AtlasDatabase } from './database'
 export { decodeEventRows, EUnreadableReason, type DecodedLog, type UnreadableRow } from './decode-events'
 export { PrismaEventLog, type AppendArgs } from './event-log'
 export { RandomIds } from './ids'
-export { rewindBranch, type RewindResult } from './rewind'
+export { rewindThread, type RewindResult } from './rewind'
 export { atlasMigrationsDirectory, loadAtlasMigrations } from './migrations'
 export {
   ATLAS_DATABASE_NAME,

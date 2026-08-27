@@ -1,12 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 
-import { ClockPort, CredentialPort, EventLogPort, IdPort, toBranchId } from '@dltech/atlas-core'
+import { ClockPort, CredentialPort, EventLogPort, IdPort, toThreadId } from '@dltech/atlas-core'
 
 import { KeychainCredentialPort } from '../../credentials/keychain-credential-port'
 import type { KeychainReader } from '../../credentials/keychain-reader'
 import {
-  BranchStorePort,
-  PrismaBranchStore,
+  ThreadStorePort,
+  PrismaThreadStore,
   PrismaEventLog,
   RandomIds,
   SystemClock,
@@ -52,8 +52,8 @@ describe('createHarnessContainer', () => {
     expect(harness.resolve(portToken(EventLogPort))).toBeInstanceOf(PrismaEventLog)
   })
 
-  it('resolves the branch store port to the prisma branch store', () => {
-    expect(harness.resolve(portToken(BranchStorePort))).toBeInstanceOf(PrismaBranchStore)
+  it('resolves the thread store port to the prisma thread store', () => {
+    expect(harness.resolve(portToken(ThreadStorePort))).toBeInstanceOf(PrismaThreadStore)
   })
 
   it('resolves the credential port to the keychain credential port', () => {
@@ -62,12 +62,12 @@ describe('createHarnessContainer', () => {
 
   it('injects the registered prisma client into the event log it builds', async () => {
     const log = harness.resolve(portToken(EventLogPort))
-    expect(await log.head({ branchId: toBranchId('brn_absent') })).toBe(0)
+    expect(await log.head({ threadId: toThreadId('brn_absent') })).toBe(0)
   })
 
-  it('injects the registered clock and ids into the branch store it builds', async () => {
-    const branches = harness.resolve(portToken(BranchStorePort))
-    const created = await branches.create({ title: 'resolved through the container' })
+  it('injects the registered clock and ids into the thread store it builds', async () => {
+    const threads = harness.resolve(portToken(ThreadStorePort))
+    const created = await threads.create({ title: 'resolved through the container' })
     expect(created.id).toStartWith('brn_')
     expect(created.head).toBe(0)
   })

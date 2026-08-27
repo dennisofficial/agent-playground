@@ -7,7 +7,7 @@ import { estimateTokens } from '../../assembly/tokens'
 import { eventsFrom, replied, said } from '../../compaction/__tests__/fixture'
 import type { EventDraft } from '../../events/body'
 import type { Event } from '../../events/envelope'
-import { toBranchId } from '../../events/ids'
+import { toThreadId } from '../../events/ids'
 import { EBudgetVerdict, resolveBudget } from '../resolve-budget'
 
 const THOUSAND_TOKENS = 'x'.repeat(4_000)
@@ -20,7 +20,7 @@ const assembleWith = (events: readonly Event[]) =>
     rules: [messagesFromEvents(), compactedHistory()],
     ctx: {
       events,
-      branchId: toBranchId('branch-1'),
+      threadId: toThreadId('thread-1'),
       step: 0,
       provider: { id: 'anthropic', modelId: 'claude-opus-5' },
       countTokens: estimateTokens,

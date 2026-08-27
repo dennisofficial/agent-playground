@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 
 import { grammarsReady } from '../../ui/markdown/__tests__/harness'
-import { open, until, BRANCH, REPLY, THINKING } from './app-fixture'
+import { open, until, THREAD, REPLY, THINKING } from './app-fixture'
 import {
   FAKE_CONFIG,
   fakeApp,
@@ -15,7 +15,7 @@ await grammarsReady()
 const PROVIDER_ERROR = 'overloaded_error'
 
 describe('the app you can actually open', () => {
-  it('opens straight into a transcript, with no menu and no error on an empty branch', async () => {
+  it('opens straight into a transcript, with no menu and no error on an empty thread', async () => {
     const mounted = await open({ app: fakeApp({ model: scriptedModelPort({ script: { thinking: THINKING, reply: REPLY } }) }) })
 
     try {
@@ -49,7 +49,7 @@ describe('the app you can actually open', () => {
 
       expect(answered).toBe(true)
 
-      const events = await mounted.app.log.read({ branchId: BRANCH })
+      const events = await mounted.app.log.read({ threadId: THREAD })
       expect(events.map((event) => event.type)).toEqual(['user-said', 'assistant-said'])
     } finally {
       await mounted.done()
@@ -68,7 +68,7 @@ describe('the app you can actually open', () => {
       const said = await until({
         holds: async () => {
           await mounted.frame()
-          const events = await mounted.app.log.read({ branchId: BRANCH })
+          const events = await mounted.app.log.read({ threadId: THREAD })
           return events.some(
             (event) => event.type === 'user-said' && event.text.includes('without a render'),
           )
@@ -131,7 +131,7 @@ describe('the app you can actually open', () => {
       })
       expect(kept).toBe(true)
 
-      const events = await mounted.app.log.read({ branchId: BRANCH })
+      const events = await mounted.app.log.read({ threadId: THREAD })
       const last = events.at(-1)
       expect(last?.type).toBe('assistant-said')
       expect(last?.type === 'assistant-said' ? last.interrupted : false).toBe(true)

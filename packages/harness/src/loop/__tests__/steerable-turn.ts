@@ -5,7 +5,7 @@ import { z } from 'zod'
 import {
   defaultPipeline,
   EToolEffect,
-  type BranchId,
+  type ThreadId,
   type EventDraft,
   type EventLogPort,
   type IdPort,
@@ -83,7 +83,7 @@ export type Opened = {
   runner: TurnRunner
   harness: AtlasHarness
   model: MockLanguageModelV4
-  branchId: BranchId
+  threadId: ThreadId
   queue: ComposerQueue
 }
 
@@ -104,7 +104,7 @@ export async function openSteerable(args: {
   })
   opened.push({ harness, temp })
 
-  const branch = await harness.branches.create({})
+  const thread = await harness.threads.create({})
   const queue = createComposerQueue()
   const tools = new InMemoryToolRegistry([touchTool])
 
@@ -118,7 +118,7 @@ export async function openSteerable(args: {
       return actingDuringStep({
         model: harness.model,
         onStep: appended.onStep,
-        act: () => appendStraightToLog({ log: harness.log, ids: harness.ids, branchId: branch.id, text: appended.text }),
+        act: () => appendStraightToLog({ log: harness.log, ids: harness.ids, threadId: thread.id, text: appended.text }),
       })
     }
     return harness.model
@@ -128,7 +128,7 @@ export async function openSteerable(args: {
     harness,
     model,
     queue,
-    branchId: branch.id,
+    threadId: thread.id,
     runner: new LoopTurnRunner({
       log: harness.log,
       model: steered,
@@ -146,11 +146,11 @@ export async function openSteerable(args: {
 async function appendStraightToLog(args: {
   log: EventLogPort
   ids: IdPort
-  branchId: BranchId
+  threadId: ThreadId
   text: string
 }): Promise<void> {
   await args.log.append({
-    branchId: args.branchId,
+    threadId: args.threadId,
     runId: args.ids.nextRunId(),
     drafts: [{ type: 'user-said', text: args.text }],
   })

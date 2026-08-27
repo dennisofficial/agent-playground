@@ -21,7 +21,7 @@ class SteppableClock implements ClockPort {
   }
 }
 
-type EndedDraft = Omit<EventOfType<'background-shell-ended'>, keyof { id: 0; seq: 0; branchId: 0; runId: 0; depth: 0; at: 0 }>
+type EndedDraft = Omit<EventOfType<'background-shell-ended'>, keyof { id: 0; seq: 0; threadId: 0; runId: 0; depth: 0; at: 0 }>
 
 function endedDraft(draft: EventDraft | undefined): EndedDraft {
   if (draft?.type !== 'background-shell-ended') {

@@ -8,7 +8,7 @@ import {
   ECacheTtl,
   estimateTokens,
   stampDrafts,
-  toBranchId,
+  toThreadId,
   toEventId,
   toRunId,
   type Credential,
@@ -38,7 +38,7 @@ const log = (drafts: readonly EventDraft[]): Event[] =>
     envelopes: drafts.map((_draft, index) => ({
       id: toEventId(`event-${index + 1}`),
       seq: index + 1,
-      branchId: toBranchId('branch-fixture'),
+      threadId: toThreadId('thread-fixture'),
       runId: toRunId('run-fixture'),
       depth: 0,
       at: '2026-01-01T00:00:00.000Z',
@@ -59,7 +59,7 @@ const sentBody = async (): Promise<{ system: CachedBlock[]; messages: { content:
     annotators: defaultAnnotators(),
     ctx: {
       events: exchange,
-      branchId: toBranchId('branch-fixture'),
+      threadId: toThreadId('thread-fixture'),
       step: 0,
       provider: { id: ANTHROPIC_PROVIDER_ID, modelId: MODEL_ID },
       countTokens: estimateTokens,

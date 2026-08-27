@@ -5,11 +5,11 @@ import {
   EventLogPort,
   IdPort,
   ModelPort,
-  type BranchId,
+  type ThreadId,
   type EventDraft,
 } from '@dltech/atlas-core'
 import {
-  BranchStorePort,
+  ThreadStorePort,
   createAnthropicOauthModel,
   createDeltaChannel,
   createHarnessContainer,
@@ -46,14 +46,14 @@ export type SessionTitler = (args: { text: string; signal?: AbortSignal }) => Pr
 
 export type AtlasApp = {
   config: AtlasConfig
-  markActiveBranch: (branchId: BranchId) => void
+  markActiveThread: (threadId: ThreadId) => void
   titler: SessionTitler
   summarise: Summariser
   credentials: CredentialPort
   channel: DeltaChannel
   runner: TurnRunner
   log: EventLogPort
-  branches: BranchStorePort
+  threads: ThreadStorePort
   ids: IdPort
   pending: PendingQueue
   shells: ShellRegistryPort
@@ -104,14 +104,14 @@ export async function composeAtlas(args: {
 
   const log = container.resolve(portToken(EventLogPort))
   const ids = container.resolve(portToken(IdPort))
-  const branches = container.resolve(portToken(BranchStorePort))
+  const threads = container.resolve(portToken(ThreadStorePort))
   const tools = container.resolve(portToken(ToolRegistry)).declarations()
   const shells = container.resolve(portToken(ShellRegistryPort))
 
   const channel = createDeltaChannel()
   const pending = createPendingQueue()
 
-  let activeBranch: BranchId | null = null
+  let activeThread: ThreadId | null = null
 
   const titlerModel = createAnthropicOauthModel({ credentials, modelId: TITLER_MODEL_ID })
   const summariserModel = createAnthropicOauthModel({ credentials, modelId: SUMMARISER_MODEL_ID })
@@ -124,17 +124,17 @@ export async function composeAtlas(args: {
   const recordTeardownEndings = async (): Promise<void> => {
     await shells.closeAll()
 
-    const branchId = activeBranch
+    const threadId = activeThread
     const drafts = shells.drainNotifications()
-    if (branchId === null || drafts.length === 0) return
+    if (threadId === null || drafts.length === 0) return
 
-    await log.append({ branchId, runId: ids.nextRunId(), drafts })
+    await log.append({ threadId, runId: ids.nextRunId(), drafts })
   }
 
   return {
     config,
-    markActiveBranch: (branchId) => {
-      activeBranch = branchId
+    markActiveThread: (threadId) => {
+      activeThread = threadId
     },
     titler: ({ text, signal }) => titleFor({ model: titlerModel, text, signal }),
     summarise: ({ events, throughSeq }) => summaryFor({ model: summariserModel, events, throughSeq }),
@@ -142,7 +142,7 @@ export async function composeAtlas(args: {
     credentials,
     channel,
     log,
-    branches,
+    threads,
     ids,
     pending,
     shells,

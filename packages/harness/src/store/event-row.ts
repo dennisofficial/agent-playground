@@ -1,6 +1,6 @@
 import {
   eventBodySchema,
-  toBranchId,
+  toThreadId,
   toEventId,
   toRunId,
   type EventDraft,
@@ -11,7 +11,7 @@ import { contextDigestOf } from './context-digest'
 
 export type EventRow = {
   id: string
-  branchId: string
+  threadId: string
   seq: number
   runId: string
   parentRunId: string | null
@@ -41,7 +41,7 @@ const bodyOf = (draft: EventDraft): string => {
 export function toEventRow({ draft, envelope }: { draft: EventDraft; envelope: EventEnvelope }): EventRow {
   return {
     id: envelope.id,
-    branchId: envelope.branchId,
+    threadId: envelope.threadId,
     seq: envelope.seq,
     runId: envelope.runId,
     parentRunId: envelope.parentRunId ?? null,
@@ -59,7 +59,7 @@ export function toEnvelope(row: EventRow): EventEnvelope {
   return {
     id: toEventId(row.id),
     seq: row.seq,
-    branchId: toBranchId(row.branchId),
+    threadId: toThreadId(row.threadId),
     runId: toRunId(row.runId),
     depth: row.depth,
     at: row.at,

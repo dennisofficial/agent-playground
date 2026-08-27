@@ -2,7 +2,7 @@ import {
   ClockPort,
   IdPort,
   stampDrafts,
-  type BranchId,
+  type ThreadId,
   type Event,
   type EventDraft,
   type EventEnvelope,
@@ -14,13 +14,13 @@ import type { Prisma, PrismaClient } from '../../prisma/generated/client'
 import { inject, injectable } from '../container/injection'
 import { PrismaClientToken } from '../container/tokens'
 import { contextIdentityOf, planAppend, type ContextIdentity } from './append-plan'
-import { readComposedRows, readOwnRows } from './compose-branch'
+import { readComposedRows, readOwnRows } from './compose-thread'
 import { decodeEventRows, type DecodedLog } from './decode-events'
 import { toEventRow } from './event-row'
 import { retryOnWriteConflict } from './retry'
 
 export type AppendArgs = {
-  branchId: BranchId
+  threadId: ThreadId
   runId: RunId
   drafts: readonly EventDraft[]
   parentRunId?: RunId | undefined
@@ -40,44 +40,44 @@ export class PrismaEventLog implements EventLogPort {
     return retryOnWriteConflict({ run: () => this.appendOnce(args) })
   }
 
-  async read(args: { branchId: BranchId; upTo?: number }): Promise<Event[]> {
+  async read(args: { threadId: ThreadId; upTo?: number }): Promise<Event[]> {
     const decoded = await this.readDecoded(args)
     return decoded.events
   }
 
-  async readDecoded({ branchId, upTo }: { branchId: BranchId; upTo?: number }): Promise<DecodedLog> {
-    return decodeEventRows(await readComposedRows({ prisma: this.prisma, branchId, upTo }))
+  async readDecoded({ threadId, upTo }: { threadId: ThreadId; upTo?: number }): Promise<DecodedLog> {
+    return decodeEventRows(await readComposedRows({ prisma: this.prisma, threadId, upTo }))
   }
 
-  async readOwn({ branchId, upTo }: { branchId: BranchId; upTo?: number }): Promise<Event[]> {
-    return decodeEventRows(await readOwnRows({ prisma: this.prisma, branchId, upTo })).events
+  async readOwn({ threadId, upTo }: { threadId: ThreadId; upTo?: number }): Promise<Event[]> {
+    return decodeEventRows(await readOwnRows({ prisma: this.prisma, threadId, upTo })).events
   }
 
-  async head({ branchId }: { branchId: BranchId }): Promise<number> {
-    const branch = await this.prisma.branch.findUnique({
-      where: { id: branchId },
+  async head({ threadId }: { threadId: ThreadId }): Promise<number> {
+    const thread = await this.prisma.thread.findUnique({
+      where: { id: threadId },
       select: { head: true },
     })
-    return branch?.head ?? 0
+    return thread?.head ?? 0
   }
 
   private appendOnce(args: AppendArgs): Promise<Event[]> {
     return this.prisma.$transaction(async (tx) => {
       const at = this.clock.now()
-      await claimBranch({ tx, branchId: args.branchId, at })
+      await claimThread({ tx, threadId: args.threadId, at })
 
-      const reusable = await loadReusableContext({ tx, branchId: args.branchId, drafts: args.drafts })
+      const reusable = await loadReusableContext({ tx, threadId: args.threadId, drafts: args.drafts })
       const plan = planAppend({ drafts: args.drafts, reusable })
       if (plan.fresh.length === 0) return plan.resolve([])
 
-      const head = await reserveSequence({ tx, branchId: args.branchId, count: plan.fresh.length, at })
+      const head = await reserveSequence({ tx, threadId: args.threadId, count: plan.fresh.length, at })
       const firstSeq = head - plan.fresh.length + 1
 
       const prepared = plan.fresh.map((draft, index) => {
         const envelope: EventEnvelope = {
           id: this.ids.nextEventId(),
           seq: firstSeq + index,
-          branchId: args.branchId,
+          threadId: args.threadId,
           runId: args.runId,
           depth: args.depth ?? 0,
           at,
@@ -98,48 +98,48 @@ export class PrismaEventLog implements EventLogPort {
   }
 }
 
-async function claimBranch({
+async function claimThread({
   tx,
-  branchId,
+  threadId,
   at,
 }: {
   tx: Prisma.TransactionClient
-  branchId: BranchId
+  threadId: ThreadId
   at: string
 }): Promise<void> {
   await tx.$executeRaw`
-    INSERT INTO "Branch" ("id", "title", "head", "createdAt", "updatedAt")
-    VALUES (${branchId}, NULL, 0, ${at}, ${at})
+    INSERT INTO "Thread" ("id", "title", "head", "createdAt", "updatedAt")
+    VALUES (${threadId}, NULL, 0, ${at}, ${at})
     ON CONFLICT("id") DO NOTHING
   `
 }
 
 async function reserveSequence({
   tx,
-  branchId,
+  threadId,
   count,
   at,
 }: {
   tx: Prisma.TransactionClient
-  branchId: BranchId
+  threadId: ThreadId
   count: number
   at: string
 }): Promise<number> {
-  const branch = await tx.branch.update({
-    where: { id: branchId },
+  const thread = await tx.thread.update({
+    where: { id: threadId },
     data: { head: { increment: count }, updatedAt: at },
     select: { head: true },
   })
-  return branch.head
+  return thread.head
 }
 
 async function loadReusableContext({
   tx,
-  branchId,
+  threadId,
   drafts,
 }: {
   tx: Prisma.TransactionClient
-  branchId: BranchId
+  threadId: ThreadId
   drafts: readonly EventDraft[]
 }): Promise<ReadonlyMap<ContextIdentity, Event>> {
   const wanted = new Set<ContextIdentity>()
@@ -149,7 +149,7 @@ async function loadReusableContext({
   }
   if (wanted.size === 0) return new Map()
 
-  const rows = await readComposedRows({ prisma: tx, branchId, type: 'context-loaded' })
+  const rows = await readComposedRows({ prisma: tx, threadId, type: 'context-loaded' })
   const reusable = new Map<ContextIdentity, Event>()
   for (const event of decodeEventRows(rows).events) {
     const identity = contextIdentityOf(event)

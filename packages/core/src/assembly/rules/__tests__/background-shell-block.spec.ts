@@ -7,7 +7,7 @@ const ended = (over: Partial<Parameters<typeof backgroundShellBlock>[0]> = {}) =
   ({
     id: 'evt_1',
     seq: 1,
-    branchId: 'br_1',
+    threadId: 'br_1',
     runId: 'run_1',
     depth: 0,
     at: '2026-08-27T12:00:00.000Z',

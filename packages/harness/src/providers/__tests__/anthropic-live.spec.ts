@@ -95,37 +95,37 @@ afterEach(async () => {
 describe.skipIf(!liveRunRequested())('a real turn against Anthropic on the subscription credential', () => {
   it('answers with a real reply', async () => {
     const { harness } = await openLiveHarness()
-    const branch = await harness.branches.create({})
+    const thread = await harness.threads.create({})
 
     const outcome = await harness.runner.say({
-      branchId: branch.id,
+      threadId: thread.id,
       text: 'Reply with exactly the single word ATLAS and nothing else.',
     })
 
     expect(failureOf(outcome)).toBe(ETurnStatus.Completed)
 
-    const events = await harness.log.read({ branchId: branch.id })
+    const events = await harness.log.read({ threadId: thread.id })
     const reply = events.at(-1)
     expect(assistantText(reply?.type === 'assistant-said' ? reply.parts : [])).toContain('ATLAS')
   }, 120_000)
 
   it('carries the thinking signature it was handed back into the next request unchanged', async () => {
     const { harness, recorder } = await openLiveHarness()
-    const branch = await harness.branches.create({})
+    const thread = await harness.threads.create({})
 
     const first = await harness.runner.say({
-      branchId: branch.id,
+      threadId: thread.id,
       text: 'Think about which of 17 and 19 is larger, then reply with just that number.',
     })
     expect(failureOf(first)).toBe(ETurnStatus.Completed)
 
-    const afterFirst = await harness.log.read({ branchId: branch.id })
+    const afterFirst = await harness.log.read({ threadId: thread.id })
     const thought = afterFirst.at(-1)
     const signature = reasoningSignature(thought?.type === 'assistant-said' ? thought.parts : [])
     if (signature === undefined) throw new Error('the live reply carried no thinking signature')
 
     const second = await harness.runner.say({
-      branchId: branch.id,
+      threadId: thread.id,
       text: 'Now reply with exactly the single word AGAIN and nothing else.',
     })
     expect(failureOf(second)).toBe(ETurnStatus.Completed)
@@ -135,15 +135,15 @@ describe.skipIf(!liveRunRequested())('a real turn against Anthropic on the subsc
 
   it('is handed thinking it can show, not a signature over an empty text', async () => {
     const { harness } = await openLiveHarness(ADAPTIVE_LIVE_MODEL)
-    const branch = await harness.branches.create({})
+    const thread = await harness.threads.create({})
 
     const outcome = await harness.runner.say({
-      branchId: branch.id,
+      threadId: thread.id,
       text: 'Work out 27 * 43 in your head step by step, then reply with just the product.',
     })
     expect(failureOf(outcome)).toBe(ETurnStatus.Completed)
 
-    const events = await harness.log.read({ branchId: branch.id })
+    const events = await harness.log.read({ threadId: thread.id })
     const thought = events.at(-1)
     const parts = thought?.type === 'assistant-said' ? thought.parts : []
     expect(parts.some((part) => part.type === 'reasoning')).toBe(true)

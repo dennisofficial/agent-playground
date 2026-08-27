@@ -25,7 +25,7 @@ describe('the exits turn-ledger-wiring does not reach', () => {
     })
 
     const outcome = await harness.runner.say({
-      branchId: harness.branchId,
+      threadId: harness.threadId,
       text: 'what changed?',
       signal: controller.signal,
     })
@@ -43,7 +43,7 @@ describe('the exits turn-ledger-wiring does not reach', () => {
       dispatchMode: EDispatchMode.Ask,
     })
 
-    const outcome = await harness.runner.say({ branchId: harness.branchId, text: 'touch it' })
+    const outcome = await harness.runner.say({ threadId: harness.threadId, text: 'touch it' })
 
     expect(outcome.status).toBe(ETurnStatus.Paused)
     const rows = await harness.recorded()
@@ -58,7 +58,7 @@ describe('the exits turn-ledger-wiring does not reach', () => {
       dispatchMode: EDispatchMode.None,
     })
 
-    const outcome = await harness.runner.say({ branchId: harness.branchId, text: 'touch it' })
+    const outcome = await harness.runner.say({ threadId: harness.threadId, text: 'touch it' })
 
     expect(outcome.status).toBe(ETurnStatus.Paused)
     const rows = await harness.recorded()
@@ -75,7 +75,7 @@ describe('the exits turn-ledger-wiring does not reach', () => {
       dispatchMode: EDispatchMode.Auto,
     })
 
-    const outcome = await harness.runner.say({ branchId: harness.branchId, text: 'what changed?' })
+    const outcome = await harness.runner.say({ threadId: harness.threadId, text: 'what changed?' })
 
     expect(outcome.status).toBe(ETurnStatus.Failed)
     const rows = await harness.recorded()
@@ -87,7 +87,7 @@ describe('the exits turn-ledger-wiring does not reach', () => {
   it('records a turn whose only model step failed, which was still a request to the provider', async () => {
     const harness = await open({ script: [{ fails: 'overloaded_error' }] })
 
-    const outcome = await harness.runner.say({ branchId: harness.branchId, text: 'what changed?' })
+    const outcome = await harness.runner.say({ threadId: harness.threadId, text: 'what changed?' })
 
     expect(outcome.status).toBe(ETurnStatus.Failed)
     expect(harness.stepsTaken()).toBe(1)
@@ -108,7 +108,7 @@ describe('the exits turn-ledger-wiring does not reach', () => {
     })
 
     await expect(
-      harness.runner.say({ branchId: harness.branchId, text: 'what changed?' }),
+      harness.runner.say({ threadId: harness.threadId, text: 'what changed?' }),
     ).rejects.toThrow('the loop threw')
 
     const rows = await harness.recorded()
@@ -129,7 +129,7 @@ describe('the exits turn-ledger-wiring does not reach', () => {
       dispatchMode: EDispatchMode.Auto,
     })
 
-    const outcome = await harness.runner.say({ branchId: harness.branchId, text: 'touch things' })
+    const outcome = await harness.runner.say({ threadId: harness.threadId, text: 'touch things' })
 
     expect(outcome.status).toBe(ETurnStatus.Completed)
     expect(harness.stepsTaken()).toBe(3)

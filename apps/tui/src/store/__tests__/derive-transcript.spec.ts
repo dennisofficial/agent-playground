@@ -19,7 +19,7 @@ import {
 } from './fixture'
 import { called, callId, result } from './tool-fixture'
 
-describe('an empty branch', () => {
+describe('an empty thread', () => {
   it('derives a usable empty transcript rather than an error', () => {
     const model = deriveTranscript({ events: [], signals: [] })
 

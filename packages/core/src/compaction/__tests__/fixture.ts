@@ -1,6 +1,6 @@
 import type { EventDraft } from '../../events/body'
 import type { Event } from '../../events/envelope'
-import { toBranchId, toCallId, toEventId, toRunId } from '../../events/ids'
+import { toThreadId, toCallId, toEventId, toRunId } from '../../events/ids'
 import { stampDrafts } from '../../events/stamp'
 
 export const eventsFrom = (drafts: readonly EventDraft[]): Event[] =>
@@ -9,7 +9,7 @@ export const eventsFrom = (drafts: readonly EventDraft[]): Event[] =>
     envelopes: drafts.map((_, index) => ({
       id: toEventId(`evt-${index + 1}`),
       seq: index + 1,
-      branchId: toBranchId('branch-1'),
+      threadId: toThreadId('thread-1'),
       runId: toRunId('run-1'),
       depth: 0,
       at: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),

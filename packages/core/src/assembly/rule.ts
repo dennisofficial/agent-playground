@@ -1,12 +1,12 @@
 import type { Event } from '../events/envelope'
-import type { BranchId } from '../events/ids'
+import type { ThreadId } from '../events/ids'
 import type { ProviderIdentity } from '../provider'
 import type { Assembled } from './assembled'
 import type { AssemblyTrace } from './trace'
 
 export type RuleContext = {
   events: readonly Event[]
-  branchId: BranchId
+  threadId: ThreadId
   step: number
   provider: ProviderIdentity
   countTokens: (value: Assembled) => number

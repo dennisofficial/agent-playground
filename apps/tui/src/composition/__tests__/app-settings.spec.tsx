@@ -1,4 +1,4 @@
-import { ESettingId, toBranchId, type SettingsDocument } from '@dltech/atlas-core'
+import { ESettingId, toThreadId, type SettingsDocument } from '@dltech/atlas-core'
 import { testRender } from '@opentui/react/test-utils'
 import { describe, expect, it } from 'bun:test'
 import React from 'react'
@@ -9,7 +9,7 @@ import { fakeApp, scriptedModelPort, type FakeApp } from './fake-app'
 
 await grammarsReady()
 
-const BRANCH = toBranchId('opened-branch')
+const THREAD = toThreadId('opened-thread')
 
 const WIDE = { width: 150, height: 40 }
 
@@ -42,7 +42,7 @@ async function landed(setup: Mounted): Promise<void> {
 }
 
 async function opened(app: FakeApp): Promise<Mounted> {
-  const setup = await testRender(<App app={app} opened={{ branchId: BRANCH, events: [], name: null }} />, WIDE)
+  const setup = await testRender(<App app={app} opened={{ threadId: THREAD, events: [], name: null }} />, WIDE)
   await setup.flush()
   await settle(250)
   await setup.flush()

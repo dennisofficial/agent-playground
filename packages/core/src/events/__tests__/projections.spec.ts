@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 
 import { EDecision, type EventDraft } from '../body'
 import type { Event } from '../envelope'
-import { toBranchId, toCallId, toEventId, toRunId } from '../ids'
+import { toThreadId, toCallId, toEventId, toRunId } from '../ids'
 import { answeredApproval, inputForCall, outstandingApproval, pendingCalls } from '../projections'
 import { stampDrafts } from '../stamp'
 
@@ -12,7 +12,7 @@ const eventsFrom = (drafts: readonly EventDraft[]): Event[] =>
     envelopes: drafts.map((_, index) => ({
       id: toEventId(`evt-${index + 1}`),
       seq: index + 1,
-      branchId: toBranchId('branch-1'),
+      threadId: toThreadId('thread-1'),
       runId: toRunId('run-1'),
       depth: 0,
       at: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
@@ -33,7 +33,7 @@ const eventsAcrossRuns = (entries: readonly { draft: EventDraft; runId: string }
     envelopes: entries.map((entry, index) => ({
       id: toEventId(`evt-${index + 1}`),
       seq: index + 1,
-      branchId: toBranchId('branch-1'),
+      threadId: toThreadId('thread-1'),
       runId: toRunId(entry.runId),
       depth: 0,
       at: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),

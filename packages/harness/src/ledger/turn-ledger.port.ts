@@ -1,10 +1,10 @@
-import type { BranchId, RunId } from '@dltech/atlas-core'
+import type { ThreadId, RunId } from '@dltech/atlas-core'
 
 // Cache reads and cache writes bill at different rates from ordinary input tokens, and both are
 // counted inside `inputTokens` rather than on top of it.
 export type TurnSpend = {
   runId: RunId
-  branchId: BranchId
+  threadId: ThreadId
   status: string
   providerId: string
   modelId: string
@@ -20,5 +20,5 @@ export type TurnSpend = {
 
 export abstract class TurnLedgerPort {
   abstract record(spend: TurnSpend): Promise<void>
-  abstract forBranch(args: { branchId: BranchId }): Promise<TurnSpend[]>
+  abstract forThread(args: { threadId: ThreadId }): Promise<TurnSpend[]>
 }

@@ -7,7 +7,7 @@ import {
   pendingCalls,
   type Assembled,
   type AssemblyPipeline,
-  type BranchId,
+  type ThreadId,
   type CallId,
   type ChunkFilter,
   type EventDraft,
@@ -79,30 +79,30 @@ export class LoopTurnRunner extends TurnRunner {
   }
 
   async say({
-    branchId,
+    threadId,
     text,
     signal,
   }: {
-    branchId: BranchId
+    threadId: ThreadId
     text: string
     signal?: AbortSignal
   }): Promise<TurnOutcome> {
     await this.log.append({
-      branchId,
+      threadId,
       runId: this.ids.nextRunId(),
       drafts: [{ type: 'user-said', text }],
     })
-    return this.runTurn({ branchId, ...(signal === undefined ? {} : { signal }) })
+    return this.runTurn({ threadId, ...(signal === undefined ? {} : { signal }) })
   }
 
-  async runTurn({ branchId, signal }: { branchId: BranchId; signal?: AbortSignal }): Promise<TurnOutcome> {
+  async runTurn({ threadId, signal }: { threadId: ThreadId; signal?: AbortSignal }): Promise<TurnOutcome> {
     const runId = this.ids.nextRunId()
     const spend = openTurnSpend({ ...(this.spend ?? {}), model: this.model.identity })
     let status: string = TURN_CRASHED
 
     try {
       const outcome = await this.trackedTurn({
-        branchId,
+        threadId,
         runId,
         spend,
         ...(signal === undefined ? {} : { signal }),
@@ -110,17 +110,17 @@ export class LoopTurnRunner extends TurnRunner {
       status = outcome.status
       return outcome
     } finally {
-      await spend.settle({ branchId, runId, status })
+      await spend.settle({ threadId, runId, status })
     }
   }
 
-  private async drainInto({ branchId }: { branchId: BranchId }): Promise<boolean> {
+  private async drainInto({ threadId }: { threadId: ThreadId }): Promise<boolean> {
     if (this.drainPending === undefined) return false
 
     const waiting = await this.drainPending()
     if (waiting.length === 0) return false
 
-    await this.log.append({ branchId, runId: this.ids.nextRunId(), drafts: waiting })
+    await this.log.append({ threadId, runId: this.ids.nextRunId(), drafts: waiting })
     return true
   }
 
@@ -143,12 +143,12 @@ export class LoopTurnRunner extends TurnRunner {
   }
 
   private async trackedTurn({
-    branchId,
+    threadId,
     signal,
     runId,
     spend,
   }: {
-    branchId: BranchId
+    threadId: ThreadId
     signal?: AbortSignal
     runId: RunId
     spend: TurnSpendTally
@@ -162,14 +162,14 @@ export class LoopTurnRunner extends TurnRunner {
     const interrupted = async (): Promise<TurnOutcome> => ({
       status: ETurnStatus.Interrupted,
       runId,
-      committed: committedSinceLastMessage(await this.log.read({ branchId })),
+      committed: committedSinceLastMessage(await this.log.read({ threadId })),
     })
 
-    const opening = (await this.hooks?.beforeTurn({ branchId })) ?? []
-    if (opening.length > 0) await this.log.append({ branchId, runId, drafts: opening })
+    const opening = (await this.hooks?.beforeTurn({ threadId })) ?? []
+    if (opening.length > 0) await this.log.append({ threadId, runId, drafts: opening })
 
     for (;;) {
-      const beforeDrain = await this.log.read({ branchId })
+      const beforeDrain = await this.log.read({ threadId })
 
       const waiting = outstandingApproval(beforeDrain)
       if (waiting !== undefined) {
@@ -186,13 +186,13 @@ export class LoopTurnRunner extends TurnRunner {
         }
 
         settleAttempted = pending.callId
-        const settled = await this.settlePending({ branchId, signal: abortSignal })
+        const settled = await this.settlePending({ threadId, signal: abortSignal })
         if (settled.paused !== undefined) return { status: ETurnStatus.Paused, runId, ...settled.paused }
         if (abortSignal.aborted) return interrupted()
         continue
       }
 
-      const events = (await this.drainInto({ branchId })) ? await this.log.read({ branchId }) : beforeDrain
+      const events = (await this.drainInto({ threadId })) ? await this.log.read({ threadId }) : beforeDrain
 
       if (!awaitsReply(events) && !messageArrivedSince({ events, seenThrough })) {
         return { status: ETurnStatus.Idle, runId }
@@ -202,7 +202,7 @@ export class LoopTurnRunner extends TurnRunner {
 
       const ctx: RuleContext = {
         events,
-        branchId,
+        threadId,
         step: modelSteps,
         provider: this.model.identity,
         countTokens: this.countTokens,
@@ -236,21 +236,21 @@ export class LoopTurnRunner extends TurnRunner {
 
       if (abortSignal.aborted) {
         const abandoned = interruptedDrafts(stepped.result)
-        if (abandoned.length > 0) await this.log.append({ branchId, runId, drafts: abandoned })
+        if (abandoned.length > 0) await this.log.append({ threadId, runId, drafts: abandoned })
         return interrupted()
       }
 
       const drafts = draftsFor(stepped.result)
-      if (drafts.length > 0) await this.log.append({ branchId, runId, drafts })
+      if (drafts.length > 0) await this.log.append({ threadId, runId, drafts })
 
       if (stepped.result.toolCalls.length > 0) continue
 
-      const latest = await this.log.read({ branchId })
+      const latest = await this.log.read({ threadId })
       if (messageArrivedSince({ events: latest, seenThrough })) continue
-      if (await this.drainInto({ branchId })) continue
+      if (await this.drainInto({ threadId })) continue
 
-      const closing = (await this.hooks?.afterTurn({ branchId })) ?? []
-      if (closing.length > 0) await this.log.append({ branchId, runId, drafts: closing })
+      const closing = (await this.hooks?.afterTurn({ threadId })) ?? []
+      if (closing.length > 0) await this.log.append({ threadId, runId, drafts: closing })
 
       return { status: ETurnStatus.Completed, runId }
     }

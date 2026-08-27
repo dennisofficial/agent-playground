@@ -12,7 +12,7 @@ const CALL_TWO = toCallId('call-2')
 
 const turnOf = (clock: Partial<typeof IDLE_TURN>): typeof IDLE_TURN => ({ ...IDLE_TURN, ...clock })
 
-describe('an empty branch', () => {
+describe('an empty thread', () => {
   it('derives an idle sidebar with nothing to show', () => {
     const model = deriveSidebar({ events: [], turn: IDLE_TURN })
 
@@ -146,7 +146,7 @@ describe('the session head', () => {
     expect(title.endsWith('…')).toBe(true)
   })
 
-  it('leaves the title unset on an empty branch, and on one that says nothing', () => {
+  it('leaves the title unset on an empty thread, and on one that says nothing', () => {
     expect(deriveSidebar({ events: [], turn: IDLE_TURN }).title).toBeNull()
 
     const blank = log([{ type: 'user-said', text: '   \n  ' }])

@@ -1,4 +1,4 @@
-import { toBranchId, toRunId, type BranchId } from '@dltech/atlas-core'
+import { toThreadId, toRunId, type ThreadId } from '@dltech/atlas-core'
 
 import type { PrismaClient } from '../../prisma/generated/client'
 import { inject, injectable } from '../container/injection'
@@ -8,7 +8,7 @@ import type { TurnLedgerPort, TurnSpend } from './turn-ledger.port'
 
 type TurnRow = {
   runId: string
-  branchId: string
+  threadId: string
   status: string
   providerId: string
   modelId: string
@@ -24,7 +24,7 @@ type TurnRow = {
 
 const toTurnSpend = (row: TurnRow): TurnSpend => ({
   runId: toRunId(row.runId),
-  branchId: toBranchId(row.branchId),
+  threadId: toThreadId(row.threadId),
   status: row.status,
   providerId: row.providerId,
   modelId: row.modelId,
@@ -46,9 +46,9 @@ export class PrismaTurnLedger implements TurnLedgerPort {
     await retryOnWriteConflict({ run: () => this.recordOnce(spend) })
   }
 
-  async forBranch({ branchId }: { branchId: BranchId }): Promise<TurnSpend[]> {
+  async forThread({ threadId }: { threadId: ThreadId }): Promise<TurnSpend[]> {
     const rows = await this.prisma.turn.findMany({
-      where: { branchId },
+      where: { threadId },
       orderBy: { startedAt: 'asc' },
     })
     return rows.map(toTurnSpend)

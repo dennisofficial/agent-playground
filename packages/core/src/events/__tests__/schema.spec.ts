@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 
 import { EDecision, type EventDraft } from '../body'
 import type { EventEnvelope } from '../envelope'
-import { toBranchId, toCallId, toEventId, toRunId } from '../ids'
+import { toThreadId, toCallId, toEventId, toRunId } from '../ids'
 import { eventBodySchema, eventEnvelopeSchema } from '../schema'
 
 const bodies: EventDraft[] = [
@@ -94,7 +94,7 @@ describe('eventEnvelopeSchema', () => {
   const root: EventEnvelope = {
     id: toEventId('evt-1'),
     seq: 1,
-    branchId: toBranchId('branch-1'),
+    threadId: toThreadId('thread-1'),
     runId: toRunId('run-1'),
     depth: 0,
     at: '2026-08-24T00:00:00.000Z',
@@ -115,7 +115,7 @@ describe('eventEnvelopeSchema', () => {
       eventEnvelopeSchema.parse({
         id: 'evt-1',
         seq: 1,
-        branchId: 'branch-1',
+        threadId: 'thread-1',
         runId: 'run-1',
         at: '2026-08-24T00:00:00.000Z',
       }),

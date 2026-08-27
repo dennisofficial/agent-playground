@@ -13,7 +13,7 @@ Seams the tests actually exercise by swapping them:
 
 - **`EventLog`** — in-memory ↔ SQLite. Only the runner and settle path import it, via append/read/head.
   `read({upTo})` already supports rewind. A real database changes exactly one thing: `seq` assignment,
-  which needs a per-branch unique constraint or a transaction rather than array length.
+  which needs a per-thread unique constraint or a transaction rather than array length.
 - **`ModelStep`** — `(assembled, tools, hooks) => {parts, toolCalls}`. The entire AI SDK sits behind
   this one function type; the runner never imports `ai`.
 - **`Rule[]`** — ordered, pure, composed by reduce. A new rule is a new file.
@@ -70,8 +70,8 @@ spike scale; not invisible at 500 events. Needs incremental assembly over a cach
    `tool-called` becomes a derived index, or `tool-called` needs an ordinal within the step.
 5. **`AfterTool`/`AfterTurn` cannot return `Event[]`.** Only the log can assign `id`/`seq`/`at`, so
    hooks must return drafts.
-6. **`assemble(events, rules)` is the wrong signature** — `RuleContext` carries `branchId` and
-   `budget`, neither derivable from events. Real shape: `assemble({events, rules, branchId, budget})`.
+6. **`assemble(events, rules)` is the wrong signature** — `RuleContext` carries `threadId` and
+   `budget`, neither derivable from events. Real shape: `assemble({events, rules, threadId, budget})`.
 7. **`tool-result` has no `name`**, so every renderer joins back to `tool-called` for the `toolName`
    the SDK requires on a `ToolResultPart` — with an `?? 'unknown'` fallback that can emit a
    malformed prompt.

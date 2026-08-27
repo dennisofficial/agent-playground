@@ -107,7 +107,7 @@ describe('the queue a message waits in until the loop takes it', () => {
 
   it('drops everything when the conversation is replaced', () => {
     const queue = createPendingQueue()
-    queue.enqueue({ text: 'meant for the old branch' })
+    queue.enqueue({ text: 'meant for the old thread' })
 
     queue.clear()
 

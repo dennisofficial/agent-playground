@@ -26,7 +26,7 @@ export function forkTarget({
     return {
       allowed: false,
       refusal: EForkRefusal.NoSuchTarget,
-      reason: `${seq} is not a fork target on a branch holding sequences ${firstSeq} through ${lastSeq}`,
+      reason: `${seq} is not a fork target on a thread holding sequences ${firstSeq} through ${lastSeq}`,
     }
   }
 
@@ -37,7 +37,7 @@ export function forkTarget({
     return {
       allowed: false,
       refusal: EForkRefusal.UnsettledToolCall,
-      reason: `a ${mode} fork at ${seq} would hand the new branch ${unsettled.name} (${unsettled.callId}) dispatched but unsettled, so its first turn would run it a second time`,
+      reason: `a ${mode} fork at ${seq} would hand the new thread ${unsettled.name} (${unsettled.callId}) dispatched but unsettled, so its first turn would run it a second time`,
     }
   }
 
@@ -46,7 +46,7 @@ export function forkTarget({
     return {
       allowed: false,
       refusal: EForkRefusal.UnansweredApproval,
-      reason: `a ${mode} fork at ${seq} would start the new branch paused on the approval for ${unanswered}, which was asked of the original branch`,
+      reason: `a ${mode} fork at ${seq} would start the new thread paused on the approval for ${unanswered}, which was asked of the original thread`,
     }
   }
 

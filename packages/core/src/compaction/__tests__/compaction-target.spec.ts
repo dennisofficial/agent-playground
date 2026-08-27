@@ -4,17 +4,17 @@ import { compactionTarget, ECompactionRefusal } from '../compaction-target'
 import { called, compacted, denied, eventsFrom, replied, resulted, said } from './fixture'
 
 describe('compactionTarget', () => {
-  it('refuses a watermark past the end of the branch', () => {
+  it('refuses a watermark past the end of the thread', () => {
     const events = eventsFrom([said('hello'), replied('hi')])
 
     expect(compactionTarget({ events, throughSeq: 9 })).toEqual({
       allowed: false,
       refusal: ECompactionRefusal.NoSuchTarget,
-      reason: '9 is not a compaction target on a branch holding sequences 1 through 2',
+      reason: '9 is not a compaction target on a thread holding sequences 1 through 2',
     })
   })
 
-  it('refuses a watermark below the first sequence the branch still holds', () => {
+  it('refuses a watermark below the first sequence the thread still holds', () => {
     const events = eventsFrom([said('hello'), replied('hi')])
 
     expect(compactionTarget({ events, throughSeq: 0 }).allowed).toBe(false)
@@ -80,11 +80,11 @@ describe('compactionTarget', () => {
     expect(compactionTarget({ events, throughSeq: 2 })).toEqual({
       allowed: false,
       refusal: ECompactionRefusal.AlreadyCompacted,
-      reason: 'this branch is already compacted through 2',
+      reason: 'this thread is already compacted through 2',
     })
   })
 
-  it('allows a later watermark on a branch that was compacted before', () => {
+  it('allows a later watermark on a thread that was compacted before', () => {
     const events = eventsFrom([
       said('hello'),
       replied('hi'),

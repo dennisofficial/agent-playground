@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 
 import { EDecision, type EventDraft } from '../body'
 import type { Event } from '../envelope'
-import { toBranchId, toCallId, toEventId, toRunId } from '../ids'
+import { toThreadId, toCallId, toEventId, toRunId } from '../ids'
 import { ERewindRefusal, rewindTarget } from '../rewind-target'
 import { stampDrafts } from '../stamp'
 
@@ -12,7 +12,7 @@ const eventsFrom = (drafts: readonly EventDraft[]): Event[] =>
     envelopes: drafts.map((_, index) => ({
       id: toEventId(`evt-${index + 1}`),
       seq: index + 1,
-      branchId: toBranchId('branch-1'),
+      threadId: toThreadId('thread-1'),
       runId: toRunId('run-1'),
       depth: 0,
       at: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
@@ -55,7 +55,7 @@ describe('rewindTarget', () => {
     expect(rewindTarget({ events: exchange(), toSeq: 2 })).toEqual({ allowed: true })
   })
 
-  it('allows emptying the branch', () => {
+  it('allows emptying the thread', () => {
     expect(rewindTarget({ events: exchange(), toSeq: 0 })).toEqual({ allowed: true })
   })
 
@@ -89,7 +89,7 @@ describe('rewindTarget', () => {
     expect(rewindTarget({ events, toSeq: 3 })).toEqual({ allowed: true })
   })
 
-  it('refuses a sequence the branch never reached', () => {
+  it('refuses a sequence the thread never reached', () => {
     expect(rewindTarget({ events: exchange(), toSeq: 6 })).toMatchObject({
       allowed: false,
       refusal: ERewindRefusal.NoSuchTarget,

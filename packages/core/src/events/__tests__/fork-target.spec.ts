@@ -4,7 +4,7 @@ import { EDecision, type EventDraft } from '../body'
 import type { Event } from '../envelope'
 import { EForkMode } from '../fork'
 import { EForkRefusal, forkTarget } from '../fork-target'
-import { toBranchId, toCallId, toEventId, toRunId } from '../ids'
+import { toThreadId, toCallId, toEventId, toRunId } from '../ids'
 import { stampDrafts } from '../stamp'
 
 const stampedFrom = ({ drafts, firstSeq }: { drafts: readonly EventDraft[]; firstSeq: number }): Event[] =>
@@ -13,7 +13,7 @@ const stampedFrom = ({ drafts, firstSeq }: { drafts: readonly EventDraft[]; firs
     envelopes: drafts.map((_, index) => ({
       id: toEventId(`evt-${firstSeq + index}`),
       seq: firstSeq + index,
-      branchId: toBranchId('branch-1'),
+      threadId: toThreadId('thread-1'),
       runId: toRunId('run-1'),
       depth: 0,
       at: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
@@ -54,11 +54,11 @@ const copyFork = (args: { events: readonly Event[]; seq: number }) =>
   forkTarget({ ...args, mode: EForkMode.Copy })
 
 describe('forkTarget', () => {
-  it('refuses a sequence the branch never reached', () => {
+  it('refuses a sequence the thread never reached', () => {
     expect(copyFork({ events: exchange(), seq: 6 })).toEqual({
       allowed: false,
       refusal: EForkRefusal.NoSuchTarget,
-      reason: '6 is not a fork target on a branch holding sequences 1 through 5',
+      reason: '6 is not a fork target on a thread holding sequences 1 through 5',
     })
     expect(copyFork({ events: exchange(), seq: -1 }).allowed).toBe(false)
     expect(copyFork({ events: exchange(), seq: 2.5 }).allowed).toBe(false)
@@ -71,7 +71,7 @@ describe('forkTarget', () => {
     })
   })
 
-  it('refuses a fork that would hand the new branch a dispatched but unsettled call', () => {
+  it('refuses a fork that would hand the new thread a dispatched but unsettled call', () => {
     const target = copyFork({ events: exchange(), seq: 3 })
 
     expect(target.allowed).toBe(false)
@@ -84,11 +84,11 @@ describe('forkTarget', () => {
     expect(copyFork({ events: exchange(), seq: 2 })).toEqual({ allowed: true })
   })
 
-  it('allows a fork at the last sequence the branch holds', () => {
+  it('allows a fork at the last sequence the thread holds', () => {
     expect(copyFork({ events: exchange(), seq: 5 })).toEqual({ allowed: true })
   })
 
-  it('allows a fork at a user message the branch never answered', () => {
+  it('allows a fork at a user message the thread never answered', () => {
     expect(copyFork({ events: exchange(), seq: 1 })).toEqual({ allowed: true })
   })
 
@@ -108,7 +108,7 @@ describe('forkTarget', () => {
     expect(copyFork({ events, seq: 5 })).toEqual({ allowed: true })
   })
 
-  it('refuses a fork that would start the new branch on an approval nobody is going to answer', () => {
+  it('refuses a fork that would start the new thread on an approval nobody is going to answer', () => {
     const events = eventsFrom([
       said('delete it'),
       { type: 'approval-requested', callId: toCallId('call-1'), reason: 'bash writes' },
@@ -122,7 +122,7 @@ describe('forkTarget', () => {
     expect(copyFork({ events, seq: 3 })).toEqual({ allowed: true })
   })
 
-  it('bounds against the first sequence a branch still holds, not against zero', () => {
+  it('bounds against the first sequence a thread still holds, not against zero', () => {
     const events = stampedFrom({
       drafts: [said('carry on from the fork'), replied('carrying on')],
       firstSeq: 5,
@@ -133,11 +133,11 @@ describe('forkTarget', () => {
     expect(copyFork({ events, seq: 4 })).toEqual({
       allowed: false,
       refusal: EForkRefusal.NoSuchTarget,
-      reason: '4 is not a fork target on a branch holding sequences 5 through 6',
+      reason: '4 is not a fork target on a thread holding sequences 5 through 6',
     })
   })
 
-  it('allows a fork that drops a compaction the branch had applied', () => {
+  it('allows a fork that drops a compaction the thread had applied', () => {
     const events = eventsFrom([
       said('hello'),
       replied('hi'),
@@ -150,7 +150,7 @@ describe('forkTarget', () => {
     expect(copyFork({ events, seq: 5 })).toEqual({ allowed: true })
   })
 
-  it('answers the same for either mode, because both give the new branch the same context', () => {
+  it('answers the same for either mode, because both give the new thread the same context', () => {
     const events = exchange()
 
     for (const seq of [0, 1, 2, 3, 4, 5, 6]) {

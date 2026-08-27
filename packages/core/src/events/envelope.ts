@@ -1,10 +1,10 @@
 import type { EventBody, EventDraft, EventType } from './body'
-import type { BranchId, EventId, RunId } from './ids'
+import type { ThreadId, EventId, RunId } from './ids'
 
 export type EventEnvelope = {
   id: EventId
   seq: number
-  branchId: BranchId
+  threadId: ThreadId
   runId: RunId
   parentRunId?: RunId | undefined
   depth: number

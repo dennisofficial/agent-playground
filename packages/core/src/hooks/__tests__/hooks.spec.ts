@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import { toBranchId, toCallId } from '../../events/ids'
+import { toThreadId, toCallId } from '../../events/ids'
 import { EBeforeToolDecision } from '../../policy/before-tool'
 import type { Chunk } from '../../stream/chunk'
 import { EToolEffect, type ToolCall } from '../../tools/tool'
@@ -56,12 +56,12 @@ describe('hook types', () => {
     })
   })
 
-  it('let an after-turn hook return drafts for a branch', async () => {
+  it('let an after-turn hook return drafts for a thread', async () => {
     const summarise: AfterTurn = async () => ({
       drafts: [{ type: 'nudge', text: 'keep going', lifetimeSteps: 1 }],
     })
 
-    expect(await summarise({ branchId: toBranchId('branch-1') })).toEqual({
+    expect(await summarise({ threadId: toThreadId('thread-1') })).toEqual({
       drafts: [{ type: 'nudge', text: 'keep going', lifetimeSteps: 1 }],
     })
   })
@@ -72,7 +72,7 @@ describe('hook types', () => {
       drafts: [{ type: 'nudge', text: 'commit first', lifetimeSteps: 1 }],
     })
 
-    expect(await openWithGitState({ branchId: toBranchId('branch-1') })).toEqual({
+    expect(await openWithGitState({ threadId: toThreadId('thread-1') })).toEqual({
       additionalContext: 'branch: main, 3 files dirty',
       drafts: [{ type: 'nudge', text: 'commit first', lifetimeSteps: 1 }],
     })
@@ -81,7 +81,7 @@ describe('hook types', () => {
   it('let a hook that has nothing to say return an empty outcome', async () => {
     const quiet: BeforeTurn = async () => ({})
 
-    expect(await quiet({ branchId: toBranchId('branch-1') })).toEqual({})
+    expect(await quiet({ threadId: toThreadId('thread-1') })).toEqual({})
   })
 
   it('let an on-chunk hook drop a chunk entirely', async () => {

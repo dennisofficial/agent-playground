@@ -8,7 +8,7 @@ import { AiSdkModelPort } from '../model/ai-sdk-model-port'
 import { createRawTape } from '../model/raw-tape'
 import { registerFileState } from '../files'
 import { registerShells } from '../shells/register-shells'
-import { BranchStorePort, PrismaBranchStore, PrismaEventLog, RandomIds, SystemClock } from '../store'
+import { ThreadStorePort, PrismaThreadStore, PrismaEventLog, RandomIds, SystemClock } from '../store'
 import { HookedToolDispatcher, ToolDispatcher } from '../tools/dispatch'
 import { registerBuiltinTools } from '../tools/register-tools'
 import { ToolRegistry } from '../tools/registry'
@@ -31,7 +31,7 @@ export function createHarnessContainer(): DependencyContainer {
   harness.register(portToken(IdPort), { useClass: RandomIds })
   harness.register(portToken(EventLogPort), { useClass: PrismaEventLog })
   harness.register(portToken(TurnLedgerPort), { useClass: PrismaTurnLedger })
-  harness.register(portToken(BranchStorePort), { useClass: PrismaBranchStore })
+  harness.register(portToken(ThreadStorePort), { useClass: PrismaThreadStore })
   harness.register(portToken(CredentialPort), {
     useFactory: (resolver) =>
       new KeychainCredentialPort({

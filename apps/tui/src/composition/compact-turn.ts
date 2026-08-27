@@ -1,11 +1,11 @@
 import {
   modelEntry,
   planCompaction,
-  type BranchId,
+  type ThreadId,
   type Event,
   type EventLogPort,
 } from '@dltech/atlas-core'
-import { compactBranch, type BranchStorePort } from '@dltech/atlas-harness'
+import { compactThread, type ThreadStorePort } from '@dltech/atlas-harness'
 
 export enum ECompaction {
   Compacted = 'compacted',
@@ -25,21 +25,21 @@ export type Summariser = (args: {
 
 export async function compactTurn(args: {
   log: EventLogPort
-  branches: BranchStorePort
-  branchId: BranchId
+  threads: ThreadStorePort
+  threadId: ThreadId
   keepRecentTokens: number
   summarise: Summariser
 }): Promise<Compaction> {
-  const { log, branches, branchId, keepRecentTokens, summarise } = args
+  const { log, threads, threadId, keepRecentTokens, summarise } = args
 
-  const events = await log.read({ branchId })
+  const events = await log.read({ threadId })
   const plan = planCompaction({ events, keepRecentTokens })
   if (plan === undefined) return { type: ECompaction.Nothing }
 
-  const outcome = await compactBranch({
+  const outcome = await compactThread({
     log,
-    branches,
-    branchId,
+    threads,
+    threadId,
     throughSeq: plan.throughSeq,
     summarise,
   })

@@ -12,7 +12,7 @@ const turns = (count: number): readonly EventDraft[] =>
   Array.from({ length: count }, turn).flat()
 
 describe('planCompaction', () => {
-  it('proposes nothing for a branch that already fits the recency budget', () => {
+  it('proposes nothing for a thread that already fits the recency budget', () => {
     const events = eventsFrom(turns(2))
 
     expect(planCompaction({ events, keepRecentTokens: 1000 })).toBeUndefined()
@@ -42,7 +42,7 @@ describe('planCompaction', () => {
     expect(planCompaction({ events, keepRecentTokens: 10 })).toBeUndefined()
   })
 
-  it('advances past a watermark the branch already carries', () => {
+  it('advances past a watermark the thread already carries', () => {
     const events = eventsFrom([...turns(3), compacted(2, 'the first turn'), ...turns(3)])
     const plan = planCompaction({ events, keepRecentTokens: 250 })
 

@@ -1,4 +1,4 @@
-import { toBranchId } from '@dltech/atlas-core'
+import { toThreadId } from '@dltech/atlas-core'
 import { EShellStatus, toShellId, type ShellSnapshot } from '@dltech/atlas-harness'
 import { testRender } from '@opentui/react/test-utils'
 import { describe, expect, it } from 'bun:test'
@@ -10,7 +10,7 @@ import { fakeApp, scriptedModelPort, type FakeApp } from './fake-app'
 
 await grammarsReady()
 
-const BRANCH = toBranchId('opened-branch')
+const THREAD = toThreadId('opened-thread')
 
 const WIDE = { width: 150, height: 40 }
 
@@ -39,7 +39,7 @@ type Mounted = Awaited<ReturnType<typeof testRender>>
 
 async function opened(app: FakeApp): Promise<Mounted> {
   const setup = await testRender(
-    <App app={app} opened={{ branchId: BRANCH, events: [], name: null }} />,
+    <App app={app} opened={{ threadId: THREAD, events: [], name: null }} />,
     WIDE,
   )
   await setup.flush()

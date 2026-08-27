@@ -27,7 +27,7 @@ function recordingLedger(args: { failWith?: Error } = {}): RecordingLedger {
       if (args.failWith !== undefined) throw args.failWith
       recorded.push(spend)
     },
-    forBranch: async () => [...recorded],
+    forThread: async () => [...recorded],
   }
 }
 
@@ -68,17 +68,17 @@ describe('every way a turn can end reaches the ledger', () => {
   it('records a completed turn with the status it returned', async () => {
     const harness = await openHarness([{ text: 'auth and the router' }])
     const ledger = recordingLedger()
-    const branch = await harness.branches.create({})
+    const thread = await harness.threads.create({})
 
     const outcome = await runnerOver({ harness, ledger }).say({
-      branchId: branch.id,
+      threadId: thread.id,
       text: 'what changed?',
     })
 
     expect(outcome.status).toBe(ETurnStatus.Completed)
     expect(ledger.recorded).toHaveLength(1)
     expect(ledger.recorded[0]).toMatchObject({
-      branchId: branch.id,
+      threadId: thread.id,
       status: ETurnStatus.Completed,
       steps: 1,
     })
@@ -87,14 +87,14 @@ describe('every way a turn can end reaches the ledger', () => {
   it('records a turn that threw out of the loop as crashed, and still lets the throw through', async () => {
     const harness = await openHarness([{ text: 'never reached' }])
     const ledger = recordingLedger()
-    const branch = await harness.branches.create({})
+    const thread = await harness.threads.create({})
     const runner = runnerOver({
       harness,
       ledger,
       model: throwingModel(harness.model.identity, new Error('the loop threw')),
     })
 
-    await expect(runner.say({ branchId: branch.id, text: 'what changed?' })).rejects.toThrow('the loop threw')
+    await expect(runner.say({ threadId: thread.id, text: 'what changed?' })).rejects.toThrow('the loop threw')
 
     expect(ledger.recorded).toHaveLength(1)
     expect(ledger.recorded[0]?.status).toBe('crashed')
@@ -103,14 +103,14 @@ describe('every way a turn can end reaches the ledger', () => {
   it('separates a crash from a returned failure', async () => {
     const harness = await openHarness([{ text: 'never reached' }])
     const ledger = recordingLedger()
-    const branch = await harness.branches.create({})
+    const thread = await harness.threads.create({})
     const runner = runnerOver({
       harness,
       ledger,
       model: throwingModel(harness.model.identity, new Error('the loop threw')),
     })
 
-    await expect(runner.say({ branchId: branch.id, text: 'go' })).rejects.toThrow()
+    await expect(runner.say({ threadId: thread.id, text: 'go' })).rejects.toThrow()
 
     expect(ledger.recorded[0]?.status).not.toBe(ETurnStatus.Failed)
   })
@@ -118,22 +118,22 @@ describe('every way a turn can end reaches the ledger', () => {
   it('leaves no row for a turn that never reached the model', async () => {
     const harness = await openHarness([{ text: 'unused' }])
     const ledger = recordingLedger()
-    const branch = await harness.branches.create({})
+    const thread = await harness.threads.create({})
 
-    const outcome = await runnerOver({ harness, ledger }).runTurn({ branchId: branch.id })
+    const outcome = await runnerOver({ harness, ledger }).runTurn({ threadId: thread.id })
 
     expect(outcome.status).toBe(ETurnStatus.Idle)
     expect(ledger.recorded).toHaveLength(0)
   })
 
-  it('writes one row per turn rather than one per step or one per branch', async () => {
+  it('writes one row per turn rather than one per step or one per thread', async () => {
     const harness = await openHarness([{ text: 'first' }, { text: 'second' }])
     const ledger = recordingLedger()
-    const branch = await harness.branches.create({})
+    const thread = await harness.threads.create({})
     const runner = runnerOver({ harness, ledger })
 
-    await runner.say({ branchId: branch.id, text: 'one' })
-    await runner.say({ branchId: branch.id, text: 'two' })
+    await runner.say({ threadId: thread.id, text: 'one' })
+    await runner.say({ threadId: thread.id, text: 'two' })
 
     expect(ledger.recorded).toHaveLength(2)
     expect(new Set(ledger.recorded.map((spend) => spend.runId)).size).toBe(2)
@@ -142,9 +142,9 @@ describe('every way a turn can end reaches the ledger', () => {
   it('carries the tokens the steps were billed onto the row', async () => {
     const harness = await openHarness([{ text: 'auth and the router' }])
     const ledger = recordingLedger()
-    const branch = await harness.branches.create({})
+    const thread = await harness.threads.create({})
 
-    await runnerOver({ harness, ledger }).say({ branchId: branch.id, text: 'what changed?' })
+    await runnerOver({ harness, ledger }).say({ threadId: thread.id, text: 'what changed?' })
 
     const spend = ledger.recorded[0]
     expect(spend).toBeDefined()
@@ -160,13 +160,13 @@ describe('the ledger is accounting, not the turn', () => {
     const harness = await openHarness([{ text: 'auth and the router' }])
     const failures: unknown[] = []
     const ledger = recordingLedger({ failWith: new Error('disk is gone') })
-    const branch = await harness.branches.create({})
+    const thread = await harness.threads.create({})
 
     const outcome = await runnerOver({
       harness,
       ledger,
       onLedgerFailure: (error) => failures.push(error),
-    }).say({ branchId: branch.id, text: 'what changed?' })
+    }).say({ threadId: thread.id, text: 'what changed?' })
 
     expect(outcome.status).toBe(ETurnStatus.Completed)
     expect(failures).toHaveLength(1)
@@ -174,7 +174,7 @@ describe('the ledger is accounting, not the turn', () => {
 
   it('runs the same wrapper with no ledger bound at all', async () => {
     const harness = await openHarness([{ text: 'auth and the router' }])
-    const branch = await harness.branches.create({})
+    const thread = await harness.threads.create({})
 
     const runner = new LoopTurnRunner({
       log: harness.log,
@@ -183,7 +183,7 @@ describe('the ledger is accounting, not the turn', () => {
       assembly: defaultPipeline(),
     })
 
-    const outcome = await runner.say({ branchId: branch.id, text: 'what changed?' })
+    const outcome = await runner.say({ threadId: thread.id, text: 'what changed?' })
     expect(outcome.status).toBe(ETurnStatus.Completed)
   })
 })

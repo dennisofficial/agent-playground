@@ -19,15 +19,15 @@ import { PrismaTurnLedger } from '../ledger'
 import { AiSdkModelPort } from '../model/ai-sdk-model-port'
 import { createRawTape } from '../model/raw-tape'
 import type { ToolDispatcher } from '../tools/dispatch'
-import { openAtlasDatabase, PrismaBranchStore, PrismaEventLog, RandomIds, SystemClock } from '../store'
-import type { BranchStorePort } from '../store'
+import { openAtlasDatabase, PrismaThreadStore, PrismaEventLog, RandomIds, SystemClock } from '../store'
+import type { ThreadStorePort } from '../store'
 import { LoopTurnRunner, type TurnDeps } from './run-turn'
 import { TurnRunner } from './turn-runner.port'
 
 export type AtlasHarness = {
   runner: TurnRunner
   log: EventLogPort
-  branches: BranchStorePort
+  threads: ThreadStorePort
   model: ModelPort
   ids: IdPort
   clock: ClockPort
@@ -88,7 +88,7 @@ export async function buildHarness(args: BuildHarnessArgs): Promise<AtlasHarness
   return {
     runner: new LoopTurnRunner(turnDeps),
     log,
-    branches: new PrismaBranchStore(database.prisma, clock, ids),
+    threads: new PrismaThreadStore(database.prisma, clock, ids),
     model,
     ids,
     clock,

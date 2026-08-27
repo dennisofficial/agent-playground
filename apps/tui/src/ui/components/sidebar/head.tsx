@@ -20,7 +20,7 @@ const turnsAndTokens = (model: SidebarModel): string => {
 }
 
 /**
- * No model and no conversation branch: the footer carries what is answering, and a fork of the
+ * No model and no thread: the footer carries what is answering, and a fork of the
  * conversation belongs to the session picker rather than here — this says `git` instead.
  */
 export function HeadSection(props: { model: SidebarModel; cells: number }): React.ReactNode {

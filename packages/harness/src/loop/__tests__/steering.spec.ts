@@ -10,12 +10,12 @@ const typesOf = (events: readonly { type: string }[]): string[] => events.map((e
 
 describe('a message typed while the last model step is running', () => {
   it('is answered by the same turn rather than left behind a Completed', async () => {
-    const { runner, model, branchId } = await openSteerable({
+    const { runner, model, threadId } = await openSteerable({
       script: [{ text: 'starting on X' }, { text: 'switching to Y' }],
       types: { text: 'actually, do Y', onStep: 1 },
     })
 
-    const outcome = await runner.say({ branchId, text: 'do X' })
+    const outcome = await runner.say({ threadId, text: 'do X' })
 
     expect(outcome.status).toBe(ETurnStatus.Completed)
     expect(model.doStreamCalls).toHaveLength(2)
@@ -23,37 +23,37 @@ describe('a message typed while the last model step is running', () => {
   })
 
   it('lands after the assistant turn it followed, so the exchange never ends on the assistant', async () => {
-    const { runner, harness, branchId } = await openSteerable({
+    const { runner, harness, threadId } = await openSteerable({
       script: [{ text: 'starting on X' }, { text: 'switching to Y' }],
       types: { text: 'actually, do Y', onStep: 1 },
     })
 
-    await runner.say({ branchId, text: 'do X' })
+    await runner.say({ threadId, text: 'do X' })
 
-    const events = await harness.log.read({ branchId })
+    const events = await harness.log.read({ threadId })
     expect(typesOf(events)).toEqual(['user-said', 'assistant-said', 'user-said', 'assistant-said'])
   })
 
   it('is pulled from the queue once, however often the loop asks', async () => {
-    const { runner, harness, branchId, queue } = await openSteerable({
+    const { runner, harness, threadId, queue } = await openSteerable({
       script: [{ text: 'starting on X' }, { text: 'switching to Y' }],
       types: { text: 'actually, do Y', onStep: 1 },
     })
 
-    await runner.say({ branchId, text: 'do X' })
+    await runner.say({ threadId, text: 'do X' })
 
     expect(queue.drains()).toBeGreaterThan(1)
-    const events = await harness.log.read({ branchId })
+    const events = await harness.log.read({ threadId })
     expect(events.filter((event) => event.type === 'user-said' && event.text === 'actually, do Y')).toHaveLength(1)
   })
 
   it('costs a model step, so steering extends the turn rather than ending it', async () => {
-    const { runner, model, branchId } = await openSteerable({
+    const { runner, model, threadId } = await openSteerable({
       script: [{ text: 'starting on X' }, { text: 'doing Y instead' }],
       types: { text: 'actually, do Y', onStep: 1 },
     })
 
-    const outcome = await runner.say({ branchId, text: 'do X' })
+    const outcome = await runner.say({ threadId, text: 'do X' })
 
     expect(outcome.status).toBe(ETurnStatus.Completed)
     expect(model.doStreamCalls).toHaveLength(2)
@@ -62,16 +62,16 @@ describe('a message typed while the last model step is running', () => {
 
 describe('a message typed while a tool call is settling', () => {
   it('lands after the result rather than splitting the call from it', async () => {
-    const { runner, harness, branchId } = await openSteerable({
+    const { runner, harness, threadId } = await openSteerable({
       script: [{ text: 'touching', calls: [{ callId: 'call-1', name: 'touch', input: {} }] }, { text: 'touched it' }],
       types: { text: 'actually, do Y', onStep: 1 },
       withTools: true,
     })
 
-    const outcome = await runner.say({ branchId, text: 'do X' })
+    const outcome = await runner.say({ threadId, text: 'do X' })
 
     expect(outcome.status).toBe(ETurnStatus.Completed)
-    const events = await harness.log.read({ branchId })
+    const events = await harness.log.read({ threadId })
     expect(typesOf(events)).toEqual([
       'user-said',
       'assistant-said',
@@ -85,30 +85,30 @@ describe('a message typed while a tool call is settling', () => {
 
 describe('a turn nobody steers', () => {
   it('completes after exactly the steps its script holds when no queue is wired at all', async () => {
-    const { runner, harness, model, branchId } = await openSteerable({
+    const { runner, harness, model, threadId } = await openSteerable({
       script: [{ text: 'auth and the router' }],
       withQueue: false,
     })
 
-    const outcome = await runner.say({ branchId, text: 'what changed?' })
+    const outcome = await runner.say({ threadId, text: 'what changed?' })
 
     expect(outcome.status).toBe(ETurnStatus.Completed)
     expect(model.doStreamCalls).toHaveLength(1)
-    const events = await harness.log.read({ branchId })
+    const events = await harness.log.read({ threadId })
     expect(typesOf(events)).toEqual(['user-said', 'assistant-said'])
   })
 
   it('asks an empty queue and appends nothing for the nothing it gets back', async () => {
-    const { runner, harness, model, branchId, queue } = await openSteerable({
+    const { runner, harness, model, threadId, queue } = await openSteerable({
       script: [{ text: 'auth and the router' }],
     })
 
-    const outcome = await runner.say({ branchId, text: 'what changed?' })
+    const outcome = await runner.say({ threadId, text: 'what changed?' })
 
     expect(outcome.status).toBe(ETurnStatus.Completed)
     expect(model.doStreamCalls).toHaveLength(1)
     expect(queue.drains()).toBeGreaterThan(0)
-    const events = await harness.log.read({ branchId })
+    const events = await harness.log.read({ threadId })
     expect(typesOf(events)).toEqual(['user-said', 'assistant-said'])
   })
 })
@@ -122,15 +122,15 @@ describe('AfterTurn against a steered turn', () => {
     const hooks = new HookChain({
       afterTurn: [{ name: 'observed', order: { stage: EStage.Observe, nudge: 0 }, run: nudging('observed') }],
     })
-    const { runner, harness, branchId } = await openSteerable({
+    const { runner, harness, threadId } = await openSteerable({
       script: [{ text: 'starting on X' }, { text: 'switching to Y' }],
       types: { text: 'actually, do Y', onStep: 1 },
       hooks,
     })
 
-    await runner.say({ branchId, text: 'do X' })
+    await runner.say({ threadId, text: 'do X' })
 
-    const events = await harness.log.read({ branchId })
+    const events = await harness.log.read({ threadId })
     expect(events.filter((event) => event.type === 'nudge')).toHaveLength(1)
     expect(events.at(-1)?.type).toBe('nudge')
   })
@@ -138,16 +138,16 @@ describe('AfterTurn against a steered turn', () => {
 
 describe('a message written straight to the log behind the loop', () => {
   it('is noticed and refused rather than sent as a prefill, naming the turn it would have prefilled', async () => {
-    const { runner, harness, model, branchId } = await openSteerable({
+    const { runner, harness, model, threadId } = await openSteerable({
       script: [{ text: 'starting on X' }, { text: 'never asked' }],
       appends: { text: 'actually, do Y', onStep: 1 },
     })
 
-    const outcome = await runner.say({ branchId, text: 'do X' })
+    const outcome = await runner.say({ threadId, text: 'do X' })
 
     expect(outcome.status).toBe(ETurnStatus.Failed)
     expect(model.doStreamCalls).toHaveLength(1)
-    const events = await harness.log.read({ branchId })
+    const events = await harness.log.read({ threadId })
     const spoken = events.find((event) => event.type === 'assistant-said')
     const message = outcome.status === ETurnStatus.Failed ? outcome.message : ''
     expect(message).toContain(spoken?.id ?? 'no event')

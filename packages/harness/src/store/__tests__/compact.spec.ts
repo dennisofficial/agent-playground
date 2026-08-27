@@ -5,11 +5,11 @@ import {
   ECompactionRefusal,
   toCallId,
   toRunId,
-  type BranchId,
+  type ThreadId,
   type EventDraft,
 } from '@dltech/atlas-core'
 
-import { compactBranch, ECompactionFailure, type Summarise } from '../compact'
+import { compactThread, ECompactionFailure, type Summarise } from '../compact'
 import { openStoreFixture, type StoreFixture } from './harness'
 
 let fixture: StoreFixture
@@ -37,18 +37,18 @@ const resulted: EventDraft = {
 
 const summarises = (summary: string | null): Summarise => async () => summary
 
-const openBranch = async (drafts: readonly EventDraft[]): Promise<BranchId> => {
+const openThread = async (drafts: readonly EventDraft[]): Promise<ThreadId> => {
   fixture = await openStoreFixture()
-  const branch = await fixture.branches.create({ title: 'work' })
-  await fixture.log.append({ branchId: branch.id, runId, drafts })
-  return branch.id
+  const thread = await fixture.threads.create({ title: 'work' })
+  await fixture.log.append({ threadId: thread.id, runId, drafts })
+  return thread.id
 }
 
-const compactTo = (args: { branchId: BranchId; throughSeq: number; summary: string | null }) =>
-  compactBranch({
+const compactTo = (args: { threadId: ThreadId; throughSeq: number; summary: string | null }) =>
+  compactThread({
     log: fixture.log,
-    branches: fixture.branches,
-    branchId: args.branchId,
+    threads: fixture.threads,
+    threadId: args.threadId,
     throughSeq: args.throughSeq,
     summarise: summarises(args.summary),
   })
@@ -57,15 +57,15 @@ afterEach(async () => {
   await fixture.close()
 })
 
-describe('compactBranch', () => {
+describe('compactThread', () => {
   it('replaces the compacted range with the summary and reports what it swallowed', async () => {
-    const branchId = await openBranch([
+    const threadId = await openThread([
       said('build the parser'),
       replied('done'),
       said('now the lexer'),
     ])
 
-    const outcome = await compactTo({ branchId, throughSeq: 2, summary: 'A parser was written.' })
+    const outcome = await compactTo({ threadId, throughSeq: 2, summary: 'A parser was written.' })
 
     expect(outcome).toEqual({
       ok: true,
@@ -75,12 +75,12 @@ describe('compactBranch', () => {
     })
   })
 
-  it('leaves the branch holding the summary in place of the turns it compacted', async () => {
-    const branchId = await openBranch([said('build the parser'), replied('done'), said('next')])
+  it('leaves the thread holding the summary in place of the turns it compacted', async () => {
+    const threadId = await openThread([said('build the parser'), replied('done'), said('next')])
 
-    await compactTo({ branchId, throughSeq: 2, summary: 'A parser was written.' })
+    await compactTo({ threadId, throughSeq: 2, summary: 'A parser was written.' })
 
-    const events = await fixture.log.read({ branchId })
+    const events = await fixture.log.read({ threadId })
     expect(events.map((event) => [event.seq, event.type])).toEqual([
       [2, 'history-compacted'],
       [3, 'user-said'],
@@ -89,11 +89,11 @@ describe('compactBranch', () => {
   })
 
   it('survives a reload, because the summary is a stored event like any other', async () => {
-    const branchId = await openBranch([said('build the parser'), replied('done'), said('next')])
+    const threadId = await openThread([said('build the parser'), replied('done'), said('next')])
 
-    await compactTo({ branchId, throughSeq: 2, summary: 'A parser was written.' })
+    await compactTo({ threadId, throughSeq: 2, summary: 'A parser was written.' })
 
-    const watermark = (await fixture.log.read({ branchId })).find(
+    const watermark = (await fixture.log.read({ threadId })).find(
       (event) => event.type === 'history-compacted',
     )
 
@@ -102,11 +102,11 @@ describe('compactBranch', () => {
   })
 
   it('keeps appending above the summary, so the sequence never collides', async () => {
-    const branchId = await openBranch([said('build the parser'), replied('done'), said('next')])
+    const threadId = await openThread([said('build the parser'), replied('done'), said('next')])
 
-    await compactTo({ branchId, throughSeq: 2, summary: 'A parser was written.' })
+    await compactTo({ threadId, throughSeq: 2, summary: 'A parser was written.' })
     const [appended] = await fixture.log.append({
-      branchId,
+      threadId,
       runId,
       drafts: [said('and now this')],
     })
@@ -114,24 +114,24 @@ describe('compactBranch', () => {
     expect(appended?.seq).toBe(4)
   })
 
-  it('compacts again over a branch it already compacted, folding the earlier summary in', async () => {
-    const branchId = await openBranch([said('one'), replied('two'), said('three'), replied('four')])
+  it('compacts again over a thread it already compacted, folding the earlier summary in', async () => {
+    const threadId = await openThread([said('one'), replied('two'), said('three'), replied('four')])
 
-    await compactTo({ branchId, throughSeq: 2, summary: 'the first exchange' })
-    const again = await compactTo({ branchId, throughSeq: 4, summary: 'both exchanges' })
+    await compactTo({ threadId, throughSeq: 2, summary: 'the first exchange' })
+    const again = await compactTo({ threadId, throughSeq: 4, summary: 'both exchanges' })
 
     if (!again.ok) throw new Error(again.reason)
     expect(again.replaced).toBe(3)
 
-    const events = await fixture.log.read({ branchId })
+    const events = await fixture.log.read({ threadId })
     expect(events.map((event) => event.type)).toEqual(['history-compacted'])
     expect(compactedThrough(events)).toBe(4)
   })
 
-  it('refuses a watermark the guard rejects and leaves the branch untouched', async () => {
-    const branchId = await openBranch([said('clean the build'), called, resulted])
+  it('refuses a watermark the guard rejects and leaves the thread untouched', async () => {
+    const threadId = await openThread([said('clean the build'), called, resulted])
 
-    const outcome = await compactTo({ branchId, throughSeq: 2, summary: 'never asked for' })
+    const outcome = await compactTo({ threadId, throughSeq: 2, summary: 'never asked for' })
 
     expect(outcome).toEqual({
       ok: false,
@@ -140,27 +140,27 @@ describe('compactBranch', () => {
         'compacting through 2 would keep the result of bash (call-1) after compacting the call it answers',
       refusal: ECompactionRefusal.SplitsToolCall,
     })
-    expect((await fixture.log.read({ branchId })).length).toBe(3)
+    expect((await fixture.log.read({ threadId })).length).toBe(3)
   })
 
   it('deletes nothing when the summariser fails, rather than compacting to nothing', async () => {
-    const branchId = await openBranch([said('build the parser'), replied('done'), said('next')])
+    const threadId = await openThread([said('build the parser'), replied('done'), said('next')])
 
-    const outcome = await compactTo({ branchId, throughSeq: 2, summary: null })
+    const outcome = await compactTo({ threadId, throughSeq: 2, summary: null })
 
     expect(outcome.ok).toBe(false)
     expect(outcome.ok === false && outcome.failure).toBe(ECompactionFailure.NoSummary)
-    expect((await fixture.log.read({ branchId })).length).toBe(3)
+    expect((await fixture.log.read({ threadId })).length).toBe(3)
   })
 
   it('never asks the summariser for a range the guard already refused', async () => {
-    const branchId = await openBranch([said('clean the build'), called, resulted])
+    const threadId = await openThread([said('clean the build'), called, resulted])
     let asked = false
 
-    await compactBranch({
+    await compactThread({
       log: fixture.log,
-      branches: fixture.branches,
-      branchId,
+      threads: fixture.threads,
+      threadId,
       throughSeq: 2,
       summarise: async () => {
         asked = true

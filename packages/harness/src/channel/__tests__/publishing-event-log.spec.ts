@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 
 import {
   stampDrafts,
-  toBranchId,
+  toThreadId,
   toEventId,
   toRunId,
   type Event,
@@ -13,8 +13,8 @@ import {
 import { createDeltaChannel, EStepEnd, withDeltaPublishing } from '..'
 import { assistantEvent, recorder, stepEnded } from './signals'
 
-const branchId = toBranchId('branch-1')
-const otherBranchId = toBranchId('branch-2')
+const threadId = toThreadId('thread-1')
+const otherThreadId = toThreadId('thread-2')
 const runId = toRunId('run-1')
 
 function fakeLog(): EventLogPort & { readonly rows: Event[] } {
@@ -23,11 +23,11 @@ function fakeLog(): EventLogPort & { readonly rows: Event[] } {
   return {
     rows,
 
-    async append({ branchId: target, runId: run, drafts }) {
+    async append({ threadId: target, runId: run, drafts }) {
       const envelopes = drafts.map((_: EventDraft, index: number) => ({
         id: toEventId(`event-${rows.length + index + 1}`),
         seq: rows.length + index + 1,
-        branchId: target,
+        threadId: target,
         runId: run,
         depth: 0,
         at: '2026-08-24T00:00:00.000Z',
@@ -45,8 +45,8 @@ function fakeLog(): EventLogPort & { readonly rows: Event[] } {
       return rows.length
     },
 
-    async readOwn({ branchId, upTo }) {
-      return this.read({ branchId, ...(upTo === undefined ? {} : { upTo }) })
+    async readOwn({ threadId, upTo }) {
+      return this.read({ threadId, ...(upTo === undefined ? {} : { upTo }) })
     },
   }
 }
@@ -56,11 +56,11 @@ describe('the log that publishes what it commits', () => {
     const channel = createDeltaChannel()
     const log = withDeltaPublishing({ log: fakeLog(), channel })
     const { seen, listener } = recorder()
-    channel.subscribe({ branchId, listener })
-    channel.publisherFor({ branchId }).onChunk({ type: 'text-delta', id: 't1', text: 'auth' })
+    channel.subscribe({ threadId, listener })
+    channel.publisherFor({ threadId }).onChunk({ type: 'text-delta', id: 't1', text: 'auth' })
 
     const appended = await log.append({
-      branchId,
+      threadId,
       runId,
       drafts: [{ type: 'assistant-said', parts: [{ type: 'text', text: 'auth' }] }],
     })
@@ -75,22 +75,22 @@ describe('the log that publishes what it commits', () => {
     const inner = fakeLog()
     const log = withDeltaPublishing({ log: inner, channel: createDeltaChannel() })
 
-    const appended = await log.append({ branchId, runId, drafts: [{ type: 'user-said', text: 'what changed?' }] })
+    const appended = await log.append({ threadId, runId, drafts: [{ type: 'user-said', text: 'what changed?' }] })
 
     expect(appended).toEqual(inner.rows)
-    expect(await log.read({ branchId })).toEqual(inner.rows)
-    expect(await log.head({ branchId })).toBe(1)
+    expect(await log.read({ threadId })).toEqual(inner.rows)
+    expect(await log.head({ threadId })).toBe(1)
   })
 
-  it('leaves the step in flight on another branch alone', async () => {
+  it('leaves the step in flight on another thread alone', async () => {
     const channel = createDeltaChannel()
     const log = withDeltaPublishing({ log: fakeLog(), channel })
     const { seen, listener } = recorder()
-    channel.subscribe({ branchId, listener })
-    channel.publisherFor({ branchId }).onChunk({ type: 'text-delta', id: 't1', text: 'auth' })
+    channel.subscribe({ threadId, listener })
+    channel.publisherFor({ threadId }).onChunk({ type: 'text-delta', id: 't1', text: 'auth' })
 
     await log.append({
-      branchId: otherBranchId,
+      threadId: otherThreadId,
       runId,
       drafts: [{ type: 'assistant-said', parts: [{ type: 'text', text: 'elsewhere' }] }],
     })

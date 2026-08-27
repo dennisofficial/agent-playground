@@ -4,12 +4,12 @@ import type { ProviderOptions } from '../provider'
 import { EShellStatus } from '../shells/status'
 import { EDecision, type EventBody } from './body'
 import type { EventEnvelope } from './envelope'
-import { branchIdSchema, callIdSchema, eventIdSchema, runIdSchema, snapshotIdSchema } from './ids'
+import { threadIdSchema, callIdSchema, eventIdSchema, runIdSchema, snapshotIdSchema } from './ids'
 
 export const eventEnvelopeSchema: z.ZodType<EventEnvelope> = z.object({
   id: eventIdSchema,
   seq: z.number().int().positive(),
-  branchId: branchIdSchema,
+  threadId: threadIdSchema,
   runId: runIdSchema,
   parentRunId: runIdSchema.optional(),
   depth: z.number().int().nonnegative(),

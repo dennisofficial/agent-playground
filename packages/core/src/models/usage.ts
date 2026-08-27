@@ -57,7 +57,7 @@ function messageOfEvent(event: Event): Message | undefined {
 }
 
 /**
- * What the next turn will carry, estimated from the branch alone. It deliberately leaves out the
+ * What the next turn will carry, estimated from the thread alone. It deliberately leaves out the
  * system preamble, which the harness assembles and the reader cannot see.
  */
 export function estimateEventTokens(events: readonly Event[]): number {

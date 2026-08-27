@@ -24,7 +24,7 @@ export function rewindTarget({
     return {
       allowed: false,
       refusal: ERewindRefusal.NoSuchTarget,
-      reason: `${toSeq} is not a rewind target on a branch holding sequences 0 through ${lastSeq}`,
+      reason: `${toSeq} is not a rewind target on a thread holding sequences 0 through ${lastSeq}`,
     }
   }
 
@@ -32,7 +32,7 @@ export function rewindTarget({
     return {
       allowed: false,
       refusal: ERewindRefusal.BelowInheritedPrefix,
-      reason: `rewinding to ${toSeq} would cut into the ${floorSeq} sequences this branch inherited rather than owns, and the rows below ${floorSeq} belong to its parent`,
+      reason: `rewinding to ${toSeq} would cut into the ${floorSeq} sequences this thread inherited rather than owns, and the rows below ${floorSeq} belong to its parent`,
     }
   }
 

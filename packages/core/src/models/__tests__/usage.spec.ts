@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 
 import type { EventDraft } from '../../events/body'
 import type { Event } from '../../events/envelope'
-import { toBranchId, toCallId, toEventId, toRunId } from '../../events/ids'
+import { toThreadId, toCallId, toEventId, toRunId } from '../../events/ids'
 import { stampDrafts } from '../../events/stamp'
 import { contextTokens, estimateEventTokens } from '../usage'
 
@@ -12,15 +12,15 @@ const eventsFrom = (drafts: readonly EventDraft[]): Event[] =>
     envelopes: drafts.map((_, index) => ({
       id: toEventId(`evt-${index + 1}`),
       seq: index + 1,
-      branchId: toBranchId('branch-1'),
+      threadId: toThreadId('thread-1'),
       runId: toRunId('run-1'),
       depth: 0,
       at: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
     })),
   })
 
-describe('estimating what the branch will carry into the next turn', () => {
-  it('counts nothing for an empty branch', () => {
+describe('estimating what the thread will carry into the next turn', () => {
+  it('counts nothing for an empty thread', () => {
     expect(estimateEventTokens([])).toBe(0)
   })
 
@@ -52,7 +52,7 @@ describe('estimating what the branch will carry into the next turn', () => {
     expect(estimateEventTokens(events)).toBeGreaterThan(100)
   })
 
-  it('grows as the branch grows', () => {
+  it('grows as the thread grows', () => {
     const short = eventsFrom([{ type: 'user-said', text: 'hello' }])
     const long = eventsFrom([
       { type: 'user-said', text: 'hello' },

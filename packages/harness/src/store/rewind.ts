@@ -1,30 +1,30 @@
-import { rewindTarget, type BranchId, type ERewindRefusal, type EventLogPort } from '@dltech/atlas-core'
+import { rewindTarget, type ThreadId, type ERewindRefusal, type EventLogPort } from '@dltech/atlas-core'
 
-import type { BranchStorePort } from './branch-store'
+import type { ThreadStorePort } from './thread-store'
 
 export type RewindResult =
   | { ok: true; discarded: number }
   | { ok: false; refusal: ERewindRefusal; reason: string }
 
-export async function rewindBranch({
+export async function rewindThread({
   log,
-  branches,
-  branchId,
+  threads,
+  threadId,
   toSeq,
 }: {
   log: EventLogPort
-  branches: BranchStorePort
-  branchId: BranchId
+  threads: ThreadStorePort
+  threadId: ThreadId
   toSeq: number
 }): Promise<RewindResult> {
-  const events = await log.read({ branchId })
-  const owned = await log.readOwn({ branchId })
+  const events = await log.read({ threadId })
+  const owned = await log.readOwn({ threadId })
   const firstOwned = owned[0]
-  const floorSeq = firstOwned === undefined ? await log.head({ branchId }) : firstOwned.seq - 1
+  const floorSeq = firstOwned === undefined ? await log.head({ threadId }) : firstOwned.seq - 1
 
   const target = rewindTarget({ events, toSeq, floorSeq })
   if (!target.allowed) return { ok: false, refusal: target.refusal, reason: target.reason }
 
-  await branches.rewind({ branchId, toSeq })
+  await threads.rewind({ threadId, toSeq })
   return { ok: true, discarded: owned.filter((event) => event.seq > toSeq).length }
 }

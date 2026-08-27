@@ -1,4 +1,4 @@
-import { toBranchId } from '@dltech/atlas-core'
+import { toThreadId } from '@dltech/atlas-core'
 import { testRender } from '@opentui/react/test-utils'
 import React from 'react'
 
@@ -10,7 +10,7 @@ const WIDTH = 90
 
 const HEIGHT = 30
 
-export const BRANCH = toBranchId('opened-branch')
+export const THREAD = toThreadId('opened-thread')
 
 export const THINKING = 'The loop reads the log, so position is derived rather than remembered.'
 
@@ -29,7 +29,7 @@ export type Mounted = {
 }
 
 export async function open(args: { app: FakeApp }): Promise<Mounted> {
-  const setup = await testRender(<App app={args.app} opened={{ branchId: BRANCH, events: [], name: null }} />, {
+  const setup = await testRender(<App app={args.app} opened={{ threadId: THREAD, events: [], name: null }} />, {
     width: WIDTH,
     height: HEIGHT,
   })

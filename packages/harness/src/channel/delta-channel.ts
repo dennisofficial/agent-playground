@@ -1,4 +1,4 @@
-import type { BranchId, ChunkFilter, Event, EventOfType, EventRef } from '@dltech/atlas-core'
+import type { ThreadId, ChunkFilter, Event, EventOfType, EventRef } from '@dltech/atlas-core'
 
 import { EStepEnd, toStepId, type ChannelSignal, type StepId, type StepSignal } from './signal'
 
@@ -6,20 +6,20 @@ export type ChannelListener = (signal: ChannelSignal) => void
 
 export type Unsubscribe = () => void
 
-export type BranchPublisher = {
-  readonly branchId: BranchId
+export type ThreadPublisher = {
+  readonly threadId: ThreadId
   readonly onChunk: ChunkFilter
   settleAppend(args: { events: readonly Event[] }): void
   close(args: { end: EStepEnd }): void
 }
 
 export type DeltaChannel = {
-  subscribe(args: { branchId: BranchId; listener: ChannelListener }): Unsubscribe
-  snapshot(args: { branchId: BranchId }): readonly ChannelSignal[]
-  publisherFor(args: { branchId: BranchId; filter?: ChunkFilter | undefined }): BranchPublisher
+  subscribe(args: { threadId: ThreadId; listener: ChannelListener }): Unsubscribe
+  snapshot(args: { threadId: ThreadId }): readonly ChannelSignal[]
+  publisherFor(args: { threadId: ThreadId; filter?: ChunkFilter | undefined }): ThreadPublisher
 }
 
-type BranchState = {
+type ThreadState = {
   listeners: Set<ChannelListener>
   inFlight: readonly StepSignal[]
   stepId: StepId | undefined
@@ -34,54 +34,54 @@ const durableAssistantEvent = (events: readonly Event[]): EventOfType<'assistant
 const refOf = (event: EventOfType<'assistant-said'> | undefined): EventRef | null =>
   event === undefined ? null : { eventId: event.id, seq: event.seq }
 
-const needsAStepToFailIn = (args: { state: BranchState; end: EStepEnd }): boolean =>
+const needsAStepToFailIn = (args: { state: ThreadState; end: EStepEnd }): boolean =>
   args.state.stepId === undefined && args.end === EStepEnd.Failed
 
 const endOf = (event: EventOfType<'assistant-said'> | undefined): EStepEnd =>
   event?.interrupted === true ? EStepEnd.Interrupted : EStepEnd.Completed
 
 export function createDeltaChannel(): DeltaChannel {
-  const branches = new Map<BranchId, BranchState>()
+  const threads = new Map<ThreadId, ThreadState>()
 
-  const stateFor = (branchId: BranchId): BranchState => {
-    const existing = branches.get(branchId)
+  const stateFor = (threadId: ThreadId): ThreadState => {
+    const existing = threads.get(threadId)
     if (existing !== undefined) return existing
 
-    const created: BranchState = {
+    const created: ThreadState = {
       listeners: new Set(),
       inFlight: NOTHING_IN_FLIGHT,
       stepId: undefined,
       stepsStarted: 0,
     }
-    branches.set(branchId, created)
+    threads.set(threadId, created)
     return created
   }
 
-  const forgetIfIdle = (args: { branchId: BranchId; state: BranchState }) => {
+  const forgetIfIdle = (args: { threadId: ThreadId; state: ThreadState }) => {
     if (args.state.listeners.size > 0 || args.state.stepId !== undefined) return
-    branches.delete(args.branchId)
+    threads.delete(args.threadId)
   }
 
-  const notify = (args: { state: BranchState; signal: ChannelSignal }) => {
+  const notify = (args: { state: ThreadState; signal: ChannelSignal }) => {
     for (const listener of [...args.state.listeners]) listener(args.signal)
   }
 
-  const publish = (args: { state: BranchState; signal: StepSignal }) => {
+  const publish = (args: { state: ThreadState; signal: StepSignal }) => {
     args.state.inFlight = [...args.state.inFlight, args.signal]
     notify(args)
   }
 
-  const startStep = (args: { branchId: BranchId; state: BranchState }): StepId => {
+  const startStep = (args: { threadId: ThreadId; state: ThreadState }): StepId => {
     args.state.stepsStarted += 1
-    const stepId = toStepId(`${args.branchId}#${args.state.stepsStarted}`)
+    const stepId = toStepId(`${args.threadId}#${args.state.stepsStarted}`)
     args.state.stepId = stepId
     publish({ state: args.state, signal: { type: 'step-started', stepId } })
     return stepId
   }
 
   const endStep = (args: {
-    branchId: BranchId
-    state: BranchState
+    threadId: ThreadId
+    state: ThreadState
     end: EStepEnd
     supersededBy: EventRef | null
   }): boolean => {
@@ -94,55 +94,55 @@ export function createDeltaChannel(): DeltaChannel {
       state: args.state,
       signal: { type: 'step-ended', stepId, end: args.end, supersededBy: args.supersededBy },
     })
-    forgetIfIdle({ branchId: args.branchId, state: args.state })
+    forgetIfIdle({ threadId: args.threadId, state: args.state })
     return true
   }
 
   return {
-    subscribe({ branchId, listener }) {
-      const state = stateFor(branchId)
+    subscribe({ threadId, listener }) {
+      const state = stateFor(threadId)
       for (const signal of state.inFlight) listener(signal)
       state.listeners.add(listener)
 
       return () => {
         state.listeners.delete(listener)
-        forgetIfIdle({ branchId, state })
+        forgetIfIdle({ threadId, state })
       }
     },
 
-    snapshot({ branchId }) {
-      return branches.get(branchId)?.inFlight ?? NOTHING_IN_FLIGHT
+    snapshot({ threadId }) {
+      return threads.get(threadId)?.inFlight ?? NOTHING_IN_FLIGHT
     },
 
-    publisherFor({ branchId, filter }) {
+    publisherFor({ threadId, filter }) {
       return {
-        branchId,
+        threadId,
 
         onChunk(chunk) {
           const kept = filter === undefined ? chunk : filter(chunk)
           if (kept === null) return null
 
-          const state = stateFor(branchId)
-          const stepId = state.stepId ?? startStep({ branchId, state })
+          const state = stateFor(threadId)
+          const stepId = state.stepId ?? startStep({ threadId, state })
           publish({ state, signal: { type: 'chunk', stepId, chunk: kept } })
           return kept
         },
 
         settleAppend({ events }) {
-          const state = branches.get(branchId)
+          const state = threads.get(threadId)
           if (state === undefined) return
 
           const durable = durableAssistantEvent(events)
-          const ended = endStep({ branchId, state, end: endOf(durable), supersededBy: refOf(durable) })
+          const ended = endStep({ threadId, state, end: endOf(durable), supersededBy: refOf(durable) })
           if (!ended) notify({ state, signal: { type: 'events-appended' } })
         },
 
         close({ end }) {
-          const state = branches.get(branchId)
+          const state = threads.get(threadId)
           if (state === undefined) return
 
-          if (needsAStepToFailIn({ state, end })) startStep({ branchId, state })
-          endStep({ branchId, state, end, supersededBy: null })
+          if (needsAStepToFailIn({ state, end })) startStep({ threadId, state })
+          endStep({ threadId, state, end, supersededBy: null })
         },
       }
     },

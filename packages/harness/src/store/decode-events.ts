@@ -17,7 +17,7 @@ export enum EUnreadableReason {
 export type UnreadableRow = {
   id: string
   seq: number
-  branchId: string
+  threadId: string
   type: string
   reason: EUnreadableReason
   detail: string
@@ -39,7 +39,7 @@ export function decodeEventRows(rows: readonly EventRow[]): DecodedLog {
       unreadable.push({
         id: row.id,
         seq: row.seq,
-        branchId: row.branchId,
+        threadId: row.threadId,
         type: row.type,
         reason: decoded.reason,
         detail: decoded.detail,

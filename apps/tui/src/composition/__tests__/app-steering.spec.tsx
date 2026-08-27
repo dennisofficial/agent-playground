@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 
 import { grammarsReady } from '../../ui/markdown/__tests__/harness'
-import { open, until, BRANCH, REPLY, THINKING } from './app-fixture'
+import { open, until, THREAD, REPLY, THINKING } from './app-fixture'
 import { fakeApp, scriptedModelPort } from './fake-app'
 
 await grammarsReady()
@@ -46,7 +46,7 @@ describe('typing while the turn is running', () => {
       expect(mounted.app.turnsDriven).toBe(1)
       expect(mounted.app.pending.getSnapshot().map((message) => message.text)).toEqual([STEER])
 
-      const midTurn = await mounted.app.log.read({ branchId: BRANCH })
+      const midTurn = await mounted.app.log.read({ threadId: THREAD })
       expect(midTurn.filter((event) => event.type === 'user-said').length).toBe(1)
     } finally {
       await mounted.done()
@@ -153,7 +153,7 @@ describe('typing while the turn is running', () => {
         holds: async () => {
           const frame = await mounted.frame()
           if (!frame.includes(STEER)) blanked += 1
-          const events = await mounted.app.log.read({ branchId: BRANCH })
+          const events = await mounted.app.log.read({ threadId: THREAD })
           const landed = events.some((event) => event.type === 'user-said' && event.text === STEER)
           return landed && frame.includes(STEER) && !frame.includes(TAKE_BACK)
         },
@@ -186,7 +186,7 @@ describe('typing while the turn is running', () => {
       const consumed = await until({
         holds: async () => {
           await mounted.frame()
-          const events = await mounted.app.log.read({ branchId: BRANCH })
+          const events = await mounted.app.log.read({ threadId: THREAD })
           return events.some((event) => event.type === 'user-said' && event.text === STEER)
         },
         within: 20_000,
@@ -204,7 +204,7 @@ describe('typing while the turn is running', () => {
       })
       expect(released).toBe(true)
 
-      const events = await mounted.app.log.read({ branchId: BRANCH })
+      const events = await mounted.app.log.read({ threadId: THREAD })
       const kinds = events.map((event) => event.type)
       expect(kinds.indexOf('assistant-said')).toBeLessThan(kinds.lastIndexOf('user-said'))
     } finally {

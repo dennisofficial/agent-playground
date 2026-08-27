@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 
 import { compacted, eventsFrom, loaded, replied, said } from '../../../compaction/__tests__/fixture'
 import type { Event } from '../../../events/envelope'
-import { toBranchId } from '../../../events/ids'
+import { toThreadId } from '../../../events/ids'
 import { assemble } from '../../assemble'
 import type { RuleContext } from '../../rule'
 import { estimateTokens } from '../../tokens'
@@ -11,7 +11,7 @@ import { messagesFromEvents } from '../messages-from-events'
 
 const contextOf = (events: readonly Event[]): RuleContext => ({
   events,
-  branchId: toBranchId('branch-1'),
+  threadId: toThreadId('thread-1'),
   step: 0,
   provider: { id: 'anthropic', modelId: 'claude-opus-5' },
   countTokens: estimateTokens,
@@ -29,7 +29,7 @@ const promptOf = (events: readonly Event[]) =>
   }))
 
 describe('compactedHistory', () => {
-  it('leaves a branch that was never compacted exactly as the content rules built it', () => {
+  it('leaves a thread that was never compacted exactly as the content rules built it', () => {
     const events = eventsFrom([said('hello'), replied('hi'), said('again')])
 
     expect(promptOf(events)).toEqual([
@@ -39,7 +39,7 @@ describe('compactedHistory', () => {
     ])
   })
 
-  it('renders the summary ahead of the turns the branch still holds', () => {
+  it('renders the summary ahead of the turns the thread still holds', () => {
     const events = eventsFrom([
       compacted(4, 'The operator asked for a parser and a lexer; both are written.'),
       said('now the formatter'),
@@ -54,7 +54,7 @@ describe('compactedHistory', () => {
     ])
   })
 
-  it('renders nothing but the summary on a branch compacted all the way to its head', () => {
+  it('renders nothing but the summary on a thread compacted all the way to its head', () => {
     const events = eventsFrom([compacted(6, 'Everything so far.')])
 
     const prompt = promptOf(events)
@@ -77,7 +77,7 @@ describe('compactedHistory', () => {
     expect(prompt[2]).toEqual({ role: 'user', text: 'now the lexer' })
   })
 
-  it('honours the deepest watermark when a branch carries more than one', () => {
+  it('honours the deepest watermark when a thread carries more than one', () => {
     const events = eventsFrom([
       compacted(2, 'the first exchange'),
       compacted(5, 'both exchanges'),

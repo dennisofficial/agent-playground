@@ -15,7 +15,7 @@ import {
   EToolEffect,
   HOOK_CONTEXT_KEY,
   OnChunkHook,
-  toBranchId,
+  toThreadId,
   toCallId,
   toRunId,
   ToolDefinition,
@@ -129,8 +129,8 @@ describe('resolveHookChain', () => {
     expect(await chain.beforeStep({ assembled, trace: [] })).toBe(assembled)
     expect(await chain.beforeRequest({ prompt })).toBe(prompt)
     expect(await chain.onChunk({ chunk: text })).toBe(text)
-    expect(await chain.beforeTurn({ branchId: toBranchId('branch-1') })).toEqual([])
-    expect(await chain.afterTurn({ branchId: toBranchId('branch-1') })).toEqual([])
+    expect(await chain.beforeTurn({ threadId: toThreadId('thread-1') })).toEqual([])
+    expect(await chain.afterTurn({ threadId: toThreadId('thread-1') })).toEqual([])
   })
 
   it('resolves a registered BeforeTurnHook and slots its context under the name it declares', async () => {
@@ -147,7 +147,7 @@ describe('resolveHookChain', () => {
 
     const chain = resolveHookChain({ container: child })
 
-    expect(await chain.beforeTurn({ branchId: toBranchId('branch-1') })).toEqual([
+    expect(await chain.beforeTurn({ threadId: toThreadId('thread-1') })).toEqual([
       { type: 'context-loaded', slot: 'gitState', key: HOOK_CONTEXT_KEY, content: '3 files dirty' },
     ])
   })

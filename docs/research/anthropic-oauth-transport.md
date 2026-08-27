@@ -10,7 +10,7 @@ lives outside this repository and cannot drift when our code is refactored.
 ## The provider needs no replacement
 
 `@ai-sdk/anthropic@4.0.41` supports bearer auth directly. Its provider factory chooses between two
-mutually exclusive branches, and `x-api-key` is the _else_:
+mutually exclusive threads, and `x-api-key` is the _else_:
 
 ```ts
 const authHeaders = options.authToken

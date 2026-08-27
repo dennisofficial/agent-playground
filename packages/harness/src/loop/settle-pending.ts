@@ -2,7 +2,7 @@ import {
   isConcurrencySafeCall,
   partitionToolCalls,
   pendingCalls,
-  type BranchId,
+  type ThreadId,
   type CallId,
   type EventLogPort,
   type ToolDeclaration,
@@ -11,7 +11,7 @@ import {
 import type { DispatchableCall, ToolDispatcher } from '../tools/dispatch'
 
 export type SettlePending = (args: {
-  branchId: BranchId
+  threadId: ThreadId
   signal: AbortSignal
 }) => Promise<{ paused?: { callId: CallId; reason: string } }>
 
@@ -25,8 +25,8 @@ export function createSettlePending(deps: {
   const isSafe = (call: DispatchableCall): boolean =>
     isConcurrencySafeCall({ declaration: declarations.get(call.name), input: call.input })
 
-  return async ({ branchId, signal }) => {
-    const events = await deps.log.read({ branchId })
+  return async ({ threadId, signal }) => {
+    const events = await deps.log.read({ threadId })
     const calls = [...pendingCalls(events)].sort((left, right) => left.ordinal - right.ordinal)
 
     const runs = partitionToolCalls({ calls, isSafe })
@@ -39,7 +39,7 @@ export function createSettlePending(deps: {
       for (const [index, drafts] of settled.entries()) {
         const call = run[index]
         if (call === undefined || drafts.length === 0) continue
-        await deps.log.append({ branchId, runId: call.runId, drafts })
+        await deps.log.append({ threadId, runId: call.runId, drafts })
       }
 
       const asked = settled.flat().find((draft) => draft.type === 'approval-requested')

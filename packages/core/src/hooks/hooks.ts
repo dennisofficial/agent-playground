@@ -1,7 +1,7 @@
 import type { Assembled } from '../assembly/assembled'
 import type { ProviderPrompt } from '../assembly/provider-prompt'
 import type { AssemblyTrace } from '../assembly/trace'
-import type { BranchId } from '../events/ids'
+import type { ThreadId } from '../events/ids'
 import type { BeforeToolOutcome } from '../policy/before-tool'
 import type { Chunk } from '../stream/chunk'
 import type { ToolCall, ToolOutcome } from '../tools/tool'
@@ -21,7 +21,7 @@ export enum EHookPhase {
   AfterTurn = 'after-turn',
 }
 
-export type BeforeTurn = (args: { branchId: BranchId }) => Promise<HookOutcome>
+export type BeforeTurn = (args: { threadId: ThreadId }) => Promise<HookOutcome>
 
 export type BeforeStep = (args: { assembled: Assembled; trace: AssemblyTrace }) => Promise<Assembled>
 
@@ -33,7 +33,7 @@ export type AfterTool = (args: { call: ToolCall; result: ToolOutcome }) => Promi
 
 export type OnChunk = (chunk: Chunk) => Promise<Chunk | null>
 
-export type AfterTurn = (args: { branchId: BranchId }) => Promise<HookOutcome>
+export type AfterTurn = (args: { threadId: ThreadId }) => Promise<HookOutcome>
 
 abstract class PhaseHook<TRun> {
   abstract readonly name: string

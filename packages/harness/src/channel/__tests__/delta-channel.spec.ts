@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'bun:test'
 
-import { toBranchId, toCallId, toEventId, toRunId, type Chunk, type Event } from '@dltech/atlas-core'
+import { toThreadId, toCallId, toEventId, toRunId, type Chunk, type Event } from '@dltech/atlas-core'
 
 import { createDeltaChannel, EStepEnd } from '..'
 import { firstStepId, recorder, stepEnded } from './signals'
 
-const branchId = toBranchId('branch-1')
+const threadId = toThreadId('thread-1')
 
 const textBlock = (id: string, deltas: readonly string[]): Chunk[] => [
   { type: 'text-start', id },
@@ -19,20 +19,20 @@ const assistantSaid = (args: { seq: number; text: string; interrupted?: boolean 
   ...(args.interrupted === undefined ? {} : { interrupted: args.interrupted }),
   id: toEventId(`event-${args.seq}`),
   seq: args.seq,
-  branchId,
+  threadId,
   runId: toRunId('run-1'),
   depth: 0,
   at: '2026-08-24T00:00:00.000Z',
 })
 
-describe('a branch that is not mid-step', () => {
+describe('a thread that is not mid-step', () => {
   it('yields an empty channel rather than an error', () => {
     const channel = createDeltaChannel()
     const { seen, listener } = recorder()
 
-    const unsubscribe = channel.subscribe({ branchId, listener })
+    const unsubscribe = channel.subscribe({ threadId, listener })
 
-    expect(channel.snapshot({ branchId })).toEqual([])
+    expect(channel.snapshot({ threadId })).toEqual([])
     expect(seen).toEqual([])
     unsubscribe()
   })
@@ -42,8 +42,8 @@ describe('the step in flight', () => {
   it('carries text deltas and their block boundaries', () => {
     const channel = createDeltaChannel()
     const { seen, listener } = recorder()
-    channel.subscribe({ branchId, listener })
-    const publisher = channel.publisherFor({ branchId })
+    channel.subscribe({ threadId, listener })
+    const publisher = channel.publisherFor({ threadId })
 
     for (const chunk of textBlock('t1', ['auth ', 'and the router'])) publisher.onChunk(chunk)
 
@@ -56,8 +56,8 @@ describe('the step in flight', () => {
   it('carries reasoning deltas as distinct blocks', () => {
     const channel = createDeltaChannel()
     const { seen, listener } = recorder()
-    channel.subscribe({ branchId, listener })
-    const publisher = channel.publisherFor({ branchId })
+    channel.subscribe({ threadId, listener })
+    const publisher = channel.publisherFor({ threadId })
 
     publisher.onChunk({ type: 'reasoning-start', id: 'r1' })
     publisher.onChunk({ type: 'reasoning-delta', id: 'r1', text: 'two files touched' })
@@ -72,7 +72,7 @@ describe('the step in flight', () => {
 
   it('returns the chunk unchanged so the accumulator still sees it', () => {
     const channel = createDeltaChannel()
-    const publisher = channel.publisherFor({ branchId })
+    const publisher = channel.publisherFor({ threadId })
     const chunk: Chunk = { type: 'text-delta', id: 't1', text: 'auth' }
 
     expect(publisher.onChunk(chunk)).toBe(chunk)
@@ -81,8 +81,8 @@ describe('the step in flight', () => {
   it('stamps every signal of one step with the same step id, and a later step with another', () => {
     const channel = createDeltaChannel()
     const { seen, listener } = recorder()
-    channel.subscribe({ branchId, listener })
-    const publisher = channel.publisherFor({ branchId })
+    channel.subscribe({ threadId, listener })
+    const publisher = channel.publisherFor({ threadId })
 
     publisher.onChunk({ type: 'text-delta', id: 't1', text: 'first' })
     publisher.settleAppend({ events: [assistantSaid({ seq: 2, text: 'first' })] })
@@ -98,8 +98,8 @@ describe('completing a step', () => {
   it('emits a signal naming the durable event that supersedes the deltas', () => {
     const channel = createDeltaChannel()
     const { seen, listener } = recorder()
-    channel.subscribe({ branchId, listener })
-    const publisher = channel.publisherFor({ branchId })
+    channel.subscribe({ threadId, listener })
+    const publisher = channel.publisherFor({ threadId })
     for (const chunk of textBlock('t1', ['auth and the router'])) publisher.onChunk(chunk)
 
     publisher.settleAppend({ events: [assistantSaid({ seq: 2, text: 'auth and the router' })] })
@@ -116,8 +116,8 @@ describe('completing a step', () => {
   it('names the step interrupted when the durable event says it was', () => {
     const channel = createDeltaChannel()
     const { seen, listener } = recorder()
-    channel.subscribe({ branchId, listener })
-    const publisher = channel.publisherFor({ branchId })
+    channel.subscribe({ threadId, listener })
+    const publisher = channel.publisherFor({ threadId })
     publisher.onChunk({ type: 'text-delta', id: 't1', text: 'half a th' })
 
     publisher.settleAppend({ events: [assistantSaid({ seq: 2, text: 'half a th', interrupted: true })] })
@@ -130,8 +130,8 @@ describe('completing a step', () => {
   it('supersedes the deltas with nothing when the step committed no assistant turn', () => {
     const channel = createDeltaChannel()
     const { seen, listener } = recorder()
-    channel.subscribe({ branchId, listener })
-    const publisher = channel.publisherFor({ branchId })
+    channel.subscribe({ threadId, listener })
+    const publisher = channel.publisherFor({ threadId })
     publisher.onChunk({ type: 'tool-call', callId: toCallId('call-1'), name: 'read', input: {} })
 
     publisher.settleAppend({ events: [] })
@@ -144,35 +144,35 @@ describe('completing a step', () => {
   it('leaves the channel empty afterwards', () => {
     const channel = createDeltaChannel()
     const { listener } = recorder()
-    channel.subscribe({ branchId, listener })
-    const publisher = channel.publisherFor({ branchId })
+    channel.subscribe({ threadId, listener })
+    const publisher = channel.publisherFor({ threadId })
     for (const chunk of textBlock('t1', ['auth'])) publisher.onChunk(chunk)
 
     publisher.settleAppend({ events: [assistantSaid({ seq: 2, text: 'auth' })] })
 
-    expect(channel.snapshot({ branchId })).toEqual([])
+    expect(channel.snapshot({ threadId })).toEqual([])
     const late = recorder()
-    channel.subscribe({ branchId, listener: late.listener })
+    channel.subscribe({ threadId, listener: late.listener })
     expect(late.seen).toEqual([])
   })
 
   it('says events landed when no step is in flight, so a turn steered mid-flight shows at once', () => {
     const channel = createDeltaChannel()
     const { seen, listener } = recorder()
-    channel.subscribe({ branchId, listener })
+    channel.subscribe({ threadId, listener })
 
-    channel.publisherFor({ branchId }).settleAppend({ events: [assistantSaid({ seq: 1, text: 'stale' })] })
+    channel.publisherFor({ threadId }).settleAppend({ events: [assistantSaid({ seq: 1, text: 'stale' })] })
 
     expect(seen).toEqual([{ type: 'events-appended' }])
   })
 
   it('keeps that out of the signals a late subscriber replays, which are the step in flight', () => {
     const channel = createDeltaChannel()
-    channel.subscribe({ branchId, listener: () => undefined })
+    channel.subscribe({ threadId, listener: () => undefined })
 
-    channel.publisherFor({ branchId }).settleAppend({ events: [assistantSaid({ seq: 1, text: 'stale' })] })
+    channel.publisherFor({ threadId }).settleAppend({ events: [assistantSaid({ seq: 1, text: 'stale' })] })
 
-    expect(channel.snapshot({ branchId })).toEqual([])
+    expect(channel.snapshot({ threadId })).toEqual([])
   })
 })
 
@@ -180,8 +180,8 @@ describe('a step that never commits', () => {
   it('ends when the publisher is closed, so a subscriber never waits forever', () => {
     const channel = createDeltaChannel()
     const { seen, listener } = recorder()
-    channel.subscribe({ branchId, listener })
-    const publisher = channel.publisherFor({ branchId })
+    channel.subscribe({ threadId, listener })
+    const publisher = channel.publisherFor({ threadId })
     publisher.onChunk({ type: 'text-delta', id: 't1', text: 'half a th' })
 
     publisher.close({ end: EStepEnd.Interrupted })
@@ -192,15 +192,15 @@ describe('a step that never commits', () => {
       end: EStepEnd.Interrupted,
       supersededBy: null,
     })
-    expect(channel.snapshot({ branchId })).toEqual([])
+    expect(channel.snapshot({ threadId })).toEqual([])
   })
 
   it('opens and ends a step for a failure that never streamed, so it is not silence', () => {
     const channel = createDeltaChannel()
     const { seen, listener } = recorder()
-    channel.subscribe({ branchId, listener })
+    channel.subscribe({ threadId, listener })
 
-    channel.publisherFor({ branchId }).close({ end: EStepEnd.Failed })
+    channel.publisherFor({ threadId }).close({ end: EStepEnd.Failed })
 
     expect(seen.map((signal) => signal.type)).toEqual(['step-started', 'step-ended'])
     expect(seen.at(-1)).toEqual({
@@ -214,9 +214,9 @@ describe('a step that never commits', () => {
   it('says nothing when a turn that streamed nothing closes without failing', () => {
     const channel = createDeltaChannel()
     const { seen, listener } = recorder()
-    channel.subscribe({ branchId, listener })
+    channel.subscribe({ threadId, listener })
 
-    channel.publisherFor({ branchId }).close({ end: EStepEnd.Completed })
+    channel.publisherFor({ threadId }).close({ end: EStepEnd.Completed })
 
     expect(seen).toEqual([])
   })
@@ -224,8 +224,8 @@ describe('a step that never commits', () => {
   it('is closed idempotently, so a committed step is not ended twice', () => {
     const channel = createDeltaChannel()
     const { seen, listener } = recorder()
-    channel.subscribe({ branchId, listener })
-    const publisher = channel.publisherFor({ branchId })
+    channel.subscribe({ threadId, listener })
+    const publisher = channel.publisherFor({ threadId })
     publisher.onChunk({ type: 'text-delta', id: 't1', text: 'auth' })
     publisher.settleAppend({ events: [assistantSaid({ seq: 2, text: 'auth' })] })
 
@@ -237,8 +237,8 @@ describe('a step that never commits', () => {
   it('gives a failure after the last commit a step of its own rather than swallowing it', () => {
     const channel = createDeltaChannel()
     const { seen, listener } = recorder()
-    channel.subscribe({ branchId, listener })
-    const publisher = channel.publisherFor({ branchId })
+    channel.subscribe({ threadId, listener })
+    const publisher = channel.publisherFor({ threadId })
     publisher.onChunk({ type: 'text-delta', id: 't1', text: 'auth' })
     publisher.settleAppend({ events: [assistantSaid({ seq: 2, text: 'auth' })] })
 
@@ -253,12 +253,12 @@ describe('a step that never commits', () => {
 describe('attaching mid-step', () => {
   it('replays the step in flight in order, then continues live', () => {
     const channel = createDeltaChannel()
-    const publisher = channel.publisherFor({ branchId })
+    const publisher = channel.publisherFor({ threadId })
     publisher.onChunk({ type: 'text-start', id: 't1' })
     publisher.onChunk({ type: 'text-delta', id: 't1', text: 'auth ' })
 
     const { seen, listener } = recorder()
-    channel.subscribe({ branchId, listener })
+    channel.subscribe({ threadId, listener })
     publisher.onChunk({ type: 'text-delta', id: 't1', text: 'and the router' })
     publisher.settleAppend({ events: [assistantSaid({ seq: 2, text: 'auth and the router' })] })
 
@@ -281,9 +281,9 @@ describe('unsubscribing', () => {
     const channel = createDeltaChannel()
     const staying = recorder()
     const leaving = recorder()
-    channel.subscribe({ branchId, listener: staying.listener })
-    const unsubscribe = channel.subscribe({ branchId, listener: leaving.listener })
-    const publisher = channel.publisherFor({ branchId })
+    channel.subscribe({ threadId, listener: staying.listener })
+    const unsubscribe = channel.subscribe({ threadId, listener: leaving.listener })
+    const publisher = channel.publisherFor({ threadId })
     publisher.onChunk({ type: 'text-delta', id: 't1', text: 'auth' })
 
     unsubscribe()
@@ -298,9 +298,9 @@ describe('a filter in front of the channel', () => {
   it('publishes nothing the filter dropped and hides it from the accumulator too', () => {
     const channel = createDeltaChannel()
     const { seen, listener } = recorder()
-    channel.subscribe({ branchId, listener })
+    channel.subscribe({ threadId, listener })
     const publisher = channel.publisherFor({
-      branchId,
+      threadId,
       filter: (chunk) => (chunk.type === 'text-delta' && chunk.text.includes('secret') ? null : chunk),
     })
 
@@ -316,14 +316,14 @@ describe('a filter in front of the channel', () => {
 describe('the snapshot of the step in flight', () => {
   it('keeps its identity until the next signal, so a react store can hold it', () => {
     const channel = createDeltaChannel()
-    const publisher = channel.publisherFor({ branchId })
+    const publisher = channel.publisherFor({ threadId })
     publisher.onChunk({ type: 'text-delta', id: 't1', text: 'auth' })
 
-    const first = channel.snapshot({ branchId })
-    expect(channel.snapshot({ branchId })).toBe(first)
+    const first = channel.snapshot({ threadId })
+    expect(channel.snapshot({ threadId })).toBe(first)
 
     publisher.onChunk({ type: 'text-delta', id: 't1', text: ' and the router' })
-    expect(channel.snapshot({ branchId })).not.toBe(first)
+    expect(channel.snapshot({ threadId })).not.toBe(first)
     expect(first).toHaveLength(2)
   })
 })

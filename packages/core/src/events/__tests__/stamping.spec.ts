@@ -2,20 +2,20 @@ import { describe, expect, it } from 'bun:test'
 
 import type { EventDraft } from '../body'
 import type { EventEnvelope } from '../envelope'
-import { toBranchId, toEventId, toRunId } from '../ids'
+import { toThreadId, toEventId, toRunId } from '../ids'
 import { stampEvent } from '../stamp'
 
 const envelope: EventEnvelope = {
   id: toEventId('evt-1'),
   seq: 7,
-  branchId: toBranchId('branch-1'),
+  threadId: toThreadId('thread-1'),
   runId: toRunId('run-1'),
   depth: 0,
   at: '2026-08-24T00:00:00.000Z',
 }
 
 describe('stampEvent', () => {
-  it('adds identity, sequence, branch, run, depth and time to a draft', () => {
+  it('adds identity, sequence, thread, run, depth and time to a draft', () => {
     const draft: EventDraft = { type: 'user-said', text: 'hello' }
 
     expect(stampEvent({ draft, envelope })).toEqual({
@@ -23,7 +23,7 @@ describe('stampEvent', () => {
       text: 'hello',
       id: toEventId('evt-1'),
       seq: 7,
-      branchId: toBranchId('branch-1'),
+      threadId: toThreadId('thread-1'),
       runId: toRunId('run-1'),
       depth: 0,
       at: '2026-08-24T00:00:00.000Z',
@@ -34,7 +34,7 @@ describe('stampEvent', () => {
     const draft: EventDraft = { type: 'nudge', text: 'stay on task', lifetimeSteps: 2 }
 
     expect(Object.keys(stampEvent({ draft, envelope })).sort()).toEqual(
-      ['at', 'branchId', 'depth', 'id', 'lifetimeSteps', 'runId', 'seq', 'text', 'type'].sort(),
+      ['at', 'threadId', 'depth', 'id', 'lifetimeSteps', 'runId', 'seq', 'text', 'type'].sort(),
     )
   })
 

@@ -3,7 +3,7 @@ import { ETurnStatus } from '@dltech/atlas-harness'
 import { describe, expect, it } from 'bun:test'
 
 import { grammarsReady } from '../../ui/markdown/__tests__/harness'
-import { open, until, BRANCH, THINKING } from './app-fixture'
+import { open, until, THREAD, THINKING } from './app-fixture'
 import { fakeApp, scriptedModelPort, type FakeApp } from './fake-app'
 
 await grammarsReady()
@@ -24,7 +24,7 @@ async function strandedCall(): Promise<FakeApp> {
   const app = fakeApp({ model: scriptedModelPort({ script: { thinking: THINKING, reply: SPOKEN } }) })
 
   await app.log.append({
-    branchId: BRANCH,
+    threadId: THREAD,
     runId: toRunId('run-before'),
     drafts: [{ type: 'tool-called', callId: toCallId('call-1'), name: CALL, input: {}, ordinal: 0 }],
   })
@@ -43,7 +43,7 @@ async function strandedCall(): Promise<FakeApp> {
 }
 
 describe('escape on a turn that committed nothing', () => {
-  it('empties the branch of the exchange and hands the message back to the composer', async () => {
+  it('empties the thread of the exchange and hands the message back to the composer', async () => {
     const mounted = await open({
       app: fakeApp({
         model: scriptedModelPort({ script: { thinking: THINKING, reply: SPOKEN }, perChunkMs: 200 }),
@@ -65,7 +65,7 @@ describe('escape on a turn that committed nothing', () => {
       const emptied = await until({
         holds: async () => {
           await mounted.frame()
-          return (await mounted.app.log.read({ branchId: BRANCH })).length === 0
+          return (await mounted.app.log.read({ threadId: THREAD })).length === 0
         },
         within: 20_000,
       })
@@ -106,7 +106,7 @@ describe('escape on a turn that committed nothing', () => {
       })
       expect(idle).toBe(true)
 
-      const events = await mounted.app.log.read({ branchId: BRANCH })
+      const events = await mounted.app.log.read({ threadId: THREAD })
       expect(events.map((event) => event.type)).toEqual(['user-said', 'assistant-said'])
       expect(events[0]?.type === 'user-said' ? events[0].text : '').toBe(MESSAGE)
       expect(await mounted.frame()).toContain(PROMPT)
@@ -128,7 +128,7 @@ describe('escape on a turn that committed nothing', () => {
       })
 
       expect(blamed).toBe(true)
-      expect((await mounted.app.log.read({ branchId: BRANCH })).length).toBe(2)
+      expect((await mounted.app.log.read({ threadId: THREAD })).length).toBe(2)
     } finally {
       await mounted.done()
     }

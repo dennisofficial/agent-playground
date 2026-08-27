@@ -4,7 +4,7 @@ import React from 'react'
 
 import { grammarsReady, settle, teardown } from '../../ui/markdown/__tests__/harness'
 import { App } from '../app'
-import { open, until, BRANCH, REPLY, THINKING } from './app-fixture'
+import { open, until, THREAD, REPLY, THINKING } from './app-fixture'
 import { fakeApp, scriptedModelPort, type FakeApp } from './fake-app'
 
 await grammarsReady()
@@ -23,7 +23,7 @@ const naming = (names: string | null): FakeApp =>
   fakeApp({ model: scriptedModelPort({ script }), names })
 
 describe('naming a session from its opening message', () => {
-  it('asks for a name and writes it to the branch', async () => {
+  it('asks for a name and writes it to the thread', async () => {
     const mounted = await open({ app: naming(NAME) })
 
     try {
@@ -33,14 +33,14 @@ describe('naming a session from its opening message', () => {
       const named = await until({
         holds: async () => {
           await mounted.frame()
-          return mounted.app.branches.renames.length > 0
+          return mounted.app.threads.renames.length > 0
         },
         within: WITHIN_MS,
       })
 
       expect(named).toBe(true)
       expect(mounted.app.titled).toEqual([OPENING])
-      expect(mounted.app.branches.renames).toEqual([{ branchId: BRANCH, title: NAME }])
+      expect(mounted.app.threads.renames).toEqual([{ threadId: THREAD, title: NAME }])
     } finally {
       await mounted.done()
     }
@@ -72,13 +72,13 @@ describe('naming a session from its opening message', () => {
 
       expect(ran).toBe(true)
       expect(mounted.app.titled).toEqual([OPENING])
-      expect(mounted.app.branches.renames).toHaveLength(1)
+      expect(mounted.app.threads.renames).toHaveLength(1)
     } finally {
       await mounted.done()
     }
   })
 
-  it('leaves the branch unnamed when the titler declines, rather than failing the turn', async () => {
+  it('leaves the thread unnamed when the titler declines, rather than failing the turn', async () => {
     const mounted = await open({ app: naming(null) })
 
     try {
@@ -92,7 +92,7 @@ describe('naming a session from its opening message', () => {
 
       expect(settled).toBe(true)
       expect(mounted.app.titled).toEqual([OPENING])
-      expect(mounted.app.branches.renames).toEqual([])
+      expect(mounted.app.threads.renames).toEqual([])
     } finally {
       await mounted.done()
     }
@@ -101,7 +101,7 @@ describe('naming a session from its opening message', () => {
   it('drops the name when a new conversation starts, rather than carrying it over', async () => {
     const app = naming(NAME)
     const setup = await testRender(
-      <App app={app} opened={{ branchId: BRANCH, events: [], name: null }} />,
+      <App app={app} opened={{ threadId: THREAD, events: [], name: null }} />,
       { width: 140, height: 40 },
     )
 
@@ -134,7 +134,7 @@ describe('naming a session from its opening message', () => {
   it('heads the sidebar with the name once it lands', async () => {
     const app = naming(NAME)
     const setup = await testRender(
-      <App app={app} opened={{ branchId: BRANCH, events: [], name: null }} />,
+      <App app={app} opened={{ threadId: THREAD, events: [], name: null }} />,
       { width: 140, height: 40 },
     )
 

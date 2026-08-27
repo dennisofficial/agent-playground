@@ -1,7 +1,7 @@
 import {
   compactedThrough,
   stampEvent,
-  toBranchId,
+  toThreadId,
   toCallId,
   toEventId,
   toRunId,
@@ -13,9 +13,9 @@ import { describe, expect, it } from 'bun:test'
 import { durableEntries } from '../../store/durable-entries'
 import { EEntryKind } from '../../store/transcript-model'
 import { compactTurn, ECompaction } from '../compact-turn'
-import { fakeBranchStore, fakeEventLog } from './fake-backend'
+import { fakeThreadStore, fakeEventLog } from './fake-backend'
 
-const BRANCH = toBranchId('compacting')
+const THREAD = toThreadId('compacting')
 
 const AT = '2026-08-25T00:00:00.000Z'
 
@@ -28,7 +28,7 @@ const stamped = (drafts: readonly EventDraft[]): Event[] =>
       envelope: {
         id: toEventId(`event-${index + 1}`),
         seq: index + 1,
-        branchId: BRANCH,
+        threadId: THREAD,
         runId: toRunId('run-1'),
         depth: 0,
         at: AT,
@@ -47,19 +47,19 @@ const summarises = (summary: string | null) => async () => summary
 
 
 describe('compacting a conversation the operator asked to compact', () => {
-  it('records a summary and reports how much of the branch it covered', async () => {
+  it('records a summary and reports how much of the thread it covered', async () => {
     const log = fakeEventLog(stamped(turns(40)))
 
     const compaction = await compactTurn({
       log,
-      branches: fakeBranchStore({ log, existing: [BRANCH] }),
-      branchId: BRANCH,
+      threads: fakeThreadStore({ log, existing: [THREAD] }),
+      threadId: THREAD,
       keepRecentTokens: 10_000,
       summarise: summarises('Forty turns of parser work.'),
     })
 
     expect(compaction.type).toBe(ECompaction.Compacted)
-    expect(compactedThrough(await log.read({ branchId: BRANCH }))).toBeGreaterThan(0)
+    expect(compactedThrough(await log.read({ threadId: THREAD }))).toBeGreaterThan(0)
   })
 
   it('does nothing to a conversation that still fits, rather than compacting for the sake of it', async () => {
@@ -67,8 +67,8 @@ describe('compacting a conversation the operator asked to compact', () => {
 
     const compaction = await compactTurn({
       log,
-      branches: fakeBranchStore({ log, existing: [BRANCH] }),
-      branchId: BRANCH,
+      threads: fakeThreadStore({ log, existing: [THREAD] }),
+      threadId: THREAD,
       keepRecentTokens: 100_000,
       summarise: summarises('should never be asked for'),
     })
@@ -81,17 +81,17 @@ describe('compacting a conversation the operator asked to compact', () => {
 
     const compaction = await compactTurn({
       log,
-      branches: fakeBranchStore({ log, existing: [BRANCH] }),
-      branchId: BRANCH,
+      threads: fakeThreadStore({ log, existing: [THREAD] }),
+      threadId: THREAD,
       keepRecentTokens: 10_000,
       summarise: summarises(null),
     })
 
     expect(compaction.type).toBe(ECompaction.Refused)
-    expect(compactedThrough(await log.read({ branchId: BRANCH }))).toBe(0)
+    expect(compactedThrough(await log.read({ threadId: THREAD }))).toBe(0)
   })
 
-  it('leaves a branch whose tool call has not settled alone', async () => {
+  it('leaves a thread whose tool call has not settled alone', async () => {
     const log = fakeEventLog(
       stamped([
         ...turns(40),
@@ -101,8 +101,8 @@ describe('compacting a conversation the operator asked to compact', () => {
 
     const compaction = await compactTurn({
       log,
-      branches: fakeBranchStore({ log, existing: [BRANCH] }),
-      branchId: BRANCH,
+      threads: fakeThreadStore({ log, existing: [THREAD] }),
+      threadId: THREAD,
       keepRecentTokens: 10_000,
       summarise: summarises('a summary'),
     })
@@ -117,14 +117,14 @@ describe('what the transcript shows after a compaction', () => {
 
     const compaction = await compactTurn({
       log,
-      branches: fakeBranchStore({ log, existing: [BRANCH] }),
-      branchId: BRANCH,
+      threads: fakeThreadStore({ log, existing: [THREAD] }),
+      threadId: THREAD,
       keepRecentTokens: 10_000,
       summarise: summarises('Forty turns of parser work.'),
     })
     if (compaction.type !== ECompaction.Compacted) throw new Error('expected a compaction')
 
-    const remaining = await log.read({ branchId: BRANCH })
+    const remaining = await log.read({ threadId: THREAD })
     const entries = durableEntries(remaining)
 
     expect(entries[0]?.kind).toBe(EEntryKind.HistoryCompacted)
@@ -145,13 +145,13 @@ describe('what the transcript shows after a compaction', () => {
 
     await compactTurn({
       log,
-      branches: fakeBranchStore({ log, existing: [BRANCH] }),
-      branchId: BRANCH,
+      threads: fakeThreadStore({ log, existing: [THREAD] }),
+      threadId: THREAD,
       keepRecentTokens: 2_000,
       summarise: summarises('Forty turns of parser work.'),
     })
 
-    const remaining = await log.read({ branchId: BRANCH })
+    const remaining = await log.read({ threadId: THREAD })
     expect(remaining.some((event) => event.type === 'tool-called')).toBe(true)
     expect(remaining.some((event) => event.type === 'tool-result')).toBe(true)
   })

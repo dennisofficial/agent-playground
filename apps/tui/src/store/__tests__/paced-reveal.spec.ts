@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it } from 'bun:test'
 
-import { createDeltaChannel, type BranchPublisher, type DeltaChannel } from '@dltech/atlas-harness'
+import { createDeltaChannel, type ThreadPublisher, type DeltaChannel } from '@dltech/atlas-harness'
 
 import { createConversationStore, type ConversationStore } from '../conversation-store'
 import { EEntryKind } from '../transcript-model'
-import { fixtureBranchId, log } from './fixture'
+import { fixtureThreadId, log } from './fixture'
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -22,12 +22,12 @@ const tailOf = (store: ConversationStore): string =>
 describe('the paced reveal', () => {
   let channel: DeltaChannel
   let store: ConversationStore
-  let publisher: BranchPublisher
+  let publisher: ThreadPublisher
 
   beforeEach(() => {
     channel = createDeltaChannel()
-    store = createConversationStore({ channel, branchId: fixtureBranchId, paceReveal: true })
-    publisher = channel.publisherFor({ branchId: fixtureBranchId })
+    store = createConversationStore({ channel, threadId: fixtureThreadId, paceReveal: true })
+    publisher = channel.publisherFor({ threadId: fixtureThreadId })
   })
 
   it('holds a chunk back rather than painting it all at once', async () => {

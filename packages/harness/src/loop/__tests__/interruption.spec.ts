@@ -6,7 +6,7 @@ import {
   EToolEffect,
   pendingCalls,
   toCallId,
-  type BranchId,
+  type ThreadId,
   type ChunkType,
   type Event,
   type ToolDeclaration,
@@ -32,7 +32,7 @@ afterEach(async () => {
 type Interruptible = {
   harness: AtlasHarness
   model: MockLanguageModelV4
-  branchId: BranchId
+  threadId: ThreadId
   interruption: AbortSignal
 }
 
@@ -55,16 +55,16 @@ async function openArmed(): Promise<Interruptible> {
   })
 
   opened.push({ harness, temp })
-  const branch = await harness.branches.create({})
-  return { harness, model, branchId: branch.id, interruption: controller.signal }
+  const thread = await harness.threads.create({})
+  return { harness, model, threadId: thread.id, interruption: controller.signal }
 }
 
-async function openWith(script: readonly ScriptedStep[]): Promise<{ harness: AtlasHarness; branchId: BranchId }> {
+async function openWith(script: readonly ScriptedStep[]): Promise<{ harness: AtlasHarness; threadId: ThreadId }> {
   const temp = createTempDatabase()
   const harness = await buildHarness({ databaseUrl: temp.databaseUrl, model: scriptedModel({ script }) })
   opened.push({ harness, temp })
-  const branch = await harness.branches.create({})
-  return { harness, branchId: branch.id }
+  const thread = await harness.threads.create({})
+  return { harness, threadId: thread.id }
 }
 
 const readDeclaration: ToolDeclaration = {
@@ -78,7 +78,7 @@ async function openCutShortAt(args: {
   script: readonly ScriptedStep[]
   chunk: ChunkType
   tools?: readonly ToolDeclaration[] | undefined
-}): Promise<{ harness: AtlasHarness; branchId: BranchId; interruption: AbortSignal }> {
+}): Promise<{ harness: AtlasHarness; threadId: ThreadId; interruption: AbortSignal }> {
   const temp = createTempDatabase()
   const controller = new AbortController()
   let armed = true
@@ -97,8 +97,8 @@ async function openCutShortAt(args: {
   })
 
   opened.push({ harness, temp })
-  const branch = await harness.branches.create({})
-  return { harness, branchId: branch.id, interruption: controller.signal }
+  const thread = await harness.threads.create({})
+  return { harness, threadId: thread.id, interruption: controller.signal }
 }
 
 const assistantTurns = (events: readonly Event[]) => events.filter((event) => event.type === 'assistant-said')
@@ -112,13 +112,13 @@ describe('interrupting a step that had already asked for a tool', () => {
     })
 
     const outcome = await cut.harness.runner.say({
-      branchId: cut.branchId,
+      threadId: cut.threadId,
       text: 'what is in a.ts?',
       signal: cut.interruption,
     })
 
     expect(outcome.status).toBe(ETurnStatus.Interrupted)
-    const events = await cut.harness.log.read({ branchId: cut.branchId })
+    const events = await cut.harness.log.read({ threadId: cut.threadId })
     expect(events.map((event) => event.type)).toEqual([
       'user-said',
       'assistant-said',
@@ -139,7 +139,7 @@ describe('interrupting a step that had already asked for a tool', () => {
     })
 
     const outcome = await cut.harness.runner.say({
-      branchId: cut.branchId,
+      threadId: cut.threadId,
       text: 'what is in a.ts?',
       signal: cut.interruption,
     })
@@ -155,12 +155,12 @@ describe('interrupting a step that had already asked for a tool', () => {
     })
 
     await cut.harness.runner.say({
-      branchId: cut.branchId,
+      threadId: cut.threadId,
       text: 'what is in a.ts?',
       signal: cut.interruption,
     })
 
-    const events = await cut.harness.log.read({ branchId: cut.branchId })
+    const events = await cut.harness.log.read({ threadId: cut.threadId })
     expect(pendingCalls(events)).toEqual([])
   })
 })
@@ -170,17 +170,17 @@ describe('interrupting a streaming reply', () => {
     const armed = await openArmed()
 
     const outcome = await armed.harness.runner.say({
-      branchId: armed.branchId,
+      threadId: armed.threadId,
       text: 'what changed?',
       signal: armed.interruption,
     })
 
     expect(outcome.status).toBe(ETurnStatus.Interrupted)
-    const events = await armed.harness.log.read({ branchId: armed.branchId })
+    const events = await armed.harness.log.read({ threadId: armed.threadId })
     expect(events.map((event) => event.type)).toEqual(['user-said', 'assistant-said'])
 
     const [reply] = assistantTurns(events)
-    if (reply?.type !== 'assistant-said') throw new Error('the branch holds no assistant turn')
+    if (reply?.type !== 'assistant-said') throw new Error('the thread holds no assistant turn')
     expect(reply.parts).toEqual([{ type: 'text', text: HEAD }])
     expect(reply.interrupted).toBe(true)
   })
@@ -189,7 +189,7 @@ describe('interrupting a streaming reply', () => {
     const armed = await openArmed()
 
     const outcome = await armed.harness.runner.say({
-      branchId: armed.branchId,
+      threadId: armed.threadId,
       text: 'what changed?',
       signal: armed.interruption,
     })
@@ -204,50 +204,50 @@ describe('interrupting a streaming reply', () => {
     })
 
     const outcome = await cut.harness.runner.say({
-      branchId: cut.branchId,
+      threadId: cut.threadId,
       text: 'what changed?',
       signal: cut.interruption,
     })
 
     expect(outcome.status).toBe(ETurnStatus.Interrupted)
     expect(outcome.status === ETurnStatus.Interrupted ? outcome.committed : undefined).toBe(false)
-    const events = await cut.harness.log.read({ branchId: cut.branchId })
+    const events = await cut.harness.log.read({ threadId: cut.threadId })
     expect(events.map((event) => event.type)).toEqual(['user-said', 'assistant-said'])
     const [thought] = assistantTurns(events)
     expect(thought?.type === 'assistant-said' ? thought.parts.map((part) => part.type) : []).toEqual(['reasoning'])
   })
 
   it('appends nothing when the abort landed before any text arrived', async () => {
-    const { harness, branchId } = await openWith([{ text: 'unreachable' }])
+    const { harness, threadId } = await openWith([{ text: 'unreachable' }])
     const controller = new AbortController()
     controller.abort()
 
-    const outcome = await harness.runner.say({ branchId, text: 'what changed?', signal: controller.signal })
+    const outcome = await harness.runner.say({ threadId, text: 'what changed?', signal: controller.signal })
 
     expect(outcome.status).toBe(ETurnStatus.Interrupted)
     expect(outcome.status === ETurnStatus.Interrupted ? outcome.committed : undefined).toBe(false)
-    const events = await harness.log.read({ branchId })
+    const events = await harness.log.read({ threadId })
     expect(events.map((event) => event.type)).toEqual(['user-said'])
   })
 
   it('waits for input on the next turn rather than re-asking', async () => {
     const armed = await openArmed()
-    await armed.harness.runner.say({ branchId: armed.branchId, text: 'what changed?', signal: armed.interruption })
+    await armed.harness.runner.say({ threadId: armed.threadId, text: 'what changed?', signal: armed.interruption })
     const asked = armed.model.doStreamCalls.length
 
-    const outcome = await armed.harness.runner.runTurn({ branchId: armed.branchId })
+    const outcome = await armed.harness.runner.runTurn({ threadId: armed.threadId })
 
     expect(outcome.status).toBe(ETurnStatus.Idle)
     expect(armed.model.doStreamCalls).toHaveLength(asked)
-    const events = await armed.harness.log.read({ branchId: armed.branchId })
+    const events = await armed.harness.log.read({ threadId: armed.threadId })
     expect(events.map((event) => event.type)).toEqual(['user-said', 'assistant-said'])
   })
 
   it('renders the interrupted turn back to the model unchanged', async () => {
     const armed = await openArmed()
-    await armed.harness.runner.say({ branchId: armed.branchId, text: 'what changed?', signal: armed.interruption })
+    await armed.harness.runner.say({ threadId: armed.threadId, text: 'what changed?', signal: armed.interruption })
 
-    const outcome = await armed.harness.runner.say({ branchId: armed.branchId, text: 'go on' })
+    const outcome = await armed.harness.runner.say({ threadId: armed.threadId, text: 'go on' })
 
     expect(outcome.status).toBe(ETurnStatus.Completed)
     const prompt = armed.model.doStreamCalls[1]?.prompt ?? []

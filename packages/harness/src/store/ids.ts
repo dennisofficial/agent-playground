@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto'
 
 import {
-  toBranchId,
+  toThreadId,
   toCallId,
   toEventId,
   toRunId,
-  type BranchId,
+  type ThreadId,
   type CallId,
   type EventId,
   type IdPort,
@@ -16,8 +16,8 @@ import { injectable } from '../container/injection'
 
 @injectable()
 export class RandomIds implements IdPort {
-  nextBranchId(): BranchId {
-    return toBranchId(`brn_${randomUUID()}`)
+  nextThreadId(): ThreadId {
+    return toThreadId(`brn_${randomUUID()}`)
   }
 
   nextRunId(): RunId {

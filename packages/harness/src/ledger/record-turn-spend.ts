@@ -2,7 +2,7 @@ import {
   addUsage,
   NOTHING_BILLED,
   type BilledUsage,
-  type BranchId,
+  type ThreadId,
   type ClockPort,
   type ModelUsage,
   type ProviderIdentity,
@@ -20,7 +20,7 @@ export type TurnLedgerDeps = {
 }
 
 export type RecordTurnSpendArgs = TurnLedgerDeps & {
-  branchId: BranchId
+  threadId: ThreadId
   runId: RunId
   status: string
   model: ProviderIdentity
@@ -43,7 +43,7 @@ export async function recordTurnSpend(args: RecordTurnSpendArgs): Promise<void> 
   try {
     await ledger.record({
       runId: args.runId,
-      branchId: args.branchId,
+      threadId: args.threadId,
       status: args.status,
       providerId: args.model.id,
       modelId: args.model.modelId,
@@ -60,7 +60,7 @@ export async function recordTurnSpend(args: RecordTurnSpendArgs): Promise<void> 
 
 export type TurnSpendTally = {
   countStep(usage: ModelUsage | undefined): void
-  settle(args: { branchId: BranchId; runId: RunId; status: string }): Promise<void>
+  settle(args: { threadId: ThreadId; runId: RunId; status: string }): Promise<void>
 }
 
 export function openTurnSpend(args: TurnLedgerDeps & { model: ProviderIdentity }): TurnSpendTally {
@@ -75,10 +75,10 @@ export function openTurnSpend(args: TurnLedgerDeps & { model: ProviderIdentity }
       usage = addUsage({ billed: usage, step: reported })
     },
 
-    settle: ({ branchId, runId, status }) =>
+    settle: ({ threadId, runId, status }) =>
       recordTurnSpend({
         ...args,
-        branchId,
+        threadId,
         runId,
         status,
         steps,

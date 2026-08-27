@@ -40,9 +40,9 @@ describe('BeforeStep', () => {
         beforeStep: [{ name: 'insistOnBrevity', order: { stage: EStage.Policy, nudge: 0 }, run: insistOnBrevity }],
       }),
     })
-    const branch = await harness.branches.create({})
+    const thread = await harness.threads.create({})
 
-    const outcome = await runner.say({ branchId: branch.id, text: 'what changed?' })
+    const outcome = await runner.say({ threadId: thread.id, text: 'what changed?' })
 
     expect(outcome.status).toBe(ETurnStatus.Completed)
     expect(model.doStreamCalls[0]?.prompt.slice(0, 2)).toEqual([
@@ -64,9 +64,9 @@ describe('BeforeStep', () => {
         beforeStep: [{ name: 'blankEveryText', order: { stage: EStage.Policy, nudge: 0 }, run: blankEveryText }],
       }),
     })
-    const branch = await harness.branches.create({})
+    const thread = await harness.threads.create({})
 
-    const outcome = await runner.say({ branchId: branch.id, text: 'what changed?' })
+    const outcome = await runner.say({ threadId: thread.id, text: 'what changed?' })
 
     expect(outcome.status).toBe(ETurnStatus.Failed)
     expect(outcome.status === ETurnStatus.Failed ? outcome.message : '').toMatch(/text block holding no text/)
@@ -87,15 +87,15 @@ describe('BeforeRequest', () => {
         beforeRequest: [{ name: 'shout', order: { stage: EStage.Policy, nudge: 0 }, run: shout }],
       }),
     })
-    const branch = await harness.branches.create({})
+    const thread = await harness.threads.create({})
 
-    await runner.say({ branchId: branch.id, text: 'what changed?' })
+    await runner.say({ threadId: thread.id, text: 'what changed?' })
 
     expect(model.doStreamCalls[0]?.prompt.slice(0, 2)).toEqual([
       { role: 'system', content: MINIMAL_PREAMBLE },
       { role: 'system', content: 'SHOUT' },
     ])
-    const events = await harness.log.read({ branchId: branch.id })
+    const events = await harness.log.read({ threadId: thread.id })
     expect(events.map((event) => event.type)).toEqual(['user-said', 'assistant-said'])
   })
 })
@@ -111,11 +111,11 @@ describe('AfterTurn', () => {
         ],
       }),
     })
-    const branch = await harness.branches.create({})
+    const thread = await harness.threads.create({})
 
-    await runner.say({ branchId: branch.id, text: 'what changed?' })
+    await runner.say({ threadId: thread.id, text: 'what changed?' })
 
-    const events = await harness.log.read({ branchId: branch.id })
+    const events = await harness.log.read({ threadId: thread.id })
     expect(events.map((event) => event.type)).toEqual(['user-said', 'assistant-said', 'nudge', 'nudge'])
     expect(events.flatMap((event) => (event.type === 'nudge' ? [event.text] : []))).toEqual([
       'guarded',
@@ -131,11 +131,11 @@ describe('AfterTurn', () => {
         afterTurn: [{ name: 'observed', order: { stage: EStage.Observe, nudge: 0 }, run: nudging('observed') }],
       }),
     })
-    const branch = await harness.branches.create({})
+    const thread = await harness.threads.create({})
 
-    await runner.say({ branchId: branch.id, text: 'what changed?' })
+    await runner.say({ threadId: thread.id, text: 'what changed?' })
 
-    const events = await harness.log.read({ branchId: branch.id })
+    const events = await harness.log.read({ threadId: thread.id })
     expect(events.filter((event) => event.type === 'nudge')).toHaveLength(1)
     expect(events.at(-1)?.type).toBe('nudge')
   })
@@ -162,15 +162,15 @@ describe('OnChunk against the delta channel', () => {
 
     const channel = createDeltaChannel()
     const seen: ChannelSignal[] = []
-    const branch = await harness.branches.create({})
-    channel.subscribe({ branchId: branch.id, listener: (signal) => void seen.push(signal) })
+    const thread = await harness.threads.create({})
+    channel.subscribe({ threadId: thread.id, listener: (signal) => void seen.push(signal) })
 
     const runner = new PublishingTurnRunner({
       channel,
       deps: { log: harness.log, model: harness.model, ids: harness.ids, assembly: defaultPipeline(), hooks },
     })
 
-    const outcome = await runner.say({ branchId: branch.id, text: 'what changed?' })
+    const outcome = await runner.say({ threadId: thread.id, text: 'what changed?' })
 
     expect(outcome.status).toBe(ETurnStatus.Completed)
     expect(publishedDeltas(seen)).toEqual(['auth and '])

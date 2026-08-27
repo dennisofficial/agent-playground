@@ -84,9 +84,9 @@ describe('how long a turn is allowed to work', () => {
     const { runner, harness, model } = await openScripted({
       script: [...callingSteps(64), { text: 'touched all of them' }],
     })
-    const branch = await harness.branches.create({})
+    const thread = await harness.threads.create({})
 
-    const outcome = await runner.say({ branchId: branch.id, text: 'touch things' })
+    const outcome = await runner.say({ threadId: thread.id, text: 'touch things' })
 
     expect(outcome.status).toBe(ETurnStatus.Completed)
     expect(model.doStreamCalls).toHaveLength(65)
@@ -96,9 +96,9 @@ describe('how long a turn is allowed to work', () => {
     const { runner, harness, steps } = await openScripted({
       script: [...callingSteps(3), { text: 'touched them' }],
     })
-    const branch = await harness.branches.create({})
+    const thread = await harness.threads.create({})
 
-    await runner.say({ branchId: branch.id, text: 'touch things' })
+    await runner.say({ threadId: thread.id, text: 'touch things' })
 
     expect(steps).toEqual([0, 1, 2, 3])
   })
@@ -135,13 +135,13 @@ describe('the shape of the prompt the loop is about to send', () => {
       ids: harness.ids,
       assembly: { rules: [...defaultRules(), speakOutOfTurn], annotators: defaultAnnotators() },
     })
-    const branch = await harness.branches.create({})
+    const thread = await harness.threads.create({})
 
-    const outcome = await runner.say({ branchId: branch.id, text: 'what changed?' })
+    const outcome = await runner.say({ threadId: thread.id, text: 'what changed?' })
 
     expect(model.doStreamCalls).toHaveLength(0)
     expect(outcome.status).toBe(ETurnStatus.Failed)
-    const events = await harness.log.read({ branchId: branch.id })
+    const events = await harness.log.read({ threadId: thread.id })
     const said = events[0]
     expect(outcome.status === ETurnStatus.Failed ? outcome.message : '').toContain(said?.id ?? 'no event')
     expect(outcome.status === ETurnStatus.Failed ? outcome.message : '').toMatch(/first message must be the user/)
@@ -151,9 +151,9 @@ describe('the shape of the prompt the loop is about to send', () => {
     const { runner, harness, model } = await openScripted({
       script: [callingStep(1), { text: 'touched it' }],
     })
-    const branch = await harness.branches.create({})
+    const thread = await harness.threads.create({})
 
-    const outcome = await runner.say({ branchId: branch.id, text: 'touch things' })
+    const outcome = await runner.say({ threadId: thread.id, text: 'touch things' })
 
     expect(outcome.status).toBe(ETurnStatus.Completed)
     expect(model.doStreamCalls).toHaveLength(2)
@@ -168,13 +168,13 @@ describe('a thinking turn whose text block arrives blank', () => {
         { text: 'touched it' },
       ],
     })
-    const branch = await harness.branches.create({})
+    const thread = await harness.threads.create({})
 
-    const outcome = await runner.say({ branchId: branch.id, text: 'touch things' })
+    const outcome = await runner.say({ threadId: thread.id, text: 'touch things' })
 
     expect(outcome.status).toBe(ETurnStatus.Completed)
     expect(model.doStreamCalls).toHaveLength(2)
-    const events = await harness.log.read({ branchId: branch.id })
+    const events = await harness.log.read({ threadId: thread.id })
     const spoken = events.flatMap((event) =>
       event.type === 'assistant-said' ? [event.parts.map((part) => part.type)] : [],
     )
@@ -185,12 +185,12 @@ describe('a thinking turn whose text block arrives blank', () => {
     const { runner, harness } = await openScripted({
       script: [{ text: '   ', calls: [{ callId: 'call-1', name: 'touch', input: {} }] }, { text: 'touched it' }],
     })
-    const branch = await harness.branches.create({})
+    const thread = await harness.threads.create({})
 
-    const outcome = await runner.say({ branchId: branch.id, text: 'touch things' })
+    const outcome = await runner.say({ threadId: thread.id, text: 'touch things' })
 
     expect(outcome.status).toBe(ETurnStatus.Completed)
-    const events = await harness.log.read({ branchId: branch.id })
+    const events = await harness.log.read({ threadId: thread.id })
     expect(events.map((event) => event.type)).toEqual([
       'user-said',
       'tool-called',
@@ -222,9 +222,9 @@ describe('a dispatch that settles nothing', () => {
         },
       },
     })
-    const branch = await harness.branches.create({})
+    const thread = await harness.threads.create({})
 
-    const outcome = await runner.say({ branchId: branch.id, text: 'touch things' })
+    const outcome = await runner.say({ threadId: thread.id, text: 'touch things' })
 
     expect(outcome.status).toBe(ETurnStatus.Failed)
     expect(outcome.status === ETurnStatus.Failed ? outcome.message : '').toContain('touch')

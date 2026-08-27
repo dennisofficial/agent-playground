@@ -1,6 +1,6 @@
 import {
   stampDrafts,
-  toBranchId,
+  toThreadId,
   toCallId,
   toEventId,
   toRunId,
@@ -54,7 +54,7 @@ export function clocked(drafts: readonly ClockedDraft[]): Event[] {
     envelopes: drafts.map((entry, index) => ({
       id: toEventId(`clocked-${index + 1}`),
       seq: index + 1,
-      branchId: toBranchId('branch-clocked'),
+      threadId: toThreadId('thread-clocked'),
       runId: toRunId('run-clocked'),
       depth: 0,
       at: entry.at,

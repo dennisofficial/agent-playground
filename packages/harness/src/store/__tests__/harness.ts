@@ -2,19 +2,19 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import type { BranchId, ClockPort, EventId, IdPort, RunId } from '@dltech/atlas-core'
-import { toBranchId, toCallId, toEventId, toRunId } from '@dltech/atlas-core'
+import type { ThreadId, ClockPort, EventId, IdPort, RunId } from '@dltech/atlas-core'
+import { toThreadId, toCallId, toEventId, toRunId } from '@dltech/atlas-core'
 
 import type { PrismaClient } from '../../../prisma/generated/client'
 import { openAtlasDatabase, type AtlasDatabase } from '../database'
-import { PrismaBranchStore } from '../branch-store'
+import { PrismaThreadStore } from '../thread-store'
 import { PrismaEventLog } from '../event-log'
 
 export type StoreFixture = {
   databaseUrl: string
   prisma: PrismaClient
   log: PrismaEventLog
-  branches: PrismaBranchStore
+  threads: PrismaThreadStore
   clock: SteppingClock
   reopen: () => Promise<StoreFixture>
   close: () => Promise<void>
@@ -40,8 +40,8 @@ export class CountingIds implements IdPort {
     return `${this.prefix}-${kind}-${seen}`
   }
 
-  nextBranchId(): BranchId {
-    return toBranchId(this.next('branch'))
+  nextThreadId(): ThreadId {
+    return toThreadId(this.next('thread'))
   }
 
   nextRunId(): RunId {
@@ -83,7 +83,7 @@ async function attach({
     prisma: database.prisma,
     clock,
     log: new PrismaEventLog(database.prisma, clock, ids),
-    branches: new PrismaBranchStore(database.prisma, clock, ids),
+    threads: new PrismaThreadStore(database.prisma, clock, ids),
     reopen: async () => {
       await database.close()
       return attach({ databaseUrl, discard, idPrefix: `${idPrefix}b` })
@@ -102,7 +102,7 @@ export async function openStoreFixture(): Promise<StoreFixture> {
 
 export async function openSecondWriter(fixture: StoreFixture): Promise<{
   log: PrismaEventLog
-  branches: PrismaBranchStore
+  threads: PrismaThreadStore
   close: () => Promise<void>
 }> {
   const database = await openAtlasDatabase({ databaseUrl: fixture.databaseUrl })
@@ -110,7 +110,7 @@ export async function openSecondWriter(fixture: StoreFixture): Promise<{
   const ids = new CountingIds('w2')
   return {
     log: new PrismaEventLog(database.prisma, clock, ids),
-    branches: new PrismaBranchStore(database.prisma, clock, ids),
+    threads: new PrismaThreadStore(database.prisma, clock, ids),
     close: () => database.close(),
   }
 }

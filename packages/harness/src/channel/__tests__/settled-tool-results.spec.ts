@@ -39,7 +39,7 @@ function announcing(inner: DeltaChannel): { channel: DeltaChannel; announced: Ev
       publisherFor: (args) => {
         const publisher = inner.publisherFor(args)
         return {
-          branchId: publisher.branchId,
+          threadId: publisher.threadId,
           onChunk: publisher.onChunk,
           settleAppend: ({ events }) => {
             announced.push(...events)
@@ -79,9 +79,9 @@ describe('a turn that settles a tool call', () => {
         dispatch: new HookedToolDispatcher({ registry, hooks: new HookChain({}) }),
       },
     })
-    const branch = await harness.branches.create({})
+    const thread = await harness.threads.create({})
 
-    const outcome = await runner.say({ branchId: branch.id, text: 'read a.ts' })
+    const outcome = await runner.say({ threadId: thread.id, text: 'read a.ts' })
 
     expect(outcome.status).toBe(ETurnStatus.Completed)
     expect(announced.map((event) => event.type)).toEqual([

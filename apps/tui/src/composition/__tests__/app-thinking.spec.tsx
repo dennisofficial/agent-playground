@@ -3,7 +3,7 @@ import { describe, expect, it } from 'bun:test'
 
 import { grammarsReady } from '../../ui/markdown/__tests__/harness'
 import { EThinkingVisibility } from '../../store'
-import { open, until, BRANCH, REPLY, THINKING } from './app-fixture'
+import { open, until, THREAD, REPLY, THINKING } from './app-fixture'
 import { fakeApp, scriptedModelPort } from './fake-app'
 
 await grammarsReady()
@@ -48,7 +48,7 @@ describe('the thinking blocks setting', () => {
       const kept = await until({
         holds: async () => {
           await mounted.frame()
-          const events = await mounted.app.log.read({ branchId: BRANCH })
+          const events = await mounted.app.log.read({ threadId: THREAD })
           return events.some(
             (event) =>
               event.type === 'assistant-said' &&

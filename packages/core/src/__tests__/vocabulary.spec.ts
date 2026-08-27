@@ -10,7 +10,7 @@ import {
   eventBodySchema,
   pendingCalls,
   stampEvent,
-  toBranchId,
+  toThreadId,
   toCallId,
   toEventId,
   toRunId,
@@ -33,7 +33,7 @@ describe('the package entry point', () => {
       envelope: {
         id: toEventId('evt-1'),
         seq: 1,
-        branchId: toBranchId('branch-1'),
+        threadId: toThreadId('thread-1'),
         runId: toRunId('run-1'),
         depth: 0,
         at: '2026-08-24T00:00:00.000Z',

@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 
-import { ERewindRefusal, toCallId, toRunId, type BranchId, type EventDraft } from '@dltech/atlas-core'
+import { ERewindRefusal, toCallId, toRunId, type ThreadId, type EventDraft } from '@dltech/atlas-core'
 
-import { rewindBranch } from '../rewind'
+import { rewindThread } from '../rewind'
 import { openStoreFixture, type StoreFixture } from './harness'
 
 let fixture: StoreFixture
@@ -27,62 +27,62 @@ const resulted: EventDraft = {
   output: { ok: true },
 }
 
-const openExchange = async (): Promise<{ fixture: StoreFixture; branchId: BranchId }> => {
+const openExchange = async (): Promise<{ fixture: StoreFixture; threadId: ThreadId }> => {
   fixture = await openStoreFixture()
-  const branch = await fixture.branches.create({ title: 'work' })
+  const thread = await fixture.threads.create({ title: 'work' })
   await fixture.log.append({
-    branchId: branch.id,
+    threadId: thread.id,
     runId,
     drafts: [said('clean the build'), replied('on it'), called, resulted, replied('done')],
   })
-  return { fixture, branchId: branch.id }
+  return { fixture, threadId: thread.id }
 }
 
 afterEach(async () => {
   await fixture.close()
 })
 
-describe('rewindBranch', () => {
-  it('truncates the branch to a settled point and reports what it discarded', async () => {
-    const { fixture: store, branchId } = await openExchange()
+describe('rewindThread', () => {
+  it('truncates the thread to a settled point and reports what it discarded', async () => {
+    const { fixture: store, threadId } = await openExchange()
 
-    const result = await rewindBranch({ log: store.log, branches: store.branches, branchId, toSeq: 2 })
+    const result = await rewindThread({ log: store.log, threads: store.threads, threadId, toSeq: 2 })
 
     expect(result).toEqual({ ok: true, discarded: 3 })
-    expect((await store.log.read({ branchId })).map((event) => event.type)).toEqual([
+    expect((await store.log.read({ threadId })).map((event) => event.type)).toEqual([
       'user-said',
       'assistant-said',
     ])
-    expect((await store.branches.find({ branchId }))?.head).toBe(2)
+    expect((await store.threads.find({ threadId }))?.head).toBe(2)
   })
 
   it('refuses a target that would re-dispatch a tool call, which the surviving idempotencyKey does not deduplicate', async () => {
-    const { fixture: store, branchId } = await openExchange()
+    const { fixture: store, threadId } = await openExchange()
 
-    const result = await rewindBranch({ log: store.log, branches: store.branches, branchId, toSeq: 3 })
+    const result = await rewindThread({ log: store.log, threads: store.threads, threadId, toSeq: 3 })
 
     expect(result).toMatchObject({ ok: false, refusal: ERewindRefusal.UnsettledToolCall })
-    expect((await store.log.read({ branchId })).length).toBe(5)
-    expect((await store.branches.find({ branchId }))?.head).toBe(5)
+    expect((await store.log.read({ threadId })).length).toBe(5)
+    expect((await store.threads.find({ threadId }))?.head).toBe(5)
   })
 
-  it('refuses a sequence the branch never reached, and writes nothing', async () => {
-    const { fixture: store, branchId } = await openExchange()
+  it('refuses a sequence the thread never reached, and writes nothing', async () => {
+    const { fixture: store, threadId } = await openExchange()
 
-    const result = await rewindBranch({ log: store.log, branches: store.branches, branchId, toSeq: 9 })
+    const result = await rewindThread({ log: store.log, threads: store.threads, threadId, toSeq: 9 })
 
     expect(result).toMatchObject({ ok: false, refusal: ERewindRefusal.NoSuchTarget })
-    expect((await store.log.read({ branchId })).length).toBe(5)
-    expect((await store.branches.find({ branchId }))?.head).toBe(5)
+    expect((await store.log.read({ threadId })).length).toBe(5)
+    expect((await store.threads.find({ threadId }))?.head).toBe(5)
   })
 
-  it('leaves the branch ready for the next exchange', async () => {
-    const { fixture: store, branchId } = await openExchange()
+  it('leaves the thread ready for the next exchange', async () => {
+    const { fixture: store, threadId } = await openExchange()
 
-    await rewindBranch({ log: store.log, branches: store.branches, branchId, toSeq: 0 })
-    const appended = await store.log.append({ branchId, runId, drafts: [said('start over')] })
+    await rewindThread({ log: store.log, threads: store.threads, threadId, toSeq: 0 })
+    const appended = await store.log.append({ threadId, runId, drafts: [said('start over')] })
 
     expect(appended.map((event) => event.seq)).toEqual([1])
-    expect((await store.log.read({ branchId })).map((event) => event.type)).toEqual(['user-said'])
+    expect((await store.log.read({ threadId })).map((event) => event.type)).toEqual(['user-said'])
   })
 })

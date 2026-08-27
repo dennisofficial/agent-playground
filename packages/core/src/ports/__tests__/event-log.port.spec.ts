@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 
 import type { EventDraft } from '../../events/body'
 import type { Event } from '../../events/envelope'
-import { toBranchId, toEventId, toRunId, type BranchId, type RunId } from '../../events/ids'
+import { toThreadId, toEventId, toRunId, type ThreadId, type RunId } from '../../events/ids'
 import { stampEvent } from '../../events/stamp'
 import type { ClockPort } from '../clock.port'
 import type { EventLogPort } from '../event-log.port'
@@ -14,45 +14,45 @@ const fakeClock = (): ClockPort => {
 
 const fakeLog = (): EventLogPort => {
   const clock = fakeClock()
-  const branches = new Map<BranchId, Event[]>()
-  const of = (branchId: BranchId): Event[] => {
-    const existing = branches.get(branchId)
+  const threads = new Map<ThreadId, Event[]>()
+  const of = (threadId: ThreadId): Event[] => {
+    const existing = threads.get(threadId)
     if (existing) return existing
     const created: Event[] = []
-    branches.set(branchId, created)
+    threads.set(threadId, created)
     return created
   }
 
   return {
-    async append({ branchId, runId, drafts }: { branchId: BranchId; runId: RunId; drafts: readonly EventDraft[] }) {
-      const stored = of(branchId)
+    async append({ threadId, runId, drafts }: { threadId: ThreadId; runId: RunId; drafts: readonly EventDraft[] }) {
+      const stored = of(threadId)
       return drafts.map((draft) => {
         const seq = stored.length + 1
         const event = stampEvent({
           draft,
-          envelope: { id: toEventId(`evt-${seq}`), seq, branchId, runId, depth: 0, at: clock.now() },
+          envelope: { id: toEventId(`evt-${seq}`), seq, threadId, runId, depth: 0, at: clock.now() },
         })
         stored.push(event)
         return event
       })
     },
-    async read({ branchId, upTo }) {
-      const stored = of(branchId)
+    async read({ threadId, upTo }) {
+      const stored = of(threadId)
       if (upTo === undefined) return [...stored]
       return stored.filter((event) => event.seq <= upTo)
     },
-    async head({ branchId }) {
-      return of(branchId).length
+    async head({ threadId }) {
+      return of(threadId).length
     },
-    async readOwn({ branchId, upTo }) {
-      const stored = of(branchId)
+    async readOwn({ threadId, upTo }) {
+      const stored = of(threadId)
       if (upTo === undefined) return [...stored]
       return stored.filter((event) => event.seq <= upTo)
     },
   }
 }
 
-const branchId = toBranchId('branch-1')
+const threadId = toThreadId('thread-1')
 const runId = toRunId('run-1')
 
 describe('EventLogPort', () => {
@@ -60,7 +60,7 @@ describe('EventLogPort', () => {
     const log = fakeLog()
 
     const appended = await log.append({
-      branchId,
+      threadId,
       runId,
       drafts: [
         { type: 'user-said', text: 'hello' },
@@ -74,20 +74,20 @@ describe('EventLogPort', () => {
     ])
   })
 
-  it('reads a branch back in sequence order', async () => {
+  it('reads a thread back in sequence order', async () => {
     const log = fakeLog()
-    await log.append({ branchId, runId, drafts: [{ type: 'user-said', text: 'first' }] })
-    await log.append({ branchId, runId, drafts: [{ type: 'user-said', text: 'second' }] })
+    await log.append({ threadId, runId, drafts: [{ type: 'user-said', text: 'first' }] })
+    await log.append({ threadId, runId, drafts: [{ type: 'user-said', text: 'second' }] })
 
-    const events = await log.read({ branchId })
+    const events = await log.read({ threadId })
 
     expect(events.map((event) => event.seq)).toEqual([1, 2])
   })
 
-  it('reads a prefix of a branch when given an upper bound', async () => {
+  it('reads a prefix of a thread when given an upper bound', async () => {
     const log = fakeLog()
     await log.append({
-      branchId,
+      threadId,
       runId,
       drafts: [
         { type: 'user-said', text: 'first' },
@@ -95,10 +95,10 @@ describe('EventLogPort', () => {
       ],
     })
 
-    expect(await log.read({ branchId, upTo: 1 })).toHaveLength(1)
+    expect(await log.read({ threadId, upTo: 1 })).toHaveLength(1)
   })
 
-  it('reports the head of a branch nothing has been appended to as zero', async () => {
-    expect(await fakeLog().head({ branchId })).toBe(0)
+  it('reports the head of a thread nothing has been appended to as zero', async () => {
+    expect(await fakeLog().head({ threadId })).toBe(0)
   })
 })

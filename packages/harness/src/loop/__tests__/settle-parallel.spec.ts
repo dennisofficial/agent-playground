@@ -4,7 +4,7 @@ import { z } from 'zod'
 import {
   EToolEffect,
   toCallId,
-  type BranchId,
+  type ThreadId,
   type EventDraft,
   type ToolDeclaration,
 } from '@dltech/atlas-core'
@@ -49,10 +49,10 @@ const TOOLS: readonly ToolDeclaration[] = [
 async function branchWithCalls(args: {
   harness: AtlasHarness
   calls: readonly { callId: string; name: string }[]
-}): Promise<BranchId> {
-  const branch = await args.harness.branches.create({})
+}): Promise<ThreadId> {
+  const thread = await args.harness.threads.create({})
   await args.harness.log.append({
-    branchId: branch.id,
+    threadId: thread.id,
     runId: args.harness.ids.nextRunId(),
     drafts: [
       { type: 'user-said', text: 'go' },
@@ -68,7 +68,7 @@ async function branchWithCalls(args: {
       ),
     ],
   })
-  return branch.id
+  return thread.id
 }
 
 type Trace = { started: string[]; finished: string[]; peakInFlight: number }
@@ -113,15 +113,15 @@ const tracingDispatch = (args: {
 
 const freshTrace = (): Trace => ({ started: [], finished: [], peakInFlight: 0 })
 
-const resultOrder = async (harness: AtlasHarness, branchId: BranchId): Promise<string[]> =>
-  (await harness.log.read({ branchId }))
+const resultOrder = async (harness: AtlasHarness, threadId: ThreadId): Promise<string[]> =>
+  (await harness.log.read({ threadId }))
     .filter((event) => event.type === 'tool-result')
     .map((event) => (event.type === 'tool-result' ? String(event.callId) : ''))
 
 describe('settling a step whose calls may share a batch', () => {
   it('runs consecutive read-only calls at once rather than one after another', async () => {
     const harness = await openLog()
-    const branchId = await branchWithCalls({
+    const threadId = await branchWithCalls({
       harness,
       calls: [
         { callId: 'call-1', name: 'read' },
@@ -136,15 +136,15 @@ describe('settling a step whose calls may share a batch', () => {
       tools: TOOLS,
     })
 
-    await settle({ branchId, signal: new AbortController().signal })
+    await settle({ threadId, signal: new AbortController().signal })
 
     expect(trace.peakInFlight).toBe(3)
-    expect(await resultOrder(harness, branchId)).toEqual(['call-1', 'call-2', 'call-3'])
+    expect(await resultOrder(harness, threadId)).toEqual(['call-1', 'call-2', 'call-3'])
   })
 
   it('appends results in call order even when they finish out of order', async () => {
     const harness = await openLog()
-    const branchId = await branchWithCalls({
+    const threadId = await branchWithCalls({
       harness,
       calls: [
         { callId: 'call-slow', name: 'read' },
@@ -161,15 +161,15 @@ describe('settling a step whose calls may share a batch', () => {
       tools: TOOLS,
     })
 
-    await settle({ branchId, signal: new AbortController().signal })
+    await settle({ threadId, signal: new AbortController().signal })
 
     expect(trace.finished).toEqual(['call-fast', 'call-slow'])
-    expect(await resultOrder(harness, branchId)).toEqual(['call-slow', 'call-fast'])
+    expect(await resultOrder(harness, threadId)).toEqual(['call-slow', 'call-fast'])
   })
 
   it('keeps a call that changes the world to itself', async () => {
     const harness = await openLog()
-    const branchId = await branchWithCalls({
+    const threadId = await branchWithCalls({
       harness,
       calls: [
         { callId: 'call-1', name: 'write' },
@@ -183,7 +183,7 @@ describe('settling a step whose calls may share a batch', () => {
       tools: TOOLS,
     })
 
-    await settle({ branchId, signal: new AbortController().signal })
+    await settle({ threadId, signal: new AbortController().signal })
 
     expect(trace.peakInFlight).toBe(1)
     expect(trace.finished).toEqual(['call-1', 'call-2'])
@@ -191,7 +191,7 @@ describe('settling a step whose calls may share a batch', () => {
 
   it('treats an unsafe call as a barrier the reads either side do not cross', async () => {
     const harness = await openLog()
-    const branchId = await branchWithCalls({
+    const threadId = await branchWithCalls({
       harness,
       calls: [
         { callId: 'read-a', name: 'read' },
@@ -207,7 +207,7 @@ describe('settling a step whose calls may share a batch', () => {
       tools: TOOLS,
     })
 
-    await settle({ branchId, signal: new AbortController().signal })
+    await settle({ threadId, signal: new AbortController().signal })
 
     expect(trace.peakInFlight).toBe(2)
     expect(trace.finished.indexOf('the-write')).toBeGreaterThan(trace.finished.indexOf('read-b'))
@@ -216,7 +216,7 @@ describe('settling a step whose calls may share a batch', () => {
 
   it('settles one at a time when it knows nothing about the tools', async () => {
     const harness = await openLog()
-    const branchId = await branchWithCalls({
+    const threadId = await branchWithCalls({
       harness,
       calls: [
         { callId: 'call-1', name: 'read' },
@@ -226,14 +226,14 @@ describe('settling a step whose calls may share a batch', () => {
     const trace = freshTrace()
     const settle = createSettlePending({ log: harness.log, dispatch: tracingDispatch({ trace }) })
 
-    await settle({ branchId, signal: new AbortController().signal })
+    await settle({ threadId, signal: new AbortController().signal })
 
     expect(trace.peakInFlight).toBe(1)
   })
 
   it('runs every safe call of a step at once, with no cap to open a second batch', async () => {
     const harness = await openLog()
-    const branchId = await branchWithCalls({
+    const threadId = await branchWithCalls({
       harness,
       calls: Array.from({ length: 24 }, (_, index) => ({ callId: `call-${index}`, name: 'read' })),
     })
@@ -244,15 +244,15 @@ describe('settling a step whose calls may share a batch', () => {
       tools: TOOLS,
     })
 
-    await settle({ branchId, signal: new AbortController().signal })
+    await settle({ threadId, signal: new AbortController().signal })
 
     expect(trace.peakInFlight).toBe(24)
-    expect(await resultOrder(harness, branchId)).toHaveLength(24)
+    expect(await resultOrder(harness, threadId)).toHaveLength(24)
   })
 
   it('pauses at the first approval in call order, keeping the results its batch-mates produced', async () => {
     const harness = await openLog()
-    const branchId = await branchWithCalls({
+    const threadId = await branchWithCalls({
       harness,
       calls: [
         { callId: 'call-1', name: 'read' },
@@ -273,15 +273,15 @@ describe('settling a step whose calls may share a batch', () => {
       tools: TOOLS,
     })
 
-    const settled = await settle({ branchId, signal: new AbortController().signal })
+    const settled = await settle({ threadId, signal: new AbortController().signal })
 
     expect(settled).toEqual({ paused: { callId: toCallId('call-asks'), reason: 'a human should look' } })
-    expect(await resultOrder(harness, branchId)).toEqual(['call-1', 'call-3'])
+    expect(await resultOrder(harness, threadId)).toEqual(['call-1', 'call-3'])
   })
 
   it('stops before the next batch once the signal is aborted', async () => {
     const harness = await openLog()
-    const branchId = await branchWithCalls({
+    const threadId = await branchWithCalls({
       harness,
       calls: [
         { callId: 'call-write', name: 'write' },
@@ -302,17 +302,17 @@ describe('settling a step whose calls may share a batch', () => {
       tools: TOOLS,
     })
 
-    await settle({ branchId, signal: controller.signal })
+    await settle({ threadId, signal: controller.signal })
 
     expect(trace.started).toEqual(['call-write'])
   })
 
   it('stamps every result of a batch with the run that emitted its own call', async () => {
     const harness = await openLog()
-    const branch = await harness.branches.create({})
+    const thread = await harness.threads.create({})
     const firstRun = harness.ids.nextRunId()
     await harness.log.append({
-      branchId: branch.id,
+      threadId: thread.id,
       runId: firstRun,
       drafts: [
         { type: 'user-said', text: 'go' },
@@ -322,7 +322,7 @@ describe('settling a step whose calls may share a batch', () => {
     })
     const secondRun = harness.ids.nextRunId()
     await harness.log.append({
-      branchId: branch.id,
+      threadId: thread.id,
       runId: secondRun,
       drafts: [{ type: 'tool-called', callId: toCallId('call-2'), name: 'read', input: {}, ordinal: 1 }],
     })
@@ -332,10 +332,10 @@ describe('settling a step whose calls may share a batch', () => {
       tools: TOOLS,
     })
 
-    await settle({ branchId: branch.id, signal: new AbortController().signal })
+    await settle({ threadId: thread.id, signal: new AbortController().signal })
 
     const stamped = new Map(
-      (await harness.log.read({ branchId: branch.id }))
+      (await harness.log.read({ threadId: thread.id }))
         .filter((event) => event.type === 'tool-result')
         .map((event) => [event.type === 'tool-result' ? String(event.callId) : '', event.runId]),
     )

@@ -23,7 +23,7 @@ drifting on rewind is permanent work. This is why no graph framework is used.
 ## Events
 
 ```ts
-type EventEnvelope = { id: string; seq: number; branchId: string; runId: string; at: string }
+type EventEnvelope = { id: string; seq: number; threadId: string; runId: string; at: string }
 type EventDraft = EventBody                      // what callers and hooks author
 type Event = EventBody & EventEnvelope           // what the log returns
 ```
@@ -80,7 +80,7 @@ type EventBody =
   behaviour and forced the core-loop spike to invent semantics that became load-bearing.
 - **`history-compacted` replaces the rows it names.** It stands at the sequence the compacted range
   ended on, and the rows at or below `throughSeq` are deleted in the same transaction — `context-loaded`
-  excepted, which is current content rather than history and would otherwise strip a branch's
+  excepted, which is current content rather than history and would otherwise strip a thread's
   instructions permanently. `replaced` is stored rather than derived precisely because the rows it
   counted are gone. This is the one event that is not purely additive, and the reason is that the
   transcript must show what the model can read: scrollback past a boundary the model cannot see makes
@@ -90,14 +90,14 @@ type EventBody =
   `CLAUDE.md` pulled in because a tool touched a directory beneath it, a skill body, MCP tool
   descriptions. `(slot, key)` names the thing; the content decides whether it is the same load.
 
-**`append` is idempotent on `(branchId, slot, key, content)` for `context-loaded`.** Otherwise every
+**`append` is idempotent on `(threadId, slot, key, content)` for `context-loaded`.** Otherwise every
 context-loading hook reimplements dedup, and one that forgets spams the prompt forever.
 
 **Content is part of the identity, and that is the correction that made reloading possible.** An
-earlier revision keyed on `(branchId, slot, key)` alone. The implementation of that was not an upsert
+earlier revision keyed on `(threadId, slot, key)` alone. The implementation of that was not an upsert
 but **first-write-wins** — re-offering a key with changed content returned the original event and
 discarded the new content — so a `CLAUDE.md` edited mid-session could never reach the model again on
-that branch, for the life of the branch, as a mechanical fact rather than a policy choice.
+that thread, for the life of the thread, as a mechanical fact rather than a policy choice.
 
 Keying on content instead gives every context source the same three properties without any of them
 implementing anything: re-offering unchanged content is a free no-op that leaves the prompt cache
@@ -107,10 +107,10 @@ Atlas the three separate transcript-scanning delta mechanisms Claude Code grew �
 instructions, deferred tools, and agent listings, whose own comments record them as copies of each
 other carrying the same bug.
 
-**Reuse is looked up across the composed view, not the branch's own rows, and that is what keeps a
+**Reuse is looked up across the composed view, not the thread's own rows, and that is what keeps a
 reference fork's cache alive.** A sub-agent inheriting its parent's prefix holds none of those rows itself,
-so a lookup scoped to `where: { branchId }` finds nothing, treats an unchanged `CLAUDE.md` as fresh, and
-appends a duplicate — the per-branch unique index does not stop it, because the child's `branchId` differs.
+so a lookup scoped to `where: { threadId }` finds nothing, treats an unchanged `CLAUDE.md` as fresh, and
+appends a duplicate — the per-thread unique index does not stop it, because the child's `threadId` differs.
 Nothing renders twice: `currentContextEvents` keys on `(slot, key)` without the digest and the last write
 wins, so the child's copy is the one the prompt carries. The damage is subtler than a duplicate. The file
 moves from the front of the conversation to the tail, so the composed prefix is no longer byte-identical to
@@ -128,44 +128,44 @@ keying on it directly so the unique index stays narrow.
 
 ```ts
 interface EventLog {
-  append(args: { branchId: string; runId: string; drafts: readonly EventDraft[] }): Promise<Event[]>
-  read(args: { branchId: string; upTo?: number }): Promise<Event[]>
-  head(args: { branchId: string }): Promise<number>
-  readOwn(args: { branchId: string; upTo?: number }): Promise<Event[]>
+  append(args: { threadId: string; runId: string; drafts: readonly EventDraft[] }): Promise<Event[]>
+  read(args: { threadId: string; upTo?: number }): Promise<Event[]>
+  head(args: { threadId: string }): Promise<number>
+  readOwn(args: { threadId: string; upTo?: number }): Promise<Event[]>
 }
 ```
 
-**`read` returns the composed view; `readOwn` returns the branch's own rows.** They are the same thing
-until a branch is forked by reference, at which point the child holds no copy of the prefix it inherits
+**`read` returns the composed view; `readOwn` returns the thread's own rows.** They are the same thing
+until a thread is forked by reference, at which point the child holds no copy of the prefix it inherits
 and `read` has to stitch the parent's rows up to the fork point onto the child's own. Two readers need
 the difference: assembly and the transcript want the composed view, because that is the conversation;
-anything reasoning about what this branch may *write* wants `readOwn`, because a child must never mutate
+anything reasoning about what this thread may *write* wants `readOwn`, because a child must never mutate
 a row it does not own.
 
-**Forking is not on this interface.** It writes a branch row and event rows together, so it has to be one
-transaction over both tables, and it lives on `BranchStorePort.fork({ from, seq, mode, title })` next to
+**Forking is not on this interface.** It writes a thread row and event rows together, so it has to be one
+transaction over both tables, and it lives on `ThreadStorePort.fork({ from, seq, mode, title })` next to
 `rewind` for that reason. `forkFrom` was specified here in an earlier revision and never implemented past
 a `throw`; the mode it lacked — copy for a fork the user keeps, reference for a sub-agent inheriting its
 parent's context — is the whole decision, so specifying it without one was specifying nothing.
 
-**A forked branch's sequences do not start at 1.** `Branch.head` is initialised to the fork point, so the
-child's own rows begin above it and `(branchId, seq)` stays unique per branch while the composed view stays
+**A forked thread's sequences do not start at 1.** `Thread.head` is initialised to the fork point, so the
+child's own rows begin above it and `(threadId, seq)` stays unique per thread while the composed view stays
 monotonic. Every guard that bounds a target therefore bounds against the first sequence actually present,
 not against zero — `rewindTarget` predates this and assumes a floor of 0, which is safe only because a
 rewind target below the first row deletes nothing.
 
-`seq` must be assigned under a per-branch unique constraint or a transaction — array length does not
+`seq` must be assigned under a per-thread unique constraint or a transaction — array length does not
 survive concurrency, and background agents mean two writers.
 
-### A row that will not decode costs one event, not the branch
+### A row that will not decode costs one event, not the thread
 
 Each stored row is decoded on its own. A row whose body is not JSON, whose body no longer matches
 `eventBodySchema`, or whose identifier columns will not pass the branded parsers is set aside as an
-unreadable row — `id`, `seq`, `branchId`, the stored `type`, and why it failed — instead of throwing
-the read. One body written by an older build would otherwise make the whole branch permanently
+unreadable row — `id`, `seq`, `threadId`, the stored `type`, and why it failed — instead of throwing
+the read. One body written by an older build would otherwise make the whole thread permanently
 unreadable, and the log is the authority for assembly, transcript and rewind alike.
 
-An unreadable row carries its identifiers as plain strings, not as `EventId` and `BranchId`. It is a
+An unreadable row carries its identifiers as plain strings, not as `EventId` and `ThreadId`. It is a
 record of a row that failed validation; branding it would assert the very thing that did not hold.
 It reports what the database held, unvalidated.
 
@@ -199,7 +199,7 @@ type Annotator = (input: Assembled, trace: AssemblyTrace, ctx: RuleContext) => A
 
 type RuleContext = {
   events: readonly Event[]
-  branchId: string
+  threadId: string
   step: number
   provider: { id: string; modelId: string }
   countTokens(value: Assembled): number
@@ -299,13 +299,13 @@ enum EStage { Guard, Policy, Observe }
 
 type HookOutcome = { additionalContext?: string; drafts?: readonly EventDraft[] }
 
-type BeforeTurn    = (args: { branchId: string }) => Promise<HookOutcome>
+type BeforeTurn    = (args: { threadId: string }) => Promise<HookOutcome>
 type BeforeStep    = (args: { assembled: Assembled; trace: AssemblyTrace }) => Promise<Assembled>  // persists
 type BeforeRequest = (p: ProviderPrompt) => Promise<ProviderPrompt>          // transient, per-provider
 type BeforeTool    = (args: { call: ToolCall }) => Promise<BeforeToolOutcome>
 type AfterTool     = (args: { call: ToolCall; result: ToolOutcome }) => Promise<HookOutcome>
 type OnChunk       = (c: Chunk) => Promise<Chunk | null>
-type AfterTurn     = (args: { branchId: string }) => Promise<HookOutcome>
+type AfterTurn     = (args: { threadId: string }) => Promise<HookOutcome>
 
 type ToolCall = { callId: string; name: string; input: unknown; effect: EToolEffect }
 ```
@@ -510,7 +510,7 @@ catches the next way in.
 **One fault is latent rather than live.** `OpensWithAssistant` is unreachable today, because `say`
 always appends `user-said` first and a log of only `assistant-said` makes `awaitsReply` false. It
 becomes reachable when `forkFrom` lands, which makes it a constraint on the rewind slice: **a fork
-point must never leave a branch whose first event is `assistant-said` or `tool-called`.**
+point must never leave a thread whose first event is `assistant-said` or `tool-called`.**
 
 ## Settled: core owns its message type
 

@@ -21,7 +21,7 @@ import {
   type TurnProgress,
 } from '../turn-progress'
 
-const STEP = toStepId('branch#1')
+const STEP = toStepId('thread#1')
 
 const chunk = (held: Chunk): ChannelSignal => ({ type: 'chunk', stepId: STEP, chunk: held })
 

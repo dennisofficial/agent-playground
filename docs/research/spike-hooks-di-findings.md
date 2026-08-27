@@ -49,7 +49,7 @@ by type means reading `design:paramtypes` plus `@Inject` overrides, which is pre
 libraries are. A plain registry only works if each hook hand-declares `static deps`, a per-hook edit.
 
 Nest still wins on: dozens of providers, lifecycle hooks (`onModuleDestroy` for the SQLite store and
-provider sessions), branch-scoped instances, and being already proven in Atlas.
+provider sessions), thread-scoped instances, and being already proven in Atlas.
 
 ## `bun build --compile`: three findings, one fatal
 
@@ -129,7 +129,7 @@ stage.
    found by the core-loop spike.
 2. **The signature has no context, so dedup leaks into every hook.** "Load `CLAUDE.md` once" is a
    question about the log, but `(call, output)` cannot see it, so the hook had to inject the log.
-   **Fix: make `append` idempotent on `(branchId, slot, key)`** — `context-loaded.key` already *is*
+   **Fix: make `append` idempotent on `(threadId, slot, key)`** — `context-loaded.key` already *is*
    the identity — and the hook goes back to stateless.
 
 What hooks wanted and could not do: fail the turn or annul a tool result; see a batch (ten parallel

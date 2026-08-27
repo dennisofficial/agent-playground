@@ -1,12 +1,12 @@
 import {
   compactionTarget,
-  type BranchId,
+  type ThreadId,
   type ECompactionRefusal,
   type Event,
   type EventLogPort,
 } from '@dltech/atlas-core'
 
-import type { BranchStorePort } from './branch-store'
+import type { ThreadStorePort } from './thread-store'
 
 export enum ECompactionFailure {
   Refused = 'refused',
@@ -22,22 +22,22 @@ export type Summarise = (args: {
   throughSeq: number
 }) => Promise<string | null>
 
-const NO_SUMMARY = 'the summariser returned nothing, so the branch was left as it was'
+const NO_SUMMARY = 'the summariser returned nothing, so the thread was left as it was'
 
-export async function compactBranch({
+export async function compactThread({
   log,
-  branches,
-  branchId,
+  threads,
+  threadId,
   throughSeq,
   summarise,
 }: {
   log: EventLogPort
-  branches: BranchStorePort
-  branchId: BranchId
+  threads: ThreadStorePort
+  threadId: ThreadId
   throughSeq: number
   summarise: Summarise
 }): Promise<CompactionOutcome> {
-  const events = await log.read({ branchId })
+  const events = await log.read({ threadId })
 
   const target = compactionTarget({ events, throughSeq })
   if (!target.allowed) {
@@ -54,7 +54,7 @@ export async function compactBranch({
     return { ok: false, failure: ECompactionFailure.NoSummary, reason: NO_SUMMARY }
   }
 
-  const replaced = await branches.compact({ branchId, throughSeq, summary })
+  const replaced = await threads.compact({ threadId, throughSeq, summary })
 
   return { ok: true, throughSeq, summary, replaced }
 }

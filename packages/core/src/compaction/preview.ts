@@ -25,7 +25,7 @@ export function eventsWithCompaction({
       replaced: events.length - kept.length,
       id: toEventId(PREVIEW_EVENT_ID),
       seq: throughSeq,
-      branchId: last.branchId,
+      threadId: last.threadId,
       runId: last.runId,
       depth: last.depth,
       at: last.at,

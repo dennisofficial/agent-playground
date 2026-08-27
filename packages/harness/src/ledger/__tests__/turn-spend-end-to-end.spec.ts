@@ -33,13 +33,13 @@ describe('a turn driven through the loop and read back out of SQLite', () => {
       dispatchMode: EDispatchMode.Auto,
     })
 
-    const outcome = await harness.runner.say({ branchId: harness.branchId, text: 'what changed?' })
+    const outcome = await harness.runner.say({ threadId: harness.threadId, text: 'what changed?' })
 
     expect(outcome.status).toBe(ETurnStatus.Completed)
     expect(await harness.recorded()).toMatchObject([
       {
         runId: outcome.runId,
-        branchId: harness.branchId,
+        threadId: harness.threadId,
         status: ETurnStatus.Completed,
         providerId: 'anthropic',
         modelId: 'claude-opus-5',
@@ -55,7 +55,7 @@ describe('a turn driven through the loop and read back out of SQLite', () => {
   it('gives the row a real duration and a pair of timestamps SQLite kept in order', async () => {
     const harness = await open({ script: [{ text: 'done', usage: usage(1_000) }] })
 
-    await harness.runner.say({ branchId: harness.branchId, text: 'go' })
+    await harness.runner.say({ threadId: harness.threadId, text: 'go' })
 
     const row = (await harness.recorded())[0]
     expect(row).toBeDefined()
@@ -64,13 +64,13 @@ describe('a turn driven through the loop and read back out of SQLite', () => {
     expect(row?.durationMs).toBeGreaterThanOrEqual(0)
   })
 
-  it('keeps one row per turn across several turns on one branch', async () => {
+  it('keeps one row per turn across several turns on one thread', async () => {
     const harness = await open({
       script: [{ text: 'first', usage: usage(200) }, { text: 'second', usage: usage(400) }],
     })
 
-    const first = await harness.runner.say({ branchId: harness.branchId, text: 'one' })
-    const second = await harness.runner.say({ branchId: harness.branchId, text: 'two' })
+    const first = await harness.runner.say({ threadId: harness.threadId, text: 'one' })
+    const second = await harness.runner.say({ threadId: harness.threadId, text: 'two' })
 
     const rows = await harness.recorded()
     expect(rows).toHaveLength(2)
@@ -88,7 +88,7 @@ describe('a turn driven through the loop and read back out of SQLite', () => {
     })
 
     await expect(
-      harness.runner.say({ branchId: harness.branchId, text: 'what changed?' }),
+      harness.runner.say({ threadId: harness.threadId, text: 'what changed?' }),
     ).rejects.toThrow('the loop threw')
 
     const rows = await harness.recorded()
@@ -101,7 +101,7 @@ describe('a turn driven through the loop and read back out of SQLite', () => {
   it('writes nothing at all for a turn that never reached the model', async () => {
     const harness = await open({ script: [] })
 
-    const outcome = await harness.runner.runTurn({ branchId: harness.branchId })
+    const outcome = await harness.runner.runTurn({ threadId: harness.threadId })
 
     expect(outcome.status).toBe(ETurnStatus.Idle)
     expect(await harness.recorded()).toEqual([])

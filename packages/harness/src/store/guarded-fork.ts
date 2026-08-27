@@ -1,43 +1,43 @@
 import {
   forkTarget,
-  type BranchId,
+  type ThreadId,
   type EForkMode,
   type EForkRefusal,
   type EventLogPort,
 } from '@dltech/atlas-core'
 
-import type { BranchStorePort, BranchSummary } from './branch-store'
+import type { ThreadStorePort, ThreadSummary } from './thread-store'
 
 export type ForkResult =
-  | { ok: true; branch: BranchSummary; inherited: number }
+  | { ok: true; thread: ThreadSummary; inherited: number }
   | { ok: false; refusal: EForkRefusal; reason: string }
 
 export async function forkConversation({
   log,
-  branches,
-  branchId,
+  threads,
+  threadId,
   seq,
   mode,
   title,
 }: {
   log: EventLogPort
-  branches: BranchStorePort
-  branchId: BranchId
+  threads: ThreadStorePort
+  threadId: ThreadId
   seq: number
   mode: EForkMode
   title?: string | undefined
 }): Promise<ForkResult> {
-  const events = await log.read({ branchId })
+  const events = await log.read({ threadId })
 
   const target = forkTarget({ events, seq, mode })
   if (!target.allowed) return { ok: false, refusal: target.refusal, reason: target.reason }
 
-  const branch = await branches.fork({
-    from: branchId,
+  const thread = await threads.fork({
+    from: threadId,
     seq,
     mode,
     ...(title === undefined ? {} : { title }),
   })
 
-  return { ok: true, branch, inherited: events.filter((event) => event.seq <= seq).length }
+  return { ok: true, thread, inherited: events.filter((event) => event.seq <= seq).length }
 }

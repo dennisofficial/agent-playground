@@ -6,7 +6,7 @@ export function withDeltaPublishing(args: { log: EventLogPort; channel: DeltaCha
   return {
     async append(appendArgs) {
       const events = await args.log.append(appendArgs)
-      args.channel.publisherFor({ branchId: appendArgs.branchId }).settleAppend({ events })
+      args.channel.publisherFor({ threadId: appendArgs.threadId }).settleAppend({ events })
       return events
     },
 

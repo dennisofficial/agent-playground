@@ -6,12 +6,12 @@ import {
   ERewindRefusal,
   toCallId,
   toRunId,
-  type BranchId,
+  type ThreadId,
   type EventDraft,
 } from '@dltech/atlas-core'
 
 import { forkConversation } from '../guarded-fork'
-import { rewindBranch } from '../rewind'
+import { rewindThread } from '../rewind'
 import { openStoreFixture, type StoreFixture } from './harness'
 
 let fixture: StoreFixture
@@ -37,18 +37,18 @@ const resulted: EventDraft = {
   output: { ok: true },
 }
 
-const openBranch = async (drafts: readonly EventDraft[]): Promise<BranchId> => {
+const openThread = async (drafts: readonly EventDraft[]): Promise<ThreadId> => {
   fixture = await openStoreFixture()
-  const branch = await fixture.branches.create({ title: 'work' })
-  await fixture.log.append({ branchId: branch.id, runId, drafts })
-  return branch.id
+  const thread = await fixture.threads.create({ title: 'work' })
+  await fixture.log.append({ threadId: thread.id, runId, drafts })
+  return thread.id
 }
 
-const forkAt = (args: { branchId: BranchId; seq: number; mode: EForkMode }) =>
+const forkAt = (args: { threadId: ThreadId; seq: number; mode: EForkMode }) =>
   forkConversation({
     log: fixture.log,
-    branches: fixture.branches,
-    branchId: args.branchId,
+    threads: fixture.threads,
+    threadId: args.threadId,
     seq: args.seq,
     mode: args.mode,
   })
@@ -58,72 +58,72 @@ afterEach(async () => {
 })
 
 describe('forkConversation', () => {
-  it('refuses a fork that would hand the new branch an unsettled call to run again', async () => {
-    const branchId = await openBranch([said('clean the build'), called])
+  it('refuses a fork that would hand the new thread an unsettled call to run again', async () => {
+    const threadId = await openThread([said('clean the build'), called])
 
-    const forked = await forkAt({ branchId, seq: 2, mode: EForkMode.Copy })
+    const forked = await forkAt({ threadId, seq: 2, mode: EForkMode.Copy })
 
     expect(forked.ok).toBe(false)
     expect(forked.ok === false && forked.refusal).toBe(EForkRefusal.UnsettledToolCall)
   })
 
-  it('creates no branch when the guard refuses', async () => {
-    const branchId = await openBranch([said('clean the build'), called])
-    const before = await fixture.branches.mostRecent()
+  it('creates no thread when the guard refuses', async () => {
+    const threadId = await openThread([said('clean the build'), called])
+    const before = await fixture.threads.mostRecent()
 
-    await forkAt({ branchId, seq: 2, mode: EForkMode.Copy })
+    await forkAt({ threadId, seq: 2, mode: EForkMode.Copy })
 
-    expect((await fixture.branches.mostRecent())?.id).toBe(before?.id)
+    expect((await fixture.threads.mostRecent())?.id).toBe(before?.id)
   })
 
   it('copies the inherited prefix into a copy fork and leaves the parent whole', async () => {
-    const branchId = await openBranch([said('clean the build'), called, resulted, replied('done')])
+    const threadId = await openThread([said('clean the build'), called, resulted, replied('done')])
 
-    const forked = await forkAt({ branchId, seq: 3, mode: EForkMode.Copy })
+    const forked = await forkAt({ threadId, seq: 3, mode: EForkMode.Copy })
     if (!forked.ok) throw new Error(forked.reason)
 
     expect(forked.inherited).toBe(3)
-    expect((await fixture.log.readOwn({ branchId: forked.branch.id })).map((e) => e.seq)).toEqual([1, 2, 3])
-    expect((await fixture.log.read({ branchId })).length).toBe(4)
+    expect((await fixture.log.readOwn({ threadId: forked.thread.id })).map((e) => e.seq)).toEqual([1, 2, 3])
+    expect((await fixture.log.read({ threadId })).length).toBe(4)
   })
 
   it('copies nothing into a reference fork but reads the inherited prefix through it', async () => {
-    const branchId = await openBranch([said('clean the build'), called, resulted, replied('done')])
+    const threadId = await openThread([said('clean the build'), called, resulted, replied('done')])
 
-    const forked = await forkAt({ branchId, seq: 3, mode: EForkMode.Reference })
+    const forked = await forkAt({ threadId, seq: 3, mode: EForkMode.Reference })
     if (!forked.ok) throw new Error(forked.reason)
 
-    expect(await fixture.log.readOwn({ branchId: forked.branch.id })).toEqual([])
-    expect((await fixture.log.read({ branchId: forked.branch.id })).map((e) => e.seq)).toEqual([1, 2, 3])
+    expect(await fixture.log.readOwn({ threadId: forked.thread.id })).toEqual([])
+    expect((await fixture.log.read({ threadId: forked.thread.id })).map((e) => e.seq)).toEqual([1, 2, 3])
   })
 
   it('continues the sequence above the fork point on both kinds of fork', async () => {
-    const branchId = await openBranch([said('clean the build'), called, resulted, replied('done')])
+    const threadId = await openThread([said('clean the build'), called, resulted, replied('done')])
 
     for (const mode of [EForkMode.Copy, EForkMode.Reference]) {
-      const forked = await forkAt({ branchId, seq: 3, mode })
+      const forked = await forkAt({ threadId, seq: 3, mode })
       if (!forked.ok) throw new Error(forked.reason)
 
       const [appended] = await fixture.log.append({
-        branchId: forked.branch.id,
+        threadId: forked.thread.id,
         runId,
         drafts: [said('and now this')],
       })
 
       expect(appended?.seq).toBe(4)
-      expect((await fixture.log.read({ branchId: forked.branch.id })).map((e) => e.seq)).toEqual([1, 2, 3, 4])
+      expect((await fixture.log.read({ threadId: forked.thread.id })).map((e) => e.seq)).toEqual([1, 2, 3, 4])
     }
   })
 
   it('leaves the parent untouched when the child is written to', async () => {
-    const branchId = await openBranch([said('clean the build'), replied('done')])
+    const threadId = await openThread([said('clean the build'), replied('done')])
 
-    const forked = await forkAt({ branchId, seq: 2, mode: EForkMode.Reference })
+    const forked = await forkAt({ threadId, seq: 2, mode: EForkMode.Reference })
     if (!forked.ok) throw new Error(forked.reason)
 
-    await fixture.log.append({ branchId: forked.branch.id, runId, drafts: [said('child only')] })
+    await fixture.log.append({ threadId: forked.thread.id, runId, drafts: [said('child only')] })
 
-    expect((await fixture.log.readOwn({ branchId })).map((e) => e.seq)).toEqual([1, 2])
+    expect((await fixture.log.readOwn({ threadId })).map((e) => e.seq)).toEqual([1, 2])
   })
 })
 
@@ -136,50 +136,50 @@ const loadedClaudeMd: EventDraft = {
 
 describe('loaded context across a reference fork', () => {
   it('reuses the parent row when the child re-offers unchanged content, so the inherited prefix stays byte-identical', async () => {
-    const branchId = await openBranch([loadedClaudeMd, said('build the parser'), replied('done')])
+    const threadId = await openThread([loadedClaudeMd, said('build the parser'), replied('done')])
 
-    const forked = await forkAt({ branchId, seq: 3, mode: EForkMode.Reference })
+    const forked = await forkAt({ threadId, seq: 3, mode: EForkMode.Reference })
     if (!forked.ok) throw new Error(forked.reason)
 
     const [reoffered] = await fixture.log.append({
-      branchId: forked.branch.id,
+      threadId: forked.thread.id,
       runId,
       drafts: [loadedClaudeMd],
     })
 
     expect(reoffered?.seq).toBe(1)
-    expect(await fixture.log.readOwn({ branchId: forked.branch.id })).toEqual([])
-    expect((await fixture.log.read({ branchId: forked.branch.id })).map((e) => e.seq)).toEqual([1, 2, 3])
+    expect(await fixture.log.readOwn({ threadId: forked.thread.id })).toEqual([])
+    expect((await fixture.log.read({ threadId: forked.thread.id })).map((e) => e.seq)).toEqual([1, 2, 3])
   })
 
   it('appends a fresh row on the child when the content actually changed', async () => {
-    const branchId = await openBranch([loadedClaudeMd, said('build the parser')])
+    const threadId = await openThread([loadedClaudeMd, said('build the parser')])
 
-    const forked = await forkAt({ branchId, seq: 2, mode: EForkMode.Reference })
+    const forked = await forkAt({ threadId, seq: 2, mode: EForkMode.Reference })
     if (!forked.ok) throw new Error(forked.reason)
 
     await fixture.log.append({
-      branchId: forked.branch.id,
+      threadId: forked.thread.id,
       runId,
       drafts: [{ ...loadedClaudeMd, content: 'Never use as any. Also no comments.' }],
     })
 
-    expect((await fixture.log.readOwn({ branchId: forked.branch.id })).length).toBe(1)
+    expect((await fixture.log.readOwn({ threadId: forked.thread.id })).length).toBe(1)
   })
 })
 
 describe('rewinding across a fork boundary', () => {
   it('refuses to rewind a reference fork into the prefix it inherited rather than owns', async () => {
-    const branchId = await openBranch([said('one'), replied('two'), said('three')])
+    const threadId = await openThread([said('one'), replied('two'), said('three')])
 
-    const forked = await forkAt({ branchId, seq: 3, mode: EForkMode.Reference })
+    const forked = await forkAt({ threadId, seq: 3, mode: EForkMode.Reference })
     if (!forked.ok) throw new Error(forked.reason)
-    await fixture.log.append({ branchId: forked.branch.id, runId, drafts: [said('four')] })
+    await fixture.log.append({ threadId: forked.thread.id, runId, drafts: [said('four')] })
 
-    const rewound = await rewindBranch({
+    const rewound = await rewindThread({
       log: fixture.log,
-      branches: fixture.branches,
-      branchId: forked.branch.id,
+      threads: fixture.threads,
+      threadId: forked.thread.id,
       toSeq: 1,
     })
 
@@ -188,36 +188,36 @@ describe('rewinding across a fork boundary', () => {
   })
 
   it('leaves the sequence space intact, so a later append cannot collide with an inherited row', async () => {
-    const branchId = await openBranch([said('one'), replied('two'), said('three')])
+    const threadId = await openThread([said('one'), replied('two'), said('three')])
 
-    const forked = await forkAt({ branchId, seq: 3, mode: EForkMode.Reference })
+    const forked = await forkAt({ threadId, seq: 3, mode: EForkMode.Reference })
     if (!forked.ok) throw new Error(forked.reason)
-    await fixture.log.append({ branchId: forked.branch.id, runId, drafts: [said('four')] })
+    await fixture.log.append({ threadId: forked.thread.id, runId, drafts: [said('four')] })
 
-    await rewindBranch({
+    await rewindThread({
       log: fixture.log,
-      branches: fixture.branches,
-      branchId: forked.branch.id,
+      threads: fixture.threads,
+      threadId: forked.thread.id,
       toSeq: 1,
     })
-    await fixture.log.append({ branchId: forked.branch.id, runId, drafts: [said('five')] })
+    await fixture.log.append({ threadId: forked.thread.id, runId, drafts: [said('five')] })
 
-    const seqs = (await fixture.log.read({ branchId: forked.branch.id })).map((event) => event.seq)
+    const seqs = (await fixture.log.read({ threadId: forked.thread.id })).map((event) => event.seq)
     expect(seqs).toEqual([...seqs].sort((left, right) => left - right))
     expect(new Set(seqs).size).toBe(seqs.length)
   })
 
   it('still rewinds a reference fork down to its own first sequence', async () => {
-    const branchId = await openBranch([said('one'), replied('two'), said('three')])
+    const threadId = await openThread([said('one'), replied('two'), said('three')])
 
-    const forked = await forkAt({ branchId, seq: 3, mode: EForkMode.Reference })
+    const forked = await forkAt({ threadId, seq: 3, mode: EForkMode.Reference })
     if (!forked.ok) throw new Error(forked.reason)
-    await fixture.log.append({ branchId: forked.branch.id, runId, drafts: [said('four')] })
+    await fixture.log.append({ threadId: forked.thread.id, runId, drafts: [said('four')] })
 
-    const rewound = await rewindBranch({
+    const rewound = await rewindThread({
       log: fixture.log,
-      branches: fixture.branches,
-      branchId: forked.branch.id,
+      threads: fixture.threads,
+      threadId: forked.thread.id,
       toSeq: 3,
     })
 
@@ -225,33 +225,33 @@ describe('rewinding across a fork boundary', () => {
   })
 
   it('lets a copy fork rewind below the fork point, because it owns every row it holds', async () => {
-    const branchId = await openBranch([said('one'), replied('two'), said('three')])
+    const threadId = await openThread([said('one'), replied('two'), said('three')])
 
-    const forked = await forkAt({ branchId, seq: 3, mode: EForkMode.Copy })
+    const forked = await forkAt({ threadId, seq: 3, mode: EForkMode.Copy })
     if (!forked.ok) throw new Error(forked.reason)
 
-    const rewound = await rewindBranch({
+    const rewound = await rewindThread({
       log: fixture.log,
-      branches: fixture.branches,
-      branchId: forked.branch.id,
+      threads: fixture.threads,
+      threadId: forked.thread.id,
       toSeq: 1,
     })
 
     expect(rewound).toEqual({ ok: true, discarded: 2 })
-    expect((await fixture.log.readOwn({ branchId })).length).toBe(3)
+    expect((await fixture.log.readOwn({ threadId })).length).toBe(3)
   })
 
   it('counts only the rows it deleted, not the inherited ones it left alone', async () => {
-    const branchId = await openBranch([said('one'), replied('two'), said('three')])
+    const threadId = await openThread([said('one'), replied('two'), said('three')])
 
-    const forked = await forkAt({ branchId, seq: 3, mode: EForkMode.Reference })
+    const forked = await forkAt({ threadId, seq: 3, mode: EForkMode.Reference })
     if (!forked.ok) throw new Error(forked.reason)
-    await fixture.log.append({ branchId: forked.branch.id, runId, drafts: [said('four'), said('five')] })
+    await fixture.log.append({ threadId: forked.thread.id, runId, drafts: [said('four'), said('five')] })
 
-    const rewound = await rewindBranch({
+    const rewound = await rewindThread({
       log: fixture.log,
-      branches: fixture.branches,
-      branchId: forked.branch.id,
+      threads: fixture.threads,
+      threadId: forked.thread.id,
       toSeq: 4,
     })
 

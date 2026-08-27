@@ -5,7 +5,7 @@ import { createDeltaChannel, EStepEnd, type DeltaChannel } from '@dltech/atlas-h
 
 import { createConversationStore, type ConversationStore } from '../conversation-store'
 import { EEntryKind } from '../transcript-model'
-import { fixtureBranchId, log } from './fixture'
+import { fixtureThreadId, log } from './fixture'
 
 const textOf = (store: ConversationStore) => store.getSnapshot().entries.map((entry) => entry.text)
 
@@ -21,10 +21,10 @@ describe('the conversation store', () => {
 
   beforeEach(() => {
     channel = createDeltaChannel()
-    store = createConversationStore({ channel, branchId: fixtureBranchId })
+    store = createConversationStore({ channel, threadId: fixtureThreadId })
   })
 
-  it('opens on a usable empty transcript for a branch with nothing in it', () => {
+  it('opens on a usable empty transcript for a thread with nothing in it', () => {
     expect(store.getSnapshot().isEmpty).toBe(true)
     expect(store.getSnapshot().entries).toEqual([])
   })
@@ -46,7 +46,7 @@ describe('the conversation store', () => {
 
     store.setEvents(log([{ type: 'user-said', text: 'hello' }]))
     const afterEvents = notices
-    channel.publisherFor({ branchId: fixtureBranchId }).onChunk({ type: 'text-delta', id: 'b1', text: 'hi' })
+    channel.publisherFor({ threadId: fixtureThreadId }).onChunk({ type: 'text-delta', id: 'b1', text: 'hi' })
 
     expect(afterEvents).toBeGreaterThan(0)
     expect(notices).toBeGreaterThan(afterEvents)
@@ -63,7 +63,7 @@ describe('the conversation store', () => {
     if (reply === undefined) throw new Error('fixture lost its reply')
 
     store.setEvents(question)
-    const publisher = channel.publisherFor({ branchId: fixtureBranchId })
+    const publisher = channel.publisherFor({ threadId: fixtureThreadId })
     publisher.onChunk({ type: 'text-delta', id: 'b1', text: 'hi ' })
     publisher.onChunk({ type: 'text-delta', id: 'b1', text: 'there' })
 
@@ -81,18 +81,18 @@ describe('the conversation store', () => {
     const reply = durable[0]
     if (reply === undefined) throw new Error('fixture lost its reply')
 
-    const publisher = channel.publisherFor({ branchId: fixtureBranchId })
+    const publisher = channel.publisherFor({ threadId: fixtureThreadId })
     publisher.onChunk({ type: 'text-delta', id: 'b1', text: 'done' })
     publisher.settleAppend({ events: [reply] })
     store.setEvents(durable)
-    channel.publisherFor({ branchId: fixtureBranchId }).onChunk({ type: 'text-delta', id: 'b2', text: 'again' })
+    channel.publisherFor({ threadId: fixtureThreadId }).onChunk({ type: 'text-delta', id: 'b2', text: 'again' })
 
     expect(textOf(store)).toEqual(['done', 'again'])
   })
 
   it('stops following the channel once disposed', () => {
     store.dispose()
-    channel.publisherFor({ branchId: fixtureBranchId }).onChunk({ type: 'text-delta', id: 'b1', text: 'hi' })
+    channel.publisherFor({ threadId: fixtureThreadId }).onChunk({ type: 'text-delta', id: 'b1', text: 'hi' })
 
     expect(store.getSnapshot().isEmpty).toBe(true)
   })
@@ -104,11 +104,11 @@ describe('a failure the store is holding on screen', () => {
 
   beforeEach(() => {
     channel = createDeltaChannel()
-    store = createConversationStore({ channel, branchId: fixtureBranchId })
+    store = createConversationStore({ channel, threadId: fixtureThreadId })
   })
 
   const failAStep = () => {
-    const publisher = channel.publisherFor({ branchId: fixtureBranchId })
+    const publisher = channel.publisherFor({ threadId: fixtureThreadId })
     publisher.onChunk({ type: 'text-delta', id: 'b1', text: 'part way' })
     publisher.onChunk({ type: 'error', message: 'The operation timed out.' })
     publisher.close({ end: EStepEnd.Failed })

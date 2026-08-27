@@ -69,7 +69,7 @@ describe('a message sent while the turn was still running', () => {
     ])
   })
 
-  it('leaves an ordinary opening message unmarked on a branch with no tools at all', () => {
+  it('leaves an ordinary opening message unmarked on a thread with no tools at all', () => {
     const events = log([
       { type: 'user-said', text: 'what derives the prompt' },
       { type: 'assistant-said', parts: [{ type: 'text', text: 'The log does.' }] },

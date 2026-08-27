@@ -1,4 +1,4 @@
-import { EForkMode, toBranchId, type BranchId } from '@dltech/atlas-core'
+import { EForkMode, toThreadId, type ThreadId } from '@dltech/atlas-core'
 
 import type { Prisma, PrismaClient } from '../../prisma/generated/client'
 import type { EventRow } from './event-row'
@@ -6,30 +6,30 @@ import type { EventRow } from './event-row'
 const REFERENCE_CHAIN_LIMIT = 8
 
 export class ForkChainTooDeep extends Error {
-  constructor({ branchId, limit }: { branchId: BranchId; limit: number }) {
+  constructor({ threadId, limit }: { threadId: ThreadId; limit: number }) {
     super(
-      `reading ${branchId} walked more than ${limit} reference forks, which is either a cycle or a nesting depth Atlas does not support`,
+      `reading ${threadId} walked more than ${limit} reference forks, which is either a cycle or a nesting depth Atlas does not support`,
     )
     this.name = 'ForkChainTooDeep'
   }
 }
 
-type Reader = Pick<PrismaClient, 'branch' | 'event'> | Prisma.TransactionClient
+type Reader = Pick<PrismaClient, 'thread' | 'event'> | Prisma.TransactionClient
 
 export async function readOwnRows({
   prisma,
-  branchId,
+  threadId,
   upTo,
   type,
 }: {
   prisma: Reader
-  branchId: BranchId
+  threadId: ThreadId
   upTo?: number | undefined
   type?: string | undefined
 }): Promise<EventRow[]> {
   return prisma.event.findMany({
     where: {
-      branchId,
+      threadId,
       ...(upTo === undefined ? {} : { seq: { lte: upTo } }),
       ...(type === undefined ? {} : { type }),
     },
@@ -39,23 +39,23 @@ export async function readOwnRows({
 
 export async function readComposedRows({
   prisma,
-  branchId,
+  threadId,
   upTo,
   type,
 }: {
   prisma: Reader
-  branchId: BranchId
+  threadId: ThreadId
   upTo?: number | undefined
   type?: string | undefined
 }): Promise<EventRow[]> {
-  const segments = await planSegments({ prisma, branchId, upTo })
+  const segments = await planSegments({ prisma, threadId, upTo })
 
   const composed: EventRow[] = []
   for (const segment of segments) {
     composed.push(
       ...(await readOwnRows({
         prisma,
-        branchId: segment.branchId,
+        threadId: segment.threadId,
         upTo: segment.upTo,
         ...(type === undefined ? {} : { type }),
       })),
@@ -64,48 +64,48 @@ export async function readComposedRows({
   return composed
 }
 
-type Segment = { branchId: BranchId; upTo: number | undefined }
+type Segment = { threadId: ThreadId; upTo: number | undefined }
 
 async function planSegments({
   prisma,
-  branchId,
+  threadId,
   upTo,
 }: {
   prisma: Reader
-  branchId: BranchId
+  threadId: ThreadId
   upTo?: number | undefined
 }): Promise<Segment[]> {
   const segments: Segment[] = []
-  let segment: Segment = { branchId, upTo }
+  let segment: Segment = { threadId, upTo }
 
   for (let hop = 0; hop < REFERENCE_CHAIN_LIMIT; hop += 1) {
     segments.unshift(segment)
 
-    const inherited = await inheritedPrefixOf({ prisma, branchId: segment.branchId })
+    const inherited = await inheritedPrefixOf({ prisma, threadId: segment.threadId })
     if (inherited === undefined) return segments
 
     segment = {
-      branchId: inherited.branchId,
+      threadId: inherited.threadId,
       upTo: segment.upTo === undefined ? inherited.forkSeq : Math.min(segment.upTo, inherited.forkSeq),
     }
   }
 
-  throw new ForkChainTooDeep({ branchId, limit: REFERENCE_CHAIN_LIMIT })
+  throw new ForkChainTooDeep({ threadId, limit: REFERENCE_CHAIN_LIMIT })
 }
 
 async function inheritedPrefixOf({
   prisma,
-  branchId,
+  threadId,
 }: {
   prisma: Reader
-  branchId: BranchId
-}): Promise<{ branchId: BranchId; forkSeq: number } | undefined> {
-  const link = await prisma.branch.findUnique({
-    where: { id: branchId },
-    select: { parentBranchId: true, forkSeq: true, forkMode: true },
+  threadId: ThreadId
+}): Promise<{ threadId: ThreadId; forkSeq: number } | undefined> {
+  const link = await prisma.thread.findUnique({
+    where: { id: threadId },
+    select: { parentThreadId: true, forkSeq: true, forkMode: true },
   })
   if (link === null) return undefined
   if (link.forkMode !== EForkMode.Reference) return undefined
-  if (link.parentBranchId === null || link.forkSeq === null) return undefined
-  return { branchId: toBranchId(link.parentBranchId), forkSeq: link.forkSeq }
+  if (link.parentThreadId === null || link.forkSeq === null) return undefined
+  return { threadId: toThreadId(link.parentThreadId), forkSeq: link.forkSeq }
 }

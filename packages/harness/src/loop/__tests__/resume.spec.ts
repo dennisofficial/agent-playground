@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import type { MockLanguageModelV4 } from 'ai/test'
 
-import type { BranchId } from '@dltech/atlas-core'
+import type { ThreadId } from '@dltech/atlas-core'
 
 import { buildHarness, ETurnStatus, type AtlasHarness } from '..'
 import { scriptedModel, type ScriptedStep } from '../../model/testing/scripted-model'
@@ -31,22 +31,22 @@ const promptText = (model: MockLanguageModelV4, call: number): string =>
 describe('a conversation that outlives the process that started it', () => {
   it('continues from nothing but the database file, driven by a different script', async () => {
     const first = await attach([{ text: 'auth and the router' }])
-    const branch = await first.harness.branches.create({})
-    const opened = await first.harness.runner.say({ branchId: branch.id, text: 'what changed?' })
+    const thread = await first.harness.threads.create({})
+    const opened = await first.harness.runner.say({ threadId: thread.id, text: 'what changed?' })
     expect(opened.status).toBe(ETurnStatus.Completed)
     await first.release()
 
     const second = await attach([{ text: 'because the token expired' }])
-    const recovered = await second.harness.branches.mostRecent()
-    if (recovered === undefined) throw new Error('the database remembered no branch')
+    const recovered = await second.harness.threads.mostRecent()
+    if (recovered === undefined) throw new Error('the database remembered no thread')
 
-    const outcome = await second.harness.runner.say({ branchId: recovered.id, text: 'why?' })
+    const outcome = await second.harness.runner.say({ threadId: recovered.id, text: 'why?' })
 
     expect(outcome.status).toBe(ETurnStatus.Completed)
     expect(promptText(second.model, 0)).toContain('what changed?')
     expect(promptText(second.model, 0)).toContain('auth and the router')
 
-    const events = await second.harness.log.read({ branchId: recovered.id })
+    const events = await second.harness.log.read({ threadId: recovered.id })
     expect(events.map((event) => event.type)).toEqual([
       'user-said',
       'assistant-said',
@@ -63,45 +63,45 @@ describe('a conversation that outlives the process that started it', () => {
 
   it('finishes a reply the previous process died before writing', async () => {
     const first = await attach([])
-    const branch: BranchId = (await first.harness.branches.create({})).id
+    const thread: ThreadId = (await first.harness.threads.create({})).id
     await first.harness.log.append({
-      branchId: branch,
+      threadId: thread,
       runId: first.harness.ids.nextRunId(),
       drafts: [{ type: 'user-said', text: 'what changed?' }],
     })
     await first.release()
 
     const second = await attach([{ text: 'auth and the router' }])
-    const outcome = await second.harness.runner.runTurn({ branchId: branch })
+    const outcome = await second.harness.runner.runTurn({ threadId: thread })
 
     expect(outcome.status).toBe(ETurnStatus.Completed)
     expect(promptText(second.model, 0)).toContain('what changed?')
-    const events = await second.harness.log.read({ branchId: branch })
+    const events = await second.harness.log.read({ threadId: thread })
     expect(events.map((event) => event.type)).toEqual(['user-said', 'assistant-said'])
     await second.release()
   })
 
   it('carries a thinking signature written by one process into the next process prompt', async () => {
     const first = await attach([{ reasoning: { text: 'checking the diff', signature: 'sig-abc' }, text: 'two files' }])
-    const branch = (await first.harness.branches.create({})).id
-    await first.harness.runner.say({ branchId: branch, text: 'what changed?' })
+    const thread = (await first.harness.threads.create({})).id
+    await first.harness.runner.say({ threadId: thread, text: 'what changed?' })
     await first.release()
 
     const second = await attach([{ text: 'because the token expired' }])
-    await second.harness.runner.say({ branchId: branch, text: 'why?' })
+    await second.harness.runner.say({ threadId: thread, text: 'why?' })
 
     expect(promptText(second.model, 0)).toContain('sig-abc')
     await second.release()
   })
 
-  it('does nothing on a reopened branch whose last word was the model', async () => {
+  it('does nothing on a reopened thread whose last word was the model', async () => {
     const first = await attach([{ text: 'auth and the router' }])
-    const branch = (await first.harness.branches.create({})).id
-    await first.harness.runner.say({ branchId: branch, text: 'what changed?' })
+    const thread = (await first.harness.threads.create({})).id
+    await first.harness.runner.say({ threadId: thread, text: 'what changed?' })
     await first.release()
 
     const second = await attach([{ text: 'unreachable' }])
-    const outcome = await second.harness.runner.runTurn({ branchId: branch })
+    const outcome = await second.harness.runner.runTurn({ threadId: thread })
 
     expect(outcome.status).toBe(ETurnStatus.Idle)
     expect(second.model.doStreamCalls).toHaveLength(0)

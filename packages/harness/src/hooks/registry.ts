@@ -9,7 +9,7 @@ import {
   type BeforeStep,
   type BeforeTool,
   type BeforeTurn,
-  type BranchId,
+  type ThreadId,
   type Chunk,
   type EventDraft,
   type HookOrder,
@@ -20,7 +20,7 @@ import {
 
 export type RegisteredHook<TPhase> = { name: string; order: HookOrder; run: TPhase }
 
-export type BranchScopedOutcome = (args: { branchId: BranchId }) => Promise<HookOutcome>
+export type ThreadScopedOutcome = (args: { threadId: ThreadId }) => Promise<HookOutcome>
 
 export type HookChainArgs = {
   beforeTurn?: readonly RegisteredHook<BeforeTurn>[] | undefined
@@ -33,13 +33,13 @@ export type HookChainArgs = {
 }
 
 async function collectDrafts(args: {
-  hooks: readonly RegisteredHook<BranchScopedOutcome>[]
-  branchId: BranchId
+  hooks: readonly RegisteredHook<ThreadScopedOutcome>[]
+  threadId: ThreadId
 }): Promise<readonly EventDraft[]> {
   const drafts: EventDraft[] = []
 
   for (const hook of args.hooks) {
-    const outcome = await hook.run({ branchId: args.branchId })
+    const outcome = await hook.run({ threadId: args.threadId })
     drafts.push(...hookOutcomeDrafts({ hookName: hook.name, outcome }))
   }
 
@@ -50,11 +50,11 @@ export class HookChain {
   readonly beforeTool: readonly RegisteredHook<BeforeTool>[]
   readonly afterTool: readonly RegisteredHook<AfterTool>[]
 
-  private readonly beforeTurnHooks: readonly RegisteredHook<BranchScopedOutcome>[]
+  private readonly beforeTurnHooks: readonly RegisteredHook<ThreadScopedOutcome>[]
   private readonly beforeStepHooks: readonly RegisteredHook<BeforeStep>[]
   private readonly beforeRequestHooks: readonly RegisteredHook<BeforeRequest>[]
   private readonly onChunkHooks: readonly RegisteredHook<OnChunk>[]
-  private readonly afterTurnHooks: readonly RegisteredHook<BranchScopedOutcome>[]
+  private readonly afterTurnHooks: readonly RegisteredHook<ThreadScopedOutcome>[]
 
   constructor(args: HookChainArgs) {
     this.beforeTurnHooks = orderHooks(args.beforeTurn ?? [])
@@ -66,8 +66,8 @@ export class HookChain {
     this.afterTurnHooks = orderHooks(args.afterTurn ?? [])
   }
 
-  async beforeTurn(args: { branchId: BranchId }): Promise<readonly EventDraft[]> {
-    return collectDrafts({ hooks: this.beforeTurnHooks, branchId: args.branchId })
+  async beforeTurn(args: { threadId: ThreadId }): Promise<readonly EventDraft[]> {
+    return collectDrafts({ hooks: this.beforeTurnHooks, threadId: args.threadId })
   }
 
   async beforeStep(args: { assembled: Assembled; trace: AssemblyTrace }): Promise<Assembled> {
@@ -92,7 +92,7 @@ export class HookChain {
     return chunk
   }
 
-  async afterTurn(args: { branchId: BranchId }): Promise<readonly EventDraft[]> {
-    return collectDrafts({ hooks: this.afterTurnHooks, branchId: args.branchId })
+  async afterTurn(args: { threadId: ThreadId }): Promise<readonly EventDraft[]> {
+    return collectDrafts({ hooks: this.afterTurnHooks, threadId: args.threadId })
   }
 }

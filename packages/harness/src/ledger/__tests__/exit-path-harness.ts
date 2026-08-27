@@ -10,7 +10,7 @@ import {
   EStage,
   EToolEffect,
   toCallId,
-  type BranchId,
+  type ThreadId,
   type ModelPort,
   type ModelStepResult,
   type ModelToolCall,
@@ -23,7 +23,7 @@ import { HookChain } from '../../hooks/registry'
 import { LoopTurnRunner, type TurnDeps } from '../../loop/run-turn'
 import { TurnRunner } from '../../loop/turn-runner.port'
 import { ModelStreamError } from '../../model/errors'
-import { openAtlasDatabase, PrismaBranchStore, PrismaEventLog, RandomIds, SystemClock } from '../../store'
+import { openAtlasDatabase, PrismaThreadStore, PrismaEventLog, RandomIds, SystemClock } from '../../store'
 import { HookedToolDispatcher } from '../../tools/dispatch'
 import { InMemoryToolRegistry } from '../../tools/registry'
 import { PrismaTurnLedger } from '../prisma-turn-ledger'
@@ -53,7 +53,7 @@ export const fakeLedger = (args: { rejects?: boolean } = {}): TurnLedgerPort => 
       if (args.rejects === true) throw new Error('the ledger is unavailable')
       rows.push(spend)
     },
-    forBranch: async ({ branchId }) => rows.filter((row) => row.branchId === branchId),
+    forThread: async ({ threadId }) => rows.filter((row) => row.threadId === threadId),
   }
 }
 
@@ -112,7 +112,7 @@ const askEverything = new HookChain({
 
 export type ExitPathHarness = {
   runner: TurnRunner
-  branchId: BranchId
+  threadId: ThreadId
   recorded: () => Promise<readonly TurnSpend[]>
   stepsTaken: () => number
   failures: () => readonly unknown[]
@@ -131,7 +131,7 @@ export async function openExitPathHarness(args: {
   const database = await openAtlasDatabase({ databaseUrl: `file:${join(directory, 'harness.db')}` })
   const clock = new SystemClock()
   const ids = new RandomIds()
-  const branch = await new PrismaBranchStore(database.prisma, clock, ids).create({})
+  const thread = await new PrismaThreadStore(database.prisma, clock, ids).create({})
 
   const ledger = args.ledger ?? (args.persist === true ? new PrismaTurnLedger(database.prisma) : fakeLedger())
   const failures: unknown[] = []
@@ -141,8 +141,8 @@ export async function openExitPathHarness(args: {
   const hooks = mode === EDispatchMode.Ask ? askEverything : new HookChain({})
 
   return {
-    branchId: branch.id,
-    recorded: () => ledger.forBranch({ branchId: branch.id }),
+    threadId: thread.id,
+    recorded: () => ledger.forThread({ threadId: thread.id }),
     stepsTaken: model.taken,
     failures: () => failures,
     runner: buildRunner({

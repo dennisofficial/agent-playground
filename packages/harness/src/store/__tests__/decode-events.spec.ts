@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 
-import { toBranchId, toEventId, toRunId, type EventDraft } from '@dltech/atlas-core'
+import { toThreadId, toEventId, toRunId, type EventDraft } from '@dltech/atlas-core'
 
 import { decodeEventRows, EUnreadableReason } from '../decode-events'
 import type { EventRow } from '../event-row'
 import { openStoreFixture, type StoreFixture } from './harness'
 
-const branchId = toBranchId('branch-1')
+const threadId = toThreadId('thread-1')
 const runId = toRunId('run-1')
 
 const said = (text: string): EventDraft => ({ type: 'user-said', text })
@@ -16,19 +16,19 @@ function rowAt({
   body,
   type = 'user-said',
   id = `event-${seq}`,
-  rowBranchId = 'branch-1',
+  rowThreadId = 'thread-1',
   runIdColumn = 'run-1',
 }: {
   seq: number
   body: string
   type?: string
   id?: string
-  rowBranchId?: string
+  rowThreadId?: string
   runIdColumn?: string
 }): EventRow {
   return {
     id,
-    branchId: rowBranchId,
+    threadId: rowThreadId,
     seq,
     runId: runIdColumn,
     parentRunId: null,
@@ -55,7 +55,7 @@ describe('decodeEventRows', () => {
     expect(event?.type).toBe('user-said')
     expect(event?.seq).toBe(1)
     expect(event?.id).toBe(toEventId('event-1'))
-    expect(event?.branchId).toBe(branchId)
+    expect(event?.threadId).toBe(threadId)
     expect(event?.runId).toBe(runId)
   })
 
@@ -67,7 +67,7 @@ describe('decodeEventRows', () => {
     const [gap] = decoded.unreadable
     expect(gap?.seq).toBe(1)
     expect(gap?.id).toBe('event-1')
-    expect(gap?.branchId).toBe('branch-1')
+    expect(gap?.threadId).toBe('thread-1')
     expect(gap?.reason).toBe(EUnreadableReason.MalformedJson)
     expect(gap?.detail.length).toBeGreaterThan(0)
   })
@@ -102,17 +102,17 @@ describe('decodeEventRows', () => {
     expect(gap?.reason).toBe(EUnreadableReason.CorruptEnvelope)
     expect(gap?.id).toBe('')
     expect(gap?.seq).toBe(1)
-    expect(gap?.branchId).toBe('branch-1')
+    expect(gap?.threadId).toBe('thread-1')
   })
 
-  it('reports a row whose branchId column is empty instead of throwing', () => {
+  it('reports a row whose threadId column is empty instead of throwing', () => {
     const decoded = decodeEventRows([
-      rowAt({ seq: 1, body: JSON.stringify(said('one')), rowBranchId: '' }),
+      rowAt({ seq: 1, body: JSON.stringify(said('one')), rowThreadId: '' }),
     ])
 
     expect(decoded.events).toEqual([])
     expect(decoded.unreadable[0]?.reason).toBe(EUnreadableReason.CorruptEnvelope)
-    expect(decoded.unreadable[0]?.branchId).toBe('')
+    expect(decoded.unreadable[0]?.threadId).toBe('')
     expect(decoded.unreadable[0]?.id).toBe('event-1')
   })
 
@@ -138,7 +138,7 @@ describe('decodeEventRows', () => {
       validRow(1, 'one'),
       rowAt({ seq: 2, body: JSON.stringify(said('two')), id: '' }),
       validRow(3, 'three'),
-      rowAt({ seq: 4, body: '{ truncated', rowBranchId: '' }),
+      rowAt({ seq: 4, body: '{ truncated', rowThreadId: '' }),
       validRow(5, 'five'),
     ])
 
@@ -186,15 +186,15 @@ describe('PrismaEventLog over a corrupted row', () => {
     fixture = await openStoreFixture()
     const { log, prisma } = fixture
 
-    const appended = await log.append({ branchId, runId, drafts: [said('one'), said('two'), said('three')] })
+    const appended = await log.append({ threadId, runId, drafts: [said('one'), said('two'), said('three')] })
     const corrupted = appended[1]
     if (!corrupted) throw new Error('expected three appended events')
     await prisma.event.update({ where: { id: corrupted.id }, data: { body: '{ truncated' } })
 
-    const events = await log.read({ branchId })
+    const events = await log.read({ threadId })
     expect(events.map((event) => event.seq)).toEqual([1, 3])
 
-    const decoded = await log.readDecoded({ branchId })
+    const decoded = await log.readDecoded({ threadId })
     expect(decoded.events.map((event) => event.seq)).toEqual([1, 3])
     expect(decoded.unreadable.map((gap) => gap.seq)).toEqual([2])
     expect(decoded.unreadable[0]?.id).toBe(corrupted.id)

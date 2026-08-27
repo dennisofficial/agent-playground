@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'bun:test'
 
-import { toBranchId, toRunId, type ClockPort, type ProviderIdentity } from '@dltech/atlas-core'
+import { toThreadId, toRunId, type ClockPort, type ProviderIdentity } from '@dltech/atlas-core'
 
 import { openTurnSpend, recordTurnSpend, TURN_CRASHED } from '../record-turn-spend'
 import type { TurnLedgerPort, TurnSpend } from '../turn-ledger.port'
 
 const MODEL: ProviderIdentity = { id: 'anthropic', modelId: 'claude-opus-5' }
-const BRANCH = toBranchId('branch-1')
+const THREAD = toThreadId('thread-1')
 const RUN = toRunId('run-1')
 
 const tickingClock = (stamps: readonly string[]): ClockPort => {
@@ -25,7 +25,7 @@ const recordingLedger = (): RecordingLedger => {
     record: async (spend) => {
       recorded.push(spend)
     },
-    forBranch: async () => recorded,
+    forThread: async () => recorded,
   }
 }
 
@@ -33,7 +33,7 @@ const failingLedger = (): TurnLedgerPort => ({
   record: async () => {
     throw new Error('the ledger is unavailable')
   },
-  forBranch: async () => [],
+  forThread: async () => [],
 })
 
 describe('a turn tallied across its steps', () => {
@@ -44,12 +44,12 @@ describe('a turn tallied across its steps', () => {
     tally.countStep({ inputTokens: 1_000, outputTokens: 40, cacheReadTokens: 900, cacheWriteTokens: 100 })
     tally.countStep({ inputTokens: 1_500, outputTokens: 60, cacheReadTokens: 1_400, cacheWriteTokens: 0 })
     tally.countStep({ inputTokens: 2_100, outputTokens: 20, cacheReadTokens: 2_000, cacheWriteTokens: 0 })
-    await tally.settle({ branchId: BRANCH, runId: RUN, status: 'completed' })
+    await tally.settle({ threadId: THREAD, runId: RUN, status: 'completed' })
 
     expect(ledger.recorded).toEqual([
       {
         runId: RUN,
-        branchId: BRANCH,
+        threadId: THREAD,
         status: 'completed',
         providerId: 'anthropic',
         modelId: 'claude-opus-5',
@@ -71,7 +71,7 @@ describe('a turn tallied across its steps', () => {
 
     tally.countStep({ inputTokens: 800, outputTokens: 20 })
     tally.countStep(undefined)
-    await tally.settle({ branchId: BRANCH, runId: RUN, status: 'interrupted' })
+    await tally.settle({ threadId: THREAD, runId: RUN, status: 'interrupted' })
 
     expect(ledger.recorded[0]?.steps).toBe(2)
     expect(ledger.recorded[0]?.inputTokens).toBe(800)
@@ -84,7 +84,7 @@ describe('a turn tallied across its steps', () => {
     for (const status of ['completed', 'failed', 'interrupted', 'paused', 'a-status-invented-tomorrow']) {
       const tally = openTurnSpend({ ledger, clock: overTenSeconds(), model: MODEL })
       tally.countStep({ inputTokens: 10, outputTokens: 1 })
-      await tally.settle({ branchId: BRANCH, runId: toRunId(`run-${status}`), status })
+      await tally.settle({ threadId: THREAD, runId: toRunId(`run-${status}`), status })
     }
 
     expect(ledger.recorded.map((spend) => spend.status)).toEqual([
@@ -100,7 +100,7 @@ describe('a turn tallied across its steps', () => {
     const ledger = recordingLedger()
     const tally = openTurnSpend({ ledger, clock: overTenSeconds(), model: MODEL })
 
-    await tally.settle({ branchId: BRANCH, runId: RUN, status: 'idle' })
+    await tally.settle({ threadId: THREAD, runId: RUN, status: 'idle' })
 
     expect(ledger.recorded).toEqual([])
   })
@@ -109,7 +109,7 @@ describe('a turn tallied across its steps', () => {
     const ledger = recordingLedger()
     const tally = openTurnSpend({ ledger, clock: overTenSeconds(), model: MODEL })
 
-    await tally.settle({ branchId: BRANCH, runId: RUN, status: TURN_CRASHED })
+    await tally.settle({ threadId: THREAD, runId: RUN, status: TURN_CRASHED })
 
     expect(ledger.recorded).toMatchObject([{ status: TURN_CRASHED, steps: 0, inputTokens: 0 }])
   })
@@ -119,7 +119,7 @@ describe('a turn tallied across its steps', () => {
     tally.countStep({ inputTokens: 10, outputTokens: 1 })
 
     await expect(
-      tally.settle({ branchId: BRANCH, runId: RUN, status: 'completed' }),
+      tally.settle({ threadId: THREAD, runId: RUN, status: 'completed' }),
     ).resolves.toBeUndefined()
   })
 
@@ -128,7 +128,7 @@ describe('a turn tallied across its steps', () => {
     const tally = openTurnSpend({ ledger, model: MODEL })
 
     tally.countStep({ inputTokens: 10, outputTokens: 1 })
-    await tally.settle({ branchId: BRANCH, runId: RUN, status: 'completed' })
+    await tally.settle({ threadId: THREAD, runId: RUN, status: 'completed' })
 
     expect(Number.isNaN(Date.parse(ledger.recorded[0]?.startedAt ?? ''))).toBe(false)
     expect(ledger.recorded[0]?.durationMs).toBeGreaterThanOrEqual(0)
@@ -148,7 +148,7 @@ describe('the ledger is accounting, not the turn', () => {
     tally.countStep({ inputTokens: 10, outputTokens: 1 })
 
     await expect(
-      tally.settle({ branchId: BRANCH, runId: RUN, status: 'completed' }),
+      tally.settle({ threadId: THREAD, runId: RUN, status: 'completed' }),
     ).resolves.toBeUndefined()
     expect(seen).toHaveLength(1)
   })
@@ -158,7 +158,7 @@ describe('the ledger is accounting, not the turn', () => {
     tally.countStep({ inputTokens: 10, outputTokens: 1 })
 
     await expect(
-      tally.settle({ branchId: BRANCH, runId: RUN, status: 'completed' }),
+      tally.settle({ threadId: THREAD, runId: RUN, status: 'completed' }),
     ).resolves.toBeUndefined()
   })
 })
@@ -169,7 +169,7 @@ describe('the write on its own, for a caller that tallied elsewhere', () => {
 
     await recordTurnSpend({
       ledger,
-      branchId: BRANCH,
+      threadId: THREAD,
       runId: RUN,
       status: 'completed',
       model: MODEL,
@@ -187,7 +187,7 @@ describe('the write on its own, for a caller that tallied elsewhere', () => {
 
     await recordTurnSpend({
       ledger,
-      branchId: BRANCH,
+      threadId: THREAD,
       runId: RUN,
       status: 'completed',
       model: MODEL,

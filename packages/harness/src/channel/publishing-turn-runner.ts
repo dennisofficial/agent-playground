@@ -1,7 +1,7 @@
-import type { BranchId } from '@dltech/atlas-core'
+import type { ThreadId } from '@dltech/atlas-core'
 
 import { ETurnStatus, LoopTurnRunner, TurnRunner, type TurnDeps, type TurnOutcome } from '../loop'
-import type { BranchPublisher, DeltaChannel } from './delta-channel'
+import type { ThreadPublisher, DeltaChannel } from './delta-channel'
 import { withDeltaPublishing } from './publishing-event-log'
 import { EStepEnd } from './signal'
 
@@ -12,7 +12,7 @@ const endFor = (outcome: TurnOutcome): EStepEnd => {
 }
 
 async function publishing(args: {
-  publisher: BranchPublisher
+  publisher: ThreadPublisher
   run: () => Promise<TurnOutcome>
 }): Promise<TurnOutcome> {
   try {
@@ -35,24 +35,24 @@ export class PublishingTurnRunner extends TurnRunner {
     this.deps = { ...args.deps, log: withDeltaPublishing({ log: args.deps.log, channel: args.channel }) }
   }
 
-  say({ branchId, text, signal }: { branchId: BranchId; text: string; signal?: AbortSignal }): Promise<TurnOutcome> {
-    const { publisher, runner } = this.runnerFor(branchId)
+  say({ threadId, text, signal }: { threadId: ThreadId; text: string; signal?: AbortSignal }): Promise<TurnOutcome> {
+    const { publisher, runner } = this.runnerFor(threadId)
     return publishing({
       publisher,
-      run: () => runner.say({ branchId, text, ...(signal === undefined ? {} : { signal }) }),
+      run: () => runner.say({ threadId, text, ...(signal === undefined ? {} : { signal }) }),
     })
   }
 
-  runTurn({ branchId, signal }: { branchId: BranchId; signal?: AbortSignal }): Promise<TurnOutcome> {
-    const { publisher, runner } = this.runnerFor(branchId)
+  runTurn({ threadId, signal }: { threadId: ThreadId; signal?: AbortSignal }): Promise<TurnOutcome> {
+    const { publisher, runner } = this.runnerFor(threadId)
     return publishing({
       publisher,
-      run: () => runner.runTurn({ branchId, ...(signal === undefined ? {} : { signal }) }),
+      run: () => runner.runTurn({ threadId, ...(signal === undefined ? {} : { signal }) }),
     })
   }
 
-  private runnerFor(branchId: BranchId): { publisher: BranchPublisher; runner: TurnRunner } {
-    const publisher = this.channel.publisherFor({ branchId, filter: this.deps.onChunk })
+  private runnerFor(threadId: ThreadId): { publisher: ThreadPublisher; runner: TurnRunner } {
+    const publisher = this.channel.publisherFor({ threadId, filter: this.deps.onChunk })
     return { publisher, runner: new LoopTurnRunner({ ...this.deps, onChunk: publisher.onChunk }) }
   }
 }

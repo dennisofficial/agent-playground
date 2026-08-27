@@ -25,9 +25,9 @@ describe('BeforeTurn', () => {
       script: [{ text: 'auth' }],
       hooks: new HookChain({ beforeTurn: [opening({ name: 'gitState', context: '3 files dirty' })] }),
     })
-    const branch = await harness.branches.create({})
+    const thread = await harness.threads.create({})
 
-    const outcome = await runner.say({ branchId: branch.id, text: 'what changed?' })
+    const outcome = await runner.say({ threadId: thread.id, text: 'what changed?' })
 
     expect(outcome.status).toBe(ETurnStatus.Completed)
     expect(JSON.stringify(model.doStreamCalls[0]?.prompt)).toContain('3 files dirty')
@@ -38,11 +38,11 @@ describe('BeforeTurn', () => {
       script: [{ text: 'auth' }],
       hooks: new HookChain({ beforeTurn: [opening({ name: 'gitState', context: '3 files dirty' })] }),
     })
-    const branch = await harness.branches.create({})
+    const thread = await harness.threads.create({})
 
-    await runner.say({ branchId: branch.id, text: 'what changed?' })
+    await runner.say({ threadId: thread.id, text: 'what changed?' })
 
-    const events = await harness.log.read({ branchId: branch.id })
+    const events = await harness.log.read({ threadId: thread.id })
     expect(events.map((event) => event.type)).toEqual(['user-said', 'context-loaded', 'assistant-said'])
     expect(events.flatMap((event) => (event.type === 'context-loaded' ? [event] : []))[0]).toMatchObject({
       slot: 'gitState',
@@ -58,9 +58,9 @@ describe('BeforeTurn', () => {
       withTools: true,
       hooks: new HookChain({ beforeTurn: [opening({ name: 'gitState', context: '3 files dirty', seen })] }),
     })
-    const branch = await harness.branches.create({})
+    const thread = await harness.threads.create({})
 
-    await runner.say({ branchId: branch.id, text: 'what changed?' })
+    await runner.say({ threadId: thread.id, text: 'what changed?' })
 
     expect(seen).toEqual(['gitState'])
   })
@@ -70,12 +70,12 @@ describe('BeforeTurn', () => {
       script: [{ text: 'first' }, { text: 'second' }],
       hooks: new HookChain({ beforeTurn: [opening({ name: 'gitState', context: '3 files dirty' })] }),
     })
-    const branch = await harness.branches.create({})
+    const thread = await harness.threads.create({})
 
-    await runner.say({ branchId: branch.id, text: 'what changed?' })
-    await runner.say({ branchId: branch.id, text: 'and now?' })
+    await runner.say({ threadId: thread.id, text: 'what changed?' })
+    await runner.say({ threadId: thread.id, text: 'and now?' })
 
-    const events = await harness.log.read({ branchId: branch.id })
+    const events = await harness.log.read({ threadId: thread.id })
     expect(events.filter((event) => event.type === 'context-loaded')).toHaveLength(1)
   })
 
@@ -93,13 +93,13 @@ describe('BeforeTurn', () => {
         ],
       }),
     })
-    const branch = await harness.branches.create({})
+    const thread = await harness.threads.create({})
 
-    await runner.say({ branchId: branch.id, text: 'what changed?' })
+    await runner.say({ threadId: thread.id, text: 'what changed?' })
     dirty = 1
-    await runner.say({ branchId: branch.id, text: 'and now?' })
+    await runner.say({ threadId: thread.id, text: 'and now?' })
 
-    const events = await harness.log.read({ branchId: branch.id })
+    const events = await harness.log.read({ threadId: thread.id })
     expect(events.filter((event) => event.type === 'context-loaded')).toHaveLength(2)
 
     const second = JSON.stringify(model.doStreamCalls[1]?.prompt)
@@ -123,11 +123,11 @@ describe('BeforeTurn', () => {
         ],
       }),
     })
-    const branch = await harness.branches.create({})
+    const thread = await harness.threads.create({})
 
-    await runner.say({ branchId: branch.id, text: 'what changed?' })
+    await runner.say({ threadId: thread.id, text: 'what changed?' })
 
-    const events = await harness.log.read({ branchId: branch.id })
+    const events = await harness.log.read({ threadId: thread.id })
     expect(events.map((event) => event.type)).toEqual([
       'user-said',
       'context-loaded',

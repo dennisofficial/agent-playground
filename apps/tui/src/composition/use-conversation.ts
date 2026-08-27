@@ -1,7 +1,7 @@
 import {
   contextTokens,
   eventsOfType,
-  type BranchId,
+  type ThreadId,
   type Event,
   type ModelUsage,
 } from '@dltech/atlas-core'
@@ -50,7 +50,7 @@ const committedNothing = (outcome: TurnOutcome): boolean =>
   outcome.status === ETurnStatus.Interrupted && !outcome.committed
 
 export type Conversation = {
-  branchId: BranchId
+  threadId: ThreadId
   model: TranscriptModel
   sidebar: SidebarModel
   turn: TurnClock
@@ -82,13 +82,13 @@ export function useConversation(args: {
   const [reported, setReported] = useState<ModelUsage | null>(null)
   const [name, setName] = useState<string | null>(args.opened.name)
   const abort = useRef<AbortController | null>(null)
-  const asked = useRef<BranchId | null>(null)
+  const asked = useRef<ThreadId | null>(null)
 
   const store = useMemo(
     () =>
       createConversationStore({
         channel: app.channel,
-        branchId: opened.branchId,
+        threadId: opened.threadId,
         events: opened.events,
         paceReveal,
         name: opened.name,
@@ -98,7 +98,7 @@ export function useConversation(args: {
 
   useEffect(() => () => store.dispose(), [store])
 
-  useEffect(() => app.markActiveBranch(opened.branchId), [app, opened.branchId])
+  useEffect(() => app.markActiveThread(opened.threadId), [app, opened.threadId])
 
   useEffect(() => store.setName(name), [store, name])
 
@@ -123,16 +123,16 @@ export function useConversation(args: {
   const notices = useSyncExternalStore(subscribeToShells, readShellNotices)
 
   const refresh = useCallback(async () => {
-    const read: readonly Event[] = await app.log.read({ branchId: opened.branchId })
+    const read: readonly Event[] = await app.log.read({ threadId: opened.threadId })
     store.setEvents(read)
     setEvents(read)
     pending.settleTaken({ landed: trailingSaid(read) })
-  }, [app.log, opened.branchId, pending, store])
+  }, [app.log, opened.threadId, pending, store])
 
   useEffect(
     () =>
       app.channel.subscribe({
-        branchId: opened.branchId,
+        threadId: opened.threadId,
         listener: (signal) => {
           setProgress((current) => turnAdvanced({ progress: current, signal }))
           if (signal.type === 'chunk' && signal.chunk.type === 'finish') {
@@ -142,7 +142,7 @@ export function useConversation(args: {
           if (signal.type === 'step-ended' || signal.type === 'events-appended') void refresh()
         },
       }),
-    [app.channel, opened.branchId, refresh],
+    [app.channel, opened.threadId, refresh],
   )
 
   const streaming = derived.streaming || working
@@ -176,8 +176,8 @@ export function useConversation(args: {
   const undo = useCallback(async () => {
     const undone = await undoTurn({
       log: app.log,
-      branches: app.branches,
-      branchId: opened.branchId,
+      threads: app.threads,
+      threadId: opened.threadId,
     })
 
     if (undone.type === EUndo.Refused) {
@@ -188,13 +188,13 @@ export function useConversation(args: {
 
     await refresh()
     onUndone(undone.text)
-  }, [app.branches, app.log, onUndone, opened.branchId, refresh])
+  }, [app.threads, app.log, onUndone, opened.threadId, refresh])
 
   const compact = useCallback(async () => {
     const compaction = await compactTurn({
       log: app.log,
-      branches: app.branches,
-      branchId: opened.branchId,
+      threads: app.threads,
+      threadId: opened.threadId,
       keepRecentTokens: recencyBudgetFor(app.model.choice().modelId),
       summarise: app.summarise,
     })
@@ -207,7 +207,7 @@ export function useConversation(args: {
 
     setReported(null)
     await refresh()
-  }, [app.branches, app.log, app.model, app.summarise, opened.branchId, refresh])
+  }, [app.threads, app.log, app.model, app.summarise, opened.threadId, refresh])
 
   const drive = useCallback(
     (drafts: readonly { type: 'user-said'; text: string }[]) => {
@@ -223,14 +223,14 @@ export function useConversation(args: {
         try {
           if (drafts.length > 0) {
             await app.log.append({
-              branchId: opened.branchId,
+              threadId: opened.threadId,
               runId: app.ids.nextRunId(),
               drafts,
             })
             await refresh()
           }
           const outcome = await app.runner.runTurn({
-            branchId: opened.branchId,
+            threadId: opened.threadId,
             signal: controller.signal,
           })
           setFailure(stoppageOf(outcome))
@@ -245,7 +245,7 @@ export function useConversation(args: {
         }
       })()
     },
-    [app, opened.branchId, readClock, refresh, store, undo],
+    [app, opened.threadId, readClock, refresh, store, undo],
   )
 
   /**
@@ -271,9 +271,9 @@ export function useConversation(args: {
 
   const nameSession = useCallback(
     (said: string) => {
-      if (name !== null || asked.current === opened.branchId) return
+      if (name !== null || asked.current === opened.threadId) return
 
-      asked.current = opened.branchId
+      asked.current = opened.threadId
       const opening = eventsOfType({ events, type: 'user-said' }).at(0)?.text ?? said
 
       void app
@@ -281,11 +281,11 @@ export function useConversation(args: {
         .then((named) => {
           if (named === null) return
           setName(named)
-          return app.branches.rename({ branchId: opened.branchId, title: named })
+          return app.threads.rename({ threadId: opened.threadId, title: named })
         })
         .catch(() => undefined)
     },
-    [app, events, name, opened.branchId],
+    [app, events, name, opened.threadId],
   )
 
   const handleSend = useCallback(
@@ -329,15 +329,15 @@ export function useConversation(args: {
 
     pending.clear()
     app.shells.forgetNotices()
-    void app.branches.create({}).then((branch) => {
+    void app.threads.create({}).then((thread) => {
       setProgress(IDLE_PROGRESS)
       setFailure(null)
       setReported(null)
       setEvents([])
       setName(null)
-      setOpened({ branchId: branch.id, events: [], name: null })
+      setOpened({ threadId: thread.id, events: [], name: null })
     })
-  }, [app.branches, pending, working])
+  }, [app.threads, pending, working])
 
   const used = useMemo(() => contextTokens({ reported, events }), [reported, events])
 
@@ -347,7 +347,7 @@ export function useConversation(args: {
   const retryable = model.failure !== null && !working
 
   return {
-    branchId: opened.branchId,
+    threadId: opened.threadId,
     model,
     sidebar,
     turn,

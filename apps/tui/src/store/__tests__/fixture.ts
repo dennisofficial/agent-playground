@@ -1,6 +1,6 @@
 import {
   stampDrafts,
-  toBranchId,
+  toThreadId,
   toEventId,
   toRunId,
   type Event,
@@ -12,14 +12,14 @@ import { EStepEnd, toStepId, type StepId, type StepSignal } from '@dltech/atlas-
 
 import { EEntryKind, type TranscriptEntry, type TranscriptModel } from '../transcript-model'
 
-export const fixtureBranchId = toBranchId('branch-fixture')
+export const fixtureThreadId = toThreadId('thread-fixture')
 
 const fixtureRunId = toRunId('run-fixture')
 
 const envelopeAt = (index: number): EventEnvelope => ({
   id: toEventId(`event-${index + 1}`),
   seq: index + 1,
-  branchId: fixtureBranchId,
+  threadId: fixtureThreadId,
   runId: fixtureRunId,
   depth: 0,
   at: '2026-01-01T00:00:00.000Z',
