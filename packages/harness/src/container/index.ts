@@ -16,5 +16,7 @@ export {
   KeychainReaderToken,
   LanguageModelToken,
   PrismaClientToken,
+  ProjectSettingsStoreToken,
+  UserSettingsStoreToken,
   WorkspaceRoot,
 } from './tokens'

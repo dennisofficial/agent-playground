@@ -1,5 +1,7 @@
 import type { LanguageModelV4 } from '@ai-sdk/provider'
 
+import type { SettingsStorePort } from '@dltech/atlas-core'
+
 import type { PrismaClient } from '../../prisma/generated/client'
 import type { KeychainReader } from '../credentials/keychain-reader'
 import type { HookRegistry } from '../hooks/registry'
@@ -17,3 +19,11 @@ export const LanguageModelToken: InjectionToken<LanguageModelV4> = Symbol('atlas
 export const HookRegistryToken: InjectionToken<HookRegistry> = Symbol('atlas.HookRegistry')
 
 export const DispatchToken: InjectionToken<Dispatch> = Symbol('atlas.Dispatch')
+
+export const UserSettingsStoreToken: InjectionToken<SettingsStorePort> = Symbol(
+  'atlas.UserSettingsStore',
+)
+
+export const ProjectSettingsStoreToken: InjectionToken<SettingsStorePort> = Symbol(
+  'atlas.ProjectSettingsStore',
+)
