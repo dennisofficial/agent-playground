@@ -1,0 +1,30 @@
+apps/tui/src/ui/markdown/__tests__/table-steadiness.spec.tsx
+  s_7f205ead237226::t_ee05685b172549 47,52-64,67
+  s_7f205ead237226::t_1a5beac125ee41 1-46,48-49,68-72,89
+  s_7f205ead237226::t_ec2fd05a3dcb69 73-88
+apps/tui/src/ui/markdown/markdown-view.tsx
+  s_7f205ead237226::t_42cbf7e4e7bd83 107
+  s_7f205ead237226::t_00684e6a0cb3fc 135
+apps/tui/src/ui/markdown/prose/prose-view.tsx
+  s_7f205ead237226::t_00684e6a0cb3fc 32-37,42,51,99
+apps/tui/src/ui/markdown/table-block.tsx
+  s_7f205ead237226::t_c105d293385ef6 9-16
+  s_7f205ead237226::t_42cbf7e4e7bd83 20
+  s_7f205ead237226::t_62f8b52012c5fc 29
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "b0d36834587144ab3a23b27053968609aa012423",
+  "prompts": {},
+  "sessions": {
+    "s_7f205ead237226": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7b5d11b1-5234-4507-bf09-f0ee02a9f79b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
