@@ -29,11 +29,17 @@ const QUOTE_TEXT_PAD = 2
 
 const ORDINAL_COLUMN = 2
 
-type Frame = { readonly width: number; readonly ground: string; readonly slab: string }
+type Frame = {
+  readonly width: number
+  readonly ground: string
+  readonly slab: string
+  readonly streaming: boolean
+}
 
 export function ProseView(props: {
   source: string
   width: number
+  streaming?: boolean
   fg?: string
   bg?: string
 }): React.ReactNode {
@@ -42,6 +48,7 @@ export function ProseView(props: {
     width: props.width,
     ground: props.fg ?? theme.hover,
     slab: inlineCodeSlab(props.bg),
+    streaming: props.streaming === true,
   }
 
   return <BlockStream blocks={blocks} frame={frame} />
@@ -89,7 +96,7 @@ function Block(props: { block: ProseBlock; frame: Frame }): React.ReactNode {
   if (block.kind === EProseBlock.Code) {
     return <FencedBlock language={block.language} source={block.source} width={frame.width} />
   }
-  return <TableBlock markdown={block.markdown} width={frame.width} />
+  return <TableBlock markdown={block.markdown} width={frame.width} streaming={frame.streaming} />
 }
 
 function Heading(props: {

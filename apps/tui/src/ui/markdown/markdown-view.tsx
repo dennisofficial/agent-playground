@@ -104,6 +104,7 @@ function Segment(
       <TableBlock
         markdown={segment.markdown}
         width={props.width}
+        streaming={props.live}
         fg={props.fg ?? theme.hover}
         {...(props.bg === undefined ? {} : { bg: props.bg })}
       />
@@ -131,6 +132,7 @@ function Segment(
       <ProseView
         source={segment.text}
         width={props.width}
+        streaming={props.live}
         {...(props.fg === undefined ? {} : { fg: props.fg })}
         {...(props.bg === undefined ? {} : { bg: props.bg })}
       />

@@ -6,9 +6,18 @@ import { HorizontalScroller } from './horizontal-scroller'
 import { proseSyntaxStyle } from './syntax-style'
 import { measureTable, TABLE_OPTIONS } from './table-metrics'
 
+/**
+ * `streaming` is not decoration on the renderable — it is what stops @opentui 0.4.5's incremental
+ * parser from freezing the table. `parseMarkdownIncremental` keeps every token whose `raw` is still
+ * a prefix of the new content and lexes only the remainder; with streaming off it holds back nothing
+ * (`trailingUnstable` is 0), so the half-arrived table token is kept and each new row lexes alone,
+ * as a paragraph drawn beneath the box. Streaming leaves the trailing tokens unstable, which is the
+ * whole table here, so every delta re-lexes the table entire.
+ */
 export function TableBlock(props: {
   markdown: string
   width: number
+  streaming?: boolean
   fg?: string
   bg?: string
 }): React.ReactNode {
@@ -17,6 +26,7 @@ export function TableBlock(props: {
   const table = (
     <markdown
       content={content}
+      streaming={props.streaming === true}
       syntaxStyle={proseSyntaxStyle()}
       tableOptions={TABLE_OPTIONS}
       width={metrics.columns}
