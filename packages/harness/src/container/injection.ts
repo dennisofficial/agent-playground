@@ -16,3 +16,14 @@ export type PortConstructor<T> = abstract new (...args: never[]) => T
 export const portToken = <T>(port: PortConstructor<T>): InjectionToken<T> => port as InjectionToken<T>
 
 export const createIsolatedContainer = (): DependencyContainer => container.createChildContainer()
+
+// tsyringe's `resolveAll` guards unregistered tokens only when `isNormalToken` holds, and that is
+// string-or-symbol only — a class token with no registrations falls through to `construct(token)`.
+// `abstract` is erased at runtime, so that yields one phantom instance rather than an empty array,
+// and `{ isOptional: true }` does not help. Verified against tsyringe 4.10.0.
+// https://github.com/microsoft/tsyringe/blob/master/src/dependency-container.ts
+export const resolveSet = <T>(args: {
+  container: DependencyContainer
+  token: InjectionToken<T>
+}): readonly T[] =>
+  args.container.isRegistered(args.token, true) ? args.container.resolveAll(args.token) : []
