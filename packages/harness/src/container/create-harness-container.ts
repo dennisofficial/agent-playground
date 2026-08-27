@@ -2,6 +2,7 @@ import { ClockPort, CredentialPort, EventLogPort, IdPort } from '@dltech/atlas-c
 
 import { KeychainCredentialPort } from '../credentials/keychain-credential-port'
 import { BranchStorePort, PrismaBranchStore, PrismaEventLog, RandomIds, SystemClock } from '../store'
+import { registerBuiltinTools } from '../tools/register-tools'
 import { createIsolatedContainer, portToken, type DependencyContainer } from './injection'
 import { KeychainReaderToken } from './tokens'
 
@@ -19,6 +20,8 @@ export function createHarnessContainer(): DependencyContainer {
         clock: resolver.resolve(portToken(ClockPort)),
       }),
   })
+
+  registerBuiltinTools({ container: harness })
 
   return harness
 }
