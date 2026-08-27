@@ -5,6 +5,7 @@ import type { BranchId } from '../events/ids'
 import type { BeforeToolOutcome } from '../policy/before-tool'
 import type { Chunk } from '../stream/chunk'
 import type { ToolCall, ToolOutcome } from '../tools/tool'
+import type { HookOrder } from './order'
 
 export * from './order'
 
@@ -28,3 +29,21 @@ export type AfterTool = (args: { call: ToolCall; result: ToolOutcome }) => Promi
 export type OnChunk = (chunk: Chunk) => Promise<Chunk | null>
 
 export type AfterTurn = (args: { branchId: BranchId }) => Promise<EventDraft[]>
+
+abstract class PhaseHook<TRun> {
+  abstract readonly name: string
+  abstract readonly order: HookOrder
+  abstract readonly run: TRun
+}
+
+export abstract class BeforeStepHook extends PhaseHook<BeforeStep> {}
+
+export abstract class BeforeRequestHook extends PhaseHook<BeforeRequest> {}
+
+export abstract class BeforeToolHook extends PhaseHook<BeforeTool> {}
+
+export abstract class AfterToolHook extends PhaseHook<AfterTool> {}
+
+export abstract class OnChunkHook extends PhaseHook<OnChunk> {}
+
+export abstract class AfterTurnHook extends PhaseHook<AfterTurn> {}

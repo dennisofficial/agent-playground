@@ -3,18 +3,19 @@ import { isAbsolute, resolve } from 'node:path'
 import { z } from 'zod'
 
 import {
+  BeforeToolHook,
   EBeforeToolDecision,
   EPathForm,
   EPathPresence,
   EStage,
   type BeforeTool,
   type DeclaredPathField,
+  type HookOrder,
   type ToolCall,
   type ToolDeclaration,
 } from '@dltech/atlas-core'
 
-import { createWorkspaceContainment } from '../tools/containment'
-import type { RegisteredHook } from './registry'
+import { createWorkspaceContainment, type WorkspaceContainment } from '../tools/containment'
 
 enum EDenial {
   Unregistered = 'unregistered',
@@ -69,19 +70,32 @@ function reasonFor({ call, denial, root }: { call: ToolCall; denial: Denial; roo
   return `${call.name} would reach ${destination}, outside the workspace root ${root}`
 }
 
-export function createBoundaryHook({
-  root: workspace,
-  tools,
-}: {
-  root: string
-  tools: readonly ToolDeclaration[]
-}): RegisteredHook<BeforeTool> {
-  const containment = createWorkspaceContainment({ root: workspace })
-  const root = containment.root
-  const pathFieldsByTool = new Map(tools.map((tool) => [tool.name, tool.pathFields]))
+export class WorkspaceBoundaryHook extends BeforeToolHook {
+  readonly name = 'workspaceBoundary'
+  readonly order: HookOrder = { stage: EStage.Guard, nudge: 0 }
 
-  const escapeDenial = async (args: { declared: string; candidate: string }): Promise<Denial | undefined> => {
-    const escapee = await containment.escapeeOf(args.candidate)
+  private readonly containment: WorkspaceContainment
+  private readonly root: string
+  private readonly pathFieldsByTool: Map<string, readonly DeclaredPathField[] | undefined>
+
+  constructor(root: string, tools: readonly ToolDeclaration[]) {
+    super()
+    this.containment = createWorkspaceContainment({ root })
+    this.root = this.containment.root
+    this.pathFieldsByTool = new Map(tools.map((tool) => [tool.name, tool.pathFields]))
+  }
+
+  readonly run: BeforeTool = async ({ call }) => {
+    const denial = await this.denialFor(call)
+    if (denial !== undefined) {
+      return { decision: EBeforeToolDecision.Deny, reason: reasonFor({ call, denial, root: this.root }) }
+    }
+
+    return { decision: EBeforeToolDecision.Allow, input: call.input }
+  }
+
+  private async escapeDenial(args: { declared: string; candidate: string }): Promise<Denial | undefined> {
+    const escapee = await this.containment.escapeeOf(args.candidate)
     if (escapee === undefined) return undefined
 
     return {
@@ -91,11 +105,11 @@ export function createBoundaryHook({
     }
   }
 
-  const fieldDenial = async (args: {
+  private async fieldDenial(args: {
     input: unknown
     declared: DeclaredPathField
     base: string
-  }): Promise<Denial | undefined> => {
+  }): Promise<Denial | undefined> {
     const { field, presence, form } = args.declared
     const value = inputFieldOf({ input: args.input, field })
 
@@ -117,10 +131,10 @@ export function createBoundaryHook({
     }
 
     const candidate = form === EPathForm.Absolute ? resolve(value) : resolve(args.base, value)
-    return escapeDenial({ declared: value, candidate })
+    return this.escapeDenial({ declared: value, candidate })
   }
 
-  const baseOf = (args: { input: unknown; declared: readonly DeclaredPathField[] }): string => {
+  private baseOf(args: { input: unknown; declared: readonly DeclaredPathField[] }): string {
     for (const declared of args.declared) {
       if (declared.form !== EPathForm.Absolute) continue
 
@@ -128,51 +142,41 @@ export function createBoundaryHook({
       if (isUsableBase(value)) return resolve(value)
     }
 
-    return root
+    return this.root
   }
 
-  const declaredFieldsFor = (
-    name: string,
-  ): { denial: Denial } | { declared: readonly DeclaredPathField[] } => {
-    if (!pathFieldsByTool.has(name)) return { denial: { kind: EDenial.Unregistered } }
+  private declaredFieldsFor(name: string): { denial: Denial } | { declared: readonly DeclaredPathField[] } {
+    if (!this.pathFieldsByTool.has(name)) return { denial: { kind: EDenial.Unregistered } }
 
-    const declared = pathFieldsByTool.get(name)
+    const declared = this.pathFieldsByTool.get(name)
     if (declared === undefined) return { denial: { kind: EDenial.Undeclared } }
 
     return { declared }
   }
 
-  const denialFor = async (call: ToolCall): Promise<Denial | undefined> => {
-    const found = declaredFieldsFor(call.name)
+  private async denialFor(call: ToolCall): Promise<Denial | undefined> {
+    const found = this.declaredFieldsFor(call.name)
     if ('denial' in found) return found.denial
 
     const byForm = (form: EPathForm) => found.declared.filter((declared) => declared.form === form)
 
     for (const declared of byForm(EPathForm.Absolute)) {
-      const denial = await fieldDenial({ input: call.input, declared, base: root })
+      const denial = await this.fieldDenial({ input: call.input, declared, base: this.root })
       if (denial !== undefined) return denial
     }
 
-    const base = baseOf({ input: call.input, declared: found.declared })
+    const base = this.baseOf({ input: call.input, declared: found.declared })
 
     for (const declared of byForm(EPathForm.RelativeToBase)) {
-      const denial = await fieldDenial({ input: call.input, declared, base })
+      const denial = await this.fieldDenial({ input: call.input, declared, base })
       if (denial !== undefined) return denial
     }
 
     return undefined
   }
-
-  return {
-    name: 'workspaceBoundary',
-    order: { stage: EStage.Guard, nudge: 0 },
-    run: async ({ call }) => {
-      const denial = await denialFor(call)
-      if (denial !== undefined) {
-        return { decision: EBeforeToolDecision.Deny, reason: reasonFor({ call, denial, root }) }
-      }
-
-      return { decision: EBeforeToolDecision.Allow, input: call.input }
-    },
-  }
 }
+
+export const createBoundaryHook = (args: {
+  root: string
+  tools: readonly ToolDeclaration[]
+}): BeforeToolHook => new WorkspaceBoundaryHook(args.root, args.tools)
