@@ -1,0 +1,38 @@
+packages/harness/src/store/paths.ts
+  s_c653afe8642d12::t_568a325bb63bde 6,12-13
+packages/harness/src/model/raw-tape.ts
+  s_c653afe8642d12::t_324f0989710107 1-4,7-13,17-38,42-45,53-54,57-59,62,64,66-75,79-82,85-90,92-95,99-100,111-112,114-115,118-127,133,135-139
+  s_c653afe8642d12::t_e36fb1408538ee 5-6,14-16,39-41,46-52,55-56,60-61,63,65,76-78,83-84,98,101-110,113,116-117,128-132,134
+  s_c653afe8642d12::t_63f011269d068d 91,96-97
+packages/harness/src/model/index.ts
+  s_c653afe8642d12::t_f8041689f3157a 10
+packages/harness/src/model/__tests__/raw-tape.spec.ts
+  s_c653afe8642d12::t_3faaec375d64d5 279-285
+  s_c653afe8642d12::t_24a380703186e4 20,23,31-34,37,40-41,49-50,57,64-66,71,75-76,86,88,100-101,103,110-111,127,133-153,155-163,165-167,169-177,181-198,200-208,211-218,220-234,236-252,255-263,270-274,276,278
+  s_c653afe8642d12::t_568c5851857dee 2-10
+  s_c653afe8642d12::t_b566408dc7022b 1,11-19,21-22,24-30,35-36,38-39,42-48,51-56,58-63,67-70,72-74,77-85,87,89-99,102,104-109,112-126,128-132,154,164,168,178-180,199,209-210,219,235,253-254,264-266,268-269,275,277,287-295
+  s_c653afe8642d12::t_3135b0d29125a8 267,286
+packages/harness/src/model/raw-tape-files.ts
+  s_c653afe8642d12::t_c13c90e64c9bf5 1,3-8,10-17,20-21,46,59-63
+  s_c653afe8642d12::t_5dcbef2951f729 2,9,18-19,22-45,47-58
+packages/harness/src/model/raw-tape-line.ts
+  s_c653afe8642d12::t_f9b415b944e7c1 41-44
+  s_c653afe8642d12::t_7758c56657b607 1-5,9-20,29-34,36-37,39-40
+  s_c653afe8642d12::t_5d54241b0f2b6b 6-8,21-28,35,38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "2843e5166626d7edfcda4759edce3984fe2c8263",
+  "prompts": {},
+  "sessions": {
+    "s_c653afe8642d12": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "502bac1c-ba5f-44da-ae83-54ebe85bd8cc",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
