@@ -1,0 +1,27 @@
+packages/harness/src/hooks/__tests__/resolve-hooks.spec.ts
+  s_3d83af59050d52::t_d8fabe629668a6 1-181
+packages/harness/src/hooks/index.ts
+  s_3d83af59050d52::t_5dfddb5762ce7f 2
+packages/harness/src/hooks/resolve-hooks.ts
+  s_3d83af59050d52::t_39c8bfa8b6be00 1-39
+packages/harness/src/hooks/boundary.ts
+  s_3d83af59050d52::t_602895efd9251e 6,13,18,73-92,94-98,108,112,134,137,145,148-149,151,157-158,164,168,171,178-182
+packages/core/src/hooks/hooks.ts
+  s_3d83af59050d52::t_b233bf593cb1b5 8,32-49
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "52fdf180e11df988f218524e29a5a50e0f7aad86",
+  "prompts": {},
+  "sessions": {
+    "s_3d83af59050d52": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "576fc6c5-ff3a-40f0-b80e-172325e4141c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
