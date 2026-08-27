@@ -12,8 +12,10 @@ const AT = '2026-08-25T00:00:00.000Z'
 
 export type FakeBranchStore = BranchStorePort & { readonly created: number }
 
-export function fakeBranchStore(existing: readonly BranchId[] = []): FakeBranchStore {
-  const rows: BranchSummary[] = existing.map((id) => ({
+export function fakeBranchStore(
+  args: { existing?: readonly BranchId[]; log?: FakeEventLog } = {},
+): FakeBranchStore {
+  const rows: BranchSummary[] = (args.existing ?? []).map((id) => ({
     id,
     head: 0,
     createdAt: AT,
@@ -48,10 +50,19 @@ export function fakeBranchStore(existing: readonly BranchId[] = []): FakeBranchS
     },
 
     async rename() {},
+
+    async rewind({ branchId, toSeq }) {
+      const row = rows.find((held) => held.id === branchId)
+      if (row !== undefined) row.head = toSeq
+      args.log?.truncate({ branchId, toSeq })
+    },
   }
 }
 
-export type FakeEventLog = EventLogPort & { readonly branchesRead: readonly BranchId[] }
+export type FakeEventLog = EventLogPort & {
+  readonly branchesRead: readonly BranchId[]
+  truncate(args: { branchId: BranchId; toSeq: number }): void
+}
 
 export function fakeEventLog(seeded: readonly Event[] = []): FakeEventLog {
   const byBranch = new Map<BranchId, Event[]>()
@@ -86,6 +97,14 @@ export function fakeEventLog(seeded: readonly Event[] = []): FakeEventLog {
 
       byBranch.set(branchId, [...held, ...written])
       return written
+    },
+
+    truncate({ branchId, toSeq }) {
+      const held = byBranch.get(branchId) ?? []
+      byBranch.set(
+        branchId,
+        held.filter((event) => event.seq <= toSeq),
+      )
     },
 
     async read({ branchId }) {

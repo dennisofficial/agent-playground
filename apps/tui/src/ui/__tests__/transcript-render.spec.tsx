@@ -138,6 +138,78 @@ describe('what the transcript actually says', () => {
     expect(rows[next - 1]?.trim()).toBe('')
   })
 
+  it('marks a message sent mid-turn where it landed, rather than hiding it or moving it', async () => {
+    const events = clocked([
+      { draft: said('Reading the pieces that already exist.'), at: AT },
+      { draft: called({ n: 1, name: 'read', input: { path: 'a.ts' } }), at: AT },
+      { draft: { type: 'user-said', text: 'check the tests too' }, at: AT },
+      { draft: result({ n: 1, name: 'read', output: { lines: 10 } }), at: AT },
+    ])
+    const model = deriveTranscript({ events, signals: [] })
+    const rows = (await frameOf(transcript({ model, width: 100 }), 100)).split('\n')
+
+    const group = rows.findIndex((row) => row.includes('Read 1 file'))
+    const marker = rows.findIndex((row) => row.includes('sent mid-turn'))
+    const said1 = rows.findIndex((row) => row.includes('check the tests too'))
+
+    expect(marker).toBeGreaterThan(group)
+    expect(said1).toBeGreaterThan(marker)
+    expect(rows[marker]).toContain(glyph.queued)
+  })
+
+  it('leaves an ordinary message unmarked', async () => {
+    const frame = await frameOf(transcript({ model: SETTLED, width: 80 }), 80)
+    expect(frame).not.toContain('sent mid-turn')
+  })
+
+  it('stands a queued message under the working line, where the transcript has not got it yet', async () => {
+    const rows = (
+      await frameOf(
+        transcript({
+          model: STREAMING,
+          width: 80,
+          turn: RUNNING,
+          pending: [
+            { id: 'p1', text: 'check the tests too' },
+            { id: 'p2', text: 'and the fixtures' },
+          ],
+        }),
+        80,
+      )
+    ).split('\n')
+
+    const working = rows.findIndex((row) => row.includes('Working for'))
+    const first = rows.findIndex((row) => row.includes('check the tests too'))
+    const second = rows.findIndex((row) => row.includes('and the fixtures'))
+
+    expect(first).toBeGreaterThan(working)
+    expect(second).toBeGreaterThan(first)
+    expect(rows[first]).toContain(glyph.queued)
+  })
+
+  it('says how to get a queued message back, since nothing else would tell you', async () => {
+    const frame = await frameOf(
+      transcript({
+        model: STREAMING,
+        width: 80,
+        turn: RUNNING,
+        pending: [{ id: 'p1', text: 'check the tests too' }],
+      }),
+      80,
+    )
+
+    expect(frame).toContain('↑ to edit')
+  })
+
+  it('shows nothing at all when the queue is empty', async () => {
+    const frame = await frameOf(
+      transcript({ model: STREAMING, width: 80, turn: RUNNING, pending: [] }),
+      80,
+    )
+
+    expect(frame).not.toContain('↑ to edit')
+  })
+
   it('rules off the first thing the operator has not seen', async () => {
     const frame = await frameOf(transcript({ model: SETTLED, width: 80, anchorKey: 'u2' }), 80)
     expect(frame).toContain(' new ')

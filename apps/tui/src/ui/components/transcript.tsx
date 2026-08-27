@@ -1,10 +1,11 @@
 import React, { useCallback, useState } from 'react'
 
-import { EEntryKind, type TranscriptModel } from '../../store'
+import { EEntryKind, type PendingMessage, type TranscriptModel } from '../../store'
 import { useTranscriptFollow } from '../hooks/use-transcript-follow'
 import { useHiddenVerticalScrollbar } from '../hide-scrollbar'
 import { TRANSCRIPT_PADDING } from '../theme'
 import { ErrorBlock } from './blocks/error-block'
+import { PendingBlock } from './blocks/pending-block'
 import { WelcomeBlock } from './blocks/welcome-block'
 import { EntryView } from './entry-view'
 import { JumpToBottom, NewDivider, UNSEEN_ANCHOR_ID } from './new-divider'
@@ -26,6 +27,8 @@ export const IDLE_TURN: TurnClock = {
 
 const FAILURE_WITHOUT_A_REASON = 'The model reported no reason.'
 
+const NOTHING_PENDING: readonly PendingMessage[] = Object.freeze([])
+
 export function Transcript(props: {
   model: TranscriptModel
   width: number
@@ -35,6 +38,7 @@ export function Transcript(props: {
   modelId: string
   turn?: TurnClock
   anchorKey?: string | null
+  pending?: readonly PendingMessage[]
   onRetry?: () => void
   opened?: ReadonlySet<string>
   onToggle?: (key: string) => void
@@ -93,6 +97,7 @@ export function Transcript(props: {
             cwd={props.cwd}
             home={props.home}
             modelId={props.modelId}
+            width={props.width}
           />
         ) : null}
 
@@ -129,6 +134,8 @@ export function Transcript(props: {
             />
           </box>
         ) : null}
+
+        <PendingBlock messages={props.pending ?? NOTHING_PENDING} width={props.width} />
       </scrollbox>
 
       {follow.pinned ? null : (

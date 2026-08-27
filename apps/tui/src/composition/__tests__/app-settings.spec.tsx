@@ -59,6 +59,15 @@ async function onSettings(app: FakeApp): Promise<Mounted> {
 const valueOf = (app: FakeApp, id: ESettingId): unknown =>
   app.settings.snapshot().resolution.settings.get(id)?.value
 
+const SIDEBAR_WIDTH_ROW = 2
+
+async function downTo(args: { setup: Mounted; row: number }): Promise<void> {
+  for (let step = 0; step < args.row; step += 1) {
+    args.setup.mockInput.pressArrow('down')
+    await landed(args.setup)
+  }
+}
+
 describe('the settings page', () => {
   it('stays closed until ctrl+o asks for it, and leaves on escape', async () => {
     const setup = await opened(appWith())
@@ -101,8 +110,7 @@ describe('the settings page', () => {
     const setup = await onSettings(app)
 
     try {
-      setup.mockInput.pressArrow('down')
-      await landed(setup)
+      await downTo({ setup, row: SIDEBAR_WIDTH_ROW })
 
       setup.mockInput.pressArrow('right')
       await landed(setup)
@@ -145,8 +153,7 @@ describe('the settings page', () => {
     const setup = await onSettings(app)
 
     try {
-      setup.mockInput.pressArrow('down')
-      await landed(setup)
+      await downTo({ setup, row: SIDEBAR_WIDTH_ROW })
       setup.mockInput.pressArrow('left')
       await landed(setup)
 
@@ -165,8 +172,7 @@ describe('the settings page', () => {
     const setup = await onSettings(app)
 
     try {
-      setup.mockInput.pressArrow('down')
-      await landed(setup)
+      await downTo({ setup, row: SIDEBAR_WIDTH_ROW })
       const before = columnOf(setup, 'SET BY')
       expect(before).toBeGreaterThan(0)
 

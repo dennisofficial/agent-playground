@@ -35,6 +35,8 @@ import { useSettings } from './use-settings'
 
 const PLACEHOLDER = 'Ask anything'
 
+const STEER_PLACEHOLDER = 'Steer the turn'
+
 const HELP_KEY = '?'
 
 const readoutOf = (args: { entry: ModelEntry | undefined; used: number }): FooterContext | null => {
@@ -53,12 +55,15 @@ export function App(props: { app: AtlasApp; opened: OpenedConversation }): React
 
   const settings = useSettings({ app: props.app })
 
+  const draft = useDraft()
+
   const conversation = useConversation({
     app: props.app,
     opened: props.opened,
     paceReveal: settings.paceReveal,
+    thinking: settings.thinking,
+    onUndone: draft.setValue,
   })
-  const draft = useDraft()
 
   const [preference, setPreference] = useState<ESidebarPreference>(ESidebarPreference.Auto)
   const [forcedOpen, setForcedOpen] = useState(false)
@@ -159,6 +164,14 @@ export function App(props: { app: AtlasApp; opened: OpenedConversation }): React
     [draft],
   )
 
+  const handleTakeBackPending = useCallback((): boolean => {
+    const text = conversation.handleTakeBackPending()
+    if (text === null) return false
+
+    draft.setValue(text)
+    return true
+  }, [conversation, draft])
+
   const handleToggleSidebar = useCallback(() => {
     setForcedOpen(!sidebarVisible)
     setPreference(sidebarVisible ? ESidebarPreference.Hidden : ESidebarPreference.Auto)
@@ -236,6 +249,11 @@ export function App(props: { app: AtlasApp; opened: OpenedConversation }): React
       return
     }
 
+    if (key.name === 'up' && !key.ctrl && !key.meta && draftIsEmpty() && handleTakeBackPending()) {
+      key.preventDefault()
+      return
+    }
+
     if (key.name === 'escape') {
       key.preventDefault()
       conversation.handleInterrupt()
@@ -276,6 +294,7 @@ export function App(props: { app: AtlasApp; opened: OpenedConversation }): React
             home={homedir()}
             modelId={selection.modelId}
             turn={conversation.turn}
+            pending={conversation.pending}
             onRetry={conversation.handleRetry}
             opened={opened}
             onToggle={handleToggle}
@@ -285,7 +304,7 @@ export function App(props: { app: AtlasApp; opened: OpenedConversation }): React
             draft={draft}
             width={chromeWidth}
             tone={tone}
-            placeholder={PLACEHOLDER}
+            placeholder={conversation.working ? STEER_PLACEHOLDER : PLACEHOLDER}
             maxRows={composerRows(height)}
             focused={switcher === null && settings.state === null}
           />

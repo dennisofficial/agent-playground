@@ -17,7 +17,7 @@ export function EntryView(props: {
 
   switch (entry.kind) {
     case EEntryKind.OperatorSaid:
-      return <UserBlock text={entry.text} width={props.width} />
+      return <UserBlock text={entry.text} width={props.width} steer={entry.steer} />
 
     case EEntryKind.ModelSaid:
       return (

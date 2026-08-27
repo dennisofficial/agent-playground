@@ -21,6 +21,7 @@ import {
   type DeltaChannel,
 } from '@dltech/atlas-harness'
 
+import { createPendingQueue } from '../../store'
 import type { AtlasApp } from '../compose'
 import { heldChoice } from '../model-selection'
 import { DEFAULT_MODEL_ID, type AtlasConfig } from '../config'
@@ -113,21 +114,40 @@ export type FakeApp = AtlasApp & {
   channel: DeltaChannel
   log: FakeEventLog
   branches: FakeBranchStore
+  readonly turnsDriven: number
 }
 
 export function fakeApp(args: { model: ModelPort; settings?: SettingsDocument }): FakeApp {
   const channel = createDeltaChannel()
   const log = fakeEventLog()
-  const branches = fakeBranchStore()
+  const branches = fakeBranchStore({ log })
   const ids = new RandomIds()
+  const pending = createPendingQueue()
+  const runner = createPublishingTurnRunner({
+    channel,
+    deps: {
+      log,
+      model: args.model,
+      ids,
+      rules: defaultRules(),
+      drainPending: async () => pending.drain(),
+    },
+  })
+
+  let turnsDriven = 0
 
   return {
+    get turnsDriven() {
+      return turnsDriven
+    },
+
     config: FAKE_CONFIG,
     credentials: alwaysAuthorised(),
     channel,
     log,
     branches,
     ids,
+    pending,
     model: heldChoice({ modelId: FAKE_CONFIG.modelId ?? DEFAULT_MODEL_ID, effort: EEffort.Medium }),
     settings: createSettingsService({
       definitions: ATLAS_SETTINGS,
@@ -137,9 +157,12 @@ export function fakeApp(args: { model: ModelPort; settings?: SettingsDocument })
       }),
     }),
     close: async () => {},
-    runner: createPublishingTurnRunner({
-      channel,
-      deps: { log, model: args.model, ids, rules: defaultRules() },
-    }),
+    runner: {
+      say: (call) => runner.say(call),
+      runTurn: (call) => {
+        turnsDriven += 1
+        return runner.runTurn(call)
+      },
+    },
   }
 }

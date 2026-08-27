@@ -64,3 +64,9 @@ export const fromTheModel = (model: TranscriptModel) =>
     (entry): entry is Exclude<TranscriptEntry, { kind: EEntryKind.OperatorSaid }> =>
       entry.kind !== EEntryKind.OperatorSaid,
   )
+
+export const fromTheOperator = (model: TranscriptModel) =>
+  model.entries.filter(
+    (entry): entry is Extract<TranscriptEntry, { kind: EEntryKind.OperatorSaid }> =>
+      entry.kind === EEntryKind.OperatorSaid,
+  )

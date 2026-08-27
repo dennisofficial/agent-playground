@@ -17,6 +17,7 @@ export type OperatorSaidEntry = {
   author: EAuthor.Operator
   key: string
   text: string
+  steer: boolean
 }
 
 export type ModelSaidEntry = {

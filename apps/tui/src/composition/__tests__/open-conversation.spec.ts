@@ -19,7 +19,7 @@ const said = (text: string): Event => ({
 
 describe('which conversation the app opens on', () => {
   it('opens on the most recent one, with everything it already held', async () => {
-    const branches = fakeBranchStore([toBranchId('older'), YESTERDAY])
+    const branches = fakeBranchStore({ existing: [toBranchId('older'), YESTERDAY] })
     const log = fakeEventLog([said('carry this on')])
 
     const opened = await openConversation({ branches, log, fresh: false })
@@ -40,7 +40,7 @@ describe('which conversation the app opens on', () => {
   })
 
   it('starts a fresh one when asked, without touching the last', async () => {
-    const branches = fakeBranchStore([YESTERDAY])
+    const branches = fakeBranchStore({ existing: [YESTERDAY] })
     const log = fakeEventLog([said('do not pollute this')])
 
     const opened = await openConversation({ branches, log, fresh: true })

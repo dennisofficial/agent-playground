@@ -1,68 +1,12 @@
-import { toBranchId } from '@dltech/atlas-core'
-import { testRender } from '@opentui/react/test-utils'
 import { describe, expect, it } from 'bun:test'
-import React from 'react'
 
-import { grammarsReady, settle, teardown } from '../../ui/markdown/__tests__/harness'
-import { App } from '../app'
-import { FAKE_CONFIG, fakeApp, failingModelPort, scriptedModelPort, type FakeApp } from './fake-app'
+import { grammarsReady } from '../../ui/markdown/__tests__/harness'
+import { open, until, BRANCH, REPLY, THINKING } from './app-fixture'
+import { FAKE_CONFIG, fakeApp, failingModelPort, scriptedModelPort } from './fake-app'
 
 await grammarsReady()
 
-const WIDTH = 90
-
-const HEIGHT = 30
-
-const BRANCH = toBranchId('opened-branch')
-
-const THINKING = 'The loop reads the log, so position is derived rather than remembered.'
-
-const REPLY = 'Atlas derives every prompt from the event log.'
-
 const PROVIDER_ERROR = 'overloaded_error'
-
-type Mounted = {
-  app: FakeApp
-  frame: () => Promise<string>
-  nextFrame: () => Promise<string>
-  typeText: (text: string) => Promise<void>
-  pressEnter: () => void
-  pressEscape: () => void
-  done: () => Promise<void>
-}
-
-async function open(args: { app: FakeApp }): Promise<Mounted> {
-  const setup = await testRender(<App app={args.app} opened={{ branchId: BRANCH, events: [] }} />, {
-    width: WIDTH,
-    height: HEIGHT,
-  })
-
-  return {
-    app: args.app,
-    frame: async () => {
-      await setup.flush()
-      await settle(250)
-      await setup.flush()
-      return setup.captureCharFrame()
-    },
-    nextFrame: async () => {
-      await setup.flush()
-      return setup.captureCharFrame()
-    },
-    typeText: (text) => setup.mockInput.typeText(text),
-    pressEnter: () => setup.mockInput.pressEnter(),
-    pressEscape: () => setup.mockInput.pressEscape(),
-    done: () => teardown(setup),
-  }
-}
-
-async function until(args: { holds: () => Promise<boolean>; within: number }): Promise<boolean> {
-  const deadline = Date.now() + args.within
-  while (Date.now() < deadline) {
-    if (await args.holds()) return true
-  }
-  return false
-}
 
 describe('the app you can actually open', () => {
   it('opens straight into a transcript, with no menu and no error on an empty branch', async () => {
@@ -158,7 +102,7 @@ describe('the app you can actually open', () => {
       app: fakeApp({
         model: scriptedModelPort({
           script: { thinking: THINKING, reply: REPLY },
-          perChunkMs: 120,
+          perChunkMs: 300,
         }),
       }),
     })
@@ -167,11 +111,11 @@ describe('the app you can actually open', () => {
       await mounted.typeText('go')
       mounted.pressEnter()
 
-      const streaming = await until({
-        holds: async () => (await mounted.frame()).includes('Thinking'),
-        within: 20_000,
+      const spoke = await until({
+        holds: async () => (await mounted.frame()).includes('Atlas derives'),
+        within: 30_000,
       })
-      expect(streaming).toBe(true)
+      expect(spoke).toBe(true)
 
       mounted.pressEscape()
 

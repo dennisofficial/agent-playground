@@ -5,6 +5,7 @@ import React from 'react'
 import {
   EAuthor,
   EEntryKind,
+  type PendingMessage,
   type TranscriptEntry,
   type TranscriptModel,
 } from '../../store'
@@ -39,11 +40,16 @@ const LONG_REPLY = [
   '| claude | opus |',
 ].join('\n')
 
-const operatorSaid = (key: string, text: string): TranscriptEntry => ({
+const operatorSaid = (
+  key: string,
+  text: string,
+  flags: { steer?: boolean } = {},
+): TranscriptEntry => ({
   kind: EEntryKind.OperatorSaid,
   author: EAuthor.Operator,
   key,
   text,
+  steer: flags.steer ?? false,
 })
 
 type ModelFlags = { streaming?: boolean; interrupted?: boolean }
@@ -143,6 +149,7 @@ export function transcript(args: {
   width: number
   turn?: TurnClock
   anchorKey?: string
+  pending?: readonly PendingMessage[]
   onRetry?: () => void
 }): React.ReactNode {
   return (
@@ -155,6 +162,7 @@ export function transcript(args: {
       modelId={MODEL_ID}
       {...(args.turn ? { turn: args.turn } : {})}
       {...(args.anchorKey ? { anchorKey: args.anchorKey } : {})}
+      {...(args.pending ? { pending: args.pending } : {})}
       {...(args.onRetry ? { onRetry: args.onRetry } : {})}
     />
   )

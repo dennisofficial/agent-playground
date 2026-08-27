@@ -172,7 +172,8 @@ describe('what a turn outcome tells the user', () => {
   it('says nothing about a turn that completed, went idle, or was interrupted', () => {
     expect(stoppageOf({ status: ETurnStatus.Completed, runId })).toBeNull()
     expect(stoppageOf({ status: ETurnStatus.Idle, runId })).toBeNull()
-    expect(stoppageOf({ status: ETurnStatus.Interrupted, runId })).toBeNull()
+    expect(stoppageOf({ status: ETurnStatus.Interrupted, runId, committed: true })).toBeNull()
+    expect(stoppageOf({ status: ETurnStatus.Interrupted, runId, committed: false })).toBeNull()
   })
 
   it('passes a failure through in the words the loop used', () => {
