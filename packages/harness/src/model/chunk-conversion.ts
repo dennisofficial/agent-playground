@@ -20,14 +20,36 @@ const carriedMetadata = (part: { providerMetadata?: SharedV4ProviderMetadata }) 
 }
 
 /**
- * `inputTokens` is the whole prompt in AI SDK 7 — cache reads and writes are broken out under
- * `inputTokenDetails` rather than added on top — so the two totals are the context as billed.
+ * `inputTokens` is the whole prompt in AI SDK 7 — `@ai-sdk/anthropic`'s `convertAnthropicUsage`
+ * returns `inputTokens.total = noCache + cacheRead + cacheWrite` — so the two totals are the context
+ * as billed, and the details are a breakdown within `inputTokens` rather than an addition to it.
+ * They are carried because the three input tiers bill at different rates.
  */
+type InputTiers = Partial<LanguageModelUsage['inputTokenDetails']>
+
+// ai@7's own `addLanguageModelUsage` reads `inputTokenDetails` through `?.`, so a provider reaching
+// the stream without one is a shape the SDK itself expects.
+const inputTiersOf = (usage: LanguageModelUsage): InputTiers => usage.inputTokenDetails ?? {}
+
 const carriedUsage = (usage: LanguageModelUsage | undefined): { usage?: ModelUsage } => {
   if (usage === undefined) return {}
   const { inputTokens, outputTokens } = usage
-  if (inputTokens === undefined && outputTokens === undefined) return {}
-  return { usage: { inputTokens: inputTokens ?? 0, outputTokens: outputTokens ?? 0 } }
+  const { cacheReadTokens, cacheWriteTokens } = inputTiersOf(usage)
+  const reportedNothing =
+    inputTokens === undefined &&
+    outputTokens === undefined &&
+    cacheReadTokens === undefined &&
+    cacheWriteTokens === undefined
+  if (reportedNothing) return {}
+
+  return {
+    usage: {
+      inputTokens: inputTokens ?? 0,
+      outputTokens: outputTokens ?? 0,
+      ...(cacheReadTokens === undefined ? {} : { cacheReadTokens }),
+      ...(cacheWriteTokens === undefined ? {} : { cacheWriteTokens }),
+    },
+  }
 }
 
 export function toCoreChunk(part: TextStreamPart<ToolSet>): Chunk | null {

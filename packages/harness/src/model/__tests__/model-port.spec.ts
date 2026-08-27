@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'bun:test'
+import type { LanguageModelV4StreamPart } from '@ai-sdk/provider'
+import { MockLanguageModelV4, simulateReadableStream } from 'ai/test'
 import { z } from 'zod'
 
 import {
@@ -18,6 +20,40 @@ import {
 import { createAiSdkModelPort } from '../ai-sdk-model-port'
 import { ModelStreamError } from '../errors'
 import { scriptedModel } from '../testing/scripted-model'
+
+const cacheReportingModel = (tiers: {
+  noCache: number
+  cacheRead: number
+  cacheWrite: number
+  output: number
+}): MockLanguageModelV4 =>
+  new MockLanguageModelV4({
+    doStream: async () => ({
+      stream: simulateReadableStream<LanguageModelV4StreamPart>({
+        chunks: [
+          { type: 'stream-start', warnings: [] },
+          { type: 'text-start', id: 'cached' },
+          { type: 'text-delta', id: 'cached', delta: 'answer' },
+          { type: 'text-end', id: 'cached' },
+          {
+            type: 'finish',
+            finishReason: { unified: 'stop', raw: undefined },
+            usage: {
+              inputTokens: {
+                total: tiers.noCache + tiers.cacheRead + tiers.cacheWrite,
+                noCache: tiers.noCache,
+                cacheRead: tiers.cacheRead,
+                cacheWrite: tiers.cacheWrite,
+              },
+              outputTokens: { total: tiers.output, text: tiers.output, reasoning: 0 },
+            },
+          },
+        ],
+        initialDelayInMs: 0,
+        chunkDelayInMs: 0,
+      }),
+    }),
+  })
 
 const identity: ProviderIdentity = { id: 'anthropic', modelId: 'claude-opus-5' }
 
@@ -194,7 +230,35 @@ describe('createAiSdkModelPort', () => {
     expect(seen.find((chunk) => chunk.type === 'finish')).toEqual({
       type: 'finish',
       reason: EFinishReason.Stop,
-      usage: { inputTokens: 41_000, outputTokens: 900 },
+      usage: { inputTokens: 41_000, outputTokens: 900, cacheReadTokens: 0, cacheWriteTokens: 0 },
+    })
+  })
+
+  it('carries a cache read and a cache write through, since the two bill at different rates', async () => {
+    const result = await step({
+      model: cacheReportingModel({ noCache: 1_000, cacheRead: 38_000, cacheWrite: 2_000, output: 900 }),
+    })
+
+    expect(result.usage).toEqual({
+      inputTokens: 41_000,
+      outputTokens: 900,
+      cacheReadTokens: 38_000,
+      cacheWriteTokens: 2_000,
+    })
+  })
+
+  it('hands the step its usage, so the loop can account for what the turn was billed', async () => {
+    const result = await step({
+      model: scriptedModel({
+        script: [{ text: 'answer', usage: { inputTokens: 41_000, outputTokens: 900 } }],
+      }),
+    })
+
+    expect(result.usage).toEqual({
+      inputTokens: 41_000,
+      outputTokens: 900,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
     })
   })
 

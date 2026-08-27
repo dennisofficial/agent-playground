@@ -10,7 +10,12 @@ export enum EFinishReason {
   Other = 'other',
 }
 
-export type ModelUsage = { inputTokens: number; outputTokens: number }
+export type ModelUsage = {
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+}
 
 export type Chunk =
   | { type: 'text-start'; id: string; providerMetadata?: ProviderOptions }

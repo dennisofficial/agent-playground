@@ -76,3 +76,35 @@ export function contextTokens(args: {
   if (reported === null) return estimateEventTokens(args.events)
   return Math.max(0, reported.inputTokens) + Math.max(0, reported.outputTokens)
 }
+
+export type BilledUsage = {
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+}
+
+export const NOTHING_BILLED: BilledUsage = {
+  inputTokens: 0,
+  outputTokens: 0,
+  cacheReadTokens: 0,
+  cacheWriteTokens: 0,
+}
+
+const countedOrNothing = (value: number | undefined): number =>
+  value === undefined || !Number.isFinite(value) || value < 0 ? 0 : value
+
+/**
+ * Every step is billed the whole prompt it sent, so a turn's spend is the sum over its steps —
+ * unlike its context, which is only ever the last step's report.
+ */
+export function addUsage(args: { billed: BilledUsage; step: ModelUsage | undefined }): BilledUsage {
+  const { billed, step } = args
+  if (step === undefined) return billed
+  return {
+    inputTokens: billed.inputTokens + countedOrNothing(step.inputTokens),
+    outputTokens: billed.outputTokens + countedOrNothing(step.outputTokens),
+    cacheReadTokens: billed.cacheReadTokens + countedOrNothing(step.cacheReadTokens),
+    cacheWriteTokens: billed.cacheWriteTokens + countedOrNothing(step.cacheWriteTokens),
+  }
+}

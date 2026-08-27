@@ -21,7 +21,7 @@ import {
   type ToolDeclaration,
 } from '@dltech/atlas-core'
 
-import { runAfterTurn, runBeforeStep, type HookRegistry } from '../hooks/registry'
+import type { HookChain } from '../hooks/registry'
 import { ModelStreamError } from '../model/errors'
 import type { Dispatch } from '../tools/dispatch'
 import { openTurnSpend, TURN_CRASHED, type TurnLedgerDeps, type TurnSpendTally } from '../ledger/record-turn-spend'
@@ -39,7 +39,7 @@ export type TurnDeps = {
   countTokens?: ((assembled: Assembled) => number) | undefined
   onChunk?: ChunkFilter | undefined
   dispatch?: Dispatch | undefined
-  hooks?: HookRegistry | undefined
+  hooks?: HookChain | undefined
   drainPending?: (() => Promise<readonly string[]>) | undefined
   spend?: TurnLedgerDeps | undefined
 }
@@ -175,7 +175,7 @@ export function createTurnRunner(deps: TurnDeps): TurnRunner {
         ctx,
       })
 
-      const assembled = await runBeforeStep({ hooks: deps.hooks?.beforeStep ?? [], assembled: projected, trace })
+      const assembled = (await deps.hooks?.beforeStep({ assembled: projected, trace })) ?? projected
       previous = assembled
 
       const faults = exchangeFaults(assembled)
@@ -215,7 +215,7 @@ export function createTurnRunner(deps: TurnDeps): TurnRunner {
       if (messageArrivedSince({ events: latest, seenThrough })) continue
       if (await drainInto({ branchId })) continue
 
-      const closing = await runAfterTurn({ hooks: deps.hooks?.afterTurn ?? [], branchId })
+      const closing = (await deps.hooks?.afterTurn({ branchId })) ?? []
       if (closing.length > 0) await deps.log.append({ branchId, runId, drafts: closing })
 
       return { status: ETurnStatus.Completed, runId }

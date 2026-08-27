@@ -5,6 +5,7 @@ import {
   type Chunk,
   type ModelStepResult,
   type ModelToolCall,
+  type ModelUsage,
   type ProviderOptions,
 } from '@dltech/atlas-core'
 
@@ -25,6 +26,7 @@ export function createPartAccumulator(): PartAccumulator {
   const parts: AssistantPart[] = []
   const toolCalls: ModelToolCall[] = []
   let finishReason = EFinishReason.Other
+  let usage: ModelUsage | undefined
 
   const handleStart = (args: { id: string; kind: EBlockKind; providerMetadata: ProviderOptions | undefined }) => {
     if (open.has(args.id)) return
@@ -76,12 +78,13 @@ export function createPartAccumulator(): PartAccumulator {
       }
       if (chunk.type === 'finish') {
         finishReason = chunk.reason
+        if (chunk.usage !== undefined) usage = chunk.usage
       }
     },
 
     finish() {
       for (const id of openedOrder) handleClose({ id, providerMetadata: undefined })
-      return { parts, toolCalls, finishReason }
+      return { parts, toolCalls, finishReason, ...(usage === undefined ? {} : { usage }) }
     },
   }
 }

@@ -32,6 +32,7 @@ export * from './tools/tool'
 
 export * from './policy/approval'
 export * from './policy/before-tool'
+export * from './policy/concurrency'
 
 export * from './hooks/hooks'
 

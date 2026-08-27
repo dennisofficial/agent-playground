@@ -20,6 +20,7 @@ model Branch {
   createdAt String
   updatedAt String
   events    Event[]
+  turns     Turn[]
 
   @@index([updatedAt])
 }
@@ -41,4 +42,23 @@ model Event {
   @@unique([branchId, seq])
   @@unique([branchId, contextSlot, contextKey])
   @@index([branchId, type])
+}
+
+model Turn {
+  runId            String @id
+  branchId         String
+  status           String
+  providerId       String
+  modelId          String
+  steps            Int
+  inputTokens      Int
+  outputTokens     Int
+  cacheReadTokens  Int
+  cacheWriteTokens Int
+  startedAt        String
+  endedAt          String
+  durationMs       Int
+  branch           Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@index([branchId, startedAt])
 }
