@@ -1,0 +1,21 @@
+packages/harness/src/hooks/__tests__/resolve-hooks.spec.ts
+  s_3d83af59050d52::t_2f9c7c0b2e7c73 17,160-161,187-188
+packages/harness/src/hooks/boundary.ts
+  s_3d83af59050d52::t_2f9c7c0b2e7c73 11,19-20,76,85-88
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "41866b97508c57a743c7a42121c60cc96c0f3302",
+  "prompts": {},
+  "sessions": {
+    "s_3d83af59050d52": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "576fc6c5-ff3a-40f0-b80e-172325e4141c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
