@@ -1,8 +1,17 @@
 import { stat } from 'node:fs/promises'
 
-import { EPathForm, EPathPresence, EToolEffect, type ToolDefinition } from '@dltech/atlas-core'
+import {
+  EPathForm,
+  EPathPresence,
+  EToolEffect,
+  type DeclaredPathField,
+  type ToolDefinition,
+  type ToolInvocation,
+  type ToolOutcome,
+} from '@dltech/atlas-core'
 import { z } from 'zod'
 
+import { injectable } from '../../container/injection'
 import { absolutePathSchema } from './file-text'
 
 const MAX_READ_BYTES = 262_144
@@ -89,56 +98,60 @@ async function scanLines(args: {
   return { kind: EScan.Selected, lines, moreAfter: false }
 }
 
-export function createReadTool(): ToolDefinition {
-  return {
-    name: 'read',
-    description,
-    effect: EToolEffect.Read,
-    inputSchema,
-    pathFields: [{ field: 'path', presence: EPathPresence.Required, form: EPathForm.Absolute }],
-    async invoke({ input }) {
-      const parsed = inputSchema.safeParse(input)
-      if (!parsed.success) return { ok: false, reason: `read was called with invalid input: ${z.prettifyError(parsed.error)}` }
+@injectable()
+export class ReadTool implements ToolDefinition {
+  readonly name = 'read'
+  readonly description = description
+  readonly effect = EToolEffect.Read
+  readonly inputSchema = inputSchema
+  readonly pathFields: readonly DeclaredPathField[] = [
+    { field: 'path', presence: EPathPresence.Required, form: EPathForm.Absolute },
+  ]
 
-      const { path, offset, limit } = parsed.data
-      const stats = await stat(path).catch(() => null)
-      if (stats === null) return { ok: false, reason: `File does not exist: ${path}` }
-      if (stats.isDirectory()) {
-        return { ok: false, reason: `${path} is a directory; use glob or grep to inspect its contents.` }
+  async invoke({ input }: ToolInvocation): Promise<ToolOutcome> {
+    const parsed = inputSchema.safeParse(input)
+    if (!parsed.success) return { ok: false, reason: `read was called with invalid input: ${z.prettifyError(parsed.error)}` }
+
+    const { path, offset, limit } = parsed.data
+    const stats = await stat(path).catch(() => null)
+    if (stats === null) return { ok: false, reason: `File does not exist: ${path}` }
+    if (stats.isDirectory()) {
+      return { ok: false, reason: `${path} is a directory; use glob or grep to inspect its contents.` }
+    }
+    if (!stats.isFile()) return { ok: false, reason: `${path} is not a regular file.` }
+
+    const opening = await Bun.file(path).slice(0, BINARY_SNIFF_LENGTH).text()
+    if (opening.includes(NUL)) {
+      return { ok: false, reason: `${path} looks like a binary file and cannot be read as text.` }
+    }
+
+    const firstLine = offset ?? 1
+    const scan = await scanLines({ path, firstLine, limit })
+
+    if (scan.kind === EScan.Overflow) {
+      return {
+        ok: false,
+        reason: `reading ${path} from line ${firstLine} passes the ${MAX_READ_BYTES} byte read limit at line ${scan.atLine}. Narrow the range with offset and limit, or use grep to find the part you need.`,
       }
-      if (!stats.isFile()) return { ok: false, reason: `${path} is not a regular file.` }
+    }
 
-      const opening = await Bun.file(path).slice(0, BINARY_SNIFF_LENGTH).text()
-      if (opening.includes(NUL)) {
-        return { ok: false, reason: `${path} looks like a binary file and cannot be read as text.` }
-      }
-
-      const firstLine = offset ?? 1
-      const scan = await scanLines({ path, firstLine, limit })
-
-      if (scan.kind === EScan.Overflow) {
-        return {
-          ok: false,
-          reason: `reading ${path} from line ${firstLine} passes the ${MAX_READ_BYTES} byte read limit at line ${scan.atLine}. Narrow the range with offset and limit, or use grep to find the part you need.`,
-        }
-      }
-
-      if (scan.kind === EScan.PastEnd) {
-        return {
-          ok: true,
-          output: { path, lines: 0, truncated: scan.totalLines > 0 },
-          modelText:
-            scan.totalLines === 0
-              ? `${path} exists but is empty.`
-              : `${path} has ${scan.totalLines} lines; line ${firstLine} is past the end of the file.`,
-        }
-      }
-
+    if (scan.kind === EScan.PastEnd) {
       return {
         ok: true,
-        output: { path, lines: scan.lines.length, truncated: firstLine > 1 || scan.moreAfter },
-        modelText: scan.lines.map((line, index) => `${firstLine + index}\t${line}`).join('\n'),
+        output: { path, lines: 0, truncated: scan.totalLines > 0 },
+        modelText:
+          scan.totalLines === 0
+            ? `${path} exists but is empty.`
+            : `${path} has ${scan.totalLines} lines; line ${firstLine} is past the end of the file.`,
       }
-    },
+    }
+
+    return {
+      ok: true,
+      output: { path, lines: scan.lines.length, truncated: firstLine > 1 || scan.moreAfter },
+      modelText: scan.lines.map((line, index) => `${firstLine + index}\t${line}`).join('\n'),
+    }
   }
 }
+
+export const createReadTool = (): ToolDefinition => new ReadTool()

@@ -42,6 +42,12 @@ export type ToolDeclaration = {
 
 export type ToolInvocation = { input: unknown; signal: AbortSignal; idempotencyKey: string }
 
-export type ToolDefinition = ToolDeclaration & {
-  invoke(args: ToolInvocation): Promise<ToolOutcome>
+export abstract class ToolDefinition {
+  abstract readonly name: string
+  abstract readonly description: string
+  abstract readonly effect: EToolEffect
+  abstract readonly inputSchema: ZodType
+  abstract readonly pathFields?: readonly DeclaredPathField[]
+
+  abstract invoke(args: ToolInvocation): Promise<ToolOutcome>
 }

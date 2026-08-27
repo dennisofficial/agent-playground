@@ -1,7 +1,17 @@
 import { z } from 'zod'
 
-import { EPathForm, EPathPresence, EToolEffect, type ToolDefinition, type ToolOutcome } from '@dltech/atlas-core'
+import {
+  EPathForm,
+  EPathPresence,
+  EToolEffect,
+  type DeclaredPathField,
+  type ToolDefinition,
+  type ToolInvocation,
+  type ToolOutcome,
+} from '@dltech/atlas-core'
 
+import { inject, injectable } from '../../container/injection'
+import { WorkspaceRoot } from '../../container/tokens'
 import { absolutePathSchema } from './file-text'
 
 const DEFAULT_HEAD_LIMIT = 250
@@ -132,77 +142,82 @@ function renderModelText(args: {
   return sections.join('\n\n')
 }
 
-export function createGrepTool(args: { root: string }): ToolDefinition {
-  return {
-    name: 'grep',
-    description,
-    effect: EToolEffect.Read,
-    inputSchema,
-    pathFields: [{ field: 'path', presence: EPathPresence.Optional, form: EPathForm.Absolute }],
-    invoke: async ({ input, signal }): Promise<ToolOutcome> => {
-      const parsed = inputSchema.safeParse(input)
-      if (!parsed.success) {
-        return { ok: false, reason: `grep was called with invalid input: ${z.prettifyError(parsed.error)}` }
-      }
+@injectable()
+export class GrepTool implements ToolDefinition {
+  readonly name = 'grep'
+  readonly description = description
+  readonly effect = EToolEffect.Read
+  readonly inputSchema = inputSchema
+  readonly pathFields: readonly DeclaredPathField[] = [
+    { field: 'path', presence: EPathPresence.Optional, form: EPathForm.Absolute },
+  ]
 
-      const { pattern, path, glob, caseInsensitive, context, headLimit, offset } = parsed.data
-      const searcher = searcherFor({
-        pattern,
-        searchPath: path ?? args.root,
-        glob,
-        caseInsensitive: caseInsensitive ?? false,
-        context,
+  constructor(@inject(WorkspaceRoot) private readonly root: string) {}
+  async invoke({ input, signal }: ToolInvocation): Promise<ToolOutcome> {
+    const parsed = inputSchema.safeParse(input)
+    if (!parsed.success) {
+      return { ok: false, reason: `grep was called with invalid input: ${z.prettifyError(parsed.error)}` }
+    }
+
+    const { pattern, path, glob, caseInsensitive, context, headLimit, offset } = parsed.data
+    const searcher = searcherFor({
+      pattern,
+      searchPath: path ?? this.root,
+      glob,
+      caseInsensitive: caseInsensitive ?? false,
+      context,
+    })
+
+    let stdout: string
+    let stderr: string
+    let exitCode: number
+    try {
+      const search = Bun.spawn({
+        cmd: [...searcher.command],
+        cwd: this.root,
+        stdin: 'ignore',
+        stdout: 'pipe',
+        stderr: 'pipe',
       })
-
-      let stdout: string
-      let stderr: string
-      let exitCode: number
+      const handleAbort = (): void => void search.kill('SIGTERM')
+      signal.addEventListener('abort', handleAbort, { once: true })
       try {
-        const search = Bun.spawn({
-          cmd: [...searcher.command],
-          cwd: args.root,
-          stdin: 'ignore',
-          stdout: 'pipe',
-          stderr: 'pipe',
-        })
-        const handleAbort = (): void => void search.kill('SIGTERM')
-        signal.addEventListener('abort', handleAbort, { once: true })
-        try {
-          ;[stdout, stderr, exitCode] = await Promise.all([
-            new Response(search.stdout).text(),
-            new Response(search.stderr).text(),
-            search.exited,
-          ])
-        } finally {
-          signal.removeEventListener('abort', handleAbort)
-        }
-      } catch (error) {
-        return { ok: false, reason: `could not run ${searcher.name}: ${messageOf(error)}` }
+        ;[stdout, stderr, exitCode] = await Promise.all([
+          new Response(search.stdout).text(),
+          new Response(search.stderr).text(),
+          search.exited,
+        ])
+      } finally {
+        signal.removeEventListener('abort', handleAbort)
       }
+    } catch (error) {
+      return { ok: false, reason: `could not run ${searcher.name}: ${messageOf(error)}` }
+    }
 
-      const lines = stdout
-        .split('\n')
-        .filter((line) => line.length > 0)
-        .map(clampLine)
+    const lines = stdout
+      .split('\n')
+      .filter((line) => line.length > 0)
+      .map(clampLine)
 
-      const searchFailed = exitCode > NO_MATCH_EXIT_CODE
-      const complaint = searchFailed ? complaintFrom(stderr) : ''
+    const searchFailed = exitCode > NO_MATCH_EXIT_CODE
+    const complaint = searchFailed ? complaintFrom(stderr) : ''
 
-      if (searchFailed && lines.length === 0) {
-        return {
-          ok: false,
-          reason: `${searcher.name} exited ${exitCode}${complaint.length === 0 ? '' : `: ${complaint}`}`,
-        }
-      }
-
-      const from = offset ?? 0
-      const window = lines.slice(from, from + (headLimit ?? DEFAULT_HEAD_LIMIT))
-
+    if (searchFailed && lines.length === 0) {
       return {
-        ok: true,
-        output: { pattern, matches: window, truncated: from + window.length < lines.length },
-        modelText: renderModelText({ window, total: lines.length, offset: from, complaint }),
+        ok: false,
+        reason: `${searcher.name} exited ${exitCode}${complaint.length === 0 ? '' : `: ${complaint}`}`,
       }
-    },
+    }
+
+    const from = offset ?? 0
+    const window = lines.slice(from, from + (headLimit ?? DEFAULT_HEAD_LIMIT))
+
+    return {
+      ok: true,
+      output: { pattern, matches: window, truncated: from + window.length < lines.length },
+      modelText: renderModelText({ window, total: lines.length, offset: from, complaint }),
+    }
   }
 }
+
+export const createGrepTool = ({ root }: { root: string }): ToolDefinition => new GrepTool(root)

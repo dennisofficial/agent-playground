@@ -1,6 +1,15 @@
 import { z } from 'zod'
 
-import { EToolEffect, TAKES_NO_PATHS, type ToolDefinition, type ToolOutcome } from '@dltech/atlas-core'
+import {
+  EToolEffect,
+  TAKES_NO_PATHS,
+  type ToolDefinition,
+  type ToolInvocation,
+  type ToolOutcome,
+} from '@dltech/atlas-core'
+
+import { inject, injectable } from '../../container/injection'
+import { WorkspaceRoot } from '../../container/tokens'
 
 const DEFAULT_TIMEOUT_MS = 120_000
 const MAXIMUM_TIMEOUT_MS = 600_000
@@ -200,69 +209,72 @@ function renderModelText(args: {
   return sections.join('\n\n')
 }
 
-export function createBashTool(args: { root: string }): ToolDefinition {
-  return {
-    name: 'bash',
-    description,
-    effect: EToolEffect.Destructive,
-    inputSchema,
-    pathFields: TAKES_NO_PATHS,
-    invoke: async ({ input, signal }): Promise<ToolOutcome> => {
-      const parsed = inputSchema.safeParse(input)
-      if (!parsed.success) {
-        return { ok: false, reason: `bash was called with invalid input: ${z.prettifyError(parsed.error)}` }
-      }
-      if (signal.aborted) return { ok: false, reason: 'the turn was abandoned before the command started' }
+@injectable()
+export class BashTool implements ToolDefinition {
+  readonly name = 'bash'
+  readonly description = description
+  readonly effect = EToolEffect.Destructive
+  readonly inputSchema = inputSchema
+  readonly pathFields = TAKES_NO_PATHS
 
-      const { command, timeoutMs } = parsed.data
-      const timeout = Math.min(timeoutMs ?? DEFAULT_TIMEOUT_MS, MAXIMUM_TIMEOUT_MS)
+  constructor(@inject(WorkspaceRoot) private readonly root: string) {}
+  async invoke({ input, signal }: ToolInvocation): Promise<ToolOutcome> {
+    const parsed = inputSchema.safeParse(input)
+    if (!parsed.success) {
+      return { ok: false, reason: `bash was called with invalid input: ${z.prettifyError(parsed.error)}` }
+    }
+    if (signal.aborted) return { ok: false, reason: 'the turn was abandoned before the command started' }
 
-      const started = startShell({ command, cwd: args.root })
-      if (!started.ok) return started
+    const { command, timeoutMs } = parsed.data
+    const timeout = Math.min(timeoutMs ?? DEFAULT_TIMEOUT_MS, MAXIMUM_TIMEOUT_MS)
 
-      const { shell } = started
-      const terminate = terminatorFor(shell)
-      let timedOut = false
-      const deadline = setTimeout(() => {
-        timedOut = true
-        terminate()
-      }, timeout)
-      signal.addEventListener('abort', terminate, { once: true })
+    const started = startShell({ command, cwd: this.root })
+    if (!started.ok) return started
 
-      let read: ShellOutput
-      try {
-        read = await readShell(shell)
-      } catch (error) {
-        return { ok: false, reason: `the command could not be read back: ${messageOf(error)}` }
-      } finally {
-        clearTimeout(deadline)
-        signal.removeEventListener('abort', terminate)
-      }
+    const { shell } = started
+    const terminate = terminatorFor(shell)
+    let timedOut = false
+    const deadline = setTimeout(() => {
+      timedOut = true
+      terminate()
+    }, timeout)
+    signal.addEventListener('abort', terminate, { once: true })
 
-      if (signal.aborted && !timedOut) {
-        return { ok: false, reason: 'the turn was abandoned while the command was running' }
-      }
+    let read: ShellOutput
+    try {
+      read = await readShell(shell)
+    } catch (error) {
+      return { ok: false, reason: `the command could not be read back: ${messageOf(error)}` }
+    } finally {
+      clearTimeout(deadline)
+      signal.removeEventListener('abort', terminate)
+    }
 
-      const merged = mergeStreams({ stdout: read.stdout, stderr: read.stderr })
+    if (signal.aborted && !timedOut) {
+      return { ok: false, reason: 'the turn was abandoned while the command was running' }
+    }
 
-      return {
-        ok: true,
-        output: {
-          command,
-          description: parsed.data.description,
-          exitCode: read.exitCode,
-          stdout: render(read.stdout),
-          stderr: render(read.stderr),
-          truncated: merged.truncated,
-          timedOut,
-        },
-        modelText: renderModelText({
-          merged: render(merged),
-          exitCode: read.exitCode,
-          timedOut,
-          timeoutMs: timeout,
-        }),
-      }
-    },
+    const merged = mergeStreams({ stdout: read.stdout, stderr: read.stderr })
+
+    return {
+      ok: true,
+      output: {
+        command,
+        description: parsed.data.description,
+        exitCode: read.exitCode,
+        stdout: render(read.stdout),
+        stderr: render(read.stderr),
+        truncated: merged.truncated,
+        timedOut,
+      },
+      modelText: renderModelText({
+        merged: render(merged),
+        exitCode: read.exitCode,
+        timedOut,
+        timeoutMs: timeout,
+      }),
+    }
   }
 }
+
+export const createBashTool = ({ root }: { root: string }): ToolDefinition => new BashTool(root)

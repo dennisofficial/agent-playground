@@ -1,9 +1,18 @@
 import { mkdir, stat } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
-import { EPathForm, EPathPresence, EToolEffect, type ToolDefinition, type ToolOutcome } from '@dltech/atlas-core'
+import {
+  EPathForm,
+  EPathPresence,
+  EToolEffect,
+  type DeclaredPathField,
+  type ToolDefinition,
+  type ToolInvocation,
+  type ToolOutcome,
+} from '@dltech/atlas-core'
 import { z } from 'zod'
 
+import { injectable } from '../../container/injection'
 import {
   absolutePathSchema,
   detectLineEnding,
@@ -113,29 +122,33 @@ async function replaceInFile(args: {
   }
 }
 
-export function createEditTool(): ToolDefinition {
-  return {
-    name: 'edit',
-    description,
-    effect: EToolEffect.Write,
-    inputSchema,
-    pathFields: [{ field: 'path', presence: EPathPresence.Required, form: EPathForm.Absolute }],
-    async invoke({ input }) {
-      const parsed = inputSchema.safeParse(input)
-      if (!parsed.success) return { ok: false, reason: `edit was called with invalid input: ${z.prettifyError(parsed.error)}` }
+@injectable()
+export class EditTool implements ToolDefinition {
+  readonly name = 'edit'
+  readonly description = description
+  readonly effect = EToolEffect.Write
+  readonly inputSchema = inputSchema
+  readonly pathFields: readonly DeclaredPathField[] = [
+    { field: 'path', presence: EPathPresence.Required, form: EPathForm.Absolute },
+  ]
 
-      const { path, oldString, newString, replaceAll } = parsed.data
-      const stats = await stat(path).catch(() => null)
-      if (stats !== null && !stats.isFile()) return { ok: false, reason: `${path} is not a regular file.` }
+  async invoke({ input }: ToolInvocation): Promise<ToolOutcome> {
+    const parsed = inputSchema.safeParse(input)
+    if (!parsed.success) return { ok: false, reason: `edit was called with invalid input: ${z.prettifyError(parsed.error)}` }
 
-      if (oldString === '') {
-        const existing = stats === null ? null : await Bun.file(path).text()
-        return await createFile({ path, newString, existing })
-      }
+    const { path, oldString, newString, replaceAll } = parsed.data
+    const stats = await stat(path).catch(() => null)
+    if (stats !== null && !stats.isFile()) return { ok: false, reason: `${path} is not a regular file.` }
 
-      if (stats === null) return { ok: false, reason: `File does not exist: ${path}` }
+    if (oldString === '') {
+      const existing = stats === null ? null : await Bun.file(path).text()
+      return await createFile({ path, newString, existing })
+    }
 
-      return await replaceInFile({ path, oldString, newString, replaceAll: replaceAll ?? false })
-    },
+    if (stats === null) return { ok: false, reason: `File does not exist: ${path}` }
+
+    return await replaceInFile({ path, oldString, newString, replaceAll: replaceAll ?? false })
   }
 }
+
+export const createEditTool = (): ToolDefinition => new EditTool()

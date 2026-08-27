@@ -2,9 +2,19 @@ import { statSync } from 'node:fs'
 
 import { z } from 'zod'
 
-import { EPathForm, EPathPresence, EToolEffect, type ToolDefinition, type ToolOutcome } from '@dltech/atlas-core'
+import {
+  EPathForm,
+  EPathPresence,
+  EToolEffect,
+  type DeclaredPathField,
+  type ToolDefinition,
+  type ToolInvocation,
+  type ToolOutcome,
+} from '@dltech/atlas-core'
 
-import { createWorkspaceContainment } from '../containment'
+import { inject, injectable } from '../../container/injection'
+import { WorkspaceRoot } from '../../container/tokens'
+import { createWorkspaceContainment, type WorkspaceContainment } from '../containment'
 import { absolutePathSchema } from './file-text'
 
 const RESULT_LIMIT = 100
@@ -48,46 +58,52 @@ function renderModelText(args: { paths: readonly string[]; total: number }): str
   ].join('\n\n')
 }
 
-export function createGlobTool(args: { root: string }): ToolDefinition {
-  const containment = createWorkspaceContainment({ root: args.root })
+@injectable()
+export class GlobTool implements ToolDefinition {
+  readonly name = 'glob'
+  readonly description = description
+  readonly effect = EToolEffect.Read
+  readonly inputSchema = inputSchema
+  readonly pathFields: readonly DeclaredPathField[] = [
+    { field: 'path', presence: EPathPresence.Optional, form: EPathForm.Absolute },
+    { field: 'pattern', presence: EPathPresence.Required, form: EPathForm.RelativeToBase },
+  ]
 
-  return {
-    name: 'glob',
-    description,
-    effect: EToolEffect.Read,
-    inputSchema,
-    pathFields: [
-      { field: 'path', presence: EPathPresence.Optional, form: EPathForm.Absolute },
-      { field: 'pattern', presence: EPathPresence.Required, form: EPathForm.RelativeToBase },
-    ],
-    invoke: async ({ input, signal }): Promise<ToolOutcome> => {
-      const parsed = inputSchema.safeParse(input)
-      if (!parsed.success) {
-        return { ok: false, reason: `glob was called with invalid input: ${z.prettifyError(parsed.error)}` }
+  private readonly containment: WorkspaceContainment
+
+  constructor(@inject(WorkspaceRoot) private readonly root: string) {
+    this.containment = createWorkspaceContainment({ root })
+  }
+
+  async invoke({ input, signal }: ToolInvocation): Promise<ToolOutcome> {
+    const parsed = inputSchema.safeParse(input)
+    if (!parsed.success) {
+      return { ok: false, reason: `glob was called with invalid input: ${z.prettifyError(parsed.error)}` }
+    }
+
+    const { pattern, path } = parsed.data
+    const from = path ?? this.root
+
+    const found: DatedPath[] = []
+    try {
+      const scan = new Bun.Glob(pattern).scan({ cwd: from, absolute: true, onlyFiles: true })
+      for await (const match of scan) {
+        if (signal.aborted) return { ok: false, reason: 'the turn was abandoned while scanning for files' }
+        if (!(await this.containment.contains(match))) continue
+        found.push({ path: match, modifiedAt: modifiedAt(match) })
       }
+    } catch (error) {
+      return { ok: false, reason: `could not scan ${from} for "${pattern}": ${messageOf(error)}` }
+    }
 
-      const { pattern, path } = parsed.data
-      const from = path ?? args.root
+    const paths = found.sort(byNewestFirst).slice(0, RESULT_LIMIT).map((dated) => dated.path)
 
-      const found: DatedPath[] = []
-      try {
-        const scan = new Bun.Glob(pattern).scan({ cwd: from, absolute: true, onlyFiles: true })
-        for await (const match of scan) {
-          if (signal.aborted) return { ok: false, reason: 'the turn was abandoned while scanning for files' }
-          if (!(await containment.contains(match))) continue
-          found.push({ path: match, modifiedAt: modifiedAt(match) })
-        }
-      } catch (error) {
-        return { ok: false, reason: `could not scan ${from} for "${pattern}": ${messageOf(error)}` }
-      }
-
-      const paths = found.sort(byNewestFirst).slice(0, RESULT_LIMIT).map((dated) => dated.path)
-
-      return {
-        ok: true,
-        output: { pattern, paths, truncated: paths.length < found.length },
-        modelText: renderModelText({ paths, total: found.length }),
-      }
-    },
+    return {
+      ok: true,
+      output: { pattern, paths, truncated: paths.length < found.length },
+      modelText: renderModelText({ paths, total: found.length }),
+    }
   }
 }
+
+export const createGlobTool = ({ root }: { root: string }): ToolDefinition => new GlobTool(root)

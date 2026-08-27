@@ -1,8 +1,8 @@
 import type { ToolDeclaration, ToolDefinition } from '@dltech/atlas-core'
 
-export type ToolRegistry = {
-  declarations(): readonly ToolDeclaration[]
-  find(name: string): ToolDefinition | undefined
+export abstract class ToolRegistry {
+  abstract declarations(): readonly ToolDeclaration[]
+  abstract find(name: string): ToolDefinition | undefined
 }
 
 export function createToolRegistry(definitions: readonly ToolDefinition[]): ToolRegistry {

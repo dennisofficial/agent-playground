@@ -1,9 +1,18 @@
 import { mkdir, stat } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
-import { EPathForm, EPathPresence, EToolEffect, type ToolDefinition } from '@dltech/atlas-core'
+import {
+  EPathForm,
+  EPathPresence,
+  EToolEffect,
+  type DeclaredPathField,
+  type ToolDefinition,
+  type ToolInvocation,
+  type ToolOutcome,
+} from '@dltech/atlas-core'
 import { z } from 'zod'
 
+import { injectable } from '../../container/injection'
 import { absolutePathSchema } from './file-text'
 
 const inputSchema = z.strictObject({
@@ -18,34 +27,38 @@ const description = [
   'Prefer the edit tool for changing part of an existing file.',
 ].join(' ')
 
-export function createWriteTool(): ToolDefinition {
-  return {
-    name: 'write',
-    description,
-    effect: EToolEffect.Write,
-    inputSchema,
-    pathFields: [{ field: 'path', presence: EPathPresence.Required, form: EPathForm.Absolute }],
-    async invoke({ input }) {
-      const parsed = inputSchema.safeParse(input)
-      if (!parsed.success) return { ok: false, reason: `write was called with invalid input: ${z.prettifyError(parsed.error)}` }
+@injectable()
+export class WriteTool implements ToolDefinition {
+  readonly name = 'write'
+  readonly description = description
+  readonly effect = EToolEffect.Write
+  readonly inputSchema = inputSchema
+  readonly pathFields: readonly DeclaredPathField[] = [
+    { field: 'path', presence: EPathPresence.Required, form: EPathForm.Absolute },
+  ]
 
-      const { path, content } = parsed.data
-      const stats = await stat(path).catch(() => null)
-      if (stats !== null && !stats.isFile()) {
-        return { ok: false, reason: `${path} already exists and is not a regular file.` }
-      }
+  async invoke({ input }: ToolInvocation): Promise<ToolOutcome> {
+    const parsed = inputSchema.safeParse(input)
+    if (!parsed.success) return { ok: false, reason: `write was called with invalid input: ${z.prettifyError(parsed.error)}` }
 
-      await mkdir(dirname(path), { recursive: true })
-      const bytes = await Bun.write(path, content)
-      const created = stats === null
+    const { path, content } = parsed.data
+    const stats = await stat(path).catch(() => null)
+    if (stats !== null && !stats.isFile()) {
+      return { ok: false, reason: `${path} already exists and is not a regular file.` }
+    }
 
-      return {
-        ok: true,
-        output: { path, created, bytes },
-        modelText: created
-          ? `File created successfully at: ${path}`
-          : `The file ${path} has been updated successfully.`,
-      }
-    },
+    await mkdir(dirname(path), { recursive: true })
+    const bytes = await Bun.write(path, content)
+    const created = stats === null
+
+    return {
+      ok: true,
+      output: { path, created, bytes },
+      modelText: created
+        ? `File created successfully at: ${path}`
+        : `The file ${path} has been updated successfully.`,
+    }
   }
 }
+
+export const createWriteTool = (): ToolDefinition => new WriteTool()
