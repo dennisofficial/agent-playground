@@ -1,4 +1,4 @@
-export { PrismaBranchStore, type BranchStoreDeps, type BranchStorePort, type BranchSummary } from './branch-store'
+export { BranchStorePort, PrismaBranchStore, type BranchStoreDeps, type BranchSummary } from './branch-store'
 export { SystemClock } from './clock'
 export { openAtlasDatabase, type AtlasDatabase } from './database'
 export { PrismaEventLog, type AppendArgs, type EventLogDeps } from './event-log'

@@ -10,11 +10,11 @@ export type BranchSummary = {
   updatedAt: string
 }
 
-export interface BranchStorePort {
-  create(args: { title?: string | undefined }): Promise<BranchSummary>
-  find(args: { branchId: BranchId }): Promise<BranchSummary | undefined>
-  mostRecent(): Promise<BranchSummary | undefined>
-  rename(args: { branchId: BranchId; title: string }): Promise<void>
+export abstract class BranchStorePort {
+  abstract create(args: { title?: string | undefined }): Promise<BranchSummary>
+  abstract find(args: { branchId: BranchId }): Promise<BranchSummary | undefined>
+  abstract mostRecent(): Promise<BranchSummary | undefined>
+  abstract rename(args: { branchId: BranchId; title: string }): Promise<void>
 }
 
 export type BranchStoreDeps = {

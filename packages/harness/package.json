@@ -13,9 +13,9 @@
     "db:migrate": "prisma migrate dev"
   },
   "dependencies": {
-    "@dltech/atlas-core": "workspace:*",
     "@ai-sdk/anthropic": "^4.0.41",
     "@ai-sdk/provider": "4.0.7",
+    "@dltech/atlas-core": "workspace:*",
     "@nestjs/common": "^11.1.6",
     "@nestjs/core": "^11.1.6",
     "@prisma/client": "7.9.1",
@@ -23,6 +23,7 @@
     "prisma-adapter-bun-sqlite": "^0.8.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
+    "tsyringe": "4.10.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

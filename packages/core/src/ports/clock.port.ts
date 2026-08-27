@@ -1,3 +1,3 @@
-export interface ClockPort {
-  now(): string
+export abstract class ClockPort {
+  abstract now(): string
 }

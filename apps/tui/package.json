@@ -23,7 +23,8 @@
     "@opentui/react": "0.4.5",
     "marked": "^18.0.7",
     "react": "19.2.7",
-    "reflect-metadata": "^0.2.2"
+    "reflect-metadata": "^0.2.2",
+    "tsyringe": "4.10.0"
   },
   "devDependencies": {
     "@types/bun": "latest",

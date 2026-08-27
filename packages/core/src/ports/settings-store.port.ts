@@ -1,7 +1,7 @@
 import type { SettingsDocument, SettingsRead } from '../settings/document'
 
-export interface SettingsStorePort {
-  origin(): string
-  read(): SettingsRead
-  write(document: SettingsDocument): void
+export abstract class SettingsStorePort {
+  abstract origin(): string
+  abstract read(): SettingsRead
+  abstract write(document: SettingsDocument): void
 }

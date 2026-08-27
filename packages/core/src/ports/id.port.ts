@@ -1,8 +1,8 @@
 import type { BranchId, CallId, EventId, RunId } from '../events/ids'
 
-export interface IdPort {
-  nextBranchId(): BranchId
-  nextRunId(): RunId
-  nextEventId(): EventId
-  nextCallId(): CallId
+export abstract class IdPort {
+  abstract nextBranchId(): BranchId
+  abstract nextRunId(): RunId
+  abstract nextEventId(): EventId
+  abstract nextCallId(): CallId
 }

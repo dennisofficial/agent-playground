@@ -1,9 +1,9 @@
 import type { SnapshotId } from '../events/ids'
 
-export interface WorkspacePort {
-  readonly root: string
+export abstract class WorkspacePort {
+  abstract readonly root: string
 
-  snapshot(args: { label: string }): Promise<SnapshotId>
+  abstract snapshot(args: { label: string }): Promise<SnapshotId>
 
-  restore(args: { snapshotId: SnapshotId }): Promise<void>
+  abstract restore(args: { snapshotId: SnapshotId }): Promise<void>
 }

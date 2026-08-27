@@ -15,10 +15,10 @@ export type ModelStepResult = {
   finishReason: EFinishReason
 }
 
-export interface ModelPort {
-  readonly identity: ProviderIdentity
+export abstract class ModelPort {
+  abstract readonly identity: ProviderIdentity
 
-  step(args: {
+  abstract step(args: {
     assembled: Assembled
     tools: readonly ToolDeclaration[]
     signal: AbortSignal
