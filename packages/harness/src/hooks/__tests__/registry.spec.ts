@@ -17,7 +17,7 @@ const allow: BeforeTool = async ({ call }) => ({ decision: EBeforeToolDecision.A
 
 const record: AfterTool = async () => []
 
-const passStep: BeforeStep = async (assembled) => assembled
+const passStep: BeforeStep = async ({ assembled }) => assembled
 
 const passPrompt: BeforeRequest = async (prompt) => prompt
 

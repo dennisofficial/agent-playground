@@ -3,7 +3,7 @@ import type { MockLanguageModelV4 } from 'ai/test'
 import { z } from 'zod'
 
 import {
-  defaultRules,
+  defaultPipeline,
   EToolEffect,
   type BranchId,
   type EventLogPort,
@@ -86,7 +86,6 @@ export async function openSteerable(args: {
   script: readonly ScriptedStep[]
   types?: { text: string; onStep: number | 'each' } | undefined
   appends?: { text: string; onStep: number } | undefined
-  maxSteps?: number | undefined
   hooks?: HookRegistry | undefined
   withTools?: boolean | undefined
   withQueue?: boolean | undefined
@@ -129,9 +128,8 @@ export async function openSteerable(args: {
       log: harness.log,
       model: steered,
       ids: harness.ids,
-      rules: defaultRules(),
+      assembly: defaultPipeline(),
       ...(args.withQueue === false ? {} : { drainPending: queue.drain }),
-      ...(args.maxSteps === undefined ? {} : { maxSteps: args.maxSteps }),
       ...(args.hooks === undefined ? {} : { hooks: args.hooks }),
       ...(args.withTools === true
         ? { tools: tools.declarations(), dispatch: createDispatch({ registry: tools, hooks: createHookRegistry({}) }) }

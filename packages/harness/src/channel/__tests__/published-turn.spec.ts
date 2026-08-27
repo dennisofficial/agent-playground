@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 
-import { defaultRules, type Event, type EventOfType } from '@dltech/atlas-core'
+import { defaultPipeline, type Event, type EventOfType } from '@dltech/atlas-core'
 
 import type { LanguageModel } from 'ai'
 
@@ -34,7 +34,7 @@ const depsOf = (harness: AtlasHarness): TurnDeps => ({
   log: harness.log,
   model: harness.model,
   ids: harness.ids,
-  rules: defaultRules(),
+  assembly: defaultPipeline(),
 })
 
 const deltasOf = (signals: readonly ChannelSignal[], kind: 'text-delta' | 'reasoning-delta'): string =>

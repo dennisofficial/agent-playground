@@ -3,14 +3,14 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { defaultRules, type Event, type EventOfType } from '@dltech/atlas-core'
+import { defaultPipeline, type Event, type EventOfType } from '@dltech/atlas-core'
 
 import { createDeltaChannel, createPublishingTurnRunner, type ChannelSignal } from '../../channel'
 import { createBoundaryHook } from '../../hooks/boundary'
 import { createHookRegistry } from '../../hooks/registry'
 import { scriptedModel, type ScriptedStep } from '../../model/testing/scripted-model'
-import { createEditTool } from '../../tools/builtin/edit'
-import { createReadTool } from '../../tools/builtin/read'
+import { EditTool } from '../../tools/builtin/edit'
+import { ReadTool } from '../../tools/builtin/read'
 import { createDispatch } from '../../tools/dispatch'
 import { createToolRegistry } from '../../tools/registry'
 import { buildHarness, ETurnStatus, type AtlasHarness } from '..'
@@ -35,7 +35,7 @@ async function openWorkspace(scriptFor: (workspace: string) => readonly Scripted
   })
   opened.push({ harness, temp, workspace })
 
-  const registry = createToolRegistry([createReadTool(), createEditTool()])
+  const registry = createToolRegistry([new ReadTool(), new EditTool()])
   const channel = createDeltaChannel()
   const seen: ChannelSignal[] = []
 
@@ -45,7 +45,7 @@ async function openWorkspace(scriptFor: (workspace: string) => readonly Scripted
       log: harness.log,
       model: harness.model,
       ids: harness.ids,
-      rules: defaultRules({ root: workspace, tools: registry.declarations() }),
+      assembly: defaultPipeline({ root: workspace, tools: registry.declarations() }),
       tools: registry.declarations(),
       dispatch: createDispatch({
         registry,

@@ -5,14 +5,14 @@ import type {
   SharedV4ProviderOptions,
 } from '@ai-sdk/provider'
 
-import type { CredentialPort } from '@dltech/atlas-core'
+import { ANTHROPIC_PROVIDER_ID, type CredentialPort } from '@dltech/atlas-core'
 
 import { withAnthropicSubscriptionAttribution } from './anthropic-subscription-attribution'
 
 export type AnthropicFetch = NonNullable<AnthropicProviderSettings['fetch']>
 
 export const ANTHROPIC_OAUTH_BETA = 'oauth-2025-04-20'
-export const ANTHROPIC_PROVIDER_ID = 'anthropic'
+export { ANTHROPIC_PROVIDER_ID }
 
 export type AnthropicOauthModelArgs = {
   credentials: CredentialPort

@@ -1,8 +1,8 @@
 import type { LanguageModel } from 'ai'
 
 import {
-  defaultRules,
-  type Annotator,
+  defaultPipeline,
+  type AssemblyPipeline,
   type Assembled,
   type ChunkFilter,
   type ClockPort,
@@ -10,12 +10,14 @@ import {
   type IdPort,
   type ModelPort,
   type ProviderIdentity,
-  type Rule,
   type ToolDeclaration,
 } from '@dltech/atlas-core'
 
 import type { HookRegistry } from '../hooks/registry'
+import type { TurnLedgerPort } from '../ledger'
+import { PrismaTurnLedger } from '../ledger'
 import { createAiSdkModelPort } from '../model/ai-sdk-model-port'
+import { createRawTape } from '../model/raw-tape'
 import type { Dispatch } from '../tools/dispatch'
 import { openAtlasDatabase, PrismaBranchStore, PrismaEventLog, RandomIds, SystemClock } from '../store'
 import type { BranchStorePort } from '../store'
@@ -28,6 +30,7 @@ export type AtlasHarness = {
   model: ModelPort
   ids: IdPort
   clock: ClockPort
+  ledger: TurnLedgerPort
   databaseUrl: string
   close: () => Promise<void>
 }
@@ -36,11 +39,9 @@ export type BuildHarnessArgs = {
   model: LanguageModel
   databaseUrl?: string | undefined
   identity?: ProviderIdentity | undefined
-  rules?: readonly Rule[] | undefined
-  annotators?: readonly Annotator[] | undefined
+  assembly?: AssemblyPipeline | undefined
   tools?: readonly ToolDeclaration[] | undefined
   dispatch?: Dispatch | undefined
-  maxSteps?: number | undefined
   countTokens?: ((assembled: Assembled) => number) | undefined
   clock?: ClockPort | undefined
   ids?: IdPort | undefined
@@ -61,24 +62,26 @@ export async function buildHarness(args: BuildHarnessArgs): Promise<AtlasHarness
   const clock = args.clock ?? new SystemClock()
   const ids = args.ids ?? new RandomIds()
   const log = new PrismaEventLog(database.prisma, clock, ids)
+  const tape = createRawTape({ scope: `pid-${process.pid}` })
   const model = createAiSdkModelPort({
     model: args.model,
     identity: args.identity ?? providerIdentityOf(args.model),
     hooks: args.hooks,
+    tape,
   })
+  const ledger = new PrismaTurnLedger(database.prisma)
 
   const turnDeps: TurnDeps = {
     log,
     model,
     ids,
-    rules: args.rules ?? defaultRules(),
-    annotators: args.annotators,
+    assembly: args.assembly ?? defaultPipeline(),
     tools: args.tools,
     dispatch: args.dispatch,
-    maxSteps: args.maxSteps,
     countTokens: args.countTokens,
     onChunk: args.onChunk,
     hooks: args.hooks,
+    spend: { ledger, clock },
   }
 
   return {
@@ -88,7 +91,11 @@ export async function buildHarness(args: BuildHarnessArgs): Promise<AtlasHarness
     model,
     ids,
     clock,
+    ledger,
     databaseUrl: database.databaseUrl,
-    close: database.close,
+    close: async () => {
+      await tape.close()
+      await database.close()
+    },
   }
 }

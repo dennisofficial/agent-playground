@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { z } from 'zod'
 
-import { defaultRules, EToolEffect, type Event, type ToolDefinition } from '@dltech/atlas-core'
+import { defaultPipeline, EToolEffect, type Event, type ToolDefinition } from '@dltech/atlas-core'
 
 import { createDeltaChannel, createPublishingTurnRunner, type DeltaChannel } from '..'
 import { buildHarness, ETurnStatus, type AtlasHarness } from '../../loop'
@@ -74,7 +74,7 @@ describe('a turn that settles a tool call', () => {
         log: harness.log,
         model: harness.model,
         ids: harness.ids,
-        rules: defaultRules(),
+        assembly: defaultPipeline(),
         tools: registry.declarations(),
         dispatch: createDispatch({ registry, hooks: createHookRegistry({}) }),
       },

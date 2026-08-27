@@ -1,5 +1,6 @@
 import type { Assembled } from '../assembly/assembled'
 import type { ProviderPrompt } from '../assembly/provider-prompt'
+import type { AssemblyTrace } from '../assembly/trace'
 import type { EventDraft } from '../events/body'
 import type { BranchId } from '../events/ids'
 import type { BeforeToolOutcome } from '../policy/before-tool'
@@ -18,7 +19,7 @@ export enum EHookPhase {
   AfterTurn = 'after-turn',
 }
 
-export type BeforeStep = (assembled: Assembled) => Promise<Assembled>
+export type BeforeStep = (args: { assembled: Assembled; trace: AssemblyTrace }) => Promise<Assembled>
 
 export type BeforeRequest = (prompt: ProviderPrompt) => Promise<ProviderPrompt>
 

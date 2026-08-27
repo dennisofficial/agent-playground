@@ -4,7 +4,7 @@ import type { MockLanguageModelV4 } from 'ai/test'
 import { z } from 'zod'
 
 import {
-  defaultRules,
+  defaultPipeline,
   EStage,
   EToolEffect,
   MINIMAL_PREAMBLE,
@@ -65,7 +65,7 @@ async function openHooked(args: {
       log: harness.log,
       model: harness.model,
       ids: harness.ids,
-      rules: defaultRules(),
+      assembly: defaultPipeline(),
       hooks: args.hooks,
       ...(args.withTools === true
         ? {
@@ -86,7 +86,7 @@ const publishedDeltas = (signals: readonly ChannelSignal[]): string[] =>
 
 describe('BeforeStep', () => {
   it('rewrites the assembled prompt the model is then sent', async () => {
-    const insistOnBrevity: BeforeStep = async (assembled) => ({
+    const insistOnBrevity: BeforeStep = async ({ assembled }) => ({
       ...assembled,
       system: [...assembled.system, { text: 'Answer in one word.' }],
     })
@@ -110,7 +110,7 @@ describe('BeforeStep', () => {
 
   it('is checked by exchangeFaults, so a rewrite the provider would reject fails the turn unsent', async () => {
     const blankUserTurn: Message = { role: 'user', content: [{ type: 'text', text: '' }] }
-    const blankEveryText: BeforeStep = async (assembled) => ({
+    const blankEveryText: BeforeStep = async ({ assembled }) => ({
       ...assembled,
       messages: assembled.messages.map((entry) => ({ ...entry, message: blankUserTurn })),
     })
@@ -224,7 +224,7 @@ describe('OnChunk against the delta channel', () => {
 
     const runner = createPublishingTurnRunner({
       channel,
-      deps: { log: harness.log, model: harness.model, ids: harness.ids, rules: defaultRules(), hooks },
+      deps: { log: harness.log, model: harness.model, ids: harness.ids, assembly: defaultPipeline(), hooks },
     })
 
     const outcome = await runner.say({ branchId: branch.id, text: 'what changed?' })

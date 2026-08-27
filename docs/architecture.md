@@ -36,24 +36,34 @@ event log already provides durable resume, so it would be bought twice.
 ```ts
 async function runTurn({ branchId, signal }: { branchId: string; signal: AbortSignal }) {
   let modelSteps = 0
-  while (modelSteps < maxSteps) {
+  let settleAttempted: string | undefined
+  for (;;) {
     const events = await log.read({ branchId })
 
     const waiting = outstandingApproval(events)
     if (waiting) return { status: Paused, callId: waiting }
 
-    if (pendingCalls(events).length > 0) {
+    const pending = pendingCalls(events)[0]
+    if (pending) {
+      if (pending.callId === settleAttempted) return { status: Failed, message: stalled(pending) }
+
+      settleAttempted = pending.callId
       const settled = await settlePending({ branchId, signal })
       if (settled.paused) return settled.paused
       continue
     }
 
-    const assembled = await hooks.beforeStep(assemble({ events, rules, annotators, ctx }))
+    const steered = await drainPending()
+    if (steered.length > 0) await log.append({ branchId, drafts: steered.map(userSaid) })
+
+    const { assembled: projected, trace } = assemble({ events, rules, annotators, ctx })
+    const assembled = await hooks.beforeStep({ assembled: projected, trace })
 
     const faults = exchangeFaults(assembled)
     if (faults.length > 0) return { status: Failed, message: report(faults) }
 
     modelSteps += 1
+    settleAttempted = undefined
     const { parts, toolCalls } = await modelStep({ assembled, tools, signal })
 
     if (parts.length > 0) await log.append({ branchId, drafts: [{ type: 'assistant-said', parts }] })
@@ -61,21 +71,36 @@ async function runTurn({ branchId, signal }: { branchId: string; signal: AbortSi
       await log.append({ branchId, drafts: [{ type: 'tool-called', ordinal, ...call }] })
     }
     if (toolCalls.length > 0) continue
+    if (arrivedUnseen() || (await drainPending()).length > 0) continue
 
     await log.append({ branchId, drafts: await hooks.afterTurn({ branchId }) })
     return { status: Completed }
   }
-  return { status: Exhausted }
 }
 
 const resume = runTurn
 ```
 
-**`maxSteps` counts model steps, not loop iterations.** A settlement is work the harness does between
-model calls, so charging it against the ceiling made the advertised budget depend on whether the model
-happened to use tools — halving it for a coding agent, which uses them constantly. A separate
-iteration backstop remains, as a spin guard rather than a budget. `ctx.step` handed to rules is the
-model-step index for the same reason: `nudge.lifetimeSteps` is specified in model steps.
+**A turn never returns `Completed` with an unanswered message behind it.** There are three edges back
+to the read, not one: a settlement finished, the step emitted tool calls, and — before the hooks that
+close the turn — something the model has not seen arrived while the last step was running. A message
+the developer typed mid-turn is pulled from the composer's queue at the boundary *before* assembling,
+never appended when it was typed: a message not yet consumed is a draft the developer may still edit
+or take back, and an append-only log cannot represent that. Draining at the boundary also puts the
+message after the assistant turn it followed, which is what keeps the prompt from ending on the
+assistant. `AfterTurn` runs once, at the end, on the far side of that check — hooks that append
+turn-taking drafts would otherwise restart the loop they were called to close.
+
+**A turn has no step ceiling.** A coding agent works for as long as the work takes, and every bound
+Atlas tried — a model-step budget, an iteration backstop — ended turns that were making progress,
+handing the developer a resume button for a loop that should never have stopped. Supervision is the
+real bound: the developer watches the turn and interrupts it, which the abort signal already carries.
+What replaces the backstop is narrower and answers a different question. A `dispatch` that returns
+without settling the call it was handed makes no progress at all, and an unbounded loop would spin on
+it forever, so the loop remembers which call it last tried to settle and fails naming that call when
+the same one comes back around. That is a stuck detector, not a budget: it cannot fire on a turn that
+is still working. `modelSteps` survives only as the index handed to rules as `ctx.step`, counting
+model calls rather than loop iterations because `nudge.lifetimeSteps` is specified in model steps.
 
 **`settlePending` is built by the loop, not injected into it.** `TurnDeps` takes `dispatch`; the loop
 constructs `settlePending` from `dispatch` and the log it already holds. Injecting a pre-built
@@ -156,11 +181,11 @@ dependency rule: `core` has no I/O, `harness` is importable without a terminal. 
 packages/core/src/
   events/        Event union, EventDraft, envelope, branded ids
   events/        projections: pendingCalls, outstandingApproval, answeredApproval
-  assembly/      Assembled, Rule, Annotator, RuleContext, assemble, trace
+  assembly/      Assembled, Rule, Annotator, RuleContext, assemble, trace, AssemblyPipeline
   assembly/      exchange-shape: the faults a provider would reject, reported not thrown
   assembly/rules/        content policy — thinking tail, loaded context, ephemeral, images
-  assembly/annotators/   cache breakpoints, provenance
-  budget/        the fixpoint controller (pure: takes a rebuild function)
+  assembly/annotators/   cacheBreakpoints (built); provenance (not built)
+  budget/        the fixpoint controller (pure: takes a rebuild function) — NOT BUILT
   hooks/         phase types and outcome types only — no container
   policy/        BeforeTool severity resolution, the approval resolver
   tools/         ToolCall, ToolOutcome, EToolEffect, definition types

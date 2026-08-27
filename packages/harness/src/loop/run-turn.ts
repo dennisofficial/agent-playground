@@ -5,9 +5,10 @@ import {
   exchangeFaults,
   outstandingApproval,
   pendingCalls,
-  type Annotator,
   type Assembled,
+  type AssemblyPipeline,
   type BranchId,
+  type CallId,
   type ChunkFilter,
   type EventDraft,
   type EventLogPort,
@@ -15,14 +16,15 @@ import {
   type ModelPort,
   type ModelStepResult,
   type ExchangeFault,
-  type Rule,
   type RuleContext,
+  type RunId,
   type ToolDeclaration,
 } from '@dltech/atlas-core'
 
 import { runAfterTurn, runBeforeStep, type HookRegistry } from '../hooks/registry'
 import { ModelStreamError } from '../model/errors'
 import type { Dispatch } from '../tools/dispatch'
+import { openTurnSpend, TURN_CRASHED, type TurnLedgerDeps, type TurnSpendTally } from '../ledger/record-turn-spend'
 import { createSettlePending } from './settle-pending'
 import { draftsFor, interruptedDrafts } from './step-drafts'
 import { committedSinceLastMessage, messageArrivedSince } from './turn-position'
@@ -32,30 +34,30 @@ export type TurnDeps = {
   log: EventLogPort
   model: ModelPort
   ids: IdPort
-  rules: readonly Rule[]
-  annotators?: readonly Annotator[] | undefined
+  assembly: AssemblyPipeline
   tools?: readonly ToolDeclaration[] | undefined
-  maxSteps?: number | undefined
   countTokens?: ((assembled: Assembled) => number) | undefined
   onChunk?: ChunkFilter | undefined
   dispatch?: Dispatch | undefined
   hooks?: HookRegistry | undefined
   drainPending?: (() => Promise<readonly string[]>) | undefined
+  spend?: TurnLedgerDeps | undefined
 }
+
+
 
 export type TurnRunner = {
   say(args: { branchId: BranchId; text: string; signal?: AbortSignal }): Promise<TurnOutcome>
   runTurn(args: { branchId: BranchId; signal?: AbortSignal }): Promise<TurnOutcome>
 }
 
-const DEFAULT_MAX_STEPS = 16
-
-const ITERATIONS_PER_MODEL_STEP = 2
-
 type SteppedTurn = { ok: true; result: ModelStepResult } | { ok: false; message: string; cause: unknown }
 
 const faultLine = (fault: ExchangeFault): string =>
   `message ${fault.messageIndex}: ${fault.detail} (event ${fault.origin.eventId})`
+
+const stalledReport = (call: { callId: CallId; name: string }): string =>
+  `dispatch left ${call.name} (${call.callId}) pending without settling it — the turn would spin forever`
 
 const faultReport = (faults: readonly ExchangeFault[]): string =>
   `the assembled prompt is one Atlas must not send — ${faults.map(faultLine).join('; ')}`
@@ -83,13 +85,11 @@ async function takeModelStep(args: {
 
 export function createTurnRunner(deps: TurnDeps): TurnRunner {
   const tools = deps.tools ?? []
-  const maxSteps = deps.maxSteps ?? DEFAULT_MAX_STEPS
   const countTokens = deps.countTokens ?? estimateTokens
-  const iterationBackstop = maxSteps * ITERATIONS_PER_MODEL_STEP + 1
   const settlePending =
     deps.dispatch === undefined
       ? undefined
-      : createSettlePending({ log: deps.log, dispatch: deps.dispatch })
+      : createSettlePending({ log: deps.log, dispatch: deps.dispatch, tools })
 
   const drainInto = async ({ branchId }: { branchId: BranchId }): Promise<boolean> => {
     if (deps.drainPending === undefined) return false
@@ -105,18 +105,22 @@ export function createTurnRunner(deps: TurnDeps): TurnRunner {
     return true
   }
 
-  const runTurn = async ({
+  const trackedTurn = async ({
     branchId,
     signal,
+    runId,
+    spend,
   }: {
     branchId: BranchId
     signal?: AbortSignal
+    runId: RunId
+    spend: TurnSpendTally
   }): Promise<TurnOutcome> => {
-    const runId = deps.ids.nextRunId()
     const abortSignal = signal ?? new AbortController().signal
     let previous: Assembled | undefined
     let modelSteps = 0
     let seenThrough: number | undefined
+    let settleAttempted: CallId | undefined
 
     const interrupted = async (): Promise<TurnOutcome> => ({
       status: ETurnStatus.Interrupted,
@@ -124,7 +128,7 @@ export function createTurnRunner(deps: TurnDeps): TurnRunner {
       committed: committedSinceLastMessage(await deps.log.read({ branchId })),
     })
 
-    for (let iteration = 0; iteration < iterationBackstop; iteration += 1) {
+    for (;;) {
       const beforeDrain = await deps.log.read({ branchId })
 
       const waiting = outstandingApproval(beforeDrain)
@@ -137,7 +141,11 @@ export function createTurnRunner(deps: TurnDeps): TurnRunner {
         if (settlePending === undefined) {
           return { status: ETurnStatus.Paused, runId, callId: pending.callId, reason: `awaiting ${pending.name}` }
         }
+        if (pending.callId === settleAttempted) {
+          return { status: ETurnStatus.Failed, runId, message: stalledReport(pending), cause: pending }
+        }
 
+        settleAttempted = pending.callId
         const settled = await settlePending({ branchId, signal: abortSignal })
         if (settled.paused !== undefined) return { status: ETurnStatus.Paused, runId, ...settled.paused }
         if (abortSignal.aborted) return interrupted()
@@ -149,7 +157,6 @@ export function createTurnRunner(deps: TurnDeps): TurnRunner {
       if (!awaitsReply(events) && !messageArrivedSince({ events, seenThrough })) {
         return { status: ETurnStatus.Idle, runId }
       }
-      if (modelSteps >= maxSteps) return { status: ETurnStatus.Exhausted, runId }
 
       seenThrough = events.at(-1)?.seq
 
@@ -162,13 +169,13 @@ export function createTurnRunner(deps: TurnDeps): TurnRunner {
         ...(previous === undefined ? {} : { previous }),
       }
 
-      const { assembled: projected } = assemble({
-        rules: deps.rules,
+      const { assembled: projected, trace } = assemble({
+        rules: deps.assembly.rules,
+        annotators: deps.assembly.annotators,
         ctx,
-        ...(deps.annotators === undefined ? {} : { annotators: deps.annotators }),
       })
 
-      const assembled = await runBeforeStep({ hooks: deps.hooks?.beforeStep ?? [], assembled: projected })
+      const assembled = await runBeforeStep({ hooks: deps.hooks?.beforeStep ?? [], assembled: projected, trace })
       previous = assembled
 
       const faults = exchangeFaults(assembled)
@@ -185,6 +192,9 @@ export function createTurnRunner(deps: TurnDeps): TurnRunner {
       })
 
       modelSteps += 1
+      settleAttempted = undefined
+
+      spend.countStep(stepped.ok ? stepped.result.usage : undefined)
 
       if (!stepped.ok) {
         return { status: ETurnStatus.Failed, runId, message: stepped.message, cause: stepped.cause }
@@ -210,8 +220,31 @@ export function createTurnRunner(deps: TurnDeps): TurnRunner {
 
       return { status: ETurnStatus.Completed, runId }
     }
+  }
 
-    return { status: ETurnStatus.Exhausted, runId }
+  const runTurn = async ({
+    branchId,
+    signal,
+  }: {
+    branchId: BranchId
+    signal?: AbortSignal
+  }): Promise<TurnOutcome> => {
+    const runId = deps.ids.nextRunId()
+    const spend = openTurnSpend({ ...(deps.spend ?? {}), model: deps.model.identity })
+    let status: string = TURN_CRASHED
+
+    try {
+      const outcome = await trackedTurn({
+        branchId,
+        runId,
+        spend,
+        ...(signal === undefined ? {} : { signal }),
+      })
+      status = outcome.status
+      return outcome
+    } finally {
+      await spend.settle({ branchId, runId, status })
+    }
   }
 
   return {

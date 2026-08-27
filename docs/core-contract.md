@@ -85,6 +85,26 @@ interface EventLog {
 `seq` must be assigned under a per-branch unique constraint or a transaction — array length does not
 survive concurrency, and background agents mean two writers.
 
+### A row that will not decode costs one event, not the branch
+
+Each stored row is decoded on its own. A row whose body is not JSON, whose body no longer matches
+`eventBodySchema`, or whose identifier columns will not pass the branded parsers is set aside as an
+unreadable row — `id`, `seq`, `branchId`, the stored `type`, and why it failed — instead of throwing
+the read. One body written by an older build would otherwise make the whole branch permanently
+unreadable, and the log is the authority for assembly, transcript and rewind alike.
+
+An unreadable row carries its identifiers as plain strings, not as `EventId` and `BranchId`. It is a
+record of a row that failed validation; branding it would assert the very thing that did not hold.
+It reports what the database held, unvalidated.
+
+The fallback is deliberately not an arm of `EventBody`. That union is switched exhaustively —
+assembly rules, projections, rewind targets, exchange shape, the TUI's transcript derivation — and
+a row the storage layer could not parse is a storage fact, not something the domain has an opinion
+about. So the split lives at the decode boundary in `harness`: decoding rows yields
+`{ events, unreadable }`, `read` returns `events` for callers that only want the log, and callers
+that reason about `seq` — a rewind guard above all — can ask for both, because a guard cannot refuse
+a gap it cannot see.
+
 ## Assembly
 
 ```ts
@@ -117,7 +137,15 @@ type RuleContext = {
 function assemble(args: { rules: readonly Rule[]; annotators?: readonly Annotator[]
                           ctx: RuleContext
                           onRuleFailure?: ERuleFailurePolicy }): { assembled: Assembled; trace: AssemblyTrace }
+
+type AssemblyPipeline = { rules: readonly Rule[]; annotators: readonly Annotator[] }
 ```
+
+**Rules and annotators travel as one `AssemblyPipeline`.** They are not independently chosen: an
+annotator reads the shape the rules produced, so a caller holding one without the other is holding
+half a decision. As two loose fields the two composition roots — `buildHarness` and the TUI's
+`compose.ts` — each had to remember both, and adding the first annotator meant editing both roots.
+`defaultPipeline(workspace)` is the one thing either root asks for.
 
 **Rules are pure and synchronous.** Not for testability — because re-running a cheap pure pipeline is
 free, which makes fixpoint search over assembly parameters trivial (see the budget controller). Async
@@ -127,6 +155,31 @@ arrives via `AfterTool` appending `context-loaded`, and a rule renders it.
 **Rules do content policy. Annotators do metadata.** Cache breakpoints, provenance, and budget
 accounting are not peers of content rules — every one needed an escape hatch when forced into the
 `Rule` shape. Annotators run once afterwards with read access to the trace.
+
+**`cacheBreakpoints` is the first annotator**, and it is why the seam exists. Anthropic prices a
+cache read at ~0.1x input and rejects a fifth `cache_control`, so placement is a budget of four
+spent deliberately: one on the **last system block** — tools render before system, so that single
+marker caches tools and system together — and up to three across the conversation, the last of which
+sits on the final content block so the next step reads the whole prefix back. The others are
+*anchors* at absolute multiples of `CACHE_ANCHOR_STRIDE_BLOCKS` (15) content blocks. Absolute is the
+load-bearing word: the log only ever grows at the end, so a position counted from the front is the
+same position next step, which is what lets a later request read what an earlier one wrote. Counted
+from the end they would move every step, write entries nothing ever reads, and cost the write
+premium for nothing. The stride is 15 against a 20-block lookback because each breakpoint walks back
+at most 20 blocks to find a prior entry: a step that appends more than 20 blocks — an assistant turn
+with a dozen parallel tool calls — would otherwise silently miss and rewrite the whole conversation.
+
+**The marker goes on a part, never on a message.** `@ai-sdk/anthropic` will fall back to the message's
+`providerOptions` and mark its last content block, which is one interrupted turn away from putting
+`cache_control` on a `thinking` block — not a cacheable position. The annotator picks the last
+non-reasoning part itself, and marks nothing when a message has none.
+
+**The TTLs are fixed when the annotator is constructed**, 1h for system and 5m for the conversation.
+Not a default we inherited: the system prefix is the expensive, stable half and wants to survive a
+human's coffee break, while a step-to-step conversation gap is well under five minutes and the 2x
+write premium buys nothing there. Anthropic requires the longer-lived entry to render first, which
+system does. Fixing them at construction is also what stops a mid-session flip, which would bust the
+prefix it was meant to protect.
 
 **Budget enforcement is not a rule.** It is a controller *above* the pipeline that re-runs assembly
 at escalating pressure and truncates only if the whole ladder fails. In-pipeline it overshot a
@@ -159,7 +212,7 @@ Anthropic's signature actually lands — and must be written back under the requ
 ```ts
 enum EStage { Guard, Policy, Observe }
 
-type BeforeStep    = (a: Assembled) => Promise<Assembled>                    // persists
+type BeforeStep    = (args: { assembled: Assembled; trace: AssemblyTrace }) => Promise<Assembled>  // persists
 type BeforeRequest = (p: ProviderPrompt) => Promise<ProviderPrompt>          // transient, per-provider
 type BeforeTool    = (args: { call: ToolCall }) => Promise<BeforeToolOutcome>
 type AfterTool     = (args: { call: ToolCall; result: ToolOutcome }) => Promise<EventDraft[]>
@@ -171,6 +224,10 @@ type ToolCall = { callId: string; name: string; input: unknown; effect: EToolEff
 
 - **`BeforeStep` and `BeforeRequest` are different seams** — the first persists to the record, the
   second is a transient per-provider rewrite. Adopted from Mastra, whose split proved real.
+- **`BeforeStep` carries the assembly trace.** It runs at the one point where the trace still exists,
+  and the loop previously dropped it there. Anything that must answer "which rule dropped that
+  message?" or "did the cache annotator place its breakpoints?" needs it, and inventing a second
+  observation seam for that would be inventing a seam this one already is.
 - **`effect` is on the call.** Otherwise every guard hook injects the tool registry to learn whether
   a tool mutates.
 - **Ordering is by named stage**, with a numeric nudge within a stage. Bare integers work at three
@@ -231,9 +288,21 @@ than a prompt position. `runTurn` calls it between `assemble` and the model step
 on any fault, because the request would be rejected anyway and a named fault beats an opaque 400 one
 round trip later.
 
-**The contract is deliberately narrow: every fault is a request the provider will reject.** That is
-what makes it safe to wire to a refusal, and it is why `toolName` mismatch between a result and its
-call is *not* checked — a genuine projection bug that will corrupt the TUI, but not a rejection.
+**The contract is deliberately narrow: every fault is a request Atlas must not send.** That is what
+makes it safe to wire to a refusal, and it is why `toolName` mismatch between a result and its call
+is *not* checked — a genuine projection bug that will corrupt the TUI, but neither a rejection nor a
+request with a meaning Atlas did not intend.
+
+Almost every member of that set is there because **the provider will reject it**, which is the
+stronger and more obvious reason. `EndsWithAssistant` is the one member that is not: Anthropic
+supports assistant prefill on some models, so a trailing assistant message is a rejection on the
+models Atlas uses and a feature elsewhere. It belongs here because Atlas has no prefill: the loop
+assembles only when the conversation is the user's to answer, so a prompt ending on the assistant is
+a projection disagreeing with the loop's own gate, and sending it asks for a completion nobody meant
+to request. It is the false-positive question, not the rejection question, that decides membership —
+and this check cannot fire on a legitimate turn, because there is no legitimate turn it describes.
+**If Atlas ever gains a deliberate prefill — "continue this response" — this fault must be gated on
+that intent rather than left standing.**
 
 It was written against `@ai-sdk/anthropic`'s own converter, which corrected two invariants that
 looked obvious and were wrong:
@@ -275,6 +344,13 @@ validator declines to guess. That is the intended division of labour. The accumu
 shapes that never made sense — it now drops empty and whitespace-only text parts at the source — and
 the validator asserts only what is certain. Every gap on this list resolves at the producer, not by
 loosening the check.
+
+**Its closing counterpart is live, and was written from a failure in the field.** Appending a steer
+the moment it was typed gave it a lower `seq` than the `assistant-said` appended once the step
+finished, so the projection emitted `user / user / assistant` and the provider answered
+`This model does not support assistant message prefill`. The loop now drains queued messages at the
+boundary before assembling, which orders them correctly by construction; `EndsWithAssistant` is what
+catches the next way in.
 
 **One fault is latent rather than live.** `OpensWithAssistant` is unreachable today, because `say`
 always appends `user-said` first and a log of only `assistant-said` makes `awaitsReply` false. It

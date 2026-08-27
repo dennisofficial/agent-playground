@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { z } from 'zod'
 
-import { defaultRules, EToolEffect, MINIMAL_PREAMBLE, toCallId, type ToolDefinition } from '@dltech/atlas-core'
+import { defaultPipeline, EToolEffect, MINIMAL_PREAMBLE, toCallId, type ToolDefinition } from '@dltech/atlas-core'
 
 import { buildHarness, createTurnRunner, ETurnStatus, type AtlasHarness, type TurnRunner } from '..'
 import { scriptedModel, type ScriptedStep } from '../../model/testing/scripted-model'
@@ -198,7 +198,7 @@ describe('a turn that settles its own tool call', () => {
       log: harness.log,
       model: harness.model,
       ids: harness.ids,
-      rules: defaultRules(),
+      assembly: defaultPipeline(),
       tools: registry.declarations(),
       dispatch: createDispatch({ registry, hooks: createHookRegistry({}) }),
     })
@@ -236,7 +236,7 @@ async function runnerDispatchingWith(dispatch: Dispatch): Promise<{ runner: Turn
       log: harness.log,
       model: harness.model,
       ids: harness.ids,
-      rules: defaultRules(),
+      assembly: defaultPipeline(),
       dispatch,
     }),
   }

@@ -3,6 +3,7 @@ import {
   type AfterTool,
   type AfterTurn,
   type Assembled,
+  type AssemblyTrace,
   type BeforeRequest,
   type BeforeStep,
   type BeforeTool,
@@ -46,9 +47,10 @@ export function createHookRegistry(args: {
 export async function runBeforeStep(args: {
   hooks: readonly RegisteredHook<BeforeStep>[]
   assembled: Assembled
+  trace: AssemblyTrace
 }): Promise<Assembled> {
   let assembled = args.assembled
-  for (const hook of args.hooks) assembled = await hook.run(assembled)
+  for (const hook of args.hooks) assembled = await hook.run({ assembled, trace: args.trace })
   return assembled
 }
 

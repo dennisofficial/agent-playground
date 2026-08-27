@@ -1,7 +1,7 @@
 import {
   ClockPort,
   CredentialPort,
-  defaultRules,
+  defaultPipeline,
   EventLogPort,
   IdPort,
   ModelPort,
@@ -21,7 +21,9 @@ import {
   portToken,
   PrismaClientToken,
   registerDisposable,
+  ShellRegistryPort,
   ToolRegistry,
+  TurnLedgerPort,
   WorkspaceRoot,
   type DeltaChannel,
   type SettingsService,
@@ -92,6 +94,7 @@ export async function composeAtlas(args: {
   const ids = container.resolve(portToken(IdPort))
   const branches = container.resolve(portToken(BranchStorePort))
   const tools = container.resolve(portToken(ToolRegistry)).declarations()
+  const shells = container.resolve(portToken(ShellRegistryPort))
 
   const channel = createDeltaChannel()
   const pending = createPendingQueue()
@@ -113,10 +116,14 @@ export async function composeAtlas(args: {
         log,
         model: container.resolve(portToken(ModelPort)),
         ids,
-        rules: defaultRules({ root: config.cwd, tools }),
+        assembly: defaultPipeline({ root: config.cwd, tools }),
         tools,
         dispatch: container.resolve(DispatchToken),
-        drainPending: async () => pending.drain(),
+        drainPending: async () => [...pending.drain(), ...shells.drainNotifications()],
+        spend: {
+          ledger: container.resolve(portToken(TurnLedgerPort)),
+          clock: container.resolve(portToken(ClockPort)),
+        },
       },
     }),
   }

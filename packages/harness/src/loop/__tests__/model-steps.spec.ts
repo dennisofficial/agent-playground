@@ -2,7 +2,14 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import type { MockLanguageModelV4 } from 'ai/test'
 import { z } from 'zod'
 
-import { defaultRules, defineRule, EToolEffect, type ToolDefinition } from '@dltech/atlas-core'
+import {
+  defaultAnnotators,
+  defaultPipeline,
+  defaultRules,
+  defineRule,
+  EToolEffect,
+  type ToolDefinition,
+} from '@dltech/atlas-core'
 
 import { buildHarness, createTurnRunner, ETurnStatus, type AtlasHarness, type TurnRunner } from '..'
 import { scriptedModel, type ScriptedStep } from '../../model/testing/scripted-model'
@@ -36,7 +43,7 @@ const touchTool: ToolDefinition = {
 const callingSteps = (count: number): ScriptedStep[] =>
   Array.from({ length: count }, (_, index) => callingStep(index + 1))
 
-async function openBudgeted(args: { maxSteps: number; script: readonly ScriptedStep[] }): Promise<{
+async function openScripted(args: { script: readonly ScriptedStep[] }): Promise<{
   runner: TurnRunner
   harness: AtlasHarness
   model: MockLanguageModelV4
@@ -65,32 +72,35 @@ async function openBudgeted(args: { maxSteps: number; script: readonly ScriptedS
       log: harness.log,
       model: harness.model,
       ids: harness.ids,
-      rules: [...defaultRules(), recordStep],
+      assembly: { rules: [...defaultRules(), recordStep], annotators: defaultAnnotators() },
       tools: registry.declarations(),
       dispatch: createDispatch({ registry, hooks: createHookRegistry({}) }),
-      maxSteps: args.maxSteps,
     }),
   }
 }
 
-describe('the step ceiling a turn is promised', () => {
-  it('spends the budget on model steps alone, so settling a tool call costs nothing', async () => {
-    const { runner, harness, model } = await openBudgeted({ maxSteps: 4, script: callingSteps(6) })
+describe('how long a turn is allowed to work', () => {
+  it('runs as many model steps as the work takes, with no ceiling to cut it short', async () => {
+    const { runner, harness, model } = await openScripted({
+      script: [...callingSteps(64), { text: 'touched all of them' }],
+    })
     const branch = await harness.branches.create({})
 
     const outcome = await runner.say({ branchId: branch.id, text: 'touch things' })
 
-    expect(outcome.status).toBe(ETurnStatus.Exhausted)
-    expect(model.doStreamCalls).toHaveLength(4)
+    expect(outcome.status).toBe(ETurnStatus.Completed)
+    expect(model.doStreamCalls).toHaveLength(65)
   })
 
   it('hands rules the index of the model step, not of the loop iteration', async () => {
-    const { runner, harness, steps } = await openBudgeted({ maxSteps: 3, script: callingSteps(5) })
+    const { runner, harness, steps } = await openScripted({
+      script: [...callingSteps(3), { text: 'touched them' }],
+    })
     const branch = await harness.branches.create({})
 
     await runner.say({ branchId: branch.id, text: 'touch things' })
 
-    expect(steps).toEqual([0, 1, 2])
+    expect(steps).toEqual([0, 1, 2, 3])
   })
 })
 
@@ -123,7 +133,7 @@ describe('the shape of the prompt the loop is about to send', () => {
       log: harness.log,
       model: harness.model,
       ids: harness.ids,
-      rules: [...defaultRules(), speakOutOfTurn],
+      assembly: { rules: [...defaultRules(), speakOutOfTurn], annotators: defaultAnnotators() },
     })
     const branch = await harness.branches.create({})
 
@@ -138,8 +148,7 @@ describe('the shape of the prompt the loop is about to send', () => {
   })
 
   it('sends a real tool exchange to the model rather than faulting on its own projection', async () => {
-    const { runner, harness, model } = await openBudgeted({
-      maxSteps: 4,
+    const { runner, harness, model } = await openScripted({
       script: [callingStep(1), { text: 'touched it' }],
     })
     const branch = await harness.branches.create({})
@@ -153,8 +162,7 @@ describe('the shape of the prompt the loop is about to send', () => {
 
 describe('a thinking turn whose text block arrives blank', () => {
   it('completes the turn Claude opens a blank text block in, and records only what was said', async () => {
-    const { runner, harness, model } = await openBudgeted({
-      maxSteps: 4,
+    const { runner, harness, model } = await openScripted({
       script: [
         { reasoning: { text: 'the file needs touching' }, text: '  \n ', calls: [{ callId: 'call-1', name: 'touch', input: {} }] },
         { text: 'touched it' },
@@ -174,8 +182,7 @@ describe('a thinking turn whose text block arrives blank', () => {
   })
 
   it('appends no assistant turn at all when the only thing said was blank', async () => {
-    const { runner, harness } = await openBudgeted({
-      maxSteps: 4,
+    const { runner, harness } = await openScripted({
       script: [{ text: '   ', calls: [{ callId: 'call-1', name: 'touch', input: {} }] }, { text: 'touched it' }],
     })
     const branch = await harness.branches.create({})
@@ -194,7 +201,7 @@ describe('a thinking turn whose text block arrives blank', () => {
 })
 
 describe('a dispatch that settles nothing', () => {
-  it('gives up rather than spinning on a call that never leaves the pending list', async () => {
+  it('fails naming the stuck call rather than spinning on it forever', async () => {
     const temp = createTempDatabase()
     const model = scriptedModel({ script: [callingStep(1)] })
     const harness = await buildHarness({ databaseUrl: temp.databaseUrl, model })
@@ -206,20 +213,19 @@ describe('a dispatch that settles nothing', () => {
       log: harness.log,
       model: harness.model,
       ids: harness.ids,
-      rules: defaultRules(),
+      assembly: defaultPipeline(),
       tools: registry.declarations(),
       dispatch: async () => {
         dispatched += 1
         return []
       },
-      maxSteps: 3,
     })
     const branch = await harness.branches.create({})
 
     const outcome = await runner.say({ branchId: branch.id, text: 'touch things' })
 
-    expect(outcome.status).toBe(ETurnStatus.Exhausted)
-    expect(dispatched).toBeGreaterThan(0)
-    expect(dispatched).toBeLessThanOrEqual(7)
+    expect(outcome.status).toBe(ETurnStatus.Failed)
+    expect(outcome.status === ETurnStatus.Failed ? outcome.message : '').toContain('touch')
+    expect(dispatched).toBe(1)
   })
 })

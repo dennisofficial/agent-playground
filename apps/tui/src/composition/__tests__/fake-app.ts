@@ -1,7 +1,7 @@
 import {
   ATLAS_SETTINGS,
   EEffort,
-  defaultRules,
+  defaultPipeline,
   EFinishReason,
   type Chunk,
   type ChunkFilter,
@@ -110,6 +110,27 @@ export function failingModelPort(args: { message: string }): ModelPort {
   }
 }
 
+const whenAborted = (signal: AbortSignal): Promise<void> =>
+  new Promise((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }))
+
+export function failingThenStallingModelPort(args: { message: string }): ModelPort {
+  let failed = false
+
+  return {
+    identity: { id: 'failing-then-stalling', modelId: 'failing-then-stalling' },
+
+    async step({ signal }): Promise<ModelStepResult> {
+      if (!failed) {
+        failed = true
+        throw new ModelStreamError({ message: args.message })
+      }
+
+      await whenAborted(signal)
+      return { parts: [], toolCalls: [], finishReason: EFinishReason.Stop }
+    },
+  }
+}
+
 export type FakeApp = AtlasApp & {
   channel: DeltaChannel
   log: FakeEventLog
@@ -129,7 +150,7 @@ export function fakeApp(args: { model: ModelPort; settings?: SettingsDocument })
       log,
       model: args.model,
       ids,
-      rules: defaultRules(),
+      assembly: defaultPipeline(),
       drainPending: async () => pending.drain(),
     },
   })
