@@ -1,0 +1,43 @@
+packages/harness/src/tools/builtin/edit.ts
+  s_3d83af59050d52::t_c140241e9c3fd5 4-12,15,125-150,153-154
+packages/harness/src/tools/index.ts
+  ai_agent 2
+packages/harness/src/tools/builtin/grep.ts
+  s_3d83af59050d52::t_327286fa796be2 3-14,145-160,162-180,182-183,185-191,193-195,197-200,202-203,205-208,210,212-213,215-219,222-223
+packages/core/src/tools/tool.ts
+  s_3d83af59050d52::t_7cc052f09a18e7 45-52
+packages/harness/src/tools/register-tools.ts
+  s_3d83af59050d52::t_29f515cefda863 1-24
+packages/harness/src/tools/builtin/glob.ts
+  s_3d83af59050d52::t_327286fa796be2 5-17,61-76,78-93,95-97,99,101-105,108-109
+packages/harness/src/tools/builtin/write.ts
+  s_3d83af59050d52::t_c140241e9c3fd5 4-12,15,30-60,63-64
+packages/harness/src/tools/__tests__/tool-container.spec.ts
+  s_3d83af59050d52::t_acf3f94ef89f7a 19,25,28-31,62-63,68,76-77,88-89
+  s_3d83af59050d52::t_29f515cefda863 10,26-27,48
+  s_3d83af59050d52::t_6e67eb9a9c9219 74-75
+  s_3d83af59050d52::t_360a38dbb5b28c 1-9,11-18,20-24,32-47,49-61,64-67,69-73,78-87,90-107
+packages/harness/src/tools/builtin/bash.ts
+  s_3d83af59050d52::t_327286fa796be2 3-12,212-276,279-280
+packages/harness/src/tools/builtin/read.ts
+  s_3d83af59050d52::t_a588ff5ca943ed 3-11,14,101-111
+  s_3d83af59050d52::t_12eb963065ef06 112-121,123-126,128-129,131-134,136,138,141-145,147-153,156-157
+packages/harness/src/tools/registry.ts
+  ai_agent 3-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "0e0c96571f2052e239d42fa918870a5203683e01",
+  "prompts": {},
+  "sessions": {
+    "s_3d83af59050d52": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "576fc6c5-ff3a-40f0-b80e-172325e4141c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
