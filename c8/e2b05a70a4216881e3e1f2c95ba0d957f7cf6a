@@ -1,0 +1,52 @@
+packages/harness/src/loop/build-harness.ts
+  s_3d83af59050d52::t_7600a049260f42 63,87
+packages/harness/src/container/__tests__/harness-container.spec.ts
+  s_3d83af59050d52::t_f2285099f470af 1-109
+packages/harness/src/container/injection.ts
+  s_3d83af59050d52::t_0ec2ffeaef71f2 4-12,16-18
+  s_3d83af59050d52::t_e643140c9a8018 13-15
+  s_3d83af59050d52::t_be560ce4e279c3 1-3
+packages/harness/src/index.ts
+  s_3d83af59050d52::t_7600a049260f42 4
+packages/harness/src/store/clock.ts
+  s_3d83af59050d52::t_4ca22dc20610c0 3-5
+packages/harness/src/settings/file-store.ts
+  s_3d83af59050d52::t_7600a049260f42 14-15,22
+packages/harness/src/container/index.ts
+  s_3d83af59050d52::t_0ec2ffeaef71f2 1-4
+packages/harness/src/store/index.ts
+  s_3d83af59050d52::t_7600a049260f42 1,4
+packages/harness/src/container/create-harness-container.ts
+  s_3d83af59050d52::t_0ec2ffeaef71f2 1-24
+packages/harness/src/store/event-log.ts
+  s_3d83af59050d52::t_4094c5f8daa549 2-3,14-15
+  s_3d83af59050d52::t_a0ac9d4257bc8b 28,30-34,42,50,64-65,77
+packages/harness/src/credentials/keychain-credential-port.ts
+  s_3d83af59050d52::t_7600a049260f42 3,10
+packages/harness/src/settings/memory-store.ts
+  s_3d83af59050d52::t_7600a049260f42 8-10
+packages/harness/src/container/tokens.ts
+  s_3d83af59050d52::t_0ec2ffeaef71f2 1-9
+packages/harness/src/store/branch-store.ts
+  s_3d83af59050d52::t_8b18676fbccfa1 1,4-5,30,32-36,39-40,42,52,57,62
+packages/harness/src/store/ids.ts
+  s_3d83af59050d52::t_4ca22dc20610c0 15-17
+packages/harness/src/store/__tests__/harness.ts
+  s_3d83af59050d52::t_7600a049260f42 82-83,105
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "c8e2b05a70a4216881e3e1f2c95ba0d957f7cf6a",
+  "prompts": {},
+  "sessions": {
+    "s_3d83af59050d52": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "576fc6c5-ff3a-40f0-b80e-172325e4141c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
