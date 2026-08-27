@@ -9,6 +9,7 @@ import {
   type EventDraft,
 } from '@dltech/atlas-core'
 
+import { EUnreadableReason } from '../decode-events'
 import { openSecondWriter, openStoreFixture, type StoreFixture } from './harness'
 
 let fixture: StoreFixture
@@ -243,7 +244,7 @@ describe('PrismaEventLog hydration', () => {
     ).toMatchObject({ type: 'context-loaded', slot: 'project-instructions', key: '/repo/CLAUDE.md' })
   })
 
-  it('rejects a stored body that no longer parses as an event', async () => {
+  it('sets aside a stored body that no longer parses as an event', async () => {
     const { log, databaseUrl } = await openFixture()
     await log.append({ branchId, runId, drafts: [said('one')] })
 
@@ -252,7 +253,11 @@ describe('PrismaEventLog hydration', () => {
     database.run(`UPDATE "Event" SET "body" = '{"type":"who-knows"}'`)
     database.close()
 
-    await expect(log.read({ branchId })).rejects.toThrow()
+    expect(await log.read({ branchId })).toEqual([])
+
+    const { unreadable } = await log.readDecoded({ branchId })
+    expect(unreadable.map((gap) => gap.seq)).toEqual([1])
+    expect(unreadable[0]?.reason).toBe(EUnreadableReason.UnrecognizedBody)
   })
 })
 

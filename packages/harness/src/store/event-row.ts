@@ -1,10 +1,7 @@
 import {
-  eventBodySchema,
-  stampDrafts,
   toBranchId,
   toEventId,
   toRunId,
-  type Event,
   type EventDraft,
   type EventEnvelope,
 } from '@dltech/atlas-core'
@@ -39,14 +36,7 @@ export function toEventRow({ draft, envelope }: { draft: EventDraft; envelope: E
   }
 }
 
-export function toEvents(rows: readonly EventRow[]): Event[] {
-  return stampDrafts({
-    drafts: rows.map((row) => eventBodySchema.parse(JSON.parse(row.body))),
-    envelopes: rows.map(toEnvelope),
-  })
-}
-
-function toEnvelope(row: EventRow): EventEnvelope {
+export function toEnvelope(row: EventRow): EventEnvelope {
   return {
     id: toEventId(row.id),
     seq: row.seq,

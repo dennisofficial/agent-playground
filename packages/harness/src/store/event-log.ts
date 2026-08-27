@@ -14,7 +14,8 @@ import type { Prisma, PrismaClient } from '../../prisma/generated/client'
 import { inject, injectable } from '../container/injection'
 import { PrismaClientToken } from '../container/tokens'
 import { contextIdentityOf, planAppend, type ContextIdentity } from './append-plan'
-import { toEventRow, toEvents } from './event-row'
+import { decodeEventRows, type DecodedLog } from './decode-events'
+import { toEventRow } from './event-row'
 import { retryOnWriteConflict } from './retry'
 
 export type AppendArgs = {
@@ -38,12 +39,17 @@ export class PrismaEventLog implements EventLogPort {
     return retryOnWriteConflict({ run: () => this.appendOnce(args) })
   }
 
-  async read({ branchId, upTo }: { branchId: BranchId; upTo?: number }): Promise<Event[]> {
+  async read(args: { branchId: BranchId; upTo?: number }): Promise<Event[]> {
+    const decoded = await this.readDecoded(args)
+    return decoded.events
+  }
+
+  async readDecoded({ branchId, upTo }: { branchId: BranchId; upTo?: number }): Promise<DecodedLog> {
     const rows = await this.prisma.event.findMany({
       where: { branchId, ...(upTo === undefined ? {} : { seq: { lte: upTo } }) },
       orderBy: { seq: 'asc' },
     })
-    return toEvents(rows)
+    return decodeEventRows(rows)
   }
 
   async head({ branchId }: { branchId: BranchId }): Promise<number> {
@@ -150,7 +156,7 @@ async function loadReusableContext({
 
   const rows = await tx.event.findMany({ where: { branchId, type: 'context-loaded' } })
   const reusable = new Map<ContextIdentity, Event>()
-  for (const event of toEvents(rows)) {
+  for (const event of decodeEventRows(rows).events) {
     const identity = contextIdentityOf(event)
     if (identity !== undefined && wanted.has(identity)) reusable.set(identity, event)
   }

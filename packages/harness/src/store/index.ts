@@ -1,6 +1,7 @@
 export { BranchStorePort, PrismaBranchStore, type BranchSummary } from './branch-store'
 export { SystemClock } from './clock'
 export { openAtlasDatabase, type AtlasDatabase } from './database'
+export { decodeEventRows, EUnreadableReason, type DecodedLog, type UnreadableRow } from './decode-events'
 export { PrismaEventLog, type AppendArgs } from './event-log'
 export { RandomIds } from './ids'
 export { rewindBranch, type RewindResult } from './rewind'
