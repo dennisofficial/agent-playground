@@ -3,9 +3,14 @@ import { join } from 'node:path'
 
 export const ATLAS_DIRECTORY_NAME = '.atlas'
 export const ATLAS_DATABASE_NAME = 'harness.db'
+export const ATLAS_TAPES_DIRECTORY_NAME = 'tapes'
 
 export function atlasDirectory(): string {
   return join(homedir(), ATLAS_DIRECTORY_NAME)
+}
+
+export function atlasTapesDirectory(): string {
+  return join(atlasDirectory(), ATLAS_TAPES_DIRECTORY_NAME)
 }
 
 export function atlasDatabaseFile(): string {
