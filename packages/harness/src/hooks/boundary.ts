@@ -8,6 +8,7 @@ import {
   EPathForm,
   EPathPresence,
   EStage,
+  ToolDefinition,
   type BeforeTool,
   type DeclaredPathField,
   type HookOrder,
@@ -15,6 +16,8 @@ import {
   type ToolDeclaration,
 } from '@dltech/atlas-core'
 
+import { inject, injectAll, injectable, portToken } from '../container/injection'
+import { WorkspaceRoot } from '../container/tokens'
 import { createWorkspaceContainment, type WorkspaceContainment } from '../tools/containment'
 
 enum EDenial {
@@ -70,6 +73,7 @@ function reasonFor({ call, denial, root }: { call: ToolCall; denial: Denial; roo
   return `${call.name} would reach ${destination}, outside the workspace root ${root}`
 }
 
+@injectable()
 export class WorkspaceBoundaryHook extends BeforeToolHook {
   readonly name = 'workspaceBoundary'
   readonly order: HookOrder = { stage: EStage.Guard, nudge: 0 }
@@ -78,7 +82,10 @@ export class WorkspaceBoundaryHook extends BeforeToolHook {
   private readonly root: string
   private readonly pathFieldsByTool: Map<string, readonly DeclaredPathField[] | undefined>
 
-  constructor(root: string, tools: readonly ToolDeclaration[]) {
+  constructor(
+    @inject(WorkspaceRoot) root: string,
+    @injectAll(portToken(ToolDefinition)) tools: readonly ToolDeclaration[],
+  ) {
     super()
     this.containment = createWorkspaceContainment({ root })
     this.root = this.containment.root

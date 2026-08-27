@@ -14,11 +14,11 @@ import {
   OnChunkHook,
   toCallId,
   toRunId,
+  ToolDefinition,
   type BeforeTool,
   type Chunk,
   type HookOrder,
   type OnChunk,
-  type ToolDefinition,
 } from '@dltech/atlas-core'
 
 import { createIsolatedContainer, portToken, type DependencyContainer } from '../../container/injection'
@@ -153,17 +153,16 @@ describe('the boundary hook threaded ahead of a second hook', () => {
   it('hands the next hook the path the caller wrote, not the realpath it checked against', async () => {
     const witness = new PathWitness()
     const invoked: string[] = []
+    const touch = touchTool(invoked)
 
     const child = createIsolatedContainer()
     child.register(WorkspaceRoot, { useValue: link })
-    child.register(portToken(BeforeToolHook), {
-      useFactory: (resolver) =>
-        new WorkspaceBoundaryHook(resolver.resolve(WorkspaceRoot), [touchTool(invoked)]),
-    })
+    child.register(portToken(ToolDefinition), { useValue: touch })
+    child.register(portToken(BeforeToolHook), { useClass: WorkspaceBoundaryHook })
     child.register(portToken(BeforeToolHook), { useValue: witness })
 
     const dispatch = createDispatch({
-      registry: createToolRegistry([touchTool(invoked)]),
+      registry: createToolRegistry([touch]),
       hooks: resolveHookRegistry({ container: child }),
     })
 
@@ -177,5 +176,33 @@ describe('the boundary hook threaded ahead of a second hook', () => {
     expect(drafts.map((draft) => draft.type)).toEqual(['tool-result'])
     expect(witness.seen).toEqual([path])
     expect(invoked).toEqual([path])
+  })
+
+  it('denies a path outside the root the container injected', async () => {
+    const invoked: string[] = []
+    const touch = touchTool(invoked)
+
+    const child = createIsolatedContainer()
+    child.register(WorkspaceRoot, { useValue: link })
+    child.register(portToken(ToolDefinition), { useValue: touch })
+    child.register(portToken(BeforeToolHook), { useClass: WorkspaceBoundaryHook })
+
+    const dispatch = createDispatch({
+      registry: createToolRegistry([touch]),
+      hooks: resolveHookRegistry({ container: child }),
+    })
+
+    const drafts = await dispatch({
+      call: {
+        callId: toCallId('call-2'),
+        name: 'touch',
+        input: { path: '/etc/hosts' },
+        runId: toRunId('run-1'),
+      },
+      signal: AbortSignal.timeout(5_000),
+    })
+
+    expect(drafts.map((draft) => draft.type)).toEqual(['tool-denied'])
+    expect(invoked).toEqual([])
   })
 })
