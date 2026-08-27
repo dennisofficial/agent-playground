@@ -1,0 +1,19 @@
+packages/harness/src/container/create-harness-container.ts
+  s_3d83af59050d52::t_892a1374650982 5,24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "9413d7dd9fcc3b03b91f60927178a325d6250ad3",
+  "prompts": {},
+  "sessions": {
+    "s_3d83af59050d52": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "576fc6c5-ff3a-40f0-b80e-172325e4141c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
