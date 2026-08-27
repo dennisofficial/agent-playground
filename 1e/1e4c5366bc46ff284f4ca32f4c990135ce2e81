@@ -1,0 +1,1095 @@
+apps/tui/src/ui/__tests__/switcher-render.spec.tsx
+  s_b7bbfe3e745bcc::t_a63c8590e223af 30,44,53
+  s_ed3588bb0efbeb::t_20a88a0133b7cf 4
+apps/tui/src/store/__tests__/shell-ended-entry.spec.ts
+  s_ae221a728d5afb::t_9eb3c2579c574c 1-92
+packages/core/src/hooks/__tests__/hooks.spec.ts
+  s_2feab2e45d45ee::t_252153610e4787 7,42-49,51-56,60-82,84
+apps/tui/src/ui/components/diff/diff-footer.tsx
+  s_b391e026d4f658::t_e704b1d24f4426 44,46
+packages/core/src/budget/resolve-budget.ts
+  s_d3cfb63b7ee15c::t_ad867bd366ce7c 1-84
+apps/tui/src/store/in-flight-steps.ts
+  s_883ed224e7d728::t_a555a0dcc3a5eb 2,97,99,108,110,118
+  s_b391e026d4f658::t_411fbe6cb191a3 96,98,100-106
+apps/tui/src/composition/__tests__/app-sidebar.spec.tsx
+  s_37569aa4b69462::t_eee9695d5554e4 51,70,98,125
+packages/harness/src/tools/__tests__/tool-container.spec.ts
+  s_2feab2e45d45ee::t_ff7451c305ea17 10,18-26,28,58,119-187
+  s_b391e026d4f658::t_a9855df6b4476d 188-189
+packages/harness/src/hooks/__tests__/registry.spec.ts
+  s_37569aa4b69462::t_e790db8a066d3a 36,40-44,46-47,49-57,59-60,62-66,68,71-75,77-78,112,116-117,120-121,124-125,132-133,187
+  s_2feab2e45d45ee::t_e27b0d9eb38038 6,14,25,76,80-92,127-129,137,144-145,198-207,214-230,232-239,243-245,257
+  s_2feab2e45d45ee::t_6e28a65a08e8c6 173,185,188,197,208-210
+  s_2feab2e45d45ee::t_9745da793d5622 21,93
+  s_37569aa4b69462::t_2b3ffcaca598a3 7,10,15-16,18,27-29,31-34,37-38,45,48,58,67,94-95,97-100,103-104,106-111,113-114,130-131,134-136,138-143,146-172,174-184,186,189-196,211-213,246,249-250,252-256,258
+apps/tui/src/ui/__tests__/footer-render.spec.tsx
+  s_d3cfb63b7ee15c::t_eb85072dd3e56c 69
+apps/tui/src/ui/tool-group-spans.ts
+  s_d3cfb63b7ee15c::t_3a2aba5722116a 11,106
+apps/tui/src/store/index.ts
+  s_883ed224e7d728::t_bb8a14074692d6 14-19
+  s_b391e026d4f658::t_c5996ecfcf2352 10
+  s_cb1c44c44ecab7::t_63abcd518c4d16 50-54
+  s_ae221a728d5afb::t_8f7e0a241ee70d 20-25,60
+packages/core/src/context/render.ts
+  s_47c6af51a98de9::t_90d1a279d5813f 1-42
+packages/harness/src/loop/turn-faults.ts
+  s_37569aa4b69462::t_4b8901658da2f1 1-10
+packages/harness/prisma/schema.prisma
+  s_d3cfb63b7ee15c::t_78c91deb59c2fd 17-26,29
+  s_47c6af51a98de9::t_26a385c9f80e81 2-3,44,48
+packages/core/src/context/__tests__/render.spec.ts
+  s_47c6af51a98de9::t_eda853c5c69e37 1-78
+packages/harness/src/shells/shell-process.ts
+  s_2feab2e45d45ee::t_bb37a6a75877de 117
+  s_2feab2e45d45ee::t_a60613c055d6b6 1-116,118-151
+apps/tui/src/composition/compose.ts
+  s_37569aa4b69462::t_6557e6953cf676 154
+  s_d3cfb63b7ee15c::t_a0d4021c6fa610 51,117,140
+  s_37569aa4b69462::t_eee9695d5554e4 13,28,45-46,50,116,139
+  s_2feab2e45d45ee::t_e4560cf89eddb1 59,148
+  s_2feab2e45d45ee::t_dacf0e4ec6f037 163-166
+  s_ae221a728d5afb::t_0b2a0dab5cd290 8,49,114-115,118-133,136-138,150-153
+  s_37569aa4b69462::t_eb6ebba370b4b8 24,32
+  s_2feab2e45d45ee::t_f6fb46c1f78f4f 9
+  s_d3cfb63b7ee15c::t_f2f4d56ac74988 27
+packages/core/src/assembly/rules/messages-from-events.ts
+  s_47c6af51a98de9::t_13504903213981 1-2
+  s_ae221a728d5afb::t_63e64717cbdb07 115-123
+  s_ae221a728d5afb::t_e88cdd81943caa 8
+  s_47c6af51a98de9::t_1568debc3c2146 92,105-114
+packages/harness/src/loop/__tests__/settle-parallel.spec.ts
+  s_2feab2e45d45ee::t_68d84fd60f54a0 1-12,14-75,81-83,85-88,91,94,96,98-100,102-233,235-237,239-248,251-345
+apps/tui/src/composition/use-settings.ts
+  s_cb1c44c44ecab7::t_63abcd518c4d16 17,39,155-161
+packages/harness/src/shells/register-shells.ts
+  s_2feab2e45d45ee::t_1e12c75d8ffb7d 1-21
+packages/harness/src/files/__tests__/read-state.spec.ts
+  s_8872fb7ebcd73e::t_74392a3cb6af69 1-4,6-14,53
+  s_8872fb7ebcd73e::t_d06c83c53a171f 29-36,52
+  ai_agent 5,37-51
+  s_8872fb7ebcd73e::t_e00985ea6948a3 15-28
+apps/tui/src/ui/__tests__/settings-render.spec.tsx
+  s_cb1c44c44ecab7::t_c5f10573647cb6 93
+packages/harness/src/tools/builtin/shell-list.ts
+  s_2feab2e45d45ee::t_2ea4baef03f4a8 1-2,11-35,37,39-88
+  s_ae221a728d5afb::t_3d8e4d0875f6b0 3-10,36,38
+packages/harness/src/model/__tests__/titler.spec.ts
+  s_37569aa4b69462::t_eee9695d5554e4 1-117
+packages/harness/src/store/compose-branch.ts
+  s_d3cfb63b7ee15c::t_bcc9a53f9b9d9d 27,48,76
+  s_d3cfb63b7ee15c::t_ab285a574a316c 1-22,24-26,29-30,36-43,45-47,50-54,63-75,77-111
+  s_d3cfb63b7ee15c::t_499ae9d9bbea8d 23,28,31-35,44,49,55-62
+packages/harness/src/store/__tests__/event-log.spec.ts
+  s_47c6af51a98de9::t_d028146eb96522 272,276,284-309
+packages/core/src/shells/status.ts
+  s_ae221a728d5afb::t_8f0c254452202f 1-28
+packages/harness/src/tools/__tests__/registry.spec.ts
+  s_4f948d8df330fa::t_60596ec322e151 6,16,18,26
+apps/tui/src/composition/__tests__/app-shortcuts.spec.tsx
+  s_b391e026d4f658::t_c2d59dd4820825 9-14,81-108
+  s_37569aa4b69462::t_eee9695d5554e4 41
+packages/harness/src/shells/shell-id.ts
+  s_2feab2e45d45ee::t_fc9e714d5e16c8 1-7
+apps/tui/src/composition/app.tsx
+  s_d3cfb63b7ee15c::t_49f0e1e4ada3fa 33,214-221,224
+  s_883ed224e7d728::t_93d37eb4dd9d4d 276
+  s_2feab2e45d45ee::t_f014852fd3e4c4 204-205,253,270-271
+  s_d765cd4ce5918c::t_7650f016d7ab81 96
+  s_2feab2e45d45ee::t_fbe2a6756cad1e 29,274-275,277-282
+  s_d765cd4ce5918c::t_ee66a0e047bc0a 162,238
+  s_b391e026d4f658::t_3d5e8bd2f8ec04 187-188,192-200,202-203,206-210
+  s_b391e026d4f658::t_eab1f4d334aa5e 240-242
+  s_2feab2e45d45ee::t_3b52456589f0d5 19,35-36,113,123-129
+  s_b391e026d4f658::t_9f745865470d29 4,21-26,28,53-62
+  s_d3cfb63b7ee15c::t_33b2ffd55fd330 201
+packages/harness/src/hooks/resolve-hooks.ts
+  s_37569aa4b69462::t_acd5c37b8c50bd 17,19,23
+  s_2feab2e45d45ee::t_f6df5afacc4187 7,24
+packages/harness/src/loop/__tests__/settle-pending.spec.ts
+  s_37569aa4b69462::t_7c2507d9c44c6b 6,57-58,66-67
+packages/harness/src/loop/index.ts
+  s_37569aa4b69462::t_eb8346aaa8ada4 4,6
+packages/harness/src/hooks/__tests__/file-state-wiring.spec.ts
+  s_8872fb7ebcd73e::t_1e3e25109fd144 18,24
+  s_8872fb7ebcd73e::t_497983d70c4710 141-144
+  s_8872fb7ebcd73e::t_e24ba009eebdeb 1-17,19-23,25-140,145-146
+apps/tui/src/composition/use-conversation.ts
+  s_37569aa4b69462::t_eee9695d5554e4 337-338,345
+  s_b391e026d4f658::t_f05a9c37678345 220,243,248
+  s_ae221a728d5afb::t_6e42eea3952e19 13,16,60,101-104,117-123,250-288,296-297,305,331,344,357
+  s_d3cfb63b7ee15c::t_9a8618c667c036 198
+  s_7289cac56014c9::t_738d8f0de7d3d2 363
+  s_883ed224e7d728::t_576812b2e6b9c7 129-130,142
+  s_b391e026d4f658::t_eab1f4d334aa5e 63,347,360
+  s_d3cfb63b7ee15c::t_fd8c38817c0f86 66,193-195,197,199-209
+  s_b391e026d4f658::t_babd1399bccb9c 219
+  s_b391e026d4f658::t_478b50ad758aeb 149-154,159-162,164-170,172,174
+  s_b391e026d4f658::t_8d10cfd6bce200 163,171
+  s_d3cfb63b7ee15c::t_b8a49d8fd59b92 23
+  s_b391e026d4f658::t_377668f82875af 26,30-31,37
+  s_883ed224e7d728::t_bb8a14074692d6 14
+packages/harness/src/shells/shell-registry.ts
+  s_ae221a728d5afb::t_1e86c716d9b50b 6,33,35-36,68,140,143-144,156,187,197-198
+  s_ae221a728d5afb::t_08e8792d8914bb 50-51,78,141,146,157,186,188-196
+  s_2feab2e45d45ee::t_2105e8c2f459df 30,40,95-96,105,115-122
+  s_2feab2e45d45ee::t_3f1828d83cde40 5,28,89,163
+  s_9c004e858d4c41::t_e4502d06c0fc21 34,42-49,52-67,77,114,138-139,142,145,155
+  s_ae221a728d5afb::t_d9512556583360 1,79,137,147-154
+  s_2feab2e45d45ee::t_fad35b55630ec8 2-4,7-27,29,31-32,37-39,41,69-76,80-88,90-94,97-104,106-113,123-136,158-162,164-185,199-200
+packages/harness/src/model/summariser.ts
+  s_d3cfb63b7ee15c::t_552fc2f0ceaeb9 1-43
+packages/core/src/events/projections.ts
+  s_ae221a728d5afb::t_c2ba09f73fa813 71
+packages/harness/src/loop/settle-pending.ts
+  s_2feab2e45d45ee::t_97a2dbb9abd1f9 1-9,18-19,21-27,33-34,39-43,45
+  s_b391e026d4f658::t_a9855df6b4476d 38
+  s_37569aa4b69462::t_ae9fc3677f4918 11,20,37
+  s_2feab2e45d45ee::t_08ff397385d0a4 32
+packages/harness/src/loop/build-harness.ts
+  s_37569aa4b69462::t_a5bc1d3977ca6b 24
+  s_37569aa4b69462::t_8710fd5ecba930 19,25,67,89
+  s_37569aa4b69462::t_ae9fc3677f4918 21,45
+  s_2feab2e45d45ee::t_9745da793d5622 16,50
+packages/core/src/context/supersede.ts
+  s_47c6af51a98de9::t_5a7e00ddabc496 1-27
+packages/core/src/compaction/compaction-plan.ts
+  s_d3cfb63b7ee15c::t_33a1642f4f6383 1-51
+apps/tui/src/composition/overlay-stack.tsx
+  s_2feab2e45d45ee::t_d137d39c9fb13e 1-13,15-39,41-64
+  s_883ed224e7d728::t_93d37eb4dd9d4d 14,40
+packages/harness/src/tools/builtin/read.ts
+  s_37569aa4b69462::t_4b084c8eabf506 11,111,115-116
+  s_37569aa4b69462::t_117cf14b94d865 108-109
+  s_2feab2e45d45ee::t_0ea0f5e8f56bf6 107
+  s_37569aa4b69462::t_5e65ae58e84f26 4,112
+  s_37569aa4b69462::t_ccf75f45601350 8,103
+packages/harness/src/channel/__tests__/publishing-event-log.spec.ts
+  s_d3cfb63b7ee15c::t_2482e98922509d 48-50
+apps/tui/src/composition/__tests__/app-shell-wake.spec.tsx
+  s_ae221a728d5afb::t_abf2e89c7b8d8d 1-102
+apps/tui/src/ui/__tests__/transcript-render.spec.tsx
+  s_ae221a728d5afb::t_910ebf0763159e 172-173,223,241,255
+  s_ae221a728d5afb::t_fa2a7e94cd50db 4
+  s_cb1c44c44ecab7::t_5d98d3b4265256 117
+  s_9c004e858d4c41::t_e76d9ea5ec6796 214-222,224-232
+  s_883ed224e7d728::t_61aa8911b2e9a7 249-254,256-261
+  s_cb1c44c44ecab7::t_a68ec0a9780ff4 87,180
+  s_9c004e858d4c41::t_c76586f70c3211 186-213
+packages/harness/src/store/__tests__/decode-events.spec.ts
+  s_47c6af51a98de9::t_132e2062fd471b 41
+apps/tui/src/ui/__tests__/accents.spec.ts
+  s_cb1c44c44ecab7::t_ad0d157b70df47 1-33
+apps/tui/src/ui/hooks/use-transcript-follow.ts
+  s_d765cd4ce5918c::t_ea0e8baef72e33 60
+  s_d765cd4ce5918c::t_a2fd45a121054d 18-20,25,55,58-59,61
+apps/tui/src/ui/keys/__tests__/keys.spec.ts
+  s_b391e026d4f658::t_485bc8fd655505 1-172
+packages/harness/src/loop/__tests__/turn-ledger-wiring.spec.ts
+  s_37569aa4b69462::t_0236819419e0eb 5,47,179
+packages/harness/src/store/event-log.ts
+  s_d3cfb63b7ee15c::t_e4dc97c05225f8 17,49-53
+  s_d3cfb63b7ee15c::t_499ae9d9bbea8d 152
+apps/tui/src/store/reveal.ts
+  s_883ed224e7d728::t_a555a0dcc3a5eb 2,20
+packages/harness/src/tools/declared-paths.ts
+  s_8872fb7ebcd73e::t_afbf25f4ddf539 1-45
+packages/harness/src/tools/register-tools.ts
+  s_4f948d8df330fa::t_60596ec322e151 3,9,11,13,23-24,26
+  s_2feab2e45d45ee::t_649838cf4bf07f 10,22
+packages/harness/src/container/__tests__/harness-graph.spec.ts
+  s_2feab2e45d45ee::t_9745da793d5622 48,62
+  s_37569aa4b69462::t_e7307e5675d13e 49,56
+  s_2feab2e45d45ee::t_e7dd85f9c50149 34-44
+  s_8872fb7ebcd73e::t_2a2e56eda0bacf 47,51-55
+  s_37569aa4b69462::t_6db174550e23d4 8,12,66,68
+  s_37569aa4b69462::t_e7348dea59bcb8 6
+packages/harness/src/tools/builtin/__tests__/glob.spec.ts
+  s_37569aa4b69462::t_aafd689e459382 6,23,29
+apps/tui/src/composition/__tests__/app-mount.spec.tsx
+  s_cb1c44c44ecab7::t_a68ec0a9780ff4 99
+  s_47c6af51a98de9::t_68717d453c0f9b 196-241
+  s_b391e026d4f658::t_0824b4ec9f1032 5-11,165-191
+packages/harness/src/loop/__tests__/model-steps.spec.ts
+  s_37569aa4b69462::t_87bdf0902b80e0 17,77
+  s_37569aa4b69462::t_0236819419e0eb 14,71,132,212
+  s_4f948d8df330fa::t_60596ec322e151 18,57,210
+  s_2feab2e45d45ee::t_9745da793d5622 16
+apps/tui/src/store/__tests__/derive-transcript.spec.ts
+  s_883ed224e7d728::t_ff4d25da02dc5f 3,149,366-367
+  s_cb1c44c44ecab7::t_0afc5a910e2b64 6,9-19,317-365
+apps/tui/src/ui/keys/index.ts
+  s_b391e026d4f658::t_b703eed7d1df63 1-19
+packages/harness/src/tools/builtin/shell-output.ts
+  s_2feab2e45d45ee::t_649838cf4bf07f 36-41,92
+  s_2feab2e45d45ee::t_0ea0f5e8f56bf6 73
+  s_2feab2e45d45ee::t_3bc75ecbdd789a 1-2,10-23,25-32,34-35,42-72,74-91,93-100
+  s_ae221a728d5afb::t_3d8e4d0875f6b0 3-9,24,33
+apps/tui/src/ui/__tests__/shells-model.spec.ts
+  s_2feab2e45d45ee::t_fd593e021ed47b 3
+  s_2feab2e45d45ee::t_e7915e738313d8 1-2,4-15,17-24,27-76,78-153,157-158
+  s_2feab2e45d45ee::t_fee4c5795752c3 154-156
+  s_2feab2e45d45ee::t_baa96aca661a21 25-26
+packages/core/src/context/slot.ts
+  s_47c6af51a98de9::t_a098f669a57f1e 1-11
+packages/harness/src/context/__tests__/read-instructions.spec.ts
+  s_47c6af51a98de9::t_7bdd4392835393 1-139
+packages/core/src/budget/__tests__/resolve-budget.spec.ts
+  s_d3cfb63b7ee15c::t_f66138c50a9f3d 13,16,41,47,53,56,61,63-64,72
+  s_d3cfb63b7ee15c::t_e7237e70b54ac9 1-12,14-15,17-40,42-46,48-52,54-55,57-60,62,65-71,73-82
+packages/harness/src/hooks/__tests__/record-file-state.spec.ts
+  s_8872fb7ebcd73e::t_08c7e588b5d817 1
+  s_8872fb7ebcd73e::t_8111e690d3596d 2-116,118-121,123-227,229,231-246,249-250
+  s_2feab2e45d45ee::t_ad90bc1a134bcc 117,122,228,230,247-248
+packages/core/src/context/__tests__/supersede.spec.ts
+  s_47c6af51a98de9::t_3109323b76f3b4 1-2,5-8,10-21,23-33,35-43,45-52,54-62,64-74
+  s_47c6af51a98de9::t_ee579980b70b37 22,63
+  s_47c6af51a98de9::t_ef805b9e7659f7 3-4,9,34,44,53
+apps/tui/src/store/thinking-fold.ts
+  s_cb1c44c44ecab7::t_74b3e233bbec73 7-26,32-35,37-41,43-47,50-51,55-58,61-62,64-84
+  s_cb1c44c44ecab7::t_757bf881003eb1 1-6,27-31,36,42,48-49,52-54,59-60,63
+apps/tui/src/ui/components/transcript.tsx
+  s_ae221a728d5afb::t_a93d1b301a912e 30
+  s_d3cfb63b7ee15c::t_3a2aba5722116a 3
+  s_d765cd4ce5918c::t_76d3424fe485fc 41,51-54
+  s_ae221a728d5afb::t_21c1ec40a30cef 42,142
+apps/tui/src/ui/__tests__/settings-model.spec.ts
+  s_cb1c44c44ecab7::t_9672662a35f444 35-37,39
+  s_47c6af51a98de9::t_4724cea2f8235c 38,40,73
+packages/core/src/hooks/__tests__/outcome.spec.ts
+  s_2feab2e45d45ee::t_73deeb2b8cba96 1-61
+packages/harness/src/tools/dispatch.ts
+  s_2feab2e45d45ee::t_cf95c307cc6838 4,188-189
+  s_37569aa4b69462::t_a610eb7c1a79a2 20-21,26-30,35-37,40-54,57-63,65-66,68-73,75-77,80-82,84-85,88-91,93-97,99-110,113-123,129-132,136-147,150-157,160-161,163-176,178,180-187,190-192,195-209,211,213-229,231-238
+apps/tui/src/store/transcript-model.ts
+  s_883ed224e7d728::t_f7db07cfd77da9 22
+  s_ae221a728d5afb::t_28c3f67f85f258 14,72-81,88
+  s_d3cfb63b7ee15c::t_cd98434cf4291c 13,64-71,87
+packages/harness/src/store/__tests__/compact.spec.ts
+  s_d3cfb63b7ee15c::t_798a8b71c88278 47-55,61,68,73,78,81,84-86,91,94-108,111,114-115,117-128,134,143,146,149,153,162
+  s_d3cfb63b7ee15c::t_4962e1cec6eed4 1-46,56-60,62-67,69-72,74-77,79-80,82-83,87-90,92-93,109-110,112-113,116,129-133,135-142,144-145,147-148,150-152,154-161,163-173
+apps/tui/src/store/__tests__/pending-queue.spec.ts
+  s_883ed224e7d728::t_a55e6a1ec4d499 3-4,163-171
+  s_883ed224e7d728::t_9c6dddfa8e4d18 134
+  s_883ed224e7d728::t_d73d432646cb6f 25-42,46-78,129-130,146
+packages/core/src/assembly/__tests__/assemble.spec.ts
+  s_d3cfb63b7ee15c::t_c3ffb3313cb388 82
+apps/tui/src/ui/shimmer-style.ts
+  s_8ca0db9b7bb1cb::t_32308c69261904 1
+packages/harness/src/container/index.ts
+  s_2feab2e45d45ee::t_9745da793d5622 14
+apps/tui/src/store/__tests__/sidebar-model.spec.ts
+  s_37569aa4b69462::t_eee9695d5554e4 120-148
+packages/core/src/compaction/__tests__/compaction-target.spec.ts
+  s_d3cfb63b7ee15c::t_d5b79076498ec8 1-3,5-9,11-16,23-32,34
+  s_d3cfb63b7ee15c::t_39f965dcfa8fac 10,44,77,80,82-83,87
+  s_d3cfb63b7ee15c::t_bf0326a0eb5575 4,17-22,33,36,47,51-53,58-60,65,68,71-72,74,96
+  s_d3cfb63b7ee15c::t_820bc2b752d813 35,37-43,45-46,48-50,61-64,66-67,69-70,73,75-76,78-79,81,84-86,88-95,97-98
+  s_d3cfb63b7ee15c::t_4f87a763f1d1d9 54-57
+packages/core/src/events/body.ts
+  s_d3cfb63b7ee15c::t_4cac9dd6e366af 41
+  s_1177f553f929cc::t_815468dc3531f1 15,20
+  s_ae221a728d5afb::t_fc93ec7d78efae 2,30-40
+apps/tui/src/ui/components/diff/inline-diff.tsx
+  s_b391e026d4f658::t_c17e498f11c4a8 8
+packages/core/src/compaction/compaction-target.ts
+  s_d3cfb63b7ee15c::t_785dba20d62cfd 2-3,7-8,15-41,57-74
+  s_d3cfb63b7ee15c::t_2a346591043f81 1,4-6,9-14,42-56,75-79
+apps/tui/src/ui/components/blocks/compacted-block.tsx
+  s_d3cfb63b7ee15c::t_cb9385b745db9f 1-27
+packages/harness/src/loop/__tests__/hooked-turn.ts
+  s_2feab2e45d45ee::t_c36aaf81069da6 1-69
+packages/harness/src/hooks/__tests__/resolve-hooks.spec.ts
+  s_2feab2e45d45ee::t_e27b0d9eb38038 132
+  s_37569aa4b69462::t_b4d28dbde69703 118-131,133
+  s_37569aa4b69462::t_8307c3d1d69392 108-109
+  s_37569aa4b69462::t_9125a20b18b9f2 18,22,27
+  s_4f948d8df330fa::t_60596ec322e151 11,33,184-186,207,233
+  s_2feab2e45d45ee::t_9745da793d5622 35,72,208,234
+  s_37569aa4b69462::t_95c7920715f7fe 65,67-70,73-80,82-84,86-93,95-96
+  s_37569aa4b69462::t_fa0bacd0586a32 32,206,212,232,237
+apps/tui/src/ui/components/spans.tsx
+  s_8ca0db9b7bb1cb::t_0df480dc7360a4 3,9-13
+packages/harness/src/tools/builtin/__tests__/shell-tools.spec.ts
+  s_4f948d8df330fa::t_60596ec322e151 1-7,9-12,14-21,23-42,44-83,85-240,338-339
+  s_2feab2e45d45ee::t_fef2a501fb4c14 13,22,43,241-243,246-249,252-253,255-259,261-337
+  s_2feab2e45d45ee::t_1b57fa23a6da9a 245,251
+  s_2feab2e45d45ee::t_e129b32baa4f68 8,84,244,250,254,260
+packages/core/src/models/usage.ts
+  s_d3cfb63b7ee15c::t_afd331536c4e80 52-55
+apps/tui/src/composition/__tests__/turn-progress.spec.ts
+  s_cb1c44c44ecab7::t_5d98d3b4265256 88
+  s_b391e026d4f658::t_7d561ad5d47007 9,17-18,20,199,201-241,243
+packages/harness/src/tools/builtin/write.ts
+  s_37569aa4b69462::t_5e65ae58e84f26 5
+  s_37569aa4b69462::t_ccf75f45601350 9,32
+  s_4f948d8df330fa::t_46bd039c77b166 38
+  s_37569aa4b69462::t_4b084c8eabf506 12,37,41-42
+packages/harness/src/tools/registry.ts
+  s_37569aa4b69462::t_2b77fb37d0fee8 1-3,10-25,27-28,31-32
+  s_b391e026d4f658::t_a9855df6b4476d 26
+apps/tui/src/ui/keys/shortcut-groups.ts
+  s_b391e026d4f658::t_b703eed7d1df63 1-24
+packages/harness/src/store/context-digest.ts
+  s_47c6af51a98de9::t_83aebf1af7cc47 1-4
+apps/tui/src/store/shell-ended-line.ts
+  s_ae221a728d5afb::t_5fab895e471536 1-28
+packages/harness/src/model/ai-sdk-model-port.ts
+  s_c653afe8642d12::t_d684f221fbbf50 92
+  s_37569aa4b69462::t_a8aa5cb53365d5 49
+  s_37569aa4b69462::t_6871ceca1a4fe0 33
+  s_c653afe8642d12::t_102e13a1fc1700 69-70
+  s_37569aa4b69462::t_e1194a32d2fb45 36-37
+  s_c653afe8642d12::t_f85e674d542bbb 50,53
+  s_c653afe8642d12::t_ed27246c2f2766 16
+  s_37569aa4b69462::t_96aad3e8e5f44d 4,6-12,88,93-135
+  s_2feab2e45d45ee::t_9745da793d5622 91
+  s_37569aa4b69462::t_c335b75f4da43c 15
+  s_37569aa4b69462::t_3c62e7cb8879a9 74
+apps/tui/src/ui/shells-model.ts
+  s_2feab2e45d45ee::t_b7b7430480586b 1-58,68-86,91-94
+  s_ae221a728d5afb::t_e4c8055697673e 61
+  s_2feab2e45d45ee::t_fee4c5795752c3 87-90
+  s_ae221a728d5afb::t_dd9a10c66876e9 59-60,62-67
+packages/harness/src/shells/background-shell.ts
+  s_ae221a728d5afb::t_9e0c4489c77fc4 1
+  s_2feab2e45d45ee::t_6f4db0d020ead7 2-3,5-15,17,20-27,29-30,32-109,121-131,133-134,137-142,144,148,150-153
+  s_ae221a728d5afb::t_292cfba35fe173 16
+  s_2feab2e45d45ee::t_0c3f6195a0755e 4,18-19,28,31,132,135-136
+  s_2feab2e45d45ee::t_f18205831d351a 110-120
+  s_2feab2e45d45ee::t_ffe0ff06ce44fb 143,145-147,149
+apps/tui/src/store/__tests__/thinking-fold.spec.ts
+  s_cb1c44c44ecab7::t_d32e5c919e9eb6 1-133
+packages/harness/src/providers/anthropic-thinking.ts
+  s_b7bbfe3e745bcc::t_73e82f54c9c1c4 1-21
+packages/harness/src/loop/__tests__/builtin-turn.spec.ts
+  s_37569aa4b69462::t_87bdf0902b80e0 18,56
+  s_37569aa4b69462::t_8b1e924285d489 8,48
+  s_2feab2e45d45ee::t_9745da793d5622 13,58
+  s_4f948d8df330fa::t_60596ec322e151 19
+  s_8872fb7ebcd73e::t_d3e2cba05bb74f 54-55,59-63
+  s_1177f553f929cc::t_c7aa7c3f60a889 226-244
+  s_8872fb7ebcd73e::t_7f3dcfe90731a5 9,11-12,17,42-44,75-89,111,116,120,132,135-142,148-205
+packages/harness/src/hooks/__tests__/boundary.spec.ts
+  s_2feab2e45d45ee::t_0ea0f5e8f56bf6 17-18
+  s_2feab2e45d45ee::t_65a35dde20d479 46
+  s_2feab2e45d45ee::t_9745da793d5622 26,171
+  s_37569aa4b69462::t_aafd689e459382 19-24,43-45,47-48
+packages/harness/src/ledger/__tests__/exit-path-harness.ts
+  s_37569aa4b69462::t_0236819419e0eb 23-24,127,129
+  s_37569aa4b69462::t_87bdf0902b80e0 27,155
+apps/tui/src/store/__tests__/fixture.ts
+  s_d3cfb63b7ee15c::t_e6312dd5372cdf 64-67,71
+  s_d3cfb63b7ee15c::t_f50ee97cd4cd41 68-70,72-74
+  s_883ed224e7d728::t_a53d5b8074f18f 11,37,39,45,55
+packages/harness/src/tools/builtin/grep.ts
+  s_37569aa4b69462::t_5e65ae58e84f26 4,154
+  s_37569aa4b69462::t_ccf75f45601350 8,147
+  s_2feab2e45d45ee::t_0ea0f5e8f56bf6 151
+  s_37569aa4b69462::t_4b084c8eabf506 11,153,157-159,161-162
+packages/harness/src/shells/__tests__/shell-registry.spec.ts
+  s_ae221a728d5afb::t_6ddb25b262988e 6,24-32,225,227,234-257,260,267-275,279,281-282,284-289,291-295,297-300,303-306,309,311-313,315-345,347,409,422,434
+  s_2feab2e45d45ee::t_d6bd62f3e04e51 1-5,7,9,11-23,33-78,80-88,91-224,226,228-233,258-259,261-266,276-278,280,283,290,296,301-302,307-308,310,314,346,348-352,363-375,379-380,382,384-386,408,410-411,413,415,431,467-493,495-501,503-504
+  s_2feab2e45d45ee::t_e129b32baa4f68 8,402-403,405,412,414,417,420-421,425-427,430,432-433,437-445,494,502
+  s_2feab2e45d45ee::t_0ea0f5e8f56bf6 10,79,89-90
+packages/harness/src/hooks/registry.ts
+  s_2feab2e45d45ee::t_f6df5afacc4187 2,11,16,23,26,36-39,42-43,53,57,60,67-70
+  s_37569aa4b69462::t_b6b87911849a84 25,35,48-52,54-56,58-59,61-66,71-97
+apps/tui/prototype/shell.tsx
+  s_ed3588bb0efbeb::t_2ee524d679782b 37
+  s_883ed224e7d728::t_ff4d25da02dc5f 36
+packages/core/src/tools/tool.ts
+  s_4f948d8df330fa::t_46bd039c77b166 24-25
+  s_37569aa4b69462::t_ccf75f45601350 66,72-75,78
+  s_37569aa4b69462::t_61ac8196ea811d 1,55-61,65,76-77,79-85
+  s_b391e026d4f658::t_a9855df6b4476d 86
+  s_2feab2e45d45ee::t_45f2884b15f08e 49
+  s_37569aa4b69462::t_117cf14b94d865 50,68
+  s_37569aa4b69462::t_95602d16fa4355 67
+  s_37569aa4b69462::t_5e65ae58e84f26 21-23,26-27,32
+packages/harness/src/hooks/read-before-write.ts
+  s_8872fb7ebcd73e::t_d39592128415d6 52
+  s_8872fb7ebcd73e::t_795d660c888b64 1,29,36,41-51,53-65,67-70,123-128,130-131
+  s_8872fb7ebcd73e::t_26e76baccf2178 2-28,30-35,37-40,66,71-122,129,132-163
+apps/tui/src/ui/keys/binding.ts
+  s_2feab2e45d45ee::t_cf9c235d2c29b8 18
+  s_b391e026d4f658::t_054cfeb4012d94 1-17,19-43
+packages/core/src/ports/event-log.port.ts
+  s_d3cfb63b7ee15c::t_67688a501e8e75 18
+packages/harness/src/shells/output-buffer.ts
+  s_2feab2e45d45ee::t_c0779160ce3647 1-48
+packages/harness/src/store/__tests__/guarded-fork.spec.ts
+  s_d3cfb63b7ee15c::t_8d301c3b803688 6,14,168-258
+  s_d3cfb63b7ee15c::t_c663b4b51c3ec3 1-5,7-13,15-128
+  s_d3cfb63b7ee15c::t_155651068a0097 129-167,259-260
+packages/harness/src/loop/__tests__/before-turn.spec.ts
+  s_2feab2e45d45ee::t_c36aaf81069da6 1-138
+apps/tui/src/ui/components/blocks/shell-ended-block.tsx
+  s_ae221a728d5afb::t_6ed9bcadfe68af 1-85
+packages/harness/src/hooks/record-file-state.ts
+  s_2feab2e45d45ee::t_cf95c307cc6838 38,41,47
+  s_8872fb7ebcd73e::t_82e6bfeab022b9 1-37,39-40,42-46,48-90
+apps/tui/src/composition/__tests__/app-titling.spec.tsx
+  s_37569aa4b69462::t_eee9695d5554e4 1-161
+apps/tui/src/composition/__tests__/app-settings.spec.tsx
+  s_37569aa4b69462::t_eee9695d5554e4 45
+packages/harness/src/tools/__tests__/dispatch.spec.ts
+  s_37569aa4b69462::t_fa0bacd0586a32 17,23,28,41,54,72,79,93,105,115,129,143,150,156,163,172,185,214,226,240,252,264,271
+  s_4f948d8df330fa::t_60596ec322e151 18,24,42,73,94,116,144,157,173,215,241,265
+packages/core/src/compaction/render-range.ts
+  s_d3cfb63b7ee15c::t_71156bc274976d 1-61
+packages/harness/src/context/read-instructions.ts
+  s_47c6af51a98de9::t_b45750ea480250 1-71
+packages/core/src/policy/__tests__/before-tool.spec.ts
+  s_37569aa4b69462::t_8c79008c0a59be 102-110,114-116,118-139,141-150
+  s_47c6af51a98de9::t_9d54ac62b7cb25 111-113,117,140
+apps/tui/src/ui/wordmark.ts
+  s_8ca0db9b7bb1cb::t_ee8c6b96846ce5 1-109
+apps/tui/src/ui/components/sidebar/shells.tsx
+  s_2feab2e45d45ee::t_6cea5f8d98beed 1-8,10-46,48-57
+  s_ae221a728d5afb::t_dd9a10c66876e9 9,47
+packages/core/src/assembly/rules/__tests__/messages-from-events.spec.ts
+  s_47c6af51a98de9::t_4beec1c95c0ccb 147,150,156-177,183-185
+  s_47c6af51a98de9::t_318fb510bcfc7c 178-182
+packages/core/src/hooks/outcome.ts
+  s_2feab2e45d45ee::t_8902155a4feb10 1-26
+packages/core/src/assembly/rules/__tests__/compacted-history.spec.ts
+  s_d3cfb63b7ee15c::t_2c621edf83c9aa 1-2,4-41,43-50,52-54,64-65,67-79,81-89,91-92
+  s_d3cfb63b7ee15c::t_17244aaffa6f77 3,42,51,55-63,66,80,90
+packages/harness/prisma/migrations/20260827000000_context_digest/migration.sql
+  s_47c6af51a98de9::t_c91ec57bc00f8b 1-8
+apps/tui/src/composition/use-switcher.ts
+  s_2feab2e45d45ee::t_a33854d8027557 4,14,25-26,30,37-38,42
+  s_2feab2e45d45ee::t_0433e553da3eba 1-3,5-13,15-24,27-29,31-36,39-41,43-92
+apps/tui/src/composition/turn-progress.ts
+  s_b391e026d4f658::t_acdf32f7fead54 61-82
+packages/harness/src/files/read-state.ts
+  s_8872fb7ebcd73e::t_4671f406a565d3 1-2,17,21
+  s_8872fb7ebcd73e::t_1104374b17897f 3-16,18-20,22-23
+packages/core/src/policy/before-tool.ts
+  s_37569aa4b69462::t_fad36162aab2fe 31,34-40,58,60,63,65
+packages/harness/src/store/append-plan.ts
+  s_47c6af51a98de9::t_26a385c9f80e81 3-4,9
+packages/harness/src/channel/__tests__/published-turn.spec.ts
+  s_37569aa4b69462::t_133092568203f2 11
+  s_37569aa4b69462::t_0236819419e0eb 62,90,104,123,143,164,179,194
+  s_883ed224e7d728::t_91e9d8c67da31c 67
+packages/harness/src/files/register-file-state.ts
+  s_8872fb7ebcd73e::t_604535ac503271 1-8
+apps/tui/src/composition/__tests__/global-bindings.spec.ts
+  s_b391e026d4f658::t_4e952da4760662 1-15,17-18,20-100
+  s_2feab2e45d45ee::t_2a406448b84da5 16
+  s_d3cfb63b7ee15c::t_33b2ffd55fd330 19
+packages/harness/src/channel/__tests__/delta-channel.spec.ts
+  s_883ed224e7d728::t_91e9d8c67da31c 159,166-175
+  s_7289cac56014c9::t_5eb018095da171 91
+packages/harness/src/tools/__tests__/declared-paths.spec.ts
+  s_8872fb7ebcd73e::t_6c8957e5bdd454 1-104
+packages/harness/src/store/fork.ts
+  s_d3cfb63b7ee15c::t_9ae568011df7d8 1-93
+packages/core/src/policy/__tests__/concurrency.spec.ts
+  s_2feab2e45d45ee::t_5d75d8e32cbe79 1-87,90-116,119,121,124-147
+  s_2feab2e45d45ee::t_08ff397385d0a4 88-89,117-118,120,122-123
+packages/harness/src/store/rewind.ts
+  s_d3cfb63b7ee15c::t_e7e622fbd9aa84 21-23
+  s_d3cfb63b7ee15c::t_da7af41851761e 25,29
+packages/harness/src/shells/__tests__/output-buffer.spec.ts
+  s_2feab2e45d45ee::t_bc2f978a4d237c 1-92,94-102
+  s_2feab2e45d45ee::t_30433b172830d2 93
+apps/tui/src/composition/__tests__/fake-backend.ts
+  s_d3cfb63b7ee15c::t_2482e98922509d 181-183
+  s_d3cfb63b7ee15c::t_d67587ee83b629 5
+  s_37569aa4b69462::t_eee9695d5554e4 14-17,30,37-40,79-83
+  s_d3cfb63b7ee15c::t_92c5631f430abe 41-44,96,134-161
+  s_d3cfb63b7ee15c::t_c53ea6478fdffe 45-58
+apps/tui/src/ui/components/entry-view.tsx
+  s_d3cfb63b7ee15c::t_cb9385b745db9f 5,63-68
+  s_9c004e858d4c41::t_89aad3e22163e4 9,22-28
+  s_ae221a728d5afb::t_6ed9bcadfe68af 6,69-80
+apps/tui/src/store/conversation-store.ts
+  s_cb1c44c44ecab7::t_415952c3ea62e0 16,26,38-39,42,49-50,56,118-123
+  s_37569aa4b69462::t_eee9695d5554e4 124-131
+  s_7289cac56014c9::t_2961d2418e937e 2,31,45,74-75
+  s_b391e026d4f658::t_c5996ecfcf2352 6,25,113-117,132
+apps/tui/src/composition/undo-turn.ts
+  s_d3cfb63b7ee15c::t_d09fe4a0262ef5 26
+packages/harness/prisma/ensure-client.ts
+  s_37569aa4b69462::t_4cd937b78efb23 1,5-6,8-10
+apps/tui/src/ui/components/blocks/pending-block.tsx
+  s_ae221a728d5afb::t_21c1ec40a30cef 3,38,41,48-49,52,54-70,73-78
+  s_9c004e858d4c41::t_b40b58510fff86 32,44
+  s_9c004e858d4c41::t_d08236414e1d9d 5,7-9,11-16,18-22,24-29,31,34,45-47,50-51,53
+packages/harness/src/store/index.ts
+  s_d3cfb63b7ee15c::t_7ab9b35546e0ef 2-7
+  s_d3cfb63b7ee15c::t_7e0c0456846731 9-10
+  s_2feab2e45d45ee::t_ae1b273b378d98 11
+packages/core/src/context/instruction-files.ts
+  s_47c6af51a98de9::t_2ba29e71052ed2 1-116
+packages/core/src/events/rewind-target.ts
+  s_d3cfb63b7ee15c::t_d57828919b0d63 8,16,20,31-35
+packages/core/src/models/catalog.ts
+  s_b7bbfe3e745bcc::t_7f79f3a2d03368 12-21,27
+apps/tui/src/ui/components/blocks/welcome-block.tsx
+  s_8ca0db9b7bb1cb::t_0df480dc7360a4 5-7,15-18,21-29,32-44,46,48-54,56
+  s_8ca0db9b7bb1cb::t_a948254527a4b0 19-20,31
+docs/architecture.md
+  s_2feab2e45d45ee::t_64a57fe059a6fa 40-42,97-102
+  s_ae221a728d5afb::t_653f5f9d2d88ba 59-60
+  s_d3cfb63b7ee15c::t_22f5e81f13ffe1 246-251,306,310,317-341
+  s_d3cfb63b7ee15c::t_de2dd4e253720a 252-253,261-263,269
+  s_d3cfb63b7ee15c::t_8b17530dba421a 260,264-268
+  s_2feab2e45d45ee::t_713c2dfe16441f 130-139,151-172,177-187,189,228,235-237,239-240
+  s_d3cfb63b7ee15c::t_01187dd3218209 270-300
+  s_d3cfb63b7ee15c::t_bf75f40db99210 254-259
+  s_c653afe8642d12::t_186aff1abe1cb8 368-384
+  s_2feab2e45d45ee::t_9452c4919141f1 147-150,173-176,199,206-212,220
+  s_d3cfb63b7ee15c::t_393516617da20e 301-305,307-309,311-316
+  s_ae221a728d5afb::t_bdbca198322e32 188,190-198,200-205,213-219,221-227,229-234,238
+apps/tui/src/ui/keys/use-key-bindings.ts
+  s_b391e026d4f658::t_d1d22fcdf2de98 1-38
+packages/harness/src/model/__tests__/abort.spec.ts
+  s_37569aa4b69462::t_cf5fa81ba10905 11,39,43
+apps/tui/src/composition/compact-turn.ts
+  s_d3cfb63b7ee15c::t_bae4d46a0feedf 2,50-58
+  s_d3cfb63b7ee15c::t_d1a6e0d506ef51 47
+  s_d3cfb63b7ee15c::t_543637b1a7d9ad 1,3-7,9-16,18-27,29-32,34-46,48,59
+packages/harness/src/store/guarded-fork.ts
+  s_2feab2e45d45ee::t_ae1b273b378d98 1-43
+apps/tui/src/ui/__tests__/footer-layout.spec.ts
+  s_d3cfb63b7ee15c::t_eb85072dd3e56c 62,123
+apps/tui/src/ui/components/diff/__tests__/side-by-side-diff.spec.tsx
+  s_d765cd4ce5918c::t_ea0e8baef72e33 120,123,125
+packages/harness/src/model/__tests__/raw-tape-wiring.spec.ts
+  s_37569aa4b69462::t_cf5fa81ba10905 12,158,160
+  s_c653afe8642d12::t_2a36ae45e20afb 1-11,13-135,137-157,159,161-180
+  s_c653afe8642d12::t_2b345fdbd372aa 136
+packages/harness/src/hooks/__tests__/read-before-write.spec.ts
+  s_8872fb7ebcd73e::t_d39592128415d6 1,239-272
+  s_8872fb7ebcd73e::t_8f554d72cfd437 97,99-105,122-124,148-150,169,178-180,201
+  s_8872fb7ebcd73e::t_221a8d7a4b589e 2-17,19-96,98,106-121,125-147,151-168,170-177,181-200,202-238,273-294
+  s_8872fb7ebcd73e::t_0e3e3cbc055c98 18
+packages/core/src/assembly/pipeline.ts
+  s_d3cfb63b7ee15c::t_afd331536c4e80 3,13
+packages/harness/src/tools/__tests__/dispatch-snapshots.spec.ts
+  s_37569aa4b69462::t_fa0bacd0586a32 15,43,56,58,72,74,84,91,100,106,116,122,132,145,153,166,176,178,194,205
+  s_4f948d8df330fa::t_60596ec322e151 16,44
+apps/tui/src/composition/__tests__/compact-turn.spec.ts
+  s_d3cfb63b7ee15c::t_d67587ee83b629 16,48,55,70,84,104
+  s_d3cfb63b7ee15c::t_2c65b27edb0751 47
+  s_d3cfb63b7ee15c::t_1c66821522ed2e 1-10,17-46,49-54,56-69,71-83,85-103,105-110,157-158
+  s_d3cfb63b7ee15c::t_2d375745f1bf8e 13-14,111-156
+  s_d3cfb63b7ee15c::t_d1a6e0d506ef51 11-12,15
+apps/tui/src/ui/components/blocks/user-block.tsx
+  s_9c004e858d4c41::t_44a3d2375c9f8e 11-21,26-27,30,38-50
+  s_883ed224e7d728::t_153c9d063ce983 24,53-61
+packages/harness/src/model/__tests__/model-port-hooks.spec.ts
+  s_37569aa4b69462::t_cf5fa81ba10905 14,31,35
+  s_37569aa4b69462::t_cbbf3a42682c2c 13
+  s_2feab2e45d45ee::t_9745da793d5622 32,52,84,105
+apps/tui/src/composition/open-conversation.ts
+  s_37569aa4b69462::t_eee9695d5554e4 4-8,18-22
+packages/core/src/compaction/preview.ts
+  s_d3cfb63b7ee15c::t_0f7d367d846a56 1-26,28-35
+packages/harness/src/tools/__tests__/dispatch-hooks.spec.ts
+  s_37569aa4b69462::t_fa0bacd0586a32 13,20,41,51,72,90,106,117,140,163,170,182,189,197,213,221,235
+  s_4f948d8df330fa::t_60596ec322e151 14,21,52,91,118,164,183,198,222
+  s_2feab2e45d45ee::t_0dc358827b4261 157
+packages/harness/src/model/titler.ts
+  s_37569aa4b69462::t_eee9695d5554e4 1-59
+apps/tui/src/ui/keys/chord.ts
+  s_b391e026d4f658::t_723d4834851e2b 1-49
+packages/harness/src/tools/index.ts
+  s_b391e026d4f658::t_41fa320b25db7d 12-13
+  s_2feab2e45d45ee::t_649838cf4bf07f 11
+packages/core/src/compaction/__tests__/fixture.ts
+  s_d3cfb63b7ee15c::t_49f0e1e4ada3fa 55-61
+  s_d3cfb63b7ee15c::t_ce4e7f4064d434 62-68
+  s_d3cfb63b7ee15c::t_b737342e3abe3c 1,42-43,45-46
+  s_d3cfb63b7ee15c::t_73d89670967f10 2-41,44,54
+  s_d3cfb63b7ee15c::t_b064627b0ecdae 53
+  s_d3cfb63b7ee15c::t_af7995bd0fa8f6 47-52
+apps/tui/src/ui/components/shells.tsx
+  s_2feab2e45d45ee::t_2a406448b84da5 101-108,114-125,181
+  s_ae221a728d5afb::t_dd9a10c66876e9 12,86
+  s_2feab2e45d45ee::t_c841ddb6581d57 1-11,13-35,38-74,78-83,85,87-88,90-92,94-100,109-113,126-180,182-188,190-193,195-197,201-203,216-221
+  s_2feab2e45d45ee::t_6a648a585d437b 36-37
+  s_ae221a728d5afb::t_e4c8055697673e 75-76,89
+  s_883ed224e7d728::t_93d37eb4dd9d4d 77,84,93,189,194,199-200,206,208-215
+packages/harness/src/loop/__tests__/steerable-turn.ts
+  s_37569aa4b69462::t_0236819419e0eb 16,132
+  s_ae221a728d5afb::t_daaf38f3be5a3c 34-35,40,45-48
+  s_37569aa4b69462::t_87bdf0902b80e0 19,140
+  s_ae221a728d5afb::t_5e685257b9bf30 9
+  s_37569aa4b69462::t_cbbf3a42682c2c 17
+  s_2feab2e45d45ee::t_9745da793d5622 94
+  s_4f948d8df330fa::t_60596ec322e151 20,109
+apps/tui/src/ui/keys/registry.ts
+  s_b391e026d4f658::t_8565e6bb245f8c 1-42
+apps/tui/src/composition/__tests__/app-shells.spec.tsx
+  s_b391e026d4f658::t_8a9ca37d2a859b 1,3-83,107-125
+  s_2feab2e45d45ee::t_fd593e021ed47b 2
+  s_b391e026d4f658::t_b6500cb373aeb5 84-106
+packages/core/src/events/schema.ts
+  s_1177f553f929cc::t_815468dc3531f1 50,57
+  s_d3cfb63b7ee15c::t_ac96a427cf4e26 98-101,103
+  s_d3cfb63b7ee15c::t_4cac9dd6e366af 102
+  s_ae221a728d5afb::t_c2ba09f73fa813 4,87-97
+  s_1177f553f929cc::t_c1eabe83447293 44-45
+packages/harness/src/hooks/register-hooks.ts
+  s_8872fb7ebcd73e::t_88c97ae2f63d91 1,5-6,10-11
+apps/tui/src/store/__tests__/compacted-entry.spec.ts
+  s_d3cfb63b7ee15c::t_309ba517b003e9 1-11,13-30,32-40
+  s_d3cfb63b7ee15c::t_d67587ee83b629 12,31
+packages/harness/src/channel/__tests__/settled-tool-results.spec.ts
+  s_37569aa4b69462::t_0236819419e0eb 6,71
+  s_37569aa4b69462::t_87bdf0902b80e0 11,79
+  s_4f948d8df330fa::t_60596ec322e151 12,69
+packages/core/src/context/__tests__/instruction-files.spec.ts
+  s_47c6af51a98de9::t_1a97d2ce2dfe3b 1-190
+packages/harness/src/providers/__tests__/anthropic-thinking.spec.ts
+  s_b7bbfe3e745bcc::t_4bd819ba6e288b 3-14,17-19,23-28,31-37
+packages/core/src/compaction/__tests__/compaction-plan.spec.ts
+  s_d3cfb63b7ee15c::t_aedac697195950 1-65
+docs/research/anthropic-oauth-transport.md
+  s_b7bbfe3e745bcc::t_3211351290c026 131-153
+apps/tui/src/ui/palette.ts
+  s_cb1c44c44ecab7::t_224294a350c602 78
+apps/tui/src/composition/use-overlay-keys.ts
+  s_2feab2e45d45ee::t_3bef10bbe59a67 1-3,5-13,17-20,22-49
+  s_2feab2e45d45ee::t_b1ff766490a8f5 14-16
+apps/tui/src/ui/colour.ts
+  s_8ca0db9b7bb1cb::t_32308c69261904 1-18
+packages/harness/src/container/create-harness-container.ts
+  s_c653afe8642d12::t_10c094d4511d3b 5
+  s_2feab2e45d45ee::t_1ce0fc0f6ec0e7 10,44
+  s_2feab2e45d45ee::t_9745da793d5622 6,48-49,56,66
+  s_8872fb7ebcd73e::t_c7adb5bb933e6c 9,43
+  s_c653afe8642d12::t_a5fdf7d1c266cc 8
+  s_37569aa4b69462::t_8710fd5ecba930 7,63
+  s_37569aa4b69462::t_be3104726a8dcc 12,22,52,54
+  s_c653afe8642d12::t_60d586b761ac92 15
+  s_c653afe8642d12::t_201e6c49402de9 33
+  s_c653afe8642d12::t_5d145be1884e4c 27-29
+  s_c653afe8642d12::t_7e8550a43b3d95 67
+apps/tui/src/store/expandable.ts
+  s_ae221a728d5afb::t_8c72fd968fdc9f 9
+apps/tui/src/ui/__tests__/wordmark.spec.ts
+  s_8ca0db9b7bb1cb::t_059b9900ecc1ec 1-66
+packages/harness/prisma/migrations/20260827010000_branch_fork/migration.sql
+  s_d3cfb63b7ee15c::t_78c91deb59c2fd 1-11
+packages/harness/src/loop/__tests__/run-turn.spec.ts
+  s_37569aa4b69462::t_7c2507d9c44c6b 13,203,223,247-251,263-267
+  s_37569aa4b69462::t_0236819419e0eb 10,197,235
+  s_4f948d8df330fa::t_60596ec322e151 14,196
+  s_2feab2e45d45ee::t_9745da793d5622 12
+apps/tui/src/composition/__tests__/fake-app.ts
+  s_2feab2e45d45ee::t_b59362975e2ed5 278-279
+  s_2feab2e45d45ee::t_a6e0eb989e2fa5 23,25
+  s_37569aa4b69462::t_eee9695d5554e4 239,242-245,247,267,274-277,280-282
+  s_2feab2e45d45ee::t_f6fb46c1f78f4f 14-15,261-262
+  s_37569aa4b69462::t_6557e6953cf676 254
+  s_2feab2e45d45ee::t_06c27e4a797277 138-139,141-143,146-148,156-168,174-195,229-232,235,253,294
+  s_ae221a728d5afb::t_ccdf08dad28f23 140,144-145,149-155,169-173,196-223,225-226,228
+  s_2feab2e45d45ee::t_91686d729fc0b5 224,227
+  s_d3cfb63b7ee15c::t_956302fb86b88c 285-286
+  s_37569aa4b69462::t_eb6ebba370b4b8 21
+apps/tui/src/composition/__tests__/app-fixture.tsx
+  s_47c6af51a98de9::t_68717d453c0f9b 27,32,53
+apps/tui/src/composition/global-bindings.ts
+  s_b391e026d4f658::t_feae9a1c9f429f 2-12,14,16-37,44-62,70-75,83-103
+  s_b391e026d4f658::t_779235b63fe746 38-43
+  s_2feab2e45d45ee::t_f014852fd3e4c4 13,76-82
+  s_d3cfb63b7ee15c::t_fcd5ff660523dc 15,63-64,66-69
+apps/tui/src/ui/keys/__tests__/shortcut-groups.spec.ts
+  s_b391e026d4f658::t_45f34097674219 1-68
+apps/tui/src/composition/model-selection.ts
+  s_b7bbfe3e745bcc::t_46b63d446b06cf 1,3,39-42
+packages/harness/src/store/event-row.ts
+  s_47c6af51a98de9::t_26a385c9f80e81 10-11,24,54
+  s_1177f553f929cc::t_6c839ed6d09c42 2,27-38,51
+packages/harness/src/loop/__tests__/steering.spec.ts
+  s_2feab2e45d45ee::t_0dc358827b4261 116-118
+  s_2feab2e45d45ee::t_9745da793d5622 6,122
+  s_9f86667004fef3::t_243b24772d6487 50,52,58-59
+packages/harness/src/tools/builtin/__tests__/read-whole-file.spec.ts
+  s_37569aa4b69462::t_ab9cb59bb9f4a2 1-70
+packages/core/src/assembly/__tests__/pipeline.spec.ts
+  s_d3cfb63b7ee15c::t_c3ffb3313cb388 21-25,50
+packages/harness/src/tools/builtin/bash.ts
+  s_9c004e858d4c41::t_8084b1f5540e72 120,160
+  s_2feab2e45d45ee::t_eab1b1bc3d1bc3 40,112
+  s_2feab2e45d45ee::t_3ff94e2b3cc944 95,132
+  s_2feab2e45d45ee::t_b1ff766490a8f5 41
+  s_37569aa4b69462::t_ccf75f45601350 3,82
+  s_37569aa4b69462::t_02545115fdf178 8-9,16
+  s_37569aa4b69462::t_34c0c8bc1f040c 92-94,119,169
+  s_37569aa4b69462::t_87640171c08172 10-15,17,121-122,151
+  s_2feab2e45d45ee::t_e424cde6a8f823 5,7,27,38-39,88-91,96-111,113-118,123-131
+packages/core/src/events/__tests__/fork-target.spec.ts
+  s_d3cfb63b7ee15c::t_141d3403b55dac 1-46,48-172
+  s_d3cfb63b7ee15c::t_3a2aba5722116a 47
+packages/core/src/assembly/rules/background-shell-block.ts
+  s_ae221a728d5afb::t_1e3b3bc698560c 1-30
+apps/tui/src/ui/__tests__/shimmer.spec.ts
+  s_8ca0db9b7bb1cb::t_32308c69261904 4-5
+  s_cb1c44c44ecab7::t_a68ec0a9780ff4 46
+apps/tui/src/store/__tests__/conversation-store.spec.ts
+  s_b391e026d4f658::t_9a639365111cab 4,100-140
+packages/core/src/compaction/__tests__/render-range.spec.ts
+  s_d3cfb63b7ee15c::t_88e32814ca0a65 1-3,15-64,66-69
+  s_d3cfb63b7ee15c::t_ce4e7f4064d434 4-14,65
+apps/tui/src/ui/components/diff/__tests__/inline-diff.spec.tsx
+  s_d765cd4ce5918c::t_ea0e8baef72e33 131,136-137,139-141
+packages/core/src/index.ts
+  s_d3cfb63b7ee15c::t_67688a501e8e75 10
+  s_ae221a728d5afb::t_63e64717cbdb07 35,43-45
+  s_47c6af51a98de9::t_a106e14d83fb77 39-42,46
+  s_d3cfb63b7ee15c::t_06f938452cc08a 13-16,18,34
+  s_d3cfb63b7ee15c::t_ce4e7f4064d434 17
+packages/harness/src/shells/__tests__/prompt-sniff.spec.ts
+  s_2feab2e45d45ee::t_284fcd8807e9f1 1-53
+packages/harness/src/store/compact.ts
+  s_d3cfb63b7ee15c::t_552fc2f0ceaeb9 1-16,18-56,58,60
+apps/tui/src/ui/__tests__/shells-render.spec.tsx
+  s_2feab2e45d45ee::t_e5cd192bcf49dd 2-20,22-30,33-127,131-133,144-192
+  s_2feab2e45d45ee::t_baa96aca661a21 31-32
+  s_2feab2e45d45ee::t_fd593e021ed47b 1
+packages/harness/src/store/__tests__/event-row.spec.ts
+  s_1177f553f929cc::t_89f29dcac5a573 1-22,25-78
+  s_1177f553f929cc::t_aa5a884ac7582d 23-24
+apps/tui/src/store/__tests__/back-to-back-messages.spec.ts
+  s_883ed224e7d728::t_3ce319c8714f99 4,21
+  s_883ed224e7d728::t_b004c1b5c88c32 1-3,5-20,22-69
+apps/tui/src/composition/__tests__/app-steering.spec.tsx
+  s_883ed224e7d728::t_5da7123afe2553 122
+  s_cb1c44c44ecab7::t_a68ec0a9780ff4 28,64,103,178
+  s_883ed224e7d728::t_2e42781367181f 129-144,151-169,198-205
+  s_883ed224e7d728::t_156ab5efb7ad35 145-150
+packages/harness/src/tools/builtin/edit.ts
+  s_4f948d8df330fa::t_46bd039c77b166 133
+  s_37569aa4b69462::t_4b084c8eabf506 12,132,136-137
+  s_37569aa4b69462::t_ccf75f45601350 9,127
+  s_37569aa4b69462::t_5e65ae58e84f26 5
+packages/harness/src/model/index.ts
+  s_d3cfb63b7ee15c::t_7ab9b35546e0ef 14
+packages/harness/src/channel/publishing-turn-runner.ts
+  s_37569aa4b69462::t_eb8346aaa8ada4 3,28-30,32-35,38-56
+apps/tui/src/store/pending-rows.ts
+  s_ae221a728d5afb::t_5fab895e471536 1-45
+packages/harness/src/store/branch-store.ts
+  s_d3cfb63b7ee15c::t_e4dc97c05225f8 1-5,8,13-14,24,39-44,53-54,136-154,164-166
+  s_d3cfb63b7ee15c::t_01982857018ec4 16,112-114
+  s_d3cfb63b7ee15c::t_6ac2ebc58e26a5 33-38,99-111,115-133
+packages/core/src/shells/label.ts
+  s_ae221a728d5afb::t_1e3b3bc698560c 1-18
+packages/harness/src/shells/notifications.ts
+  s_ae221a728d5afb::t_b60008a2272287 1-18
+  s_2feab2e45d45ee::t_543c10ac271d13 19-20
+apps/tui/src/ui/accents.ts
+  s_cb1c44c44ecab7::t_224294a350c602 19
+packages/core/src/events/fork.ts
+  s_d3cfb63b7ee15c::t_67688a501e8e75 1-4
+packages/harness/src/tools/builtin/glob.ts
+  s_9c004e858d4c41::t_8084b1f5540e72 89
+  s_37569aa4b69462::t_5e65ae58e84f26 6,70-71
+  s_37569aa4b69462::t_4b084c8eabf506 13,69,77,81-82
+  s_37569aa4b69462::t_ccf75f45601350 10,63
+  s_2feab2e45d45ee::t_0ea0f5e8f56bf6 67
+apps/tui/src/store/sidebar-model.ts
+  s_37569aa4b69462::t_eee9695d5554e4 82-89,91-93,95-97,100-104,106,115
+packages/harness/src/hooks/boundary.ts
+  s_8872fb7ebcd73e::t_c13b69965c01dc 149-151,153
+  s_8872fb7ebcd73e::t_14e5b81c64025d 20-26
+  s_8872fb7ebcd73e::t_a45a8f4f021e5f 76,85
+apps/tui/src/ui/__tests__/transcript-fixture.tsx
+  s_ae221a728d5afb::t_e88ebd8e5956fb 8,154
+  s_883ed224e7d728::t_90a7d9ea585449 52
+  s_d765cd4ce5918c::t_af1d5da94dbbd5 1,3,153,167,179-183
+packages/harness/src/channel/publishing-event-log.ts
+  s_d3cfb63b7ee15c::t_20da5c61f833b3 15
+packages/core/src/assembly/rules/system-preamble.ts
+  s_d3cfb63b7ee15c::t_8bc05e4530a018 7-9
+apps/tui/src/composition/config.ts
+  s_d3cfb63b7ee15c::t_a0d4021c6fa610 9-10
+  s_37569aa4b69462::t_eee9695d5554e4 7-8
+apps/tui/src/ui/components/working-line.tsx
+  s_cb1c44c44ecab7::t_a68ec0a9780ff4 21
+packages/harness/src/loop/turn-runner.port.ts
+  s_37569aa4b69462::t_4b8901658da2f1 1-9
+packages/harness/src/files/index.ts
+  s_8872fb7ebcd73e::t_604535ac503271 1-2
+packages/harness/src/model/__tests__/model-port.spec.ts
+  s_37569aa4b69462::t_cf5fa81ba10905 20,83,92,94
+packages/harness/src/store/__tests__/fork.spec.ts
+  s_d3cfb63b7ee15c::t_a81c2232197a84 1-18,20-29,33-42,45,47-49,52-165,167,169-188,190-225,229-230,232,234-287,290-303,305-310,313-317,319-321,324-333,336-358,365,367,369-403
+  s_d3cfb63b7ee15c::t_4ae7f27f2820b1 19,30-32,43-44,46,50-51,166,168,189,226-228,231,233,288-289,304,311-312,318,322-323,334-335,359-364,366,368
+packages/core/src/policy/concurrency.ts
+  s_2feab2e45d45ee::t_e65e25d96e2f34 53
+  s_2feab2e45d45ee::t_bb259f67659b6a 2,12-18,20-52,54-63
+  s_2feab2e45d45ee::t_2130f9d368ab1a 1,3-11,19
+apps/tui/src/composition/use-shells.ts
+  s_2feab2e45d45ee::t_d3b92617de57b9 1-160
+apps/tui/src/store/pending-queue.ts
+  s_883ed224e7d728::t_bb8a14074692d6 1-2,19-29
+  s_883ed224e7d728::t_6ca4ae97b4b804 11,38-40,42,44,49-52,62,73,81-86,89,93-94
+  s_883ed224e7d728::t_906c42ee069ac0 31-37
+  s_883ed224e7d728::t_2f14d833c54af2 87
+  s_883ed224e7d728::t_5da7123afe2553 3,66,80
+apps/tui/src/ui/__tests__/tool-group-render.spec.tsx
+  s_d765cd4ce5918c::t_ea0e8baef72e33 134-140,170
+packages/core/src/settings/registry.ts
+  s_cb1c44c44ecab7::t_9ebbf5d0a5c2c0 40
+  s_cb1c44c44ecab7::t_fdc31a57ce80ce 11,34-39,41-48
+  s_47c6af51a98de9::t_ccfe39e82b646a 13-17,65-123
+apps/tui/src/ui/footer-layout.ts
+  s_d3cfb63b7ee15c::t_ecc10d19dd9fb1 34
+packages/core/src/assembly/rules/__tests__/background-shell-block.spec.ts
+  s_ae221a728d5afb::t_222965aa334a3f 1-78
+apps/tui/src/store/__tests__/pending-rows.spec.ts
+  s_ae221a728d5afb::t_9eb3c2579c574c 1-3,5-11,13-64,66-70
+  s_ae221a728d5afb::t_36c6e1420895b7 4,12,65
+apps/tui/src/ui/components/sidebar.tsx
+  s_2feab2e45d45ee::t_f014852fd3e4c4 7-8,13,44-45,71-75
+packages/harness/src/shells/prompt-sniff.ts
+  s_2feab2e45d45ee::t_d82b9b28bb89a4 1-26
+packages/core/src/compaction/watermark.ts
+  s_d3cfb63b7ee15c::t_bdeb55f38cda1c 1-15
+packages/harness/src/tools/builtin/shell-kill.ts
+  s_ae221a728d5afb::t_3d8e4d0875f6b0 19,49-50
+  s_2feab2e45d45ee::t_b44ae22180e327 1-18,20-48,51-53
+apps/tui/src/composition/__tests__/app-switcher.spec.tsx
+  s_37569aa4b69462::t_eee9695d5554e4 20
+packages/harness/src/providers/__tests__/anthropic-live.spec.ts
+  s_ed3588bb0efbeb::t_15741924ad4ee6 135
+  s_b7bbfe3e745bcc::t_272d6f5a6dc956 3-4,10,20-21,24-26,37-38,53-55,136-150
+packages/core/src/models/registry.ts
+  s_b1a2a4390c8a6d::t_ab630f5afc1b03 10,19
+  s_b7bbfe3e745bcc::t_7f79f3a2d03368 1,11,20,29,38
+packages/harness/src/tools/builtin/__tests__/bash.spec.ts
+  s_2feab2e45d45ee::t_0ea0f5e8f56bf6 8-9,19,108
+  s_b391e026d4f658::t_a9855df6b4476d 1-7,10-18,20-105,107,109-116,118-120
+  s_9c004e858d4c41::t_8084b1f5540e72 106,117
+packages/harness/src/loop/run-turn.ts
+  s_37569aa4b69462::t_b9747361d7c19f 27,29,32,50-58,60-79,81-93,95,98-115,117-118,120,127-145,155,165,172,181,189,195,207-208,213-214,218,226,239,244,248,250,252-253
+  s_37569aa4b69462::t_ae9fc3677f4918 25,42
+  s_ae221a728d5afb::t_700eafed1a6f2b 44,59,123
+  s_2feab2e45d45ee::t_bb59dff5cb63e0 168-170
+packages/core/src/assembly/rules/compacted-history.ts
+  s_d3cfb63b7ee15c::t_49f0e1e4ada3fa 1-6,8-21,24-34
+packages/core/src/events/fork-target.ts
+  s_d3cfb63b7ee15c::t_e72d731afcf725 1-54
+apps/tui/src/store/durable-entries.ts
+  s_883ed224e7d728::t_f7db07cfd77da9 49-68,75-88
+  s_ae221a728d5afb::t_28c3f67f85f258 4,95,97-108
+  s_883ed224e7d728::t_e08dd55cb1ec54 90,92-94,109-117,119-121,123-125
+  s_d3cfb63b7ee15c::t_cd98434cf4291c 122
+packages/harness/src/providers/index.ts
+  s_b7bbfe3e745bcc::t_73e82f54c9c1c4 2
+packages/harness/src/shells/index.ts
+  s_2feab2e45d45ee::t_e98998d471039e 1-8
+packages/harness/src/channel/signal.ts
+  s_883ed224e7d728::t_bdd42f2221d7e9 17,21-22
+apps/tui/src/store/derive-transcript.ts
+  s_cb1c44c44ecab7::t_8df6d15288bf17 9
+  s_cb1c44c44ecab7::t_2be443d91a8754 66,70-76
+  s_883ed224e7d728::t_a555a0dcc3a5eb 2,64
+packages/harness/src/loop/__tests__/hook-phases.spec.ts
+  s_2feab2e45d45ee::t_0dc358827b4261 21-23
+  s_37569aa4b69462::t_0236819419e0eb 14-15,168
+  s_2feab2e45d45ee::t_e129b32baa4f68 16
+  s_2feab2e45d45ee::t_9745da793d5622 39,63,86,107,130,151
+apps/tui/src/ui/__tests__/switcher-model.spec.ts
+  s_b7bbfe3e745bcc::t_a63c8590e223af 20
+  s_ed3588bb0efbeb::t_20a88a0133b7cf 3
+packages/core/src/hooks/hooks.ts
+  s_2feab2e45d45ee::t_d20ce00acefcf1 9,12,15,24-25,32,36,44
+docs/core-contract.md
+  s_d3cfb63b7ee15c::t_133e890b4f57d8 108-119
+  s_8872fb7ebcd73e::t_55d8acbc5af5bf 388-416
+  s_d3cfb63b7ee15c::t_86da3c5158029d 132,136-153
+  s_47c6af51a98de9::t_73eaeed04c6fb8 89,91,94-107,120-123
+  s_2feab2e45d45ee::t_be0b3b7a8594c1 298-300,304,306,311-326,381-382
+  s_2feab2e45d45ee::t_8a761c55b5ad72 335-345,354-358
+  s_ae221a728d5afb::t_aec7416e26e681 47-51,70-78
+  s_2feab2e45d45ee::t_9452c4919141f1 359-361
+  s_37569aa4b69462::t_e2f8b864d3ef79 378-380
+  s_d3cfb63b7ee15c::t_706afcb5f50bbc 81-86,258-270
+packages/core/src/events/__tests__/schema.spec.ts
+  s_1177f553f929cc::t_3d7e323ad3014a 52
+  s_1177f553f929cc::t_8f48dc30a22131 42-51,53-64
+packages/harness/src/tools/__tests__/dispatch-totality.spec.ts
+  s_37569aa4b69462::t_2a474d48949259 29
+  s_2feab2e45d45ee::t_0dc358827b4261 118
+  s_37569aa4b69462::t_434fa602c064a2 1-28,30-117,119-155
+packages/harness/src/channel/delta-channel.ts
+  s_883ed224e7d728::t_cf29668473ea55 3,24,29,69,87,89,98,136-137
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "1e1e4c5366bc46ff284f4ca32f4c990135ce2e81",
+  "prompts": {},
+  "sessions": {
+    "s_1177f553f929cc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e0e77361-623e-4412-bac7-793fc9917eab",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_2feab2e45d45ee": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b871ace6-8e2a-4076-9f7d-a528d2feb1e8",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_37569aa4b69462": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d09552e0-3201-480f-8869-4be07520639c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_47c6af51a98de9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6888be04-b8aa-40fc-9fba-f18d469a2fb1",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_4f948d8df330fa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4f7a3271-9603-4b68-a9d1-744f1724222c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_7289cac56014c9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "deb9e657-40d6-4071-86b2-0da25a0d28ab",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_883ed224e7d728": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a2750133-2129-434b-afa8-450a06579505",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_8872fb7ebcd73e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d05de19b-dc4a-4a3f-bdf0-fb1d5f42189a",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_8ca0db9b7bb1cb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d08e62a6-c30b-4210-a5b1-8bc6a6f264d2",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_9c004e858d4c41": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "925cfad3-facf-41d8-8b68-db9abe2f2d63",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_9f86667004fef3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "89e85b5f-d60c-4697-adbe-aec6d1dbaab6",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_ae221a728d5afb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6179ca44-98f8-4b62-b079-c844c3e33986",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_b1a2a4390c8a6d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4a8fb22f-2854-4dfc-bf70-e57313582cf9",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_b391e026d4f658": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "760b684a-4408-425b-98b3-04fe839261f6",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_b7bbfe3e745bcc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9c9ac6c0-3c96-48f0-9145-030b21f3daf9",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_c653afe8642d12": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "502bac1c-ba5f-44da-ae83-54ebe85bd8cc",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_cb1c44c44ecab7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6b576e52-410f-43f5-af46-0de8b00ccd2f",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_d3cfb63b7ee15c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cf3a5937-331f-4bf1-b81e-6216ce956844",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_d765cd4ce5918c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "77f44bb6-da1a-48dd-b7c7-d8b4ced34109",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_ed3588bb0efbeb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b1f24252-ac33-4c97-9ba3-ca59d69b0a62",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
