@@ -1,0 +1,117 @@
+import { describe, expect, it } from 'bun:test'
+
+import { createPendingQueue } from '../pending-queue'
+
+const textsOf = (queue: { getSnapshot: () => readonly { text: string }[] }) =>
+  queue.getSnapshot().map((message) => message.text)
+
+describe('the queue a message waits in until the loop takes it', () => {
+  it('holds what was typed, in the order it was typed', () => {
+    const queue = createPendingQueue()
+
+    queue.enqueue({ text: 'check the tests too' })
+    queue.enqueue({ text: 'and the fixtures' })
+
+    expect(textsOf(queue)).toEqual(['check the tests too', 'and the fixtures'])
+  })
+
+  it('hands the whole queue to a drain and keeps nothing back', () => {
+    const queue = createPendingQueue()
+    queue.enqueue({ text: 'first' })
+    queue.enqueue({ text: 'second' })
+
+    expect(queue.drain()).toEqual(['first', 'second'])
+    expect(textsOf(queue)).toEqual([])
+  })
+
+  it('returns nothing to a second drain, so a message is never sent twice', () => {
+    const queue = createPendingQueue()
+    queue.enqueue({ text: 'only once' })
+
+    expect(queue.drain()).toEqual(['only once'])
+    expect(queue.drain()).toEqual([])
+  })
+
+  it('gives back the most recent message when it is taken back, and forgets it', () => {
+    const queue = createPendingQueue()
+    queue.enqueue({ text: 'first' })
+    queue.enqueue({ text: 'second' })
+
+    expect(queue.takeBackLast()?.text).toBe('second')
+    expect(textsOf(queue)).toEqual(['first'])
+  })
+
+  it('has nothing to give back once a drain has already taken the message', () => {
+    const queue = createPendingQueue()
+    queue.enqueue({ text: 'gone to the model' })
+    queue.drain()
+
+    expect(queue.takeBackLast()).toBeNull()
+  })
+
+  it('has nothing to give back from an empty queue', () => {
+    expect(createPendingQueue().takeBackLast()).toBeNull()
+  })
+
+  it('drops everything when the conversation is replaced', () => {
+    const queue = createPendingQueue()
+    queue.enqueue({ text: 'meant for the old branch' })
+
+    queue.clear()
+
+    expect(textsOf(queue)).toEqual([])
+    expect(queue.drain()).toEqual([])
+  })
+
+  it('tells its listeners on every change and stops when they leave', () => {
+    const queue = createPendingQueue()
+    let told = 0
+    const leave = queue.subscribe(() => {
+      told += 1
+    })
+
+    queue.enqueue({ text: 'one' })
+    queue.takeBackLast()
+    queue.enqueue({ text: 'two' })
+    queue.drain()
+    expect(told).toBe(4)
+
+    leave()
+    queue.enqueue({ text: 'unheard' })
+    expect(told).toBe(4)
+  })
+
+  it('stays quiet when a drain finds nothing, so an idle loop does not re-render the app', () => {
+    const queue = createPendingQueue()
+    let told = 0
+    queue.subscribe(() => {
+      told += 1
+    })
+
+    queue.drain()
+    queue.drain()
+    queue.clear()
+
+    expect(told).toBe(0)
+  })
+
+  it('keeps one snapshot identity between changes, so a subscribed render settles', () => {
+    const queue = createPendingQueue()
+    queue.enqueue({ text: 'one' })
+
+    const first = queue.getSnapshot()
+    expect(queue.getSnapshot()).toBe(first)
+
+    queue.enqueue({ text: 'two' })
+    expect(queue.getSnapshot()).not.toBe(first)
+  })
+
+  it('gives every queued message its own key, so two identical ones still render apart', () => {
+    const queue = createPendingQueue()
+    queue.enqueue({ text: 'same' })
+    queue.enqueue({ text: 'same' })
+
+    const [first, second] = queue.getSnapshot()
+    expect(first?.id).not.toBe(second?.id)
+  })
+})

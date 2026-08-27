@@ -10,6 +10,7 @@ export {
   type InFlightStep,
   type StepBlock,
 } from './in-flight-steps'
+export { createPendingQueue, type PendingMessage, type PendingQueue } from './pending-queue'
 export {
   advancedGate,
   attachedGate,
