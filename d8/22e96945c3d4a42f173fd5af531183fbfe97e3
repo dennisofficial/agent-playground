@@ -1,0 +1,39 @@
+packages/core/src/ports/settings-store.port.ts
+  s_3d83af59050d52::t_2520acf10c0e2a 3-6
+packages/harness/src/store/branch-store.ts
+  s_3d83af59050d52::t_eb5ebac4e8fc77 13-17
+packages/core/src/ports/id.port.ts
+  s_3d83af59050d52::t_2520acf10c0e2a 3-7
+packages/core/src/ports/model.port.ts
+  s_3d83af59050d52::t_933d1a26db348f 18-19,21
+packages/core/src/ports/credential.port.ts
+  s_3d83af59050d52::t_2520acf10c0e2a 3-4
+apps/tui/package.json
+  s_3d83af59050d52::t_ae5aa9ea01a110 26-27
+packages/core/src/ports/workspace.port.ts
+  s_3d83af59050d52::t_2520acf10c0e2a 3-4,6,8
+packages/harness/src/store/index.ts
+  s_3d83af59050d52::t_eae0f12cb1ac3c 1
+packages/harness/package.json
+  s_3d83af59050d52::t_d48d9b259b016f 18,26
+packages/core/src/ports/event-log.port.ts
+  s_3d83af59050d52::t_2520acf10c0e2a 5-6,14,16,18
+packages/core/src/ports/clock.port.ts
+  s_3d83af59050d52::t_2520acf10c0e2a 1-2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "d822e96945c3d4a42f173fd5af531183fbfe97e3",
+  "prompts": {},
+  "sessions": {
+    "s_3d83af59050d52": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "576fc6c5-ff3a-40f0-b80e-172325e4141c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
