@@ -5,7 +5,7 @@ import 'reflect-metadata'
 
 import { container, type DependencyContainer, type InjectionToken } from 'tsyringe'
 
-export { inject, injectAll, injectable } from 'tsyringe'
+export { inject, injectAll, injectable, instanceCachingFactory } from 'tsyringe'
 export type { DependencyContainer, InjectionToken } from 'tsyringe'
 
 export type PortConstructor<T> = abstract new (...args: never[]) => T

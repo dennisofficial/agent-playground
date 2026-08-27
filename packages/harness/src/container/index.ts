@@ -1,4 +1,20 @@
 export { createHarnessContainer } from './create-harness-container'
-export { createIsolatedContainer, inject, injectAll, injectable, portToken, resolveSet } from './injection'
+export {
+  createIsolatedContainer,
+  inject,
+  injectAll,
+  injectable,
+  instanceCachingFactory,
+  portToken,
+  resolveSet,
+} from './injection'
 export type { DependencyContainer, InjectionToken, PortConstructor } from './injection'
-export { KeychainReaderToken, PrismaClientToken, WorkspaceRoot } from './tokens'
+export { Disposable, disposeAll, registerDisposable } from './disposal'
+export {
+  DispatchToken,
+  HookRegistryToken,
+  KeychainReaderToken,
+  LanguageModelToken,
+  PrismaClientToken,
+  WorkspaceRoot,
+} from './tokens'
