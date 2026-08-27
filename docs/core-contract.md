@@ -78,12 +78,14 @@ type EventBody =
   is dropped rather than delivered leaves its output where `shell_output` can still find it.
 - **`nudge.lifetimeSteps` replaces `ephemeral: true`**, which named a property rather than a
   behaviour and forced the core-loop spike to invent semantics that became load-bearing.
-- **`history-compacted` is a watermark, not a replacement.** It records that everything at or below
-  `throughSeq` is represented by `summary`; the rows themselves stay. So the log remains append-only,
-  the transcript still renders what the model can no longer read, and undoing a compaction is the
-  rewind that already exists. Only the prompt projection honours it — `pendingCalls` and
-  `outstandingApproval` read the whole log, so a compacted call is still settled. It carries two
-  fields and no counts or token figures: those are derivable from the rows it did not delete.
+- **`history-compacted` replaces the rows it names.** It stands at the sequence the compacted range
+  ended on, and the rows at or below `throughSeq` are deleted in the same transaction — `context-loaded`
+  excepted, which is current content rather than history and would otherwise strip a branch's
+  instructions permanently. `replaced` is stored rather than derived precisely because the rows it
+  counted are gone. This is the one event that is not purely additive, and the reason is that the
+  transcript must show what the model can read: scrollback past a boundary the model cannot see makes
+  "why doesn't it remember that" unanswerable. The cost is that a compaction cannot be undone, which is
+  why the guard refuses an unsafe range rather than trimming it.
 - **`context-loaded` is the general mechanism** for anything the model sees that is not a message: a
   `CLAUDE.md` pulled in because a tool touched a directory beneath it, a skill body, MCP tool
   descriptions. `(slot, key)` names the thing; the content decides whether it is the same load.
@@ -260,14 +262,14 @@ re-assembling a previewed event list rather than by estimating arithmetically, s
 what the next request will actually carry. It returns a recommendation — `fits`, `compact` or
 `exhausted` — because producing the summary is a model call and the controller is pure.
 
-**`compactedHistory` is the second content rule, and it elides by `origin.seq`.** That is the whole
-reason `AssembledMessage` carries provenance: the rule needs no knowledge of how `messagesFromEvents`
-grouped anything, so compaction cost that file no edits. It filters messages at or below the deepest
-watermark, prepends the summary as a user message wrapped in a `<system-reminder>` — never a system
-block, which would move the cached prefix — and carries `context-loaded` messages across the watermark
-regardless of their seq, because those are current content rather than history. It also drops a leading
-`role: 'tool'` message, so a watermark authored outside the guard cannot produce an exchange
-`exchangeFaults` would have to reject.
+**`compactedHistory` is the second content rule, and it only orders — it elides nothing.** Because
+compaction deletes, the log the rules see already *is* what the model reads, so there is nothing to
+filter. What the rule does is place the summary: it renders the deepest watermark as a user message
+wrapped in a `<system-reminder>` — never a system block, which would move the cached prefix — and puts
+the surviving `context-loaded` messages *ahead* of it, so the prompt reads instructions, then compacted
+history, then live turns. It needed no edit to `messagesFromEvents`, which is what `AssembledMessage`
+carrying provenance bought: the rule partitions on `origin.seq` without knowing how the groups were
+built.
 
 **`onRuleFailure`.** One throwing rule must not kill the turn; under `SkipRule` its input passes
 through and the failure is recorded on the trace. Degraded context beats a dead turn. It defaults to

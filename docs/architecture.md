@@ -250,7 +250,7 @@ log every step is not sustainable on its own. Compaction is what bounds it, and 
 decided by one question: does it destroy the rows it compacts?
 
 **One thread, one log.** The log *is* the thread, so every operation that adjusts context acts on the
-current log rather than producing a second conversation. Rewind truncates it. Compaction marks it.
+current log rather than producing a second conversation. Rewind truncates it. Compaction replaces a range of it with a summary.
 A sub-agent may inherit its parent's prefix **by reference**, which is safe precisely because that child
 is read-only over the inherited rows and its depth is bounded by agent nesting rather than by how many
 times a human pressed undo. **Inheritance is the spawning agent's decision, not a property of sub-agents**
@@ -298,31 +298,27 @@ Rewind is already guarded: `rewindTarget` takes a `floorSeq` and refuses `BelowI
 `rewindBranch` derives from the branch's own first sequence — not from `forkSeq`, because a **copy** fork
 records a parent link yet owns every row it holds and may legitimately rewind past the fork point.
 
-**It does not. Compaction appends one `history-compacted` event carrying `{ throughSeq, summary }`, and
-a pure rule elides the covered range from the prompt.** Nothing is deleted and nothing is mutated. The
-log stays append-only, which is the invariant everything else already leans on: `--resume` works because
-the log *is* the record, undo is the rewind that already exists, and the transcript still renders the
-compacted turns because it reads the log rather than the prompt. That last property is the one users
-notice — the model forgot, and you can still scroll up.
+**It does. Compaction deletes the rows it compacts and puts one `history-compacted` event carrying
+`{ throughSeq, summary, replaced }` in their place, at the sequence the range ended on.** The transcript
+therefore shows exactly what the model can read, which is the property that decided it: a UI that scrolls
+back past the boundary is showing the operator a conversation the agent no longer has, and every question
+"why doesn't it remember that" then has two possible answers. One record, one view.
 
-The alternative considered and rejected was a destructive range operation, a true sibling of rewind that
-deletes `seq <= throughSeq` and inserts the summary. It keeps the log smaller and the "one record"
-reading literal, at the price of making an accidental compaction unrecoverable and taking the scrollback
-with it. The bytes it would reclaim are a few megabytes on a conversation that burned a million tokens,
-which is the wrong thing to spend a permanent data loss on.
+What that costs, stated plainly: a compaction cannot be undone. The rows are gone, so rewinding past the
+watermark is not a recovery path. The guard is the only protection, which is why it refuses rather than
+truncates when a range is unsafe.
 
-**Only the prompt projection elides. Control-flow projections do not.** `pendingCalls` and
-`outstandingApproval` read the full log, so a compacted tool call is still settled and a compacted
-approval is still answered. This is why the guard has no `splits-approval` refusal: approval events never
-reach the prompt, so a watermark cannot corrupt them. It *can* orphan a tool result whose call it
-compacts, which the prompt would carry as a malformed exchange, so that one is refused.
+**`context-loaded` is exempt from the delete.** It means "here is the current content of X", not history,
+so compacting it away would strip a branch's `CLAUDE.md` permanently — and `append`'s content-keyed
+idempotency means an unchanged re-offer resolves to the row that is no longer there. The delete therefore
+spares `context-loaded`, the assembly rule renders those messages *ahead* of the summary, and the
+summariser's transcript render leaves them out so they are not duplicated into the prose. Instructions,
+then the compacted history, then the live turns.
 
-**`context-loaded` survives compaction.** It means "here is the current content of X", not history, and
-`append` is idempotent on content — so an unchanged re-offer of a `CLAUDE.md` resolves to the *original*
-low-seq event rather than appending a new one. Eliding by seq alone would therefore strip the project's
-instructions for the rest of the branch, permanently and silently. `compactedHistory` carries those
-messages across the watermark instead, and the summariser's transcript render leaves them out so they are
-not duplicated into the summary.
+**Only the prompt is shortened; control flow is unaffected.** `pendingCalls` and `outstandingApproval`
+read the log, and the guard refuses any watermark that would strip a tool call while keeping the result it
+answers — so a compaction can never leave a dispatched call the loop would run twice. There is no
+`splits-approval` refusal because approval events never render into the prompt at all.
 
 **Compaction rewrites message content, which costs one cold conversation and nothing else.** Anthropic's
 cache tiers are invalidated top-down: a message-content change drops the messages cache but leaves the
