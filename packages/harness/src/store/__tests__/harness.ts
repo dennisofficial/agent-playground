@@ -5,12 +5,14 @@ import { join } from 'node:path'
 import type { BranchId, ClockPort, EventId, IdPort, RunId } from '@dltech/atlas-core'
 import { toBranchId, toCallId, toEventId, toRunId } from '@dltech/atlas-core'
 
+import type { PrismaClient } from '../../../prisma/generated/client'
 import { openAtlasDatabase, type AtlasDatabase } from '../database'
 import { PrismaBranchStore } from '../branch-store'
 import { PrismaEventLog } from '../event-log'
 
 export type StoreFixture = {
   databaseUrl: string
+  prisma: PrismaClient
   log: PrismaEventLog
   branches: PrismaBranchStore
   clock: SteppingClock
@@ -78,6 +80,7 @@ async function attach({
 
   return {
     databaseUrl,
+    prisma: database.prisma,
     clock,
     log: new PrismaEventLog(database.prisma, clock, ids),
     branches: new PrismaBranchStore(database.prisma, clock, ids),
@@ -99,9 +102,15 @@ export async function openStoreFixture(): Promise<StoreFixture> {
 
 export async function openSecondWriter(fixture: StoreFixture): Promise<{
   log: PrismaEventLog
+  branches: PrismaBranchStore
   close: () => Promise<void>
 }> {
   const database = await openAtlasDatabase({ databaseUrl: fixture.databaseUrl })
-  const log = new PrismaEventLog(database.prisma, new SteppingClock(), new CountingIds('w2'))
-  return { log, close: () => database.close() }
+  const clock = new SteppingClock()
+  const ids = new CountingIds('w2')
+  return {
+    log: new PrismaEventLog(database.prisma, clock, ids),
+    branches: new PrismaBranchStore(database.prisma, clock, ids),
+    close: () => database.close(),
+  }
 }

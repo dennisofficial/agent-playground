@@ -5,6 +5,7 @@ import type { Assembled, AssembledMessage } from './assembled'
 
 export enum EExchangeFault {
   OpensWithAssistant = 'opens-with-assistant',
+  EndsWithAssistant = 'ends-with-assistant',
   EmptyContent = 'empty-content',
   BlankText = 'blank-text',
   RepeatedCallId = 'repeated-call-id',
@@ -222,12 +223,27 @@ function openingFaults(messages: readonly AssembledMessage[]): ExchangeFault[] {
   ]
 }
 
+function closingFaults(messages: readonly AssembledMessage[]): ExchangeFault[] {
+  const last = messages.at(-1)
+  if (last === undefined || last.message.role !== 'assistant') return []
+
+  return [
+    faultAt({
+      fault: EExchangeFault.EndsWithAssistant,
+      placed: { entry: last, index: messages.length - 1 },
+      detail:
+        'the exchange ends with an assistant message, which asks the provider to prefill that turn rather than to answer',
+    }),
+  ]
+}
+
 export function exchangeFaults(assembled: Assembled): readonly ExchangeFault[] {
   const { messages } = assembled
   const turns = providerTurns(messages)
 
   const faults = [
     ...openingFaults(messages),
+    ...closingFaults(messages),
     ...messages.flatMap((entry, index) => contentFaults({ entry, index })),
     ...turns.flatMap((turn) => orderFaults(turn)),
     ...turns.flatMap((turn, position) => unansweredFaults({ turn, next: turns[position + 1] })),

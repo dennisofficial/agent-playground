@@ -44,7 +44,9 @@ const kindsOf = (assembled: Assembled): EExchangeFault[] =>
 
 describe('an exchange the provider accepts', () => {
   it('reports nothing for a plain spoken exchange', () => {
-    expect(exchangeFaults(exchange([user('hello'), assistant([text('hi there')])]))).toEqual([])
+    expect(
+      exchangeFaults(exchange([user('hello'), assistant([text('hi there')]), user('and now?')])),
+    ).toEqual([])
   })
 
   it('reports nothing for a call answered in the turn that follows it', () => {
@@ -53,6 +55,7 @@ describe('an exchange the provider accepts', () => {
       assistant([text('reading'), call('c0'), call('c1')]),
       settlement([result('c0'), result('c1')]),
       assistant([text('one export')]),
+      user('thanks'),
     ])
 
     expect(exchangeFaults(assembled)).toEqual([])
@@ -122,12 +125,15 @@ describe('a settlement split by an intervening message', () => {
 })
 
 describe('a call and its result out of reach of each other', () => {
-  it('faults a call with no following turn at all', () => {
+  it('faults a call with no following turn at all, alongside the prefill that leaves behind', () => {
     const assembled = exchange([user('go'), assistant([text('running it'), call('c0')])])
     const faults = exchangeFaults(assembled)
 
-    expect(faults.map((entry) => entry.fault)).toEqual([EExchangeFault.UnansweredCall])
-    expect(faults[0]).toMatchObject({ messageIndex: 1, toolCallId: 'c0' })
+    expect(faults.map((entry) => entry.fault)).toEqual([
+      EExchangeFault.EndsWithAssistant,
+      EExchangeFault.UnansweredCall,
+    ])
+    expect(faults[1]).toMatchObject({ messageIndex: 1, toolCallId: 'c0' })
   })
 
   it('faults both ends when the result arrives two turns late', () => {
@@ -166,7 +172,7 @@ describe('a call and its result out of reach of each other', () => {
 
 describe('content the provider rejects outright', () => {
   it('faults a message holding no parts', () => {
-    const assembled = exchange([user('go'), assistant([])])
+    const assembled = exchange([user('go'), assistant([]), user('still there?')])
     const faults = exchangeFaults(assembled)
 
     expect(faults.map((entry) => entry.fault)).toEqual([EExchangeFault.EmptyContent])
@@ -179,20 +185,28 @@ describe('content the provider rejects outright', () => {
 
   it('leaves a whitespace-only text part alone, which the provider is not known to refuse', () => {
     expect(kindsOf(exchange([user('   \n  ')]))).toEqual([])
-    expect(kindsOf(exchange([user('go'), assistant([text('\t')])]))).toEqual([])
+    expect(kindsOf(exchange([user('go'), assistant([text('\t')]), user('and?')]))).toEqual([])
   })
 
   it('faults every empty text part in one message', () => {
     const assembled = exchange([
       user('go'),
       assistant([text(''), text('real'), text('')]),
+      user('again?'),
     ])
 
     expect(kindsOf(assembled)).toEqual([EExchangeFault.BlankText, EExchangeFault.BlankText])
   })
 
+  it('faults an exchange that ends with the assistant, which asks the provider to prefill', () => {
+    const faults = exchangeFaults(exchange([user('go'), assistant([text('on it')])]))
+
+    expect(faults.map((entry) => entry.fault)).toEqual([EExchangeFault.EndsWithAssistant])
+    expect(faults[0]).toMatchObject({ messageIndex: 1, origin: originAt(1) })
+  })
+
   it('faults an exchange that opens with the assistant', () => {
-    const faults = exchangeFaults(exchange([assistant([text('unprompted')])]))
+    const faults = exchangeFaults(exchange([assistant([text('unprompted')]), user('who asked?')]))
 
     expect(faults.map((entry) => entry.fault)).toEqual([EExchangeFault.OpensWithAssistant])
     expect(faults[0]).toMatchObject({ messageIndex: 0, origin: originAt(0) })
@@ -228,7 +242,7 @@ describe('an id used more than once', () => {
 
 describe('the report itself', () => {
   it('carries the origin of the message each fault sits on', () => {
-    const faults = exchangeFaults(exchange([user(''), assistant([call('c0')])]))
+    const faults = exchangeFaults(exchange([user(''), assistant([call('c0')]), user('go on')]))
 
     expect(faults.map((entry) => entry.origin)).toEqual([originAt(0), originAt(1)])
   })
@@ -238,6 +252,7 @@ describe('the report itself', () => {
       assistant([call('c0')]),
       settlement([result('stray')]),
       assistant([]),
+      user('go on'),
     ])
 
     expect(exchangeFaults(assembled).map((entry) => entry.messageIndex)).toEqual([0, 0, 1, 2])

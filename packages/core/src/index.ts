@@ -7,6 +7,7 @@ export * from './events/body'
 export * from './events/envelope'
 export * from './events/ids'
 export * from './events/projections'
+export * from './events/rewind-target'
 export * from './events/schema'
 export * from './events/stamp'
 

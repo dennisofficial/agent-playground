@@ -1,7 +1,16 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import type { MockLanguageModelV4 } from 'ai/test'
+import { z } from 'zod'
 
-import type { BranchId, Event } from '@dltech/atlas-core'
+import {
+  EToolEffect,
+  pendingCalls,
+  toCallId,
+  type BranchId,
+  type ChunkType,
+  type Event,
+  type ToolDeclaration,
+} from '@dltech/atlas-core'
 
 import { buildHarness, ETurnStatus, type AtlasHarness } from '..'
 import { interruptibleModel } from '../../model/testing/interruptible-model'
@@ -58,7 +67,103 @@ async function openWith(script: readonly ScriptedStep[]): Promise<{ harness: Atl
   return { harness, branchId: branch.id }
 }
 
+const readDeclaration: ToolDeclaration = {
+  name: 'read_file',
+  description: 'read a file',
+  effect: EToolEffect.Read,
+  inputSchema: z.object({ path: z.string() }),
+}
+
+async function openCutShortAt(args: {
+  script: readonly ScriptedStep[]
+  chunk: ChunkType
+  tools?: readonly ToolDeclaration[] | undefined
+}): Promise<{ harness: AtlasHarness; branchId: BranchId; interruption: AbortSignal }> {
+  const temp = createTempDatabase()
+  const controller = new AbortController()
+  let armed = true
+
+  const harness = await buildHarness({
+    databaseUrl: temp.databaseUrl,
+    model: scriptedModel({ script: args.script }),
+    ...(args.tools === undefined ? {} : { tools: args.tools }),
+    onChunk: (chunk) => {
+      if (armed && chunk.type === args.chunk) {
+        armed = false
+        controller.abort()
+      }
+      return chunk
+    },
+  })
+
+  opened.push({ harness, temp })
+  const branch = await harness.branches.create({})
+  return { harness, branchId: branch.id, interruption: controller.signal }
+}
+
 const assistantTurns = (events: readonly Event[]) => events.filter((event) => event.type === 'assistant-said')
+
+describe('interrupting a step that had already asked for a tool', () => {
+  it('records the call it emitted and settles it as something that never ran', async () => {
+    const cut = await openCutShortAt({
+      script: [{ text: 'reading', calls: [{ callId: 'call-1', name: 'read_file', input: { path: 'a.ts' } }] }],
+      chunk: 'tool-call',
+      tools: [readDeclaration],
+    })
+
+    const outcome = await cut.harness.runner.say({
+      branchId: cut.branchId,
+      text: 'what is in a.ts?',
+      signal: cut.interruption,
+    })
+
+    expect(outcome.status).toBe(ETurnStatus.Interrupted)
+    const events = await cut.harness.log.read({ branchId: cut.branchId })
+    expect(events.map((event) => event.type)).toEqual([
+      'user-said',
+      'assistant-said',
+      'tool-called',
+      'tool-denied',
+    ])
+
+    const denial = events.find((event) => event.type === 'tool-denied')
+    expect(denial?.type === 'tool-denied' ? denial.callId : '').toBe(toCallId('call-1'))
+    expect(denial?.type === 'tool-denied' ? denial.reason : '').toMatch(/interrupted/)
+  })
+
+  it('reports the exchange committed, because the model asked for work the log now holds', async () => {
+    const cut = await openCutShortAt({
+      script: [{ text: 'reading', calls: [{ callId: 'call-1', name: 'read_file', input: { path: 'a.ts' } }] }],
+      chunk: 'tool-call',
+      tools: [readDeclaration],
+    })
+
+    const outcome = await cut.harness.runner.say({
+      branchId: cut.branchId,
+      text: 'what is in a.ts?',
+      signal: cut.interruption,
+    })
+
+    expect(outcome.status === ETurnStatus.Interrupted ? outcome.committed : undefined).toBe(true)
+  })
+
+  it('leaves nothing pending, so no later turn tries to run what the developer stopped', async () => {
+    const cut = await openCutShortAt({
+      script: [{ text: 'reading', calls: [{ callId: 'call-1', name: 'read_file', input: { path: 'a.ts' } }] }],
+      chunk: 'tool-call',
+      tools: [readDeclaration],
+    })
+
+    await cut.harness.runner.say({
+      branchId: cut.branchId,
+      text: 'what is in a.ts?',
+      signal: cut.interruption,
+    })
+
+    const events = await cut.harness.log.read({ branchId: cut.branchId })
+    expect(pendingCalls(events)).toEqual([])
+  })
+})
 
 describe('interrupting a streaming reply', () => {
   it('keeps what had already streamed as one assistant turn marked interrupted', async () => {
@@ -80,6 +185,38 @@ describe('interrupting a streaming reply', () => {
     expect(reply.interrupted).toBe(true)
   })
 
+  it('reports the exchange committed, because prose the developer read is not discardable', async () => {
+    const armed = await openArmed()
+
+    const outcome = await armed.harness.runner.say({
+      branchId: armed.branchId,
+      text: 'what changed?',
+      signal: armed.interruption,
+    })
+
+    expect(outcome.status === ETurnStatus.Interrupted ? outcome.committed : undefined).toBe(true)
+  })
+
+  it('reports nothing committed when the step got no further than thinking', async () => {
+    const cut = await openCutShortAt({
+      script: [{ reasoning: { text: 'weighing it up' } }],
+      chunk: 'reasoning-delta',
+    })
+
+    const outcome = await cut.harness.runner.say({
+      branchId: cut.branchId,
+      text: 'what changed?',
+      signal: cut.interruption,
+    })
+
+    expect(outcome.status).toBe(ETurnStatus.Interrupted)
+    expect(outcome.status === ETurnStatus.Interrupted ? outcome.committed : undefined).toBe(false)
+    const events = await cut.harness.log.read({ branchId: cut.branchId })
+    expect(events.map((event) => event.type)).toEqual(['user-said', 'assistant-said'])
+    const [thought] = assistantTurns(events)
+    expect(thought?.type === 'assistant-said' ? thought.parts.map((part) => part.type) : []).toEqual(['reasoning'])
+  })
+
   it('appends nothing when the abort landed before any text arrived', async () => {
     const { harness, branchId } = await openWith([{ text: 'unreachable' }])
     const controller = new AbortController()
@@ -88,6 +225,7 @@ describe('interrupting a streaming reply', () => {
     const outcome = await harness.runner.say({ branchId, text: 'what changed?', signal: controller.signal })
 
     expect(outcome.status).toBe(ETurnStatus.Interrupted)
+    expect(outcome.status === ETurnStatus.Interrupted ? outcome.committed : undefined).toBe(false)
     const events = await harness.log.read({ branchId })
     expect(events.map((event) => event.type)).toEqual(['user-said'])
   })

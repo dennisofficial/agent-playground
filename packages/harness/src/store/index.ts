@@ -3,6 +3,7 @@ export { SystemClock } from './clock'
 export { openAtlasDatabase, type AtlasDatabase } from './database'
 export { PrismaEventLog, type AppendArgs } from './event-log'
 export { RandomIds } from './ids'
+export { rewindBranch, type RewindResult } from './rewind'
 export { atlasMigrationsDirectory, loadAtlasMigrations } from './migrations'
 export {
   ATLAS_DATABASE_NAME,

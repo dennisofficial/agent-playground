@@ -17,6 +17,7 @@ export abstract class BranchStorePort {
   abstract find(args: { branchId: BranchId }): Promise<BranchSummary | undefined>
   abstract mostRecent(): Promise<BranchSummary | undefined>
   abstract rename(args: { branchId: BranchId; title: string }): Promise<void>
+  abstract rewind(args: { branchId: BranchId; toSeq: number }): Promise<void>
 }
 
 type BranchRow = {
@@ -60,6 +61,14 @@ export class PrismaBranchStore implements BranchStorePort {
 
   async rename({ branchId, title }: { branchId: BranchId; title: string }): Promise<void> {
     await this.prisma.branch.update({ where: { id: branchId }, data: { title } })
+  }
+
+  async rewind({ branchId, toSeq }: { branchId: BranchId; toSeq: number }): Promise<void> {
+    const at = this.clock.now()
+    await this.prisma.$transaction(async (tx) => {
+      await tx.event.deleteMany({ where: { branchId, seq: { gt: toSeq } } })
+      await tx.branch.update({ where: { id: branchId }, data: { head: toSeq, updatedAt: at } })
+    })
   }
 }
 

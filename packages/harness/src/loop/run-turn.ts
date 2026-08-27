@@ -24,6 +24,8 @@ import { runAfterTurn, runBeforeStep, type HookRegistry } from '../hooks/registr
 import { ModelStreamError } from '../model/errors'
 import type { Dispatch } from '../tools/dispatch'
 import { createSettlePending } from './settle-pending'
+import { draftsFor, interruptedDrafts } from './step-drafts'
+import { committedSinceLastMessage, messageArrivedSince } from './turn-position'
 import { ETurnStatus, type TurnOutcome } from './turn-outcome'
 
 export type TurnDeps = {
@@ -38,6 +40,7 @@ export type TurnDeps = {
   onChunk?: ChunkFilter | undefined
   dispatch?: Dispatch | undefined
   hooks?: HookRegistry | undefined
+  drainPending?: (() => Promise<readonly string[]>) | undefined
 }
 
 export type TurnRunner = {
@@ -51,27 +54,11 @@ const ITERATIONS_PER_MODEL_STEP = 2
 
 type SteppedTurn = { ok: true; result: ModelStepResult } | { ok: false; message: string; cause: unknown }
 
-function interruptedDraft(result: ModelStepResult): EventDraft | undefined {
-  if (result.parts.length === 0) return undefined
-  return { type: 'assistant-said', parts: result.parts, interrupted: true }
-}
-
-function draftsFor(result: ModelStepResult): EventDraft[] {
-  const drafts: EventDraft[] = []
-  if (result.parts.length > 0) drafts.push({ type: 'assistant-said', parts: result.parts })
-
-  result.toolCalls.forEach((call, ordinal) => {
-    drafts.push({ type: 'tool-called', callId: call.callId, name: call.name, input: call.input, ordinal })
-  })
-
-  return drafts
-}
-
 const faultLine = (fault: ExchangeFault): string =>
   `message ${fault.messageIndex}: ${fault.detail} (event ${fault.origin.eventId})`
 
 const faultReport = (faults: readonly ExchangeFault[]): string =>
-  `the assembled prompt would be rejected by the provider — ${faults.map(faultLine).join('; ')}`
+  `the assembled prompt is one Atlas must not send — ${faults.map(faultLine).join('; ')}`
 
 async function takeModelStep(args: {
   model: ModelPort
@@ -104,6 +91,20 @@ export function createTurnRunner(deps: TurnDeps): TurnRunner {
       ? undefined
       : createSettlePending({ log: deps.log, dispatch: deps.dispatch })
 
+  const drainInto = async ({ branchId }: { branchId: BranchId }): Promise<boolean> => {
+    if (deps.drainPending === undefined) return false
+
+    const waiting = await deps.drainPending()
+    if (waiting.length === 0) return false
+
+    await deps.log.append({
+      branchId,
+      runId: deps.ids.nextRunId(),
+      drafts: waiting.map((text): EventDraft => ({ type: 'user-said', text })),
+    })
+    return true
+  }
+
   const runTurn = async ({
     branchId,
     signal,
@@ -115,16 +116,23 @@ export function createTurnRunner(deps: TurnDeps): TurnRunner {
     const abortSignal = signal ?? new AbortController().signal
     let previous: Assembled | undefined
     let modelSteps = 0
+    let seenThrough: number | undefined
+
+    const interrupted = async (): Promise<TurnOutcome> => ({
+      status: ETurnStatus.Interrupted,
+      runId,
+      committed: committedSinceLastMessage(await deps.log.read({ branchId })),
+    })
 
     for (let iteration = 0; iteration < iterationBackstop; iteration += 1) {
-      const events = await deps.log.read({ branchId })
+      const beforeDrain = await deps.log.read({ branchId })
 
-      const waiting = outstandingApproval(events)
+      const waiting = outstandingApproval(beforeDrain)
       if (waiting !== undefined) {
         return { status: ETurnStatus.Paused, runId, callId: waiting, reason: 'awaiting approval' }
       }
 
-      const pending = pendingCalls(events)[0]
+      const pending = pendingCalls(beforeDrain)[0]
       if (pending !== undefined) {
         if (settlePending === undefined) {
           return { status: ETurnStatus.Paused, runId, callId: pending.callId, reason: `awaiting ${pending.name}` }
@@ -132,12 +140,18 @@ export function createTurnRunner(deps: TurnDeps): TurnRunner {
 
         const settled = await settlePending({ branchId, signal: abortSignal })
         if (settled.paused !== undefined) return { status: ETurnStatus.Paused, runId, ...settled.paused }
-        if (abortSignal.aborted) return { status: ETurnStatus.Interrupted, runId }
+        if (abortSignal.aborted) return interrupted()
         continue
       }
 
-      if (!awaitsReply(events)) return { status: ETurnStatus.Idle, runId }
+      const events = (await drainInto({ branchId })) ? await deps.log.read({ branchId }) : beforeDrain
+
+      if (!awaitsReply(events) && !messageArrivedSince({ events, seenThrough })) {
+        return { status: ETurnStatus.Idle, runId }
+      }
       if (modelSteps >= maxSteps) return { status: ETurnStatus.Exhausted, runId }
+
+      seenThrough = events.at(-1)?.seq
 
       const ctx: RuleContext = {
         events,
@@ -177,15 +191,19 @@ export function createTurnRunner(deps: TurnDeps): TurnRunner {
       }
 
       if (abortSignal.aborted) {
-        const interrupted = interruptedDraft(stepped.result)
-        if (interrupted !== undefined) await deps.log.append({ branchId, runId, drafts: [interrupted] })
-        return { status: ETurnStatus.Interrupted, runId }
+        const abandoned = interruptedDrafts(stepped.result)
+        if (abandoned.length > 0) await deps.log.append({ branchId, runId, drafts: abandoned })
+        return interrupted()
       }
 
       const drafts = draftsFor(stepped.result)
       if (drafts.length > 0) await deps.log.append({ branchId, runId, drafts })
 
       if (stepped.result.toolCalls.length > 0) continue
+
+      const latest = await deps.log.read({ branchId })
+      if (messageArrivedSince({ events: latest, seenThrough })) continue
+      if (await drainInto({ branchId })) continue
 
       const closing = await runAfterTurn({ hooks: deps.hooks?.afterTurn ?? [], branchId })
       if (closing.length > 0) await deps.log.append({ branchId, runId, drafts: closing })

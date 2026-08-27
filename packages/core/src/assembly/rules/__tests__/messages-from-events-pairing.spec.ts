@@ -255,6 +255,7 @@ describe('messagesFromEvents pairing every call with a result', () => {
       { type: 'tool-result', callId: toCallId('call-0'), name: 'read', output: 'a', modelText: 'a' },
       { type: 'assistant-said', parts: [{ type: 'text', text: 'second' }] },
       { type: 'tool-called', callId: toCallId('call-0'), name: 'read', input: { path: 'a' }, ordinal: 0 },
+      { type: 'user-said', text: 'go on' },
     ])
 
     const assembled = messagesFromEvents()(empty, contextFor({ events }))
@@ -264,6 +265,7 @@ describe('messagesFromEvents pairing every call with a result', () => {
       'assistant',
       'tool',
       'assistant',
+      'user',
     ])
     expect(assembled.messages[3]?.message.content).toEqual([{ type: 'text', text: 'second' }])
     expect(exchangeFaults(assembled)).toEqual([])
