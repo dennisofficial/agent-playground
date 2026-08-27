@@ -1,0 +1,151 @@
+packages/harness/src/loop/__tests__/model-steps.spec.ts
+  s_9f86667004fef3::t_86fdbeb57532cb 82-84,96
+  s_4f948d8df330fa::t_035ccba0df9a01 5-12
+  s_ed3588bb0efbeb::t_6d42d5416bf06c 204,216,227-228
+  s_ed3588bb0efbeb::t_ee6364d733a64d 46,75,85-86,91-92,97-98,103,136,151
+  s_ed3588bb0efbeb::t_bd7f138cab1e05 165,185
+packages/harness/src/hooks/__tests__/registry.spec.ts
+  s_4f948d8df330fa::t_f6c58a7d27788a 20
+packages/harness/src/providers/anthropic-oauth.ts
+  s_4f948d8df330fa::t_83fd0b2db0bdf8 8,15
+packages/harness/src/loop/__tests__/builtin-turn.spec.ts
+  s_ed3588bb0efbeb::t_692c45c2f37477 38,48
+  s_4f948d8df330fa::t_f43ef6970e3d80 6
+  s_37569aa4b69462::t_aafd689e459382 12-13
+packages/harness/src/channel/__tests__/published-turn.spec.ts
+  s_4f948d8df330fa::t_f43ef6970e3d80 3,37
+packages/harness/src/providers/__tests__/anthropic-cache-breakpoints.spec.ts
+  s_4f948d8df330fa::t_912300fa1e052f 1-117
+packages/core/src/assembly/__tests__/pipeline.spec.ts
+  s_4f948d8df330fa::t_d3a1e1fe40e599 4-5,32-49
+apps/tui/src/composition/compose.ts
+  s_4f948d8df330fa::t_9e8375944606d1 4,119
+  s_2feab2e45d45ee::t_7b068449cbe0b3 24,97,122
+  s_c653afe8642d12::t_8df809e0e1c817 123-126
+  s_c653afe8642d12::t_05c84aeb5797da 26
+docs/architecture.md
+  s_4f948d8df330fa::t_8f023d63e75a0f 59-60,184,187-188
+  s_ed3588bb0efbeb::t_c17595cfe07a6d 56-58,74,84-92
+  s_9f86667004fef3::t_05a8a32af96614 39-40,46-50,66,94-103
+packages/harness/src/channel/__tests__/settled-tool-results.spec.ts
+  s_ed3588bb0efbeb::t_71ef3161161109 77
+  s_4f948d8df330fa::t_f43ef6970e3d80 4
+packages/core/src/assembly/annotators/__tests__/cache-breakpoints.spec.ts
+  s_4f948d8df330fa::t_3cc4d2b0ccfaea 1-189
+packages/harness/src/loop/__tests__/run-turn.spec.ts
+  s_ed3588bb0efbeb::t_a81324fb278c66 201
+  s_ed3588bb0efbeb::t_e058ca2bcf7a7e 239
+  s_4f948d8df330fa::t_f43ef6970e3d80 8
+packages/harness/src/loop/build-harness.ts
+  s_c653afe8642d12::t_17132cb351fb7d 65,70,72,84
+  s_4f948d8df330fa::t_bbd2cb7e040e3b 5
+  s_c653afe8642d12::t_9eaf6dc369cafa 94,96-99
+  s_4f948d8df330fa::t_9e8375944606d1 4,42,78
+packages/core/src/hooks/hooks.ts
+  s_4f948d8df330fa::t_1c0f61022981c5 3
+  s_4f948d8df330fa::t_bb3e3530a2134c 22
+packages/core/src/index.ts
+  s_4f948d8df330fa::t_c7f074cf1f4dca 24
+packages/core/src/assembly/annotators/cache-breakpoints.ts
+  s_4f948d8df330fa::t_cdd3ebbb6e96e7 1-156
+docs/core-contract.md
+  s_ed3588bb0efbeb::t_a9e16543ae4e2b 291-305
+  s_c653afe8642d12::t_18245298d6ba86 88-89,99-107
+  s_c653afe8642d12::t_cdccb15f4c6651 90-98
+  s_4f948d8df330fa::t_6d54189800da04 140-141,144-149,159-183,215,227-230
+  s_ed3588bb0efbeb::t_5b73c2204bf34a 348-354
+packages/harness/src/loop/run-turn.ts
+  s_2feab2e45d45ee::t_b9725334b86269 92
+  s_c653afe8642d12::t_fc68ada47d0e99 44
+  s_c653afe8642d12::t_785ea1b7bb983f 27,48,234
+  s_c653afe8642d12::t_e98a48e9f0e6d0 108,111-112,116-117
+  s_c653afe8642d12::t_5eb359ef7f219b 20
+  s_c653afe8642d12::t_396efab435b6ab 223
+  s_9f86667004fef3::t_61121c1536bbcf 59-60,123,131,144-146,148
+  s_4f948d8df330fa::t_bbd2cb7e040e3b 9
+  s_c653afe8642d12::t_4d1eacb03f5c1a 225-233,236-247
+  s_9f86667004fef3::t_07307fab35ba74 11,195
+  s_c653afe8642d12::t_cb8c204c42195b 197
+  s_4f948d8df330fa::t_9e8375944606d1 37,172-174,178
+packages/harness/src/hooks/registry.ts
+  s_4f948d8df330fa::t_bb3e3530a2134c 6,50,53
+packages/harness/src/loop/__tests__/steerable-turn.ts
+  s_ed3588bb0efbeb::t_b85c88d4ff50fd 131
+  s_4f948d8df330fa::t_f43ef6970e3d80 6
+packages/core/src/assembly/pipeline.ts
+  s_4f948d8df330fa::t_bb3e3530a2134c 6-10,17-20
+  s_4f948d8df330fa::t_e672683fe5816e 1-2,14-16
+packages/harness/src/loop/__tests__/hook-phases.spec.ts
+  s_4f948d8df330fa::t_f43ef6970e3d80 7
+  s_ed3588bb0efbeb::t_2f32d32c330104 227
+  s_ed3588bb0efbeb::t_4645aa6deefe54 113
+  s_ed3588bb0efbeb::t_613523fdb7b4df 68
+  s_ed3588bb0efbeb::t_2730db1db906f4 89
+apps/tui/src/composition/__tests__/fake-app.ts
+  s_b391e026d4f658::t_d8f7003b719a5b 113-133
+  s_4f948d8df330fa::t_ac74ae1afa1f7e 4,153
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "5e2bd64e5ba93c126f896095507361030e272b9e",
+  "prompts": {},
+  "sessions": {
+    "s_2feab2e45d45ee": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b871ace6-8e2a-4076-9f7d-a528d2feb1e8",
+        "model": "claude-opus-5"
+      },
+      "human_author": null
+    },
+    "s_37569aa4b69462": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d09552e0-3201-480f-8869-4be07520639c",
+        "model": "claude-opus-5"
+      },
+      "human_author": null
+    },
+    "s_4f948d8df330fa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4f7a3271-9603-4b68-a9d1-744f1724222c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_9f86667004fef3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "89e85b5f-d60c-4697-adbe-aec6d1dbaab6",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_b391e026d4f658": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "760b684a-4408-425b-98b3-04fe839261f6",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_c653afe8642d12": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "502bac1c-ba5f-44da-ae83-54ebe85bd8cc",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_ed3588bb0efbeb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b1f24252-ac33-4c97-9ba3-ca59d69b0a62",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
