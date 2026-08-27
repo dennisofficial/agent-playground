@@ -1,0 +1,119 @@
+apps/tui/src/ui/components/transcript.tsx
+  s_8ca0db9b7bb1cb::t_0df480dc7360a4 100
+  s_ed3588bb0efbeb::t_d063d6434ef2bb 3,8,30-31,41,137-138
+apps/tui/src/store/__tests__/fixture.ts
+  s_ed3588bb0efbeb::t_49a1a349fa645e 67-72
+apps/tui/src/composition/__tests__/open-conversation.spec.ts
+  s_ed3588bb0efbeb::t_e9bc2c2ace7789 22,43
+apps/tui/src/composition/__tests__/fake-app.ts
+  s_ed3588bb0efbeb::t_b48e8a0c3e4a24 160-166
+  s_ed3588bb0efbeb::t_d208efae52d2fb 24,125,128-134,150
+  s_ed3588bb0efbeb::t_a11c72c590c474 117,126-127,135-137,140-143
+  s_ed3588bb0efbeb::t_d22a90a515cd19 123
+apps/tui/src/composition/__tests__/app-settings.spec.tsx
+  s_cb1c44c44ecab7::t_a3f8010d77574c 62-70,113,156,175
+apps/tui/src/composition/__tests__/fake-backend.ts
+  s_ed3588bb0efbeb::t_cbc01112dcb3eb 53-56,58
+  s_ed3588bb0efbeb::t_217efb1f836fbd 102-109
+  s_ed3588bb0efbeb::t_5417d409967815 15-18
+  s_ed3588bb0efbeb::t_b6958e70093cf6 57,62-65
+apps/tui/src/composition/__tests__/turn-progress.spec.ts
+  s_ed3588bb0efbeb::t_960ddf27e5b0a8 175-176
+apps/tui/src/ui/components/entry-view.tsx
+  s_ed3588bb0efbeb::t_e257fa99ba9805 20
+apps/tui/src/composition/__tests__/app-steering.spec.tsx
+  s_ed3588bb0efbeb::t_5c416dc6b3283b 1-10,12,14,19-20,22-56,58-95,97-129,131-166,168-195
+  s_ed3588bb0efbeb::t_f87fafda5f72e7 11,13,15-18,21,57,96,130,167
+apps/tui/src/composition/use-conversation.ts
+  s_ed3588bb0efbeb::t_6ae2a858069279 41-43
+  s_ed3588bb0efbeb::t_f354af4a06a798 98-100,226,234,248,250
+  s_ed3588bb0efbeb::t_7aef59a39bcb97 194,196-197
+  s_ed3588bb0efbeb::t_7237d83d4ec08c 10-11,13-16,52,54,195,201,204
+  s_ed3588bb0efbeb::t_673fcd2ba99435 142
+  s_cb1c44c44ecab7::t_ad249753e82f42 12,64,89
+  s_ed3588bb0efbeb::t_a9f3a1c2d6217a 134-141,143-146,148,150
+  s_ed3588bb0efbeb::t_8a9680259baa8b 7
+  s_ed3588bb0efbeb::t_e5eccf2b76cbc6 65,67
+  s_ed3588bb0efbeb::t_67e77a4115b216 20
+  s_ed3588bb0efbeb::t_4f197a404454f9 175
+  s_ed3588bb0efbeb::t_f4ed744012a539 186
+  s_ed3588bb0efbeb::t_619f37069842f2 147,149
+apps/tui/src/ui/components/blocks/user-block.tsx
+  s_ed3588bb0efbeb::t_27ec2ee1254182 4,11-17,22-29
+apps/tui/src/composition/undo-turn.ts
+  s_ed3588bb0efbeb::t_6727950807935b 1-33
+apps/tui/src/store/__tests__/steered-message.spec.ts
+  s_ed3588bb0efbeb::t_f7e94b2a91b7e2 1-84
+apps/tui/src/store/transcript-model.ts
+  s_ed3588bb0efbeb::t_04eafa5b04cd50 20
+apps/tui/src/composition/__tests__/app-mount.spec.tsx
+  s_ed3588bb0efbeb::t_2ee656b358bbf6 3-5
+  s_ed3588bb0efbeb::t_0d6f3f989292ca 105,114-116,118
+apps/tui/src/composition/__tests__/undo-turn.spec.ts
+  s_ed3588bb0efbeb::t_8a4115931aaa78 1-86
+apps/tui/src/ui/__tests__/queued-line.spec.ts
+  s_ed3588bb0efbeb::t_f270f453200f83 1-32
+apps/tui/src/composition/app.tsx
+  s_ed3588bb0efbeb::t_f809fd4aaa3b95 58-59,65
+  s_cb1c44c44ecab7::t_ad249753e82f42 64
+  s_ed3588bb0efbeb::t_01b632666e24dd 167-174,297
+  s_ed3588bb0efbeb::t_297b349681bba8 38-39,307
+  s_ed3588bb0efbeb::t_6eaa7cb8db92e8 252-254
+apps/tui/src/composition/__tests__/app-thinking.spec.tsx
+  s_cb1c44c44ecab7::t_d00fa9d5d55e44 13,77,85
+  s_cb1c44c44ecab7::t_75feba11bcfe8b 1-12,14-47,62-73,82-83,87-91
+  s_cb1c44c44ecab7::t_c19174ee21c186 48-61
+  s_cb1c44c44ecab7::t_e44cc2f0a98f92 74-76,78-81,84,86
+apps/tui/src/store/durable-entries.ts
+  s_ed3588bb0efbeb::t_dc1231cb6a8851 1
+  s_ed3588bb0efbeb::t_6b464463ef811b 33-38,42-47,52,56-64
+  s_ed3588bb0efbeb::t_c254fa3c13f105 39-41
+apps/tui/src/composition/__tests__/app-fixture.tsx
+  s_ed3588bb0efbeb::t_7578846c14a1aa 1-65
+apps/tui/src/ui/components/blocks/pending-block.tsx
+  s_ed3588bb0efbeb::t_a1e32b7d0140ec 1-41
+apps/tui/src/ui/__tests__/transcript-fixture.tsx
+  s_ed3588bb0efbeb::t_cd6378e27e87db 8,152,165
+  s_ed3588bb0efbeb::t_85d92506085457 43-47,52
+apps/tui/src/ui/__tests__/transcript-render.spec.tsx
+  s_ed3588bb0efbeb::t_14424449222431 165-212
+  s_ed3588bb0efbeb::t_8c6b47ce008bdf 141-164
+apps/tui/src/composition/__tests__/app-undo.spec.tsx
+  s_ed3588bb0efbeb::t_538e51dada317e 1-2,7
+  s_ed3588bb0efbeb::t_63cd7958221510 3-6,8-18,45-116,136
+  s_ed3588bb0efbeb::t_79822e57dc9bfc 21-22,126
+  s_ed3588bb0efbeb::t_fb8b188e728631 117-125,127-135
+  s_ed3588bb0efbeb::t_773d1470abfdb7 19-20,23-44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "caed9e2cf9d7a13f40ac17dd64a0ae045c45f660",
+  "prompts": {},
+  "sessions": {
+    "s_8ca0db9b7bb1cb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d08e62a6-c30b-4210-a5b1-8bc6a6f264d2",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_cb1c44c44ecab7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6b576e52-410f-43f5-af46-0de8b00ccd2f",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_ed3588bb0efbeb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b1f24252-ac33-4c97-9ba3-ca59d69b0a62",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
