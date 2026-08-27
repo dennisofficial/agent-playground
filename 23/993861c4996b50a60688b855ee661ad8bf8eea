@@ -1,0 +1,115 @@
+packages/harness/src/ledger/__tests__/turn-exit-paths.spec.ts
+  s_c653afe8642d12::t_ae89b8ae9c9738 4,20,34-37,49-52,64-66,81-84,94-97,100,104,114-119,122,136-139
+  s_c653afe8642d12::t_4b28649e5b7c31 1-3,5-19,21-33,38-48,53-63,67-80,85-86,101-103,105-113,120-121,123-135,140-141
+  s_c653afe8642d12::t_9c8155771baa63 87-93,98-99
+packages/harness/src/ledger/__tests__/exit-path-harness.ts
+  s_4f948d8df330fa::t_60596ec322e151 1-162
+packages/harness/src/ledger/__tests__/turn-spend-end-to-end.spec.ts
+  s_c653afe8642d12::t_45698a8ed55130 1-2,5,7-11,16-17,24,32,34-35,53-54,57,65-66,70-71,79-80,88-89,99-100,103,105,108-109
+  s_c653afe8642d12::t_fa234b3d06bfa2 3-4,6,12-15,18-23,25-31,33,36-52,55-56,58-64,67-69,72-78,81-87,90-98,101-102,104,106-107
+packages/core/src/stream/chunk.ts
+  s_c653afe8642d12::t_3bd4e443ced66e 13-18
+packages/harness/src/model/chunk-conversion.ts
+  s_c653afe8642d12::t_241e6d6493f200 28-33,37
+  s_c653afe8642d12::t_bce3a5b7ef41d6 23-26,38-52
+packages/harness/src/ledger/turn-ledger.port.ts
+  s_c653afe8642d12::t_fa09ee66915242 8
+  s_c653afe8642d12::t_55cf4f851106b9 3-4
+  s_c653afe8642d12::t_f8d6c2de8f1f97 1-2,5-7,9-24
+packages/core/src/models/usage.ts
+  s_c653afe8642d12::t_37916f768f9a2e 79-110
+packages/harness/prisma/schema.prisma
+  s_c653afe8642d12::t_d786591be0a29a 23,46-63
+packages/harness/src/loop/run-turn.ts
+  s_37569aa4b69462::t_6b7065837458ff 178
+  s_37569aa4b69462::t_95496dc587daf0 218
+  s_2feab2e45d45ee::t_9745da793d5622 42
+  s_37569aa4b69462::t_5a84602e86cdea 24
+packages/core/src/models/__tests__/billed-usage.spec.ts
+  s_c653afe8642d12::t_73c3ebdd8da403 1-71
+packages/harness/src/ledger/index.ts
+  s_c653afe8642d12::t_153a947a66034e 2,4-9
+  s_c653afe8642d12::t_785ea1b7bb983f 3
+  s_c653afe8642d12::t_bf815ec66ae17d 1,10
+packages/harness/prisma/migrations/20260826000000_turn_ledger/migration.sql
+  s_c653afe8642d12::t_e903f7ee3d1b27 1-20
+packages/harness/src/loop/__tests__/turn-ledger-wiring.spec.ts
+  s_4f948d8df330fa::t_f43ef6970e3d80 3,51,183
+  s_c653afe8642d12::t_68d8c702e22441 1-2,4-50,52-182,184-189
+packages/harness/src/ledger/__tests__/record-turn-spend.spec.ts
+  s_c653afe8642d12::t_162ad04fd7b021 108-116
+  s_c653afe8642d12::t_7a0140f36042c3 1-4,6-107,117-202
+  s_c653afe8642d12::t_7f9a6a146e049e 5
+packages/harness/src/model/accumulator.ts
+  s_c653afe8642d12::t_db7de734c07e02 81,87
+  s_c653afe8642d12::t_ba6efcb28fa51b 29
+  s_c653afe8642d12::t_0503d21b6439e3 8
+packages/harness/src/index.ts
+  s_c653afe8642d12::t_35fc2833cad7b1 12
+  s_2feab2e45d45ee::t_531c85ce24894c 9
+packages/core/src/ports/model.port.ts
+  s_c653afe8642d12::t_9d2bc903b65940 16
+  s_c653afe8642d12::t_85b7a0b46c044c 5
+packages/core/src/index.ts
+  s_2feab2e45d45ee::t_100536fbabee64 35
+packages/harness/src/ledger/__tests__/prisma-turn-ledger.spec.ts
+  s_c653afe8642d12::t_c3427cae0c48f9 41,60,70-71,74-75,81,103,120
+  s_c653afe8642d12::t_4cc22d676bae83 1-40,42-59,61-69,72-73,76-80,82-90,115-119,121-125
+  s_c653afe8642d12::t_813cfc13442c60 91-102,104-114
+packages/harness/src/model/__tests__/usage-conversion.spec.ts
+  s_c653afe8642d12::t_a5071cc29faccd 1-3,6-24,34-44,46-59,61-65,67-68,73,80-81,84-85
+  s_c653afe8642d12::t_37099265cabce5 4-5,45,83
+  s_c653afe8642d12::t_0cd55c39047b22 25-33,60,66,69-72,74-79,82
+packages/harness/src/model/__tests__/model-port.spec.ts
+  s_c653afe8642d12::t_37ca4c8689b8e1 233-236,250-261
+  s_c653afe8642d12::t_774ea244376fb9 24-57
+  s_c653afe8642d12::t_06404e6ebe58a3 237-249
+  s_c653afe8642d12::t_bcca03cec854a8 2-3
+packages/harness/src/ledger/prisma-turn-ledger.ts
+  s_c653afe8642d12::t_7087f29af44b95 1-27,29-59,62-64
+  s_c653afe8642d12::t_f37c928b32095a 28,60-61
+packages/harness/src/ledger/record-turn-spend.ts
+  s_c653afe8642d12::t_cbb2fd52890fdf 14-15
+  s_c653afe8642d12::t_078a2c70368e03 1-13,16-40,42-90
+  s_c653afe8642d12::t_b71c2534ed0a74 41
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "23993861c4996b50a60688b855ee661ad8bf8eea",
+  "prompts": {},
+  "sessions": {
+    "s_2feab2e45d45ee": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b871ace6-8e2a-4076-9f7d-a528d2feb1e8",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_37569aa4b69462": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d09552e0-3201-480f-8869-4be07520639c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_4f948d8df330fa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4f7a3271-9603-4b68-a9d1-744f1724222c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_c653afe8642d12": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "502bac1c-ba5f-44da-ae83-54ebe85bd8cc",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
