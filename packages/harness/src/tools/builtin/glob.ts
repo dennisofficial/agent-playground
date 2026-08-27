@@ -3,13 +3,14 @@ import { statSync } from 'node:fs'
 import { z } from 'zod'
 
 import {
+  EContentAccess,
   EPathForm,
   EPathPresence,
   EToolEffect,
+  SchemaTool,
   type DeclaredPathField,
-  type ToolDefinition,
-  type ToolInvocation,
   type ToolOutcome,
+  type ToolRun,
 } from '@dltech/atlas-core'
 
 import { inject, injectable } from '../../container/injection'
@@ -59,36 +60,33 @@ function renderModelText(args: { paths: readonly string[]; total: number }): str
 }
 
 @injectable()
-export class GlobTool implements ToolDefinition {
+export class GlobTool extends SchemaTool<typeof inputSchema> {
   readonly name = 'glob'
   readonly description = description
   readonly effect = EToolEffect.Read
+  override readonly isConcurrencySafe = (): boolean => true
   readonly inputSchema = inputSchema
-  readonly pathFields: readonly DeclaredPathField[] = [
-    { field: 'path', presence: EPathPresence.Optional, form: EPathForm.Absolute },
-    { field: 'pattern', presence: EPathPresence.Required, form: EPathForm.RelativeToBase },
+  override readonly pathFields: readonly DeclaredPathField[] = [
+    { field: 'path', presence: EPathPresence.Optional, form: EPathForm.Absolute, content: EContentAccess.None },
+    { field: 'pattern', presence: EPathPresence.Required, form: EPathForm.RelativeToBase, content: EContentAccess.None },
   ]
 
   private readonly containment: WorkspaceContainment
 
   constructor(@inject(WorkspaceRoot) private readonly root: string) {
+    super()
     this.containment = createWorkspaceContainment({ root })
   }
 
-  async invoke({ input, signal }: ToolInvocation): Promise<ToolOutcome> {
-    const parsed = inputSchema.safeParse(input)
-    if (!parsed.success) {
-      return { ok: false, reason: `glob was called with invalid input: ${z.prettifyError(parsed.error)}` }
-    }
-
-    const { pattern, path } = parsed.data
+  protected override async run({ input, signal }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
+    const { pattern, path } = input
     const from = path ?? this.root
 
     const found: DatedPath[] = []
     try {
       const scan = new Bun.Glob(pattern).scan({ cwd: from, absolute: true, onlyFiles: true })
       for await (const match of scan) {
-        if (signal.aborted) return { ok: false, reason: 'the turn was abandoned while scanning for files' }
+        if (signal.aborted) return { ok: false, reason: 'the developer interrupted the turn while scanning for files' }
         if (!(await this.containment.contains(match))) continue
         found.push({ path: match, modifiedAt: modifiedAt(match) })
       }
@@ -106,4 +104,3 @@ export class GlobTool implements ToolDefinition {
   }
 }
 
-export const createGlobTool = ({ root }: { root: string }): ToolDefinition => new GlobTool(root)

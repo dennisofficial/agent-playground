@@ -66,7 +66,7 @@ describe('the footer', () => {
 
   it('spells out the consequence once the window is under pressure', async () => {
     const frame = await frameOf(footer({ width: 100, percent: 86 }), 100)
-    expect(frame).toContain('context 86% — compacts at 90')
+    expect(frame).toContain('context 86% — ctrl+k to compact')
   })
 
   it('keeps to one row with no meter at all when there is nothing to report', async () => {

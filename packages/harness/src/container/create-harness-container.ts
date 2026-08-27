@@ -2,26 +2,35 @@ import { ClockPort, CredentialPort, EventLogPort, IdPort, ModelPort } from '@dlt
 
 import { KeychainCredentialPort } from '../credentials/keychain-credential-port'
 import { registerBuiltinHooks } from '../hooks/register-hooks'
-import { resolveHookRegistry } from '../hooks/resolve-hooks'
-import { createAiSdkModelPort } from '../model/ai-sdk-model-port'
+import { PrismaTurnLedger, TurnLedgerPort } from '../ledger'
+import { resolveHookChain } from '../hooks/resolve-hooks'
+import { AiSdkModelPort } from '../model/ai-sdk-model-port'
+import { createRawTape } from '../model/raw-tape'
+import { registerFileState } from '../files'
+import { registerShells } from '../shells/register-shells'
 import { BranchStorePort, PrismaBranchStore, PrismaEventLog, RandomIds, SystemClock } from '../store'
-import { createDispatch } from '../tools/dispatch'
+import { HookedToolDispatcher, ToolDispatcher } from '../tools/dispatch'
 import { registerBuiltinTools } from '../tools/register-tools'
 import { ToolRegistry } from '../tools/registry'
+import { registerDisposable } from './disposal'
 import {
   createIsolatedContainer,
   instanceCachingFactory,
   portToken,
   type DependencyContainer,
 } from './injection'
-import { DispatchToken, HookRegistryToken, KeychainReaderToken, LanguageModelToken } from './tokens'
+import { HookChainToken, KeychainReaderToken, LanguageModelToken } from './tokens'
 
 export function createHarnessContainer(): DependencyContainer {
   const harness = createIsolatedContainer()
 
+  const tape = createRawTape({ scope: `pid-${process.pid}` })
+  registerDisposable({ container: harness, close: () => tape.close() })
+
   harness.register(portToken(ClockPort), { useClass: SystemClock })
   harness.register(portToken(IdPort), { useClass: RandomIds })
   harness.register(portToken(EventLogPort), { useClass: PrismaEventLog })
+  harness.register(portToken(TurnLedgerPort), { useClass: PrismaTurnLedger })
   harness.register(portToken(BranchStorePort), { useClass: PrismaBranchStore })
   harness.register(portToken(CredentialPort), {
     useFactory: (resolver) =>
@@ -31,28 +40,31 @@ export function createHarnessContainer(): DependencyContainer {
       }),
   })
 
+  registerFileState({ container: harness })
+  registerShells({ container: harness })
   registerBuiltinTools({ container: harness })
   registerBuiltinHooks({ container: harness })
 
-  harness.register(HookRegistryToken, {
-    useFactory: instanceCachingFactory((resolver) => resolveHookRegistry({ container: resolver })),
+  harness.register(HookChainToken, {
+    useFactory: instanceCachingFactory((resolver) => resolveHookChain({ container: resolver })),
   })
 
-  harness.register(DispatchToken, {
+  harness.register(portToken(ToolDispatcher), {
     useFactory: (resolver) =>
-      createDispatch({
+      new HookedToolDispatcher({
         registry: resolver.resolve(portToken(ToolRegistry)),
-        hooks: resolver.resolve(HookRegistryToken),
+        hooks: resolver.resolve(HookChainToken),
       }),
   })
 
   harness.register(portToken(ModelPort), {
     useFactory: (resolver) => {
       const model = resolver.resolve(LanguageModelToken)
-      return createAiSdkModelPort({
+      return new AiSdkModelPort({
         model,
         identity: { id: model.provider, modelId: model.modelId },
-        hooks: resolver.resolve(HookRegistryToken),
+        hooks: resolver.resolve(HookChainToken),
+        tape,
       })
     },
   })

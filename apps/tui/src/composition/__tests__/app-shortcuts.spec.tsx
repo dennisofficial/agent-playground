@@ -4,9 +4,14 @@ import { describe, expect, it } from 'bun:test'
 import React from 'react'
 
 import { grammarsReady, settle, teardown } from '../../ui/markdown/__tests__/harness'
-import { SHORTCUT_GROUPS } from '../../ui/shortcuts'
+import { EKeyGroup } from '../../ui/keys'
 import { App } from '../app'
-import { fakeApp, scriptedModelPort, type FakeApp } from './fake-app'
+import {
+  fakeApp,
+  failingThenStallingModelPort,
+  scriptedModelPort,
+  type FakeApp,
+} from './fake-app'
 
 await grammarsReady()
 
@@ -14,7 +19,7 @@ const BRANCH = toBranchId('opened-branch')
 
 const WIDE = { width: 150, height: 40 }
 
-const HEADING = (SHORTCUT_GROUPS[0]?.title ?? '').toUpperCase()
+const HEADING = EKeyGroup.Composer.toUpperCase()
 
 type Mounted = Awaited<ReturnType<typeof testRender>>
 
@@ -33,7 +38,7 @@ async function landed(setup: Mounted): Promise<void> {
 }
 
 async function opened(app: FakeApp): Promise<Mounted> {
-  const setup = await testRender(<App app={app} opened={{ branchId: BRANCH, events: [] }} />, WIDE)
+  const setup = await testRender(<App app={app} opened={{ branchId: BRANCH, events: [], name: null }} />, WIDE)
   await setup.flush()
   await settle(250)
   await setup.flush()
@@ -70,6 +75,37 @@ describe('the shortcuts list', () => {
       expect(setup.captureCharFrame()).not.toContain(HEADING)
     } finally {
       await teardown(setup)
+    }
+  }, 60_000)
+
+  it('lists a block key only while the block that owns it is on screen', async () => {
+    const failing = fakeApp({ model: failingThenStallingModelPort({ message: 'overloaded_error' }) })
+    const healthy = await opened(appWith())
+
+    try {
+      healthy.mockInput.pressKey('?')
+      await landed(healthy)
+
+      expect(healthy.captureCharFrame()).not.toContain('retry a failed turn')
+    } finally {
+      await teardown(healthy)
+    }
+
+    const failed = await opened(failing)
+
+    try {
+      await failed.mockInput.typeText('what changed?')
+      failed.mockInput.pressEnter()
+      await settle(2_000)
+      await failed.flush()
+      expect(failed.captureCharFrame()).toContain('ctrl+r retry')
+
+      failed.mockInput.pressKey('?')
+      await landed(failed)
+
+      expect(failed.captureCharFrame()).toContain('retry a failed turn')
+    } finally {
+      await teardown(failed)
     }
   }, 60_000)
 

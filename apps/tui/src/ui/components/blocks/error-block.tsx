@@ -1,6 +1,13 @@
 import React from 'react'
 
 import { useClickRegion } from '../../hooks/use-click-region'
+import {
+  EKeyGroup,
+  EKeyLayer,
+  spellChord,
+  useKeyBindings,
+  type KeyDeclaration,
+} from '../../keys'
 import { formatElapsed, formatTokens, glyph, theme, TRANSCRIPT_INSET } from '../../theme'
 import { Panel } from '../panel'
 import { Spans } from '../spans'
@@ -10,7 +17,11 @@ const HEADING = 'failed'
 
 const SEPARATOR = ' · '
 
-const RETRY_LABEL = ' retry'
+const RETRY: KeyDeclaration = {
+  chord: 'ctrl+r',
+  hint: 'retry',
+  describe: 'retry a failed turn',
+}
 
 const costOf = (args: { durationMs?: number; outputTokens?: number }): string => {
   const parts: string[] = []
@@ -36,8 +47,8 @@ function Header(props: { cost: string }): React.ReactNode {
 }
 
 const retrySpans = (hovered: boolean): readonly Span[] => [
-  { text: `${glyph.retry} r`, fg: theme.accent },
-  { text: RETRY_LABEL, fg: hovered ? theme.hover : theme.hint },
+  { text: `${glyph.retry} ${spellChord(RETRY.chord)}`, fg: theme.accent },
+  { text: ` ${RETRY.hint}`, fg: hovered ? theme.hover : theme.hint },
 ]
 
 /**
@@ -52,6 +63,13 @@ export function ErrorBlock(props: {
   onRetry?: () => void
 }): React.ReactNode {
   const retry = useClickRegion(props.onRetry)
+  const onRetry = props.onRetry
+
+  useKeyBindings(
+    onRetry === undefined
+      ? []
+      : [{ ...RETRY, layer: EKeyLayer.Block, group: EKeyGroup.Turn, run: onRetry }],
+  )
 
   return (
     <box flexDirection="column" marginBottom={1} flexShrink={0}>

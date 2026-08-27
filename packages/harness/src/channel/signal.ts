@@ -14,7 +14,9 @@ export enum EStepEnd {
   Failed = 'failed',
 }
 
-export type ChannelSignal =
+export type StepSignal =
   | { type: 'step-started'; stepId: StepId }
   | { type: 'chunk'; stepId: StepId; chunk: Chunk }
   | { type: 'step-ended'; stepId: StepId; end: EStepEnd; supersededBy: EventRef | null }
+
+export type ChannelSignal = StepSignal | { type: 'events-appended' }

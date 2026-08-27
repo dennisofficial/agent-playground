@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 
 import { toCallId } from '../../events/ids'
 import { EToolEffect, type ToolCall } from '../../tools/tool'
-import { EBeforeToolDecision, resolveBeforeTool } from '../before-tool'
+import { EBeforeToolDecision, resolveBeforeTool, type BeforeToolOutcome } from '../before-tool'
 
 const call: ToolCall = {
   callId: toCallId('call-1'),
@@ -97,5 +97,54 @@ describe('resolveBeforeTool', () => {
       reason: 'outside the workspace root',
     })
     expect(resolution.dissenters.map((dissent) => dissent.hookName)).toEqual(['boundary', 'secrets'])
+  })
+})
+
+describe('resolveBeforeTool when a hook returns a decision without a reason', () => {
+  const call: ToolCall = {
+    callId: toCallId('call_reasonless'),
+    name: 'write',
+    input: { path: '/tmp/x' },
+    effect: EToolEffect.Write,
+  }
+
+  const acrossABoundary = (outcome: { decision: EBeforeToolDecision }): BeforeToolOutcome =>
+    JSON.parse(JSON.stringify(outcome))
+
+  const reasonless = (decision: EBeforeToolDecision.Ask | EBeforeToolDecision.Deny) =>
+    resolveBeforeTool({
+      call,
+      outcomes: [{ hookName: 'silentGuard', outcome: acrossABoundary({ decision }) }],
+    })
+
+  it('still denies, rather than falling through to allow', () => {
+    const { outcome } = reasonless(EBeforeToolDecision.Deny)
+    expect(outcome.decision).toBe(EBeforeToolDecision.Deny)
+  })
+
+  it('names the hook that denied without saying why', () => {
+    const { outcome } = reasonless(EBeforeToolDecision.Deny)
+    if (outcome.decision === EBeforeToolDecision.Allow) throw new Error('expected a denial')
+    expect(outcome.reason).toContain('silentGuard')
+  })
+
+  it('still asks, rather than falling through to allow', () => {
+    const { outcome } = reasonless(EBeforeToolDecision.Ask)
+    expect(outcome.decision).toBe(EBeforeToolDecision.Ask)
+  })
+
+  it('prefers a reasonless denial over a later well-formed ask', () => {
+    const { outcome } = resolveBeforeTool({
+      call,
+      outcomes: [
+        { hookName: 'silentGuard', outcome: acrossABoundary({ decision: EBeforeToolDecision.Deny }) },
+        {
+          hookName: 'approvals',
+          outcome: { decision: EBeforeToolDecision.Ask, reason: 'are you sure?' },
+        },
+      ],
+    })
+
+    expect(outcome.decision).toBe(EBeforeToolDecision.Deny)
   })
 })

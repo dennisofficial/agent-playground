@@ -5,7 +5,7 @@ import { inlineColumns, numberDigits, type InlineColumns } from '../../diff-layo
 import { theme } from '../../theme'
 import { Panel, PANEL_INSET, PANEL_PAD } from '../panel'
 import { useDiffChunks, type DiffEmphasis } from './diff-chunks'
-import { DiffFooter, filesSpans, INLINE_KEYS, type DiffFileCount } from './diff-footer'
+import { DiffFooter, filesSpans, type DiffFileCount } from './diff-footer'
 import { FileHeader, HunkHeading } from './diff-header'
 import { patchText } from './diff-patch'
 import { InlineDiffRow } from './diff-row'
@@ -87,7 +87,6 @@ export function InlineDiff(props: {
       <DiffFooter
         width={props.width}
         left={filesSpans({ files: props.files ?? null })}
-        keys={INLINE_KEYS}
       />
     </box>
   )

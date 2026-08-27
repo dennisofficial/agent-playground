@@ -17,7 +17,7 @@ const appWith = (): FakeApp =>
   fakeApp({ model: scriptedModelPort({ script: { thinking: 'weighing it', reply: 'done' } }) })
 
 async function opened(app: FakeApp): Promise<Awaited<ReturnType<typeof testRender>>> {
-  const setup = await testRender(<App app={app} opened={{ branchId: BRANCH, events: [] }} />, WIDE)
+  const setup = await testRender(<App app={app} opened={{ branchId: BRANCH, events: [], name: null }} />, WIDE)
   await setup.flush()
   await settle(250)
   await setup.flush()

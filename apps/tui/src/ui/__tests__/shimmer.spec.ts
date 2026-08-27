@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'bun:test'
 
 import { beaconHeat, shimmerCrest, shimmerCycleMs, shimmerHeat, WORKING_SHIMMER } from '../shimmer'
-import { mixHex, shimmerSpans } from '../shimmer-style'
+import { mixHex } from '../colour'
+import { shimmerSpans } from '../shimmer-style'
 
 describe('the sweep arithmetic', () => {
   it('spends the quiet part of the cycle with the crest off the end of the line', () => {
@@ -42,7 +43,7 @@ describe('the sweep, coloured', () => {
   })
 
   it('coalesces runs of one colour, so a resting line is a handful of spans', () => {
-    const label = 'Working for 12s (esc to interrupt)'
+    const label = 'Thinking for 12s (esc to interrupt)'
     const spans = shimmerSpans({ text: label, crest: 4, spec: WORKING_SHIMMER, offset: 2 })
     expect(spans.length).toBeLessThan([...label].length)
     expect(spans.map((span) => span.text).join('')).toBe(label)

@@ -18,10 +18,13 @@ export async function rewindBranch({
   toSeq: number
 }): Promise<RewindResult> {
   const events = await log.read({ branchId })
+  const owned = await log.readOwn({ branchId })
+  const firstOwned = owned[0]
+  const floorSeq = firstOwned === undefined ? await log.head({ branchId }) : firstOwned.seq - 1
 
-  const target = rewindTarget({ events, toSeq })
+  const target = rewindTarget({ events, toSeq, floorSeq })
   if (!target.allowed) return { ok: false, refusal: target.refusal, reason: target.reason }
 
   await branches.rewind({ branchId, toSeq })
-  return { ok: true, discarded: events.filter((event) => event.seq > toSeq).length }
+  return { ok: true, discarded: owned.filter((event) => event.seq > toSeq).length }
 }

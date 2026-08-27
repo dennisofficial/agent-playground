@@ -2,9 +2,11 @@ import React from 'react'
 
 import { EEntryKind, type TranscriptEntry } from '../../store'
 import { AssistantBlock } from './blocks/assistant-block'
+import { CompactedBlock } from './blocks/compacted-block'
+import { ShellEndedBlock } from './blocks/shell-ended-block'
 import { ThinkingBlock } from './blocks/thinking-block'
 import { ToolGroupBlock } from './blocks/tool-group-block'
-import { UserBlock } from './blocks/user-block'
+import { EUserMark, UserBlock } from './blocks/user-block'
 
 export function EntryView(props: {
   entry: TranscriptEntry
@@ -17,7 +19,13 @@ export function EntryView(props: {
 
   switch (entry.kind) {
     case EEntryKind.OperatorSaid:
-      return <UserBlock text={entry.text} width={props.width} steer={entry.steer} />
+      return (
+        <UserBlock
+          said={entry.said}
+          width={props.width}
+          mark={entry.steer ? EUserMark.MidTurn : EUserMark.Plain}
+        />
+      )
 
     case EEntryKind.ModelSaid:
       return (
@@ -46,6 +54,27 @@ export function EntryView(props: {
       return (
         <ToolGroupBlock
           group={entry.group}
+          width={props.width}
+          expanded={props.expanded ?? false}
+          {...(onToggle ? { onToggle: () => onToggle(entry.key) } : {})}
+        />
+      )
+
+    case EEntryKind.HistoryCompacted:
+      return (
+        <CompactedBlock
+          text={entry.text}
+          width={props.width}
+          compactedEntries={entry.compactedEntries}
+        />
+      )
+
+    case EEntryKind.BackgroundShellEnded:
+      return (
+        <ShellEndedBlock
+          text={entry.text}
+          output={entry.output}
+          failed={entry.failed}
           width={props.width}
           expanded={props.expanded ?? false}
           {...(onToggle ? { onToggle: () => onToggle(entry.key) } : {})}

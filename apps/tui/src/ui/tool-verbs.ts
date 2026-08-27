@@ -157,9 +157,3 @@ const TONE_COLOURS: Record<EVerbTone, string> = {
 
 export const toneColour = (tone: EVerbTone): string => TONE_COLOURS[tone]
 
-export const REVIEW_AFFORDANCE = '⏎ review'
-
-export const LIST_AFFORDANCE = '⏎ list'
-
-export const affordanceFor = (verb: ToolVerb): string =>
-  verb.tone === EVerbTone.Mutating ? REVIEW_AFFORDANCE : LIST_AFFORDANCE

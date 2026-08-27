@@ -10,6 +10,8 @@ export enum EEntryKind {
   ModelSaid = 'model-said',
   ModelThought = 'model-thought',
   ToolsRan = 'tools-ran',
+  HistoryCompacted = 'history-compacted',
+  BackgroundShellEnded = 'background-shell-ended',
 }
 
 export type OperatorSaidEntry = {
@@ -17,6 +19,7 @@ export type OperatorSaidEntry = {
   author: EAuthor.Operator
   key: string
   text: string
+  said: readonly string[]
   steer: boolean
 }
 
@@ -58,11 +61,31 @@ export const toolsRanEntry = (group: ToolGroup): ToolsRanEntry => ({
   group,
 })
 
+export type HistoryCompactedEntry = {
+  kind: EEntryKind.HistoryCompacted
+  author: EAuthor.Model
+  key: string
+  text: string
+  compactedEntries: number
+}
+
+export type BackgroundShellEndedEntry = {
+  kind: EEntryKind.BackgroundShellEnded
+  author: EAuthor.Model
+  key: string
+  text: string
+  shellId: string
+  output: string
+  failed: boolean
+}
+
 export type TranscriptEntry =
   | OperatorSaidEntry
   | ModelSaidEntry
   | ModelThoughtEntry
   | ToolsRanEntry
+  | HistoryCompactedEntry
+  | BackgroundShellEndedEntry
 
 export type StepFailure = { message: string | null }
 

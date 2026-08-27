@@ -2,12 +2,9 @@ import { describe, expect, it } from 'bun:test'
 
 import { theme } from '../theme'
 import {
-  affordanceFor,
   EToolVerb,
   EVerbTone,
   liveLabel,
-  LIST_AFFORDANCE,
-  REVIEW_AFFORDANCE,
   settledLabel,
   toneColour,
   verbIdentity,
@@ -108,11 +105,5 @@ describe('the colour a verb carries', () => {
     expect(toneColour(verbOfTool('edit').tone)).toBe(theme.ok)
     expect(toneColour(verbOfTool('bash').tone)).toBe(theme.ok)
     expect(toneColour(verbOfTool('linear__createIssue').tone)).toBe(theme.court.external)
-  })
-
-  it('offers a mutation up for review and a read for listing', () => {
-    expect(affordanceFor(verbOfTool('edit'))).toBe(REVIEW_AFFORDANCE)
-    expect(affordanceFor(verbOfTool('read'))).toBe(LIST_AFFORDANCE)
-    expect(affordanceFor(verbOfTool('linear__createIssue'))).toBe(LIST_AFFORDANCE)
   })
 })

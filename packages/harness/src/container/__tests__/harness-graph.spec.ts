@@ -3,12 +3,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeAll, describe, expect, it } from 'bun:test'
 
-import { EventLogPort, toCallId, toRunId } from '@dltech/atlas-core'
+import { EventLogPort, toCallId, toRunId, type Chunk } from '@dltech/atlas-core'
 
+import { ToolDispatcher } from '../../tools/dispatch'
 import { ToolRegistry } from '../../tools/registry'
 import { createHarnessContainer } from '../create-harness-container'
 import { portToken, type DependencyContainer } from '../injection'
-import { DispatchToken, HookRegistryToken, WorkspaceRoot } from '../tokens'
+import { HookChainToken, WorkspaceRoot } from '../tokens'
 
 let root = ''
 
@@ -30,26 +31,41 @@ describe('the harness container graph', () => {
       .map((declaration) => declaration.name)
       .sort()
 
-    expect(names).toEqual(['bash', 'edit', 'glob', 'grep', 'read', 'write'])
+    expect(names).toEqual([
+      'bash',
+      'edit',
+      'glob',
+      'grep',
+      'read',
+      'shell_kill',
+      'shell_list',
+      'shell_output',
+      'write',
+    ])
   })
 
-  it('resolves the boundary hook into the before-tool phase, not a phantom', () => {
-    const hooks = rooted().resolve(HookRegistryToken)
+  it('resolves both guards into the before-tool phase and the recorder into after-tool, not phantoms', async () => {
+    const hooks = rooted().resolve(HookChainToken)
+    const delta: Chunk = { type: 'text-delta', id: 'block-1', text: 'hello' }
 
-    expect(hooks.beforeTool.map((hook) => hook.name)).toEqual(['workspaceBoundary'])
-    expect(hooks.onChunk).toEqual([])
+    expect(hooks.beforeTool.map((hook) => hook.name)).toEqual([
+      'workspaceBoundary',
+      'readBeforeWrite',
+    ])
+    expect(hooks.afterTool.map((hook) => hook.name)).toEqual(['recordFileState'])
+    expect(await hooks.onChunk({ chunk: delta })).toBe(delta)
   })
 
   it('hands the hook registry out as one instance, however many collaborators ask', () => {
     const container = rooted()
 
-    expect(container.resolve(HookRegistryToken)).toBe(container.resolve(HookRegistryToken))
+    expect(container.resolve(HookChainToken)).toBe(container.resolve(HookChainToken))
   })
 
   it('denies a tool call escaping the workspace root the root registered', async () => {
-    const dispatch = rooted().resolve(DispatchToken)
+    const dispatcher = rooted().resolve(portToken(ToolDispatcher))
 
-    const drafts = await dispatch({
+    const drafts = await dispatcher.dispatch({
       call: {
         callId: toCallId('call-1'),
         name: 'read',

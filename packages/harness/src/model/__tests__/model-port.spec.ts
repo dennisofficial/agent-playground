@@ -17,7 +17,7 @@ import {
   type ToolDeclaration,
 } from '@dltech/atlas-core'
 
-import { createAiSdkModelPort } from '../ai-sdk-model-port'
+import { AiSdkModelPort } from '../ai-sdk-model-port'
 import { ModelStreamError } from '../errors'
 import { scriptedModel } from '../testing/scripted-model'
 
@@ -80,7 +80,7 @@ const step = (args: {
   tools?: readonly ToolDeclaration[]
   onChunk?: ChunkFilter
 }) => {
-  const port = createAiSdkModelPort({ model: args.model, identity })
+  const port = new AiSdkModelPort({ model: args.model, identity })
   return port.step({
     assembled: args.assembled ?? assembledWith([userTurn]),
     tools: args.tools ?? [],
@@ -89,9 +89,9 @@ const step = (args: {
   })
 }
 
-describe('createAiSdkModelPort', () => {
+describe('AiSdkModelPort', () => {
   it('exposes the provider identity it was built with', () => {
-    expect(createAiSdkModelPort({ model: scriptedModel({ script: [{ text: 'hi' }] }), identity }).identity).toEqual(
+    expect(new AiSdkModelPort({ model: scriptedModel({ script: [{ text: 'hi' }] }), identity }).identity).toEqual(
       identity,
     )
   })

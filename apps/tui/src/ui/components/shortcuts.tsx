@@ -1,12 +1,8 @@
 import React from 'react'
 
 import { cellsOf } from '../hint-layout'
-import {
-  keyColumnCells,
-  SHORTCUT_GROUPS,
-  type Shortcut,
-  type ShortcutGroup,
-} from '../shortcuts'
+import { groupsOfBindings, useBoundKeys } from '../keys'
+import { keyColumnCells, type Shortcut, type ShortcutGroup } from '../shortcuts'
 import { theme } from '../theme'
 import { Panel, PANEL_INSET, PANEL_PAD } from './panel'
 import { truncateCells } from './sidebar/cells'
@@ -49,7 +45,8 @@ export function Shortcuts(props: {
   width: number
   groups?: readonly ShortcutGroup[]
 }): React.ReactNode {
-  const groups = props.groups ?? SHORTCUT_GROUPS
+  const bound = useBoundKeys()
+  const groups = props.groups ?? groupsOfBindings(bound)
   const cells = Math.max(0, props.width - CHROME_COLUMNS)
   const keyCells = keyColumnCells(groups)
 

@@ -1,11 +1,22 @@
 import { describe, expect, it } from 'bun:test'
 
-import { EStepEnd, type ChannelSignal, type StepId } from '@dltech/atlas-harness'
+import { EStepEnd, type StepId, type StepSignal } from '@dltech/atlas-harness'
 
 import { deriveTranscript } from '../derive-transcript'
+import { EThinkingVisibility } from '../thinking-fold'
 import { EGroupState } from '../tool-groups'
 import { EAuthor, EEntryKind } from '../transcript-model'
-import { ended, fromTheModel, log, reasoningDelta, refTo, started, stepOne, textDelta } from './fixture'
+import {
+  ended,
+  fromTheModel,
+  log,
+  reasoningDelta,
+  refTo,
+  started,
+  stepOne,
+  stepTwo,
+  textDelta,
+} from './fixture'
 import { called, callId, result } from './tool-fixture'
 
 describe('an empty branch', () => {
@@ -135,7 +146,7 @@ describe('deltas in flight', () => {
   })
 })
 
-const toolCall = (args: { stepId: StepId; n: number; name: string }): ChannelSignal => ({
+const toolCall = (args: { stepId: StepId; n: number; name: string }): StepSignal => ({
   type: 'chunk',
   stepId: args.stepId,
   chunk: { type: 'tool-call', callId: callId(args.n), name: args.name, input: {} },
@@ -301,5 +312,56 @@ describe('a tool call that has only been streamed', () => {
     if (entry?.kind !== EEntryKind.ToolsRan) throw new Error('the group was not projected')
     expect(entry.group.state).toBe(EGroupState.Live)
     expect(entry.streaming).toBe(true)
+  })
+})
+
+describe('reasoning across steps', () => {
+  const events = log([
+    { type: 'assistant-said', parts: [{ type: 'reasoning', text: 'weighing it up' }] },
+    { type: 'assistant-said', parts: [{ type: 'reasoning', text: 'still weighing' }] },
+    { type: 'assistant-said', parts: [{ type: 'text', text: 'a burrito' }] },
+  ])
+
+  it('stands one thinking block where two steps thought back to back', () => {
+    expect(shapeOf(deriveTranscript({ events, signals: [] }))).toEqual([
+      [EEntryKind.ModelThought, 'weighing it up\n\nstill weighing'],
+      [EEntryKind.ModelSaid, 'a burrito'],
+    ])
+  })
+
+  it('folds a durable thought into the one still streaming after it', () => {
+    const model = deriveTranscript({
+      events: log([
+        { type: 'assistant-said', parts: [{ type: 'reasoning', text: 'weighing it up' }] },
+      ]),
+      signals: [started(stepTwo), reasoningDelta({ stepId: stepTwo, blockId: 'r1', text: 'more' })],
+    })
+
+    expect(shapeOf(model)).toEqual([[EEntryKind.ModelThought, 'weighing it up\n\nmore']])
+    expect(fromTheModel(model).at(-1)?.streaming).toBe(true)
+  })
+
+  it('drops settled thinking but keeps the live tail when set to stream', () => {
+    const model = deriveTranscript({
+      events,
+      signals: [started(stepTwo), reasoningDelta({ stepId: stepTwo, blockId: 'r1', text: 'more' })],
+      thinking: EThinkingVisibility.Stream,
+    })
+
+    expect(shapeOf(model)).toEqual([
+      [EEntryKind.ModelSaid, 'a burrito'],
+      [EEntryKind.ModelThought, 'more'],
+    ])
+  })
+
+  it('drops thinking entirely when set to hidden, live tail included', () => {
+    const model = deriveTranscript({
+      events,
+      signals: [started(stepTwo), reasoningDelta({ stepId: stepTwo, blockId: 'r1', text: 'more' })],
+      thinking: EThinkingVisibility.Hidden,
+    })
+
+    expect(shapeOf(model)).toEqual([[EEntryKind.ModelSaid, 'a burrito']])
+    expect(model.streaming).toBe(true)
   })
 })

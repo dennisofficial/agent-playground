@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import React from 'react'
 
-import { EEffort, EModelVendor, type ModelEntry } from '@dltech/atlas-core'
+import { EEffort, EModelVendor, EThinkingControl, type ModelEntry } from '@dltech/atlas-core'
 
 import { EFFORT_ABBREVIATION, Switcher } from '../components/switcher'
 import { cellsOf } from '../hint-layout'
@@ -27,6 +27,7 @@ const anthropic = (args: { id: string; label: string; price: number }): ModelEnt
   label: args.label,
   vendor: EModelVendor.Anthropic,
   contextWindow: 200_000,
+  thinkingControl: EThinkingControl.Effort,
   inputPricePerMillion: 3,
   outputPricePerMillion: args.price,
 })
@@ -40,6 +41,7 @@ const MODELS: readonly ModelEntry[] = [
     label: 'gpt-5-codex',
     vendor: EModelVendor.OpenAI,
     contextWindow: 400_000,
+  thinkingControl: EThinkingControl.Effort,
     inputPricePerMillion: 1.25,
     outputPricePerMillion: 10,
   },
@@ -48,6 +50,7 @@ const MODELS: readonly ModelEntry[] = [
     label: 'o4-mini',
     vendor: EModelVendor.OpenAI,
     contextWindow: 200_000,
+  thinkingControl: EThinkingControl.Effort,
     inputPricePerMillion: 1.1,
     outputPricePerMillion: 4.4,
   },

@@ -1,4 +1,5 @@
-import { CONTEXT_BAR_CELLS, CONTEXT_COMPACT_PERCENT, isContextWarning } from './context-bar'
+import { COMPACT_CHORD, CONTEXT_BAR_CELLS, isContextWarning } from './context-bar'
+import { spellChord } from './keys'
 import { cellsOf, HINT_SEPARATOR } from './hint-layout'
 import { formatTokens } from './theme'
 
@@ -30,7 +31,7 @@ export function effortSegment(effort: FooterEffort): string {
 export function readouts(context: FooterContext): readonly FooterReadout[] {
   const percent = `${Math.round(context.percent)}%`
   if (isContextWarning(context.percent)) {
-    const spelled = `context ${percent} — compacts at ${CONTEXT_COMPACT_PERCENT}`
+    const spelled = `context ${percent} — ${spellChord(COMPACT_CHORD)} to compact`
     return [
       { bar: true, text: spelled },
       { bar: false, text: spelled },

@@ -9,17 +9,6 @@ export type DiffKey = Hint & { colour: string }
 
 export type DiffFileCount = { index: number; total: number }
 
-export const INLINE_KEYS: readonly DiffKey[] = [
-  { key: 'a', label: 'apply', colour: theme.ok },
-  { key: 'r', label: 'reject', colour: theme.error },
-  { key: 's', label: 'side-by-side', colour: theme.code },
-  { key: 'n', label: 'next', colour: theme.code },
-]
-
-export const SIDE_BY_SIDE_KEYS: readonly DiffKey[] = [
-  { key: 's', label: 'inline', colour: theme.code },
-]
-
 export const SIDE_BY_SIDE_NOTE = `fits above ${SIDE_BY_SIDE_MIN_TERMINAL_WIDTH} cols${HINT_SEPARATOR}falls back to inline below it`
 
 const spanCells = (spans: readonly Span[]): number =>
@@ -52,9 +41,9 @@ export function filesSpans(args: { files: DiffFileCount | null }): Span[] {
 export function DiffFooter(props: {
   width: number
   left: readonly Span[]
-  keys: readonly DiffKey[]
+  keys?: readonly DiffKey[]
 }): React.ReactNode {
-  const right = keySpans({ keys: props.keys, cells: props.width })
+  const right = keySpans({ keys: props.keys ?? [], cells: props.width })
   const left = clipSpans({
     spans: props.left,
     columns: Math.max(0, props.width - spanCells(right)),

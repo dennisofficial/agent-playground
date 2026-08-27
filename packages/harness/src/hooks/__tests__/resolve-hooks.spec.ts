@@ -6,28 +6,33 @@ import { z } from 'zod'
 
 import {
   BeforeToolHook,
+  BeforeTurnHook,
   EBeforeToolDecision,
+  EContentAccess,
   EPathForm,
   EPathPresence,
   EStage,
   EToolEffect,
+  HOOK_CONTEXT_KEY,
   OnChunkHook,
+  toBranchId,
   toCallId,
   toRunId,
   ToolDefinition,
+  type Assembled,
   type BeforeTool,
   type Chunk,
   type HookOrder,
   type OnChunk,
+  type ProviderPrompt,
 } from '@dltech/atlas-core'
 
 import { createIsolatedContainer, portToken, type DependencyContainer } from '../../container/injection'
 import { WorkspaceRoot } from '../../container/tokens'
-import { createDispatch } from '../../tools/dispatch'
-import { createToolRegistry } from '../../tools/registry'
+import { HookedToolDispatcher } from '../../tools/dispatch'
+import { InMemoryToolRegistry } from '../../tools/registry'
 import { WorkspaceBoundaryHook } from '../boundary'
-import { runOnChunk } from '../registry'
-import { resolveHookRegistry } from '../resolve-hooks'
+import { resolveHookChain } from '../resolve-hooks'
 
 class ChunkHook extends OnChunkHook {
   constructor(
@@ -57,29 +62,38 @@ function containerWith(hooks: readonly OnChunkHook[]): DependencyContainer {
 const guard = (nudge: number): HookOrder => ({ stage: EStage.Guard, nudge })
 const observe = (nudge: number): HookOrder => ({ stage: EStage.Observe, nudge })
 
-describe('resolveHookRegistry', () => {
-  it('gives the same order whichever way round the two hooks are registered', () => {
-    const seen: string[] = []
-    const redaction = observing({ name: 'secret-redaction', order: guard(0), seen })
-    const transcript = observing({ name: 'transcript-log', order: observe(0), seen })
+const text: Chunk = { type: 'text-delta', id: 'block-1', text: 'hello' }
 
-    const forwards = resolveHookRegistry({ container: containerWith([redaction, transcript]) })
-    const backwards = resolveHookRegistry({ container: containerWith([transcript, redaction]) })
+async function namesRun(args: { hooks: readonly OnChunkHook[]; seen: string[] }): Promise<string[]> {
+  await resolveHookChain({ container: containerWith(args.hooks) }).onChunk({ chunk: text })
+  return args.seen
+}
 
-    expect(forwards.onChunk.map((hook) => hook.name)).toEqual(['secret-redaction', 'transcript-log'])
-    expect(backwards.onChunk.map((hook) => hook.name)).toEqual(forwards.onChunk.map((hook) => hook.name))
+describe('resolveHookChain', () => {
+  it('gives the same order whichever way round the two hooks are registered', async () => {
+    const runWith = async (reversed: boolean) => {
+      const seen: string[] = []
+      const redaction = observing({ name: 'secret-redaction', order: guard(0), seen })
+      const transcript = observing({ name: 'transcript-log', order: observe(0), seen })
+      const hooks = reversed ? [transcript, redaction] : [redaction, transcript]
+      return namesRun({ hooks, seen })
+    }
+
+    expect(await runWith(false)).toEqual(['secret-redaction', 'transcript-log'])
+    expect(await runWith(true)).toEqual(['secret-redaction', 'transcript-log'])
   })
 
-  it('breaks a tie on name, so registration order cannot decide it', () => {
-    const seen: string[] = []
-    const zebra = observing({ name: 'zebra', order: guard(50), seen })
-    const alpha = observing({ name: 'alpha', order: guard(50), seen })
+  it('breaks a tie on name, so registration order cannot decide it', async () => {
+    const runWith = async (reversed: boolean) => {
+      const seen: string[] = []
+      const zebra = observing({ name: 'zebra', order: guard(50), seen })
+      const alpha = observing({ name: 'alpha', order: guard(50), seen })
+      const hooks = reversed ? [alpha, zebra] : [zebra, alpha]
+      return namesRun({ hooks, seen })
+    }
 
-    const forwards = resolveHookRegistry({ container: containerWith([zebra, alpha]) })
-    const backwards = resolveHookRegistry({ container: containerWith([alpha, zebra]) })
-
-    expect(forwards.onChunk.map((hook) => hook.name)).toEqual(['alpha', 'zebra'])
-    expect(backwards.onChunk.map((hook) => hook.name)).toEqual(['alpha', 'zebra'])
+    expect(await runWith(false)).toEqual(['alpha', 'zebra'])
+    expect(await runWith(true)).toEqual(['alpha', 'zebra'])
   })
 
   it('drops the chunk before the logger runs, registered either way round', async () => {
@@ -91,8 +105,8 @@ describe('resolveHookRegistry', () => {
       const transcript = observing({ name: 'transcript-log', order: observe(0), seen })
       const hooks = order === 'redaction-first' ? [redaction, transcript] : [transcript, redaction]
 
-      const registry = resolveHookRegistry({ container: containerWith(hooks) })
-      const kept = await runOnChunk({ hooks: registry.onChunk, chunk: delta })
+      const chain = resolveHookChain({ container: containerWith(hooks) })
+      const kept = await chain.onChunk({ chunk: delta })
 
       return { kept, seen }
     }
@@ -101,15 +115,41 @@ describe('resolveHookRegistry', () => {
     expect(await runWith('logger-first')).toEqual({ kept: null, seen: [] })
   })
 
-  it('resolves a phase nobody registered as empty, not as one phantom hook', () => {
-    const registry = resolveHookRegistry({ container: createIsolatedContainer() })
+  it('resolves a phase nobody registered as empty, not as one phantom hook', async () => {
+    const chain = resolveHookChain({ container: createIsolatedContainer() })
+    const assembled: Assembled = { system: [], messages: [] }
+    const prompt: ProviderPrompt = {
+      instructions: [],
+      messages: [],
+      provider: { id: 'test', modelId: 'test' },
+    }
 
-    expect(registry.beforeStep).toEqual([])
-    expect(registry.beforeRequest).toEqual([])
-    expect(registry.beforeTool).toEqual([])
-    expect(registry.afterTool).toEqual([])
-    expect(registry.onChunk).toEqual([])
-    expect(registry.afterTurn).toEqual([])
+    expect(chain.beforeTool).toEqual([])
+    expect(chain.afterTool).toEqual([])
+    expect(await chain.beforeStep({ assembled, trace: [] })).toBe(assembled)
+    expect(await chain.beforeRequest({ prompt })).toBe(prompt)
+    expect(await chain.onChunk({ chunk: text })).toBe(text)
+    expect(await chain.beforeTurn({ branchId: toBranchId('branch-1') })).toEqual([])
+    expect(await chain.afterTurn({ branchId: toBranchId('branch-1') })).toEqual([])
+  })
+
+  it('resolves a registered BeforeTurnHook and slots its context under the name it declares', async () => {
+    class GitStateHook extends BeforeTurnHook {
+      readonly name = 'gitState'
+      readonly order: HookOrder = { stage: EStage.Observe, nudge: 0 }
+      readonly run = async (): Promise<{ additionalContext: string }> => ({
+        additionalContext: '3 files dirty',
+      })
+    }
+
+    const child = createIsolatedContainer()
+    child.register(portToken(BeforeTurnHook), { useClass: GitStateHook })
+
+    const chain = resolveHookChain({ container: child })
+
+    expect(await chain.beforeTurn({ branchId: toBranchId('branch-1') })).toEqual([
+      { type: 'context-loaded', slot: 'gitState', key: HOOK_CONTEXT_KEY, content: '3 files dirty' },
+    ])
   })
 })
 
@@ -141,7 +181,9 @@ function touchTool(invoked: string[]): ToolDefinition {
     description: 'the touch tool',
     effect: EToolEffect.Write,
     inputSchema: z.object({ path: z.string() }),
-    pathFields: [{ field: 'path', presence: EPathPresence.Required, form: EPathForm.Absolute }],
+    pathFields: [
+      { field: 'path', presence: EPathPresence.Required, form: EPathForm.Absolute, content: EContentAccess.Overwrites },
+    ],
     invoke: async ({ input }) => {
       invoked.push(pathOf(input))
       return { ok: true, output: 'touched', modelText: 'touched' }
@@ -161,13 +203,13 @@ describe('the boundary hook threaded ahead of a second hook', () => {
     child.register(portToken(BeforeToolHook), { useClass: WorkspaceBoundaryHook })
     child.register(portToken(BeforeToolHook), { useValue: witness })
 
-    const dispatch = createDispatch({
-      registry: createToolRegistry([touch]),
-      hooks: resolveHookRegistry({ container: child }),
+    const dispatcher = new HookedToolDispatcher({
+      registry: new InMemoryToolRegistry([touch]),
+      hooks: resolveHookChain({ container: child }),
     })
 
     const path = join(link, 'a.ts')
-    const drafts = await dispatch({
+    const drafts = await dispatcher.dispatch({
       call: { callId: toCallId('call-1'), name: 'touch', input: { path }, runId: toRunId('run-1') },
       signal: AbortSignal.timeout(5_000),
     })
@@ -187,12 +229,12 @@ describe('the boundary hook threaded ahead of a second hook', () => {
     child.register(portToken(ToolDefinition), { useValue: touch })
     child.register(portToken(BeforeToolHook), { useClass: WorkspaceBoundaryHook })
 
-    const dispatch = createDispatch({
-      registry: createToolRegistry([touch]),
-      hooks: resolveHookRegistry({ container: child }),
+    const dispatcher = new HookedToolDispatcher({
+      registry: new InMemoryToolRegistry([touch]),
+      hooks: resolveHookChain({ container: child }),
     })
 
-    const drafts = await dispatch({
+    const drafts = await dispatcher.dispatch({
       call: {
         callId: toCallId('call-2'),
         name: 'touch',

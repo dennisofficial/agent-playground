@@ -1,6 +1,6 @@
 import type { BranchId, ChunkFilter, Event, EventOfType, EventRef } from '@dltech/atlas-core'
 
-import { EStepEnd, toStepId, type ChannelSignal, type StepId } from './signal'
+import { EStepEnd, toStepId, type ChannelSignal, type StepId, type StepSignal } from './signal'
 
 export type ChannelListener = (signal: ChannelSignal) => void
 
@@ -21,12 +21,12 @@ export type DeltaChannel = {
 
 type BranchState = {
   listeners: Set<ChannelListener>
-  inFlight: readonly ChannelSignal[]
+  inFlight: readonly StepSignal[]
   stepId: StepId | undefined
   stepsStarted: number
 }
 
-const NOTHING_IN_FLIGHT: readonly ChannelSignal[] = Object.freeze([])
+const NOTHING_IN_FLIGHT: readonly StepSignal[] = Object.freeze([])
 
 const durableAssistantEvent = (events: readonly Event[]): EventOfType<'assistant-said'> | undefined =>
   events.find((event): event is EventOfType<'assistant-said'> => event.type === 'assistant-said')
@@ -66,7 +66,7 @@ export function createDeltaChannel(): DeltaChannel {
     for (const listener of [...args.state.listeners]) listener(args.signal)
   }
 
-  const publish = (args: { state: BranchState; signal: ChannelSignal }) => {
+  const publish = (args: { state: BranchState; signal: StepSignal }) => {
     args.state.inFlight = [...args.state.inFlight, args.signal]
     notify(args)
   }
@@ -84,9 +84,9 @@ export function createDeltaChannel(): DeltaChannel {
     state: BranchState
     end: EStepEnd
     supersededBy: EventRef | null
-  }) => {
+  }): boolean => {
     const stepId = args.state.stepId
-    if (stepId === undefined) return
+    if (stepId === undefined) return false
 
     args.state.stepId = undefined
     args.state.inFlight = NOTHING_IN_FLIGHT
@@ -95,6 +95,7 @@ export function createDeltaChannel(): DeltaChannel {
       signal: { type: 'step-ended', stepId, end: args.end, supersededBy: args.supersededBy },
     })
     forgetIfIdle({ branchId: args.branchId, state: args.state })
+    return true
   }
 
   return {
@@ -132,7 +133,8 @@ export function createDeltaChannel(): DeltaChannel {
           if (state === undefined) return
 
           const durable = durableAssistantEvent(events)
-          endStep({ branchId, state, end: endOf(durable), supersededBy: refOf(durable) })
+          const ended = endStep({ branchId, state, end: endOf(durable), supersededBy: refOf(durable) })
+          if (!ended) notify({ state, signal: { type: 'events-appended' } })
         },
 
         close({ end }) {

@@ -44,6 +44,11 @@ type EventBody =
   | { type: 'approval-answered';  callId: string; decision: EDecision; editedInput?: unknown }
   | { type: 'context-loaded';     slot: string; key: string; content: string; triggeredBy?: string }
   | { type: 'nudge';              text: string; lifetimeSteps: number }
+  | { type: 'background-shell-ended'
+                                  shellId: string; command: string; description?: string
+                                  status: EShellStatus; exitCode?: number
+                                  output: string
+                                  droppedCharacters: number; remainingCharacters: number }
 ```
 
 - **`tool-result.error` distinguishes a crash from a denial.** *Denied* means policy said no; a
@@ -62,14 +67,60 @@ type EventBody =
   can emit a malformed prompt.
 - **`tool-called.ordinal` fixes intra-step ordering.** `seq` alone across two event kinds collapses
   text → tool-call → text into (all text)(all calls).
+- **`background-shell-ended` carries the output rather than a pointer to it.** A shell that outlives
+  its turn has to re-enter the conversation somehow, and the two obvious shapes are both wrong: a
+  `user-said` puts words in the operator's mouth and renders as their message, and a notice saying
+  "read it with `shell_output`" spends a whole model step fetching bytes the harness already held.
+  So the ending is its own arm, projected by `messagesFromEvents` as a `user`-role
+  `<background-shell-ended>` block and rendered by the transcript as an event line. `EShellStatus`
+  lives in `core/shells` for this reason: `core` owns the value unions its event bodies store.
+  The delta is read when the draft is **handed over**, not when the process exits, so an ending that
+  is dropped rather than delivered leaves its output where `shell_output` can still find it.
 - **`nudge.lifetimeSteps` replaces `ephemeral: true`**, which named a property rather than a
   behaviour and forced the core-loop spike to invent semantics that became load-bearing.
+- **`history-compacted` is a watermark, not a replacement.** It records that everything at or below
+  `throughSeq` is represented by `summary`; the rows themselves stay. So the log remains append-only,
+  the transcript still renders what the model can no longer read, and undoing a compaction is the
+  rewind that already exists. Only the prompt projection honours it — `pendingCalls` and
+  `outstandingApproval` read the whole log, so a compacted call is still settled. It carries two
+  fields and no counts or token figures: those are derivable from the rows it did not delete.
 - **`context-loaded` is the general mechanism** for anything the model sees that is not a message: a
   `CLAUDE.md` pulled in because a tool touched a directory beneath it, a skill body, MCP tool
-  descriptions. `key` is the dedup identity.
+  descriptions. `(slot, key)` names the thing; the content decides whether it is the same load.
 
-**`append` is idempotent on `(branchId, slot, key)` for `context-loaded`.** Otherwise every
+**`append` is idempotent on `(branchId, slot, key, content)` for `context-loaded`.** Otherwise every
 context-loading hook reimplements dedup, and one that forgets spams the prompt forever.
+
+**Content is part of the identity, and that is the correction that made reloading possible.** An
+earlier revision keyed on `(branchId, slot, key)` alone. The implementation of that was not an upsert
+but **first-write-wins** — re-offering a key with changed content returned the original event and
+discarded the new content — so a `CLAUDE.md` edited mid-session could never reach the model again on
+that branch, for the life of the branch, as a mechanical fact rather than a policy choice.
+
+Keying on content instead gives every context source the same three properties without any of them
+implementing anything: re-offering unchanged content is a free no-op that leaves the prompt cache
+intact, changed content appends a **new** event, and no row is ever mutated. A source can therefore
+return everything it currently knows on every turn and let the log be the delta. That is what spares
+Atlas the three separate transcript-scanning delta mechanisms Claude Code grew — one each for MCP
+instructions, deferred tools, and agent listings, whose own comments record them as copies of each
+other carrying the same bug.
+
+**Reuse is looked up across the composed view, not the branch's own rows, and that is what keeps a
+reference fork's cache alive.** A sub-agent inheriting its parent's prefix holds none of those rows itself,
+so a lookup scoped to `where: { branchId }` finds nothing, treats an unchanged `CLAUDE.md` as fresh, and
+appends a duplicate — the per-branch unique index does not stop it, because the child's `branchId` differs.
+Nothing renders twice: `currentContextEvents` keys on `(slot, key)` without the digest and the last write
+wins, so the child's copy is the one the prompt carries. The damage is subtler than a duplicate. The file
+moves from the front of the conversation to the tail, so the composed prefix is no longer byte-identical to
+the parent's at the position the parent's copy occupied, every cache anchor after it is dead, and the
+sub-agent pays full input price for the whole inherited history — which is the one cost inheriting by
+reference exists to avoid. So the lookup spans the inherited chain, an unchanged re-offer resolves to the
+**parent's** event, and the child writes no row at all.
+
+The projection renders only the **latest** event per `(slot, key)`, so a changed file supersedes
+rather than accumulates, and arrives at maximum recency. `core/context/supersede.ts` owns that; the
+storage-level identity lives in `harness/store/append-plan.ts`, which digests the content rather than
+keying on it directly so the unique index stays narrow.
 
 ## Log
 
@@ -78,9 +129,28 @@ interface EventLog {
   append(args: { branchId: string; runId: string; drafts: readonly EventDraft[] }): Promise<Event[]>
   read(args: { branchId: string; upTo?: number }): Promise<Event[]>
   head(args: { branchId: string }): Promise<number>
-  forkFrom(args: { branchId: string; seq: number; into: string }): Promise<void>
+  readOwn(args: { branchId: string; upTo?: number }): Promise<Event[]>
 }
 ```
+
+**`read` returns the composed view; `readOwn` returns the branch's own rows.** They are the same thing
+until a branch is forked by reference, at which point the child holds no copy of the prefix it inherits
+and `read` has to stitch the parent's rows up to the fork point onto the child's own. Two readers need
+the difference: assembly and the transcript want the composed view, because that is the conversation;
+anything reasoning about what this branch may *write* wants `readOwn`, because a child must never mutate
+a row it does not own.
+
+**Forking is not on this interface.** It writes a branch row and event rows together, so it has to be one
+transaction over both tables, and it lives on `BranchStorePort.fork({ from, seq, mode, title })` next to
+`rewind` for that reason. `forkFrom` was specified here in an earlier revision and never implemented past
+a `throw`; the mode it lacked — copy for a fork the user keeps, reference for a sub-agent inheriting its
+parent's context — is the whole decision, so specifying it without one was specifying nothing.
+
+**A forked branch's sequences do not start at 1.** `Branch.head` is initialised to the fork point, so the
+child's own rows begin above it and `(branchId, seq)` stays unique per branch while the composed view stays
+monotonic. Every guard that bounds a target therefore bounds against the first sequence actually present,
+not against zero — `rewindTarget` predates this and assumes a floor of 0, which is safe only because a
+rewind target below the first row deletes nothing.
 
 `seq` must be assigned under a per-branch unique constraint or a transaction — array length does not
 survive concurrency, and background agents mean two writers.
@@ -185,6 +255,19 @@ prefix it was meant to protect.
 at escalating pressure and truncates only if the whole ladder fails. In-pipeline it overshot a
 1500-token budget down to 176 — discarding 92% of remaining context — because the only safe move for
 a pure function is dropping a whole turn group. The controller kept 26 messages where the rule kept 7.
+`core/budget/resolveBudget` is that controller: it walks a recency ladder, and measures each rung by
+re-assembling a previewed event list rather than by estimating arithmetically, so what it promises is
+what the next request will actually carry. It returns a recommendation — `fits`, `compact` or
+`exhausted` — because producing the summary is a model call and the controller is pure.
+
+**`compactedHistory` is the second content rule, and it elides by `origin.seq`.** That is the whole
+reason `AssembledMessage` carries provenance: the rule needs no knowledge of how `messagesFromEvents`
+grouped anything, so compaction cost that file no edits. It filters messages at or below the deepest
+watermark, prepends the summary as a user message wrapped in a `<system-reminder>` — never a system
+block, which would move the cached prefix — and carries `context-loaded` messages across the watermark
+regardless of their seq, because those are current content rather than history. It also drops a leading
+`role: 'tool'` message, so a watermark authored outside the guard cannot produce an exchange
+`exchangeFaults` would have to reject.
 
 **`onRuleFailure`.** One throwing rule must not kill the turn; under `SkipRule` its input passes
 through and the failure is recorded on the trace. Degraded context beats a dead turn. It defaults to
@@ -212,16 +295,35 @@ Anthropic's signature actually lands — and must be written back under the requ
 ```ts
 enum EStage { Guard, Policy, Observe }
 
+type HookOutcome = { additionalContext?: string; drafts?: readonly EventDraft[] }
+
+type BeforeTurn    = (args: { branchId: string }) => Promise<HookOutcome>
 type BeforeStep    = (args: { assembled: Assembled; trace: AssemblyTrace }) => Promise<Assembled>  // persists
 type BeforeRequest = (p: ProviderPrompt) => Promise<ProviderPrompt>          // transient, per-provider
 type BeforeTool    = (args: { call: ToolCall }) => Promise<BeforeToolOutcome>
-type AfterTool     = (args: { call: ToolCall; result: ToolOutcome }) => Promise<EventDraft[]>
+type AfterTool     = (args: { call: ToolCall; result: ToolOutcome }) => Promise<HookOutcome>
 type OnChunk       = (c: Chunk) => Promise<Chunk | null>
-type AfterTurn     = (args: { branchId: string }) => Promise<EventDraft[]>
+type AfterTurn     = (args: { branchId: string }) => Promise<HookOutcome>
 
 type ToolCall = { callId: string; name: string; input: unknown; effect: EToolEffect }
 ```
 
+- **A draft-returning hook returns `HookOutcome`, not `EventDraft[]`.** `drafts` is the old return
+  value unchanged. `additionalContext` is the shorter road for the common case — a hook with something
+  to *tell the model* rather than an event to record — and `hookOutcomeDrafts` in `core/hooks` renders
+  it as a `context-loaded` draft with `slot` = the hook's name and `key` = `'additional-context'`.
+  That is not a convenience wrapper over a free choice of event: `context-loaded` is the only body the
+  prompt projection renders *and* dedupes *and* supersedes, and all three are what "here is my current
+  extra context" needs. Byte-identical context reappends to nothing, changed context replaces what the
+  hook said last time, and a hook can never bury the prompt under its own history. Blank context is
+  dropped rather than spent on an empty `<system-reminder>`.
+- **`BeforeTurn` is the mirror of `AfterTurn`** — once per turn, before the first assembly, so what it
+  loads is in the prompt the turn opens with. It sits *outside* the loop rather than behind the
+  awaits-a-reply check `AfterTurn` sits on the far side of, because context loaded after assembly is
+  context the step never saw. The asymmetry is deliberate and cheap: `AfterTurn` gated itself to stop
+  turn-taking drafts restarting the loop it closes, a hazard `BeforeTurn` does not have, and a turn
+  that goes on to return `Idle` has already had its `BeforeTurn` fire — which costs nothing when the
+  hook uses `additionalContext`, since identical content dedupes to the event already in the log.
 - **`BeforeStep` and `BeforeRequest` are different seams** — the first persists to the record, the
   second is a transient per-provider rewrite. Adopted from Mastra, whose split proved real.
 - **`BeforeStep` carries the assembly trace.** It runs at the one point where the trace still exists,
@@ -230,6 +332,17 @@ type ToolCall = { callId: string; name: string; input: unknown; effect: EToolEff
   observation seam for that would be inventing a seam this one already is.
 - **`effect` is on the call.** Otherwise every guard hook injects the tool registry to learn whether
   a tool mutates.
+- **Concurrency safety is on the declaration, keyed by input.** `isConcurrencySafe?(input)` is optional
+  on `ToolDeclaration`, absent means unsafe, and `isConcurrencySafeCall` fails closed on an unregistered
+  tool, a schema-parse failure or a throwing predicate. It is typed `(input: z.output<TSchema>) => boolean`
+  on `ToolDefinition` and erased to `(input: unknown) => boolean` on `ToolDeclaration`; the erased side
+  is declared with **method syntax** deliberately, because a property-syntax optional would make a
+  specifically-typed implementation unassignable under `strictFunctionTypes`.
+- **A Write or Destructive tool is never concurrency-safe, whatever it declares.** `isConcurrencySafeCall`
+  short-circuits on effect before consulting the predicate. `dispatch` snapshots the workspace before
+  such a tool runs, and a snapshot means "the tree before this call" — concurrent writers capture each
+  other's partial state and rewind-to-before-this-call stops being true. Making this structural rather
+  than conventional is what stops a later tool reintroducing the hazard by opting in.
 - **Ordering is by named stage**, with a numeric nudge within a stage. Bare integers work at three
   hooks and rot at thirty, where two authors both pick 50 and an alphabetical tiebreak silently
   decides security policy. `OnChunk` order is a **security** constraint: a hook returning `null` drops
@@ -238,6 +351,14 @@ type ToolCall = { callId: string; name: string; input: unknown; effect: EToolEff
   hook, it asks again, and the turn pauses forever.
 - **Conflicting `BeforeTool` outcomes resolve by severity: deny > ask > allow.** Every hook is
   consulted, nobody short-circuits, and all dissenters are named so the UI can say who blocked what.
+- **Hooks see one call at a time rather than a batch, and partitioning happens before them.** A step's
+  calls are folded into concurrent runs before `dispatch`, so `isConcurrencySafe` reads the raw logged
+  input, and a `BeforeTool` hook that rewrites input cannot move a call between batches. The gap this
+  leaves — a guard that must reason about two calls of one step together — is closed today only by the
+  effect rule above keeping every world-changing call in a batch of one.
+- **A batch has no size limit.** `partitionToolCalls` takes no cap: admission is the predicate and
+  nothing else. A number here would only ever bite a step the model deliberately fanned out, and the
+  effect rule already means every call in a batch is read-only.
 - **Input threading is order-dependent even though the verdict is not.** Any harness letting hooks
   rewrite tool input needs a stated normalisation contract — two individually-correct hooks disagreed
   about whether a path was `/var` or `/private/var` and silently killed context injection on every
@@ -254,12 +375,44 @@ every hook is consulted, none short-circuits, deny > ask > allow, `dissenters` n
 returned Ask or Deny, and input threads sequentially so the winning Allow carries the last Allow's
 input. `orderHooks` in `core/hooks` is the stage-then-nudge-then-**name** ordering; the name tiebreak
 is not garnish, it is what stops two authors both picking nudge 50 and getting an ordering decided by
-array-literal position. `harness/tools/dispatch.ts` is the only caller of either, and it dispatches
-`BeforeTool` and `AfterTool` only — the other four phases stay typed and unwired.
+array-literal position. `harness/tools/dispatch.ts` is the only caller of either. It is now the `ToolDispatcher` port with a
+`HookedToolDispatcher` adapter, and it dispatches `BeforeTool` and `AfterTool`. The remaining phases
+are wired elsewhere rather than unwired: `harness/hooks/registry.ts` is a `HookChain` class whose
+`beforeTurn`, `beforeStep`, `beforeRequest`, `onChunk` and `afterTurn` methods are called by
+`LoopTurnRunner` and `AiSdkModelPort`.
 
 **`dissenters` is computed and currently discarded.** `tool-denied` carries only `reason`, so the
 "UI can say who blocked what" purpose is unmet until that event grows a field. Recorded so it reads
 as a known gap rather than an oversight.
+
+**Read before write is a guard hook plus a recorder, and `AfterTool` has a producer at last.**
+`ReadBeforeWriteHook` (`EStage.Guard`, nudge 1 — after containment at nudge 0, so an escaping path is
+refused for escaping) denies a write to a file with no recorded view, one whose `mtimeMs` or `size` no
+longer match disk, or — for a whole-file replace only — one where the model saw a window. A path that
+does not exist is allowed: creating a file destroys nothing, and refusing it would make `write` to a new
+path and `edit` with an empty `oldString` impossible. `RecordFileStateHook` (`EStage.Observe`) fills
+the notebook after a successful call and is the **first registration of `AfterToolHook`** in the repo.
+
+**Which tools this applies to is declared, never inferred.** `DeclaredPathField.content` is an
+`EContentAccess` of `None | Reads | Amends | Overwrites`. `EToolEffect` cannot answer it: it
+over-selects, since a future `mkdir` or `move` is `Write` and must not demand a prior read, and
+`grep`/`glob` are `Read` while showing only fragments. `Amends` and `Overwrites` are separate members
+because their safe preconditions differ — `edit` matches `oldString` against freshly read bytes and
+fails if absent or ambiguous, so its blast radius is bounded by a string the model provably saw, while
+`write` replaces every byte and gets no such bound. Collapsing them into one value forces the guard to
+branch on `call.name`, which is the table `pathFields` exists to have deleted.
+
+**Whether a read showed the whole file is answered by the tool, not read off its input.**
+`ToolDeclaration.revealsWholeFile?(input)` is optional and defaults, at the call site, to `false`. A
+guard reading `offset`/`limit` field names itself would silently credit a future reader using
+`startLine`/`maxLines` with a whole-file view, which is the same fail-open one step along. The
+predicate may **under-claim** and must never **over-claim**: a generous `limit` that happened to return
+everything reads as a window, so the model re-reads. That direction is free; the other destroys files.
+
+**A guard that cannot verify must deny.** `stat(path).catch(() => null)` collapses "absent" and "not
+permitted to look" into one value, making a guard strongest against the benign case and weakest against
+the suspicious one. The read-before-write gate distinguishes three states: absent allows, present
+continues, and unverifiable denies while naming the errno.
 
 **Tool input is validated twice, and neither is redundant.** `dispatch` parses `call.input` against
 the declaration's schema *before* the `BeforeTool` chain, which turns a malformed call into one

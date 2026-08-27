@@ -8,7 +8,7 @@ import {
   type EventEnvelope,
   type EventRef,
 } from '@dltech/atlas-core'
-import { EStepEnd, toStepId, type ChannelSignal, type StepId } from '@dltech/atlas-harness'
+import { EStepEnd, toStepId, type StepId, type StepSignal } from '@dltech/atlas-harness'
 
 import { EEntryKind, type TranscriptEntry, type TranscriptModel } from '../transcript-model'
 
@@ -34,15 +34,15 @@ export const refTo = (event: Event): EventRef => ({ eventId: event.id, seq: even
 export const stepOne: StepId = toStepId('step-1')
 export const stepTwo: StepId = toStepId('step-2')
 
-export const started = (stepId: StepId): ChannelSignal => ({ type: 'step-started', stepId })
+export const started = (stepId: StepId): StepSignal => ({ type: 'step-started', stepId })
 
-export const textDelta = (args: { stepId: StepId; blockId: string; text: string }): ChannelSignal => ({
+export const textDelta = (args: { stepId: StepId; blockId: string; text: string }): StepSignal => ({
   type: 'chunk',
   stepId: args.stepId,
   chunk: { type: 'text-delta', id: args.blockId, text: args.text },
 })
 
-export const reasoningDelta = (args: { stepId: StepId; blockId: string; text: string }): ChannelSignal => ({
+export const reasoningDelta = (args: { stepId: StepId; blockId: string; text: string }): StepSignal => ({
   type: 'chunk',
   stepId: args.stepId,
   chunk: { type: 'reasoning-delta', id: args.blockId, text: args.text },
@@ -52,7 +52,7 @@ export const ended = (args: {
   stepId: StepId
   end: EStepEnd
   supersededBy: EventRef | null
-}): ChannelSignal => ({
+}): StepSignal => ({
   type: 'step-ended',
   stepId: args.stepId,
   end: args.end,
@@ -61,8 +61,17 @@ export const ended = (args: {
 
 export const fromTheModel = (model: TranscriptModel) =>
   model.entries.filter(
-    (entry): entry is Exclude<TranscriptEntry, { kind: EEntryKind.OperatorSaid }> =>
-      entry.kind !== EEntryKind.OperatorSaid,
+    (
+      entry,
+    ): entry is Exclude<
+      TranscriptEntry,
+      | { kind: EEntryKind.OperatorSaid }
+      | { kind: EEntryKind.HistoryCompacted }
+      | { kind: EEntryKind.BackgroundShellEnded }
+    > =>
+      entry.kind !== EEntryKind.OperatorSaid &&
+      entry.kind !== EEntryKind.HistoryCompacted &&
+      entry.kind !== EEntryKind.BackgroundShellEnded,
   )
 
 export const fromTheOperator = (model: TranscriptModel) =>

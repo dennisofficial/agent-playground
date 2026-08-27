@@ -79,7 +79,7 @@ describe('assemble', () => {
       ctx: contextFor({ events: exchange }),
     })
 
-    expect(defaultRules().at(-1)?.ruleName).toBe('messagesFromEvents')
+    expect(defaultRules().at(-1)?.ruleName).toBe('compactedHistory')
     expect(assembled.system.map((block) => block.text)).toEqual([MINIMAL_PREAMBLE])
     expect(assembled.messages).toEqual([])
     expect(trace.at(-1)).toMatchObject({

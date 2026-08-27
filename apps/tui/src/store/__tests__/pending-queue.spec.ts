@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 
-import { createPendingQueue } from '../pending-queue'
+import { createPendingQueue, trailingSaid } from '../pending-queue'
+import { log } from './fixture'
 
 const textsOf = (queue: { getSnapshot: () => readonly { text: string }[] }) =>
   queue.getSnapshot().map((message) => message.text)
@@ -21,7 +22,58 @@ describe('the queue a message waits in until the loop takes it', () => {
     queue.enqueue({ text: 'second' })
 
     expect(queue.drain()).toEqual(['first', 'second'])
+    expect(queue.drain()).toEqual([])
+  })
+
+  it('keeps showing what it handed over, so the message is never off the screen', () => {
+    const queue = createPendingQueue()
+    queue.enqueue({ text: 'first' })
+    queue.drain()
+
+    expect(textsOf(queue)).toEqual(['first'])
+  })
+
+  it('lets it go once the log it was handed to has it', () => {
+    const queue = createPendingQueue()
+    queue.enqueue({ text: 'first' })
+    queue.drain()
+
+    queue.settleTaken({ landed: ['first'] })
+
     expect(textsOf(queue)).toEqual([])
+  })
+
+  it('lets it go when the turn that carried it opened with a message of its own', () => {
+    const queue = createPendingQueue()
+    queue.enqueue({ text: 'queued' })
+    queue.drain()
+
+    queue.settleTaken({ landed: ['queued', 'and this one'] })
+
+    expect(textsOf(queue)).toEqual([])
+  })
+
+  it('holds on when the read that came back does not have it yet', () => {
+    const queue = createPendingQueue()
+    queue.enqueue({ text: 'first' })
+    queue.drain()
+
+    queue.settleTaken({ landed: [] })
+    queue.settleTaken({ landed: ['something else'] })
+
+    expect(textsOf(queue)).toEqual(['first'])
+  })
+
+  it('shows what it handed over ahead of what is still waiting', () => {
+    const queue = createPendingQueue()
+    queue.enqueue({ text: 'taken' })
+    queue.drain()
+    queue.enqueue({ text: 'waiting' })
+
+    expect(textsOf(queue)).toEqual(['taken', 'waiting'])
+
+    queue.settleTaken({ landed: ['taken'] })
+    expect(textsOf(queue)).toEqual(['waiting'])
   })
 
   it('returns nothing to a second drain, so a message is never sent twice', () => {
@@ -74,11 +126,12 @@ describe('the queue a message waits in until the loop takes it', () => {
     queue.takeBackLast()
     queue.enqueue({ text: 'two' })
     queue.drain()
-    expect(told).toBe(4)
+    queue.settleTaken({ landed: ['two'] })
+    expect(told).toBe(5)
 
     leave()
     queue.enqueue({ text: 'unheard' })
-    expect(told).toBe(4)
+    expect(told).toBe(5)
   })
 
   it('stays quiet when a drain finds nothing, so an idle loop does not re-render the app', () => {
@@ -90,6 +143,7 @@ describe('the queue a message waits in until the loop takes it', () => {
 
     queue.drain()
     queue.drain()
+    queue.settleTaken({ landed: ['nothing of ours'] })
     queue.clear()
 
     expect(told).toBe(0)
@@ -104,6 +158,17 @@ describe('the queue a message waits in until the loop takes it', () => {
 
     queue.enqueue({ text: 'two' })
     expect(queue.getSnapshot()).not.toBe(first)
+  })
+
+  it('reads what landed off the tail of the log, not off the whole of it', () => {
+    const events = log([
+      { type: 'user-said', text: 'said long ago' },
+      { type: 'assistant-said', parts: [{ type: 'text', text: 'answered' }] },
+      { type: 'user-said', text: 'are' },
+      { type: 'user-said', text: 'you?' },
+    ])
+
+    expect(trailingSaid(events)).toEqual(['are', 'you?'])
   })
 
   it('gives every queued message its own key, so two identical ones still render apart', () => {

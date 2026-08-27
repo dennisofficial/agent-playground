@@ -7,11 +7,11 @@ import { z } from 'zod'
 
 import { defaultPipeline, EToolEffect, MINIMAL_PREAMBLE, toCallId, type ToolDefinition } from '@dltech/atlas-core'
 
-import { buildHarness, createTurnRunner, ETurnStatus, type AtlasHarness, type TurnRunner } from '..'
+import { buildHarness, ETurnStatus, LoopTurnRunner, TurnRunner, type AtlasHarness } from '..'
 import { scriptedModel, type ScriptedStep } from '../../model/testing/scripted-model'
-import { createHookRegistry } from '../../hooks/registry'
-import { createDispatch, type Dispatch } from '../../tools/dispatch'
-import { createToolRegistry } from '../../tools/registry'
+import { HookChain } from '../../hooks/registry'
+import { HookedToolDispatcher, type ToolDispatcher } from '../../tools/dispatch'
+import { InMemoryToolRegistry } from '../../tools/registry'
 import { createTempDatabase, type TempDatabase } from './temp-database'
 
 const opened: { harness: AtlasHarness; temp: TempDatabase }[] = []
@@ -193,14 +193,14 @@ describe('a turn that settles its own tool call', () => {
     })
     opened.push({ harness, temp })
 
-    const registry = createToolRegistry([writeToolIn(root)])
-    const runner = createTurnRunner({
+    const registry = new InMemoryToolRegistry([writeToolIn(root)])
+    const runner = new LoopTurnRunner({
       log: harness.log,
       model: harness.model,
       ids: harness.ids,
       assembly: defaultPipeline(),
       tools: registry.declarations(),
-      dispatch: createDispatch({ registry, hooks: createHookRegistry({}) }),
+      dispatch: new HookedToolDispatcher({ registry, hooks: new HookChain({}) }),
     })
     const branch = await harness.branches.create({})
 
@@ -220,7 +220,7 @@ describe('a turn that settles its own tool call', () => {
   })
 })
 
-async function runnerDispatchingWith(dispatch: Dispatch): Promise<{ runner: TurnRunner; harness: AtlasHarness }> {
+async function runnerDispatchingWith(dispatch: ToolDispatcher): Promise<{ runner: TurnRunner; harness: AtlasHarness }> {
   const temp = createTempDatabase()
   const harness = await buildHarness({
     databaseUrl: temp.databaseUrl,
@@ -232,7 +232,7 @@ async function runnerDispatchingWith(dispatch: Dispatch): Promise<{ runner: Turn
 
   return {
     harness,
-    runner: createTurnRunner({
+    runner: new LoopTurnRunner({
       log: harness.log,
       model: harness.model,
       ids: harness.ids,
@@ -244,9 +244,11 @@ async function runnerDispatchingWith(dispatch: Dispatch): Promise<{ runner: Turn
 
 describe('a turn whose settlement does not finish', () => {
   it('pauses on the call the settlement asked a human about', async () => {
-    const { runner, harness } = await runnerDispatchingWith(async ({ call }) => [
-      { type: 'approval-requested', callId: call.callId, reason: 'read needs a human' },
-    ])
+    const { runner, harness } = await runnerDispatchingWith({
+      dispatch: async ({ call }) => [
+        { type: 'approval-requested', callId: call.callId, reason: 'read needs a human' },
+      ],
+    })
     const branch = await harness.branches.create({})
 
     const outcome = await runner.say({ branchId: branch.id, text: 'read a.ts' })
@@ -258,9 +260,11 @@ describe('a turn whose settlement does not finish', () => {
 
   it('reports an interruption rather than spinning when the settlement was cut short', async () => {
     const controller = new AbortController()
-    const { runner, harness } = await runnerDispatchingWith(async ({ call }) => {
-      controller.abort()
-      return [{ type: 'tool-result', callId: call.callId, name: call.name, output: 'read', modelText: 'read' }]
+    const { runner, harness } = await runnerDispatchingWith({
+      dispatch: async ({ call }) => {
+        controller.abort()
+        return [{ type: 'tool-result', callId: call.callId, name: call.name, output: 'read', modelText: 'read' }]
+      },
     })
     const branch = await harness.branches.create({})
 

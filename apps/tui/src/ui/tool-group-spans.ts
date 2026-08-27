@@ -8,7 +8,7 @@ import {
 import type { Span } from './components/spans'
 import { cellsOf } from './hint-layout'
 import { formatElapsed, theme } from './theme'
-import { affordanceFor, toneColour } from './tool-verbs'
+import { toneColour } from './tool-verbs'
 
 const MINUS = '−'
 
@@ -103,22 +103,10 @@ function countedSpans(args: { group: ToolGroup; cells: number }): Span[] {
   return directorySpans(args)
 }
 
-export function settledDetail(args: {
-  group: ToolGroup
-  now: number
-  inner: number
-  expandable: boolean
-  expanded: boolean
-}): Span[] {
-  const affordance =
-    args.expandable && !args.expanded
-      ? [{ text: affordanceFor(args.group.verb), fg: theme.hint }]
-      : []
-
+export function settledDetail(args: { group: ToolGroup; now: number; inner: number }): Span[] {
   return joined([
     countedSpans({ group: args.group, cells: Math.floor(args.inner / 2) }),
     elapsedSpans({ group: args.group, now: args.now }),
-    affordance,
   ])
 }
 

@@ -25,7 +25,7 @@ describe('typing while the turn is running', () => {
       mounted.pressEnter()
 
       const running = await until({
-        holds: async () => (await mounted.frame()).includes('Working for'),
+        holds: async () => (await mounted.frame()).includes('Thinking for'),
         within: 20_000,
       })
       expect(running).toBe(true)
@@ -61,7 +61,7 @@ describe('typing while the turn is running', () => {
       mounted.pressEnter()
 
       const running = await until({
-        holds: async () => (await mounted.frame()).includes('Working for'),
+        holds: async () => (await mounted.frame()).includes('Thinking for'),
         within: 20_000,
       })
       expect(running).toBe(true)
@@ -100,7 +100,7 @@ describe('typing while the turn is running', () => {
       mounted.pressEnter()
 
       const running = await until({
-        holds: async () => (await mounted.frame()).includes('Working for'),
+        holds: async () => (await mounted.frame()).includes('Thinking for'),
         within: 20_000,
       })
       expect(running).toBe(true)
@@ -119,8 +119,49 @@ describe('typing while the turn is running', () => {
       mounted.pressUp()
       await mounted.frame()
 
-      expect(mounted.app.pending.getSnapshot()).toEqual([])
+      expect(mounted.app.pending.takeBackLast()).toBeNull()
       expect(await mounted.frame()).not.toContain(TAKE_BACK)
+    } finally {
+      await mounted.done()
+    }
+  }, 60_000)
+
+  it('never blanks the message between the loop taking it and the transcript showing it', async () => {
+    const mounted = await open({ app: slowly() })
+
+    try {
+      await mounted.typeText('start')
+      mounted.pressEnter()
+
+      const running = await until({
+        holds: async () => (await mounted.frame()).includes('Thinking for'),
+        within: 20_000,
+      })
+      expect(running).toBe(true)
+
+      await mounted.typeText(STEER)
+      mounted.pressEnter()
+
+      const queued = await until({
+        holds: async () => (await mounted.frame()).includes(TAKE_BACK),
+        within: 20_000,
+      })
+      expect(queued).toBe(true)
+
+      let blanked = 0
+      const shown = await until({
+        holds: async () => {
+          const frame = await mounted.frame()
+          if (!frame.includes(STEER)) blanked += 1
+          const events = await mounted.app.log.read({ branchId: BRANCH })
+          const landed = events.some((event) => event.type === 'user-said' && event.text === STEER)
+          return landed && frame.includes(STEER) && !frame.includes(TAKE_BACK)
+        },
+        within: 20_000,
+      })
+
+      expect(shown).toBe(true)
+      expect(blanked).toBe(0)
     } finally {
       await mounted.done()
     }
@@ -134,7 +175,7 @@ describe('typing while the turn is running', () => {
       mounted.pressEnter()
 
       const running = await until({
-        holds: async () => (await mounted.frame()).includes('Working for'),
+        holds: async () => (await mounted.frame()).includes('Thinking for'),
         within: 20_000,
       })
       expect(running).toBe(true)
@@ -152,8 +193,16 @@ describe('typing while the turn is running', () => {
       })
 
       expect(consumed).toBe(true)
-      expect(mounted.app.pending.getSnapshot()).toEqual([])
       expect(mounted.app.turnsDriven).toBe(1)
+
+      const released = await until({
+        holds: async () => {
+          await mounted.frame()
+          return mounted.app.pending.getSnapshot().length === 0
+        },
+        within: 20_000,
+      })
+      expect(released).toBe(true)
 
       const events = await mounted.app.log.read({ branchId: BRANCH })
       const kinds = events.map((event) => event.type)

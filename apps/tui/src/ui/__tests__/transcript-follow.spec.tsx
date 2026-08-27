@@ -5,7 +5,14 @@ import React, { act } from 'react'
 
 import { grammarsReady, settle, teardown } from '../markdown/__tests__/harness'
 import { theme } from '../theme'
-import { drawn, HEIGHT, LAST_WORDS, SETTLED, SizedTranscript } from './transcript-fixture'
+import {
+  drawn,
+  HEIGHT,
+  LAST_WORDS,
+  SETTLED,
+  SendingTranscript,
+  SizedTranscript,
+} from './transcript-fixture'
 
 await grammarsReady()
 
@@ -130,6 +137,31 @@ describe('the transcript follows the newest output', () => {
 
       await hover({ setup, x: 1, y: 1 })
       expect(pillColour(setup.captureSpans(), row)?.equals(parseColor(theme.hover))).toBe(true)
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
+  it('takes what the operator sends back to the newest output', async () => {
+    const setup = await testRender(<SendingTranscript model={SETTLED} />, {
+      width: 80,
+      height: SHORT,
+    })
+    try {
+      await drawn(setup)
+      for (let wheel = 0; wheel < 6; wheel += 1) await setup.mockMouse.scroll(20, 5, 'up')
+      await settle(LONGER_THAN_ONE_FOLLOW_POLL_MS)
+      expect(await drawn(setup)).toContain(JUMP)
+
+      await act(async () => {
+        setup.mockInput.pressEnter()
+        await setup.flush()
+      })
+      await settle(LONGER_THAN_ONE_FOLLOW_POLL_MS)
+
+      const landed = await drawn(setup)
+      expect(landed).toContain(LAST_WORDS)
+      expect(landed).not.toContain(JUMP)
     } finally {
       await teardown(setup)
     }

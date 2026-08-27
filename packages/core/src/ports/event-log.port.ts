@@ -15,5 +15,5 @@ export abstract class EventLogPort {
 
   abstract head(args: { branchId: BranchId }): Promise<number>
 
-  abstract forkFrom(args: { branchId: BranchId; seq: number; into: BranchId }): Promise<void>
+  abstract readOwn(args: { branchId: BranchId; upTo?: number }): Promise<Event[]>
 }

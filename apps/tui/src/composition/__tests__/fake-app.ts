@@ -11,14 +11,18 @@ import {
   type ModelStepResult,
   type SettingsDocument,
 } from '@dltech/atlas-core'
+import type { EventDraft } from '@dltech/atlas-core'
+
 import {
   createDeltaChannel,
-  createPublishingTurnRunner,
   createSettingsService,
   MemorySettingsStore,
   ModelStreamError,
+  PublishingTurnRunner,
   RandomIds,
+  ShellRegistryPort,
   type DeltaChannel,
+  type ShellSnapshot,
 } from '@dltech/atlas-harness'
 
 import { createPendingQueue } from '../../store'
@@ -131,36 +135,154 @@ export function failingThenStallingModelPort(args: { message: string }): ModelPo
   }
 }
 
+export type FakeShells = ShellRegistryPort & {
+  place: (snapshot: ShellSnapshot) => void
+  announce: (snapshot: ShellSnapshot) => void
+  readonly killed: readonly string[]
+}
+
+const NO_NOTICES: readonly ShellSnapshot[] = Object.freeze([])
+
+export function fakeShellRegistry(): FakeShells {
+  const snapshots: ShellSnapshot[] = []
+  const killed: string[] = []
+  const listeners = new Set<() => void>()
+  let ended: readonly ShellSnapshot[] = NO_NOTICES
+
+  const settle = (next: readonly ShellSnapshot[]): void => {
+    ended = next
+    for (const listener of [...listeners]) listener()
+  }
+
+  const find = (shellId: string): ShellSnapshot | undefined =>
+    snapshots.find((snapshot) => snapshot.shellId === shellId)
+
+  return {
+    get killed() {
+      return killed
+    },
+
+    place: (snapshot) => {
+      snapshots.push(snapshot)
+    },
+
+    announce: (snapshot) => {
+      snapshots.push(snapshot)
+      settle([...ended, snapshot])
+    },
+
+    start: () => ({ ok: false, reason: 'the fake registry starts no processes' }),
+
+    read: ({ shellId }) => {
+      const snapshot = find(shellId)
+      if (snapshot === undefined) return { ok: false, reason: `no shell ${shellId}` }
+      return {
+        ok: true,
+        snapshot,
+        delta: { text: '', droppedCharacters: 0, remainingCharacters: 0 },
+      }
+    },
+
+    peek: ({ shellId }) => (find(shellId) === undefined ? undefined : `output of ${shellId}`),
+
+    kill: ({ shellId }) => {
+      const snapshot = find(shellId)
+      if (snapshot === undefined) return { ok: false, reason: `no shell ${shellId}` }
+      killed.push(shellId)
+      return { ok: true, snapshot }
+    },
+
+    list: () => snapshots,
+
+    drainNotifications: () => {
+      const handed = ended
+      if (handed.length === 0) return []
+
+      settle(NO_NOTICES)
+      return handed.map(
+        (snapshot): EventDraft => ({
+          type: 'background-shell-ended',
+          shellId: snapshot.shellId,
+          command: snapshot.command,
+          description: snapshot.description,
+          status: snapshot.status,
+          exitCode: snapshot.exitCode,
+          output: `output of ${snapshot.shellId}`,
+          droppedCharacters: 0,
+          remainingCharacters: 0,
+        }),
+      )
+    },
+
+    pendingNotices: () => ended,
+
+    onNotice: (listener) => {
+      listeners.add(listener)
+      return () => void listeners.delete(listener)
+    },
+
+    forgetNotices: () => {
+      if (ended.length === 0) return
+      settle(NO_NOTICES)
+    },
+
+    closeAll: async () => {},
+  }
+}
+
 export type FakeApp = AtlasApp & {
   channel: DeltaChannel
+  shells: FakeShells
   log: FakeEventLog
   branches: FakeBranchStore
   readonly turnsDriven: number
+  readonly titled: readonly string[]
 }
 
-export function fakeApp(args: { model: ModelPort; settings?: SettingsDocument }): FakeApp {
+export function fakeApp(args: {
+  model: ModelPort
+  settings?: SettingsDocument
+  names?: string | null
+  summarises?: string | null
+}): FakeApp {
   const channel = createDeltaChannel()
   const log = fakeEventLog()
   const branches = fakeBranchStore({ log })
   const ids = new RandomIds()
   const pending = createPendingQueue()
-  const runner = createPublishingTurnRunner({
+  const shells = fakeShellRegistry()
+  const runner = new PublishingTurnRunner({
     channel,
     deps: {
       log,
       model: args.model,
       ids,
       assembly: defaultPipeline(),
-      drainPending: async () => pending.drain(),
+      drainPending: async () =>
+        pending.drain().map((text): EventDraft => ({ type: 'user-said', text })),
     },
   })
 
   let turnsDriven = 0
+  const titled: string[] = []
 
   return {
     get turnsDriven() {
       return turnsDriven
     },
+
+    get titled() {
+      return titled
+    },
+
+    markActiveBranch: () => undefined,
+
+    titler: async ({ text }) => {
+      titled.push(text)
+      return args.names ?? null
+    },
+
+    summarise: async () => args.summarises ?? null,
 
     config: FAKE_CONFIG,
     credentials: alwaysAuthorised(),
@@ -169,6 +291,7 @@ export function fakeApp(args: { model: ModelPort; settings?: SettingsDocument })
     branches,
     ids,
     pending,
+    shells,
     model: heldChoice({ modelId: FAKE_CONFIG.modelId ?? DEFAULT_MODEL_ID, effort: EEffort.Medium }),
     settings: createSettingsService({
       definitions: ATLAS_SETTINGS,

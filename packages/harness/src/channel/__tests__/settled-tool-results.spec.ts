@@ -3,13 +3,13 @@ import { z } from 'zod'
 
 import { defaultPipeline, EToolEffect, type Event, type ToolDefinition } from '@dltech/atlas-core'
 
-import { createDeltaChannel, createPublishingTurnRunner, type DeltaChannel } from '..'
+import { createDeltaChannel, PublishingTurnRunner, type DeltaChannel } from '..'
 import { buildHarness, ETurnStatus, type AtlasHarness } from '../../loop'
 import { createTempDatabase, type TempDatabase } from '../../loop/__tests__/temp-database'
 import { scriptedModel } from '../../model/testing/scripted-model'
-import { createHookRegistry } from '../../hooks/registry'
-import { createDispatch } from '../../tools/dispatch'
-import { createToolRegistry } from '../../tools/registry'
+import { HookChain } from '../../hooks/registry'
+import { HookedToolDispatcher } from '../../tools/dispatch'
+import { InMemoryToolRegistry } from '../../tools/registry'
 
 const opened: { harness: AtlasHarness; temp: TempDatabase }[] = []
 
@@ -66,9 +66,9 @@ describe('a turn that settles a tool call', () => {
     })
     opened.push({ harness, temp })
 
-    const registry = createToolRegistry([readTool])
+    const registry = new InMemoryToolRegistry([readTool])
     const { channel, announced } = announcing(createDeltaChannel())
-    const runner = createPublishingTurnRunner({
+    const runner = new PublishingTurnRunner({
       channel,
       deps: {
         log: harness.log,
@@ -76,7 +76,7 @@ describe('a turn that settles a tool call', () => {
         ids: harness.ids,
         assembly: defaultPipeline(),
         tools: registry.declarations(),
-        dispatch: createDispatch({ registry, hooks: createHookRegistry({}) }),
+        dispatch: new HookedToolDispatcher({ registry, hooks: new HookChain({}) }),
       },
     })
     const branch = await harness.branches.create({})

@@ -8,7 +8,7 @@ import {
   type ProviderIdentity,
 } from '@dltech/atlas-core'
 
-import { createAiSdkModelPort } from '../ai-sdk-model-port'
+import { AiSdkModelPort, type AiSdkModelPortArgs } from '../ai-sdk-model-port'
 import { interruptibleModel } from '../testing/interruptible-model'
 import { raisingModel } from '../testing/raising-model'
 import { scriptedModel } from '../testing/scripted-model'
@@ -36,11 +36,11 @@ const abortOnFirstDelta =
   }
 
 const stepWith = (args: {
-  model: Parameters<typeof createAiSdkModelPort>[0]['model']
+  model: AiSdkModelPortArgs['model']
   signal: AbortSignal
   onChunk?: ChunkFilter
 }) =>
-  createAiSdkModelPort({ model: args.model, identity }).step({
+  new AiSdkModelPort({ model: args.model, identity }).step({
     assembled,
     tools: [],
     signal: args.signal,

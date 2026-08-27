@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import React from 'react'
 
-import { EMPTY_TRANSCRIPT, type TranscriptModel } from '../../store'
+import { EMPTY_TRANSCRIPT, EPendingKind, type TranscriptModel } from '../../store'
 import { RAIL, RAIL_HEAD, RAIL_TAIL } from '../borders'
 import { Composer } from '../components/composer'
 import { JumpToBottom, NewDivider } from '../components/new-divider'
@@ -84,7 +84,7 @@ describe('what the transcript actually says', () => {
     const frame = await frameOf(transcript({ model: STREAMING, width: 80, turn: RUNNING }), 80)
     expect(frame).toContain(glyph.thinking)
     expect(frame).toContain('Thinking…')
-    expect(frame).toContain('Working for')
+    expect(frame).toContain('Thinking for')
   })
 
   it('renders a failure alongside the partial reply, never as silence', async () => {
@@ -103,11 +103,10 @@ describe('what the transcript actually says', () => {
       transcript({ model: FAILED_WITH_A_REASON, width: 80, onRetry: () => undefined }),
       80,
     )
-    expect(offered).toContain(`${glyph.retry} r`)
-    expect(offered).toContain('retry')
+    expect(offered).toContain(`${glyph.retry} ctrl+r retry`)
 
     const bare = await frameOf(transcript({ model: FAILED_WITH_A_REASON, width: 80 }), 80)
-    expect(bare).not.toContain(`${glyph.retry} r`)
+    expect(bare).not.toContain('retry')
   })
 
   it('lets the failed slab carry the cost rather than repeating it in a working line', async () => {
@@ -115,7 +114,7 @@ describe('what the transcript actually says', () => {
       transcript({ model: FAILED_WITH_A_REASON, width: 80, turn: FINISHED }),
       80,
     )
-    expect(frame).not.toContain('Worked for')
+    expect(frame).not.toContain('Thought for')
   })
 
   it('attaches a tool group to the reply that asked for it, and spaces the groups apart', async () => {
@@ -170,21 +169,67 @@ describe('what the transcript actually says', () => {
           width: 80,
           turn: RUNNING,
           pending: [
-            { id: 'p1', text: 'check the tests too' },
-            { id: 'p2', text: 'and the fixtures' },
+            { kind: EPendingKind.Operator, id: 'p1', text: 'check the tests too', taken: false },
+            { kind: EPendingKind.Operator, id: 'p2', text: 'and the fixtures', taken: false },
           ],
         }),
         80,
       )
     ).split('\n')
 
-    const working = rows.findIndex((row) => row.includes('Working for'))
+    const working = rows.findIndex((row) => row.includes('Thinking for'))
     const first = rows.findIndex((row) => row.includes('check the tests too'))
     const second = rows.findIndex((row) => row.includes('and the fixtures'))
 
     expect(first).toBeGreaterThan(working)
     expect(second).toBeGreaterThan(first)
-    expect(rows[first]).toContain(glyph.queued)
+    expect(rows[first]).toContain(RAIL)
+  })
+
+  it('gives consecutive queued messages one panel rather than stacking one each', async () => {
+    const rows = (
+      await frameOf(
+        transcript({
+          model: STREAMING,
+          width: 80,
+          turn: RUNNING,
+          pending: [
+            { kind: EPendingKind.Operator, id: 'p1', text: 'hi', taken: false },
+            { kind: EPendingKind.Operator, id: 'p2', text: 'how', taken: false },
+            { kind: EPendingKind.Operator, id: 'p3', text: 'are', taken: false },
+            { kind: EPendingKind.Operator, id: 'p4', text: 'you?', taken: false },
+          ],
+        }),
+        80,
+      )
+    ).split('\n')
+
+    const working = rows.findIndex((row) => row.includes('Thinking for'))
+    const queued = rows.slice(working)
+
+    expect(queued.filter((row) => row.startsWith(RAIL_HEAD)).length).toBe(1)
+    expect(queued.filter((row) => row.startsWith(RAIL_TAIL)).length).toBe(1)
+    expect(queued.some((row) => row.includes('hi'))).toBe(true)
+    expect(queued.some((row) => row.includes('you?'))).toBe(true)
+  })
+
+  it('gives a queued message the same panel the transcript gives a sent one', async () => {
+    const rows = (
+      await frameOf(
+        transcript({
+          model: STREAMING,
+          width: 80,
+          turn: RUNNING,
+          pending: [{ kind: EPendingKind.Operator, id: 'p1', text: 'check the tests too', taken: false }],
+        }),
+        80,
+      )
+    ).split('\n')
+
+    const said = rows.findIndex((row) => row.includes('check the tests too'))
+    expect(rows[said]).toContain(RAIL)
+    expect(rows[said - 1]).toContain(RAIL_HEAD)
+    expect(rows[said + 1]).toContain(RAIL_TAIL)
   })
 
   it('says how to get a queued message back, since nothing else would tell you', async () => {
@@ -193,12 +238,77 @@ describe('what the transcript actually says', () => {
         model: STREAMING,
         width: 80,
         turn: RUNNING,
-        pending: [{ id: 'p1', text: 'check the tests too' }],
+        pending: [{ kind: EPendingKind.Operator, id: 'p1', text: 'check the tests too', taken: false }],
       }),
       80,
     )
 
     expect(frame).toContain('↑ to edit')
+  })
+
+  it('stops offering it back once the loop has taken it, while it still stands there', async () => {
+    const frame = await frameOf(
+      transcript({
+        model: STREAMING,
+        width: 80,
+        turn: RUNNING,
+        pending: [{ kind: EPendingKind.Operator, id: 'p1', text: 'check the tests too', taken: true }],
+      }),
+      80,
+    )
+
+    expect(frame).toContain('check the tests too')
+    expect(frame).not.toContain('↑ to edit')
+  })
+
+  it('stands a background shell ending in the same queue, for show only', async () => {
+    const frame = await frameOf(
+      transcript({
+        model: STREAMING,
+        width: 80,
+        turn: RUNNING,
+        pending: [
+          {
+            kind: EPendingKind.BackgroundShell,
+            id: 'shell-ended-bash_1',
+            text: 'Background shell "Run full TUI suite" completed (exit code 0)',
+            failed: false,
+          },
+        ],
+      }),
+      80,
+    )
+
+    expect(frame).toContain('Background shell "Run full TUI suite" completed (exit code 0)')
+    expect(frame).toContain('queued')
+    expect(frame).not.toContain('↑ to edit')
+  })
+
+  it('offers the take-back to the typed message rather than to a shell queued after it', async () => {
+    const frame = await frameOf(
+      transcript({
+        model: STREAMING,
+        width: 80,
+        turn: RUNNING,
+        pending: [
+          { kind: EPendingKind.Operator, id: 'p1', text: 'check the tests too', taken: false },
+          {
+            kind: EPendingKind.BackgroundShell,
+            id: 'shell-ended-bash_1',
+            text: 'Background shell `bun test` was killed',
+            failed: false,
+          },
+        ],
+      }),
+      80,
+    ).then((text) => text.split('\n'))
+
+    const typed = frame.findIndex((row) => row.includes('check the tests too'))
+    const shell = frame.findIndex((row) => row.includes('was killed'))
+    const takeBack = frame.findIndex((row) => row.includes('↑ to edit'))
+
+    expect(shell).toBeGreaterThan(typed)
+    expect(takeBack).toBeLessThan(shell)
   })
 
   it('shows nothing at all when the queue is empty', async () => {

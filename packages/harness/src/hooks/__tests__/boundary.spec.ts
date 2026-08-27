@@ -14,14 +14,16 @@ import {
   type ToolDeclaration,
 } from '@dltech/atlas-core'
 
-import { createBashTool } from '../../tools/builtin/bash'
-import { createEditTool } from '../../tools/builtin/edit'
-import { createGlobTool } from '../../tools/builtin/glob'
-import { createGrepTool } from '../../tools/builtin/grep'
-import { createReadTool } from '../../tools/builtin/read'
-import { createWriteTool } from '../../tools/builtin/write'
+import { BunShellRegistry } from '../../shells/shell-registry'
+import { SystemClock } from '../../store'
+import { BashTool } from '../../tools/builtin/bash'
+import { EditTool } from '../../tools/builtin/edit'
+import { GlobTool } from '../../tools/builtin/glob'
+import { GrepTool } from '../../tools/builtin/grep'
+import { ReadTool } from '../../tools/builtin/read'
+import { WriteTool } from '../../tools/builtin/write'
 import { createBoundaryHook } from '../boundary'
-import { createHookRegistry } from '../registry'
+import { HookChain } from '../registry'
 
 let root = ''
 
@@ -38,12 +40,12 @@ const undeclaredTool: ToolDeclaration = {
 }
 
 const toolsRootedAt = (workspace: string): readonly ToolDeclaration[] => [
-  createReadTool(),
-  createWriteTool(),
-  createEditTool(),
-  createBashTool({ root: workspace }),
-  createGrepTool({ root: workspace }),
-  createGlobTool({ root: workspace }),
+  new ReadTool(),
+  new WriteTool(),
+  new EditTool(),
+  new BashTool(workspace, new BunShellRegistry(workspace, new SystemClock())),
+  new GrepTool(workspace),
+  new GlobTool(workspace),
   undeclaredTool,
 ]
 
@@ -166,7 +168,7 @@ describe('createBoundaryHook', () => {
       input: call.input,
     })
 
-    const registry = createHookRegistry({
+    const registry = new HookChain({
       beforeTool: [
         { name: 'approvalPolicy', order: { stage: EStage.Policy, nudge: 0 }, run: permissive },
         { name: 'anotherGuard', order: { stage: EStage.Guard, nudge: 10 }, run: permissive },

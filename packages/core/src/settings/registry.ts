@@ -8,7 +8,13 @@ export const SETTING_PAGES: readonly SettingPage[] = [
 
 export enum ESettingId {
   SmoothStreaming = 'transcript.smoothStreaming',
+  ThinkingBlocks = 'transcript.thinkingBlocks',
   SidebarWidth = 'sidebar.width',
+  ProjectInstructions = 'context.projectInstructions',
+  UserInstructions = 'context.userInstructions',
+  InstructionFilenames = 'context.filenames',
+  NestedInstructions = 'context.nestedInstructions',
+  ReloadInstructions = 'context.reload',
   Accent = 'appearance.accent',
   BlockPadding = 'appearance.blockPadding',
 }
@@ -26,6 +32,22 @@ export const ATLAS_SETTINGS: readonly SettingDefinition[] = [
     fallback: true,
   },
   {
+    id: ESettingId.ThinkingBlocks,
+    page: ESettingPage.General,
+    group: 'Transcript',
+    label: 'Thinking blocks',
+    description:
+      'What the transcript keeps of the reasoning behind an answer. Keep leaves a summary row behind that unfolds into the whole thought; while streaming shows the live tail and drops the row the moment the thought is done; hide never renders reasoning at all. Adjacent thoughts always fold into one block.',
+    environmentVariable: 'ATLAS_THINKING_BLOCKS',
+    kind: ESettingKind.Choice,
+    fallback: 'keep',
+    options: [
+      { value: 'keep', label: 'keep', detail: 'shipped' },
+      { value: 'stream', label: 'while streaming' },
+      { value: 'hidden', label: 'hide' },
+    ],
+  },
+  {
     id: ESettingId.SidebarWidth,
     page: ESettingPage.General,
     group: 'Layout',
@@ -39,6 +61,66 @@ export const ATLAS_SETTINGS: readonly SettingDefinition[] = [
     maximum: 64,
     step: 2,
     unit: ' cols',
+  },
+  {
+    id: ESettingId.ProjectInstructions,
+    page: ESettingPage.General,
+    group: 'Project context',
+    label: 'Project instructions',
+    description:
+      'Load the instruction files a repository carries for its agents, walking the workspace root down to the working directory so that a deeper file overrides a shallower one.',
+    environmentVariable: 'ATLAS_PROJECT_INSTRUCTIONS',
+    kind: ESettingKind.Toggle,
+    fallback: true,
+  },
+  {
+    id: ESettingId.UserInstructions,
+    page: ESettingPage.General,
+    group: 'Project context',
+    label: 'Personal instructions',
+    description:
+      'Also load the instruction files in your home directory, which apply to every project. They are read before the repository, so anything the repository says wins.',
+    environmentVariable: 'ATLAS_USER_INSTRUCTIONS',
+    kind: ESettingKind.Toggle,
+    fallback: true,
+  },
+  {
+    id: ESettingId.InstructionFilenames,
+    page: ESettingPage.General,
+    group: 'Project context',
+    label: 'Instruction filenames',
+    description:
+      'Which filenames count as instructions. AGENTS.md is the cross-vendor convention and CLAUDE.md the Claude-specific one; when both are read, CLAUDE.md is loaded second and therefore wins a disagreement. A .local.md sibling of either is read last and is never checked in.',
+    environmentVariable: 'ATLAS_INSTRUCTION_FILENAMES',
+    kind: ESettingKind.Choice,
+    fallback: 'both',
+    options: [
+      { value: 'both', label: 'both', detail: 'shipped' },
+      { value: 'claude', label: 'CLAUDE.md' },
+      { value: 'agents', label: 'AGENTS.md' },
+    ],
+  },
+  {
+    id: ESettingId.NestedInstructions,
+    page: ESettingPage.General,
+    group: 'Project context',
+    label: 'Nested instructions',
+    description:
+      'Pull in the instruction file above a path the moment a tool touches it, rather than only the ones on the way to the working directory. This is what lets a package deep in a monorepo state its own rules without every session paying for them.',
+    environmentVariable: 'ATLAS_NESTED_INSTRUCTIONS',
+    kind: ESettingKind.Toggle,
+    fallback: true,
+  },
+  {
+    id: ESettingId.ReloadInstructions,
+    page: ESettingPage.General,
+    group: 'Project context',
+    label: 'Reload on change',
+    description:
+      'Re-read the instruction files at every turn, so editing one takes effect in the conversation you are already in. Unchanged files cost nothing; a changed one is appended again and supersedes what the model was reading. Turning this off freezes the instructions as they were when the conversation opened.',
+    environmentVariable: 'ATLAS_RELOAD_INSTRUCTIONS',
+    kind: ESettingKind.Toggle,
+    fallback: true,
   },
   {
     id: ESettingId.Accent,

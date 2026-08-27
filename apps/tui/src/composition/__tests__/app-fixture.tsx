@@ -24,11 +24,12 @@ export type Mounted = {
   pressEnter: () => void
   pressEscape: () => void
   pressUp: () => void
+  pressCtrl: (key: string) => void
   done: () => Promise<void>
 }
 
 export async function open(args: { app: FakeApp }): Promise<Mounted> {
-  const setup = await testRender(<App app={args.app} opened={{ branchId: BRANCH, events: [] }} />, {
+  const setup = await testRender(<App app={args.app} opened={{ branchId: BRANCH, events: [], name: null }} />, {
     width: WIDTH,
     height: HEIGHT,
   })
@@ -49,6 +50,7 @@ export async function open(args: { app: FakeApp }): Promise<Mounted> {
     pressEnter: () => setup.mockInput.pressEnter(),
     pressEscape: () => setup.mockInput.pressEscape(),
     pressUp: () => setup.mockInput.pressArrow('up'),
+    pressCtrl: (key) => setup.mockInput.pressKey(key, { ctrl: true }),
     done: () => teardown(setup),
   }
 }

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'bun:test'
 
 import { defaultPipeline, type ModelPort } from '@dltech/atlas-core'
 
-import { buildHarness, createTurnRunner, ETurnStatus, type AtlasHarness, type TurnRunner } from '..'
+import { buildHarness, ETurnStatus, LoopTurnRunner, TurnRunner, type AtlasHarness } from '..'
 import { TurnLedgerPort, type TurnSpend } from '../../ledger'
 import { scriptedModel, type ScriptedStep } from '../../model/testing/scripted-model'
 import { createTempDatabase, type TempDatabase } from './temp-database'
@@ -44,7 +44,7 @@ function runnerOver(args: {
   model?: ModelPort
   onLedgerFailure?: (error: unknown) => void
 }): TurnRunner {
-  return createTurnRunner({
+  return new LoopTurnRunner({
     log: args.harness.log,
     model: args.model ?? args.harness.model,
     ids: args.harness.ids,
@@ -176,7 +176,7 @@ describe('the ledger is accounting, not the turn', () => {
     const harness = await openHarness([{ text: 'auth and the router' }])
     const branch = await harness.branches.create({})
 
-    const runner = createTurnRunner({
+    const runner = new LoopTurnRunner({
       log: harness.log,
       model: harness.model,
       ids: harness.ids,

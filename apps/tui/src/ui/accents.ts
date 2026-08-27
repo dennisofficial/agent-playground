@@ -16,6 +16,6 @@ export function accentPalette(name: string): Partial<Palette> {
     accent,
     caretBg: accent,
     codeInline: accent,
-    court: { ...SHIPPED_PALETTE.court, agent: accent },
+    court: { ...SHIPPED_PALETTE.court, agent: accent, yours: accent },
   }
 }

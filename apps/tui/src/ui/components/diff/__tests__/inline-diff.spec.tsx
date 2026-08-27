@@ -128,17 +128,17 @@ describe('InlineDiff', () => {
     expect(isColour({ cell: cells[CODE_AT + EMPHASIS_END], colour: theme.diff.addBg })).toBe(true)
   }, 30_000)
 
-  it('counts the files under review and offers the keys the design names', async () => {
+  it('counts the files under review, and names no key that nothing is listening for', async () => {
     const { rows } = await shown({
       node: <InlineDiff file={FILE} width={90} files={{ index: 1, total: 3 }} />,
       width: 90,
     })
-    const footer = rows.find((row) => row.includes('apply')) ?? ''
+    const footer = rows.find((row) => row.includes('1/3 files')) ?? ''
+
     expect(footer).toContain('1/3 files')
-    expect(footer).toContain('a apply')
-    expect(footer).toContain('r reject')
-    expect(footer).toContain('s side-by-side')
-    expect(footer).toContain('n next')
+    for (const phantom of ['a apply', 'r reject', 's side-by-side', 'n next']) {
+      expect(footer).not.toContain(phantom)
+    }
   }, 30_000)
 
   it('heads the panel with the path and the counts', async () => {

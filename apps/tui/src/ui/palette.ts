@@ -75,7 +75,7 @@ export const theme: Palette = {
   codeInline: ACCENT,
   court: {
     agent: ACCENT,
-    yours: '#e3b341',
+    yours: ACCENT,
     external: '#b392f0',
     none: '#6b625c',
   },

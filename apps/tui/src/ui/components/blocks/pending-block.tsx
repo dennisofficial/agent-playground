@@ -1,41 +1,81 @@
 import React from 'react'
 
-import type { PendingMessage } from '../../../store'
+import { EPendingKind, type PendingRow } from '../../../store'
 import { glyph, theme, TRANSCRIPT_INSET } from '../../theme'
+import { UserBlock } from './user-block'
 
-const GUTTER = 2
+type PendingRun =
+  | { kind: EPendingKind.Operator; id: string; said: readonly string[]; takeBack: boolean }
+  | { kind: EPendingKind.BackgroundShell; id: string; text: string; failed: boolean }
 
-const NARROWEST_BAND = 12
+/**
+ * Consecutive queued messages share one panel, the way the transcript gives one panel to
+ * consecutive things the operator said — four one-word messages must not stack four panels high.
+ */
+export function pendingRuns(rows: readonly PendingRow[]): readonly PendingRun[] {
+  const runs: PendingRun[] = []
 
-const ELLIPSIS = '…'
+  for (const row of rows) {
+    if (row.kind === EPendingKind.BackgroundShell) {
+      runs.push({ kind: row.kind, id: row.id, text: row.text, failed: row.failed })
+      continue
+    }
 
-const TAKE_BACK = `${' '.repeat(GUTTER)}↑ to edit`
+    const open = runs.at(-1)
+    if (open?.kind === EPendingKind.Operator) {
+      open.said = [...open.said, row.text]
+      open.takeBack = !row.taken
+      continue
+    }
 
-export function queuedLine(args: { text: string; columns: number }): string {
-  const flattened = args.text.replace(/\s+/g, ' ').trim()
-  const cells = [...flattened]
-  if (cells.length <= args.columns) return flattened
+    runs.push({ kind: row.kind, id: row.id, said: [row.text], takeBack: !row.taken })
+  }
 
-  return `${cells.slice(0, Math.max(1, args.columns - 1)).join('')}${ELLIPSIS}`
+  return runs
 }
 
 export function PendingBlock(props: {
-  messages: readonly PendingMessage[]
+  rows: readonly PendingRow[]
   width: number
 }): React.ReactNode {
-  if (props.messages.length === 0) return null
-
-  const columns = Math.max(NARROWEST_BAND, props.width - TRANSCRIPT_INSET - GUTTER)
+  if (props.rows.length === 0) return null
 
   return (
-    <box flexDirection="column" marginTop={1} marginBottom={1} flexShrink={0}>
-      {props.messages.map((message) => (
-        <text key={message.id} fg={theme.meta}>
-          <span fg={theme.court.yours}>{glyph.queued}</span>{' '}
-          {queuedLine({ text: message.text, columns })}
-        </text>
-      ))}
-      <text fg={theme.hint}>{TAKE_BACK}</text>
+    <box flexDirection="column" flexShrink={0}>
+      {pendingRuns(props.rows).map((run) =>
+        run.kind === EPendingKind.BackgroundShell ? (
+          <WaitingShellRow key={run.id} text={run.text} failed={run.failed} width={props.width} />
+        ) : (
+          <UserBlock
+            key={run.id}
+            said={run.said}
+            width={props.width}
+            {...(run.takeBack ? { takeBack: true } : {})}
+          />
+        ),
+      )}
+    </box>
+  )
+}
+
+/**
+ * Nobody typed this, so it carries no take-back affordance: it is waiting to be handed to the model,
+ * not waiting to be sent.
+ */
+function WaitingShellRow(props: {
+  text: string
+  failed: boolean
+  width: number
+}): React.ReactNode {
+  const inner = Math.max(1, props.width - TRANSCRIPT_INSET)
+
+  return (
+    <box flexDirection="column" marginBottom={1} flexShrink={0}>
+      <text wrapMode="none" width={inner} flexShrink={0}>
+        <span fg={props.failed ? theme.error : theme.ok}>{`${glyph.queued} `}</span>
+        <span fg={theme.meta}>{props.text}</span>
+        <span fg={theme.dim}>{'  queued'}</span>
+      </text>
     </box>
   )
 }

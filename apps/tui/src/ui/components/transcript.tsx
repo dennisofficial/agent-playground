@@ -1,6 +1,6 @@
 import React, { useCallback, useState } from 'react'
 
-import { EEntryKind, type PendingMessage, type TranscriptModel } from '../../store'
+import { EEntryKind, type PendingRow, type TranscriptModel } from '../../store'
 import { useTranscriptFollow } from '../hooks/use-transcript-follow'
 import { useHiddenVerticalScrollbar } from '../hide-scrollbar'
 import { TRANSCRIPT_PADDING } from '../theme'
@@ -27,7 +27,7 @@ export const IDLE_TURN: TurnClock = {
 
 const FAILURE_WITHOUT_A_REASON = 'The model reported no reason.'
 
-const NOTHING_PENDING: readonly PendingMessage[] = Object.freeze([])
+const NOTHING_PENDING: readonly PendingRow[] = Object.freeze([])
 
 export function Transcript(props: {
   model: TranscriptModel
@@ -38,7 +38,8 @@ export function Transcript(props: {
   modelId: string
   turn?: TurnClock
   anchorKey?: string | null
-  pending?: readonly PendingMessage[]
+  sends?: number
+  pending?: readonly PendingRow[]
   onRetry?: () => void
   opened?: ReadonlySet<string>
   onToggle?: (key: string) => void
@@ -47,7 +48,10 @@ export function Transcript(props: {
   const turn = props.turn ?? IDLE_TURN
   const anchorKey = props.anchorKey ?? null
   const anchorIndex = model.entries.findIndex((entry) => entry.key === anchorKey)
-  const follow = useTranscriptFollow({ anchorId: anchorIndex >= 0 ? UNSEEN_ANCHOR_ID : null })
+  const follow = useTranscriptFollow({
+    anchorId: anchorIndex >= 0 ? UNSEEN_ANCHOR_ID : null,
+    sends: props.sends ?? 0,
+  })
   const handleScroller = useHiddenVerticalScrollbar(follow.scroller)
 
   const [ownOpened, setOwnOpened] = useState<ReadonlySet<string>>(() => new Set<string>())
@@ -135,7 +139,7 @@ export function Transcript(props: {
           </box>
         ) : null}
 
-        <PendingBlock messages={props.pending ?? NOTHING_PENDING} width={props.width} />
+        <PendingBlock rows={props.pending ?? NOTHING_PENDING} width={props.width} />
       </scrollbox>
 
       {follow.pinned ? null : (

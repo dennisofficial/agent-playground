@@ -128,6 +128,29 @@ The isolation matrix, with AI SDK retries disabled:
 The attribution-only request also returned `200` for `claude-opus-5`. A real Atlas harness turn through
 `createAnthropicOauthModel` returned `200` from Sonnet 5 after the adapter began injecting the block.
 
+## Thinking is returned empty unless the request asks to see it
+
+Observed 2026-08-26 against `claude-opus-5` on the subscription credential. With
+`thinking: {type: "enabled", budget_tokens: N}` the response streams a `thinking` block whose
+`thinking_delta` payloads are all `""`, followed by a real `signature_delta` and
+`output_tokens_details.thinking_tokens: 34`. The model thought; the text was withheld.
+
+`display` governs this. It defaults to `"omitted"` from Opus 4.7 onward, is only accepted alongside
+`thinking: {type: "adaptive"}`, and `"summarized"` is what returns the text:
+
+```json
+"thinking": { "type": "adaptive", "display": "summarized" }
+```
+
+`adaptive` replaces the deprecated `enabled` plus `budget_tokens` from Sonnet 4.6 and Opus 4.6 onward,
+and the depth control moves to `output_config.effort`. The direction does not commute: `claude-haiku-4-5`
+answers `adaptive thinking is not supported on this model`. Which form a model takes is
+`ModelEntry.thinkingControl`, and `anthropicThinkingOptions` maps it onto the request.
+
+Because `adaptive` lets the model decide whether to think at all, a trivial prompt can come back with no
+reasoning block whatsoever — that is not the same failure as an empty one, and a regression test has to
+force real thinking to tell them apart.
+
 ## Verified live
 
 Observed 2026-08-25 from `packages/harness/src/providers/__tests__/anthropic-live.spec.ts`, through

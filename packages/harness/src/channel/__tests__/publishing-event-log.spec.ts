@@ -45,7 +45,9 @@ function fakeLog(): EventLogPort & { readonly rows: Event[] } {
       return rows.length
     },
 
-    async forkFrom() {},
+    async readOwn({ branchId, upTo }) {
+      return this.read({ branchId, ...(upTo === undefined ? {} : { upTo }) })
+    },
   }
 }
 

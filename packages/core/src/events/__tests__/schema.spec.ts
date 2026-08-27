@@ -39,6 +39,32 @@ describe('eventBodySchema', () => {
     expect(eventBodySchema.parse(JSON.parse(JSON.stringify(body)))).toEqual(body)
   })
 
+  it('reads a failed tool result back, though stringify dropped its undefined output', () => {
+    const body: EventDraft = {
+      type: 'tool-result',
+      callId: toCallId('call-1'),
+      name: 'shell_output',
+      output: undefined,
+      error: { message: 'no background shell is registered as "bash_2"' },
+    }
+    const written = JSON.stringify(body)
+
+    expect(Object.keys(JSON.parse(written))).not.toContain('output')
+    expect(eventBodySchema.parse(JSON.parse(written))).toEqual(body)
+  })
+
+  it('reads a call back, though stringify dropped its undefined input', () => {
+    const body: EventDraft = {
+      type: 'tool-called',
+      callId: toCallId('call-1'),
+      name: 'shell_list',
+      input: undefined,
+      ordinal: 0,
+    }
+
+    expect(eventBodySchema.parse(JSON.parse(JSON.stringify(body)))).toEqual(body)
+  })
+
   it('rejects a kind that is not in the union', () => {
     expect(() => eventBodySchema.parse({ type: 'tool-failed', callId: 'call-1' })).toThrow()
   })

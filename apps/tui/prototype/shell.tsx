@@ -33,6 +33,8 @@ const said = (key: string, text: string): TranscriptEntry => ({
   author: EAuthor.Operator,
   key,
   text,
+  said: [text],
+  steer: false,
 })
 
 const replied = (key: string, text: string): TranscriptEntry => ({

@@ -2,7 +2,13 @@ import { describe, expect, it } from 'bun:test'
 
 import { grammarsReady } from '../../ui/markdown/__tests__/harness'
 import { open, until, BRANCH, REPLY, THINKING } from './app-fixture'
-import { FAKE_CONFIG, fakeApp, failingModelPort, scriptedModelPort } from './fake-app'
+import {
+  FAKE_CONFIG,
+  fakeApp,
+  failingModelPort,
+  failingThenStallingModelPort,
+  scriptedModelPort,
+} from './fake-app'
 
 await grammarsReady()
 
@@ -90,7 +96,7 @@ describe('the app you can actually open', () => {
       mounted.pressEnter()
 
       const first = await mounted.nextFrame()
-      expect(first).toContain('Working for')
+      expect(first).toContain('Thinking for')
       expect(first).toContain('esc to interrupt')
     } finally {
       await mounted.done()
@@ -152,6 +158,83 @@ describe('the app you can actually open', () => {
       const frame = await mounted.frame()
       expect(frame).toContain('failed')
       expect(frame).not.toContain('The model reported no reason.')
+    } finally {
+      await mounted.done()
+    }
+  }, 60_000)
+
+  it('clears the failure the moment the next turn starts, rather than leaving it under a working sidebar', async () => {
+    const mounted = await open({
+      app: fakeApp({ model: failingThenStallingModelPort({ message: PROVIDER_ERROR }) }),
+    })
+
+    try {
+      await mounted.typeText('what changed?')
+      mounted.pressEnter()
+
+      const blamed = await until({
+        holds: async () => (await mounted.frame()).includes(PROVIDER_ERROR),
+        within: 20_000,
+      })
+      expect(blamed).toBe(true)
+
+      await mounted.typeText('try again')
+      mounted.pressEnter()
+
+      const working = await until({
+        holds: async () => (await mounted.frame()).includes('esc to interrupt'),
+        within: 20_000,
+      })
+
+      expect(working).toBe(true)
+      expect(await mounted.frame()).not.toContain(PROVIDER_ERROR)
+      mounted.pressEscape()
+    } finally {
+      await mounted.done()
+    }
+  }, 60_000)
+
+  it('retries the failed turn on the chord the error block advertises', async () => {
+    const mounted = await open({
+      app: fakeApp({ model: failingThenStallingModelPort({ message: PROVIDER_ERROR }) }),
+    })
+
+    try {
+      await mounted.typeText('what changed?')
+      mounted.pressEnter()
+
+      const blamed = await until({
+        holds: async () => (await mounted.frame()).includes('ctrl+r retry'),
+        within: 20_000,
+      })
+      expect(blamed).toBe(true)
+
+      mounted.pressCtrl('r')
+
+      const working = await until({
+        holds: async () => (await mounted.frame()).includes('esc to interrupt'),
+        within: 20_000,
+      })
+
+      expect(working).toBe(true)
+      expect(await mounted.frame()).not.toContain(PROVIDER_ERROR)
+      mounted.pressEscape()
+    } finally {
+      await mounted.done()
+    }
+  }, 60_000)
+
+  it('leaves the retry chord alone when there is no failure to retry', async () => {
+    const mounted = await open({
+      app: fakeApp({ model: scriptedModelPort({ script: { thinking: THINKING, reply: REPLY } }) }),
+    })
+
+    try {
+      mounted.pressCtrl('r')
+
+      const frame = await mounted.frame()
+      expect(frame).not.toContain('esc to interrupt')
+      expect(mounted.app.turnsDriven).toBe(0)
     } finally {
       await mounted.done()
     }

@@ -11,11 +11,11 @@ import {
   type ToolDefinition,
 } from '@dltech/atlas-core'
 
-import { buildHarness, createTurnRunner, ETurnStatus, type AtlasHarness, type TurnRunner } from '..'
+import { buildHarness, ETurnStatus, LoopTurnRunner, TurnRunner, type AtlasHarness } from '..'
 import { scriptedModel, type ScriptedStep } from '../../model/testing/scripted-model'
-import { createHookRegistry } from '../../hooks/registry'
-import { createDispatch } from '../../tools/dispatch'
-import { createToolRegistry } from '../../tools/registry'
+import { HookChain } from '../../hooks/registry'
+import { HookedToolDispatcher } from '../../tools/dispatch'
+import { InMemoryToolRegistry } from '../../tools/registry'
 import { createTempDatabase, type TempDatabase } from './temp-database'
 
 const opened: { harness: AtlasHarness; temp: TempDatabase }[] = []
@@ -54,7 +54,7 @@ async function openScripted(args: { script: readonly ScriptedStep[] }): Promise<
   const harness = await buildHarness({ databaseUrl: temp.databaseUrl, model })
   opened.push({ harness, temp })
 
-  const registry = createToolRegistry([touchTool])
+  const registry = new InMemoryToolRegistry([touchTool])
   const steps: number[] = []
   const recordStep = defineRule({
     name: 'recordStep',
@@ -68,13 +68,13 @@ async function openScripted(args: { script: readonly ScriptedStep[] }): Promise<
     harness,
     model,
     steps,
-    runner: createTurnRunner({
+    runner: new LoopTurnRunner({
       log: harness.log,
       model: harness.model,
       ids: harness.ids,
       assembly: { rules: [...defaultRules(), recordStep], annotators: defaultAnnotators() },
       tools: registry.declarations(),
-      dispatch: createDispatch({ registry, hooks: createHookRegistry({}) }),
+      dispatch: new HookedToolDispatcher({ registry, hooks: new HookChain({}) }),
     }),
   }
 }
@@ -129,7 +129,7 @@ describe('the shape of the prompt the loop is about to send', () => {
       },
     })
 
-    const runner = createTurnRunner({
+    const runner = new LoopTurnRunner({
       log: harness.log,
       model: harness.model,
       ids: harness.ids,
@@ -207,17 +207,19 @@ describe('a dispatch that settles nothing', () => {
     const harness = await buildHarness({ databaseUrl: temp.databaseUrl, model })
     opened.push({ harness, temp })
 
-    const registry = createToolRegistry([touchTool])
+    const registry = new InMemoryToolRegistry([touchTool])
     let dispatched = 0
-    const runner = createTurnRunner({
+    const runner = new LoopTurnRunner({
       log: harness.log,
       model: harness.model,
       ids: harness.ids,
       assembly: defaultPipeline(),
       tools: registry.declarations(),
-      dispatch: async () => {
-        dispatched += 1
-        return []
+      dispatch: {
+        dispatch: async () => {
+          dispatched += 1
+          return []
+        },
       },
     })
     const branch = await harness.branches.create({})

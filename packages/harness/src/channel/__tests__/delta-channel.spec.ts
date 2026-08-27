@@ -88,7 +88,7 @@ describe('the step in flight', () => {
     publisher.settleAppend({ events: [assistantSaid({ seq: 2, text: 'first' })] })
     publisher.onChunk({ type: 'text-delta', id: 't2', text: 'second' })
 
-    const stepIds = seen.map((signal) => signal.stepId)
+    const stepIds = seen.flatMap((signal) => (signal.type === 'events-appended' ? [] : [signal.stepId]))
     expect(new Set(stepIds.slice(0, 3)).size).toBe(1)
     expect(stepIds[3]).not.toBe(stepIds[0])
   })
@@ -156,14 +156,23 @@ describe('completing a step', () => {
     expect(late.seen).toEqual([])
   })
 
-  it('publishes nothing when no step is in flight, which is the user turn being appended', () => {
+  it('says events landed when no step is in flight, so a turn steered mid-flight shows at once', () => {
     const channel = createDeltaChannel()
     const { seen, listener } = recorder()
     channel.subscribe({ branchId, listener })
 
     channel.publisherFor({ branchId }).settleAppend({ events: [assistantSaid({ seq: 1, text: 'stale' })] })
 
-    expect(seen).toEqual([])
+    expect(seen).toEqual([{ type: 'events-appended' }])
+  })
+
+  it('keeps that out of the signals a late subscriber replays, which are the step in flight', () => {
+    const channel = createDeltaChannel()
+    channel.subscribe({ branchId, listener: () => undefined })
+
+    channel.publisherFor({ branchId }).settleAppend({ events: [assistantSaid({ seq: 1, text: 'stale' })] })
+
+    expect(channel.snapshot({ branchId })).toEqual([])
   })
 })
 

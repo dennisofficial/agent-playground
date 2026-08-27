@@ -4,8 +4,7 @@ import type { SettingsStorePort } from '@dltech/atlas-core'
 
 import type { PrismaClient } from '../../prisma/generated/client'
 import type { KeychainReader } from '../credentials/keychain-reader'
-import type { HookRegistry } from '../hooks/registry'
-import type { Dispatch } from '../tools/dispatch'
+import type { HookChain } from '../hooks/registry'
 import type { InjectionToken } from './injection'
 
 export const PrismaClientToken: InjectionToken<PrismaClient> = Symbol('atlas.PrismaClient')
@@ -16,9 +15,7 @@ export const KeychainReaderToken: InjectionToken<KeychainReader> = Symbol('atlas
 
 export const LanguageModelToken: InjectionToken<LanguageModelV4> = Symbol('atlas.LanguageModel')
 
-export const HookRegistryToken: InjectionToken<HookRegistry> = Symbol('atlas.HookRegistry')
-
-export const DispatchToken: InjectionToken<Dispatch> = Symbol('atlas.Dispatch')
+export const HookChainToken: InjectionToken<HookChain> = Symbol('atlas.HookChain')
 
 export const UserSettingsStoreToken: InjectionToken<SettingsStorePort> = Symbol(
   'atlas.UserSettingsStore',

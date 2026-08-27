@@ -1,11 +1,11 @@
-import { useTerminalDimensions } from '@opentui/react'
+import { useKeyboard, useTerminalDimensions } from '@opentui/react'
 import { testRender } from '@opentui/react/test-utils'
-import React from 'react'
+import React, { useState } from 'react'
 
 import {
   EAuthor,
   EEntryKind,
-  type PendingMessage,
+  type PendingRow,
   type TranscriptEntry,
   type TranscriptModel,
 } from '../../store'
@@ -49,6 +49,7 @@ const operatorSaid = (
   author: EAuthor.Operator,
   key,
   text,
+  said: [text],
   steer: flags.steer ?? false,
 })
 
@@ -149,7 +150,8 @@ export function transcript(args: {
   width: number
   turn?: TurnClock
   anchorKey?: string
-  pending?: readonly PendingMessage[]
+  sends?: number
+  pending?: readonly PendingRow[]
   onRetry?: () => void
 }): React.ReactNode {
   return (
@@ -162,6 +164,7 @@ export function transcript(args: {
       modelId={MODEL_ID}
       {...(args.turn ? { turn: args.turn } : {})}
       {...(args.anchorKey ? { anchorKey: args.anchorKey } : {})}
+      {...(args.sends === undefined ? {} : { sends: args.sends })}
       {...(args.pending ? { pending: args.pending } : {})}
       {...(args.onRetry ? { onRetry: args.onRetry } : {})}
     />
@@ -171,6 +174,13 @@ export function transcript(args: {
 export function SizedTranscript(props: { model: TranscriptModel }): React.ReactNode {
   const { width } = useTerminalDimensions()
   return transcript({ model: props.model, width })
+}
+
+export function SendingTranscript(props: { model: TranscriptModel }): React.ReactNode {
+  const { width } = useTerminalDimensions()
+  const [sends, setSends] = useState(0)
+  useKeyboard(() => setSends((count) => count + 1))
+  return transcript({ model: props.model, width, sends })
 }
 
 export async function mount(node: React.ReactNode, width: number): Promise<void> {

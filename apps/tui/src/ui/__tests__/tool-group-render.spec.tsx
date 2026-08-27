@@ -129,16 +129,20 @@ describe('what a settled group says', () => {
 
     expect(frame).toContain(`${glyph.result} Read 3 files`)
     expect(frame).toContain('src/auth, src/users')
-    expect(frame).toContain('⏎ list')
   })
 
-  it('reports a mutation as lines added and removed, and offers it for review', async () => {
+  it('names no key for opening it, since the row is opened by clicking it', async () => {
+    const frame = await frameOf(block({ group: READS, width: 80 }), 80)
+
+    expect(frame).not.toContain('⏎')
+  })
+
+  it('reports a mutation as lines added and removed', async () => {
     const frame = await frameOf(block({ group: EDITS, width: 80 }), 80)
 
     expect(frame).toContain(`${glyph.result} Edited 3 files`)
     expect(frame).toContain('+117')
     expect(frame).toContain('−14')
-    expect(frame).toContain('⏎ review')
   })
 
   it('uses the minus sign rather than a hyphen for a removal', async () => {
@@ -163,7 +167,7 @@ describe('what a settled group says', () => {
     expect(frame).toContain('no such file')
   })
 
-  it('lists one row per call when opened, and drops the affordance that opened it', async () => {
+  it('lists one row per call when opened', async () => {
     const frame = await frameOf(block({ group: EDITS, width: 80, expanded: true }), 80)
 
     expect(frame).toContain('revoked.store.ts')

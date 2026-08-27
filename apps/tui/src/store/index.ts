@@ -7,10 +7,22 @@ export {
   prunedSignals,
   runKey,
   stepsOfSignals,
+  withoutFailedTail,
   type InFlightStep,
   type StepBlock,
 } from './in-flight-steps'
-export { createPendingQueue, type PendingMessage, type PendingQueue } from './pending-queue'
+export {
+  createPendingQueue,
+  trailingSaid,
+  type PendingMessage,
+  type PendingQueue,
+} from './pending-queue'
+export { EPendingKind, pendingRows, type PendingRow } from './pending-rows'
+export {
+  shellEndedLine,
+  shellEndingFailed,
+  type ShellEnding,
+} from './shell-ended-line'
 export {
   advancedGate,
   attachedGate,
@@ -35,10 +47,17 @@ export {
   type ToolGroup,
 } from './tool-groups'
 export {
+  EThinkingVisibility,
+  foldThoughts,
+  SHIPPED_THINKING,
+  thinkingVisibilityOf,
+} from './thinking-fold'
+export {
   EAuthor,
   EEntryKind,
   EMPTY_TRANSCRIPT,
   toolsRanEntry,
+  type BackgroundShellEndedEntry,
   type ModelSaidEntry,
   type ModelThoughtEntry,
   type OperatorSaidEntry,

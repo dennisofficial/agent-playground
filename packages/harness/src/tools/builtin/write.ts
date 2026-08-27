@@ -2,13 +2,14 @@ import { mkdir, stat } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 import {
+  EContentAccess,
   EPathForm,
   EPathPresence,
   EToolEffect,
+  SchemaTool,
   type DeclaredPathField,
-  type ToolDefinition,
-  type ToolInvocation,
   type ToolOutcome,
+  type ToolRun,
 } from '@dltech/atlas-core'
 import { z } from 'zod'
 
@@ -28,20 +29,17 @@ const description = [
 ].join(' ')
 
 @injectable()
-export class WriteTool implements ToolDefinition {
+export class WriteTool extends SchemaTool<typeof inputSchema> {
   readonly name = 'write'
   readonly description = description
   readonly effect = EToolEffect.Write
   readonly inputSchema = inputSchema
-  readonly pathFields: readonly DeclaredPathField[] = [
-    { field: 'path', presence: EPathPresence.Required, form: EPathForm.Absolute },
+  override readonly pathFields: readonly DeclaredPathField[] = [
+    { field: 'path', presence: EPathPresence.Required, form: EPathForm.Absolute, content: EContentAccess.Overwrites },
   ]
 
-  async invoke({ input }: ToolInvocation): Promise<ToolOutcome> {
-    const parsed = inputSchema.safeParse(input)
-    if (!parsed.success) return { ok: false, reason: `write was called with invalid input: ${z.prettifyError(parsed.error)}` }
-
-    const { path, content } = parsed.data
+  protected override async run({ input }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
+    const { path, content } = input
     const stats = await stat(path).catch(() => null)
     if (stats !== null && !stats.isFile()) {
       return { ok: false, reason: `${path} already exists and is not a regular file.` }
@@ -61,4 +59,3 @@ export class WriteTool implements ToolDefinition {
   }
 }
 
-export const createWriteTool = (): ToolDefinition => new WriteTool()

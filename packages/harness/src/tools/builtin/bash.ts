@@ -1,26 +1,30 @@
 import { z } from 'zod'
 
-import {
-  EToolEffect,
-  TAKES_NO_PATHS,
-  type ToolDefinition,
-  type ToolInvocation,
-  type ToolOutcome,
-} from '@dltech/atlas-core'
+import { EToolEffect, SchemaTool, type ToolOutcome, type ToolRun } from '@dltech/atlas-core'
 
-import { inject, injectable } from '../../container/injection'
+import { inject, injectable, portToken } from '../../container/injection'
 import { WorkspaceRoot } from '../../container/tokens'
+import { ShellRegistryPort } from '../../shells/shell-registry'
+import {
+  countLineBreaks,
+  messageOf,
+  readShell,
+  render,
+  startShell,
+  terminatorFor,
+  type ShellOutput,
+  type Tail,
+} from '../../shells/shell-process'
 
 const DEFAULT_TIMEOUT_MS = 120_000
 const MAXIMUM_TIMEOUT_MS = 600_000
-const SIGKILL_GRACE_MS = 5_000
 const MAXIMUM_OUTPUT_CHARACTERS = 30_000
-const READ_GRACE_MS = 1_000
 
 const inputSchema = z.strictObject({
   command: z.string().min(1),
   timeoutMs: z.number().int().positive().optional(),
   description: z.string().optional(),
+  runInBackground: z.boolean().optional(),
 })
 
 const description = [
@@ -31,146 +35,11 @@ const description = [
   'A non-zero exit is reported rather than raised, with the code named at the end.',
   `Times out after ${DEFAULT_TIMEOUT_MS} ms unless timeoutMs says otherwise, and never later than ${MAXIMUM_TIMEOUT_MS} ms.`,
   'Pass description to say in a few words what the command is for.',
+  'Set runInBackground to start a long-running command - a dev server, a watch, a slow test suite - and get a shell id back at once instead of waiting.',
+  'A background shell has no timeout, interleaves stdout and stderr in arrival order, and outlives the turn that started it.',
+  'You are always told when it ends, however it ends, and the output comes with that notice - so do not poll it.',
+  'Read it with shell_output, list what is running with shell_list, and stop it with shell_kill.',
 ].join(' ')
-
-type Shell = Bun.Subprocess<'ignore', 'pipe', 'pipe'>
-
-type StartedShell = { ok: true; shell: Shell } | { ok: false; reason: string }
-
-type Tail = { text: string; droppedLines: number; truncated: boolean }
-
-type TailBuffer = { append: (chunk: string) => void; tail: () => Tail }
-
-type Drain = { tail: () => Tail; stop: () => void; done: Promise<void> }
-
-type ShellOutput = { stdout: Tail; stderr: Tail; exitCode: number }
-
-const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error))
-
-const countLineBreaks = (text: string): number => text.split('\n').length - 1
-
-function startShell(args: { command: string; cwd: string }): StartedShell {
-  try {
-    return {
-      ok: true,
-      shell: Bun.spawn({
-        cmd: ['bash', '-c', args.command],
-        cwd: args.cwd,
-        stdin: 'ignore',
-        stdout: 'pipe',
-        stderr: 'pipe',
-        detached: true,
-      }),
-    }
-  } catch (error) {
-    return { ok: false, reason: `could not start a shell in ${args.cwd}: ${messageOf(error)}` }
-  }
-}
-
-/**
- * setsid(2) makes the shell a process group leader, so a negative pid signals the whole group.
- * Signalling only the shell would strand every process it forked: those are reparented to init the
- * moment it dies, which puts them out of reach of any later kill.
- */
-function signalGroup(args: { shell: Shell; signal: 'SIGTERM' | 'SIGKILL' }): void {
-  try {
-    process.kill(-args.shell.pid, args.signal)
-  } catch {
-    try {
-      args.shell.kill(args.signal)
-    } catch {
-      return
-    }
-  }
-}
-
-function terminatorFor(shell: Shell): () => void {
-  let fired = false
-
-  return () => {
-    if (fired) return
-    fired = true
-    signalGroup({ shell, signal: 'SIGTERM' })
-    setTimeout(() => signalGroup({ shell, signal: 'SIGKILL' }), SIGKILL_GRACE_MS).unref()
-  }
-}
-
-function tailBuffer(limit: number): TailBuffer {
-  let text = ''
-  let droppedLines = 0
-  let truncated = false
-
-  return {
-    append: (chunk) => {
-      text += chunk
-      if (text.length <= limit) return
-
-      const overflow = text.length - limit
-      droppedLines += countLineBreaks(text.slice(0, overflow))
-      text = text.slice(overflow)
-      truncated = true
-    },
-    tail: () => ({ text, droppedLines, truncated }),
-  }
-}
-
-function drain(stream: ReadableStream<Uint8Array>): Drain {
-  const reader = stream.getReader()
-  const decoder = new TextDecoder()
-  const buffer = tailBuffer(MAXIMUM_OUTPUT_CHARACTERS)
-
-  const done = (async () => {
-    for (;;) {
-      const { done: finished, value } = await reader.read()
-      if (finished) break
-      if (value !== undefined) buffer.append(decoder.decode(value, { stream: true }))
-    }
-    buffer.append(decoder.decode())
-  })()
-  done.catch(() => undefined)
-
-  return {
-    tail: buffer.tail,
-    stop: () => void reader.cancel().catch(() => undefined),
-    done,
-  }
-}
-
-async function withinReadGrace(reads: Promise<unknown>): Promise<void> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const grace = new Promise<void>((resolve) => {
-    timer = setTimeout(resolve, READ_GRACE_MS)
-  })
-
-  await Promise.race([reads.then(() => undefined).catch(() => undefined), grace])
-  clearTimeout(timer)
-}
-
-/**
- * A process the shell forked inherits the stdout pipe, so the read side reaches EOF only once every
- * holder has exited - long after the shell itself was killed. Measured at 61 s for a `sleep 61` the
- * shell left behind under a 400 ms timeout.
- */
-async function readShell(shell: Shell): Promise<ShellOutput> {
-  const stdout = drain(shell.stdout)
-  const stderr = drain(shell.stderr)
-
-  const exitCode = await shell.exited
-  await withinReadGrace(Promise.all([stdout.done, stderr.done]))
-  stdout.stop()
-  stderr.stop()
-
-  return { stdout: stdout.tail(), stderr: stderr.tail(), exitCode }
-}
-
-function render(tail: Tail): string {
-  if (!tail.truncated) return tail.text
-
-  const firstBreak = tail.text.indexOf('\n')
-  const kept = firstBreak === -1 ? tail.text : tail.text.slice(firstBreak + 1)
-  const dropped = Math.max(tail.droppedLines + (firstBreak === -1 ? 0 : 1), 1)
-  return `... [${dropped} lines truncated] ...\n\n${kept}`
-}
 
 function mergeStreams(args: { stdout: Tail; stderr: Tail }): Tail {
   const text = [args.stdout.text, args.stderr.text]
@@ -210,22 +79,59 @@ function renderModelText(args: {
 }
 
 @injectable()
-export class BashTool implements ToolDefinition {
+export class BashTool extends SchemaTool<typeof inputSchema> {
   readonly name = 'bash'
   readonly description = description
   readonly effect = EToolEffect.Destructive
   readonly inputSchema = inputSchema
-  readonly pathFields = TAKES_NO_PATHS
 
-  constructor(@inject(WorkspaceRoot) private readonly root: string) {}
-  async invoke({ input, signal }: ToolInvocation): Promise<ToolOutcome> {
-    const parsed = inputSchema.safeParse(input)
-    if (!parsed.success) {
-      return { ok: false, reason: `bash was called with invalid input: ${z.prettifyError(parsed.error)}` }
+  constructor(
+    @inject(WorkspaceRoot) private readonly root: string,
+    @inject(portToken(ShellRegistryPort)) private readonly shells: ShellRegistryPort,
+  ) {
+    super()
+  }
+
+  private startInBackground(args: { command: string; description?: string | undefined }): ToolOutcome {
+    const started = this.shells.start(args)
+    if (!started.ok) return started
+
+    const { shellId } = started.snapshot
+
+    return {
+      ok: true,
+      output: {
+        command: args.command,
+        description: args.description,
+        shellId,
+        status: started.snapshot.status,
+        pid: started.snapshot.pid,
+      },
+      modelText: [
+        `Started in the background as shell ${shellId}.`,
+        'You will be told when it ends, and its output arrives with that notice, so do not poll it.',
+        `Read what it has printed so far with shell_output({ shellId: "${shellId}" }),`,
+        `and stop it with shell_kill({ shellId: "${shellId}" }).`,
+      ].join(' '),
     }
-    if (signal.aborted) return { ok: false, reason: 'the turn was abandoned before the command started' }
+  }
 
-    const { command, timeoutMs } = parsed.data
+  protected override async run({ input, signal }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
+    if (signal.aborted) return { ok: false, reason: 'the developer interrupted the turn before the command started' }
+
+    const { command, timeoutMs } = input
+
+    if (input.runInBackground === true) {
+      if (timeoutMs !== undefined) {
+        return {
+          ok: false,
+          reason:
+            'a background shell has no timeout: drop timeoutMs to start it, or drop runInBackground to wait for the command',
+        }
+      }
+      return this.startInBackground({ command, description: input.description })
+    }
+
     const timeout = Math.min(timeoutMs ?? DEFAULT_TIMEOUT_MS, MAXIMUM_TIMEOUT_MS)
 
     const started = startShell({ command, cwd: this.root })
@@ -242,7 +148,7 @@ export class BashTool implements ToolDefinition {
 
     let read: ShellOutput
     try {
-      read = await readShell(shell)
+      read = await readShell({ shell, limit: MAXIMUM_OUTPUT_CHARACTERS })
     } catch (error) {
       return { ok: false, reason: `the command could not be read back: ${messageOf(error)}` }
     } finally {
@@ -251,7 +157,7 @@ export class BashTool implements ToolDefinition {
     }
 
     if (signal.aborted && !timedOut) {
-      return { ok: false, reason: 'the turn was abandoned while the command was running' }
+      return { ok: false, reason: 'the developer interrupted the turn while the command was running' }
     }
 
     const merged = mergeStreams({ stdout: read.stdout, stderr: read.stderr })
@@ -260,7 +166,7 @@ export class BashTool implements ToolDefinition {
       ok: true,
       output: {
         command,
-        description: parsed.data.description,
+        description: input.description,
         exitCode: read.exitCode,
         stdout: render(read.stdout),
         stderr: render(read.stderr),
@@ -276,5 +182,3 @@ export class BashTool implements ToolDefinition {
     }
   }
 }
-
-export const createBashTool = ({ root }: { root: string }): ToolDefinition => new BashTool(root)

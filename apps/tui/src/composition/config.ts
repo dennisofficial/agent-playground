@@ -4,6 +4,10 @@ import { atlasDirectory } from '@dltech/atlas-harness'
 
 export const DEFAULT_MODEL_ID = 'claude-haiku-4-5-20251001'
 
+export const TITLER_MODEL_ID = 'claude-haiku-4-5-20251001'
+
+export const SUMMARISER_MODEL_ID = 'claude-sonnet-5'
+
 export const DEFAULT_THINKING_BUDGET_TOKENS = 2048
 
 export const DEV_DATABASE_NAME = 'dev.db'

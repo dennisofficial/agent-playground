@@ -1,8 +1,11 @@
+import { contextBlock } from '../../context/render'
+import { currentContextEvents } from '../../context/supersede'
 import type { AssistantPart } from '../../events/body'
 import type { Event, EventOfType, EventRef } from '../../events/envelope'
 import type { TextPart, ToolCallPart, ToolResultPart } from '../../message/parts'
 import type { AssembledMessage } from '../assembled'
 import { defineRule, type Rule } from '../rule'
+import { backgroundShellBlock } from './background-shell-block'
 
 type OpenMessage =
   | { role: 'user'; content: TextPart[] }
@@ -86,12 +89,38 @@ function walkEvents(events: readonly Event[]): Walk {
   const groups: Group[] = []
   const settlements = new Map<string, SettledCall>()
   const claimedCallIds = new Set<string>()
+  const current = new Set(currentContextEvents(events).map((event) => event.id))
   let openAssistant: Group | undefined
 
   for (const event of events) {
     if (event.type === 'user-said') {
       groups.push({
         message: { role: 'user', content: [{ type: 'text', text: event.text }] },
+        origin: originOf(event),
+      })
+      openAssistant = undefined
+      continue
+    }
+
+    if (event.type === 'context-loaded') {
+      if (!current.has(event.id)) continue
+
+      groups.push({
+        message: {
+          role: 'user',
+          content: [
+            { type: 'text', text: contextBlock({ slot: event.slot, key: event.key, content: event.content }) },
+          ],
+        },
+        origin: originOf(event),
+      })
+      openAssistant = undefined
+      continue
+    }
+
+    if (event.type === 'background-shell-ended') {
+      groups.push({
+        message: { role: 'user', content: [{ type: 'text', text: backgroundShellBlock(event) }] },
         origin: originOf(event),
       })
       openAssistant = undefined

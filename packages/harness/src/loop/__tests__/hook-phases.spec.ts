@@ -1,83 +1,26 @@
-import { afterEach, describe, expect, it } from 'bun:test'
-import type { MockLanguageModelV4 } from 'ai/test'
-
-import { z } from 'zod'
+import { describe, expect, it } from 'bun:test'
 
 import {
   defaultPipeline,
   EStage,
-  EToolEffect,
   MINIMAL_PREAMBLE,
   type AfterTurn,
   type BeforeRequest,
   type BeforeStep,
   type Message,
   type OnChunk,
-  type ToolDefinition,
 } from '@dltech/atlas-core'
 
-import { buildHarness, createTurnRunner, ETurnStatus, type AtlasHarness, type TurnRunner } from '..'
-import { createDeltaChannel, createPublishingTurnRunner, type ChannelSignal } from '../../channel'
-import { createHookRegistry, type HookRegistry } from '../../hooks/registry'
+import { buildHarness, ETurnStatus } from '..'
+import { createDeltaChannel, PublishingTurnRunner, type ChannelSignal } from '../../channel'
+import { HookChain } from '../../hooks/registry'
 import { interruptibleModel } from '../../model/testing/interruptible-model'
-import { scriptedModel, type ScriptedStep } from '../../model/testing/scripted-model'
-import { createDispatch } from '../../tools/dispatch'
-import { createToolRegistry } from '../../tools/registry'
-import { createTempDatabase, type TempDatabase } from './temp-database'
+import { createTempDatabase } from './temp-database'
+import { keepOpen, openHooked } from './hooked-turn'
 
-const opened: { harness: AtlasHarness; temp: TempDatabase }[] = []
-
-afterEach(async () => {
-  for (const entry of opened.splice(0)) {
-    await entry.harness.close()
-    entry.temp.discard()
-  }
+const nudging = (text: string): AfterTurn => async () => ({
+  drafts: [{ type: 'nudge', text, lifetimeSteps: 1 }],
 })
-
-const touchTool: ToolDefinition = {
-  name: 'touch',
-  description: 'do nothing at all',
-  effect: EToolEffect.Read,
-  inputSchema: z.object({}),
-  invoke: async () => ({ ok: true, output: 'touched', modelText: 'touched' }),
-}
-
-async function openHooked(args: {
-  script: readonly ScriptedStep[]
-  hooks: HookRegistry
-  withTools?: boolean
-}): Promise<{
-  runner: TurnRunner
-  harness: AtlasHarness
-  model: MockLanguageModelV4
-}> {
-  const temp = createTempDatabase()
-  const model = scriptedModel({ script: args.script })
-  const harness = await buildHarness({ databaseUrl: temp.databaseUrl, model, hooks: args.hooks })
-  opened.push({ harness, temp })
-
-  const tools = createToolRegistry([touchTool])
-
-  return {
-    harness,
-    model,
-    runner: createTurnRunner({
-      log: harness.log,
-      model: harness.model,
-      ids: harness.ids,
-      assembly: defaultPipeline(),
-      hooks: args.hooks,
-      ...(args.withTools === true
-        ? {
-            tools: tools.declarations(),
-            dispatch: createDispatch({ registry: tools, hooks: args.hooks }),
-          }
-        : {}),
-    }),
-  }
-}
-
-const nudging = (text: string): AfterTurn => async () => [{ type: 'nudge', text, lifetimeSteps: 1 }]
 
 const publishedDeltas = (signals: readonly ChannelSignal[]): string[] =>
   signals.flatMap((signal) =>
@@ -93,7 +36,7 @@ describe('BeforeStep', () => {
 
     const { runner, harness, model } = await openHooked({
       script: [{ text: 'auth' }],
-      hooks: createHookRegistry({
+      hooks: new HookChain({
         beforeStep: [{ name: 'insistOnBrevity', order: { stage: EStage.Policy, nudge: 0 }, run: insistOnBrevity }],
       }),
     })
@@ -117,7 +60,7 @@ describe('BeforeStep', () => {
 
     const { runner, harness, model } = await openHooked({
       script: [{ text: 'unreachable' }],
-      hooks: createHookRegistry({
+      hooks: new HookChain({
         beforeStep: [{ name: 'blankEveryText', order: { stage: EStage.Policy, nudge: 0 }, run: blankEveryText }],
       }),
     })
@@ -140,7 +83,7 @@ describe('BeforeRequest', () => {
 
     const { runner, harness, model } = await openHooked({
       script: [{ text: 'AUTH' }],
-      hooks: createHookRegistry({
+      hooks: new HookChain({
         beforeRequest: [{ name: 'shout', order: { stage: EStage.Policy, nudge: 0 }, run: shout }],
       }),
     })
@@ -161,7 +104,7 @@ describe('AfterTurn', () => {
   it('appends what its hooks return, in stage order, once the turn has completed', async () => {
     const { runner, harness } = await openHooked({
       script: [{ text: 'auth' }],
-      hooks: createHookRegistry({
+      hooks: new HookChain({
         afterTurn: [
           { name: 'observed', order: { stage: EStage.Observe, nudge: 0 }, run: nudging('observed') },
           { name: 'guarded', order: { stage: EStage.Guard, nudge: 0 }, run: nudging('guarded') },
@@ -184,7 +127,7 @@ describe('AfterTurn', () => {
     const { runner, harness } = await openHooked({
       script: [{ text: 'looking', calls: [{ callId: 'call-1', name: 'touch', input: {} }] }, { text: 'auth' }],
       withTools: true,
-      hooks: createHookRegistry({
+      hooks: new HookChain({
         afterTurn: [{ name: 'observed', order: { stage: EStage.Observe, nudge: 0 }, run: nudging('observed') }],
       }),
     })
@@ -205,7 +148,7 @@ describe('OnChunk against the delta channel', () => {
       return chunk
     }
 
-    const hooks = createHookRegistry({
+    const hooks = new HookChain({
       onChunk: [{ name: 'secret-redaction', order: { stage: EStage.Guard, nudge: 0 }, run: redact }],
     })
 
@@ -215,14 +158,14 @@ describe('OnChunk against the delta channel', () => {
       model: interruptibleModel({ head: 'auth and ', tail: 'sk-leak', chunkDelayInMs: 0 }),
       hooks,
     })
-    opened.push({ harness, temp })
+    keepOpen({ harness, temp })
 
     const channel = createDeltaChannel()
     const seen: ChannelSignal[] = []
     const branch = await harness.branches.create({})
     channel.subscribe({ branchId: branch.id, listener: (signal) => void seen.push(signal) })
 
-    const runner = createPublishingTurnRunner({
+    const runner = new PublishingTurnRunner({
       channel,
       deps: { log: harness.log, model: harness.model, ids: harness.ids, assembly: defaultPipeline(), hooks },
     })

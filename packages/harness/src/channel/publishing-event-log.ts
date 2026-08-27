@@ -12,6 +12,6 @@ export function withDeltaPublishing(args: { log: EventLogPort; channel: DeltaCha
 
     read: (readArgs) => args.log.read(readArgs),
     head: (headArgs) => args.log.head(headArgs),
-    forkFrom: (forkArgs) => args.log.forkFrom(forkArgs),
+    readOwn: (readArgs) => args.log.readOwn(readArgs),
   }
 }

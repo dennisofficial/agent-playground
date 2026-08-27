@@ -59,7 +59,7 @@ describe('footerLayout at ease', () => {
     })
     expect(layout.instruments.context).toEqual({
       bar: true,
-      text: 'context 86% — compacts at 90',
+      text: 'context 86% — ctrl+k to compact',
     })
   })
 
@@ -120,7 +120,7 @@ describe('footerLayout under pressure', () => {
         context: { percent: CONTEXT_WARN_PERCENT + 11 },
       })
     const spelled = (layout: FooterLayout): boolean =>
-      layout.instruments.context?.text.includes('compacts at 90') === true
+      layout.instruments.context?.text.includes('ctrl+k to compact') === true
     for (let width = 200; width >= 40; width -= 1) {
       const layout = warned(width)
       if (!spelled(layout)) {

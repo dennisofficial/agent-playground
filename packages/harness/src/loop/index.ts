@@ -1,4 +1,6 @@
 export * from './build-harness'
 export * from './run-turn'
 export * from './settle-pending'
+export * from './turn-faults'
 export * from './turn-outcome'
+export * from './turn-runner.port'

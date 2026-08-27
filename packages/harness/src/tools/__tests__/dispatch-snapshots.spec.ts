@@ -11,9 +11,9 @@ import {
   type WorkspacePort,
 } from '@dltech/atlas-core'
 
-import { createHookRegistry, type RegisteredHook } from '../../hooks/registry'
-import { createDispatch, type Dispatch } from '../dispatch'
-import { createToolRegistry } from '../registry'
+import { HookChain, type RegisteredHook } from '../../hooks/registry'
+import { HookedToolDispatcher, type ToolDispatcher } from '../dispatch'
+import { InMemoryToolRegistry } from '../registry'
 import { readCall, toolNamed } from './fixtures'
 
 type RecordingWorkspace = WorkspacePort & { labels: readonly string[] }
@@ -40,8 +40,8 @@ function dispatchWith(args: {
   workspace?: WorkspacePort
   invoke?: () => Promise<{ ok: false; reason: string }>
   beforeTool?: readonly RegisteredHook<BeforeTool>[]
-}): Dispatch {
-  const registry = createToolRegistry([
+}): ToolDispatcher {
+  const registry = new InMemoryToolRegistry([
     toolNamed({
       name: 'read',
       effect: args.effect,
@@ -53,9 +53,9 @@ function dispatchWith(args: {
     }),
   ])
 
-  return createDispatch({
+  return new HookedToolDispatcher({
     registry,
-    hooks: createHookRegistry(args.beforeTool === undefined ? {} : { beforeTool: args.beforeTool }),
+    hooks: new HookChain(args.beforeTool === undefined ? {} : { beforeTool: args.beforeTool }),
     ...(args.workspace === undefined ? {} : { workspace: args.workspace }),
   })
 }
@@ -69,9 +69,9 @@ describe('dispatching a write-effect tool with a workspace bound', () => {
   it('snapshots the workspace before invoking the tool and puts the id on the result', async () => {
     const steps: string[] = []
     const workspace = workspaceRecording({ steps })
-    const dispatch = dispatchWith({ effect: EToolEffect.Write, steps, workspace })
+    const dispatcher = dispatchWith({ effect: EToolEffect.Write, steps, workspace })
 
-    const drafts = await dispatch({ call: readCall, signal: new AbortController().signal })
+    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal })
 
     expect(steps).toEqual(['snapshot', 'invoke'])
     expect(snapshotIdOf(drafts[0])).toBe(toSnapshotId('tree-1'))
@@ -81,14 +81,14 @@ describe('dispatching a write-effect tool with a workspace bound', () => {
 
   it('still records the snapshot when the tool fails, because it may have written first', async () => {
     const steps: string[] = []
-    const dispatch = dispatchWith({
+    const dispatcher = dispatchWith({
       effect: EToolEffect.Write,
       steps,
       workspace: workspaceRecording({ steps }),
       invoke: async () => ({ ok: false, reason: 'disk full' }),
     })
 
-    const drafts = await dispatch({ call: readCall, signal: new AbortController().signal })
+    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal })
 
     expect(snapshotIdOf(drafts[0])).toBe(toSnapshotId('tree-1'))
   })
@@ -97,13 +97,13 @@ describe('dispatching a write-effect tool with a workspace bound', () => {
 describe('dispatching a destructive-effect tool with a workspace bound', () => {
   it('snapshots the workspace first', async () => {
     const steps: string[] = []
-    const dispatch = dispatchWith({
+    const dispatcher = dispatchWith({
       effect: EToolEffect.Destructive,
       steps,
       workspace: workspaceRecording({ steps }),
     })
 
-    const drafts = await dispatch({ call: readCall, signal: new AbortController().signal })
+    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal })
 
     expect(steps).toEqual(['snapshot', 'invoke'])
     expect(snapshotIdOf(drafts[0])).toBe(toSnapshotId('tree-1'))
@@ -113,13 +113,13 @@ describe('dispatching a destructive-effect tool with a workspace bound', () => {
 describe('dispatching a read-effect tool with a workspace bound', () => {
   it('takes no snapshot, because a read cannot change the world', async () => {
     const steps: string[] = []
-    const dispatch = dispatchWith({
+    const dispatcher = dispatchWith({
       effect: EToolEffect.Read,
       steps,
       workspace: workspaceRecording({ steps }),
     })
 
-    const drafts = await dispatch({ call: readCall, signal: new AbortController().signal })
+    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal })
 
     expect(steps).toEqual(['invoke'])
     expect(snapshotIdOf(drafts[0])).toBeUndefined()
@@ -129,7 +129,7 @@ describe('dispatching a read-effect tool with a workspace bound', () => {
 describe('dispatching a write-effect tool a hook stops', () => {
   it('takes no snapshot when the call is denied', async () => {
     const steps: string[] = []
-    const dispatch = dispatchWith({
+    const dispatcher = dispatchWith({
       effect: EToolEffect.Write,
       steps,
       workspace: workspaceRecording({ steps }),
@@ -142,7 +142,7 @@ describe('dispatching a write-effect tool a hook stops', () => {
       ],
     })
 
-    const drafts = await dispatch({ call: readCall, signal: new AbortController().signal })
+    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal })
 
     expect(steps).toEqual([])
     expect(drafts[0]?.type).toBe('tool-denied')
@@ -150,7 +150,7 @@ describe('dispatching a write-effect tool a hook stops', () => {
 
   it('takes no snapshot while the call is waiting on a human', async () => {
     const steps: string[] = []
-    const dispatch = dispatchWith({
+    const dispatcher = dispatchWith({
       effect: EToolEffect.Write,
       steps,
       workspace: workspaceRecording({ steps }),
@@ -163,7 +163,7 @@ describe('dispatching a write-effect tool a hook stops', () => {
       ],
     })
 
-    const drafts = await dispatch({ call: readCall, signal: new AbortController().signal })
+    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal })
 
     expect(steps).toEqual([])
     expect(drafts[0]?.type).toBe('approval-requested')
@@ -173,9 +173,9 @@ describe('dispatching a write-effect tool a hook stops', () => {
 describe('dispatching a write-effect tool with no workspace bound', () => {
   it('invokes the tool and reports a result carrying no snapshot id at all', async () => {
     const steps: string[] = []
-    const dispatch = dispatchWith({ effect: EToolEffect.Write, steps })
+    const dispatcher = dispatchWith({ effect: EToolEffect.Write, steps })
 
-    const drafts = await dispatch({ call: readCall, signal: new AbortController().signal })
+    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal })
 
     expect(steps).toEqual(['invoke'])
     expect(drafts[0]).toStrictEqual({
@@ -191,7 +191,7 @@ describe('dispatching a write-effect tool with no workspace bound', () => {
 describe('dispatching a write-effect tool when the snapshot fails', () => {
   it('runs the tool anyway and reports a result with no snapshot id', async () => {
     const steps: string[] = []
-    const dispatch = dispatchWith({
+    const dispatcher = dispatchWith({
       effect: EToolEffect.Write,
       steps,
       workspace: workspaceRecording({
@@ -202,7 +202,7 @@ describe('dispatching a write-effect tool when the snapshot fails', () => {
       }),
     })
 
-    const drafts = await dispatch({ call: readCall, signal: new AbortController().signal })
+    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal })
 
     expect(steps).toEqual(['snapshot', 'invoke'])
     expect(snapshotIdOf(drafts[0])).toBeUndefined()

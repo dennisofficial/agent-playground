@@ -44,8 +44,10 @@ const fakeLog = (): EventLogPort => {
     async head({ branchId }) {
       return of(branchId).length
     },
-    async forkFrom() {
-      throw new Error('not implemented')
+    async readOwn({ branchId, upTo }) {
+      const stored = of(branchId)
+      if (upTo === undefined) return [...stored]
+      return stored.filter((event) => event.seq <= upTo)
     },
   }
 }

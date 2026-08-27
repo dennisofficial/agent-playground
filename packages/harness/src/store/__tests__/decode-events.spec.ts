@@ -38,6 +38,7 @@ function rowAt({
     body,
     contextSlot: null,
     contextKey: null,
+    contextDigest: null,
   }
 }
 

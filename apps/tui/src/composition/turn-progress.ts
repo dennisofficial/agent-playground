@@ -58,12 +58,32 @@ export function turnSettled(args: { progress: TurnProgress; now: number }): Turn
 export const clockReadableAt = (args: { now: number; clock: TurnClock }): number =>
   args.clock.startedAt === null ? args.now : Math.max(args.now, args.clock.startedAt)
 
-const STEP_CEILING = 'The turn hit the step ceiling with work still outstanding. Send it on to continue.'
+const SUSPENSION_FLOOR_MS = 10_000
+
+export type Suspension = { tickedAt: number; suspendedMs: number }
+
+export const suspensionFrom = (args: { now: number; suspendedMs?: number }): Suspension => ({
+  tickedAt: args.now,
+  suspendedMs: args.suspendedMs ?? 0,
+})
+
+export function suspensionTicked(args: {
+  suspension: Suspension
+  now: number
+  intervalMs: number
+}): Suspension {
+  const unticked = args.now - args.suspension.tickedAt - args.intervalMs
+  if (unticked < SUSPENSION_FLOOR_MS) return { ...args.suspension, tickedAt: args.now }
+
+  return { tickedAt: args.now, suspendedMs: args.suspension.suspendedMs + unticked }
+}
+
+export const awakeAt = (args: { suspension: Suspension; now: number }): number =>
+  args.now - args.suspension.suspendedMs
 
 export function stoppageOf(outcome: TurnOutcome): string | null {
   if (outcome.status === ETurnStatus.Failed) return outcome.message
   if (outcome.status === ETurnStatus.Paused) return `The turn is waiting: ${outcome.reason}.`
-  if (outcome.status === ETurnStatus.Exhausted) return STEP_CEILING
   return null
 }
 

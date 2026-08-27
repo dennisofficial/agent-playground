@@ -1,10 +1,13 @@
 import {
+  eventBodySchema,
   toBranchId,
   toEventId,
   toRunId,
   type EventDraft,
   type EventEnvelope,
 } from '@dltech/atlas-core'
+
+import { contextDigestOf } from './context-digest'
 
 export type EventRow = {
   id: string
@@ -18,6 +21,21 @@ export type EventRow = {
   body: string
   contextSlot: string | null
   contextKey: string | null
+  contextDigest: string | null
+}
+
+export class UnreadableWrite extends Error {
+  constructor(args: { type: string; detail: string }) {
+    super(`refusing to write a ${args.type} event Atlas could not read back: ${args.detail}`)
+    this.name = 'UnreadableWrite'
+  }
+}
+
+const bodyOf = (draft: EventDraft): string => {
+  const body = JSON.stringify(draft)
+  const readable = eventBodySchema.safeParse(JSON.parse(body))
+  if (!readable.success) throw new UnreadableWrite({ type: draft.type, detail: readable.error.message })
+  return body
 }
 
 export function toEventRow({ draft, envelope }: { draft: EventDraft; envelope: EventEnvelope }): EventRow {
@@ -30,9 +48,10 @@ export function toEventRow({ draft, envelope }: { draft: EventDraft; envelope: E
     depth: envelope.depth,
     at: envelope.at,
     type: draft.type,
-    body: JSON.stringify(draft),
+    body: bodyOf(draft),
     contextSlot: draft.type === 'context-loaded' ? draft.slot : null,
     contextKey: draft.type === 'context-loaded' ? draft.key : null,
+    contextDigest: draft.type === 'context-loaded' ? contextDigestOf(draft.content) : null,
   }
 }
 

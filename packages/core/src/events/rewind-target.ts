@@ -5,6 +5,7 @@ export enum ERewindRefusal {
   NoSuchTarget = 'no-such-target',
   UnsettledToolCall = 'unsettled-tool-call',
   UnansweredApproval = 'unanswered-approval',
+  BelowInheritedPrefix = 'below-inherited-prefix',
 }
 
 export type RewindTarget = { allowed: true } | { allowed: false; refusal: ERewindRefusal; reason: string }
@@ -12,9 +13,11 @@ export type RewindTarget = { allowed: true } | { allowed: false; refusal: ERewin
 export function rewindTarget({
   events,
   toSeq,
+  floorSeq = 0,
 }: {
   events: readonly Event[]
   toSeq: number
+  floorSeq?: number | undefined
 }): RewindTarget {
   const lastSeq = events.at(-1)?.seq ?? 0
   if (!Number.isInteger(toSeq) || toSeq < 0 || toSeq > lastSeq) {
@@ -22,6 +25,14 @@ export function rewindTarget({
       allowed: false,
       refusal: ERewindRefusal.NoSuchTarget,
       reason: `${toSeq} is not a rewind target on a branch holding sequences 0 through ${lastSeq}`,
+    }
+  }
+
+  if (toSeq < floorSeq) {
+    return {
+      allowed: false,
+      refusal: ERewindRefusal.BelowInheritedPrefix,
+      reason: `rewinding to ${toSeq} would cut into the ${floorSeq} sequences this branch inherited rather than owns, and the rows below ${floorSeq} belong to its parent`,
     }
   }
 

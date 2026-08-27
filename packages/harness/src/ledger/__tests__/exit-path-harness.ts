@@ -20,10 +20,11 @@ import {
 } from '@dltech/atlas-core'
 
 import { HookChain } from '../../hooks/registry'
-import { createTurnRunner, type TurnRunner } from '../../loop/run-turn'
+import { LoopTurnRunner, type TurnDeps } from '../../loop/run-turn'
+import { TurnRunner } from '../../loop/turn-runner.port'
 import { ModelStreamError } from '../../model/errors'
 import { openAtlasDatabase, PrismaBranchStore, PrismaEventLog, RandomIds, SystemClock } from '../../store'
-import { createDispatch } from '../../tools/dispatch'
+import { HookedToolDispatcher } from '../../tools/dispatch'
 import { InMemoryToolRegistry } from '../../tools/registry'
 import { PrismaTurnLedger } from '../prisma-turn-ledger'
 import type { TurnLedgerPort, TurnSpend } from '../turn-ledger.port'
@@ -123,9 +124,9 @@ export async function openExitPathHarness(args: {
   dispatchMode?: EDispatchMode
   ledger?: TurnLedgerPort
   persist?: boolean
-  createRunner?: typeof createTurnRunner
+  createRunner?: (deps: TurnDeps) => TurnRunner
 }): Promise<ExitPathHarness> {
-  const buildRunner = args.createRunner ?? createTurnRunner
+  const buildRunner = args.createRunner ?? ((deps: TurnDeps) => new LoopTurnRunner(deps))
   const directory = mkdtempSync(join(tmpdir(), 'atlas-exit-'))
   const database = await openAtlasDatabase({ databaseUrl: `file:${join(directory, 'harness.db')}` })
   const clock = new SystemClock()
@@ -151,7 +152,7 @@ export async function openExitPathHarness(args: {
       assembly: defaultPipeline(),
       tools: registry.declarations(),
       hooks,
-      ...(mode === EDispatchMode.None ? {} : { dispatch: createDispatch({ registry, hooks }) }),
+      ...(mode === EDispatchMode.None ? {} : { dispatch: new HookedToolDispatcher({ registry, hooks }) }),
       spend: { ledger, clock, onLedgerFailure: (error) => failures.push(error) },
     }),
     close: async () => {

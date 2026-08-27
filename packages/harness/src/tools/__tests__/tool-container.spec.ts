@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { ToolDefinition, type ToolOutcome } from '@dltech/atlas-core'
 
 import { createHarnessContainer } from '../../container/create-harness-container'
+import { disposeAll } from '../../container/disposal'
 import { portToken, resolveSet, type DependencyContainer } from '../../container/injection'
 import { WorkspaceRoot } from '../../container/tokens'
 import { BashTool } from '../builtin/bash'
@@ -14,7 +15,17 @@ import { GlobTool } from '../builtin/glob'
 import { GrepTool } from '../builtin/grep'
 import { ToolRegistry } from '../registry'
 
-const BUILTIN_NAMES = ['read', 'write', 'edit', 'bash', 'grep', 'glob']
+const BUILTIN_NAMES = [
+  'read',
+  'write',
+  'edit',
+  'bash',
+  'grep',
+  'glob',
+  'shell_list',
+  'shell_output',
+  'shell_kill',
+]
 
 function containerRootedAt(root: string): DependencyContainer {
   const container = createHarnessContainer()
@@ -44,7 +55,7 @@ describe('the builtin tools resolved from the container', () => {
 
   afterAll(() => rmSync(root, { recursive: true, force: true }))
 
-  it('resolves all six against the one ToolDefinition token, in registration order', () => {
+  it('resolves every builtin against the one ToolDefinition token, in registration order', () => {
     const tools = resolveSet({ container, token: portToken(ToolDefinition) })
 
     expect(tools.map((tool) => tool.name)).toEqual(BUILTIN_NAMES)
@@ -103,5 +114,76 @@ describe('tool registration across containers', () => {
     const container = createHarnessContainer()
 
     expect(() => container.resolve(portToken(ToolRegistry))).toThrow()
+  })
+})
+
+describe('the background shell registry the tools share', () => {
+  it('hands bash, shell_output and shell_kill the same registry, so a shell one starts the others can see', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'atlas-shared-shells-'))
+    const container = containerRootedAt(root)
+
+    try {
+      const started = await invoke(toolNamed({ container, name: 'bash' }), {
+        command: 'sleep 30',
+        runInBackground: true,
+      })
+      expect(started.ok).toBe(true)
+      if (!started.ok) return
+
+      const shellId = (started.output as { shellId: string }).shellId
+      const read = await invoke(toolNamed({ container, name: 'shell_output' }), { shellId })
+      const killed = await invoke(toolNamed({ container, name: 'shell_kill' }), { shellId })
+
+      expect(read.ok).toBe(true)
+      expect(killed.ok).toBe(true)
+    } finally {
+      await disposeAll({ container })
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('gives each container its own registry rather than sharing one process-wide', async () => {
+    const first = mkdtempSync(join(tmpdir(), 'atlas-shells-first-'))
+    const second = mkdtempSync(join(tmpdir(), 'atlas-shells-second-'))
+    const containers = [containerRootedAt(first), containerRootedAt(second)] as const
+
+    try {
+      const started = await invoke(toolNamed({ container: containers[0], name: 'bash' }), {
+        command: 'sleep 30',
+        runInBackground: true,
+      })
+      expect(started.ok).toBe(true)
+      if (!started.ok) return
+
+      const shellId = (started.output as { shellId: string }).shellId
+      const elsewhere = await invoke(toolNamed({ container: containers[1], name: 'shell_output' }), { shellId })
+
+      expect(elsewhere.ok).toBe(false)
+    } finally {
+      for (const container of containers) await disposeAll({ container })
+      rmSync(first, { recursive: true, force: true })
+      rmSync(second, { recursive: true, force: true })
+    }
+  })
+
+  it('kills what it started when the container is torn down', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'atlas-shells-teardown-'))
+    const container = containerRootedAt(root)
+    const witness = join(root, 'zombie.txt')
+
+    try {
+      await invoke(toolNamed({ container, name: 'bash' }), {
+        command: `sleep 2; echo alive > ${witness}`,
+        runInBackground: true,
+      })
+      await Bun.sleep(150)
+
+      await disposeAll({ container })
+      await Bun.sleep(2200)
+
+      expect(await Bun.file(witness).exists()).toBe(false)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })

@@ -1,4 +1,6 @@
-export type PendingMessage = { id: string; text: string }
+import type { Event } from '@dltech/atlas-core'
+
+export type PendingMessage = { id: string; text: string; taken: boolean }
 
 export type PendingQueue = {
   subscribe(listener: () => void): () => void
@@ -6,6 +8,7 @@ export type PendingQueue = {
   enqueue(args: { text: string }): void
   takeBackLast(): PendingMessage | null
   drain(): readonly string[]
+  settleTaken(args: { landed: readonly string[] }): void
   clear(): void
 }
 
@@ -13,14 +16,40 @@ const NOTHING_PENDING: readonly PendingMessage[] = Object.freeze([])
 
 const NOTHING_TAKEN: readonly string[] = Object.freeze([])
 
+export const trailingSaid = (events: readonly Event[]): readonly string[] => {
+  const said: string[] = []
+
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]
+    if (event?.type !== 'user-said') break
+    said.unshift(event.text)
+  }
+
+  return said
+}
+
+const landedInOrder = (args: { landed: readonly string[]; taken: readonly PendingMessage[] }): boolean => {
+  const said = args.taken.map((message) => message.text)
+
+  return args.landed.some(
+    (_text, start) =>
+      start + said.length <= args.landed.length &&
+      said.every((text, offset) => text === args.landed[start + offset]),
+  )
+}
+
 export function createPendingQueue(): PendingQueue {
+  let taken: readonly PendingMessage[] = NOTHING_PENDING
   let waiting: readonly PendingMessage[] = NOTHING_PENDING
+  let snapshot: readonly PendingMessage[] = NOTHING_PENDING
   let stamped = 0
 
   const listeners = new Set<() => void>()
 
-  const settle = (next: readonly PendingMessage[]) => {
-    waiting = next
+  const settle = (next: { taken?: readonly PendingMessage[]; waiting?: readonly PendingMessage[] }) => {
+    taken = next.taken ?? taken
+    waiting = next.waiting ?? waiting
+    snapshot = taken.length === 0 ? waiting : [...taken, ...waiting]
     for (const listener of [...listeners]) listener()
   }
 
@@ -30,32 +59,39 @@ export function createPendingQueue(): PendingQueue {
       return () => void listeners.delete(listener)
     },
 
-    getSnapshot: () => waiting,
+    getSnapshot: () => snapshot,
 
     enqueue({ text }) {
       stamped += 1
-      settle([...waiting, { id: `pending-${stamped}`, text }])
+      settle({ waiting: [...waiting, { id: `pending-${stamped}`, text, taken: false }] })
     },
 
     takeBackLast() {
       const last = waiting.at(-1)
       if (last === undefined) return null
 
-      settle(waiting.slice(0, -1))
+      settle({ waiting: waiting.slice(0, -1) })
       return last
     },
 
     drain() {
       if (waiting.length === 0) return NOTHING_TAKEN
 
-      const taken = waiting.map((message) => message.text)
-      settle(NOTHING_PENDING)
-      return taken
+      const handed = waiting.map((message) => ({ ...message, taken: true }))
+      settle({ taken: [...taken, ...handed], waiting: NOTHING_PENDING })
+      return handed.map((message) => message.text)
+    },
+
+    settleTaken({ landed }) {
+      if (taken.length === 0) return
+      if (!landedInOrder({ landed, taken })) return
+
+      settle({ taken: NOTHING_PENDING })
     },
 
     clear() {
-      if (waiting.length === 0) return
-      settle(NOTHING_PENDING)
+      if (snapshot.length === 0) return
+      settle({ taken: NOTHING_PENDING, waiting: NOTHING_PENDING })
     },
   }
 }

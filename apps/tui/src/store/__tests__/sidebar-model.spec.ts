@@ -117,6 +117,35 @@ describe('the session head', () => {
     expect(title.endsWith('…')).toBe(true)
   })
 
+  it('prefers the name the session was given over the first thing said', () => {
+    const events = log([{ type: 'user-said', text: 'the refresh token never rotates' }])
+
+    expect(deriveSidebar({ events, turn: IDLE_TURN, name: 'Refresh-token rotation' }).title).toBe(
+      'Refresh-token rotation',
+    )
+  })
+
+  it('falls back to the opening message while the session is still unnamed', () => {
+    const events = log([{ type: 'user-said', text: 'the refresh token never rotates' }])
+
+    expect(deriveSidebar({ events, turn: IDLE_TURN, name: null }).title).toBe(
+      'the refresh token never rotates',
+    )
+  })
+
+  it('ignores a name that is blank rather than showing an empty heading', () => {
+    const events = log([{ type: 'user-said', text: 'rotate the tokens' }])
+
+    expect(deriveSidebar({ events, turn: IDLE_TURN, name: '   ' }).title).toBe('rotate the tokens')
+  })
+
+  it('truncates a name too long for the sidebar', () => {
+    const title = deriveSidebar({ events: [], turn: IDLE_TURN, name: 'R'.repeat(200) }).title ?? ''
+
+    expect([...title].length).toBeLessThanOrEqual(SIDEBAR_WIDTH)
+    expect(title.endsWith('…')).toBe(true)
+  })
+
   it('leaves the title unset on an empty branch, and on one that says nothing', () => {
     expect(deriveSidebar({ events: [], turn: IDLE_TURN }).title).toBeNull()
 

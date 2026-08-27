@@ -1,4 +1,4 @@
-import { EModelVendor, type ModelEntry } from './catalog'
+import { EModelVendor, EThinkingControl, type ModelEntry } from './catalog'
 
 const RELEASE_STAMP = /-\d{8}$/
 
@@ -7,7 +7,8 @@ export const MODEL_CATALOG: readonly ModelEntry[] = [
     id: 'claude-opus-5',
     label: 'opus-5',
     vendor: EModelVendor.Anthropic,
-    contextWindow: 200_000,
+    contextWindow: 1_000_000,
+    thinkingControl: EThinkingControl.Effort,
     inputPricePerMillion: 5,
     outputPricePerMillion: 25,
   },
@@ -15,7 +16,8 @@ export const MODEL_CATALOG: readonly ModelEntry[] = [
     id: 'claude-sonnet-5',
     label: 'sonnet-5',
     vendor: EModelVendor.Anthropic,
-    contextWindow: 200_000,
+    contextWindow: 1_000_000,
+    thinkingControl: EThinkingControl.Effort,
     inputPricePerMillion: 3,
     outputPricePerMillion: 15,
   },
@@ -24,6 +26,7 @@ export const MODEL_CATALOG: readonly ModelEntry[] = [
     label: 'haiku-4-5',
     vendor: EModelVendor.Anthropic,
     contextWindow: 200_000,
+    thinkingControl: EThinkingControl.Budget,
     inputPricePerMillion: 1,
     outputPricePerMillion: 5,
   },
@@ -32,6 +35,7 @@ export const MODEL_CATALOG: readonly ModelEntry[] = [
     label: 'gpt-5-codex',
     vendor: EModelVendor.OpenAI,
     contextWindow: 400_000,
+    thinkingControl: EThinkingControl.Effort,
     inputPricePerMillion: 1.25,
     outputPricePerMillion: 10,
   },

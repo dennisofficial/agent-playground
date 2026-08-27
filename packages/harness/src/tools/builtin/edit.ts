@@ -2,13 +2,14 @@ import { mkdir, stat } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 import {
+  EContentAccess,
   EPathForm,
   EPathPresence,
   EToolEffect,
+  SchemaTool,
   type DeclaredPathField,
-  type ToolDefinition,
-  type ToolInvocation,
   type ToolOutcome,
+  type ToolRun,
 } from '@dltech/atlas-core'
 import { z } from 'zod'
 
@@ -123,20 +124,17 @@ async function replaceInFile(args: {
 }
 
 @injectable()
-export class EditTool implements ToolDefinition {
+export class EditTool extends SchemaTool<typeof inputSchema> {
   readonly name = 'edit'
   readonly description = description
   readonly effect = EToolEffect.Write
   readonly inputSchema = inputSchema
-  readonly pathFields: readonly DeclaredPathField[] = [
-    { field: 'path', presence: EPathPresence.Required, form: EPathForm.Absolute },
+  override readonly pathFields: readonly DeclaredPathField[] = [
+    { field: 'path', presence: EPathPresence.Required, form: EPathForm.Absolute, content: EContentAccess.Amends },
   ]
 
-  async invoke({ input }: ToolInvocation): Promise<ToolOutcome> {
-    const parsed = inputSchema.safeParse(input)
-    if (!parsed.success) return { ok: false, reason: `edit was called with invalid input: ${z.prettifyError(parsed.error)}` }
-
-    const { path, oldString, newString, replaceAll } = parsed.data
+  protected override async run({ input }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
+    const { path, oldString, newString, replaceAll } = input
     const stats = await stat(path).catch(() => null)
     if (stats !== null && !stats.isFile()) return { ok: false, reason: `${path} is not a regular file.` }
 
@@ -151,4 +149,3 @@ export class EditTool implements ToolDefinition {
   }
 }
 
-export const createEditTool = (): ToolDefinition => new EditTool()

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'bun:test'
 import { EStage, type AfterTurn } from '@dltech/atlas-core'
 
 import { ETurnStatus } from '..'
-import { createHookRegistry } from '../../hooks/registry'
+import { HookChain } from '../../hooks/registry'
 import { openSteerable, userTexts } from './steerable-turn'
 
 const typesOf = (events: readonly { type: string }[]): string[] => events.map((event) => event.type)
@@ -47,30 +47,16 @@ describe('a message typed while the last model step is running', () => {
     expect(events.filter((event) => event.type === 'user-said' && event.text === 'actually, do Y')).toHaveLength(1)
   })
 
-  it('costs a model step, so a turn out of budget reports Exhausted rather than looping', async () => {
+  it('costs a model step, so steering extends the turn rather than ending it', async () => {
     const { runner, model, branchId } = await openSteerable({
-      script: [{ text: 'starting on X' }, { text: 'never asked' }],
+      script: [{ text: 'starting on X' }, { text: 'doing Y instead' }],
       types: { text: 'actually, do Y', onStep: 1 },
-      maxSteps: 1,
     })
 
     const outcome = await runner.say({ branchId, text: 'do X' })
 
-    expect(outcome.status).toBe(ETurnStatus.Exhausted)
-    expect(model.doStreamCalls).toHaveLength(1)
-  })
-
-  it('spends the whole step budget when it keeps arriving, and the spin guard never gets there first', async () => {
-    const { runner, model, branchId } = await openSteerable({
-      script: [{ text: 'one' }, { text: 'two' }, { text: 'three' }, { text: 'never asked' }],
-      types: { text: 'no, the other thing', onStep: 'each' },
-      maxSteps: 3,
-    })
-
-    const outcome = await runner.say({ branchId, text: 'do X' })
-
-    expect(outcome.status).toBe(ETurnStatus.Exhausted)
-    expect(model.doStreamCalls).toHaveLength(3)
+    expect(outcome.status).toBe(ETurnStatus.Completed)
+    expect(model.doStreamCalls).toHaveLength(2)
   })
 })
 
@@ -127,11 +113,13 @@ describe('a turn nobody steers', () => {
   })
 })
 
-const nudging = (text: string): AfterTurn => async () => [{ type: 'nudge', text, lifetimeSteps: 1 }]
+const nudging = (text: string): AfterTurn => async () => ({
+  drafts: [{ type: 'nudge', text, lifetimeSteps: 1 }],
+})
 
 describe('AfterTurn against a steered turn', () => {
   it('runs once at the end of the turn, not once per continuation', async () => {
-    const hooks = createHookRegistry({
+    const hooks = new HookChain({
       afterTurn: [{ name: 'observed', order: { stage: EStage.Observe, nudge: 0 }, run: nudging('observed') }],
     })
     const { runner, harness, branchId } = await openSteerable({

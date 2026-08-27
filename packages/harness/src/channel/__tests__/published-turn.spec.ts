@@ -8,7 +8,7 @@ import { buildHarness, ETurnStatus, type AtlasHarness, type TurnDeps } from '../
 import { interruptibleModel } from '../../model/testing/interruptible-model'
 import { createTempDatabase, type TempDatabase } from '../../loop/__tests__/temp-database'
 import { scriptedModel, type ScriptedStep } from '../../model/testing/scripted-model'
-import { createDeltaChannel, createPublishingTurnRunner, EStepEnd, type ChannelSignal } from '..'
+import { createDeltaChannel, EStepEnd, PublishingTurnRunner, type ChannelSignal } from '..'
 import { assistantEvent, firstStepId, recorder, stepEnded } from './signals'
 
 const opened: { harness: AtlasHarness; temp: TempDatabase }[] = []
@@ -59,12 +59,12 @@ describe('running a turn', () => {
     const channel = createDeltaChannel()
     const { seen, listener } = recorder()
     channel.subscribe({ branchId: branch.id, listener })
-    const runner = createPublishingTurnRunner({ channel, deps: depsOf(harness) })
+    const runner = new PublishingTurnRunner({ channel, deps: depsOf(harness) })
 
     const outcome = await runner.say({ branchId: branch.id, text: 'what changed?' })
 
     expect(outcome.status).toBe(ETurnStatus.Completed)
-    expect(seen[0]?.type).toBe('step-started')
+    expect(seen.find((signal) => signal.type !== 'events-appended')?.type).toBe('step-started')
     expect(deltasOf(seen, 'reasoning-delta')).toBe('two files touched')
     expect(deltasOf(seen, 'text-delta')).toBe('auth and the router')
 
@@ -87,7 +87,7 @@ describe('running a turn', () => {
         readAtHandover = harness.log.read({ branchId: branch.id })
       },
     })
-    const runner = createPublishingTurnRunner({ channel, deps: depsOf(harness) })
+    const runner = new PublishingTurnRunner({ channel, deps: depsOf(harness) })
 
     await runner.say({ branchId: branch.id, text: 'what changed?' })
 
@@ -101,7 +101,7 @@ describe('running a turn', () => {
     const channel = createDeltaChannel()
     const { seen, listener } = recorder()
     channel.subscribe({ branchId: branch.id, listener })
-    const runner = createPublishingTurnRunner({ channel, deps: depsOf(harness) })
+    const runner = new PublishingTurnRunner({ channel, deps: depsOf(harness) })
 
     await runner.say({ branchId: branch.id, text: 'what changed?' })
     const between = channel.snapshot({ branchId: branch.id })
@@ -120,7 +120,7 @@ describe('running a turn', () => {
     const channel = createDeltaChannel()
     const { seen, listener } = recorder()
     channel.subscribe({ branchId: branch.id, listener })
-    const runner = createPublishingTurnRunner({ channel, deps: depsOf(harness) })
+    const runner = new PublishingTurnRunner({ channel, deps: depsOf(harness) })
 
     const outcome = await runner.say({ branchId: branch.id, text: 'what changed?' })
 
@@ -140,7 +140,7 @@ describe('running a turn', () => {
     const channel = createDeltaChannel()
     const { seen, listener } = recorder()
     channel.subscribe({ branchId: branch.id, listener })
-    const runner = createPublishingTurnRunner({ channel, deps: depsOf(harness) })
+    const runner = new PublishingTurnRunner({ channel, deps: depsOf(harness) })
 
     const outcome = await runner.say({ branchId: branch.id, text: 'what changed?' })
 
@@ -161,7 +161,7 @@ describe('running a turn', () => {
     const channel = createDeltaChannel()
     const { seen, listener } = recorder()
     channel.subscribe({ branchId: branch.id, listener })
-    const runner = createPublishingTurnRunner({ channel, deps: depsOf(harness) })
+    const runner = new PublishingTurnRunner({ channel, deps: depsOf(harness) })
 
     const outcome = await runner.say({ branchId: branch.id, text: 'what changed?' })
 
@@ -176,7 +176,7 @@ describe('running a turn', () => {
     const channel = createDeltaChannel()
     const { seen, listener } = recorder()
     channel.subscribe({ branchId: other.id, listener })
-    const runner = createPublishingTurnRunner({ channel, deps: depsOf(harness) })
+    const runner = new PublishingTurnRunner({ channel, deps: depsOf(harness) })
 
     await runner.say({ branchId: branch.id, text: 'what changed?' })
 
@@ -191,7 +191,7 @@ describe('running a turn', () => {
     channel.subscribe({ branchId: branch.id, listener })
     const controller = new AbortController()
     let armed = true
-    const runner = createPublishingTurnRunner({
+    const runner = new PublishingTurnRunner({
       channel,
       deps: {
         ...depsOf(harness),

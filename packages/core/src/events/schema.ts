@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import type { ProviderOptions } from '../provider'
+import { EShellStatus } from '../shells/status'
 import { EDecision, type EventBody } from './body'
 import type { EventEnvelope } from './envelope'
 import { branchIdSchema, callIdSchema, eventIdSchema, runIdSchema, snapshotIdSchema } from './ids'
@@ -39,18 +40,21 @@ export const eventBodySchema: z.ZodType<EventBody> = z.discriminatedUnion('type'
     parts: z.array(assistantPartSchema),
     interrupted: z.boolean().optional(),
   }),
+  // Zod 4 requires a z.unknown() key to be present, where Zod 3 inferred it optional. A tool call or
+  // result whose input or output is undefined loses the key to JSON.stringify, so both must say .optional()
+  // or the stored row stops decoding.
   z.object({
     type: z.literal('tool-called'),
     callId: callIdSchema,
     name: z.string(),
-    input: z.unknown(),
+    input: z.unknown().optional(),
     ordinal: z.number().int().nonnegative(),
   }),
   z.object({
     type: z.literal('tool-result'),
     callId: callIdSchema,
     name: z.string(),
-    output: z.unknown(),
+    output: z.unknown().optional(),
     modelText: z.string().optional(),
     error: z.object({ message: z.string() }).optional(),
     snapshotId: snapshotIdSchema.optional(),
@@ -80,4 +84,21 @@ export const eventBodySchema: z.ZodType<EventBody> = z.discriminatedUnion('type'
     triggeredBy: z.string().optional(),
   }),
   z.object({ type: z.literal('nudge'), text: z.string(), lifetimeSteps: z.number().int().nonnegative() }),
+  z.object({
+    type: z.literal('background-shell-ended'),
+    shellId: z.string().min(1),
+    command: z.string(),
+    description: z.string().optional(),
+    status: z.enum(EShellStatus),
+    exitCode: z.number().int().optional(),
+    output: z.string(),
+    droppedCharacters: z.number().int().nonnegative(),
+    remainingCharacters: z.number().int().nonnegative(),
+  }),
+  z.object({
+    type: z.literal('history-compacted'),
+    throughSeq: z.number().int().positive(),
+    summary: z.string(),
+    replaced: z.number().int().nonnegative(),
+  }),
 ])

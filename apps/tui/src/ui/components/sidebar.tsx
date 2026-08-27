@@ -4,10 +4,13 @@ import React from 'react'
 
 import { collapseHome, tailOfPath } from '../paths'
 import { theme } from '../theme'
+import type { ShellSnapshot } from '@dltech/atlas-harness'
+
 import type { SidebarModel } from '../../store'
 import { sidebarCells } from './sidebar/cells'
 import { SubagentsSection, TeammatesSection } from './sidebar/crew'
 import { FactsSection, HeadSection } from './sidebar/head'
+import { ShellsSection } from './sidebar/shells'
 import { TodoSection } from './sidebar/todo'
 import { ApprovalsSection, ToolCallsSection, TurnSection } from './sidebar/turn'
 import type { TurnClock } from './transcript'
@@ -38,6 +41,8 @@ export function Sidebar(props: {
   now: number
   cwd: string
   overlay?: boolean
+  shells?: readonly ShellSnapshot[]
+  onOpenShell?: (shellId: string) => void
 }): React.ReactNode {
   const { model } = props
   const cells = sidebarCells({ width: props.width })
@@ -63,6 +68,11 @@ export function Sidebar(props: {
           <TurnSection turn={props.turn} now={props.now} cells={cells} />
           <ApprovalsSection model={model} cells={cells} />
           <ToolCallsSection model={model} cells={cells} />
+          <ShellsSection
+            shells={props.shells ?? []}
+            cells={cells}
+            {...(props.onOpenShell === undefined ? {} : { onOpen: props.onOpenShell })}
+          />
           <TodoSection tasks={model.todo ?? []} cells={cells} />
           <SubagentsSection subagents={model.subagents ?? []} cells={cells} />
           <TeammatesSection teammates={model.teammates ?? []} cells={cells} />

@@ -13,15 +13,16 @@ import {
   type ToolDeclaration,
 } from '@dltech/atlas-core'
 
-import type { HookRegistry } from '../hooks/registry'
+import type { HookChain } from '../hooks/registry'
 import type { TurnLedgerPort } from '../ledger'
 import { PrismaTurnLedger } from '../ledger'
-import { createAiSdkModelPort } from '../model/ai-sdk-model-port'
+import { AiSdkModelPort } from '../model/ai-sdk-model-port'
 import { createRawTape } from '../model/raw-tape'
-import type { Dispatch } from '../tools/dispatch'
+import type { ToolDispatcher } from '../tools/dispatch'
 import { openAtlasDatabase, PrismaBranchStore, PrismaEventLog, RandomIds, SystemClock } from '../store'
 import type { BranchStorePort } from '../store'
-import { createTurnRunner, type TurnDeps, type TurnRunner } from './run-turn'
+import { LoopTurnRunner, type TurnDeps } from './run-turn'
+import { TurnRunner } from './turn-runner.port'
 
 export type AtlasHarness = {
   runner: TurnRunner
@@ -41,12 +42,12 @@ export type BuildHarnessArgs = {
   identity?: ProviderIdentity | undefined
   assembly?: AssemblyPipeline | undefined
   tools?: readonly ToolDeclaration[] | undefined
-  dispatch?: Dispatch | undefined
+  dispatch?: ToolDispatcher | undefined
   countTokens?: ((assembled: Assembled) => number) | undefined
   clock?: ClockPort | undefined
   ids?: IdPort | undefined
   onChunk?: ChunkFilter | undefined
-  hooks?: HookRegistry | undefined
+  hooks?: HookChain | undefined
 }
 
 export function providerIdentityOf(model: LanguageModel): ProviderIdentity {
@@ -63,7 +64,7 @@ export async function buildHarness(args: BuildHarnessArgs): Promise<AtlasHarness
   const ids = args.ids ?? new RandomIds()
   const log = new PrismaEventLog(database.prisma, clock, ids)
   const tape = createRawTape({ scope: `pid-${process.pid}` })
-  const model = createAiSdkModelPort({
+  const model = new AiSdkModelPort({
     model: args.model,
     identity: args.identity ?? providerIdentityOf(args.model),
     hooks: args.hooks,
@@ -85,7 +86,7 @@ export async function buildHarness(args: BuildHarnessArgs): Promise<AtlasHarness
   }
 
   return {
-    runner: createTurnRunner(turnDeps),
+    runner: new LoopTurnRunner(turnDeps),
     log,
     branches: new PrismaBranchStore(database.prisma, clock, ids),
     model,

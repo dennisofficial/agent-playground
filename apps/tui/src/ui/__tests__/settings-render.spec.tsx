@@ -90,7 +90,7 @@ describe('the settings page', () => {
   })
 
   it('marks the selected row and only that row', async () => {
-    const rows = await rowsOf(page({ state: { pageIndex: 0, rowIndex: 1 } }), WIDE)
+    const rows = await rowsOf(page({ state: { pageIndex: 0, rowIndex: 2 } }), WIDE)
     const marked = rows.filter((row) => row.includes(glyph.selected))
 
     expect(marked).toHaveLength(1)

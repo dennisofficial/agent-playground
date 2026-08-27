@@ -32,8 +32,12 @@ describe('settingsModel', () => {
   it('gathers consecutive rows under one group heading', () => {
     const general = modelWith().pages[0]
 
-    expect(general?.groups.map((group) => group.label)).toEqual(['Transcript', 'Layout'])
-    expect(general?.rows).toHaveLength(2)
+    expect(general?.groups.map((group) => [group.label, group.rows.length])).toEqual([
+      ['Transcript', 2],
+      ['Layout', 1],
+      ['Project context', 5],
+    ])
+    expect(general?.rows).toHaveLength(8)
   })
 
   it('keeps the appearance page to its colour and its density', () => {
@@ -66,7 +70,7 @@ describe('moving around the page', () => {
     const top = openSettings()
 
     expect(moveRow({ state: top, model, delta: -1 })).toEqual({ pageIndex: 0, rowIndex: 0 })
-    expect(moveRow({ state: top, model, delta: 9 })).toEqual({ pageIndex: 0, rowIndex: 1 })
+    expect(moveRow({ state: top, model, delta: 99 })).toEqual({ pageIndex: 0, rowIndex: 7 })
   })
 
   it('wraps around the tab strip and lands on its first row', () => {

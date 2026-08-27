@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { toCallId, toSnapshotId, type BranchId, type EventDraft, type RunId } from '@dltech/atlas-core'
 
 import { scriptedModel } from '../../model/testing/scripted-model'
-import type { Dispatch, DispatchableCall } from '../../tools/dispatch'
+import type { DispatchableCall, ToolDispatcher } from '../../tools/dispatch'
 import { buildHarness, type AtlasHarness } from '..'
 import { createSettlePending } from '../settle-pending'
 import { createTempDatabase, type TempDatabase } from './temp-database'
@@ -54,8 +54,8 @@ async function branchWithCalls(args: {
 function scriptedDispatch(args: {
   seen: DispatchableCall[]
   draftsFor?: (call: DispatchableCall) => readonly EventDraft[]
-}): Dispatch {
-  return async ({ call }) => {
+}): ToolDispatcher {
+  const dispatch = async ({ call }: { call: DispatchableCall }): Promise<readonly EventDraft[]> => {
     args.seen.push(call)
     return (
       args.draftsFor?.(call) ?? [
@@ -63,6 +63,8 @@ function scriptedDispatch(args: {
       ]
     )
   }
+
+  return { dispatch }
 }
 
 describe('settling the calls a step left pending', () => {

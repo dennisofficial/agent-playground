@@ -1,13 +1,14 @@
 import { stat } from 'node:fs/promises'
 
 import {
+  EContentAccess,
   EPathForm,
   EPathPresence,
   EToolEffect,
+  SchemaTool,
   type DeclaredPathField,
-  type ToolDefinition,
-  type ToolInvocation,
   type ToolOutcome,
+  type ToolRun,
 } from '@dltech/atlas-core'
 import { z } from 'zod'
 
@@ -99,20 +100,20 @@ async function scanLines(args: {
 }
 
 @injectable()
-export class ReadTool implements ToolDefinition {
+export class ReadTool extends SchemaTool<typeof inputSchema> {
   readonly name = 'read'
   readonly description = description
   readonly effect = EToolEffect.Read
+  override readonly isConcurrencySafe = (): boolean => true
+  override readonly revealsWholeFile = (input: z.output<typeof inputSchema>): boolean =>
+    input.offset === undefined && input.limit === undefined
   readonly inputSchema = inputSchema
-  readonly pathFields: readonly DeclaredPathField[] = [
-    { field: 'path', presence: EPathPresence.Required, form: EPathForm.Absolute },
+  override readonly pathFields: readonly DeclaredPathField[] = [
+    { field: 'path', presence: EPathPresence.Required, form: EPathForm.Absolute, content: EContentAccess.Reads },
   ]
 
-  async invoke({ input }: ToolInvocation): Promise<ToolOutcome> {
-    const parsed = inputSchema.safeParse(input)
-    if (!parsed.success) return { ok: false, reason: `read was called with invalid input: ${z.prettifyError(parsed.error)}` }
-
-    const { path, offset, limit } = parsed.data
+  protected override async run({ input }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
+    const { path, offset, limit } = input
     const stats = await stat(path).catch(() => null)
     if (stats === null) return { ok: false, reason: `File does not exist: ${path}` }
     if (stats.isDirectory()) {
@@ -154,4 +155,3 @@ export class ReadTool implements ToolDefinition {
   }
 }
 
-export const createReadTool = (): ToolDefinition => new ReadTool()

@@ -1,13 +1,14 @@
 import { z } from 'zod'
 
 import {
+  EContentAccess,
   EPathForm,
   EPathPresence,
   EToolEffect,
+  SchemaTool,
   type DeclaredPathField,
-  type ToolDefinition,
-  type ToolInvocation,
   type ToolOutcome,
+  type ToolRun,
 } from '@dltech/atlas-core'
 
 import { inject, injectable } from '../../container/injection'
@@ -143,23 +144,22 @@ function renderModelText(args: {
 }
 
 @injectable()
-export class GrepTool implements ToolDefinition {
+export class GrepTool extends SchemaTool<typeof inputSchema> {
   readonly name = 'grep'
   readonly description = description
   readonly effect = EToolEffect.Read
+  override readonly isConcurrencySafe = (): boolean => true
   readonly inputSchema = inputSchema
-  readonly pathFields: readonly DeclaredPathField[] = [
-    { field: 'path', presence: EPathPresence.Optional, form: EPathForm.Absolute },
+  override readonly pathFields: readonly DeclaredPathField[] = [
+    { field: 'path', presence: EPathPresence.Optional, form: EPathForm.Absolute, content: EContentAccess.None },
   ]
 
-  constructor(@inject(WorkspaceRoot) private readonly root: string) {}
-  async invoke({ input, signal }: ToolInvocation): Promise<ToolOutcome> {
-    const parsed = inputSchema.safeParse(input)
-    if (!parsed.success) {
-      return { ok: false, reason: `grep was called with invalid input: ${z.prettifyError(parsed.error)}` }
-    }
+  constructor(@inject(WorkspaceRoot) private readonly root: string) {
+    super()
+  }
 
-    const { pattern, path, glob, caseInsensitive, context, headLimit, offset } = parsed.data
+  protected override async run({ input, signal }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
+    const { pattern, path, glob, caseInsensitive, context, headLimit, offset } = input
     const searcher = searcherFor({
       pattern,
       searchPath: path ?? this.root,
@@ -220,4 +220,3 @@ export class GrepTool implements ToolDefinition {
   }
 }
 
-export const createGrepTool = ({ root }: { root: string }): ToolDefinition => new GrepTool(root)

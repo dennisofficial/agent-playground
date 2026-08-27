@@ -10,8 +10,8 @@ import {
   type OnChunk,
 } from '@dltech/atlas-core'
 
-import { createHookRegistry, type HookRegistry } from '../../hooks/registry'
-import { createAiSdkModelPort } from '../ai-sdk-model-port'
+import { HookChain } from '../../hooks/registry'
+import { AiSdkModelPort, type AiSdkModelPortArgs } from '../ai-sdk-model-port'
 import { interruptibleModel } from '../testing/interruptible-model'
 import { scriptedModel } from '../testing/scripted-model'
 
@@ -28,11 +28,11 @@ const assembled: Assembled = {
 }
 
 const step = (args: {
-  model: Parameters<typeof createAiSdkModelPort>[0]['model']
-  hooks: HookRegistry
+  model: AiSdkModelPortArgs['model']
+  hooks: HookChain
   onChunk?: ChunkFilter
 }) =>
-  createAiSdkModelPort({ model: args.model, identity, hooks: args.hooks }).step({
+  new AiSdkModelPort({ model: args.model, identity, hooks: args.hooks }).step({
     assembled,
     tools: [],
     signal: new AbortController().signal,
@@ -49,7 +49,7 @@ describe('BeforeRequest', () => {
 
     await step({
       model,
-      hooks: createHookRegistry({
+      hooks: new HookChain({
         beforeRequest: [
           { name: 'observed', order: { stage: EStage.Observe, nudge: 0 }, run: instructing('observed') },
           { name: 'guarded', order: { stage: EStage.Guard, nudge: 0 }, run: instructing('guarded') },
@@ -81,7 +81,7 @@ describe('OnChunk', () => {
 
     const result = await step({
       model: interruptibleModel({ head: 'safe ', tail: 'sk-leak', chunkDelayInMs: 0 }),
-      hooks: createHookRegistry({
+      hooks: new HookChain({
         onChunk: [
           { name: 'transcript-log', order: { stage: EStage.Observe, nudge: 0 }, run: recordingInto(logged) },
           { name: 'secret-redaction', order: { stage: EStage.Guard, nudge: 0 }, run: dropsLeaks },
@@ -102,7 +102,7 @@ describe('OnChunk', () => {
 
     await step({
       model: interruptibleModel({ head: 'safe ', tail: 'sk-leak', chunkDelayInMs: 0 }),
-      hooks: createHookRegistry({
+      hooks: new HookChain({
         onChunk: [{ name: 'secret-redaction', order: { stage: EStage.Guard, nudge: 0 }, run: dropsLeaks }],
       }),
       onChunk: publish,

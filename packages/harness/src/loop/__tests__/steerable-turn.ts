@@ -6,17 +6,18 @@ import {
   defaultPipeline,
   EToolEffect,
   type BranchId,
+  type EventDraft,
   type EventLogPort,
   type IdPort,
   type ModelPort,
   type ToolDefinition,
 } from '@dltech/atlas-core'
 
-import { buildHarness, createTurnRunner, ETurnStatus, type AtlasHarness, type TurnRunner } from '..'
-import { createHookRegistry, type HookRegistry } from '../../hooks/registry'
+import { buildHarness, ETurnStatus, LoopTurnRunner, TurnRunner, type AtlasHarness } from '..'
+import { HookChain } from '../../hooks/registry'
 import { scriptedModel, type ScriptedStep } from '../../model/testing/scripted-model'
-import { createDispatch } from '../../tools/dispatch'
-import { createToolRegistry } from '../../tools/registry'
+import { HookedToolDispatcher } from '../../tools/dispatch'
+import { InMemoryToolRegistry } from '../../tools/registry'
 import { createTempDatabase, type TempDatabase } from './temp-database'
 
 const opened: { harness: AtlasHarness; temp: TempDatabase }[] = []
@@ -30,17 +31,21 @@ afterEach(async () => {
 
 export type ComposerQueue = {
   type: (text: string) => void
-  drain: () => Promise<readonly string[]>
+  queue: (draft: EventDraft) => void
+  drain: () => Promise<readonly EventDraft[]>
   drains: () => number
 }
 
 function createComposerQueue(): ComposerQueue {
-  let waiting: string[] = []
+  let waiting: EventDraft[] = []
   let drains = 0
 
   return {
     type: (text) => {
-      waiting.push(text)
+      waiting.push({ type: 'user-said', text })
+    },
+    queue: (draft) => {
+      waiting.push(draft)
     },
     drain: async () => {
       drains += 1
@@ -86,7 +91,7 @@ export async function openSteerable(args: {
   script: readonly ScriptedStep[]
   types?: { text: string; onStep: number | 'each' } | undefined
   appends?: { text: string; onStep: number } | undefined
-  hooks?: HookRegistry | undefined
+  hooks?: HookChain | undefined
   withTools?: boolean | undefined
   withQueue?: boolean | undefined
 }): Promise<Opened> {
@@ -101,7 +106,7 @@ export async function openSteerable(args: {
 
   const branch = await harness.branches.create({})
   const queue = createComposerQueue()
-  const tools = createToolRegistry([touchTool])
+  const tools = new InMemoryToolRegistry([touchTool])
 
   const steered = ((): ModelPort => {
     if (args.types !== undefined) {
@@ -124,7 +129,7 @@ export async function openSteerable(args: {
     model,
     queue,
     branchId: branch.id,
-    runner: createTurnRunner({
+    runner: new LoopTurnRunner({
       log: harness.log,
       model: steered,
       ids: harness.ids,
@@ -132,7 +137,7 @@ export async function openSteerable(args: {
       ...(args.withQueue === false ? {} : { drainPending: queue.drain }),
       ...(args.hooks === undefined ? {} : { hooks: args.hooks }),
       ...(args.withTools === true
-        ? { tools: tools.declarations(), dispatch: createDispatch({ registry: tools, hooks: createHookRegistry({}) }) }
+        ? { tools: tools.declarations(), dispatch: new HookedToolDispatcher({ registry: tools, hooks: new HookChain({}) }) }
         : {}),
     }),
   }

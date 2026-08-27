@@ -9,7 +9,6 @@ import { useDiffChunks, type DiffEmphasis } from './diff-chunks'
 import {
   DiffFooter,
   separatedSpans,
-  SIDE_BY_SIDE_KEYS,
   SIDE_BY_SIDE_NOTE,
 } from './diff-footer'
 import { FileHeader, HunkHeading } from './diff-header'
@@ -110,7 +109,6 @@ export function SideBySideDiff(props: {
       <DiffFooter
         width={props.width}
         left={separatedSpans({ text: SIDE_BY_SIDE_NOTE, fg: theme.meta })}
-        keys={SIDE_BY_SIDE_KEYS}
       />
     </box>
   )

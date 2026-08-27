@@ -15,7 +15,6 @@ import {
   type IdPort,
   type ModelPort,
   type ModelStepResult,
-  type ExchangeFault,
   type RuleContext,
   type RunId,
   type ToolDeclaration,
@@ -23,12 +22,14 @@ import {
 
 import type { HookChain } from '../hooks/registry'
 import { ModelStreamError } from '../model/errors'
-import type { Dispatch } from '../tools/dispatch'
+import type { ToolDispatcher } from '../tools/dispatch'
 import { openTurnSpend, TURN_CRASHED, type TurnLedgerDeps, type TurnSpendTally } from '../ledger/record-turn-spend'
-import { createSettlePending } from './settle-pending'
+import { createSettlePending, type SettlePending } from './settle-pending'
 import { draftsFor, interruptedDrafts } from './step-drafts'
+import { faultReport, stalledReport } from './turn-faults'
 import { committedSinceLastMessage, messageArrivedSince } from './turn-position'
 import { ETurnStatus, type TurnOutcome } from './turn-outcome'
+import { TurnRunner } from './turn-runner.port'
 
 export type TurnDeps = {
   log: EventLogPort
@@ -38,203 +39,69 @@ export type TurnDeps = {
   tools?: readonly ToolDeclaration[] | undefined
   countTokens?: ((assembled: Assembled) => number) | undefined
   onChunk?: ChunkFilter | undefined
-  dispatch?: Dispatch | undefined
+  dispatch?: ToolDispatcher | undefined
   hooks?: HookChain | undefined
-  drainPending?: (() => Promise<readonly string[]>) | undefined
+  drainPending?: (() => Promise<readonly EventDraft[]>) | undefined
   spend?: TurnLedgerDeps | undefined
-}
-
-
-
-export type TurnRunner = {
-  say(args: { branchId: BranchId; text: string; signal?: AbortSignal }): Promise<TurnOutcome>
-  runTurn(args: { branchId: BranchId; signal?: AbortSignal }): Promise<TurnOutcome>
 }
 
 type SteppedTurn = { ok: true; result: ModelStepResult } | { ok: false; message: string; cause: unknown }
 
-const faultLine = (fault: ExchangeFault): string =>
-  `message ${fault.messageIndex}: ${fault.detail} (event ${fault.origin.eventId})`
+export class LoopTurnRunner extends TurnRunner {
+  private readonly log: EventLogPort
+  private readonly model: ModelPort
+  private readonly ids: IdPort
+  private readonly assembly: AssemblyPipeline
+  private readonly tools: readonly ToolDeclaration[]
+  private readonly countTokens: (assembled: Assembled) => number
+  private readonly onChunk: ChunkFilter | undefined
+  private readonly hooks: HookChain | undefined
+  private readonly drainPending: (() => Promise<readonly EventDraft[]>) | undefined
+  private readonly spend: TurnLedgerDeps | undefined
+  private readonly settlePending: SettlePending | undefined
 
-const stalledReport = (call: { callId: CallId; name: string }): string =>
-  `dispatch left ${call.name} (${call.callId}) pending without settling it — the turn would spin forever`
-
-const faultReport = (faults: readonly ExchangeFault[]): string =>
-  `the assembled prompt is one Atlas must not send — ${faults.map(faultLine).join('; ')}`
-
-async function takeModelStep(args: {
-  model: ModelPort
-  assembled: Assembled
-  tools: readonly ToolDeclaration[]
-  signal: AbortSignal
-  onChunk?: ChunkFilter | undefined
-}): Promise<SteppedTurn> {
-  try {
-    const result = await args.model.step({
-      assembled: args.assembled,
-      tools: args.tools,
-      signal: args.signal,
-      ...(args.onChunk === undefined ? {} : { onChunk: args.onChunk }),
-    })
-    return { ok: true, result }
-  } catch (error) {
-    if (error instanceof ModelStreamError) return { ok: false, message: error.message, cause: error.cause }
-    throw error
+  constructor(deps: TurnDeps) {
+    super()
+    this.log = deps.log
+    this.model = deps.model
+    this.ids = deps.ids
+    this.assembly = deps.assembly
+    this.tools = deps.tools ?? []
+    this.countTokens = deps.countTokens ?? estimateTokens
+    this.onChunk = deps.onChunk
+    this.hooks = deps.hooks
+    this.drainPending = deps.drainPending
+    this.spend = deps.spend
+    this.settlePending =
+      deps.dispatch === undefined
+        ? undefined
+        : createSettlePending({ log: deps.log, dispatch: deps.dispatch, tools: this.tools })
   }
-}
 
-export function createTurnRunner(deps: TurnDeps): TurnRunner {
-  const tools = deps.tools ?? []
-  const countTokens = deps.countTokens ?? estimateTokens
-  const settlePending =
-    deps.dispatch === undefined
-      ? undefined
-      : createSettlePending({ log: deps.log, dispatch: deps.dispatch, tools })
-
-  const drainInto = async ({ branchId }: { branchId: BranchId }): Promise<boolean> => {
-    if (deps.drainPending === undefined) return false
-
-    const waiting = await deps.drainPending()
-    if (waiting.length === 0) return false
-
-    await deps.log.append({
+  async say({
+    branchId,
+    text,
+    signal,
+  }: {
+    branchId: BranchId
+    text: string
+    signal?: AbortSignal
+  }): Promise<TurnOutcome> {
+    await this.log.append({
       branchId,
-      runId: deps.ids.nextRunId(),
-      drafts: waiting.map((text): EventDraft => ({ type: 'user-said', text })),
+      runId: this.ids.nextRunId(),
+      drafts: [{ type: 'user-said', text }],
     })
-    return true
+    return this.runTurn({ branchId, ...(signal === undefined ? {} : { signal }) })
   }
 
-  const trackedTurn = async ({
-    branchId,
-    signal,
-    runId,
-    spend,
-  }: {
-    branchId: BranchId
-    signal?: AbortSignal
-    runId: RunId
-    spend: TurnSpendTally
-  }): Promise<TurnOutcome> => {
-    const abortSignal = signal ?? new AbortController().signal
-    let previous: Assembled | undefined
-    let modelSteps = 0
-    let seenThrough: number | undefined
-    let settleAttempted: CallId | undefined
-
-    const interrupted = async (): Promise<TurnOutcome> => ({
-      status: ETurnStatus.Interrupted,
-      runId,
-      committed: committedSinceLastMessage(await deps.log.read({ branchId })),
-    })
-
-    for (;;) {
-      const beforeDrain = await deps.log.read({ branchId })
-
-      const waiting = outstandingApproval(beforeDrain)
-      if (waiting !== undefined) {
-        return { status: ETurnStatus.Paused, runId, callId: waiting, reason: 'awaiting approval' }
-      }
-
-      const pending = pendingCalls(beforeDrain)[0]
-      if (pending !== undefined) {
-        if (settlePending === undefined) {
-          return { status: ETurnStatus.Paused, runId, callId: pending.callId, reason: `awaiting ${pending.name}` }
-        }
-        if (pending.callId === settleAttempted) {
-          return { status: ETurnStatus.Failed, runId, message: stalledReport(pending), cause: pending }
-        }
-
-        settleAttempted = pending.callId
-        const settled = await settlePending({ branchId, signal: abortSignal })
-        if (settled.paused !== undefined) return { status: ETurnStatus.Paused, runId, ...settled.paused }
-        if (abortSignal.aborted) return interrupted()
-        continue
-      }
-
-      const events = (await drainInto({ branchId })) ? await deps.log.read({ branchId }) : beforeDrain
-
-      if (!awaitsReply(events) && !messageArrivedSince({ events, seenThrough })) {
-        return { status: ETurnStatus.Idle, runId }
-      }
-
-      seenThrough = events.at(-1)?.seq
-
-      const ctx: RuleContext = {
-        events,
-        branchId,
-        step: modelSteps,
-        provider: deps.model.identity,
-        countTokens,
-        ...(previous === undefined ? {} : { previous }),
-      }
-
-      const { assembled: projected, trace } = assemble({
-        rules: deps.assembly.rules,
-        annotators: deps.assembly.annotators,
-        ctx,
-      })
-
-      const assembled = (await deps.hooks?.beforeStep({ assembled: projected, trace })) ?? projected
-      previous = assembled
-
-      const faults = exchangeFaults(assembled)
-      if (faults.length > 0) {
-        return { status: ETurnStatus.Failed, runId, message: faultReport(faults), cause: faults }
-      }
-
-      const stepped = await takeModelStep({
-        model: deps.model,
-        assembled,
-        tools,
-        signal: abortSignal,
-        onChunk: deps.onChunk,
-      })
-
-      modelSteps += 1
-      settleAttempted = undefined
-
-      spend.countStep(stepped.ok ? stepped.result.usage : undefined)
-
-      if (!stepped.ok) {
-        return { status: ETurnStatus.Failed, runId, message: stepped.message, cause: stepped.cause }
-      }
-
-      if (abortSignal.aborted) {
-        const abandoned = interruptedDrafts(stepped.result)
-        if (abandoned.length > 0) await deps.log.append({ branchId, runId, drafts: abandoned })
-        return interrupted()
-      }
-
-      const drafts = draftsFor(stepped.result)
-      if (drafts.length > 0) await deps.log.append({ branchId, runId, drafts })
-
-      if (stepped.result.toolCalls.length > 0) continue
-
-      const latest = await deps.log.read({ branchId })
-      if (messageArrivedSince({ events: latest, seenThrough })) continue
-      if (await drainInto({ branchId })) continue
-
-      const closing = (await deps.hooks?.afterTurn({ branchId })) ?? []
-      if (closing.length > 0) await deps.log.append({ branchId, runId, drafts: closing })
-
-      return { status: ETurnStatus.Completed, runId }
-    }
-  }
-
-  const runTurn = async ({
-    branchId,
-    signal,
-  }: {
-    branchId: BranchId
-    signal?: AbortSignal
-  }): Promise<TurnOutcome> => {
-    const runId = deps.ids.nextRunId()
-    const spend = openTurnSpend({ ...(deps.spend ?? {}), model: deps.model.identity })
+  async runTurn({ branchId, signal }: { branchId: BranchId; signal?: AbortSignal }): Promise<TurnOutcome> {
+    const runId = this.ids.nextRunId()
+    const spend = openTurnSpend({ ...(this.spend ?? {}), model: this.model.identity })
     let status: string = TURN_CRASHED
 
     try {
-      const outcome = await trackedTurn({
+      const outcome = await this.trackedTurn({
         branchId,
         runId,
         spend,
@@ -247,16 +114,145 @@ export function createTurnRunner(deps: TurnDeps): TurnRunner {
     }
   }
 
-  return {
-    async say({ branchId, text, signal }) {
-      await deps.log.append({
-        branchId,
-        runId: deps.ids.nextRunId(),
-        drafts: [{ type: 'user-said', text }],
-      })
-      return runTurn({ branchId, ...(signal === undefined ? {} : { signal }) })
-    },
+  private async drainInto({ branchId }: { branchId: BranchId }): Promise<boolean> {
+    if (this.drainPending === undefined) return false
 
-    runTurn,
+    const waiting = await this.drainPending()
+    if (waiting.length === 0) return false
+
+    await this.log.append({ branchId, runId: this.ids.nextRunId(), drafts: waiting })
+    return true
+  }
+
+  private async takeModelStep(args: {
+    assembled: Assembled
+    signal: AbortSignal
+  }): Promise<SteppedTurn> {
+    try {
+      const result = await this.model.step({
+        assembled: args.assembled,
+        tools: this.tools,
+        signal: args.signal,
+        ...(this.onChunk === undefined ? {} : { onChunk: this.onChunk }),
+      })
+      return { ok: true, result }
+    } catch (error) {
+      if (error instanceof ModelStreamError) return { ok: false, message: error.message, cause: error.cause }
+      throw error
+    }
+  }
+
+  private async trackedTurn({
+    branchId,
+    signal,
+    runId,
+    spend,
+  }: {
+    branchId: BranchId
+    signal?: AbortSignal
+    runId: RunId
+    spend: TurnSpendTally
+  }): Promise<TurnOutcome> {
+    const abortSignal = signal ?? new AbortController().signal
+    let previous: Assembled | undefined
+    let modelSteps = 0
+    let seenThrough: number | undefined
+    let settleAttempted: CallId | undefined
+
+    const interrupted = async (): Promise<TurnOutcome> => ({
+      status: ETurnStatus.Interrupted,
+      runId,
+      committed: committedSinceLastMessage(await this.log.read({ branchId })),
+    })
+
+    const opening = (await this.hooks?.beforeTurn({ branchId })) ?? []
+    if (opening.length > 0) await this.log.append({ branchId, runId, drafts: opening })
+
+    for (;;) {
+      const beforeDrain = await this.log.read({ branchId })
+
+      const waiting = outstandingApproval(beforeDrain)
+      if (waiting !== undefined) {
+        return { status: ETurnStatus.Paused, runId, callId: waiting, reason: 'awaiting approval' }
+      }
+
+      const pending = pendingCalls(beforeDrain)[0]
+      if (pending !== undefined) {
+        if (this.settlePending === undefined) {
+          return { status: ETurnStatus.Paused, runId, callId: pending.callId, reason: `awaiting ${pending.name}` }
+        }
+        if (pending.callId === settleAttempted) {
+          return { status: ETurnStatus.Failed, runId, message: stalledReport(pending), cause: pending }
+        }
+
+        settleAttempted = pending.callId
+        const settled = await this.settlePending({ branchId, signal: abortSignal })
+        if (settled.paused !== undefined) return { status: ETurnStatus.Paused, runId, ...settled.paused }
+        if (abortSignal.aborted) return interrupted()
+        continue
+      }
+
+      const events = (await this.drainInto({ branchId })) ? await this.log.read({ branchId }) : beforeDrain
+
+      if (!awaitsReply(events) && !messageArrivedSince({ events, seenThrough })) {
+        return { status: ETurnStatus.Idle, runId }
+      }
+
+      seenThrough = events.at(-1)?.seq
+
+      const ctx: RuleContext = {
+        events,
+        branchId,
+        step: modelSteps,
+        provider: this.model.identity,
+        countTokens: this.countTokens,
+        ...(previous === undefined ? {} : { previous }),
+      }
+
+      const { assembled: projected, trace } = assemble({
+        rules: this.assembly.rules,
+        annotators: this.assembly.annotators,
+        ctx,
+      })
+
+      const assembled = (await this.hooks?.beforeStep({ assembled: projected, trace })) ?? projected
+      previous = assembled
+
+      const faults = exchangeFaults(assembled)
+      if (faults.length > 0) {
+        return { status: ETurnStatus.Failed, runId, message: faultReport(faults), cause: faults }
+      }
+
+      const stepped = await this.takeModelStep({ assembled, signal: abortSignal })
+
+      modelSteps += 1
+      settleAttempted = undefined
+
+      spend.countStep(stepped.ok ? stepped.result.usage : undefined)
+
+      if (!stepped.ok) {
+        return { status: ETurnStatus.Failed, runId, message: stepped.message, cause: stepped.cause }
+      }
+
+      if (abortSignal.aborted) {
+        const abandoned = interruptedDrafts(stepped.result)
+        if (abandoned.length > 0) await this.log.append({ branchId, runId, drafts: abandoned })
+        return interrupted()
+      }
+
+      const drafts = draftsFor(stepped.result)
+      if (drafts.length > 0) await this.log.append({ branchId, runId, drafts })
+
+      if (stepped.result.toolCalls.length > 0) continue
+
+      const latest = await this.log.read({ branchId })
+      if (messageArrivedSince({ events: latest, seenThrough })) continue
+      if (await this.drainInto({ branchId })) continue
+
+      const closing = (await this.hooks?.afterTurn({ branchId })) ?? []
+      if (closing.length > 0) await this.log.append({ branchId, runId, drafts: closing })
+
+      return { status: ETurnStatus.Completed, runId }
+    }
   }
 }

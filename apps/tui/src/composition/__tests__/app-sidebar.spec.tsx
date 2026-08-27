@@ -48,7 +48,7 @@ async function pressCtrlB(setup: Awaited<ReturnType<typeof testRender>>): Promis
 describe('the sidebar', () => {
   it('docks beside the transcript on a wide terminal', async () => {
     const app: FakeApp = fakeApp({ model: scriptedModelPort({ script: { thinking: THINKING, reply: REPLY } }) })
-    const setup = await testRender(<App app={app} opened={{ branchId: BRANCH, events: [] }} />, {
+    const setup = await testRender(<App app={app} opened={{ branchId: BRANCH, events: [], name: null }} />, {
       width: 140,
       height: 40,
     })
@@ -67,7 +67,7 @@ describe('the sidebar', () => {
 
   it('stays hidden on a narrow terminal until ctrl+b opens it as an overlay', async () => {
     const app: FakeApp = fakeApp({ model: scriptedModelPort({ script: { thinking: THINKING, reply: REPLY } }) })
-    const setup = await testRender(<App app={app} opened={{ branchId: BRANCH, events: [] }} />, {
+    const setup = await testRender(<App app={app} opened={{ branchId: BRANCH, events: [], name: null }} />, {
       width: 90,
       height: 30,
     })
@@ -95,7 +95,7 @@ describe('the sidebar', () => {
 
   it('is reached across a gutter the composer alone gives up', async () => {
     const app: FakeApp = fakeApp({ model: scriptedModelPort({ script: { thinking: THINKING, reply: REPLY } }) })
-    const setup = await testRender(<App app={app} opened={{ branchId: BRANCH, events: [] }} />, {
+    const setup = await testRender(<App app={app} opened={{ branchId: BRANCH, events: [], name: null }} />, {
       width: WIDE,
       height: 40,
     })
@@ -122,7 +122,7 @@ describe('the sidebar', () => {
 
   it('folds away on a wide terminal when ctrl+b hides it', async () => {
     const app: FakeApp = fakeApp({ model: scriptedModelPort({ script: { thinking: THINKING, reply: REPLY } }) })
-    const setup = await testRender(<App app={app} opened={{ branchId: BRANCH, events: [] }} />, {
+    const setup = await testRender(<App app={app} opened={{ branchId: BRANCH, events: [], name: null }} />, {
       width: 140,
       height: 40,
     })

@@ -28,11 +28,16 @@ function dissentsAmong(outcomes: readonly ConsultedHook[]): HookDissent[] {
   )
 }
 
-function firstReasonFor(args: {
+function firstDissentFor(args: {
   dissenters: readonly HookDissent[]
   decision: EBeforeToolDecision.Ask | EBeforeToolDecision.Deny
-}): string | undefined {
-  return args.dissenters.find((dissent) => dissent.decision === args.decision)?.reason
+}): HookDissent | undefined {
+  return args.dissenters.find((dissent) => dissent.decision === args.decision)
+}
+
+function reasonOf(dissent: HookDissent): string {
+  if (typeof dissent.reason === 'string' && dissent.reason !== '') return dissent.reason
+  return `the ${dissent.hookName} hook returned ${dissent.decision} without a reason`
 }
 
 function lastAllowedInput(args: { outcomes: readonly ConsultedHook[]; fallback: unknown }): unknown {
@@ -50,14 +55,14 @@ export function resolveBeforeTool(args: {
 }): BeforeToolResolution {
   const dissenters = dissentsAmong(args.outcomes)
 
-  const denial = firstReasonFor({ dissenters, decision: EBeforeToolDecision.Deny })
+  const denial = firstDissentFor({ dissenters, decision: EBeforeToolDecision.Deny })
   if (denial !== undefined) {
-    return { outcome: { decision: EBeforeToolDecision.Deny, reason: denial }, dissenters }
+    return { outcome: { decision: EBeforeToolDecision.Deny, reason: reasonOf(denial) }, dissenters }
   }
 
-  const question = firstReasonFor({ dissenters, decision: EBeforeToolDecision.Ask })
+  const question = firstDissentFor({ dissenters, decision: EBeforeToolDecision.Ask })
   if (question !== undefined) {
-    return { outcome: { decision: EBeforeToolDecision.Ask, reason: question }, dissenters }
+    return { outcome: { decision: EBeforeToolDecision.Ask, reason: reasonOf(question) }, dissenters }
   }
 
   return {

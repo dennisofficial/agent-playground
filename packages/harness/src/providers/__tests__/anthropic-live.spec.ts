@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 
+import { EEffort } from '@dltech/atlas-core'
+
 import { KeychainCredentialPort, createSecurityKeychainReader } from '../../credentials'
 import { ETurnStatus, buildHarness, type AtlasHarness } from '../../loop'
 import { createTempDatabase, type TempDatabase } from '../../loop/__tests__/temp-database'
 import { SystemClock } from '../../store'
 import { createAnthropicOauthModel } from '../anthropic-oauth'
+import { anthropicThinkingOptions } from '../anthropic-thinking'
 import { bodyOnlyRecordingPassthroughFetch, type BodyOnlyRecordingFetch } from './recording-fetch'
 
 export const LIVE_ANTHROPIC_FLAG = 'ATLAS_LIVE_ANTHROPIC'
@@ -14,9 +17,13 @@ const liveRunRequested = (): boolean => process.env[LIVE_ANTHROPIC_FLAG] === '1'
 const liveModelId = (): string =>
   process.env.ATLAS_LIVE_ANTHROPIC_MODEL ?? 'claude-haiku-4-5-20251001'
 
+const ADAPTIVE_LIVE_MODEL = 'claude-opus-5'
+
 const opened: { harness: AtlasHarness; temp: TempDatabase }[] = []
 
-async function openLiveHarness(): Promise<{ harness: AtlasHarness; recorder: BodyOnlyRecordingFetch }> {
+async function openLiveHarness(
+  modelId: string = liveModelId(),
+): Promise<{ harness: AtlasHarness; recorder: BodyOnlyRecordingFetch }> {
   const recorder = bodyOnlyRecordingPassthroughFetch()
   const temp = createTempDatabase()
 
@@ -27,8 +34,8 @@ async function openLiveHarness(): Promise<{ harness: AtlasHarness; recorder: Bod
         reader: createSecurityKeychainReader(),
         clock: new SystemClock(),
       }),
-      modelId: liveModelId(),
-      providerOptions: { anthropic: { thinking: { type: 'enabled', budgetTokens: 2048 } } },
+      modelId,
+      providerOptions: anthropicThinkingOptions({ modelId, effort: EEffort.High }),
       fetch: recorder.fetch,
     }),
   })
@@ -40,6 +47,12 @@ async function openLiveHarness(): Promise<{ harness: AtlasHarness; recorder: Bod
 const assistantText = (parts: readonly { type: string }[]): string =>
   parts
     .filter((part): part is { type: 'text'; text: string } => part.type === 'text' && 'text' in part)
+    .map((part) => part.text)
+    .join('')
+
+const reasoningText = (parts: readonly { type: string }[]): string =>
+  parts
+    .filter((part): part is { type: 'reasoning'; text: string } => part.type === 'reasoning' && 'text' in part)
     .map((part) => part.text)
     .join('')
 
@@ -118,5 +131,22 @@ describe.skipIf(!liveRunRequested())('a real turn against Anthropic on the subsc
     expect(failureOf(second)).toBe(ETurnStatus.Completed)
 
     expect(thinkingSignaturesIn(recorder.requests[1]?.body)).toContain(signature)
+  }, 180_000)
+
+  it('is handed thinking it can show, not a signature over an empty text', async () => {
+    const { harness } = await openLiveHarness(ADAPTIVE_LIVE_MODEL)
+    const branch = await harness.branches.create({})
+
+    const outcome = await harness.runner.say({
+      branchId: branch.id,
+      text: 'Work out 27 * 43 in your head step by step, then reply with just the product.',
+    })
+    expect(failureOf(outcome)).toBe(ETurnStatus.Completed)
+
+    const events = await harness.log.read({ branchId: branch.id })
+    const thought = events.at(-1)
+    const parts = thought?.type === 'assistant-said' ? thought.parts : []
+    expect(parts.some((part) => part.type === 'reasoning')).toBe(true)
+    expect(reasoningText(parts).trim().length).toBeGreaterThan(0)
   }, 180_000)
 })

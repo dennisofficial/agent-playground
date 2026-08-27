@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import { EEffort, EModelVendor, type ModelEntry } from '@dltech/atlas-core'
+import { EEffort, EModelVendor, EThinkingControl, type ModelEntry } from '@dltech/atlas-core'
 
 import {
   adjustEffort,
@@ -17,6 +17,7 @@ const entry = (id: string, vendor: EModelVendor = EModelVendor.Anthropic): Model
   label: id,
   vendor,
   contextWindow: 200_000,
+  thinkingControl: EThinkingControl.Effort,
   inputPricePerMillion: 1,
   outputPricePerMillion: 5,
 })

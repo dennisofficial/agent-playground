@@ -14,6 +14,7 @@ import type { Prisma, PrismaClient } from '../../prisma/generated/client'
 import { inject, injectable } from '../container/injection'
 import { PrismaClientToken } from '../container/tokens'
 import { contextIdentityOf, planAppend, type ContextIdentity } from './append-plan'
+import { readComposedRows, readOwnRows } from './compose-branch'
 import { decodeEventRows, type DecodedLog } from './decode-events'
 import { toEventRow } from './event-row'
 import { retryOnWriteConflict } from './retry'
@@ -45,11 +46,11 @@ export class PrismaEventLog implements EventLogPort {
   }
 
   async readDecoded({ branchId, upTo }: { branchId: BranchId; upTo?: number }): Promise<DecodedLog> {
-    const rows = await this.prisma.event.findMany({
-      where: { branchId, ...(upTo === undefined ? {} : { seq: { lte: upTo } }) },
-      orderBy: { seq: 'asc' },
-    })
-    return decodeEventRows(rows)
+    return decodeEventRows(await readComposedRows({ prisma: this.prisma, branchId, upTo }))
+  }
+
+  async readOwn({ branchId, upTo }: { branchId: BranchId; upTo?: number }): Promise<Event[]> {
+    return decodeEventRows(await readOwnRows({ prisma: this.prisma, branchId, upTo })).events
   }
 
   async head({ branchId }: { branchId: BranchId }): Promise<number> {
@@ -58,12 +59,6 @@ export class PrismaEventLog implements EventLogPort {
       select: { head: true },
     })
     return branch?.head ?? 0
-  }
-
-  async forkFrom(args: { branchId: BranchId; seq: number; into: BranchId }): Promise<void> {
-    throw new Error(
-      `PrismaEventLog.forkFrom is not implemented (asked to fork ${args.branchId} at ${args.seq} into ${args.into})`,
-    )
   }
 
   private appendOnce(args: AppendArgs): Promise<Event[]> {
@@ -154,7 +149,7 @@ async function loadReusableContext({
   }
   if (wanted.size === 0) return new Map()
 
-  const rows = await tx.event.findMany({ where: { branchId, type: 'context-loaded' } })
+  const rows = await readComposedRows({ prisma: tx, branchId, type: 'context-loaded' })
   const reusable = new Map<ContextIdentity, Event>()
   for (const event of decodeEventRows(rows).events) {
     const identity = contextIdentityOf(event)

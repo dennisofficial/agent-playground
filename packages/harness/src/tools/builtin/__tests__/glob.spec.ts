@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeAll, describe, expect, it } from 'bun:test'
 
-import { createGlobTool } from '../glob'
+import { GlobTool } from '../glob'
 
 let root = ''
 let outside = ''
@@ -20,13 +20,13 @@ beforeAll(async () => {
 })
 
 const scan = async (input: unknown) =>
-  createGlobTool({ root }).invoke({
+  new GlobTool(root).invoke({
     input,
     signal: new AbortController().signal,
     idempotencyKey: 'glob-1',
   })
 
-describe('createGlobTool', () => {
+describe('GlobTool', () => {
   it('returns the matches inside the workspace', async () => {
     const outcome = await scan({ pattern: '**/*.txt' })
 

@@ -49,6 +49,10 @@ function messageOfEvent(event: Event): Message | undefined {
     return { role: 'user', content: [{ type: 'text', text: event.content }] }
   }
 
+  if (event.type === 'history-compacted') {
+    return { role: 'user', content: [{ type: 'text', text: event.summary }] }
+  }
+
   return undefined
 }
 

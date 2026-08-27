@@ -1,5 +1,5 @@
 import { EBlockKind, type Chunk, type Event, type EventRef } from '@dltech/atlas-core'
-import { EStepEnd, type ChannelSignal, type StepId } from '@dltech/atlas-harness'
+import { EStepEnd, type StepId, type StepSignal } from '@dltech/atlas-harness'
 
 import type { LiveToolCall } from './tool-groups'
 
@@ -93,10 +93,21 @@ export function liveSteps(args: {
   )
 }
 
-export function prunedSignals(args: {
-  signals: readonly ChannelSignal[]
+export function withoutFailedTail(args: {
+  signals: readonly StepSignal[]
   events: readonly Event[]
-}): readonly ChannelSignal[] {
+}): readonly StepSignal[] {
+  const live = liveSteps({ steps: stepsOfSignals(args.signals), events: args.events })
+  const tail = live.at(-1)
+  if (tail === undefined || tail.end !== EStepEnd.Failed) return args.signals
+
+  return args.signals.filter((signal) => signal.stepId !== tail.stepId)
+}
+
+export function prunedSignals(args: {
+  signals: readonly StepSignal[]
+  events: readonly Event[]
+}): readonly StepSignal[] {
   const live = liveSteps({ steps: stepsOfSignals(args.signals), events: args.events })
   const rendered = new Set(live.map((step) => step.stepId))
   const kept = args.signals.filter((signal) => rendered.has(signal.stepId))
@@ -104,7 +115,7 @@ export function prunedSignals(args: {
   return kept.length === args.signals.length ? args.signals : kept
 }
 
-export function stepsOfSignals(signals: readonly ChannelSignal[]): InFlightStep[] {
+export function stepsOfSignals(signals: readonly StepSignal[]): InFlightStep[] {
   const ordered: InFlightStep[] = []
   const byId = new Map<StepId, InFlightStep>()
 

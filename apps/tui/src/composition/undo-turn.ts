@@ -23,7 +23,7 @@ export async function undoTurn(args: {
 }): Promise<Undo> {
   const { log, branches, branchId } = args
 
-  const said = (await log.read({ branchId })).findLast(wasSaid)
+  const said = (await log.readOwn({ branchId })).findLast(wasSaid)
   if (said === undefined) return { type: EUndo.Nothing }
 
   const rewound = await rewindBranch({ log, branches, branchId, toSeq: said.seq - 1 })

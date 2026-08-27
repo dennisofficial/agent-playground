@@ -4,6 +4,7 @@ import {
   BeforeRequestHook,
   BeforeStepHook,
   BeforeToolHook,
+  BeforeTurnHook,
   OnChunkHook,
 } from '@dltech/atlas-core'
 
@@ -13,13 +14,14 @@ import {
   type DependencyContainer,
   type PortConstructor,
 } from '../container/injection'
-import { createHookRegistry, type HookRegistry } from './registry'
+import { HookChain } from './registry'
 
-export function resolveHookRegistry(args: { container: DependencyContainer }): HookRegistry {
+export function resolveHookChain(args: { container: DependencyContainer }): HookChain {
   const phase = <THook>(hook: PortConstructor<THook>): readonly THook[] =>
     resolveSet({ container: args.container, token: portToken(hook) })
 
-  return createHookRegistry({
+  return new HookChain({
+    beforeTurn: phase(BeforeTurnHook),
     beforeStep: phase(BeforeStepHook),
     beforeRequest: phase(BeforeRequestHook),
     beforeTool: phase(BeforeToolHook),

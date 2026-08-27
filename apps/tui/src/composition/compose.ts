@@ -5,39 +5,50 @@ import {
   EventLogPort,
   IdPort,
   ModelPort,
+  type BranchId,
+  type EventDraft,
 } from '@dltech/atlas-core'
 import {
   BranchStorePort,
+  createAnthropicOauthModel,
   createDeltaChannel,
   createHarnessContainer,
-  createPublishingTurnRunner,
   createSecurityKeychainReader,
   disposeAll,
-  DispatchToken,
   KeychainCredentialPort,
   KeychainReaderToken,
   LanguageModelToken,
   openAtlasDatabase,
   portToken,
   PrismaClientToken,
+  PublishingTurnRunner,
   registerDisposable,
   ShellRegistryPort,
+  summaryFor,
+  titleFor,
+  ToolDispatcher,
   ToolRegistry,
   TurnLedgerPort,
+  TurnRunner,
   WorkspaceRoot,
   type DeltaChannel,
   type SettingsService,
-  type TurnRunner,
 } from '@dltech/atlas-harness'
 
 import { createPendingQueue, type PendingQueue } from '../store'
-import type { AtlasConfig } from './config'
+import type { Summariser } from './compact-turn'
+import { SUMMARISER_MODEL_ID, TITLER_MODEL_ID, type AtlasConfig } from './config'
 import { launchSelection, rememberSelection } from './model-preference'
 import { selectableModel, type ModelChoice } from './model-selection'
 import { bindSettings } from './settings-binding'
 
+export type SessionTitler = (args: { text: string; signal?: AbortSignal }) => Promise<string | null>
+
 export type AtlasApp = {
   config: AtlasConfig
+  markActiveBranch: (branchId: BranchId) => void
+  titler: SessionTitler
+  summarise: Summariser
   credentials: CredentialPort
   channel: DeltaChannel
   runner: TurnRunner
@@ -45,6 +56,7 @@ export type AtlasApp = {
   branches: BranchStorePort
   ids: IdPort
   pending: PendingQueue
+  shells: ShellRegistryPort
   model: ModelChoice
   settings: SettingsService
   close: () => Promise<void>
@@ -99,8 +111,33 @@ export async function composeAtlas(args: {
   const channel = createDeltaChannel()
   const pending = createPendingQueue()
 
+  let activeBranch: BranchId | null = null
+
+  const titlerModel = createAnthropicOauthModel({ credentials, modelId: TITLER_MODEL_ID })
+  const summariserModel = createAnthropicOauthModel({ credentials, modelId: SUMMARISER_MODEL_ID })
+
+  /**
+   * Teardown kills every background shell, and those endings are worth keeping: reopening the
+   * conversation should say where the dev server went. Nothing is left running to drain them, so the
+   * close path appends what teardown produced before the database goes.
+   */
+  const recordTeardownEndings = async (): Promise<void> => {
+    await shells.closeAll()
+
+    const branchId = activeBranch
+    const drafts = shells.drainNotifications()
+    if (branchId === null || drafts.length === 0) return
+
+    await log.append({ branchId, runId: ids.nextRunId(), drafts })
+  }
+
   return {
     config,
+    markActiveBranch: (branchId) => {
+      activeBranch = branchId
+    },
+    titler: ({ text, signal }) => titleFor({ model: titlerModel, text, signal }),
+    summarise: ({ events, throughSeq }) => summaryFor({ model: summariserModel, events, throughSeq }),
     settings,
     credentials,
     channel,
@@ -108,9 +145,13 @@ export async function composeAtlas(args: {
     branches,
     ids,
     pending,
+    shells,
     model,
-    close: () => disposeAll({ container }),
-    runner: createPublishingTurnRunner({
+    close: async () => {
+      await recordTeardownEndings().catch(() => undefined)
+      await disposeAll({ container })
+    },
+    runner: new PublishingTurnRunner({
       channel,
       deps: {
         log,
@@ -118,8 +159,11 @@ export async function composeAtlas(args: {
         ids,
         assembly: defaultPipeline({ root: config.cwd, tools }),
         tools,
-        dispatch: container.resolve(DispatchToken),
-        drainPending: async () => [...pending.drain(), ...shells.drainNotifications()],
+        dispatch: container.resolve(portToken(ToolDispatcher)),
+        drainPending: async () => [
+          ...pending.drain().map((text): EventDraft => ({ type: 'user-said', text })),
+          ...shells.drainNotifications(),
+        ],
         spend: {
           ledger: container.resolve(portToken(TurnLedgerPort)),
           clock: container.resolve(portToken(ClockPort)),

@@ -79,18 +79,31 @@ const approvalNames = (events: readonly Event[]): SidebarApproval[] => {
   return [{ callId: outstanding, reason: requested.reason }]
 }
 
-const titleOf = (events: readonly Event[]): string | null => {
-  const opening = eventsOfType({ events, type: 'user-said' }).at(0)
-  if (opening === undefined) return null
-
-  const oneLine = opening.text.replace(/\s+/g, ' ').trim()
-  if (oneLine.length === 0) return null
-
-  return truncateCells({ text: oneLine, cells: TITLE_CELLS })
+const oneLineOf = (text: string): string | null => {
+  const oneLine = text.replace(/\s+/g, ' ').trim()
+  return oneLine.length === 0 ? null : oneLine
 }
 
-export function deriveSidebar(args: { events: readonly Event[]; turn: TurnClock }): SidebarModel {
+const nameOrOpening = (args: { events: readonly Event[]; name: string | null }): string | null => {
+  const named = args.name === null ? null : oneLineOf(args.name)
+  if (named !== null) return named
+
+  const opening = eventsOfType({ events: args.events, type: 'user-said' }).at(0)
+  return opening === undefined ? null : oneLineOf(opening.text)
+}
+
+const titleOf = (args: { events: readonly Event[]; name: string | null }): string | null => {
+  const title = nameOrOpening(args)
+  return title === null ? null : truncateCells({ text: title, cells: TITLE_CELLS })
+}
+
+export function deriveSidebar(args: {
+  events: readonly Event[]
+  turn: TurnClock
+  name?: string | null | undefined
+}): SidebarModel {
   const { events, turn } = args
+  const name = args.name ?? null
 
   const running = turn.startedAt !== null
   const liveOutputTokens = running ? turn.outputTokens : 0
@@ -99,7 +112,7 @@ export function deriveSidebar(args: { events: readonly Event[]; turn: TurnClock 
   const awaitingApproval = outstandingApproval(events)
 
   return {
-    title: titleOf(events),
+    title: titleOf({ events, name }),
     turnCount: eventsOfType({ events, type: 'user-said' }).length,
     totalTokens: liveOutputTokens + (lastTurnOutputTokens ?? 0),
     approvals: approvalNames(events),

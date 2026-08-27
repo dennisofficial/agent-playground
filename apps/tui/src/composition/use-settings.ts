@@ -14,6 +14,7 @@ import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 
 import { accentHex, accentPalette } from '../ui/accents'
 import { applyBlockDensity, blockDensityOf, SHIPPED_DENSITY } from '../ui/density-store'
 import { applyPalette } from '../ui/palette-store'
+import { SHIPPED_THINKING, thinkingVisibilityOf, type EThinkingVisibility } from '../store'
 import {
   currentRow,
   movePage,
@@ -35,6 +36,7 @@ export type SettingsControl = {
   problem: string | undefined
   sidebarWidth: number
   paceReveal: boolean
+  thinking: EThinkingVisibility
   handleOpen: () => void
   handleDismiss: () => void
   handleActivate: (target: SettingsState) => void
@@ -150,6 +152,13 @@ export function useSettings(args: { app: AtlasApp }): SettingsControl {
       fallback: SIDEBAR_WIDTH,
     }),
     paceReveal: toggleValueOf({ resolution: held.resolution, id: ESettingId.SmoothStreaming }),
+    thinking: thinkingVisibilityOf(
+      choiceValueOf({
+        resolution: held.resolution,
+        id: ESettingId.ThinkingBlocks,
+        fallback: SHIPPED_THINKING,
+      }),
+    ),
     handleOpen,
     handleDismiss,
     handleActivate,

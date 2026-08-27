@@ -144,16 +144,45 @@ describe('messagesFromEvents', () => {
     ])
   })
 
-  it('ignores context and nudge events, which later slices render', () => {
+  it('renders loaded context as a user message and still ignores a nudge', () => {
     const events = log([
       { type: 'user-said', text: 'run it' },
-      { type: 'context-loaded', slot: 'project', key: 'CLAUDE.md', content: 'rules' },
+      { type: 'context-loaded', slot: 'project-instructions', key: '/repo/CLAUDE.md', content: 'rules' },
       { type: 'nudge', text: 'keep going', lifetimeSteps: 1 },
     ])
 
     const assembled = messagesFromEvents()(empty, contextFor({ events }))
 
-    expect(assembled.messages.map((entry) => entry.message.role)).toEqual(['user'])
+    expect(assembled.messages.map((entry) => entry.message.role)).toEqual(['user', 'user'])
+    expect(assembled.messages[1]?.message.content).toEqual([
+      {
+        type: 'text',
+        text: [
+          '<system-reminder>',
+          'Contents of /repo/CLAUDE.md (project instructions, checked into the codebase):',
+          '',
+          'rules',
+          '</system-reminder>',
+        ].join('\n'),
+      },
+    ])
+  })
+
+  it('renders only the latest load of a file, so a re-read supersedes rather than repeats', () => {
+    const events = log([
+      { type: 'context-loaded', slot: 'project-instructions', key: '/repo/CLAUDE.md', content: 'old rules' },
+      { type: 'user-said', text: 'run it' },
+      { type: 'context-loaded', slot: 'project-instructions', key: '/repo/CLAUDE.md', content: 'new rules' },
+    ])
+
+    const rendered = messagesFromEvents()(empty, contextFor({ events })).messages.flatMap((entry) =>
+      entry.message.role === 'user'
+        ? entry.message.content.map((part) => part.text)
+        : [],
+    )
+
+    expect(rendered.filter((text) => text.includes('old rules'))).toEqual([])
+    expect(rendered.filter((text) => text.includes('new rules'))).toHaveLength(1)
   })
 
   it('drops an assistant turn that holds no parts', () => {

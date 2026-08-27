@@ -6,6 +6,7 @@ import { EMPTY_TRANSCRIPT, type TranscriptModel } from '../../store'
 import { toCallId, toRunId } from '@dltech/atlas-core'
 
 import {
+  awakeAt,
   clockReadableAt,
   stoppageOf,
   IDLE_PROGRESS,
@@ -13,7 +14,10 @@ import {
   turnAdvanced,
   turnInterrupting,
   turnSettled,
+  suspensionFrom,
+  suspensionTicked,
   turnStarted,
+  type Suspension,
   type TurnProgress,
 } from '../turn-progress'
 
@@ -81,7 +85,7 @@ describe('the clock the working line reads', () => {
     expect(turnInterrupting(IDLE_PROGRESS)).toBe(IDLE_PROGRESS)
   })
 
-  it('settles into what the turn cost, so the line reads "Worked for"', () => {
+  it('settles into what the turn cost, so the line reads "Thought for"', () => {
     const progress = turnSettled({
       progress: absorbing([chunk({ type: 'text-delta', id: 't', text: 'x'.repeat(400) })]),
       now: 93_000,
@@ -192,17 +196,50 @@ describe('what a turn outcome tells the user', () => {
 
     expect(said).toContain('awaiting approval')
   })
+})
 
-  it('names the step ceiling distinctly from a pause, so the two are not debugged as one', () => {
-    const exhausted = stoppageOf({ status: ETurnStatus.Exhausted, runId })
-    const paused = stoppageOf({
-      status: ETurnStatus.Paused,
-      runId,
-      callId: toCallId('call-1'),
-      reason: 'awaiting read',
-    })
+describe('a clock that does not count the time the machine was asleep', () => {
+  const TICK = 250
 
-    expect(exhausted).toContain('step')
-    expect(exhausted).not.toBe(paused)
+  const ticking = (gaps: readonly number[]): Suspension =>
+    gaps.reduce(
+      (suspension, gap) =>
+        suspensionTicked({ suspension, now: suspension.tickedAt + gap, intervalMs: TICK }),
+      suspensionFrom({ now: 1_000 }),
+    )
+
+  it('reads as wall clock while the ticks keep arriving', () => {
+    const suspension = ticking([TICK, TICK, TICK])
+
+    expect(suspension.suspendedMs).toBe(0)
+    expect(awakeAt({ suspension, now: 5_000 })).toBe(5_000)
+  })
+
+  it('forgives a tick that ran late without calling the process suspended', () => {
+    expect(ticking([TICK, 3_000, TICK]).suspendedMs).toBe(0)
+  })
+
+  it('drops an hour of closed lid out of the elapsed time it reports', () => {
+    const hour = 60 * 60 * 1_000
+    const suspension = ticking([TICK, hour, TICK])
+
+    expect(suspension.suspendedMs).toBe(hour - TICK)
+    expect(awakeAt({ suspension, now: 1_000 + hour }) - 1_000).toBe(TICK)
+  })
+
+  it('keeps the turn that started before the sleep readable, never negative', () => {
+    const hour = 60 * 60 * 1_000
+    const suspension = ticking([hour])
+    const clock = turnStarted({ now: 1_000 }).clock
+
+    const now = clockReadableAt({ clock, now: awakeAt({ suspension, now: 1_000 + hour }) })
+
+    expect(now - 1_000).toBeGreaterThanOrEqual(0)
+  })
+
+  it('adds up several sleeps rather than only remembering the last', () => {
+    const suspension = ticking([60_000, TICK, 60_000])
+
+    expect(suspension.suspendedMs).toBe(2 * (60_000 - TICK))
   })
 })

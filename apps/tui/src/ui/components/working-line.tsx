@@ -18,7 +18,7 @@ export function WorkingLine(props: {
   const elapsed = formatElapsed(props.elapsedMs)
   const tokens = props.outputTokens > 0 ? `↓ ${formatTokens(props.outputTokens)} tokens` : ''
   const detail = props.running ? `${tokens ? `${tokens} · ` : ''}esc to interrupt` : tokens
-  const label = `${props.running ? 'Working' : 'Worked'} for ${elapsed}${detail ? ` (${detail})` : ''}`
+  const label = `${props.running ? 'Thinking' : 'Thought'} for ${elapsed}${detail ? ` (${detail})` : ''}`
 
   return (
     <box flexDirection="column">

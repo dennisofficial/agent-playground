@@ -3,81 +3,258 @@ import { describe, expect, it } from 'bun:test'
 import {
   EBeforeToolDecision,
   EStage,
+  HOOK_CONTEXT_KEY,
+  toBranchId,
   type AfterTool,
   type AfterTurn,
+  type Assembled,
   type BeforeRequest,
   type BeforeStep,
   type BeforeTool,
+  type BeforeTurn,
+  type Chunk,
+  type HookOrder,
   type OnChunk,
+  type ProviderPrompt,
 } from '@dltech/atlas-core'
 
-import { createHookRegistry, type RegisteredHook } from '../registry'
+import { HookChain, type RegisteredHook } from '../registry'
 
 const allow: BeforeTool = async ({ call }) => ({ decision: EBeforeToolDecision.Allow, input: call.input })
 
-const record: AfterTool = async () => []
+const record: AfterTool = async () => ({})
 
-const passStep: BeforeStep = async ({ assembled }) => assembled
+const guard = (nudge: number): HookOrder => ({ stage: EStage.Guard, nudge })
+const policy = (nudge: number): HookOrder => ({ stage: EStage.Policy, nudge })
+const observe = (nudge: number): HookOrder => ({ stage: EStage.Observe, nudge })
 
-const passPrompt: BeforeRequest = async (prompt) => prompt
+const assembled: Assembled = { system: [], messages: [] }
+const prompt: ProviderPrompt = { instructions: [], messages: [], provider: { id: 'test', modelId: 'test' } }
+const delta: Chunk = { type: 'text-delta', id: 'block-1', text: 'hello' }
+const branchId = toBranchId('branch-1')
 
-const passChunk: OnChunk = async (chunk) => chunk
+const noting = (args: { name: string; seen: string[] }): void => {
+  args.seen.push(args.name)
+}
 
-const closeTurn: AfterTurn = async () => []
-
-const guard = (name: string, nudge: number): RegisteredHook<BeforeTool> => ({
-  name,
-  order: { stage: EStage.Guard, nudge },
-  run: allow,
+const notingStep = (args: { name: string; order: HookOrder; seen: string[] }): RegisteredHook<BeforeStep> => ({
+  name: args.name,
+  order: args.order,
+  run: async ({ assembled: given }) => {
+    noting(args)
+    return given
+  },
 })
 
-describe('createHookRegistry', () => {
-  it('orders each phase once, at construction', () => {
-    const registry = createHookRegistry({
+const notingRequest = (args: {
+  name: string
+  order: HookOrder
+  seen: string[]
+}): RegisteredHook<BeforeRequest> => ({
+  name: args.name,
+  order: args.order,
+  run: async (given) => {
+    noting(args)
+    return given
+  },
+})
+
+const notingChunk = (args: { name: string; order: HookOrder; seen: string[] }): RegisteredHook<OnChunk> => ({
+  name: args.name,
+  order: args.order,
+  run: async (given) => {
+    noting(args)
+    return given
+  },
+})
+
+const notingTurn = (args: { name: string; order: HookOrder; seen: string[] }): RegisteredHook<AfterTurn> => ({
+  name: args.name,
+  order: args.order,
+  run: async () => {
+    noting(args)
+    return {}
+  },
+})
+
+const notingOpening = (args: {
+  name: string
+  order: HookOrder
+  seen: string[]
+}): RegisteredHook<BeforeTurn> => ({
+  name: args.name,
+  order: args.order,
+  run: async () => {
+    noting(args)
+    return {}
+  },
+})
+
+describe('HookChain', () => {
+  it('orders the tool phases once, at construction', () => {
+    const chain = new HookChain({
       beforeTool: [
-        { name: 'audit', order: { stage: EStage.Observe, nudge: 0 }, run: allow },
-        guard('zebra', 50),
-        guard('alpha', 50),
-        guard('first', 10),
+        { name: 'audit', order: observe(0), run: allow },
+        { name: 'zebra', order: guard(50), run: allow },
+        { name: 'alpha', order: guard(50), run: allow },
+        { name: 'first', order: guard(10), run: allow },
       ],
       afterTool: [
-        { name: 'later', order: { stage: EStage.Observe, nudge: 20 }, run: record },
-        { name: 'sooner', order: { stage: EStage.Observe, nudge: 10 }, run: record },
-      ],
-      beforeStep: [
-        { name: 'budget', order: { stage: EStage.Policy, nudge: 0 }, run: passStep },
-        { name: 'redact', order: { stage: EStage.Guard, nudge: 0 }, run: passStep },
-      ],
-      beforeRequest: [
-        { name: 'cache-breakpoints', order: { stage: EStage.Observe, nudge: 0 }, run: passPrompt },
-        { name: 'strip-internal-ids', order: { stage: EStage.Guard, nudge: 0 }, run: passPrompt },
-      ],
-      onChunk: [
-        { name: 'transcript-log', order: { stage: EStage.Observe, nudge: 0 }, run: passChunk },
-        { name: 'secret-redaction', order: { stage: EStage.Guard, nudge: 0 }, run: passChunk },
-      ],
-      afterTurn: [
-        { name: 'zebra', order: { stage: EStage.Observe, nudge: 5 }, run: closeTurn },
-        { name: 'alpha', order: { stage: EStage.Observe, nudge: 5 }, run: closeTurn },
+        { name: 'later', order: observe(20), run: record },
+        { name: 'sooner', order: observe(10), run: record },
       ],
     })
 
-    expect(registry.beforeTool.map((hook) => hook.name)).toEqual(['first', 'alpha', 'zebra', 'audit'])
-    expect(registry.afterTool.map((hook) => hook.name)).toEqual(['sooner', 'later'])
-    expect(registry.beforeStep.map((hook) => hook.name)).toEqual(['redact', 'budget'])
-    expect(registry.beforeRequest.map((hook) => hook.name)).toEqual(['strip-internal-ids', 'cache-breakpoints'])
-    expect(registry.onChunk.map((hook) => hook.name)).toEqual(['secret-redaction', 'transcript-log'])
-    expect(registry.afterTurn.map((hook) => hook.name)).toEqual(['alpha', 'zebra'])
+    expect(chain.beforeTool.map((hook) => hook.name)).toEqual(['first', 'alpha', 'zebra', 'audit'])
+    expect(chain.afterTool.map((hook) => hook.name)).toEqual(['sooner', 'later'])
   })
 
-  it('stands up empty for a harness with no hooks at all', () => {
-    const registry = createHookRegistry({})
+  it('runs each phase in the order stage and nudge settled on', async () => {
+    const seen: string[] = []
+    const chain = new HookChain({
+      beforeStep: [
+        notingStep({ name: 'budget', order: policy(0), seen }),
+        notingStep({ name: 'redact', order: guard(0), seen }),
+      ],
+      beforeRequest: [
+        notingRequest({ name: 'cache-breakpoints', order: observe(0), seen }),
+        notingRequest({ name: 'strip-internal-ids', order: guard(0), seen }),
+      ],
+      onChunk: [
+        notingChunk({ name: 'transcript-log', order: observe(0), seen }),
+        notingChunk({ name: 'secret-redaction', order: guard(0), seen }),
+      ],
+      beforeTurn: [
+        notingOpening({ name: 'later-opener', order: observe(0), seen }),
+        notingOpening({ name: 'first-opener', order: guard(0), seen }),
+      ],
+      afterTurn: [
+        notingTurn({ name: 'zebra', order: observe(5), seen }),
+        notingTurn({ name: 'alpha', order: observe(5), seen }),
+      ],
+    })
 
-    expect(registry.beforeTool).toEqual([])
-    expect(registry.afterTool).toEqual([])
-    expect(registry.beforeStep).toEqual([])
-    expect(registry.beforeRequest).toEqual([])
-    expect(registry.onChunk).toEqual([])
-    expect(registry.afterTurn).toEqual([])
+    await chain.beforeTurn({ branchId })
+    await chain.beforeStep({ assembled, trace: [] })
+    await chain.beforeRequest({ prompt })
+    await chain.onChunk({ chunk: delta })
+    await chain.afterTurn({ branchId })
+
+    expect(seen).toEqual([
+      'first-opener',
+      'later-opener',
+      'redact',
+      'budget',
+      'strip-internal-ids',
+      'cache-breakpoints',
+      'secret-redaction',
+      'transcript-log',
+      'alpha',
+      'zebra',
+    ])
+  })
+
+  it('threads what one hook returns into the next', async () => {
+    const chain = new HookChain({
+      beforeStep: [
+        {
+          name: 'preamble',
+          order: guard(0),
+          run: async ({ assembled: given }) => ({ ...given, system: [{ text: 'be brief' }] }),
+        },
+        {
+          name: 'shout',
+          order: observe(0),
+          run: async ({ assembled: given }) => ({
+            ...given,
+            system: given.system.map((block) => ({ text: block.text.toUpperCase() })),
+          }),
+        },
+      ],
+    })
+
+    expect(await chain.beforeStep({ assembled, trace: [] })).toEqual({
+      system: [{ text: 'BE BRIEF' }],
+      messages: [],
+    })
+  })
+
+  it('stops at the hook that drops the chunk, leaving the rest unrun', async () => {
+    const seen: string[] = []
+    const chain = new HookChain({
+      onChunk: [
+        { name: 'secret-redaction', order: guard(0), run: async () => null },
+        notingChunk({ name: 'transcript-log', order: observe(0), seen }),
+      ],
+    })
+
+    expect(await chain.onChunk({ chunk: delta })).toBeNull()
+    expect(seen).toEqual([])
+  })
+
+  it('gathers the drafts every branch-scoped hook returns', async () => {
+    const chain = new HookChain({
+      afterTurn: [
+        {
+          name: 'first',
+          order: guard(0),
+          run: async () => ({ drafts: [{ type: 'nudge', text: 'one', lifetimeSteps: 1 }] }),
+        },
+        {
+          name: 'second',
+          order: observe(0),
+          run: async () => ({ drafts: [{ type: 'nudge', text: 'two', lifetimeSteps: 1 }] }),
+        },
+      ],
+    })
+
+    expect(await chain.afterTurn({ branchId })).toEqual([
+      { type: 'nudge', text: 'one', lifetimeSteps: 1 },
+      { type: 'nudge', text: 'two', lifetimeSteps: 1 },
+    ])
+  })
+
+  it('renders additionalContext as a context-loaded draft slotted under the hook that returned it', async () => {
+    const chain = new HookChain({
+      beforeTurn: [
+        { name: 'gitState', order: observe(0), run: async () => ({ additionalContext: '3 files dirty' }) },
+      ],
+    })
+
+    expect(await chain.beforeTurn({ branchId })).toEqual([
+      { type: 'context-loaded', slot: 'gitState', key: HOOK_CONTEXT_KEY, content: '3 files dirty' },
+    ])
+  })
+
+  it('carries a hook that returns both, context ahead of drafts', async () => {
+    const chain = new HookChain({
+      afterTurn: [
+        {
+          name: 'gitState',
+          order: observe(0),
+          run: async () => ({
+            additionalContext: '3 files dirty',
+            drafts: [{ type: 'nudge', text: 'commit first', lifetimeSteps: 1 }],
+          }),
+        },
+      ],
+    })
+
+    expect((await chain.afterTurn({ branchId })).map((draft) => draft.type)).toEqual([
+      'context-loaded',
+      'nudge',
+    ])
+  })
+
+  it('stands up empty for a harness with no hooks at all', async () => {
+    const chain = new HookChain({})
+
+    expect(chain.beforeTool).toEqual([])
+    expect(chain.afterTool).toEqual([])
+    expect(await chain.beforeStep({ assembled, trace: [] })).toBe(assembled)
+    expect(await chain.beforeRequest({ prompt })).toBe(prompt)
+    expect(await chain.onChunk({ chunk: delta })).toBe(delta)
+    expect(await chain.beforeTurn({ branchId })).toEqual([])
+    expect(await chain.afterTurn({ branchId })).toEqual([])
   })
 })

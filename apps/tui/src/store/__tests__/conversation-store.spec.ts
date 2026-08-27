@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'bun:test'
 
 import type { Event } from '@dltech/atlas-core'
-import { createDeltaChannel, type DeltaChannel } from '@dltech/atlas-harness'
+import { createDeltaChannel, EStepEnd, type DeltaChannel } from '@dltech/atlas-harness'
 
 import { createConversationStore, type ConversationStore } from '../conversation-store'
 import { EEntryKind } from '../transcript-model'
@@ -95,5 +95,48 @@ describe('the conversation store', () => {
     channel.publisherFor({ branchId: fixtureBranchId }).onChunk({ type: 'text-delta', id: 'b1', text: 'hi' })
 
     expect(store.getSnapshot().isEmpty).toBe(true)
+  })
+})
+
+describe('a failure the store is holding on screen', () => {
+  let channel: DeltaChannel
+  let store: ConversationStore
+
+  beforeEach(() => {
+    channel = createDeltaChannel()
+    store = createConversationStore({ channel, branchId: fixtureBranchId })
+  })
+
+  const failAStep = () => {
+    const publisher = channel.publisherFor({ branchId: fixtureBranchId })
+    publisher.onChunk({ type: 'text-delta', id: 'b1', text: 'part way' })
+    publisher.onChunk({ type: 'error', message: 'The operation timed out.' })
+    publisher.close({ end: EStepEnd.Failed })
+  }
+
+  it('stays put while nothing has superseded it', () => {
+    failAStep()
+
+    expect(store.getSnapshot().failure).toEqual({ message: 'The operation timed out.' })
+  })
+
+  it('is retired the moment a retry takes over, so the working line can show', () => {
+    failAStep()
+    store.supersedeFailure()
+
+    expect(store.getSnapshot().failure).toBeNull()
+  })
+
+  it('notifies subscribers when it is retired, and only when there was one', () => {
+    let notices = 0
+    failAStep()
+    store.subscribe(() => void (notices += 1))
+
+    store.supersedeFailure()
+    const afterRetiring = notices
+    store.supersedeFailure()
+
+    expect(afterRetiring).toBe(1)
+    expect(notices).toBe(1)
   })
 })

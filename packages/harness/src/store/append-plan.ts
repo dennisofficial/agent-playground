@@ -1,10 +1,12 @@
 import type { Event, EventDraft } from '@dltech/atlas-core'
 
+import { contextDigestOf } from './context-digest'
+
 export type ContextIdentity = string
 
 export function contextIdentityOf(draft: EventDraft): ContextIdentity | undefined {
   if (draft.type !== 'context-loaded') return undefined
-  return JSON.stringify([draft.slot, draft.key])
+  return JSON.stringify([draft.slot, draft.key, contextDigestOf(draft.content)])
 }
 
 type PlanEntry = { kind: 'reused'; event: Event } | { kind: 'fresh'; position: number }

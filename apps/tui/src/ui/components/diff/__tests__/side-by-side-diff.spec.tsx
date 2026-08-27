@@ -117,11 +117,12 @@ describe('SideBySideDiff', () => {
     }
   }, 60_000)
 
-  it('says where the split holds and offers the way back to inline', async () => {
+  it('says where the split holds, without naming a key nothing is listening for', async () => {
     const { rows } = await at(WIDTH)
     const footer = rows.find((row) => row.includes('falls back to inline')) ?? ''
+
     expect(footer).toContain('fits above 140 cols')
-    expect(footer).toContain('s inline')
+    expect(footer).not.toContain('s inline')
   }, 30_000)
 
   it('clips a long line on either side rather than wrapping it', async () => {

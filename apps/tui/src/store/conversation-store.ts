@@ -1,9 +1,9 @@
 import type { BranchId, Event } from '@dltech/atlas-core'
-import type { ChannelSignal, DeltaChannel, Unsubscribe } from '@dltech/atlas-harness'
+import type { ChannelSignal, DeltaChannel, StepSignal, Unsubscribe } from '@dltech/atlas-harness'
 
 import { IDLE_TURN, type TurnClock } from '../ui/components/transcript'
 import { deriveTranscript } from './derive-transcript'
-import { prunedSignals } from './in-flight-steps'
+import { prunedSignals, withoutFailedTail } from './in-flight-steps'
 import {
   advancedGate,
   attachedGate,
@@ -13,6 +13,7 @@ import {
   type RevealGate,
 } from './reveal'
 import { deriveSidebar, type SidebarModel } from './sidebar-model'
+import { SHIPPED_THINKING, type EThinkingVisibility } from './thinking-fold'
 import type { TranscriptModel } from './transcript-model'
 
 export type ConversationStore = {
@@ -21,32 +22,39 @@ export type ConversationStore = {
   getSidebar(): SidebarModel
   setEvents(events: readonly Event[]): void
   setTurn(turn: TurnClock): void
+  supersedeFailure(): void
+  setThinking(thinking: EThinkingVisibility): void
+  setName(name: string | null): void
   dispose(): void
 }
 
-const NO_SIGNALS: readonly ChannelSignal[] = Object.freeze([])
+const NO_SIGNALS: readonly StepSignal[] = Object.freeze([])
 
 export function createConversationStore(args: {
   channel: DeltaChannel
   branchId: BranchId
   events?: readonly Event[]
   paceReveal?: boolean
+  thinking?: EThinkingVisibility
+  name?: string | null
 }): ConversationStore {
   const paceReveal = args.paceReveal ?? false
+  let thinking: EThinkingVisibility = args.thinking ?? SHIPPED_THINKING
+  let name: string | null = args.name ?? null
   let events: readonly Event[] = args.events ?? []
-  let signals: readonly ChannelSignal[] = NO_SIGNALS
+  let signals: readonly StepSignal[] = NO_SIGNALS
   let turn: TurnClock = IDLE_TURN
   let gate: RevealGate | null = null
   let frame: ReturnType<typeof setTimeout> | undefined
-  let model = deriveTranscript({ events, signals })
-  let sidebar = deriveSidebar({ events, turn })
+  let model = deriveTranscript({ events, signals, thinking })
+  let sidebar = deriveSidebar({ events, turn, name })
 
   const listeners = new Set<() => void>()
 
   const republish = () => {
     signals = prunedSignals({ signals, events })
-    model = deriveTranscript({ events, signals, reveal: gate })
-    sidebar = deriveSidebar({ events, turn })
+    model = deriveTranscript({ events, signals, reveal: gate, thinking })
+    sidebar = deriveSidebar({ events, turn, name })
     for (const listener of [...listeners]) listener()
   }
 
@@ -63,6 +71,8 @@ export function createConversationStore(args: {
   }
 
   const handleSignal = (signal: ChannelSignal) => {
+    if (signal.type === 'events-appended') return
+
     signals = [...signals, signal]
 
     if (!paceReveal || signal.type !== 'chunk') {
@@ -97,6 +107,26 @@ export function createConversationStore(args: {
 
     setTurn(next) {
       turn = next
+      republish()
+    },
+
+    supersedeFailure() {
+      const kept = withoutFailedTail({ signals, events })
+      if (kept === signals) return
+
+      signals = kept
+      republish()
+    },
+
+    setThinking(next) {
+      if (next === thinking) return
+      thinking = next
+      republish()
+    },
+
+    setName(next) {
+      if (next === name) return
+      name = next
       republish()
     },
 

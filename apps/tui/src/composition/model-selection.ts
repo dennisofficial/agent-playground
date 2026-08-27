@@ -1,11 +1,6 @@
+import { EEffort, EModelVendor, modelEntry, type CredentialPort } from '@dltech/atlas-core'
 import {
-  EEffort,
-  EModelVendor,
-  modelEntry,
-  thinkingBudgetFor,
-  type CredentialPort,
-} from '@dltech/atlas-core'
-import {
+  anthropicThinkingOptions,
   createAnthropicOauthModel,
   createSwitchableModel,
   type Switchable,
@@ -41,11 +36,10 @@ export function selectableModel(args: {
       createAnthropicOauthModel({
         credentials: args.credentials,
         modelId: choice.modelId,
-        providerOptions: {
-          anthropic: {
-            thinking: { type: 'enabled', budgetTokens: thinkingBudgetFor(choice.effort) },
-          },
-        },
+        providerOptions: anthropicThinkingOptions({
+          modelId: choice.modelId,
+          effort: choice.effort,
+        }),
       }),
   })
 

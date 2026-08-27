@@ -269,16 +269,44 @@ describe('PrismaEventLog context-loaded idempotency', () => {
     content,
   })
 
-  it('returns the existing event instead of appending a second time', async () => {
+  it('returns the existing event when the same content is offered again', async () => {
     const { log } = await openFixture()
 
     const [first] = await log.append({ branchId, runId, drafts: [loaded('/repo/CLAUDE.md')] })
-    const [second] = await log.append({ branchId, runId, drafts: [loaded('/repo/CLAUDE.md', 'changed')] })
+    const [second] = await log.append({ branchId, runId, drafts: [loaded('/repo/CLAUDE.md')] })
 
     expect(second?.id).toBe(first?.id)
     expect(second?.seq).toBe(1)
     expect(await log.head({ branchId })).toBe(1)
     expect(await log.read({ branchId })).toHaveLength(1)
+  })
+
+  it('appends a second event when the same key is offered with changed content', async () => {
+    const { log } = await openFixture()
+
+    const [first] = await log.append({ branchId, runId, drafts: [loaded('/repo/CLAUDE.md')] })
+    const [second] = await log.append({ branchId, runId, drafts: [loaded('/repo/CLAUDE.md', 'changed')] })
+
+    expect(second?.id).not.toBe(first?.id)
+    expect(await log.head({ branchId })).toBe(2)
+
+    const stored = await log.read({ branchId })
+    expect(stored).toHaveLength(2)
+    expect(stored.map((event) => (event.type === 'context-loaded' ? event.content : undefined))).toEqual([
+      'body',
+      'changed',
+    ])
+  })
+
+  it('reuses the first content again after a change, rather than appending a third time', async () => {
+    const { log } = await openFixture()
+
+    const [first] = await log.append({ branchId, runId, drafts: [loaded('/repo/CLAUDE.md')] })
+    await log.append({ branchId, runId, drafts: [loaded('/repo/CLAUDE.md', 'changed')] })
+    const [reverted] = await log.append({ branchId, runId, drafts: [loaded('/repo/CLAUDE.md')] })
+
+    expect(reverted?.id).toBe(first?.id)
+    expect(await log.head({ branchId })).toBe(2)
   })
 
   it('collapses duplicates inside one batch', async () => {
@@ -319,16 +347,6 @@ describe('PrismaEventLog context-loaded idempotency', () => {
     await log.append({ branchId, runId, drafts: [said('one'), said('two'), said('three'), said('four')] })
 
     expect(await log.read({ branchId })).toHaveLength(4)
-  })
-})
-
-describe('PrismaEventLog fork', () => {
-  it('is present on the interface and unimplemented', async () => {
-    const { log } = await openFixture()
-
-    await expect(
-      log.forkFrom({ branchId, seq: 1, into: toBranchId('branch-2') }),
-    ).rejects.toThrow(/not implemented/i)
   })
 })
 

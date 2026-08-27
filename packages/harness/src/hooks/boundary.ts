@@ -1,7 +1,5 @@
 import { isAbsolute, resolve } from 'node:path'
 
-import { z } from 'zod'
-
 import {
   BeforeToolHook,
   EBeforeToolDecision,
@@ -19,6 +17,13 @@ import {
 import { inject, injectAll, injectable, portToken } from '../container/injection'
 import { WorkspaceRoot } from '../container/tokens'
 import { createWorkspaceContainment, type WorkspaceContainment } from '../tools/containment'
+import {
+  ABSENT,
+  createDeclaredPaths,
+  EPathDeclaration,
+  inputFieldOf,
+  type DeclaredPaths,
+} from '../tools/declared-paths'
 
 enum EDenial {
   Unregistered = 'unregistered',
@@ -34,18 +39,6 @@ type Denial =
   | { kind: EDenial.Escapes; path: string; resolvesTo?: string | undefined }
   | { kind: EDenial.Uncheckable; field: string; found: string }
   | { kind: EDenial.Malformed; field: string; path: string; fault: string }
-
-const ABSENT = Symbol('absent')
-
-const inputRecordSchema = z.record(z.string(), z.unknown())
-
-function inputFieldOf({ input, field }: { input: unknown; field: string }): unknown {
-  const parsed = inputRecordSchema.safeParse(input)
-  if (!parsed.success) return ABSENT
-
-  const value = parsed.data[field]
-  return value === undefined ? ABSENT : value
-}
 
 const isUsableBase = (value: unknown): value is string =>
   typeof value === 'string' && isAbsolute(value) && !value.includes('\0')
@@ -80,7 +73,7 @@ export class WorkspaceBoundaryHook extends BeforeToolHook {
 
   private readonly containment: WorkspaceContainment
   private readonly root: string
-  private readonly pathFieldsByTool: Map<string, readonly DeclaredPathField[] | undefined>
+  private readonly declaredPaths: DeclaredPaths
 
   constructor(
     @inject(WorkspaceRoot) root: string,
@@ -89,7 +82,7 @@ export class WorkspaceBoundaryHook extends BeforeToolHook {
     super()
     this.containment = createWorkspaceContainment({ root })
     this.root = this.containment.root
-    this.pathFieldsByTool = new Map(tools.map((tool) => [tool.name, tool.pathFields]))
+    this.declaredPaths = createDeclaredPaths({ tools })
   }
 
   readonly run: BeforeTool = async ({ call }) => {
@@ -153,12 +146,11 @@ export class WorkspaceBoundaryHook extends BeforeToolHook {
   }
 
   private declaredFieldsFor(name: string): { denial: Denial } | { declared: readonly DeclaredPathField[] } {
-    if (!this.pathFieldsByTool.has(name)) return { denial: { kind: EDenial.Unregistered } }
+    const declaration = this.declaredPaths.forTool(name)
+    if (declaration.kind === EPathDeclaration.Unregistered) return { denial: { kind: EDenial.Unregistered } }
+    if (declaration.kind === EPathDeclaration.Undeclared) return { denial: { kind: EDenial.Undeclared } }
 
-    const declared = this.pathFieldsByTool.get(name)
-    if (declared === undefined) return { denial: { kind: EDenial.Undeclared } }
-
-    return { declared }
+    return { declared: declaration.fields }
   }
 
   private async denialFor(call: ToolCall): Promise<Denial | undefined> {

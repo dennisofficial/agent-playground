@@ -15,11 +15,14 @@ export type TranscriptFollow = {
   handleJumpToBottom: () => void
 }
 
-export function useTranscriptFollow(args: { anchorId?: string | null } = {}): TranscriptFollow {
+export function useTranscriptFollow(
+  args: { anchorId?: string | null; sends?: number } = {},
+): TranscriptFollow {
   const scroller = useRef<ScrollBoxRenderable | null>(null)
   const [pinned, setPinned] = useState(true)
   const landed = useRef(false)
   const anchorId = args.anchorId ?? null
+  const sends = args.sends ?? 0
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -49,7 +52,13 @@ export function useTranscriptFollow(args: { anchorId?: string | null } = {}): Tr
     const box = scroller.current
     if (!box) return
     box.scrollTo(Math.max(0, box.scrollHeight - box.viewport.height))
+    setPinned(true)
   }, [])
+
+  useEffect(() => {
+    if (sends === 0) return
+    handleJumpToBottom()
+  }, [sends, handleJumpToBottom])
 
   return { scroller, pinned, handleJumpToBottom }
 }

@@ -1,5 +1,5 @@
 import type { Event } from '@dltech/atlas-core'
-import type { ChannelSignal } from '@dltech/atlas-harness'
+import type { StepSignal } from '@dltech/atlas-harness'
 
 import { liveSteps, runKey, stepsOfSignals } from './in-flight-steps'
 
@@ -17,7 +17,7 @@ export type TailRun = { key: string; text: string }
 
 export function tailRunOf(args: {
   events: readonly Event[]
-  signals: readonly ChannelSignal[]
+  signals: readonly StepSignal[]
 }): TailRun | null {
   const step = liveSteps({ steps: stepsOfSignals(args.signals), events: args.events }).at(-1)
   if (step === undefined || step.end !== null) return null

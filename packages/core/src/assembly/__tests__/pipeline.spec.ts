@@ -18,7 +18,11 @@ describe('defaultRules', () => {
 
     expect(assembled.system).toEqual([{ text: MINIMAL_PREAMBLE }])
     expect(assembled.messages.map((entry) => entry.origin.seq)).toEqual([1, 2, 3])
-    expect(trace.map((step) => step.name)).toEqual(['systemPreamble', 'messagesFromEvents'])
+    expect(trace.map((step) => step.name)).toEqual([
+      'systemPreamble',
+      'messagesFromEvents',
+      'compactedHistory',
+    ])
   })
 
   it('threads a workspace through to the preamble the composition root wires', () => {
@@ -43,6 +47,7 @@ describe('defaultPipeline', () => {
     expect(trace.map((step) => step.name)).toEqual([
       'systemPreamble',
       'messagesFromEvents',
+      'compactedHistory',
       'cacheBreakpoints',
     ])
     expect(assembled.system.at(-1)?.providerOptions).toBeDefined()

@@ -5,14 +5,18 @@ import { join } from 'node:path'
 
 import { defaultPipeline, type Event, type EventOfType } from '@dltech/atlas-core'
 
-import { createDeltaChannel, createPublishingTurnRunner, type ChannelSignal } from '../../channel'
+import { createDeltaChannel, PublishingTurnRunner, type ChannelSignal } from '../../channel'
+import { InMemoryFileReadState } from '../../files/read-state'
 import { createBoundaryHook } from '../../hooks/boundary'
-import { createHookRegistry } from '../../hooks/registry'
+import { createReadBeforeWriteHook } from '../../hooks/read-before-write'
+import { createRecordFileStateHook } from '../../hooks/record-file-state'
+import { HookChain } from '../../hooks/registry'
 import { scriptedModel, type ScriptedStep } from '../../model/testing/scripted-model'
 import { EditTool } from '../../tools/builtin/edit'
 import { ReadTool } from '../../tools/builtin/read'
-import { createDispatch } from '../../tools/dispatch'
-import { createToolRegistry } from '../../tools/registry'
+import { WriteTool } from '../../tools/builtin/write'
+import { HookedToolDispatcher } from '../../tools/dispatch'
+import { InMemoryToolRegistry } from '../../tools/registry'
 import { buildHarness, ETurnStatus, type AtlasHarness } from '..'
 import { createTempDatabase, type TempDatabase } from './temp-database'
 
@@ -35,22 +39,28 @@ async function openWorkspace(scriptFor: (workspace: string) => readonly Scripted
   })
   opened.push({ harness, temp, workspace })
 
-  const registry = createToolRegistry([new ReadTool(), new EditTool()])
+  const registry = new InMemoryToolRegistry([new ReadTool(), new EditTool(), new WriteTool()])
+  const declarations = registry.declarations()
+  const viewed = new InMemoryFileReadState()
   const channel = createDeltaChannel()
   const seen: ChannelSignal[] = []
 
-  const runner = createPublishingTurnRunner({
+  const runner = new PublishingTurnRunner({
     channel,
     deps: {
       log: harness.log,
       model: harness.model,
       ids: harness.ids,
-      assembly: defaultPipeline({ root: workspace, tools: registry.declarations() }),
-      tools: registry.declarations(),
-      dispatch: createDispatch({
+      assembly: defaultPipeline({ root: workspace, tools: declarations }),
+      tools: declarations,
+      dispatch: new HookedToolDispatcher({
         registry,
-        hooks: createHookRegistry({
-          beforeTool: [createBoundaryHook({ root: workspace, tools: registry.declarations() })],
+        hooks: new HookChain({
+          beforeTool: [
+            createBoundaryHook({ root: workspace, tools: declarations }),
+            createReadBeforeWriteHook({ seen: viewed, tools: declarations }),
+          ],
+          afterTool: [createRecordFileStateHook({ seen: viewed, tools: declarations })],
         }),
       }),
     },
@@ -62,9 +72,21 @@ async function openWorkspace(scriptFor: (workspace: string) => readonly Scripted
   return { harness, workspace, runner, branchId: branch.id, seen }
 }
 
-const resultOf = (events: readonly Event[]): EventOfType<'tool-result'> => {
-  const found = events.find((event): event is EventOfType<'tool-result'> => event.type === 'tool-result')
-  if (found === undefined) throw new Error('no tool result was recorded')
+const resultOf = (args: {
+  events: readonly Event[]
+  name: string
+}): EventOfType<'tool-result'> => {
+  const found = args.events.find(
+    (event): event is EventOfType<'tool-result'> =>
+      event.type === 'tool-result' && event.name === args.name,
+  )
+  if (found === undefined) throw new Error(`no tool result was recorded for ${args.name}`)
+  return found
+}
+
+const denialOf = (events: readonly Event[]): EventOfType<'tool-denied'> => {
+  const found = events.find((event): event is EventOfType<'tool-denied'> => event.type === 'tool-denied')
+  if (found === undefined) throw new Error('no tool denial was recorded')
   return found
 }
 
@@ -86,15 +108,16 @@ describe('a turn that drives a real builtin tool', () => {
       'tool-result',
       'assistant-said',
     ])
-    expect(resultOf(events).modelText).toBe('1\texport const alpha = 1')
+    expect(resultOf({ events, name: 'read' }).modelText).toBe('1\texport const alpha = 1')
   })
 
   it('edits a file on disk and records a diff the transcript can render', async () => {
     const { harness, workspace, runner, branchId } = await openWorkspace((root) => [
+      { calls: [{ callId: 'call-1', name: 'read', input: { path: join(root, 'beta.ts') } }] },
       {
         calls: [
           {
-            callId: 'call-1',
+            callId: 'call-2',
             name: 'edit',
             input: { path: join(root, 'beta.ts'), oldString: 'let x = 1', newString: 'const x = 2' },
           },
@@ -106,12 +129,80 @@ describe('a turn that drives a real builtin tool', () => {
 
     const outcome = await runner.say({ branchId, text: 'make x a const' })
     const events = await harness.log.read({ branchId })
-    const output = resultOf(events).output as { diff: string }
+    const output = resultOf({ events, name: 'edit' }).output as { diff: string }
 
     expect(outcome.status).toBe(ETurnStatus.Completed)
+    expect(events.map((event) => event.type)).toEqual([
+      'user-said',
+      'tool-called',
+      'tool-result',
+      'tool-called',
+      'tool-result',
+      'assistant-said',
+    ])
     expect(readFileSync(join(workspace, 'beta.ts'), 'utf8')).toBe('const x = 2\n')
     expect(output.diff).toContain('-let x = 1')
     expect(output.diff).toContain('+const x = 2')
+  })
+
+  it('refuses to overwrite a file the model never read, and leaves its bytes untouched', async () => {
+    const { harness, workspace, runner, branchId } = await openWorkspace((root) => [
+      {
+        calls: [
+          {
+            callId: 'call-1',
+            name: 'write',
+            input: { path: join(root, 'delta.ts'), content: 'export const delta = 2\n' },
+          },
+        ],
+      },
+      { text: 'I have to read delta.ts before replacing it' },
+    ])
+    writeFileSync(join(workspace, 'delta.ts'), 'export const delta = 1\n')
+
+    const outcome = await runner.say({ branchId, text: 'make delta 2' })
+    const events = await harness.log.read({ branchId })
+
+    expect(outcome.status).toBe(ETurnStatus.Completed)
+    expect(events.map((event) => event.type)).toEqual([
+      'user-said',
+      'tool-called',
+      'tool-denied',
+      'assistant-said',
+    ])
+    expect(denialOf(events).reason).toContain('read it first')
+    expect(readFileSync(join(workspace, 'delta.ts'), 'utf8')).toBe('export const delta = 1\n')
+  })
+
+  it('lets the overwrite through once the whole file has been read in the same turn', async () => {
+    const { harness, workspace, runner, branchId } = await openWorkspace((root) => [
+      { calls: [{ callId: 'call-1', name: 'read', input: { path: join(root, 'epsilon.ts') } }] },
+      {
+        calls: [
+          {
+            callId: 'call-2',
+            name: 'write',
+            input: { path: join(root, 'epsilon.ts'), content: 'export const epsilon = 2\n' },
+          },
+        ],
+      },
+      { text: 'epsilon is 2 now' },
+    ])
+    writeFileSync(join(workspace, 'epsilon.ts'), 'export const epsilon = 1\n')
+
+    const outcome = await runner.say({ branchId, text: 'make epsilon 2' })
+    const events = await harness.log.read({ branchId })
+
+    expect(outcome.status).toBe(ETurnStatus.Completed)
+    expect(events.map((event) => event.type)).toEqual([
+      'user-said',
+      'tool-called',
+      'tool-result',
+      'tool-called',
+      'tool-result',
+      'assistant-said',
+    ])
+    expect(readFileSync(join(workspace, 'epsilon.ts'), 'utf8')).toBe('export const epsilon = 2\n')
   })
 
   it('records the guard denial rather than touching a file outside the workspace', async () => {
@@ -130,6 +221,25 @@ describe('a turn that drives a real builtin tool', () => {
       'tool-denied',
       'assistant-said',
     ])
+  })
+
+  it('settles a tool that failed, so the turn finishes instead of stalling on the call', async () => {
+    const { harness, runner, branchId } = await openWorkspace((root) => [
+      { calls: [{ callId: 'call-1', name: 'read', input: { path: join(root, 'missing.ts') } }] },
+      { text: 'missing.ts is not there' },
+    ])
+
+    const outcome = await runner.say({ branchId, text: 'read missing.ts' })
+    const events = await harness.log.read({ branchId })
+
+    expect(outcome.status).toBe(ETurnStatus.Completed)
+    expect(events.map((event) => event.type)).toEqual([
+      'user-said',
+      'tool-called',
+      'tool-result',
+      'assistant-said',
+    ])
+    expect(resultOf({ events, name: 'read' }).error?.message.length).toBeGreaterThan(0)
   })
 
   it('publishes one step-started and one step-ended per model step, and none for the settlement', async () => {

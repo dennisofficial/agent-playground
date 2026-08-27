@@ -1,16 +1,18 @@
 import type { Assembled } from '../assembly/assembled'
 import type { ProviderPrompt } from '../assembly/provider-prompt'
 import type { AssemblyTrace } from '../assembly/trace'
-import type { EventDraft } from '../events/body'
 import type { BranchId } from '../events/ids'
 import type { BeforeToolOutcome } from '../policy/before-tool'
 import type { Chunk } from '../stream/chunk'
 import type { ToolCall, ToolOutcome } from '../tools/tool'
 import type { HookOrder } from './order'
+import type { HookOutcome } from './outcome'
 
 export * from './order'
+export * from './outcome'
 
 export enum EHookPhase {
+  BeforeTurn = 'before-turn',
   BeforeStep = 'before-step',
   BeforeRequest = 'before-request',
   BeforeTool = 'before-tool',
@@ -19,23 +21,27 @@ export enum EHookPhase {
   AfterTurn = 'after-turn',
 }
 
+export type BeforeTurn = (args: { branchId: BranchId }) => Promise<HookOutcome>
+
 export type BeforeStep = (args: { assembled: Assembled; trace: AssemblyTrace }) => Promise<Assembled>
 
 export type BeforeRequest = (prompt: ProviderPrompt) => Promise<ProviderPrompt>
 
 export type BeforeTool = (args: { call: ToolCall }) => Promise<BeforeToolOutcome>
 
-export type AfterTool = (args: { call: ToolCall; result: ToolOutcome }) => Promise<EventDraft[]>
+export type AfterTool = (args: { call: ToolCall; result: ToolOutcome }) => Promise<HookOutcome>
 
 export type OnChunk = (chunk: Chunk) => Promise<Chunk | null>
 
-export type AfterTurn = (args: { branchId: BranchId }) => Promise<EventDraft[]>
+export type AfterTurn = (args: { branchId: BranchId }) => Promise<HookOutcome>
 
 abstract class PhaseHook<TRun> {
   abstract readonly name: string
   abstract readonly order: HookOrder
   abstract readonly run: TRun
 }
+
+export abstract class BeforeTurnHook extends PhaseHook<BeforeTurn> {}
 
 export abstract class BeforeStepHook extends PhaseHook<BeforeStep> {}
 
