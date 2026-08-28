@@ -37,8 +37,9 @@ const description = [
   'Pass description to say in a few words what the command is for.',
   'Set runInBackground to start a long-running command - a dev server, a watch, a slow test suite - and get a shell id back at once instead of waiting.',
   'A background shell has no timeout, interleaves stdout and stderr in arrival order, and outlives the turn that started it.',
-  'You are always told when it ends, however it ends, and the output comes with that notice - so do not poll it.',
-  'Read it with shell_output, list what is running with shell_list, and stop it with shell_kill.',
+  'Its ending wakes you wherever you are, however it ends, carrying everything it printed - whether or not a turn is running when it lands.',
+  'So never wait on one: no sleeping, no polling, no idle loop. Move on to other work, or end the turn and be woken.',
+  'shell_output reads a shell that will not end on its own, shell_list shows what is running, and shell_kill stops one.',
 ].join(' ')
 
 function mergeStreams(args: { stdout: Tail; stderr: Tail }): Tail {
@@ -108,10 +109,11 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
         pid: started.snapshot.pid,
       },
       modelText: [
-        `Started in the background as shell ${shellId}.`,
-        'You will be told when it ends, and its output arrives with that notice, so do not poll it.',
-        `Read what it has printed so far with shell_output({ shellId: "${shellId}" }),`,
-        `and stop it with shell_kill({ shellId: "${shellId}" }).`,
+        `Started in the background as shell ${shellId}, and it outlives this turn.`,
+        'Its ending will be delivered to you with everything it printed, whether or not a turn is running then.',
+        'So do not wait on it: no sleeping, no polling, no idle loop. Take up other work, or end the turn and be woken.',
+        `Use shell_output({ shellId: "${shellId}" }) only for a shell that will not end on its own, such as a dev server`,
+        `whose startup log you need, and shell_kill({ shellId: "${shellId}" }) to stop it.`,
       ].join(' '),
     }
   }

@@ -81,7 +81,7 @@ describe('asking bash to run something in the background', () => {
     const output = outputOf(outcome)
     expect(output.shellId).toBe('bash_1')
     expect(output.status).toBe(EShellStatus.Running)
-    expect(modelTextOf(outcome)).toContain('You will be told when it ends')
+    expect(modelTextOf(outcome)).toContain('Its ending will be delivered to you')
   })
 
   it('returns before a slow command could possibly have finished', async () => {
@@ -247,8 +247,25 @@ describe('telling the model it will hear about the ending', () => {
 
     const outcome = await invoke(suite.bash, { command: 'sleep 30', runInBackground: true })
 
-    expect(modelTextOf(outcome)).toContain('You will be told when it ends')
-    expect(modelTextOf(outcome)).toContain('do not poll')
+    expect(modelTextOf(outcome)).toContain('Its ending will be delivered to you with everything it printed')
+    expect(modelTextOf(outcome)).toContain('no polling')
+  })
+
+  it('names waiting on the shell as the mistake and ending the turn as the alternative', async () => {
+    const suite = openSuite()
+
+    const outcome = await invoke(suite.bash, { command: 'sleep 30', runInBackground: true })
+
+    expect(modelTextOf(outcome)).toContain('no sleeping')
+    expect(modelTextOf(outcome)).toContain('end the turn and be woken')
+  })
+
+  it('scopes shell_output to a shell that will not end on its own', async () => {
+    const suite = openSuite()
+
+    const outcome = await invoke(suite.bash, { command: 'sleep 30', runInBackground: true })
+
+    expect(modelTextOf(outcome)).toContain('only for a shell that will not end on its own')
   })
 
   it('offers no way to turn the notice off', async () => {

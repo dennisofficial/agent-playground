@@ -22,6 +22,8 @@ const description = [
   'Each call consumes what it returns, so two calls never hand back the same output twice.',
   'stdout and stderr are interleaved in arrival order, and the shell is not disturbed by being read.',
   'A shell that has ended already handed you its ending and its output, so there is nothing left to read unless that notice said characters were still waiting.',
+  'Reach for it only when you need what a still-running shell has printed - the startup log of a dev server, the first failures of a watch.',
+  'Never call it to find out whether a shell has finished: the ending comes to you on its own, so asking is always wasted.',
 ].join(' ')
 
 const stillRunning = (status: EShellStatus): boolean => status === EShellStatus.Running
