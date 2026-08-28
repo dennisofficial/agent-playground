@@ -1,0 +1,31 @@
+packages/core/src/events/__tests__/schema.spec.ts
+  s_d3cfb63b7ee15c::t_34b3749776e2ed 130-146
+packages/core/src/events/schema.ts
+  s_d3cfb63b7ee15c::t_7f04840c7ed83e 7
+packages/core/src/events/body.ts
+  s_d3cfb63b7ee15c::t_7f04840c7ed83e 3
+packages/core/src/events/__tests__/ids.spec.ts
+  s_d3cfb63b7ee15c::t_df08b9b29c8055 14
+  s_d3cfb63b7ee15c::t_133709504edf3e 3
+packages/harness/src/loop/__tests__/settle-pending.spec.ts
+  s_d3cfb63b7ee15c::t_71aea9d7a8a32f 3
+packages/harness/src/tools/dispatch.ts
+  s_d3cfb63b7ee15c::t_52184e297bbdc2 196
+  s_d3cfb63b7ee15c::t_93555d81b0fdb0 92
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "ed309833677eed33766746e5d3f2e873b45e89c7",
+  "prompts": {},
+  "sessions": {
+    "s_d3cfb63b7ee15c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cf3a5937-331f-4bf1-b81e-6216ce956844",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
