@@ -22,6 +22,7 @@ import {
   RandomIds,
   ShellRegistryPort,
   type DeltaChannel,
+  type DiscoveredSkill,
   type ShellSnapshot,
 } from '@dltech/atlas-harness'
 
@@ -244,6 +245,7 @@ export function fakeApp(args: {
   settings?: SettingsDocument
   names?: string | null
   summarises?: string | null
+  skills?: readonly DiscoveredSkill[]
 }): FakeApp {
   const channel = createDeltaChannel()
   const log = fakeEventLog()
@@ -267,6 +269,8 @@ export function fakeApp(args: {
   const titled: string[] = []
 
   return {
+    skills: args.skills ?? [],
+
     get turnsDriven() {
       return turnsDriven
     },

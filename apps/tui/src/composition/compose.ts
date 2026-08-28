@@ -1,4 +1,7 @@
+import { join } from 'node:path'
+
 import {
+  BeforeTurnHook,
   ClockPort,
   CredentialPort,
   defaultPipeline,
@@ -13,8 +16,16 @@ import {
   createAnthropicOauthModel,
   createDeltaChannel,
   createHarnessContainer,
+  ATLAS_DIRECTORY_NAME,
+  atlasDirectory,
   createSecurityKeychainReader,
   disposeAll,
+  EmbeddedSkillSource,
+  ESkillOrigin,
+  FilesystemSkillSource,
+  HookChainToken,
+  loadSkills,
+  LoadInstructionsHook,
   KeychainCredentialPort,
   KeychainReaderToken,
   LanguageModelToken,
@@ -32,6 +43,7 @@ import {
   TurnRunner,
   WorkspaceRoot,
   type DeltaChannel,
+  type DiscoveredSkill,
   type SettingsService,
 } from '@dltech/atlas-harness'
 
@@ -40,6 +52,7 @@ import type { Summariser } from './compact-turn'
 import { SUMMARISER_MODEL_ID, TITLER_MODEL_ID, type AtlasConfig } from './config'
 import { launchSelection, rememberSelection } from './model-preference'
 import { selectableModel, type ModelChoice } from './model-selection'
+import { instructionPlanOf } from './instruction-plan'
 import { bindSettings } from './settings-binding'
 
 export type SessionTitler = (args: { text: string; signal?: AbortSignal }) => Promise<string | null>
@@ -59,8 +72,11 @@ export type AtlasApp = {
   shells: ShellRegistryPort
   model: ModelChoice
   settings: SettingsService
+  skills: readonly DiscoveredSkill[]
   close: () => Promise<void>
 }
+
+const SKILLS_DIRECTORY_NAME = 'skills'
 
 export async function composeAtlas(args: {
   config: AtlasConfig
@@ -87,6 +103,12 @@ export async function composeAtlas(args: {
   const credentials = container.resolve(portToken(CredentialPort))
   const settings = bindSettings({ container, env: args.env, cwd: config.cwd })
 
+  container.register(portToken(BeforeTurnHook), {
+    useValue: new LoadInstructionsHook({
+      source: () => instructionPlanOf({ settings, cwd: config.cwd }),
+    }),
+  })
+
   const model = selectableModel({
     credentials,
     initial: launchSelection({
@@ -107,6 +129,20 @@ export async function composeAtlas(args: {
   const threads = container.resolve(portToken(ThreadStorePort))
   const tools = container.resolve(portToken(ToolRegistry)).declarations()
   const shells = container.resolve(portToken(ShellRegistryPort))
+
+  const skills = await loadSkills({
+    sources: [
+      new EmbeddedSkillSource(),
+      new FilesystemSkillSource({
+        directory: join(atlasDirectory(), SKILLS_DIRECTORY_NAME),
+        origin: ESkillOrigin.User,
+      }),
+      new FilesystemSkillSource({
+        directory: join(config.cwd, ATLAS_DIRECTORY_NAME, SKILLS_DIRECTORY_NAME),
+        origin: ESkillOrigin.Project,
+      }),
+    ],
+  })
 
   const channel = createDeltaChannel()
   const pending = createPendingQueue()
@@ -139,6 +175,7 @@ export async function composeAtlas(args: {
     titler: ({ text, signal }) => titleFor({ model: titlerModel, text, signal }),
     summarise: ({ events, throughSeq }) => summaryFor({ model: summariserModel, events, throughSeq }),
     settings,
+    skills,
     credentials,
     channel,
     log,
@@ -160,6 +197,7 @@ export async function composeAtlas(args: {
         assembly: defaultPipeline({ root: config.cwd, tools }),
         tools,
         dispatch: container.resolve(portToken(ToolDispatcher)),
+        hooks: container.resolve(HookChainToken),
         drainPending: async () => [
           ...pending.drain().map((text): EventDraft => ({ type: 'user-said', text })),
           ...shells.drainNotifications(),

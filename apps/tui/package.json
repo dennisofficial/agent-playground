@@ -14,7 +14,8 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "grammars:update": "bun scripts/update-grammars.ts",
-    "build": "bun scripts/generate-manifest.ts && bun build --compile --external class-validator --external class-transformer --external @nestjs/microservices --external @nestjs/websockets --external @nestjs/websockets/socket-module --external @nestjs/platform-express src/main.tsx --outfile bin/atlas"
+    "build": "bun scripts/generate-manifest.ts && bun scripts/generate-skills.ts && bun build --compile --external class-validator --external class-transformer --external @nestjs/microservices --external @nestjs/websockets --external @nestjs/websockets/socket-module --external @nestjs/platform-express src/main.tsx --outfile bin/atlas",
+    "skills:generate": "bun scripts/generate-skills.ts"
   },
   "dependencies": {
     "@dltech/atlas-core": "workspace:*",

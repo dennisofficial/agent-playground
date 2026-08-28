@@ -35,6 +35,7 @@ const said = (key: string, text: string): TranscriptEntry => ({
   text,
   said: [text],
   steer: false,
+    skills: [],
 })
 
 const replied = (key: string, text: string): TranscriptEntry => ({

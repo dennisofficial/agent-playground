@@ -21,6 +21,7 @@ export type OperatorSaidEntry = {
   text: string
   said: readonly string[]
   steer: boolean
+  skills: readonly string[]
 }
 
 export type ModelSaidEntry = {

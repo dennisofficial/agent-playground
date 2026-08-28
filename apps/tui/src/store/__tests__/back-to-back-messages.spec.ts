@@ -23,6 +23,7 @@ describe('two messages sent one after the other', () => {
         text: 'are\nyou?',
         said: ['are', 'you?'],
         steer: false,
+    skills: [],
       },
     ])
   })

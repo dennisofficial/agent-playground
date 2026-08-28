@@ -3,6 +3,7 @@ import {
   eventsOfType,
   type ThreadId,
   type Event,
+  type EventDraft,
   type ModelUsage,
 } from '@dltech/atlas-core'
 import { ETurnStatus, type TurnOutcome } from '@dltech/atlas-harness'
@@ -58,7 +59,7 @@ export type Conversation = {
   working: boolean
   contextTokens: number
   pending: readonly PendingRow[]
-  handleSend: (text: string) => void
+  handleSend: (text: string, context?: readonly EventDraft[]) => void
   handleTakeBackPending: () => string | null
   handleRetry: (() => void) | null
   handleInterrupt: () => void
@@ -210,7 +211,7 @@ export function useConversation(args: {
   }, [app.threads, app.log, app.model, app.summarise, opened.threadId, refresh])
 
   const drive = useCallback(
-    (drafts: readonly { type: 'user-said'; text: string }[]) => {
+    (drafts: readonly EventDraft[]) => {
       const controller = new AbortController()
 
       abort.current = controller
@@ -289,7 +290,7 @@ export function useConversation(args: {
   )
 
   const handleSend = useCallback(
-    (text: string) => {
+    (text: string, context: readonly EventDraft[] = []) => {
       const said = text.trim()
       if (said.length === 0) return
 
@@ -300,7 +301,7 @@ export function useConversation(args: {
         return
       }
 
-      drive([...pending.drain(), said].map(userSaid))
+      drive([...context, ...[...pending.drain(), said].map(userSaid)])
     },
     [drive, nameSession, pending, working],
   )
@@ -339,6 +340,8 @@ export function useConversation(args: {
     })
   }, [app.threads, pending, working])
 
+  const handleCompact = useCallback(() => void compact(), [compact])
+
   const used = useMemo(() => contextTokens({ reported, events }), [reported, events])
 
   const rows = useMemo(() => pendingRows({ messages: queued, notices }), [notices, queued])
@@ -360,6 +363,6 @@ export function useConversation(args: {
     handleRetry: retryable ? handleRetry : null,
     handleInterrupt,
     handleNewConversation,
-    handleCompact: () => void compact(),
+    handleCompact,
   }
 }

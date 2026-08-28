@@ -24,6 +24,7 @@ export function EntryView(props: {
           said={entry.said}
           width={props.width}
           mark={entry.steer ? EUserMark.MidTurn : EUserMark.Plain}
+          skills={entry.skills}
         />
       )
 

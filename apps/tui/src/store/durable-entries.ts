@@ -1,4 +1,4 @@
-import type { AssistantPart, CallId, Event, EventId, EventOfType } from '@dltech/atlas-core'
+import { EContextSlot, type AssistantPart, type CallId, type Event, type EventId, type EventOfType } from '@dltech/atlas-core'
 
 import { modelEntries } from './model-entries'
 import { shellEndedLine, shellEndingFailed } from './shell-ended-line'
@@ -46,6 +46,23 @@ function saidWhileToolsWereOutstanding(events: readonly Event[]): ReadonlySet<Ev
   return steers
 }
 
+function skillsLoadedWith(events: readonly Event[]): ReadonlyMap<EventId, readonly string[]> {
+  const attached = new Map<EventId, readonly string[]>()
+  let loaded: string[] = []
+
+  for (const event of events) {
+    if (event.type === 'context-loaded') {
+      if (event.slot === EContextSlot.Skill) loaded.push(event.key)
+      continue
+    }
+
+    if (event.type === 'user-said' && loaded.length > 0) attached.set(event.id, loaded)
+    loaded = []
+  }
+
+  return attached
+}
+
 function inOneBreath(entries: readonly TranscriptEntry[]): TranscriptEntry[] {
   return entries.reduce<TranscriptEntry[]>((folded, entry) => {
     const open = folded.at(-1)
@@ -61,6 +78,7 @@ function inOneBreath(entries: readonly TranscriptEntry[]): TranscriptEntry[] {
       ...open,
       text: `${open.text}\n${entry.text}`,
       said: [...open.said, ...entry.said],
+      skills: [...new Set([...open.skills, ...entry.skills])],
     }
     return folded
   }, [])
@@ -71,6 +89,7 @@ export function durableEntries(events: readonly Event[]): TranscriptEntry[] {
     toolGroups(events).map((group) => [group.openedBy, group]),
   )
   const steers = saidWhileToolsWereOutstanding(events)
+  const loaded = skillsLoadedWith(events)
 
   return inOneBreath(
     events.flatMap((event): TranscriptEntry[] => {
@@ -83,6 +102,7 @@ export function durableEntries(events: readonly Event[]): TranscriptEntry[] {
             text: event.text,
             said: [event.text],
             steer: steers.has(event.id),
+            skills: loaded.get(event.id) ?? [],
           },
         ]
       }

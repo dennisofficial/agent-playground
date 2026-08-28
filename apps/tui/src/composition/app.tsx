@@ -1,11 +1,20 @@
 import { homedir } from 'node:os'
 
+import type { KeyEvent } from '@opentui/core'
 import { useKeyboard, useRenderer, useTerminalDimensions } from '@opentui/react'
-import React, { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 
 import { contextPressure, modelEntry, type ModelEntry } from '@dltech/atlas-core'
 
 import { newestExpandableKey } from '../store'
+import { CommandMenu } from '../ui/components/command-menu'
 import { Composer, composerRows, composerTone } from '../ui/components/composer'
 import { Footer, type FooterContext } from '../ui/components/footer'
 import { Screen } from '../ui/components/screen'
@@ -24,6 +33,8 @@ import {
   useKeyBindings,
   useKeyRegistry,
 } from '../ui/keys'
+import { commandSpecs, dispatchSubmission, EDispatch, localCommands } from './commands'
+import { useCommandMenu } from './use-command-menu'
 import type { AtlasApp } from './compose'
 import { globalBindings } from './global-bindings'
 import { OverlayStack } from './overlay-stack'
@@ -150,6 +161,40 @@ function Workspace(props: { app: AtlasApp; opened: OpenedConversation }): React.
 
   // OpenTUI parses a whole input burst before React re-renders, so a paste — or ⏎ arriving in the
   // same burst as the text — reaches here with `draft.value` still empty. The buffer is the truth.
+  const commands = useMemo(
+    () =>
+      localCommands({
+        onCompact: conversation.handleCompact,
+        onShortcuts: () => setShortcuts(true),
+        onOpenSwitcher: switcher.handleOpen,
+        onOpenShells: () => shells.handleOpen(),
+        onOpenSettings: settings.handleOpen,
+        onNewConversation: handleNewConversation,
+      }),
+    [
+      conversation.handleCompact,
+      handleNewConversation,
+      settings.handleOpen,
+      shells,
+      switcher.handleOpen,
+    ],
+  )
+
+  const skills = useMemo(
+    () => props.app.skills.filter((skill) => skill.userInvocable),
+    [props.app.skills],
+  )
+
+  const specs = useMemo(() => commandSpecs({ commands, skills }), [commands, skills])
+
+  const commandMenu = useCommandMenu({ specs, onComplete: draft.setValue })
+  const readDraft = useRef(commandMenu.handleTextChanged)
+  readDraft.current = commandMenu.handleTextChanged
+
+  useEffect(() => {
+    readDraft.current(draft.value)
+  }, [draft.value])
+
   const handleSubmit = useCallback(() => {
     const said = draft.editor.current?.plainText ?? draft.value
     if (said.trim().length === 0) {
@@ -158,9 +203,18 @@ function Workspace(props: { app: AtlasApp; opened: OpenedConversation }): React.
     }
 
     draft.clear()
-    conversation.handleSend(said)
     setSends((count) => count + 1)
-  }, [conversation, draft, handleOpenNewest])
+
+    void dispatchSubmission({ text: said, commands, skills }).then((dispatched) => {
+      if (dispatched.type === EDispatch.Refused) {
+        draft.setValue(said)
+        return
+      }
+      if (dispatched.type !== EDispatch.Send) return
+
+      conversation.handleSend(dispatched.text, dispatched.drafts)
+    })
+  }, [commands, conversation, draft, handleOpenNewest, skills])
 
   /**
    * The draft is asked for its buffer rather than its mirror because OpenTUI parses a whole input
@@ -221,7 +275,15 @@ function Workspace(props: { app: AtlasApp; opened: OpenedConversation }): React.
     bindings: registry.snapshot,
   })
 
-  useKeyboard(handleKey)
+  const handleKeyWithMenu = useCallback(
+    (key: KeyEvent) => {
+      if (commandMenu.handleKey(key)) return
+      handleKey(key)
+    },
+    [commandMenu, handleKey],
+  )
+
+  useKeyboard(handleKeyWithMenu)
 
   return (
     <Screen>
@@ -244,6 +306,9 @@ function Workspace(props: { app: AtlasApp; opened: OpenedConversation }): React.
             onToggle={handleToggle}
           />
           {shortcuts ? <Shortcuts width={chromeWidth} /> : null}
+          {commandMenu.state === null ? null : (
+            <CommandMenu state={commandMenu.state} width={chromeWidth} />
+          )}
           <Composer
             draft={draft}
             width={chromeWidth}

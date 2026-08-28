@@ -51,6 +51,7 @@ const operatorSaid = (
   text,
   said: [text],
   steer: flags.steer ?? false,
+  skills: [],
 })
 
 type ModelFlags = { streaming?: boolean; interrupted?: boolean }

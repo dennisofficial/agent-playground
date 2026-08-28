@@ -20,14 +20,19 @@ const MARK_TEXT: Record<EUserMark, string | null> = {
 
 const TAKE_BACK = '↑ to edit'
 
+const skillLine = (skills: readonly string[]): string =>
+  `${glyph.result} ${skills.length === 1 ? 'skill' : 'skills'} ${skills.join(', ')}`
+
 export function UserBlock(props: {
   said: readonly string[]
   width: number
   mark?: EUserMark
   takeBack?: boolean
+  skills?: readonly string[]
 }): React.ReactNode {
   const columns = Math.max(NARROWEST_BAND, props.width - RESERVED)
   const mark = MARK_TEXT[props.mark ?? EUserMark.Plain]
+  const skills = props.skills ?? []
 
   return (
     <box flexDirection="column" marginBottom={1} flexShrink={0}>
@@ -60,6 +65,11 @@ export function UserBlock(props: {
           />
         ))}
       </Panel>
+      {skills.length === 0 ? null : (
+        <box paddingLeft={PANEL_PAD}>
+          <text fg={theme.meta}>{skillLine(skills)}</text>
+        </box>
+      )}
     </box>
   )
 }
