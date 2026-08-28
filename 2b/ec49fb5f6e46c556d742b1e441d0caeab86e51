@@ -1,0 +1,21 @@
+apps/tui/src/composition/app.tsx
+  s_d3cfb63b7ee15c::t_b67bc4bccdffbc 28,149
+apps/tui/src/composition/__tests__/app-rewind.spec.tsx
+  s_d3cfb63b7ee15c::t_483c61ce0b2669 242
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "2bec49fb5f6e46c556d742b1e441d0caeab86e51",
+  "prompts": {},
+  "sessions": {
+    "s_d3cfb63b7ee15c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cf3a5937-331f-4bf1-b81e-6216ce956844",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
