@@ -25,7 +25,7 @@ import { useDraft } from '../ui/hooks/use-draft'
 import { modelLabel } from '../ui/model-label'
 import { densityVersion, subscribeDensity } from '../ui/density-store'
 import { paletteVersion, subscribePalette } from '../ui/palette-store'
-import { ERewindVerb, type RewindChoice } from '../ui/rewind-model'
+import { ERewindPointKind, ERewindVerb, type RewindChoice } from '../ui/rewind-model'
 import type { SwitcherChoice } from '../ui/switcher-model'
 import { SIDEBAR_GUTTER, SIDEBAR_MIN_TERMINAL_WIDTH } from '../ui/theme'
 import {
@@ -146,7 +146,7 @@ function Workspace(props: { app: AtlasApp; opened: OpenedConversation }): React.
     ({ point, verb }: RewindChoice) => {
       if (verb === ERewindVerb.ToHere) {
         conversation.handleRewindTo(point.seq - 1)
-        draft.setValue(point.text)
+        if (point.kind === ERewindPointKind.Said) draft.setValue(point.text)
         return
       }
 

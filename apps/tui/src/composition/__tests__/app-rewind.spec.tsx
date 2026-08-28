@@ -239,3 +239,4 @@ describe('the compaction clock', () => {
     }
   }, 60_000)
 })
+
