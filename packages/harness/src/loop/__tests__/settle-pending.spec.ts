@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 
-import { toCallId, toSnapshotId, type ThreadId, type EventDraft, type RunId } from '@dltech/atlas-core'
+import { toCallId, type ThreadId, type EventDraft, type RunId } from '@dltech/atlas-core'
 
 import { scriptedModel } from '../../model/testing/scripted-model'
 import type { DispatchableCall, ToolDispatcher } from '../../tools/dispatch'
@@ -195,34 +195,3 @@ describe('settling the calls a step left pending', () => {
   })
 })
 
-describe('settling a call whose dispatch took a workspace snapshot', () => {
-  it('persists the snapshot id, so the world timeline survives a re-read of the log', async () => {
-    const harness = await openLog()
-    const { threadId } = await branchWithCalls({ harness, calls: [{ callId: 'call-1', name: 'edit' }] })
-    const seen: DispatchableCall[] = []
-    const settle = createSettlePending({
-      log: harness.log,
-      dispatch: scriptedDispatch({
-        seen,
-        draftsFor: (call) => [
-          {
-            type: 'tool-result',
-            callId: call.callId,
-            name: call.name,
-            output: 'done',
-            modelText: 'done',
-            snapshotId: toSnapshotId('4b825dc642cb6eb9a060e54bf8d69288fbee4904'),
-          },
-        ],
-      }),
-    })
-
-    await settle({ threadId, signal: new AbortController().signal })
-
-    const events = await harness.log.read({ threadId })
-    const result = events.find((event) => event.type === 'tool-result')
-    expect(result?.type === 'tool-result' ? result.snapshotId : undefined).toBe(
-      toSnapshotId('4b825dc642cb6eb9a060e54bf8d69288fbee4904'),
-    )
-  })
-})

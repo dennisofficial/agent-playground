@@ -1,6 +1,6 @@
 import type { ReasoningPart, TextPart } from '../message/parts'
 import type { EShellStatus } from '../shells/status'
-import type { CallId, SnapshotId } from './ids'
+import type { CallId } from './ids'
 
 export enum ECompactionAnchor {
   Prefix = 'prefix',
@@ -25,7 +25,6 @@ export type EventBody =
       output?: unknown
       modelText?: string | undefined
       error?: { message: string } | undefined
-      snapshotId?: SnapshotId | undefined
     }
   | { type: 'tool-denied'; callId: CallId; name: string; reason: string }
   | { type: 'approval-requested'; callId: CallId; reason: string }

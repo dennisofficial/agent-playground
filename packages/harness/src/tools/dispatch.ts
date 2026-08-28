@@ -10,7 +10,6 @@ import {
   type ConsultedHook,
   type EventDraft,
   type RunId,
-  type SnapshotId,
   type ToolCall,
   type ToolDefinition,
   type ToolOutcome,
@@ -87,11 +86,10 @@ export class HookedToolDispatcher extends ToolDispatcher {
 
     const allowed: ToolCall = { ...candidate, input: outcome.input }
     const idempotencyKey = `${call.runId}:${call.callId}`
-    const snapshotId = await this.snapshotBeforeInvoking({ call: allowed, idempotencyKey })
     const result = await this.invokeTool({ definition, call: allowed, signal, idempotencyKey })
 
     return [
-      this.resultDraft({ call: allowed, result, snapshotId }),
+      this.resultDraft({ call: allowed, result }),
       ...(await this.observeAfterTool({ call: allowed, result })),
     ]
   }
@@ -195,28 +193,7 @@ export class HookedToolDispatcher extends ToolDispatcher {
     return observed
   }
 
-  private async snapshotBeforeInvoking(args: {
-    call: ToolCall
-    idempotencyKey: string
-  }): Promise<SnapshotId | undefined> {
-    const workspace = this.workspace
-    if (workspace === undefined) return undefined
-    if (!changesTheWorld(args.call.effect)) return undefined
-
-    try {
-      return await workspace.snapshot({ label: `${args.call.name} for ${args.idempotencyKey}` })
-    } catch {
-      return undefined
-    }
-  }
-
-  private resultDraft(args: {
-    call: ToolCall
-    result: ToolOutcome
-    snapshotId: SnapshotId | undefined
-  }): EventDraft {
-    const taken = args.snapshotId === undefined ? {} : { snapshotId: args.snapshotId }
-
+  private resultDraft(args: { call: ToolCall; result: ToolOutcome }): EventDraft {
     if (args.result.ok) {
       return {
         type: 'tool-result',
@@ -224,7 +201,6 @@ export class HookedToolDispatcher extends ToolDispatcher {
         name: args.call.name,
         output: args.result.output,
         modelText: args.result.modelText,
-        ...taken,
       }
     }
 
@@ -234,7 +210,6 @@ export class HookedToolDispatcher extends ToolDispatcher {
       name: args.call.name,
       output: undefined,
       error: { message: args.result.reason },
-      ...taken,
     }
   }
 }

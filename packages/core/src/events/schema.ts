@@ -4,7 +4,7 @@ import type { ProviderOptions } from '../provider'
 import { EShellStatus } from '../shells/status'
 import { ECompactionAnchor, EDecision, type EventBody } from './body'
 import type { EventEnvelope } from './envelope'
-import { threadIdSchema, callIdSchema, eventIdSchema, runIdSchema, snapshotIdSchema } from './ids'
+import { threadIdSchema, callIdSchema, eventIdSchema, runIdSchema } from './ids'
 
 export const eventEnvelopeSchema: z.ZodType<EventEnvelope> = z.object({
   id: eventIdSchema,
@@ -57,7 +57,6 @@ export const eventBodySchema: z.ZodType<EventBody> = z.discriminatedUnion('type'
     output: z.unknown().optional(),
     modelText: z.string().optional(),
     error: z.object({ message: z.string() }).optional(),
-    snapshotId: snapshotIdSchema.optional(),
   }),
   z.object({
     type: z.literal('tool-denied'),

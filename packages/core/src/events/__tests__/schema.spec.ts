@@ -127,3 +127,20 @@ describe('eventEnvelopeSchema', () => {
     expect(() => eventEnvelopeSchema.parse({ ...root, seq: 0 })).toThrow()
   })
 })
+
+describe('a row written before workspace snapshots were removed', () => {
+  it('still decodes, with the field it no longer has quietly dropped', () => {
+    const stored = {
+      type: 'tool-result',
+      callId: 'call-1',
+      name: 'bash',
+      output: { ok: true },
+      snapshotId: '4b825dc642cb6eb9a060e54bf8d69288fbee4904',
+    }
+
+    const parsed = eventBodySchema.safeParse(stored)
+
+    expect(parsed.success).toBe(true)
+    expect(parsed.success && 'snapshotId' in parsed.data).toBe(false)
+  })
+})

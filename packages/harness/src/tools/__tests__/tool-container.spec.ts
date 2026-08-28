@@ -25,6 +25,7 @@ const BUILTIN_NAMES = [
   'shell_list',
   'shell_output',
   'shell_kill',
+  'task_write',
 ]
 
 function containerRootedAt(root: string): DependencyContainer {

@@ -3,11 +3,9 @@ import { describe, expect, it } from 'bun:test'
 import {
   EStage,
   EToolEffect,
-  toSnapshotId,
   type AfterTool,
   type BeforeTool,
   type EventDraft,
-  type SnapshotId,
   type WorkspacePort,
 } from '@dltech/atlas-core'
 
@@ -54,16 +52,6 @@ function dispatcherFor(args: {
     ...(args.workspace === undefined ? {} : { workspace: args.workspace }),
   })
 }
-
-const workspaceThatFailsToSnapshot = (): WorkspacePort => ({
-  root: '/workspace',
-  snapshot: async (): Promise<SnapshotId> => {
-    throw new Error('not a git worktree')
-  },
-  restore: async () => {
-    throw new Error('restore must not be called by dispatch')
-  },
-})
 
 const settled = (dispatcher: HookedToolDispatcher, call = readCall): Promise<readonly EventDraft[]> =>
   dispatcher.dispatch({ call, signal: new AbortController().signal })
@@ -125,18 +113,6 @@ describe('dispatch is total: every failure mode still answers the model with a d
     expect(drafts).toHaveLength(1)
     expect(drafts[0]?.type).toBe('tool-result')
     expect(later).toEqual(['records'])
-  })
-
-  it('answers when the workspace snapshot throws', async () => {
-    const drafts = await settled(
-      dispatcherFor({
-        effect: EToolEffect.Write,
-        workspace: workspaceThatFailsToSnapshot(),
-      }),
-    )
-
-    expect(drafts).toHaveLength(1)
-    expect(drafts[0]?.type === 'tool-result' ? drafts[0].snapshotId : toSnapshotId('tree-1')).toBeUndefined()
   })
 
   it('answers when no tool carries the name the model asked for', async () => {
