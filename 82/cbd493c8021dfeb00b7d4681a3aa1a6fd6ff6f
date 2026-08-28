@@ -1,0 +1,150 @@
+apps/tui/src/composition/__tests__/instruction-plan.spec.ts
+  s_12fa27c8f7ad2f::t_712d5aa378e768 1-49
+apps/tui/src/composition/commands/registry.ts
+  s_12fa27c8f7ad2f::t_fcae79b0e47c36 1-87
+packages/harness/src/skills/__tests__/registry.spec.ts
+  s_12fa27c8f7ad2f::t_b1f6675887f284 1-92
+apps/tui/prototype/shell.tsx
+  s_12fa27c8f7ad2f::t_1f9d6f10ed4745 38
+apps/tui/src/store/__tests__/back-to-back-messages.spec.ts
+  s_12fa27c8f7ad2f::t_1f9d6f10ed4745 26
+packages/harness/src/skills/__tests__/filesystem-source.spec.ts
+  s_12fa27c8f7ad2f::t_d8349f3c70102e 1-172
+packages/harness/skills/commit/SKILL.md
+  s_12fa27c8f7ad2f::t_12d0ffeb474f52 1-14
+packages/core/src/context/slot.ts
+  s_12fa27c8f7ad2f::t_fcae79b0e47c36 5
+apps/tui/src/composition/__tests__/app-commands.spec.tsx
+  s_12fa27c8f7ad2f::t_9c4f4b3de9e675 158-165,167-177
+  s_12fa27c8f7ad2f::t_f92935fbc74264 1-2,12-24,53-93
+  s_12fa27c8f7ad2f::t_d9790214d6ddcc 3-11,25-52,94-157,178-195
+  s_12fa27c8f7ad2f::t_6024e526914782 166
+apps/tui/src/ui/components/entry-view.tsx
+  s_12fa27c8f7ad2f::t_a615617d95d5e6 27
+packages/harness/src/skills/filesystem-source.ts
+  s_12fa27c8f7ad2f::t_96de244b7352ac 1-8,11-34,43-48,50-51,53-68
+  s_12fa27c8f7ad2f::t_9e446ce6fec4d5 9-10
+  s_12fa27c8f7ad2f::t_0781f63e21b77a 35-42
+  s_12fa27c8f7ad2f::t_9e6eec864319f0 49,52
+apps/tui/src/composition/__tests__/use-command-menu.spec.tsx
+  s_12fa27c8f7ad2f::t_d78ba2ae112977 45-46
+  s_12fa27c8f7ad2f::t_c054dc5268e678 76
+  s_12fa27c8f7ad2f::t_4a4d72553f0ff9 7
+  s_12fa27c8f7ad2f::t_122f69ab3e3383 1-6,8-44,47-75,77-209
+apps/tui/src/composition/use-command-menu.ts
+  s_12fa27c8f7ad2f::t_bbef979e0ae38d 57
+  s_12fa27c8f7ad2f::t_bebfd1516fe005 1-56,58-70
+packages/harness/src/hooks/__tests__/load-instructions.spec.ts
+  s_12fa27c8f7ad2f::t_57faa1d39d4b22 1-85
+apps/tui/src/composition/commands/index.ts
+  s_12fa27c8f7ad2f::t_7cb1da2fc7bbd3 1-17
+packages/harness/src/hooks/index.ts
+  s_12fa27c8f7ad2f::t_68ed07cce87226 5
+apps/tui/src/ui/command-menu-model.ts
+  s_12fa27c8f7ad2f::t_3cffe3025ae65a 1-65
+apps/tui/src/composition/app.tsx
+  s_12fa27c8f7ad2f::t_bffa79e8635d9e 3,278-286
+  s_12fa27c8f7ad2f::t_e1f326e528a6c9 164-187,207-217
+  s_12fa27c8f7ad2f::t_6d686251ce6597 5-12,191-192,195-196
+  s_12fa27c8f7ad2f::t_4ec5bea8658f9f 17,36-37,188-190,193-194,197,309-311
+apps/tui/src/ui/__tests__/command-menu-model.spec.ts
+  s_12fa27c8f7ad2f::t_080d9a2899da1a 1-150,153-212
+  s_12fa27c8f7ad2f::t_ee7480c6166e50 151-152
+packages/core/src/commands/__tests__/frontmatter.spec.ts
+  s_12fa27c8f7ad2f::t_fbd72975ef47b3 1-64
+apps/tui/src/ui/components/blocks/user-block.tsx
+  s_12fa27c8f7ad2f::t_a615617d95d5e6 23-25,31,35,68,72
+  s_12fa27c8f7ad2f::t_32f6b872581ff5 69-71
+packages/core/src/commands/spec.ts
+  s_12fa27c8f7ad2f::t_edb4141520d5b9 1-20
+apps/tui/scripts/generate-skills.ts
+  s_12fa27c8f7ad2f::t_12d0ffeb474f52 1-44
+packages/harness/src/hooks/load-instructions.ts
+  s_12fa27c8f7ad2f::t_68ed07cce87226 1-43
+packages/harness/src/skills/skill.ts
+  s_12fa27c8f7ad2f::t_f24a50a495e87c 1-61
+packages/harness/src/index.ts
+  s_12fa27c8f7ad2f::t_a08dd0b6c44e98 12
+  s_12fa27c8f7ad2f::t_68ed07cce87226 5
+packages/core/src/commands/__tests__/mention.spec.ts
+  s_12fa27c8f7ad2f::t_d5d87fa64920fe 1-95
+apps/tui/src/composition/use-conversation.ts
+  s_12fa27c8f7ad2f::t_ebabb0ee63b471 6
+  s_12fa27c8f7ad2f::t_2e368fa8776c49 343-344,366
+  s_12fa27c8f7ad2f::t_55413f6611cb40 62,214,293,304
+apps/tui/src/store/transcript-model.ts
+  s_12fa27c8f7ad2f::t_68dbd499672e98 24
+packages/harness/src/skills/__tests__/embedded-source.spec.ts
+  s_12fa27c8f7ad2f::t_795584003f0aa8 1-30
+packages/core/src/context/render.ts
+  s_12fa27c8f7ad2f::t_fcae79b0e47c36 27-30
+packages/harness/src/skills/embedded-source.ts
+  s_12fa27c8f7ad2f::t_77a96171ffc1d3 1-27
+apps/tui/src/store/durable-entries.ts
+  s_12fa27c8f7ad2f::t_1f9d6f10ed4745 1
+  s_12fa27c8f7ad2f::t_68dbd499672e98 49-65,81,92,105
+apps/tui/src/composition/__tests__/fake-app.ts
+  s_12fa27c8f7ad2f::t_2fc1bcc9229213 248,272
+  s_12fa27c8f7ad2f::t_f92935fbc74264 25
+apps/tui/src/ui/__tests__/transcript-fixture.tsx
+  s_12fa27c8f7ad2f::t_1f9d6f10ed4745 54
+packages/harness/src/context/index.ts
+  s_12fa27c8f7ad2f::t_68ed07cce87226 1-7
+packages/core/src/commands/frontmatter.ts
+  s_12fa27c8f7ad2f::t_b5d71b07ec8aaa 1-33
+packages/core/src/commands/resolve.ts
+  s_12fa27c8f7ad2f::t_b5d71b07ec8aaa 1-92
+packages/core/src/commands/__tests__/resolve.spec.ts
+  s_12fa27c8f7ad2f::t_fbd72975ef47b3 1-141
+packages/core/src/index.ts
+  s_12fa27c8f7ad2f::t_895d60e750875c 13
+packages/harness/src/skills/registry.ts
+  s_12fa27c8f7ad2f::t_09ceeff2398bf6 1-22
+apps/tui/src/store/__tests__/skills-loaded.spec.ts
+  s_12fa27c8f7ad2f::t_e3ea0b72d81009 1,12,14-15,31,33,36
+  s_12fa27c8f7ad2f::t_b520982397c7e5 2-11,13,17-30,32,34-35,37-88
+  s_12fa27c8f7ad2f::t_e6653b99fa9ef7 16
+apps/tui/src/composition/commands/local-command.ts
+  s_12fa27c8f7ad2f::t_fcae79b0e47c36 1-33
+apps/tui/src/composition/instruction-plan.ts
+  s_12fa27c8f7ad2f::t_99f9f39c53d20f 1-28
+apps/tui/src/composition/commands/__tests__/dispatch.spec.ts
+  s_12fa27c8f7ad2f::t_7cb1da2fc7bbd3 1-43,45,47-52,54-139
+apps/tui/src/ui/__tests__/command-menu-render.spec.tsx
+  s_12fa27c8f7ad2f::t_1f44d1f9560632 1-85
+packages/harness/src/skills/index.ts
+  s_12fa27c8f7ad2f::t_5d934f53f7d611 1-5
+apps/tui/src/composition/compose.ts
+  s_12fa27c8f7ad2f::t_100e2075e49c13 26,28,55,106-111,200
+  s_12fa27c8f7ad2f::t_9ef492e06f62bc 1-2,19,79
+  s_12fa27c8f7ad2f::t_3f41e64197740a 4
+  s_12fa27c8f7ad2f::t_0e4eeaf21701ea 20,23-25,27,46,75,133-146,178
+packages/core/src/commands/expand.ts
+  s_12fa27c8f7ad2f::t_b5d71b07ec8aaa 1-16
+apps/tui/src/composition/commands/dispatch.ts
+  s_12fa27c8f7ad2f::t_7cb1da2fc7bbd3 1-71
+apps/tui/package.json
+  s_12fa27c8f7ad2f::t_12d0ffeb474f52 17-18
+packages/core/src/commands/mention.ts
+  s_12fa27c8f7ad2f::t_edb4141520d5b9 1-128
+packages/core/src/commands/index.ts
+  s_12fa27c8f7ad2f::t_b5d71b07ec8aaa 1-11
+apps/tui/src/ui/components/command-menu.tsx
+  s_12fa27c8f7ad2f::t_813070deb1ade2 1-113
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "82cbd493c8021dfeb00b7d4681a3aa1a6fd6ff6f",
+  "prompts": {},
+  "sessions": {
+    "s_12fa27c8f7ad2f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "78c7bd9a-cc30-4ce9-b550-bdab1f372699",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
