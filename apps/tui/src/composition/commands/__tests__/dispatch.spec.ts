@@ -3,6 +3,7 @@ import { describe, expect, it } from 'bun:test'
 
 import { dispatchSubmission, EDispatch, type LoadedSkill } from '../dispatch'
 import { ECommandEcho, ECommandEffect, ECommandTiming, RAN, type LocalCommand } from '../local-command'
+import { ECompactScope } from '../../compact-turn'
 import { localCommands } from '../registry'
 
 const skillSpec = (name: string): CommandSpec => ({
@@ -110,6 +111,7 @@ describe('localCommands', () => {
     const handler = () => undefined
     const commands = localCommands({
       onCompact: handler,
+      onRewind: handler,
       onShortcuts: handler,
       onOpenSwitcher: handler,
       onOpenShells: handler,
@@ -125,6 +127,7 @@ describe('localCommands', () => {
     const handler = () => undefined
     const commands = localCommands({
       onCompact: handler,
+      onRewind: handler,
       onShortcuts: handler,
       onOpenSwitcher: handler,
       onOpenShells: handler,
@@ -135,5 +138,86 @@ describe('localCommands', () => {
     const settled = commands.filter((one) => one.timing === ECommandTiming.Settled)
 
     expect(settled.map((one) => one.name).sort()).toEqual(['compact', 'new'])
+  })
+})
+
+describe('the compact command and its scope', () => {
+  const commandsWith = (onCompact: (scope: ECompactScope) => void) => {
+    const handler = () => undefined
+    return localCommands({
+      onCompact,
+      onRewind: handler,
+      onShortcuts: handler,
+      onOpenSwitcher: handler,
+      onOpenShells: handler,
+      onOpenSettings: handler,
+      onNewConversation: handler,
+    })
+  }
+
+  it('compacts only the older turns when asked with no argument', async () => {
+    const asked: ECompactScope[] = []
+
+    await dispatchSubmission({ text: '/compact', commands: commandsWith((s) => asked.push(s)), skills: [] })
+
+    expect(asked).toEqual([ECompactScope.Recent])
+  })
+
+  it('compacts the whole conversation when asked for all', async () => {
+    const asked: ECompactScope[] = []
+
+    await dispatchSubmission({
+      text: '/compact all',
+      commands: commandsWith((s) => asked.push(s)),
+      skills: [],
+    })
+
+    expect(asked).toEqual([ECompactScope.Everything])
+  })
+
+  it('refuses an argument it does not understand rather than compacting something else', async () => {
+    const asked: ECompactScope[] = []
+
+    const dispatched = await dispatchSubmission({
+      text: '/compact everything',
+      commands: commandsWith((s) => asked.push(s)),
+      skills: [],
+    })
+
+    expect(dispatched.type).toBe(EDispatch.Refused)
+    expect(asked).toEqual([])
+  })
+
+  it('refuses to rewrite history while a turn is still reading it', async () => {
+    const asked: ECompactScope[] = []
+
+    const dispatched = await dispatchSubmission({
+      text: '/compact',
+      commands: commandsWith((s) => asked.push(s)),
+      skills: [],
+      working: true,
+    })
+
+    expect(dispatched.type).toBe(EDispatch.Refused)
+    expect(dispatched.type === EDispatch.Refused && dispatched.reason).toContain('wait for the turn')
+    expect(asked).toEqual([])
+  })
+
+  it('still opens an overlay mid-turn, because that rewrites nothing', async () => {
+    const opened: string[] = []
+    const handler = () => undefined
+    const commands = localCommands({
+      onCompact: handler,
+      onRewind: () => opened.push('rewind'),
+      onShortcuts: handler,
+      onOpenSwitcher: handler,
+      onOpenShells: handler,
+      onOpenSettings: handler,
+      onNewConversation: handler,
+    })
+
+    await dispatchSubmission({ text: '/rewind', commands, skills: [], working: true })
+
+    expect(opened).toEqual(['rewind'])
   })
 })

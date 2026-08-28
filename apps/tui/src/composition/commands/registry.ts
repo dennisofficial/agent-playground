@@ -1,9 +1,23 @@
 import { ECommandGroup, ECommandKind } from '@dltech/atlas-core'
 
-import { ECommandEcho, ECommandTiming, RAN, type LocalCommand } from './local-command'
+import { ECompactScope, scopeOfArgument } from '../compact-turn'
+import {
+  ECommandEcho,
+  ECommandEffect,
+  ECommandTiming,
+  RAN,
+  type CommandEffect,
+  type LocalCommand,
+} from './local-command'
+
+const UNKNOWN_SCOPE = (argumentText: string): string =>
+  `/compact takes no argument, or "all" to compact the whole conversation — not ${argumentText.trim()}`
+
+const refused = (reason: string): CommandEffect => ({ type: ECommandEffect.Refused, reason })
 
 export type LocalCommandHandlers = {
-  onCompact: () => void
+  onCompact: (scope: ECompactScope) => void
+  onRewind: () => void
   onShortcuts: () => void
   onOpenSwitcher: () => void
   onOpenShells: () => void
@@ -67,10 +81,19 @@ export function localCommands(handlers: LocalCommandHandlers): readonly LocalCom
       group: ECommandGroup.Context,
       timing: ECommandTiming.Settled,
       echo: ECommandEcho.Name,
-      run: () => {
-        handlers.onCompact()
+      run: ({ argumentText }) => {
+        const scope = scopeOfArgument(argumentText)
+        if (scope === null) return refused(UNKNOWN_SCOPE(argumentText))
+
+        handlers.onCompact(scope)
         return RAN
       },
+    }),
+    immediate({
+      name: 'rewind',
+      summary: 'go back to an earlier message, or summarise around it',
+      group: ECommandGroup.Context,
+      open: handlers.onRewind,
     }),
     local({
       name: 'new',

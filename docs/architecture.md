@@ -315,6 +315,25 @@ spares `context-loaded`, the assembly rule renders those messages *ahead* of the
 summariser's transcript render leaves them out so they are not duplicated into the prose. Instructions,
 then the compacted history, then the live turns.
 
+**Compaction has two anchors, and they are not symmetric.** A *prefix* compaction replaces the oldest
+turns and puts the summary at the high end of the range it replaced, immediately before the survivors. A
+*suffix* compaction — the operator pointing at a message and saying "summarise from here" — replaces the
+newest turns and puts the summary at the low end, immediately after the survivors. `ECompactionAnchor`
+records which, explicitly rather than by inference, because two things downstream need to tell them apart.
+
+The first is the rewind floor. `compactedThrough` counts only prefix compactions: a suffix compaction
+deletes the tail and leaves everything below it intact, so it must not stop the operator rewinding into
+rows that are still there. The second is the guard. A prefix cut orphans a tool *result* whose call it
+removed, which the provider rejects; a suffix cut strands a dispatched *call* whose result it summarised
+away, so the next turn runs the tool a second time. Those are different failures found by different
+projections, which is why `suffixCompactionTarget` is its own function rather than a parameter on the
+first.
+
+`compactedHistory` therefore splices each summary in at its own sequence rather than prepending. That is
+what lets a prefix and a suffix summary coexist on one thread and each read in the right place, and it is
+also why the rule needs no special case for `context-loaded`: those events carry low sequences and fall
+ahead of a prefix summary on their own.
+
 **Only the prompt is shortened; control flow is unaffected.** `pendingCalls` and `outstandingApproval`
 read the log, and the guard refuses any watermark that would strip a tool call while keeping the result it
 answers — so a compaction can never leave a dispatched call the loop would run twice. There is no

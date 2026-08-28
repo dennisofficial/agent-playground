@@ -6,6 +6,7 @@ export enum ECompactionRefusal {
   NoSuchTarget = 'no-such-target',
   AlreadyCompacted = 'already-compacted',
   SplitsToolCall = 'splits-tool-call',
+  NothingToCompact = 'nothing-to-compact',
 }
 
 export type CompactionTarget =

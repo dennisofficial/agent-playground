@@ -67,6 +67,8 @@ export function EntryView(props: {
           text={entry.text}
           width={props.width}
           compactedEntries={entry.compactedEntries}
+          expanded={props.expanded ?? false}
+          {...(onToggle ? { onToggle: () => onToggle(entry.key) } : {})}
         />
       )
 

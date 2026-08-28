@@ -20,10 +20,15 @@ const SUMMARY_OUTPUT_TOKEN_LIMIT = 2_000
 export async function summaryFor(args: {
   model: LanguageModel
   events: readonly Event[]
+  fromSeq: number
   throughSeq: number
   signal?: AbortSignal | undefined
 }): Promise<string | null> {
-  const transcript = transcriptOfRange({ events: args.events, throughSeq: args.throughSeq })
+  const transcript = transcriptOfRange({
+    events: args.events,
+    fromSeq: args.fromSeq,
+    throughSeq: args.throughSeq,
+  })
   if (transcript.trim().length === 0) return null
 
   try {

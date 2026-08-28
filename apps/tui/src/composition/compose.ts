@@ -48,7 +48,7 @@ import {
 } from '@dltech/atlas-harness'
 
 import { createPendingQueue, type PendingQueue } from '../store'
-import type { Summariser } from './compact-turn'
+import { compactTurn, ECompaction, type Summariser } from './compact-turn'
 import { SUMMARISER_MODEL_ID, TITLER_MODEL_ID, type AtlasConfig } from './config'
 import { launchSelection, rememberSelection } from './model-preference'
 import { selectableModel, type ModelChoice } from './model-selection'
@@ -152,6 +152,33 @@ export async function composeAtlas(args: {
   const titlerModel = createAnthropicOauthModel({ credentials, modelId: TITLER_MODEL_ID })
   const summariserModel = createAnthropicOauthModel({ credentials, modelId: SUMMARISER_MODEL_ID })
 
+  const summarise: Summariser = ({ events, fromSeq, throughSeq, signal }) =>
+    summaryFor({
+      model: summariserModel,
+      events,
+      fromSeq,
+      throughSeq,
+      ...(signal === undefined ? {} : { signal }),
+    })
+
+  /**
+   * The loop asks for this only when a step would otherwise be sent a prompt the window cannot hold,
+   * which is the one moment compacting mid-turn is safe: the loop is between steps and re-reads the
+   * log itself afterwards.
+   */
+  const compactBeforeOverflow = async (): Promise<boolean> => {
+    const thread = await threads.mostRecent()
+    if (thread === undefined) return false
+
+    const compaction = await compactTurn({
+      log,
+      threads,
+      threadId: thread.id,
+      summarise,
+    })
+    return compaction.type === ECompaction.Compacted
+  }
+
   /**
    * Teardown kills every background shell, and those endings are worth keeping: reopening the
    * conversation should say where the dev server went. Nothing is left running to drain them, so the
@@ -173,7 +200,7 @@ export async function composeAtlas(args: {
       activeThread = threadId
     },
     titler: ({ text, signal }) => titleFor({ model: titlerModel, text, signal }),
-    summarise: ({ events, throughSeq }) => summaryFor({ model: summariserModel, events, throughSeq }),
+    summarise,
     settings,
     skills,
     credentials,
@@ -206,6 +233,7 @@ export async function composeAtlas(args: {
           ledger: container.resolve(portToken(TurnLedgerPort)),
           clock: container.resolve(portToken(ClockPort)),
         },
+        compact: compactBeforeOverflow,
       },
     }),
   }

@@ -2,7 +2,7 @@ import { z } from 'zod'
 
 import type { ProviderOptions } from '../provider'
 import { EShellStatus } from '../shells/status'
-import { EDecision, type EventBody } from './body'
+import { ECompactionAnchor, EDecision, type EventBody } from './body'
 import type { EventEnvelope } from './envelope'
 import { threadIdSchema, callIdSchema, eventIdSchema, runIdSchema, snapshotIdSchema } from './ids'
 
@@ -97,6 +97,8 @@ export const eventBodySchema: z.ZodType<EventBody> = z.discriminatedUnion('type'
   }),
   z.object({
     type: z.literal('history-compacted'),
+    anchor: z.enum(ECompactionAnchor),
+    fromSeq: z.number().int().positive(),
     throughSeq: z.number().int().positive(),
     summary: z.string(),
     replaced: z.number().int().nonnegative(),

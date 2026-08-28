@@ -1,3 +1,4 @@
+import { ECompactionAnchor } from '../events/body'
 import type { Event } from '../events/envelope'
 import { toEventId } from '../events/ids'
 
@@ -20,6 +21,8 @@ export function eventsWithCompaction({
   return [
     {
       type: 'history-compacted',
+      anchor: ECompactionAnchor.Prefix,
+      fromSeq: events[0]?.seq ?? throughSeq,
       throughSeq,
       summary,
       replaced: events.length - kept.length,

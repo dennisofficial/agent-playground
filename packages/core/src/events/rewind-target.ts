@@ -1,4 +1,5 @@
 import type { Event } from './envelope'
+import { replacedThrough } from '../compaction/watermark'
 import { outstandingApproval, pendingCalls } from './projections'
 
 export enum ERewindRefusal {
@@ -6,6 +7,7 @@ export enum ERewindRefusal {
   UnsettledToolCall = 'unsettled-tool-call',
   UnansweredApproval = 'unanswered-approval',
   BelowInheritedPrefix = 'below-inherited-prefix',
+  BelowCompaction = 'below-compaction',
 }
 
 export type RewindTarget = { allowed: true } | { allowed: false; refusal: ERewindRefusal; reason: string }
@@ -25,6 +27,15 @@ export function rewindTarget({
       allowed: false,
       refusal: ERewindRefusal.NoSuchTarget,
       reason: `${toSeq} is not a rewind target on a thread holding sequences 0 through ${lastSeq}`,
+    }
+  }
+
+  const compactedFloor = replacedThrough(events)
+  if (toSeq < compactedFloor) {
+    return {
+      allowed: false,
+      refusal: ERewindRefusal.BelowCompaction,
+      reason: `rewinding to ${toSeq} is not possible on a thread compacted through ${compactedFloor} — those turns were replaced by a summary and the rows are gone`,
     }
   }
 

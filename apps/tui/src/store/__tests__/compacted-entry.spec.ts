@@ -1,3 +1,4 @@
+import { ECompactionAnchor } from '@dltech/atlas-core'
 import { describe, expect, it } from 'bun:test'
 
 import { deriveTranscript } from '../derive-transcript'
@@ -9,7 +10,14 @@ describe('the transcript across a compaction', () => {
     const events = log([
       { type: 'user-said', text: 'build the parser' },
       { type: 'assistant-said', parts: [{ type: 'text', text: 'done' }] },
-      { type: 'history-compacted', throughSeq: 2, summary: 'A parser was written.', replaced: 2 },
+      {
+        type: 'history-compacted',
+        anchor: ECompactionAnchor.Prefix,
+        fromSeq: 1,
+        throughSeq: 2,
+        summary: 'A parser was written.',
+        replaced: 2,
+      },
       { type: 'user-said', text: 'now the lexer' },
     ])
 
@@ -28,7 +36,14 @@ describe('the transcript across a compaction', () => {
       { type: 'user-said', text: 'first' },
       { type: 'assistant-said', parts: [{ type: 'text', text: 'one' }] },
       { type: 'user-said', text: 'second' },
-      { type: 'history-compacted', throughSeq: 3, summary: 'two exchanges', replaced: 3 },
+      {
+        type: 'history-compacted',
+        anchor: ECompactionAnchor.Prefix,
+        fromSeq: 1,
+        throughSeq: 3,
+        summary: 'two exchanges',
+        replaced: 3,
+      },
     ])
 
     const compacted = deriveTranscript({ events, signals: [] }).entries.find(

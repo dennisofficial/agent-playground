@@ -1,6 +1,7 @@
 import {
   stampEvent,
   toThreadId,
+  ECompactionAnchor,
   toEventId,
   toRunId,
   type ThreadId,
@@ -38,8 +39,30 @@ export function fakeThreadStore(
       return renames
     },
 
-    async compact({ threadId, throughSeq, summary }) {
-      return args.log?.replaceWithSummary({ threadId, throughSeq, summary }) ?? 0
+    async compact({ threadId, anchor, fromSeq, throughSeq, summary }) {
+      return (
+        args.log?.replaceWithSummary({
+          threadId,
+          anchor,
+          fromSeq,
+          throughSeq,
+          summary,
+          discardRows: false,
+        }) ?? 0
+      )
+    },
+
+    async summarise({ threadId, anchor, fromSeq, throughSeq, summary }) {
+      return (
+        args.log?.replaceWithSummary({
+          threadId,
+          anchor,
+          fromSeq,
+          throughSeq,
+          summary,
+          discardRows: true,
+        }) ?? 0
+      )
     },
 
     async fork({ from, seq, title }) {
@@ -93,7 +116,14 @@ export function fakeThreadStore(
 export type FakeEventLog = EventLogPort & {
   readonly branchesRead: readonly ThreadId[]
   truncate(args: { threadId: ThreadId; toSeq: number }): void
-  replaceWithSummary(args: { threadId: ThreadId; throughSeq: number; summary: string }): number
+  replaceWithSummary(args: {
+    threadId: ThreadId
+    anchor: ECompactionAnchor
+    fromSeq: number
+    throughSeq: number
+    summary: string
+    discardRows: boolean
+  }): number
 }
 
 export function fakeEventLog(seeded: readonly Event[] = []): FakeEventLog {
@@ -131,21 +161,30 @@ export function fakeEventLog(seeded: readonly Event[] = []): FakeEventLog {
       return written
     },
 
-    replaceWithSummary({ threadId, throughSeq, summary }) {
+    replaceWithSummary({ threadId, anchor, fromSeq, throughSeq, summary, discardRows }) {
       const held = byThread.get(threadId) ?? []
-      const compactable = held.filter(
-        (event) => event.seq <= throughSeq && event.type !== 'context-loaded',
-      )
-      const spared = held.filter(
-        (event) => event.seq <= throughSeq && event.type === 'context-loaded',
-      )
+      const inRange = (event: Event): boolean => event.seq >= fromSeq && event.seq <= throughSeq
+      const compactable = held.filter((event) => inRange(event) && event.type !== 'context-loaded')
+      const spared = held.filter((event) => inRange(event) && event.type === 'context-loaded')
+      const summarySeq = discardRows
+        ? anchor === ECompactionAnchor.Prefix
+          ? throughSeq
+          : fromSeq
+        : (held.at(-1)?.seq ?? 0) + 1
       stamped += 1
 
       const watermark = stampEvent({
-        draft: { type: 'history-compacted', throughSeq, summary, replaced: compactable.length },
+        draft: {
+          type: 'history-compacted',
+          anchor,
+          fromSeq,
+          throughSeq,
+          summary,
+          replaced: compactable.length,
+        },
         envelope: {
           id: toEventId(`event-${stamped}`),
-          seq: throughSeq,
+          seq: summarySeq,
           threadId,
           runId: toRunId('run-compaction'),
           depth: 0,

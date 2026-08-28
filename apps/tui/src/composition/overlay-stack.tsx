@@ -1,10 +1,12 @@
 import { MODEL_CATALOG } from '@dltech/atlas-core'
 import React from 'react'
 
+import { Rewind } from '../ui/components/rewind'
 import { Settings } from '../ui/components/settings'
 import { Shells } from '../ui/components/shells'
 import { Switcher } from '../ui/components/switcher'
 import { modelIsReachable } from './model-selection'
+import type { RewindControl } from './use-rewind'
 import type { SettingsControl } from './use-settings'
 import type { ShellsControl } from './use-shells'
 import type { SwitcherControl } from './use-switcher'
@@ -17,12 +19,22 @@ export function OverlayStack(props: {
   switcher: SwitcherControl
   shells: ShellsControl
   settings: SettingsControl
+  rewind: RewindControl
 }): React.ReactNode {
-  const { switcher, shells, settings } = props
+  const { switcher, shells, settings, rewind } = props
   const sidebarWidth = Math.min(settings.sidebarWidth, props.width)
 
   return (
     <>
+      {rewind.state === null ? null : (
+        <Rewind
+          width={Math.min(props.contentWidth, props.width)}
+          state={rewind.state}
+          overlay
+          onPick={rewind.handlePick}
+          onDismiss={rewind.handleDismiss}
+        />
+      )}
       {switcher.state === null ? null : (
         <Switcher
           width={sidebarWidth}

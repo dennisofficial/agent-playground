@@ -48,6 +48,8 @@ export type BuildHarnessArgs = {
   ids?: IdPort | undefined
   onChunk?: ChunkFilter | undefined
   hooks?: HookChain | undefined
+  compact?: (() => Promise<boolean>) | undefined
+  autoCompactAtPercent?: (() => number) | undefined
 }
 
 export function providerIdentityOf(model: LanguageModel): ProviderIdentity {
@@ -83,6 +85,10 @@ export async function buildHarness(args: BuildHarnessArgs): Promise<AtlasHarness
     onChunk: args.onChunk,
     hooks: args.hooks,
     spend: { ledger, clock },
+    ...(args.compact === undefined ? {} : { compact: args.compact }),
+    ...(args.autoCompactAtPercent === undefined
+      ? {}
+      : { autoCompactAtPercent: args.autoCompactAtPercent }),
   }
 
   return {

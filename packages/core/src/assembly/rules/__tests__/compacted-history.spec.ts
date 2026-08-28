@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'bun:test'
 
-import { compacted, eventsFrom, loaded, replied, said } from '../../../compaction/__tests__/fixture'
+import { ECompactionAnchor } from '../../../events/body'
+import {
+  compactedRange,
+  eventsFrom,
+  loaded,
+  replied,
+  said,
+} from '../../../compaction/__tests__/fixture'
 import type { Event } from '../../../events/envelope'
 import { toThreadId } from '../../../events/ids'
 import { assemble } from '../../assemble'
@@ -23,9 +30,7 @@ const promptOf = (events: readonly Event[]) =>
     ctx: contextOf(events),
   }).assembled.messages.map((entry) => ({
     role: entry.message.role,
-    text: entry.message.content
-      .map((part) => ('text' in part ? part.text : part.type))
-      .join(' '),
+    text: entry.message.content.map((part) => ('text' in part ? part.text : part.type)).join(' '),
   }))
 
 describe('compactedHistory', () => {
@@ -39,54 +44,70 @@ describe('compactedHistory', () => {
     ])
   })
 
-  it('renders the summary ahead of the turns the thread still holds', () => {
+  it('drops the turns the watermark covers, even though the log still holds them', () => {
     const events = eventsFrom([
-      compacted(4, 'The operator asked for a parser and a lexer; both are written.'),
+      said('build the parser'),
+      replied('done'),
+      compactedRange({ fromSeq: 1, throughSeq: 2, summary: 'A parser was written.' }),
       said('now the formatter'),
     ])
 
     expect(promptOf(events)).toEqual([
       {
         role: 'user',
-        text: '<system-reminder>\nEarlier turns of this conversation, compacted to save context:\n\nThe operator asked for a parser and a lexer; both are written.\n</system-reminder>',
+        text: '<system-reminder>\nEarlier turns of this conversation, compacted to save context:\n\nA parser was written.\n</system-reminder>',
       },
       { role: 'user', text: 'now the formatter' },
     ])
   })
 
-  it('renders nothing but the summary on a thread compacted all the way to its head', () => {
-    const events = eventsFrom([compacted(6, 'Everything so far.')])
-
-    const prompt = promptOf(events)
-
-    expect(prompt).toHaveLength(1)
-    expect(prompt[0]?.text).toContain('Everything so far.')
-  })
-
-  it('puts loaded context ahead of the summary, because compaction spares it', () => {
+  it('keeps loaded context, because it is current content rather than history', () => {
     const events = eventsFrom([
       loaded('project-instructions', '/repo/CLAUDE.md', 'Never use as any.'),
-      compacted(3, 'A parser was written.'),
+      said('build the parser'),
+      compactedRange({ fromSeq: 1, throughSeq: 2, summary: 'A parser was written.' }),
       said('now the lexer'),
     ])
 
     const prompt = promptOf(events)
 
+    expect(prompt).toHaveLength(3)
     expect(prompt[0]?.text).toContain('Never use as any.')
     expect(prompt[1]?.text).toContain('A parser was written.')
     expect(prompt[2]).toEqual({ role: 'user', text: 'now the lexer' })
   })
 
-  it('honours the deepest watermark when a thread carries more than one', () => {
+  it('renders a prefix and a suffix summary each at its own position', () => {
     const events = eventsFrom([
-      compacted(2, 'the first exchange'),
-      compacted(5, 'both exchanges'),
-      said('third'),
+      said('one'),
+      replied('two'),
+      compactedRange({ fromSeq: 1, throughSeq: 2, summary: 'the opening exchange' }),
+      said('the middle'),
+      replied('four'),
+      compactedRange({
+        fromSeq: 5,
+        throughSeq: 5,
+        summary: 'everything after the middle',
+        anchor: ECompactionAnchor.Suffix,
+      }),
     ])
 
-    const prompt = promptOf(events)
+    expect(promptOf(events).map((entry) => entry.text)).toEqual([
+      expect.stringContaining('the opening exchange'),
+      'the middle',
+      expect.stringContaining('everything after the middle'),
+    ])
+  })
 
-    expect(prompt[0]?.text).toContain('both exchanges')
-    expect(prompt.some((entry) => entry.text.includes('the first exchange'))).toBe(false)
+  it('still renders the summary when the rows it covered were deleted', () => {
+    const events = eventsFrom([
+      compactedRange({ fromSeq: 1, throughSeq: 1, summary: 'everything before' }),
+      said('what survived'),
+    ])
+
+    expect(promptOf(events).map((entry) => entry.text)).toEqual([
+      expect.stringContaining('everything before'),
+      'what survived',
+    ])
   })
 })

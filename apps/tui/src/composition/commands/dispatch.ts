@@ -6,7 +6,7 @@ import {
   type EventDraft,
 } from '@dltech/atlas-core'
 
-import { ECommandEffect, type LocalCommand } from './local-command'
+import { ECommandEffect, ECommandTiming, type LocalCommand } from './local-command'
 
 export type LoadedSkill = { spec: CommandSpec; body: string }
 
@@ -28,10 +28,14 @@ export function commandSpecs(args: {
   return [...args.commands, ...args.skills.map((skill) => skill.spec)]
 }
 
+const MID_TURN = (name: string): string =>
+  `/${name} would rewrite the history this turn is reading, so it has to wait for the turn to finish`
+
 export async function dispatchSubmission(args: {
   text: string
   commands: readonly LocalCommand[]
   skills: readonly LoadedSkill[]
+  working?: boolean | undefined
 }): Promise<Dispatch> {
   const submission = resolveSubmission({
     text: args.text,
@@ -42,6 +46,10 @@ export async function dispatchSubmission(args: {
   if (invoked !== null) {
     const command = args.commands.find((one) => one.name === invoked.spec.name)
     if (command === undefined) return { type: EDispatch.Send, text: args.text, drafts: [] }
+
+    if (args.working === true && command.timing === ECommandTiming.Settled) {
+      return { type: EDispatch.Refused, reason: MID_TURN(command.name) }
+    }
 
     const effect = await command.run({ argumentText: invoked.argumentText })
     if (effect.type === ECommandEffect.Refused) {

@@ -15,6 +15,7 @@ export enum ESettingId {
   InstructionFilenames = 'context.filenames',
   NestedInstructions = 'context.nestedInstructions',
   ReloadInstructions = 'context.reload',
+  AutoCompact = 'context.autoCompact',
   Accent = 'appearance.accent',
   BlockPadding = 'appearance.blockPadding',
 }
@@ -121,6 +122,21 @@ export const ATLAS_SETTINGS: readonly SettingDefinition[] = [
     environmentVariable: 'ATLAS_RELOAD_INSTRUCTIONS',
     kind: ESettingKind.Toggle,
     fallback: true,
+  },
+  {
+    id: ESettingId.AutoCompact,
+    page: ESettingPage.General,
+    group: 'Context window',
+    label: 'Compact automatically at',
+    description:
+      'How full the context window may get before Atlas summarises the older turns without being asked. It checks when a turn ends, so a turn is never interrupted to do it, and it compacts mid-turn only when a step would otherwise overflow the window outright. Set to zero to compact only when you ask with /compact.',
+    environmentVariable: 'ATLAS_AUTO_COMPACT',
+    kind: ESettingKind.Range,
+    fallback: 90,
+    minimum: 0,
+    maximum: 100,
+    step: 5,
+    unit: '%',
   },
   {
     id: ESettingId.Accent,

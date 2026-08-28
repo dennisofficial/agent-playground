@@ -7,6 +7,7 @@ export function isExpandable(entry: TranscriptEntry): boolean {
     return entry.group.state !== EGroupState.Live && entry.group.calls.length > 0
   }
   if (entry.kind === EEntryKind.BackgroundShellEnded) return entry.output.trimEnd().length > 0
+  if (entry.kind === EEntryKind.HistoryCompacted) return entry.text.trim().length > 0
   return false
 }
 

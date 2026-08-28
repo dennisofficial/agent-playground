@@ -8,3 +8,6 @@ export const stalledReport = (call: { callId: CallId; name: string }): string =>
 
 export const faultReport = (faults: readonly ExchangeFault[]): string =>
   `the assembled prompt is one Atlas must not send — ${faults.map(faultLine).join('; ')}`
+
+export const overflowReport = ({ tokens, window }: { tokens: number; window: number }): string =>
+  `this conversation no longer fits the model's context window — about ${tokens.toLocaleString('en-US')} tokens against ${window.toLocaleString('en-US')}. Run /compact to replace the older turns with a summary, or raise the automatic threshold in settings.`

@@ -1,4 +1,3 @@
-import { COMPACT_CHORD } from '../ui/context-bar'
 import { EKeyGroup, EKeyLayer, type KeyBinding } from '../ui/keys'
 
 export type GlobalHandlers = {
@@ -12,7 +11,6 @@ export type GlobalHandlers = {
   onToggleSidebar: () => void
   onOpenShells: () => void
   onOpenSettings: () => void
-  onCompact: () => void
   onQuit: () => void
 }
 
@@ -60,13 +58,6 @@ export function globalBindings(handlers: GlobalHandlers): readonly KeyBinding[] 
       hint: 'model and effort',
       group: EKeyGroup.Session,
       run: handlers.onOpenSwitcher,
-    }),
-    global({
-      chord: COMPACT_CHORD,
-      hint: 'compact context',
-      describe: 'summarise the earlier turns and drop them from the prompt',
-      group: EKeyGroup.Session,
-      run: handlers.onCompact,
     }),
     global({
       chord: 'ctrl+b',

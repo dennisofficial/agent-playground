@@ -6,7 +6,7 @@ export const CONTEXT_BAR_CELLS = 10
 
 export const CONTEXT_WARN_PERCENT = 75
 
-export const COMPACT_CHORD = 'ctrl+k'
+export const COMPACT_COMMAND = '/compact'
 
 export type ContextBarCells = { ok: number; warn: number; empty: number }
 

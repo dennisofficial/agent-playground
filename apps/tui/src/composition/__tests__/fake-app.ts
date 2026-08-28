@@ -245,6 +245,7 @@ export function fakeApp(args: {
   settings?: SettingsDocument
   names?: string | null
   summarises?: string | null
+  summariseDelayMs?: number
   skills?: readonly DiscoveredSkill[]
 }): FakeApp {
   const channel = createDeltaChannel()
@@ -286,7 +287,19 @@ export function fakeApp(args: {
       return args.names ?? null
     },
 
-    summarise: async () => args.summarises ?? null,
+    summarise: async ({ signal }) => {
+      const delay = args.summariseDelayMs ?? 0
+      if (delay > 0) {
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, delay)
+          signal?.addEventListener('abort', () => {
+            clearTimeout(timer)
+            reject(new Error('aborted'))
+          })
+        })
+      }
+      return args.summarises ?? null
+    },
 
     config: FAKE_CONFIG,
     credentials: alwaysAuthorised(),

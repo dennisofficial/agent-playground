@@ -15,6 +15,8 @@ import { accentHex, accentPalette } from '../ui/accents'
 import { applyBlockDensity, blockDensityOf, SHIPPED_DENSITY } from '../ui/density-store'
 import { applyPalette } from '../ui/palette-store'
 import { SHIPPED_THINKING, thinkingVisibilityOf, type EThinkingVisibility } from '../store'
+
+const AUTO_COMPACT_AT_PERCENT = 90
 import {
   currentRow,
   movePage,
@@ -35,6 +37,7 @@ export type SettingsControl = {
   origin: string
   problem: string | undefined
   sidebarWidth: number
+  autoCompactAtPercent: number
   paceReveal: boolean
   thinking: EThinkingVisibility
   handleOpen: () => void
@@ -150,6 +153,11 @@ export function useSettings(args: { app: AtlasApp }): SettingsControl {
       resolution: held.resolution,
       id: ESettingId.SidebarWidth,
       fallback: SIDEBAR_WIDTH,
+    }),
+    autoCompactAtPercent: rangeValueOf({
+      resolution: held.resolution,
+      id: ESettingId.AutoCompact,
+      fallback: AUTO_COMPACT_AT_PERCENT,
     }),
     paceReveal: toggleValueOf({ resolution: held.resolution, id: ESettingId.SmoothStreaming }),
     thinking: thinkingVisibilityOf(

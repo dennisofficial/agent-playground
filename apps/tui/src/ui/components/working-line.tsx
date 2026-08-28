@@ -6,19 +6,31 @@ import { beaconColour, shimmerSpans } from '../shimmer-style'
 import { formatElapsed, formatTokens, glyph, spinnerFrame, theme } from '../theme'
 import { Spans } from './spans'
 
+export enum EWorkingVerb {
+  Thinking = 'Thinking',
+  Compacting = 'Compacting',
+}
+
+const SETTLED_VERB: Readonly<Record<EWorkingVerb, string>> = {
+  [EWorkingVerb.Thinking]: 'Thought',
+  [EWorkingVerb.Compacting]: 'Compacted',
+}
+
 export function WorkingLine(props: {
   running: boolean
   elapsedMs: number
   outputTokens: number
   interrupting: boolean
+  verb?: EWorkingVerb | undefined
 }): React.ReactNode {
+  const verb = props.verb ?? EWorkingVerb.Thinking
   const shimmering = props.running && !props.interrupting
   const now = useShimmerClock({ active: props.running })
 
   const elapsed = formatElapsed(props.elapsedMs)
   const tokens = props.outputTokens > 0 ? `↓ ${formatTokens(props.outputTokens)} tokens` : ''
   const detail = props.running ? `${tokens ? `${tokens} · ` : ''}esc to interrupt` : tokens
-  const label = `${props.running ? 'Thinking' : 'Thought'} for ${elapsed}${detail ? ` (${detail})` : ''}`
+  const label = `${props.running ? verb : SETTLED_VERB[verb]} for ${elapsed}${detail ? ` (${detail})` : ''}`
 
   return (
     <box flexDirection="column">

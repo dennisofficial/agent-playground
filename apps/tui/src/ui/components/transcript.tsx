@@ -9,7 +9,7 @@ import { PendingBlock } from './blocks/pending-block'
 import { WelcomeBlock } from './blocks/welcome-block'
 import { EntryView } from './entry-view'
 import { JumpToBottom, NewDivider, UNSEEN_ANCHOR_ID } from './new-divider'
-import { WorkingLine } from './working-line'
+import { EWorkingVerb, WorkingLine } from './working-line'
 
 export type TurnClock = {
   startedAt: number | null
@@ -29,6 +29,8 @@ const FAILURE_WITHOUT_A_REASON = 'The model reported no reason.'
 
 const NOTHING_PENDING: readonly PendingRow[] = Object.freeze([])
 
+export type Compacting = { startedAt: number; cancelling: boolean }
+
 export function Transcript(props: {
   model: TranscriptModel
   width: number
@@ -40,6 +42,7 @@ export function Transcript(props: {
   anchorKey?: string | null
   sends?: number
   pending?: readonly PendingRow[]
+  compacting?: Compacting | undefined
   onRetry?: () => void
   opened?: ReadonlySet<string>
   onToggle?: (key: string) => void
@@ -118,6 +121,18 @@ export function Transcript(props: {
             {...(props.onRetry === undefined ? {} : { onRetry: props.onRetry })}
           />
         ) : null}
+
+        {props.compacting === undefined ? null : (
+          <box flexDirection="row" marginTop={1} marginBottom={1}>
+            <WorkingLine
+              running
+              elapsedMs={Math.max(0, props.now - props.compacting.startedAt)}
+              outputTokens={0}
+              interrupting={props.compacting.cancelling}
+              verb={EWorkingVerb.Compacting}
+            />
+          </box>
+        )}
 
         {model.failure !== null ? null : model.streaming && turn.startedAt !== null ? (
           <box flexDirection="row" marginTop={1} marginBottom={1}>

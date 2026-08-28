@@ -1,5 +1,10 @@
 import {
   assemble,
+  AUTO_COMPACT_OFF,
+  autoCompactBeforeStep,
+  EAutoCompact,
+  modelEntry,
+  overflowsWindow,
   awaitsReply,
   estimateTokens,
   exchangeFaults,
@@ -26,7 +31,7 @@ import type { ToolDispatcher } from '../tools/dispatch'
 import { openTurnSpend, TURN_CRASHED, type TurnLedgerDeps, type TurnSpendTally } from '../ledger/record-turn-spend'
 import { createSettlePending, type SettlePending } from './settle-pending'
 import { draftsFor, interruptedDrafts } from './step-drafts'
-import { faultReport, stalledReport } from './turn-faults'
+import { faultReport, overflowReport, stalledReport } from './turn-faults'
 import { committedSinceLastMessage, messageArrivedSince } from './turn-position'
 import { ETurnStatus, type TurnOutcome } from './turn-outcome'
 import { TurnRunner } from './turn-runner.port'
@@ -43,6 +48,8 @@ export type TurnDeps = {
   hooks?: HookChain | undefined
   drainPending?: (() => Promise<readonly EventDraft[]>) | undefined
   spend?: TurnLedgerDeps | undefined
+  compact?: (() => Promise<boolean>) | undefined
+  autoCompactAtPercent?: (() => number) | undefined
 }
 
 type SteppedTurn = { ok: true; result: ModelStepResult } | { ok: false; message: string; cause: unknown }
@@ -59,6 +66,8 @@ export class LoopTurnRunner extends TurnRunner {
   private readonly drainPending: (() => Promise<readonly EventDraft[]>) | undefined
   private readonly spend: TurnLedgerDeps | undefined
   private readonly settlePending: SettlePending | undefined
+  private readonly compact: (() => Promise<boolean>) | undefined
+  private readonly autoCompactAtPercent: () => number
 
   constructor(deps: TurnDeps) {
     super()
@@ -72,6 +81,8 @@ export class LoopTurnRunner extends TurnRunner {
     this.hooks = deps.hooks
     this.drainPending = deps.drainPending
     this.spend = deps.spend
+    this.compact = deps.compact
+    this.autoCompactAtPercent = deps.autoCompactAtPercent ?? (() => AUTO_COMPACT_OFF)
     this.settlePending =
       deps.dispatch === undefined
         ? undefined
@@ -158,6 +169,7 @@ export class LoopTurnRunner extends TurnRunner {
     let modelSteps = 0
     let seenThrough: number | undefined
     let settleAttempted: CallId | undefined
+    let compacted = false
 
     const interrupted = async (): Promise<TurnOutcome> => ({
       status: ETurnStatus.Interrupted,
@@ -217,6 +229,31 @@ export class LoopTurnRunner extends TurnRunner {
 
       const assembled = (await this.hooks?.beforeStep({ assembled: projected, trace })) ?? projected
       previous = assembled
+
+      const tokens = this.countTokens(assembled)
+      const window = modelEntry(this.model.identity.modelId)?.contextWindow ?? 0
+
+      if (
+        autoCompactBeforeStep({ tokens, window, atPercent: this.autoCompactAtPercent() }) ===
+          EAutoCompact.BeforeOverflow &&
+        !compacted &&
+        this.compact !== undefined
+      ) {
+        compacted = true
+        if (await this.compact()) {
+          previous = undefined
+          continue
+        }
+      }
+
+      if (overflowsWindow({ tokens, window })) {
+        return {
+          status: ETurnStatus.Failed,
+          runId,
+          message: overflowReport({ tokens, window }),
+          cause: { tokens, window },
+        }
+      }
 
       const faults = exchangeFaults(assembled)
       if (faults.length > 0) {

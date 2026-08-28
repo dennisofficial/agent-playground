@@ -2,6 +2,11 @@ import type { ReasoningPart, TextPart } from '../message/parts'
 import type { EShellStatus } from '../shells/status'
 import type { CallId, SnapshotId } from './ids'
 
+export enum ECompactionAnchor {
+  Prefix = 'prefix',
+  Suffix = 'suffix',
+}
+
 export enum EDecision {
   Allow = 'allow',
   Deny = 'deny',
@@ -38,7 +43,14 @@ export type EventBody =
       droppedCharacters: number
       remainingCharacters: number
     }
-  | { type: 'history-compacted'; throughSeq: number; summary: string; replaced: number }
+  | {
+      type: 'history-compacted'
+      anchor: ECompactionAnchor
+      fromSeq: number
+      throughSeq: number
+      summary: string
+      replaced: number
+    }
 
 export type EventDraft = EventBody
 

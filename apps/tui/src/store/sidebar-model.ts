@@ -1,7 +1,9 @@
 import {
+  EPlanStatus,
   eventsOfType,
   outstandingApproval,
   pendingCalls,
+  planFromEvents,
   type CallId,
   type Event,
 } from '@dltech/atlas-core'
@@ -26,7 +28,12 @@ export enum ESidebarTaskState {
   Pending = 'pending',
 }
 
-export type SidebarTask = { id: string; label: string; state: ESidebarTaskState }
+export type SidebarTask = {
+  id: string
+  label: string
+  state: ESidebarTaskState
+  activeForm?: string | undefined
+}
 
 export type SidebarSubagent = {
   id: string
@@ -97,6 +104,20 @@ const titleOf = (args: { events: readonly Event[]; name: string | null }): strin
   return title === null ? null : truncateCells({ text: title, cells: TITLE_CELLS })
 }
 
+const TASK_STATE_OF: Record<EPlanStatus, ESidebarTaskState> = {
+  [EPlanStatus.Pending]: ESidebarTaskState.Pending,
+  [EPlanStatus.InProgress]: ESidebarTaskState.Running,
+  [EPlanStatus.Completed]: ESidebarTaskState.Done,
+}
+
+const todoOf = (events: readonly Event[]): readonly SidebarTask[] =>
+  planFromEvents(events).map((task) => ({
+    id: String(task.ordinal),
+    label: task.text,
+    state: TASK_STATE_OF[task.status],
+    ...(task.activeForm === undefined ? {} : { activeForm: task.activeForm }),
+  }))
+
 export function deriveSidebar(args: {
   events: readonly Event[]
   turn: TurnClock
@@ -110,6 +131,7 @@ export function deriveSidebar(args: {
   const lastTurnOutputTokens = running ? null : (turn.completed?.outputTokens ?? null)
 
   const awaitingApproval = outstandingApproval(events)
+  const todo = todoOf(events)
 
   return {
     title: titleOf({ events, name }),
@@ -122,5 +144,6 @@ export function deriveSidebar(args: {
     lastActivity: events.at(-1)?.at ?? null,
     liveOutputTokens,
     lastTurnOutputTokens,
+    ...(todo.length === 0 ? {} : { todo }),
   }
 }

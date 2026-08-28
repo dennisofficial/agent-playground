@@ -11,7 +11,7 @@ import React, {
   useSyncExternalStore,
 } from 'react'
 
-import { contextPressure, modelEntry, type ModelEntry } from '@dltech/atlas-core'
+import { contextPressure, ECompactionAnchor, modelEntry, type ModelEntry } from '@dltech/atlas-core'
 
 import { newestExpandableKey } from '../store'
 import { CommandMenu } from '../ui/components/command-menu'
@@ -25,6 +25,7 @@ import { useDraft } from '../ui/hooks/use-draft'
 import { modelLabel } from '../ui/model-label'
 import { densityVersion, subscribeDensity } from '../ui/density-store'
 import { paletteVersion, subscribePalette } from '../ui/palette-store'
+import { ERewindVerb, type RewindChoice } from '../ui/rewind-model'
 import type { SwitcherChoice } from '../ui/switcher-model'
 import { SIDEBAR_GUTTER, SIDEBAR_MIN_TERMINAL_WIDTH } from '../ui/theme'
 import {
@@ -44,6 +45,7 @@ import { useConversation } from './use-conversation'
 import { useOverlayKeys } from './use-overlay-keys'
 import { useSettings } from './use-settings'
 import { useShells } from './use-shells'
+import { useRewind } from './use-rewind'
 import { useSwitcher } from './use-switcher'
 
 const PLACEHOLDER = 'Ask anything'
@@ -84,6 +86,7 @@ function Workspace(props: { app: AtlasApp; opened: OpenedConversation }): React.
     app: props.app,
     opened: props.opened,
     paceReveal: settings.paceReveal,
+    autoCompactAtPercent: settings.autoCompactAtPercent,
     thinking: settings.thinking,
     onUndone: draft.setValue,
   })
@@ -139,6 +142,26 @@ function Workspace(props: { app: AtlasApp; opened: OpenedConversation }): React.
 
   const shells = useShells({ app: props.app })
 
+  const handleRewindChoice = useCallback(
+    ({ point, verb }: RewindChoice) => {
+      if (verb === ERewindVerb.ToHere) {
+        conversation.handleRewindTo(point.seq - 1)
+        draft.setValue(point.text)
+        return
+      }
+
+      if (verb === ERewindVerb.SummariseUpTo) {
+        conversation.handleCompactAround({ anchor: ECompactionAnchor.Prefix, seq: point.seq - 1 })
+        return
+      }
+
+      conversation.handleCompactAround({ anchor: ECompactionAnchor.Suffix, seq: point.seq })
+    },
+    [conversation, draft],
+  )
+
+  const rewind = useRewind({ events: conversation.readEvents, onPick: handleRewindChoice })
+
   const handleToggle = useCallback((key: string) => {
     setOpened((current) => {
       const next = new Set(current)
@@ -165,6 +188,7 @@ function Workspace(props: { app: AtlasApp; opened: OpenedConversation }): React.
     () =>
       localCommands({
         onCompact: conversation.handleCompact,
+        onRewind: rewind.handleOpen,
         onShortcuts: () => setShortcuts(true),
         onOpenSwitcher: switcher.handleOpen,
         onOpenShells: () => shells.handleOpen(),
@@ -174,6 +198,7 @@ function Workspace(props: { app: AtlasApp; opened: OpenedConversation }): React.
     [
       conversation.handleCompact,
       handleNewConversation,
+      rewind.handleOpen,
       settings.handleOpen,
       shells,
       switcher.handleOpen,
@@ -205,9 +230,15 @@ function Workspace(props: { app: AtlasApp; opened: OpenedConversation }): React.
     draft.clear()
     setSends((count) => count + 1)
 
-    void dispatchSubmission({ text: said, commands, skills }).then((dispatched) => {
+    void dispatchSubmission({
+      text: said,
+      commands,
+      skills,
+      working: conversation.working,
+    }).then((dispatched) => {
       if (dispatched.type === EDispatch.Refused) {
         draft.setValue(said)
+        conversation.handleReportProblem(dispatched.reason)
         return
       }
       if (dispatched.type !== EDispatch.Send) return
@@ -252,7 +283,6 @@ function Workspace(props: { app: AtlasApp; opened: OpenedConversation }): React.
       onSubmit: handleSubmit,
       onShortcuts: () => setShortcuts(true),
       onTakeBackPending: handleTakeBackPending,
-      onCompact: conversation.handleCompact,
       onInterrupt: conversation.handleInterrupt,
       onNewConversation: handleNewConversation,
       onOpenSwitcher: switcher.handleOpen,
@@ -268,6 +298,7 @@ function Workspace(props: { app: AtlasApp; opened: OpenedConversation }): React.
   const handleKey = useOverlayKeys({
     veil: { shown: shortcuts, dismiss: () => setShortcuts(false), keys: [HELP_KEY] },
     owners: [
+      { open: rewind.state !== null, handleKey: rewind.handleKey },
       { open: switcher.state !== null, handleKey: switcher.handleKey },
       { open: shells.state !== null, handleKey: shells.handleKey },
       { open: settings.state !== null, handleKey: settings.handleKey, porous: true },
@@ -277,7 +308,11 @@ function Workspace(props: { app: AtlasApp; opened: OpenedConversation }): React.
 
   const handleKeyWithMenu = useCallback(
     (key: KeyEvent) => {
-      if (commandMenu.handleKey(key)) return
+      if (commandMenu.handleKey(key)) {
+        key.preventDefault()
+        return
+      }
+
       handleKey(key)
     },
     [commandMenu, handleKey],
@@ -299,6 +334,9 @@ function Workspace(props: { app: AtlasApp; opened: OpenedConversation }): React.
             turn={conversation.turn}
             sends={sends}
             pending={conversation.pending}
+            {...(conversation.compacting === null
+              ? {}
+              : { compacting: conversation.compacting })}
             {...(conversation.handleRetry === null
               ? {}
               : { onRetry: conversation.handleRetry })}
@@ -315,7 +353,12 @@ function Workspace(props: { app: AtlasApp; opened: OpenedConversation }): React.
             tone={tone}
             placeholder={conversation.working ? STEER_PLACEHOLDER : PLACEHOLDER}
             maxRows={composerRows(height)}
-            focused={switcher.state === null && settings.state === null && shells.state === null}
+            focused={
+              switcher.state === null &&
+              settings.state === null &&
+              shells.state === null &&
+              rewind.state === null
+            }
           />
           <Footer
             width={chromeWidth}
@@ -344,6 +387,7 @@ function Workspace(props: { app: AtlasApp; opened: OpenedConversation }): React.
           switcher={switcher}
           shells={shells}
           settings={settings}
+          rewind={rewind}
         />
       </box>
     </Screen>

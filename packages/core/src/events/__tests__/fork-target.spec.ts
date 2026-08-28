@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import { EDecision, type EventDraft } from '../body'
+import { ECompactionAnchor, EDecision, type EventDraft } from '../body'
 import type { Event } from '../envelope'
 import { EForkMode } from '../fork'
 import { EForkRefusal, forkTarget } from '../fork-target'
@@ -42,6 +42,8 @@ const resulted = (callId: string): EventDraft => ({
 })
 const compacted = (throughSeq: number, summary: string): EventDraft => ({
   type: 'history-compacted',
+  anchor: ECompactionAnchor.Prefix,
+  fromSeq: 1,
   throughSeq,
   summary,
   replaced: throughSeq,

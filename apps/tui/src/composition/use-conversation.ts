@@ -1,12 +1,16 @@
 import {
+  autoCompactAfterTurn,
   contextTokens,
+  EAutoCompact,
+  ECompactionAnchor,
+  modelEntry,
   eventsOfType,
   type ThreadId,
   type Event,
   type EventDraft,
   type ModelUsage,
 } from '@dltech/atlas-core'
-import { ETurnStatus, type TurnOutcome } from '@dltech/atlas-harness'
+import { ETurnStatus, rewindThread, type TurnOutcome } from '@dltech/atlas-harness'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 
 import {
@@ -18,10 +22,16 @@ import {
   type SidebarModel,
   type TranscriptModel,
 } from '../store'
-import type { TurnClock } from '../ui/components/transcript'
+import type { Compacting, TurnClock } from '../ui/components/transcript'
 import type { AtlasApp } from './compose'
 import type { OpenedConversation } from './open-conversation'
-import { compactTurn, ECompaction, recencyBudgetFor } from './compact-turn'
+import {
+  summariseAt,
+  compactTurn,
+  ECompaction,
+  ECompactScope,
+  type Compaction,
+} from './compact-turn'
 import { EUndo, undoTurn } from './undo-turn'
 import {
   awakeAt,
@@ -47,6 +57,8 @@ const messageOf = (error: unknown): string => (error instanceof Error ? error.me
 
 const userSaid = (text: string) => ({ type: 'user-said' as const, text })
 
+const COMPACTION_CRASHED = 'compacting the history did not finish, so nothing was changed'
+
 const committedNothing = (outcome: TurnOutcome): boolean =>
   outcome.status === ETurnStatus.Interrupted && !outcome.committed
 
@@ -59,18 +71,24 @@ export type Conversation = {
   working: boolean
   contextTokens: number
   pending: readonly PendingRow[]
+  readEvents: () => readonly Event[]
   handleSend: (text: string, context?: readonly EventDraft[]) => void
   handleTakeBackPending: () => string | null
   handleRetry: (() => void) | null
+  handleReportProblem: (reason: string) => void
   handleInterrupt: () => void
+  compacting: Compacting | null
   handleNewConversation: () => void
-  handleCompact: () => void
+  handleCompact: (scope: ECompactScope) => void
+  handleCompactAround: (args: { anchor: ECompactionAnchor; seq: number }) => void
+  handleRewindTo: (toSeq: number) => void
 }
 
 export function useConversation(args: {
   app: AtlasApp
   opened: OpenedConversation
   paceReveal: boolean
+  autoCompactAtPercent: number
   thinking: EThinkingVisibility
   onUndone: (text: string) => void
 }): Conversation {
@@ -78,12 +96,15 @@ export function useConversation(args: {
   const [opened, setOpened] = useState<OpenedConversation>(args.opened)
   const [progress, setProgress] = useState<TurnProgress>(IDLE_PROGRESS)
   const [failure, setFailure] = useState<string | null>(null)
+  const [compacting, setCompacting] = useState<Compacting | null>(null)
   const [working, setWorking] = useState(false)
   const [events, setEvents] = useState<readonly Event[]>(args.opened.events)
   const [reported, setReported] = useState<ModelUsage | null>(null)
   const [name, setName] = useState<string | null>(args.opened.name)
   const abort = useRef<AbortController | null>(null)
   const asked = useRef<ThreadId | null>(null)
+  const usedRef = useRef(0)
+  const compacter = useRef<AbortController | null>(null)
 
   const store = useMemo(
     () =>
@@ -154,8 +175,10 @@ export function useConversation(args: {
   )
   const [now, setNow] = useState(readClock)
 
+  const ticking = streaming || compacting !== null
+
   useEffect(() => {
-    if (!streaming) return
+    if (!ticking) return
 
     suspension.current = suspensionFrom({
       now: Date.now(),
@@ -172,7 +195,7 @@ export function useConversation(args: {
       setNow(readClock())
     }, CLOCK_TICK_MS)
     return () => clearInterval(timer)
-  }, [readClock, streaming])
+  }, [readClock, ticking])
 
   const undo = useCallback(async () => {
     const undone = await undoTurn({
@@ -191,24 +214,110 @@ export function useConversation(args: {
     onUndone(undone.text)
   }, [app.threads, app.log, onUndone, opened.threadId, refresh])
 
-  const compact = useCallback(async () => {
-    const compaction = await compactTurn({
-      log: app.log,
-      threads: app.threads,
-      threadId: opened.threadId,
-      keepRecentTokens: recencyBudgetFor(app.model.choice().modelId),
-      summarise: app.summarise,
+  const settleCompaction = useCallback(
+    async (compaction: Compaction) => {
+      if (compaction.type === ECompaction.Refused) {
+        setFailure(compaction.reason)
+        return
+      }
+      if (compaction.type === ECompaction.Nothing) return
+
+      setReported(null)
+      await refresh()
+    },
+    [refresh],
+  )
+
+  const runCompaction = useCallback(
+    async (start: (signal: AbortSignal) => Promise<Compaction>): Promise<void> => {
+      if (compacter.current !== null) return
+
+      const controller = new AbortController()
+      compacter.current = controller
+      setCompacting({ startedAt: readClock(), cancelling: false })
+
+      try {
+        const outcome = await start(controller.signal)
+        if (!controller.signal.aborted) await settleCompaction(outcome)
+      } catch {
+        if (!controller.signal.aborted) setFailure(COMPACTION_CRASHED)
+      } finally {
+        compacter.current = null
+        setCompacting(null)
+      }
+    },
+    [readClock, settleCompaction],
+  )
+
+  const compact = useCallback(
+    (scope: ECompactScope) =>
+      runCompaction((signal) =>
+        compactTurn({
+          log: app.log,
+          threads: app.threads,
+          threadId: opened.threadId,
+          scope,
+          summarise: app.summarise,
+          signal,
+        }),
+      ),
+    [app.threads, app.log, app.summarise, opened.threadId, runCompaction],
+  )
+
+  const compactAround = useCallback(
+    (args: { anchor: ECompactionAnchor; seq: number }) =>
+      runCompaction((signal) =>
+        summariseAt({
+          log: app.log,
+          threads: app.threads,
+          threadId: opened.threadId,
+          anchor: args.anchor,
+          seq: args.seq,
+          summarise: app.summarise,
+          signal,
+        }),
+      ),
+    [app.threads, app.log, app.summarise, opened.threadId, runCompaction],
+  )
+
+  const rewindTo = useCallback(
+    async (toSeq: number) => {
+      const rewound = await rewindThread({
+        log: app.log,
+        threads: app.threads,
+        threadId: opened.threadId,
+        toSeq,
+      })
+
+      if (!rewound.ok) {
+        setFailure(rewound.reason)
+        return
+      }
+      setReported(null)
+      await refresh()
+    },
+    [app.threads, app.log, opened.threadId, refresh],
+  )
+
+  const compactIfFull = useCallback(async () => {
+    const window = modelEntry(app.model.choice().modelId)?.contextWindow ?? 0
+    const decision = autoCompactAfterTurn({
+      used: usedRef.current,
+      window,
+      atPercent: args.autoCompactAtPercent,
     })
+    if (decision === EAutoCompact.Hold) return
 
-    if (compaction.type === ECompaction.Refused) {
-      setFailure(compaction.reason)
-      return
-    }
-    if (compaction.type === ECompaction.Nothing) return
-
-    setReported(null)
-    await refresh()
-  }, [app.threads, app.log, app.model, app.summarise, opened.threadId, refresh])
+    await runCompaction((signal) =>
+      compactTurn({
+        log: app.log,
+        threads: app.threads,
+        threadId: opened.threadId,
+        summarise: app.summarise,
+        signal,
+      }),
+    )
+  }, [app, args.autoCompactAtPercent, opened.threadId, runCompaction])
 
   const drive = useCallback(
     (drafts: readonly EventDraft[]) => {
@@ -243,6 +352,7 @@ export function useConversation(args: {
           setWorking(false)
           setProgress((current) => turnSettled({ progress: current, now: readClock() }))
           await refresh().catch(() => undefined)
+          await compactIfFull().catch(() => undefined)
         }
       })()
     },
@@ -318,6 +428,13 @@ export function useConversation(args: {
   }, [drive, working])
 
   const handleInterrupt = useCallback(() => {
+    const compacter_ = compacter.current
+    if (compacter_ !== null) {
+      setCompacting((current) => (current === null ? null : { ...current, cancelling: true }))
+      compacter_.abort()
+      return
+    }
+
     const controller = abort.current
     if (controller === null) return
 
@@ -340,9 +457,19 @@ export function useConversation(args: {
     })
   }, [app.threads, pending, working])
 
-  const handleCompact = useCallback(() => void compact(), [compact])
+  const handleCompact = useCallback((scope: ECompactScope) => void compact(scope), [compact])
+
+  const handleCompactAround = useCallback(
+    (args: { anchor: ECompactionAnchor; seq: number }) => void compactAround(args),
+    [compactAround],
+  )
+
+  const handleRewindTo = useCallback((toSeq: number) => void rewindTo(toSeq), [rewindTo])
+
+  const readEvents = useCallback((): readonly Event[] => events, [events])
 
   const used = useMemo(() => contextTokens({ reported, events }), [reported, events])
+  usedRef.current = used
 
   const rows = useMemo(() => pendingRows({ messages: queued, notices }), [notices, queued])
 
@@ -361,8 +488,13 @@ export function useConversation(args: {
     handleSend,
     handleTakeBackPending,
     handleRetry: retryable ? handleRetry : null,
+    readEvents,
+    compacting,
+    handleReportProblem: setFailure,
     handleInterrupt,
     handleNewConversation,
     handleCompact,
+    handleCompactAround,
+    handleRewindTo,
   }
 }

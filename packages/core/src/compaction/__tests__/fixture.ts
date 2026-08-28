@@ -1,4 +1,4 @@
-import type { EventDraft } from '../../events/body'
+import { ECompactionAnchor, type EventDraft } from '../../events/body'
 import type { Event } from '../../events/envelope'
 import { toThreadId, toCallId, toEventId, toRunId } from '../../events/ids'
 import { stampDrafts } from '../../events/stamp'
@@ -48,6 +48,8 @@ export const denied = (callId: string): EventDraft => ({
 
 export const compacted = (throughSeq: number, summary: string): EventDraft => ({
   type: 'history-compacted',
+  anchor: ECompactionAnchor.Prefix,
+  fromSeq: 1,
   throughSeq,
   summary,
   replaced: throughSeq,
@@ -65,4 +67,27 @@ export const resultedWith = (callId: string, output: string): EventDraft => ({
   callId: toCallId(callId),
   name: 'read',
   output,
+})
+
+export const compactedFrom = (fromSeq: number, summary: string): EventDraft => ({
+  type: 'history-compacted',
+  anchor: ECompactionAnchor.Suffix,
+  fromSeq,
+  throughSeq: fromSeq + 1,
+  summary,
+  replaced: 2,
+})
+
+export const compactedRange = (args: {
+  fromSeq: number
+  throughSeq: number
+  summary: string
+  anchor?: ECompactionAnchor
+}): EventDraft => ({
+  type: 'history-compacted',
+  anchor: args.anchor ?? ECompactionAnchor.Prefix,
+  fromSeq: args.fromSeq,
+  throughSeq: args.throughSeq,
+  summary: args.summary,
+  replaced: args.throughSeq - args.fromSeq + 1,
 })

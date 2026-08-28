@@ -2,14 +2,17 @@ import { afterEach, describe, expect, it } from 'bun:test'
 
 import {
   compactedThrough,
+  ECompactionAnchor,
   ECompactionRefusal,
+  ERewindRefusal,
   toCallId,
   toRunId,
-  type ThreadId,
   type EventDraft,
+  type ThreadId,
 } from '@dltech/atlas-core'
 
 import { compactThread, ECompactionFailure, type Summarise } from '../compact'
+import { rewindThread } from '../rewind'
 import { openStoreFixture, type StoreFixture } from './harness'
 
 let fixture: StoreFixture
@@ -44,92 +47,173 @@ const openThread = async (drafts: readonly EventDraft[]): Promise<ThreadId> => {
   return thread.id
 }
 
-const compactTo = (args: { threadId: ThreadId; throughSeq: number; summary: string | null }) =>
+const mark = (args: {
+  threadId: ThreadId
+  anchor?: ECompactionAnchor
+  seq: number
+  summary: string | null
+  destructive: boolean
+}) =>
   compactThread({
     log: fixture.log,
     threads: fixture.threads,
     threadId: args.threadId,
-    throughSeq: args.throughSeq,
+    anchor: args.anchor ?? ECompactionAnchor.Prefix,
+    seq: args.seq,
+    destructive: args.destructive,
     summarise: summarises(args.summary),
   })
+
+const compactTo = (args: { threadId: ThreadId; throughSeq: number; summary: string | null }) =>
+  mark({ threadId: args.threadId, seq: args.throughSeq, summary: args.summary, destructive: false })
+
+const summariseTo = (args: { threadId: ThreadId; throughSeq: number; summary: string | null }) =>
+  mark({ threadId: args.threadId, seq: args.throughSeq, summary: args.summary, destructive: true })
+
+const summariseFrom = (args: { threadId: ThreadId; fromSeq: number; summary: string | null }) =>
+  mark({
+    threadId: args.threadId,
+    anchor: ECompactionAnchor.Suffix,
+    seq: args.fromSeq,
+    summary: args.summary,
+    destructive: true,
+  })
+
+const shapeOf = async (threadId: ThreadId) =>
+  (await fixture.log.read({ threadId })).map((event) => [event.seq, event.type])
+
+const rewoundTo = (args: { threadId: ThreadId; toSeq: number }) =>
+  rewindThread({
+    log: fixture.log,
+    threads: fixture.threads,
+    threadId: args.threadId,
+    toSeq: args.toSeq,
+  })
+
+const OPENING = [said('one'), replied('two'), said('three'), replied('four')] as const
 
 afterEach(async () => {
   await fixture.close()
 })
 
-describe('compactThread', () => {
-  it('replaces the compacted range with the summary and reports what it swallowed', async () => {
-    const threadId = await openThread([
-      said('build the parser'),
-      replied('done'),
-      said('now the lexer'),
-    ])
+describe('compaction hides a range without destroying it', () => {
+  it('appends the watermark past the head and leaves every row where it was', async () => {
+    const threadId = await openThread([...OPENING])
 
-    const outcome = await compactTo({ threadId, throughSeq: 2, summary: 'A parser was written.' })
+    const outcome = await compactTo({ threadId, throughSeq: 2, summary: 'the opening' })
 
     expect(outcome).toEqual({
       ok: true,
+      anchor: ECompactionAnchor.Prefix,
+      fromSeq: 1,
       throughSeq: 2,
       replaced: 2,
-      summary: 'A parser was written.',
+      summary: 'the opening',
     })
+    expect(await shapeOf(threadId)).toEqual([
+      [1, 'user-said'],
+      [2, 'assistant-said'],
+      [3, 'user-said'],
+      [4, 'assistant-said'],
+      [5, 'history-compacted'],
+    ])
   })
 
-  it('leaves the thread holding the summary in place of the turns it compacted', async () => {
-    const threadId = await openThread([said('build the parser'), replied('done'), said('next')])
+  it('leaves the boundary rewindable, because nothing was lost', async () => {
+    const threadId = await openThread([...OPENING])
+    await compactTo({ threadId, throughSeq: 2, summary: 'the opening' })
 
-    await compactTo({ threadId, throughSeq: 2, summary: 'A parser was written.' })
+    const rewound = await rewoundTo({ threadId, toSeq: 1 })
+
+    expect(rewound.ok).toBe(true)
+    expect((await fixture.log.read({ threadId })).map((event) => event.seq)).toEqual([1])
+  })
+
+  it('keeps appending above the watermark', async () => {
+    const threadId = await openThread([...OPENING])
+    await compactTo({ threadId, throughSeq: 2, summary: 'the opening' })
+
+    const [appended] = await fixture.log.append({ threadId, runId, drafts: [said('five')] })
+
+    expect(appended?.seq).toBe(6)
+  })
+
+  it('survives a reload, because the watermark is a stored event like any other', async () => {
+    const threadId = await openThread([...OPENING])
+    await compactTo({ threadId, throughSeq: 2, summary: 'the opening' })
 
     const events = await fixture.log.read({ threadId })
-    expect(events.map((event) => [event.seq, event.type])).toEqual([
-      [2, 'history-compacted'],
-      [3, 'user-said'],
-    ])
+    const watermark = events.find((event) => event.type === 'history-compacted')
+
+    expect(watermark?.type === 'history-compacted' && watermark.summary).toBe('the opening')
+    expect(watermark?.type === 'history-compacted' && watermark.replaced).toBe(2)
     expect(compactedThrough(events)).toBe(2)
   })
+})
 
-  it('survives a reload, because the summary is a stored event like any other', async () => {
-    const threadId = await openThread([said('build the parser'), replied('done'), said('next')])
+describe('summarisation replaces the range it covers', () => {
+  it('deletes the rows and stands the summary in their place', async () => {
+    const threadId = await openThread([...OPENING])
 
-    await compactTo({ threadId, throughSeq: 2, summary: 'A parser was written.' })
+    await summariseTo({ threadId, throughSeq: 2, summary: 'the opening' })
 
-    const watermark = (await fixture.log.read({ threadId })).find(
-      (event) => event.type === 'history-compacted',
-    )
-
-    expect(watermark?.type === 'history-compacted' && watermark.summary).toBe('A parser was written.')
-    expect(watermark?.type === 'history-compacted' && watermark.replaced).toBe(2)
+    expect(await shapeOf(threadId)).toEqual([
+      [2, 'history-compacted'],
+      [3, 'user-said'],
+      [4, 'assistant-said'],
+    ])
   })
 
-  it('keeps appending above the summary, so the sequence never collides', async () => {
-    const threadId = await openThread([said('build the parser'), replied('done'), said('next')])
+  it('closes the boundary to rewind, because there is nothing behind it', async () => {
+    const threadId = await openThread([...OPENING])
+    await summariseTo({ threadId, throughSeq: 2, summary: 'the opening' })
 
-    await compactTo({ threadId, throughSeq: 2, summary: 'A parser was written.' })
-    const [appended] = await fixture.log.append({
-      threadId,
-      runId,
-      drafts: [said('and now this')],
-    })
+    const rewound = await rewoundTo({ threadId, toSeq: 1 })
 
-    expect(appended?.seq).toBe(4)
+    expect(rewound.ok).toBe(false)
+    expect(rewound.ok === false && rewound.refusal).toBe(ERewindRefusal.BelowCompaction)
   })
 
-  it('compacts again over a thread it already compacted, folding the earlier summary in', async () => {
-    const threadId = await openThread([said('one'), replied('two'), said('three'), replied('four')])
+  it('still allows a rewind above the boundary', async () => {
+    const threadId = await openThread([...OPENING])
+    await summariseTo({ threadId, throughSeq: 2, summary: 'the opening' })
 
-    await compactTo({ threadId, throughSeq: 2, summary: 'the first exchange' })
-    const again = await compactTo({ threadId, throughSeq: 4, summary: 'both exchanges' })
+    expect(await rewoundTo({ threadId, toSeq: 3 })).toEqual({ ok: true, discarded: 1 })
+  })
+
+  it('folds an earlier summary into a later one', async () => {
+    const threadId = await openThread([...OPENING])
+
+    await summariseTo({ threadId, throughSeq: 2, summary: 'the opening' })
+    const again = await summariseTo({ threadId, throughSeq: 4, summary: 'both exchanges' })
 
     if (!again.ok) throw new Error(again.reason)
-    expect(again.replaced).toBe(3)
-
-    const events = await fixture.log.read({ threadId })
-    expect(events.map((event) => event.type)).toEqual(['history-compacted'])
-    expect(compactedThrough(events)).toBe(4)
+    expect(await shapeOf(threadId)).toEqual([[4, 'history-compacted']])
   })
 
-  it('refuses a watermark the guard rejects and leaves the thread untouched', async () => {
-    const threadId = await openThread([said('clean the build'), called, resulted])
+  it('replaces the tail instead when asked to summarise from a point', async () => {
+    const threadId = await openThread([...OPENING])
+
+    await summariseFrom({ threadId, fromSeq: 3, summary: 'the closing' })
+
+    expect(await shapeOf(threadId)).toEqual([
+      [1, 'user-said'],
+      [2, 'assistant-said'],
+      [3, 'history-compacted'],
+    ])
+  })
+
+  it('does not raise the rewind floor when it took only the tail', async () => {
+    const threadId = await openThread([...OPENING])
+    await summariseFrom({ threadId, fromSeq: 3, summary: 'the closing' })
+
+    expect((await rewoundTo({ threadId, toSeq: 1 })).ok).toBe(true)
+  })
+})
+
+describe('what neither operation will do', () => {
+  it('refuses a prefix that would orphan a tool result', async () => {
+    const threadId = await openThread([said('clean it'), called, resulted])
 
     const outcome = await compactTo({ threadId, throughSeq: 2, summary: 'never asked for' })
 
@@ -143,25 +227,36 @@ describe('compactThread', () => {
     expect((await fixture.log.read({ threadId })).length).toBe(3)
   })
 
-  it('deletes nothing when the summariser fails, rather than compacting to nothing', async () => {
-    const threadId = await openThread([said('build the parser'), replied('done'), said('next')])
+  it('refuses a suffix that would strand a dispatched call', async () => {
+    const threadId = await openThread([said('clean it'), called, resulted, replied('done')])
+
+    const outcome = await summariseFrom({ threadId, fromSeq: 3, summary: 'never asked for' })
+
+    expect(outcome.ok).toBe(false)
+    expect(outcome.ok === false && outcome.refusal).toBe(ECompactionRefusal.SplitsToolCall)
+    expect((await fixture.log.read({ threadId })).length).toBe(4)
+  })
+
+  it('changes nothing when the summariser comes back empty', async () => {
+    const threadId = await openThread([...OPENING])
 
     const outcome = await compactTo({ threadId, throughSeq: 2, summary: null })
 
     expect(outcome.ok).toBe(false)
     expect(outcome.ok === false && outcome.failure).toBe(ECompactionFailure.NoSummary)
-    expect((await fixture.log.read({ threadId })).length).toBe(3)
+    expect((await fixture.log.read({ threadId })).length).toBe(4)
   })
 
   it('never asks the summariser for a range the guard already refused', async () => {
-    const threadId = await openThread([said('clean the build'), called, resulted])
+    const threadId = await openThread([said('clean it'), called, resulted])
     let asked = false
 
     await compactThread({
       log: fixture.log,
       threads: fixture.threads,
       threadId,
-      throughSeq: 2,
+      anchor: ECompactionAnchor.Prefix,
+      seq: 2,
       summarise: async () => {
         asked = true
         return 'a summary'

@@ -46,13 +46,15 @@ function lineOf(event: Event): string | undefined {
 
 export function transcriptOfRange({
   events,
+  fromSeq = 0,
   throughSeq,
 }: {
   events: readonly Event[]
+  fromSeq?: number | undefined
   throughSeq: number
 }): string {
   return events
-    .filter((event) => event.seq <= throughSeq)
+    .filter((event) => event.seq >= fromSeq && event.seq <= throughSeq)
     .flatMap((event) => {
       const line = lineOf(event)
       return line === undefined ? [] : [line]
