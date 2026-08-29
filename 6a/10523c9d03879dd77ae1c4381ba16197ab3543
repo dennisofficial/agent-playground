@@ -1,0 +1,52 @@
+apps/tui/src/composition/use-shells.ts
+  s_ffa38a69c1752c::t_2897cfcac2bd83 4,107
+apps/tui/src/ui/shells-model.ts
+  s_ffa38a69c1752c::t_fef65506667283 51-53
+packages/harness/src/shells/__tests__/shell-registry.spec.ts
+  s_ffa38a69c1752c::t_8611d96603a5cc 6,184,199,209,218,417
+  s_ffa38a69c1752c::t_2436cd9b5e6cba 423
+apps/tui/src/store/__tests__/shell-ended-entry.spec.ts
+  s_ffa38a69c1752c::t_2436cd9b5e6cba 24-25,35,62-69,90-96
+  s_ffa38a69c1752c::t_b227d5e43e6300 3
+apps/tui/src/ui/__tests__/shells-model.spec.ts
+  s_ffa38a69c1752c::t_b227d5e43e6300 3
+  s_ffa38a69c1752c::t_2436cd9b5e6cba 112-119
+packages/core/src/shells/status.ts
+  s_ffa38a69c1752c::t_f188c61f5264a0 8-13,18,27-33,35
+packages/harness/src/tools/builtin/shell-kill.ts
+  s_ffa38a69c1752c::t_2897cfcac2bd83 6,34
+packages/harness/src/shells/shell-registry.ts
+  s_ffa38a69c1752c::t_2897cfcac2bd83 1,28-32,35,93-97,105,133,137,175
+packages/core/src/assembly/rules/background-shell-block.ts
+  s_ffa38a69c1752c::t_00f52f29786bc5 3,10-12,24
+packages/core/src/events/schema.ts
+  s_ffa38a69c1752c::t_3e3d8a6061fb88 4
+  s_ffa38a69c1752c::t_441f8c5f861148 86,93
+apps/tui/src/store/shell-ended-line.ts
+  s_ffa38a69c1752c::t_770d08c66e5883 1,7,16-22,24
+packages/core/src/assembly/rules/__tests__/background-shell-block.spec.ts
+  s_ffa38a69c1752c::t_2436cd9b5e6cba 3,62-77
+packages/core/src/events/body.ts
+  s_ffa38a69c1752c::t_441f8c5f861148 34,41
+  s_ffa38a69c1752c::t_3e3d8a6061fb88 2
+packages/harness/src/shells/notifications.ts
+  s_ffa38a69c1752c::t_2897cfcac2bd83 15
+packages/harness/src/shells/background-shell.ts
+  s_ffa38a69c1752c::t_7d5151b6c20eb3 1,16,25,40,80,87,90,132
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "6a10523c9d03879dd77ae1c4381ba16197ab3543",
+  "prompts": {},
+  "sessions": {
+    "s_ffa38a69c1752c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "99f09dac-2ab2-4d9d-a013-49c9d611609e",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
