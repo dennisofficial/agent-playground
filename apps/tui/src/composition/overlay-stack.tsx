@@ -2,10 +2,12 @@ import { MODEL_CATALOG } from '@dltech/atlas-core'
 import React from 'react'
 
 import { ExitGuard } from '../ui/components/exit-guard'
+import { exitGuardRow } from '../ui/exit-guard-model'
 import { Rewind } from '../ui/components/rewind'
 import { Settings } from '../ui/components/settings'
 import { Shells } from '../ui/components/shells'
 import { Switcher } from '../ui/components/switcher'
+import { isShellRunning } from '../ui/shells-model'
 import { modelIsReachable } from './model-selection'
 import type { ExitGuardControl } from './use-exit-guard'
 import type { RewindControl } from './use-rewind'
@@ -64,6 +66,7 @@ export function OverlayStack(props: {
       {exitGuard.state === null ? null : (
         <ExitGuard
           width={Math.min(props.contentWidth, props.width)}
+          running={shells.shells.filter(isShellRunning).map(exitGuardRow)}
           state={exitGuard.state}
           overlay
           onPick={exitGuard.handlePick}

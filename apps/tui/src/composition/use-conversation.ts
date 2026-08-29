@@ -91,6 +91,7 @@ export function useConversation(args: {
   autoCompactAtPercent: number
   thinking: EThinkingVisibility
   onUndone: (text: string) => void
+  canWake: boolean
 }): Conversation {
   const { app, paceReveal, thinking, onUndone } = args
   const [opened, setOpened] = useState<OpenedConversation>(args.opened)
@@ -363,6 +364,9 @@ export function useConversation(args: {
    * A background shell that ends while nothing is running has no turn to be delivered into, so the
    * ending is what starts one. Mid-turn there is nothing to do: the loop drains the same queue on
    * its next pass. The witness keeps a turn that dies before its first drain from spinning here.
+   *
+   * A turn must not start behind a prompt that has taken the keyboard, so an overlay waiting on an
+   * answer holds the wake off until it is closed. The ending keeps until then.
    */
   const woken = useRef<string | null>(null)
 
@@ -371,14 +375,14 @@ export function useConversation(args: {
       woken.current = null
       return
     }
-    if (working) return
+    if (working || !args.canWake) return
 
     const witness = notices.map((notice) => notice.shellId).join(' ')
     if (woken.current === witness) return
 
     woken.current = witness
     drive([])
-  }, [drive, notices, working])
+  }, [args.canWake, drive, notices, working])
 
   const nameSession = useCallback(
     (said: string) => {

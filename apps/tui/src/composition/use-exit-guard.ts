@@ -6,13 +6,12 @@ import {
   moveSelection,
   openExitGuard,
   resolve,
-  type ExitGuardRow,
   type ExitGuardState,
 } from '../ui/exit-guard-model'
 
 export type ExitGuardControl = {
   state: ExitGuardState | null
-  handleOpen: (args: { running: readonly ExitGuardRow[] }) => void
+  handleOpen: () => void
   handleDismiss: () => void
   handlePick: (choice: EExitChoice) => void
   handleKey: (key: KeyEvent) => void
@@ -22,10 +21,7 @@ export function useExitGuard(args: { onExit: () => void }): ExitGuardControl {
   const [state, setState] = useState<ExitGuardState | null>(null)
   const { onExit } = args
 
-  const handleOpen = useCallback(
-    ({ running }: { running: readonly ExitGuardRow[] }) => setState(openExitGuard({ running })),
-    [],
-  )
+  const handleOpen = useCallback(() => setState(openExitGuard()), [])
 
   const handleDismiss = useCallback(() => setState(null), [])
 

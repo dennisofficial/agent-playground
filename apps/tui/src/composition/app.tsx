@@ -25,9 +25,7 @@ import { useDraft } from '../ui/hooks/use-draft'
 import { modelLabel } from '../ui/model-label'
 import { densityVersion, subscribeDensity } from '../ui/density-store'
 import { paletteVersion, subscribePalette } from '../ui/palette-store'
-import { exitGuardRow } from '../ui/exit-guard-model'
 import { ERewindPointKind, ERewindVerb, type RewindChoice } from '../ui/rewind-model'
-import { isShellRunning } from '../ui/shells-model'
 import type { SwitcherChoice } from '../ui/switcher-model'
 import { SIDEBAR_GUTTER, SIDEBAR_MIN_TERMINAL_WIDTH } from '../ui/theme'
 import {
@@ -77,6 +75,7 @@ export function App(props: { app: AtlasApp; opened: OpenedConversation }): React
 
 function Workspace(props: { app: AtlasApp; opened: OpenedConversation }): React.ReactNode {
   const renderer = useRenderer()
+  const exitGuard = useExitGuard({ onExit: () => renderer.destroy() })
   const { width, height } = useTerminalDimensions()
   useSyncExternalStore(subscribePalette, paletteVersion)
   useSyncExternalStore(subscribeDensity, densityVersion)
@@ -92,6 +91,7 @@ function Workspace(props: { app: AtlasApp; opened: OpenedConversation }): React.
     autoCompactAtPercent: settings.autoCompactAtPercent,
     thinking: settings.thinking,
     onUndone: draft.setValue,
+    canWake: exitGuard.state === null,
   })
 
   const [preference, setPreference] = useState<ESidebarPreference>(ESidebarPreference.Auto)
@@ -272,22 +272,23 @@ function Workspace(props: { app: AtlasApp; opened: OpenedConversation }): React.
     setPreference(sidebarVisible ? ESidebarPreference.Hidden : ESidebarPreference.Auto)
   }, [sidebarVisible])
 
-  const exitGuard = useExitGuard({ onExit: () => renderer.destroy() })
-
   const handleQuit = useCallback(() => {
     if (conversation.working) {
       conversation.handleInterrupt()
       return
     }
 
-    const running = shells.shells.filter(isShellRunning)
-    if (running.length > 0) {
-      exitGuard.handleOpen({ running: running.map(exitGuardRow) })
+    if (shells.running > 0) {
+      exitGuard.handleOpen()
       return
     }
 
     renderer.destroy()
   }, [conversation, exitGuard, renderer, shells])
+
+  useEffect(() => {
+    if (exitGuard.state !== null && shells.running === 0) exitGuard.handleDismiss()
+  }, [exitGuard, shells.running])
 
   useKeyBindings(
     globalBindings({
