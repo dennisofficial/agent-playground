@@ -13,9 +13,22 @@ await grammarsReady()
 
 const THREAD = toThreadId('opened-thread')
 
-const WIDE = { width: 150, height: 40 }
+/**
+ * OpenTUI's renderer quits on ctrl+c by default (`exitOnCtrlC`), and the app turns that off in
+ * boot.tsx — which a test mount never runs. Left on, the renderer tears down before the binding
+ * under test is ever consulted.
+ */
+const WIDE = { width: 150, height: 40, exitOnCtrlC: false }
 
 const PRESS_MS = 60
+
+const PAST_SHELL_POLL_MS = 700
+
+const MARKER = '❯'
+
+const SCRIPTED_REPLY = 'the model answered'
+
+const PLACEHOLDER = 'Describe the work below.'
 
 const shell = (over: {
   shellId: string
@@ -36,13 +49,27 @@ const shell = (over: {
 
 const appWith = (shells: readonly ShellSnapshot[]): FakeApp => {
   const app = fakeApp({
-    model: scriptedModelPort({ script: { thinking: 'weighing it', reply: 'done' } }),
+    model: scriptedModelPort({ script: { thinking: 'weighing it', reply: SCRIPTED_REPLY } }),
   })
   for (const entry of shells) app.shells.place(entry)
   return app
 }
 
 type Mounted = Awaited<ReturnType<typeof testRender>>
+
+/**
+ * The fake registry hands back the very array it mutates, so a status changed in place is
+ * invisible to the snapshot comparison that decides whether to re-render. Swapping the listing
+ * for a fresh array is what makes a shell look like it ended.
+ */
+function endingShell(args: { app: FakeApp; running: ShellSnapshot }): () => void {
+  let listed: readonly ShellSnapshot[] = [args.running]
+  args.app.shells.list = () => listed
+
+  return () => {
+    listed = [{ ...args.running, status: EShellStatus.Exited }]
+  }
+}
 
 async function opened(app: FakeApp): Promise<Mounted> {
   const setup = await testRender(
@@ -114,7 +141,7 @@ describe('quitting while a background shell is still running', () => {
     try {
       expect(await quit(setup)).toContain(HEADING)
 
-      setup.mockInput.pressKey('escape')
+      setup.mockInput.pressEscape()
       await settle(PRESS_MS)
       await setup.flush()
 
@@ -130,15 +157,59 @@ describe('quitting while a background shell is still running', () => {
     try {
       await quit(setup)
 
-      setup.mockInput.pressKey('down')
+      setup.mockInput.pressArrow('down')
       await settle(PRESS_MS)
       await setup.flush()
 
       const rows = setup.captureCharFrame().split('\n')
-      const marked = rows.find((row) => row.includes('›'))
+      const marked = rows.find((row) => row.includes(MARKER))
 
       expect(marked).toBeDefined()
       expect(marked).toContain('Stay')
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
+  it('stands down on its own when the last shell finishes under it, without quitting', async () => {
+    const live = shell({ shellId: 'bash_1', command: 'bun run dev' })
+    const app = appWith([live])
+    const end = endingShell({ app, running: live })
+    const setup = await opened(app)
+
+    try {
+      expect(await quit(setup)).toContain(HEADING)
+
+      end()
+      await settle(PAST_SHELL_POLL_MS)
+      await setup.flush()
+
+      const frame = setup.captureCharFrame()
+
+      expect(frame).not.toContain(HEADING)
+      expect(frame).toContain(PLACEHOLDER)
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
+  it('holds a shell ending back rather than starting a turn behind the prompt', async () => {
+    const app = appWith([shell({ shellId: 'bash_1', command: 'bun run dev' })])
+    const setup = await opened(app)
+
+    try {
+      expect(await quit(setup)).toContain(HEADING)
+
+      app.shells.announce(
+        shell({ shellId: 'bash_2', command: 'bun test', status: EShellStatus.Exited }),
+      )
+      await settle(PAST_SHELL_POLL_MS)
+      await setup.flush()
+
+      const frame = setup.captureCharFrame()
+
+      expect(frame).toContain(HEADING)
+      expect(frame).not.toContain(SCRIPTED_REPLY)
     } finally {
       await teardown(setup)
     }
@@ -150,9 +221,9 @@ describe('quitting while a background shell is still running', () => {
     try {
       await quit(setup)
 
-      setup.mockInput.pressKey('down')
+      setup.mockInput.pressArrow('down')
       await settle(PRESS_MS)
-      setup.mockInput.pressKey('return')
+      setup.mockInput.pressEnter()
       await settle(PRESS_MS)
       await setup.flush()
 
