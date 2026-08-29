@@ -123,9 +123,25 @@ given no tools needs.
 what makes a turn which paused and resumed produce a log identical to one that completed in a single
 pass — the property the whole event-log design exists to protect.
 
-**Resume is not implemented.** `resume` *is* `runTurn`, because position is a pure function of the
-log. Proven by serializing the log, discarding every in-memory object, rebuilding with a different
-model script, and completing the turn. A durable pause is `return`.
+**Resume is almost not implemented.** `resume` *is* `runTurn`, because position is a pure function of
+the log. Proven by serializing the log, discarding every in-memory object, rebuilding with a
+different model script, and completing the turn. A durable pause is `return`.
+
+The one thing it cannot derive is a turn stopped while the model still held the floor. An interrupt
+mid-reply leaves `assistant-said { interrupted: true }` as the last turn-taking event, so
+`awaitsReply` is false and the next `runTurn` returns `Idle` rather than answering the model's own
+half-sentence. `resume` therefore appends a `nudge` — and only then, which `core/events/resumePlan`
+decides. Every other stopping place already gives the loop somewhere to go: a failed step appends
+nothing, a call the developer stopped before it ran is settled as denied, and one aborted in flight
+gets a result carrying the abort, so all three tails are turn-taking and resume appends nothing at
+all. `nudge` is what makes this cost one event rather than a second record of loop position: it is
+in the prompt for `lifetimeSteps` model steps and then gone, so a resumed turn leaves a log a
+completed one could also have produced.
+
+A call the loop recorded but never dispatched — a later batch that the abort reached first — is
+re-dispatched by resume, which is correct rather than a hazard: `settlePending` only skips runs it
+never entered, so nothing that started is missing its result. That is the same shape rewind refuses,
+for the opposite reason: rewind is undoing the call, resume is completing it.
 
 **A step's calls settle in batches, not one at a time.** `settlePending` folds the pending calls
 into runs of consecutive concurrency-safe ones — each unsafe call a run of its own — and dispatches a
@@ -173,7 +189,10 @@ started it ends. `bash({ runInBackground: true })` registers the process with a 
 `ShellRegistryPort`; `shell_output` reads what it has printed since the last read, `shell_list` says
 what exists, and `shell_kill` stops it. The developer gets the same three through the sidebar's SHELLS
 section and the `ctrl+t` panel, which reads a shell by `peek` rather than `read` so that looking at one
-never consumes output the model has yet to see. `harness/src/shells/` owns the lifecycle and the bash tool is a caller, which is why the
+never consumes output the model has yet to see. The panel scrolls that peek: it holds the last 64k
+characters, wrapped to at most a thousand rows, in a scrollbox that sticks to the newest line until a
+reader pages away from it. That window is shorter than what the registry retains because every row is a
+renderable the tail rewrites each time the shell prints. `harness/src/shells/` owns the lifecycle and the bash tool is a caller, which is why the
 process primitives live there rather than under `tools/builtin/`.
 
 **Output is buffered in memory behind a byte cursor, not written to a file.** Claude Code hands the
@@ -380,6 +399,54 @@ head. Fork is the same operation writing to a new `threadId` — one row, becaus
 Snapshots cannot undo non-filesystem effects, so tool dispatch takes
 `idempotencyKey: ${runId}:${callId}`.
 
+### Where the session is, is Conversation
+
+There are two directories, and they answer different questions.
+
+The **project directory** is fixed for the life of the process. It anchors `.atlas/settings.json`,
+project skills, the instruction-file descent, and — the load-bearing part — every relative path a
+tool is given. The **session directory** is where a bash command starts, and `cd` moves it.
+
+Tool paths resolve against the *project* directory, not the session directory. This is a deliberate
+departure from Claude Code, which resolves them against the session cwd. Rewind is the reason: a path
+resolved against a cursor the conversation can move means a different file when the same log replays
+from a different point, and the log is supposed to be the one record. `ResolveProjectPathsHook` makes
+every declared `EPathForm.Absolute` field absolute at `EStage.Guard, nudge -1` — before anything
+downstream keys on a path, so read-before-write cannot see the same file under two spellings.
+
+The session directory is not held anywhere. It is `sessionDirectoryOf(events)` — the last
+`cwd-changed` in the log, or the project directory when there is none. That places it in the
+Conversation row, which is the only reason rewind, fork and resume agree about it without a second
+record to keep in step. A mutable holder in the container would have been the checkpointer the two
+rules exist to refuse.
+
+Shells are spawned fresh per call, so nothing in the process survives it — an exported variable, a
+shell function, a background job. The directory survives because the harness tracks it out of band:
+the tool spawns into the session directory, recovers `pwd -P` through a probe file, and reports the
+move as tool output that an `AfterTool` hook turns into the event. A command that calls `exit`, or
+dies under `set -e`, never reaches the probe, and the session simply stays where it was.
+
+Both sides of the comparison go through `realpath`, for the reason path handling always does here:
+`/var` and `/private/var` name one directory, and a string compare reports a move on every command
+run under a temporary directory.
+
+**The prompt is split along a static/live seam.** The system prompt names only the project directory,
+because `cacheBreakpoints` puts a 1h breakpoint on the last system block and a directory that changed
+inside it would cold-start the whole prefix on every `cd`. The live session directory rides the
+Conversation instead: `sessionDirectoryBlock` appends a reminder at the *tail* of the messages, where
+invalidation is cheap, and only while the session sits somewhere other than the project directory.
+
+It is a rule over the log rather than a `context-loaded` event on purpose. An event renders at its own
+seq, so a move at seq 13 of a 133-event thread scrolls away and the model is left inferring its own
+location — which it answers by defensively prefixing `cd <abs> &&` onto every command. Supersession
+would not have saved it either: it is keyed on `(slot, key)` in the projection and on a content digest
+in the store, so an A→B→A walk cannot re-file the notice at the tail.
+
+Neither directory walls the filesystem off. There was a containment guard that refused any declared
+path outside the project directory, and it was deleted rather than kept: `bash` declares no path
+fields, so it never applied there, and an agent that can `cat` a file it may not `edit` is being told
+which tool to use, not being made safe.
+
 **Two stores sit outside all three timelines, and neither is ever read back to rebuild state.**
 
 The **spend ledger** is one `Turn` row per turn: token counts in four tiers, the model that billed
@@ -419,6 +486,74 @@ there is a security constraint, not a preference.
 An append that closes no step still says so, as `events-appended`. Otherwise a message steered into a
 running turn is durable the moment the loop drains it but invisible until the next step ends, and the
 operator watches what they sent disappear for the length of a model call.
+
+## Startup
+
+The renderer comes up **before** the harness does. `bootAtlas` starts `openSession` — compose the
+container, read credentials, register grammars, open the conversation — and then, without waiting on
+it, creates the `CliRenderer` and renders `BootScreen`. What fills the terminal for the length of the
+boot is the curtain, not an empty screen and not a half-built workspace.
+
+Two ordering rules hold that together, and both are load-bearing.
+
+**Appearance is applied before anything mounts.** `openSession` resolves the accent and the block
+density out of the settings snapshot and writes them into the live palette while it still holds the
+terminal alone. Applied from an effect instead — which is what `useSettings` alone did — the first
+committed frame paints in the shipped clay at comfort density and the next one corrects it, a
+whole-screen repaint of a screen the operator has already started reading. `useSettings` still
+applies appearance on every change, because a setting edited at runtime has to land; it is a no-op
+when the value is already the one in force.
+
+**The workspace mounts under the curtain, not after it.** `BootScreen` renders `<App>` as soon as the
+session is ready and holds the curtain over it until the ink has laid down and the workspace has had
+a beat to settle. So what the curtain hides is real settling — sticky scroll finding the bottom,
+tree-sitter highlighting arriving off-thread — rather than work deferred until someone can watch it.
+
+`<App covered>` takes the composer's focus with it: the terminal cursor is not part of the character
+grid, so a focused textarea would draw its caret straight through the curtain. It swallows keys for
+the same reason — while the curtain is up the only key that reaches anything is the one that lifts
+it. Before the harness exists nothing can lift it at all, because there would be nothing behind it;
+only ctrl+c is answered there, since the renderer holds raw mode from the first frame and a boot that
+hangs must still be abandonable.
+
+`ui/startup-model.ts` owns the choreography as pure data — ink, hold, lift, gone — so the timing is
+tested without a terminal, and `Startup` only draws whatever frame it is handed.
+
+## Credentials and accounts
+
+Atlas holds **accounts**, not a credential. One per login, several per provider, each with a status
+and a label, and one of them marked as the one that answers for its provider. `AccountStorePort` in
+`core` is the contract; the vault is `~/.atlas/auth.json` at mode 0600, written temp-and-renamed,
+with every secret sealed by aes-256-gcm under `~/.atlas/key`. A file rather than the OS keychain,
+because the keychain is one platform's and the vault is not.
+
+**The model port asks for a credential per request.** `createAnthropicOauthModel` resolves one inside
+`doStream`, so a token that goes stale mid-session is refreshed by the next step rather than failing
+the turn — nothing above the port has to know a refresh happened.
+
+Four decisions are pure and live in `core/credentials/`, tested with plain data:
+
+- `refreshDecision` — fresh, due inside a five-minute skew, or unrefreshable.
+- `adoptionOf` — whether a pair observed elsewhere is newer, ours, and worth keeping. Ported from the
+  previous TUI, where the missing case cost a week of dead accounts.
+- `chooseAccount` — which account answers. An `expired` account is ranked last but never excluded,
+  because a refresh is the only thing that clears that status and excluding it makes the door
+  one-way.
+- The provider registry — what each provider supports and how one signs in to it. Anthropic is
+  wired; OpenAI's device-code flow and OpenRouter's API key are declared and answer `reachable:
+  false`, which is what the switcher reads as `⚠ no key`.
+
+**A refresh token is single-use.** The server rotates it, so two callers refreshing one account race
+and the loser gets a 400 that reads exactly like a dead credential. `RefreshingCredentialPort` keeps
+one in-flight refresh per account, keyed by id and dropped the moment it settles — it is not a cache.
+A hard 4xx marks the account expired; anything else falls back to the token in hand if it still has
+life, because a socket hang-up is not an authentication failure.
+
+**A credential imported from another tool is written back to it.** Atlas takes up an existing Claude
+Code login on first run, so nobody is asked to sign in twice — but refreshing it would leave the
+`claude` CLI holding a pair the server has already invalidated. So an imported account remembers its
+source, and the rotated pair goes back the way it came, guarded by `adoptionOf` in both directions:
+Atlas takes up a pair Claude Code refreshed first, and never pushes an older pair over a newer one.
 
 ## Packages
 
@@ -461,8 +596,9 @@ packages/core/src/
   hooks/         phase types and outcome types only — no container
   policy/        BeforeTool severity resolution, the approval resolver, tool-call partitioning
   tools/         ToolCall, ToolOutcome, EToolEffect, EContentAccess, definition types
-  ports/         EventLogPort, ModelPort, WorkspacePort, CredentialPort, ClockPort, IdPort,
-                 SettingsStorePort
+  ports/         EventLogPort, ModelPort, WorkspacePort, CredentialPort, AccountStorePort,
+                 ClockPort, IdPort, SettingsStorePort
+  credentials/   accounts, provider specs, and the pure decisions: refresh, adoption, selection
   settings/      definitions, layered resolution with provenance, edit operations, the registry
   message/       Atlas's own message type (see below)
 
@@ -470,12 +606,13 @@ packages/harness/src/
   loop/          runTurn, settlePending
   model/         ModelPort over AI SDK; the stream accumulator
   model/providers/   LanguageModelV4 impls: claude-oauth, codex-oauth, api-key
-  credentials/   CredentialPort backends: macOS Keychain, auth.json file, encrypted vault
+  credentials/   the account vault, the refreshing CredentialPort, OAuth clients, and the
+                 sources a login can be imported from and written back to
   files/         what the model has seen of each file on disk, for the read-before-write guard
   store/         Prisma event log, thread heads, workspace snapshots
   tools/         registry, dispatcher, builtin tools
   shells/        background shell registry, process-group lifecycle, delta output buffers
-  hooks/         hook implementations — claude-md injection, workspace boundary, read-before-write,
+  hooks/         hook implementations — claude-md injection, read-before-write,
                  file-state recording, approval policy
   settings/      SettingsStorePort backends: user and project files, in memory; the layer service
   workspace/     git snapshot and restore

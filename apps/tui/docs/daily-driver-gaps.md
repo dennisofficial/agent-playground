@@ -3,8 +3,8 @@
 An audit of `apps/tui` + `packages/{core,harness}` against "could I use this instead of Claude Code
 today". Ordered by what stops you, not by size.
 
-Re-verified against the working tree (189 uncommitted files, typecheck green across all three
-packages). What the code has closed since the first pass is listed at the bottom.
+Re-verified against the working tree, typecheck and tests green across all three packages. What the
+code has closed since the first pass is listed at the bottom.
 
 ## What already works
 
@@ -14,7 +14,7 @@ sidebar, the `ctrl+t` panel and an exit guard that names what would die, twelve 
 instruction-file loading (`CLAUDE.md` / `AGENTS.md`, nested, reloaded per turn), slash commands,
 skills and the command menu, the model/effort switcher, layered settings, a spend ledger, the raw
 tape, markdown with two-tier syntax highlighting, table panning and side-by-side diffs, plan
-mirroring from `task_write`.
+mirroring from `task_write`, and an account vault that refreshes its own logins.
 
 ## P0 — blocks daily driving
 
@@ -47,14 +47,7 @@ mirroring from `task_write`.
    Needs: the boundary hook back or a note saying why not, a shell-command classifier, allow / ask /
    deny lists in settings, and the approval overlay + `EDecision` append path in the TUI.
 
-4. **No credential refresh, and macOS only.** `KeychainCredentialPort` reads the Claude Code
-   keychain blob and `credentials/expiry.ts:24` throws if it is stale — the advice is literally "run
-   `claude` once to refresh it". There is no refresh-token exchange, no API-key port, no `auth.json`
-   backend, no `security`-free reader, so Linux is dead on arrival and a long day ends with Atlas
-   exiting at boot until you open Claude Code. The check also happens once at boot, so expiry
-   mid-session surfaces as a failed turn.
-
-5. **No transient-error *automatic* retry.** `model/ai-sdk-model-port.ts:79` turns any stream error
+4. **No transient-error *automatic* retry.** `model/ai-sdk-model-port.ts:79` turns any stream error
    into `ModelStreamError` and `loop/model-step.ts:31` ends the turn `Failed`. Manual recovery is
    there — `ctrl+r` on the error block re-runs the turn with nothing appended, and the resume block
    covers the interrupt case — but a 429, a 529 overloaded, or a dropped socket still needs a human to
@@ -94,8 +87,10 @@ mirroring from `task_write`.
     scripted or used in CI.
 
 13. **Only Anthropic is reachable.** `modelIsReachable` hard-codes `EModelVendor.Anthropic`;
-    `gpt-5-codex` sits in the catalog purely to render as unavailable. No codex-oauth provider, no
-    OpenAI/Gemini/local via API key, which undercuts the model-agnostic claim in practice.
+    `gpt-5-codex` sits in the catalog purely to render as unavailable. The credential side is now
+    ready for the others — `PROVIDER_SPECS` declares OpenAI's device-code flow and OpenRouter's API
+    key, and an api-key account already reaches Anthropic through `x-api-key` — but no second
+    `LanguageModelV4` provider is wired, so the model-agnostic claim is still one adapter short.
 
 14. **No images.** No paste-image path, no image parts in `core/message` — zero hits for `image`
     anywhere in `core` — so screenshots and design references are out.
@@ -109,6 +104,13 @@ transcript search, and `core/budget/resolveBudget` as the auto-compaction contro
 
 ## Closed since the first audit
 
+- **Credentials refresh themselves, hold more than one account, and no longer need macOS.**
+  `RefreshingCredentialPort` reads an account out of `~/.atlas/auth.json` (0600, aes-256-gcm under
+  `~/.atlas/key`), refreshes inside a five-minute skew with one in-flight exchange per account, and
+  writes the rotated pair back to the Claude Code keychain item it was imported from so `claude`
+  keeps working. `ctrl+a` / `/auth` lists accounts, signs in by pasted code, takes an API key,
+  switches and removes; `ANTHROPIC_API_KEY` shows up as an account of its own. A boot that cannot
+  authenticate now opens the overlay carrying the reason instead of exiting.
 - **Auto-compaction is wired.** `useConversation.compactIfFull` runs after every turn against
   `ESettingId.AutoCompact` (`context.autoCompact`, 90% by default). Only `resolveBudget`, the
   fixpoint controller, is still unused.
@@ -185,7 +187,6 @@ transcript search, and `core/budget/resolveBudget` as the auto-compaction contro
 
 1. Workspace-scoped threads + `list()` + a session picker. (P0 1, 2)
 2. Settle the boundary hook, then write the prompt prose. (P0 3a, P1 6)
-3. Credential refresh + an API-key port. (P0 4)
-4. Retry with backoff. (P0 5)
-5. Command classifier, permission settings, approval overlay. (P0 3b)
-6. `@`-mentions, `/cost`, web fetch. (P1 7, 10, 9)
+3. Retry with backoff. (P0 4)
+4. Command classifier, permission settings, approval overlay. (P0 3b)
+5. `@`-mentions, `/cost`, web fetch. (P1 7, 10, 9)

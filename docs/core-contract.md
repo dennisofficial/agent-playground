@@ -44,6 +44,7 @@ type EventBody =
   | { type: 'approval-answered';  callId: string; decision: EDecision; editedInput?: unknown }
   | { type: 'context-loaded';     slot: string; key: string; content: string; triggeredBy?: string }
   | { type: 'nudge';              text: string; lifetimeSteps: number }
+  | { type: 'cwd-changed';        path: string }
   | { type: 'background-shell-ended'
                                   shellId: string; command: string; description?: string
                                   status: EShellStatus; exitCode?: number
@@ -77,7 +78,13 @@ type EventBody =
   The delta is read when the draft is **handed over**, not when the process exits, so an ending that
   is dropped rather than delivered leaves its output where `shell_output` can still find it.
 - **`nudge.lifetimeSteps` replaces `ephemeral: true`**, which named a property rather than a
-  behaviour and forced the core-loop spike to invent semantics that became load-bearing.
+  behaviour and forced the core-loop spike to invent semantics that became load-bearing. The
+  behaviour is counted from the log, not from a turn's step index: a nudge is rendered while fewer
+  than `lifetimeSteps` `assistant-said` events follow it, so it survives the tool traffic between
+  steps and expires identically on a thread reopened in another process. `messagesFromEvents`
+  projects a live one as a `user`-role `<nudge>` block; the transcript renders nothing, because the
+  developer did not say it. This is what `resume` appends when an interrupted reply is the last word
+  — see `resumePlan` in `core/events`.
 - **`history-compacted` replaces the rows it names.** It stands at the sequence the compacted range
   ended on, and the rows at or below `throughSeq` are deleted in the same transaction — `context-loaded`
   excepted, which is current content rather than history and would otherwise strip a thread's
@@ -367,7 +374,7 @@ type ToolCall = { callId: string; name: string; input: unknown; effect: EToolEff
   write.
 - **Human-edited input is re-checked through `BeforeTool` once.** An approval returning `editedInput`
   that skips the guards is a privilege-escalation path: approve `delete_path`, redirect it to
-  `/etc/hosts`, and the boundary hook never sees it.
+  `/etc/hosts`, and `ReadBeforeWrite` never sees it.
 
 Known gaps, accepted for now: a hook cannot fail the turn or annul a tool result, and hooks see one
 call at a time rather than a batch.
@@ -388,8 +395,7 @@ are wired elsewhere rather than unwired: `harness/hooks/registry.ts` is a `HookC
 as a known gap rather than an oversight.
 
 **Read before write is a guard hook plus a recorder, and `AfterTool` has a producer at last.**
-`ReadBeforeWriteHook` (`EStage.Guard`, nudge 1 — after containment at nudge 0, so an escaping path is
-refused for escaping) denies a write to a file with no recorded view, one whose `mtimeMs` or `size` no
+`ReadBeforeWriteHook` (`EStage.Guard`, nudge 1) denies a write to a file with no recorded view, one whose `mtimeMs` or `size` no
 longer match disk, or — for a whole-file replace only — one where the model saw a window. A path that
 does not exist is allowed: creating a file destroys nothing, and refusing it would make `write` to a new
 path and `edit` with an empty `oldString` impossible. `RecordFileStateHook` (`EStage.Observe`) fills
