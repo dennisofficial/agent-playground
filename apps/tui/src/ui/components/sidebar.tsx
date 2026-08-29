@@ -29,6 +29,12 @@ function SidebarFooter(props: { cwd: string; cells: number }): React.ReactNode {
   )
 }
 
+/**
+ * Every positioning prop is passed on every render rather than spread in only while floating:
+ * OpenTUI's reconciler applies the props an element carries and leaves a prop that disappeared
+ * from it at its last value, so a sidebar that stopped floating would stay out of the flow and
+ * the transcript would keep the whole terminal and draw underneath it.
+ */
 export function Sidebar(props: {
   width: number
   model: SidebarModel
@@ -41,6 +47,7 @@ export function Sidebar(props: {
 }): React.ReactNode {
   const { model } = props
   const cells = sidebarCells({ width: props.width })
+  const floating = props.overlay === true
 
   return (
     <box
@@ -52,9 +59,11 @@ export function Sidebar(props: {
       paddingBottom={1}
       paddingLeft={2}
       paddingRight={2}
-      {...(props.overlay
-        ? { position: 'absolute' as const, top: 0, bottom: 0, right: 0, zIndex: 20 }
-        : {})}
+      position={floating ? 'absolute' : 'relative'}
+      zIndex={floating ? 20 : 0}
+      top={0}
+      bottom={0}
+      right={0}
     >
       <scrollbox flexGrow={1} flexShrink={1} flexBasis={0}>
         <box flexDirection="column" flexShrink={0} gap={1}>

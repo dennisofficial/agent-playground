@@ -182,3 +182,67 @@ describe('what the sidebar says', () => {
     expect(rowWith({ rows, text: '14 turns' })).toBeTruthy()
   }, 30_000)
 })
+
+type OverlayHandle = { flip: (next: boolean) => void }
+
+function Beside(props: { handle: OverlayHandle }): React.ReactNode {
+  const [overlay, setOverlay] = React.useState(true)
+  props.handle.flip = setOverlay
+
+  return (
+    <box flexDirection="row" width={TERMINAL_WIDTH} height={HEIGHT}>
+      <box flexGrow={1} flexShrink={1} flexBasis={0} />
+      <Sidebar
+        width={SIDEBAR_WIDTH}
+        model={FED}
+        turn={RUNNING}
+        now={42_000}
+        cwd={CWD}
+        overlay={overlay}
+      />
+    </box>
+  )
+}
+
+const columnWidth = (setup: Awaited<ReturnType<typeof testRender>>): number => {
+  const column = setup.renderer.root.getChildren()[0]?.getChildren()[0]
+  if (column === undefined) throw new Error('the content column never mounted')
+
+  return column.width
+}
+
+describe('the column beside the sidebar', () => {
+  it('keeps the whole terminal for the content while the sidebar floats over it', async () => {
+    const handle: OverlayHandle = { flip: () => {} }
+    const setup = await testRender(<Beside handle={handle} />, {
+      width: TERMINAL_WIDTH,
+      height: HEIGHT,
+    })
+
+    try {
+      await setup.flush()
+
+      expect(columnWidth(setup)).toBe(TERMINAL_WIDTH)
+    } finally {
+      await teardown(setup)
+    }
+  }, 30_000)
+
+  it('hands the content back its share once the sidebar stops floating', async () => {
+    const handle: OverlayHandle = { flip: () => {} }
+    const setup = await testRender(<Beside handle={handle} />, {
+      width: TERMINAL_WIDTH,
+      height: HEIGHT,
+    })
+
+    try {
+      await setup.flush()
+      handle.flip(false)
+      await setup.flush()
+
+      expect(columnWidth(setup)).toBe(TERMINAL_WIDTH - SIDEBAR_WIDTH)
+    } finally {
+      await teardown(setup)
+    }
+  }, 30_000)
+})

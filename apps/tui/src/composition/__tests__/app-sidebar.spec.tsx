@@ -1,4 +1,4 @@
-import { parseColor, type CapturedFrame } from '@opentui/core'
+import { parseColor, type CapturedFrame, type Renderable } from '@opentui/core'
 import { toThreadId } from '@dltech/atlas-core'
 import { testRender } from '@opentui/react/test-utils'
 import { describe, expect, it } from 'bun:test'
@@ -45,6 +45,28 @@ const NARROW = 90
 async function pressCtrlB(setup: Awaited<ReturnType<typeof testRender>>): Promise<void> {
   setup.mockInput.pressKey('b', { ctrl: true })
   await setup.flush()
+}
+
+function contentColumnWidth(setup: Awaited<ReturnType<typeof testRender>>): number {
+  const beside = (node: Renderable): Renderable | null => {
+    const children = node.getChildren()
+    const column = children[0]
+    if (column !== undefined && children.length > 1 && children[1]?.width === SIDEBAR_WIDTH) {
+      return column
+    }
+
+    for (const child of children) {
+      const found = beside(child)
+      if (found !== null) return found
+    }
+
+    return null
+  }
+
+  const column = beside(setup.renderer.root)
+  if (column === null) throw new Error('no column was laid out beside the sidebar')
+
+  return column.width
 }
 
 async function resizeTo(args: {
@@ -201,6 +223,31 @@ describe('the sidebar', () => {
       await resizeTo({ setup, width: NARROW })
 
       expect(setup.captureCharFrame()).not.toContain(SIDEBAR_MARK)
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
+  it('lays the transcript out beside the sidebar once a narrow peek is widened', async () => {
+    const app: FakeApp = fakeApp({ model: scriptedModelPort({ script: { thinking: THINKING, reply: REPLY } }) })
+    const setup = await testRender(<App app={app} opened={{ threadId: THREAD, events: [], name: null }} />, {
+      width: NARROW,
+      height: 40,
+    })
+
+    try {
+      await setup.flush()
+      await settle(250)
+      await setup.flush()
+
+      await pressCtrlB(setup)
+      await settle(250)
+
+      expect(contentColumnWidth(setup)).toBe(NARROW)
+
+      await resizeTo({ setup, width: WIDE })
+
+      expect(contentColumnWidth(setup)).toBe(WIDE - SIDEBAR_WIDTH)
     } finally {
       await teardown(setup)
     }
