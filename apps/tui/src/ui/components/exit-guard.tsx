@@ -57,6 +57,23 @@ function Line(props: {
 
 const Gap = (): React.ReactNode => <box height={1} flexShrink={0} />
 
+function Shells(props: { running: readonly ExitGuardRow[]; cells: number }): React.ReactNode {
+  if (props.running.length === 0) return null
+
+  return (
+    <box flexDirection="column" flexShrink={0}>
+      <Gap />
+      {props.running.map((row) => (
+        <Line
+          key={row.shellId}
+          spans={shellSpans({ row, cells: props.cells })}
+          cells={props.cells}
+        />
+      ))}
+    </box>
+  )
+}
+
 function shellSpans(args: { row: ExitGuardRow; cells: number }): Span[] {
   const tag: Span[] = [
     { text: SHELL_TAG, fg: theme.meta },
@@ -108,6 +125,7 @@ function optionSpans(args: {
  */
 export function ExitGuard(props: {
   width: number
+  running: readonly ExitGuardRow[]
   state: ExitGuardState
   overlay?: boolean
   onPick: (choice: EExitChoice) => void
@@ -131,10 +149,7 @@ export function ExitGuard(props: {
     >
       <Line spans={[{ text: HEADING, fg: theme.accent }]} cells={cells} />
       <Line spans={[{ text: SUBTITLE, fg: theme.hint }]} cells={cells} />
-      <Gap />
-      {props.state.running.map((row) => (
-        <Line key={row.shellId} spans={shellSpans({ row, cells })} cells={cells} />
-      ))}
+      <Shells running={props.running} cells={cells} />
       <Gap />
       {EXIT_GUARD_OPTIONS.map((option, index) => (
         <Line

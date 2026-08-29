@@ -6,7 +6,7 @@ import {
   DETACH_NOTE,
   EExitChoice,
   EXIT_GUARD_OPTIONS,
-  type ExitGuardState,
+  type ExitGuardRow,
 } from '../exit-guard-model'
 import { glyph } from '../theme'
 import { frameOf, mount } from './transcript-fixture'
@@ -15,16 +15,13 @@ const WIDTH = 80
 
 const RUNNING_LABEL = 'Wait for TUI suite then report'
 
-const state = (over: Partial<ExitGuardState> = {}): ExitGuardState => ({
-  running: [{ shellId: 'sh-1', label: RUNNING_LABEL }],
-  selected: 0,
-  ...over,
-})
+const RUNNING: readonly ExitGuardRow[] = [{ shellId: 'sh-1', label: RUNNING_LABEL }]
 
-const guard = (over: Partial<ExitGuardState> = {}) => (
+const guard = (over: { running?: readonly ExitGuardRow[]; selected?: number } = {}) => (
   <ExitGuard
     width={WIDTH}
-    state={state(over)}
+    running={over.running ?? RUNNING}
+    state={{ selected: over.selected ?? 0 }}
     overlay
     onPick={() => undefined}
     onDismiss={() => undefined}
@@ -73,6 +70,14 @@ describe('the exit guard when background work is still running', () => {
 
     expect(frame).toContain(RUNNING_LABEL)
     expect(frame).toContain('Tail the dev server')
+  })
+
+  it('lists no work at all once the last shell has finished', async () => {
+    const frame = await frameOf(guard({ running: [] }), WIDTH)
+
+    expect(frame).toContain(HEADING)
+    expect(frame).not.toContain('shell')
+    expect(frame).not.toContain(RUNNING_LABEL)
   })
 
   it('advertises the option it cannot honour yet as unavailable', async () => {
@@ -154,7 +159,8 @@ describe('the exit guard when background work is still running', () => {
       mount(
         <ExitGuard
           width={40}
-          state={state()}
+          running={RUNNING}
+          state={{ selected: 0 }}
           overlay
           onPick={() => undefined}
           onDismiss={() => undefined}
