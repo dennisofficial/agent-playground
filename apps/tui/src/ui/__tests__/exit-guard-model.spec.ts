@@ -10,15 +10,9 @@ import {
   openExitGuard,
   resolve,
   selectedOption,
-  type ExitGuardRow,
 } from '../exit-guard-model'
 
-const ROWS: readonly ExitGuardRow[] = [
-  { shellId: 'bash_1', label: 'dev server' },
-  { shellId: 'bash_2', label: 'bun test --watch' },
-]
-
-const opened = () => openExitGuard({ running: ROWS })
+const opened = () => openExitGuard()
 
 const at = (choice: EExitChoice): number =>
   EXIT_GUARD_OPTIONS.findIndex((option) => option.choice === choice)
@@ -51,16 +45,12 @@ describe('exit guard options', () => {
 })
 
 describe('opening the exit guard', () => {
-  it('keeps the running shells it was handed', () => {
-    expect(opened().running).toEqual(ROWS)
-  })
-
   it('selects the first enabled option', () => {
     expect(resolve(opened())).toBe(EExitChoice.StopAndExit)
   })
 
-  it('opens with no shells running', () => {
-    expect(openExitGuard({ running: [] }).running).toEqual([])
+  it('carries nothing but the selection', () => {
+    expect(opened()).toEqual({ selected: at(EExitChoice.StopAndExit) })
   })
 })
 
@@ -104,10 +94,6 @@ describe('moving the selection', () => {
 
     expect(moveSelection({ state, delta: 0 })).toBe(state)
   })
-
-  it('keeps the running shells while moving', () => {
-    expect(moveSelection({ state: opened(), delta: 1 }).running).toEqual(ROWS)
-  })
 })
 
 describe('resolving a choice', () => {
@@ -116,16 +102,16 @@ describe('resolving a choice', () => {
   })
 
   it('returns nothing when the selection sits on a disabled option', () => {
-    expect(resolve({ running: ROWS, selected: at(EExitChoice.Detach) })).toBeNull()
+    expect(resolve({ selected: at(EExitChoice.Detach) })).toBeNull()
   })
 
   it('returns nothing when the selection sits off the end', () => {
-    expect(resolve({ running: ROWS, selected: EXIT_GUARD_OPTIONS.length })).toBeNull()
+    expect(resolve({ selected: EXIT_GUARD_OPTIONS.length })).toBeNull()
   })
 
   it('reports the selected option itself', () => {
     expect(selectedOption(opened())?.choice).toBe(EExitChoice.StopAndExit)
-    expect(selectedOption({ running: ROWS, selected: -1 })).toBeUndefined()
+    expect(selectedOption({ selected: -1 })).toBeUndefined()
   })
 })
 

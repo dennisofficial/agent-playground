@@ -21,7 +21,6 @@ export type ExitGuardOption = {
 }
 
 export type ExitGuardState = {
-  running: readonly ExitGuardRow[]
   selected: number
 }
 
@@ -49,8 +48,8 @@ export function exitGuardRow(
   return { shellId: shell.shellId, label: shellNameLabel(shell) }
 }
 
-export function openExitGuard(args: { running: readonly ExitGuardRow[] }): ExitGuardState {
-  return { running: args.running, selected: FIRST_ENABLED }
+export function openExitGuard(): ExitGuardState {
+  return { selected: FIRST_ENABLED }
 }
 
 export function selectedOption(state: ExitGuardState): ExitGuardOption | undefined {
@@ -83,7 +82,7 @@ export function moveSelection(args: { state: ExitGuardState; delta: number }): E
   const selected = steppedSelection({ from: args.state.selected, steps })
   if (selected === args.state.selected) return args.state
 
-  return { ...args.state, selected }
+  return { selected }
 }
 
 export function resolve(state: ExitGuardState): EExitChoice | null {
