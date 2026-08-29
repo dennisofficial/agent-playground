@@ -1,0 +1,23 @@
+apps/tui/src/composition/use-exit-guard.ts
+  s_d3b7051a198a00::t_e14e8a85dcf632 14,24
+apps/tui/src/composition/app.tsx
+  s_d3b7051a198a00::t_8ce39b88736615 281-282
+apps/tui/src/composition/overlay-stack.tsx
+  s_d3b7051a198a00::t_cb12b368730980 5,10,69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "2de8a939fe6a9fc45251adf83e783d78d3dd1c9a",
+  "prompts": {},
+  "sessions": {
+    "s_d3b7051a198a00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e551b05d-d5fc-4f70-ab29-b43f8292ee61",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
