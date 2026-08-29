@@ -15,11 +15,6 @@ import { TodoSection } from './sidebar/todo'
 import { ApprovalsSection, ToolCallsSection, TurnSection } from './sidebar/turn'
 import type { TurnClock } from './transcript'
 
-export enum ESidebarPreference {
-  Auto = 'auto',
-  Hidden = 'hidden',
-}
-
 function SidebarFooter(props: { cwd: string; cells: number }): React.ReactNode {
   const where = collapseHome({ cwd: props.cwd, home: homedir() })
 

@@ -40,9 +40,21 @@ function groundsAcross(args: { frame: CapturedFrame; needle: string }): string[]
   )
 }
 
+const NARROW = 90
+
 async function pressCtrlB(setup: Awaited<ReturnType<typeof testRender>>): Promise<void> {
   setup.mockInput.pressKey('b', { ctrl: true })
   await setup.flush()
+}
+
+async function resizeTo(args: {
+  setup: Awaited<ReturnType<typeof testRender>>
+  width: number
+}): Promise<void> {
+  args.setup.resize(args.width, 40)
+  await args.setup.flush()
+  await settle(250)
+  await args.setup.flush()
 }
 
 describe('the sidebar', () => {
@@ -133,6 +145,60 @@ describe('the sidebar', () => {
 
       await pressCtrlB(setup)
       await settle(250)
+
+      expect(setup.captureCharFrame()).not.toContain(SIDEBAR_MARK)
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
+  it('comes back on widening after a narrow peek was opened and closed', async () => {
+    const app: FakeApp = fakeApp({ model: scriptedModelPort({ script: { thinking: THINKING, reply: REPLY } }) })
+    const setup = await testRender(<App app={app} opened={{ threadId: THREAD, events: [], name: null }} />, {
+      width: NARROW,
+      height: 40,
+    })
+
+    try {
+      await setup.flush()
+      await settle(250)
+      await setup.flush()
+
+      await pressCtrlB(setup)
+      await settle(250)
+      await pressCtrlB(setup)
+      await settle(250)
+
+      expect(setup.captureCharFrame()).not.toContain(SIDEBAR_MARK)
+
+      await resizeTo({ setup, width: WIDE })
+
+      expect(setup.captureCharFrame()).toContain(SIDEBAR_MARK)
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
+  it('auto-collapses on narrowing after it was opened again on a wide terminal', async () => {
+    const app: FakeApp = fakeApp({ model: scriptedModelPort({ script: { thinking: THINKING, reply: REPLY } }) })
+    const setup = await testRender(<App app={app} opened={{ threadId: THREAD, events: [], name: null }} />, {
+      width: WIDE,
+      height: 40,
+    })
+
+    try {
+      await setup.flush()
+      await settle(250)
+      await setup.flush()
+
+      await pressCtrlB(setup)
+      await settle(250)
+      await pressCtrlB(setup)
+      await settle(250)
+
+      expect(setup.captureCharFrame()).toContain(SIDEBAR_MARK)
+
+      await resizeTo({ setup, width: NARROW })
 
       expect(setup.captureCharFrame()).not.toContain(SIDEBAR_MARK)
     } finally {

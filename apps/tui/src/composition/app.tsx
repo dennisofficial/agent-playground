@@ -19,7 +19,7 @@ import { Composer, composerRows, composerTone } from '../ui/components/composer'
 import { Footer, type FooterContext } from '../ui/components/footer'
 import { Screen } from '../ui/components/screen'
 import { Shortcuts } from '../ui/components/shortcuts'
-import { Sidebar, ESidebarPreference } from '../ui/components/sidebar'
+import { Sidebar } from '../ui/components/sidebar'
 import { Transcript } from '../ui/components/transcript'
 import { useDraft } from '../ui/hooks/use-draft'
 import { modelLabel } from '../ui/model-label'
@@ -27,7 +27,15 @@ import { densityVersion, subscribeDensity } from '../ui/density-store'
 import { paletteVersion, subscribePalette } from '../ui/palette-store'
 import { ERewindPointKind, ERewindVerb, type RewindChoice } from '../ui/rewind-model'
 import type { SwitcherChoice } from '../ui/switcher-model'
-import { SIDEBAR_GUTTER, SIDEBAR_MIN_TERMINAL_WIDTH } from '../ui/theme'
+import { SIDEBAR_GUTTER } from '../ui/theme'
+import {
+  ESidebarLayout,
+  flipSidebar,
+  sidebarChoiceInForce,
+  sidebarLayout,
+  sidebarShown,
+  type SidebarChoice,
+} from '../ui/sidebar-visibility'
 import {
   createKeyRegistry,
   KeyRegistryContext,
@@ -94,10 +102,10 @@ function Workspace(props: { app: AtlasApp; opened: OpenedConversation }): React.
     canWake: exitGuard.state === null,
   })
 
-  const [preference, setPreference] = useState<ESidebarPreference>(ESidebarPreference.Auto)
-  const [forcedOpen, setForcedOpen] = useState(false)
-  const wide = width > SIDEBAR_MIN_TERMINAL_WIDTH
-  const sidebarVisible = forcedOpen || (preference === ESidebarPreference.Auto && wide)
+  const [sidebarChoice, setSidebarChoice] = useState<SidebarChoice | null>(null)
+  const layout = sidebarLayout(width)
+  const wide = layout === ESidebarLayout.Wide
+  const sidebarVisible = sidebarShown({ layout, choice: sidebarChoice })
   const docked = sidebarVisible && wide
   const overlay = sidebarVisible && !wide
   const contentWidth = width - (docked ? settings.sidebarWidth : 0)
@@ -268,9 +276,12 @@ function Workspace(props: { app: AtlasApp; opened: OpenedConversation }): React.
   }, [conversation, draft])
 
   const handleToggleSidebar = useCallback(() => {
-    setForcedOpen(!sidebarVisible)
-    setPreference(sidebarVisible ? ESidebarPreference.Hidden : ESidebarPreference.Auto)
-  }, [sidebarVisible])
+    setSidebarChoice((choice) => flipSidebar({ layout, choice }))
+  }, [layout])
+
+  useEffect(() => {
+    setSidebarChoice((choice) => sidebarChoiceInForce({ layout, choice }))
+  }, [layout])
 
   const handleQuit = useCallback(() => {
     if (conversation.working) {
