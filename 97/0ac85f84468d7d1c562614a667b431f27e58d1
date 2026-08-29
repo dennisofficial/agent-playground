@@ -1,0 +1,204 @@
+packages/harness/src/loop/__tests__/hooked-turn.ts
+  s_bab394425c6cdd::t_626e4a55144d6d 16-17,62
+  s_bab394425c6cdd::t_3c21b2bee7bbd5 13
+packages/harness/src/loop/__tests__/steerable-turn.ts
+  s_bab394425c6cdd::t_3c21b2bee7bbd5 7
+  s_bab394425c6cdd::t_626e4a55144d6d 24-25,139
+packages/core/src/workspace/session-directory.ts
+  s_bab394425c6cdd::t_65bae5172edd93 1-32
+packages/core/src/assembly/rules/nudge-block.ts
+  s_b5ead36c55393c::t_e9a628546eafc5 1-7
+packages/harness/src/tools/builtin/glob.ts
+  s_bab394425c6cdd::t_41ba8f11ea1a3a 72-76,78
+  s_bab394425c6cdd::t_2f6d51060438fc 16,28
+packages/harness/src/hooks/__tests__/resolve-hooks.spec.ts
+  s_bab394425c6cdd::t_78805594abae9f 36-37
+packages/core/src/assembly/rules/session-directory-block.ts
+  s_bab394425c6cdd::t_3cdf5d7a24c51f 1-52
+packages/harness/src/channel/publishing-turn-runner.ts
+  s_b5ead36c55393c::t_12ab375fb5cfac 54-61
+packages/core/src/assembly/__tests__/assemble.spec.ts
+  s_bab394425c6cdd::t_a925222ece9feb 7,13-20,22-23,32,36,39,69,74,78,91,98,135,140-141,143,170,185
+  s_bab394425c6cdd::t_626e4a55144d6d 11-12
+  s_bab394425c6cdd::t_7c98b08e3df2d4 21
+  s_bab394425c6cdd::t_e605043ac294f6 95-97
+packages/core/src/events/__tests__/resume-plan.spec.ts
+  s_b5ead36c55393c::t_acc3c06c47394c 5,26,29,44,84-85,97-99
+  s_b5ead36c55393c::t_36f49290023f03 1-4,6-25,27-28,30-43,45-83,86-96,100-104
+packages/harness/src/hooks/resolve-project-paths.ts
+  s_bab394425c6cdd::t_b4eda09e42be4b 1-59
+packages/core/src/events/resume-plan.ts
+  s_b5ead36c55393c::t_ce4aae3faa9555 1-52
+packages/harness/src/hooks/__tests__/resolve-project-paths.spec.ts
+  s_bab394425c6cdd::t_58d65286ed8b58 1-69
+packages/harness/src/loop/resume-turn.ts
+  s_b5ead36c55393c::t_e87e41f8829ee1 1-13
+packages/core/src/events/__tests__/nudges.spec.ts
+  s_b5ead36c55393c::t_636ae56def0c7c 1-3,5-31,34-61
+  s_b5ead36c55393c::t_e983ebb0647f31 4,32-33
+packages/harness/src/prompt/__tests__/preamble-fragments.spec.ts
+  s_bab394425c6cdd::t_acc86b2ecc5c85 90,92,128,130
+  s_bab394425c6cdd::t_bb4b2f4383e015 1-33,36,40-80,82-89,91,93-99,101-104,108-127,129,131-154,156-191
+  s_bab394425c6cdd::t_e1429018c70b06 34-35,37-39,81,100,105-107,155
+packages/harness/src/loop/__tests__/builtin-turn.spec.ts
+  s_66c6b1433d0f69::t_28513f449f32bc 6
+  s_bab394425c6cdd::t_626e4a55144d6d 22-23,55
+packages/core/src/assembly/rules/messages-from-events.ts
+  s_b5ead36c55393c::t_b2c05ac0d82e7e 5,10
+  s_b5ead36c55393c::t_82185ff78dfaa3 124-134
+  s_b5ead36c55393c::t_400ecac31233ed 95
+packages/core/src/assembly/rules/__tests__/session-directory-block.spec.ts
+  s_bab394425c6cdd::t_2c01e4804ba983 1-72
+packages/harness/src/channel/__tests__/published-turn.spec.ts
+  s_bab394425c6cdd::t_626e4a55144d6d 14-15,39
+  s_bab394425c6cdd::t_3c21b2bee7bbd5 3
+packages/harness/src/loop/__tests__/hook-phases.spec.ts
+  s_bab394425c6cdd::t_3c21b2bee7bbd5 5,18,52,98
+  s_bab394425c6cdd::t_626e4a55144d6d 22-23,173
+packages/core/src/assembly/rules/__tests__/messages-from-events.spec.ts
+  s_b5ead36c55393c::t_9855110458493c 147,156
+packages/harness/src/loop/run-turn.ts
+  s_b5ead36c55393c::t_99f6ccc9ba3b5c 29,254-260
+  s_b5ead36c55393c::t_12ab375fb5cfac 31,113-114
+  s_bab394425c6cdd::t_e95cec8e8e2df7 53,68,88-93
+packages/harness/src/hooks/__tests__/track-session-directory.spec.ts
+  s_bab394425c6cdd::t_fa5c22194e97e8 1-77
+packages/harness/src/loop/__tests__/run-turn.spec.ts
+  s_bab394425c6cdd::t_3c21b2bee7bbd5 8,15,28,69,76
+  s_bab394425c6cdd::t_626e4a55144d6d 18-19,204,242
+packages/harness/src/tools/builtin/file-text.ts
+  s_bab394425c6cdd::t_b4eda09e42be4b 3
+packages/core/src/assembly/rules/__tests__/system-prompt-characterization.spec.ts
+  s_bab394425c6cdd::t_7c98b08e3df2d4 28,87
+  s_bab394425c6cdd::t_5e339f1a5069e9 1-27,29-86,88-89
+packages/harness/src/loop/__tests__/model-steps.spec.ts
+  s_bab394425c6cdd::t_626e4a55144d6d 22-23,78,139,219
+  s_bab394425c6cdd::t_3c21b2bee7bbd5 10
+packages/harness/src/ledger/__tests__/exit-path-harness.ts
+  s_bab394425c6cdd::t_3c21b2bee7bbd5 8
+  s_bab394425c6cdd::t_626e4a55144d6d 33-34,155
+packages/harness/src/tools/builtin/bash.ts
+  s_bab394425c6cdd::t_e90de5c6625104 2,176-177,205-206
+  s_bab394425c6cdd::t_f5181845233ec6 1,3-5,11,22,43-45,87,93,109-113,138-142,155-159,162-164,167,171-174,178-181,203-204,223,230
+  s_bab394425c6cdd::t_29a700ac4803b6 105
+  s_bab394425c6cdd::t_c0d1dc6c0a65c3 196
+packages/core/src/assembly/pipeline.ts
+  s_bab394425c6cdd::t_ab43e38c8dbe81 6
+  s_bab394425c6cdd::t_f40078a8c2cc97 5,13-25,32-39
+packages/harness/src/hooks/register-hooks.ts
+  s_7063ef02591fbf::t_9d653c67236695 4,14
+  s_bab394425c6cdd::t_b4eda09e42be4b 6,11
+  s_bab394425c6cdd::t_1863d0cb2581fc 8,15
+packages/harness/src/hooks/track-session-directory.ts
+  s_bab394425c6cdd::t_65bae5172edd93 1-24
+packages/harness/src/tools/builtin/__tests__/glob.spec.ts
+  s_b5ead36c55393c::t_372792954755ab 23,27,31,42,45,48,51
+packages/harness/src/container/__tests__/harness-graph.spec.ts
+  s_bab394425c6cdd::t_78805594abae9f 14-15,45,83
+  s_bab394425c6cdd::t_c6f03e3f44614b 50,72,86
+  s_bab394425c6cdd::t_e42472cf0bff84 55
+  s_bab394425c6cdd::t_e4e9b10f90fc90 58-62
+packages/harness/src/tools/builtin/__tests__/bash.spec.ts
+  s_bab394425c6cdd::t_3dce55c11c7b67 19,109
+  s_b5ead36c55393c::t_a46fe6e05caa49 170
+  s_bab394425c6cdd::t_e8c302c6bf4da3 1,123-169
+  s_bab394425c6cdd::t_76edd2e55d19c3 23,113
+packages/harness/src/loop/build-harness.ts
+  s_bab394425c6cdd::t_a107851edf94cd 5,10,15,47,55,57,71,81-86,93
+packages/harness/src/loop/__tests__/resume-interrupted.spec.ts
+  s_b5ead36c55393c::t_b9b6471f8a0d53 1-189
+packages/harness/src/prompt/register-prompt-fragments.ts
+  s_bab394425c6cdd::t_3b559c5e98da63 1-22
+packages/harness/src/prompt/fragments/environment.ts
+  s_bab394425c6cdd::t_54f5b8943b5778 2,5-9,13,15,18-22,25-26,31-32
+  s_bab394425c6cdd::t_8fdf135a3862e1 1,3-4,10-12,14,16-17,23-24,27-30
+packages/core/src/assembly/rules/system-prompt.ts
+  s_bab394425c6cdd::t_ab43e38c8dbe81 1-5,7,9-10,13-16
+  s_bab394425c6cdd::t_99bb6150bc8f7d 6,8,11-12
+packages/harness/src/channel/__tests__/settled-tool-results.spec.ts
+  s_bab394425c6cdd::t_626e4a55144d6d 14-15,79
+  s_bab394425c6cdd::t_3c21b2bee7bbd5 4
+packages/core/src/events/nudges.ts
+  s_b5ead36c55393c::t_ad9eecfa93fd84 1-2
+  s_b5ead36c55393c::t_3051040d1bbdeb 3-24
+packages/harness/src/loop/__tests__/model-switch-across-vendors.spec.ts
+  s_bab394425c6cdd::t_3c21b2bee7bbd5 1-18,21-61,63-115
+  s_bab394425c6cdd::t_626e4a55144d6d 19-20,62
+packages/harness/src/hooks/__tests__/file-state-wiring.spec.ts
+  s_bab394425c6cdd::t_c6f03e3f44614b 128
+packages/harness/src/loop/index.ts
+  s_b5ead36c55393c::t_7b05c859cb0bd1 3
+  s_b5ead36c55393c::t_99f6ccc9ba3b5c 2
+packages/harness/src/prompt/__tests__/fake-fragments.ts
+  s_bab394425c6cdd::t_a107851edf94cd 1-55
+packages/harness/src/loop/turn-runner.port.ts
+  s_b5ead36c55393c::t_7b05c859cb0bd1 9-10
+packages/core/src/assembly/rules/__tests__/system-prompt.spec.ts
+  s_bab394425c6cdd::t_7c98b08e3df2d4 16,71,82
+  s_bab394425c6cdd::t_5409d3ee9d350f 92-93,95,98,103
+  s_bab394425c6cdd::t_5e339f1a5069e9 1-15,17-70,72-81,83-91,94,96-97,99-102,104-105
+packages/harness/src/providers/__tests__/anthropic-cache-breakpoints.spec.ts
+  s_bab394425c6cdd::t_3c21b2bee7bbd5 9,54-61
+  s_bab394425c6cdd::t_626e4a55144d6d 27-28,67
+packages/core/src/assembly/__tests__/pipeline.spec.ts
+  s_bab394425c6cdd::t_a925222ece9feb 3,7,12-24,26,33,35-36,38,41,48,53-56,58-66,68-83,85-89,98,101,110-112,114-131
+  s_bab394425c6cdd::t_626e4a55144d6d 10-11,34,49,57,67,84,96,113
+  s_bab394425c6cdd::t_e605043ac294f6 44,104
+packages/harness/src/loop/__tests__/prompt-on-model-switch.spec.ts
+  s_bab394425c6cdd::t_3c21b2bee7bbd5 1-17,20-62,67-76,80-111,113-120,122-126
+  s_bab394425c6cdd::t_c654c0e61497c9 64-66,78-79
+  s_bab394425c6cdd::t_d6317d32b8f46e 63,77
+  s_bab394425c6cdd::t_d0e0bf211966c5 18-19
+  s_bab394425c6cdd::t_9562fe369b1692 112,121
+packages/harness/src/loop/__tests__/turn-ledger-wiring.spec.ts
+  s_bab394425c6cdd::t_626e4a55144d6d 10-11,53,185
+  s_bab394425c6cdd::t_3c21b2bee7bbd5 3
+packages/harness/src/loop/model-step.ts
+  s_b5ead36c55393c::t_99f6ccc9ba3b5c 1-36
+packages/core/src/prompt/coverage.ts
+  s_bab394425c6cdd::t_cde33842a0d320 1-12,21-31
+  s_bab394425c6cdd::t_99bb6150bc8f7d 13-20
+packages/core/src/prompt/context.ts
+  s_bab394425c6cdd::t_99bb6150bc8f7d 15-19,22-23
+  s_bab394425c6cdd::t_ab43e38c8dbe81 1-14,20-21,24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "970ac85f84468d7d1c562614a667b431f27e58d1",
+  "prompts": {},
+  "sessions": {
+    "s_66c6b1433d0f69": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c57a7f64-6ee4-49de-b936-88cc81cc95e1",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_7063ef02591fbf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b4f0af45-eec7-44f9-880c-9b9eb5856ab9",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_b5ead36c55393c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa2f1207-2b28-41a1-910b-89d317a88077",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_bab394425c6cdd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dc9c7b81-2f4d-4d8c-8608-897e98e997e3",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
