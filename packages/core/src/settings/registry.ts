@@ -38,7 +38,7 @@ export const ATLAS_SETTINGS: readonly SettingDefinition[] = [
     group: 'Transcript',
     label: 'Thinking blocks',
     description:
-      'What the transcript keeps of the reasoning behind an answer. Keep leaves a summary row behind that unfolds into the whole thought; while streaming shows the live tail and drops the row the moment the thought is done; hide never renders reasoning at all. Adjacent thoughts always fold into one block.',
+      'What the transcript keeps of the reasoning behind an answer. Keep leaves a summary row behind that unfolds into the whole thought; while streaming shows the live tail and holds it until something lands under it — the answer, or the end of the turn; hide never renders reasoning at all. Adjacent thoughts always fold into one block.',
     environmentVariable: 'ATLAS_THINKING_BLOCKS',
     kind: ESettingKind.Choice,
     fallback: 'keep',

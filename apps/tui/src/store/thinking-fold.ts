@@ -80,5 +80,8 @@ export function foldThoughts(args: {
   const folded = foldedAdjacentThoughts(args.entries)
   if (args.visibility === EThinkingVisibility.Keep) return folded
 
-  return folded.filter((entry) => !isThought(entry) || entry.streaming)
+  const trailing = folded.length - 1
+  return folded.filter(
+    (entry, index) => !isThought(entry) || entry.streaming || index === trailing,
+  )
 }
