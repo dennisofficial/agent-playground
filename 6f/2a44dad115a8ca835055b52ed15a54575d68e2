@@ -1,0 +1,238 @@
+apps/tui/src/ui/components/composer.tsx
+  s_adf1982df4e758::t_46a49b8c895021 75
+  s_adf1982df4e758::t_f554aab353cca7 149
+  s_adf1982df4e758::t_2d6e1bcac50bfb 5,8,55-74,76-81,89,133-137,144-148
+apps/tui/src/composition/__tests__/app-turn-line.spec.tsx
+  s_00fa36acc2e63f::t_60135ce990aa13 1-133
+apps/tui/src/ui/components/sidebar/turn.tsx
+  s_967264872f02f3::t_d60a009ecfeea1 4
+apps/tui/src/ui/shells-model.ts
+  s_d6704d751c1fe9::t_2edba36aec3345 95-131
+  s_d6704d751c1fe9::t_3c8f7aac6d2e6c 82-83,86-87
+apps/tui/src/composition/commands/__tests__/dispatch.spec.ts
+  s_b5ead36c55393c::t_2663f7a221d889 224
+apps/tui/src/composition/resume-turn.ts
+  s_b5ead36c55393c::t_f23ea15558b053 1-30
+apps/tui/src/ui/__tests__/composer-render.spec.tsx
+  s_adf1982df4e758::t_eb7e8503bf6936 6,117,120-121,140-142
+  s_adf1982df4e758::t_7aedf4180eae61 5,20-28,33,37,93-116,118-119,122-139
+apps/tui/src/composition/__tests__/app-undo.spec.tsx
+  s_b5ead36c55393c::t_2457d290477e33 36
+apps/tui/src/composition/app.tsx
+  s_bab394425c6cdd::t_b054fc7c7aa6ca 427,443-444
+  s_d3b7051a198a00::t_c6e9d925ba976f 358-370,408
+  s_b5ead36c55393c::t_cea2c23def6818 389-394
+  s_adf1982df4e758::t_ddc2124477bb05 409-411
+apps/tui/src/ui/components/shells.tsx
+  s_d6704d751c1fe9::t_46dee089c3e4a5 29-34,40
+  s_d6704d751c1fe9::t_0ffea507e406b3 120,124-125,128-133
+  s_d6704d751c1fe9::t_196741e62f6c97 64,72
+  s_d6704d751c1fe9::t_17389cb52017d5 186
+  s_d6704d751c1fe9::t_9b0340ce52aef9 211
+  s_d6704d751c1fe9::t_d775956d7b56fc 158-173,175,177-179
+  s_d6704d751c1fe9::t_c772cc2cf4cb7b 36,122-123
+  s_d6704d751c1fe9::t_7e3d5b60329f59 119,176,252
+  s_d6704d751c1fe9::t_c87f33f7b22cfb 6
+  s_d6704d751c1fe9::t_cf897ac904d5fa 244,253
+apps/tui/src/store/__tests__/sidebar-model.spec.ts
+  s_967264872f02f3::t_2ee7745efbb0ff 25,38
+apps/tui/src/composition/__tests__/app-switcher.spec.tsx
+  s_00fa36acc2e63f::t_ed72eaf726db54 20
+apps/tui/src/ui/components/transcript.tsx
+  s_b5ead36c55393c::t_cea2c23def6818 9,19,27,47-48,127-131,140
+apps/tui/src/composition/__tests__/resume-turn.spec.ts
+  s_b5ead36c55393c::t_95b3ee66523469 1-77
+apps/tui/src/ui/__tests__/shells-render.spec.tsx
+  s_d6704d751c1fe9::t_e7493d466d2cbd 193-233
+apps/tui/src/store/__tests__/fixture.ts
+  s_8632cf9b1d7379::t_3b4702f5a4c3b3 71,75-76
+apps/tui/src/composition/use-conversation.ts
+  s_bab394425c6cdd::t_d3183dcee36eeb 10,28-29,78,158-162,165,514-518,528
+  s_00fa36acc2e63f::t_efcac5028f2354 498
+  s_b5ead36c55393c::t_ce52b91aa6be85 8-9,39,84-85,446-471,525,540-541
+  s_00fa36acc2e63f::t_d676262666b86e 124
+apps/tui/src/composition/__tests__/fake-app.ts
+  s_00fa36acc2e63f::t_adbd9432182e07 40-47
+  s_d6704d751c1fe9::t_f514894456a91a 166,175,197-200,218-219
+  s_66c6b1433d0f69::t_28513f449f32bc 5,9-10,20-21,23,30,271,288,298,309,319
+  s_bab394425c6cdd::t_b5036a773623b7 297
+  s_b5ead36c55393c::t_2457d290477e33 361-364
+apps/tui/src/store/__tests__/thinking-fold.spec.ts
+  s_8632cf9b1d7379::t_5fb5025f422563 5-10,214-269
+apps/tui/src/composition/compose.ts
+  s_bab394425c6cdd::t_2b2d0101e46ea8 9,13,18,20,34-35,37-39,44,46,77,82,101,105-107,109-114,119-130,157,159-162,201,205,236,240,253,255-256,264
+apps/tui/src/composition/__tests__/open-conversation.spec.ts
+  s_00fa36acc2e63f::t_f5d2c6e212be45 4-5,7,11-26,43,50-63,68,78-83,87
+apps/tui/src/ui/components/sidebar.tsx
+  s_bab394425c6cdd::t_cfbec2cd84a940 5,18-27,31,52
+  s_967264872f02f3::t_d60a009ecfeea1 15
+  s_bab394425c6cdd::t_cb7ca9cd24a6df 93
+apps/tui/src/composition/__tests__/app-titling.spec.tsx
+  s_00fa36acc2e63f::t_ed72eaf726db54 104,137
+apps/tui/src/ui/__tests__/startup-render.spec.tsx
+  s_8632cf9b1d7379::t_dd465d1707cf4f 106-113
+  s_8632cf9b1d7379::t_00ec333c361d23 1-105,114-132
+apps/tui/src/store/index.ts
+  s_967264872f02f3::t_d60a009ecfeea1 69
+  s_8632cf9b1d7379::t_d4879c2a3fc4bf 54
+apps/tui/src/composition/open-conversation.ts
+  s_00fa36acc2e63f::t_d725b2deed055e 2,7,14,20-24,27-28
+apps/tui/src/composition/__tests__/fake-backend.ts
+  s_00fa36acc2e63f::t_adbd9432182e07 11-16,230-243
+apps/tui/src/composition/__tests__/boot-curtain.spec.tsx
+  s_00fa36acc2e63f::t_ed72eaf726db54 1-220
+apps/tui/docs/daily-driver-gaps.md
+  s_b5ead36c55393c::t_780f3611b2ff38 1-27,31-56,63-189
+  s_3d2e1035c4805f::t_3663d87a053989 29-30,59-60
+apps/tui/src/composition/__tests__/app-settings.spec.tsx
+  s_00fa36acc2e63f::t_ed72eaf726db54 45
+apps/tui/src/composition/__tests__/app-resume.spec.tsx
+  s_b5ead36c55393c::t_e628fb3d51d821 1-107
+apps/tui/src/composition/open-session.ts
+  s_00fa36acc2e63f::t_12a789946143f2 1-80
+apps/tui/src/store/thinking-fold.ts
+  s_8632cf9b1d7379::t_997f9218d1a4a1 47-48,50-51,54-57,59-61,63-74,112,116
+  s_8632cf9b1d7379::t_e64ab64c2abbae 49,52-53,58,62
+apps/tui/src/composition/__tests__/app-sidebar.spec.tsx
+  s_00fa36acc2e63f::t_ed72eaf726db54 85,104,132,159,179,206,233
+apps/tui/src/composition/__tests__/app-shortcuts.spec.tsx
+  s_00fa36acc2e63f::t_ed72eaf726db54 41
+apps/tui/src/ui/hooks/use-output-scroll.ts
+  s_d6704d751c1fe9::t_d2a10288b625ec 1-81
+apps/tui/src/composition/overlay-stack.tsx
+  s_d6704d751c1fe9::t_658add27e14fef 67
+apps/tui/src/ui/components/blocks/resume-block.tsx
+  s_b5ead36c55393c::t_d0168312d98c4b 1-20,22,24-29,32-48,52-55
+  s_b5ead36c55393c::t_a1cec91b1bb027 21,23,30-31,49-51
+apps/tui/src/store/__tests__/derive-transcript.spec.ts
+  s_8632cf9b1d7379::t_49611ebbdbb5a5 380
+  s_8632cf9b1d7379::t_3b4702f5a4c3b3 368-379,381-401
+apps/tui/src/store/conversation-store.ts
+  s_00fa36acc2e63f::t_efcac5028f2354 2-8,29,39-40,45,55,59,66,114-115
+apps/tui/src/store/derive-transcript.ts
+  s_8632cf9b1d7379::t_d4879c2a3fc4bf 2,9-14,70,77-78,80
+apps/tui/src/composition/use-shells.ts
+  s_d6704d751c1fe9::t_06eae052f9e7c1 6,10,20-24,34,90,130-135,146,156,170
+apps/tui/src/composition/__tests__/app-shells.spec.tsx
+  s_00fa36acc2e63f::t_ed72eaf726db54 42
+  s_d6704d751c1fe9::t_67f9e2dba1578e 126-202
+apps/tui/src/ui/__tests__/shells-model.spec.ts
+  s_d6704d751c1fe9::t_bd41180d4afb8f 6,10,137,167-206
+  s_d6704d751c1fe9::t_3b8c90b4f4d013 141,145,149,153,157,161,165-166
+apps/tui/src/composition/__tests__/app-fixture.tsx
+  s_00fa36acc2e63f::t_07d14793fc1381 7,10-16,39-45
+apps/tui/src/composition/__tests__/app-rewind.spec.tsx
+  s_00fa36acc2e63f::t_ed72eaf726db54 33,36,40-45,47,49,60-61,75,88,91,94-99,116,144,168-186,189
+apps/tui/src/composition/__tests__/app-commands.spec.tsx
+  s_00fa36acc2e63f::t_ed72eaf726db54 45
+apps/tui/src/ui/components/startup.tsx
+  s_8632cf9b1d7379::t_dd465d1707cf4f 3,23-24,27-43,136
+  s_967264872f02f3::t_2c6c732aac3d89 1-2,4-22,25-26,44-135,137-139
+apps/tui/src/ui/components/panel.tsx
+  s_adf1982df4e758::t_652ee9616be794 36-40,42-48,59,86-89,150,194
+  s_adf1982df4e758::t_46a49b8c895021 33-35,41
+  s_adf1982df4e758::t_8ab2dbe08c9f08 141-142
+  s_adf1982df4e758::t_915c6d61422742 140
+apps/tui/src/ui/__tests__/sidebar-render.spec.tsx
+  s_967264872f02f3::t_ea5f445d7af2ec 145
+  s_babe8d051442b0::t_c52e98baac813b 10,26,87-133
+  s_967264872f02f3::t_2ee7745efbb0ff 201
+apps/tui/src/composition/__tests__/app-exit-guard.spec.tsx
+  s_00fa36acc2e63f::t_ed72eaf726db54 76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "6f2a44dad115a8ca835055b52ed15a54575d68e2",
+  "prompts": {},
+  "sessions": {
+    "s_00fa36acc2e63f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "352277a1-bedf-4330-b2f6-4afc99730d7c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_3d2e1035c4805f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "76eb15ec-b39c-4b59-bca8-97832249f71d",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_66c6b1433d0f69": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c57a7f64-6ee4-49de-b936-88cc81cc95e1",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_8632cf9b1d7379": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6f62ac47-c0c1-4ca8-b95f-cc5ce030418a",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_967264872f02f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a1471a88-6dd9-41b1-91a1-79fde634633d",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_adf1982df4e758": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c917459c-6bba-41b7-a291-c7d5536957d4",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_b5ead36c55393c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa2f1207-2b28-41a1-910b-89d317a88077",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_bab394425c6cdd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dc9c7b81-2f4d-4d8c-8608-897e98e997e3",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_babe8d051442b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0251aeb7-0dd6-46f8-904b-67dd5b9bfa4b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_d3b7051a198a00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e551b05d-d5fc-4f70-ab29-b43f8292ee61",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_d6704d751c1fe9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c3b1f982-f1ca-4721-acf0-1d165750ad9b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
