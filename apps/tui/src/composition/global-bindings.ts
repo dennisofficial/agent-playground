@@ -11,6 +11,7 @@ export type GlobalHandlers = {
   onToggleSidebar: () => void
   onOpenShells: () => void
   onOpenSettings: () => void
+  onOpenAccounts: () => void
   onQuit: () => void
 }
 
@@ -77,6 +78,13 @@ export function globalBindings(handlers: GlobalHandlers): readonly KeyBinding[] 
       hint: 'settings',
       group: EKeyGroup.Session,
       run: handlers.onOpenSettings,
+    }),
+    global({
+      chord: 'ctrl+a',
+      hint: 'accounts',
+      describe: 'sign in, switch account, or remove one',
+      group: EKeyGroup.Session,
+      run: handlers.onOpenAccounts,
     }),
     global({
       chord: 'escape',

@@ -11,7 +11,11 @@ import type { OpenedConversation } from './open-conversation'
 import { ESession, type Session } from './open-session'
 import { useStartup } from './use-startup'
 
-type ReadySession = { app: AtlasApp; opened: OpenedConversation }
+type ReadySession = {
+  app: AtlasApp
+  opened: OpenedConversation
+  credentialNotice: string | null
+}
 
 function useReadySession(session: Promise<Session>): ReadySession | null {
   const [ready, setReady] = useState<ReadySession | null>(null)
@@ -21,7 +25,11 @@ function useReadySession(session: Promise<Session>): ReadySession | null {
 
     void session.then((settled) => {
       if (!live || settled.type !== ESession.Ready) return
-      setReady({ app: settled.app, opened: settled.opened })
+      setReady({
+        app: settled.app,
+        opened: settled.opened,
+        credentialNotice: settled.credentialNotice,
+      })
     })
 
     return () => {
@@ -63,7 +71,12 @@ export function BootScreen(props: {
   return (
     <>
       {ready === null ? null : (
-        <App app={ready.app} opened={ready.opened} covered={startup.covered} />
+        <App
+          app={ready.app}
+          opened={ready.opened}
+          credentialNotice={ready.credentialNotice}
+          covered={startup.covered}
+        />
       )}
       {startup.covered ? (
         <Startup

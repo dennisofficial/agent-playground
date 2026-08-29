@@ -116,6 +116,7 @@ describe('localCommands', () => {
       onOpenSwitcher: handler,
       onOpenShells: handler,
       onOpenSettings: handler,
+      onOpenAccounts: handler,
       onNewConversation: handler,
     })
 
@@ -132,6 +133,7 @@ describe('localCommands', () => {
       onOpenSwitcher: handler,
       onOpenShells: handler,
       onOpenSettings: handler,
+      onOpenAccounts: handler,
       onNewConversation: handler,
     })
 
@@ -151,6 +153,7 @@ describe('the compact command and its scope', () => {
       onOpenSwitcher: handler,
       onOpenShells: handler,
       onOpenSettings: handler,
+      onOpenAccounts: handler,
       onNewConversation: handler,
     })
   }
@@ -213,6 +216,7 @@ describe('the compact command and its scope', () => {
       onOpenSwitcher: handler,
       onOpenShells: handler,
       onOpenSettings: handler,
+      onOpenAccounts: handler,
       onNewConversation: handler,
     })
 

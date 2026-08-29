@@ -22,6 +22,7 @@ export type LocalCommandHandlers = {
   onOpenSwitcher: () => void
   onOpenShells: () => void
   onOpenSettings: () => void
+  onOpenAccounts: () => void
   onNewConversation: () => void
 }
 
@@ -73,6 +74,12 @@ export function localCommands(handlers: LocalCommandHandlers): readonly LocalCom
       summary: 'open settings',
       group: ECommandGroup.Session,
       open: handlers.onOpenSettings,
+    }),
+    immediate({
+      name: 'auth',
+      summary: 'sign in, switch account, or remove one',
+      group: ECommandGroup.Session,
+      open: handlers.onOpenAccounts,
     }),
     local({
       name: 'compact',

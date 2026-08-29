@@ -42,6 +42,7 @@ const ready = (app: FakeApp): Session => ({
   type: ESession.Ready,
   app,
   opened: { threadId: THREAD, events: [], turns: [], name: null },
+  credentialNotice: null,
 })
 
 async function mount(session: Promise<Session>, onAbandon = (): void => undefined): Promise<Mounted> {

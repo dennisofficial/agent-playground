@@ -1,6 +1,7 @@
 import { MODEL_CATALOG } from '@dltech/atlas-core'
 import React from 'react'
 
+import { Accounts } from '../ui/components/accounts'
 import { CompactingOverlay, type Compacting } from '../ui/components/compacting'
 import { ExitGuard } from '../ui/components/exit-guard'
 import { exitGuardRow } from '../ui/exit-guard-model'
@@ -10,6 +11,7 @@ import { Shells } from '../ui/components/shells'
 import { Switcher } from '../ui/components/switcher'
 import { isShellRunning } from '../ui/shells-model'
 import { modelIsReachable } from './model-selection'
+import type { AccountsControl } from './use-accounts'
 import type { ExitGuardControl } from './use-exit-guard'
 import type { RewindControl } from './use-rewind'
 import type { SettingsControl } from './use-settings'
@@ -24,12 +26,13 @@ export function OverlayStack(props: {
   switcher: SwitcherControl
   shells: ShellsControl
   settings: SettingsControl
+  accounts: AccountsControl
   rewind: RewindControl
   exitGuard: ExitGuardControl
   compacting: Compacting | null
   now: number
 }): React.ReactNode {
-  const { switcher, shells, settings, rewind, exitGuard } = props
+  const { switcher, shells, settings, accounts, rewind, exitGuard } = props
   const sidebarWidth = Math.min(settings.sidebarWidth, props.width)
 
   return (
@@ -44,6 +47,15 @@ export function OverlayStack(props: {
           overlay
           onPick={rewind.handlePick}
           onDismiss={rewind.handleDismiss}
+        />
+      )}
+      {accounts.state === null ? null : (
+        <Accounts
+          width={sidebarWidth}
+          state={accounts.state}
+          overlay
+          onPick={accounts.handlePick}
+          onDismiss={accounts.handleDismiss}
         />
       )}
       {switcher.state === null ? null : (

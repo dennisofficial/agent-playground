@@ -13,7 +13,12 @@ export enum ESession {
 }
 
 export type Session =
-  | { type: ESession.Ready; app: AtlasApp; opened: OpenedConversation }
+  | {
+      type: ESession.Ready
+      app: AtlasApp
+      opened: OpenedConversation
+      credentialNotice: string | null
+    }
   | { type: ESession.Refused; message: string; exitCode: number }
   | { type: ESession.Failed; error: unknown }
 
@@ -43,12 +48,12 @@ async function startSession(args: {
   const app = await composeAtlas({ config, env: args.env })
   applyAppearance(appearanceOf({ resolution: app.settings.snapshot().resolution }))
 
+  /**
+   * A credential Atlas cannot use is no longer a reason to refuse to start: the accounts overlay is
+   * inside the app, so the session opens carrying what went wrong and offers the fix.
+   */
   progress.report(EBootStep.Authorising)
   const refused = await credentialRefusal(app)
-  if (refused !== null) {
-    await app.close()
-    return { type: ESession.Refused, message: refused.message, exitCode: refused.exitCode }
-  }
 
   // @opentui/core's first Tree-sitter client takes the default parser set as it finds it, so a
   // grammar registered after the tree mounts never reaches it — and a missing grammar only warns.
@@ -64,7 +69,7 @@ async function startSession(args: {
   })
 
   progress.report(EBootStep.Ready)
-  return { type: ESession.Ready, app, opened }
+  return { type: ESession.Ready, app, opened, credentialNotice: refused?.message ?? null }
 }
 
 /**

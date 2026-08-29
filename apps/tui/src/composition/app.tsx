@@ -55,6 +55,7 @@ import { useOverlayKeys } from './use-overlay-keys'
 import { useSettings } from './use-settings'
 import { useShells } from './use-shells'
 import { useRewind } from './use-rewind'
+import { useAccounts } from './use-accounts'
 import { useSwitcher } from './use-switcher'
 
 const PLACEHOLDER = 'Ask anything'
@@ -74,13 +75,19 @@ const readoutOf = (args: { entry: ModelEntry | undefined; used: number }): Foote
 export function App(props: {
   app: AtlasApp
   opened: OpenedConversation
+  credentialNotice?: string | null
   covered?: boolean
 }): React.ReactNode {
   const registry = useMemo(() => createKeyRegistry(), [])
 
   return (
     <KeyRegistryContext.Provider value={registry}>
-      <Workspace app={props.app} opened={props.opened} covered={props.covered === true} />
+      <Workspace
+        app={props.app}
+        opened={props.opened}
+        credentialNotice={props.credentialNotice ?? null}
+        covered={props.covered === true}
+      />
     </KeyRegistryContext.Provider>
   )
 }
@@ -88,6 +95,7 @@ export function App(props: {
 function Workspace(props: {
   app: AtlasApp
   opened: OpenedConversation
+  credentialNotice: string | null
   covered: boolean
 }): React.ReactNode {
   const renderer = useRenderer()
@@ -161,6 +169,21 @@ function Workspace(props: {
 
   const shells = useShells({ app: props.app })
 
+  const accounts = useAccounts({ accounts: props.app.accounts })
+
+  /**
+   * A session that opened with nothing it can authenticate with shows the accounts overlay rather
+   * than waiting for the first turn to fail with the same message.
+   */
+  const { credentialNotice } = props
+  const notified = useRef(false)
+  useEffect(() => {
+    if (credentialNotice === null || notified.current) return
+
+    notified.current = true
+    accounts.handleOpen(credentialNotice)
+  }, [accounts, credentialNotice])
+
   const handleRewindChoice = useCallback(
     ({ point, verb }: RewindChoice) => {
       if (verb === ERewindVerb.ToHere) {
@@ -212,9 +235,11 @@ function Workspace(props: {
         onOpenSwitcher: switcher.handleOpen,
         onOpenShells: () => shells.handleOpen(),
         onOpenSettings: settings.handleOpen,
+        onOpenAccounts: () => accounts.handleOpen(),
         onNewConversation: handleNewConversation,
       }),
     [
+      accounts,
       conversation.handleCompact,
       handleNewConversation,
       rewind.handleOpen,
@@ -321,6 +346,7 @@ function Workspace(props: {
       onOpenShells: () => shells.handleOpen(),
       onToggleSidebar: handleToggleSidebar,
       onOpenSettings: settings.handleOpen,
+      onOpenAccounts: () => accounts.handleOpen(),
       onQuit: handleQuit,
     }),
   )
@@ -334,6 +360,7 @@ function Workspace(props: {
       { open: rewind.state !== null, handleKey: rewind.handleKey },
       { open: switcher.state !== null, handleKey: switcher.handleKey },
       { open: shells.state !== null, handleKey: shells.handleKey },
+      { open: accounts.state !== null, handleKey: accounts.handleKey },
       { open: settings.state !== null, handleKey: settings.handleKey, porous: true },
     ],
     bindings: registry.snapshot,
@@ -364,6 +391,7 @@ function Workspace(props: {
     props.covered ||
     exitGuard.state !== null ||
     switcher.state !== null ||
+    accounts.state !== null ||
     settings.state !== null ||
     shells.state !== null ||
     rewind.state !== null ||
@@ -438,6 +466,7 @@ function Workspace(props: {
           switcher={switcher}
           shells={shells}
           settings={settings}
+          accounts={accounts}
           rewind={rewind}
           exitGuard={exitGuard}
           compacting={conversation.compacting}

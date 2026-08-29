@@ -16,6 +16,7 @@ const handlers = (over: Partial<GlobalHandlers>): GlobalHandlers => ({
   onOpenShells: noop,
   onToggleSidebar: noop,
   onOpenSettings: noop,
+  onOpenAccounts: noop,
   onQuit: noop,
   ...over,
 })
