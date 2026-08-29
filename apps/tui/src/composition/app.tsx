@@ -25,7 +25,9 @@ import { useDraft } from '../ui/hooks/use-draft'
 import { modelLabel } from '../ui/model-label'
 import { densityVersion, subscribeDensity } from '../ui/density-store'
 import { paletteVersion, subscribePalette } from '../ui/palette-store'
+import { exitGuardRow } from '../ui/exit-guard-model'
 import { ERewindPointKind, ERewindVerb, type RewindChoice } from '../ui/rewind-model'
+import { isShellRunning } from '../ui/shells-model'
 import type { SwitcherChoice } from '../ui/switcher-model'
 import { SIDEBAR_GUTTER, SIDEBAR_MIN_TERMINAL_WIDTH } from '../ui/theme'
 import {
@@ -42,6 +44,7 @@ import { OverlayStack } from './overlay-stack'
 import type { ModelSelection } from './model-selection'
 import type { OpenedConversation } from './open-conversation'
 import { useConversation } from './use-conversation'
+import { useExitGuard } from './use-exit-guard'
 import { useOverlayKeys } from './use-overlay-keys'
 import { useSettings } from './use-settings'
 import { useShells } from './use-shells'
@@ -269,13 +272,22 @@ function Workspace(props: { app: AtlasApp; opened: OpenedConversation }): React.
     setPreference(sidebarVisible ? ESidebarPreference.Hidden : ESidebarPreference.Auto)
   }, [sidebarVisible])
 
+  const exitGuard = useExitGuard({ onExit: () => renderer.destroy() })
+
   const handleQuit = useCallback(() => {
     if (conversation.working) {
       conversation.handleInterrupt()
       return
     }
+
+    const running = shells.shells.filter(isShellRunning)
+    if (running.length > 0) {
+      exitGuard.handleOpen({ running: running.map(exitGuardRow) })
+      return
+    }
+
     renderer.destroy()
-  }, [conversation, renderer])
+  }, [conversation, exitGuard, renderer, shells])
 
   useKeyBindings(
     globalBindings({
@@ -298,6 +310,7 @@ function Workspace(props: { app: AtlasApp; opened: OpenedConversation }): React.
   const handleKey = useOverlayKeys({
     veil: { shown: shortcuts, dismiss: () => setShortcuts(false), keys: [HELP_KEY] },
     owners: [
+      { open: exitGuard.state !== null, handleKey: exitGuard.handleKey },
       { open: rewind.state !== null, handleKey: rewind.handleKey },
       { open: switcher.state !== null, handleKey: switcher.handleKey },
       { open: shells.state !== null, handleKey: shells.handleKey },
@@ -354,6 +367,7 @@ function Workspace(props: { app: AtlasApp; opened: OpenedConversation }): React.
             placeholder={conversation.working ? STEER_PLACEHOLDER : PLACEHOLDER}
             maxRows={composerRows(height)}
             focused={
+              exitGuard.state === null &&
               switcher.state === null &&
               settings.state === null &&
               shells.state === null &&
@@ -388,6 +402,7 @@ function Workspace(props: { app: AtlasApp; opened: OpenedConversation }): React.
           shells={shells}
           settings={settings}
           rewind={rewind}
+          exitGuard={exitGuard}
         />
       </box>
     </Screen>

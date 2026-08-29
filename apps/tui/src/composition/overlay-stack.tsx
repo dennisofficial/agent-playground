@@ -1,11 +1,13 @@
 import { MODEL_CATALOG } from '@dltech/atlas-core'
 import React from 'react'
 
+import { ExitGuard } from '../ui/components/exit-guard'
 import { Rewind } from '../ui/components/rewind'
 import { Settings } from '../ui/components/settings'
 import { Shells } from '../ui/components/shells'
 import { Switcher } from '../ui/components/switcher'
 import { modelIsReachable } from './model-selection'
+import type { ExitGuardControl } from './use-exit-guard'
 import type { RewindControl } from './use-rewind'
 import type { SettingsControl } from './use-settings'
 import type { ShellsControl } from './use-shells'
@@ -20,8 +22,9 @@ export function OverlayStack(props: {
   shells: ShellsControl
   settings: SettingsControl
   rewind: RewindControl
+  exitGuard: ExitGuardControl
 }): React.ReactNode {
-  const { switcher, shells, settings, rewind } = props
+  const { switcher, shells, settings, rewind, exitGuard } = props
   const sidebarWidth = Math.min(settings.sidebarWidth, props.width)
 
   return (
@@ -56,6 +59,15 @@ export function OverlayStack(props: {
           overlay
           onKill={shells.handleKill}
           onDismiss={shells.handleDismiss}
+        />
+      )}
+      {exitGuard.state === null ? null : (
+        <ExitGuard
+          width={Math.min(props.contentWidth, props.width)}
+          state={exitGuard.state}
+          overlay
+          onPick={exitGuard.handlePick}
+          onDismiss={exitGuard.handleDismiss}
         />
       )}
       {settings.state === null ? null : (
