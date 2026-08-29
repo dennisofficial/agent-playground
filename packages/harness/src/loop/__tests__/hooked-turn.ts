@@ -10,7 +10,10 @@ import type { HookChain } from '../../hooks/registry'
 import { scriptedModel, type ScriptedStep } from '../../model/testing/scripted-model'
 import { HookedToolDispatcher } from '../../tools/dispatch'
 import { InMemoryToolRegistry } from '../../tools/registry'
+import { fixturePrompt } from './fixture-prompt'
 import { createTempDatabase, type TempDatabase } from './temp-database'
+
+const PROJECT_DIRECTORY = '/w'
 
 const opened: { harness: AtlasHarness; temp: TempDatabase }[] = []
 
@@ -56,7 +59,7 @@ export async function openHooked(args: {
       log: harness.log,
       model: harness.model,
       ids: harness.ids,
-      assembly: defaultPipeline(),
+      assembly: defaultPipeline({ prompt: () => fixturePrompt(), projectDirectory: PROJECT_DIRECTORY }),
       hooks: args.hooks,
       ...(args.withTools === true
         ? {

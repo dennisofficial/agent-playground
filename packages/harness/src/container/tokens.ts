@@ -3,6 +3,7 @@ import type { LanguageModelV4 } from '@ai-sdk/provider'
 import type { SettingsStorePort } from '@dltech/atlas-core'
 
 import type { PrismaClient } from '../../prisma/generated/client'
+import type { ClaudeCodeSource } from '../credentials/claude-code-source'
 import type { KeychainReader } from '../credentials/keychain-reader'
 import type { HookChain } from '../hooks/registry'
 import type { InjectionToken } from './injection'
@@ -12,6 +13,9 @@ export const PrismaClientToken: InjectionToken<PrismaClient> = Symbol('atlas.Pri
 export const WorkspaceRoot: InjectionToken<string> = Symbol('atlas.WorkspaceRoot')
 
 export const KeychainReaderToken: InjectionToken<KeychainReader> = Symbol('atlas.KeychainReader')
+
+export const ClaudeCodeSourceToken: InjectionToken<ClaudeCodeSource> =
+  Symbol('atlas.ClaudeCodeSource')
 
 export const LanguageModelToken: InjectionToken<LanguageModelV4> = Symbol('atlas.LanguageModel')
 

@@ -144,7 +144,7 @@ describe('messagesFromEvents', () => {
     ])
   })
 
-  it('renders loaded context as a user message and still ignores a nudge', () => {
+  it('renders loaded context as a user message, and a live nudge after it', () => {
     const events = log([
       { type: 'user-said', text: 'run it' },
       { type: 'context-loaded', slot: 'project-instructions', key: '/repo/CLAUDE.md', content: 'rules' },
@@ -153,7 +153,7 @@ describe('messagesFromEvents', () => {
 
     const assembled = messagesFromEvents()(empty, contextFor({ events }))
 
-    expect(assembled.messages.map((entry) => entry.message.role)).toEqual(['user', 'user'])
+    expect(assembled.messages.map((entry) => entry.message.role)).toEqual(['user', 'user', 'user'])
     expect(assembled.messages[1]?.message.content).toEqual([
       {
         type: 'text',
@@ -196,5 +196,34 @@ describe('messagesFromEvents', () => {
     const events = log([{ type: 'user-said', text: 'hello' }])
 
     expect(messagesFromEvents()(seeded, contextFor({ events })).system).toEqual([{ text: 'preamble' }])
+  })
+})
+
+describe('messagesFromEvents and nudges', () => {
+  it('renders a live nudge as a user-role block, so the prompt no longer ends on the model', () => {
+    const events = log([
+      { type: 'user-said', text: 'explain' },
+      { type: 'assistant-said', parts: [{ type: 'text', text: 'it works by' }], interrupted: true },
+      { type: 'nudge', text: 'carry on', lifetimeSteps: 1 },
+    ])
+
+    const assembled = messagesFromEvents()(empty, contextFor({ events }))
+
+    expect(assembled.messages.at(-1)).toEqual({
+      message: { role: 'user', content: [{ type: 'text', text: '<nudge>\ncarry on\n</nudge>' }] },
+      origin: { eventId: toEventId('event-3'), seq: 3 },
+    })
+  })
+
+  it('drops a nudge the model has already answered', () => {
+    const events = log([
+      { type: 'user-said', text: 'explain' },
+      { type: 'nudge', text: 'carry on', lifetimeSteps: 1 },
+      { type: 'assistant-said', parts: [{ type: 'text', text: 'carried' }] },
+    ])
+
+    const assembled = messagesFromEvents()(empty, contextFor({ events }))
+
+    expect(assembled.messages.map((entry) => entry.message.role)).toEqual(['user', 'assistant'])
   })
 })

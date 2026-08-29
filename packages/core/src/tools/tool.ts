@@ -50,12 +50,26 @@ export type ToolDeclaration = {
   revealsWholeFile?(input: unknown): boolean
 }
 
-export type ToolInvocation = { input: unknown; signal: AbortSignal; idempotencyKey: string }
+export type ToolInvocation = {
+  input: unknown
+  signal: AbortSignal
+  idempotencyKey: string
+  sessionDirectory: string
+}
+
+export type SessionDirectoryMove = { sessionDirectory: string }
+
+export function movedSessionDirectoryOf(output: unknown): string | undefined {
+  if (typeof output !== 'object' || output === null) return undefined
+  const moved = (output as Partial<SessionDirectoryMove>).sessionDirectory
+  return typeof moved === 'string' && moved.length > 0 ? moved : undefined
+}
 
 export type ToolRun<TSchema extends ZodType> = {
   input: z.output<TSchema>
   signal: AbortSignal
   idempotencyKey: string
+  sessionDirectory: string
 }
 
 export abstract class ToolDefinition<TSchema extends ZodType = ZodType> {
@@ -75,12 +89,17 @@ export abstract class SchemaTool<TSchema extends ZodType = ZodType> extends Tool
 
   protected abstract run(args: ToolRun<TSchema>): Promise<ToolOutcome>
 
-  override async invoke({ input, signal, idempotencyKey }: ToolInvocation): Promise<ToolOutcome> {
+  override async invoke({
+    input,
+    signal,
+    idempotencyKey,
+    sessionDirectory,
+  }: ToolInvocation): Promise<ToolOutcome> {
     const parsed = this.inputSchema.safeParse(input)
     if (!parsed.success) {
       return { ok: false, reason: `${this.name} was called with invalid input: ${z.prettifyError(parsed.error)}` }
     }
 
-    return await this.run({ input: parsed.data, signal, idempotencyKey })
+    return await this.run({ input: parsed.data, signal, idempotencyKey, sessionDirectory })
   }
 }

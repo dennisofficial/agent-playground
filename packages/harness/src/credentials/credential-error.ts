@@ -3,6 +3,7 @@ export enum ECredentialFailure {
   NotFound = 'not-found',
   Unreadable = 'unreadable',
   Expired = 'expired',
+  RefreshFailed = 'refresh-failed',
 }
 
 export class CredentialError extends Error {

@@ -6,12 +6,12 @@ import {
   defaultAnnotators,
   defaultRules,
   ECacheTtl,
+  type CompiledPrompt,
   estimateTokens,
   stampDrafts,
   toThreadId,
   toEventId,
   toRunId,
-  type Credential,
   type CredentialPort,
   type Event,
   type EventDraft,
@@ -21,16 +21,16 @@ import { toInstructions } from '../../model/instructions'
 import { toModelMessages } from '../../model/message-conversion'
 import { toProviderPrompt } from '../../model/provider-prompt'
 import { ANTHROPIC_PROVIDER_ID, createAnthropicOauthModel } from '../anthropic-oauth'
+import { credentialsHandingOut, oauthCredential } from '../../credentials/testing'
 import { recordingFetch, streamedText } from './recording-fetch'
+
+const PROJECT_DIRECTORY = '/w'
 
 const MODEL_ID = 'claude-opus-5'
 
-const credentials: CredentialPort = {
-  read: async (): Promise<Credential> => ({
-    accessToken: 'token',
-    expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
-  }),
-}
+const credentials: CredentialPort = credentialsHandingOut(
+  oauthCredential({ accessToken: 'token' }),
+)
 
 const log = (drafts: readonly EventDraft[]): Event[] =>
   stampDrafts({
@@ -51,11 +51,20 @@ const exchange = log([
   { type: 'user-said', text: 'and now?' },
 ])
 
+const FIXTURE_PROMPT: CompiledPrompt = {
+  blocks: [{ text: 'You are Atlas.' }, { text: 'The project directory is /w.' }],
+  parts: [
+    { id: 'fixture.identity', text: 'You are Atlas.', chars: 14 },
+    { id: 'fixture.environment', text: 'The project directory is /w.', chars: 28 },
+  ],
+  skipped: [],
+}
+
 type CachedBlock = { cache_control?: { type: string; ttl?: string } }
 
 const sentBody = async (): Promise<{ system: CachedBlock[]; messages: { content: CachedBlock[] }[] }> => {
   const { assembled } = assemble({
-    rules: defaultRules(),
+    rules: defaultRules({ prompt: () => FIXTURE_PROMPT, projectDirectory: PROJECT_DIRECTORY }),
     annotators: defaultAnnotators(),
     ctx: {
       events: exchange,

@@ -99,9 +99,6 @@ const fileHolding = (args: { name: string; text: string }): string => {
   return path
 }
 
-const indexOfHook = (name: string): number =>
-  chain.beforeTool.findIndex((hook) => hook.name === name)
-
 describe('the file-state hooks resolved from one container', () => {
   it('denies an edit to a file nothing has read yet', async () => {
     const path = fileHolding({ name: 'unread.ts', text: 'before\n' })
@@ -128,19 +125,11 @@ describe('the file-state hooks resolved from one container', () => {
     expect(await decisionOf(editing(path))).toBe(EBeforeToolDecision.Allow)
   })
 
-  it('registers each hook exactly once, alongside the boundary guard', () => {
+  it('registers each hook exactly once', () => {
     const named = (hooks: readonly RegisteredHook<unknown>[], name: string): number =>
       hooks.filter((hook) => hook.name === name).length
 
     expect(named(chain.beforeTool, 'readBeforeWrite')).toBe(1)
     expect(named(chain.afterTool, 'recordFileState')).toBe(1)
-    expect(named(chain.beforeTool, 'workspaceBoundary')).toBe(1)
-  })
-
-  it('asks the boundary guard first, so an escaping path is refused for escaping rather than for being unread', () => {
-    const boundary = indexOfHook('workspaceBoundary')
-
-    expect(boundary).toBeGreaterThanOrEqual(0)
-    expect(indexOfHook('readBeforeWrite')).toBeGreaterThan(boundary)
   })
 })

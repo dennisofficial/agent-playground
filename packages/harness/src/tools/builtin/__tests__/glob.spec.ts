@@ -20,14 +20,15 @@ beforeAll(async () => {
 })
 
 const scan = async (input: unknown) =>
-  new GlobTool(root).invoke({
+  new GlobTool().invoke({
     input,
     signal: new AbortController().signal,
     idempotencyKey: 'glob-1',
+    sessionDirectory: root,
   })
 
 describe('GlobTool', () => {
-  it('returns the matches inside the workspace', async () => {
+  it('returns the matches under the directory it scans', async () => {
     const outcome = await scan({ pattern: '**/*.txt' })
 
     expect(outcome).toMatchObject({
@@ -38,24 +39,15 @@ describe('GlobTool', () => {
     })
   })
 
-  it('drops a match outside the workspace root, whatever the pattern was', async () => {
+  it('reaches outside the directory it scans when the pattern says to', async () => {
     const outcome = await scan({ pattern: '../*.txt' })
 
-    expect(outcome).toMatchObject({ ok: true, output: { paths: [] } })
-    expect(JSON.stringify(outcome)).not.toContain(outside)
+    expect(outcome).toMatchObject({ ok: true, output: { paths: [outside] } })
   })
 
-  it('returns nothing outside the root for patterns whose escape resolve cannot see', async () => {
-    for (const pattern of ['{.,..}/*.txt', '[.][.]/*.txt', '@(..)/*.txt']) {
-      const outcome = await scan({ pattern })
-
-      expect(JSON.stringify(outcome)).not.toContain(outside)
-    }
-  })
-
-  it('drops a match reached through a path that escapes the root', async () => {
+  it('follows a path argument out of the directory it started in', async () => {
     const outcome = await scan({ path: join(root, 'sub'), pattern: '../../*.txt' })
 
-    expect(outcome).toMatchObject({ ok: true, output: { paths: [] } })
+    expect(outcome).toMatchObject({ ok: true, output: { paths: [outside] } })
   })
 })

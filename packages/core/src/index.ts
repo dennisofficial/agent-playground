@@ -76,6 +76,7 @@ export * from './hooks/hooks'
 export * from './credentials/account'
 export * from './credentials/adoption'
 export * from './credentials/refresh'
+export * from './credentials/providers'
 export * from './credentials/selection'
 
 export * from './ports/account-store.port'

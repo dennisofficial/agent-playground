@@ -9,6 +9,7 @@ import { ReadTool } from './builtin/read'
 import { ShellKillTool } from './builtin/shell-kill'
 import { ShellListTool } from './builtin/shell-list'
 import { ShellOutputTool } from './builtin/shell-output'
+import { TaskWriteTool } from './builtin/task-write'
 import { WriteTool } from './builtin/write'
 import { InMemoryToolRegistry, ToolRegistry } from './registry'
 
@@ -22,6 +23,7 @@ export function registerBuiltinTools({ container }: { container: DependencyConta
   container.register(portToken(ToolDefinition), { useClass: ShellListTool })
   container.register(portToken(ToolDefinition), { useClass: ShellOutputTool })
   container.register(portToken(ToolDefinition), { useClass: ShellKillTool })
+  container.register(portToken(ToolDefinition), { useClass: TaskWriteTool })
 
   container.register(portToken(ToolRegistry), { useClass: InMemoryToolRegistry })
 }

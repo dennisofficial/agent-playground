@@ -26,6 +26,7 @@ export abstract class ToolDispatcher {
   abstract dispatch(args: {
     call: DispatchableCall
     signal: AbortSignal
+    sessionDirectory: string
   }): Promise<readonly EventDraft[]>
 }
 
@@ -56,8 +57,9 @@ export class HookedToolDispatcher extends ToolDispatcher {
   async dispatch(args: {
     call: DispatchableCall
     signal: AbortSignal
+    sessionDirectory: string
   }): Promise<readonly EventDraft[]> {
-    const { call, signal } = args
+    const { call, signal, sessionDirectory } = args
     const definition = this.registry.find(call.name)
     if (definition === undefined) return [this.unknownToolDraft({ call })]
 
@@ -86,7 +88,13 @@ export class HookedToolDispatcher extends ToolDispatcher {
 
     const allowed: ToolCall = { ...candidate, input: outcome.input }
     const idempotencyKey = `${call.runId}:${call.callId}`
-    const result = await this.invokeTool({ definition, call: allowed, signal, idempotencyKey })
+    const result = await this.invokeTool({
+      definition,
+      call: allowed,
+      signal,
+      idempotencyKey,
+      sessionDirectory,
+    })
 
     return [
       this.resultDraft({ call: allowed, result }),
@@ -163,12 +171,14 @@ export class HookedToolDispatcher extends ToolDispatcher {
     call: ToolCall
     signal: AbortSignal
     idempotencyKey: string
+    sessionDirectory: string
   }): Promise<ToolOutcome> {
     try {
       return await args.definition.invoke({
         input: args.call.input,
         signal: args.signal,
         idempotencyKey: args.idempotencyKey,
+        sessionDirectory: args.sessionDirectory,
       })
     } catch (error) {
       return { ok: false, reason: `the ${args.call.name} tool threw: ${messageOf(error)}` }

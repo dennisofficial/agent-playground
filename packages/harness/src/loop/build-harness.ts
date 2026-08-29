@@ -2,14 +2,17 @@ import type { LanguageModel } from 'ai'
 
 import {
   defaultPipeline,
+  EMPTY_PROMPT,
   type AssemblyPipeline,
   type Assembled,
   type ChunkFilter,
   type ClockPort,
+  type CompiledPrompt,
   type EventLogPort,
   type IdPort,
   type ModelPort,
   type ProviderIdentity,
+  type ThreadId,
   type ToolDeclaration,
 } from '@dltech/atlas-core'
 
@@ -41,6 +44,7 @@ export type BuildHarnessArgs = {
   databaseUrl?: string | undefined
   identity?: ProviderIdentity | undefined
   assembly?: AssemblyPipeline | undefined
+  prompt?: CompiledPrompt | undefined
   tools?: readonly ToolDeclaration[] | undefined
   dispatch?: ToolDispatcher | undefined
   countTokens?: ((assembled: Assembled) => number) | undefined
@@ -48,13 +52,9 @@ export type BuildHarnessArgs = {
   ids?: IdPort | undefined
   onChunk?: ChunkFilter | undefined
   hooks?: HookChain | undefined
-  compact?: (() => Promise<boolean>) | undefined
+  compact?: ((args: { threadId: ThreadId }) => Promise<boolean>) | undefined
   autoCompactAtPercent?: (() => number) | undefined
-}
-
-export function providerIdentityOf(model: LanguageModel): ProviderIdentity {
-  if (typeof model === 'string') return { id: 'gateway', modelId: model }
-  return { id: model.provider, modelId: model.modelId }
+  projectDirectory?: string | undefined
 }
 
 export async function buildHarness(args: BuildHarnessArgs): Promise<AtlasHarness> {
@@ -68,7 +68,7 @@ export async function buildHarness(args: BuildHarnessArgs): Promise<AtlasHarness
   const tape = createRawTape({ scope: `pid-${process.pid}` })
   const model = new AiSdkModelPort({
     model: args.model,
-    identity: args.identity ?? providerIdentityOf(args.model),
+    ...(args.identity === undefined ? {} : { identity: args.identity }),
     hooks: args.hooks,
     tape,
   })
@@ -78,13 +78,19 @@ export async function buildHarness(args: BuildHarnessArgs): Promise<AtlasHarness
     log,
     model,
     ids,
-    assembly: args.assembly ?? defaultPipeline(),
+    assembly:
+      args.assembly ??
+      defaultPipeline({
+        prompt: () => args.prompt ?? EMPTY_PROMPT,
+        projectDirectory: args.projectDirectory ?? process.cwd(),
+      }),
     tools: args.tools,
     dispatch: args.dispatch,
     countTokens: args.countTokens,
     onChunk: args.onChunk,
     hooks: args.hooks,
     spend: { ledger, clock },
+    projectDirectory: args.projectDirectory,
     ...(args.compact === undefined ? {} : { compact: args.compact }),
     ...(args.autoCompactAtPercent === undefined
       ? {}

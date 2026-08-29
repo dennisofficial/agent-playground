@@ -51,6 +51,14 @@ export class PublishingTurnRunner extends TurnRunner {
     })
   }
 
+  resume({ threadId, signal }: { threadId: ThreadId; signal?: AbortSignal }): Promise<TurnOutcome> {
+    const { publisher, runner } = this.runnerFor(threadId)
+    return publishing({
+      publisher,
+      run: () => runner.resume({ threadId, ...(signal === undefined ? {} : { signal }) }),
+    })
+  }
+
   private runnerFor(threadId: ThreadId): { publisher: ThreadPublisher; runner: TurnRunner } {
     const publisher = this.channel.publisherFor({ threadId, filter: this.deps.onChunk })
     return { publisher, runner: new LoopTurnRunner({ ...this.deps, onChunk: publisher.onChunk }) }

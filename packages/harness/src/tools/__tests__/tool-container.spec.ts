@@ -41,8 +41,12 @@ function toolNamed({ container, name }: { container: DependencyContainer; name: 
   return found
 }
 
-const invoke = (tool: ToolDefinition, input: unknown): Promise<ToolOutcome> =>
-  tool.invoke({ input, signal: AbortSignal.timeout(10_000), idempotencyKey: 'key-1' })
+const invoke = (
+  tool: ToolDefinition,
+  input: unknown,
+  sessionDirectory = tmpdir(),
+): Promise<ToolOutcome> =>
+  tool.invoke({ input, signal: AbortSignal.timeout(10_000), idempotencyKey: 'key-1', sessionDirectory })
 
 describe('the builtin tools resolved from the container', () => {
   let root: string
@@ -76,8 +80,8 @@ describe('the builtin tools resolved from the container', () => {
     expect(BashTool.name).not.toBe('bash')
   })
 
-  it('injects the workspace root into the tools that need one', async () => {
-    const outcome = await invoke(toolNamed({ container, name: 'glob' }), { pattern: '*.ts' })
+  it('scans the session directory when the call names no path of its own', async () => {
+    const outcome = await invoke(toolNamed({ container, name: 'glob' }), { pattern: '*.ts' }, root)
 
     expect(outcome.ok).toBe(true)
     expect(outcome.ok && outcome.modelText).toContain('kept.ts')
@@ -98,7 +102,7 @@ describe('tool registration across containers', () => {
 
     try {
       const globIn = (root: string): Promise<ToolOutcome> =>
-        invoke(toolNamed({ container: containerRootedAt(root), name: 'glob' }), { pattern: '*.ts' })
+        invoke(toolNamed({ container: containerRootedAt(root), name: 'glob' }), { pattern: '*.ts' }, root)
 
       const found = await globIn(first)
       const empty = await globIn(second)
@@ -124,10 +128,11 @@ describe('the background shell registry the tools share', () => {
     const container = containerRootedAt(root)
 
     try {
-      const started = await invoke(toolNamed({ container, name: 'bash' }), {
-        command: 'sleep 30',
-        runInBackground: true,
-      })
+      const started = await invoke(
+        toolNamed({ container, name: 'bash' }),
+        { command: 'sleep 30', runInBackground: true },
+        root,
+      )
       expect(started.ok).toBe(true)
       if (!started.ok) return
 
@@ -149,10 +154,11 @@ describe('the background shell registry the tools share', () => {
     const containers = [containerRootedAt(first), containerRootedAt(second)] as const
 
     try {
-      const started = await invoke(toolNamed({ container: containers[0], name: 'bash' }), {
-        command: 'sleep 30',
-        runInBackground: true,
-      })
+      const started = await invoke(
+        toolNamed({ container: containers[0], name: 'bash' }),
+        { command: 'sleep 30', runInBackground: true },
+        tmpdir(),
+      )
       expect(started.ok).toBe(true)
       if (!started.ok) return
 

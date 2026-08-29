@@ -11,6 +11,8 @@ import { createHarnessContainer } from '../create-harness-container'
 import { portToken, type DependencyContainer } from '../injection'
 import { HookChainToken, WorkspaceRoot } from '../tokens'
 
+const SESSION_DIRECTORY = '/workspace'
+
 let root = ''
 
 beforeAll(async () => {
@@ -40,19 +42,24 @@ describe('the harness container graph', () => {
       'shell_kill',
       'shell_list',
       'shell_output',
+      'task_write',
       'write',
     ])
   })
 
-  it('resolves both guards into the before-tool phase and the recorder into after-tool, not phantoms', async () => {
+  it('resolves the guard into the before-tool phase and the recorder into after-tool, not phantoms', async () => {
     const hooks = rooted().resolve(HookChainToken)
     const delta: Chunk = { type: 'text-delta', id: 'block-1', text: 'hello' }
 
     expect(hooks.beforeTool.map((hook) => hook.name)).toEqual([
-      'workspaceBoundary',
+      'resolveProjectPaths',
       'readBeforeWrite',
     ])
-    expect(hooks.afterTool.map((hook) => hook.name)).toEqual(['recordFileState'])
+    expect(hooks.afterTool.map((hook) => hook.name)).toEqual([
+      'plan',
+      'recordFileState',
+      'track-session-directory',
+    ])
     expect(await hooks.onChunk({ chunk: delta })).toBe(delta)
   })
 
@@ -62,7 +69,7 @@ describe('the harness container graph', () => {
     expect(container.resolve(HookChainToken)).toBe(container.resolve(HookChainToken))
   })
 
-  it('denies a tool call escaping the workspace root the root registered', async () => {
+  it('lets a tool call reach outside the root, which no longer walls the filesystem off', async () => {
     const dispatcher = rooted().resolve(portToken(ToolDispatcher))
 
     const drafts = await dispatcher.dispatch({
@@ -73,9 +80,10 @@ describe('the harness container graph', () => {
         runId: toRunId('run-1'),
       },
       signal: AbortSignal.timeout(5_000),
+      sessionDirectory: SESSION_DIRECTORY,
     })
 
-    expect(drafts.map((draft) => draft.type)).toEqual(['tool-denied'])
+    expect(drafts.map((draft) => draft.type)).toEqual(['tool-result'])
   })
 
   it('refuses to resolve the event log until the root has opened a database', () => {

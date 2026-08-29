@@ -195,3 +195,83 @@ describe('settling the calls a step left pending', () => {
   })
 })
 
+
+describe('carrying the session directory across tool calls', () => {
+  const directoriesSeen = (
+    seen: { sessionDirectory: string }[],
+  ): readonly string[] => seen.map((entry) => entry.sessionDirectory)
+
+  const recordingDispatch = (args: {
+    seen: { sessionDirectory: string }[]
+    moves: Map<string, string>
+  }): ToolDispatcher => {
+    const dispatch = async (call: {
+      call: DispatchableCall
+      sessionDirectory: string
+    }): Promise<readonly EventDraft[]> => {
+      args.seen.push({ sessionDirectory: call.sessionDirectory })
+      const moved = args.moves.get(call.call.callId)
+      return [
+        { type: 'tool-result', callId: call.call.callId, name: call.call.name, output: {} },
+        ...(moved === undefined ? [] : [{ type: 'cwd-changed' as const, path: moved }]),
+      ]
+    }
+    return { dispatch } as unknown as ToolDispatcher
+  }
+
+  it('starts at the project directory when nothing has moved', async () => {
+    const harness = await openLog()
+    const { threadId } = await branchWithCalls({ harness, calls: [{ callId: 'call_1', name: 'bash' }] })
+    const seen: { sessionDirectory: string }[] = []
+
+    const settle = createSettlePending({
+      log: harness.log,
+      dispatch: recordingDispatch({ seen, moves: new Map() }),
+      projectDirectory: '/project',
+    })
+    await settle({ threadId, signal: new AbortController().signal })
+
+    expect(directoriesSeen(seen)).toEqual(['/project'])
+  })
+
+  it('hands a later call the directory an earlier call moved to', async () => {
+    const harness = await openLog()
+    const { threadId } = await branchWithCalls({
+      harness,
+      calls: [{ callId: 'call_1', name: 'bash' }, { callId: 'call_2', name: 'bash' }],
+    })
+    const seen: { sessionDirectory: string }[] = []
+
+    const settle = createSettlePending({
+      log: harness.log,
+      dispatch: recordingDispatch({ seen, moves: new Map([['call_1', '/project/packages']]) }),
+      projectDirectory: '/project',
+    })
+    await settle({ threadId, signal: new AbortController().signal })
+
+    expect(directoriesSeen(seen)).toEqual(['/project', '/project/packages'])
+  })
+
+  it('resumes from the move a previous turn already recorded', async () => {
+    const harness = await openLog()
+    const { threadId, runId } = await branchWithCalls({
+      harness,
+      calls: [{ callId: 'call_1', name: 'bash' }],
+    })
+    await harness.log.append({
+      threadId,
+      runId,
+      drafts: [{ type: 'cwd-changed', path: '/project/apps/tui' }],
+    })
+    const seen: { sessionDirectory: string }[] = []
+
+    const settle = createSettlePending({
+      log: harness.log,
+      dispatch: recordingDispatch({ seen, moves: new Map() }),
+      projectDirectory: '/project',
+    })
+    await settle({ threadId, signal: new AbortController().signal })
+
+    expect(directoriesSeen(seen)).toEqual(['/project/apps/tui'])
+  })
+})

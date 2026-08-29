@@ -5,14 +5,17 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { z } from 'zod'
 
-import { defaultPipeline, EToolEffect, MINIMAL_PREAMBLE, toCallId, type ToolDefinition } from '@dltech/atlas-core'
+import { defaultPipeline, EMPTY_PROMPT, EToolEffect, toCallId, type ToolDefinition } from '@dltech/atlas-core'
 
 import { buildHarness, ETurnStatus, LoopTurnRunner, TurnRunner, type AtlasHarness } from '..'
 import { scriptedModel, type ScriptedStep } from '../../model/testing/scripted-model'
 import { HookChain } from '../../hooks/registry'
 import { HookedToolDispatcher, type ToolDispatcher } from '../../tools/dispatch'
 import { InMemoryToolRegistry } from '../../tools/registry'
+import { FIXTURE_DOCTRINE, fixturePrompt } from './fixture-prompt'
 import { createTempDatabase, type TempDatabase } from './temp-database'
+
+const PROJECT_DIRECTORY = '/w'
 
 const opened: { harness: AtlasHarness; temp: TempDatabase }[] = []
 
@@ -22,7 +25,7 @@ async function open(script: readonly ScriptedStep[]): Promise<AtlasHarness> {
 
 async function openWithModel(model: MockLanguageModelV4): Promise<{ harness: AtlasHarness; model: MockLanguageModelV4 }> {
   const temp = createTempDatabase()
-  const harness = await buildHarness({ databaseUrl: temp.databaseUrl, model })
+  const harness = await buildHarness({ databaseUrl: temp.databaseUrl, model, prompt: fixturePrompt() })
   opened.push({ harness, temp })
   return { harness, model }
 }
@@ -63,14 +66,14 @@ describe('a turn over a real log', () => {
     ])
   })
 
-  it('hands the system preamble to the provider as an instruction, not as a message', async () => {
+  it('hands the compiled prompt to the provider as an instruction, not as a message', async () => {
     const { harness, model } = await openWithModel(scriptedModel({ script: [{ text: 'auth and the router' }] }))
     const thread = await harness.threads.create({})
 
     await harness.runner.say({ threadId: thread.id, text: 'what changed?' })
 
     const prompt = model.doStreamCalls[0]?.prompt ?? []
-    expect(prompt[0]).toEqual({ role: 'system', content: MINIMAL_PREAMBLE })
+    expect(prompt[0]).toEqual({ role: 'system', content: FIXTURE_DOCTRINE })
     expect(prompt.slice(1).map((message) => message.role)).toEqual(['user'])
   })
 
@@ -198,7 +201,7 @@ describe('a turn that settles its own tool call', () => {
       log: harness.log,
       model: harness.model,
       ids: harness.ids,
-      assembly: defaultPipeline(),
+      assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, projectDirectory: PROJECT_DIRECTORY }),
       tools: registry.declarations(),
       dispatch: new HookedToolDispatcher({ registry, hooks: new HookChain({}) }),
     })
@@ -236,7 +239,7 @@ async function runnerDispatchingWith(dispatch: ToolDispatcher): Promise<{ runner
       log: harness.log,
       model: harness.model,
       ids: harness.ids,
-      assembly: defaultPipeline(),
+      assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, projectDirectory: PROJECT_DIRECTORY }),
       dispatch,
     }),
   }

@@ -13,9 +13,7 @@ import {
   type ToolRun,
 } from '@dltech/atlas-core'
 
-import { inject, injectable } from '../../container/injection'
-import { WorkspaceRoot } from '../../container/tokens'
-import { createWorkspaceContainment, type WorkspaceContainment } from '../containment'
+import { injectable } from '../../container/injection'
 import { absolutePathSchema } from './file-text'
 
 const RESULT_LIMIT = 100
@@ -27,7 +25,7 @@ const inputSchema = z.strictObject({
 
 const description = [
   'Find files by glob pattern and return their absolute paths, most recently modified first.',
-  'Matches against the workspace root unless path names a different directory, which must be absolute.',
+  'Matches against the directory you are currently in unless path names a different one, which must be absolute.',
   `Returns at most ${RESULT_LIMIT} paths; when more match, the result says how many were left out.`,
   'Hidden files and directories are not matched.',
 ].join(' ')
@@ -71,23 +69,19 @@ export class GlobTool extends SchemaTool<typeof inputSchema> {
     { field: 'pattern', presence: EPathPresence.Required, form: EPathForm.RelativeToBase, content: EContentAccess.None },
   ]
 
-  private readonly containment: WorkspaceContainment
-
-  constructor(@inject(WorkspaceRoot) private readonly root: string) {
-    super()
-    this.containment = createWorkspaceContainment({ root })
-  }
-
-  protected override async run({ input, signal }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
+  protected override async run({
+    input,
+    signal,
+    sessionDirectory,
+  }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
     const { pattern, path } = input
-    const from = path ?? this.root
+    const from = path ?? sessionDirectory
 
     const found: DatedPath[] = []
     try {
       const scan = new Bun.Glob(pattern).scan({ cwd: from, absolute: true, onlyFiles: true })
       for await (const match of scan) {
         if (signal.aborted) return { ok: false, reason: 'the developer interrupted the turn while scanning for files' }
-        if (!(await this.containment.contains(match))) continue
         found.push({ path: match, modifiedAt: modifiedAt(match) })
       }
     } catch (error) {

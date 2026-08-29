@@ -11,8 +11,7 @@ import {
   type ToolRun,
 } from '@dltech/atlas-core'
 
-import { inject, injectable } from '../../container/injection'
-import { WorkspaceRoot } from '../../container/tokens'
+import { injectable } from '../../container/injection'
 import { absolutePathSchema } from './file-text'
 
 const DEFAULT_HEAD_LIMIT = 250
@@ -154,15 +153,15 @@ export class GrepTool extends SchemaTool<typeof inputSchema> {
     { field: 'path', presence: EPathPresence.Optional, form: EPathForm.Absolute, content: EContentAccess.None },
   ]
 
-  constructor(@inject(WorkspaceRoot) private readonly root: string) {
-    super()
-  }
-
-  protected override async run({ input, signal }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
+  protected override async run({
+    input,
+    signal,
+    sessionDirectory,
+  }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
     const { pattern, path, glob, caseInsensitive, context, headLimit, offset } = input
     const searcher = searcherFor({
       pattern,
-      searchPath: path ?? this.root,
+      searchPath: path ?? sessionDirectory,
       glob,
       caseInsensitive: caseInsensitive ?? false,
       context,
@@ -174,7 +173,7 @@ export class GrepTool extends SchemaTool<typeof inputSchema> {
     try {
       const search = Bun.spawn({
         cmd: [...searcher.command],
-        cwd: this.root,
+        cwd: sessionDirectory,
         stdin: 'ignore',
         stdout: 'pipe',
         stderr: 'pipe',

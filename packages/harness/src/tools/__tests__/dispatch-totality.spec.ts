@@ -14,6 +14,8 @@ import { HookedToolDispatcher } from '../dispatch'
 import { InMemoryToolRegistry } from '../registry'
 import { readCall, toolNamed } from './fixtures'
 
+const WORKSPACE_DIRECTORY = '/workspace'
+
 const succeeds = async () => ({ ok: true as const, output: 'done', modelText: 'rendered' })
 
 const guard = (args: { name: string; run: BeforeTool }): RegisteredHook<BeforeTool> => ({
@@ -54,7 +56,7 @@ function dispatcherFor(args: {
 }
 
 const settled = (dispatcher: HookedToolDispatcher, call = readCall): Promise<readonly EventDraft[]> =>
-  dispatcher.dispatch({ call, signal: new AbortController().signal })
+  dispatcher.dispatch({ call, signal: new AbortController().signal, sessionDirectory: WORKSPACE_DIRECTORY })
 
 describe('dispatch is total: every failure mode still answers the model with a draft', () => {
   it('answers when the tool itself throws', async () => {

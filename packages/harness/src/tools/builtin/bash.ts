@@ -1,20 +1,25 @@
+import { randomUUID } from 'node:crypto'
+import { realpath } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import { z } from 'zod'
 
 import {
   EToolEffect,
   SchemaTool,
-  sleptSeconds,
+  idledSeconds,
   waitsBySleeping,
   type ToolOutcome,
   type ToolRun,
 } from '@dltech/atlas-core'
 
 import { inject, injectable, portToken } from '../../container/injection'
-import { WorkspaceRoot } from '../../container/tokens'
 import { ShellRegistryPort } from '../../shells/shell-registry'
 import {
   countLineBreaks,
   messageOf,
+  probeCwd,
   readShell,
   render,
   startShell,
@@ -35,8 +40,9 @@ const inputSchema = z.strictObject({
 })
 
 const description = [
-  'Run a command in a fresh bash process rooted at the workspace.',
-  'State does not carry between calls: no directory change, shell variable or background job survives.',
+  'Run a command in a fresh bash process, starting in the directory the session is currently in.',
+  'A directory change carries to your next call - cd once and stay there rather than prefixing every command with it.',
+  'Nothing else carries: a shell variable, function or background job does not survive the call that made it.',
   'stdout and stderr come back as one string, all of stdout first and then all of stderr, so the two are not interleaved.',
   'Only the tail is kept once the output grows past its cap.',
   'A non-zero exit is reported rather than raised, with the code named at the end.',
@@ -78,11 +84,13 @@ function renderModelText(args: {
   exitCode: number
   timedOut: boolean
   timeoutMs: number
+  movedTo?: string | undefined
 }): string {
   const sections: string[] = []
   if (args.merged.length > 0) sections.push(args.merged)
   if (args.timedOut) sections.push(`The command was killed after exceeding its ${args.timeoutMs} ms timeout.`)
   if (args.exitCode !== 0) sections.push(`Exit code: ${args.exitCode}`)
+  if (args.movedTo !== undefined) sections.push(`You are now in ${args.movedTo}, and later commands start there.`)
   if (sections.length === 0) return 'The command completed with no output.'
   return sections.join('\n\n')
 }
@@ -94,14 +102,15 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
   readonly effect = EToolEffect.Destructive
   readonly inputSchema = inputSchema
 
-  constructor(
-    @inject(WorkspaceRoot) private readonly root: string,
-    @inject(portToken(ShellRegistryPort)) private readonly shells: ShellRegistryPort,
-  ) {
+  constructor(@inject(portToken(ShellRegistryPort)) private readonly shells: ShellRegistryPort) {
     super()
   }
 
-  private startInBackground(args: { command: string; description?: string | undefined }): ToolOutcome {
+  private startInBackground(args: {
+    command: string
+    description?: string | undefined
+    cwd: string
+  }): ToolOutcome {
     const started = this.shells.start(args)
     if (!started.ok) return started
 
@@ -126,7 +135,11 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
     }
   }
 
-  protected override async run({ input, signal }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
+  protected override async run({
+    input,
+    signal,
+    sessionDirectory,
+  }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
     if (signal.aborted) return { ok: false, reason: 'the developer interrupted the turn before the command started' }
 
     const { command, timeoutMs } = input
@@ -139,20 +152,33 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
             'a background shell has no timeout: drop timeoutMs to start it, or drop runInBackground to wait for the command',
         }
       }
-      return this.startInBackground({ command, description: input.description })
-    }
-
-    if (waitsBySleeping(command)) {
-      return {
-        ok: false,
-        reason: `this command spends ${sleptSeconds(command)} seconds asleep, and nothing advances while it does: a background shell's ending is delivered to you wherever you are, so end the turn and be woken rather than idling until it lands`,
-      }
+      return this.startInBackground({
+        command,
+        description: input.description,
+        cwd: sessionDirectory,
+      })
     }
 
     const timeout = Math.min(timeoutMs ?? DEFAULT_TIMEOUT_MS, MAXIMUM_TIMEOUT_MS)
 
-    const started = startShell({ command, cwd: this.root })
-    if (!started.ok) return started
+    if (waitsBySleeping({ command, timeoutMs: timeout })) {
+      return {
+        ok: false,
+        reason: `this command spends ${idledSeconds({ command, timeoutMs: timeout })} seconds asleep, and nothing advances while it does: a background shell's ending is delivered to you wherever you are, so end the turn and be woken rather than idling until it lands`,
+      }
+    }
+
+    const probe = probeCwd({
+      command,
+      probeFile: join(tmpdir(), `atlas-cwd-${randomUUID()}`),
+    })
+
+    const startedIn = await realpath(sessionDirectory).catch(() => sessionDirectory)
+    const started = startShell({ command: probe.command, cwd: startedIn })
+    if (!started.ok) {
+      await probe.discard()
+      return started
+    }
 
     const { shell } = started
     const terminate = terminatorFor(shell)
@@ -167,11 +193,16 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
     try {
       read = await readShell({ shell, limit: MAXIMUM_OUTPUT_CHARACTERS })
     } catch (error) {
+      await probe.discard()
       return { ok: false, reason: `the command could not be read back: ${messageOf(error)}` }
     } finally {
       clearTimeout(deadline)
       signal.removeEventListener('abort', terminate)
     }
+
+    const settledIn = await probe.settled()
+    await probe.discard()
+    const movedTo = settledIn !== undefined && settledIn !== startedIn ? settledIn : undefined
 
     if (signal.aborted && !timedOut) {
       return { ok: false, reason: 'the developer interrupted the turn while the command was running' }
@@ -189,12 +220,14 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
         stderr: render(read.stderr),
         truncated: merged.truncated,
         timedOut,
+        ...(movedTo === undefined ? {} : { sessionDirectory: movedTo }),
       },
       modelText: renderModelText({
         merged: render(merged),
         exitCode: read.exitCode,
         timedOut,
         timeoutMs: timeout,
+        movedTo,
       }),
     }
   }

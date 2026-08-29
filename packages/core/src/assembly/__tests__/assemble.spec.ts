@@ -4,9 +4,22 @@ import { assemble } from '../assemble'
 import { defaultRules } from '../pipeline'
 import { defineAnnotator, defineRule } from '../rule'
 import { messagesFromEvents } from '../rules/messages-from-events'
-import { MINIMAL_PREAMBLE, systemPreamble } from '../rules/system-preamble'
+import { EMPTY_PROMPT, systemPrompt } from '../rules/system-prompt'
 import { EAssemblyStage, ERuleFailurePolicy } from '../trace'
 import { contextFor, log } from './log-fixture'
+
+const PROJECT_DIRECTORY = '/w'
+
+const DOCTRINE = 'You are Atlas, a coding agent talking to a developer in their terminal.'
+
+const doctrine = () =>
+  systemPrompt({
+    prompt: () => ({
+      blocks: [{ text: DOCTRINE }],
+      parts: [{ id: 'fixture.doctrine', text: DOCTRINE, chars: DOCTRINE.length }],
+      skipped: [],
+    })
+  })
 
 const exchange = log([
   { type: 'user-said', text: 'hello' },
@@ -16,14 +29,14 @@ const exchange = log([
 describe('assemble', () => {
   it('returns the prompt and a trace with one step per rule, in order', () => {
     const { assembled, trace } = assemble({
-      rules: [systemPreamble(), messagesFromEvents()],
+      rules: [doctrine(), messagesFromEvents()],
       ctx: contextFor({ events: exchange }),
     })
 
-    expect(assembled.system.map((block) => block.text)).toEqual([MINIMAL_PREAMBLE])
+    expect(assembled.system.map((block) => block.text)).toEqual([DOCTRINE])
     expect(assembled.messages.map((entry) => entry.message.role)).toEqual(['user', 'assistant'])
     expect(trace.map((step) => [step.stage, step.name, step.systemBlocks, step.messages])).toEqual([
-      [EAssemblyStage.Rule, 'systemPreamble', 1, 0],
+      [EAssemblyStage.Rule, 'systemPrompt', 1, 0],
       [EAssemblyStage.Rule, 'messagesFromEvents', 1, 2],
     ])
   })
@@ -53,16 +66,16 @@ describe('assemble', () => {
     })
 
     const { assembled, trace } = assemble({
-      rules: [messagesFromEvents(), exploding, systemPreamble()],
+      rules: [messagesFromEvents(), exploding, doctrine()],
       ctx: contextFor({ events: exchange }),
     })
 
     expect(assembled.messages).toHaveLength(2)
-    expect(assembled.system.map((block) => block.text)).toEqual([MINIMAL_PREAMBLE])
+    expect(assembled.system.map((block) => block.text)).toEqual([DOCTRINE])
     expect(trace.map((step) => [step.name, step.failure])).toEqual([
       ['messagesFromEvents', undefined],
       ['exploding', 'rule blew up'],
-      ['systemPreamble', undefined],
+      ['systemPrompt', undefined],
     ])
   })
 
@@ -75,12 +88,14 @@ describe('assemble', () => {
     })
 
     const { assembled, trace } = assemble({
-      rules: [systemPreamble(), exploding],
+      rules: [doctrine(), exploding],
       ctx: contextFor({ events: exchange }),
     })
 
-    expect(defaultRules().at(-1)?.ruleName).toBe('compactedHistory')
-    expect(assembled.system.map((block) => block.text)).toEqual([MINIMAL_PREAMBLE])
+    expect(
+      defaultRules({ prompt: () => EMPTY_PROMPT, projectDirectory: PROJECT_DIRECTORY }).at(-1)?.ruleName,
+    ).toBe('sessionDirectoryBlock')
+    expect(assembled.system.map((block) => block.text)).toEqual([DOCTRINE])
     expect(assembled.messages).toEqual([])
     expect(trace.at(-1)).toMatchObject({
       name: 'explodingMessages',
@@ -117,15 +132,15 @@ describe('assemble', () => {
     })
 
     const { assembled, trace } = assemble({
-      rules: [systemPreamble(), messagesFromEvents()],
+      rules: [doctrine(), messagesFromEvents()],
       annotators: [stamping],
       ctx: contextFor({ events: exchange }),
     })
 
-    expect(namesSeen).toEqual([['systemPreamble', 'messagesFromEvents']])
-    expect(assembled.system.at(-1)?.text).toBe('systemPreamble,messagesFromEvents')
+    expect(namesSeen).toEqual([['systemPrompt', 'messagesFromEvents']])
+    expect(assembled.system.at(-1)?.text).toBe('systemPrompt,messagesFromEvents')
     expect(trace.map((step) => [step.stage, step.name])).toEqual([
-      [EAssemblyStage.Rule, 'systemPreamble'],
+      [EAssemblyStage.Rule, 'systemPrompt'],
       [EAssemblyStage.Rule, 'messagesFromEvents'],
       [EAssemblyStage.Annotator, 'stampRulesThatRan'],
     ])
@@ -152,7 +167,7 @@ describe('assemble', () => {
   it('assembles the same log twice into equal results', () => {
     const run = () =>
       assemble({
-        rules: [systemPreamble(), messagesFromEvents()],
+        rules: [doctrine(), messagesFromEvents()],
         ctx: contextFor({ events: exchange }),
       })
 
@@ -167,7 +182,7 @@ describe('assemble', () => {
     const events = log([{ type: 'user-said', text: 'hello' }])
     const snapshot = structuredClone(events)
 
-    assemble({ rules: [systemPreamble(), messagesFromEvents()], ctx: contextFor({ events }) })
+    assemble({ rules: [doctrine(), messagesFromEvents()], ctx: contextFor({ events }) })
 
     expect(events).toEqual(snapshot)
   })

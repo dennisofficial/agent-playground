@@ -19,16 +19,16 @@ import {
   type EventLogPort,
   type IdPort,
   type ModelPort,
-  type ModelStepResult,
   type RuleContext,
   type RunId,
   type ToolDeclaration,
 } from '@dltech/atlas-core'
 
 import type { HookChain } from '../hooks/registry'
-import { ModelStreamError } from '../model/errors'
 import type { ToolDispatcher } from '../tools/dispatch'
+import { takeModelStep } from './model-step'
 import { openTurnSpend, TURN_CRASHED, type TurnLedgerDeps, type TurnSpendTally } from '../ledger/record-turn-spend'
+import { appendResumeDrafts } from './resume-turn'
 import { createSettlePending, type SettlePending } from './settle-pending'
 import { draftsFor, interruptedDrafts } from './step-drafts'
 import { faultReport, overflowReport, stalledReport } from './turn-faults'
@@ -48,11 +48,10 @@ export type TurnDeps = {
   hooks?: HookChain | undefined
   drainPending?: (() => Promise<readonly EventDraft[]>) | undefined
   spend?: TurnLedgerDeps | undefined
-  compact?: (() => Promise<boolean>) | undefined
+  compact?: ((args: { threadId: ThreadId }) => Promise<boolean>) | undefined
   autoCompactAtPercent?: (() => number) | undefined
+  projectDirectory?: string | undefined
 }
-
-type SteppedTurn = { ok: true; result: ModelStepResult } | { ok: false; message: string; cause: unknown }
 
 export class LoopTurnRunner extends TurnRunner {
   private readonly log: EventLogPort
@@ -66,7 +65,7 @@ export class LoopTurnRunner extends TurnRunner {
   private readonly drainPending: (() => Promise<readonly EventDraft[]>) | undefined
   private readonly spend: TurnLedgerDeps | undefined
   private readonly settlePending: SettlePending | undefined
-  private readonly compact: (() => Promise<boolean>) | undefined
+  private readonly compact: ((args: { threadId: ThreadId }) => Promise<boolean>) | undefined
   private readonly autoCompactAtPercent: () => number
 
   constructor(deps: TurnDeps) {
@@ -86,7 +85,12 @@ export class LoopTurnRunner extends TurnRunner {
     this.settlePending =
       deps.dispatch === undefined
         ? undefined
-        : createSettlePending({ log: deps.log, dispatch: deps.dispatch, tools: this.tools })
+        : createSettlePending({
+            log: deps.log,
+            dispatch: deps.dispatch,
+            tools: this.tools,
+            projectDirectory: deps.projectDirectory,
+          })
   }
 
   async say({
@@ -103,6 +107,11 @@ export class LoopTurnRunner extends TurnRunner {
       runId: this.ids.nextRunId(),
       drafts: [{ type: 'user-said', text }],
     })
+    return this.runTurn({ threadId, ...(signal === undefined ? {} : { signal }) })
+  }
+
+  async resume({ threadId, signal }: { threadId: ThreadId; signal?: AbortSignal }): Promise<TurnOutcome> {
+    await appendResumeDrafts({ log: this.log, ids: this.ids, threadId })
     return this.runTurn({ threadId, ...(signal === undefined ? {} : { signal }) })
   }
 
@@ -133,24 +142,6 @@ export class LoopTurnRunner extends TurnRunner {
 
     await this.log.append({ threadId, runId: this.ids.nextRunId(), drafts: waiting })
     return true
-  }
-
-  private async takeModelStep(args: {
-    assembled: Assembled
-    signal: AbortSignal
-  }): Promise<SteppedTurn> {
-    try {
-      const result = await this.model.step({
-        assembled: args.assembled,
-        tools: this.tools,
-        signal: args.signal,
-        ...(this.onChunk === undefined ? {} : { onChunk: this.onChunk }),
-      })
-      return { ok: true, result }
-    } catch (error) {
-      if (error instanceof ModelStreamError) return { ok: false, message: error.message, cause: error.cause }
-      throw error
-    }
   }
 
   private async trackedTurn({
@@ -240,7 +231,7 @@ export class LoopTurnRunner extends TurnRunner {
         this.compact !== undefined
       ) {
         compacted = true
-        if (await this.compact()) {
+        if (await this.compact({ threadId })) {
           previous = undefined
           continue
         }
@@ -260,7 +251,13 @@ export class LoopTurnRunner extends TurnRunner {
         return { status: ETurnStatus.Failed, runId, message: faultReport(faults), cause: faults }
       }
 
-      const stepped = await this.takeModelStep({ assembled, signal: abortSignal })
+      const stepped = await takeModelStep({
+        model: this.model,
+        tools: this.tools,
+        onChunk: this.onChunk,
+        assembled,
+        signal: abortSignal,
+      })
 
       modelSteps += 1
       settleAttempted = undefined

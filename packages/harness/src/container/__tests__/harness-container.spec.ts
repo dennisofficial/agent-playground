@@ -2,8 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 
 import { ClockPort, CredentialPort, EventLogPort, IdPort, toThreadId } from '@dltech/atlas-core'
 
-import { KeychainCredentialPort } from '../../credentials/keychain-credential-port'
 import type { KeychainReader } from '../../credentials/keychain-reader'
+import { RefreshingCredentialPort } from '../../credentials/refreshing-credential-port'
 import {
   ThreadStorePort,
   PrismaThreadStore,
@@ -18,7 +18,10 @@ import { createHarnessContainer } from '../create-harness-container'
 import { portToken, type DependencyContainer } from '../injection'
 import { KeychainReaderToken, PrismaClientToken, WorkspaceRoot } from '../tokens'
 
-const silentReader: KeychainReader = { readGenericPassword: async () => '{}' }
+const silentReader: KeychainReader = {
+  readGenericPassword: async () => '{}',
+  writeGenericPassword: async () => undefined,
+}
 
 describe('createHarnessContainer', () => {
   let database: AtlasDatabase
@@ -56,8 +59,8 @@ describe('createHarnessContainer', () => {
     expect(harness.resolve(portToken(ThreadStorePort))).toBeInstanceOf(PrismaThreadStore)
   })
 
-  it('resolves the credential port to the keychain credential port', () => {
-    expect(harness.resolve(portToken(CredentialPort))).toBeInstanceOf(KeychainCredentialPort)
+  it('resolves the credential port to one that can refresh what it hands out', () => {
+    expect(harness.resolve(portToken(CredentialPort))).toBeInstanceOf(RefreshingCredentialPort)
   })
 
   it('injects the registered prisma client into the event log it builds', async () => {

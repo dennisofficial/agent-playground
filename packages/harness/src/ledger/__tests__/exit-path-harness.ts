@@ -5,6 +5,7 @@ import { z } from 'zod'
 
 import {
   defaultPipeline,
+  EMPTY_PROMPT,
   EBeforeToolDecision,
   EFinishReason,
   EStage,
@@ -28,6 +29,8 @@ import { HookedToolDispatcher } from '../../tools/dispatch'
 import { InMemoryToolRegistry } from '../../tools/registry'
 import { PrismaTurnLedger } from '../prisma-turn-ledger'
 import type { TurnLedgerPort, TurnSpend } from '../turn-ledger.port'
+
+const PROJECT_DIRECTORY = '/w'
 
 const MODEL: ProviderIdentity = { id: 'anthropic', modelId: 'claude-opus-5' }
 
@@ -149,7 +152,7 @@ export async function openExitPathHarness(args: {
       log: new PrismaEventLog(database.prisma, clock, ids),
       model: model.port,
       ids,
-      assembly: defaultPipeline(),
+      assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, projectDirectory: PROJECT_DIRECTORY }),
       tools: registry.declarations(),
       hooks,
       ...(mode === EDispatchMode.None ? {} : { dispatch: new HookedToolDispatcher({ registry, hooks }) }),

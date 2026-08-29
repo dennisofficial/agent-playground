@@ -2,7 +2,18 @@ import { afterEach, describe, expect, it } from 'bun:test'
 
 import { EEffort } from '@dltech/atlas-core'
 
-import { KeychainCredentialPort, createSecurityKeychainReader } from '../../credentials'
+import {
+  ClaudeCodeSource,
+  FileAccountStore,
+  RefreshingCredentialPort,
+  SecretCipher,
+  atlasVaultFile,
+  atlasVaultKeyFile,
+  builtinRefreshClients,
+  claudeCodePayloadStore,
+  createSecurityKeychainReader,
+  importClaudeCodeAccount,
+} from '../../credentials'
 import { ETurnStatus, buildHarness, type AtlasHarness } from '../../loop'
 import { createTempDatabase, type TempDatabase } from '../../loop/__tests__/temp-database'
 import { SystemClock } from '../../store'
@@ -11,6 +22,27 @@ import { anthropicThinkingOptions } from '../anthropic-thinking'
 import { bodyOnlyRecordingPassthroughFetch, type BodyOnlyRecordingFetch } from './recording-fetch'
 
 export const LIVE_ANTHROPIC_FLAG = 'ATLAS_LIVE_ANTHROPIC'
+
+const liveCredentials = async (): Promise<RefreshingCredentialPort> => {
+  const clock = new SystemClock()
+  const accounts = new FileAccountStore({
+    file: atlasVaultFile(),
+    cipher: new SecretCipher(atlasVaultKeyFile()),
+    clock,
+  })
+  const source = new ClaudeCodeSource(
+    claudeCodePayloadStore({ reader: createSecurityKeychainReader() }),
+  )
+
+  await importClaudeCodeAccount({ accounts, source })
+
+  return new RefreshingCredentialPort({
+    accounts,
+    clients: builtinRefreshClients({ clock }),
+    clock,
+    sinks: [source],
+  })
+}
 
 const liveRunRequested = (): boolean => process.env[LIVE_ANTHROPIC_FLAG] === '1'
 
@@ -30,10 +62,7 @@ async function openLiveHarness(
   const harness = await buildHarness({
     databaseUrl: temp.databaseUrl,
     model: createAnthropicOauthModel({
-      credentials: new KeychainCredentialPort({
-        reader: createSecurityKeychainReader(),
-        clock: new SystemClock(),
-      }),
+      credentials: await liveCredentials(),
       modelId,
       providerOptions: anthropicThinkingOptions({ modelId, effort: EEffort.High }),
       fetch: recorder.fetch,

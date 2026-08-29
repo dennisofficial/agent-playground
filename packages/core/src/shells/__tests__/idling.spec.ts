@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'bun:test'
 
-import { SLEEP_BUDGET_SECONDS, sleptSeconds, waitsBySleeping } from '../idling'
+import { SLEEP_BUDGET_SECONDS, idledSeconds, sleptSeconds, waitsBySleeping } from '../idling'
+
+const UNBOUNDED_MS = 600_000
+
+const waits = (command: string, timeoutMs = UNBOUNDED_MS): boolean =>
+  waitsBySleeping({ command, timeoutMs })
 
 describe('the seconds a command spends asleep', () => {
   it('reads a bare sleep as seconds', () => {
@@ -29,21 +34,42 @@ describe('the seconds a command spends asleep', () => {
 
 describe('telling an idle wait from a short settle', () => {
   it('calls the poll loop that was burning turns a wait', () => {
-    expect(waitsBySleeping('sleep 115; echo waited')).toBe(true)
-    expect(waitsBySleeping('sleep 90; echo waited')).toBe(true)
+    expect(waits('sleep 115; echo waited')).toBe(true)
+    expect(waits('sleep 90; echo waited')).toBe(true)
   })
 
   it('leaves a short settle before a real command alone', () => {
-    expect(waitsBySleeping('sleep 2 && curl -sf localhost:3000')).toBe(false)
-    expect(waitsBySleeping('sleep 5; bun test')).toBe(false)
+    expect(waits('sleep 2 && curl -sf localhost:3000')).toBe(false)
+    expect(waits('sleep 5; bun test')).toBe(false)
   })
 
   it('leaves the budget itself alone and refuses only past it', () => {
-    expect(waitsBySleeping(`sleep ${SLEEP_BUDGET_SECONDS}`)).toBe(false)
-    expect(waitsBySleeping(`sleep ${SLEEP_BUDGET_SECONDS + 1}`)).toBe(true)
+    expect(waits(`sleep ${SLEEP_BUDGET_SECONDS}`)).toBe(false)
+    expect(waits(`sleep ${SLEEP_BUDGET_SECONDS + 1}`)).toBe(true)
   })
 
   it('sees a wait split across several short sleeps', () => {
-    expect(waitsBySleeping('sleep 20; sleep 20; sleep 20')).toBe(true)
+    expect(waits('sleep 20; sleep 20; sleep 20')).toBe(true)
+  })
+})
+
+describe('a timeout the caller set caps what the command can idle away', () => {
+  const BRIEF_MS = 300
+
+  it('allows a long sleep the timeout will cut short well inside the budget', () => {
+    expect(waits('(sleep 2; touch marker) & echo working; sleep 30', BRIEF_MS)).toBe(false)
+  })
+
+  it('still refuses when the timeout leaves room to idle past the budget', () => {
+    expect(waits(`sleep ${SLEEP_BUDGET_SECONDS * 4}`, UNBOUNDED_MS)).toBe(true)
+  })
+
+  it('measures the idle as the shorter of the sleeping and the timeout', () => {
+    expect(idledSeconds({ command: 'sleep 120', timeoutMs: 5_000 })).toBe(5)
+    expect(idledSeconds({ command: 'sleep 3', timeoutMs: UNBOUNDED_MS })).toBe(3)
+  })
+
+  it('leaves the budget itself alone when the timeout lands exactly on it', () => {
+    expect(waits('sleep 600', SLEEP_BUDGET_SECONDS * 1_000)).toBe(false)
   })
 })

@@ -5,6 +5,8 @@ import { beforeAll, describe, expect, it } from 'bun:test'
 
 import { ReadTool } from '../read'
 
+const SESSION_DIRECTORY = '/workspace'
+
 let root = ''
 
 beforeAll(async () => {
@@ -21,6 +23,7 @@ const readWith = async (input: { path: string; offset?: number; limit?: number }
     input,
     signal: new AbortController().signal,
     idempotencyKey: 'read-1',
+    sessionDirectory: SESSION_DIRECTORY,
   })
 
   if (!outcome.ok) throw new Error(outcome.reason)

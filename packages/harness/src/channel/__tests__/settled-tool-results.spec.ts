@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { z } from 'zod'
 
-import { defaultPipeline, EToolEffect, type Event, type ToolDefinition } from '@dltech/atlas-core'
+import { defaultPipeline, EMPTY_PROMPT, EToolEffect, type Event, type ToolDefinition } from '@dltech/atlas-core'
 
 import { createDeltaChannel, PublishingTurnRunner, type DeltaChannel } from '..'
 import { buildHarness, ETurnStatus, type AtlasHarness } from '../../loop'
@@ -10,6 +10,8 @@ import { scriptedModel } from '../../model/testing/scripted-model'
 import { HookChain } from '../../hooks/registry'
 import { HookedToolDispatcher } from '../../tools/dispatch'
 import { InMemoryToolRegistry } from '../../tools/registry'
+
+const PROJECT_DIRECTORY = '/w'
 
 const opened: { harness: AtlasHarness; temp: TempDatabase }[] = []
 
@@ -74,7 +76,7 @@ describe('a turn that settles a tool call', () => {
         log: harness.log,
         model: harness.model,
         ids: harness.ids,
-        assembly: defaultPipeline(),
+        assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, projectDirectory: PROJECT_DIRECTORY }),
         tools: registry.declarations(),
         dispatch: new HookedToolDispatcher({ registry, hooks: new HookChain({}) }),
       },

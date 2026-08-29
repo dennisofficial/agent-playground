@@ -2,10 +2,12 @@ import { contextBlock } from '../../context/render'
 import { currentContextEvents } from '../../context/supersede'
 import type { AssistantPart } from '../../events/body'
 import type { Event, EventOfType, EventRef } from '../../events/envelope'
+import { liveNudgeIds } from '../../events/nudges'
 import type { TextPart, ToolCallPart, ToolResultPart } from '../../message/parts'
 import type { AssembledMessage } from '../assembled'
 import { defineRule, type Rule } from '../rule'
 import { backgroundShellBlock } from './background-shell-block'
+import { nudgeBlock } from './nudge-block'
 
 type OpenMessage =
   | { role: 'user'; content: TextPart[] }
@@ -90,6 +92,7 @@ function walkEvents(events: readonly Event[]): Walk {
   const settlements = new Map<string, SettledCall>()
   const claimedCallIds = new Set<string>()
   const current = new Set(currentContextEvents(events).map((event) => event.id))
+  const nudging = liveNudgeIds(events)
   let openAssistant: Group | undefined
 
   for (const event of events) {
@@ -112,6 +115,17 @@ function walkEvents(events: readonly Event[]): Walk {
             { type: 'text', text: contextBlock({ slot: event.slot, key: event.key, content: event.content }) },
           ],
         },
+        origin: originOf(event),
+      })
+      openAssistant = undefined
+      continue
+    }
+
+    if (event.type === 'nudge') {
+      if (!nudging.has(event.id)) continue
+
+      groups.push({
+        message: { role: 'user', content: [{ type: 'text', text: nudgeBlock(event) }] },
         origin: originOf(event),
       })
       openAssistant = undefined

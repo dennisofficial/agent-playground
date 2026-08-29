@@ -5,11 +5,19 @@ import type {
   SharedV4ProviderOptions,
 } from '@ai-sdk/provider'
 
-import { ANTHROPIC_PROVIDER_ID, type CredentialPort } from '@dltech/atlas-core'
+import {
+  ANTHROPIC_PROVIDER_ID,
+  EAuthKind,
+  type AccountId,
+  type Credential,
+  type CredentialPort,
+} from '@dltech/atlas-core'
 
 import { withAnthropicSubscriptionAttribution } from './anthropic-subscription-attribution'
 
 export type AnthropicFetch = NonNullable<AnthropicProviderSettings['fetch']>
+
+type AuthorizedModel = { model: LanguageModelV4; credential: Credential }
 
 export const ANTHROPIC_OAUTH_BETA = 'oauth-2025-04-20'
 export { ANTHROPIC_PROVIDER_ID }
@@ -17,6 +25,7 @@ export { ANTHROPIC_PROVIDER_ID }
 export type AnthropicOauthModelArgs = {
   credentials: CredentialPort
   modelId: string
+  accountId?: AccountId | undefined
   providerOptions?: SharedV4ProviderOptions | undefined
   baseURL?: string | undefined
   fetch?: AnthropicFetch | undefined
@@ -40,17 +49,23 @@ const mergedProviderOptions = (args: {
 // credential is legal as long as no request is made through it. `supportedUrls` reads pure config.
 const supportedUrlsWithoutACredential = (modelId: string) => createAnthropic()(modelId).supportedUrls
 
-export function createAnthropicOauthModel(args: AnthropicOauthModelArgs): LanguageModelV4 {
-  const authorizedModel = async (): Promise<LanguageModelV4> => {
-    const credential = await args.credentials.read()
+const authOf = (credential: Credential): AnthropicProviderSettings =>
+  credential.kind === EAuthKind.Oauth
+    ? { authToken: credential.accessToken, headers: { 'anthropic-beta': ANTHROPIC_OAUTH_BETA } }
+    : { apiKey: credential.apiKey }
 
-    return createAnthropic({
+export function createAnthropicOauthModel(args: AnthropicOauthModelArgs): LanguageModelV4 {
+  const authorizedModel = async (): Promise<AuthorizedModel> => {
+    const credential = await args.credentials.read({ accountId: args.accountId })
+
+    const model = createAnthropic({
       name: ANTHROPIC_PROVIDER_ID,
-      authToken: credential.accessToken,
-      headers: { 'anthropic-beta': ANTHROPIC_OAUTH_BETA },
+      ...authOf(credential),
       ...(args.baseURL === undefined ? {} : { baseURL: args.baseURL }),
       ...(args.fetch === undefined ? {} : { fetch: args.fetch }),
     })(args.modelId)
+
+    return { model, credential }
   }
 
   const withDefaultProviderOptions = (
@@ -65,20 +80,33 @@ export function createAnthropicOauthModel(args: AnthropicOauthModelArgs): Langua
     return { ...options, providerOptions }
   }
 
+  // The billing header routes a claude.ai subscription; a metered API key needs no routing and must
+  // not carry it.
+  const attributed = ({
+    authorized,
+    options,
+  }: {
+    authorized: AuthorizedModel
+    options: LanguageModelV4CallOptions
+  }): LanguageModelV4CallOptions =>
+    authorized.credential.kind === EAuthKind.Oauth
+      ? withAnthropicSubscriptionAttribution(withDefaultProviderOptions(options))
+      : withDefaultProviderOptions(options)
+
   return {
     specificationVersion: 'v4',
     provider: ANTHROPIC_PROVIDER_ID,
     modelId: args.modelId,
     supportedUrls: supportedUrlsWithoutACredential(args.modelId),
 
-    doGenerate: async (options) =>
-      (await authorizedModel()).doGenerate(
-        withAnthropicSubscriptionAttribution(withDefaultProviderOptions(options)),
-      ),
+    doGenerate: async (options) => {
+      const authorized = await authorizedModel()
+      return authorized.model.doGenerate(attributed({ authorized, options }))
+    },
 
-    doStream: async (options) =>
-      (await authorizedModel()).doStream(
-        withAnthropicSubscriptionAttribution(withDefaultProviderOptions(options)),
-      ),
+    doStream: async (options) => {
+      const authorized = await authorizedModel()
+      return authorized.model.doStream(attributed({ authorized, options }))
+    },
   }
 }

@@ -1,6 +1,18 @@
-import { ClockPort, CredentialPort, EventLogPort, IdPort, ModelPort } from '@dltech/atlas-core'
+import {
+  AccountStorePort,
+  ClockPort,
+  CredentialPort,
+  EventLogPort,
+  IdPort,
+  ModelPort,
+} from '@dltech/atlas-core'
 
-import { KeychainCredentialPort } from '../credentials/keychain-credential-port'
+import { ClaudeCodeSource, claudeCodePayloadStore } from '../credentials/claude-code-source'
+import { FileAccountStore } from '../credentials/file-account-store'
+import { builtinRefreshClients } from '../credentials/oauth'
+import { atlasVaultFile, atlasVaultKeyFile } from '../credentials/paths'
+import { RefreshingCredentialPort } from '../credentials/refreshing-credential-port'
+import { SecretCipher } from '../credentials/secret-cipher'
 import { registerBuiltinHooks } from '../hooks/register-hooks'
 import { PrismaTurnLedger, TurnLedgerPort } from '../ledger'
 import { resolveHookChain } from '../hooks/resolve-hooks'
@@ -19,7 +31,12 @@ import {
   portToken,
   type DependencyContainer,
 } from './injection'
-import { HookChainToken, KeychainReaderToken, LanguageModelToken } from './tokens'
+import {
+  ClaudeCodeSourceToken,
+  HookChainToken,
+  KeychainReaderToken,
+  LanguageModelToken,
+} from './tokens'
 
 export function createHarnessContainer(): DependencyContainer {
   const harness = createIsolatedContainer()
@@ -32,12 +49,37 @@ export function createHarnessContainer(): DependencyContainer {
   harness.register(portToken(EventLogPort), { useClass: PrismaEventLog })
   harness.register(portToken(TurnLedgerPort), { useClass: PrismaTurnLedger })
   harness.register(portToken(ThreadStorePort), { useClass: PrismaThreadStore })
+  harness.register(portToken(AccountStorePort), {
+    useFactory: instanceCachingFactory(
+      (resolver) =>
+        new FileAccountStore({
+          file: atlasVaultFile(),
+          cipher: new SecretCipher(atlasVaultKeyFile()),
+          clock: resolver.resolve(portToken(ClockPort)),
+        }),
+    ),
+  })
+
+  harness.register(ClaudeCodeSourceToken, {
+    useFactory: instanceCachingFactory(
+      (resolver) =>
+        new ClaudeCodeSource(
+          claudeCodePayloadStore({ reader: resolver.resolve(KeychainReaderToken) }),
+        ),
+    ),
+  })
+
   harness.register(portToken(CredentialPort), {
-    useFactory: (resolver) =>
-      new KeychainCredentialPort({
-        reader: resolver.resolve(KeychainReaderToken),
-        clock: resolver.resolve(portToken(ClockPort)),
-      }),
+    useFactory: instanceCachingFactory((resolver) => {
+      const clock = resolver.resolve(portToken(ClockPort))
+
+      return new RefreshingCredentialPort({
+        accounts: resolver.resolve(portToken(AccountStorePort)),
+        clients: builtinRefreshClients({ clock }),
+        clock,
+        sinks: [resolver.resolve(ClaudeCodeSourceToken)],
+      })
+    }),
   })
 
   registerFileState({ container: harness })
@@ -62,7 +104,6 @@ export function createHarnessContainer(): DependencyContainer {
       const model = resolver.resolve(LanguageModelToken)
       return new AiSdkModelPort({
         model,
-        identity: { id: model.provider, modelId: model.modelId },
         hooks: resolver.resolve(HookChainToken),
         tape,
       })

@@ -7,6 +7,7 @@ import {
   defaultPipeline,
   defaultRules,
   defineRule,
+  EMPTY_PROMPT,
   EToolEffect,
   type ToolDefinition,
 } from '@dltech/atlas-core'
@@ -17,6 +18,8 @@ import { HookChain } from '../../hooks/registry'
 import { HookedToolDispatcher } from '../../tools/dispatch'
 import { InMemoryToolRegistry } from '../../tools/registry'
 import { createTempDatabase, type TempDatabase } from './temp-database'
+
+const PROJECT_DIRECTORY = '/w'
 
 const opened: { harness: AtlasHarness; temp: TempDatabase }[] = []
 
@@ -72,7 +75,7 @@ async function openScripted(args: { script: readonly ScriptedStep[] }): Promise<
       log: harness.log,
       model: harness.model,
       ids: harness.ids,
-      assembly: { rules: [...defaultRules(), recordStep], annotators: defaultAnnotators() },
+      assembly: { rules: [...defaultRules({ prompt: () => EMPTY_PROMPT, projectDirectory: PROJECT_DIRECTORY }), recordStep], annotators: defaultAnnotators() },
       tools: registry.declarations(),
       dispatch: new HookedToolDispatcher({ registry, hooks: new HookChain({}) }),
     }),
@@ -133,7 +136,7 @@ describe('the shape of the prompt the loop is about to send', () => {
       log: harness.log,
       model: harness.model,
       ids: harness.ids,
-      assembly: { rules: [...defaultRules(), speakOutOfTurn], annotators: defaultAnnotators() },
+      assembly: { rules: [...defaultRules({ prompt: () => EMPTY_PROMPT, projectDirectory: PROJECT_DIRECTORY }), speakOutOfTurn], annotators: defaultAnnotators() },
     })
     const thread = await harness.threads.create({})
 
@@ -213,7 +216,7 @@ describe('a dispatch that settles nothing', () => {
       log: harness.log,
       model: harness.model,
       ids: harness.ids,
-      assembly: defaultPipeline(),
+      assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, projectDirectory: PROJECT_DIRECTORY }),
       tools: registry.declarations(),
       dispatch: {
         dispatch: async () => {

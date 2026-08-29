@@ -3,11 +3,10 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { defaultPipeline, type Event, type EventOfType } from '@dltech/atlas-core'
+import { defaultPipeline, EMPTY_PROMPT, type Event, type EventOfType } from '@dltech/atlas-core'
 
 import { createDeltaChannel, PublishingTurnRunner, type ChannelSignal } from '../../channel'
 import { InMemoryFileReadState } from '../../files/read-state'
-import { createBoundaryHook } from '../../hooks/boundary'
 import { createReadBeforeWriteHook } from '../../hooks/read-before-write'
 import { createRecordFileStateHook } from '../../hooks/record-file-state'
 import { HookChain } from '../../hooks/registry'
@@ -19,6 +18,8 @@ import { HookedToolDispatcher } from '../../tools/dispatch'
 import { InMemoryToolRegistry } from '../../tools/registry'
 import { buildHarness, ETurnStatus, type AtlasHarness } from '..'
 import { createTempDatabase, type TempDatabase } from './temp-database'
+
+const PROJECT_DIRECTORY = '/w'
 
 const opened: { harness: AtlasHarness; temp: TempDatabase; workspace: string }[] = []
 
@@ -51,13 +52,12 @@ async function openWorkspace(scriptFor: (workspace: string) => readonly Scripted
       log: harness.log,
       model: harness.model,
       ids: harness.ids,
-      assembly: defaultPipeline({ root: workspace, tools: declarations }),
+      assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, projectDirectory: PROJECT_DIRECTORY }),
       tools: declarations,
       dispatch: new HookedToolDispatcher({
         registry,
         hooks: new HookChain({
           beforeTool: [
-            createBoundaryHook({ root: workspace, tools: declarations }),
             createReadBeforeWriteHook({ seen: viewed, tools: declarations }),
           ],
           afterTool: [createRecordFileStateHook({ seen: viewed, tools: declarations })],
@@ -205,20 +205,20 @@ describe('a turn that drives a real builtin tool', () => {
     expect(readFileSync(join(workspace, 'epsilon.ts'), 'utf8')).toBe('export const epsilon = 2\n')
   })
 
-  it('records the guard denial rather than touching a file outside the workspace', async () => {
+  it('reads a file outside the workspace, which nothing walls off any more', async () => {
     const { harness, runner, threadId } = await openWorkspace(() => [
-      { calls: [{ callId: 'call-1', name: 'read', input: { path: '/etc/passwd' } }] },
-      { text: 'I cannot read outside the workspace' },
+      { calls: [{ callId: 'call-1', name: 'read', input: { path: '/etc/hosts' } }] },
+      { text: 'read it' },
     ])
 
-    const outcome = await runner.say({ threadId, text: 'read /etc/passwd' })
+    const outcome = await runner.say({ threadId, text: 'read /etc/hosts' })
     const events = await harness.log.read({ threadId })
 
     expect(outcome.status).toBe(ETurnStatus.Completed)
     expect(events.map((event) => event.type)).toEqual([
       'user-said',
       'tool-called',
-      'tool-denied',
+      'tool-result',
       'assistant-said',
     ])
   })

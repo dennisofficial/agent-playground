@@ -13,6 +13,10 @@ export function sleptSeconds(command: string): number {
   return total
 }
 
-export function waitsBySleeping(command: string): boolean {
-  return sleptSeconds(command) > SLEEP_BUDGET_SECONDS
+export function idledSeconds(args: { command: string; timeoutMs: number }): number {
+  return Math.min(sleptSeconds(args.command), args.timeoutMs / 1_000)
+}
+
+export function waitsBySleeping(args: { command: string; timeoutMs: number }): boolean {
+  return idledSeconds(args) > SLEEP_BUDGET_SECONDS
 }

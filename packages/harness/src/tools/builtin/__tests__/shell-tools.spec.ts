@@ -37,7 +37,7 @@ function openSuite(): Suite {
   const suite: Suite = {
     root,
     shells,
-    bash: new BashTool(root, shells),
+    bash: new BashTool(shells),
     output: new ShellOutputTool(shells),
     kill: new ShellKillTool(shells),
     list: new ShellListTool(shells),
@@ -46,11 +46,16 @@ function openSuite(): Suite {
   return suite
 }
 
-const invoke = (tool: { invoke: (args: never) => Promise<ToolOutcome> }, input: unknown): Promise<ToolOutcome> =>
+const invoke = (
+  tool: { invoke: (args: never) => Promise<ToolOutcome> },
+  input: unknown,
+  sessionDirectory = tmpdir(),
+): Promise<ToolOutcome> =>
   tool.invoke({
     input,
     signal: new AbortController().signal,
     idempotencyKey: 'key-1',
+    sessionDirectory,
   } as never)
 
 const outputOf = (outcome: ToolOutcome): Record<string, unknown> => {

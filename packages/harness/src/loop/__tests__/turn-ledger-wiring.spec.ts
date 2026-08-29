@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 
-import { defaultPipeline, type ModelPort } from '@dltech/atlas-core'
+import { defaultPipeline, EMPTY_PROMPT, type ModelPort } from '@dltech/atlas-core'
 
 import { buildHarness, ETurnStatus, LoopTurnRunner, TurnRunner, type AtlasHarness } from '..'
 import { TurnLedgerPort, type TurnSpend } from '../../ledger'
 import { scriptedModel, type ScriptedStep } from '../../model/testing/scripted-model'
 import { createTempDatabase, type TempDatabase } from './temp-database'
+
+const PROJECT_DIRECTORY = '/w'
 
 const opened: { harness: AtlasHarness; temp: TempDatabase }[] = []
 
@@ -48,7 +50,7 @@ function runnerOver(args: {
     log: args.harness.log,
     model: args.model ?? args.harness.model,
     ids: args.harness.ids,
-    assembly: defaultPipeline(),
+    assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, projectDirectory: PROJECT_DIRECTORY }),
     spend: {
       ledger: args.ledger,
       clock: args.harness.clock,
@@ -180,7 +182,7 @@ describe('the ledger is accounting, not the turn', () => {
       log: harness.log,
       model: harness.model,
       ids: harness.ids,
-      assembly: defaultPipeline(),
+      assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, projectDirectory: PROJECT_DIRECTORY }),
     })
 
     const outcome = await runner.say({ threadId: thread.id, text: 'what changed?' })

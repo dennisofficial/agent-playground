@@ -15,6 +15,7 @@ import {
 import { buildHarness, ETurnStatus, type AtlasHarness } from '..'
 import { interruptibleModel } from '../../model/testing/interruptible-model'
 import { scriptedModel, type ScriptedStep } from '../../model/testing/scripted-model'
+import { fixturePrompt } from './fixture-prompt'
 import { createTempDatabase, type TempDatabase } from './temp-database'
 
 const HEAD = 'auth and the router'
@@ -45,6 +46,7 @@ async function openArmed(): Promise<Interruptible> {
   const harness = await buildHarness({
     databaseUrl: temp.databaseUrl,
     model,
+    prompt: fixturePrompt(),
     onChunk: (chunk) => {
       if (armed && chunk.type === 'text-delta') {
         armed = false

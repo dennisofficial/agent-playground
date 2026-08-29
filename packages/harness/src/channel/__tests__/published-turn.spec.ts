@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 
-import { defaultPipeline, type Event, type EventOfType } from '@dltech/atlas-core'
+import { defaultPipeline, EMPTY_PROMPT, type Event, type EventOfType } from '@dltech/atlas-core'
 
 import type { LanguageModel } from 'ai'
 
@@ -10,6 +10,8 @@ import { createTempDatabase, type TempDatabase } from '../../loop/__tests__/temp
 import { scriptedModel, type ScriptedStep } from '../../model/testing/scripted-model'
 import { createDeltaChannel, EStepEnd, PublishingTurnRunner, type ChannelSignal } from '..'
 import { assistantEvent, firstStepId, recorder, stepEnded } from './signals'
+
+const PROJECT_DIRECTORY = '/w'
 
 const opened: { harness: AtlasHarness; temp: TempDatabase }[] = []
 
@@ -34,7 +36,7 @@ const depsOf = (harness: AtlasHarness): TurnDeps => ({
   log: harness.log,
   model: harness.model,
   ids: harness.ids,
-  assembly: defaultPipeline(),
+  assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, projectDirectory: PROJECT_DIRECTORY }),
 })
 
 const deltasOf = (signals: readonly ChannelSignal[], kind: 'text-delta' | 'reasoning-delta'): string =>

@@ -18,6 +18,7 @@ import { createPartAccumulator } from './accumulator'
 import { toCoreChunk } from './chunk-conversion'
 import { ModelStreamError } from './errors'
 import { toInstructions } from './instructions'
+import { providerIdentityOf } from './provider-identity'
 import { toModelMessages } from './message-conversion'
 import { toProviderPrompt } from './provider-prompt'
 import { toToolSet } from './tool-set'
@@ -87,24 +88,27 @@ export async function runModelStream(args: {
 
 export type AiSdkModelPortArgs = {
   model: LanguageModel
-  identity: ProviderIdentity
+  identity?: ProviderIdentity | undefined
   hooks?: HookChain | undefined
   tape?: RawTape | undefined
 }
 
 export class AiSdkModelPort extends ModelPort {
-  readonly identity: ProviderIdentity
-
   private readonly model: LanguageModel
+  private readonly declaredIdentity: ProviderIdentity | undefined
   private readonly hooks: HookChain | undefined
   private readonly tape: RawTape | undefined
 
   constructor(args: AiSdkModelPortArgs) {
     super()
     this.model = args.model
-    this.identity = args.identity
+    this.declaredIdentity = args.identity
     this.hooks = args.hooks
     this.tape = args.tape
+  }
+
+  get identity(): ProviderIdentity {
+    return this.declaredIdentity ?? providerIdentityOf(this.model)
   }
 
   async step({

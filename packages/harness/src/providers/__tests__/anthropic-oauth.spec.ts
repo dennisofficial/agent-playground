@@ -1,24 +1,27 @@
 import { describe, expect, it } from 'bun:test'
 import { generateText, streamText } from 'ai'
 
-import type { Credential, CredentialPort } from '@dltech/atlas-core'
+import type { CredentialPort } from '@dltech/atlas-core'
 
 import { CredentialError, ECredentialFailure } from '../../credentials'
+import { apiKeyCredential, oauthCredential } from '../../credentials/testing'
 import { ANTHROPIC_OAUTH_BETA, createAnthropicOauthModel } from '../anthropic-oauth'
 import { generatedText, recordingFetch, streamedText } from './recording-fetch'
-
-const inAnHour = (): string => new Date(Date.now() + 3_600_000).toISOString()
 
 const credentialsReturning = (...tokens: readonly string[]): CredentialPort => {
   let handed = 0
   return {
-    read: async (): Promise<Credential> => {
+    read: async () => {
       const accessToken = tokens[Math.min(handed, tokens.length - 1)] ?? ''
       handed += 1
-      return { accessToken, expiresAt: inAnHour() }
+      return oauthCredential({ accessToken })
     },
   }
 }
+
+const apiKeyCredentials = (apiKey: string): CredentialPort => ({
+  read: async () => apiKeyCredential({ apiKey }),
+})
 
 describe('the anthropic model authenticated by a subscription credential', () => {
   it('sends the credential as a bearer token under the oauth beta, and no api key', async () => {
@@ -162,6 +165,35 @@ describe('the anthropic model authenticated by a subscription credential', () =>
 
     expect(recorder.requests[0]?.body).toMatchObject({
       thinking: { type: 'adaptive', display: 'summarized' },
+    })
+  })
+
+  it('sends an api key as an api key, not as a bearer token', async () => {
+    const recorder = recordingFetch({ body: streamedText('pong') })
+    const model = createAnthropicOauthModel({
+      credentials: apiKeyCredentials('sk-ant-metered'),
+      modelId: 'claude-opus-5',
+      fetch: recorder.fetch,
+    })
+
+    await streamText({ model, prompt: 'ping' }).text
+
+    expect(recorder.requests[0]?.headers.get('x-api-key')).toBe('sk-ant-metered')
+    expect(recorder.requests[0]?.headers.has('authorization')).toBe(false)
+  })
+
+  it('keeps subscription attribution off a metered key, which needs no routing', async () => {
+    const recorder = recordingFetch({ body: streamedText('pong') })
+    const model = createAnthropicOauthModel({
+      credentials: apiKeyCredentials('sk-ant-metered'),
+      modelId: 'claude-sonnet-5',
+      fetch: recorder.fetch,
+    })
+
+    await streamText({ model, system: 'You are Atlas.', prompt: 'ping' }).text
+
+    expect(recorder.requests[0]?.body).toMatchObject({
+      system: [{ type: 'text', text: 'You are Atlas.' }],
     })
   })
 

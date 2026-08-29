@@ -6,4 +6,6 @@ export abstract class TurnRunner {
   abstract say(args: { threadId: ThreadId; text: string; signal?: AbortSignal }): Promise<TurnOutcome>
 
   abstract runTurn(args: { threadId: ThreadId; signal?: AbortSignal }): Promise<TurnOutcome>
+
+  abstract resume(args: { threadId: ThreadId; signal?: AbortSignal }): Promise<TurnOutcome>
 }

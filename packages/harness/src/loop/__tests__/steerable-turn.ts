@@ -4,6 +4,7 @@ import { z } from 'zod'
 
 import {
   defaultPipeline,
+  EMPTY_PROMPT,
   EToolEffect,
   type ThreadId,
   type EventDraft,
@@ -19,6 +20,8 @@ import { scriptedModel, type ScriptedStep } from '../../model/testing/scripted-m
 import { HookedToolDispatcher } from '../../tools/dispatch'
 import { InMemoryToolRegistry } from '../../tools/registry'
 import { createTempDatabase, type TempDatabase } from './temp-database'
+
+const PROJECT_DIRECTORY = '/w'
 
 const opened: { harness: AtlasHarness; temp: TempDatabase }[] = []
 
@@ -133,7 +136,7 @@ export async function openSteerable(args: {
       log: harness.log,
       model: steered,
       ids: harness.ids,
-      assembly: defaultPipeline(),
+      assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, projectDirectory: PROJECT_DIRECTORY }),
       ...(args.withQueue === false ? {} : { drainPending: queue.drain }),
       ...(args.hooks === undefined ? {} : { hooks: args.hooks }),
       ...(args.withTools === true

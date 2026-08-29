@@ -2,8 +2,8 @@ import { describe, expect, it } from 'bun:test'
 
 import {
   defaultPipeline,
+  EMPTY_PROMPT,
   EStage,
-  MINIMAL_PREAMBLE,
   type AfterTurn,
   type BeforeRequest,
   type BeforeStep,
@@ -15,8 +15,11 @@ import { buildHarness, ETurnStatus } from '..'
 import { createDeltaChannel, PublishingTurnRunner, type ChannelSignal } from '../../channel'
 import { HookChain } from '../../hooks/registry'
 import { interruptibleModel } from '../../model/testing/interruptible-model'
+import { FIXTURE_DOCTRINE } from './fixture-prompt'
 import { createTempDatabase } from './temp-database'
 import { keepOpen, openHooked } from './hooked-turn'
+
+const PROJECT_DIRECTORY = '/w'
 
 const nudging = (text: string): AfterTurn => async () => ({
   drafts: [{ type: 'nudge', text, lifetimeSteps: 1 }],
@@ -46,7 +49,7 @@ describe('BeforeStep', () => {
 
     expect(outcome.status).toBe(ETurnStatus.Completed)
     expect(model.doStreamCalls[0]?.prompt.slice(0, 2)).toEqual([
-      { role: 'system', content: MINIMAL_PREAMBLE },
+      { role: 'system', content: FIXTURE_DOCTRINE },
       { role: 'system', content: 'Answer in one word.' },
     ])
   })
@@ -92,7 +95,7 @@ describe('BeforeRequest', () => {
     await runner.say({ threadId: thread.id, text: 'what changed?' })
 
     expect(model.doStreamCalls[0]?.prompt.slice(0, 2)).toEqual([
-      { role: 'system', content: MINIMAL_PREAMBLE },
+      { role: 'system', content: FIXTURE_DOCTRINE },
       { role: 'system', content: 'SHOUT' },
     ])
     const events = await harness.log.read({ threadId: thread.id })
@@ -167,7 +170,7 @@ describe('OnChunk against the delta channel', () => {
 
     const runner = new PublishingTurnRunner({
       channel,
-      deps: { log: harness.log, model: harness.model, ids: harness.ids, assembly: defaultPipeline(), hooks },
+      deps: { log: harness.log, model: harness.model, ids: harness.ids, assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, projectDirectory: PROJECT_DIRECTORY }), hooks },
     })
 
     const outcome = await runner.say({ threadId: thread.id, text: 'what changed?' })

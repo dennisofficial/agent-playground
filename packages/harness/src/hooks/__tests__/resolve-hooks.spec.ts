@@ -31,8 +31,9 @@ import { createIsolatedContainer, portToken, type DependencyContainer } from '..
 import { WorkspaceRoot } from '../../container/tokens'
 import { HookedToolDispatcher } from '../../tools/dispatch'
 import { InMemoryToolRegistry } from '../../tools/registry'
-import { WorkspaceBoundaryHook } from '../boundary'
 import { resolveHookChain } from '../resolve-hooks'
+
+const SESSION_DIRECTORY = '/workspace'
 
 class ChunkHook extends OnChunkHook {
   constructor(
@@ -190,61 +191,3 @@ function touchTool(invoked: string[]): ToolDefinition {
     },
   }
 }
-
-describe('the boundary hook threaded ahead of a second hook', () => {
-  it('hands the next hook the path the caller wrote, not the realpath it checked against', async () => {
-    const witness = new PathWitness()
-    const invoked: string[] = []
-    const touch = touchTool(invoked)
-
-    const child = createIsolatedContainer()
-    child.register(WorkspaceRoot, { useValue: link })
-    child.register(portToken(ToolDefinition), { useValue: touch })
-    child.register(portToken(BeforeToolHook), { useClass: WorkspaceBoundaryHook })
-    child.register(portToken(BeforeToolHook), { useValue: witness })
-
-    const dispatcher = new HookedToolDispatcher({
-      registry: new InMemoryToolRegistry([touch]),
-      hooks: resolveHookChain({ container: child }),
-    })
-
-    const path = join(link, 'a.ts')
-    const drafts = await dispatcher.dispatch({
-      call: { callId: toCallId('call-1'), name: 'touch', input: { path }, runId: toRunId('run-1') },
-      signal: AbortSignal.timeout(5_000),
-    })
-
-    expect(real).not.toBe(link)
-    expect(drafts.map((draft) => draft.type)).toEqual(['tool-result'])
-    expect(witness.seen).toEqual([path])
-    expect(invoked).toEqual([path])
-  })
-
-  it('denies a path outside the root the container injected', async () => {
-    const invoked: string[] = []
-    const touch = touchTool(invoked)
-
-    const child = createIsolatedContainer()
-    child.register(WorkspaceRoot, { useValue: link })
-    child.register(portToken(ToolDefinition), { useValue: touch })
-    child.register(portToken(BeforeToolHook), { useClass: WorkspaceBoundaryHook })
-
-    const dispatcher = new HookedToolDispatcher({
-      registry: new InMemoryToolRegistry([touch]),
-      hooks: resolveHookChain({ container: child }),
-    })
-
-    const drafts = await dispatcher.dispatch({
-      call: {
-        callId: toCallId('call-2'),
-        name: 'touch',
-        input: { path: '/etc/hosts' },
-        runId: toRunId('run-1'),
-      },
-      signal: AbortSignal.timeout(5_000),
-    })
-
-    expect(drafts.map((draft) => draft.type)).toEqual(['tool-denied'])
-    expect(invoked).toEqual([])
-  })
-})

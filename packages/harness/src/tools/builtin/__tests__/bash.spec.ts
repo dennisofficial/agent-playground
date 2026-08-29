@@ -1,4 +1,4 @@
-import { mkdtemp, stat } from 'node:fs/promises'
+import { mkdtemp, readdir, realpath, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeAll, describe, expect, it } from 'bun:test'
@@ -16,10 +16,11 @@ beforeAll(async () => {
 })
 
 const invoke = (input: unknown): Promise<ToolOutcome> =>
-  new BashTool(root, new BunShellRegistry(root, new SystemClock())).invoke({
+  new BashTool(new BunShellRegistry(root, new SystemClock())).invoke({
     input,
     signal: new AbortController().signal,
     idempotencyKey: 'bash-1',
+    sessionDirectory: root,
   })
 
 const outputOf = (outcome: ToolOutcome): Record<string, unknown> => {
@@ -105,10 +106,11 @@ describe('BashTool', () => {
 
   it('abandons a command, and says who stopped it, once the turn is interrupted', async () => {
     const controller = new AbortController()
-    const outcome = new BashTool(root, new BunShellRegistry(root, new SystemClock())).invoke({
+    const outcome = new BashTool(new BunShellRegistry(root, new SystemClock())).invoke({
       input: { command: 'sleep 30' },
       signal: controller.signal,
       idempotencyKey: 'bash-2',
+      sessionDirectory: root,
     })
     setTimeout(() => controller.abort(), 100)
 
@@ -117,4 +119,52 @@ describe('BashTool', () => {
       reason: 'the developer interrupted the turn while the command was running',
     })
   }, 15_000)
+})
+
+describe('following the session directory', () => {
+  it('reports where a cd left the shell', async () => {
+    const nested = join(root, 'nested')
+    await invoke({ command: `mkdir -p ${nested}` })
+
+    const outcome = await invoke({ command: 'cd nested && pwd' })
+
+    expect(await realpath(outputOf(outcome).sessionDirectory as string)).toBe(await realpath(nested))
+    expect(outcome.ok && outcome.modelText).toContain('You are now in')
+  })
+
+  it('reports no move when the command stays put', async () => {
+    const outcome = await invoke({ command: 'echo staying' })
+
+    expect(outputOf(outcome).sessionDirectory).toBeUndefined()
+    expect(outcome.ok && outcome.modelText).not.toContain('You are now in')
+  })
+
+  it('starts where it is told rather than at the project root', async () => {
+    const elsewhere = await mkdtemp(join(tmpdir(), 'atlas-elsewhere-'))
+
+    const outcome = await new BashTool(new BunShellRegistry(root, new SystemClock())).invoke({
+      input: { command: 'pwd' },
+      signal: new AbortController().signal,
+      idempotencyKey: 'bash-elsewhere',
+      sessionDirectory: elsewhere,
+    })
+
+    expect(await realpath((outputOf(outcome).stdout as string).trim())).toBe(await realpath(elsewhere))
+  })
+
+  it('keeps the exit code of a command that also moved', async () => {
+    const outcome = await invoke({ command: 'cd nested && exit 3' })
+
+    expect(outputOf(outcome).exitCode).toBe(3)
+    expect(outputOf(outcome).sessionDirectory).toBeUndefined()
+  })
+
+  it('leaves no probe file behind', async () => {
+    const before = await readdir(tmpdir())
+    await invoke({ command: 'pwd' })
+    const after = await readdir(tmpdir())
+
+    const leaked = after.filter((name) => name.startsWith('atlas-cwd-') && !before.includes(name))
+    expect(leaked).toEqual([])
+  })
 })
