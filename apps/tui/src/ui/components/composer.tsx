@@ -2,8 +2,10 @@ import type { KeyBinding } from '@opentui/core'
 import React, { useCallback, useLayoutEffect, useState } from 'react'
 
 import type { DraftControls } from '../hooks/use-draft'
+import { cellsOf } from '../hint-layout'
 import { theme } from '../theme'
 import { Panel, PANEL_INSET, PANEL_PAD } from './panel'
+import { truncateCells } from './sidebar/cells'
 
 const DEFAULT_MAX_ROWS = 8
 
@@ -50,6 +52,33 @@ const UNBOUNDED = 10_000
 const overflowBadge = (hidden: number): string =>
   hidden === 1 ? '⋯ 1 more row' : `⋯ ${hidden} more rows`
 
+const TITLE_PAD = 1
+
+const TITLE_MIN_CELLS = 8
+
+const RAIL_COLUMNS = 1
+
+const TITLE_RUNWAY = 4
+
+const slabCells = (text: string): number => cellsOf(text) + TITLE_PAD * 2
+
+/**
+ * The head row is shared: whatever the badge takes, plus the `▄` between them, is gone before the
+ * title starts. Below `TITLE_MIN_CELLS` of what is left there is no title worth truncating to.
+ */
+export function composerTitle(args: {
+  title: string
+  width: number
+  badge: string | null
+}): string | null {
+  const spent =
+    RAIL_COLUMNS + TITLE_RUNWAY + PANEL_PAD + (args.badge === null ? 0 : slabCells(args.badge) + 1)
+  const room = args.width - spent - TITLE_PAD * 2
+  if (room < TITLE_MIN_CELLS) return null
+
+  return truncateCells({ text: args.title, cells: room })
+}
+
 export function Composer(props: {
   draft: DraftControls
   width: number
@@ -57,6 +86,7 @@ export function Composer(props: {
   placeholder?: string
   maxRows?: number
   focused?: boolean
+  title?: string
 }): React.ReactNode {
   const tone = props.tone ?? EComposerTone.Idle
   const maxRows = props.maxRows ?? DEFAULT_MAX_ROWS
@@ -100,19 +130,23 @@ export function Composer(props: {
   }, [editor, measure, sync])
 
   const hidden = metrics.total - metrics.rows
+  const badge = hidden > 0 ? overflowBadge(hidden) : null
+  const title =
+    props.title === undefined
+      ? null
+      : composerTitle({ title: props.title, width: props.width, badge })
 
   return (
     <Panel
       width={props.width}
       rail={railColour(tone)}
       fill={theme.panelBg}
-      {...(hidden > 0
-        ? {
-            badge: (
-              <text fg={theme.hint} bg={theme.panelBg}>{` ${overflowBadge(hidden)} `}</text>
-            ),
-          }
-        : {})}
+      {...(badge === null
+        ? {}
+        : { badge: <text fg={theme.hint} bg={theme.panelBg}>{` ${badge} `}</text> })}
+      {...(title === null
+        ? {}
+        : { title: <text fg={theme.body} bg={theme.panelBg}>{` ${title} `}</text> })}
     >
       <textarea
         ref={editor}

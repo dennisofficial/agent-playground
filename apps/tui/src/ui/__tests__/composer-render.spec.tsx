@@ -2,7 +2,8 @@ import { describe, expect, it } from 'bun:test'
 import React from 'react'
 
 import { PANEL_BOTTOM_EDGE, PANEL_TOP_EDGE, RAIL, RAIL_HEAD, RAIL_TAIL } from '../borders'
-import { Composer, composerTone, EComposerTone } from '../components/composer'
+import { Composer, composerTitle, composerTone, EComposerTone } from '../components/composer'
+import { PANEL_PAD } from '../components/panel'
 import { ComposerHints, type Hint } from '../components/composer-hints'
 import { useDraft } from '../hooks/use-draft'
 import { grammarsReady } from '../markdown/__tests__/harness'
@@ -16,15 +17,24 @@ const PLACEHOLDER = 'Ask anything'
 
 const LONG_DRAFT = 'wrap '.repeat(60)
 
-function Draft(props: { text?: string; tone?: EComposerTone; maxRows?: number }): React.ReactNode {
+const TITLE = 'Refresh-token rotation'
+
+function Draft(props: {
+  text?: string
+  tone?: EComposerTone
+  maxRows?: number
+  title?: string
+  width?: number
+}): React.ReactNode {
   const draft = useDraft(props.text ?? '')
   return (
     <Composer
       draft={draft}
-      width={WIDTH}
+      width={props.width ?? WIDTH}
       placeholder={PLACEHOLDER}
       {...(props.tone === undefined ? {} : { tone: props.tone })}
       {...(props.maxRows === undefined ? {} : { maxRows: props.maxRows })}
+      {...(props.title === undefined ? {} : { title: props.title })}
     />
   )
 }
@@ -77,6 +87,56 @@ describe('the composer', () => {
   it('says nothing about hidden rows when the whole draft is showing', async () => {
     const frame = await frameOf(<Draft text="one row" />, WIDTH)
     expect(frame).not.toContain('more row')
+  })
+})
+
+describe('composerTitle', () => {
+  it('keeps a title that fits the head row whole', () => {
+    expect(composerTitle({ title: TITLE, width: WIDTH, badge: null })).toBe(TITLE)
+  })
+
+  it('truncates rather than pushing the title past the left of the row', () => {
+    const fitted = composerTitle({ title: TITLE, width: 28, badge: null })
+    expect(fitted).not.toBeNull()
+    expect(fitted).toEndWith('…')
+    expect(fitted?.length).toBeLessThan(TITLE.length)
+  })
+
+  it('gives the badge its cells first, so the two never overlap', () => {
+    const alone = composerTitle({ title: TITLE, width: 40, badge: null })
+    const shared = composerTitle({ title: TITLE, width: 40, badge: '⋯ 3 more rows' })
+    expect(shared?.length ?? 0).toBeLessThan(alone?.length ?? 0)
+  })
+
+  it('drops the title outright when the row is too narrow to say anything', () => {
+    expect(composerTitle({ title: TITLE, width: 18, badge: '⋯ 3 more rows' })).toBeNull()
+  })
+})
+
+describe('the composer title', () => {
+  it('closes the head row on the half glyph rather than on the title itself', async () => {
+    const frame = await frameOf(<Draft title={TITLE} />, WIDTH)
+    const head = frame.split('\n').find((row) => row.startsWith(RAIL_HEAD))
+    expect(head).toContain(`${PANEL_TOP_EDGE} ${TITLE} ${PANEL_TOP_EDGE}`)
+    expect(head?.trimEnd()).toEndWith(PANEL_TOP_EDGE.repeat(PANEL_PAD))
+  })
+
+  it('keeps the head row a single row however long the title', async () => {
+    const frame = await frameOf(<Draft title={'A very long session title '.repeat(6)} />, WIDTH)
+    expect(frame.split('\n').filter((row) => row.startsWith(RAIL_HEAD))).toHaveLength(1)
+  })
+
+  it('seats the hidden-row badge to the left of the title rather than under it', async () => {
+    const frame = await frameOf(<Draft text={LONG_DRAFT} maxRows={2} title={TITLE} />, WIDTH)
+    const head = frame.split('\n').find((row) => row.startsWith(RAIL_HEAD)) ?? ''
+    expect(head.indexOf('more rows')).toBeGreaterThan(0)
+    expect(head.indexOf('more rows')).toBeLessThan(head.indexOf(TITLE))
+  })
+
+  it('says nothing when the session has no title', async () => {
+    const frame = await frameOf(<Draft />, WIDTH)
+    const head = frame.split('\n').find((row) => row.startsWith(RAIL_HEAD))
+    expect(head).toBe(`${RAIL_HEAD}${PANEL_TOP_EDGE.repeat(WIDTH - 1)}`)
   })
 })
 

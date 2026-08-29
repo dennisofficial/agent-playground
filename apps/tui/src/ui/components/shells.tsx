@@ -3,6 +3,7 @@ import React from 'react'
 import type { ShellSnapshot } from '@dltech/atlas-harness'
 
 import { fitHints, hintSpans, type Hint } from '../hint-layout'
+import type { OutputScroll } from '../hooks/use-output-scroll'
 import { usePress, type PressHandlers } from '../hooks/use-press'
 import {
   AWAITING_INPUT_LABEL,
@@ -25,9 +26,18 @@ export const SHELLS_INSET = EDGE + PAD * 2
 export const shellsCells = (args: { width: number }): number =>
   Math.max(0, args.width - SHELLS_INSET)
 
-const OUTPUT_ROWS = 18
+/**
+ * How far back the panel lets a reader walk. The registry retains more than this, but every row is
+ * a renderable that the tail rewrites as output lands, so the scrollback is bounded by what a reader
+ * would ever page through rather than by what is kept.
+ */
+const SCROLLBACK_ROWS = 1_000
+
+const SCROLLBAR_COLUMN = 1
 
 const NOTHING_PRINTED = 'It has printed nothing yet.'
+
+const BACK_TO_END = 'back to the end'
 
 const STDIN_CLOSED =
   'Its stdin is closed, so nothing can answer it. Kill it and re-run with input piped in.'
@@ -51,7 +61,7 @@ function Line(props: {
   )
 }
 
-function GroupHeader(props: { label: string; count?: string }): React.ReactNode {
+function GroupHeader(props: { label: string; count?: string; note?: string }): React.ReactNode {
   return (
     <Line>
       <text>
@@ -59,6 +69,7 @@ function GroupHeader(props: { label: string; count?: string }): React.ReactNode 
           spans={[
             { text: props.label.toUpperCase(), fg: theme.meta },
             ...(props.count === undefined ? [] : [{ text: `  ${props.count}`, fg: theme.hint }]),
+            ...(props.note === undefined ? [] : [{ text: `  ${props.note}`, fg: theme.warn }]),
           ]}
         />
       </text>
@@ -105,12 +116,21 @@ function OutputSection(props: {
   output: string
   cells: number
   press: PressHandlers
+  jumpPress: PressHandlers
+  scroll?: OutputScroll | undefined
 }): React.ReactNode {
-  const rows = outputRows({ text: props.output, cells: props.cells, rows: OUTPUT_ROWS })
+  const wrapCells = Math.max(0, props.cells - SCROLLBAR_COLUMN)
+  const rows = outputRows({ text: props.output, cells: wrapCells, limit: SCROLLBACK_ROWS })
+  const scroll = props.scroll
+  const scrolledBack = scroll !== undefined && !scroll.pinned
 
   return (
-    <box flexDirection="column" flexShrink={0}>
-      <GroupHeader label="Output" count={`${props.shell.totalCharacters} chars`} />
+    <box flexDirection="column" flexGrow={1} flexShrink={1} flexBasis={0}>
+      <GroupHeader
+        label="Output"
+        count={`${props.shell.totalCharacters} chars`}
+        {...(scrolledBack ? { note: 'scrolled back' } : {})}
+      />
       {isShellRunning(props.shell) ? (
         <Line press={props.press}>
           <text>
@@ -135,18 +155,35 @@ function OutputSection(props: {
           <text fg={theme.meta}>{NOTHING_PRINTED}</text>
         </Line>
       ) : (
-        rows.map((row, index) => (
-          <Line key={`${index}-${row}`}>
-            <text fg={theme.hover}>{row}</text>
-          </Line>
-        ))
+        <scrollbox
+          {...(scroll === undefined ? {} : { ref: scroll.attach })}
+          flexGrow={1}
+          flexShrink={1}
+          flexBasis={0}
+          focusable={false}
+          stickyScroll
+          stickyStart="bottom"
+          viewportCulling
+        >
+          {rows.map((row, index) => (
+            <Line key={index}>
+              <text fg={theme.hover}>{row}</text>
+            </Line>
+          ))}
+        </scrollbox>
       )}
+      {scrolledBack ? (
+        <Line press={props.jumpPress}>
+          <text fg={theme.warn}>{`↓ ${BACK_TO_END}`}</text>
+        </Line>
+      ) : null}
     </box>
   )
 }
 
 const WALKING: readonly Hint[] = [
   { key: '↑↓', label: 'pick' },
+  { key: 'pgup/pgdn', label: 'scroll' },
   { key: 'k', label: 'kill' },
   { key: 'esc', label: 'close' },
 ]
@@ -171,6 +208,7 @@ export function Shells(props: {
   shells: readonly ShellSnapshot[]
   selected: ShellSnapshot | undefined
   output: string
+  scroll?: OutputScroll | undefined
   overlay?: boolean
   onKill: (shellId: string) => void
   onDismiss: () => void
@@ -203,7 +241,7 @@ export function Shells(props: {
             </Line>
           </box>
         ) : (
-          <box flexDirection="column" flexShrink={0}>
+          <box flexDirection="column" flexGrow={1} flexShrink={1} flexBasis={0}>
             <GroupHeader label="Shell log" count={`${running}/${props.shells.length}`} />
             <ShellHeading shell={selected} cells={cells} />
             <OutputSection
@@ -211,6 +249,8 @@ export function Shells(props: {
               output={props.output}
               cells={cells}
               press={press(() => props.onKill(selected.shellId))}
+              jumpPress={press(props.scroll?.handleJumpToEnd)}
+              {...(props.scroll === undefined ? {} : { scroll: props.scroll })}
             />
           </box>
         )}

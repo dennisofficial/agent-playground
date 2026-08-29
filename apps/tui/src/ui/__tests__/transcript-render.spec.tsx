@@ -23,11 +23,14 @@ import {
   MODEL_ID,
   mount,
   PARTIAL_REPLY,
+  REASONING,
   RUNNING,
   SETTLED,
   STREAMING,
   STREAMING_REPLY,
   transcript,
+  TURN_DONE,
+  TURN_STOPPED,
   WIDTHS,
 } from './transcript-fixture'
 
@@ -81,10 +84,42 @@ describe('what the transcript actually says', () => {
   })
 
   it('keeps thinking visibly apart from the answer while it streams', async () => {
-    const frame = await frameOf(transcript({ model: STREAMING, width: 80, turn: RUNNING }), 80)
+    const frame = await frameOf(transcript({ model: STREAMING, width: 80, turn: REASONING }), 80)
     expect(frame).toContain(glyph.thinking)
     expect(frame).toContain('Thinking…')
     expect(frame).toContain('Thinking for')
+  })
+
+  it('says it is working, not thinking, when no reasoning block is streaming', async () => {
+    const frame = await frameOf(transcript({ model: STREAMING, width: 80, turn: RUNNING }), 80)
+    expect(frame).toContain('Working for')
+    expect(frame).not.toContain('Thinking for')
+  })
+
+  it('leaves a finished turn pinned to the reply it measured, with what it cost and when', async () => {
+    const rows = (await frameOf(transcript({ model: TURN_DONE, width: 80 }), 80)).split('\n')
+
+    const reply = rows.findIndex((row) => row.includes('done'))
+    const worked = rows.findIndex((row) => row.includes('Worked for'))
+
+    expect(worked).toBeGreaterThan(reply)
+    expect(rows[worked]).toContain('54s')
+    expect(rows[worked]).toContain('1.1k tokens')
+    expect(rows[worked]).toContain('6:32pm')
+  })
+
+  it('says a stopped turn was stopped rather than worked', async () => {
+    const frame = await frameOf(transcript({ model: TURN_STOPPED, width: 80 }), 80)
+
+    expect(frame).toContain('Stopped after 12s')
+    expect(frame).not.toContain('tokens')
+  })
+
+  it('draws no finished turn of its own, so history cannot drift from the log', async () => {
+    const frame = await frameOf(transcript({ model: SETTLED, width: 80, turn: FINISHED }), 80)
+
+    expect(frame).not.toContain('Worked for')
+    expect(frame).not.toContain('Thought for')
   })
 
   it('renders a failure alongside the partial reply, never as silence', async () => {
@@ -114,7 +149,7 @@ describe('what the transcript actually says', () => {
       transcript({ model: FAILED_WITH_A_REASON, width: 80, turn: FINISHED }),
       80,
     )
-    expect(frame).not.toContain('Thought for')
+    expect(frame).not.toContain('Worked for')
   })
 
   it('attaches a tool group to the reply that asked for it, and spaces the groups apart', async () => {
@@ -135,6 +170,24 @@ describe('what the transcript actually says', () => {
 
     const next = rows.findIndex((row) => row.includes('Editing in one pass'))
     expect(rows[next - 1]?.trim()).toBe('')
+  })
+
+  it('stacks back-to-back tool groups with no blank row between them', async () => {
+    const events = clocked([
+      { draft: said('Reading, then editing.'), at: AT },
+      { draft: called({ n: 1, name: 'read', input: { path: 'a.ts' } }), at: AT },
+      { draft: result({ n: 1, name: 'read', output: { lines: 10 } }), at: AT },
+      { draft: called({ n: 2, name: 'edit', input: { path: 'a.ts' } }), at: AT },
+      { draft: result({ n: 2, name: 'edit', output: { added: 4, removed: 1 } }), at: AT },
+    ])
+    const model = deriveTranscript({ events, signals: [] })
+    const rows = (await frameOf(transcript({ model, width: 100 }), 100)).split('\n')
+
+    const read = rows.findIndex((row) => row.includes('Read 1 file'))
+    const edited = rows.findIndex((row) => row.includes('Edited 1 file'))
+
+    expect(read).toBeGreaterThan(0)
+    expect(edited).toBe(read + 1)
   })
 
   it('marks a message sent mid-turn where it landed, rather than hiding it or moving it', async () => {
@@ -177,7 +230,7 @@ describe('what the transcript actually says', () => {
       )
     ).split('\n')
 
-    const working = rows.findIndex((row) => row.includes('Thinking for'))
+    const working = rows.findIndex((row) => row.includes('Working for'))
     const first = rows.findIndex((row) => row.includes('check the tests too'))
     const second = rows.findIndex((row) => row.includes('and the fixtures'))
 
@@ -204,7 +257,7 @@ describe('what the transcript actually says', () => {
       )
     ).split('\n')
 
-    const working = rows.findIndex((row) => row.includes('Thinking for'))
+    const working = rows.findIndex((row) => row.includes('Working for'))
     const queued = rows.slice(working)
 
     expect(queued.filter((row) => row.startsWith(RAIL_HEAD)).length).toBe(1)
@@ -337,10 +390,9 @@ describe('what the transcript actually says', () => {
 describe('the pieces around the transcript mount', () => {
   it('renders the working line in each of its states', async () => {
     for (const state of [
-      { running: true, elapsedMs: 4_000, outputTokens: 0, interrupting: false },
-      { running: true, elapsedMs: 94_000, outputTokens: 12_400, interrupting: false },
-      { running: true, elapsedMs: 94_000, outputTokens: 12_400, interrupting: true },
-      { running: false, elapsedMs: 92_000, outputTokens: 4_210, interrupting: false },
+      { elapsedMs: 4_000, outputTokens: 0, interrupting: false },
+      { elapsedMs: 94_000, outputTokens: 12_400, interrupting: false },
+      { elapsedMs: 94_000, outputTokens: 12_400, interrupting: true },
     ]) {
       await expect(mount(<WorkingLine {...state} />, 60)).resolves.toBeUndefined()
     }

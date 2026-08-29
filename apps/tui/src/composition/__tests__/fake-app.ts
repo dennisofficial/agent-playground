@@ -2,9 +2,12 @@ import {
   ATLAS_SETTINGS,
   EEffort,
   defaultPipeline,
+  EMPTY_PROMPT,
   EFinishReason,
   type Chunk,
   type ChunkFilter,
+  EAuthKind,
+  toAccountId,
   type Credential,
   type CredentialPort,
   type ModelPort,
@@ -14,13 +17,17 @@ import {
 import type { EventDraft } from '@dltech/atlas-core'
 
 import {
+  AccountsService,
+  builtinOauthClients,
   createDeltaChannel,
+  memoryAccountStore,
   createSettingsService,
   MemorySettingsStore,
   ModelStreamError,
   PublishingTurnRunner,
   RandomIds,
   ShellRegistryPort,
+  SystemClock,
   type DeltaChannel,
   type DiscoveredSkill,
   type ShellSnapshot,
@@ -30,7 +37,14 @@ import { createPendingQueue } from '../../store'
 import type { AtlasApp } from '../compose'
 import { heldChoice } from '../model-selection'
 import { DEFAULT_MODEL_ID, type AtlasConfig } from '../config'
-import { fakeThreadStore, fakeEventLog, type FakeThreadStore, type FakeEventLog } from './fake-backend'
+import {
+  fakeThreadStore,
+  fakeEventLog,
+  fakeLedger,
+  type FakeThreadStore,
+  type FakeEventLog,
+  type FakeLedger,
+} from './fake-backend'
 
 export const FAKE_CONFIG: AtlasConfig = {
   modelId: 'claude-haiku-4-5-20251001',
@@ -42,11 +56,22 @@ export const FAKE_CONFIG: AtlasConfig = {
 }
 
 const CREDENTIAL: Credential = {
+  kind: EAuthKind.Oauth,
+  accountId: toAccountId('acc_fake'),
   accessToken: 'not-a-real-token',
   expiresAt: '2099-01-01T00:00:00.000Z',
 }
 
 export const alwaysAuthorised = (): CredentialPort => ({ read: async () => CREDENTIAL })
+
+export const fakeAccounts = (): AccountsService => {
+  const clock = new SystemClock()
+
+  return new AccountsService({
+    accounts: memoryAccountStore({ clock }),
+    clients: builtinOauthClients({ clock }),
+  })
+}
 
 export type ScriptedReply = { thinking: string; reply: string }
 
@@ -138,6 +163,7 @@ export function failingThenStallingModelPort(args: { message: string }): ModelPo
 
 export type FakeShells = ShellRegistryPort & {
   place: (snapshot: ShellSnapshot) => void
+  print: (args: { shellId: string; text: string }) => void
   announce: (snapshot: ShellSnapshot) => void
   readonly killed: readonly string[]
 }
@@ -146,6 +172,7 @@ const NO_NOTICES: readonly ShellSnapshot[] = Object.freeze([])
 
 export function fakeShellRegistry(): FakeShells {
   const snapshots: ShellSnapshot[] = []
+  const printed = new Map<string, string>()
   const killed: string[] = []
   const listeners = new Set<() => void>()
   let ended: readonly ShellSnapshot[] = NO_NOTICES
@@ -167,6 +194,10 @@ export function fakeShellRegistry(): FakeShells {
       snapshots.push(snapshot)
     },
 
+    print: ({ shellId, text }) => {
+      printed.set(shellId, text)
+    },
+
     announce: (snapshot) => {
       snapshots.push(snapshot)
       settle([...ended, snapshot])
@@ -184,7 +215,8 @@ export function fakeShellRegistry(): FakeShells {
       }
     },
 
-    peek: ({ shellId }) => (find(shellId) === undefined ? undefined : `output of ${shellId}`),
+    peek: ({ shellId }) =>
+      find(shellId) === undefined ? undefined : (printed.get(shellId) ?? `output of ${shellId}`),
 
     kill: ({ shellId }) => {
       const snapshot = find(shellId)
@@ -236,6 +268,7 @@ export type FakeApp = AtlasApp & {
   shells: FakeShells
   log: FakeEventLog
   threads: FakeThreadStore
+  ledger: FakeLedger
   readonly turnsDriven: number
   readonly titled: readonly string[]
 }
@@ -252,6 +285,7 @@ export function fakeApp(args: {
   const log = fakeEventLog()
   const threads = fakeThreadStore({ log })
   const ids = new RandomIds()
+  const ledger = fakeLedger()
   const pending = createPendingQueue()
   const shells = fakeShellRegistry()
   const runner = new PublishingTurnRunner({
@@ -260,7 +294,8 @@ export function fakeApp(args: {
       log,
       model: args.model,
       ids,
-      assembly: defaultPipeline(),
+      assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, projectDirectory: FAKE_CONFIG.cwd }),
+      spend: { ledger, clock: new SystemClock() },
       drainPending: async () =>
         pending.drain().map((text): EventDraft => ({ type: 'user-said', text })),
     },
@@ -271,6 +306,7 @@ export function fakeApp(args: {
 
   return {
     skills: args.skills ?? [],
+    accounts: fakeAccounts(),
 
     get turnsDriven() {
       return turnsDriven
@@ -279,6 +315,8 @@ export function fakeApp(args: {
     get titled() {
       return titled
     },
+
+    ledger,
 
     markActiveThread: () => undefined,
 
@@ -320,6 +358,10 @@ export function fakeApp(args: {
     close: async () => {},
     runner: {
       say: (call) => runner.say(call),
+      resume: (call) => {
+        turnsDriven += 1
+        return runner.resume(call)
+      },
       runTurn: (call) => {
         turnsDriven += 1
         return runner.runTurn(call)

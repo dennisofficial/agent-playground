@@ -7,7 +7,7 @@ import { ESidebarTaskState, IDLE_SIDEBAR, type SidebarModel } from '../../store/
 import { Sidebar } from '../components/sidebar'
 import { IDLE_TURN, type TurnClock } from '../components/transcript'
 import { teardown } from '../markdown/__tests__/harness'
-import { SIDEBAR_WIDTH } from '../theme'
+import { glyph, SPINNER_FRAMES, SIDEBAR_WIDTH } from '../theme'
 
 const TERMINAL_WIDTH = 80
 
@@ -23,6 +23,7 @@ const RUNNING: TurnClock = {
   startedAt: 1_000,
   outputTokens: 1_280,
   interrupting: false,
+  reasoning: false,
   completed: null,
 }
 
@@ -39,7 +40,6 @@ const FED: SidebarModel = {
   turnCount: 14,
   totalTokens: 22_400,
   approvals: [{ callId: toCallId('call-a'), reason: 'runs a shell command' }],
-  toolCalls: [{ callId: toCallId('call-b'), name: 'read_file' }],
   lastActivity: null,
   liveOutputTokens: 1_280,
   lastTurnOutputTokens: null,
@@ -84,6 +84,53 @@ const rowWith = (args: { rows: readonly string[]; text: string }): string =>
 
 const written = (row: string): string => row.slice(0, SCROLLBAR_COLUMN)
 
+describe('the checklist', () => {
+  it('marks the running task without animating it, so an idle sidebar holds still', async () => {
+    const rows = await rowsOf({ model: FED, turn: IDLE_TURN })
+    const running = rowWith({ rows, text: 'Cover rotation and reuse' })
+
+    expect(running).toContain(glyph.marker)
+    for (const frame of SPINNER_FRAMES) expect(running).not.toContain(frame)
+  })
+
+  it('soft-wraps a task too long for the column instead of clipping it', async () => {
+    const model: SidebarModel = {
+      ...FED,
+      todo: [
+        {
+          id: 'k9',
+          label: 'Soft-wrap the sidebar task text instead of truncating it',
+          state: ESidebarTaskState.Pending,
+        },
+      ],
+    }
+
+    const rows = await rowsOf({ model, turn: IDLE_TURN })
+
+    expect(rowWith({ rows, text: 'Soft-wrap the' })).not.toContain('…')
+    expect(rowWith({ rows, text: 'truncating it' })).not.toBe('')
+  })
+
+  it('says what it is doing in place of the task it is doing', async () => {
+    const model: SidebarModel = {
+      ...FED,
+      todo: [
+        {
+          id: 'k9',
+          label: 'Fix the bug',
+          state: ESidebarTaskState.Running,
+          activeForm: 'Fixing the bug',
+        },
+      ],
+    }
+
+    const rows = await rowsOf({ model, turn: IDLE_TURN })
+
+    expect(rowWith({ rows, text: 'Fixing the bug' })).not.toBe('')
+    expect(rowWith({ rows, text: 'Fix the bug' })).toBe('')
+  })
+})
+
 describe('what the sidebar says', () => {
   it('keeps every row inside its own column', async () => {
     const rows = await rowsOf({ model: FED })
@@ -95,7 +142,7 @@ describe('what the sidebar says', () => {
     const rows = await rowsOf({ model: IDLE_SIDEBAR, turn: IDLE_TURN })
     const frame = rows.join('\n')
 
-    for (const header of ['TURN', 'APPROVALS', 'TOOL CALLS', 'TODO', 'SUBAGENTS', 'TEAMMATES'])
+    for (const header of ['TURN', 'APPROVALS', 'TODO', 'SUBAGENTS', 'TEAMMATES'])
       expect(frame).not.toContain(header)
 
     expect(frame).not.toContain('turns')
@@ -151,7 +198,7 @@ describe('what the sidebar says', () => {
     expect(rowWith({ rows, text: 'omar' })).toContain('idle')
   }, 30_000)
 
-  it('keeps the live turn, the approval and the pending call in view', async () => {
+  it('keeps the live turn and the approval in view', async () => {
     const rows = await rowsOf({ model: FED })
     const frame = rows.join('\n')
 
@@ -159,8 +206,6 @@ describe('what the sidebar says', () => {
     expect(rowWith({ rows, text: 'working' })).toContain('41s')
     expect(rowWith({ rows, text: 'APPROVALS' })).toContain('1')
     expect(frame).toContain('runs a shell command')
-    expect(rowWith({ rows, text: 'TOOL CALLS' })).toContain('1')
-    expect(frame).toContain('read_file')
   }, 30_000)
 
   it('pins where it is running to the bottom of the column', async () => {

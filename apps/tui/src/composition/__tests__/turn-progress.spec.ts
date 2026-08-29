@@ -72,6 +72,61 @@ describe('the clock the working line reads', () => {
     expect(progress.clock.outputTokens).toBe(0)
   })
 
+  it('is not thinking until a reasoning block opens', () => {
+    expect(started().clock.reasoning).toBe(false)
+    expect(absorbing([chunk({ type: 'text-delta', id: 't', text: 'hi' })]).clock.reasoning).toBe(false)
+  })
+
+  it('is thinking only while the reasoning block is open', () => {
+    const opened = absorbing([chunk({ type: 'reasoning-start', id: 'r' })])
+    expect(opened.clock.reasoning).toBe(true)
+
+    const closed = turnAdvanced({ progress: opened, signal: chunk({ type: 'reasoning-end', id: 'r' }) })
+    expect(closed.clock.reasoning).toBe(false)
+  })
+
+  it('stops thinking when the answer starts, even if the reasoning block never closed', () => {
+    const progress = absorbing([
+      chunk({ type: 'reasoning-start', id: 'r' }),
+      chunk({ type: 'reasoning-delta', id: 'r', text: 'weighing it up' }),
+      chunk({ type: 'text-delta', id: 't', text: 'the answer' }),
+    ])
+
+    expect(progress.clock.reasoning).toBe(false)
+  })
+
+  it('stops thinking when a tool call is what the thought produced', () => {
+    const progress = absorbing([
+      chunk({ type: 'reasoning-start', id: 'r' }),
+      chunk({ type: 'tool-call', callId: toCallId('call-1'), name: 'read', input: {} }),
+    ])
+
+    expect(progress.clock.reasoning).toBe(false)
+  })
+
+  it('thinks again when a later step opens a second reasoning block', () => {
+    const progress = absorbing([
+      chunk({ type: 'reasoning-start', id: 'r1' }),
+      chunk({ type: 'reasoning-end', id: 'r1' }),
+      chunk({ type: 'tool-call', callId: toCallId('call-1'), name: 'read', input: {} }),
+      chunk({ type: 'reasoning-start', id: 'r2' }),
+    ])
+
+    expect(progress.clock.reasoning).toBe(true)
+  })
+
+  it('leaves the progress untouched when a signal changes neither count nor thinking', () => {
+    const progress = absorbing([chunk({ type: 'text-delta', id: 't', text: 'hi' })])
+
+    expect(turnAdvanced({ progress, signal: chunk({ type: 'text-end', id: 't' }) })).toBe(progress)
+  })
+
+  it('is no longer thinking once the turn settles', () => {
+    const thinking = absorbing([chunk({ type: 'reasoning-start', id: 'r' })])
+
+    expect(turnSettled({ progress: thinking, now: 5_000 }).clock.reasoning).toBe(false)
+  })
+
   it('marks the turn as interrupting without losing the count so far', () => {
     const progress = turnInterrupting(
       absorbing([chunk({ type: 'text-delta', id: 't', text: 'x'.repeat(12) })]),
@@ -85,7 +140,7 @@ describe('the clock the working line reads', () => {
     expect(turnInterrupting(IDLE_PROGRESS)).toBe(IDLE_PROGRESS)
   })
 
-  it('settles into what the turn cost, so the line reads "Thought for"', () => {
+  it('settles into what the turn cost, so the line reads "Worked for"', () => {
     const progress = turnSettled({
       progress: absorbing([chunk({ type: 'text-delta', id: 't', text: 'x'.repeat(400) })]),
       now: 93_000,

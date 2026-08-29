@@ -8,11 +8,10 @@ import {
 } from '@dltech/atlas-core'
 
 import { ClaudeCodeSource, claudeCodePayloadStore } from '../credentials/claude-code-source'
-import { FileAccountStore } from '../credentials/file-account-store'
-import { builtinRefreshClients } from '../credentials/oauth'
+import { fileAccountStore } from '../credentials/account-store'
+import { builtinOauthClients } from '../credentials/oauth'
 import { atlasVaultFile, atlasVaultKeyFile } from '../credentials/paths'
 import { RefreshingCredentialPort } from '../credentials/refreshing-credential-port'
-import { SecretCipher } from '../credentials/secret-cipher'
 import { registerBuiltinHooks } from '../hooks/register-hooks'
 import { PrismaTurnLedger, TurnLedgerPort } from '../ledger'
 import { resolveHookChain } from '../hooks/resolve-hooks'
@@ -52,9 +51,9 @@ export function createHarnessContainer(): DependencyContainer {
   harness.register(portToken(AccountStorePort), {
     useFactory: instanceCachingFactory(
       (resolver) =>
-        new FileAccountStore({
+        fileAccountStore({
           file: atlasVaultFile(),
-          cipher: new SecretCipher(atlasVaultKeyFile()),
+          keyFile: atlasVaultKeyFile(),
           clock: resolver.resolve(portToken(ClockPort)),
         }),
     ),
@@ -75,7 +74,7 @@ export function createHarnessContainer(): DependencyContainer {
 
       return new RefreshingCredentialPort({
         accounts: resolver.resolve(portToken(AccountStorePort)),
-        clients: builtinRefreshClients({ clock }),
+        clients: builtinOauthClients({ clock }),
         clock,
         sinks: [resolver.resolve(ClaudeCodeSourceToken)],
       })

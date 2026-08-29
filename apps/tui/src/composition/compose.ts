@@ -1,18 +1,23 @@
 import { join } from 'node:path'
 
 import {
+  AccountStorePort,
   BeforeTurnHook,
   ClockPort,
   CredentialPort,
   defaultPipeline,
+  EPromptAgent,
   EventLogPort,
   IdPort,
   ModelPort,
+  promptContextFor,
   type ThreadId,
   type EventDraft,
 } from '@dltech/atlas-core'
 import {
+  AccountsService,
   ThreadStorePort,
+  builtinOauthClients,
   createAnthropicOauthModel,
   createDeltaChannel,
   createHarnessContainer,
@@ -26,13 +31,19 @@ import {
   HookChainToken,
   loadSkills,
   LoadInstructionsHook,
-  KeychainCredentialPort,
+  ClaudeCodeSource,
+  ClaudeCodeSourceToken,
   KeychainReaderToken,
+  claudeCodePayloadStore,
+  importClaudeCodeAccount,
+  syncEnvironmentAccounts,
   LanguageModelToken,
   openAtlasDatabase,
   portToken,
   PrismaClientToken,
+  PromptRegistry,
   PublishingTurnRunner,
+  registerBuiltinPromptFragments,
   registerDisposable,
   ShellRegistryPort,
   summaryFor,
@@ -63,10 +74,12 @@ export type AtlasApp = {
   titler: SessionTitler
   summarise: Summariser
   credentials: CredentialPort
+  accounts: AccountsService
   channel: DeltaChannel
   runner: TurnRunner
   log: EventLogPort
   threads: ThreadStorePort
+  ledger: TurnLedgerPort
   ids: IdPort
   pending: PendingQueue
   shells: ShellRegistryPort
@@ -85,22 +98,36 @@ export async function composeAtlas(args: {
   const { config } = args
   const container = createHarnessContainer()
 
+  registerBuiltinPromptFragments({ container })
   container.register(WorkspaceRoot, { useValue: config.cwd })
   container.register(KeychainReaderToken, { useValue: createSecurityKeychainReader() })
 
-  const service = config.keychainService
-  if (service !== undefined) {
-    container.register(portToken(CredentialPort), {
+  const keychainService = config.keychainService
+  if (keychainService !== undefined) {
+    container.register(ClaudeCodeSourceToken, {
       useFactory: (resolver) =>
-        new KeychainCredentialPort({
-          reader: resolver.resolve(KeychainReaderToken),
-          clock: resolver.resolve(portToken(ClockPort)),
-          service,
-        }),
+        new ClaudeCodeSource(
+          claudeCodePayloadStore({
+            reader: resolver.resolve(KeychainReaderToken),
+            service: keychainService,
+          }),
+        ),
     })
   }
 
   const credentials = container.resolve(portToken(CredentialPort))
+  const accountStore = container.resolve(portToken(AccountStorePort))
+
+  await syncEnvironmentAccounts({ accounts: accountStore, env: args.env })
+  await importClaudeCodeAccount({
+    accounts: accountStore,
+    source: container.resolve(ClaudeCodeSourceToken),
+  })
+
+  const accounts = new AccountsService({
+    accounts: accountStore,
+    clients: builtinOauthClients({ clock: container.resolve(portToken(ClockPort)) }),
+  })
   const settings = bindSettings({ container, env: args.env, cwd: config.cwd })
 
   container.register(portToken(BeforeTurnHook), {
@@ -127,7 +154,12 @@ export async function composeAtlas(args: {
   const log = container.resolve(portToken(EventLogPort))
   const ids = container.resolve(portToken(IdPort))
   const threads = container.resolve(portToken(ThreadStorePort))
+  const ledger = container.resolve(portToken(TurnLedgerPort))
   const tools = container.resolve(portToken(ToolRegistry)).declarations()
+  const modelPort = container.resolve(portToken(ModelPort))
+  const prompts = container.resolve(portToken(PromptRegistry))
+  const compiledPrompt = () =>
+    prompts.compile(promptContextFor({ agent: EPromptAgent.Main, provider: modelPort.identity }))
   const shells = container.resolve(portToken(ShellRegistryPort))
 
   const skills = await loadSkills({
@@ -166,14 +198,11 @@ export async function composeAtlas(args: {
    * which is the one moment compacting mid-turn is safe: the loop is between steps and re-reads the
    * log itself afterwards.
    */
-  const compactBeforeOverflow = async (): Promise<boolean> => {
-    const thread = await threads.mostRecent()
-    if (thread === undefined) return false
-
+  const compactBeforeOverflow = async ({ threadId }: { threadId: ThreadId }): Promise<boolean> => {
     const compaction = await compactTurn({
       log,
       threads,
-      threadId: thread.id,
+      threadId,
       summarise,
     })
     return compaction.type === ECompaction.Compacted
@@ -204,9 +233,11 @@ export async function composeAtlas(args: {
     settings,
     skills,
     credentials,
+    accounts,
     channel,
     log,
     threads,
+    ledger,
     ids,
     pending,
     shells,
@@ -219,9 +250,10 @@ export async function composeAtlas(args: {
       channel,
       deps: {
         log,
-        model: container.resolve(portToken(ModelPort)),
+        model: modelPort,
         ids,
-        assembly: defaultPipeline({ root: config.cwd, tools }),
+        assembly: defaultPipeline({ prompt: compiledPrompt, projectDirectory: config.cwd }),
+        projectDirectory: config.cwd,
         tools,
         dispatch: container.resolve(portToken(ToolDispatcher)),
         hooks: container.resolve(HookChainToken),
@@ -229,10 +261,7 @@ export async function composeAtlas(args: {
           ...pending.drain().map((text): EventDraft => ({ type: 'user-said', text })),
           ...shells.drainNotifications(),
         ],
-        spend: {
-          ledger: container.resolve(portToken(TurnLedgerPort)),
-          clock: container.resolve(portToken(ClockPort)),
-        },
+        spend: { ledger, clock: container.resolve(portToken(ClockPort)) },
         compact: compactBeforeOverflow,
       },
     }),

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import { collapseHome, tailOfPath } from '../paths'
+import { collapseHome, tailOfPath, sessionLabel } from '../paths'
 
 const HOME = '/Users/ada'
 
@@ -43,5 +43,37 @@ describe('tailOfPath', () => {
 
   it('falls back to the bare tail when no boundary fits', () => {
     expect(tailOfPath({ path: '~/averyverylongdirectory', cells: 8 })).toBe('…rectory')
+  })
+})
+
+describe('sessionLabel', () => {
+  const home = '/Users/dev'
+  const projectDirectory = '/Users/dev/atlas'
+
+  it('shows the collapsed project path while the session has not moved', () => {
+    expect(sessionLabel({ projectDirectory, sessionDirectory: projectDirectory, home })).toEqual({
+      path: '~/atlas',
+      moved: false,
+    })
+  })
+
+  it('shows the path relative to the project once the session moves inside it', () => {
+    expect(
+      sessionLabel({ projectDirectory, sessionDirectory: '/Users/dev/atlas/packages/harness', home }),
+    ).toEqual({ path: 'packages/harness', moved: true })
+  })
+
+  it('shows a collapsed absolute path once the session leaves the project', () => {
+    expect(sessionLabel({ projectDirectory, sessionDirectory: '/Users/dev/Downloads', home })).toEqual({
+      path: '~/Downloads',
+      moved: true,
+    })
+  })
+
+  it('does not mistake a sibling directory sharing the project prefix for a child', () => {
+    expect(sessionLabel({ projectDirectory, sessionDirectory: '/Users/dev/atlas-notes', home })).toEqual({
+      path: '~/atlas-notes',
+      moved: true,
+    })
   })
 })

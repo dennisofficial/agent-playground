@@ -6,6 +6,7 @@ import { useHiddenVerticalScrollbar } from '../hide-scrollbar'
 import { TRANSCRIPT_PADDING } from '../theme'
 import { ErrorBlock } from './blocks/error-block'
 import { PendingBlock } from './blocks/pending-block'
+import { ResumeBlock } from './blocks/resume-block'
 import { WelcomeBlock } from './blocks/welcome-block'
 import { EntryView } from './entry-view'
 import { JumpToBottom, NewDivider, UNSEEN_ANCHOR_ID } from './new-divider'
@@ -15,6 +16,7 @@ export type TurnClock = {
   startedAt: number | null
   outputTokens: number
   interrupting: boolean
+  reasoning: boolean
   completed: { durationMs: number; outputTokens: number } | null
 }
 
@@ -22,14 +24,13 @@ export const IDLE_TURN: TurnClock = {
   startedAt: null,
   outputTokens: 0,
   interrupting: false,
+  reasoning: false,
   completed: null,
 }
 
 const FAILURE_WITHOUT_A_REASON = 'The model reported no reason.'
 
 const NOTHING_PENDING: readonly PendingRow[] = Object.freeze([])
-
-export type Compacting = { startedAt: number; cancelling: boolean }
 
 export function Transcript(props: {
   model: TranscriptModel
@@ -42,8 +43,9 @@ export function Transcript(props: {
   anchorKey?: string | null
   sends?: number
   pending?: readonly PendingRow[]
-  compacting?: Compacting | undefined
   onRetry?: () => void
+  onResume?: () => void
+  onResumeFresh?: () => void
   opened?: ReadonlySet<string>
   onToggle?: (key: string) => void
 }): React.ReactNode {
@@ -122,34 +124,20 @@ export function Transcript(props: {
           />
         ) : null}
 
-        {props.compacting === undefined ? null : (
-          <box flexDirection="row" marginTop={1} marginBottom={1}>
-            <WorkingLine
-              running
-              elapsedMs={Math.max(0, props.now - props.compacting.startedAt)}
-              outputTokens={0}
-              interrupting={props.compacting.cancelling}
-              verb={EWorkingVerb.Compacting}
-            />
-          </box>
+        {model.failure !== null || model.streaming || props.onResume === undefined ? null : (
+          <ResumeBlock
+            onResume={props.onResume}
+            {...(props.onResumeFresh === undefined ? {} : { onResumeFresh: props.onResumeFresh })}
+          />
         )}
 
         {model.failure !== null ? null : model.streaming && turn.startedAt !== null ? (
           <box flexDirection="row" marginTop={1} marginBottom={1}>
             <WorkingLine
-              running
               elapsedMs={props.now - turn.startedAt}
               outputTokens={turn.outputTokens}
               interrupting={turn.interrupting}
-            />
-          </box>
-        ) : turn.completed ? (
-          <box flexDirection="row" marginTop={1} marginBottom={1}>
-            <WorkingLine
-              running={false}
-              elapsedMs={turn.completed.durationMs}
-              outputTokens={turn.completed.outputTokens}
-              interrupting={false}
+              verb={turn.reasoning ? EWorkingVerb.Thinking : EWorkingVerb.Working}
             />
           </box>
         ) : null}

@@ -2,7 +2,6 @@ import {
   EPlanStatus,
   eventsOfType,
   outstandingApproval,
-  pendingCalls,
   planFromEvents,
   type CallId,
   type Event,
@@ -11,8 +10,6 @@ import {
 import { sidebarCells, truncateCells } from '../ui/components/sidebar/cells'
 import type { TurnClock } from '../ui/components/transcript'
 import { SIDEBAR_WIDTH } from '../ui/theme'
-
-export type SidebarToolCall = { callId: CallId; name: string }
 
 export type SidebarApproval = { callId: CallId; reason: string }
 
@@ -49,7 +46,6 @@ export type SidebarModel = {
   turnCount: number
   totalTokens: number
   approvals: readonly SidebarApproval[]
-  toolCalls: readonly SidebarToolCall[]
   lastActivity: string | null
   liveOutputTokens: number
   lastTurnOutputTokens: number | null
@@ -66,7 +62,6 @@ export const IDLE_SIDEBAR: SidebarModel = {
   turnCount: 0,
   totalTokens: 0,
   approvals: [],
-  toolCalls: [],
   lastActivity: null,
   liveOutputTokens: 0,
   lastTurnOutputTokens: null,
@@ -130,7 +125,6 @@ export function deriveSidebar(args: {
   const liveOutputTokens = running ? turn.outputTokens : 0
   const lastTurnOutputTokens = running ? null : (turn.completed?.outputTokens ?? null)
 
-  const awaitingApproval = outstandingApproval(events)
   const todo = todoOf(events)
 
   return {
@@ -138,9 +132,6 @@ export function deriveSidebar(args: {
     turnCount: eventsOfType({ events, type: 'user-said' }).length,
     totalTokens: liveOutputTokens + (lastTurnOutputTokens ?? 0),
     approvals: approvalNames(events),
-    toolCalls: pendingCalls(events)
-      .filter((call) => call.callId !== awaitingApproval)
-      .map((call) => ({ callId: call.callId, name: call.name })),
     lastActivity: events.at(-1)?.at ?? null,
     liveOutputTokens,
     lastTurnOutputTokens,

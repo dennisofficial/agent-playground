@@ -1,4 +1,5 @@
 import { registerGrammars } from '../grammars/index'
+import { frameSettled } from '../../__tests__/waiting'
 
 /**
  * `getTreeSitterClient()` hands back ONE client for the whole process. `renderer.destroy()` tears it
@@ -27,10 +28,10 @@ export async function settle(ms = HIGHLIGHT_SETTLE_MS): Promise<void> {
 }
 
 export async function teardown(setup: {
-  flush: () => Promise<unknown>
+  flush: () => Promise<void>
+  captureCharFrame: () => string
   renderer: { destroy: () => void }
 }): Promise<void> {
-  await setup.flush()
-  await settle()
+  await frameSettled({ setup, within: HIGHLIGHT_SETTLE_MS })
   setup.renderer.destroy()
 }

@@ -39,7 +39,7 @@ type Mounted = Awaited<ReturnType<typeof testRender>>
 
 async function opened(app: FakeApp): Promise<Mounted> {
   const setup = await testRender(
-    <App app={app} opened={{ threadId: THREAD, events: [], name: null }} />,
+    <App app={app} opened={{ threadId: THREAD, events: [], turns: [], name: null }} />,
     WIDE,
   )
   await setup.flush()
@@ -118,6 +118,83 @@ describe('reading a background shell without losing the sidebar', () => {
       await setup.flush()
 
       expect(setup.captureCharFrame()).not.toContain('SHELL LOG')
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+})
+
+const LOUD_LINES = 200
+
+const loud = Array.from({ length: LOUD_LINES }, (_, index) => `line ${index + 1}`).join('\n')
+
+const printedLines = (frame: string): readonly number[] =>
+  [...frame.matchAll(/line (\d+)/g)].map((match) => Number(match[1]))
+
+async function openedOnLoudShell(): Promise<Mounted> {
+  const app = appWith([running({ shellId: 'bash_1', command: 'bun run dev' })])
+  app.shells.print({ shellId: 'bash_1', text: loud })
+
+  const setup = await opened(app)
+  setup.mockInput.pressKey('t', { ctrl: true })
+  await settle(READ_MS)
+  await setup.flush()
+  return setup
+}
+
+const PAGE_UP = '\u001b[5~'
+
+describe('walking back through what a shell already printed', () => {
+  it('opens on the newest line rather than the first one it ever printed', async () => {
+    const setup = await openedOnLoudShell()
+
+    try {
+      const shown = printedLines(setup.captureCharFrame())
+
+      expect(shown).toContain(LOUD_LINES)
+      expect(shown).not.toContain(1)
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
+  it('pages back over the lines that scrolled off, and says it stopped following', async () => {
+    const setup = await openedOnLoudShell()
+
+    try {
+      const before = printedLines(setup.captureCharFrame())
+
+      setup.mockInput.pressKey(PAGE_UP)
+      await settle(READ_MS)
+      await setup.flush()
+
+      const after = printedLines(setup.captureCharFrame())
+
+      expect(Math.min(...after)).toBeLessThan(Math.min(...before))
+      expect(after).not.toContain(LOUD_LINES)
+      expect(setup.captureCharFrame()).toContain('scrolled back')
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
+  it('gives the tail back on end, and stops saying it is behind', async () => {
+    const setup = await openedOnLoudShell()
+
+    try {
+      setup.mockInput.pressKey(PAGE_UP)
+      await settle(READ_MS)
+      await setup.flush()
+      expect(setup.captureCharFrame()).toContain('scrolled back')
+
+      setup.mockInput.pressKey('END')
+      await settle(READ_MS)
+      await setup.flush()
+
+      const frame = setup.captureCharFrame()
+
+      expect(printedLines(frame)).toContain(LOUD_LINES)
+      expect(frame).not.toContain('scrolled back')
     } finally {
       await teardown(setup)
     }

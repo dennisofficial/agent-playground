@@ -2,7 +2,7 @@
   "name": "@dltech/atlas",
   "version": "0.1.0",
   "private": true,
-  "description": "Atlas \u2014 a coding-agent harness in the shape of Claude Code.",
+  "description": "Atlas — a coding-agent harness in the shape of Claude Code.",
   "type": "module",
   "bin": {
     "atlas": "./bin/atlas"
@@ -12,7 +12,8 @@
     "proto:shell": "bun prototype/shell.tsx",
     "proto:round2": "bun prototype/round2.tsx",
     "typecheck": "tsc --noEmit",
-    "test": "bun test",
+    "test": "bun scripts/test-shards.ts",
+    "test:serial": "bun test",
     "grammars:update": "bun scripts/update-grammars.ts",
     "build": "bun scripts/generate-manifest.ts && bun scripts/generate-skills.ts && bun build --compile --external class-validator --external class-transformer --external @nestjs/microservices --external @nestjs/websockets --external @nestjs/websockets/socket-module --external @nestjs/platform-express src/main.tsx --outfile bin/atlas",
     "skills:generate": "bun scripts/generate-skills.ts"

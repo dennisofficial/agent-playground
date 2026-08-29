@@ -365,3 +365,39 @@ describe('reasoning across steps', () => {
     expect(model.streaming).toBe(true)
   })
 })
+
+describe('a tool group opened by the step that was thinking', () => {
+  const events = log([
+    { type: 'user-said', text: 'read the architecture doc' },
+    { type: 'assistant-said', parts: [{ type: 'reasoning', text: 'weighing it up' }] },
+    called({ n: 1, name: 'bash' }),
+    result({ n: 1, name: 'bash' }),
+  ])
+
+  const stillReading: readonly StepSignal[] = [
+    started(stepTwo),
+    reasoningDelta({ stepId: stepTwo, blockId: 'r1', text: 'let me read the doc' }),
+    toolCall({ stepId: stepTwo, n: 2, name: 'read' }),
+  ]
+
+  it('stands the group above the thought instead of nesting it underneath', () => {
+    const model = deriveTranscript({ events, signals: stillReading })
+
+    expect(fromTheModel(model).map((entry) => entry.kind)).toEqual([
+      EEntryKind.ToolsRan,
+      EEntryKind.ToolsRan,
+      EEntryKind.ModelThought,
+    ])
+  })
+
+  it('leaves the thought last under stream, so the setting keeps showing it', () => {
+    const model = deriveTranscript({
+      events,
+      signals: stillReading,
+      thinking: EThinkingVisibility.Stream,
+    })
+
+    expect(model.entries.at(-1)?.kind).toBe(EEntryKind.ModelThought)
+    expect(model.entries.at(-1)?.text).toBe('weighing it up\n\nlet me read the doc')
+  })
+})

@@ -12,7 +12,7 @@ const RAW_MOUSE = /on(?:MouseDown|MouseUp|MouseDrag|Mouse(?![A-Za-z]))/
  */
 const RAW_MOUSE_BELONGS_TO = new Set([
   'ui/hooks/use-press.ts',
-  'ui/markdown/text-panner.tsx',
+  'ui/markdown/pan-bar.tsx',
 ])
 
 describe('press discipline', () => {

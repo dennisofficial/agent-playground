@@ -71,17 +71,25 @@ const readoutOf = (args: { entry: ModelEntry | undefined; used: number }): Foote
   return { percent: pressure.percent, tokensLeft: Math.max(0, entry.contextWindow - args.used) }
 }
 
-export function App(props: { app: AtlasApp; opened: OpenedConversation }): React.ReactNode {
+export function App(props: {
+  app: AtlasApp
+  opened: OpenedConversation
+  covered?: boolean
+}): React.ReactNode {
   const registry = useMemo(() => createKeyRegistry(), [])
 
   return (
     <KeyRegistryContext.Provider value={registry}>
-      <Workspace app={props.app} opened={props.opened} />
+      <Workspace app={props.app} opened={props.opened} covered={props.covered === true} />
     </KeyRegistryContext.Provider>
   )
 }
 
-function Workspace(props: { app: AtlasApp; opened: OpenedConversation }): React.ReactNode {
+function Workspace(props: {
+  app: AtlasApp
+  opened: OpenedConversation
+  covered: boolean
+}): React.ReactNode {
   const renderer = useRenderer()
   const exitGuard = useExitGuard({ onExit: () => renderer.destroy() })
   const { width, height } = useTerminalDimensions()
@@ -333,6 +341,8 @@ function Workspace(props: { app: AtlasApp; opened: OpenedConversation }): React.
 
   const handleKeyWithMenu = useCallback(
     (key: KeyEvent) => {
+      if (props.covered) return
+
       if (commandMenu.handleKey(key)) {
         key.preventDefault()
         return
@@ -340,10 +350,24 @@ function Workspace(props: { app: AtlasApp; opened: OpenedConversation }): React.
 
       handleKey(key)
     },
-    [commandMenu, handleKey],
+    [commandMenu, handleKey, props.covered],
   )
 
   useKeyboard(handleKeyWithMenu)
+
+  /**
+   * Anything covering the composer must take focus with it: the terminal cursor is not part of the
+   * character grid, so a focused textarea keeps drawing its caret straight through whatever is
+   * painted over it.
+   */
+  const overlaid =
+    props.covered ||
+    exitGuard.state !== null ||
+    switcher.state !== null ||
+    settings.state !== null ||
+    shells.state !== null ||
+    rewind.state !== null ||
+    conversation.compacting !== null
 
   return (
     <Screen>
@@ -359,12 +383,15 @@ function Workspace(props: { app: AtlasApp; opened: OpenedConversation }): React.
             turn={conversation.turn}
             sends={sends}
             pending={conversation.pending}
-            {...(conversation.compacting === null
-              ? {}
-              : { compacting: conversation.compacting })}
             {...(conversation.handleRetry === null
               ? {}
               : { onRetry: conversation.handleRetry })}
+            {...(conversation.handleResume === null
+              ? {}
+              : { onResume: conversation.handleResume })}
+            {...(conversation.handleResumeFresh === null
+              ? {}
+              : { onResumeFresh: conversation.handleResumeFresh })}
             opened={opened}
             onToggle={handleToggle}
           />
@@ -378,13 +405,10 @@ function Workspace(props: { app: AtlasApp; opened: OpenedConversation }): React.
             tone={tone}
             placeholder={conversation.working ? STEER_PLACEHOLDER : PLACEHOLDER}
             maxRows={composerRows(height)}
-            focused={
-              exitGuard.state === null &&
-              switcher.state === null &&
-              settings.state === null &&
-              shells.state === null &&
-              rewind.state === null
-            }
+            focused={!overlaid}
+            {...(conversation.sidebar.title === null
+              ? {}
+              : { title: conversation.sidebar.title })}
           />
           <Footer
             width={chromeWidth}
@@ -400,6 +424,7 @@ function Workspace(props: { app: AtlasApp; opened: OpenedConversation }): React.
             turn={conversation.turn}
             now={conversation.now}
             cwd={props.app.config.cwd}
+            sessionDirectory={conversation.sessionDirectory}
             overlay={overlay}
             shells={shells.shells}
             onOpenShell={shells.handleOpen}
@@ -415,6 +440,8 @@ function Workspace(props: { app: AtlasApp; opened: OpenedConversation }): React.
           settings={settings}
           rewind={rewind}
           exitGuard={exitGuard}
+          compacting={conversation.compacting}
+          now={conversation.now}
         />
       </box>
     </Screen>

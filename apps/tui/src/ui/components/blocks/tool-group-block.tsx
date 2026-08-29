@@ -150,6 +150,7 @@ export function ToolGroupBlock(props: {
   now?: number
   expanded?: boolean
   onToggle?: () => void
+  attached?: boolean
 }): React.ReactNode {
   const { group } = props
   const live = group.state === EGroupState.Live
@@ -157,12 +158,13 @@ export function ToolGroupBlock(props: {
   const now = props.now ?? clock
   const inner = Math.max(NARROWEST_BAND, props.width - TRANSCRIPT_INSET - MARK_COLUMNS)
   const expandable = !live && group.calls.length > 0
+  const opened = props.expanded === true
   const { handlers, wash } = useClickRegion(expandable ? props.onToggle : undefined)
 
   return (
     <box
       flexDirection="column"
-      marginBottom={1}
+      marginBottom={props.attached === true && !opened ? 0 : 1}
       marginLeft={MARK_COLUMNS}
       width={inner}
       flexShrink={0}
@@ -177,7 +179,7 @@ export function ToolGroupBlock(props: {
           inner={inner}
           now={now}
           expandable={expandable}
-          expanded={props.expanded === true}
+          expanded={opened}
         />
       )}
     </box>

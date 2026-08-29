@@ -51,6 +51,7 @@ export {
   foldThoughts,
   SHIPPED_THINKING,
   thinkingVisibilityOf,
+  toolsAboveThoughts,
 } from './thinking-fold'
 export {
   EAuthor,
@@ -65,6 +66,7 @@ export {
   type ToolsRanEntry,
   type TranscriptEntry,
   type TranscriptModel,
+  type TurnEndedEntry,
 } from './transcript-model'
 export {
   deriveSidebar,
@@ -78,5 +80,4 @@ export {
   type SidebarSubagent,
   type SidebarTask,
   type SidebarTeammate,
-  type SidebarToolCall,
 } from './sidebar-model'

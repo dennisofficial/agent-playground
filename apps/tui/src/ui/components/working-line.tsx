@@ -3,47 +3,47 @@ import React from 'react'
 import { useShimmerClock } from '../hooks/use-shimmer-clock'
 import { beaconHeat, shimmerCrest, WORKING_SHIMMER } from '../shimmer'
 import { beaconColour, shimmerSpans } from '../shimmer-style'
-import { formatElapsed, formatTokens, glyph, spinnerFrame, theme } from '../theme'
+import { formatElapsed, formatTokens, spinnerFrame, theme } from '../theme'
 import { Spans } from './spans'
 
 export enum EWorkingVerb {
+  Working = 'Working',
   Thinking = 'Thinking',
   Compacting = 'Compacting',
 }
 
-const SETTLED_VERB: Readonly<Record<EWorkingVerb, string>> = {
-  [EWorkingVerb.Thinking]: 'Thought',
-  [EWorkingVerb.Compacting]: 'Compacted',
-}
+const INTERRUPTING = 'Interrupting…'
 
+/**
+ * Only ever shown while something is running. What a finished turn cost is a durable transcript
+ * row built from the ledger, not this line settling in place.
+ */
 export function WorkingLine(props: {
-  running: boolean
   elapsedMs: number
   outputTokens: number
   interrupting: boolean
   verb?: EWorkingVerb | undefined
 }): React.ReactNode {
-  const verb = props.verb ?? EWorkingVerb.Thinking
-  const shimmering = props.running && !props.interrupting
-  const now = useShimmerClock({ active: props.running })
+  const now = useShimmerClock({ active: true })
 
-  const elapsed = formatElapsed(props.elapsedMs)
-  const tokens = props.outputTokens > 0 ? `↓ ${formatTokens(props.outputTokens)} tokens` : ''
-  const detail = props.running ? `${tokens ? `${tokens} · ` : ''}esc to interrupt` : tokens
-  const label = `${props.running ? verb : SETTLED_VERB[verb]} for ${elapsed}${detail ? ` (${detail})` : ''}`
+  if (props.interrupting) {
+    return (
+      <box flexDirection="column">
+        <text fg={theme.dim}>
+          <span fg={theme.accent}>{spinnerFrame(now)}</span> {INTERRUPTING}
+        </text>
+      </box>
+    )
+  }
+
+  const verb = props.verb ?? EWorkingVerb.Working
+  const tokens =
+    props.outputTokens > 0 ? `↓ ${formatTokens(props.outputTokens)} tokens · ` : ''
+  const label = `${verb} for ${formatElapsed(props.elapsedMs)} (${tokens}esc to interrupt)`
 
   return (
     <box flexDirection="column">
-      {shimmering ? (
-        <ShimmeringLine label={label} now={now} />
-      ) : (
-        <text fg={theme.dim}>
-          <span fg={props.interrupting ? theme.accent : theme.dim}>
-            {props.interrupting ? spinnerFrame(now) : glyph.thinking}
-          </span>{' '}
-          {props.interrupting ? 'Interrupting…' : label}
-        </text>
-      )}
+      <ShimmeringLine label={label} now={now} />
     </box>
   )
 }

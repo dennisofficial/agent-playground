@@ -33,6 +33,7 @@ async function strandedCall(): Promise<FakeApp> {
     ...app,
     runner: {
       say: app.runner.say,
+      resume: app.runner.resume,
       runTurn: async () => ({
         status: ETurnStatus.Interrupted,
         runId: toRunId('run-interrupted'),

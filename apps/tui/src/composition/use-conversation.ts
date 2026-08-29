@@ -5,6 +5,9 @@ import {
   ECompactionAnchor,
   modelEntry,
   eventsOfType,
+  isResumable,
+  resumeDrafts,
+  sessionDirectoryOf,
   type ThreadId,
   type Event,
   type EventDraft,
@@ -22,7 +25,8 @@ import {
   type SidebarModel,
   type TranscriptModel,
 } from '../store'
-import type { Compacting, TurnClock } from '../ui/components/transcript'
+import type { Compacting } from '../ui/components/compacting'
+import type { TurnClock } from '../ui/components/transcript'
 import type { AtlasApp } from './compose'
 import type { OpenedConversation } from './open-conversation'
 import {
@@ -32,6 +36,7 @@ import {
   ECompactScope,
   type Compaction,
 } from './compact-turn'
+import { discardInterrupted, EDiscard } from './resume-turn'
 import { EUndo, undoTurn } from './undo-turn'
 import {
   awakeAt,
@@ -70,11 +75,14 @@ export type Conversation = {
   now: number
   working: boolean
   contextTokens: number
+  sessionDirectory: string
   pending: readonly PendingRow[]
   readEvents: () => readonly Event[]
   handleSend: (text: string, context?: readonly EventDraft[]) => void
   handleTakeBackPending: () => string | null
   handleRetry: (() => void) | null
+  handleResume: (() => void) | null
+  handleResumeFresh: (() => void) | null
   handleReportProblem: (reason: string) => void
   handleInterrupt: () => void
   compacting: Compacting | null
@@ -113,6 +121,7 @@ export function useConversation(args: {
         channel: app.channel,
         threadId: opened.threadId,
         events: opened.events,
+        turns: opened.turns,
         paceReveal,
         name: opened.name,
       }),
@@ -146,11 +155,14 @@ export function useConversation(args: {
   const notices = useSyncExternalStore(subscribeToShells, readShellNotices)
 
   const refresh = useCallback(async () => {
-    const read: readonly Event[] = await app.log.read({ threadId: opened.threadId })
-    store.setEvents(read)
+    const [read, spent] = await Promise.all([
+      app.log.read({ threadId: opened.threadId }),
+      app.ledger.forThread({ threadId: opened.threadId }),
+    ])
+    store.setEvents({ events: read, turns: spent })
     setEvents(read)
     pending.settleTaken({ landed: trailingSaid(read) })
-  }, [app.log, opened.threadId, pending, store])
+  }, [app.ledger, app.log, opened.threadId, pending, store])
 
   useEffect(
     () =>
@@ -431,6 +443,32 @@ export function useConversation(args: {
     drive([])
   }, [drive, working])
 
+  const handleResume = useCallback(() => {
+    if (working) return
+    drive(resumeDrafts(events))
+  }, [drive, events, working])
+
+  const handleResumeFresh = useCallback(() => {
+    if (working) return
+
+    void (async () => {
+      const discarded = await discardInterrupted({
+        log: app.log,
+        threads: app.threads,
+        threadId: opened.threadId,
+      })
+
+      if (discarded.type === EDiscard.Refused) {
+        setFailure(discarded.reason)
+        return
+      }
+
+      setReported(null)
+      await refresh()
+      drive([])
+    })()
+  }, [app.log, app.threads, drive, opened.threadId, refresh, working])
+
   const handleInterrupt = useCallback(() => {
     const compacter_ = compacter.current
     if (compacter_ !== null) {
@@ -457,7 +495,7 @@ export function useConversation(args: {
       setReported(null)
       setEvents([])
       setName(null)
-      setOpened({ threadId: thread.id, events: [], name: null })
+      setOpened({ threadId: thread.id, events: [], turns: [], name: null })
     })
   }, [app.threads, pending, working])
 
@@ -473,14 +511,21 @@ export function useConversation(args: {
   const readEvents = useCallback((): readonly Event[] => events, [events])
 
   const used = useMemo(() => contextTokens({ reported, events }), [reported, events])
+
+  const sessionDirectory = useMemo(
+    () => sessionDirectoryOf({ events, projectDirectory: app.config.cwd }),
+    [events, app.config.cwd],
+  )
   usedRef.current = used
 
   const rows = useMemo(() => pendingRows({ messages: queued, notices }), [notices, queued])
 
   const model = transcriptOfTurn({ model: derived, working, failure })
   const retryable = model.failure !== null && !working
+  const resumable = model.failure === null && !working && isResumable(events)
 
   return {
+    sessionDirectory,
     threadId: opened.threadId,
     model,
     sidebar,
@@ -492,6 +537,8 @@ export function useConversation(args: {
     handleSend,
     handleTakeBackPending,
     handleRetry: retryable ? handleRetry : null,
+    handleResume: resumable ? handleResume : null,
+    handleResumeFresh: resumable ? handleResumeFresh : null,
     readEvents,
     compacting,
     handleReportProblem: setFailure,

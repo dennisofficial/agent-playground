@@ -8,9 +8,11 @@ import {
   type PendingRow,
   type TranscriptEntry,
   type TranscriptModel,
+  type TurnEndedEntry,
 } from '../../store'
 import { Transcript, type TurnClock } from '../components/transcript'
-import { settle, teardown } from '../markdown/__tests__/harness'
+import { teardown } from '../markdown/__tests__/harness'
+import { frameSettled } from './waiting'
 
 export const WIDTHS = [40, 60, 100, 200] as const
 
@@ -86,6 +88,18 @@ const model = (
   ...rest,
 })
 
+const turnEnded = (key: string, over: Partial<TurnEndedEntry> = {}): TranscriptEntry => ({
+  kind: EEntryKind.TurnEnded,
+  author: EAuthor.Model,
+  key,
+  text: '',
+  durationMs: 54_000,
+  outputTokens: 1_100,
+  endedAt: new Date(2026, 7, 28, 18, 32).toISOString(),
+  interrupted: false,
+  ...over,
+})
+
 export const LAST_WORDS = 'Plain text entry, nothing else.'
 
 export const SETTLED = model([
@@ -94,6 +108,18 @@ export const SETTLED = model([
   modelSaid('a1', LONG_REPLY),
   operatorSaid('u2', 'and the composer?'),
   modelSaid('a2', LAST_WORDS),
+])
+
+export const TURN_DONE = model([
+  operatorSaid('u1', 'go'),
+  modelSaid('a1', 'done'),
+  turnEnded('turn-1'),
+])
+
+export const TURN_STOPPED = model([
+  operatorSaid('u1', 'go'),
+  modelSaid('a1', 'partial'),
+  turnEnded('turn-1', { interrupted: true, durationMs: 12_000, outputTokens: 0 }),
 ])
 
 export const STREAMING = model(
@@ -133,8 +159,11 @@ export const RUNNING: TurnClock = {
   startedAt: 1_000,
   outputTokens: 1_280,
   interrupting: false,
+  reasoning: false,
   completed: null,
 }
+
+export const REASONING: TurnClock = { ...RUNNING, reasoning: true }
 
 export const INTERRUPTING: TurnClock = { ...RUNNING, interrupting: true }
 
@@ -142,6 +171,7 @@ export const FINISHED: TurnClock = {
   startedAt: null,
   outputTokens: 0,
   interrupting: false,
+  reasoning: false,
   completed: { durationMs: 92_000, outputTokens: 4_210 },
 }
 
@@ -199,21 +229,16 @@ export async function mount(node: React.ReactNode, width: number): Promise<void>
   }
 }
 
-const PROSE_SETTLE_MS = 250
-
 /**
  * A `<markdown>` renderable parses off the render pass, so its prose reaches the buffer a frame
  * after the one that mounted it: a capture taken straight after `flush()` shows the glyphs and an
  * empty column where every wrapped paragraph will be.
  */
 export async function drawn(setup: {
-  flush: () => Promise<unknown>
+  flush: () => Promise<void>
   captureCharFrame: () => string
 }): Promise<string> {
-  await setup.flush()
-  await settle(PROSE_SETTLE_MS)
-  await setup.flush()
-  return setup.captureCharFrame()
+  return frameSettled({ setup })
 }
 
 export async function frameOf(node: React.ReactNode, width: number): Promise<string> {

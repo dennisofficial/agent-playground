@@ -2,7 +2,12 @@ import { describe, expect, it } from 'bun:test'
 
 import { toCallId } from '@dltech/atlas-core'
 
-import { foldThoughts, EThinkingVisibility, thinkingVisibilityOf } from '../thinking-fold'
+import {
+  foldThoughts,
+  EThinkingVisibility,
+  thinkingVisibilityOf,
+  toolsAboveThoughts,
+} from '../thinking-fold'
 import { liveToolGroups } from '../tool-groups'
 import { EAuthor, EEntryKind, toolsRanEntry, type TranscriptEntry } from '../transcript-model'
 
@@ -147,19 +152,6 @@ describe('the thinking visibility setting', () => {
     expect(shown.at(-1)).toMatchObject({ streaming: false, heldOpen: true })
   })
 
-  it('holds it open under stream even when the tool group renders below it', () => {
-    const shown = foldThoughts({
-      entries: [thought({ key: 'settled', text: 'weighing it' }), toolsRan()],
-      visibility: EThinkingVisibility.Stream,
-    })
-
-    expect(shown.at(0)).toMatchObject({
-      kind: EEntryKind.ModelThought,
-      key: 'settled',
-      heldOpen: true,
-    })
-  })
-
   it('leaves a streaming thought to its own live tail rather than holding it open', () => {
     const shown = foldThoughts({
       entries: [thought({ key: 'live', text: 'still going', streaming: true })],
@@ -217,5 +209,63 @@ describe('the thinking visibility setting', () => {
     expect(thinkingVisibilityOf('kept')).toBe(EThinkingVisibility.Keep)
     expect(thinkingVisibilityOf('stream')).toBe(EThinkingVisibility.Stream)
     expect(thinkingVisibilityOf('hidden')).toBe(EThinkingVisibility.Hidden)
+  })
+})
+
+describe('standing tool groups above the thought they came out of', () => {
+  it('sinks a thought below the group that opened under it', () => {
+    const tools = toolsRan()
+
+    expect(
+      shape(toolsAboveThoughts([thought({ key: 'a', text: 'weighing it' }), tools])),
+    ).toEqual([
+      [tools.kind, tools.key, tools.text],
+      [EEntryKind.ModelThought, 'a', 'weighing it'],
+    ])
+  })
+
+  it('lands the thought back above whatever is not a tool group', () => {
+    const tools = toolsRan()
+
+    expect(
+      shape(
+        toolsAboveThoughts([
+          thought({ key: 'a', text: 'weighing it' }),
+          tools,
+          said({ key: 'answer', text: 'a burrito' }),
+        ]),
+      ),
+    ).toEqual([
+      [tools.kind, tools.key, tools.text],
+      [EEntryKind.ModelThought, 'a', 'weighing it'],
+      [EEntryKind.ModelSaid, 'answer', 'a burrito'],
+    ])
+  })
+
+  it('gathers thoughts a tool group stood between so the fold can join them', () => {
+    const tools = toolsRan()
+
+    expect(
+      shape(
+        toolsAboveThoughts([
+          thought({ key: 'a', text: 'first' }),
+          tools,
+          thought({ key: 'b', text: 'second' }),
+        ]),
+      ),
+    ).toEqual([
+      [tools.kind, tools.key, tools.text],
+      [EEntryKind.ModelThought, 'a', 'first'],
+      [EEntryKind.ModelThought, 'b', 'second'],
+    ])
+  })
+
+  it('leaves what the model said above the tools it then ran', () => {
+    const tools = toolsRan()
+
+    expect(shape(toolsAboveThoughts([said({ key: 'answer', text: 'let me check' }), tools]))).toEqual([
+      [EEntryKind.ModelSaid, 'answer', 'let me check'],
+      [tools.kind, tools.key, tools.text],
+    ])
   })
 })

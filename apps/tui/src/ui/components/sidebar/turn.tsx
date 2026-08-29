@@ -1,7 +1,7 @@
 import React from 'react'
 
 import type { SidebarModel } from '../../../store/sidebar-model'
-import { formatElapsed, formatTokens, glyph, theme } from '../../theme'
+import { formatElapsed, formatTokens, theme } from '../../theme'
 import type { TurnClock } from '../transcript'
 import { Row, Section } from './row'
 
@@ -80,28 +80,6 @@ export function ApprovalsSection(props: {
           labelFg={theme.hover}
           cells={props.cells}
           mark={{ text: APPROVAL_MARK, fg: theme.warn }}
-        />
-      ))}
-    </Section>
-  )
-}
-
-export function ToolCallsSection(props: {
-  model: SidebarModel
-  cells: number
-}): React.ReactNode {
-  const { toolCalls } = props.model
-  if (toolCalls.length === 0) return null
-
-  return (
-    <Section label="Tool calls" count={String(toolCalls.length)}>
-      {toolCalls.map((call) => (
-        <Row
-          key={call.callId}
-          label={call.name}
-          labelFg={theme.hover}
-          cells={props.cells}
-          mark={{ text: glyph.active, fg: theme.accent }}
         />
       ))}
     </Section>

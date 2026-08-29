@@ -6,13 +6,14 @@ export type CredentialDiagnosis = { message: string; exitCode: number }
 
 const HEADLINE = 'Atlas could not authenticate.'
 
-const REAUTHENTICATE = 'Re-authenticate: run `claude` once, then start Atlas again.'
+const SIGN_IN = 'Sign in from the accounts overlay: press ctrl+a, or run /auth.'
 
 const adviceFor: Record<ECredentialFailure, string | null> = {
   [ECredentialFailure.StoreUnavailable]: null,
-  [ECredentialFailure.NotFound]: REAUTHENTICATE,
-  [ECredentialFailure.Unreadable]: REAUTHENTICATE,
-  [ECredentialFailure.Expired]: REAUTHENTICATE,
+  [ECredentialFailure.NotFound]: SIGN_IN,
+  [ECredentialFailure.Unreadable]: SIGN_IN,
+  [ECredentialFailure.Expired]: SIGN_IN,
+  [ECredentialFailure.RefreshFailed]: 'Check the network, then try the turn again.',
 }
 
 export function diagnoseCredentialFailure(error: unknown): CredentialDiagnosis | null {

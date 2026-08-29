@@ -42,7 +42,7 @@ async function landed(setup: Mounted): Promise<void> {
 }
 
 async function opened(app: FakeApp): Promise<Mounted> {
-  const setup = await testRender(<App app={app} opened={{ threadId: THREAD, events: [], name: null }} />, WIDE)
+  const setup = await testRender(<App app={app} opened={{ threadId: THREAD, events: [], turns: [], name: null }} />, WIDE)
   await setup.flush()
   await settle(250)
   await setup.flush()

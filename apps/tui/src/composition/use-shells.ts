@@ -3,9 +3,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { EKilledBy, type ShellSnapshot } from '@dltech/atlas-harness'
 
+import { useOutputScroll, type OutputScroll } from '../ui/hooks/use-output-scroll'
 import {
   moveShellSelection,
   openShells,
+  outputScrollCommand,
   runningCount,
   selectShell,
   selectedShell,
@@ -15,7 +17,11 @@ import type { AtlasApp } from './compose'
 
 const POLL_MS = 500
 
-const PEEKED_CHARACTERS = 8_000
+/**
+ * The scrollback a reader can walk back through, well short of the 400k the registry retains: every
+ * poll that finds new output re-wraps this whole tail.
+ */
+const PEEKED_CHARACTERS = 64_000
 
 const KILL_KEYS = new Set(['k', 'x'])
 
@@ -25,6 +31,7 @@ export type ShellsControl = {
   state: ShellsState | null
   selected: ShellSnapshot | undefined
   output: string
+  scroll: OutputScroll
   handleOpen: (shellId?: string) => void
   handleDismiss: () => void
   handleSelect: (shellId: string) => void
@@ -80,6 +87,7 @@ export function useShells({ app }: { app: AtlasApp }): ShellsControl {
   const [output, setOutput] = useState('')
   const openId = selected?.shellId
   const printed = selected?.totalCharacters
+  const scroll = useOutputScroll({ resetKey: openId })
 
   useEffect(() => {
     if (openId === undefined) {
@@ -119,6 +127,12 @@ export function useShells({ app }: { app: AtlasApp }): ShellsControl {
         return
       }
 
+      const scrolling = outputScrollCommand(key)
+      if (scrolling !== null) {
+        scroll.handleCommand(scrolling)
+        return
+      }
+
       if (key.name === 'up' || key.name === 'down') {
         setState(
           moveShellSelection({ state, count: shells.length, delta: key.name === 'up' ? -1 : 1 }),
@@ -129,7 +143,7 @@ export function useShells({ app }: { app: AtlasApp }): ShellsControl {
       const pressed = key.sequence?.toLowerCase() ?? ''
       if (KILL_KEYS.has(pressed) && selected !== undefined) handleKill(selected.shellId)
     },
-    [handleDismiss, handleKill, selected, shells.length, state],
+    [handleDismiss, handleKill, scroll, selected, shells.length, state],
   )
 
   return useMemo(
@@ -139,6 +153,7 @@ export function useShells({ app }: { app: AtlasApp }): ShellsControl {
       state,
       selected,
       output,
+      scroll,
       handleOpen,
       handleDismiss,
       handleSelect,
@@ -152,6 +167,7 @@ export function useShells({ app }: { app: AtlasApp }): ShellsControl {
       handleOpen,
       handleSelect,
       output,
+      scroll,
       selected,
       shells,
       state,

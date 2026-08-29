@@ -136,7 +136,7 @@ describe('what the transcript shows after a compaction', () => {
     if (compaction.type !== ECompaction.Compacted) throw new Error('expected a compaction')
 
     const remaining = await log.read({ threadId: THREAD })
-    const entries = durableEntries(remaining)
+    const entries = durableEntries({ events: remaining })
 
     expect(entries[0]?.kind).toBe(EEntryKind.HistoryCompacted)
     expect(entries[0]?.text).toBe('Forty turns of parser work.')

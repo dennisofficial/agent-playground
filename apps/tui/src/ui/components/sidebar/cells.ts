@@ -19,6 +19,52 @@ export function truncateCells(args: { text: string; cells: number }): string {
   return `${sliceCells({ text: args.text, cells: args.cells - 1 })}${ELLIPSIS}`
 }
 
+function hardBroken(args: { word: string; cells: number }): string[] {
+  const pieces: string[] = []
+  let rest = args.word
+
+  while (cellsOf(rest) > args.cells) {
+    const head = sliceCells({ text: rest, cells: args.cells })
+    pieces.push(head)
+    rest = rest.slice(head.length)
+  }
+
+  if (rest !== '') pieces.push(rest)
+
+  return pieces
+}
+
+export function wrapCells(args: { text: string; cells: number }): string[] {
+  if (args.cells <= 0) return []
+
+  const words = args.text.split(/\s+/).filter((word) => word !== '')
+  const lines: string[] = []
+  let line = ''
+
+  for (const word of words) {
+    const pieces = cellsOf(word) > args.cells ? hardBroken({ word, cells: args.cells }) : [word]
+
+    for (const piece of pieces) {
+      if (line === '') {
+        line = piece
+        continue
+      }
+
+      if (cellsOf(line) + 1 + cellsOf(piece) <= args.cells) {
+        line = `${line} ${piece}`
+        continue
+      }
+
+      lines.push(line)
+      line = piece
+    }
+  }
+
+  if (line !== '') lines.push(line)
+
+  return lines
+}
+
 export const spanCells = (spans: readonly Span[]): number =>
   spans.reduce((total, span) => total + cellsOf(span.text), 0)
 

@@ -68,10 +68,12 @@ export const fromTheModel = (model: TranscriptModel) =>
       | { kind: EEntryKind.OperatorSaid }
       | { kind: EEntryKind.HistoryCompacted }
       | { kind: EEntryKind.BackgroundShellEnded }
+      | { kind: EEntryKind.TurnEnded }
     > =>
       entry.kind !== EEntryKind.OperatorSaid &&
       entry.kind !== EEntryKind.HistoryCompacted &&
-      entry.kind !== EEntryKind.BackgroundShellEnded,
+      entry.kind !== EEntryKind.BackgroundShellEnded &&
+      entry.kind !== EEntryKind.TurnEnded,
   )
 
 export const fromTheOperator = (model: TranscriptModel) =>

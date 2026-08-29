@@ -52,8 +52,16 @@ export const filePayloadStore = (file: string = claudeCredentialsFile()): Claude
   },
 })
 
-export const claudeCodePayloadStore = (args: { reader: KeychainReader }): ClaudeCodePayloadStore =>
-  process.platform === 'darwin' ? keychainPayloadStore({ reader: args.reader }) : filePayloadStore()
+export const claudeCodePayloadStore = (args: {
+  reader: KeychainReader
+  service?: string | undefined
+}): ClaudeCodePayloadStore =>
+  process.platform === 'darwin'
+    ? keychainPayloadStore({
+        reader: args.reader,
+        ...(args.service === undefined ? {} : { service: args.service }),
+      })
+    : filePayloadStore()
 
 export class ClaudeCodeSource implements CredentialSink {
   readonly id = CLAUDE_CODE_SOURCE_ID

@@ -29,6 +29,7 @@ import { ocaml } from './ocaml'
 import { pascal } from './pascal'
 import { perl } from './perl'
 import { powershell } from './powershell'
+import { prisma } from './prisma'
 import { prolog } from './prolog'
 import { r } from './r'
 import { racket } from './racket'
@@ -82,6 +83,7 @@ export const LEXICAL_LANGUAGES: readonly LanguageSpec[] = [
   pascal,
   perl,
   powershell,
+  prisma,
   prolog,
   r,
   racket,

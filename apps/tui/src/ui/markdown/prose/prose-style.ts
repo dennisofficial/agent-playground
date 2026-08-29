@@ -46,6 +46,11 @@ export function markForeground(args: { marks: InlineMarks; ground: string }): st
   return args.ground
 }
 
+export function codeForeground(marks: InlineMarks): string {
+  if (marks.strike === true) return theme.hint
+  return theme.codeInline
+}
+
 export function bulletFor(depth: number): string {
   return (BULLETS[Math.min(depth, BULLETS.length - 1)] ?? BULLETS[0]) as string
 }

@@ -25,7 +25,7 @@ describe('typing while the turn is running', () => {
       mounted.pressEnter()
 
       const running = await until({
-        holds: async () => (await mounted.frame()).includes('Thinking for'),
+        holds: async () => (await mounted.frame()).includes('esc to interrupt'),
         within: 20_000,
       })
       expect(running).toBe(true)
@@ -61,7 +61,7 @@ describe('typing while the turn is running', () => {
       mounted.pressEnter()
 
       const running = await until({
-        holds: async () => (await mounted.frame()).includes('Thinking for'),
+        holds: async () => (await mounted.frame()).includes('esc to interrupt'),
         within: 20_000,
       })
       expect(running).toBe(true)
@@ -100,7 +100,7 @@ describe('typing while the turn is running', () => {
       mounted.pressEnter()
 
       const running = await until({
-        holds: async () => (await mounted.frame()).includes('Thinking for'),
+        holds: async () => (await mounted.frame()).includes('esc to interrupt'),
         within: 20_000,
       })
       expect(running).toBe(true)
@@ -134,7 +134,7 @@ describe('typing while the turn is running', () => {
       mounted.pressEnter()
 
       const running = await until({
-        holds: async () => (await mounted.frame()).includes('Thinking for'),
+        holds: async () => (await mounted.frame()).includes('esc to interrupt'),
         within: 20_000,
       })
       expect(running).toBe(true)
@@ -175,7 +175,7 @@ describe('typing while the turn is running', () => {
       mounted.pressEnter()
 
       const running = await until({
-        holds: async () => (await mounted.frame()).includes('Thinking for'),
+        holds: async () => (await mounted.frame()).includes('esc to interrupt'),
         within: 20_000,
       })
       expect(running).toBe(true)

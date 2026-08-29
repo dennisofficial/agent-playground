@@ -79,12 +79,12 @@ function wrapped(args: { line: string; cells: number }): string[] {
 }
 
 /**
- * The tail of a shell's output, hard-wrapped and cut to the rows on offer. Wrapping rather than
- * clipping because a shell prints progress bars and stack traces, where the end of the line is
+ * The tail of a shell's output, hard-wrapped and cut to the scrollback on offer. Wrapping rather
+ * than clipping because a shell prints progress bars and stack traces, where the end of the line is
  * usually the part worth reading.
  */
-export function outputRows(args: { text: string; cells: number; rows: number }): readonly string[] {
-  if (args.rows <= 0) return []
+export function outputRows(args: { text: string; cells: number; limit: number }): readonly string[] {
+  if (args.limit <= 0) return []
 
   const printed = args.text.replace(/\n+$/, '')
   if (printed === '') return []
@@ -92,5 +92,41 @@ export function outputRows(args: { text: string; cells: number; rows: number }):
   const lines = printed.split('\n')
   const laid = lines.flatMap((line) => wrapped({ line: line.replace(/\t/g, '  '), cells: args.cells }))
 
-  return laid.slice(-args.rows)
+  return laid.slice(-args.limit)
+}
+
+export enum EOutputScroll {
+  Lines = 'lines',
+  Pages = 'pages',
+  ToStart = 'to-start',
+  ToEnd = 'to-end',
+}
+
+export type OutputScrollCommand =
+  | { kind: EOutputScroll.Lines; amount: number }
+  | { kind: EOutputScroll.Pages; amount: number }
+  | { kind: EOutputScroll.ToStart }
+  | { kind: EOutputScroll.ToEnd }
+
+const LINES_PER_PRESS = 3
+
+/**
+ * Bare arrows already walk the shells, so reading one shell's scrollback is spelled with the keys a
+ * pager uses. Shift is the modifier because a terminal reports it for arrows without a Kitty
+ * handshake, which alt and ctrl are not guaranteed to survive.
+ */
+export function outputScrollCommand(key: {
+  name?: string | undefined
+  shift?: boolean | undefined
+}): OutputScrollCommand | null {
+  if (key.name === 'pageup') return { kind: EOutputScroll.Pages, amount: -1 }
+  if (key.name === 'pagedown') return { kind: EOutputScroll.Pages, amount: 1 }
+  if (key.name === 'home') return { kind: EOutputScroll.ToStart }
+  if (key.name === 'end') return { kind: EOutputScroll.ToEnd }
+
+  if (key.shift !== true) return null
+  if (key.name === 'up') return { kind: EOutputScroll.Lines, amount: -LINES_PER_PRESS }
+  if (key.name === 'down') return { kind: EOutputScroll.Lines, amount: LINES_PER_PRESS }
+
+  return null
 }

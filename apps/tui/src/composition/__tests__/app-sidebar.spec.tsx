@@ -82,7 +82,7 @@ async function resizeTo(args: {
 describe('the sidebar', () => {
   it('docks beside the transcript on a wide terminal', async () => {
     const app: FakeApp = fakeApp({ model: scriptedModelPort({ script: { thinking: THINKING, reply: REPLY } }) })
-    const setup = await testRender(<App app={app} opened={{ threadId: THREAD, events: [], name: null }} />, {
+    const setup = await testRender(<App app={app} opened={{ threadId: THREAD, events: [], turns: [], name: null }} />, {
       width: 140,
       height: 40,
     })
@@ -101,7 +101,7 @@ describe('the sidebar', () => {
 
   it('stays hidden on a narrow terminal until ctrl+b opens it as an overlay', async () => {
     const app: FakeApp = fakeApp({ model: scriptedModelPort({ script: { thinking: THINKING, reply: REPLY } }) })
-    const setup = await testRender(<App app={app} opened={{ threadId: THREAD, events: [], name: null }} />, {
+    const setup = await testRender(<App app={app} opened={{ threadId: THREAD, events: [], turns: [], name: null }} />, {
       width: 90,
       height: 30,
     })
@@ -129,7 +129,7 @@ describe('the sidebar', () => {
 
   it('is reached across a gutter the composer alone gives up', async () => {
     const app: FakeApp = fakeApp({ model: scriptedModelPort({ script: { thinking: THINKING, reply: REPLY } }) })
-    const setup = await testRender(<App app={app} opened={{ threadId: THREAD, events: [], name: null }} />, {
+    const setup = await testRender(<App app={app} opened={{ threadId: THREAD, events: [], turns: [], name: null }} />, {
       width: WIDE,
       height: 40,
     })
@@ -156,7 +156,7 @@ describe('the sidebar', () => {
 
   it('folds away on a wide terminal when ctrl+b hides it', async () => {
     const app: FakeApp = fakeApp({ model: scriptedModelPort({ script: { thinking: THINKING, reply: REPLY } }) })
-    const setup = await testRender(<App app={app} opened={{ threadId: THREAD, events: [], name: null }} />, {
+    const setup = await testRender(<App app={app} opened={{ threadId: THREAD, events: [], turns: [], name: null }} />, {
       width: 140,
       height: 40,
     })
@@ -176,7 +176,7 @@ describe('the sidebar', () => {
 
   it('comes back on widening after a narrow peek was opened and closed', async () => {
     const app: FakeApp = fakeApp({ model: scriptedModelPort({ script: { thinking: THINKING, reply: REPLY } }) })
-    const setup = await testRender(<App app={app} opened={{ threadId: THREAD, events: [], name: null }} />, {
+    const setup = await testRender(<App app={app} opened={{ threadId: THREAD, events: [], turns: [], name: null }} />, {
       width: NARROW,
       height: 40,
     })
@@ -203,7 +203,7 @@ describe('the sidebar', () => {
 
   it('auto-collapses on narrowing after it was opened again on a wide terminal', async () => {
     const app: FakeApp = fakeApp({ model: scriptedModelPort({ script: { thinking: THINKING, reply: REPLY } }) })
-    const setup = await testRender(<App app={app} opened={{ threadId: THREAD, events: [], name: null }} />, {
+    const setup = await testRender(<App app={app} opened={{ threadId: THREAD, events: [], turns: [], name: null }} />, {
       width: WIDE,
       height: 40,
     })
@@ -230,7 +230,7 @@ describe('the sidebar', () => {
 
   it('lays the transcript out beside the sidebar once a narrow peek is widened', async () => {
     const app: FakeApp = fakeApp({ model: scriptedModelPort({ script: { thinking: THINKING, reply: REPLY } }) })
-    const setup = await testRender(<App app={app} opened={{ threadId: THREAD, events: [], name: null }} />, {
+    const setup = await testRender(<App app={app} opened={{ threadId: THREAD, events: [], turns: [], name: null }} />, {
       width: NARROW,
       height: 40,
     })

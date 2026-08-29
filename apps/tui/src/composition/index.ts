@@ -1,5 +1,7 @@
 export { App } from './app'
 export { bootAtlas } from './boot'
+export { bootStepLabel, createBootProgress, EBootStep, type BootProgress } from './boot-progress'
+export { BootScreen } from './boot-screen'
 export { composeAtlas, type AtlasApp } from './compose'
 export {
   DEFAULT_MODEL_ID,
@@ -15,6 +17,7 @@ export {
   type CredentialDiagnosis,
 } from './credential-diagnosis'
 export { openConversation, type OpenedConversation } from './open-conversation'
+export { ESession, openSession, type Session } from './open-session'
 export {
   IDLE_PROGRESS,
   transcriptOfTurn,

@@ -1,12 +1,17 @@
 import { EBlockKind, type Event } from '@dltech/atlas-core'
-import { EStepEnd, type StepSignal } from '@dltech/atlas-harness'
+import { EStepEnd, type StepSignal, type TurnSpend } from '@dltech/atlas-harness'
 
 import { durableEntries } from './durable-entries'
 import { liveSteps, runKey, stepsOfSignals, type InFlightStep } from './in-flight-steps'
 import { revealedText, type RevealGate } from './reveal'
 import { modelEntries } from './model-entries'
 import { liveToolGroups, type LiveToolGroup } from './tool-groups'
-import { foldThoughts, SHIPPED_THINKING, type EThinkingVisibility } from './thinking-fold'
+import {
+  foldThoughts,
+  SHIPPED_THINKING,
+  toolsAboveThoughts,
+  type EThinkingVisibility,
+} from './thinking-fold'
 import {
   EMPTY_TRANSCRIPT,
   toolsRanEntry,
@@ -62,16 +67,17 @@ function entriesOfStep(args: { step: InFlightStep; reveal: RevealGate | null }):
 export function deriveTranscript(args: {
   events: readonly Event[]
   signals: readonly StepSignal[]
+  turns?: readonly TurnSpend[] | undefined
   reveal?: RevealGate | null
   thinking?: EThinkingVisibility
 }): TranscriptModel {
   const reveal = args.reveal ?? null
   const live = liveSteps({ steps: stepsOfSignals(args.signals), events: args.events })
   const entries = foldThoughts({
-    entries: [
-      ...durableEntries(args.events),
+    entries: toolsAboveThoughts([
+      ...durableEntries({ events: args.events, turns: args.turns }),
       ...live.flatMap((step) => entriesOfStep({ step, reveal })),
-    ],
+    ]),
     visibility: args.thinking ?? SHIPPED_THINKING,
   })
   const streaming = live.some((step) => step.end === null)

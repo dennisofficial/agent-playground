@@ -102,7 +102,7 @@ describe('the paced reveal', () => {
     expect(tailOf(store)).toBe('')
 
     publisher.settleAppend({ events: [reply] })
-    store.setEvents(durable)
+    store.setEvents({ events: durable })
 
     expect(tailOf(store)).toBe('hi there')
   })

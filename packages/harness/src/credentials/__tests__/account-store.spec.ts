@@ -12,9 +12,8 @@ import {
   type ClockPort,
 } from '@dltech/atlas-core'
 
+import { fileAccountStore, type AccountStore } from '../account-store'
 import { CredentialError, ECredentialFailure } from '../credential-error'
-import { FileAccountStore } from '../file-account-store'
-import { SecretCipher } from '../secret-cipher'
 
 const TOKEN = 'sk-ant-oat01-not-a-real-token'
 
@@ -30,14 +29,10 @@ const clock: ClockPort = {
   now: () => new Date(Date.parse('2026-01-01T00:00:00.000Z') + ticks++ * 1_000).toISOString(),
 }
 
-const storeIn = (where: string): FileAccountStore =>
-  new FileAccountStore({
-    file: join(where, 'auth.json'),
-    cipher: new SecretCipher(join(where, 'key')),
-    clock,
-  })
+const storeIn = (where: string): AccountStore =>
+  fileAccountStore({ file: join(where, 'auth.json'), keyFile: join(where, 'key'), clock })
 
-let store: FileAccountStore
+let store: AccountStore
 
 const addAnthropic = (label: string, secret: AccountSecret = oauthSecret()) =>
   store.add({
@@ -57,7 +52,7 @@ afterEach(() => {
   rmSync(directory, { recursive: true, force: true })
 })
 
-describe('FileAccountStore', () => {
+describe('the account store on a file', () => {
   it('reads back an account it stored', async () => {
     const added = await addAnthropic('work')
 
@@ -166,9 +161,9 @@ describe('FileAccountStore', () => {
 
   it('refuses a vault written under another key', async () => {
     await addAnthropic('work')
-    const wrongKey = new FileAccountStore({
+    const wrongKey = fileAccountStore({
       file: join(directory, 'auth.json'),
-      cipher: new SecretCipher(join(directory, 'other-key')),
+      keyFile: join(directory, 'other-key'),
       clock,
     })
 

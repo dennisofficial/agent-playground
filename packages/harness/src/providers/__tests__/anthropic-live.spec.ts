@@ -4,14 +4,13 @@ import { EEffort } from '@dltech/atlas-core'
 
 import {
   ClaudeCodeSource,
-  FileAccountStore,
   RefreshingCredentialPort,
-  SecretCipher,
   atlasVaultFile,
   atlasVaultKeyFile,
-  builtinRefreshClients,
+  builtinOauthClients,
   claudeCodePayloadStore,
   createSecurityKeychainReader,
+  fileAccountStore,
   importClaudeCodeAccount,
 } from '../../credentials'
 import { ETurnStatus, buildHarness, type AtlasHarness } from '../../loop'
@@ -25,9 +24,9 @@ export const LIVE_ANTHROPIC_FLAG = 'ATLAS_LIVE_ANTHROPIC'
 
 const liveCredentials = async (): Promise<RefreshingCredentialPort> => {
   const clock = new SystemClock()
-  const accounts = new FileAccountStore({
+  const accounts = fileAccountStore({
     file: atlasVaultFile(),
-    cipher: new SecretCipher(atlasVaultKeyFile()),
+    keyFile: atlasVaultKeyFile(),
     clock,
   })
   const source = new ClaudeCodeSource(
@@ -38,7 +37,7 @@ const liveCredentials = async (): Promise<RefreshingCredentialPort> => {
 
   return new RefreshingCredentialPort({
     accounts,
-    clients: builtinRefreshClients({ clock }),
+    clients: builtinOauthClients({ clock }),
     clock,
     sinks: [source],
   })

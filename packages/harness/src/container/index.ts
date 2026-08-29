@@ -11,6 +11,7 @@ export {
 export type { DependencyContainer, InjectionToken, PortConstructor } from './injection'
 export { Disposable, disposeAll, registerDisposable } from './disposal'
 export {
+  ClaudeCodeSourceToken,
   HookChainToken,
   KeychainReaderToken,
   LanguageModelToken,

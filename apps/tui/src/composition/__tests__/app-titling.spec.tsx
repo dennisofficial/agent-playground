@@ -101,7 +101,7 @@ describe('naming a session from its opening message', () => {
   it('drops the name when a new conversation starts, rather than carrying it over', async () => {
     const app = naming(NAME)
     const setup = await testRender(
-      <App app={app} opened={{ threadId: THREAD, events: [], name: null }} />,
+      <App app={app} opened={{ threadId: THREAD, events: [], turns: [], name: null }} />,
       { width: 140, height: 40 },
     )
 
@@ -134,7 +134,7 @@ describe('naming a session from its opening message', () => {
   it('heads the sidebar with the name once it lands', async () => {
     const app = naming(NAME)
     const setup = await testRender(
-      <App app={app} opened={{ threadId: THREAD, events: [], name: null }} />,
+      <App app={app} opened={{ threadId: THREAD, events: [], turns: [], name: null }} />,
       { width: 140, height: 40 },
     )
 

@@ -15,9 +15,31 @@ const tokensOf = (characters: number): number => Math.ceil(characters / CHARACTE
 const deltaTextOf = (chunk: Chunk): string =>
   chunk.type === 'text-delta' || chunk.type === 'reasoning-delta' ? chunk.text : ''
 
+function reasoningAfter(args: { chunk: Chunk; reasoning: boolean }): boolean {
+  switch (args.chunk.type) {
+    case 'reasoning-start':
+    case 'reasoning-delta':
+      return true
+    case 'reasoning-end':
+    case 'text-start':
+    case 'text-delta':
+    case 'tool-call':
+    case 'finish':
+      return false
+    default:
+      return args.reasoning
+  }
+}
+
 export const turnStarted = (args: { now: number }): TurnProgress => ({
   characters: 0,
-  clock: { startedAt: args.now, outputTokens: 0, interrupting: false, completed: null },
+  clock: {
+    startedAt: args.now,
+    outputTokens: 0,
+    interrupting: false,
+    reasoning: false,
+    completed: null,
+  },
 })
 
 export const turnInterrupting = (progress: TurnProgress): TurnProgress =>
@@ -31,11 +53,17 @@ export function turnAdvanced(args: {
 }): TurnProgress {
   if (args.signal.type !== 'chunk') return args.progress
 
+  const { clock } = args.progress
+  const reasoning = reasoningAfter({ chunk: args.signal.chunk, reasoning: clock.reasoning })
   const text = deltaTextOf(args.signal.chunk)
-  if (text.length === 0) return args.progress
+
+  if (text.length === 0) {
+    if (reasoning === clock.reasoning) return args.progress
+    return { ...args.progress, clock: { ...clock, reasoning } }
+  }
 
   const characters = args.progress.characters + text.length
-  return { characters, clock: { ...args.progress.clock, outputTokens: tokensOf(characters) } }
+  return { characters, clock: { ...clock, outputTokens: tokensOf(characters), reasoning } }
 }
 
 export function turnSettled(args: { progress: TurnProgress; now: number }): TurnProgress {
@@ -48,6 +76,7 @@ export function turnSettled(args: { progress: TurnProgress; now: number }): Turn
       startedAt: null,
       outputTokens: 0,
       interrupting: false,
+      reasoning: false,
       completed: { durationMs: Math.max(0, args.now - startedAt), outputTokens },
     },
   }

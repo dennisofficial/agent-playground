@@ -1,10 +1,7 @@
 import { randomUUID } from 'node:crypto'
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
 
 import {
   AccountStorePort,
-  accountSecretSchema,
   EAccountStatus,
   toAccountId,
   type Account,
@@ -16,40 +13,41 @@ import {
   type StoredAccount,
 } from '@dltech/atlas-core'
 
-import { CredentialError, ECredentialFailure } from './credential-error'
-import type { SecretCipher } from './secret-cipher'
-import { emptyVault, vaultFileSchema, type SealedAccount, type VaultFile } from './vault-file'
+import { SecretCipher } from './secret-cipher'
+import {
+  cipherSecretBox,
+  fileVaultBackend,
+  memoryVaultBackend,
+  plainSecretBox,
+  type SecretBox,
+  type VaultBackend,
+} from './vault-backend'
+import type { SealedAccount, VaultFile } from './vault-file'
 
-const OWNER_ONLY = 0o600
+const withoutSecret = ({ secret: _sealed, ...account }: SealedAccount): Account => account
 
-const unreadableVault = (file: string, detail: string): CredentialError =>
-  new CredentialError({
-    failure: ECredentialFailure.Unreadable,
-    message: `The account vault at ${file} could not be read: ${detail}. Move it aside and sign in again with /auth.`,
-  })
-
-export class FileAccountStore extends AccountStorePort {
-  private readonly file: string
-  private readonly cipher: SecretCipher
+export class AccountStore extends AccountStorePort {
+  private readonly backend: VaultBackend
+  private readonly box: SecretBox
   private readonly clock: ClockPort
   private writes: Promise<unknown> = Promise.resolve()
 
-  constructor(args: { file: string; cipher: SecretCipher; clock: ClockPort }) {
+  constructor(args: { backend: VaultBackend; box: SecretBox; clock: ClockPort }) {
     super()
-    this.file = args.file
-    this.cipher = args.cipher
+    this.backend = args.backend
+    this.box = args.box
     this.clock = args.clock
   }
 
   async list(): Promise<readonly Account[]> {
-    return this.load().accounts.map(withoutSecret)
+    return this.backend.load().accounts.map(withoutSecret)
   }
 
   async read(accountId: AccountId): Promise<StoredAccount | undefined> {
-    const sealed = this.load().accounts.find((account) => account.id === accountId)
+    const sealed = this.backend.load().accounts.find((account) => account.id === accountId)
     if (sealed === undefined) return undefined
 
-    return { ...sealed, secret: this.unseal(sealed) }
+    return { ...sealed, secret: this.box.open(sealed.secret) }
   }
 
   async add(draft: AccountDraft): Promise<Account> {
@@ -67,10 +65,11 @@ export class FileAccountStore extends AccountStorePort {
       createdAt: at,
       updatedAt: at,
     }
+    const sealed = this.box.seal(draft.secret)
 
     await this.mutate((vault) => ({
       ...vault,
-      accounts: [...vault.accounts, { ...account, secret: this.cipher.encrypt(serialise(draft.secret)) }],
+      accounts: [...vault.accounts, { ...account, secret: sealed }],
       active:
         vault.active[draft.provider] === undefined
           ? { ...vault.active, [draft.provider]: account.id }
@@ -86,7 +85,7 @@ export class FileAccountStore extends AccountStorePort {
    * account permanently.
    */
   async replaceSecret(args: { accountId: AccountId; secret: AccountSecret }): Promise<void> {
-    const sealed = this.cipher.encrypt(serialise(args.secret))
+    const sealed = this.box.seal(args.secret)
 
     await this.mutateAccount({
       accountId: args.accountId,
@@ -125,35 +124,7 @@ export class FileAccountStore extends AccountStorePort {
   }
 
   async activeFor(provider: EAuthProvider): Promise<AccountId | undefined> {
-    return this.load().active[provider]
-  }
-
-  private unseal(sealed: SealedAccount): AccountSecret {
-    const parsed = accountSecretSchema.safeParse(JSON.parse(this.cipher.decrypt(sealed.secret)))
-    if (!parsed.success) throw unreadableVault(this.file, `the secret for ${sealed.label} is malformed`)
-
-    return parsed.data
-  }
-
-  private load(): VaultFile {
-    let text: string
-    try {
-      text = readFileSync(this.file, 'utf8')
-    } catch {
-      return emptyVault()
-    }
-
-    let json: unknown
-    try {
-      json = JSON.parse(text)
-    } catch {
-      throw unreadableVault(this.file, 'the file is not valid JSON')
-    }
-
-    const parsed = vaultFileSchema.safeParse(json)
-    if (!parsed.success) throw unreadableVault(this.file, 'the file does not hold an account vault')
-
-    return parsed.data
+    return this.backend.load().active[provider]
   }
 
   private async mutateAccount(args: {
@@ -169,29 +140,30 @@ export class FileAccountStore extends AccountStorePort {
   }
 
   /**
-   * Serialised in process and re-read from disk inside the lock, so a refresh landing while the
-   * operator adds an account keeps both. Two Atlas processes writing in the same instant still race;
-   * `adoptionOf` is what stops that race from replacing a newer credential with an older one.
+   * Serialised in process and re-read from the backend inside the lock, so a refresh landing while
+   * the operator adds an account keeps both. Two Atlas processes writing in the same instant still
+   * race; `adoptionOf` is what stops that race replacing a newer credential with an older one.
    */
   private async mutate(change: (vault: VaultFile) => VaultFile): Promise<void> {
     const queued = this.writes.then(async () => {
-      const next = change(this.load())
-      this.write(next)
+      this.backend.save(change(this.backend.load()))
     })
 
     this.writes = queued.catch(() => undefined)
     await queued
   }
-
-  private write(vault: VaultFile): void {
-    mkdirSync(dirname(this.file), { recursive: true })
-
-    const temporary = join(dirname(this.file), `.${randomUUID()}.tmp`)
-    writeFileSync(temporary, `${JSON.stringify(vault, null, 2)}\n`, { mode: OWNER_ONLY })
-    renameSync(temporary, this.file)
-  }
 }
 
-const withoutSecret = ({ secret: _sealed, ...account }: SealedAccount): Account => account
+export const fileAccountStore = (args: {
+  file: string
+  keyFile: string
+  clock: ClockPort
+}): AccountStore =>
+  new AccountStore({
+    backend: fileVaultBackend(args.file),
+    box: cipherSecretBox({ cipher: new SecretCipher(args.keyFile), where: args.file }),
+    clock: args.clock,
+  })
 
-const serialise = (secret: AccountSecret): string => JSON.stringify(secret)
+export const memoryAccountStore = (args: { clock: ClockPort }): AccountStore =>
+  new AccountStore({ backend: memoryVaultBackend(), box: plainSecretBox(), clock: args.clock })

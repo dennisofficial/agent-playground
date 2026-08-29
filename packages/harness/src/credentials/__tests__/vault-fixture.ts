@@ -12,8 +12,7 @@ import {
   type OauthTokens,
 } from '@dltech/atlas-core'
 
-import { FileAccountStore } from '../file-account-store'
-import { SecretCipher } from '../secret-cipher'
+import { fileAccountStore, type AccountStore } from '../account-store'
 
 export const NOW = '2026-01-01T12:00:00.000Z'
 
@@ -46,7 +45,7 @@ export const oauthSecret = (args: Parameters<typeof tokens>[0] = {}): AccountSec
 })
 
 export type Vault = {
-  store: FileAccountStore
+  store: AccountStore
   directory: string
   addAccount: (args: {
     label: string
@@ -59,9 +58,9 @@ export type Vault = {
 
 export const openVault = (clock: ClockPort): Vault => {
   const directory = mkdtempSync(join(tmpdir(), 'atlas-credentials-'))
-  const store = new FileAccountStore({
+  const store = fileAccountStore({
     file: join(directory, 'auth.json'),
-    cipher: new SecretCipher(join(directory, 'key')),
+    keyFile: join(directory, 'key'),
     clock,
   })
 

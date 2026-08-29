@@ -12,6 +12,7 @@ export enum EEntryKind {
   ToolsRan = 'tools-ran',
   HistoryCompacted = 'history-compacted',
   BackgroundShellEnded = 'background-shell-ended',
+  TurnEnded = 'turn-ended',
 }
 
 export type OperatorSaidEntry = {
@@ -81,6 +82,17 @@ export type BackgroundShellEndedEntry = {
   failed: boolean
 }
 
+export type TurnEndedEntry = {
+  kind: EEntryKind.TurnEnded
+  author: EAuthor.Model
+  key: string
+  text: string
+  durationMs: number
+  outputTokens: number
+  endedAt: string
+  interrupted: boolean
+}
+
 export type TranscriptEntry =
   | OperatorSaidEntry
   | ModelSaidEntry
@@ -88,6 +100,7 @@ export type TranscriptEntry =
   | ToolsRanEntry
   | HistoryCompactedEntry
   | BackgroundShellEndedEntry
+  | TurnEndedEntry
 
 export type StepFailure = { message: string | null }
 

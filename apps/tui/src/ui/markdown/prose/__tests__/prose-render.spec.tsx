@@ -165,7 +165,7 @@ describe('inline syntax', () => {
     }
   }, 60_000)
 
-  it('slabs inline code instead of tinting it accent, so a paragraph of identifiers stays prose', async () => {
+  it('slabs inline code and tints it accent, so an identifier is findable mid-paragraph', async () => {
     const setup = await mount('`a()` and `b()` and `c()` and `d()`')
     try {
       const painted = setup
@@ -173,7 +173,28 @@ describe('inline syntax', () => {
         .lines.flatMap((line) => line.spans)
         .filter((span) => span.text.trim().length > 0)
 
-      expect(painted.some((span) => Math.round(span.bg.r * 255) === 0x33)).toBe(true)
+      const slabbed = painted.filter((span) => Math.round(span.bg.r * 255) === 0x33)
+      expect(slabbed.length).toBeGreaterThan(0)
+      for (const span of slabbed) {
+        expect(Math.round(span.fg.r * 255)).toBe(0xd9)
+      }
+
+      for (const span of painted.filter((span) => Math.round(span.bg.r * 255) !== 0x33)) {
+        expect(Math.round(span.fg.r * 255)).not.toBe(0xd9)
+      }
+    } finally {
+      await teardown(setup)
+    }
+  })
+
+  it('leaves struck code de-emphasised rather than accent, as struck prose is', async () => {
+    const setup = await mount('~~`gone()`~~')
+    try {
+      const painted = setup
+        .captureSpans()
+        .lines.flatMap((line) => line.spans)
+        .filter((span) => span.text.trim().length > 0)
+
       for (const span of painted) {
         expect(Math.round(span.fg.r * 255)).not.toBe(0xd9)
       }

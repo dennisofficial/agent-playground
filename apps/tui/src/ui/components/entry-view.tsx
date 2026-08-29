@@ -6,6 +6,7 @@ import { CompactedBlock } from './blocks/compacted-block'
 import { ShellEndedBlock } from './blocks/shell-ended-block'
 import { ThinkingBlock } from './blocks/thinking-block'
 import { ToolGroupBlock } from './blocks/tool-group-block'
+import { TurnEndedBlock } from './blocks/turn-ended-block'
 import { EUserMark, UserBlock } from './blocks/user-block'
 
 export function EntryView(props: {
@@ -58,6 +59,7 @@ export function EntryView(props: {
           group={entry.group}
           width={props.width}
           expanded={props.expanded ?? false}
+          {...(props.attached === undefined ? {} : { attached: props.attached })}
           {...(onToggle ? { onToggle: () => onToggle(entry.key) } : {})}
         />
       )
@@ -82,6 +84,16 @@ export function EntryView(props: {
           width={props.width}
           expanded={props.expanded ?? false}
           {...(onToggle ? { onToggle: () => onToggle(entry.key) } : {})}
+        />
+      )
+
+    case EEntryKind.TurnEnded:
+      return (
+        <TurnEndedBlock
+          durationMs={entry.durationMs}
+          outputTokens={entry.outputTokens}
+          endedAt={entry.endedAt}
+          interrupted={entry.interrupted}
         />
       )
 

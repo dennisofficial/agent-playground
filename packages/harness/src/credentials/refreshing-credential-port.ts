@@ -23,7 +23,7 @@ import {
 
 import { CredentialError, ECredentialFailure } from './credential-error'
 import { sinkFor, type CredentialSink } from './credential-sink'
-import { isHardAuthFailure, refreshClientFor, type RefreshClients } from './oauth'
+import { clientFor, isHardAuthFailure, type RefreshClients } from './oauth'
 
 const SIGN_IN = 'Sign in with /auth.'
 
@@ -121,7 +121,7 @@ export class RefreshingCredentialPort extends CredentialPort {
     const adopted = await this.adoptFromSink({ stored, tokens, sink })
     if (adopted !== undefined) return adopted
 
-    const client = refreshClientFor({ clients: this.clients, provider: stored.provider })
+    const client = clientFor({ clients: this.clients, provider: stored.provider })
 
     try {
       const rotated = await client.refresh({ refreshToken: tokens.refreshToken })

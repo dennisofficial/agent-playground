@@ -8,8 +8,6 @@ import { log } from './fixture'
 
 const CALL_ONE = toCallId('call-1')
 
-const CALL_TWO = toCallId('call-2')
-
 const turnOf = (clock: Partial<typeof IDLE_TURN>): typeof IDLE_TURN => ({ ...IDLE_TURN, ...clock })
 
 describe('an empty thread', () => {
@@ -17,31 +15,14 @@ describe('an empty thread', () => {
     const model = deriveSidebar({ events: [], turn: IDLE_TURN })
 
     expect(model.approvals).toEqual([])
-    expect(model.toolCalls).toEqual([])
     expect(model.lastActivity).toBeNull()
     expect(model.liveOutputTokens).toBe(0)
     expect(model.lastTurnOutputTokens).toBeNull()
   })
 })
 
-describe('tool calls', () => {
-  it('lists a called tool until its result lands', () => {
-    const events = log([
-      { type: 'tool-called', callId: CALL_ONE, name: 'read_file', input: {}, ordinal: 0 },
-      { type: 'tool-called', callId: CALL_TWO, name: 'list_dir', input: {}, ordinal: 1 },
-      { type: 'tool-result', callId: CALL_ONE, name: 'read_file', output: 'ok' },
-    ])
-
-    const model = deriveSidebar({ events, turn: IDLE_TURN })
-
-    expect(model.toolCalls.map((call) => [call.callId, call.name])).toEqual([
-      [CALL_TWO, 'list_dir'],
-    ])
-  })
-})
-
 describe('approvals', () => {
-  it('shows an outstanding approval instead of its tool call', () => {
+  it('shows an outstanding approval', () => {
     const events = log([
       { type: 'tool-called', callId: CALL_ONE, name: 'bash', input: {}, ordinal: 0 },
       { type: 'approval-requested', callId: CALL_ONE, reason: 'runs a shell command' },
@@ -52,10 +33,9 @@ describe('approvals', () => {
     expect(model.approvals).toEqual([
       { callId: CALL_ONE, reason: 'runs a shell command' },
     ])
-    expect(model.toolCalls).toEqual([])
   })
 
-  it('returns the call to the tool list once the approval is answered', () => {
+  it('clears the approval once it is answered', () => {
     const events = log([
       { type: 'tool-called', callId: CALL_ONE, name: 'bash', input: {}, ordinal: 0 },
       { type: 'approval-requested', callId: CALL_ONE, reason: 'runs a shell command' },
@@ -65,7 +45,6 @@ describe('approvals', () => {
     const model = deriveSidebar({ events, turn: IDLE_TURN })
 
     expect(model.approvals).toEqual([])
-    expect(model.toolCalls.map((call) => call.name)).toEqual(['bash'])
   })
 })
 

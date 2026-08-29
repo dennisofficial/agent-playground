@@ -2,7 +2,7 @@ import { homedir } from 'node:os'
 
 import React from 'react'
 
-import { collapseHome, tailOfPath } from '../paths'
+import { sessionLabel, tailOfPath } from '../paths'
 import { theme } from '../theme'
 import type { ShellSnapshot } from '@dltech/atlas-harness'
 
@@ -12,15 +12,23 @@ import { SubagentsSection, TeammatesSection } from './sidebar/crew'
 import { FactsSection, HeadSection } from './sidebar/head'
 import { ShellsSection } from './sidebar/shells'
 import { TodoSection } from './sidebar/todo'
-import { ApprovalsSection, ToolCallsSection, TurnSection } from './sidebar/turn'
+import { ApprovalsSection, TurnSection } from './sidebar/turn'
 import type { TurnClock } from './transcript'
 
-function SidebarFooter(props: { cwd: string; cells: number }): React.ReactNode {
-  const where = collapseHome({ cwd: props.cwd, home: homedir() })
+function SidebarFooter(props: {
+  cwd: string
+  sessionDirectory?: string | undefined
+  cells: number
+}): React.ReactNode {
+  const where = sessionLabel({
+    projectDirectory: props.cwd,
+    sessionDirectory: props.sessionDirectory ?? props.cwd,
+    home: homedir(),
+  })
 
   return (
     <box flexDirection="column" flexShrink={0} paddingTop={1}>
-      <text fg={theme.dim}>{tailOfPath({ path: where, cells: props.cells })}</text>
+      <text fg={theme.dim}>{tailOfPath({ path: where.path, cells: props.cells })}</text>
       <text>
         <span fg={theme.accent}>● </span>
         <span fg={theme.hover}>atlas</span>
@@ -41,6 +49,7 @@ export function Sidebar(props: {
   turn: TurnClock
   now: number
   cwd: string
+  sessionDirectory?: string | undefined
   overlay?: boolean
   shells?: readonly ShellSnapshot[]
   onOpenShell?: (shellId: string) => void
@@ -71,7 +80,6 @@ export function Sidebar(props: {
           <FactsSection model={model} cells={cells} />
           <TurnSection turn={props.turn} now={props.now} cells={cells} />
           <ApprovalsSection model={model} cells={cells} />
-          <ToolCallsSection model={model} cells={cells} />
           <ShellsSection
             shells={props.shells ?? []}
             cells={cells}
@@ -82,7 +90,7 @@ export function Sidebar(props: {
           <TeammatesSection teammates={model.teammates ?? []} cells={cells} />
         </box>
       </scrollbox>
-      <SidebarFooter cwd={props.cwd} cells={cells} />
+      <SidebarFooter cwd={props.cwd} sessionDirectory={props.sessionDirectory} cells={cells} />
     </box>
   )
 }

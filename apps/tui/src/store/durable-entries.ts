@@ -3,7 +3,9 @@ import { EContextSlot, type AssistantPart, type CallId, type Event, type EventId
 import { modelEntries } from './model-entries'
 import { shellEndedLine, shellEndingFailed } from './shell-ended-line'
 import { toolGroups, type ToolGroup } from './tool-groups'
+import type { TurnSpend } from '@dltech/atlas-harness'
 import { EAuthor, EEntryKind, toolsRanEntry, type TranscriptEntry } from './transcript-model'
+import { turnEndedEntry, turnsBySeq } from './turn-rows'
 
 type PartRun = { type: AssistantPart['type']; text: string }
 
@@ -84,63 +86,74 @@ function inOneBreath(entries: readonly TranscriptEntry[]): TranscriptEntry[] {
   }, [])
 }
 
-export function durableEntries(events: readonly Event[]): TranscriptEntry[] {
+export function durableEntries(args: {
+  events: readonly Event[]
+  turns?: readonly TurnSpend[] | undefined
+}): TranscriptEntry[] {
+  const { events } = args
   const opened = new Map<string, ToolGroup>(
     toolGroups(events).map((group) => [group.openedBy, group]),
   )
   const steers = saidWhileToolsWereOutstanding(events)
   const loaded = skillsLoadedWith(events)
+  const turns = turnsBySeq({ events, turns: args.turns ?? [] })
+
+  const entriesOfEvent = (event: Event): TranscriptEntry[] => {
+    if (event.type === 'user-said') {
+      return [
+        {
+          kind: EEntryKind.OperatorSaid,
+          author: EAuthor.Operator,
+          key: event.id,
+          text: event.text,
+          said: [event.text],
+          steer: steers.has(event.id),
+          skills: loaded.get(event.id) ?? [],
+        },
+      ]
+    }
+
+    if (event.type === 'assistant-said') return entriesOfAssistantEvent(event)
+
+    if (event.type === 'tool-called') {
+      const group = opened.get(event.callId)
+      return group === undefined ? [] : [toolsRanEntry(group)]
+    }
+
+    if (event.type === 'background-shell-ended') {
+      return [
+        {
+          kind: EEntryKind.BackgroundShellEnded,
+          author: EAuthor.Model,
+          key: event.id,
+          text: shellEndedLine(event),
+          shellId: event.shellId,
+          output: event.output,
+          failed: shellEndingFailed(event),
+        },
+      ]
+    }
+
+    if (event.type === 'history-compacted') {
+      return [
+        {
+          kind: EEntryKind.HistoryCompacted,
+          author: EAuthor.Model,
+          key: event.id,
+          text: event.summary,
+          compactedEntries: event.replaced,
+        },
+      ]
+    }
+
+    return []
+  }
 
   return inOneBreath(
     events.flatMap((event): TranscriptEntry[] => {
-      if (event.type === 'user-said') {
-        return [
-          {
-            kind: EEntryKind.OperatorSaid,
-            author: EAuthor.Operator,
-            key: event.id,
-            text: event.text,
-            said: [event.text],
-            steer: steers.has(event.id),
-            skills: loaded.get(event.id) ?? [],
-          },
-        ]
-      }
-
-      if (event.type === 'assistant-said') return entriesOfAssistantEvent(event)
-
-      if (event.type === 'tool-called') {
-        const group = opened.get(event.callId)
-        return group === undefined ? [] : [toolsRanEntry(group)]
-      }
-
-      if (event.type === 'background-shell-ended') {
-        return [
-          {
-            kind: EEntryKind.BackgroundShellEnded,
-            author: EAuthor.Model,
-            key: event.id,
-            text: shellEndedLine(event),
-            shellId: event.shellId,
-            output: event.output,
-            failed: shellEndingFailed(event),
-          },
-        ]
-      }
-
-      if (event.type === 'history-compacted') {
-        return [
-          {
-            kind: EEntryKind.HistoryCompacted,
-            author: EAuthor.Model,
-            key: event.id,
-            text: event.summary,
-            compactedEntries: event.replaced,
-          },
-        ]
-      }
-
-      return []
+      const entries = entriesOfEvent(event)
+      const turn = turns.get(event.seq)
+      return turn === undefined ? entries : [...entries, turnEndedEntry(turn)]
     }),
   )
 }

@@ -4,7 +4,15 @@ import React from 'react'
 
 import { settle, teardown } from '../../ui/markdown/__tests__/harness'
 import { App } from '../app'
+import type { OpenedConversation } from '../open-conversation'
 import type { FakeApp } from './fake-app'
+
+/**
+ * A settled capture is not a safe stand-in here: several of these screens animate — the interrupt
+ * spinner, the shimmer — so two captures taken microseconds apart match while the frame is still
+ * moving, and the wait ends on a state the test was not waiting for.
+ */
+const SETTLE_MS = 250
 
 const WIDTH = 90
 
@@ -28,8 +36,13 @@ export type Mounted = {
   done: () => Promise<void>
 }
 
-export async function open(args: { app: FakeApp }): Promise<Mounted> {
-  const setup = await testRender(<App app={args.app} opened={{ threadId: THREAD, events: [], name: null }} />, {
+const EMPTY: OpenedConversation = { threadId: THREAD, events: [], turns: [], name: null }
+
+export async function open(args: {
+  app: FakeApp
+  opened?: OpenedConversation
+}): Promise<Mounted> {
+  const setup = await testRender(<App app={args.app} opened={args.opened ?? EMPTY} />, {
     width: WIDTH,
     height: HEIGHT,
   })
@@ -38,7 +51,7 @@ export async function open(args: { app: FakeApp }): Promise<Mounted> {
     app: args.app,
     frame: async () => {
       await setup.flush()
-      await settle(250)
+      await settle(SETTLE_MS)
       await setup.flush()
       return setup.captureCharFrame()
     },

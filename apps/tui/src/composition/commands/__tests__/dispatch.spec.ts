@@ -221,3 +221,4 @@ describe('the compact command and its scope', () => {
     expect(opened).toEqual(['rewind'])
   })
 })
+

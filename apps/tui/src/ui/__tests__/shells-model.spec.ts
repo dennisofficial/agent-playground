@@ -3,9 +3,11 @@ import { describe, expect, it } from 'bun:test'
 import { EKilledBy, EShellStatus, toShellId, type ShellSnapshot } from '@dltech/atlas-harness'
 
 import {
+  EOutputScroll,
   moveShellSelection,
   openShells,
   outputRows,
+  outputScrollCommand,
   runningCount,
   selectShell,
   selectedShell,
@@ -132,35 +134,75 @@ describe('saying what a shell is doing', () => {
   })
 })
 
-describe('laying a shell tail out in the rows on offer', () => {
+describe('laying a shell tail out in the scrollback on offer', () => {
   it('keeps the newest lines when there are more than fit', () => {
     const text = ['one', 'two', 'three', 'four'].join('\n')
 
-    expect(outputRows({ text, cells: 20, rows: 2 })).toEqual(['three', 'four'])
+    expect(outputRows({ text, cells: 20, limit: 2 })).toEqual(['three', 'four'])
   })
 
   it('wraps a long line rather than clipping the end off it', () => {
-    expect(outputRows({ text: 'abcdefgh', cells: 3, rows: 10 })).toEqual(['abc', 'def', 'gh'])
+    expect(outputRows({ text: 'abcdefgh', cells: 3, limit: 10 })).toEqual(['abc', 'def', 'gh'])
   })
 
   it('counts a wrapped line against the row budget', () => {
-    expect(outputRows({ text: 'abcdefgh', cells: 3, rows: 2 })).toEqual(['def', 'gh'])
+    expect(outputRows({ text: 'abcdefgh', cells: 3, limit: 2 })).toEqual(['def', 'gh'])
   })
 
   it('ignores the trailing newline a command leaves behind', () => {
-    expect(outputRows({ text: 'done\n', cells: 20, rows: 4 })).toEqual(['done'])
+    expect(outputRows({ text: 'done\n', cells: 20, limit: 4 })).toEqual(['done'])
   })
 
   it('turns tabs into spaces, since a tab measures as one cell and prints as many', () => {
-    expect(outputRows({ text: 'a\tb', cells: 20, rows: 4 })).toEqual(['a  b'])
+    expect(outputRows({ text: 'a\tb', cells: 20, limit: 4 })).toEqual(['a  b'])
   })
 
   it('returns nothing when there are no rows to fill', () => {
-    expect(outputRows({ text: 'anything', cells: 20, rows: 0 })).toEqual([])
+    expect(outputRows({ text: 'anything', cells: 20, limit: 0 })).toEqual([])
   })
 
   it('returns nothing for no output, so the panel can say so in words', () => {
-    expect(outputRows({ text: '', cells: 20, rows: 4 })).toEqual([])
-    expect(outputRows({ text: '\n\n', cells: 20, rows: 4 })).toEqual([])
+    expect(outputRows({ text: '', cells: 20, limit: 4 })).toEqual([])
+    expect(outputRows({ text: '\n\n', cells: 20, limit: 4 })).toEqual([])
+  })
+})
+
+describe('reading the scrollback keys', () => {
+  it('pages with the keys a pager pages with', () => {
+    expect(outputScrollCommand({ name: 'pageup' })).toEqual({
+      kind: EOutputScroll.Pages,
+      amount: -1,
+    })
+    expect(outputScrollCommand({ name: 'pagedown' })).toEqual({
+      kind: EOutputScroll.Pages,
+      amount: 1,
+    })
+  })
+
+  it('walks to either end of what was kept', () => {
+    expect(outputScrollCommand({ name: 'home' })).toEqual({ kind: EOutputScroll.ToStart })
+    expect(outputScrollCommand({ name: 'end' })).toEqual({ kind: EOutputScroll.ToEnd })
+  })
+
+  it('creeps a few lines on a shifted arrow', () => {
+    expect(outputScrollCommand({ name: 'up', shift: true })).toEqual({
+      kind: EOutputScroll.Lines,
+      amount: -3,
+    })
+    expect(outputScrollCommand({ name: 'down', shift: true })).toEqual({
+      kind: EOutputScroll.Lines,
+      amount: 3,
+    })
+  })
+
+  it('leaves a bare arrow alone, since that one walks the shells', () => {
+    expect(outputScrollCommand({ name: 'up' })).toBeNull()
+    expect(outputScrollCommand({ name: 'down' })).toBeNull()
+  })
+
+  it('claims nothing else', () => {
+    expect(outputScrollCommand({ name: 'k' })).toBeNull()
+    expect(outputScrollCommand({ name: 'escape' })).toBeNull()
+    expect(outputScrollCommand({})).toBeNull()
   })
 })

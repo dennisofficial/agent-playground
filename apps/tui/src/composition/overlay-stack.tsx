@@ -1,6 +1,7 @@
 import { MODEL_CATALOG } from '@dltech/atlas-core'
 import React from 'react'
 
+import { CompactingOverlay, type Compacting } from '../ui/components/compacting'
 import { ExitGuard } from '../ui/components/exit-guard'
 import { exitGuardRow } from '../ui/exit-guard-model'
 import { Rewind } from '../ui/components/rewind'
@@ -25,12 +26,17 @@ export function OverlayStack(props: {
   settings: SettingsControl
   rewind: RewindControl
   exitGuard: ExitGuardControl
+  compacting: Compacting | null
+  now: number
 }): React.ReactNode {
   const { switcher, shells, settings, rewind, exitGuard } = props
   const sidebarWidth = Math.min(settings.sidebarWidth, props.width)
 
   return (
     <>
+      {props.compacting === null ? null : (
+        <CompactingOverlay compacting={props.compacting} now={props.now} width={props.width} />
+      )}
       {rewind.state === null ? null : (
         <Rewind
           width={Math.min(props.contentWidth, props.width)}
@@ -58,6 +64,7 @@ export function OverlayStack(props: {
           shells={shells.shells}
           selected={shells.selected}
           output={shells.output}
+          scroll={shells.scroll}
           overlay
           onKill={shells.handleKill}
           onDismiss={shells.handleDismiss}

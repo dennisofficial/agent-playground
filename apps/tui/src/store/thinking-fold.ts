@@ -44,6 +44,34 @@ function foldedThought(args: {
   }
 }
 
+export function toolsAboveThoughts(entries: readonly TranscriptEntry[]): TranscriptEntry[] {
+  const ordered: TranscriptEntry[] = []
+  let sinking: ModelThoughtEntry[] = []
+
+  const land = (): void => {
+    ordered.push(...sinking)
+    sinking = []
+  }
+
+  for (const entry of entries) {
+    if (isThought(entry)) {
+      sinking.push(entry)
+      continue
+    }
+
+    if (entry.kind === EEntryKind.ToolsRan && sinking.length > 0) {
+      ordered.push(entry)
+      continue
+    }
+
+    land()
+    ordered.push(entry)
+  }
+
+  land()
+  return ordered
+}
+
 function foldedAdjacentThoughts(entries: readonly TranscriptEntry[]): TranscriptEntry[] {
   const folded: TranscriptEntry[] = []
   let open: ModelThoughtEntry | null = null
@@ -70,16 +98,6 @@ function foldedAdjacentThoughts(entries: readonly TranscriptEntry[]): Transcript
   return folded
 }
 
-function heldOpenIndex(folded: readonly TranscriptEntry[]): number {
-  for (let index = folded.length - 1; index >= 0; index -= 1) {
-    const entry = folded[index]
-    if (isThought(entry)) return index
-    if (entry?.kind !== EEntryKind.ToolsRan) return -1
-  }
-
-  return -1
-}
-
 export function foldThoughts(args: {
   entries: readonly TranscriptEntry[]
   visibility: EThinkingVisibility
@@ -91,10 +109,10 @@ export function foldThoughts(args: {
   const folded = foldedAdjacentThoughts(args.entries)
   if (args.visibility === EThinkingVisibility.Keep) return folded
 
-  const held = heldOpenIndex(folded)
+  const trailing = folded.length - 1
 
   return folded.flatMap((entry, index): TranscriptEntry[] => {
     if (!isThought(entry) || entry.streaming) return [entry]
-    return index === held ? [{ ...entry, heldOpen: true }] : []
+    return index === trailing ? [{ ...entry, heldOpen: true }] : []
   })
 }

@@ -190,3 +190,44 @@ describe('what the shells panel shows', () => {
     expect(has(rows, 'close')).toBe(true)
   })
 })
+
+const LOUD_LINES = 200
+
+const loud = Array.from({ length: LOUD_LINES }, (_, index) => `line ${index + 1}`).join('\n')
+
+const printedLines = (frame: string): readonly number[] =>
+  [...frame.matchAll(/line (\d+)/g)].map((match) => Number(match[1]))
+
+describe('the scrollback the panel keeps', () => {
+  it('holds the older output behind the wheel rather than throwing it away', async () => {
+    const setup = await testRender(
+      <box flexDirection="row" width={TERMINAL_WIDTH} height={HEIGHT}>
+        <Shells
+          width={PANEL_WIDTH}
+          shells={[shell({ shellId: 'bash_1' })]}
+          selected={shell({ shellId: 'bash_1' })}
+          output={loud}
+          onKill={() => undefined}
+          onDismiss={() => undefined}
+        />
+      </box>,
+      { width: TERMINAL_WIDTH, height: HEIGHT },
+    )
+
+    try {
+      await setup.flush()
+      const settled = printedLines(setup.captureCharFrame())
+
+      expect(settled).toContain(LOUD_LINES)
+
+      await setup.mockMouse.scroll(10, 20, 'up')
+      await setup.flush()
+
+      const walked = printedLines(setup.captureCharFrame())
+
+      expect(Math.min(...walked)).toBeLessThan(Math.min(...settled))
+    } finally {
+      await teardown(setup)
+    }
+  })
+})

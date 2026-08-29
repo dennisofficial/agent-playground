@@ -36,7 +36,7 @@ const replied = (text: string): Event =>
   ({ ...envelope(), type: 'assistant-said', parts: [{ type: 'text', text }] })
 
 const operatorEntries = (events: readonly Event[]): OperatorSaidEntry[] =>
-  durableEntries(events).filter(
+  durableEntries({ events }).filter(
     (entry): entry is OperatorSaidEntry => entry.kind === EEntryKind.OperatorSaid,
   )
 

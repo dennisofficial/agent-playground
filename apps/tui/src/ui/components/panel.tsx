@@ -30,6 +30,23 @@ const railed = (rail?: string) =>
     : { border: ['left' as const], borderColor: rail, customBorderChars: RAIL_CHARS }
 
 /**
+ * The head's right corner. Both slabs stop `PANEL_PAD` short of the edge, so the row closes on the
+ * half glyph rather than on a filled cell; when they share the row the badge sits one `▄` left of
+ * the title.
+ */
+function RightSlot(props: { badge?: ReactNode; title?: ReactNode }): ReactNode {
+  if (props.badge === undefined && props.title === undefined) return null
+
+  return (
+    <box position="absolute" top={0} right={PANEL_PAD} flexDirection="row" zIndex={5}>
+      {props.badge}
+      {props.badge === undefined || props.title === undefined ? null : <box width={1} />}
+      {props.title}
+    </box>
+  )
+}
+
+/**
  * Half a row of fill, drawn as the foreground of `▄` or `▀` over the terminal's own ground. The
  * rail is capped on the same row by `╻` / `╹`, which are heavy verticals of the matching half
  * height — so a filled panel opens and closes on a half cell at both ends.
@@ -39,6 +56,7 @@ function Edge(props: {
   fill: string
   label?: ReactNode
   badge?: ReactNode
+  title?: ReactNode
   head: boolean
 }): ReactNode {
   return (
@@ -65,11 +83,10 @@ function Edge(props: {
           {props.label}
         </box>
       )}
-      {props.badge === undefined ? null : (
-        <box position="absolute" top={0} right={PANEL_PAD} zIndex={5}>
-          {props.badge}
-        </box>
-      )}
+      <RightSlot
+        {...(props.badge === undefined ? {} : { badge: props.badge })}
+        {...(props.title === undefined ? {} : { title: props.title })}
+      />
     </box>
   )
 }
@@ -120,9 +137,9 @@ function Band(props: { rail?: string; fill: string; children: ReactNode }): Reac
  * else in the app does. `fill` is separate: it raises a slab out of the transcript, capped at both
  * ends by a half row.
  *
- * `label` and `badge` are set into the head band, so they need their own background to stand clear
- * of the `▄` behind them. A `header` instead spends a whole row on its own ground, seamed off the
- * body below it whenever `band` is a different colour from `fill`.
+ * `label`, `badge` and `title` are set into the head band, so they need their own background to
+ * stand clear of the `▄` behind them. A `header` instead spends a whole row on its own ground,
+ * seamed off the body below it whenever `band` is a different colour from `fill`.
  */
 export function Panel(props: {
   rail?: string
@@ -130,6 +147,7 @@ export function Panel(props: {
   band?: string
   label?: ReactNode
   badge?: ReactNode
+  title?: ReactNode
   header?: ReactNode
   width?: number
   children: ReactNode
@@ -173,6 +191,7 @@ export function Panel(props: {
           {...(props.rail === undefined ? {} : { rail: props.rail })}
           {...(props.label === undefined ? {} : { label: props.label })}
           {...(props.badge === undefined ? {} : { badge: props.badge })}
+          {...(props.title === undefined ? {} : { title: props.title })}
         />
       ) : null}
       {props.header === undefined ? null : (

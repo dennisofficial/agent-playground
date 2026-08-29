@@ -34,7 +34,7 @@ describe('the conversation store', () => {
 
     expect(store.getSnapshot()).toBe(first)
 
-    store.setEvents(log([{ type: 'user-said', text: 'hello' }]))
+    store.setEvents({ events: log([{ type: 'user-said', text: 'hello' }]) })
 
     expect(store.getSnapshot()).not.toBe(first)
     expect(store.getSnapshot()).toBe(store.getSnapshot())
@@ -44,7 +44,7 @@ describe('the conversation store', () => {
     let notices = 0
     store.subscribe(() => void (notices += 1))
 
-    store.setEvents(log([{ type: 'user-said', text: 'hello' }]))
+    store.setEvents({ events: log([{ type: 'user-said', text: 'hello' }]) })
     const afterEvents = notices
     channel.publisherFor({ threadId: fixtureThreadId }).onChunk({ type: 'text-delta', id: 'b1', text: 'hi' })
 
@@ -62,7 +62,7 @@ describe('the conversation store', () => {
     const reply = durable[1]
     if (reply === undefined) throw new Error('fixture lost its reply')
 
-    store.setEvents(question)
+    store.setEvents({ events: question })
     const publisher = channel.publisherFor({ threadId: fixtureThreadId })
     publisher.onChunk({ type: 'text-delta', id: 'b1', text: 'hi ' })
     publisher.onChunk({ type: 'text-delta', id: 'b1', text: 'there' })
@@ -70,7 +70,7 @@ describe('the conversation store', () => {
     const seen = [answersOf(store)]
     publisher.settleAppend({ events: [reply] })
     seen.push(answersOf(store))
-    store.setEvents(durable)
+    store.setEvents({ events: durable })
     seen.push(answersOf(store))
 
     expect(seen).toEqual([['hi there'], ['hi there'], ['hi there']])
@@ -84,7 +84,7 @@ describe('the conversation store', () => {
     const publisher = channel.publisherFor({ threadId: fixtureThreadId })
     publisher.onChunk({ type: 'text-delta', id: 'b1', text: 'done' })
     publisher.settleAppend({ events: [reply] })
-    store.setEvents(durable)
+    store.setEvents({ events: durable })
     channel.publisherFor({ threadId: fixtureThreadId }).onChunk({ type: 'text-delta', id: 'b2', text: 'again' })
 
     expect(textOf(store)).toEqual(['done', 'again'])

@@ -8,7 +8,12 @@ import {
   type Event,
   type EventLogPort,
 } from '@dltech/atlas-core'
-import type { ThreadStorePort, ThreadSummary } from '@dltech/atlas-harness'
+import type {
+  ThreadStorePort,
+  ThreadSummary,
+  TurnLedgerPort,
+  TurnSpend,
+} from '@dltech/atlas-harness'
 
 const AT = '2026-08-25T00:00:00.000Z'
 
@@ -220,5 +225,21 @@ export function fakeEventLog(seeded: readonly Event[] = []): FakeEventLog {
     async readOwn({ threadId, upTo }) {
       return this.read({ threadId, ...(upTo === undefined ? {} : { upTo }) })
     },
+  }
+}
+
+export type FakeLedger = TurnLedgerPort & { readonly rows: readonly TurnSpend[] }
+
+export function fakeLedger(args: { spent?: readonly TurnSpend[] } = {}): FakeLedger {
+  const rows: TurnSpend[] = [...(args.spent ?? [])]
+
+  return {
+    get rows() {
+      return rows
+    },
+    record: async (spend) => {
+      rows.push(spend)
+    },
+    forThread: async ({ threadId }) => rows.filter((row) => row.threadId === threadId),
   }
 }

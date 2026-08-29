@@ -16,25 +16,24 @@ describe('what the operator is told when the credential is gone', () => {
     expect(diagnosis?.exitCode).toBeGreaterThan(0)
   })
 
-  it('says to re-authenticate on a credential that expired', () => {
+  it('points at the accounts overlay when the credential expired', () => {
     const diagnosis = diagnoseCredentialFailure(
       failing(ECredentialFailure.Expired, 'The credential expired at 2026-01-01T00:00:00.000Z.'),
     )
 
-    expect(diagnosis?.message).toContain('Re-authenticate')
-    expect(diagnosis?.message).toContain('claude')
+    expect(diagnosis?.message).toContain('/auth')
     expect(diagnosis?.message).toContain('expired at 2026-01-01T00:00:00.000Z')
   })
 
-  it('says to re-authenticate on a credential it could not parse', () => {
+  it('points at the accounts overlay when the credential cannot be parsed', () => {
     const diagnosis = diagnoseCredentialFailure(
       failing(ECredentialFailure.Unreadable, 'The credential is not a timestamp.'),
     )
 
-    expect(diagnosis?.message).toContain('Re-authenticate')
+    expect(diagnosis?.message).toContain('/auth')
   })
 
-  it('does not tell the operator to re-authenticate when the store itself is missing', () => {
+  it('says nothing about signing in when the store itself is missing', () => {
     const diagnosis = diagnoseCredentialFailure(
       failing(ECredentialFailure.StoreUnavailable, 'The Keychain backend needs macOS.'),
     )

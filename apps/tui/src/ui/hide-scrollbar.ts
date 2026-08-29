@@ -5,6 +5,11 @@ export function hideVerticalScrollbar(box: ScrollBoxRenderable): void {
   box.verticalScrollBar.visible = false
 }
 
+export function hideScrollbars(box: ScrollBoxRenderable): void {
+  hideVerticalScrollbar(box)
+  box.horizontalScrollBar.visible = false
+}
+
 export function useHiddenVerticalScrollbar(
   ref: RefObject<ScrollBoxRenderable | null>,
 ): (box: ScrollBoxRenderable | null) => void {

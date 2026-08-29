@@ -11,9 +11,7 @@ import {
 import type { KeyEvent } from '@opentui/core'
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 
-import { accentHex, accentPalette } from '../ui/accents'
-import { applyBlockDensity, blockDensityOf, SHIPPED_DENSITY } from '../ui/density-store'
-import { applyPalette } from '../ui/palette-store'
+import { appearanceOf, applyAppearance } from '../ui/appearance'
 import { SHIPPED_THINKING, thinkingVisibilityOf, type EThinkingVisibility } from '../store'
 
 const AUTO_COMPACT_AT_PERCENT = 90
@@ -26,10 +24,8 @@ import {
   type SettingsModel,
   type SettingsState,
 } from '../ui/settings-model'
-import { SIDEBAR_WIDTH, theme } from '../ui/theme'
+import { SIDEBAR_WIDTH } from '../ui/theme'
 import type { AtlasApp } from './compose'
-
-const SHIPPED_ACCENT = 'clay'
 
 export type SettingsControl = {
   view: SettingsModel
@@ -59,26 +55,11 @@ export function useSettings(args: { app: AtlasApp }): SettingsControl {
     [app.settings.definitions, held.resolution],
   )
 
-  const accent = choiceValueOf({
-    resolution: held.resolution,
-    id: ESettingId.Accent,
-    fallback: SHIPPED_ACCENT,
-  })
+  const { accent, density } = appearanceOf({ resolution: held.resolution })
 
   useEffect(() => {
-    if (theme.accent === accentHex(accent)) return
-    applyPalette(accentPalette(accent))
-  }, [accent])
-
-  const density = choiceValueOf({
-    resolution: held.resolution,
-    id: ESettingId.BlockPadding,
-    fallback: SHIPPED_DENSITY,
-  })
-
-  useEffect(() => {
-    applyBlockDensity(blockDensityOf(density))
-  }, [density])
+    applyAppearance({ accent, density })
+  }, [accent, density])
 
   const write = useCallback(
     (target: SettingsState, next: (row: ResolvedSetting) => SettingValue) => {

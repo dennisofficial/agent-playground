@@ -23,6 +23,19 @@ export function formatElapsed(ms: number): string {
   return `${minutes}m ${seconds % 60}s`
 }
 
+const MERIDIEM_PIVOT = 12
+
+export function formatClockTime(iso: string): string {
+  const at = new Date(iso)
+  if (Number.isNaN(at.getTime())) return ''
+
+  const hours = at.getHours()
+  const minutes = String(at.getMinutes()).padStart(2, '0')
+  const shown = hours % MERIDIEM_PIVOT === 0 ? MERIDIEM_PIVOT : hours % MERIDIEM_PIVOT
+
+  return `${shown}:${minutes}${hours < MERIDIEM_PIVOT ? 'am' : 'pm'}`
+}
+
 export function formatTokens(tokens: number): string {
   if (tokens < 1000) return String(tokens)
   return `${(tokens / 1000).toFixed(1)}k`

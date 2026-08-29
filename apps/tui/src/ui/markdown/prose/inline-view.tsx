@@ -3,7 +3,7 @@ import React from 'react'
 
 import { glyph, theme } from '../../theme'
 import { EInline, type InlineNode } from './inline'
-import { LINK_ARROW, markAttributes, markForeground } from './prose-style'
+import { codeForeground, LINK_ARROW, markAttributes, markForeground } from './prose-style'
 
 export function InlineRun(props: {
   nodes: readonly InlineNode[]
@@ -35,7 +35,7 @@ function InlineSpan(props: { node: InlineNode; ground: string; slab: string }): 
 
   if (node.kind === EInline.Code) {
     return (
-      <span fg={theme.hover} bg={props.slab} attributes={markAttributes(node.marks)}>
+      <span fg={codeForeground(node.marks)} bg={props.slab} attributes={markAttributes(node.marks)}>
         {node.text}
       </span>
     )

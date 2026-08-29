@@ -46,7 +46,9 @@ export function TableBlock(props: {
 
   return (
     <box flexDirection="column" width={props.width} flexShrink={0} marginBottom={1}>
-      <HorizontalScroller rows={metrics.rows}>{table}</HorizontalScroller>
+      <HorizontalScroller rows={metrics.rows} columns={metrics.columns} width={props.width}>
+        {table}
+      </HorizontalScroller>
       <box flexDirection="row" justifyContent="space-between">
         <text fg={theme.dim}>{`⇄ ${ALT}+wheel`}</text>
         <CopyButton text={props.markdown} />

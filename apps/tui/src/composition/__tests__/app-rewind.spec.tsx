@@ -3,7 +3,8 @@ import { testRender } from '@opentui/react/test-utils'
 import { describe, expect, it } from 'bun:test'
 import React from 'react'
 
-import { grammarsReady, settle, teardown } from '../../ui/markdown/__tests__/harness'
+import { grammarsReady, teardown } from '../../ui/markdown/__tests__/harness'
+import { frameShowing, frameWhen } from '../../ui/__tests__/waiting'
 import { App } from '../app'
 import { fakeApp, scriptedModelPort, type FakeApp } from './fake-app'
 
@@ -12,6 +13,12 @@ await grammarsReady()
 const THREAD = toThreadId('opened-thread')
 
 const WIDE = { width: 150, height: 40 }
+
+const COMPOSER_IDLE = 'Ask anything'
+
+const REWIND_TITLE = 'Rewind the conversation to an earlier point'
+
+const COMPACTING = 'Compacting for'
 
 type Mounted = Awaited<ReturnType<typeof testRender>>
 
@@ -23,22 +30,23 @@ const appWith = (): FakeApp =>
 
 async function opened(app: FakeApp): Promise<Mounted> {
   const setup = await testRender(
-    <App app={app} opened={{ threadId: THREAD, events: [], name: null }} />,
+    <App app={app} opened={{ threadId: THREAD, events: [], turns: [], name: null }} />,
     WIDE,
   )
-  await setup.flush()
-  await settle(250)
-  await setup.flush()
+  await frameShowing({ setup, text: COMPOSER_IDLE })
   return setup
 }
 
-async function said(setup: Mounted, text: string): Promise<void> {
+const saidOpening = async (setup: Mounted, text: string, opens: string): Promise<string> => {
+  await said(setup, text, opens)
+  return setup.captureCharFrame()
+}
+
+async function said(setup: Mounted, text: string, settlesOn = COMPOSER_IDLE): Promise<void> {
   await setup.mockInput.typeText(text)
-  await settle(60)
-  await setup.flush()
+  await frameShowing({ setup, text })
   setup.mockInput.pressEnter()
-  await settle(1_500)
-  await setup.flush()
+  await frameShowing({ setup, text: settlesOn })
 }
 
 describe('the rewind command', () => {
@@ -49,10 +57,8 @@ describe('the rewind command', () => {
       await said(setup, 'build the parser')
       await said(setup, 'now the lexer')
 
-      await said(setup, '/rewind')
-
-      const frame = setup.captureCharFrame()
-      expect(frame).toContain('Rewind the conversation to an earlier point')
+      const frame = await saidOpening(setup, '/rewind', REWIND_TITLE)
+      expect(frame).toContain(REWIND_TITLE)
       expect(frame).toContain('now the lexer')
       expect(frame).toContain('build the parser')
     } finally {
@@ -66,7 +72,7 @@ describe('the rewind command', () => {
     try {
       await said(setup, '/rewind')
 
-      expect(setup.captureCharFrame()).not.toContain('Rewind the conversation to an earlier point')
+      expect(setup.captureCharFrame()).not.toContain(REWIND_TITLE)
     } finally {
       await teardown(setup)
     }
@@ -79,20 +85,18 @@ describe('the rewind command', () => {
     try {
       await said(setup, 'build the parser')
       await said(setup, 'now the lexer')
-      await said(setup, '/rewind')
+      await said(setup, '/rewind', REWIND_TITLE)
 
       setup.mockInput.pressEnter()
-      await settle(200)
-      await setup.flush()
-
-      expect(setup.captureCharFrame()).toContain('rewind to here')
+      expect(await frameShowing({ setup, text: 'rewind to here' })).toContain('rewind to here')
 
       setup.mockInput.pressEnter()
-      await settle(1_500)
-      await setup.flush()
-
-      const frame = setup.captureCharFrame()
-      expect(frame).not.toContain('Rewind the conversation to an earlier point')
+      const frame = await frameWhen({
+        setup,
+        holds: (drawn) => !drawn.includes(REWIND_TITLE),
+        describe: 'the rewind overlay to close',
+      })
+      expect(frame).not.toContain(REWIND_TITLE)
       expect(frame).toContain('now the lexer')
       expect(await app.log.read({ threadId: THREAD })).toHaveLength(2)
     } finally {
@@ -109,9 +113,7 @@ describe('the compact command', () => {
     try {
       await said(setup, 'build the parser')
       await said(setup, 'now the lexer')
-      await said(setup, '/compact')
-      await settle(1_500)
-      await setup.flush()
+      await said(setup, '/compact', 'context compacted')
 
       const frame = setup.captureCharFrame()
       expect(frame).toContain('context compacted')
@@ -127,8 +129,6 @@ describe('the compact command', () => {
 
     try {
       await said(setup, '/compact')
-      await settle(500)
-      await setup.flush()
 
       expect(setup.captureCharFrame()).not.toContain('failed')
     } finally {
@@ -141,7 +141,7 @@ describe('the compact command', () => {
 
     try {
       await said(setup, 'build the parser')
-      await said(setup, '/compact sideways')
+      await said(setup, '/compact sideways', 'not sideways')
 
       expect(setup.captureCharFrame()).toContain('not sideways')
     } finally {
@@ -165,16 +165,28 @@ describe('while a compaction is running', () => {
       await said(setup, 'build the parser')
       await said(setup, 'now the lexer')
 
-      await setup.mockInput.typeText('/compact')
-      await settle(60)
-      await setup.flush()
-      setup.mockInput.pressEnter()
-      await settle(600)
+      const frame = await saidOpening(setup, '/compact', COMPACTING)
+      expect(frame).toContain(COMPACTING)
+      expect(frame).toContain('esc to interrupt')
+      expect(frame).not.toContain('Ask anything')
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
+  it('takes focus off the composer, so no caret is left drawing over the card', async () => {
+    const setup = await opened(slow())
+
+    try {
+      await said(setup, 'build the parser')
+      await said(setup, 'now the lexer')
+
+      expect(await saidOpening(setup, '/compact', COMPACTING)).toContain(COMPACTING)
+
+      await setup.mockInput.typeText('typed over the card')
       await setup.flush()
 
-      const frame = setup.captureCharFrame()
-      expect(frame).toContain('Compacting for')
-      expect(frame).toContain('esc to interrupt')
+      expect(setup.captureCharFrame()).not.toContain('typed over the card')
     } finally {
       await teardown(setup)
     }
@@ -189,18 +201,16 @@ describe('while a compaction is running', () => {
       await said(setup, 'now the lexer')
       const before = (await app.log.read({ threadId: THREAD })).length
 
-      await setup.mockInput.typeText('/compact')
-      await settle(60)
-      await setup.flush()
-      setup.mockInput.pressEnter()
-      await settle(600)
-      await setup.flush()
+      await saidOpening(setup, '/compact', COMPACTING)
 
       setup.mockInput.pressEscape()
-      await settle(1_000)
-      await setup.flush()
+      await frameWhen({
+        setup,
+        holds: (drawn) => !drawn.includes(COMPACTING),
+        describe: 'the compaction to stop',
+      })
 
-      expect(setup.captureCharFrame()).not.toContain('Compacting for')
+      expect(setup.captureCharFrame()).not.toContain(COMPACTING)
       expect(await app.log.read({ threadId: THREAD })).toHaveLength(before)
     } finally {
       await teardown(setup)
@@ -221,18 +231,9 @@ describe('the compaction clock', () => {
     try {
       await said(setup, 'build the parser')
       await said(setup, 'now the lexer')
-      await settle(1_200)
-      await setup.flush()
 
-      await setup.mockInput.typeText('/compact')
-      await settle(60)
-      await setup.flush()
-      setup.mockInput.pressEnter()
-      await settle(700)
-      await setup.flush()
-
-      const frame = setup.captureCharFrame()
-      expect(frame).toContain('Compacting for')
+      const frame = await saidOpening(setup, '/compact', COMPACTING)
+      expect(frame).toContain(COMPACTING)
       expect(frame).not.toContain('for -')
     } finally {
       await teardown(setup)
