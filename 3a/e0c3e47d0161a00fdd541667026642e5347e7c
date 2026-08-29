@@ -1,0 +1,24 @@
+apps/tui/src/store/__tests__/thinking-fold.spec.ts
+  s_8632cf9b1d7379::t_125e33006fc5e2 3-4,6-7,32-39,135,143
+  s_8632cf9b1d7379::t_8953094d826ee7 40,134,136-142,144-165
+packages/core/src/settings/registry.ts
+  s_8632cf9b1d7379::t_4b426bacf2e360 41
+apps/tui/src/store/thinking-fold.ts
+  s_8632cf9b1d7379::t_22d3a736b58393 83-86
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "3ae0c3e47d0161a00fdd541667026642e5347e7c",
+  "prompts": {},
+  "sessions": {
+    "s_8632cf9b1d7379": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6f62ac47-c0c1-4ca8-b95f-cc5ce030418a",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
