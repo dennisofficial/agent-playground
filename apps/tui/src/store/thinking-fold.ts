@@ -39,6 +39,7 @@ function foldedThought(args: {
       .filter((text) => text.length > 0)
       .join(THOUGHT_SEAM),
     streaming: run.some((entry) => entry.streaming),
+    heldOpen: false,
     interrupted: run[run.length - 1]?.interrupted ?? false,
   }
 }
@@ -69,6 +70,16 @@ function foldedAdjacentThoughts(entries: readonly TranscriptEntry[]): Transcript
   return folded
 }
 
+function heldOpenIndex(folded: readonly TranscriptEntry[]): number {
+  for (let index = folded.length - 1; index >= 0; index -= 1) {
+    const entry = folded[index]
+    if (isThought(entry)) return index
+    if (entry?.kind !== EEntryKind.ToolsRan) return -1
+  }
+
+  return -1
+}
+
 export function foldThoughts(args: {
   entries: readonly TranscriptEntry[]
   visibility: EThinkingVisibility
@@ -80,8 +91,10 @@ export function foldThoughts(args: {
   const folded = foldedAdjacentThoughts(args.entries)
   if (args.visibility === EThinkingVisibility.Keep) return folded
 
-  const trailing = folded.length - 1
-  return folded.filter(
-    (entry, index) => !isThought(entry) || entry.streaming || index === trailing,
-  )
+  const held = heldOpenIndex(folded)
+
+  return folded.flatMap((entry, index): TranscriptEntry[] => {
+    if (!isThought(entry) || entry.streaming) return [entry]
+    return index === held ? [{ ...entry, heldOpen: true }] : []
+  })
 }

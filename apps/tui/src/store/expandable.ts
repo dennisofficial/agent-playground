@@ -2,7 +2,9 @@ import { EGroupState } from './tool-groups'
 import { EEntryKind, type TranscriptEntry } from './transcript-model'
 
 export function isExpandable(entry: TranscriptEntry): boolean {
-  if (entry.kind === EEntryKind.ModelThought) return !entry.streaming && entry.text.length > 0
+  if (entry.kind === EEntryKind.ModelThought) {
+    return !entry.streaming && !entry.heldOpen && entry.text.length > 0
+  }
   if (entry.kind === EEntryKind.ToolsRan) {
     return entry.group.state !== EGroupState.Live && entry.group.calls.length > 0
   }

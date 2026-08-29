@@ -39,6 +39,7 @@ export type ModelThoughtEntry = {
   key: string
   text: string
   streaming: boolean
+  heldOpen: boolean
   interrupted: boolean
 }
 

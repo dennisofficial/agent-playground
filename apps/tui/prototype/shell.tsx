@@ -53,6 +53,7 @@ const thought = (key: string, text: string): TranscriptEntry => ({
   key,
   text,
   streaming: false,
+  heldOpen: false,
   interrupted: false,
 })
 

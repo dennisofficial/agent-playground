@@ -45,6 +45,7 @@ export function EntryView(props: {
           text={entry.text}
           width={props.width}
           streaming={entry.streaming}
+          heldOpen={entry.heldOpen}
           interrupted={entry.interrupted}
           expanded={props.expanded ?? false}
           {...(onToggle ? { onToggle: () => onToggle(entry.key) } : {})}

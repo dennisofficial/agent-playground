@@ -7,12 +7,18 @@ import { ECallState, EGroupState, NO_TOTALS, type ToolCallRow, type ToolGroup } 
 import { EAuthor, EEntryKind, toolsRanEntry, type TranscriptEntry } from '../transcript-model'
 import { verbOfTool } from '../../ui/tool-verbs'
 
-const thought = (args: { key: string; streaming: boolean; text?: string }): TranscriptEntry => ({
+const thought = (args: {
+  key: string
+  streaming: boolean
+  heldOpen?: boolean
+  text?: string
+}): TranscriptEntry => ({
   kind: EEntryKind.ModelThought,
   author: EAuthor.Model,
   key: args.key,
   text: args.text ?? 'weighed a denylist against a token version',
   streaming: args.streaming,
+  heldOpen: args.heldOpen ?? false,
   interrupted: false,
 })
 
@@ -63,6 +69,12 @@ describe('what ⏎ open acts on', () => {
 
   it('leaves thinking alone while it is still streaming', () => {
     expect(newestExpandableKey([thought({ key: 't1', streaming: true })])).toBeNull()
+  })
+
+  it('leaves thinking alone while it is held open showing its own tail', () => {
+    expect(
+      newestExpandableKey([thought({ key: 't1', streaming: false, heldOpen: true })]),
+    ).toBeNull()
   })
 
   it('leaves an empty thought alone, since there is nothing behind it', () => {

@@ -20,10 +20,13 @@ const hexOf = (colour: { r: number; g: number; b: number }): string =>
     .map((channel) => Math.round(channel * 255).toString(16).padStart(2, '0'))
     .join('')
 
-async function groundsUnder(flags: {
-  streaming?: boolean
-  expanded?: boolean
-}): Promise<Set<string>> {
+type Flags = { streaming?: boolean; heldOpen?: boolean; expanded?: boolean }
+
+async function drawn<T>(args: {
+  flags: Flags
+  read: (setup: Awaited<ReturnType<typeof testRender>>) => T
+}): Promise<T> {
+  const { flags } = args
   const setup = await testRender(
     <box flexDirection="column" width={WIDTH} height={HEIGHT} backgroundColor={theme.appBg}>
       <ThinkingBlock
@@ -31,6 +34,7 @@ async function groundsUnder(flags: {
         width={WIDTH}
         onToggle={() => {}}
         {...(flags.streaming ? { streaming: true } : {})}
+        {...(flags.heldOpen ? { heldOpen: true } : {})}
         {...(flags.expanded ? { expanded: true } : {})}
       />
     </box>,
@@ -41,15 +45,25 @@ async function groundsUnder(flags: {
     await settle(250)
     await setup.flush()
 
-    return new Set(
-      setup
-        .captureSpans()
-        .lines.flatMap((line) => line.spans.map((span) => hexOf(span.bg))),
-    )
+    return args.read(setup)
   } finally {
     await teardown(setup)
   }
 }
+
+const groundsUnder = (flags: Flags): Promise<Set<string>> =>
+  drawn({
+    flags,
+    read: (setup) =>
+      new Set(
+        setup
+          .captureSpans()
+          .lines.flatMap((line) => line.spans.map((span) => hexOf(span.bg))),
+      ),
+  })
+
+const frameOf = (flags: Flags): Promise<string> =>
+  drawn({ flags, read: (setup) => setup.captureCharFrame() })
 
 describe('a thinking block', () => {
   const ground = hexOf(parseColor(theme.appBg))
@@ -64,5 +78,14 @@ describe('a thinking block', () => {
 
   it('keeps the ground while it streams', async () => {
     expect([...(await groundsUnder({ streaming: true }))]).toEqual([ground])
+  })
+
+  it('keeps the ground while it is held open', async () => {
+    expect([...(await groundsUnder({ heldOpen: true }))]).toEqual([ground])
+  })
+
+  it('shows its tail while it is held open, not the row it settles into', async () => {
+    expect(await frameOf({ heldOpen: true })).toContain('The denylist wins.')
+    expect(await frameOf({})).not.toContain('The denylist wins.')
   })
 })

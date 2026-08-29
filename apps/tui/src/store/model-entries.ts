@@ -18,7 +18,7 @@ export function modelEntries(args: {
     } as const
 
     return run.isReasoning
-      ? { kind: EEntryKind.ModelThought, ...shared }
+      ? { kind: EEntryKind.ModelThought, ...shared, heldOpen: false }
       : { kind: EEntryKind.ModelSaid, ...shared }
   })
 }

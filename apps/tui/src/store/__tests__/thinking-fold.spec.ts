@@ -17,6 +17,7 @@ const thought = (args: {
   key: args.key,
   text: args.text,
   streaming: args.streaming ?? false,
+  heldOpen: false,
   interrupted: args.interrupted ?? false,
 })
 
@@ -131,7 +132,7 @@ describe('the thinking visibility setting', () => {
     ])
   })
 
-  it('holds the trailing thought under stream while the tools it opened run above it', () => {
+  it('holds the trailing thought open under stream while the tools it opened run above it', () => {
     const tools = toolsRan()
 
     const shown = foldThoughts({
@@ -143,6 +144,29 @@ describe('the thinking visibility setting', () => {
       [tools.kind, tools.key, tools.text],
       [EEntryKind.ModelThought, 'settled', 'weighing it'],
     ])
+    expect(shown.at(-1)).toMatchObject({ streaming: false, heldOpen: true })
+  })
+
+  it('holds it open under stream even when the tool group renders below it', () => {
+    const shown = foldThoughts({
+      entries: [thought({ key: 'settled', text: 'weighing it' }), toolsRan()],
+      visibility: EThinkingVisibility.Stream,
+    })
+
+    expect(shown.at(0)).toMatchObject({
+      kind: EEntryKind.ModelThought,
+      key: 'settled',
+      heldOpen: true,
+    })
+  })
+
+  it('leaves a streaming thought to its own live tail rather than holding it open', () => {
+    const shown = foldThoughts({
+      entries: [thought({ key: 'live', text: 'still going', streaming: true })],
+      visibility: EThinkingVisibility.Stream,
+    })
+
+    expect(shown.at(0)).toMatchObject({ streaming: true, heldOpen: false })
   })
 
   it('drops the trailing thought under stream once the turn closes under it', () => {
@@ -163,6 +187,24 @@ describe('the thinking visibility setting', () => {
     })
 
     expect(shape(shown)).toEqual([[EEntryKind.TurnEnded, 'turn-1', '']])
+  })
+
+  it('drops it under stream once the answer lands below the tools it opened', () => {
+    const tools = toolsRan()
+
+    const shown = foldThoughts({
+      entries: [
+        thought({ key: 'settled', text: 'weighing it' }),
+        tools,
+        said({ key: 'answer', text: 'a burrito' }),
+      ],
+      visibility: EThinkingVisibility.Stream,
+    })
+
+    expect(shape(shown)).toEqual([
+      [tools.kind, tools.key, tools.text],
+      [EEntryKind.ModelSaid, 'answer', 'a burrito'],
+    ])
   })
 
   it('keeps no thought at all when set to hidden', () => {

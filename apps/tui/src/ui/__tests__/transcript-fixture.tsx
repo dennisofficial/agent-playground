@@ -71,6 +71,7 @@ const modelThought = (key: string, text: string, flags: ModelFlags = {}): Transc
   key,
   text,
   streaming: flags.streaming ?? false,
+  heldOpen: false,
   interrupted: flags.interrupted ?? false,
 })
 

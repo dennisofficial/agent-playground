@@ -15,16 +15,18 @@ export function ThinkingBlock(props: {
   text: string
   width: number
   streaming?: boolean
+  heldOpen?: boolean
   expanded?: boolean
   onToggle?: () => void
   interrupted?: boolean
 }): React.ReactNode {
   const inner = Math.max(NARROWEST_BAND, props.width - TRANSCRIPT_INSET)
-  const { handlers, hovered } = useClickRegion(props.streaming ? undefined : props.onToggle)
+  const tailing = props.streaming === true || props.heldOpen === true
+  const { handlers, hovered } = useClickRegion(tailing ? undefined : props.onToggle)
 
   return (
     <box flexDirection="column" marginBottom={1} flexShrink={0} {...handlers}>
-      {props.streaming ? (
+      {tailing ? (
         <LiveTail text={props.text} inner={inner} />
       ) : props.expanded ? (
         <OpenedDocument text={props.text} inner={inner} />
