@@ -1,0 +1,24 @@
+apps/tui/src/ui/__tests__/exit-guard-render.spec.tsx
+  s_d3b7051a198a00::t_a64f4e753297cc 86-92
+  s_d3b7051a198a00::t_c24b624eebe141 1-4,11-82,93-166
+  s_d3b7051a198a00::t_b70d6f08e85b5f 5-10
+  s_d3b7051a198a00::t_f94b3c83e0fc69 83
+apps/tui/src/ui/components/exit-guard.tsx
+  s_d3b7051a198a00::t_7827446b28e359 1-159
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "cd10d1d84d7abe3448cc0aa114fded8cfaa5e88b",
+  "prompts": {},
+  "sessions": {
+    "s_d3b7051a198a00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e551b05d-d5fc-4f70-ab29-b43f8292ee61",
+        "model": "claude-opus-5"
+      },
+      "human_author": null
+    }
+  }
+}
