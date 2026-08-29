@@ -58,6 +58,11 @@ const outputOf = (outcome: ToolOutcome): Record<string, unknown> => {
   return outcome.output as Record<string, unknown>
 }
 
+const reasonOf = (outcome: ToolOutcome): string => {
+  if (outcome.ok) throw new Error('expected a refusal, got success')
+  return outcome.reason
+}
+
 const modelTextOf = (outcome: ToolOutcome): string => {
   if (!outcome.ok) throw new Error(`expected success, got: ${outcome.reason}`)
   return outcome.modelText
@@ -238,6 +243,35 @@ describe('stopping a background shell through shell_kill', () => {
 
     expect(suite.kill.effect).toBe(EToolEffect.Destructive)
     expect(suite.kill.isConcurrencySafe).toBeUndefined()
+  })
+})
+
+describe('refusing to burn the turn asleep', () => {
+  it('turns down the sleep the model was polling behind', async () => {
+    const suite = openSuite()
+
+    const outcome = await invoke(suite.bash, { command: 'sleep 115; echo waited' })
+
+    expect(outcome.ok).toBe(false)
+    expect(reasonOf(outcome)).toContain('115 seconds asleep')
+    expect(reasonOf(outcome)).toContain('end the turn and be woken')
+  })
+
+  it('still runs a short settle before a real command', async () => {
+    const suite = openSuite()
+
+    const outcome = await invoke(suite.bash, { command: 'sleep 1 && echo booted' })
+
+    expect(outcome.ok).toBe(true)
+    expect(modelTextOf(outcome)).toContain('booted')
+  })
+
+  it('leaves a backgrounded sleep alone, since it costs nothing to wait for', async () => {
+    const suite = openSuite()
+
+    const outcome = await invoke(suite.bash, { command: 'sleep 300', runInBackground: true })
+
+    expect(outcome.ok).toBe(true)
   })
 })
 

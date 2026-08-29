@@ -46,6 +46,7 @@ export * from './context/supersede'
 
 export * from './shells/status'
 export * from './shells/label'
+export * from './shells/idling'
 
 export * from './stream/chunk'
 

@@ -1,6 +1,13 @@
 import { z } from 'zod'
 
-import { EToolEffect, SchemaTool, type ToolOutcome, type ToolRun } from '@dltech/atlas-core'
+import {
+  EToolEffect,
+  SchemaTool,
+  sleptSeconds,
+  waitsBySleeping,
+  type ToolOutcome,
+  type ToolRun,
+} from '@dltech/atlas-core'
 
 import { inject, injectable, portToken } from '../../container/injection'
 import { WorkspaceRoot } from '../../container/tokens'
@@ -35,6 +42,7 @@ const description = [
   'A non-zero exit is reported rather than raised, with the code named at the end.',
   `Times out after ${DEFAULT_TIMEOUT_MS} ms unless timeoutMs says otherwise, and never later than ${MAXIMUM_TIMEOUT_MS} ms.`,
   'Pass description to say in a few words what the command is for.',
+  'A command that only sleeps is refused: idling advances nothing, so back the slow thing and end the turn instead.',
   'Set runInBackground to start a long-running command - a dev server, a watch, a slow test suite - and get a shell id back at once instead of waiting.',
   'A background shell has no timeout, interleaves stdout and stderr in arrival order, and outlives the turn that started it.',
   'Its ending wakes you wherever you are, however it ends, carrying everything it printed - whether or not a turn is running when it lands.',
@@ -132,6 +140,13 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
         }
       }
       return this.startInBackground({ command, description: input.description })
+    }
+
+    if (waitsBySleeping(command)) {
+      return {
+        ok: false,
+        reason: `this command spends ${sleptSeconds(command)} seconds asleep, and nothing advances while it does: a background shell's ending is delivered to you wherever you are, so end the turn and be woken rather than idling until it lands`,
+      }
     }
 
     const timeout = Math.min(timeoutMs ?? DEFAULT_TIMEOUT_MS, MAXIMUM_TIMEOUT_MS)
