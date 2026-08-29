@@ -1,7 +1,7 @@
 import type { KeyEvent } from '@opentui/core'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
-import type { ShellSnapshot } from '@dltech/atlas-harness'
+import { EKilledBy, type ShellSnapshot } from '@dltech/atlas-harness'
 
 import {
   moveShellSelection,
@@ -104,7 +104,7 @@ export function useShells({ app }: { app: AtlasApp }): ShellsControl {
 
   const handleKill = useCallback(
     (shellId: string) => {
-      app.shells.kill({ shellId })
+      app.shells.kill({ shellId, by: EKilledBy.User })
       setState((current) => (current === null ? null : { ...current }))
     },
     [app],

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import { EShellStatus, toShellId, type ShellSnapshot } from '@dltech/atlas-harness'
+import { EKilledBy, EShellStatus, toShellId, type ShellSnapshot } from '@dltech/atlas-harness'
 
 import {
   moveShellSelection,
@@ -107,6 +107,14 @@ describe('saying what a shell is doing', () => {
 
   it('says killed for one that was stopped', () => {
     expect(shellStateLabel(shell({ shellId: 'bash_1', status: EShellStatus.Killed }))).toBe('killed')
+  })
+
+  it('says when the kill was the developer', () => {
+    expect(
+      shellStateLabel(
+        shell({ shellId: 'bash_1', status: EShellStatus.Killed, killedBy: EKilledBy.User }),
+      ),
+    ).toBe('killed by you')
   })
 
   it('says why an overflowed one was stopped', () => {

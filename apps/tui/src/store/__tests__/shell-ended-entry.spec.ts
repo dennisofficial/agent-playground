@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import { EShellStatus } from '@dltech/atlas-core'
+import { EKilledBy, EShellStatus, type Event } from '@dltech/atlas-core'
 
 import { durableEntries } from '../durable-entries'
 import { isExpandable } from '../expandable'
@@ -21,8 +21,8 @@ const shellEnded = (over: Record<string, unknown> = {}) =>
     ...over,
   })
 
-const onlyShellEntry = (events: Parameters<typeof durableEntries>[0]): BackgroundShellEndedEntry => {
-  const entry = durableEntries(events).find(
+const onlyShellEntry = (events: readonly Event[]): BackgroundShellEndedEntry => {
+  const entry = durableEntries({ events }).find(
     (candidate): candidate is BackgroundShellEndedEntry =>
       candidate.kind === EEntryKind.BackgroundShellEnded,
   )
@@ -32,7 +32,7 @@ const onlyShellEntry = (events: Parameters<typeof durableEntries>[0]): Backgroun
 
 describe('a background shell ending in the transcript', () => {
   it('is its own entry rather than something the operator said', () => {
-    const entries = durableEntries(log([shellEnded()]))
+    const entries = durableEntries({ events: log([shellEnded()]) })
 
     expect(entries).toHaveLength(1)
     expect(entries[0]?.kind).toBe(EEntryKind.BackgroundShellEnded)
@@ -59,6 +59,14 @@ describe('a background shell ending in the transcript', () => {
     expect(entry.failed).toBe(false)
   })
 
+  it('says the developer was the one who killed it', () => {
+    const entry = onlyShellEntry(
+      log([shellEnded({ status: EShellStatus.Killed, killedBy: EKilledBy.User, exitCode: undefined })]),
+    )
+
+    expect(entry.text).toBe('Background shell "Run full TUI suite" was killed by you')
+  })
+
   it('marks a non-zero exit as failed, so the line can be read at a glance', () => {
     const entry = onlyShellEntry(log([shellEnded({ exitCode: 2 })]))
 
@@ -79,9 +87,13 @@ describe('a background shell ending in the transcript', () => {
   })
 
   it('never folds into the message a human typed beside it', () => {
-    const entries = durableEntries(
-      log([{ type: 'user-said', text: 'Again' }, shellEnded(), { type: 'user-said', text: 'go on' }]),
-    )
+    const entries = durableEntries({
+      events: log([
+        { type: 'user-said', text: 'Again' },
+        shellEnded(),
+        { type: 'user-said', text: 'go on' },
+      ]),
+    })
 
     expect(entries.map((entry) => entry.kind)).toEqual([
       EEntryKind.OperatorSaid,

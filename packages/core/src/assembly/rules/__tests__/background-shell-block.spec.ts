@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import { EShellStatus } from '../../../shells/status'
+import { EKilledBy, EShellStatus } from '../../../shells/status'
 import { backgroundShellBlock } from '../background-shell-block'
 
 const ended = (over: Partial<Parameters<typeof backgroundShellBlock>[0]> = {}) =>
@@ -57,6 +57,24 @@ describe('handing a finished background shell to the model', () => {
 
     expect(block).toContain('was killed')
     expect(block).toContain('It printed nothing.')
+  })
+
+  it('says the user was the one who stopped it, and that nothing is wrong', () => {
+    const block = backgroundShellBlock(
+      ended({ status: EShellStatus.Killed, killedBy: EKilledBy.User, exitCode: undefined, output: '' }),
+    )
+
+    expect(block).toContain('was killed by the user')
+    expect(block).toContain('do not restart it')
+  })
+
+  it('tells the model when the kill was its own, so it does not read it as interference', () => {
+    const block = backgroundShellBlock(
+      ended({ status: EShellStatus.Killed, killedBy: EKilledBy.Model, exitCode: undefined }),
+    )
+
+    expect(block).toContain('was killed at your request')
+    expect(block).not.toContain('do not restart it')
   })
 
   it('names a failing exit code', () => {

@@ -1,4 +1,4 @@
-import { EShellStatus, type ClockPort } from '@dltech/atlas-core'
+import { EKilledBy, EShellStatus, type ClockPort } from '@dltech/atlas-core'
 
 import { createOutputBuffer, type OutputDelta } from './output-buffer'
 import { looksLikePrompt } from './prompt-sniff'
@@ -13,7 +13,7 @@ import {
   type Shell,
 } from './shell-process'
 
-export { EShellStatus }
+export { EKilledBy, EShellStatus }
 
 const SNIFFED_TAIL_CHARACTERS = 240
 
@@ -22,6 +22,7 @@ export type ShellSnapshot = {
   command: string
   description?: string | undefined
   status: EShellStatus
+  killedBy?: EKilledBy | undefined
   pid: number
   exitCode?: number | undefined
   startedAt: string
@@ -36,7 +37,7 @@ export type BackgroundShell = {
   snapshot(): ShellSnapshot
   since(offset: number): OutputDelta
   tail(limit: number): string
-  kill(): void
+  kill(by: EKilledBy): void
   exited: Promise<void>
 }
 
@@ -76,15 +77,17 @@ export function startBackgroundShell(spec: BackgroundShellSpec): StartedBackgrou
   const startedAt = spec.clock.now()
 
   let status = EShellStatus.Running
+  let killedBy: EKilledBy | undefined
   let lastOutputAt = startedAt
   let exitCode: number | undefined
   let endedAt: string | undefined
 
   const drains: Drain[] = []
 
-  const kill = (): void => {
+  const kill = (by: EKilledBy): void => {
     if (status !== EShellStatus.Running) return
     status = EShellStatus.Killed
+    killedBy = by
     terminate()
   }
 
@@ -126,6 +129,7 @@ export function startBackgroundShell(spec: BackgroundShellSpec): StartedBackgrou
       command: spec.command,
       description: spec.description,
       status,
+      killedBy,
       pid: shell.pid,
       exitCode,
       startedAt,

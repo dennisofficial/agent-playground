@@ -1,4 +1,4 @@
-import { ClockPort, type EventDraft } from '@dltech/atlas-core'
+import { ClockPort, EKilledBy, type EventDraft } from '@dltech/atlas-core'
 
 import { inject, injectable, portToken } from '../container/injection'
 import { WorkspaceRoot } from '../container/tokens'
@@ -25,10 +25,14 @@ export type ShellReadOutcome =
 export type ShellKillOutcome = { ok: true; snapshot: ShellSnapshot } | { ok: false; reason: string }
 
 export abstract class ShellRegistryPort {
-  abstract start(args: { command: string; description?: string | undefined }): StartedShellOutcome
+  abstract start(args: {
+    command: string
+    description?: string | undefined
+    cwd?: string | undefined
+  }): StartedShellOutcome
   abstract read(args: { shellId: string }): ShellReadOutcome
   abstract peek(args: { shellId: string; characters: number }): string | undefined
-  abstract kill(args: { shellId: string }): ShellKillOutcome
+  abstract kill(args: { shellId: string; by: EKilledBy }): ShellKillOutcome
   abstract list(): readonly ShellSnapshot[]
   abstract drainNotifications(): readonly EventDraft[]
   abstract pendingNotices(): readonly ShellSnapshot[]
@@ -86,7 +90,11 @@ export class BunShellRegistry extends ShellRegistryPort {
     super()
   }
 
-  start(args: { command: string; description?: string | undefined }): StartedShellOutcome {
+  start(args: {
+    command: string
+    description?: string | undefined
+    cwd?: string | undefined
+  }): StartedShellOutcome {
     this.started += 1
     const shellId = toShellId(`bash_${this.started}`)
 
@@ -94,7 +102,7 @@ export class BunShellRegistry extends ShellRegistryPort {
       shellId,
       command: args.command,
       description: args.description,
-      cwd: this.root,
+      cwd: args.cwd ?? this.root,
       clock: this.clock,
       retainCharacters: RETAINED_CHARACTERS,
       overflowCharacters: OVERFLOW_CHARACTERS,
@@ -122,11 +130,11 @@ export class BunShellRegistry extends ShellRegistryPort {
     return this.entryFor(shellId)?.shell.tail(characters)
   }
 
-  kill({ shellId }: { shellId: string }): ShellKillOutcome {
+  kill({ shellId, by }: { shellId: string; by: EKilledBy }): ShellKillOutcome {
     const entry = this.entryFor(shellId)
     if (entry === undefined) return { ok: false, reason: unknownShell({ shellId, known: this.ids() }) }
 
-    entry.shell.kill()
+    entry.shell.kill(by)
     return { ok: true, snapshot: entry.shell.snapshot() }
   }
 
@@ -164,7 +172,7 @@ export class BunShellRegistry extends ShellRegistryPort {
    */
   async closeAll(): Promise<void> {
     const running = [...this.tracked.values()]
-    for (const entry of running) entry.shell.kill()
+    for (const entry of running) entry.shell.kill(EKilledBy.SessionEnd)
     await Promise.all(running.map((entry) => entry.shell.exited))
     this.tracked.clear()
   }

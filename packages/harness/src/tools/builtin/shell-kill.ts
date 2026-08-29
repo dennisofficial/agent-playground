@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { EToolEffect, SchemaTool, type ToolOutcome, type ToolRun } from '@dltech/atlas-core'
 
 import { inject, injectable, portToken } from '../../container/injection'
-import { EShellStatus } from '../../shells/background-shell'
+import { EKilledBy, EShellStatus } from '../../shells/background-shell'
 import { ShellRegistryPort } from '../../shells/shell-registry'
 import { SIGKILL_GRACE_MS } from '../../shells/shell-process'
 
@@ -31,7 +31,7 @@ export class ShellKillTool extends SchemaTool<typeof inputSchema> {
   }
 
   protected override async run({ input }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
-    const killed = this.shells.kill({ shellId: input.shellId })
+    const killed = this.shells.kill({ shellId: input.shellId, by: EKilledBy.Model })
     if (!killed.ok) return killed
 
     const { snapshot } = killed

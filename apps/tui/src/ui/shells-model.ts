@@ -1,4 +1,4 @@
-import { EShellStatus, type ShellSnapshot } from '@dltech/atlas-harness'
+import { EKilledBy, EShellStatus, type ShellSnapshot } from '@dltech/atlas-harness'
 
 export type ShellsState = { index: number }
 
@@ -48,7 +48,9 @@ export function shellStateLabel(shell: ShellSnapshot): string {
   if (shell.status === EShellStatus.Running) {
     return shell.awaitingInput ? AWAITING_INPUT_LABEL : 'running'
   }
-  if (shell.status === EShellStatus.Killed) return 'killed'
+  if (shell.status === EShellStatus.Killed) {
+    return shell.killedBy === EKilledBy.User ? 'killed by you' : 'killed'
+  }
   if (shell.status === EShellStatus.Overflowed) return 'killed — too much output'
   if (shell.exitCode === undefined || shell.exitCode === 0) return 'done'
   return `exit ${shell.exitCode}`

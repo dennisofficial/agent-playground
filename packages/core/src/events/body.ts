@@ -1,5 +1,5 @@
 import type { ReasoningPart, TextPart } from '../message/parts'
-import type { EShellStatus } from '../shells/status'
+import type { EKilledBy, EShellStatus } from '../shells/status'
 import type { CallId } from './ids'
 
 export enum ECompactionAnchor {
@@ -31,12 +31,14 @@ export type EventBody =
   | { type: 'approval-answered'; callId: CallId; decision: EDecision; editedInput?: unknown }
   | { type: 'context-loaded'; slot: string; key: string; content: string; triggeredBy?: string | undefined }
   | { type: 'nudge'; text: string; lifetimeSteps: number }
+  | { type: 'cwd-changed'; path: string }
   | {
       type: 'background-shell-ended'
       shellId: string
       command: string
       description?: string | undefined
       status: EShellStatus
+      killedBy?: EKilledBy | undefined
       exitCode?: number | undefined
       output: string
       droppedCharacters: number

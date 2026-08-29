@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 import type { ProviderOptions } from '../provider'
-import { EShellStatus } from '../shells/status'
+import { EKilledBy, EShellStatus } from '../shells/status'
 import { ECompactionAnchor, EDecision, type EventBody } from './body'
 import type { EventEnvelope } from './envelope'
 import { threadIdSchema, callIdSchema, eventIdSchema, runIdSchema } from './ids'
@@ -83,12 +83,14 @@ export const eventBodySchema: z.ZodType<EventBody> = z.discriminatedUnion('type'
     triggeredBy: z.string().optional(),
   }),
   z.object({ type: z.literal('nudge'), text: z.string(), lifetimeSteps: z.number().int().nonnegative() }),
+  z.object({ type: z.literal('cwd-changed'), path: z.string().min(1) }),
   z.object({
     type: z.literal('background-shell-ended'),
     shellId: z.string().min(1),
     command: z.string(),
     description: z.string().optional(),
     status: z.enum(EShellStatus),
+    killedBy: z.enum(EKilledBy).optional(),
     exitCode: z.number().int().optional(),
     output: z.string(),
     droppedCharacters: z.number().int().nonnegative(),

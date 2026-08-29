@@ -1,11 +1,14 @@
 import type { EventOfType } from '../../events/envelope'
 import { shellLabel } from '../../shells/label'
-import { shellEnding } from '../../shells/status'
+import { EKilledBy, shellEnding } from '../../shells/status'
 
 const OPEN = '<background-shell-ended>'
 const CLOSE = '</background-shell-ended>'
 
 const PRINTED_NOTHING = 'It printed nothing.'
+
+const USER_KILLED =
+  'The user stopped this shell deliberately. Nothing is wrong; do not restart it, work around it, or spend another run reproducing what it was doing unless the user asks.'
 
 const droppedNote = (characters: number): string =>
   `[${characters} characters were lost before this point: the shell printed faster than it was read.]`
@@ -17,6 +20,8 @@ export function backgroundShellBlock(event: EventOfType<'background-shell-ended'
   const headline = `Background shell ${event.shellId} ${shellLabel(event)} ${shellEnding(event)}. Everything it printed follows; it has not been read yet.`
 
   const sections = [headline]
+
+  if (event.killedBy === EKilledBy.User) sections.push(USER_KILLED)
 
   if (event.droppedCharacters > 0) sections.push(droppedNote(event.droppedCharacters))
 

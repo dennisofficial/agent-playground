@@ -12,6 +12,7 @@ export function endedDraft(args: { snapshot: ShellSnapshot; delta: ShellDelta })
     command: snapshot.command,
     description: snapshot.description,
     status: snapshot.status,
+    killedBy: snapshot.killedBy,
     exitCode: snapshot.exitCode,
     output: delta.text,
     droppedCharacters: delta.droppedCharacters,

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 
-import { EShellStatus as ECoreShellStatus, type ClockPort, type EventDraft, type EventOfType } from '@dltech/atlas-core'
+import { EKilledBy, EShellStatus as ECoreShellStatus, type ClockPort, type EventDraft, type EventOfType } from '@dltech/atlas-core'
 
 import { EShellStatus } from '../background-shell'
 import { BunShellRegistry, type ShellRegistryPort } from '../shell-registry'
@@ -181,7 +181,7 @@ describe('killing a background shell', () => {
     const started = registry.start({ command: 'sleep 60' })
     if (!started.ok) throw new Error(started.reason)
 
-    const killed = registry.kill({ shellId: started.snapshot.shellId })
+    const killed = registry.kill({ shellId: started.snapshot.shellId, by: EKilledBy.User })
     expect(killed.ok).toBe(true)
 
     await settle(registry, started.snapshot.shellId)
@@ -196,7 +196,7 @@ describe('killing a background shell', () => {
     if (!started.ok) throw new Error(started.reason)
 
     await Bun.sleep(150)
-    registry.kill({ shellId: started.snapshot.shellId })
+    registry.kill({ shellId: started.snapshot.shellId, by: EKilledBy.User })
     await settle(registry, started.snapshot.shellId)
     await Bun.sleep(2200)
 
@@ -206,7 +206,7 @@ describe('killing a background shell', () => {
   it('refuses a shell it does not know', () => {
     const { registry } = openRegistry()
 
-    expect(registry.kill({ shellId: 'bash_7' }).ok).toBe(false)
+    expect(registry.kill({ shellId: 'bash_7', by: EKilledBy.Model }).ok).toBe(false)
   })
 
   it('is harmless on a shell that already finished', async () => {
@@ -215,7 +215,7 @@ describe('killing a background shell', () => {
     if (!started.ok) throw new Error(started.reason)
     await settle(registry, started.snapshot.shellId)
 
-    const killed = registry.kill({ shellId: started.snapshot.shellId })
+    const killed = registry.kill({ shellId: started.snapshot.shellId, by: EKilledBy.User })
 
     expect(killed.ok && killed.snapshot.status).toBe(EShellStatus.Exited)
   })
@@ -414,12 +414,13 @@ describe('announcing every ending, whoever caused it', () => {
     const started = registry.start({ command: 'sleep 60' })
     if (!started.ok) throw new Error(started.reason)
 
-    registry.kill({ shellId: started.snapshot.shellId })
+    registry.kill({ shellId: started.snapshot.shellId, by: EKilledBy.User })
     await announced(registry)
 
     const drained = registry.drainNotifications()
     expect(drained).toHaveLength(1)
     expect(endedDraft(drained[0]).status).toBe(ECoreShellStatus.Killed)
+    expect(endedDraft(drained[0]).killedBy).toBe(EKilledBy.User)
   })
 
   it('announces a shell killed by teardown rather than suppressing it', async () => {
