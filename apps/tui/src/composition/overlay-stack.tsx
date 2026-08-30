@@ -2,6 +2,8 @@ import { MODEL_CATALOG } from '@dltech/atlas-core'
 import React from 'react'
 
 import { Accounts } from '../ui/components/accounts'
+import type { Span } from '../ui/components/spans'
+import type { AccountRow } from '../ui/accounts-model'
 import { CompactingOverlay, type Compacting } from '../ui/components/compacting'
 import { ExitGuard } from '../ui/components/exit-guard'
 import { exitGuardRow } from '../ui/exit-guard-model'
@@ -9,6 +11,7 @@ import { Rewind } from '../ui/components/rewind'
 import { Settings } from '../ui/components/settings'
 import { Shells } from '../ui/components/shells'
 import { Switcher } from '../ui/components/switcher'
+import { Threads } from '../ui/components/threads'
 import { isShellRunning } from '../ui/shells-model'
 import { modelIsReachable } from './model-selection'
 import type { AccountsControl } from './use-accounts'
@@ -17,6 +20,7 @@ import type { RewindControl } from './use-rewind'
 import type { SettingsControl } from './use-settings'
 import type { ShellsControl } from './use-shells'
 import type { SwitcherControl } from './use-switcher'
+import type { ThreadsControl } from './use-threads'
 
 export function OverlayStack(props: {
   width: number
@@ -27,12 +31,14 @@ export function OverlayStack(props: {
   shells: ShellsControl
   settings: SettingsControl
   accounts: AccountsControl
+  threads: ThreadsControl
+  accountMeters: (row: AccountRow) => readonly Span[]
   rewind: RewindControl
   exitGuard: ExitGuardControl
   compacting: Compacting | null
   now: number
 }): React.ReactNode {
-  const { switcher, shells, settings, accounts, rewind, exitGuard } = props
+  const { switcher, shells, settings, accounts, threads, rewind, exitGuard } = props
   const sidebarWidth = Math.min(settings.sidebarWidth, props.width)
 
   return (
@@ -53,9 +59,19 @@ export function OverlayStack(props: {
         <Accounts
           width={sidebarWidth}
           state={accounts.state}
+          meters={props.accountMeters}
           overlay
           onPick={accounts.handlePick}
           onDismiss={accounts.handleDismiss}
+        />
+      )}
+      {threads.state === null ? null : (
+        <Threads
+          width={sidebarWidth}
+          state={threads.state}
+          overlay
+          onPick={threads.handlePick}
+          onDismiss={threads.handleDismiss}
         />
       )}
       {switcher.state === null ? null : (

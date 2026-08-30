@@ -6,6 +6,8 @@ import type { AtlasConfig } from './config'
 import { diagnoseCredentialFailure, type CredentialDiagnosis } from './credential-diagnosis'
 import { openConversation, type OpenedConversation } from './open-conversation'
 
+const REFUSED = 1
+
 export enum ESession {
   Ready = 'ready',
   Refused = 'refused',
@@ -61,15 +63,26 @@ async function startSession(args: {
   await registerGrammars()
 
   progress.report(EBootStep.Opening)
-  const opened = await openConversation({
+  const outcome = await openConversation({
     threads: app.threads,
     log: app.log,
     ledger: app.ledger,
-    fresh: config.freshConversation,
+    workspace: app.workspace,
+    open: config.open,
   })
 
+  if (!outcome.ok) {
+    await app.close()
+    return { type: ESession.Refused, message: outcome.reason, exitCode: REFUSED }
+  }
+
   progress.report(EBootStep.Ready)
-  return { type: ESession.Ready, app, opened, credentialNotice: refused?.message ?? null }
+  return {
+    type: ESession.Ready,
+    app,
+    opened: outcome.conversation,
+    credentialNotice: refused?.message ?? null,
+  }
 }
 
 /**

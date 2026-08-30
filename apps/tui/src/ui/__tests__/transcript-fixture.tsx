@@ -54,6 +54,7 @@ const operatorSaid = (
   said: [text],
   steer: flags.steer ?? false,
   skills: [],
+  files: [],
 })
 
 type ModelFlags = { streaming?: boolean; interrupted?: boolean }
@@ -110,6 +111,20 @@ export const SETTLED = model([
   modelSaid('a2', LAST_WORDS),
 ])
 
+export const FIRST_ASK = 'first thing I asked'
+
+export const SECOND_ASK = 'second thing I asked'
+
+const filler = (word: string): string =>
+  Array.from({ length: 40 }, (_, line) => `${word} line ${line}`).join('\n\n')
+
+export const THREADED = model([
+  operatorSaid('u1', FIRST_ASK),
+  modelSaid('a1', filler('alpha')),
+  operatorSaid('u2', SECOND_ASK),
+  modelSaid('a2', filler('beta')),
+])
+
 export const TURN_DONE = model([
   operatorSaid('u1', 'go'),
   modelSaid('a1', 'done'),
@@ -119,13 +134,19 @@ export const TURN_DONE = model([
 export const TURN_STOPPED = model([
   operatorSaid('u1', 'go'),
   modelSaid('a1', 'partial'),
-  turnEnded('turn-1', { interrupted: true, durationMs: 12_000, outputTokens: 0 }),
+  turnEnded('turn-1', {
+    interrupted: true,
+    durationMs: 12_000,
+    outputTokens: 0,
+  }),
 ])
 
 export const STREAMING = model(
   [
     operatorSaid('u1', 'think about it first'),
-    modelThought('t1', `${'A'.repeat(400)}\n\nstill going`, { streaming: true }),
+    modelThought('t1', `${'A'.repeat(400)}\n\nstill going`, {
+      streaming: true,
+    }),
   ],
   { streaming: true },
 )

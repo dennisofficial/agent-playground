@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'bun:test'
 
+import { homedir } from 'node:os'
+
+import { atlasDatabaseUrl } from '@dltech/atlas-harness'
+
 import {
   DEFAULT_MODEL_ID,
   DEFAULT_THINKING_BUDGET_TOKENS,
-  devDatabaseUrl,
+  EOpenMode,
   resolveConfig,
   type AtlasConfig,
 } from '../config'
@@ -27,9 +31,10 @@ describe('the launch configuration', () => {
     expect(DEFAULT_MODEL_ID).toBe('claude-haiku-4-5-20251001')
   })
 
-  it('never falls back to the operator database', () => {
+  it('never falls back to the operator database when it was launched from source', () => {
     expect(resolve({}).databaseUrl).toBe(DEV_URL)
-    expect(devDatabaseUrl()).not.toContain('harness.db')
+    expect(atlasDatabaseUrl()).toContain('/.atlas-home/')
+    expect(atlasDatabaseUrl()).not.toContain(`${homedir()}/.atlas/`)
   })
 
   it('names no thinking budget unless the environment asked for one', () => {
@@ -37,10 +42,34 @@ describe('the launch configuration', () => {
     expect(DEFAULT_THINKING_BUDGET_TOKENS).toBeGreaterThan(0)
   })
 
-  it('opens the most recent conversation unless a fresh one was asked for', () => {
-    expect(resolve({}).freshConversation).toBe(false)
-    expect(resolve({ argv: ['--new'] }).freshConversation).toBe(true)
-    expect(resolve({ argv: ['-n'] }).freshConversation).toBe(true)
+  it('opens a new conversation unless the launch asked to come back to one', () => {
+    expect(resolve({}).open).toEqual({ mode: EOpenMode.New })
+    expect(resolve({ argv: ['--new'] }).open).toEqual({ mode: EOpenMode.New })
+    expect(resolve({ argv: ['-n'] }).open).toEqual({ mode: EOpenMode.New })
+  })
+
+  it('continues the most recent conversation when asked', () => {
+    expect(resolve({ argv: ['--continue'] }).open).toEqual({ mode: EOpenMode.Continue })
+    expect(resolve({ argv: ['-c'] }).open).toEqual({ mode: EOpenMode.Continue })
+  })
+
+  it('resumes the conversation named on the command line', () => {
+    expect(resolve({ argv: ['--resume', 'brn_1'] }).open).toEqual({
+      mode: EOpenMode.Resume,
+      threadId: 'brn_1',
+    })
+  })
+
+  it('falls back to the most recent for a bare --resume, until a picker can ask', () => {
+    expect(resolve({ argv: ['--resume'] }).open).toEqual({ mode: EOpenMode.Continue })
+    expect(resolve({ argv: ['--resume', '--new'] }).open).toEqual({ mode: EOpenMode.Continue })
+  })
+
+  it('takes a named thread ahead of a bare continue', () => {
+    expect(resolve({ argv: ['--continue', '--resume', 'brn_2'] }).open).toEqual({
+      mode: EOpenMode.Resume,
+      threadId: 'brn_2',
+    })
   })
 
   it('takes the model from the command line ahead of the environment', () => {

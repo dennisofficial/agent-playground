@@ -138,7 +138,7 @@ describe('resuming a turn the developer stopped', () => {
     expect(promptText(cut.model, 2)).not.toContain(RESUME_NUDGE)
   })
 
-  it('appends nothing when a tool settlement already gives the loop its next move', async () => {
+  it('nudges past a tool call the developer cut short, rather than asking what they want', async () => {
     const cut = await openCutShortAt({
       script: [
         { text: 'reading', calls: [{ callId: 'call-1', name: 'read_file', input: { path: 'a.ts' } }] },
@@ -162,8 +162,10 @@ describe('resuming a turn the developer stopped', () => {
       'assistant-said',
       'tool-called',
       'tool-denied',
+      'nudge',
       'assistant-said',
     ])
+    expect(promptText(cut.model, 1)).toContain(RESUME_NUDGE)
   })
 
   it('goes idle rather than re-asking when the model finished of its own accord', async () => {

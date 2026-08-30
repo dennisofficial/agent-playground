@@ -1,64 +1,116 @@
 import type { ScrollBoxRenderable } from '@opentui/core'
-import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useRef, type RefObject } from 'react'
 
 import { isPinnedToBottom } from '../scroll-position'
+import { observeScroll } from '../scroll-signal'
+import { peekAbove, type PeekCandidate } from '../transcript-peek'
+import { applyTranscriptViewport, resetTranscriptViewport } from '../transcript-viewport-store'
 
-/**
- * OpenTUI's scrollbox emits no scroll event, and the wheel, a drag and sticky-scroll following a
- * turn all move it without passing through React — so where the transcript is sitting is polled.
- */
-const POLL_MS = 250
+const NOTHING_TO_PEEK: ReadonlySet<string> = Object.freeze(new Set<string>())
 
 export type TranscriptFollow = {
   scroller: RefObject<ScrollBoxRenderable | null>
-  pinned: boolean
   handleJumpToBottom: () => void
+  handleJumpTo: (key: string) => void
 }
 
+const candidatesOf = (
+  box: ScrollBoxRenderable,
+  keys: ReadonlySet<string>,
+): readonly PeekCandidate[] =>
+  box.content
+    .getChildren()
+    .filter((child) => keys.has(child.id))
+    .map((child) => ({ key: child.id, top: child.y }))
+
 export function useTranscriptFollow(
-  args: { anchorId?: string | null; sends?: number } = {},
+  args: {
+    anchorId?: string | null
+    sends?: number
+    peekKeys?: ReadonlySet<string>
+  } = {},
 ): TranscriptFollow {
   const scroller = useRef<ScrollBoxRenderable | null>(null)
-  const [pinned, setPinned] = useState(true)
   const landed = useRef(false)
-  const anchorId = args.anchorId ?? null
+  const anchorId = useRef<string | null>(args.anchorId ?? null)
+  const peekKeys = useRef<ReadonlySet<string>>(args.peekKeys ?? NOTHING_TO_PEEK)
   const sends = args.sends ?? 0
 
+  const evaluate = useCallback(() => {
+    const box = scroller.current
+    if (!box) return
+
+    const anchor = anchorId.current
+    if (anchor !== null && !landed.current) {
+      if (!box.content.findDescendantById(anchor)) return
+      box.scrollChildIntoView(anchor)
+      landed.current = true
+    }
+
+    applyTranscriptViewport({
+      tailing: isPinnedToBottom({
+        scrollTop: box.scrollTop,
+        scrollHeight: box.scrollHeight,
+        viewportHeight: box.viewport.height,
+      }),
+      peekKey: peekAbove({
+        candidates: candidatesOf(box, peekKeys.current),
+        viewportTop: box.viewport.y,
+      }),
+    })
+  }, [])
+
   useEffect(() => {
-    const timer = setInterval(() => {
-      const box = scroller.current
-      if (!box) return
+    const box = scroller.current
+    if (!box) return
 
-      if (anchorId !== null && !landed.current) {
-        if (!box.content.findDescendantById(anchorId)) return
-        box.scrollChildIntoView(anchorId)
-        landed.current = true
-        return
-      }
+    const stop = observeScroll(box, evaluate)
+    evaluate()
 
-      setPinned(
-        isPinnedToBottom({
-          scrollTop: box.scrollTop,
-          scrollHeight: box.scrollHeight,
-          viewportHeight: box.viewport.height,
-        }),
-      )
-    }, POLL_MS)
+    return () => {
+      stop()
+      resetTranscriptViewport()
+    }
+  }, [evaluate])
 
-    return () => clearInterval(timer)
-  }, [anchorId])
+  useEffect(() => {
+    const next = args.anchorId ?? null
+    if (next !== anchorId.current) landed.current = false
+    anchorId.current = next
+    evaluate()
+  }, [args.anchorId, evaluate])
+
+  useEffect(() => {
+    peekKeys.current = args.peekKeys ?? NOTHING_TO_PEEK
+    evaluate()
+  }, [args.peekKeys, evaluate])
 
   const handleJumpToBottom = useCallback(() => {
     const box = scroller.current
     if (!box) return
     box.scrollTo(Math.max(0, box.scrollHeight - box.viewport.height))
-    setPinned(true)
-  }, [])
+    evaluate()
+  }, [evaluate])
+
+  /**
+   * `scrollChildIntoView` refuses to move an entry taller than the viewport, which is exactly the
+   * long message worth jumping back to, so the offset is applied directly.
+   */
+  const handleJumpTo = useCallback(
+    (key: string) => {
+      const box = scroller.current
+      const child = box?.content.findDescendantById(key)
+      if (!box || !child) return
+      box.scrollTo(Math.max(0, box.scrollTop + (child.y - box.viewport.y)))
+      evaluate()
+    },
+    [evaluate],
+  )
 
   useEffect(() => {
     if (sends === 0) return
     handleJumpToBottom()
   }, [sends, handleJumpToBottom])
 
-  return { scroller, pinned, handleJumpToBottom }
+  return { scroller, handleJumpToBottom, handleJumpTo }
 }

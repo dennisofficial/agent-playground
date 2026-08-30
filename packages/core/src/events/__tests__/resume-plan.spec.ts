@@ -19,7 +19,19 @@ describe('resumePlan', () => {
     expect(resumePlan(events)).toEqual({ kind: EResume.Nothing })
   })
 
-  it('continues with nothing appended when a tool settlement is the last word', () => {
+  it('continues with nothing appended when a tool settled on its own', () => {
+    const events = log([
+      { type: 'user-said', text: 'run it' },
+      { type: 'assistant-said', parts: [{ type: 'text', text: 'running' }] },
+      { type: 'tool-called', callId: toCallId('call-1'), name: 'bash', input: {}, ordinal: 0 },
+      { type: 'tool-result', callId: toCallId('call-1'), name: 'bash', output: { exitCode: 0 } },
+    ])
+
+    expect(resumePlan(events)).toEqual({ kind: EResume.Continue, nudge: false })
+    expect(resumeDrafts(events)).toEqual([])
+  })
+
+  it('nudges when the last word is a tool the developer cut short', () => {
     const events = log([
       { type: 'user-said', text: 'run it' },
       { type: 'assistant-said', parts: [{ type: 'text', text: 'running' }] },
@@ -30,10 +42,46 @@ describe('resumePlan', () => {
         name: 'bash',
         output: undefined,
         error: { message: 'the developer interrupted the turn while the command was running' },
+        interrupted: true,
       },
     ])
 
-    expect(resumePlan(events)).toEqual({ kind: EResume.Continue })
+    expect(resumePlan(events)).toEqual({ kind: EResume.Continue, nudge: true })
+    expect(resumeDrafts(events)).toEqual([{ type: 'nudge', text: RESUME_NUDGE, lifetimeSteps: 1 }])
+  })
+
+  it('nudges when a cut-short reply is followed by the tool call it never ran', () => {
+    const events = log([
+      { type: 'user-said', text: 'run it' },
+      { type: 'assistant-said', parts: [{ type: 'text', text: 'running' }], interrupted: true },
+      { type: 'tool-called', callId: toCallId('call-1'), name: 'bash', input: {}, ordinal: 0 },
+      {
+        type: 'tool-denied',
+        callId: toCallId('call-1'),
+        name: 'bash',
+        reason: 'the developer interrupted the turn before this tool ran',
+        interrupted: true,
+      },
+    ])
+
+    expect(resumePlan(events)).toEqual({ kind: EResume.Continue, nudge: true })
+    expect(resumeDrafts(events)).toEqual([{ type: 'nudge', text: RESUME_NUDGE, lifetimeSteps: 1 }])
+  })
+
+  it('leaves a tool the developer denied to speak for itself', () => {
+    const events = log([
+      { type: 'user-said', text: 'delete it' },
+      { type: 'assistant-said', parts: [{ type: 'text', text: 'deleting' }] },
+      { type: 'tool-called', callId: toCallId('call-1'), name: 'bash', input: {}, ordinal: 0 },
+      {
+        type: 'tool-denied',
+        callId: toCallId('call-1'),
+        name: 'bash',
+        reason: 'the developer said no',
+      },
+    ])
+
+    expect(resumePlan(events)).toEqual({ kind: EResume.Continue, nudge: false })
     expect(resumeDrafts(events)).toEqual([])
   })
 
@@ -44,13 +92,13 @@ describe('resumePlan', () => {
       { type: 'tool-called', callId: toCallId('call-1'), name: 'bash', input: {}, ordinal: 0 },
     ])
 
-    expect(resumePlan(events)).toEqual({ kind: EResume.Continue })
+    expect(resumePlan(events)).toEqual({ kind: EResume.Continue, nudge: false })
   })
 
   it('continues after a failed step, whose events never landed', () => {
     const events = log([{ type: 'user-said', text: 'hello' }])
 
-    expect(resumePlan(events)).toEqual({ kind: EResume.Continue })
+    expect(resumePlan(events)).toEqual({ kind: EResume.Continue, nudge: false })
   })
 
   it('nudges when the interrupted reply is the last word', () => {
@@ -74,7 +122,7 @@ describe('resumePlan', () => {
       { type: 'nudge', text: RESUME_NUDGE, lifetimeSteps: 1 },
     ])
 
-    expect(resumePlan(events)).toEqual({ kind: EResume.Continue })
+    expect(resumePlan(events)).toEqual({ kind: EResume.Continue, nudge: false })
     expect(resumeDrafts(events)).toEqual([])
   })
 
@@ -99,6 +147,6 @@ describe('resumePlan', () => {
       { type: 'approval-answered', callId: toCallId('call-1'), decision: EDecision.Allow },
     ])
 
-    expect(resumePlan(events)).toEqual({ kind: EResume.Continue })
+    expect(resumePlan(events)).toEqual({ kind: EResume.Continue, nudge: false })
   })
 })

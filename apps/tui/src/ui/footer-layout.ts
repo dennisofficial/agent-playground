@@ -1,14 +1,23 @@
-import { COMPACT_COMMAND, CONTEXT_BAR_CELLS, isContextWarning } from './context-bar'
+import { COMPACT_COMMAND, isContextWarning } from './context-bar'
 import { cellsOf, HINT_SEPARATOR } from './hint-layout'
 import { formatTokens } from './theme'
+import type { FooterMeter } from './usage-meters'
 
 export const FOOTER_GUTTER = 3
 
 export type FooterEffort = 'low' | 'medium' | 'high'
 
-export type FooterContext = { percent: number; tokensLeft?: number }
+export type FooterContext = {
+  percent: number
+  tokensUsed?: number
+  meters?: readonly FooterMeter[]
+}
 
-export type FooterReadout = { bar: boolean; text: string }
+export type FooterReadout = { full: boolean; text: string; meters: readonly FooterMeter[] }
+
+export function meterText(meter: FooterMeter): string {
+  return `${meter.label} ${meter.text}`
+}
 
 export type FooterInstruments = {
   model: string | null
@@ -29,36 +38,48 @@ export function effortSegment(effort: FooterEffort): string {
 
 export function readouts(context: FooterContext): readonly FooterReadout[] {
   const percent = `${Math.round(context.percent)}%`
+  const meters = context.meters ?? []
+
   if (isContextWarning(context.percent)) {
     const spelled = `context ${percent} — ${COMPACT_COMMAND} to compact`
     return [
-      { bar: true, text: spelled },
-      { bar: false, text: spelled },
-      { bar: false, text: `context ${percent}` },
-      { bar: false, text: percent },
+      ...(meters.length === 0 ? [] : [{ full: true, text: spelled, meters }]),
+      { full: true, text: spelled, meters: [] },
+      { full: false, text: spelled, meters: [] },
+      { full: false, text: `context ${percent}`, meters: [] },
+      { full: false, text: percent, meters: [] },
     ]
   }
-  const left = context.tokensLeft === undefined ? null : `${formatTokens(context.tokensLeft)} left`
+
+  const used = context.tokensUsed === undefined ? null : `${formatTokens(context.tokensUsed)} ctx`
+  const head = used === null ? percent : `${used}${HINT_SEPARATOR}${percent}`
+  const withMeters = meters.map((unused, index) => ({
+    full: true,
+    text: head,
+    meters: meters.slice(0, meters.length - index),
+  }))
+
   return [
-    ...(left === null ? [] : [{ bar: true, text: `${percent}${HINT_SEPARATOR}${left}` }]),
-    { bar: true, text: percent },
-    { bar: false, text: percent },
+    ...withMeters,
+    ...(used === null ? [] : [{ full: true, text: head, meters: [] }]),
+    { full: false, text: percent, meters: [] },
   ]
 }
 
-export function readoutCells(args: { readout: FooterReadout; barCells: number }): number {
-  return (args.readout.bar ? args.barCells + 1 : 0) + cellsOf(args.readout.text)
+export function readoutCells(args: { readout: FooterReadout }): number {
+  const meters = args.readout.meters.reduce(
+    (total, meter) => total + cellsOf(HINT_SEPARATOR) + cellsOf(meterText(meter)),
+    0,
+  )
+  return cellsOf(args.readout.text) + meters
 }
 
-export function instrumentCells(args: {
-  instruments: FooterInstruments
-  barCells: number
-}): number {
+export function instrumentCells(args: { instruments: FooterInstruments }): number {
   const { model, effort, context } = args.instruments
   const segments = [
     ...(model === null ? [] : [cellsOf(model)]),
     ...(effort === null ? [] : [cellsOf(effort)]),
-    ...(context === null ? [] : [readoutCells({ readout: context, barCells: args.barCells })]),
+    ...(context === null ? [] : [readoutCells({ readout: context })]),
   ]
   if (segments.length === 0) return 0
   const spelled = segments.reduce((total, cells) => total + cells, 0)
@@ -80,7 +101,7 @@ function dropLadder(args: {
   context: FooterContext | null
 }): readonly FooterInstruments[] {
   const forms = args.context === null ? [null] : readouts(args.context)
-  const bareIndex = forms.findIndex((form) => form === null || !form.bar)
+  const bareIndex = forms.findIndex((form) => form === null || !form.full)
   const kept = forms.slice(0, bareIndex + 1)
   const shortened = forms.slice(bareIndex + 1)
   const narrowest = kept[kept.length - 1] ?? null
@@ -99,9 +120,7 @@ export function footerLayout(args: {
   model: string
   effort?: FooterEffort | null
   context?: FooterContext | null
-  barCells?: number
 }): FooterLayout {
-  const barCells = args.barCells ?? CONTEXT_BAR_CELLS
   const inner = Math.max(0, args.width - FOOTER_GUTTER * 2)
   const effort = args.effort === undefined || args.effort === null ? null : effortSegment(args.effort)
 
@@ -109,8 +128,7 @@ export function footerLayout(args: {
     facts: { model: args.model, effort },
     context: args.context ?? null,
   })
-  const cellsFor = (instruments: FooterInstruments): number =>
-    instrumentCells({ instruments, barCells })
+  const cellsFor = (instruments: FooterInstruments): number => instrumentCells({ instruments })
 
   const instruments = ladder.find((entry) => cellsFor(entry) <= inner) ?? BARE
 

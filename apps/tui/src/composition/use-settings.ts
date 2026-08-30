@@ -2,7 +2,9 @@ import {
   activateSetting,
   adjustSetting,
   choiceValueOf,
+  DEFAULT_WARN_PERCENT,
   ESettingId,
+  EUsageWindow,
   rangeValueOf,
   toggleValueOf,
   type ResolvedSetting,
@@ -12,6 +14,11 @@ import type { KeyEvent } from '@opentui/core'
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 
 import { appearanceOf, applyAppearance } from '../ui/appearance'
+import {
+  EFooterMeters,
+  footerMetersOf,
+  SHIPPED_FOOTER_METERS,
+} from '../ui/usage-meters'
 import { SHIPPED_THINKING, thinkingVisibilityOf, type EThinkingVisibility } from '../store'
 
 const AUTO_COMPACT_AT_PERCENT = 90
@@ -36,6 +43,8 @@ export type SettingsControl = {
   autoCompactAtPercent: number
   paceReveal: boolean
   thinking: EThinkingVisibility
+  footerMeters: EFooterMeters
+  usageWarn: Record<EUsageWindow, number>
   handleOpen: () => void
   handleDismiss: () => void
   handleActivate: (target: SettingsState) => void
@@ -55,11 +64,11 @@ export function useSettings(args: { app: AtlasApp }): SettingsControl {
     [app.settings.definitions, held.resolution],
   )
 
-  const { accent, density } = appearanceOf({ resolution: held.resolution })
+  const { accent, density, composer } = appearanceOf({ resolution: held.resolution })
 
   useEffect(() => {
-    applyAppearance({ accent, density })
-  }, [accent, density])
+    applyAppearance({ accent, density, composer })
+  }, [accent, composer, density])
 
   const write = useCallback(
     (target: SettingsState, next: (row: ResolvedSetting) => SettingValue) => {
@@ -141,6 +150,25 @@ export function useSettings(args: { app: AtlasApp }): SettingsControl {
       fallback: AUTO_COMPACT_AT_PERCENT,
     }),
     paceReveal: toggleValueOf({ resolution: held.resolution, id: ESettingId.SmoothStreaming }),
+    footerMeters: footerMetersOf(
+      choiceValueOf({
+        resolution: held.resolution,
+        id: ESettingId.FooterMeters,
+        fallback: SHIPPED_FOOTER_METERS,
+      }),
+    ),
+    usageWarn: {
+      [EUsageWindow.FiveHour]: rangeValueOf({
+        resolution: held.resolution,
+        id: ESettingId.WarnFiveHour,
+        fallback: DEFAULT_WARN_PERCENT[EUsageWindow.FiveHour],
+      }),
+      [EUsageWindow.SevenDay]: rangeValueOf({
+        resolution: held.resolution,
+        id: ESettingId.WarnWeekly,
+        fallback: DEFAULT_WARN_PERCENT[EUsageWindow.SevenDay],
+      }),
+    },
     thinking: thinkingVisibilityOf(
       choiceValueOf({
         resolution: held.resolution,

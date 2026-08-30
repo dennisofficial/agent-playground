@@ -152,7 +152,7 @@ describe('what the transcript actually says', () => {
     expect(frame).not.toContain('Worked for')
   })
 
-  it('attaches a tool group to the reply that asked for it, and spaces the groups apart', async () => {
+  it('leaves a blank row between a reply and the tools it asked for', async () => {
     const events = clocked([
       { draft: said('Reading the pieces that already exist.'), at: AT },
       { draft: called({ n: 1, name: 'read', input: { path: 'a.ts' } }), at: AT },
@@ -164,15 +164,18 @@ describe('what the transcript actually says', () => {
     const model = deriveTranscript({ events, signals: [] })
     const rows = (await frameOf(transcript({ model, width: 100 }), 100)).split('\n')
 
+    // The reply used to hug the group below it, which read well when a group was one summary line
+    // and badly once a run became a stack of rows: the prose ended up touching the first of them.
     const reply = rows.findIndex((row) => row.includes('Reading the pieces'))
-    const group = rows.findIndex((row) => row.includes('Read 1 file'))
-    expect(group).toBe(reply + 1)
+    const group = rows.findIndex((row) => row.includes('Read a.ts'))
+    expect(group).toBe(reply + 2)
+    expect(rows[reply + 1]?.trim()).toBe('')
 
     const next = rows.findIndex((row) => row.includes('Editing in one pass'))
     expect(rows[next - 1]?.trim()).toBe('')
   })
 
-  it('stacks back-to-back tool groups with no blank row between them', async () => {
+  it('marks the head of a cluster of tool rows and leaves the rest of it unmarked', async () => {
     const events = clocked([
       { draft: said('Reading, then editing.'), at: AT },
       { draft: called({ n: 1, name: 'read', input: { path: 'a.ts' } }), at: AT },
@@ -183,11 +186,17 @@ describe('what the transcript actually says', () => {
     const model = deriveTranscript({ events, signals: [] })
     const rows = (await frameOf(transcript({ model, width: 100 }), 100)).split('\n')
 
-    const read = rows.findIndex((row) => row.includes('Read 1 file'))
-    const edited = rows.findIndex((row) => row.includes('Edited 1 file'))
+    const read = rows.findIndex((row) => row.includes('Read a.ts'))
+    const edited = rows.findIndex((row) => row.includes('Edited a.ts'))
 
     expect(read).toBeGreaterThan(0)
-    expect(edited).toBe(read + 1)
+    expect(edited).toBeGreaterThan(read)
+
+    // The first row of the cluster carries the mark. The rows under it do not — what the reader
+    // wants to see is where the tools stop, not a column of identical dots.
+    expect(rows[read]).toContain(glyph.block)
+    expect(rows[edited]).toContain(glyph.block)
+    expect(rows.slice(read, edited).filter((row) => row.includes(glyph.block))).toHaveLength(1)
   })
 
   it('marks a message sent mid-turn where it landed, rather than hiding it or moving it', async () => {
@@ -200,7 +209,7 @@ describe('what the transcript actually says', () => {
     const model = deriveTranscript({ events, signals: [] })
     const rows = (await frameOf(transcript({ model, width: 100 }), 100)).split('\n')
 
-    const group = rows.findIndex((row) => row.includes('Read 1 file'))
+    const group = rows.findIndex((row) => row.includes('Read a.ts'))
     const marker = rows.findIndex((row) => row.includes('sent mid-turn'))
     const said1 = rows.findIndex((row) => row.includes('check the tests too'))
 

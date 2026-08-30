@@ -37,15 +37,20 @@ describe('settingsModel', () => {
       ['Layout', 1],
       ['Project context', 5],
       ['Context window', 1],
+      ['Usage meters', 3],
     ])
-    expect(general?.rows).toHaveLength(9)
+    expect(general?.rows).toHaveLength(12)
   })
 
-  it('keeps the appearance page to its colour and its density', () => {
+  it('keeps the appearance page to its colour, its density and its composer', () => {
     const appearance = modelWith().pages[1]
 
-    expect(appearance?.groups.map((group) => group.label)).toEqual(['Colour', 'Density'])
-    expect(appearance?.rows).toHaveLength(2)
+    expect(appearance?.groups.map((group) => group.label)).toEqual([
+      'Colour',
+      'Density',
+      'Composer',
+    ])
+    expect(appearance?.rows).toHaveLength(3)
   })
 
   it('carries where each value came from onto the row', () => {
@@ -71,7 +76,7 @@ describe('moving around the page', () => {
     const top = openSettings()
 
     expect(moveRow({ state: top, model, delta: -1 })).toEqual({ pageIndex: 0, rowIndex: 0 })
-    expect(moveRow({ state: top, model, delta: 99 })).toEqual({ pageIndex: 0, rowIndex: 8 })
+    expect(moveRow({ state: top, model, delta: 99 })).toEqual({ pageIndex: 0, rowIndex: 11 })
   })
 
   it('wraps around the tab strip and lands on its first row', () => {

@@ -28,3 +28,15 @@ export const RAIL_TAIL = '╹'
 export const PANEL_TOP_EDGE = '▄'
 
 export const PANEL_BOTTOM_EDGE = '▀'
+
+export const FRAME_HORIZONTAL = '─'
+
+export const FRAME_VERTICAL = '│'
+
+export const FRAME_TOP_LEFT = '╭'
+
+export const FRAME_TOP_RIGHT = '╮'
+
+export const FRAME_BOTTOM_LEFT = '╰'
+
+export const FRAME_BOTTOM_RIGHT = '╯'

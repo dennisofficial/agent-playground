@@ -1,11 +1,6 @@
 import React from 'react'
 
-import {
-  CONTEXT_BAR_CELLS,
-  CONTEXT_BAR_GLYPH,
-  contextBarCells,
-  contextTone,
-} from '../context-bar'
+import { contextTone } from '../context-bar'
 import {
   FOOTER_GUTTER,
   footerLayout,
@@ -15,7 +10,9 @@ import {
   type FooterReadout,
 } from '../footer-layout'
 import { HINT_SEPARATOR } from '../hint-layout'
+import { meterTone } from '../meter-tone'
 import { theme } from '../theme'
+import type { FooterMeter } from '../usage-meters'
 import { Spans, type Span } from './spans'
 
 export type { FooterContext, FooterEffort }
@@ -38,24 +35,19 @@ function tinted(args: { text: string; fg: string }): Span[] {
     ])
 }
 
-function barSpans(args: { percent: number; cells: number }): Span[] {
-  const bar = contextBarCells(args)
-  return [
-    { text: CONTEXT_BAR_GLYPH.repeat(bar.ok), fg: theme.ok },
-    { text: CONTEXT_BAR_GLYPH.repeat(bar.warn), fg: theme.warn },
-    { text: CONTEXT_BAR_GLYPH.repeat(bar.empty), fg: theme.rule },
-  ].filter((span) => span.text.length > 0)
+function meterSpans(meters: readonly FooterMeter[]): Span[] {
+  return meters.flatMap((meter) => [
+    { text: HINT_SEPARATOR, fg: theme.rule },
+    { text: `${meter.label} `, fg: theme.rule },
+    { text: meter.text, fg: meterTone(meter.band) },
+  ])
 }
 
-function readoutSpans(args: {
-  readout: FooterReadout
-  percent: number
-  cells: number
-}): Span[] {
-  const tone = contextTone(args.percent)
-  const text = tinted({ text: args.readout.text, fg: tone })
-  if (!args.readout.bar) return text
-  return [...barSpans({ percent: args.percent, cells: args.cells }), { text: ' ' }, ...text]
+function readoutSpans(args: { readout: FooterReadout; percent: number }): Span[] {
+  return [
+    ...tinted({ text: args.readout.text, fg: contextTone(args.percent) }),
+    ...meterSpans(args.readout.meters),
+  ]
 }
 
 function factSpans(args: { instruments: FooterInstruments }): Span[][] {
@@ -71,13 +63,10 @@ export function Footer(props: {
   model: string
   effort?: FooterEffort | null
   context?: FooterContext | null
-  barCells?: number
 }): React.ReactNode {
-  const cells = props.barCells ?? CONTEXT_BAR_CELLS
   const layout = footerLayout({
     width: props.width,
     model: props.model,
-    barCells: cells,
     ...(props.effort === undefined ? {} : { effort: props.effort }),
     ...(props.context === undefined ? {} : { context: props.context }),
   })
@@ -85,12 +74,18 @@ export function Footer(props: {
   const context =
     readout === null || props.context === undefined || props.context === null
       ? []
-      : readoutSpans({ readout, percent: props.context.percent, cells })
+      : readoutSpans({ readout, percent: props.context.percent })
+
+  const facts = separated(factSpans({ instruments: layout.instruments }))
 
   return (
     <box flexDirection="row" flexShrink={0} paddingLeft={FOOTER_GUTTER} paddingRight={FOOTER_GUTTER}>
       <text>
-        <Spans spans={separated([...factSpans({ instruments: layout.instruments }), context])} />
+        <Spans spans={facts} />
+      </text>
+      <box flexGrow={1} />
+      <text>
+        <Spans spans={context} />
       </text>
     </box>
   )

@@ -40,9 +40,10 @@ const inputSchema = z.strictObject({
 })
 
 const description = [
-  'Run a command in a fresh bash process, starting in the directory the session is currently in.',
-  'A directory change carries to your next call - cd once and stay there rather than prefixing every command with it.',
-  'Nothing else carries: a shell variable, function or background job does not survive the call that made it.',
+  'Run a command in a fresh bash process, starting in the project directory.',
+  'Stay there: reach elsewhere by writing absolute paths in the command, not by opening it with cd.',
+  'Use cd only when the developer asks you to move.',
+  'A cd does carry to your next call; nothing else does, so a shell variable, function or background job dies with the call that made it.',
   'stdout and stderr come back as one string, all of stdout first and then all of stderr, so the two are not interleaved.',
   'Only the tail is kept once the output grows past its cap.',
   'A non-zero exit is reported rather than raised, with the code named at the end.',

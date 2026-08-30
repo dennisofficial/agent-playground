@@ -3,9 +3,8 @@ import { describe, expect, it } from 'bun:test'
 import { toCallId } from '@dltech/atlas-core'
 
 import { newestExpandableKey } from '../expandable'
-import { ECallState, EGroupState, NO_TOTALS, type ToolCallRow, type ToolGroup } from '../tool-groups'
+import { ECallState, type ToolCall, type ToolRun } from '../tool-runs'
 import { EAuthor, EEntryKind, toolsRanEntry, type TranscriptEntry } from '../transcript-model'
-import { verbOfTool } from '../../ui/tool-verbs'
 
 const thought = (args: {
   key: string
@@ -31,26 +30,24 @@ const said = (key: string): TranscriptEntry => ({
   interrupted: false,
 })
 
-const row = (args: { key: string; index: number }): ToolCallRow => ({
+const row = (args: { key: string; index: number; state: ECallState }): ToolCall => ({
   callId: toCallId(`${args.key}-${args.index}`),
   name: 'read',
   input: { path: 'a.ts' },
-  target: 'a.ts',
-  state: ECallState.Ok,
-  totals: NO_TOTALS,
+  output: { path: 'a.ts', lines: 12 },
+  modelText: '',
+  state: args.state,
   note: null,
+  at: null,
+  settledAt: null,
 })
 
-const group = (args: { key: string; state: EGroupState; calls: number }): ToolGroup => ({
+const run = (args: { key: string; state: ECallState; calls: number }): ToolRun => ({
   key: args.key,
   openedBy: toCallId(args.key),
-  verb: verbOfTool('read'),
-  calls: Array.from({ length: args.calls }, (_, index) => row({ key: args.key, index })),
-  state: args.state,
-  totals: { count: args.calls, settled: args.calls, added: null, removed: null, passed: null },
-  startedAtMs: null,
-  settledAtMs: null,
-  label: `Read ${args.calls} files`,
+  calls: Array.from({ length: args.calls }, (_unused, index) =>
+    row({ key: args.key, index, state: args.state }),
+  ),
 })
 
 describe('what ⏎ open acts on', () => {
@@ -82,19 +79,19 @@ describe('what ⏎ open acts on', () => {
   })
 
   it('opens a settled tool group', () => {
-    const entry = toolsRanEntry(group({ key: 'g1', state: EGroupState.Ok, calls: 3 }))
+    const entry = toolsRanEntry(run({ key: 'g1', state: ECallState.Ok, calls: 3 }))
     expect(newestExpandableKey([entry])).toBe('g1')
   })
 
   it('leaves a running tool group alone — it is already showing its tail', () => {
-    const entry = toolsRanEntry(group({ key: 'g1', state: EGroupState.Live, calls: 3 }))
+    const entry = toolsRanEntry(run({ key: 'g1', state: ECallState.Pending, calls: 3 }))
     expect(newestExpandableKey([entry])).toBeNull()
   })
 
   it('prefers a tool group over older thinking', () => {
     const entries = [
       thought({ key: 't1', streaming: false }),
-      toolsRanEntry(group({ key: 'g1', state: EGroupState.Ok, calls: 2 })),
+      toolsRanEntry(run({ key: 'g1', state: ECallState.Ok, calls: 2 })),
     ]
     expect(newestExpandableKey(entries)).toBe('g1')
   })

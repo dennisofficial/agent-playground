@@ -8,7 +8,7 @@ import {
   thinkingVisibilityOf,
   toolsAboveThoughts,
 } from '../thinking-fold'
-import { liveToolGroups } from '../tool-groups'
+import { liveToolRuns } from '../tool-runs'
 import { EAuthor, EEntryKind, toolsRanEntry, type TranscriptEntry } from '../transcript-model'
 
 const thought = (args: {
@@ -36,12 +36,12 @@ const said = (args: { key: string; text: string }): TranscriptEntry => ({
 })
 
 const toolsRan = (): TranscriptEntry => {
-  const live = liveToolGroups([
+  const live = liveToolRuns([
     { callId: toCallId('call-1'), name: 'bash', input: {}, precededByBlocks: 0 },
   ]).at(0)
-  if (live === undefined) throw new Error('a single call makes a single group')
+  if (live === undefined) throw new Error('a single call makes a single run')
 
-  return toolsRanEntry(live.group)
+  return toolsRanEntry(live.run)
 }
 
 const shape = (entries: readonly TranscriptEntry[]) =>

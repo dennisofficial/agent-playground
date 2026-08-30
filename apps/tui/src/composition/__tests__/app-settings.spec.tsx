@@ -139,6 +139,9 @@ describe('the settings page', () => {
       const frame = setup.captureCharFrame()
       expect(frame).toContain('COLOUR')
       expect(frame).toContain('Accent')
+      expect(frame).toContain('COMPOSER')
+      expect(frame).toContain('Composer edge')
+      expect(frame).toContain('slab · bordered · claude')
 
       setup.mockInput.pressTab({ shift: true })
       await landed(setup)

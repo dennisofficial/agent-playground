@@ -11,6 +11,12 @@ import type { OpenedConversation } from './open-conversation'
 import { ESession, type Session } from './open-session'
 import { useStartup } from './use-startup'
 
+/**
+ * The curtain repaints every 16ms and the workspace behind it does not change while it does, so the
+ * ink is not made to pay for a second render of the whole transcript on every frame it draws.
+ */
+const CoveredApp = React.memo(App)
+
 type ReadySession = {
   app: AtlasApp
   opened: OpenedConversation
@@ -71,7 +77,7 @@ export function BootScreen(props: {
   return (
     <>
       {ready === null ? null : (
-        <App
+        <CoveredApp
           app={ready.app}
           opened={ready.opened}
           credentialNotice={ready.credentialNotice}

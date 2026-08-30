@@ -4,7 +4,7 @@ import { EStepEnd, type StepId, type StepSignal } from '@dltech/atlas-harness'
 
 import { deriveTranscript } from '../derive-transcript'
 import { EThinkingVisibility } from '../thinking-fold'
-import { EGroupState } from '../tool-groups'
+import { settled } from '../tool-runs'
 import { EAuthor, EEntryKind } from '../transcript-model'
 import {
   ended,
@@ -214,7 +214,7 @@ describe('a tool call that has only been streamed', () => {
 
     expect(shapeOf(model)).toEqual([
       [EEntryKind.ModelSaid, 'let me look'],
-      [EEntryKind.ToolsRan, 'Reading files'],
+      [EEntryKind.ToolsRan, 'Working…'],
     ])
     expect(fromTheModel(model).at(-1)?.streaming).toBe(true)
   })
@@ -230,9 +230,9 @@ describe('a tool call that has only been streamed', () => {
 
     expect(shapeOf(deriveTranscript({ events: [], signals }))).toEqual([
       [EEntryKind.ModelSaid, 'first'],
-      [EEntryKind.ToolsRan, 'Reading files'],
+      [EEntryKind.ToolsRan, 'Working…'],
       [EEntryKind.ModelSaid, 'second'],
-      [EEntryKind.ToolsRan, 'Reading files'],
+      [EEntryKind.ToolsRan, 'Working…'],
     ])
   })
 
@@ -245,7 +245,7 @@ describe('a tool call that has only been streamed', () => {
 
     const entries = deriveTranscript({ events: [], signals }).entries
     expect(entries.length).toBe(1)
-    expect(entries[0]?.text).toBe('Reading files')
+    expect(entries[0]?.text).toBe('Working…')
   })
 
   it('hands over to the durable event without drawing the group twice', () => {
@@ -272,7 +272,7 @@ describe('a tool call that has only been streamed', () => {
 
     const once: (readonly [EEntryKind, string])[] = [
       [EEntryKind.ModelSaid, 'let me look'],
-      [EEntryKind.ToolsRan, 'Reading files'],
+      [EEntryKind.ToolsRan, 'Working…'],
     ]
 
     expect(frames.map((frame) => shapeOf(deriveTranscript(frame)))).toEqual([
@@ -310,7 +310,7 @@ describe('a tool call that has only been streamed', () => {
 
     expect(entry?.kind).toBe(EEntryKind.ToolsRan)
     if (entry?.kind !== EEntryKind.ToolsRan) throw new Error('the group was not projected')
-    expect(entry.group.state).toBe(EGroupState.Live)
+    expect(entry.run.calls.every((call) => !settled(call))).toBe(true)
     expect(entry.streaming).toBe(true)
   })
 })

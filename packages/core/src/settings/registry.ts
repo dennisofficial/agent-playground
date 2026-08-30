@@ -16,8 +16,12 @@ export enum ESettingId {
   NestedInstructions = 'context.nestedInstructions',
   ReloadInstructions = 'context.reload',
   AutoCompact = 'context.autoCompact',
+  FooterMeters = 'usage.meters',
+  WarnFiveHour = 'usage.warnFiveHour',
+  WarnWeekly = 'usage.warnWeekly',
   Accent = 'appearance.accent',
   BlockPadding = 'appearance.blockPadding',
+  ComposerEdge = 'appearance.composerEdge',
 }
 
 export const ATLAS_SETTINGS: readonly SettingDefinition[] = [
@@ -139,6 +143,52 @@ export const ATLAS_SETTINGS: readonly SettingDefinition[] = [
     unit: '%',
   },
   {
+    id: ESettingId.FooterMeters,
+    page: ESettingPage.General,
+    group: 'Usage meters',
+    label: 'Meters in the footer',
+    description:
+      'Which meters the footer carries. The context meter reports the window the current conversation occupies; the session and weekly meters report how much of the account\'s own rate limits have been spent, read from Anthropic rather than counted here. Narrowing this does not stop Atlas reading them, it stops the footer spelling them out.',
+    environmentVariable: 'ATLAS_FOOTER_METERS',
+    kind: ESettingKind.Choice,
+    fallback: 'all',
+    options: [
+      { value: 'all', label: 'all', detail: 'ctx · 5h · wk' },
+      { value: 'session', label: 'session', detail: 'ctx · 5h' },
+      { value: 'context', label: 'context only', detail: 'ctx' },
+    ],
+  },
+  {
+    id: ESettingId.WarnFiveHour,
+    page: ESettingPage.General,
+    group: 'Usage meters',
+    label: 'Warn on the session window at',
+    description:
+      'How much of the five-hour window may be spent before the footer stops being ambient and starts colouring the figure. The two bands above this one are spaced across whatever headroom is left, so moving this moves all of them.',
+    environmentVariable: 'ATLAS_WARN_FIVE_HOUR',
+    kind: ESettingKind.Range,
+    fallback: 65,
+    minimum: 0,
+    maximum: 100,
+    step: 5,
+    unit: '%',
+  },
+  {
+    id: ESettingId.WarnWeekly,
+    page: ESettingPage.General,
+    group: 'Usage meters',
+    label: 'Warn on the weekly window at',
+    description:
+      'The same threshold for the seven-day window. It earns attention later than the session window by default, because a two-thirds-spent week is simply Thursday, where a two-thirds-spent five hours is the one that walls you mid-task.',
+    environmentVariable: 'ATLAS_WARN_WEEKLY',
+    kind: ESettingKind.Range,
+    fallback: 70,
+    minimum: 0,
+    maximum: 100,
+    step: 5,
+    unit: '%',
+  },
+  {
     id: ESettingId.Accent,
     page: ESettingPage.Appearance,
     group: 'Colour',
@@ -168,6 +218,22 @@ export const ATLAS_SETTINGS: readonly SettingDefinition[] = [
     options: [
       { value: 'comfort', label: 'comfort', detail: 'shipped' },
       { value: 'compact', label: 'compact' },
+    ],
+  },
+  {
+    id: ESettingId.ComposerEdge,
+    page: ESettingPage.Appearance,
+    group: 'Composer',
+    label: 'Composer edge',
+    description:
+      'How the draft separates itself from the transcript above it. Slab gives the composer a darker ground of its own and opens it on a half row, marked down the left by the accent rail. Bordered drops that second ground and draws a thin accent frame on all four sides instead, with the session title set into the top edge. Claude keeps those two rules and drops the sides, leading the draft with a prompt caret at the margin.',
+    environmentVariable: 'ATLAS_COMPOSER_EDGE',
+    kind: ESettingKind.Choice,
+    fallback: 'slab',
+    options: [
+      { value: 'slab', label: 'slab', detail: 'shipped' },
+      { value: 'bordered', label: 'bordered' },
+      { value: 'claude', label: 'claude' },
     ],
   },
 ]

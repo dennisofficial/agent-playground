@@ -1,13 +1,25 @@
 import type { KeyBinding } from '@opentui/core'
-import React, { useCallback, useLayoutEffect, useState } from 'react'
+import React, { useCallback, useLayoutEffect, useRef, useState } from 'react'
 
+import { composerEdge, EComposerEdge } from '../composer-edge-store'
+import { charRangeOf } from '../highlight-offsets'
+import { mentionStyleId, mentionSyntaxStyle } from '../mention-style'
 import type { DraftControls } from '../hooks/use-draft'
 import { cellsOf } from '../hint-layout'
-import { theme } from '../theme'
+import { glyph, theme } from '../theme'
+import { EFrameRule, Frame, FRAME_INSET, FRAME_PAD } from './frame'
+import { NoticeSlab } from './notice-slab'
 import { Panel, PANEL_INSET, PANEL_PAD } from './panel'
 import { truncateCells } from './sidebar/cells'
 
 const DEFAULT_MAX_ROWS = 8
+
+export type HighlightSpan = { start: number; end: number }
+
+const NOTHING_HIGHLIGHTED: readonly HighlightSpan[] = []
+
+const spanKey = (spans: readonly HighlightSpan[]): string =>
+  spans.map((span) => `${span.start}:${span.end}`).join(',')
 
 export function composerRows(height: number): number {
   return Math.max(DEFAULT_MAX_ROWS, Math.floor(height / 2) - 2)
@@ -47,6 +59,12 @@ const ATLAS_BINDINGS: KeyBinding[] = [
 
 const CHROME_COLUMNS = PANEL_INSET + PANEL_PAD
 
+const FRAME_CHROME_COLUMNS = FRAME_INSET + FRAME_PAD + 1
+
+const CARET_COLUMNS = 2
+
+const CARET_CHROME_COLUMNS = CARET_COLUMNS + FRAME_PAD
+
 const UNBOUNDED = 10_000
 
 const overflowBadge = (hidden: number): string =>
@@ -58,21 +76,55 @@ const TITLE_MIN_CELLS = 8
 
 const RAIL_COLUMNS = 1
 
+const CLOSING_RULE_COLUMNS = 1
+
+const chromeColumns = (edge: EComposerEdge): number => {
+  if (edge === EComposerEdge.Bordered) return FRAME_CHROME_COLUMNS
+  if (edge === EComposerEdge.Claude) return CARET_CHROME_COLUMNS
+  return CHROME_COLUMNS
+}
+
 const TITLE_RUNWAY = 4
+
+const NOTICE_RUNWAY = 2
 
 const slabCells = (text: string): number => cellsOf(text) + TITLE_PAD * 2
 
+export function composerNoticeCells(args: {
+  width: number
+  badge: string | null
+  title: string | null
+  edge?: EComposerEdge
+}): number {
+  const closing = args.edge === EComposerEdge.Bordered ? CLOSING_RULE_COLUMNS : 0
+  const spent =
+    PANEL_PAD * 2 +
+    closing +
+    NOTICE_RUNWAY +
+    (args.badge === null ? 0 : slabCells(args.badge) + 1) +
+    (args.title === null ? 0 : slabCells(args.title))
+
+  return Math.max(0, args.width - spent)
+}
+
 /**
  * The head row is shared: whatever the badge takes, plus the `▄` between them, is gone before the
- * title starts. Below `TITLE_MIN_CELLS` of what is left there is no title worth truncating to.
+ * title starts. Below `TITLE_MIN_CELLS` of what is left there is no title worth truncating to. A
+ * bordered composer closes the row on a corner as well, so it has one column less to give.
  */
 export function composerTitle(args: {
   title: string
   width: number
   badge: string | null
+  edge?: EComposerEdge
 }): string | null {
+  const closing = args.edge === EComposerEdge.Bordered ? CLOSING_RULE_COLUMNS : 0
   const spent =
-    RAIL_COLUMNS + TITLE_RUNWAY + PANEL_PAD + (args.badge === null ? 0 : slabCells(args.badge) + 1)
+    RAIL_COLUMNS +
+    TITLE_RUNWAY +
+    PANEL_PAD +
+    closing +
+    (args.badge === null ? 0 : slabCells(args.badge) + 1)
   const room = args.width - spent - TITLE_PAD * 2
   if (room < TITLE_MIN_CELLS) return null
 
@@ -87,10 +139,14 @@ export function Composer(props: {
   maxRows?: number
   focused?: boolean
   title?: string
+  highlights?: readonly HighlightSpan[]
 }): React.ReactNode {
   const tone = props.tone ?? EComposerTone.Idle
+  const edge = composerEdge()
   const maxRows = props.maxRows ?? DEFAULT_MAX_ROWS
   const [metrics, setMetrics] = useState({ rows: 1, total: 1 })
+
+  const chrome = chromeColumns(edge)
 
   const editor = props.draft.editor
   const sync = props.draft.sync
@@ -105,7 +161,7 @@ export function Composer(props: {
     const target = editor.current
     if (!target) return
     const measured = target.editorView.measureForDimensions(
-      Math.max(8, props.width - CHROME_COLUMNS),
+      Math.max(8, props.width - chrome),
       UNBOUNDED,
     )
     const total = Math.max(1, measured?.lineCount ?? 1)
@@ -113,7 +169,7 @@ export function Composer(props: {
     setMetrics((current) =>
       current.rows === rows && current.total === total ? current : { rows, total },
     )
-  }, [editor, maxRows, props.width])
+  }, [chrome, editor, maxRows, props.width])
 
   useLayoutEffect(() => {
     const target = editor.current
@@ -121,6 +177,37 @@ export function Composer(props: {
     target.cursorOffset = target.plainText.length
     measure()
   }, [editor, measure])
+
+  /**
+   * Highlights are held by the native edit buffer, not by React, so they are repainted whole on
+   * every edit rather than diffed. Repainting only when the spans change is not enough: the buffer
+   * grows a highlight to cover text inserted against its end, so a mention would swallow whatever
+   * was typed after it. Observed against @opentui/core 0.4.5.
+   */
+  const highlights = props.highlights ?? NOTHING_HIGHLIGHTED
+  const painted = useRef(highlights)
+  painted.current = highlights
+  const highlightKey = spanKey(highlights)
+  const drafted = props.draft.value
+
+  useLayoutEffect(() => {
+    const target = editor.current
+    if (!target) return
+
+    const style = mentionSyntaxStyle()
+    if (target.syntaxStyle !== style) target.syntaxStyle = style
+
+    target.clearAllHighlights()
+
+    const styleId = mentionStyleId()
+    if (styleId === null) return
+
+    const text = target.plainText
+    for (const span of painted.current) {
+      const range = charRangeOf({ text, span })
+      target.addHighlightByCharRange({ start: range.start, end: range.end, styleId })
+    }
+  }, [drafted, editor, highlightKey])
 
   const handleChange = useCallback(() => {
     const target = editor.current
@@ -134,13 +221,62 @@ export function Composer(props: {
   const title =
     props.title === undefined
       ? null
-      : composerTitle({ title: props.title, width: props.width, badge })
+      : composerTitle({ title: props.title, width: props.width, badge, edge })
+
+  const noticeCells = composerNoticeCells({ width: props.width, badge, title, edge })
+
+  const draft = (
+    <textarea
+      ref={editor}
+      initialValue={props.draft.initial}
+      focused={props.focused !== false}
+      flexGrow={1}
+      wrapMode="word"
+      height={metrics.rows}
+      textColor={theme.userFg}
+      cursorColor={theme.caretBg}
+      keyBindings={ATLAS_BINDINGS}
+      {...(props.placeholder === undefined ? {} : { placeholder: props.placeholder })}
+      placeholderColor={theme.hint}
+      onContentChange={handleChange}
+      onCursorChange={measure}
+    />
+  )
+
+  if (edge === EComposerEdge.Bordered || edge === EComposerEdge.Claude) {
+    return (
+      <Frame
+        width={props.width}
+        colour={railColour(tone)}
+        {...(edge === EComposerEdge.Claude
+          ? {
+              rule: EFrameRule.Open,
+              lead: (
+                <box width={CARET_COLUMNS} flexShrink={0}>
+                  <text fg={railColour(tone)}>{glyph.user}</text>
+                </box>
+              ),
+            }
+          : {})}
+        label={<NoticeSlab bg={theme.appBg} cells={noticeCells} />}
+        {...(badge === null
+          ? {}
+          : { badge: <text fg={theme.hint} bg={theme.appBg}>{` ${badge} `}</text> })}
+        {...(title === null
+          ? {}
+          : { title: <text fg={theme.caretFg} bg={railColour(tone)}>{` ${title} `}</text> })}
+      >
+        {draft}
+      </Frame>
+    )
+  }
 
   return (
     <Panel
       width={props.width}
       rail={railColour(tone)}
       fill={theme.panelBg}
+      label={<NoticeSlab bg={theme.panelBg} cells={noticeCells} />}
       {...(badge === null
         ? {}
         : { badge: <text fg={theme.hint} bg={theme.panelBg}>{` ${badge} `}</text> })}
@@ -148,21 +284,7 @@ export function Composer(props: {
         ? {}
         : { title: <text fg={theme.body} bg={theme.panelBg}>{` ${title} `}</text> })}
     >
-      <textarea
-        ref={editor}
-        initialValue={props.draft.initial}
-        focused={props.focused !== false}
-        flexGrow={1}
-        wrapMode="word"
-        height={metrics.rows}
-        textColor={theme.userFg}
-        cursorColor={theme.caretBg}
-        keyBindings={ATLAS_BINDINGS}
-        {...(props.placeholder === undefined ? {} : { placeholder: props.placeholder })}
-        placeholderColor={theme.hint}
-        onContentChange={handleChange}
-        onCursorChange={measure}
-      />
+      {draft}
     </Panel>
   )
 }

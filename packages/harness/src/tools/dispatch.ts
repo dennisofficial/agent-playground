@@ -97,7 +97,7 @@ export class HookedToolDispatcher extends ToolDispatcher {
     })
 
     return [
-      this.resultDraft({ call: allowed, result }),
+      this.resultDraft({ call: allowed, result, interrupted: signal.aborted }),
       ...(await this.observeAfterTool({ call: allowed, result })),
     ]
   }
@@ -203,7 +203,7 @@ export class HookedToolDispatcher extends ToolDispatcher {
     return observed
   }
 
-  private resultDraft(args: { call: ToolCall; result: ToolOutcome }): EventDraft {
+  private resultDraft(args: { call: ToolCall; result: ToolOutcome; interrupted: boolean }): EventDraft {
     if (args.result.ok) {
       return {
         type: 'tool-result',
@@ -220,6 +220,7 @@ export class HookedToolDispatcher extends ToolDispatcher {
       name: args.call.name,
       output: undefined,
       error: { message: args.result.reason },
+      ...(args.interrupted ? { interrupted: true } : {}),
     }
   }
 }

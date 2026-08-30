@@ -13,8 +13,9 @@ void mock.module('../../clipboard', () => ({
   },
 }))
 
-const { NoticeLine } = await import('../../components/notice-line')
+const { NoticeSlab } = await import('../../components/notice-slab')
 const { dismissNotice } = await import('../../notice-store')
+const { theme } = await import('../../theme')
 const { useCopyOnSelect } = await import('../use-copy-on-select')
 const { useWordSelect } = await import('../use-word-select')
 
@@ -34,7 +35,7 @@ function Harness(): React.ReactNode {
     <box flexDirection="column" onMouse={handleMouse}>
       <text>{FIRST}</text>
       <text>{SECOND}</text>
-      <NoticeLine width={WIDTH} />
+      <NoticeSlab bg={theme.appBg} cells={WIDTH} />
     </box>
   )
 }

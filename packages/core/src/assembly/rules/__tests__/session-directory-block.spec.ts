@@ -36,7 +36,7 @@ describe('telling the model where the session actually is', () => {
     const texts = textsOf(assembled)
 
     expect(texts.at(-1)).toContain('/w/packages/core')
-    expect(texts.at(-1)).toContain('without opening it with cd')
+    expect(texts.at(-1)).toContain('rather than another cd')
     expect(texts.slice(0, -1)).toEqual(['hello', 'much later'])
   })
 

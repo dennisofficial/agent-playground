@@ -23,16 +23,21 @@ const TAKE_BACK = '↑ to edit'
 const skillLine = (skills: readonly string[]): string =>
   `${glyph.result} ${skills.length === 1 ? 'skill' : 'skills'} ${skills.join(', ')}`
 
+const fileLine = (files: readonly string[]): string =>
+  `${glyph.result} ${files.length === 1 ? 'file' : 'files'} ${files.join(', ')}`
+
 export function UserBlock(props: {
   said: readonly string[]
   width: number
   mark?: EUserMark
   takeBack?: boolean
   skills?: readonly string[]
+  files?: readonly string[]
 }): React.ReactNode {
   const columns = Math.max(NARROWEST_BAND, props.width - RESERVED)
   const mark = MARK_TEXT[props.mark ?? EUserMark.Plain]
   const skills = props.skills ?? []
+  const files = props.files ?? []
 
   return (
     <box flexDirection="column" marginBottom={1} flexShrink={0}>
@@ -68,6 +73,11 @@ export function UserBlock(props: {
       {skills.length === 0 ? null : (
         <box paddingLeft={PANEL_PAD}>
           <text fg={theme.meta}>{skillLine(skills)}</text>
+        </box>
+      )}
+      {files.length === 0 ? null : (
+        <box paddingLeft={PANEL_PAD}>
+          <text fg={theme.meta}>{fileLine(files)}</text>
         </box>
       )}
     </box>

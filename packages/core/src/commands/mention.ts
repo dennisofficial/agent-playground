@@ -1,55 +1,10 @@
-export type Mention = { start: number; end: number; name: string }
+import { codeSpanRanges, rangesCover } from '../text/backticks'
 
-type Range = { start: number; end: number }
-type Run = Range & { length: number }
+export type Mention = { start: number; end: number; name: string }
 
 const isSpace = (character: string): boolean => /\s/.test(character)
 const startsName = (character: string): boolean => /[A-Za-z]/.test(character)
 const continuesName = (character: string): boolean => /[A-Za-z0-9:-]/.test(character)
-
-function backtickRuns(text: string): readonly Run[] {
-  const runs: Run[] = []
-  let index = 0
-
-  while (index < text.length) {
-    if (text[index] !== '`') {
-      index += 1
-      continue
-    }
-
-    const start = index
-    while (index < text.length && text[index] === '`') index += 1
-    runs.push({ start, end: index, length: index - start })
-  }
-
-  return runs
-}
-
-function suppressedRanges(text: string): readonly Range[] {
-  const runs = backtickRuns(text)
-  const ranges: Range[] = []
-  let index = 0
-
-  while (index < runs.length) {
-    const open = runs[index]
-    if (open === undefined) break
-
-    const closingAt = runs.findIndex((run, at) => at > index && run.length === open.length)
-    const closing = closingAt === -1 ? undefined : runs[closingAt]
-    if (closing === undefined) {
-      index += 1
-      continue
-    }
-
-    ranges.push({ start: open.start, end: closing.end })
-    index = closingAt + 1
-  }
-
-  return ranges
-}
-
-const covers = ({ ranges, at }: { ranges: readonly Range[]; at: number }): boolean =>
-  ranges.some((range) => at >= range.start && at < range.end)
 
 function nameAt({ text, from }: { text: string; from: number }): Mention | null {
   const head = text[from]
@@ -69,7 +24,7 @@ function nameAt({ text, from }: { text: string; from: number }): Mention | null 
 }
 
 export function mentionSpans(text: string): readonly Mention[] {
-  const suppressed = suppressedRanges(text)
+  const suppressed = codeSpanRanges(text)
   const mentions: Mention[] = []
   let index = 0
 
@@ -97,7 +52,7 @@ export function mentionSpans(text: string): readonly Mention[] {
       continue
     }
 
-    if (!covers({ ranges: suppressed, at: index })) mentions.push(found)
+    if (!rangesCover({ ranges: suppressed, at: index })) mentions.push(found)
     index = found.end
   }
 

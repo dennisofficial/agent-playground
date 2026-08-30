@@ -23,13 +23,30 @@ export type ThreadSummary = {
   createdAt: string
   updatedAt: string
   parent?: { threadId: ThreadId; forkSeq: number } | undefined
+  workspace: string | null
+  repo: string | null
 }
 
+export const THREAD_LISTING_LIMIT = 50
+
 export abstract class ThreadStorePort {
-  abstract create(args: { title?: string | undefined }): Promise<ThreadSummary>
+  abstract create(args: {
+    title?: string | undefined
+    workspace?: string | undefined
+    repo?: string | null | undefined
+  }): Promise<ThreadSummary>
   abstract find(args: { threadId: ThreadId }): Promise<ThreadSummary | undefined>
-  abstract mostRecent(): Promise<ThreadSummary | undefined>
+  abstract mostRecent(args: { workspace: string }): Promise<ThreadSummary | undefined>
+  abstract list(args: {
+    workspace: string
+    limit?: number | undefined
+  }): Promise<readonly ThreadSummary[]>
   abstract rename(args: { threadId: ThreadId; title: string }): Promise<void>
+  abstract adopt(args: {
+    threadId: ThreadId
+    workspace: string
+    repo: string | null
+  }): Promise<void>
   abstract rewind(args: { threadId: ThreadId; toSeq: number }): Promise<void>
   abstract compact(args: {
     threadId: ThreadId
@@ -63,6 +80,8 @@ type ThreadRow = {
   updatedAt: string
   parentThreadId: string | null
   forkSeq: number | null
+  workspace: string | null
+  repo: string | null
 }
 
 @injectable()
@@ -73,7 +92,15 @@ export class PrismaThreadStore implements ThreadStorePort {
     private readonly ids: IdPort,
   ) {}
 
-  async create({ title }: { title?: string | undefined }): Promise<ThreadSummary> {
+  async create({
+    title,
+    workspace,
+    repo,
+  }: {
+    title?: string | undefined
+    workspace?: string | undefined
+    repo?: string | null | undefined
+  }): Promise<ThreadSummary> {
     const at = this.clock.now()
     const row = await this.prisma.thread.create({
       data: {
@@ -81,6 +108,8 @@ export class PrismaThreadStore implements ThreadStorePort {
         createdAt: at,
         updatedAt: at,
         ...(title === undefined ? {} : { title }),
+        ...(workspace === undefined ? {} : { workspace }),
+        ...(repo === undefined ? {} : { repo }),
       },
     })
     return toThreadSummary(row)
@@ -91,13 +120,43 @@ export class PrismaThreadStore implements ThreadStorePort {
     return row === null ? undefined : toThreadSummary(row)
   }
 
-  async mostRecent(): Promise<ThreadSummary | undefined> {
-    const row = await this.prisma.thread.findFirst({ orderBy: { updatedAt: 'desc' } })
+  async mostRecent({ workspace }: { workspace: string }): Promise<ThreadSummary | undefined> {
+    const row = await this.prisma.thread.findFirst({
+      where: { workspace },
+      orderBy: { updatedAt: 'desc' },
+    })
     return row === null ? undefined : toThreadSummary(row)
+  }
+
+  async list({
+    workspace,
+    limit = THREAD_LISTING_LIMIT,
+  }: {
+    workspace: string
+    limit?: number | undefined
+  }): Promise<readonly ThreadSummary[]> {
+    const rows = await this.prisma.thread.findMany({
+      where: { workspace },
+      orderBy: { updatedAt: 'desc' },
+      take: limit,
+    })
+    return rows.map(toThreadSummary)
   }
 
   async rename({ threadId, title }: { threadId: ThreadId; title: string }): Promise<void> {
     await this.prisma.thread.update({ where: { id: threadId }, data: { title } })
+  }
+
+  async adopt({
+    threadId,
+    workspace,
+    repo,
+  }: {
+    threadId: ThreadId
+    workspace: string
+    repo: string | null
+  }): Promise<void> {
+    await this.prisma.thread.update({ where: { id: threadId }, data: { workspace, repo } })
   }
 
   async rewind({ threadId, toSeq }: { threadId: ThreadId; toSeq: number }): Promise<void> {
@@ -210,6 +269,8 @@ function toThreadSummary(row: ThreadRow): ThreadSummary {
     head: row.head,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    workspace: row.workspace,
+    repo: row.repo,
     ...(row.title === null ? {} : { title: row.title }),
     ...(row.parentThreadId === null || row.forkSeq === null
       ? {}

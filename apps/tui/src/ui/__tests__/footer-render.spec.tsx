@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'bun:test'
 import React from 'react'
 
+import { EMeterBand } from '@dltech/atlas-core'
+
 import { Footer } from '../components/footer'
-import { CONTEXT_BAR_CELLS, CONTEXT_BAR_GLYPH } from '../context-bar'
 import { cellsOf } from '../hint-layout'
 import { frameOf } from './transcript-fixture'
 
@@ -10,10 +11,16 @@ const MODEL = 'haiku-4-5'
 
 const WIDTHS = [24, 40, 60, 80, 120, 200] as const
 
+const METERS = [
+  { label: '5h', band: EMeterBand.Normal, text: '34%' },
+  { label: 'wk', band: EMeterBand.Spent, text: '2h14m' },
+] as const
+
 const footer = (props: {
   width: number
   percent?: number
-  tokensLeft?: number
+  tokensUsed?: number
+  meters?: readonly { label: string; band: EMeterBand; text: string }[]
 }): React.ReactNode => (
   <Footer
     width={props.width}
@@ -24,7 +31,8 @@ const footer = (props: {
       : {
           context: {
             percent: props.percent,
-            ...(props.tokensLeft === undefined ? {} : { tokensLeft: props.tokensLeft }),
+            ...(props.tokensUsed === undefined ? {} : { tokensUsed: props.tokensUsed }),
+            ...(props.meters === undefined ? {} : { meters: props.meters }),
           },
         })}
   />
@@ -39,18 +47,37 @@ const rowsOf = (frame: string): string[] =>
 describe('the footer', () => {
   it('never lets a row run past the terminal', async () => {
     for (const width of WIDTHS) {
-      const frame = await frameOf(footer({ width, percent: 62, tokensLeft: 124_000 }), width)
+      const frame = await frameOf(footer({ width, percent: 62, tokensUsed: 124_000 }), width)
       for (const row of frame.split('\n')) expect(cellsOf(row.trimEnd())).toBeLessThanOrEqual(width)
     }
   })
 
-  it('reads as one row of model, effort and pressure', async () => {
-    const frame = await frameOf(footer({ width: 140, percent: 62, tokensLeft: 124_000 }), 140)
+  it('keeps what is answering on the left and what it is spending on the right', async () => {
+    const frame = await frameOf(footer({ width: 140, percent: 62, tokensUsed: 124_000 }), 140)
     const rows = rowsOf(frame)
     expect(rows).toHaveLength(1)
     const row = rows[0] ?? ''
-    expect(row.trimStart()).toStartWith(`${MODEL} · med · `)
-    expect(row).toEndWith('124.0k left')
+    expect(row.trimStart()).toStartWith(`${MODEL} · med`)
+    expect(row).toEndWith('124.0k ctx · 62%')
+    expect(row).toContain('   ')
+  })
+
+  it('pushes the read-out to the far edge rather than trailing the model', async () => {
+    const width = 140
+    const frame = await frameOf(footer({ width, percent: 62, tokensUsed: 124_000 }), width)
+    const row = rowsOf(frame)[0] ?? ''
+    expect(cellsOf(row)).toBe(width - 3)
+  })
+
+  it('reports the account windows alongside the context one', async () => {
+    const frame = await frameOf(
+      footer({ width: 160, percent: 62, tokensUsed: 124_000, meters: METERS }),
+      160,
+    )
+    const row = rowsOf(frame)[0] ?? ''
+    expect(row).toContain('124.0k ctx')
+    expect(row).toContain('5h 34%')
+    expect(row).toEndWith('wk 2h14m')
   })
 
   it('names no keyboard shortcut — `?` on an empty draft does that', async () => {
@@ -59,9 +86,10 @@ describe('the footer', () => {
     expect(frame).not.toContain('ctrl+')
   })
 
-  it('draws the meter as one unbroken run of cells', async () => {
-    const frame = await frameOf(footer({ width: 120, percent: 62 }), 120)
-    expect(frame).toContain(`${CONTEXT_BAR_GLYPH.repeat(CONTEXT_BAR_CELLS)} 62%`)
+  it('draws no gauge — the figures carry the reading now', async () => {
+    const frame = await frameOf(footer({ width: 120, percent: 62, tokensUsed: 124_000 }), 120)
+    expect(frame).not.toContain('█')
+    expect(frame).toContain('124.0k ctx · 62%')
   })
 
   it('spells out the consequence once the window is under pressure', async () => {
@@ -73,7 +101,7 @@ describe('the footer', () => {
     const frame = await frameOf(<Footer width={100} model={MODEL} />, 100)
     const rows = rowsOf(frame)
     expect(rows).toHaveLength(1)
-    expect(frame).not.toContain(CONTEXT_BAR_GLYPH)
+    expect(frame).not.toContain('█')
     expect(frame).not.toContain('%')
   })
 })

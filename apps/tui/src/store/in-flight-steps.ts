@@ -1,7 +1,7 @@
 import { EBlockKind, type Chunk, type Event, type EventRef } from '@dltech/atlas-core'
 import { EStepEnd, type StepId, type StepSignal } from '@dltech/atlas-harness'
 
-import type { LiveToolCall } from './tool-groups'
+import type { LiveToolCall } from './tool-runs'
 
 export type StepBlock = { id: string; kind: EBlockKind; text: string }
 

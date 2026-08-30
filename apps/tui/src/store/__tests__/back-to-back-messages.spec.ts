@@ -24,6 +24,7 @@ describe('two messages sent one after the other', () => {
         said: ['are', 'you?'],
         steer: false,
     skills: [],
+    files: [],
       },
     ])
   })

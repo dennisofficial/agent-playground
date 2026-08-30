@@ -17,27 +17,44 @@ import type {
 
 const AT = '2026-08-25T00:00:00.000Z'
 
+export const FAKE_WORKSPACE = '/work'
+
 export type FakeThreadStore = ThreadStorePort & {
   readonly created: number
+  readonly createdWith: readonly { workspace: string | null; repo: string | null }[]
   readonly renames: readonly { threadId: ThreadId; title: string }[]
 }
 
 export function fakeThreadStore(
-  args: { existing?: readonly ThreadId[]; log?: FakeEventLog } = {},
+  args: {
+    existing?: readonly ThreadId[]
+    log?: FakeEventLog
+    workspace?: string | null
+    titles?: Readonly<Record<string, string>>
+  } = {},
 ): FakeThreadStore {
+  const workspaceOf = args.workspace === undefined ? FAKE_WORKSPACE : args.workspace
   const rows: ThreadSummary[] = (args.existing ?? []).map((id) => ({
     id,
     head: 0,
     createdAt: AT,
     updatedAt: AT,
+    workspace: workspaceOf,
+    repo: null,
+    ...(args.titles?.[id] === undefined ? {} : { title: args.titles[id] }),
   }))
 
   let created = 0
+  const createdWith: { workspace: string | null; repo: string | null }[] = []
   const renames: { threadId: ThreadId; title: string }[] = []
 
   return {
     get created() {
       return created
+    },
+
+    get createdWith() {
+      return createdWith
     },
 
     get renames() {
@@ -72,25 +89,31 @@ export function fakeThreadStore(
 
     async fork({ from, seq, title }) {
       created += 1
+      const source = rows.find((row) => row.id === from)
       const row: ThreadSummary = {
         id: toThreadId(`forked-${created}`),
         head: seq,
         createdAt: AT,
         updatedAt: AT,
         parent: { threadId: from, forkSeq: seq },
+        workspace: source?.workspace ?? workspaceOf,
+        repo: source?.repo ?? null,
         ...(title === undefined ? {} : { title }),
       }
       rows.push(row)
       return row
     },
 
-    async create() {
+    async create({ workspace, repo } = {}) {
       created += 1
+      createdWith.push({ workspace: workspace ?? null, repo: repo ?? null })
       const row: ThreadSummary = {
         id: toThreadId(`made-${created}`),
         head: 0,
         createdAt: AT,
         updatedAt: AT,
+        workspace: workspace ?? workspaceOf,
+        repo: repo ?? null,
       }
       rows.push(row)
       return row
@@ -100,14 +123,27 @@ export function fakeThreadStore(
       return rows.find((row) => row.id === threadId)
     },
 
-    async mostRecent() {
-      return rows.at(-1)
+    async mostRecent({ workspace }) {
+      return rows.filter((row) => row.workspace === workspace).at(-1)
+    },
+
+    async list({ workspace, limit }) {
+      const scoped = rows.filter((row) => row.workspace === workspace).reverse()
+      return limit === undefined ? scoped : scoped.slice(0, limit)
     },
 
     async rename({ threadId, title }) {
       renames.push({ threadId, title })
       const row = rows.find((held) => held.id === threadId)
       if (row !== undefined) row.title = title
+    },
+
+    async adopt({ threadId, workspace, repo }) {
+      const row = rows.find((held) => held.id === threadId)
+      if (row === undefined) return
+
+      row.workspace = workspace
+      row.repo = repo
     },
 
     async rewind({ threadId, toSeq }) {

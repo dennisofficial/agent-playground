@@ -2,7 +2,7 @@ import { EContextSlot, type AssistantPart, type CallId, type Event, type EventId
 
 import { modelEntries } from './model-entries'
 import { shellEndedLine, shellEndingFailed } from './shell-ended-line'
-import { toolGroups, type ToolGroup } from './tool-groups'
+import { toolRuns, type ToolRun } from './tool-runs'
 import type { TurnSpend } from '@dltech/atlas-harness'
 import { EAuthor, EEntryKind, toolsRanEntry, type TranscriptEntry } from './transcript-model'
 import { turnEndedEntry, turnsBySeq } from './turn-rows'
@@ -48,18 +48,27 @@ function saidWhileToolsWereOutstanding(events: readonly Event[]): ReadonlySet<Ev
   return steers
 }
 
-function skillsLoadedWith(events: readonly Event[]): ReadonlyMap<EventId, readonly string[]> {
-  const attached = new Map<EventId, readonly string[]>()
-  let loaded: string[] = []
+type AttachedContext = { skills: readonly string[]; files: readonly string[] }
+
+const NOTHING_ATTACHED: AttachedContext = { skills: [], files: [] }
+
+function contextLoadedWith(events: readonly Event[]): ReadonlyMap<EventId, AttachedContext> {
+  const attached = new Map<EventId, AttachedContext>()
+  let skills: string[] = []
+  let files: string[] = []
 
   for (const event of events) {
     if (event.type === 'context-loaded') {
-      if (event.slot === EContextSlot.Skill) loaded.push(event.key)
+      if (event.slot === EContextSlot.Skill) skills.push(event.key)
+      if (event.slot === EContextSlot.File) files.push(event.key)
       continue
     }
 
-    if (event.type === 'user-said' && loaded.length > 0) attached.set(event.id, loaded)
-    loaded = []
+    if (event.type === 'user-said' && skills.length + files.length > 0) {
+      attached.set(event.id, { skills, files })
+    }
+    skills = []
+    files = []
   }
 
   return attached
@@ -81,6 +90,7 @@ function inOneBreath(entries: readonly TranscriptEntry[]): TranscriptEntry[] {
       text: `${open.text}\n${entry.text}`,
       said: [...open.said, ...entry.said],
       skills: [...new Set([...open.skills, ...entry.skills])],
+      files: [...new Set([...open.files, ...entry.files])],
     }
     return folded
   }, [])
@@ -91,11 +101,9 @@ export function durableEntries(args: {
   turns?: readonly TurnSpend[] | undefined
 }): TranscriptEntry[] {
   const { events } = args
-  const opened = new Map<string, ToolGroup>(
-    toolGroups(events).map((group) => [group.openedBy, group]),
-  )
+  const opened = new Map<string, ToolRun>(toolRuns(events).map((run) => [run.openedBy, run]))
   const steers = saidWhileToolsWereOutstanding(events)
-  const loaded = skillsLoadedWith(events)
+  const loaded = contextLoadedWith(events)
   const turns = turnsBySeq({ events, turns: args.turns ?? [] })
 
   const entriesOfEvent = (event: Event): TranscriptEntry[] => {
@@ -108,7 +116,8 @@ export function durableEntries(args: {
           text: event.text,
           said: [event.text],
           steer: steers.has(event.id),
-          skills: loaded.get(event.id) ?? [],
+          skills: (loaded.get(event.id) ?? NOTHING_ATTACHED).skills,
+          files: (loaded.get(event.id) ?? NOTHING_ATTACHED).files,
         },
       ]
     }
@@ -116,8 +125,8 @@ export function durableEntries(args: {
     if (event.type === 'assistant-said') return entriesOfAssistantEvent(event)
 
     if (event.type === 'tool-called') {
-      const group = opened.get(event.callId)
-      return group === undefined ? [] : [toolsRanEntry(group)]
+      const run = opened.get(event.callId)
+      return run === undefined ? [] : [toolsRanEntry(run)]
     }
 
     if (event.type === 'background-shell-ended') {

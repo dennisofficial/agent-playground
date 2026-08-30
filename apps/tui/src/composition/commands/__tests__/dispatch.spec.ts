@@ -104,6 +104,62 @@ describe('dispatchSubmission', () => {
 
     expect(result.type === EDispatch.Send && result.drafts).toEqual([])
   })
+
+  it('attaches a file the developer mentioned', async () => {
+    const dispatched = await dispatchSubmission({
+      text: 'why is @src/app.ts broken',
+      commands: [],
+      skills: [],
+      loadFile: async (path) => ({ path, content: 'the file' }),
+    })
+
+    expect(dispatched).toEqual({
+      type: EDispatch.Send,
+      text: 'why is @src/app.ts broken',
+      drafts: [
+        {
+          type: 'context-loaded',
+          slot: EContextSlot.File,
+          key: 'src/app.ts',
+          content: 'the file',
+        },
+      ],
+    })
+  })
+
+  it('attaches a mentioned file alongside an invoked skill', async () => {
+    const dispatched = await dispatchSubmission({
+      text: '/review @src/app.ts',
+      commands: [],
+      skills: SKILLS,
+      loadFile: async (path) => ({ path, content: 'the file' }),
+    })
+
+    const slots =
+      dispatched.type === EDispatch.Send
+        ? dispatched.drafts.map((draft) =>
+            draft.type === 'context-loaded' ? draft.slot : draft.type,
+          )
+        : []
+    expect(slots).toEqual([EContextSlot.Skill, EContextSlot.File])
+  })
+
+  it('attaches nothing for a local command line', async () => {
+    const asked: string[] = []
+
+    const dispatched = await dispatchSubmission({
+      text: '/demo @src/app.ts',
+      commands: [commandThat(() => RAN)],
+      skills: [],
+      loadFile: async (path) => {
+        asked.push(path)
+        return { path, content: 'the file' }
+      },
+    })
+
+    expect(dispatched).toEqual({ type: EDispatch.Ran })
+    expect(asked).toEqual([])
+  })
 })
 
 describe('localCommands', () => {
@@ -118,6 +174,7 @@ describe('localCommands', () => {
       onOpenSettings: handler,
       onOpenAccounts: handler,
       onNewConversation: handler,
+      onOpenThreads: handler,
     })
 
     expect(commands.length).toBeGreaterThan(0)
@@ -135,11 +192,12 @@ describe('localCommands', () => {
       onOpenSettings: handler,
       onOpenAccounts: handler,
       onNewConversation: handler,
+      onOpenThreads: handler,
     })
 
     const settled = commands.filter((one) => one.timing === ECommandTiming.Settled)
 
-    expect(settled.map((one) => one.name).sort()).toEqual(['compact', 'new'])
+    expect(settled.map((one) => one.name).sort()).toEqual(['compact', 'new', 'resume'])
   })
 })
 
@@ -155,6 +213,7 @@ describe('the compact command and its scope', () => {
       onOpenSettings: handler,
       onOpenAccounts: handler,
       onNewConversation: handler,
+      onOpenThreads: handler,
     })
   }
 
@@ -218,6 +277,7 @@ describe('the compact command and its scope', () => {
       onOpenSettings: handler,
       onOpenAccounts: handler,
       onNewConversation: handler,
+      onOpenThreads: handler,
     })
 
     await dispatchSubmission({ text: '/rewind', commands, skills: [], working: true })
@@ -225,4 +285,3 @@ describe('the compact command and its scope', () => {
     expect(opened).toEqual(['rewind'])
   })
 })
-

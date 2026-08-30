@@ -1,7 +1,3 @@
-import { join } from 'node:path'
-
-import { atlasDirectory } from '@dltech/atlas-harness'
-
 export const DEFAULT_MODEL_ID = 'claude-haiku-4-5-20251001'
 
 export const TITLER_MODEL_ID = 'claude-haiku-4-5-20251001'
@@ -10,20 +6,29 @@ export const SUMMARISER_MODEL_ID = 'claude-sonnet-5'
 
 export const DEFAULT_THINKING_BUDGET_TOKENS = 2048
 
-export const DEV_DATABASE_NAME = 'dev.db'
+export enum EOpenMode {
+  New = 'new',
+  Continue = 'continue',
+  Resume = 'resume',
+}
+
+export type OpenRequest =
+  | { mode: EOpenMode.New }
+  | { mode: EOpenMode.Continue }
+  | { mode: EOpenMode.Resume; threadId: string }
 
 export type AtlasConfig = {
   modelId: string | undefined
   databaseUrl: string
   keychainService: string | undefined
   thinkingBudgetTokens: number | undefined
-  freshConversation: boolean
+  open: OpenRequest
   cwd: string
 }
 
-export const devDatabaseUrl = (): string => `file:${join(atlasDirectory(), DEV_DATABASE_NAME)}`
+const CONTINUE_FLAGS: readonly string[] = ['--continue', '-c']
 
-const FRESH_FLAGS: readonly string[] = ['--new', '-n']
+const RESUME_FLAG = '--resume'
 
 const MODEL_FLAG = '--model'
 
@@ -33,12 +38,33 @@ const positiveInteger = (value: string | undefined): number | undefined => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
 }
 
-const modelFromArgv = (argv: readonly string[]): string | undefined => {
-  const flag = argv.indexOf(MODEL_FLAG)
-  if (flag < 0) return undefined
+const valueAfter = ({
+  argv,
+  flag,
+}: {
+  argv: readonly string[]
+  flag: string
+}): string | undefined => {
+  const at = argv.indexOf(flag)
+  if (at < 0) return undefined
 
-  const named = argv[flag + 1]
+  const named = argv[at + 1]
   return named === undefined || named.startsWith('-') ? undefined : named
+}
+
+const modelFromArgv = (argv: readonly string[]): string | undefined =>
+  valueAfter({ argv, flag: MODEL_FLAG })
+
+/**
+ * A launch opens a new thread unless it says otherwise, because resuming silently prepends the last
+ * conversation and bills for it on the first turn.
+ */
+const openFromArgv = (argv: readonly string[]): OpenRequest => {
+  const threadId = valueAfter({ argv, flag: RESUME_FLAG })
+  if (threadId !== undefined) return { mode: EOpenMode.Resume, threadId }
+
+  const asked = argv.includes(RESUME_FLAG) || argv.some((arg) => CONTINUE_FLAGS.includes(arg))
+  return asked ? { mode: EOpenMode.Continue } : { mode: EOpenMode.New }
 }
 
 const nonEmpty = (value: string | undefined): string | undefined =>
@@ -55,7 +81,7 @@ export function resolveConfig(args: {
     databaseUrl: nonEmpty(args.env.ATLAS_DATABASE_URL) ?? args.defaultDatabaseUrl,
     keychainService: nonEmpty(args.env.ATLAS_KEYCHAIN_SERVICE),
     thinkingBudgetTokens: positiveInteger(args.env.ATLAS_THINKING_BUDGET),
-    freshConversation: args.argv.some((arg) => FRESH_FLAGS.includes(arg)),
+    open: openFromArgv(args.argv),
     cwd: args.cwd,
   }
 }

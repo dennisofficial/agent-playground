@@ -28,6 +28,10 @@ function provenanceOf({ slot, key }: { slot: string; key: string }): string | un
     return `The ${key} skill, loaded because it was invoked:`
   }
 
+  if (slot === EContextSlot.File) {
+    return `Contents of ${key}, loaded because the developer mentioned it:`
+  }
+
   return undefined
 }
 

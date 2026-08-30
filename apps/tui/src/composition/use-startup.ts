@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useRenderer } from '@opentui/react'
+import { useCallback, useEffect, useState } from 'react'
 
 import { startupFrame, startupIsOver, type StartupFrame } from '../ui/startup-model'
 
@@ -10,20 +11,41 @@ export type StartupControl = {
   handleSkip: () => void
 }
 
+/**
+ * The ink is timed from the first frame the renderer actually paints, not from the mount that asked
+ * for it: everything between the two — the harness settling, the workspace's first layout, a
+ * terminal still answering the palette query — would otherwise be spent sweeping a screen nobody
+ * can see yet, and the operator would meet the wordmark half drawn.
+ */
 export function useStartup(args: { ready: boolean }): StartupControl {
-  const startedAt = useRef(Date.now())
+  const renderer = useRenderer()
+  const [startedAt, setStartedAt] = useState<number | null>(null)
   const [now, setNow] = useState(() => Date.now())
   const [readyAtMs, setReadyAtMs] = useState<number | null>(null)
   const [skippedAtMs, setSkippedAtMs] = useState<number | null>(null)
 
-  const sinceStart = useCallback(() => Date.now() - startedAt.current, [])
+  useEffect(() => {
+    const onFrame = (): void => setStartedAt((current) => current ?? Date.now())
+
+    renderer.on('frame', onFrame)
+    return () => void renderer.off('frame', onFrame)
+  }, [renderer])
+
+  const sinceStart = useCallback(
+    () => (startedAt === null ? 0 : Date.now() - startedAt),
+    [startedAt],
+  )
 
   useEffect(() => {
     if (!args.ready) return
     setReadyAtMs((current) => current ?? sinceStart())
   }, [args.ready, sinceStart])
 
-  const frame = startupFrame({ elapsedMs: now - startedAt.current, readyAtMs, skippedAtMs })
+  const frame = startupFrame({
+    elapsedMs: startedAt === null ? 0 : now - startedAt,
+    readyAtMs,
+    skippedAtMs,
+  })
   const over = startupIsOver(frame)
 
   useEffect(() => {

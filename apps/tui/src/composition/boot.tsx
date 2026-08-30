@@ -2,10 +2,13 @@ import { createCliRenderer, type CliRenderer } from '@opentui/core'
 import { createRoot, type Root } from '@opentui/react'
 import React from 'react'
 
+import { atlasDatabaseUrl } from '@dltech/atlas-harness'
+
 import { createBootProgress } from './boot-progress'
 import { BootScreen } from './boot-screen'
-import { devDatabaseUrl, resolveConfig } from './config'
+import { resolveConfig } from './config'
 import { ESession, openSession } from './open-session'
+import { resumeHint } from './resume-hint'
 
 const TARGET_FPS = 120
 
@@ -27,7 +30,7 @@ export async function bootAtlas(args: {
   env: Record<string, string | undefined>
   cwd: string
 }): Promise<number> {
-  const config = resolveConfig({ ...args, defaultDatabaseUrl: devDatabaseUrl() })
+  const config = resolveConfig({ ...args, defaultDatabaseUrl: atlasDatabaseUrl() })
   const progress = createBootProgress()
   const session = openSession({ config, env: args.env, progress })
 
@@ -64,7 +67,12 @@ export async function bootAtlas(args: {
   }
 
   renderer.on('destroy', () => {
-    void settled.app.close().finally(() => process.exit(0))
+    const hint = resumeHint(settled.app.activeThread())
+
+    void settled.app.close().finally(() => {
+      if (hint !== null) process.stdout.write(hint)
+      process.exit(0)
+    })
   })
 
   return STILL_RUNNING

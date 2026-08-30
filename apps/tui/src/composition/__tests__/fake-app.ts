@@ -1,9 +1,11 @@
 import {
+  AccountUsagePort,
   ATLAS_SETTINGS,
   EEffort,
   defaultPipeline,
   EMPTY_PROMPT,
   EFinishReason,
+  type AccountUsage,
   type Chunk,
   type ChunkFilter,
   EAuthKind,
@@ -19,6 +21,7 @@ import type { EventDraft } from '@dltech/atlas-core'
 import {
   AccountsService,
   builtinOauthClients,
+  createAccountUsageService,
   createDeltaChannel,
   memoryAccountStore,
   createSettingsService,
@@ -33,10 +36,13 @@ import {
   type ShellSnapshot,
 } from '@dltech/atlas-harness'
 
+import { FileBrowser } from '@dltech/atlas-harness'
+
 import { createPendingQueue } from '../../store'
 import type { AtlasApp } from '../compose'
+import type { ActiveConversation } from '../resume-hint'
 import { heldChoice } from '../model-selection'
-import { DEFAULT_MODEL_ID, type AtlasConfig } from '../config'
+import { DEFAULT_MODEL_ID, EOpenMode, type AtlasConfig } from '../config'
 import {
   fakeThreadStore,
   fakeEventLog,
@@ -51,7 +57,7 @@ export const FAKE_CONFIG: AtlasConfig = {
   databaseUrl: 'file::memory:',
   keychainService: undefined,
   thinkingBudgetTokens: 2048,
-  freshConversation: false,
+  open: { mode: EOpenMode.New },
   cwd: '/Users/dennis/Developer/atlas',
 }
 
@@ -85,9 +91,7 @@ const pieces = (text: string): string[] => {
 
 const chunksOf = (script: ScriptedReply): Chunk[] => [
   { type: 'reasoning-start', id: 'r' },
-  ...pieces(script.thinking).map(
-    (text): Chunk => ({ type: 'reasoning-delta', id: 'r', text }),
-  ),
+  ...pieces(script.thinking).map((text): Chunk => ({ type: 'reasoning-delta', id: 'r', text })),
   { type: 'reasoning-end', id: 'r' },
   { type: 'text-start', id: 't' },
   ...pieces(script.reply).map((text): Chunk => ({ type: 'text-delta', id: 't', text })),
@@ -102,10 +106,7 @@ const partsOf = (said: { thinking: string; reply: string }) => [
   ...(said.reply.length > 0 ? [{ type: 'text' as const, text: said.reply }] : []),
 ]
 
-export function scriptedModelPort(args: {
-  script: ScriptedReply
-  perChunkMs?: number
-}): ModelPort {
+export function scriptedModelPort(args: { script: ScriptedReply; perChunkMs?: number }): ModelPort {
   const perChunkMs = args.perChunkMs ?? 0
 
   return {
@@ -232,19 +233,17 @@ export function fakeShellRegistry(): FakeShells {
       if (handed.length === 0) return []
 
       settle(NO_NOTICES)
-      return handed.map(
-        (snapshot): EventDraft => ({
-          type: 'background-shell-ended',
-          shellId: snapshot.shellId,
-          command: snapshot.command,
-          description: snapshot.description,
-          status: snapshot.status,
-          exitCode: snapshot.exitCode,
-          output: `output of ${snapshot.shellId}`,
-          droppedCharacters: 0,
-          remainingCharacters: 0,
-        }),
-      )
+      return handed.map((snapshot): EventDraft => ({
+        type: 'background-shell-ended',
+        shellId: snapshot.shellId,
+        command: snapshot.command,
+        description: snapshot.description,
+        status: snapshot.status,
+        exitCode: snapshot.exitCode,
+        output: `output of ${snapshot.shellId}`,
+        droppedCharacters: 0,
+        remainingCharacters: 0,
+      }))
     },
 
     pendingNotices: () => ended,
@@ -280,6 +279,7 @@ export function fakeApp(args: {
   summarises?: string | null
   summariseDelayMs?: number
   skills?: readonly DiscoveredSkill[]
+  workspaceRoot?: string
 }): FakeApp {
   const channel = createDeltaChannel()
   const log = fakeEventLog()
@@ -302,11 +302,20 @@ export function fakeApp(args: {
   })
 
   let turnsDriven = 0
+  let marked: ActiveConversation | null = null
   const titled: string[] = []
 
   return {
     skills: args.skills ?? [],
+    files: new FileBrowser({ root: args.workspaceRoot ?? FAKE_CONFIG.cwd }),
     accounts: fakeAccounts(),
+    usage: createAccountUsageService({
+      usage: new (class extends AccountUsagePort {
+        async read(): Promise<AccountUsage | null> {
+          return null
+        }
+      })(),
+    }),
 
     get turnsDriven() {
       return turnsDriven
@@ -318,7 +327,11 @@ export function fakeApp(args: {
 
     ledger,
 
-    markActiveThread: () => undefined,
+    markActiveThread: (active) => {
+      marked = active
+    },
+
+    activeThread: () => marked,
 
     titler: async ({ text }) => {
       titled.push(text)
@@ -340,6 +353,7 @@ export function fakeApp(args: {
     },
 
     config: FAKE_CONFIG,
+    workspace: { workspace: FAKE_CONFIG.cwd, repo: null },
     credentials: alwaysAuthorised(),
     channel,
     log,

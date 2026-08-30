@@ -57,12 +57,14 @@ export const eventBodySchema: z.ZodType<EventBody> = z.discriminatedUnion('type'
     output: z.unknown().optional(),
     modelText: z.string().optional(),
     error: z.object({ message: z.string() }).optional(),
+    interrupted: z.boolean().optional(),
   }),
   z.object({
     type: z.literal('tool-denied'),
     callId: callIdSchema,
     name: z.string(),
     reason: z.string(),
+    interrupted: z.boolean().optional(),
   }),
   z.object({
     type: z.literal('approval-requested'),

@@ -94,13 +94,13 @@ describe('a step whose prompt would overflow the window', () => {
         })
 
         named = threadId
-        latestWhenAsked = (await harness.threads.mostRecent())?.id
+        latestWhenAsked = (await harness.threads.mostRecent({ workspace: '/work' }))?.id
         return false
       },
     })
 
-    const running = await harness.threads.create({})
-    const elsewhere = await harness.threads.create({})
+    const running = await harness.threads.create({ workspace: '/work' })
+    const elsewhere = await harness.threads.create({ workspace: '/work' })
 
     await harness.runner.say({ threadId: running.id, text: HUGE })
 

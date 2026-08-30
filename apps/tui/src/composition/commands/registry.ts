@@ -24,6 +24,7 @@ export type LocalCommandHandlers = {
   onOpenSettings: () => void
   onOpenAccounts: () => void
   onNewConversation: () => void
+  onOpenThreads: () => void
 }
 
 const local = (command: Omit<LocalCommand, 'kind'>): LocalCommand => ({
@@ -101,6 +102,17 @@ export function localCommands(handlers: LocalCommandHandlers): readonly LocalCom
       summary: 'go back to an earlier message, or summarise around it',
       group: ECommandGroup.Context,
       open: handlers.onRewind,
+    }),
+    local({
+      name: 'resume',
+      summary: 'switch to another conversation in this workspace',
+      group: ECommandGroup.Session,
+      timing: ECommandTiming.Settled,
+      echo: ECommandEcho.Silent,
+      run: () => {
+        handlers.onOpenThreads()
+        return RAN
+      },
     }),
     local({
       name: 'new',

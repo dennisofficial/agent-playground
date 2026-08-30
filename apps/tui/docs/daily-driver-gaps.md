@@ -18,36 +18,7 @@ mirroring from `task_write`, and an account vault that refreshes its own logins.
 
 ## P0 — blocks daily driving
 
-1. **Threads are not scoped to a workspace.** `Thread` still has no `cwd` column
-   (`harness/prisma/schema.prisma:16`) and `openConversation` calls `threads.mostRecent()`, which is
-   `findFirst({ orderBy: { updatedAt: 'desc' } })` across the whole database. Open Atlas in a second
-   repo and it resumes the conversation from the first one, with the wrong `CLAUDE.md` already in
-   the log. Needs a workspace column, a scoped `mostRecent`, and scoped listing.
-
-2. **No session picker and no thread listing.** `ThreadStorePort` exposes `mostRecent` and nothing
-   that lists. So there is no session history, and the only way to reach an older conversation is to
-   be the last one who touched it. `--new` / `/new` is the whole navigation story. `/resume` is free
-   for the picker: turn resumption is now the clickable resume block alone.
-
-3. **Nothing guards the filesystem any more, and nothing can approve.** Two halves of one hole:
-
-   - The working tree **removes `WorkspaceBoundaryHook`**. `hooks/boundary.ts`,
-     `hooks/__tests__/boundary.spec.ts` and `tools/__tests__/containment.spec.ts` are deleted and
-     `registerBuiltinHooks` no longer binds it, leaving `ReadBeforeWriteHook` as the only
-     `BeforeToolHook` — and it checks staleness, not location. So `write` / `edit` outside the
-     workspace root is now unchecked, where it used to be denied. Deliberate or not, it is the
-     largest single behavioural change sitting uncommitted.
-   - Approvals still never happen. `tools/dispatch.ts:85` emits `approval-requested` on
-     `EBeforeToolDecision.Ask` and `loop/run-turn.ts:177` pauses on it, but **no hook ever returns
-     `Ask`** and **nothing ever appends `approval-answered`** (zero non-test hits). `bash` inherits
-     `TAKES_NO_PATHS`, so `cat ~/.ssh/id_rsa`, `rm -rf ~` and `curl | sh` run unprompted. The moment
-     any hook does return `Ask`, the turn pauses with no UI able to answer it —
-     `composition/turn-progress.ts:115` renders "The turn is waiting: …" and that is the end of it.
-
-   Needs: the boundary hook back or a note saying why not, a shell-command classifier, allow / ask /
-   deny lists in settings, and the approval overlay + `EDecision` append path in the TUI.
-
-4. **No transient-error *automatic* retry.** `model/ai-sdk-model-port.ts:79` turns any stream error
+1. **No transient-error *automatic* retry.** `model/ai-sdk-model-port.ts:79` turns any stream error
    into `ModelStreamError` and `loop/model-step.ts:31` ends the turn `Failed`. Manual recovery is
    there — `ctrl+r` on the error block re-runs the turn with nothing appended, and the resume block
    covers the interrupt case — but a 429, a 529 overloaded, or a dropped socket still needs a human to
@@ -64,15 +35,12 @@ mirroring from `task_write`, and an account vault that refreshes its own logins.
    problem is solved; the content problem is untouched, and it is still the cheapest quality win
    available. `.scratch/prompt-registry/issues/02-the-prose.md` is the open issue.
 
-7. **No `@`-file mentions.** `core/commands/mention.ts` parses `/name` for skills only. There is no
-   way to point the model at a file from the composer, and no path completion.
-
 8. **No sub-agents / `task` tool.** Architecturally reserved (`runId`/`parentRunId`/`depth` on every
    event, `EForkMode`) and explicitly not safe yet — `docs/architecture.md` lists six invariants that
    break when a child inherits rows. Every "go read these forty files" job burns the main context.
 
 9. **No web access.** No `web_fetch`, no `web_search`. Any doc lookup has to go through `bash curl`,
-   which is also the tool with no gate — see P0 3.
+   which is ungated by design — see "Accepted, not gaps".
 
 10. **Cost and usage are invisible.** The ledger records four token tiers per turn and
     `MODEL_CATALOG` carries prices; `ui/switcher-model.ts:83` renders a per-model price, but nothing
@@ -95,6 +63,19 @@ mirroring from `task_write`, and an account vault that refreshes its own logins.
 14. **No images.** No paste-image path, no image parts in `core/message` — zero hits for `image`
     anywhere in `core` — so screenshots and design references are out.
 
+## Accepted, not gaps
+
+**Filesystem guarding and tool approvals are out of scope for the daily driver.** The working tree
+deletes `WorkspaceBoundaryHook` (`hooks/boundary.ts`, its spec, and
+`tools/__tests__/containment.spec.ts`), leaving `ReadBeforeWriteHook` as the only `BeforeToolHook`,
+which checks staleness rather than location. No hook returns `EBeforeToolDecision.Ask`, nothing
+appends `approval-answered`, and `bash` inherits `TAKES_NO_PATHS`, so every command runs unprompted.
+That is the intended posture: a single trusted operator on a local machine, where a confirmation
+prompt costs more than it buys. The machinery stays where it is —
+`dispatch.ts:85` still emits `approval-requested` and `run-turn.ts:177` still pauses on it — so a
+future sandboxed or multi-tenant deployment can supply a hook and an overlay without reopening the
+loop. Until then, no classifier, no permission lists, no approval UI.
+
 ## P2 — parity items, deliberately deferred
 
 MCP server lifecycle, sandbox/container isolation, PR shipping, phases and phase briefs, session
@@ -103,6 +84,38 @@ transcript search, and `core/budget/resolveBudget` as the auto-compaction contro
 `docs/architecture.md` names most of these; none needs a decision reopened.
 
 ## Closed since the first audit
+
+- **A run from a checkout keeps its state in the checkout.** `atlasDirectory()` now resolves through
+  `core/workspace/atlas-home.ts`: `ATLAS_HOME` wins if set, otherwise a source launch lands in
+  `<repo>/.atlas-home` and only the compiled binary uses `~/.atlas`. The binary is told apart by its
+  modules living under Bun's `/$bunfs` mount, so `bun run dev`, `bun src/main.tsx` and `bun test` all
+  get the local home without a flag. Database, settings, tapes, skills and the account vault follow
+  it, each writer already `mkdir -p`-ing its own directory, and `importClaudeCodeAccount` re-seeds a
+  fresh dev home from `~/.claude` on boot. `dev.db` is gone: dev and shipped state are separated by
+  home now, not by filename, so the default database is `harness.db` in both.
+
+- **`@`-file mentions, browsed like `cd`.** `core/mentions/file-mention.ts` parses `@path` out of a
+  message — past email addresses, `react@19` and code spans — and `core/mentions/browse.ts` splits
+  what is being typed into the directory to list and the fragment to filter it by. `FileBrowser`
+  (harness) reads one level at a time and resolves `~`, an absolute path and a climb out of the
+  workspace alike, so `@~/Developer/other-project/` browses as readily as `@src/`. `⇥` on a
+  directory appends its slash and opens the next level; on a file it settles with a space. Rows
+  read as one path, folders dimmed and the name lit, shortened powerlevel10k-style from the
+  outside in when the row is too narrow (`ui/path-shorten.ts`). A chosen path attaches as
+  `EContextSlot.File`: text truncated at 128 KB with a notice, a directory as its listing,
+  anything binary refused. The composer paints a mention only once the filesystem has confirmed it
+  — one question per spelling, memoised — so what is lit is what will be attached, and a mention
+  that names nothing sends as ordinary prose. `ui/highlight-offsets.ts` carries the one quirk that
+  costs: `addHighlightByCharRange` addresses the buffer with line breaks removed.
+
+- **A session picker.** `/resume` lists the conversations in this workspace off the `list()` the
+  store already exposed, through `use-threads.ts` and `ui/threads-model.ts`.
+
+- **A conversation belongs to a workspace.** `87ab439b` added `workspace` and `repo` to `Thread`
+  with an `@@index([workspace, updatedAt])`, `core/workspace/identity.ts` and the harness probe that
+  resolves them. `mostRecent` and `list` are both scoped, and a thread predating the attribution is
+  adopted by whoever opens it by id, so opening Atlas in a second repo no longer resumes the first
+  one's conversation with the wrong `CLAUDE.md` in the log.
 
 - **Credentials refresh themselves, hold more than one account, and no longer need macOS.**
   `RefreshingCredentialPort` reads an account out of `~/.atlas/auth.json` (0600, aes-256-gcm under
@@ -179,14 +192,15 @@ transcript search, and `core/budget/resolveBudget` as the auto-compaction contro
 - **`act()` warnings** throughout the composition specs.
 - Two files over the 300-line rule: `composition/use-conversation.ts` (551) and
   `composition/app.tsx` (453).
-- 189 uncommitted files, several of them deletions with real behavioural weight: the boundary hook
-  above, `system-preamble.ts`, the containment specs.
-- The dev database is `~/.atlas/dev.db` (`DEV_DATABASE_NAME`). Shipping under that name is a trap.
+- 114 uncommitted files, including an in-flight tool-rendering rewrite (`store/tool-groups.ts` →
+  `store/tool-runs.ts` + `store/tools/`, `tool-group-block.tsx` → `tool-run-block.tsx`) and an
+  unstaged usage-metering slice (`core/usage/`, `harness/usage/`, `account-usage.port.ts`). The
+  boundary-hook and `system-preamble.ts` deletions in there are intended — see "Accepted, not gaps".
+
 
 ## Suggested order
 
-1. Workspace-scoped threads + `list()` + a session picker. (P0 1, 2)
-2. Settle the boundary hook, then write the prompt prose. (P0 3a, P1 6)
-3. Retry with backoff. (P0 4)
-4. Command classifier, permission settings, approval overlay. (P0 3b)
-5. `@`-mentions, `/cost`, web fetch. (P1 7, 10, 9)
+1. Retry with backoff. (P0 1)
+2. The prompt prose. (P1 6)
+3. `/cost`. (P1 10)
+4. Web fetch. (P1 9)

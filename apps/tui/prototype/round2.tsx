@@ -125,7 +125,7 @@ function Round2(): React.ReactNode {
         width={width}
         model="haiku-4-5"
         effort={EEffort.Medium}
-        context={{ percent: 62, tokensLeft: 124_000 }}
+        context={{ percent: 62, tokensUsed: 124_000 }}
       />
     </box>
   )

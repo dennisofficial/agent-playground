@@ -7,7 +7,7 @@ import React from 'react'
 import { grammarsReady, settle, teardown } from '../../ui/markdown/__tests__/harness'
 import { EKeyGroup } from '../../ui/keys'
 import { App } from '../app'
-import { fakeApp, scriptedModelPort, type FakeApp } from './fake-app'
+import { FAKE_CONFIG, fakeApp, scriptedModelPort, type FakeApp } from './fake-app'
 
 const PIRATE = {
   spec: {
@@ -136,6 +136,25 @@ describe('the command menu', () => {
     }
   }, 60_000)
 
+  it('sits flush against the composer, spending no row on the notice gutter', async () => {
+    const setup = await opened(appWith())
+
+    try {
+      await setup.mockInput.typeText('/comp')
+      await landed(setup)
+
+      const rows = setup.captureCharFrame().split('\n')
+      const listed = rows.findIndex((row) => row.includes('replace the history so far'))
+      const drafted = rows.findIndex((row, index) => index > listed && row.includes('/comp'))
+      const between = rows.slice(listed + 1, drafted)
+
+      expect(listed).toBeGreaterThan(-1)
+      expect(between.every((row) => row.trim() !== '')).toBe(true)
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
   it('closes on escape and leaves the draft alone', async () => {
     const setup = await opened(appWith())
 
@@ -224,6 +243,23 @@ describe('the command menu', () => {
 
       expect(setup.captureCharFrame()).toContain(EKeyGroup.Composer.toUpperCase())
       expect(app.turnsDriven).toBe(0)
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+})
+
+describe('a fresh conversation started from inside the app', () => {
+  it('is filed under the workspace, so tomorrow can resume it', async () => {
+    const app = appWith()
+    const setup = await opened(app)
+
+    try {
+      await setup.mockInput.typeText('/new')
+      setup.mockInput.pressEnter()
+      await landed(setup)
+
+      expect(app.threads.createdWith).toEqual([{ workspace: FAKE_CONFIG.cwd, repo: null }])
     } finally {
       await teardown(setup)
     }

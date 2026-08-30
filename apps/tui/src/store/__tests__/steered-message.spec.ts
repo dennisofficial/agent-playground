@@ -32,13 +32,13 @@ describe('a message sent while the turn was still running', () => {
 
   it('keeps it in the transcript where it was said, rather than moving it past the result', () => {
     const events = log([
-      called({ n: 1, name: 'read' }),
+      called({ n: 1, name: 'read', input: { path: 'a.ts' } }),
       { type: 'user-said', text: 'check the tests too' },
       result({ n: 1, name: 'read' }),
     ])
 
     expect(shapeOf(deriveTranscript({ events, signals: [] }))).toEqual([
-      [EEntryKind.ToolsRan, 'Read 1 file'],
+      [EEntryKind.ToolsRan, 'Read a.ts'],
       [EEntryKind.OperatorSaid, 'check the tests too'],
     ])
   })

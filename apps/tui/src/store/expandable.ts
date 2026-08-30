@@ -1,4 +1,4 @@
-import { EGroupState } from './tool-groups'
+import { settled } from './tool-runs'
 import { EEntryKind, type TranscriptEntry } from './transcript-model'
 
 export function isExpandable(entry: TranscriptEntry): boolean {
@@ -6,7 +6,7 @@ export function isExpandable(entry: TranscriptEntry): boolean {
     return !entry.streaming && !entry.heldOpen && entry.text.length > 0
   }
   if (entry.kind === EEntryKind.ToolsRan) {
-    return entry.group.state !== EGroupState.Live && entry.group.calls.length > 0
+    return entry.run.calls.length > 0 && entry.run.calls.every(settled)
   }
   if (entry.kind === EEntryKind.BackgroundShellEnded) return entry.output.trimEnd().length > 0
   if (entry.kind === EEntryKind.HistoryCompacted) return entry.text.trim().length > 0

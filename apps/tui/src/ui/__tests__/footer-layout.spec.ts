@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'bun:test'
 
-import { CONTEXT_BAR_CELLS, CONTEXT_WARN_PERCENT } from '../context-bar'
+import { EMeterBand } from '@dltech/atlas-core'
+
+import { CONTEXT_WARN_PERCENT } from '../context-bar'
 import {
   FOOTER_GUTTER,
   footerLayout,
@@ -10,13 +12,21 @@ import {
 
 const MODEL = 'haiku-4-5'
 
+const METERS = [
+  { label: '5h', band: EMeterBand.Normal, text: '34%' },
+  { label: 'wk', band: EMeterBand.Normal, text: '61%' },
+] as const
+
 const at = (width: number): FooterLayout =>
   footerLayout({
     width,
     model: MODEL,
     effort: 'medium',
-    context: { percent: 62, tokensLeft: 124_000 },
+    context: { percent: 62, tokensUsed: 124_000, meters: METERS },
   })
+
+const meterLabels = (layout: FooterLayout): readonly string[] =>
+  (layout.instruments.context?.meters ?? []).map((meter) => meter.label)
 
 const innerOf = (width: number): number => Math.max(0, width - FOOTER_GUTTER * 2)
 
@@ -28,9 +38,11 @@ const widthWhereLost = (present: (layout: FooterLayout) => boolean): number => {
 }
 
 const hasTail = (layout: FooterLayout): boolean =>
-  layout.instruments.context?.text.includes('left') === true
+  layout.instruments.context?.text.includes('ctx') === true
 
-const hasBar = (layout: FooterLayout): boolean => layout.instruments.context?.bar === true
+const hasWeekly = (layout: FooterLayout): boolean => meterLabels(layout).includes('wk')
+
+const hasSession = (layout: FooterLayout): boolean => meterLabels(layout).includes('5h')
 
 const hasEffort = (layout: FooterLayout): boolean => layout.instruments.effort !== null
 
@@ -41,7 +53,7 @@ describe('footerLayout at ease', () => {
     expect(at(200).instruments).toEqual({
       model: MODEL,
       effort: 'med',
-      context: { bar: true, text: '62% · 124.0k left' },
+      context: { full: true, text: '124.0k ctx · 62%', meters: METERS },
     })
   })
 
@@ -58,8 +70,9 @@ describe('footerLayout at ease', () => {
       context: { percent: 86 },
     })
     expect(layout.instruments.context).toEqual({
-      bar: true,
+      full: true,
       text: 'context 86% — /compact to compact',
+      meters: [],
     })
   })
 
@@ -75,11 +88,42 @@ describe('footerLayout at ease', () => {
   })
 })
 
+describe('footerLayout meters', () => {
+  it('sheds the weekly window before the session one', () => {
+    expect(meterLabels(at(widthWhereLost(hasWeekly)))).toEqual(['5h'])
+  })
+
+  it('carries no meters when it was given none', () => {
+    const layout = footerLayout({
+      width: 200,
+      model: MODEL,
+      context: { percent: 62, tokensUsed: 124_000 },
+    })
+    expect(layout.instruments.context).toEqual({
+      full: true,
+      text: '124.0k ctx · 62%',
+      meters: [],
+    })
+  })
+
+  it('still reports the windows when the context window is the thing under pressure', () => {
+    const warned = footerLayout({
+      width: 200,
+      model: MODEL,
+      effort: 'medium',
+      context: { percent: 86, meters: METERS },
+    })
+    expect(warned.instruments.context?.text).toBe('context 86% — /compact to compact')
+    expect(meterLabels(warned)).toEqual(['5h', 'wk'])
+  })
+})
+
 describe('footerLayout under pressure', () => {
-  it('drops in order: the tail, the bar, effort, then the model', () => {
+  it('drops in order: weekly, session, the tail, effort, then the model', () => {
     const order = [
+      widthWhereLost(hasWeekly),
+      widthWhereLost(hasSession),
       widthWhereLost(hasTail),
-      widthWhereLost(hasBar),
       widthWhereLost(hasEffort),
       widthWhereLost(hasModel),
     ]
@@ -101,7 +145,7 @@ describe('footerLayout under pressure', () => {
     for (const width of WIDTHS) {
       const layout = at(width)
       expect(layout.instrumentCells).toBe(
-        instrumentCells({ instruments: layout.instruments, barCells: CONTEXT_BAR_CELLS }),
+        instrumentCells({ instruments: layout.instruments }),
       )
     }
   })

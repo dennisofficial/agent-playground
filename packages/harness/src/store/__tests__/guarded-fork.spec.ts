@@ -39,7 +39,7 @@ const resulted: EventDraft = {
 
 const openThread = async (drafts: readonly EventDraft[]): Promise<ThreadId> => {
   fixture = await openStoreFixture()
-  const thread = await fixture.threads.create({ title: 'work' })
+  const thread = await fixture.threads.create({ title: 'work', workspace: '/work' })
   await fixture.log.append({ threadId: thread.id, runId, drafts })
   return thread.id
 }
@@ -69,11 +69,11 @@ describe('forkConversation', () => {
 
   it('creates no thread when the guard refuses', async () => {
     const threadId = await openThread([said('clean the build'), called])
-    const before = await fixture.threads.mostRecent()
+    const before = await fixture.threads.list({ workspace: '/work' })
 
     await forkAt({ threadId, seq: 2, mode: EForkMode.Copy })
 
-    expect((await fixture.threads.mostRecent())?.id).toBe(before?.id)
+    expect(await fixture.threads.list({ workspace: '/work' })).toEqual(before)
   })
 
   it('copies the inherited prefix into a copy fork and leaves the parent whole', async () => {

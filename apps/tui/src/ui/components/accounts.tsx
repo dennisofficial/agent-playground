@@ -87,6 +87,7 @@ function AccountLine(props: {
   row: AccountRow
   cells: number
   selected: boolean
+  meters: readonly Span[]
   press: PressHandlers
 }): React.ReactNode {
   const band = props.selected ? { band: theme.hoverBg } : {}
@@ -116,7 +117,12 @@ function AccountLine(props: {
         <text>
           <Spans
             spans={clipSpans({
-              spans: [{ text: `  ${accountDetail(props.row.account)}`, fg: theme.hint }],
+              spans: [
+                { text: `  ${accountDetail(props.row.account)}`, fg: theme.hint },
+                ...(props.meters.length === 0
+                  ? []
+                  : [{ text: '  ', fg: theme.hint }, ...props.meters]),
+              ],
               cells: props.cells,
             })}
           />
@@ -196,6 +202,7 @@ function Prompt(props: { state: AccountsState; cells: number }): React.ReactNode
 }
 
 export function Accounts(props: {
+  meters?: (row: AccountRow) => readonly Span[]
   width: number
   state: AccountsState
   overlay?: boolean
@@ -231,6 +238,7 @@ export function Accounts(props: {
                 key={row.account.id}
                 row={row}
                 cells={cells}
+                meters={props.meters === undefined ? [] : props.meters(row)}
                 selected={index === props.state.index && !prompting}
                 press={press(() => props.onPick(row))}
               />

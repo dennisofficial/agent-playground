@@ -1,4 +1,5 @@
-import { EGroupState, type ToolGroup } from './tool-groups'
+import { runLabel } from './tools'
+import { settled, type ToolRun } from './tool-runs'
 
 export enum EAuthor {
   Operator = 'operator',
@@ -23,6 +24,7 @@ export type OperatorSaidEntry = {
   said: readonly string[]
   steer: boolean
   skills: readonly string[]
+  files: readonly string[]
 }
 
 export type ModelSaidEntry = {
@@ -51,17 +53,17 @@ export type ToolsRanEntry = {
   text: string
   streaming: boolean
   interrupted: boolean
-  group: ToolGroup
+  run: ToolRun
 }
 
-export const toolsRanEntry = (group: ToolGroup): ToolsRanEntry => ({
+export const toolsRanEntry = (run: ToolRun): ToolsRanEntry => ({
   kind: EEntryKind.ToolsRan,
   author: EAuthor.Model,
-  key: group.key,
-  text: group.label,
-  streaming: group.state === EGroupState.Live,
+  key: run.key,
+  text: runLabel(run.calls),
+  streaming: run.calls.some((call) => !settled(call)),
   interrupted: false,
-  group,
+  run,
 })
 
 export type HistoryCompactedEntry = {

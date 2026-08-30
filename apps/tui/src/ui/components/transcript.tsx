@@ -1,15 +1,17 @@
-import React, { useCallback, useState } from 'react'
+import React, { useCallback, useMemo, useState } from 'react'
 
 import { EEntryKind, type PendingRow, type TranscriptModel } from '../../store'
 import { useTranscriptFollow } from '../hooks/use-transcript-follow'
 import { useHiddenVerticalScrollbar } from '../hide-scrollbar'
 import { TRANSCRIPT_PADDING } from '../theme'
+import { useTranscriptViewport } from '../transcript-viewport-store'
 import { ErrorBlock } from './blocks/error-block'
 import { PendingBlock } from './blocks/pending-block'
 import { ResumeBlock } from './blocks/resume-block'
 import { WelcomeBlock } from './blocks/welcome-block'
 import { EntryView } from './entry-view'
 import { JumpToBottom, NewDivider, UNSEEN_ANCHOR_ID } from './new-divider'
+import { PeekLine } from './peek-line'
 import { EWorkingVerb, WorkingLine } from './working-line'
 
 export type TurnClock = {
@@ -53,11 +55,23 @@ export function Transcript(props: {
   const turn = props.turn ?? IDLE_TURN
   const anchorKey = props.anchorKey ?? null
   const anchorIndex = model.entries.findIndex((entry) => entry.key === anchorKey)
+  const peekKeys = useMemo(
+    () =>
+      new Set(
+        model.entries
+          .filter((entry) => entry.kind === EEntryKind.OperatorSaid)
+          .map((entry) => entry.key),
+      ),
+    [model.entries],
+  )
   const follow = useTranscriptFollow({
     anchorId: anchorIndex >= 0 ? UNSEEN_ANCHOR_ID : null,
     sends: props.sends ?? 0,
+    peekKeys,
   })
   const handleScroller = useHiddenVerticalScrollbar(follow.scroller)
+  const viewport = useTranscriptViewport()
+  const peeked = model.entries.find((entry) => entry.key === viewport.peekKey) ?? null
 
   const [ownOpened, setOwnOpened] = useState<ReadonlySet<string>>(() => new Set<string>())
   const handleOwnToggle = useCallback((key: string) => {
@@ -85,18 +99,20 @@ export function Transcript(props: {
         contentOptions={{ paddingRight: TRANSCRIPT_PADDING }}
       >
         {model.entries.map((entry, index) => (
-          <box
-            key={entry.key}
-            flexDirection="column"
-            {...(index === anchorIndex ? { id: UNSEEN_ANCHOR_ID } : {})}
-          >
-            {index === anchorIndex && index > 0 ? <NewDivider width={props.width} /> : null}
+          <box key={entry.key} id={entry.key} flexDirection="column">
+            {index === anchorIndex ? (
+              <box id={UNSEEN_ANCHOR_ID} flexDirection="column">
+                {index > 0 ? <NewDivider width={props.width} /> : null}
+              </box>
+            ) : null}
             <EntryView
               entry={entry}
               width={props.width}
               expanded={opened.has(entry.key)}
+              opened={opened}
               onToggle={handleToggle}
-              attached={model.entries[index + 1]?.kind === EEntryKind.ToolsRan}
+              cwd={props.cwd}
+              continues={model.entries[index - 1]?.kind === EEntryKind.ToolsRan}
             />
           </box>
         ))}
@@ -145,7 +161,15 @@ export function Transcript(props: {
         <PendingBlock rows={props.pending ?? NOTHING_PENDING} width={props.width} />
       </scrollbox>
 
-      {follow.pinned ? null : (
+      {viewport.tailing || peeked === null ? null : (
+        <PeekLine
+          text={peeked.text}
+          width={props.width}
+          onJumpTo={() => follow.handleJumpTo(peeked.key)}
+        />
+      )}
+
+      {viewport.tailing ? null : (
         <JumpToBottom width={props.width} onJump={follow.handleJumpToBottom} />
       )}
     </box>

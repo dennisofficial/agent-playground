@@ -6,6 +6,7 @@ import {
   type EventDraft,
 } from '@dltech/atlas-core'
 
+import { mentionedFileDrafts, type FileLoader } from '../mentioned-files'
 import { ECommandEffect, ECommandTiming, type LocalCommand } from './local-command'
 
 export type LoadedSkill = { spec: CommandSpec; body: string }
@@ -36,6 +37,7 @@ export async function dispatchSubmission(args: {
   commands: readonly LocalCommand[]
   skills: readonly LoadedSkill[]
   working?: boolean | undefined
+  loadFile?: FileLoader | undefined
 }): Promise<Dispatch> {
   const submission = resolveSubmission({
     text: args.text,
@@ -61,7 +63,7 @@ export async function dispatchSubmission(args: {
 
   const bodies = new Map(args.skills.map((skill) => [skill.spec.name, skill.body]))
 
-  const drafts = submission.skills.flatMap((one): EventDraft[] => {
+  const skillDrafts = submission.skills.flatMap((one): EventDraft[] => {
     const body = bodies.get(one.spec.name)
     if (body === undefined) return []
 
@@ -75,5 +77,8 @@ export async function dispatchSubmission(args: {
     ]
   })
 
-  return { type: EDispatch.Send, text: args.text, drafts }
+  const load = args.loadFile
+  const fileDrafts = load === undefined ? [] : await mentionedFileDrafts({ text: args.text, load })
+
+  return { type: EDispatch.Send, text: args.text, drafts: [...skillDrafts, ...fileDrafts] }
 }

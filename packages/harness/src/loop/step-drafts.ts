@@ -32,6 +32,7 @@ export function interruptedDrafts(result: ModelStepResult): EventDraft[] {
       callId: call.callId,
       name: call.name,
       reason: INTERRUPTED_BEFORE_RUNNING,
+      interrupted: true,
     })
   })
 

@@ -25,8 +25,9 @@ export type EventBody =
       output?: unknown
       modelText?: string | undefined
       error?: { message: string } | undefined
+      interrupted?: boolean | undefined
     }
-  | { type: 'tool-denied'; callId: CallId; name: string; reason: string }
+  | { type: 'tool-denied'; callId: CallId; name: string; reason: string; interrupted?: boolean | undefined }
   | { type: 'approval-requested'; callId: CallId; reason: string }
   | { type: 'approval-answered'; callId: CallId; decision: EDecision; editedInput?: unknown }
   | { type: 'context-loaded'; slot: string; key: string; content: string; triggeredBy?: string | undefined }

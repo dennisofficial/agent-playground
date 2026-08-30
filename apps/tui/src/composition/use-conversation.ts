@@ -28,7 +28,8 @@ import {
 import type { Compacting } from '../ui/components/compacting'
 import type { TurnClock } from '../ui/components/transcript'
 import type { AtlasApp } from './compose'
-import type { OpenedConversation } from './open-conversation'
+import { EOpenMode } from './config'
+import { openConversation, type OpenedConversation } from './open-conversation'
 import {
   summariseAt,
   compactTurn,
@@ -37,6 +38,7 @@ import {
   type Compaction,
 } from './compact-turn'
 import { discardInterrupted, EDiscard } from './resume-turn'
+import { threadHandle } from './thread-slug'
 import { EUndo, undoTurn } from './undo-turn'
 import {
   awakeAt,
@@ -69,6 +71,7 @@ const committedNothing = (outcome: TurnOutcome): boolean =>
 
 export type Conversation = {
   threadId: ThreadId
+  handle: string | null
   model: TranscriptModel
   sidebar: SidebarModel
   turn: TurnClock
@@ -87,6 +90,7 @@ export type Conversation = {
   handleInterrupt: () => void
   compacting: Compacting | null
   handleNewConversation: () => void
+  handleOpenThread: (threadId: string) => void
   handleCompact: (scope: ECompactScope) => void
   handleCompactAround: (args: { anchor: ECompactionAnchor; seq: number }) => void
   handleRewindTo: (toSeq: number) => void
@@ -130,7 +134,12 @@ export function useConversation(args: {
 
   useEffect(() => () => store.dispose(), [store])
 
-  useEffect(() => app.markActiveThread(opened.threadId), [app, opened.threadId])
+  const started = events.length > 0
+
+  useEffect(
+    () => app.markActiveThread({ threadId: opened.threadId, title: name, started }),
+    [app, name, opened.threadId, started],
+  )
 
   useEffect(() => store.setName(name), [store, name])
 
@@ -484,20 +493,49 @@ export function useConversation(args: {
     controller.abort()
   }, [])
 
-  const handleNewConversation = useCallback(() => {
-    if (working) return
-
-    pending.clear()
-    app.shells.forgetNotices()
-    void app.threads.create({}).then((thread) => {
+  const adopt = useCallback(
+    (next: OpenedConversation) => {
+      pending.clear()
+      app.shells.forgetNotices()
       setProgress(IDLE_PROGRESS)
       setFailure(null)
       setReported(null)
-      setEvents([])
-      setName(null)
-      setOpened({ threadId: thread.id, events: [], turns: [], name: null })
-    })
-  }, [app.threads, pending, working])
+      setEvents(next.events)
+      setName(next.name)
+      setOpened(next)
+    },
+    [app.shells, pending],
+  )
+
+  const handleNewConversation = useCallback(() => {
+    if (working) return
+
+    void app.threads
+      .create({ workspace: app.workspace.workspace, repo: app.workspace.repo })
+      .then((thread) => adopt({ threadId: thread.id, events: [], turns: [], name: null }))
+  }, [adopt, app.threads, app.workspace, working])
+
+  const handleOpenThread = useCallback(
+    (threadId: string) => {
+      if (working || threadId === opened.threadId) return
+
+      void openConversation({
+        threads: app.threads,
+        log: app.log,
+        ledger: app.ledger,
+        workspace: app.workspace,
+        open: { mode: EOpenMode.Resume, threadId },
+      }).then((outcome) => {
+        if (!outcome.ok) {
+          setFailure(outcome.reason)
+          return
+        }
+
+        adopt(outcome.conversation)
+      })
+    },
+    [adopt, app.ledger, app.log, app.threads, app.workspace, opened.threadId, working],
+  )
 
   const handleCompact = useCallback((scope: ECompactScope) => void compact(scope), [compact])
 
@@ -527,6 +565,7 @@ export function useConversation(args: {
   return {
     sessionDirectory,
     threadId: opened.threadId,
+    handle: name === null ? null : threadHandle({ threadId: opened.threadId, title: name }),
     model,
     sidebar,
     turn,
@@ -544,6 +583,7 @@ export function useConversation(args: {
     handleReportProblem: setFailure,
     handleInterrupt,
     handleNewConversation,
+    handleOpenThread,
     handleCompact,
     handleCompactAround,
     handleRewindTo,

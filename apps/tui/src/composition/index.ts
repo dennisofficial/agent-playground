@@ -6,8 +6,6 @@ export { composeAtlas, type AtlasApp } from './compose'
 export {
   DEFAULT_MODEL_ID,
   DEFAULT_THINKING_BUDGET_TOKENS,
-  DEV_DATABASE_NAME,
-  devDatabaseUrl,
   resolveConfig,
   type AtlasConfig,
 } from './config'

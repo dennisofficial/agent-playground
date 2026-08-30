@@ -5,7 +5,7 @@ import { durableEntries } from './durable-entries'
 import { liveSteps, runKey, stepsOfSignals, type InFlightStep } from './in-flight-steps'
 import { revealedText, type RevealGate } from './reveal'
 import { modelEntries } from './model-entries'
-import { liveToolGroups, type LiveToolGroup } from './tool-groups'
+import { liveToolRuns, type LiveToolRun } from './tool-runs'
 import {
   foldThoughts,
   SHIPPED_THINKING,
@@ -42,14 +42,14 @@ function saidInStep(args: { step: InFlightStep; reveal: RevealGate | null }): Tr
 
 function interleaved(args: {
   said: readonly TranscriptEntry[]
-  groups: readonly LiveToolGroup[]
+  runs: readonly LiveToolRun[]
 }): TranscriptEntry[] {
   const entries: TranscriptEntry[] = []
   let cursor = 0
 
-  for (const { group, precededByBlocks } of args.groups) {
+  for (const { run, precededByBlocks } of args.runs) {
     const upTo = Math.max(cursor, Math.min(precededByBlocks, args.said.length))
-    entries.push(...args.said.slice(cursor, upTo), toolsRanEntry(group))
+    entries.push(...args.said.slice(cursor, upTo), toolsRanEntry(run))
     cursor = upTo
   }
 
@@ -60,7 +60,7 @@ function interleaved(args: {
 function entriesOfStep(args: { step: InFlightStep; reveal: RevealGate | null }): TranscriptEntry[] {
   return interleaved({
     said: saidInStep(args),
-    groups: liveToolGroups(args.step.calls),
+    runs: liveToolRuns(args.step.calls),
   })
 }
 

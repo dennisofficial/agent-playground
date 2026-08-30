@@ -1,11 +1,12 @@
 import React from 'react'
 
 import { EEntryKind, type TranscriptEntry } from '../../store'
+import type { EMark } from '../tool-marks'
 import { AssistantBlock } from './blocks/assistant-block'
 import { CompactedBlock } from './blocks/compacted-block'
 import { ShellEndedBlock } from './blocks/shell-ended-block'
 import { ThinkingBlock } from './blocks/thinking-block'
-import { ToolGroupBlock } from './blocks/tool-group-block'
+import { ToolRunBlock } from './blocks/tool-run-block'
 import { TurnEndedBlock } from './blocks/turn-ended-block'
 import { EUserMark, UserBlock } from './blocks/user-block'
 
@@ -14,7 +15,17 @@ export function EntryView(props: {
   width: number
   expanded?: boolean
   onToggle?: (key: string) => void
-  attached?: boolean
+  /**
+   * Where the session is standing, so a tool row can say `src/ui/theme.ts` rather than the absolute
+   * path the tool was actually handed.
+   */
+  cwd?: string
+  /** The transcript's whole expansion set — a tool run owns three levels of it, not one flag. */
+  opened?: ReadonlySet<string>
+  /** Whether the entry above was also a tool run, so this one continues a cluster rather than opening one. */
+  continues?: boolean
+  /** How loudly a tool row's gutter should speak. Defaults to the shipped style. */
+  mark?: EMark
 }): React.ReactNode {
   const { entry, onToggle } = props
 
@@ -26,6 +37,7 @@ export function EntryView(props: {
           width={props.width}
           mark={entry.steer ? EUserMark.MidTurn : EUserMark.Plain}
           skills={entry.skills}
+          files={entry.files}
         />
       )
 
@@ -36,7 +48,6 @@ export function EntryView(props: {
           width={props.width}
           streaming={entry.streaming}
           interrupted={entry.interrupted}
-          {...(props.attached === undefined ? {} : { attached: props.attached })}
         />
       )
 
@@ -55,12 +66,14 @@ export function EntryView(props: {
 
     case EEntryKind.ToolsRan:
       return (
-        <ToolGroupBlock
-          group={entry.group}
+        <ToolRunBlock
+          run={entry.run}
           width={props.width}
-          expanded={props.expanded ?? false}
-          {...(props.attached === undefined ? {} : { attached: props.attached })}
-          {...(onToggle ? { onToggle: () => onToggle(entry.key) } : {})}
+          cwd={props.cwd ?? ''}
+          {...(props.continues === undefined ? {} : { continues: props.continues })}
+          {...(props.mark === undefined ? {} : { mark: props.mark })}
+          {...(props.opened === undefined ? {} : { opened: props.opened })}
+          {...(onToggle ? { onToggle } : {})}
         />
       )
 

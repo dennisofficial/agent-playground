@@ -2,14 +2,9 @@ import type { ScrollBoxRenderable } from '@opentui/core'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { isPinnedToBottom } from '../scroll-position'
+import { observeScroll } from '../scroll-signal'
 import { useProportionalThumb } from '../scrollbar-thumb'
 import { EOutputScroll, type OutputScrollCommand } from '../shells-model'
-
-/**
- * OpenTUI's scrollbox emits no scroll event, and the wheel, a drag and sticky-scroll chasing new
- * output all move it without passing through React — so where the log is sitting is polled.
- */
-const POLL_MS = 250
 
 export type OutputScroll = {
   attach: (box: ScrollBoxRenderable | null) => void
@@ -27,19 +22,30 @@ const restingAtEnd = (box: ScrollBoxRenderable): boolean =>
 
 export function useOutputScroll(args: { resetKey?: string | undefined } = {}): OutputScroll {
   const scroller = useRef<ScrollBoxRenderable | null>(null)
-  const attach = useProportionalThumb(scroller)
+  const thumb = useProportionalThumb(scroller)
+  const stop = useRef<(() => void) | null>(null)
   const [pinned, setPinned] = useState(true)
   const resetKey = args.resetKey
 
-  useEffect(() => {
-    const timer = setInterval(() => {
-      const box = scroller.current
+  const attach = useCallback(
+    (box: ScrollBoxRenderable | null) => {
+      stop.current?.()
+      stop.current = null
+      thumb(box)
       if (!box) return
+      stop.current = observeScroll(box, () => setPinned(restingAtEnd(box)))
       setPinned(restingAtEnd(box))
-    }, POLL_MS)
+    },
+    [thumb],
+  )
 
-    return () => clearInterval(timer)
-  }, [])
+  useEffect(
+    () => () => {
+      stop.current?.()
+      stop.current = null
+    },
+    [],
+  )
 
   const handleJumpToEnd = useCallback(() => {
     const box = scroller.current

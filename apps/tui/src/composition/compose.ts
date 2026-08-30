@@ -11,13 +11,17 @@ import {
   IdPort,
   ModelPort,
   promptContextFor,
+  toThreadId,
   type ThreadId,
   type EventDraft,
+  type WorkspaceIdentity,
 } from '@dltech/atlas-core'
 import {
   AccountsService,
   ThreadStorePort,
+  AnthropicUsageClient,
   builtinOauthClients,
+  createAccountUsageService,
   createAnthropicOauthModel,
   createDeltaChannel,
   createHarnessContainer,
@@ -31,6 +35,7 @@ import {
   HookChainToken,
   loadSkills,
   LoadInstructionsHook,
+  probeWorkspace,
   ClaudeCodeSource,
   ClaudeCodeSourceToken,
   KeychainReaderToken,
@@ -53,12 +58,15 @@ import {
   TurnLedgerPort,
   TurnRunner,
   WorkspaceRoot,
+  FileBrowser,
+  type AccountUsageService,
   type DeltaChannel,
   type DiscoveredSkill,
   type SettingsService,
 } from '@dltech/atlas-harness'
 
 import { createPendingQueue, type PendingQueue } from '../store'
+import type { ActiveConversation } from './resume-hint'
 import { compactTurn, ECompaction, type Summariser } from './compact-turn'
 import { SUMMARISER_MODEL_ID, TITLER_MODEL_ID, type AtlasConfig } from './config'
 import { launchSelection, rememberSelection } from './model-preference'
@@ -70,7 +78,9 @@ export type SessionTitler = (args: { text: string; signal?: AbortSignal }) => Pr
 
 export type AtlasApp = {
   config: AtlasConfig
-  markActiveThread: (threadId: ThreadId) => void
+  workspace: WorkspaceIdentity
+  markActiveThread: (active: ActiveConversation) => void
+  activeThread: () => ActiveConversation | null
   titler: SessionTitler
   summarise: Summariser
   credentials: CredentialPort
@@ -85,6 +95,8 @@ export type AtlasApp = {
   shells: ShellRegistryPort
   model: ModelChoice
   settings: SettingsService
+  usage: AccountUsageService
+  files: FileBrowser
   skills: readonly DiscoveredSkill[]
   close: () => Promise<void>
 }
@@ -97,6 +109,7 @@ export async function composeAtlas(args: {
 }): Promise<AtlasApp> {
   const { config } = args
   const container = createHarnessContainer()
+  const workspace = await probeWorkspace({ cwd: config.cwd })
 
   registerBuiltinPromptFragments({ container })
   container.register(WorkspaceRoot, { useValue: config.cwd })
@@ -128,6 +141,7 @@ export async function composeAtlas(args: {
     accounts: accountStore,
     clients: builtinOauthClients({ clock: container.resolve(portToken(ClockPort)) }),
   })
+  const usage = createAccountUsageService({ usage: new AnthropicUsageClient({ credentials }) })
   const settings = bindSettings({ container, env: args.env, cwd: config.cwd })
 
   container.register(portToken(BeforeTurnHook), {
@@ -179,7 +193,7 @@ export async function composeAtlas(args: {
   const channel = createDeltaChannel()
   const pending = createPendingQueue()
 
-  let activeThread: ThreadId | null = null
+  let activeThread: ActiveConversation | null = null
 
   const titlerModel = createAnthropicOauthModel({ credentials, modelId: TITLER_MODEL_ID })
   const summariserModel = createAnthropicOauthModel({ credentials, modelId: SUMMARISER_MODEL_ID })
@@ -216,24 +230,28 @@ export async function composeAtlas(args: {
   const recordTeardownEndings = async (): Promise<void> => {
     await shells.closeAll()
 
-    const threadId = activeThread
+    const active = activeThread
     const drafts = shells.drainNotifications()
-    if (threadId === null || drafts.length === 0) return
+    if (active === null || drafts.length === 0) return
 
-    await log.append({ threadId, runId: ids.nextRunId(), drafts })
+    await log.append({ threadId: toThreadId(active.threadId), runId: ids.nextRunId(), drafts })
   }
 
   return {
     config,
-    markActiveThread: (threadId) => {
-      activeThread = threadId
+    workspace,
+    markActiveThread: (active) => {
+      activeThread = active
     },
+    activeThread: () => activeThread,
     titler: ({ text, signal }) => titleFor({ model: titlerModel, text, signal }),
     summarise,
     settings,
     skills,
+    files: new FileBrowser({ root: config.cwd }),
     credentials,
     accounts,
+    usage,
     channel,
     log,
     threads,
@@ -243,6 +261,7 @@ export async function composeAtlas(args: {
     shells,
     model,
     close: async () => {
+      usage.dispose()
       await recordTeardownEndings().catch(() => undefined)
       await disposeAll({ container })
     },

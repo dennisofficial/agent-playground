@@ -7,12 +7,16 @@ import { grammarsReady, settle, teardown } from '../markdown/__tests__/harness'
 import { theme } from '../theme'
 import {
   drawn,
+  FIRST_ASK,
   HEIGHT,
   LAST_WORDS,
+  SECOND_ASK,
   SETTLED,
   SendingTranscript,
   SizedTranscript,
+  THREADED,
 } from './transcript-fixture'
+import { frameShowing } from './waiting'
 
 await grammarsReady()
 
@@ -23,6 +27,23 @@ const SHORT = 12
 const WIDE = 240
 
 const LONGER_THAN_ONE_FOLLOW_POLL_MS = 400
+
+const WELL_INSIDE_THE_OLD_POLL_MS = 60
+
+const BACK_UP = '↑'
+
+const topRow = (setup: { captureCharFrame: () => string }): string =>
+  setup.captureCharFrame().split('\n')[0] ?? ''
+
+async function wheelUp(args: {
+  setup: {
+    mockMouse: { scroll: (x: number, y: number, dir: 'up') => Promise<void> }
+  }
+  notches: number
+}): Promise<void> {
+  for (let wheel = 0; wheel < args.notches; wheel += 1)
+    await args.setup.mockMouse.scroll(20, 5, 'up')
+}
 
 const pillColour = (frame: CapturedFrame, row: number): RGBA | undefined =>
   frame.lines[row]?.spans.find((span) => span.text.includes(JUMP))?.fg
@@ -191,6 +212,83 @@ describe('the transcript follows the newest output', () => {
       const landed = await drawn(setup)
       expect(landed).toContain(LAST_WORDS)
       expect(landed).not.toContain(JUMP)
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+})
+
+describe('the transcript reacts to the wheel rather than to a clock', () => {
+  it('offers the way back well before a quarter-second tick could have fired', async () => {
+    const setup = await testRender(<SizedTranscript model={SETTLED} />, {
+      width: 80,
+      height: SHORT,
+    })
+    try {
+      await drawn(setup)
+      await wheelUp({ setup, notches: 6 })
+
+      expect(
+        await frameShowing({
+          setup,
+          text: JUMP,
+          within: WELL_INSIDE_THE_OLD_POLL_MS,
+        }),
+      ).toContain(JUMP)
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+})
+
+describe('the transcript holds your last message at the top edge', () => {
+  it('says nothing while it is tailing', async () => {
+    const setup = await testRender(<SizedTranscript model={THREADED} />, {
+      width: 80,
+      height: SHORT,
+    })
+    try {
+      expect(await drawn(setup)).not.toContain(BACK_UP)
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
+  it('names the message you are reading under, once it has scrolled past the edge', async () => {
+    const setup = await testRender(<SizedTranscript model={THREADED} />, {
+      width: 80,
+      height: SHORT,
+    })
+    try {
+      await drawn(setup)
+      await wheelUp({ setup, notches: 3 })
+      await frameShowing({ setup, text: BACK_UP })
+
+      expect(topRow(setup)).toContain(SECOND_ASK)
+      expect(topRow(setup)).toContain(BACK_UP)
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
+  it('takes a click back to that message, and then offers the one before it', async () => {
+    const setup = await testRender(<SizedTranscript model={THREADED} />, {
+      width: 80,
+      height: SHORT,
+    })
+    try {
+      await drawn(setup)
+      await wheelUp({ setup, notches: 3 })
+      await frameShowing({ setup, text: BACK_UP })
+
+      await act(async () => {
+        await setup.mockMouse.click(4, 0)
+        await setup.flush()
+      })
+      const landed = await frameShowing({ setup, text: FIRST_ASK })
+
+      expect(landed).toContain(SECOND_ASK)
+      expect(topRow(setup)).toContain(FIRST_ASK)
     } finally {
       await teardown(setup)
     }

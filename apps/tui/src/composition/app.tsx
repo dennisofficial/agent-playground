@@ -11,20 +11,31 @@ import React, {
   useSyncExternalStore,
 } from 'react'
 
-import { contextPressure, ECompactionAnchor, modelEntry, type ModelEntry } from '@dltech/atlas-core'
+import {
+  contextPressure,
+  ECompactionAnchor,
+  modelEntry,
+  type EUsageWindow,
+  type ModelEntry,
+} from '@dltech/atlas-core'
 
 import { newestExpandableKey } from '../store'
+import { accountMeterSpans } from '../ui/account-meters'
+import type { AccountRow } from '../ui/accounts-model'
+import type { Span } from '../ui/components/spans'
+import { usageMeters, type FooterMeter } from '../ui/usage-meters'
 import { CommandMenu } from '../ui/components/command-menu'
+import { FileMenu } from '../ui/components/file-menu'
 import { Composer, composerRows, composerTone } from '../ui/components/composer'
 import { Footer, type FooterContext } from '../ui/components/footer'
-import { NoticeLine } from '../ui/components/notice-line'
 import { Screen } from '../ui/components/screen'
 import { Shortcuts } from '../ui/components/shortcuts'
 import { Sidebar } from '../ui/components/sidebar'
 import { Transcript } from '../ui/components/transcript'
 import { useDraft } from '../ui/hooks/use-draft'
-import { modelLabel } from '../ui/model-label'
+import { composerEdgeVersion, subscribeComposerEdge } from '../ui/composer-edge-store'
 import { densityVersion, subscribeDensity } from '../ui/density-store'
+import { modelLabel } from '../ui/model-label'
 import { paletteVersion, subscribePalette } from '../ui/palette-store'
 import { ERewindPointKind, ERewindVerb, type RewindChoice } from '../ui/rewind-model'
 import { SelectionSurface } from '../ui/selection/selection-surface'
@@ -46,7 +57,9 @@ import {
   useKeyRegistry,
 } from '../ui/keys'
 import { commandSpecs, dispatchSubmission, EDispatch, localCommands } from './commands'
-import { useCommandMenu } from './use-command-menu'
+import { useComposerMenus } from './use-composer-menus'
+import { workspaceFileLoader } from './mentioned-files'
+import { useResolvedMentions } from './use-resolved-mentions'
 import type { AtlasApp } from './compose'
 import { globalBindings } from './global-bindings'
 import { OverlayStack } from './overlay-stack'
@@ -60,6 +73,7 @@ import { useShells } from './use-shells'
 import { useRewind } from './use-rewind'
 import { useAccounts } from './use-accounts'
 import { useSwitcher } from './use-switcher'
+import { useThreads } from './use-threads'
 
 const PLACEHOLDER = 'Ask anything'
 
@@ -67,12 +81,16 @@ const STEER_PLACEHOLDER = 'Steer the turn'
 
 const HELP_KEY = '?'
 
-const readoutOf = (args: { entry: ModelEntry | undefined; used: number }): FooterContext | null => {
+const readoutOf = (args: {
+  entry: ModelEntry | undefined
+  used: number
+  meters: readonly FooterMeter[]
+}): FooterContext | null => {
   const { entry } = args
   if (entry === undefined) return null
 
   const pressure = contextPressure({ used: args.used, window: entry.contextWindow })
-  return { percent: pressure.percent, tokensLeft: Math.max(0, entry.contextWindow - args.used) }
+  return { percent: pressure.percent, tokensUsed: pressure.used, meters: args.meters }
 }
 
 export function App(props: {
@@ -106,6 +124,8 @@ function Workspace(props: {
   const { width, height } = useTerminalDimensions()
   useSyncExternalStore(subscribePalette, paletteVersion)
   useSyncExternalStore(subscribeDensity, densityVersion)
+  useSyncExternalStore(subscribeComposerEdge, composerEdgeVersion)
+  useSyncExternalStore(props.app.usage.subscribe, props.app.usage.version)
 
   const settings = useSettings({ app: props.app })
 
@@ -149,7 +169,26 @@ function Workspace(props: {
   const entry = modelEntry(selection.modelId)
   const activeModelId = entry?.id ?? selection.modelId
 
-  const readout = readoutOf({ entry, used: conversation.contextTokens })
+  const meters = usageMeters({
+    usage: props.app.usage.snapshot(),
+    show: settings.footerMeters,
+    warn: settings.usageWarn,
+    now: Date.now(),
+  })
+
+  const readout = readoutOf({ entry, used: conversation.contextTokens, meters })
+
+  const { usage } = props.app
+  const working = conversation.working
+
+  useEffect(() => {
+    if (working) {
+      usage.track()
+      return
+    }
+    usage.stopTracking()
+  }, [usage, working])
+
 
   const handleNewConversation = useCallback(() => {
     draft.clear()
@@ -174,7 +213,38 @@ function Workspace(props: {
 
   const shells = useShells({ app: props.app })
 
+  const handleOpenThread = useCallback(
+    (threadId: string) => {
+      draft.clear()
+      conversation.handleOpenThread(threadId)
+    },
+    [conversation, draft],
+  )
+
+  const threads = useThreads({
+    app: props.app,
+    activeThreadId: conversation.threadId,
+    onPick: handleOpenThread,
+  })
+
   const accounts = useAccounts({ accounts: props.app.accounts })
+  const accountsOpen = accounts.state !== null
+  const accountRows = accounts.state?.rows
+
+  useEffect(() => {
+    if (!accountsOpen) return
+    for (const row of accountRows ?? []) void usage.refresh({ accountId: row.account.id })
+  }, [accountRows, accountsOpen, usage])
+
+  const accountMeters = useCallback(
+    (row: AccountRow): readonly Span[] =>
+      accountMeterSpans({
+        usage: usage.snapshotFor({ accountId: row.account.id }),
+        warn: settings.usageWarn,
+        now: Date.now(),
+      }),
+    [settings.usageWarn, usage],
+  )
 
   /**
    * A session that opened with nothing it can authenticate with shows the accounts overlay rather
@@ -242,6 +312,7 @@ function Workspace(props: {
         onOpenSettings: settings.handleOpen,
         onOpenAccounts: () => accounts.handleOpen(),
         onNewConversation: handleNewConversation,
+        onOpenThreads: threads.handleOpen,
       }),
     [
       accounts,
@@ -251,6 +322,7 @@ function Workspace(props: {
       settings.handleOpen,
       shells,
       switcher.handleOpen,
+      threads.handleOpen,
     ],
   )
 
@@ -261,13 +333,15 @@ function Workspace(props: {
 
   const specs = useMemo(() => commandSpecs({ commands, skills }), [commands, skills])
 
-  const commandMenu = useCommandMenu({ specs, onComplete: draft.setValue })
-  const readDraft = useRef(commandMenu.handleTextChanged)
-  readDraft.current = commandMenu.handleTextChanged
+  const menus = useComposerMenus({ specs, files: props.app.files, onComplete: draft.setValue })
+  const readDraft = useRef(menus.handleTextChanged)
+  readDraft.current = menus.handleTextChanged
 
   useEffect(() => {
     readDraft.current(draft.value)
   }, [draft.value])
+
+  const mentionSpans = useResolvedMentions({ text: draft.value, files: props.app.files })
 
   const handleSubmit = useCallback(() => {
     const said = draft.editor.current?.plainText ?? draft.value
@@ -284,6 +358,9 @@ function Workspace(props: {
       commands,
       skills,
       working: conversation.working,
+      ...(props.app.files === undefined
+        ? {}
+        : { loadFile: workspaceFileLoader(props.app.files) }),
     }).then((dispatched) => {
       if (dispatched.type === EDispatch.Refused) {
         draft.setValue(said)
@@ -294,7 +371,7 @@ function Workspace(props: {
 
       conversation.handleSend(dispatched.text, dispatched.drafts)
     })
-  }, [commands, conversation, draft, handleOpenNewest, skills])
+  }, [commands, conversation, draft, handleOpenNewest, props.app.files, skills])
 
   /**
    * The draft is asked for its buffer rather than its mirror because OpenTUI parses a whole input
@@ -366,6 +443,7 @@ function Workspace(props: {
       { open: switcher.state !== null, handleKey: switcher.handleKey },
       { open: shells.state !== null, handleKey: shells.handleKey },
       { open: accounts.state !== null, handleKey: accounts.handleKey },
+      { open: threads.state !== null, handleKey: threads.handleKey },
       { open: settings.state !== null, handleKey: settings.handleKey, porous: true },
     ],
     bindings: registry.snapshot,
@@ -375,14 +453,14 @@ function Workspace(props: {
     (key: KeyEvent) => {
       if (props.covered) return
 
-      if (commandMenu.handleKey(key)) {
+      if (menus.handleKey(key)) {
         key.preventDefault()
         return
       }
 
       handleKey(key)
     },
-    [commandMenu, handleKey, props.covered],
+    [handleKey, menus, props.covered],
   )
 
   useKeyboard(handleKeyWithMenu)
@@ -397,6 +475,7 @@ function Workspace(props: {
     exitGuard.state !== null ||
     switcher.state !== null ||
     accounts.state !== null ||
+    threads.state !== null ||
     settings.state !== null ||
     shells.state !== null ||
     rewind.state !== null ||
@@ -416,12 +495,8 @@ function Workspace(props: {
             turn={conversation.turn}
             sends={sends}
             pending={conversation.pending}
-            {...(conversation.handleRetry === null
-              ? {}
-              : { onRetry: conversation.handleRetry })}
-            {...(conversation.handleResume === null
-              ? {}
-              : { onResume: conversation.handleResume })}
+            {...(conversation.handleRetry === null ? {} : { onRetry: conversation.handleRetry })}
+            {...(conversation.handleResume === null ? {} : { onResume: conversation.handleResume })}
             {...(conversation.handleResumeFresh === null
               ? {}
               : { onResumeFresh: conversation.handleResumeFresh })}
@@ -429,10 +504,10 @@ function Workspace(props: {
             onToggle={handleToggle}
           />
           {shortcuts ? <Shortcuts width={chromeWidth} /> : null}
-          {commandMenu.state === null ? null : (
-            <CommandMenu state={commandMenu.state} width={chromeWidth} />
+          {menus.command === null ? null : (
+            <CommandMenu state={menus.command} width={chromeWidth} />
           )}
-          <NoticeLine width={chromeWidth} />
+          {menus.file === null ? null : <FileMenu state={menus.file} width={chromeWidth} />}
           <Composer
             draft={draft}
             width={chromeWidth}
@@ -440,9 +515,8 @@ function Workspace(props: {
             placeholder={conversation.working ? STEER_PLACEHOLDER : PLACEHOLDER}
             maxRows={composerRows(height)}
             focused={!overlaid}
-            {...(conversation.sidebar.title === null
-              ? {}
-              : { title: conversation.sidebar.title })}
+            highlights={mentionSpans}
+            {...(conversation.handle === null ? {} : { title: conversation.handle })}
           />
           <Footer
             width={chromeWidth}
@@ -469,10 +543,12 @@ function Workspace(props: {
           contentWidth={contentWidth}
           cwd={props.app.config.cwd}
           activeModelId={activeModelId}
+          accountMeters={accountMeters}
           switcher={switcher}
           shells={shells}
           settings={settings}
           accounts={accounts}
+          threads={threads}
           rewind={rewind}
           exitGuard={exitGuard}
           compacting={conversation.compacting}

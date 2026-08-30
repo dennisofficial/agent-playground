@@ -31,12 +31,12 @@ const MINIMAL_PREAMBLE = [
 ].join('\n')
 
 const PROJECT_DIRECTORY =
-  `The project directory is ${ROOT}, and a relative path you pass to a tool resolves against it.` +
-  ' A bash command starts in the session directory instead, which cd moves and the conversation keeps telling you.'
+  `The project directory is ${ROOT}, and it is where a bash command starts.` +
+  ' Keep it there: reach elsewhere with absolute paths rather than cd, unless the developer asks you to move.'
 
 const RELATIVE_PATHS =
-  'Write tool paths relative to the project directory.' +
-  ' They mean the same file wherever bash has moved, so never open a command with cd to reach a directory you are already in.'
+  'A path you pass to a tool resolves against the project directory, so write those relative to it.' +
+  ' A path inside a bash command is resolved by the shell instead, so write those absolute.'
 
 const CONTEXT: PromptContext = {
   agent: EPromptAgent.Main,
@@ -87,9 +87,9 @@ describe('the project-directory sentence, split at the static/live seam', () => 
     expect(compiled().parts[2]?.text).toStartWith(`The project directory is ${ROOT},`)
   })
 
-  it('points at the conversation for the session directory rather than naming one itself', () => {
+  it('tells the model to hold the directory still rather than to steer it', () => {
     expect(compiled().parts[2]?.text).toEndWith(
-      'which cd moves and the conversation keeps telling you.',
+      'unless the developer asks you to move.',
     )
   })
 
@@ -125,9 +125,9 @@ This conversation is compacted when it grows long: the earlier turns are replace
 and you will not be able to read them again. Write anything you will need later into your own
 output or into a file, rather than relying on scrolling back.
 
-The project directory is /Users/dev/project, and a relative path you pass to a tool resolves against it. A bash command starts in the session directory instead, which cd moves and the conversation keeps telling you.
+The project directory is /Users/dev/project, and it is where a bash command starts. Keep it there: reach elsewhere with absolute paths rather than cd, unless the developer asks you to move.
 
-Write tool paths relative to the project directory. They mean the same file wherever bash has moved, so never open a command with cd to reach a directory you are already in.`,
+A path you pass to a tool resolves against the project directory, so write those relative to it. A path inside a bash command is resolved by the shell instead, so write those absolute.`,
       },
     ])
   })

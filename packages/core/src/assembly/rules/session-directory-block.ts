@@ -10,7 +10,7 @@ export function sessionDirectoryReminder(args: {
   return wrapInSystemReminder(
     [
       `A cd has moved the session directory to ${args.sessionDirectory}.`,
-      'That is where a bash command starts, so run one without opening it with cd.',
+      'That is where a bash command starts now, so reach elsewhere with absolute paths rather than another cd.',
       `Paths you pass to other tools still resolve against the project directory, ${args.projectDirectory}.`,
     ].join(' '),
   )

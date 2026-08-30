@@ -11,6 +11,7 @@
     "dev": "bun src/main.tsx",
     "proto:shell": "bun prototype/shell.tsx",
     "proto:round2": "bun prototype/round2.tsx",
+    "proto:tools": "bun prototype/tools.tsx",
     "typecheck": "tsc --noEmit",
     "test": "bun scripts/test-shards.ts",
     "test:serial": "bun test",

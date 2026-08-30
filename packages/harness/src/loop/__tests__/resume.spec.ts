@@ -31,13 +31,13 @@ const promptText = (model: MockLanguageModelV4, call: number): string =>
 describe('a conversation that outlives the process that started it', () => {
   it('continues from nothing but the database file, driven by a different script', async () => {
     const first = await attach([{ text: 'auth and the router' }])
-    const thread = await first.harness.threads.create({})
+    const thread = await first.harness.threads.create({ workspace: '/work' })
     const opened = await first.harness.runner.say({ threadId: thread.id, text: 'what changed?' })
     expect(opened.status).toBe(ETurnStatus.Completed)
     await first.release()
 
     const second = await attach([{ text: 'because the token expired' }])
-    const recovered = await second.harness.threads.mostRecent()
+    const recovered = await second.harness.threads.mostRecent({ workspace: '/work' })
     if (recovered === undefined) throw new Error('the database remembered no thread')
 
     const outcome = await second.harness.runner.say({ threadId: recovered.id, text: 'why?' })

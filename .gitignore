@@ -52,6 +52,11 @@ ds-bundle/
 
 .scratch/
 
+# Atlas' own state when it runs from a checkout instead of the shipped binary: the harness database,
+# settings, raw tapes, skills, and the encrypted account vault plus its key. Repo-local so a dev run
+# never touches the operator's ~/.atlas — override with ATLAS_HOME. Holds secret material.
+.atlas-home/
+
 # Upstream repositories cloned for reference (claude-code, opentui, skills) — read here, never vendored
 .clones/
 

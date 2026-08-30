@@ -1,6 +1,8 @@
 import { activeQuery, commandCandidates, type CommandSpec } from '@dltech/atlas-core'
 
-export const COMMAND_MENU_ROWS = 8
+import { menuWindow, movedIndex, MENU_ROWS } from './menu-model'
+
+export const COMMAND_MENU_ROWS = MENU_ROWS
 
 export type CommandMenuState = {
   index: number
@@ -30,14 +32,13 @@ export function moveCommandSelection(args: {
   state: CommandMenuState
   delta: number
 }): CommandMenuState {
-  const count = args.state.matches.length
-  if (count === 0) return args.state
+  const index = movedIndex({
+    index: args.state.index,
+    count: args.state.matches.length,
+    delta: args.delta,
+  })
 
-  const steps = Math.trunc(args.delta)
-  if (steps === 0) return args.state
-
-  const wrapped = (((args.state.index + steps) % count) + count) % count
-  return { ...args.state, index: wrapped }
+  return index === args.state.index ? args.state : { ...args.state, index }
 }
 
 export function selectedCommand(state: CommandMenuState): CommandSpec | null {
@@ -56,10 +57,5 @@ export function commandMenuWindow(args: {
   state: CommandMenuState
   rows: number
 }): CommandMenuWindow {
-  const rows = Math.max(1, Math.trunc(args.rows))
-  const count = args.state.matches.length
-  if (count <= rows) return { start: 0, visible: args.state.matches }
-
-  const start = Math.min(Math.max(0, args.state.index - rows + 1), count - rows)
-  return { start, visible: args.state.matches.slice(start, start + rows) }
+  return menuWindow({ entries: args.state.matches, index: args.state.index, rows: args.rows })
 }

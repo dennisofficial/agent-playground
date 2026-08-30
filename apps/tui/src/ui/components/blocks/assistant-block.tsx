@@ -14,10 +14,12 @@ export function AssistantBlock(props: {
   width: number
   streaming?: boolean
   interrupted?: boolean
-  attached?: boolean
 }): React.ReactNode {
   return (
-    <box flexDirection="column" marginBottom={props.attached === true ? 0 : 1} flexShrink={0}>
+    // Always a blank row underneath, including when a tool run follows. The reply used to hug the
+    // group it asked for, which was right when a group drew one attached summary line and wrong now
+    // that a run draws a stack of rows: the prose ended up touching the first of them.
+    <box flexDirection="column" marginBottom={1} flexShrink={0}>
       <box flexDirection="row">
         <text fg={theme.accent} flexShrink={0}>
           {`${glyph.block} `}

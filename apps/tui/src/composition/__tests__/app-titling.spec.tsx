@@ -11,6 +11,8 @@ await grammarsReady()
 
 const NAME = 'Refresh-token rotation'
 
+const HANDLE = 'refresh-token-rotation'
+
 const OPENING = 'the refresh token never rotates'
 
 const FOLLOW_UP = 'and cover reuse detection'
@@ -149,6 +151,34 @@ describe('naming a session from its opening message', () => {
           await settle(250)
           await setup.flush()
           return setup.captureCharFrame().includes(NAME)
+        },
+        within: WITHIN_MS,
+      })
+
+      expect(headed).toBe(true)
+    } finally {
+      await teardown(setup)
+    }
+  })
+
+  it('heads the composer with the handle the session resumes by, not the written name', async () => {
+    const app = naming(NAME)
+    const setup = await testRender(
+      <App app={app} opened={{ threadId: THREAD, events: [], turns: [], name: null }} />,
+      { width: 140, height: 40 },
+    )
+
+    try {
+      await setup.flush()
+      await setup.mockInput.typeText(OPENING)
+      setup.mockInput.pressEnter()
+
+      const headed = await until({
+        holds: async () => {
+          await setup.flush()
+          await settle(250)
+          await setup.flush()
+          return setup.captureCharFrame().includes(HANDLE)
         },
         within: WITHIN_MS,
       })
