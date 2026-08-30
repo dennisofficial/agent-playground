@@ -3,9 +3,10 @@ import { cpus } from 'node:os'
 /**
  * `bun test --parallel` implies `--isolate`, and @opentui/core 0.4.5 cannot initialise its Zig
  * render library in an isolated worker — every `testRender` fails with "Cannot access 'default'
- * before initialization". Bun has no `--shard` flag either: 1.3.4 accepts it as an unknown argument
- * and ignores it, so asking for shard i of n silently runs the whole suite n times. The files are
- * therefore split here and handed to ordinary processes as explicit path filters.
+ * before initialization" — still true on bun 1.3.14, where it fails 502 of 2121 tests. Ordinary
+ * processes are fine, so the files are split here and handed out as explicit path filters rather
+ * than through `bun test --shard`, which exists only from 1.3.14 and is accepted and ignored by
+ * older bun, where a shard that silently runs the whole suite still reads as a pass.
  */
 
 const MAXIMUM_SHARDS = 20
