@@ -7,9 +7,10 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "bun prisma/ensure-client.ts && tsc --noEmit",
-    "test": "bun prisma/ensure-client.ts && bun test",
+    "typecheck": "bun run db:ensure && tsc --noEmit",
+    "test": "bun run db:ensure && bun test",
     "db:generate": "prisma generate",
+    "db:ensure": "bun prisma/ensure-client.ts",
     "db:migrate": "prisma migrate dev"
   },
   "dependencies": {
