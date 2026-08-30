@@ -49,6 +49,7 @@ export * from './context/render'
 export * from './context/supersede'
 
 export * from './workspace/session-directory'
+export * from './workspace/identity'
 
 export * from './shells/status'
 export * from './shells/label'

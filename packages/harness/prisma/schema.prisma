@@ -22,11 +22,14 @@ model Thread {
   parentThreadId String?
   forkSeq        Int?
   forkMode       String?
+  workspace      String?
+  repo           String?
   events         Event[]
   turns          Turn[]
 
   @@index([updatedAt])
   @@index([parentThreadId])
+  @@index([workspace, updatedAt])
 }
 
 model Event {
