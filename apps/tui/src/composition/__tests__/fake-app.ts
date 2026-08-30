@@ -58,7 +58,7 @@ export const FAKE_CONFIG: AtlasConfig = {
   keychainService: undefined,
   thinkingBudgetTokens: 2048,
   open: { mode: EOpenMode.New },
-  cwd: '/Users/dennis/Developer/atlas',
+  cwd: '/workspace/atlas',
 }
 
 const CREDENTIAL: Credential = {
