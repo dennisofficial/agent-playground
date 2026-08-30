@@ -2,10 +2,19 @@ import type { Shortcut, ShortcutGroup } from '../shortcuts'
 import { describedBy, EKeyGroup, type PlacedBinding } from './binding'
 import { spellChord } from './chord'
 
-const GROUP_ORDER: readonly EKeyGroup[] = [EKeyGroup.Composer, EKeyGroup.Session, EKeyGroup.Turn]
+const GROUP_ORDER: readonly EKeyGroup[] = [
+  EKeyGroup.Composer,
+  EKeyGroup.Session,
+  EKeyGroup.Turn,
+  EKeyGroup.Selection,
+]
 
 export const NATIVE_SHORTCUTS: Readonly<Record<string, readonly Shortcut[]>> = {
   [EKeyGroup.Composer]: [{ key: '⇧⏎', label: 'newline' }],
+  [EKeyGroup.Selection]: [
+    { key: 'drag', label: 'copy what you highlight' },
+    { key: '2×click', label: 'copy the word under the pointer' },
+  ],
 }
 
 const shortcutOf = (binding: PlacedBinding): Shortcut => ({

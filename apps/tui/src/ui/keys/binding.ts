@@ -9,6 +9,7 @@ export enum EKeyGroup {
   Composer = 'Composer',
   Session = 'Session',
   Turn = 'Turn',
+  Selection = 'Selection',
 }
 
 export type KeyDeclaration = { chord: Chord; hint: string; describe?: string }

@@ -14,6 +14,7 @@ export type MarkdownSegment =
       readonly language: string
       readonly filename: string
       readonly source: string
+      readonly raw: string
       readonly state: EFenceState
     }
   | { readonly kind: 'table'; readonly markdown: string }
@@ -83,6 +84,7 @@ function fenceSegment(token: Tokens.Code): MarkdownSegment {
     filename: info[1] ?? '',
     // marked leaves a trailing newline on 4-space-indented blocks but not on backtick fences.
     source: token.text.replace(/\n$/, ''),
+    raw: token.raw,
     state: fenceState(token.raw),
   }
 }

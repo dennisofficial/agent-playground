@@ -17,6 +17,7 @@ import { newestExpandableKey } from '../store'
 import { CommandMenu } from '../ui/components/command-menu'
 import { Composer, composerRows, composerTone } from '../ui/components/composer'
 import { Footer, type FooterContext } from '../ui/components/footer'
+import { NoticeLine } from '../ui/components/notice-line'
 import { Screen } from '../ui/components/screen'
 import { Shortcuts } from '../ui/components/shortcuts'
 import { Sidebar } from '../ui/components/sidebar'
@@ -26,6 +27,8 @@ import { modelLabel } from '../ui/model-label'
 import { densityVersion, subscribeDensity } from '../ui/density-store'
 import { paletteVersion, subscribePalette } from '../ui/palette-store'
 import { ERewindPointKind, ERewindVerb, type RewindChoice } from '../ui/rewind-model'
+import { SelectionSurface } from '../ui/selection/selection-surface'
+import { useCopyOnSelect } from '../ui/selection/use-copy-on-select'
 import type { SwitcherChoice } from '../ui/switcher-model'
 import { SIDEBAR_GUTTER } from '../ui/theme'
 import {
@@ -105,6 +108,8 @@ function Workspace(props: {
   useSyncExternalStore(subscribeDensity, densityVersion)
 
   const settings = useSettings({ app: props.app })
+
+  useCopyOnSelect()
 
   const draft = useDraft()
 
@@ -399,7 +404,7 @@ function Workspace(props: {
 
   return (
     <Screen>
-      <box flexDirection="row" flexGrow={1} flexShrink={1} flexBasis={0}>
+      <SelectionSurface>
         <box flexDirection="column" width={contentWidth} flexGrow={1} flexShrink={1} flexBasis={0}>
           <Transcript
             model={conversation.model}
@@ -427,6 +432,7 @@ function Workspace(props: {
           {commandMenu.state === null ? null : (
             <CommandMenu state={commandMenu.state} width={chromeWidth} />
           )}
+          <NoticeLine width={chromeWidth} />
           <Composer
             draft={draft}
             width={chromeWidth}
@@ -472,7 +478,7 @@ function Workspace(props: {
           compacting={conversation.compacting}
           now={conversation.now}
         />
-      </box>
+      </SelectionSurface>
     </Screen>
   )
 }

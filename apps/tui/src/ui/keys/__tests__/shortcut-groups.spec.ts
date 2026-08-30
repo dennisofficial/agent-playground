@@ -20,7 +20,11 @@ describe('the shortcuts list the ? overlay shows', () => {
   it('lists a binding under the group it declared, spelled the way it is pressed', () => {
     const groups = groupsOfBindings([bound({})])
 
-    expect(groups.map((group) => group.title)).toEqual([EKeyGroup.Composer, EKeyGroup.Session])
+    expect(groups.map((group) => group.title)).toEqual([
+      EKeyGroup.Composer,
+      EKeyGroup.Session,
+      EKeyGroup.Selection,
+    ])
     expect(labelsIn({ title: EKeyGroup.Session, groups })).toEqual(['new conversation'])
   })
 
@@ -56,6 +60,14 @@ describe('the shortcuts list the ? overlay shows', () => {
       EKeyGroup.Composer,
       EKeyGroup.Session,
       EKeyGroup.Turn,
+      EKeyGroup.Selection,
+    ])
+  })
+
+  it('documents the mouse gestures that copy, since no key spells them', () => {
+    expect(labelsIn({ title: EKeyGroup.Selection, groups: groupsOfBindings([]) })).toEqual([
+      'copy what you highlight',
+      'copy the word under the pointer',
     ])
   })
 

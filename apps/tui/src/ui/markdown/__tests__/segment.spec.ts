@@ -29,6 +29,7 @@ describe('segmentMarkdown', () => {
       language: 'ts',
       filename: '',
       source: 'const x = 1;',
+      raw: '```ts\nconst x = 1;\n```',
       state: EFenceState.Closed,
     })
     expect(segments[2]).toEqual({ kind: 'prose', text: '\n\nTrailing prose.\n' })
@@ -42,6 +43,7 @@ describe('segmentMarkdown', () => {
         language: 'typescript',
         filename: '',
         source: 'const x = 1;',
+        raw: '```TypeScript\nconst x = 1;\n```',
         state: EFenceState.Closed,
       },
     ])
@@ -58,6 +60,7 @@ describe('segmentMarkdown', () => {
       language: '',
       filename: '',
       source: 'plain',
+      raw: '```\nplain\n```',
       state: EFenceState.Closed,
     })
   })
@@ -70,6 +73,7 @@ describe('segmentMarkdown', () => {
       language: '',
       filename: '',
       source: 'indented code',
+      raw: '    indented code\n',
       state: EFenceState.Closed,
     })
   })

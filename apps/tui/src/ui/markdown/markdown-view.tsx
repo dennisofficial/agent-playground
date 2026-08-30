@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react'
 
+import { SourceSpan } from '../selection/source-span'
 import { theme } from '../theme'
 import { FencedBlock, fenceWidth } from './fenced-block'
 import { ProseView } from './prose/prose-view'
@@ -101,6 +102,7 @@ function Segment(
 
   if (segment.kind === 'table') {
     return (
+      <SourceSpan source={segment.markdown}>
       <TableBlock
         markdown={segment.markdown}
         width={props.width}
@@ -108,20 +110,23 @@ function Segment(
         fg={props.fg ?? theme.hover}
         {...(props.bg === undefined ? {} : { bg: props.bg })}
       />
+      </SourceSpan>
     )
   }
 
   if (segment.kind === 'fence') {
     return (
-      <FencedBlock
-        language={segment.language}
-        filename={segment.filename}
-        source={segment.source}
-        width={props.width}
-        streaming={props.live}
-        attached={props.hugsNext}
-        levelled={props.levelled}
-      />
+      <SourceSpan source={segment.raw}>
+        <FencedBlock
+          language={segment.language}
+          filename={segment.filename}
+          source={segment.source}
+          width={props.width}
+          streaming={props.live}
+          attached={props.hugsNext}
+          levelled={props.levelled}
+        />
+      </SourceSpan>
     )
   }
 

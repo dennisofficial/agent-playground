@@ -1,4 +1,5 @@
 import { toThreadId } from '@dltech/atlas-core'
+import type { MockMouse } from '@opentui/core/testing'
 import { testRender } from '@opentui/react/test-utils'
 import React from 'react'
 
@@ -33,6 +34,7 @@ export type Mounted = {
   pressEscape: () => void
   pressUp: () => void
   pressCtrl: (key: string) => void
+  mouse: MockMouse
   done: () => Promise<void>
 }
 
@@ -64,6 +66,7 @@ export async function open(args: {
     pressEscape: () => setup.mockInput.pressEscape(),
     pressUp: () => setup.mockInput.pressArrow('up'),
     pressCtrl: (key) => setup.mockInput.pressKey(key, { ctrl: true }),
+    mouse: setup.mockMouse,
     done: () => teardown(setup),
   }
 }

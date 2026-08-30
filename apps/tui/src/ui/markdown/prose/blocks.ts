@@ -68,19 +68,27 @@ const DEFINITION_LINE = /^:[ \t]+(.*)$/
 
 type Context = { readonly order: ReadonlyMap<string, number> }
 
+export type SourcedBlock = { readonly block: ProseBlock; readonly raw: string }
+
 export function proseBlocks(source: string): readonly ProseBlock[] {
+  return sourcedProseBlocks(source).map((sourced) => sourced.block)
+}
+
+export function sourcedProseBlocks(source: string): readonly SourcedBlock[] {
   const { body, definitions } = liftFootnotes(source)
   const order = new Map([...definitions.keys()].map((label, index) => [label, index + 1]))
   const context: Context = { order }
 
-  const blocks = blocksOf({ tokens: marked.lexer(body), context })
-  if (definitions.size === 0) return blocks
+  const sourced = marked
+    .lexer(body)
+    .flatMap((token) => blockOf({ token, context }).map((block) => ({ block, raw: token.raw })))
+  if (definitions.size === 0) return sourced
 
   const notes = [...definitions].map(([label, text]) => ({
     marker: superscriptNumber(order.get(label) ?? 0),
     content: inlineNodes({ tokens: marked.lexer(text), order }),
   }))
-  return [...blocks, { kind: EProseBlock.Footnotes, notes }]
+  return [...sourced, { block: { kind: EProseBlock.Footnotes, notes }, raw: '' }]
 }
 
 function liftFootnotes(source: string): {

@@ -7,12 +7,14 @@ const SRC = join(import.meta.dir, '..', '..', '..')
 const RAW_MOUSE = /on(?:MouseDown|MouseUp|MouseDrag|Mouse(?![A-Za-z]))/
 
 /**
- * `usePress` owns the press, and the scrollbar owns the drag. Everything else that reacts to a
- * click goes through the hook, so the renderer's selection anchor is always cleared behind it.
+ * `usePress` owns the press, the scrollbar owns the drag, and the selection surface owns the
+ * double click. Everything else that reacts to a click goes through the hook, so the renderer's
+ * selection anchor is always cleared behind it.
  */
 const RAW_MOUSE_BELONGS_TO = new Set([
   'ui/hooks/use-press.ts',
   'ui/markdown/pan-bar.tsx',
+  'ui/selection/selection-surface.tsx',
 ])
 
 describe('press discipline', () => {

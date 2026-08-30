@@ -2,10 +2,11 @@ import { TextAttributes } from '@opentui/core'
 import React, { useMemo } from 'react'
 
 import { BLANK_BORDER } from '../../borders'
+import { SourceSpan } from '../../selection/source-span'
 import { theme } from '../../theme'
 import { FencedBlock } from '../fenced-block'
 import { TableBlock } from '../table-block'
-import { EProseBlock, type ListItem, type ProseBlock, proseBlocks } from './blocks'
+import { EProseBlock, type ListItem, type ProseBlock, type SourcedBlock, sourcedProseBlocks } from './blocks'
 import { InlineRun } from './inline-view'
 import {
   bulletFor,
@@ -43,7 +44,7 @@ export function ProseView(props: {
   fg?: string
   bg?: string
 }): React.ReactNode {
-  const blocks = useMemo(() => proseBlocks(props.source), [props.source])
+  const blocks = useMemo(() => sourcedProseBlocks(props.source), [props.source])
   const frame: Frame = {
     width: props.width,
     ground: props.fg ?? theme.hover,
@@ -55,21 +56,20 @@ export function ProseView(props: {
 }
 
 function BlockStream(props: {
-  blocks: readonly ProseBlock[]
+  blocks: readonly SourcedBlock[]
   frame: Frame
   tight?: boolean
 }): React.ReactNode {
   return (
     <box flexDirection="column" flexShrink={0}>
-      {props.blocks.map((block, index) => (
-        <box
+      {props.blocks.map((sourced, index) => (
+        <SourceSpan
           key={index}
-          flexDirection="column"
-          flexShrink={0}
+          source={sourced.raw}
           marginBottom={props.tight === true || index === props.blocks.length - 1 ? 0 : 1}
         >
-          <Block block={block} frame={props.frame} />
-        </box>
+          <Block block={sourced.block} frame={props.frame} />
+        </SourceSpan>
       ))}
     </box>
   )
