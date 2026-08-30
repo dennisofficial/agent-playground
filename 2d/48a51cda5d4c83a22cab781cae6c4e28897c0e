@@ -1,0 +1,48 @@
+apps/tui/src/ui/keys/shortcut-groups.ts
+  s_b8a5959081d51d::t_4895d66b7ebe5a 5-10,14-17
+apps/tui/src/ui/markdown/__tests__/segment.spec.ts
+  s_b8a5959081d51d::t_8cc1a1db614761 46,63,76
+  s_c550772090599f::t_5f0882fc687563 32
+apps/tui/src/ui/keys/binding.ts
+  s_b8a5959081d51d::t_4895d66b7ebe5a 12
+apps/tui/src/ui/selection/__tests__/copy-markdown.spec.tsx
+  s_ffa28735b6ba82::t_95f7b91f8a85f6 1-107
+apps/tui/src/ui/selection/selection-surface.tsx
+  s_ffa28735b6ba82::t_5b3da84e1715fa 1-19
+apps/tui/src/ui/keys/__tests__/shortcut-groups.spec.ts
+  ai_agent 23-27,63-70
+apps/tui/src/ui/selection/screen-rows.ts
+  s_c550772090599f::t_7b2856fcf00e1b 28-40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "2d48a51cda5d4c83a22cab781cae6c4e28897c0e",
+  "prompts": {},
+  "sessions": {
+    "s_b8a5959081d51d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "907acdcd-d5dc-4ad9-8247-d27981954c95",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_c550772090599f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4fcac4b0-fc04-428c-9187-0f8a65c741b3",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_ffa28735b6ba82": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9d08fbdf-2227-419f-bd4e-92ac7dc7f383",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
