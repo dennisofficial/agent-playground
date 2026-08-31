@@ -1,21 +1,23 @@
-import { ECommandGroup, ECommandKind, splitFrontmatter, type CommandSpec } from '@dltech/atlas-core'
+import {
+  ECommandGroup,
+  ECommandKind,
+  EDefinitionOrigin,
+  splitFrontmatter,
+  type CommandSpec,
+} from '@dltech/atlas-core'
 
-export enum ESkillOrigin {
-  BuiltIn = 'built-in',
-  User = 'user',
-  Project = 'project',
-}
+export { EDefinitionOrigin as ESkillOrigin }
 
 export type DiscoveredSkill = {
   spec: CommandSpec
   body: string
-  origin: ESkillOrigin
+  origin: EDefinitionOrigin
   userInvocable: boolean
   modelInvocable: boolean
 }
 
 export abstract class SkillSource {
-  abstract readonly origin: ESkillOrigin
+  abstract readonly origin: EDefinitionOrigin
   abstract load(): Promise<readonly DiscoveredSkill[]>
 }
 
@@ -35,7 +37,7 @@ const named = (args: { written: string | undefined; fallback: string }): string 
 export function parseSkill(args: {
   text: string
   fallbackName: string
-  origin: ESkillOrigin
+  origin: EDefinitionOrigin
 }): DiscoveredSkill | undefined {
   if (args.text.trim() === '') return undefined
 
