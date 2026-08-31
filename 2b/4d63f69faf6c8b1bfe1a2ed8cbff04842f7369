@@ -1,0 +1,26 @@
+packages/harness/src/tools/__tests__/filtered-registry.spec.ts
+  ai_agent 3,72-126
+packages/harness/src/agents/types/__tests__/built-ins.spec.ts
+  s_e54c4d80a3afc5::t_32928522e664ed 62-65,69-71
+  s_e54c4d80a3afc5::t_69c2443db763e2 1,17-25,83-90,93-94
+packages/harness/src/agents/types/built-ins.ts
+  s_e54c4d80a3afc5::t_4bbe56f9434647 15,25,43,59,65,71
+packages/harness/src/agents/types/__tests__/tool-access.spec.ts
+  s_e54c4d80a3afc5::t_849c9f180a19cf 8,19-20,39,42-43,70-73,76,80-86,89-101,103,105-106,109-116,119-120,123,127-128
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "2b4d63f69faf6c8b1bfe1a2ed8cbff04842f7369",
+  "prompts": {},
+  "sessions": {
+    "s_e54c4d80a3afc5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "03da6b09-1f31-4a98-8ca8-63ea259cb7ee",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
