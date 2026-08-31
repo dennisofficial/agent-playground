@@ -1,0 +1,76 @@
+packages/core/src/agents/__tests__/status.spec.ts
+  s_098172864cf888::t_e7d3c1a399c335 66-76
+  s_098172864cf888::t_898f3d758e04d9 3-4,42-65,77-85,98-109
+  s_098172864cf888::t_8e9390e845f3cc 36-41
+packages/core/src/agents/roster.ts
+  s_098172864cf888::t_9b5bf6634f968e 75-77
+  s_098172864cf888::t_db103de39215d2 1,6,78-129
+  s_098172864cf888::t_5f2032baaec55b 2,5,71-74
+  s_098172864cf888::t_f6270fca36e5f1 17,46,63
+packages/core/src/events/projections.ts
+  s_e54c4d80a3afc5::t_e8bfefdcea59c4 3,5-12,38,80
+packages/core/src/agents/status.ts
+  s_098172864cf888::t_433258d0a0382d 36-38
+  s_098172864cf888::t_12fb238fef2c01 8
+  s_098172864cf888::t_8b74c18a7a6bdc 1-2,15,24-35,39-48,53
+packages/core/src/agents/__tests__/roster.spec.ts
+  s_098172864cf888::t_ad232dac02a3cb 157,159
+  s_098172864cf888::t_e7d3c1a399c335 8
+  s_098172864cf888::t_62863b791dc2dc 9,180-243
+  s_098172864cf888::t_3c87c197337cc1 87-101,120-121,154-156,158,160-179
+  s_098172864cf888::t_5275c38e593110 3,41-46,52,102-119
+  s_098172864cf888::t_7eae49df32b9b1 86
+packages/core/src/events/__tests__/projections.spec.ts
+  s_e54c4d80a3afc5::t_4329b04fc61ee8 73-80
+packages/core/src/events/__tests__/message-origin.spec.ts
+  s_098172864cf888::t_094252d972fe6a 1-23
+packages/core/src/events/rewind-target.ts
+  s_1cb203f76f0ee1::t_2295c0ae90e4b3 2,10,52-57
+packages/core/src/events/__tests__/schema.spec.ts
+  s_098172864cf888::t_ea0cf4f1525fe2 5,49-59
+  s_098172864cf888::t_094252d972fe6a 6,13,39-48
+packages/core/src/events/schema.ts
+  s_098172864cf888::t_50b5a70842985b 7
+  s_098172864cf888::t_8dc0f270f387af 39-43
+  s_098172864cf888::t_8f198f8a7e060c 108-115,129
+packages/core/src/events/body.ts
+  s_098172864cf888::t_8f198f8a7e060c 59-66,80
+  s_098172864cf888::t_a10aad85b8e66c 17-24,28
+packages/core/src/events/__tests__/rewind-target.spec.ts
+  s_098172864cf888::t_a7d0012580eb7e 231-237,243,245-247,249-251
+  s_098172864cf888::t_8e9390e845f3cc 3-4,191-230,238-242,244,248
+packages/core/src/shells/status.ts
+  s_098172864cf888::t_db103de39215d2 12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "35b40cc8860a199391718e275dfa919ce20dbef0",
+  "prompts": {},
+  "sessions": {
+    "s_098172864cf888": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "77c97d66-e7c0-4fef-8998-dfad371bcad0",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_1cb203f76f0ee1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6f9c520f-d959-4943-af9c-bbc22836b598",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_e54c4d80a3afc5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "03da6b09-1f31-4a98-8ca8-63ea259cb7ee",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
