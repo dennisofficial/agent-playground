@@ -39,8 +39,8 @@ const wholeToolset = () =>
     recording(AGENT_SPAWN_TOOL_NAME),
   ])
 
-const builtInTypes = (): Promise<readonly AgentType[]> =>
-  loadAgentTypes({ sources: [new EmbeddedAgentTypeSource()] })
+const builtInTypes = async (): Promise<readonly AgentType[]> =>
+  (await loadAgentTypes({ sources: [new EmbeddedAgentTypeSource()] })).types
 
 const callOf = (name: string): DispatchableCall => ({
   callId: toCallId('call-1'),

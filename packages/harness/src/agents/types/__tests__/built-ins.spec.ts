@@ -5,8 +5,8 @@ import { AGENT_SPAWN_TOOL_NAME, type AgentType } from '../agent-type'
 import { EmbeddedAgentTypeSource } from '../embedded-source'
 import { loadAgentTypes } from '../registry'
 
-const load = (): Promise<readonly AgentType[]> =>
-  loadAgentTypes({ sources: [new EmbeddedAgentTypeSource()] })
+const load = async (): Promise<readonly AgentType[]> =>
+  (await loadAgentTypes({ sources: [new EmbeddedAgentTypeSource()] })).types
 
 const named = async (name: string): Promise<AgentType> => {
   const found = (await load()).find((agentType) => agentType.name === name)

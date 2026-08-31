@@ -1,7 +1,12 @@
 import { EDefinitionOrigin } from '@dltech/atlas-core'
 import { describe, expect, it } from 'bun:test'
 
-import { AGENT_SPAWN_TOOL_NAME, AgentTypeSource, type AgentType } from '../agent-type'
+import {
+  AGENT_SPAWN_TOOL_NAME,
+  AgentTypeSource,
+  EAgentTypeRefusal,
+  type AgentTypeRead,
+} from '../agent-type'
 import { DirectoryAgentTypeSource } from '../directory-source'
 import { loadAgentTypes } from '../registry'
 
@@ -18,11 +23,14 @@ class FakeAgentTypeSource extends AgentTypeSource {
     this.files = args.files
   }
 
-  load(): Promise<readonly AgentType[]> {
+  load(): Promise<AgentTypeRead> {
     return new DirectoryAgentTypeSource({
       directory: this.origin,
       origin: this.origin,
-      read: async () => this.files,
+      read: async () => ({
+        files: this.files.map((file) => ({ ...file, path: `${this.origin}/${file.name}` })),
+        unreadable: [],
+      }),
     }).load()
   }
 }
@@ -43,7 +51,7 @@ const definition = (args: { description?: string; tools?: string; body?: string 
 
 describe('loadAgentTypes', () => {
   it('merges every source when no name collides', async () => {
-    const loaded = await loadAgentTypes({
+    const { types: loaded } = await loadAgentTypes({
       sources: [
         sourceOf({
           origin: EDefinitionOrigin.BuiltIn,
@@ -66,7 +74,7 @@ describe('loadAgentTypes', () => {
   it('lets a project file shadow a user file shadow a built-in', async () => {
     const file = (body: string) => [{ name: 'reviewer.md', text: definition({ body }) }]
 
-    const loaded = await loadAgentTypes({
+    const { types: loaded } = await loadAgentTypes({
       sources: [
         sourceOf({ origin: EDefinitionOrigin.Project, files: file('project prompt') }),
         sourceOf({ origin: EDefinitionOrigin.BuiltIn, files: file('built-in prompt') }),
@@ -82,7 +90,7 @@ describe('loadAgentTypes', () => {
   it('lets a user file shadow a built-in when no project file claims the name', async () => {
     const file = (body: string) => [{ name: 'reviewer.md', text: definition({ body }) }]
 
-    const loaded = await loadAgentTypes({
+    const { types: loaded } = await loadAgentTypes({
       sources: [
         sourceOf({ origin: EDefinitionOrigin.BuiltIn, files: file('built-in prompt') }),
         sourceOf({ origin: EDefinitionOrigin.User, files: file('user prompt') }),
@@ -94,7 +102,7 @@ describe('loadAgentTypes', () => {
   })
 
   it('never grants agent_spawn, however a definition asks for it', async () => {
-    const loaded = await loadAgentTypes({
+    const { types: loaded } = await loadAgentTypes({
       sources: [
         sourceOf({
           origin: EDefinitionOrigin.Project,
@@ -110,7 +118,7 @@ describe('loadAgentTypes', () => {
   })
 
   it('denies agent_spawn to an agent type that inherits every tool', async () => {
-    const loaded = await loadAgentTypes({
+    const { types: loaded } = await loadAgentTypes({
       sources: [
         sourceOf({
           origin: EDefinitionOrigin.Project,
@@ -124,7 +132,7 @@ describe('loadAgentTypes', () => {
   })
 
   it('leaves an agent type asking only for agent_spawn with no tools at all', async () => {
-    const loaded = await loadAgentTypes({
+    const { types: loaded } = await loadAgentTypes({
       sources: [
         sourceOf({
           origin: EDefinitionOrigin.Project,
@@ -145,14 +153,59 @@ describe('loadAgentTypes', () => {
       'Prompt.',
     ].join('\n')
 
-    const loaded = await loadAgentTypes({
+    const { types: loaded } = await loadAgentTypes({
       sources: [sourceOf({ origin: EDefinitionOrigin.User, files: [{ name: 'safe.md', text }] })],
     })
 
     expect(loaded[0]?.disallowedTools).toEqual(['write', AGENT_SPAWN_TOOL_NAME])
   })
 
+  it('records which definition a winner displaced, so a shadow is visible rather than a mystery', async () => {
+    const file = (body: string) => [{ name: 'reviewer.md', text: definition({ body }) }]
+
+    const { types, shadowed } = await loadAgentTypes({
+      sources: [
+        sourceOf({ origin: EDefinitionOrigin.BuiltIn, files: file('built-in prompt') }),
+        sourceOf({ origin: EDefinitionOrigin.User, files: file('user prompt') }),
+        sourceOf({ origin: EDefinitionOrigin.Project, files: file('project prompt') }),
+      ],
+    })
+
+    expect(types).toHaveLength(1)
+    expect(shadowed).toEqual([
+      {
+        name: 'reviewer',
+        origin: EDefinitionOrigin.BuiltIn,
+        definedIn: 'built-in/reviewer.md',
+        shadowedBy: EDefinitionOrigin.Project,
+      },
+      {
+        name: 'reviewer',
+        origin: EDefinitionOrigin.User,
+        definedIn: 'user/reviewer.md',
+        shadowedBy: EDefinitionOrigin.Project,
+      },
+    ])
+  })
+
+  it('shadows nothing when every name is claimed once', async () => {
+    const { shadowed } = await loadAgentTypes({
+      sources: [
+        sourceOf({
+          origin: EDefinitionOrigin.User,
+          files: [{ name: 'auditor.md', text: definition({}) }],
+        }),
+      ],
+    })
+
+    expect(shadowed).toEqual([])
+  })
+
   it('yields nothing when no source has anything to offer', async () => {
-    expect(await loadAgentTypes({ sources: [] })).toEqual([])
+    expect(await loadAgentTypes({ sources: [] })).toEqual({
+      types: [],
+      refusals: [],
+      shadowed: [],
+    })
   })
 })

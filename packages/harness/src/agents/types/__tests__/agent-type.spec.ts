@@ -1,10 +1,25 @@
 import { EDefinitionOrigin, EToolEffect } from '@dltech/atlas-core'
 import { describe, expect, it } from 'bun:test'
 
-import { parseAgentType, type AgentType } from '../agent-type'
+import { EAgentTypeRefusal, parseAgentType, type AgentType } from '../agent-type'
 
-const parse = (text: string, fallbackName = 'reviewer'): AgentType | undefined =>
+const read = (text: string, fallbackName = 'reviewer') =>
   parseAgentType({ text, fallbackName, origin: EDefinitionOrigin.Project })
+
+const parse = (text: string, fallbackName = 'reviewer'): AgentType | undefined => {
+  const parsed = read(text, fallbackName)
+  return parsed.ok ? parsed.agentType : undefined
+}
+
+const refusalOf = (text: string, fallbackName = 'reviewer'): EAgentTypeRefusal | undefined => {
+  const parsed = read(text, fallbackName)
+  return parsed.ok ? undefined : parsed.refusal
+}
+
+const detailOf = (text: string, fallbackName = 'reviewer'): string => {
+  const parsed = read(text, fallbackName)
+  return parsed.ok ? '' : parsed.detail
+}
 
 const frontmatter = (lines: readonly string[], body = 'Do the thing.'): string =>
   ['---', ...lines, '---', body].join('\n')
@@ -22,6 +37,7 @@ describe('parseAgentType', () => {
       model: undefined,
       maxEffect: undefined,
       origin: EDefinitionOrigin.Project,
+      definedIn: undefined,
     })
   })
 
@@ -99,13 +115,42 @@ describe('parseAgentType', () => {
     expect(parse(frontmatter(['description: d', 'colour: green']))?.prompt).toBe('Do the thing.')
   })
 
-  it('stamps the origin it was loaded from', () => {
+  it('stamps the origin and the file it was loaded from', () => {
     const parsed = parseAgentType({
       text: frontmatter(['description: d']),
       fallbackName: 'reviewer',
       origin: EDefinitionOrigin.User,
+      definedIn: '/h/.atlas/agents/reviewer.md',
     })
 
-    expect(parsed?.origin).toBe(EDefinitionOrigin.User)
+    expect(parsed.ok ? parsed.agentType.origin : undefined).toBe(EDefinitionOrigin.User)
+    expect(parsed.ok ? parsed.agentType.definedIn : undefined).toBe('/h/.atlas/agents/reviewer.md')
+  })
+})
+
+describe('what parseAgentType says when it refuses', () => {
+  it('names the reason rather than handing back a bare nothing', () => {
+    expect(refusalOf(frontmatter(['description: d', 'max-effect: readonly']))).toBe(
+      EAgentTypeRefusal.BadMaxEffect,
+    )
+    expect(refusalOf(frontmatter(['name: My Agent', 'description: d']))).toBe(
+      EAgentTypeRefusal.BadName,
+    )
+    expect(refusalOf(frontmatter(['name: reviewer']))).toBe(EAgentTypeRefusal.NoDescription)
+    expect(refusalOf(frontmatter(['description: d'], '  \n'))).toBe(EAgentTypeRefusal.NoPrompt)
+    expect(refusalOf('   ')).toBe(EAgentTypeRefusal.Empty)
+  })
+
+  it('quotes the offending value, so the operator can find it in the file', () => {
+    expect(detailOf(frontmatter(['description: d', 'max-effect: readonly']))).toContain(
+      'max-effect: "readonly"',
+    )
+    expect(detailOf(frontmatter(['name: My Agent', 'description: d']))).toContain('"my agent"')
+  })
+
+  it('carries the name it would have had, so a listing can point at the definition', () => {
+    const parsed = read(frontmatter(['description: d'], '  '), 'deep-review')
+
+    expect(parsed.ok ? '' : parsed.name).toBe('deep-review')
   })
 })
