@@ -28,6 +28,7 @@ import {
   ATLAS_DIRECTORY_NAME,
   atlasDirectory,
   createSecurityKeychainReader,
+  createUrlOpener,
   disposeAll,
   EmbeddedSkillSource,
   ESkillOrigin,
@@ -59,6 +60,7 @@ import {
   TurnRunner,
   WorkspaceRoot,
   FileBrowser,
+  type UrlOpener,
   type AccountUsageService,
   type DeltaChannel,
   type DiscoveredSkill,
@@ -97,6 +99,7 @@ export type AtlasApp = {
   settings: SettingsService
   usage: AccountUsageService
   files: FileBrowser
+  openUrl: UrlOpener
   skills: readonly DiscoveredSkill[]
   close: () => Promise<void>
 }
@@ -249,6 +252,7 @@ export async function composeAtlas(args: {
     settings,
     skills,
     files: new FileBrowser({ root: config.cwd }),
+    openUrl: createUrlOpener(),
     credentials,
     accounts,
     usage,

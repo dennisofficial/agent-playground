@@ -63,6 +63,7 @@ export function OverlayStack(props: {
           overlay
           onPick={accounts.handlePick}
           onDismiss={accounts.handleDismiss}
+          onOpenUrl={accounts.handleOpenUrl}
         />
       )}
       {threads.state === null ? null : (

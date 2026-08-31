@@ -270,6 +270,7 @@ export type FakeApp = AtlasApp & {
   ledger: FakeLedger
   readonly turnsDriven: number
   readonly titled: readonly string[]
+  readonly openedUrls: readonly string[]
 }
 
 export function fakeApp(args: {
@@ -304,11 +305,16 @@ export function fakeApp(args: {
   let turnsDriven = 0
   let marked: ActiveConversation | null = null
   const titled: string[] = []
+  const openedUrls: string[] = []
 
   return {
     skills: args.skills ?? [],
     files: new FileBrowser({ root: args.workspaceRoot ?? FAKE_CONFIG.cwd }),
     accounts: fakeAccounts(),
+    openUrl: (url: string) => {
+      openedUrls.push(url)
+    },
+    openedUrls,
     usage: createAccountUsageService({
       usage: new (class extends AccountUsagePort {
         async read(): Promise<AccountUsage | null> {

@@ -227,7 +227,7 @@ function Workspace(props: {
     onPick: handleOpenThread,
   })
 
-  const accounts = useAccounts({ accounts: props.app.accounts })
+  const accounts = useAccounts({ accounts: props.app.accounts, openUrl: props.app.openUrl })
   const accountsOpen = accounts.state !== null
   const accountRows = accounts.state?.rows
 
