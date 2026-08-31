@@ -1,0 +1,59 @@
+packages/harness/src/ledger/prisma-turn-ledger.ts
+  s_098172864cf888::t_93fddb488fc6c4 58-73
+  s_098172864cf888::t_09b7c1f3b6e83b 7-8
+packages/harness/src/store/__tests__/rewind.spec.ts
+  s_098172864cf888::t_a791d2dfbd3903 128
+  s_098172864cf888::t_a9f7f08b847ac5 3-12,98-127,129-159
+packages/harness/src/store/index.ts
+  s_098172864cf888::t_34697a96c2e849 14
+  s_098172864cf888::t_eb82507e960733 20
+packages/harness/src/ledger/turn-ledger.port.ts
+  s_098172864cf888::t_f4a70d2b0628b2 21-25,29
+packages/harness/src/ledger/spawned-threads.ts
+  s_098172864cf888::t_efbb991cd76397 1-56
+packages/harness/src/ledger/__tests__/thread-tree-rollup.spec.ts
+  s_098172864cf888::t_e7bc189021a89c 1-169,173-194
+  s_098172864cf888::t_77d82f085b2002 170-172
+packages/harness/src/ledger/index.ts
+  s_098172864cf888::t_c8458eacecc412 10-22
+packages/harness/src/ledger/thread-tree-spend.ts
+  s_098172864cf888::t_a166771a78c000 1-52
+packages/harness/src/ledger/__tests__/record-turn-spend.spec.ts
+  s_098172864cf888::t_f8fd5b844c868d 29,38
+packages/harness/src/ledger/__tests__/thread-tree-spend.spec.ts
+  s_098172864cf888::t_7d4ec739a5a81f 1-88
+packages/harness/src/store/__tests__/create-with-first-events.spec.ts
+  s_098172864cf888::t_1ac2009d9e6e21 1-182
+packages/harness/src/store/event-log.ts
+  s_098172864cf888::t_faf020fc7eea1d 65-67,71-112
+packages/harness/src/ledger/__tests__/exit-path-harness.ts
+  s_098172864cf888::t_f8fd5b844c868d 60-63
+packages/harness/src/store/thread-store.ts
+  s_098172864cf888::t_fdf800436dfc2d 139-141,147-152
+  s_098172864cf888::t_7871731661bfc8 8,18
+  s_098172864cf888::t_5f0c72d274c9b2 296-303,305-320
+  s_098172864cf888::t_5e57d9da03c26e 15,46-48,136-138,304
+  s_098172864cf888::t_2dbe27da8d9bde 50
+packages/harness/src/store/create-with-events.ts
+  s_098172864cf888::t_6e5ca23f02eb0b 1-16,18-22,32-41,43-66
+  s_098172864cf888::t_e56a261eb2282f 17
+  s_098172864cf888::t_ec3c316ed7aba9 23-31,42
+packages/harness/src/loop/__tests__/turn-ledger-wiring.spec.ts
+  s_098172864cf888::t_a155494f302834 33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "9ccec602839f46e2987322bc8be063e1d149f4fb",
+  "prompts": {},
+  "sessions": {
+    "s_098172864cf888": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "77c97d66-e7c0-4fef-8998-dfad371bcad0",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
