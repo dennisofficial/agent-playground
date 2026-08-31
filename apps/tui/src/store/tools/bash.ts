@@ -26,9 +26,21 @@ export type Shell = {
   ok: boolean
 }
 
+/**
+ * A shell line exits with the status of its LAST stage, while `readShell` reads the clause from the
+ * EARLIEST recognised one. `grep -rn foo src | head -20; ls apps; cat missing.json` is a search that
+ * found its matches and exits 1 because `cat` did not.
+ *
+ * So a gathered clause may only trust the exit code when the line held a single stage. Across 30
+ * real threads every gathered call marked failed was a multi-stage line whose command had worked;
+ * the status belonged to somebody else's stage. A named command keeps trusting it either way —
+ * reading that code is the whole reason those matchers exist.
+ */
+type Staged = Shell & { ownsExit: boolean }
+
 type Matcher = {
   when: RegExp
-  read: (shell: Shell) => Classification
+  read: (shell: Staged) => Classification
 }
 
 const lines = (text: string): number => (text.length === 0 ? 0 : text.trim().split('\n').length)
@@ -37,19 +49,21 @@ const count = (value: number): string => value.toLocaleString('en-US')
 
 const gathered = (args: {
   gather: EGather
-  shell: Shell
+  shell: Staged
   detail?: EDetail
   /** Whether this clause's metric is worth TOTALLING. The note is drawn either way. */
   counts?: boolean
 }): Classification => {
   const printed = lines(args.shell.stdout)
+  const broke = args.shell.ownsExit && !args.shell.ok
+
   return {
     klass: EToolClass.Gathered,
     gather: args.gather,
     line: said(args.shell),
-    failed: !args.shell.ok,
-    note: args.shell.ok ? (printed > 0 ? `${count(printed)} l` : '') : `exit ${args.shell.exitCode ?? 1}`,
-    metric: args.shell.ok && args.counts !== false ? printed : null,
+    failed: broke,
+    note: broke ? `exit ${args.shell.exitCode ?? 1}` : printed > 0 ? `${count(printed)} l` : '',
+    metric: broke || args.counts === false ? null : printed,
     detail: args.detail ?? EDetail.Output,
   }
 }
@@ -167,11 +181,12 @@ const stagesOf = (command: string): string[] =>
 export function readShell(shell: Shell): Classification {
   const command = withoutCd(shell.command)
   const stages = stagesOf(firstLine(command))
+  const staged: Staged = { ...shell, command, ownsExit: stages.length <= 1 }
 
   for (const stage of stages) {
     const matcher = MATCHERS.find((candidate) => candidate.when.test(stage))
-    if (matcher !== undefined) return matcher.read({ ...shell, command })
+    if (matcher !== undefined) return matcher.read(staged)
   }
 
-  return gathered({ gather: EGather.Run, shell: { ...shell, command }, counts: false })
+  return gathered({ gather: EGather.Run, shell: staged, counts: false })
 }

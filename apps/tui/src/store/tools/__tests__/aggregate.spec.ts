@@ -34,12 +34,34 @@ describe('the sentence a run of gathering makes', () => {
     ])
   })
 
-  it('says how many failed, because a failure six rows down is a failure nobody sees', () => {
+  it('pulls a failure out of the sentence, so the row that broke says its own name', () => {
     const broken = aShell({ command: 'nixify', exitCode: 1 })
 
     expect(rowsOf([read('a.ts', 5), read('b.ts', 5), broken])).toEqual([
-      'Read 2 files, ran 1 command · 10 lines · 1 failed',
+      'Read 2 files · 10 lines',
+      'nixify',
     ])
+  })
+
+  it('breaks the sentence where the failure fell rather than hoisting it to either end', () => {
+    const broken = aShell({ command: 'nixify', exitCode: 1 })
+
+    expect(rowsOf([read('a.ts', 5), broken, read('b.ts', 5), grep('x', 2)])).toEqual([
+      'Read a.ts',
+      'nixify',
+      'Read 1 file, searched 1 time · 5 lines · 2 matches',
+    ])
+  })
+
+  it('leaves no failure for a measure to count, because none can join a sentence', () => {
+    const broken = aShell({ command: 'nixify', exitCode: 1 })
+    const segments = segmentsOf({ calls: [read('a.ts', 5), read('b.ts', 5), broken], cwd: CWD })
+    const sentences = segments.filter((segment) => segment.kind === 'sentence')
+
+    expect(sentences.flatMap((segment) => segment.reads).some((entry) => entry.reading.failed)).toBe(
+      false,
+    )
+    expect(sentences.map((segment) => measureOfSentence(segment.reads))).toEqual([' · 10 lines'])
   })
 })
 

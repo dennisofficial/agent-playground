@@ -27,6 +27,18 @@ const repeats = (segment: Segment | undefined, reading: Classification): boolean
   segment !== undefined && segment.kind === 'alone' && segment.read.reading.line === reading.line
 
 /**
+ * A failure leaves the sentence.
+ *
+ * `Read 10 files, listed 2 directories, ran 1 command · 1 failed` reddened thirteen calls to report
+ * one, and buried WHICH one behind a click — the counter naming the failure was drawn in the dimmest
+ * colour on the line while the twelve calls that had worked were drawn in the loudest. Pulled out,
+ * the failed call is its own row in the place it happened: it says its own name, shows its own
+ * error, and the sentence beside it goes back to describing work that succeeded.
+ */
+const joinsSentence = (reading: Classification): boolean =>
+  reading.klass === EToolClass.Gathered && !reading.failed
+
+/**
  * A sentence covers a run of ADJACENT gathered calls, and a classified command breaks it.
  *
  * The alternative was tried and is wrong: merging every gathered call of a step into one sentence
@@ -43,7 +55,7 @@ export function segmentsOf(args: { calls: readonly ToolCall[]; cwd: string }): S
     const read: Read = { call, reading }
     const open = segments.at(-1)
 
-    if (reading.klass === EToolClass.Gathered) {
+    if (joinsSentence(reading)) {
       if (open?.kind === 'sentence') {
         segments[segments.length - 1] = { ...open, reads: [...open.reads, read] }
         continue
@@ -120,18 +132,15 @@ export function measureOfSentence(reads: readonly Read[]): string {
     totals.set(read.reading.gather, (totals.get(read.reading.gather) ?? 0) + read.reading.metric)
   }
 
-  const failed = reads.filter((read) => read.reading.failed).length
-
-  return [
-    // Same order as the clauses, for the same reason: a measure whose order depends on which call
-    // happened to land first reads differently every time for nothing a reader can act on.
-    ...CLAUSE_ORDER.filter((gather) => (totals.get(gather) ?? 0) > 0).map((gather) => {
+  // Same order as the clauses, for the same reason: a measure whose order depends on which call
+  // happened to land first reads differently every time for nothing a reader can act on.
+  return CLAUSE_ORDER.filter((gather) => (totals.get(gather) ?? 0) > 0)
+    .map((gather) => {
       const unit = CLAUSES[gather].unit
       const sum = totals.get(gather) ?? 0
       return unit === null ? '' : ` · ${count(sum)} ${sum === 1 ? unit[0] : unit[1]}`
-    }),
-    failed > 0 ? ` · ${count(failed)} failed` : '',
-  ].join('')
+    })
+    .join('')
 }
 
 /**
