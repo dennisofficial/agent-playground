@@ -23,9 +23,9 @@ describe('which stage of a shell line the exit code describes', () => {
   })
 
   it('still fails a clause when the line held one stage, so the code is its own', () => {
-    const shell = reading(aShell({ command: 'grep -rn nothing src', stdout: '', exitCode: 1 }))
+    const shell = reading(aShell({ command: 'cat missing.json', stdout: '', exitCode: 1 }))
 
-    expect(shell.gather).toBe(EGather.Search)
+    expect(shell.gather).toBe(EGather.Read)
     expect(shell.failed).toBe(true)
     expect(shell.note).toBe('exit 1')
     expect(shell.metric).toBeNull()
@@ -36,5 +36,21 @@ describe('which stage of a shell line the exit code describes', () => {
 
     expect(shell.gather).toBe(EGather.List)
     expect(shell.failed).toBe(true)
+  })
+
+  it('reads a fruitless search as a search that found nothing, not a broken one', () => {
+    const shell = reading(aShell({ command: 'grep -rn nowhere src', stdout: '', exitCode: 1 }))
+
+    expect(shell.gather).toBe(EGather.Search)
+    expect(shell.failed).toBe(false)
+    expect(shell.note).toBe('')
+  })
+
+  it('still fails a search that broke rather than one that came back empty', () => {
+    const shell = reading(aShell({ command: 'grep -rn pattern /nope', stdout: '', exitCode: 2 }))
+
+    expect(shell.gather).toBe(EGather.Search)
+    expect(shell.failed).toBe(true)
+    expect(shell.note).toBe('exit 2')
   })
 })

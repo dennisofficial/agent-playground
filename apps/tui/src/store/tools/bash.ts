@@ -53,9 +53,18 @@ const gathered = (args: {
   detail?: EDetail
   /** Whether this clause's metric is worth TOTALLING. The note is drawn either way. */
   counts?: boolean
+  /**
+   * The status this command exits with to say it found NOTHING, which is a result and not a failure.
+   *
+   * POSIX reserves grep's exit 1 for "no lines were selected" and 2 for an error, and rg, ack and
+   * ugrep all follow it. A search that came back empty answered the question it was asked.
+   * https://pubs.opengroup.org/onlinepubs/9699919799/utilities/grep.html
+   */
+  empty?: number
 }): Classification => {
   const printed = lines(args.shell.stdout)
-  const broke = args.shell.ownsExit && !args.shell.ok
+  const foundNothing = args.empty !== undefined && args.shell.exitCode === args.empty
+  const broke = args.shell.ownsExit && !args.shell.ok && !foundNothing
 
   return {
     klass: EToolClass.Gathered,
@@ -125,6 +134,8 @@ function testsRead(shell: Shell): Classification {
   }
 }
 
+const NO_MATCHES = 1
+
 const TS_ERROR = /error TS\d+/g
 
 function typecheckRead(shell: Shell): Classification {
@@ -160,7 +171,7 @@ const MATCHERS: readonly Matcher[] = [
   { when: /^(rm|mv|cp|mkdir|chmod|touch)\b/, read: (shell) => named({ line: said(shell), note: shell.ok ? 'done' : 'failed', failed: !shell.ok, detail: EDetail.None }) },
   { when: /^(sleep|timeout)\b/, read: (shell) => gathered({ gather: EGather.Run, shell, counts: false }) },
   { when: /^(sed\s+-n|cat|head|tail|wc)\b/, read: (shell) => gathered({ gather: EGather.Read, shell }) },
-  { when: /^(grep|rg|ugrep|ack)\b/, read: (shell) => gathered({ gather: EGather.Search, shell }) },
+  { when: /^(grep|rg|ugrep|ack)\b/, read: (shell) => gathered({ gather: EGather.Search, shell, empty: NO_MATCHES }) },
   { when: /^(ls|find|tree)\b/, read: (shell) => gathered({ gather: EGather.List, shell, counts: false }) },
 ]
 
