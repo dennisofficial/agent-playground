@@ -116,6 +116,76 @@ describe('a model pinned by an agent type file', () => {
   })
 })
 
+describe('a subagent model configured for every child', () => {
+  const loadWith = (args: {
+    types: readonly AgentType[]
+    subagentModelId: string
+    modelIsUsable?: ((modelId: string) => boolean) | undefined
+  }) =>
+    loadAgentTypes({
+      sources: [new FileSource({ types: args.types })],
+      subagentModelId: args.subagentModelId,
+      ...(args.modelIsUsable === undefined ? {} : { modelIsUsable: args.modelIsUsable }),
+    })
+
+  it('is left to the composition root while it names a model this build can run', async () => {
+    const { types, refusals } = await loadWith({
+      types: [typeOf({ name: 'plain' })],
+      subagentModelId: REACHABLE,
+    })
+
+    expect(refusals).toEqual([])
+    expect(types.map((agentType) => agentType.name)).toEqual(['plain'])
+  })
+
+  it('refuses every type that pinned nothing when it names no model at all', async () => {
+    const { types, refusals } = await loadWith({
+      types: [typeOf({ name: 'plain' }), typeOf({ name: 'other' })],
+      subagentModelId: TYPO,
+    })
+
+    expect(types).toEqual([])
+    expect(refusals.map((refused) => refused.name)).toEqual(['plain', 'other'])
+    expect(refusals[0]?.refusal).toBe(EAgentTypeRefusal.UnusableModel)
+  })
+
+  it('says it was the environment, not the file, and what to set it to instead', async () => {
+    const { refusals } = await loadWith({
+      types: [typeOf({ name: 'plain' })],
+      subagentModelId: TYPO,
+    })
+
+    expect(refusals[0]?.detail).toContain('ATLAS_SUBAGENT_MODEL')
+    expect(refusals[0]?.detail).toContain(`"${TYPO}"`)
+    expect(refusals[0]?.detail).toContain(REACHABLE)
+    expect(refusals[0]?.detail).not.toContain('model:')
+  })
+
+  it('leaves a type alone that pinned a model of its own', async () => {
+    const { types, refusals } = await loadWith({
+      types: [typeOf({ name: 'quick', model: REACHABLE }), typeOf({ name: 'plain' })],
+      subagentModelId: TYPO,
+    })
+
+    expect(types.map((agentType) => agentType.name)).toEqual(['quick'])
+    expect(refusals.map((refused) => refused.name)).toEqual(['plain'])
+  })
+
+  it('is refused when the composition root cannot reach that vendor either', async () => {
+    const anthropicOnly = (modelId: string) => modelId !== ANOTHER_VENDOR
+
+    const { types, refusals } = await loadWith({
+      types: [typeOf({ name: 'plain' })],
+      subagentModelId: ANOTHER_VENDOR,
+      modelIsUsable: anthropicOnly,
+    })
+
+    expect(types).toEqual([])
+    expect(refusals[0]?.detail).toContain('ATLAS_SUBAGENT_MODEL')
+    expect(refusals[0]?.detail).toContain(REACHABLE)
+  })
+})
+
 describe('the model a child is actually run against', () => {
   it('is the parent selection when the type pins nothing', () => {
     const inherited = port('claude-opus-5')
@@ -142,6 +212,37 @@ describe('the model a child is actually run against', () => {
     const built = modelFor({ agentType: typeOf({ name: 'quick', model: STAMPED }) })
 
     expect(asked).toEqual([STAMPED])
+    expect(built.identity.modelId).toBe(STAMPED)
+  })
+
+  it('is the configured subagent model when the type pins nothing', () => {
+    const asked: string[] = []
+    const modelFor = pinnedModelSource({
+      inherited: () => {
+        throw new Error('the parent selection should not have been read')
+      },
+      build: ({ modelId }) => {
+        asked.push(modelId)
+        return port(modelId)
+      },
+      subagentModelId: REACHABLE,
+    })
+
+    const built = modelFor({ agentType: typeOf({ name: 'plain' }) })
+
+    expect(asked).toEqual([REACHABLE])
+    expect(built.identity.modelId).toBe(REACHABLE)
+  })
+
+  it('is the pin the type wrote, even when a subagent model is configured', () => {
+    const modelFor = pinnedModelSource({
+      inherited: () => port('claude-opus-5'),
+      build: ({ modelId }) => port(modelId),
+      subagentModelId: REACHABLE,
+    })
+
+    const built = modelFor({ agentType: typeOf({ name: 'quick', model: STAMPED }) })
+
     expect(built.identity.modelId).toBe(STAMPED)
   })
 

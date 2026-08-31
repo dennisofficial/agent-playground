@@ -18,10 +18,12 @@ export async function bindAgentTypes(args: {
   container: DependencyContainer
   sources: readonly AgentTypeSource[]
   modelIsUsable?: ModelIsUsable | undefined
+  subagentModelId?: string | undefined
 }): Promise<AgentTypeCatalog> {
   const catalog = await loadAgentTypes({
     sources: args.sources,
     modelIsUsable: args.modelIsUsable,
+    subagentModelId: args.subagentModelId,
   })
 
   args.container.register(AgentTypesToken, { useValue: catalog.types })
