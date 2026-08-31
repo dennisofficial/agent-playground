@@ -62,40 +62,54 @@ export class PrismaEventLog implements EventLogPort {
   }
 
   private appendOnce(args: AppendArgs): Promise<Event[]> {
-    return this.prisma.$transaction(async (tx) => {
-      const at = this.clock.now()
-      await claimThread({ tx, threadId: args.threadId, at })
-
-      const reusable = await loadReusableContext({ tx, threadId: args.threadId, drafts: args.drafts })
-      const plan = planAppend({ drafts: args.drafts, reusable })
-      if (plan.fresh.length === 0) return plan.resolve([])
-
-      const head = await reserveSequence({ tx, threadId: args.threadId, count: plan.fresh.length, at })
-      const firstSeq = head - plan.fresh.length + 1
-
-      const prepared = plan.fresh.map((draft, index) => {
-        const envelope: EventEnvelope = {
-          id: this.ids.nextEventId(),
-          seq: firstSeq + index,
-          threadId: args.threadId,
-          runId: args.runId,
-          depth: args.depth ?? 0,
-          at,
-          ...(args.parentRunId === undefined ? {} : { parentRunId: args.parentRunId }),
-        }
-        return { draft, envelope, row: toEventRow({ draft, envelope }) }
-      })
-
-      await tx.event.createMany({ data: prepared.map((entry) => entry.row) })
-
-      return plan.resolve(
-        stampDrafts({
-          drafts: prepared.map((entry) => entry.draft),
-          envelopes: prepared.map((entry) => entry.envelope),
-        }),
-      )
-    })
+    return this.prisma.$transaction((tx) =>
+      appendWithin({ tx, clock: this.clock, ids: this.ids, args }),
+    )
   }
+}
+
+export async function appendWithin({
+  tx,
+  clock,
+  ids,
+  args,
+}: {
+  tx: Prisma.TransactionClient
+  clock: ClockPort
+  ids: IdPort
+  args: AppendArgs
+}): Promise<Event[]> {
+  const at = clock.now()
+  await claimThread({ tx, threadId: args.threadId, at })
+
+  const reusable = await loadReusableContext({ tx, threadId: args.threadId, drafts: args.drafts })
+  const plan = planAppend({ drafts: args.drafts, reusable })
+  if (plan.fresh.length === 0) return plan.resolve([])
+
+  const head = await reserveSequence({ tx, threadId: args.threadId, count: plan.fresh.length, at })
+  const firstSeq = head - plan.fresh.length + 1
+
+  const prepared = plan.fresh.map((draft, index) => {
+    const envelope: EventEnvelope = {
+      id: ids.nextEventId(),
+      seq: firstSeq + index,
+      threadId: args.threadId,
+      runId: args.runId,
+      depth: args.depth ?? 0,
+      at,
+      ...(args.parentRunId === undefined ? {} : { parentRunId: args.parentRunId }),
+    }
+    return { draft, envelope, row: toEventRow({ draft, envelope }) }
+  })
+
+  await tx.event.createMany({ data: prepared.map((entry) => entry.row) })
+
+  return plan.resolve(
+    stampDrafts({
+      drafts: prepared.map((entry) => entry.draft),
+      envelopes: prepared.map((entry) => entry.envelope),
+    }),
+  )
 }
 
 async function claimThread({

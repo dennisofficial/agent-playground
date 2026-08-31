@@ -30,6 +30,7 @@ function recordingLedger(args: { failWith?: Error } = {}): RecordingLedger {
       recorded.push(spend)
     },
     forThread: async () => [...recorded],
+    forThreadTree: async () => ({ own: [...recorded], delegated: [] }),
   }
 }
 

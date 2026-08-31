@@ -57,6 +57,10 @@ export const fakeLedger = (args: { rejects?: boolean } = {}): TurnLedgerPort => 
       rows.push(spend)
     },
     forThread: async ({ threadId }) => rows.filter((row) => row.threadId === threadId),
+    forThreadTree: async ({ threadId }) => ({
+      own: rows.filter((row) => row.threadId === threadId),
+      delegated: [],
+    }),
   }
 }
 

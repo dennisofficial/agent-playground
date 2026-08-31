@@ -18,7 +18,13 @@ export type TurnSpend = {
   durationMs: number
 }
 
+export type ThreadTreeSpend = {
+  own: readonly TurnSpend[]
+  delegated: readonly TurnSpend[]
+}
+
 export abstract class TurnLedgerPort {
   abstract record(spend: TurnSpend): Promise<void>
   abstract forThread(args: { threadId: ThreadId }): Promise<TurnSpend[]>
+  abstract forThreadTree(args: { threadId: ThreadId }): Promise<ThreadTreeSpend>
 }

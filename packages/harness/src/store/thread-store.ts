@@ -5,14 +5,17 @@ import {
   IdPort,
   toThreadId,
   type ThreadId,
+  type Event,
   type EventEnvelope,
 } from '@dltech/atlas-core'
 
 import type { Prisma, PrismaClient } from '../../prisma/generated/client'
 import { inject, injectable } from '../container/injection'
 import { PrismaClientToken } from '../container/tokens'
+import { createThreadWithEvents, type OpenThreadArgs } from './create-with-events'
 import { toEventRow } from './event-row'
 import { forkThread } from './fork'
+import { retryOnWriteConflict } from './retry'
 
 const CURRENT_CONTEXT_TYPE = 'context-loaded'
 
@@ -40,7 +43,11 @@ export abstract class ThreadStorePort {
     repo?: string | null | undefined
     agent?: SupervisedAgent | undefined
   }): Promise<ThreadSummary>
+  abstract createWithFirstEvents(
+    args: OpenThreadArgs,
+  ): Promise<{ thread: ThreadSummary; events: Event[] }>
   abstract find(args: { threadId: ThreadId }): Promise<ThreadSummary | undefined>
+  abstract spawned(args: { threadId: ThreadId }): Promise<readonly ThreadSummary[]>
   abstract mostRecent(args: { workspace: string }): Promise<ThreadSummary | undefined>
   abstract list(args: {
     workspace: string
@@ -126,9 +133,23 @@ export class PrismaThreadStore implements ThreadStorePort {
     return toThreadSummary(row)
   }
 
+  async createWithFirstEvents(
+    args: OpenThreadArgs,
+  ): Promise<{ thread: ThreadSummary; events: Event[] }> {
+    return retryOnWriteConflict({ run: () => this.createWithFirstEventsOnce(args) })
+  }
+
   async find({ threadId }: { threadId: ThreadId }): Promise<ThreadSummary | undefined> {
     const row = await this.prisma.thread.findUnique({ where: { id: threadId } })
     return row === null ? undefined : toThreadSummary(row)
+  }
+
+  async spawned({ threadId }: { threadId: ThreadId }): Promise<readonly ThreadSummary[]> {
+    const rows = await this.prisma.thread.findMany({
+      where: { spawnerThreadId: threadId },
+      orderBy: { createdAt: 'asc' },
+    })
+    return rows.map(toThreadSummary)
   }
 
   async mostRecent({ workspace }: { workspace: string }): Promise<ThreadSummary | undefined> {
@@ -271,6 +292,31 @@ export class PrismaThreadStore implements ThreadStorePort {
       forkThread({ tx, ids: this.ids, from, into, seq, mode, at, title }),
     )
     return toThreadSummary({ ...row, spawnerThreadId: null, agentType: null })
+  }
+
+  private createWithFirstEventsOnce({
+    drafts,
+    runId,
+    title,
+    workspace,
+    repo,
+    agent,
+  }: OpenThreadArgs): Promise<{ thread: ThreadSummary; events: Event[] }> {
+    return this.prisma.$transaction(async (tx) => {
+      const { threadId, events } = await createThreadWithEvents({
+        tx,
+        ids: this.ids,
+        clock: this.clock,
+        drafts,
+        runId,
+        title,
+        workspace,
+        repo,
+        agent,
+      })
+      const row = await tx.thread.findUniqueOrThrow({ where: { id: threadId } })
+      return { thread: toThreadSummary(row), events }
+    })
   }
 }
 

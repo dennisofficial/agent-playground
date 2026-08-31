@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 
-import { ERewindRefusal, toCallId, toRunId, type ThreadId, type EventDraft } from '@dltech/atlas-core'
+import {
+  EAgentStart,
+  EAgentStatus,
+  ERewindRefusal,
+  toCallId,
+  toRunId,
+  toThreadId,
+  type ThreadId,
+  type EventDraft,
+} from '@dltech/atlas-core'
 
 import { rewindThread } from '../rewind'
 import { openStoreFixture, type StoreFixture } from './harness'
@@ -84,5 +93,69 @@ describe('rewindThread', () => {
 
     expect(appended.map((event) => event.seq)).toEqual([1])
     expect((await store.log.read({ threadId })).map((event) => event.type)).toEqual(['user-said'])
+  })
+})
+
+const CHILD = toThreadId('thread_child')
+
+const spawned: EventDraft = {
+  type: 'agent-spawned',
+  agentId: CHILD,
+  agentType: 'explore',
+  intent: 'find the callers',
+  mode: EAgentStart.Fresh,
+}
+
+const agentEnded: EventDraft = {
+  type: 'agent-ended',
+  agentId: CHILD,
+  agentType: 'explore',
+  intent: 'find the callers',
+  status: EAgentStatus.Finished,
+  prose: 'four callers',
+  turns: 3,
+  toolCalls: 7,
+}
+
+const openDelegation = async (drafts: readonly EventDraft[]): Promise<ThreadId> => {
+  fixture = await openStoreFixture()
+  const thread = await fixture.threads.create({ title: 'delegating' })
+  await fixture.log.append({ threadId: thread.id, runId, drafts })
+  return thread.id
+}
+
+describe('rewindThread on a thread that delegated', () => {
+  it('refuses to cut below the spawn of a child nothing ended, and writes nothing', async () => {
+    const threadId = await openDelegation([said('delegate it'), spawned, replied('spawned one')])
+
+    const result = await rewindThread({
+      log: fixture.log,
+      threads: fixture.threads,
+      threadId,
+      toSeq: 1,
+    })
+
+    expect(result).toMatchObject({ ok: false, refusal: ERewindRefusal.UnendedSubAgent })
+    expect((await fixture.log.read({ threadId })).length).toBe(3)
+    expect((await fixture.threads.find({ threadId }))?.head).toBe(3)
+  })
+
+  it('cuts below the spawn of a child that ended', async () => {
+    const threadId = await openDelegation([
+      said('delegate it'),
+      spawned,
+      agentEnded,
+      replied('four callers'),
+    ])
+
+    const result = await rewindThread({
+      log: fixture.log,
+      threads: fixture.threads,
+      threadId,
+      toSeq: 1,
+    })
+
+    expect(result).toEqual({ ok: true, discarded: 3 })
+    expect((await fixture.log.read({ threadId })).map((event) => event.type)).toEqual(['user-said'])
   })
 })

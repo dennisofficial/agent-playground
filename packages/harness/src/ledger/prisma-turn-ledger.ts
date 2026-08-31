@@ -4,7 +4,8 @@ import type { PrismaClient } from '../../prisma/generated/client'
 import { inject, injectable } from '../container/injection'
 import { PrismaClientToken } from '../container/tokens'
 import { retryOnWriteConflict } from '../store/retry'
-import type { TurnLedgerPort, TurnSpend } from './turn-ledger.port'
+import { readSpawnedThreadIds } from './spawned-threads'
+import type { ThreadTreeSpend, TurnLedgerPort, TurnSpend } from './turn-ledger.port'
 
 type TurnRow = {
   runId: string
@@ -52,6 +53,22 @@ export class PrismaTurnLedger implements TurnLedgerPort {
       orderBy: { startedAt: 'asc' },
     })
     return rows.map(toTurnSpend)
+  }
+
+  async forThreadTree({ threadId }: { threadId: ThreadId }): Promise<ThreadTreeSpend> {
+    const spawned = await readSpawnedThreadIds({ prisma: this.prisma, threadId })
+    const rows = await this.prisma.turn.findMany({
+      where: { threadId: { in: [threadId, ...spawned] } },
+      orderBy: [{ startedAt: 'asc' }, { runId: 'asc' }],
+    })
+
+    const own: TurnSpend[] = []
+    const delegated: TurnSpend[] = []
+    for (const row of rows) {
+      if (row.threadId === threadId) own.push(toTurnSpend(row))
+      else delegated.push(toTurnSpend(row))
+    }
+    return { own, delegated }
   }
 
   private async recordOnce(spend: TurnSpend): Promise<void> {

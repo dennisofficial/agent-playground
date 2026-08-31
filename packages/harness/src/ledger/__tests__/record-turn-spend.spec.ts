@@ -26,6 +26,7 @@ const recordingLedger = (): RecordingLedger => {
       recorded.push(spend)
     },
     forThread: async () => recorded,
+    forThreadTree: async () => ({ own: recorded, delegated: [] }),
   }
 }
 
@@ -34,6 +35,7 @@ const failingLedger = (): TurnLedgerPort => ({
     throw new Error('the ledger is unavailable')
   },
   forThread: async () => [],
+  forThreadTree: async () => ({ own: [], delegated: [] }),
 })
 
 describe('a turn tallied across its steps', () => {
