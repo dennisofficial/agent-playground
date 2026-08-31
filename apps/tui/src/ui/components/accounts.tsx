@@ -39,8 +39,11 @@ const LIST_HINTS: readonly Hint[] = [
 
 const PROMPT_HINTS: readonly Hint[] = [
   { key: '⏎', label: 'submit' },
+  { key: 'click', label: 'reopen url' },
   { key: 'esc', label: 'cancel' },
 ]
+
+export const OPEN_URL_HINT = 'Opened in your browser. Approve, then paste the code. Click to reopen:'
 
 function Line(props: {
   children: React.ReactNode
@@ -151,13 +154,18 @@ function wrap(args: { text: string; cells: number }): readonly string[] {
   })
 }
 
-function Wrapped(props: { text: string; cells: number; fg: string }): React.ReactNode {
+function Wrapped(props: {
+  text: string
+  cells: number
+  fg: string
+  press?: PressHandlers
+}): React.ReactNode {
   const lines = wrap({ text: props.text, cells: props.cells })
 
   return (
     <>
       {lines.map((line, index) => (
-        <Line key={`${index}-${line}`}>
+        <Line key={`${index}-${line}`} {...(props.press ?? {})}>
           <text fg={props.fg}>{line}</text>
         </Line>
       ))}
@@ -165,8 +173,13 @@ function Wrapped(props: { text: string; cells: number; fg: string }): React.Reac
   )
 }
 
-function Prompt(props: { state: AccountsState; cells: number }): React.ReactNode {
+function Prompt(props: {
+  state: AccountsState
+  cells: number
+  onOpenUrl: () => void
+}): React.ReactNode {
   const { state } = props
+  const press = usePress()
   const provider = state.prompt === null ? null : providerSpec(state.prompt.provider).label
   const typing = state.view === EAccountsView.ApiKey ? maskedKey(state.typed) : state.typed
 
@@ -181,10 +194,16 @@ function Prompt(props: { state: AccountsState; cells: number }): React.ReactNode
       ) : (
         <>
           <TextLine
-            spans={[{ text: 'Open this URL, approve, then paste the code:', fg: theme.hint }]}
+            spans={[{ text: OPEN_URL_HINT, fg: theme.hint }]}
             cells={props.cells}
+            press={press(props.onOpenUrl)}
           />
-          <Wrapped text={state.prompt?.url ?? ''} cells={props.cells} fg={theme.court.external} />
+          <Wrapped
+            text={state.prompt?.url ?? ''}
+            cells={props.cells}
+            fg={theme.court.external}
+            press={press(props.onOpenUrl)}
+          />
         </>
       )}
       <TextLine
@@ -208,6 +227,7 @@ export function Accounts(props: {
   overlay?: boolean
   onPick: (row: AccountRow) => void
   onDismiss: () => void
+  onOpenUrl: () => void
 }): React.ReactNode {
   const cells = accountsCells({ width: props.width })
   const press = usePress()
@@ -245,7 +265,9 @@ export function Accounts(props: {
             ))
           )}
         </box>
-        {prompting ? <Prompt state={props.state} cells={cells} /> : null}
+        {prompting ? (
+          <Prompt state={props.state} cells={cells} onOpenUrl={props.onOpenUrl} />
+        ) : null}
         {props.state.notice === null ? null : (
           <box flexDirection="column" flexShrink={0}>
             <Wrapped text={props.state.notice} cells={cells} fg={theme.hint} />

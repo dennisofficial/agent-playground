@@ -1,9 +1,17 @@
 import { describe, expect, it } from 'bun:test'
 
+import { EAgentStatus } from '../../agents/status'
+
 import { EDecision, type EventDraft } from '../body'
 import type { Event } from '../envelope'
 import { toThreadId, toCallId, toEventId, toRunId } from '../ids'
-import { answeredApproval, inputForCall, outstandingApproval, pendingCalls } from '../projections'
+import {
+  answeredApproval,
+  awaitsReply,
+  inputForCall,
+  outstandingApproval,
+  pendingCalls,
+} from '../projections'
 import { stampDrafts } from '../stamp'
 
 const eventsFrom = (drafts: readonly EventDraft[]): Event[] =>
@@ -211,5 +219,42 @@ describe('inputForCall', () => {
 
   it('is undefined for a call that was never made', () => {
     expect(inputForCall({ events: [], callId: toCallId('call-1') })).toBeUndefined()
+  })
+})
+
+describe('whose turn it is', () => {
+  const ENDED_CHILD: EventDraft = {
+    type: 'agent-ended',
+    agentId: toThreadId('thr_child'),
+    agentType: 'explore',
+    intent: 'vault audit',
+    status: EAgentStatus.Finished,
+    prose: 'The vault reads its key file exactly once.',
+    turns: 3,
+    toolCalls: 9,
+  }
+
+  it('hands the turn back after the assistant has spoken', () => {
+    const events = eventsFrom([
+      { type: 'user-said', text: 'audit the vault' },
+      { type: 'assistant-said', parts: [{ type: 'text', text: 'delegating' }] },
+    ])
+
+    expect(awaitsReply(events)).toBe(false)
+  })
+
+  it('is the assistant to answer when a sub-agent ends, exactly as when a shell ends', () => {
+    const spoken: EventDraft = {
+      type: 'assistant-said',
+      parts: [{ type: 'text', text: 'delegating' }],
+    }
+
+    expect(awaitsReply(eventsFrom([{ type: 'user-said', text: 'go' }, spoken, ENDED_CHILD]))).toBe(
+      true,
+    )
+  })
+
+  it('reads an ending as turn-taking even when it is the only row', () => {
+    expect(awaitsReply(eventsFrom([ENDED_CHILD]))).toBe(true)
   })
 })

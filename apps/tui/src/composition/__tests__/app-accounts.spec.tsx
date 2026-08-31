@@ -209,6 +209,45 @@ describe('the accounts overlay', () => {
     }
   })
 
+  it('opens the authorize URL in the browser when a sign-in begins', async () => {
+    const app = await appWith(['work@example.com'])
+    const setup = await opened({ app })
+
+    try {
+      await openOverlay(setup)
+      setup.mockInput.pressKey('n')
+      await setup.flush()
+      await settle(120)
+      await setup.flush()
+
+      expect(app.openedUrls).toEqual(['https://claude.com/cai/oauth/authorize?code=true'])
+    } finally {
+      await teardown(setup)
+    }
+  })
+
+  it('takes a bracketed paste of the code and says who signed in', async () => {
+    const setup = await opened({ app: await appWith([]) })
+
+    try {
+      await openOverlay(setup)
+      setup.mockInput.pressKey('n')
+      await setup.flush()
+      await settle(120)
+
+      await setup.mockInput.pasteBracketedText('code#state-1')
+      await setup.flush()
+      setup.mockInput.pressEnter()
+      await setup.flush()
+      await settle(200)
+      await setup.flush()
+
+      expect(setup.captureCharFrame()).toContain('signed-in@example.com')
+    } finally {
+      await teardown(setup)
+    }
+  })
+
   it('takes a pasted code and says who signed in', async () => {
     const setup = await opened({ app: await appWith([]) })
 

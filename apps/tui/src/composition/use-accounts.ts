@@ -1,8 +1,9 @@
-import type { KeyEvent } from '@opentui/core'
+import { decodePasteBytes, stripAnsiSequences, type KeyEvent, type PasteEvent } from '@opentui/core'
+import { usePaste } from '@opentui/react'
 import { useCallback, useMemo, useRef, useState } from 'react'
 
 import { EAuthProvider, type Account, type AccountId } from '@dltech/atlas-core'
-import type { AccountsService, LoginTicket } from '@dltech/atlas-harness'
+import type { AccountsService, LoginTicket, UrlOpener } from '@dltech/atlas-harness'
 
 import {
   accountRows,
@@ -12,6 +13,7 @@ import {
   backToList,
   EAccountsView,
   failed,
+  isPrompting,
   moveSelection,
   openAccounts,
   selectedRow,
@@ -28,6 +30,7 @@ export type AccountsControl = {
   handleDismiss: () => void
   handlePick: (row: AccountRow) => void
   handleKey: (key: KeyEvent) => void
+  handleOpenUrl: () => void
 }
 
 const PROVIDERS: readonly EAuthProvider[] = [
@@ -44,6 +47,14 @@ const isPrintable = (key: KeyEvent): boolean => {
   return sequence.length > 0 && !key.ctrl && !key.meta && !/[\u0000-\u001f]/.test(sequence)
 }
 
+/**
+ * A terminal in bracketed-paste mode wraps the clipboard in ESC[200~ … ESC[201~, and OpenTUI's
+ * stdin parser lifts that whole run out of the key stream into a paste event. A prompt that only
+ * listens for keypresses therefore never sees a pasted code at all.
+ */
+const pastedText = (event: PasteEvent): string =>
+  stripAnsiSequences(decodePasteBytes(event.bytes)).replace(/[\r\n]/g, '').trim()
+
 const providerOf = (state: AccountsState): EAuthProvider =>
   selectedRow(state)?.account.provider ?? EAuthProvider.Anthropic
 
@@ -52,8 +63,11 @@ const providerOf = (state: AccountsState): EAuthProvider =>
  * key events that would all read the same rendered state. The ref is what the handlers read and
  * write; React state exists to draw it.
  */
-export function useAccounts(args: { accounts: AccountsService }): AccountsControl {
-  const { accounts } = args
+export function useAccounts(args: {
+  accounts: AccountsService
+  openUrl: UrlOpener
+}): AccountsControl {
+  const { accounts, openUrl } = args
   const held = useRef<AccountsState | null>(null)
   const [state, setState] = useState<AccountsState | null>(null)
   const ticket = useRef<LoginTicket | null>(null)
@@ -113,12 +127,20 @@ export function useAccounts(args: { accounts: AccountsService }): AccountsContro
         const begun = accounts.begin(providerOf(current))
         ticket.current = begun
         put(askForCode({ state: current, prompt: { provider: begun.provider, url: begun.url } }))
+        openUrl(begun.url)
       } catch (error) {
         put(failed({ state: current, reason: reasonOf(error) }))
       }
     },
-    [accounts, put],
+    [accounts, openUrl, put],
   )
+
+  const handleOpenUrl = useCallback(() => {
+    const url = held.current?.prompt?.url
+    if (url === undefined || url.length === 0) return
+
+    openUrl(url)
+  }, [openUrl])
 
   const removeSelected = useCallback(
     (current: AccountsState) => {
@@ -229,8 +251,25 @@ export function useAccounts(args: { accounts: AccountsService }): AccountsContro
     [handleListKey, handlePromptKey],
   )
 
+  usePaste(
+    useCallback(
+      (event: PasteEvent) => {
+        const current = held.current
+        if (current === null || !isPrompting(current)) return
+
+        const pasted = pastedText(event)
+        if (pasted.length === 0) return
+
+        event.preventDefault()
+        event.stopPropagation()
+        put(typeInto({ state: current, text: pasted }))
+      },
+      [put],
+    ),
+  )
+
   return useMemo(
-    () => ({ state, handleOpen, handleDismiss, handlePick, handleKey }),
-    [handleDismiss, handleKey, handleOpen, handlePick, state],
+    () => ({ state, handleOpen, handleDismiss, handlePick, handleKey, handleOpenUrl }),
+    [handleDismiss, handleKey, handleOpen, handleOpenUrl, handlePick, state],
   )
 }

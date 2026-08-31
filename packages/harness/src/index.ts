@@ -1,5 +1,6 @@
 export const HARNESS_PACKAGE_NAME = '@dltech/atlas-harness'
 
+export * from './browser'
 export * from './channel'
 export * from './container'
 export * from './context'

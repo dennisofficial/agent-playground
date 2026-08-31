@@ -69,6 +69,7 @@ const TURN_TAKING: readonly EventType[] = [
   'tool-denied',
   'nudge',
   'background-shell-ended',
+  'agent-ended',
 ]
 
 export function awaitsReply(events: readonly Event[]): boolean {
