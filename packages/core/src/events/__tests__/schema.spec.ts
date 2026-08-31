@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 
+import { EAgentStart } from '../../agents/start'
+import { EAgentStatus } from '../../agents/status'
 import { EDecision, type EventDraft } from '../body'
 import type { EventEnvelope } from '../envelope'
 import { toThreadId, toCallId, toEventId, toRunId } from '../ids'
@@ -15,6 +17,23 @@ const bodies: EventDraft[] = [
   { type: 'approval-answered', callId: toCallId('call-1'), decision: EDecision.Allow },
   { type: 'context-loaded', slot: 'claude-md', key: '/a/CLAUDE.md', content: '# rules' },
   { type: 'nudge', text: 'stay on task', lifetimeSteps: 2 },
+  {
+    type: 'agent-spawned',
+    agentId: toThreadId('thread-child-1'),
+    agentType: 'explore',
+    intent: 'audit the settings registry',
+    mode: EAgentStart.Fresh,
+  },
+  {
+    type: 'agent-ended',
+    agentId: toThreadId('thread-child-1'),
+    agentType: 'explore',
+    intent: 'audit the settings registry',
+    status: EAgentStatus.Finished,
+    prose: 'The registry has 14 settings; two are unread.',
+    turns: 4,
+    toolCalls: 11,
+  },
 ]
 
 describe('eventBodySchema', () => {

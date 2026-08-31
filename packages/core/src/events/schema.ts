@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+import { EAgentStart } from '../agents/start'
+import { EAgentStatus } from '../agents/status'
 import type { ProviderOptions } from '../provider'
 import { EKilledBy, EShellStatus } from '../shells/status'
 import { ECompactionAnchor, EDecision, type EventBody } from './body'
@@ -97,6 +99,23 @@ export const eventBodySchema: z.ZodType<EventBody> = z.discriminatedUnion('type'
     output: z.string(),
     droppedCharacters: z.number().int().nonnegative(),
     remainingCharacters: z.number().int().nonnegative(),
+  }),
+  z.object({
+    type: z.literal('agent-spawned'),
+    agentId: threadIdSchema,
+    agentType: z.string().min(1),
+    intent: z.string(),
+    mode: z.enum(EAgentStart),
+  }),
+  z.object({
+    type: z.literal('agent-ended'),
+    agentId: threadIdSchema,
+    agentType: z.string().min(1),
+    intent: z.string(),
+    status: z.enum(EAgentStatus),
+    prose: z.string(),
+    turns: z.number().int().nonnegative(),
+    toolCalls: z.number().int().nonnegative(),
   }),
   z.object({
     type: z.literal('history-compacted'),

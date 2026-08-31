@@ -1,6 +1,8 @@
+import type { EAgentStart } from '../agents/start'
+import type { EAgentStatus } from '../agents/status'
 import type { ReasoningPart, TextPart } from '../message/parts'
 import type { EKilledBy, EShellStatus } from '../shells/status'
-import type { CallId } from './ids'
+import type { CallId, ThreadId } from './ids'
 
 export enum ECompactionAnchor {
   Prefix = 'prefix',
@@ -44,6 +46,23 @@ export type EventBody =
       output: string
       droppedCharacters: number
       remainingCharacters: number
+    }
+  | {
+      type: 'agent-spawned'
+      agentId: ThreadId
+      agentType: string
+      intent: string
+      mode: EAgentStart
+    }
+  | {
+      type: 'agent-ended'
+      agentId: ThreadId
+      agentType: string
+      intent: string
+      status: EAgentStatus
+      prose: string
+      turns: number
+      toolCalls: number
     }
   | {
       type: 'history-compacted'
