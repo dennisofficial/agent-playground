@@ -1,85 +1,46 @@
 import { agentLabel } from '../../agents/label'
 import { agentEnding, countedNoun } from '../../agents/status'
 import type { Event, EventOfType } from '../../events/envelope'
+import { EKilledBy } from '../../shells/status'
 import type { AssembledMessage } from '../assembled'
 import { defineRule, type Rule } from '../rule'
 
 const OPEN = '<agents-ended>'
 const CLOSE = '</agents-ended>'
 
-export const DEFAULT_AGENT_PROSE_BUDGET = 8_000
-
 const REPORTED_NOTHING = 'It reported nothing.'
+
+const USER_STOPPED =
+  'The user stopped this agent deliberately; you did not, and nothing went wrong with it. Do not spawn it again to finish what it was doing unless the user asks.'
+
+const LOST_AGENT =
+  'Nobody stopped this agent: the session it was running in went away before it could report. What it says here is only what it had said by then, and whatever it was doing may be half-applied. Its thread is intact, so check the work before redoing any of it, and let the user decide whether to resume it.'
 
 const NOT_YOUR_HISTORY =
   'None of their own steps are in your history and none are coming: what each one reports here is all of it.'
 
 type Ending = EventOfType<'agent-ended'>
 
-type Portion = { event: Ending; prose: string; dropped: number }
-
-const shortenedNote = (characters: number): string =>
-  `[${characters} characters of this report were dropped: the agents that ended together share one budget.]`
-
-const droppedWholeNote = (characters: number): string =>
-  `[All ${characters} characters of this report were dropped: too many agents ended together to quote any of them.]`
-
-function portions({
-  endings,
-  budget,
-}: {
-  endings: readonly Ending[]
-  budget: number
-}): readonly Portion[] {
-  const trimmed = endings.map((event, index) => ({ event, index, prose: event.prose.trim() }))
-  const shortestFirst = [...trimmed].sort(
-    (left, right) => left.prose.length - right.prose.length || left.index - right.index,
-  )
-
-  const allotted = new Map<number, Portion>()
-  let remaining = budget
-  let unallotted = shortestFirst.length
-
-  for (const entry of shortestFirst) {
-    const share = Math.max(0, Math.floor(remaining / unallotted))
-    const prose = entry.prose.length <= share ? entry.prose : entry.prose.slice(0, share)
-    remaining -= prose.length
-    unallotted -= 1
-    allotted.set(entry.index, {
-      event: entry.event,
-      prose,
-      dropped: entry.prose.length - prose.length,
-    })
-  }
-
-  return trimmed.flatMap((entry) => {
-    const portion = allotted.get(entry.index)
-    return portion === undefined ? [] : [portion]
-  })
+const reportOf = (event: Ending): string => {
+  const prose = event.prose.trim()
+  return prose === '' ? REPORTED_NOTHING : prose
 }
 
-function reportOf(portion: Portion): readonly string[] {
-  if (portion.dropped === 0) return [portion.prose === '' ? REPORTED_NOTHING : portion.prose]
-  if (portion.prose === '') return [droppedWholeNote(portion.dropped)]
-  return [portion.prose, shortenedNote(portion.dropped)]
+function advice(event: Ending): readonly string[] {
+  if (event.killedBy === EKilledBy.User) return [USER_STOPPED]
+  if (event.killedBy === EKilledBy.Unrecorded) return [LOST_AGENT]
+  return []
 }
 
-function sectionOf(portion: Portion): string {
-  const headline = `Agent ${portion.event.agentId} ${agentLabel(portion.event)} ${agentEnding(portion.event)}.`
-  return [headline, ...reportOf(portion)].join('\n\n')
+function sectionOf(event: Ending): string {
+  const headline = `Agent ${event.agentId} ${agentLabel(event)} ${agentEnding(event)}.`
+  return [headline, ...advice(event), reportOf(event)].join('\n\n')
 }
 
-export function agentEndingsText({
-  endings,
-  proseBudget = DEFAULT_AGENT_PROSE_BUDGET,
-}: {
-  endings: readonly Ending[]
-  proseBudget?: number | undefined
-}): string {
+export function agentEndingsText({ endings }: { endings: readonly Ending[] }): string {
   const roster = `${countedNoun({ count: endings.length, noun: 'agent' })} you spawned ended. ${NOT_YOUR_HISTORY}`
-  const sections = portions({ endings, budget: proseBudget }).map(sectionOf)
 
-  return [OPEN, [roster, ...sections].join('\n\n'), CLOSE].join('\n')
+  return [OPEN, [roster, ...endings.map(sectionOf)].join('\n\n'), CLOSE].join('\n')
 }
 
 function waves(events: readonly Event[]): readonly (readonly Ending[])[] {
@@ -128,13 +89,7 @@ function mergeBySeq({
   return [...merged, ...messages.slice(index)]
 }
 
-function blockFor({
-  endings,
-  proseBudget,
-}: {
-  endings: readonly Ending[]
-  proseBudget: number
-}): readonly AssembledMessage[] {
+function blockFor({ endings }: { endings: readonly Ending[] }): readonly AssembledMessage[] {
   const anchor = endings[endings.length - 1]
   if (anchor === undefined) return []
 
@@ -142,23 +97,21 @@ function blockFor({
     {
       message: {
         role: 'user' as const,
-        content: [{ type: 'text' as const, text: agentEndingsText({ endings, proseBudget }) }],
+        content: [{ type: 'text' as const, text: agentEndingsText({ endings }) }],
       },
       origin: { eventId: anchor.id, seq: anchor.seq },
     },
   ]
 }
 
-export function agentEndingsBlock({
-  proseBudget = DEFAULT_AGENT_PROSE_BUDGET,
-}: { proseBudget?: number | undefined } = {}): Rule {
+export function agentEndingsBlock(): Rule {
   return defineRule({
     name: 'agentEndingsBlock',
     apply: (input, ctx) => {
       const grouped = waves(ctx.events)
       if (grouped.length === 0) return input
 
-      const blocks = grouped.flatMap((endings) => blockFor({ endings, proseBudget }))
+      const blocks = grouped.flatMap((endings) => blockFor({ endings }))
 
       return { system: input.system, messages: mergeBySeq({ messages: input.messages, blocks }) }
     },
