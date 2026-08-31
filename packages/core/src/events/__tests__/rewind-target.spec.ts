@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 
+import { EAgentStart } from '../../agents/start'
+import { EAgentStatus } from '../../agents/status'
 import { ECompactionAnchor, EDecision, type EventDraft } from '../body'
 import type { Event } from '../envelope'
 import { toThreadId, toCallId, toEventId, toRunId } from '../ids'
@@ -184,5 +186,68 @@ describe('rewindTarget across the two kinds of compaction', () => {
     ])
 
     expect(rewindTarget({ events, toSeq: 1 }).allowed).toBe(false)
+  })
+})
+
+const CHILD = toThreadId('thread_child')
+
+const spawned = (agentId = CHILD): EventDraft => ({
+  type: 'agent-spawned',
+  agentId,
+  agentType: 'explore',
+  intent: 'find the callers',
+  mode: EAgentStart.Fresh,
+})
+
+const agentEnded = (agentId = CHILD): EventDraft => ({
+  type: 'agent-ended',
+  agentId,
+  agentType: 'explore',
+  intent: 'find the callers',
+  status: EAgentStatus.Finished,
+  prose: 'four callers',
+  turns: 3,
+  toolCalls: 7,
+})
+
+describe('rewindTarget on a thread that delegated', () => {
+  it('refuses a target that would delete the spawn of a child nothing has ended', () => {
+    const events = eventsFrom([said('delegate it'), spawned(), replied('spawned one')])
+
+    expect(rewindTarget({ events, toSeq: 1 })).toEqual({
+      allowed: false,
+      refusal: ERewindRefusal.UnendedSubAgent,
+      reason:
+        'rewinding to 1 would cut below the spawn of explore sub-agent thread_child, which has no ending behind it, and the child would go on stepping into a thread its parent no longer records',
+    })
+  })
+
+  it('allows a target that keeps the spawn, which leaves the child recorded', () => {
+    const events = eventsFrom([said('delegate it'), spawned(), replied('spawned one')])
+
+    expect(rewindTarget({ events, toSeq: 2 })).toEqual({ allowed: true })
+  })
+
+  it('allows cutting below the spawn of a child that ended, whose rows are a record', () => {
+    const events = eventsFrom([
+      said('delegate it'),
+      spawned(),
+      agentEnded(),
+      replied('four callers'),
+    ])
+
+    expect(rewindTarget({ events, toSeq: 1 })).toEqual({ allowed: true })
+    expect(rewindTarget({ events, toSeq: 0 })).toEqual({ allowed: true })
+  })
+
+  it('names the child still unended when another one has ended', () => {
+    const other = toThreadId('thread_other')
+    const target = rewindTarget({
+      events: eventsFrom([spawned(), spawned(other), agentEnded()]),
+      toSeq: 0,
+    })
+
+    expect(target).toMatchObject({ allowed: false, refusal: ERewindRefusal.UnendedSubAgent })
+    if (!target.allowed) expect(target.reason).toContain('thread_other')
   })
 })

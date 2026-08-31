@@ -2,13 +2,15 @@ import { describe, expect, it } from 'bun:test'
 
 import { EAgentStart } from '../../agents/start'
 import { EAgentStatus } from '../../agents/status'
-import { EDecision, type EventDraft } from '../body'
+import { EKilledBy } from '../../shells/status'
+import { EDecision, EMessageOrigin, type EventDraft } from '../body'
 import type { EventEnvelope } from '../envelope'
 import { toThreadId, toCallId, toEventId, toRunId } from '../ids'
 import { eventBodySchema, eventEnvelopeSchema } from '../schema'
 
 const bodies: EventDraft[] = [
   { type: 'user-said', text: 'hello' },
+  { type: 'user-said', text: 'carry on', via: EMessageOrigin.ParentAgent },
   { type: 'assistant-said', parts: [{ type: 'text', text: 'hi' }], interrupted: true },
   { type: 'tool-called', callId: toCallId('call-1'), name: 'read_file', input: { path: '/a' }, ordinal: 0 },
   { type: 'tool-result', callId: toCallId('call-1'), name: 'read_file', output: 'contents' },
@@ -33,6 +35,28 @@ const bodies: EventDraft[] = [
     prose: 'The registry has 14 settings; two are unread.',
     turns: 4,
     toolCalls: 11,
+  },
+  {
+    type: 'agent-ended',
+    agentId: toThreadId('thread-child-1'),
+    agentType: 'explore',
+    intent: 'audit the settings registry',
+    status: EAgentStatus.Stopped,
+    killedBy: EKilledBy.Unrecorded,
+    prose: 'I had read four files.',
+    turns: 1,
+    toolCalls: 4,
+  },
+  {
+    type: 'agent-ended',
+    agentId: toThreadId('thread-child-1'),
+    agentType: 'explore',
+    intent: 'audit the settings registry',
+    status: EAgentStatus.Stopped,
+    killedBy: EKilledBy.User,
+    prose: 'I was looking at the registry.',
+    turns: 1,
+    toolCalls: 2,
   },
 ]
 

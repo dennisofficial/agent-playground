@@ -14,10 +14,18 @@ export enum EDecision {
   Deny = 'deny',
 }
 
+export enum EMessageOrigin {
+  Operator = 'operator',
+  ParentAgent = 'parent-agent',
+}
+
+export const saidBy = (said: { via?: EMessageOrigin | undefined }): EMessageOrigin =>
+  said.via ?? EMessageOrigin.Operator
+
 export type AssistantPart = TextPart | ReasoningPart
 
 export type EventBody =
-  | { type: 'user-said'; text: string }
+  | { type: 'user-said'; text: string; via?: EMessageOrigin | undefined }
   | { type: 'assistant-said'; parts: readonly AssistantPart[]; interrupted?: boolean | undefined }
   | { type: 'tool-called'; callId: CallId; name: string; input?: unknown; ordinal: number }
   | {
@@ -48,6 +56,15 @@ export type EventBody =
       remainingCharacters: number
     }
   | {
+      type: 'background-shell-awaiting-input'
+      shellId: string
+      command: string
+      description?: string | undefined
+      output: string
+      droppedCharacters: number
+      remainingCharacters: number
+    }
+  | {
       type: 'agent-spawned'
       agentId: ThreadId
       agentType: string
@@ -60,6 +77,7 @@ export type EventBody =
       agentType: string
       intent: string
       status: EAgentStatus
+      killedBy?: EKilledBy | undefined
       prose: string
       turns: number
       toolCalls: number

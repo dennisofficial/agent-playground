@@ -4,7 +4,7 @@ import { EAgentStart } from '../agents/start'
 import { EAgentStatus } from '../agents/status'
 import type { ProviderOptions } from '../provider'
 import { EKilledBy, EShellStatus } from '../shells/status'
-import { ECompactionAnchor, EDecision, type EventBody } from './body'
+import { ECompactionAnchor, EDecision, EMessageOrigin, type EventBody } from './body'
 import type { EventEnvelope } from './envelope'
 import { threadIdSchema, callIdSchema, eventIdSchema, runIdSchema } from './ids'
 
@@ -36,7 +36,11 @@ const assistantPartSchema = z.discriminatedUnion('type', [
 ])
 
 export const eventBodySchema: z.ZodType<EventBody> = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('user-said'), text: z.string() }),
+  z.object({
+    type: z.literal('user-said'),
+    text: z.string(),
+    via: z.enum(EMessageOrigin).optional(),
+  }),
   z.object({
     type: z.literal('assistant-said'),
     parts: z.array(assistantPartSchema),
@@ -101,6 +105,15 @@ export const eventBodySchema: z.ZodType<EventBody> = z.discriminatedUnion('type'
     remainingCharacters: z.number().int().nonnegative(),
   }),
   z.object({
+    type: z.literal('background-shell-awaiting-input'),
+    shellId: z.string().min(1),
+    command: z.string(),
+    description: z.string().optional(),
+    output: z.string(),
+    droppedCharacters: z.number().int().nonnegative(),
+    remainingCharacters: z.number().int().nonnegative(),
+  }),
+  z.object({
     type: z.literal('agent-spawned'),
     agentId: threadIdSchema,
     agentType: z.string().min(1),
@@ -113,6 +126,7 @@ export const eventBodySchema: z.ZodType<EventBody> = z.discriminatedUnion('type'
     agentType: z.string().min(1),
     intent: z.string(),
     status: z.enum(EAgentStatus),
+    killedBy: z.enum(EKilledBy).optional(),
     prose: z.string(),
     turns: z.number().int().nonnegative(),
     toolCalls: z.number().int().nonnegative(),

@@ -9,6 +9,7 @@ export enum EKilledBy {
   User = 'user',
   Model = 'model',
   SessionEnd = 'session-end',
+  Unrecorded = 'unrecorded',
 }
 
 export type ShellEnding = {

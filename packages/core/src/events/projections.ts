@@ -1,8 +1,15 @@
 import { EDecision, type EventType } from './body'
 import type { Event, EventOfType } from './envelope'
-import type { CallId, RunId } from './ids'
+import type { CallId, RunId, ThreadId } from './ids'
 
-export type PendingCall = { callId: CallId; name: string; input: unknown; ordinal: number; runId: RunId }
+export type PendingCall = {
+  callId: CallId
+  name: string
+  input: unknown
+  ordinal: number
+  runId: RunId
+  threadId: ThreadId
+}
 
 export function eventsOfType<TType extends EventType>({
   events,
@@ -28,6 +35,7 @@ export function pendingCalls(events: readonly Event[]): PendingCall[] {
       input: event.input,
       ordinal: event.ordinal,
       runId: event.runId,
+      threadId: event.threadId,
     }))
 }
 
@@ -69,6 +77,7 @@ const TURN_TAKING: readonly EventType[] = [
   'tool-denied',
   'nudge',
   'background-shell-ended',
+  'background-shell-awaiting-input',
   'agent-ended',
 ]
 

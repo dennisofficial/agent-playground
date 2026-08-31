@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
 import { EAgentStatus } from '../../agents/status'
-
 import { EDecision, type EventDraft } from '../body'
 import type { Event } from '../envelope'
 import { toThreadId, toCallId, toEventId, toRunId } from '../ids'
@@ -71,7 +70,14 @@ describe('pendingCalls', () => {
     const events = eventsFrom([called({ callId: 'call-1', ordinal: 0 })])
 
     expect(pendingCalls(events)).toEqual([
-      { callId: toCallId('call-1'), name: 'read_file', input: { path: '/a' }, ordinal: 0, runId: toRunId('run-1') },
+      {
+        callId: toCallId('call-1'),
+        name: 'read_file',
+        input: { path: '/a' },
+        ordinal: 0,
+        runId: toRunId('run-1'),
+        threadId: toThreadId('thread-1'),
+      },
     ])
   })
 

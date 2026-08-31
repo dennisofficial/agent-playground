@@ -1,4 +1,5 @@
 import type { Event } from './envelope'
+import { unendedSpawns } from '../agents/roster'
 import { replacedThrough } from '../compaction/watermark'
 import { outstandingApproval, pendingCalls } from './projections'
 
@@ -6,6 +7,7 @@ export enum ERewindRefusal {
   NoSuchTarget = 'no-such-target',
   UnsettledToolCall = 'unsettled-tool-call',
   UnansweredApproval = 'unanswered-approval',
+  UnendedSubAgent = 'unended-sub-agent',
   BelowInheritedPrefix = 'below-inherited-prefix',
   BelowCompaction = 'below-compaction',
 }
@@ -44,6 +46,15 @@ export function rewindTarget({
       allowed: false,
       refusal: ERewindRefusal.BelowInheritedPrefix,
       reason: `rewinding to ${toSeq} would cut into the ${floorSeq} sequences this thread inherited rather than owns, and the rows below ${floorSeq} belong to its parent`,
+    }
+  }
+
+  const cutSpawn = unendedSpawns(events).find((spawn) => spawn.seq > toSeq)
+  if (cutSpawn !== undefined) {
+    return {
+      allowed: false,
+      refusal: ERewindRefusal.UnendedSubAgent,
+      reason: `rewinding to ${toSeq} would cut below the spawn of ${cutSpawn.agentType} sub-agent ${cutSpawn.agentId}, which has no ending behind it, and the child would go on stepping into a thread its parent no longer records`,
     }
   }
 
