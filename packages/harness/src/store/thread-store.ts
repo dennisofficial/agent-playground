@@ -16,6 +16,8 @@ import { forkThread } from './fork'
 
 const CURRENT_CONTEXT_TYPE = 'context-loaded'
 
+export type SupervisedAgent = { spawnedBy: ThreadId; type: string }
+
 export type ThreadSummary = {
   id: ThreadId
   title?: string | undefined
@@ -23,6 +25,8 @@ export type ThreadSummary = {
   createdAt: string
   updatedAt: string
   parent?: { threadId: ThreadId; forkSeq: number } | undefined
+  forkMode?: EForkMode | undefined
+  agent?: SupervisedAgent | undefined
   workspace: string | null
   repo: string | null
 }
@@ -34,6 +38,7 @@ export abstract class ThreadStorePort {
     title?: string | undefined
     workspace?: string | undefined
     repo?: string | null | undefined
+    agent?: SupervisedAgent | undefined
   }): Promise<ThreadSummary>
   abstract find(args: { threadId: ThreadId }): Promise<ThreadSummary | undefined>
   abstract mostRecent(args: { workspace: string }): Promise<ThreadSummary | undefined>
@@ -80,6 +85,9 @@ type ThreadRow = {
   updatedAt: string
   parentThreadId: string | null
   forkSeq: number | null
+  forkMode: string | null
+  spawnerThreadId: string | null
+  agentType: string | null
   workspace: string | null
   repo: string | null
 }
@@ -96,10 +104,12 @@ export class PrismaThreadStore implements ThreadStorePort {
     title,
     workspace,
     repo,
+    agent,
   }: {
     title?: string | undefined
     workspace?: string | undefined
     repo?: string | null | undefined
+    agent?: SupervisedAgent | undefined
   }): Promise<ThreadSummary> {
     const at = this.clock.now()
     const row = await this.prisma.thread.create({
@@ -110,6 +120,7 @@ export class PrismaThreadStore implements ThreadStorePort {
         ...(title === undefined ? {} : { title }),
         ...(workspace === undefined ? {} : { workspace }),
         ...(repo === undefined ? {} : { repo }),
+        ...(agent === undefined ? {} : { spawnerThreadId: agent.spawnedBy, agentType: agent.type }),
       },
     })
     return toThreadSummary(row)
@@ -259,7 +270,7 @@ export class PrismaThreadStore implements ThreadStorePort {
     const row = await this.prisma.$transaction((tx) =>
       forkThread({ tx, ids: this.ids, from, into, seq, mode, at, title }),
     )
-    return toThreadSummary(row)
+    return toThreadSummary({ ...row, spawnerThreadId: null, agentType: null })
   }
 }
 
@@ -275,7 +286,20 @@ function toThreadSummary(row: ThreadRow): ThreadSummary {
     ...(row.parentThreadId === null || row.forkSeq === null
       ? {}
       : { parent: { threadId: toThreadId(row.parentThreadId), forkSeq: row.forkSeq } }),
+    ...forkModeOf(row.forkMode),
+    ...supervisedAgentOf(row),
   }
+}
+
+function forkModeOf(stored: string | null): { forkMode?: EForkMode } {
+  if (stored === EForkMode.Reference) return { forkMode: EForkMode.Reference }
+  if (stored === EForkMode.Copy) return { forkMode: EForkMode.Copy }
+  return {}
+}
+
+function supervisedAgentOf(row: ThreadRow): { agent?: SupervisedAgent } {
+  if (row.spawnerThreadId === null || row.agentType === null) return {}
+  return { agent: { spawnedBy: toThreadId(row.spawnerThreadId), type: row.agentType } }
 }
 
 const standInSeq = ({

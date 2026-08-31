@@ -9,6 +9,7 @@ import {
   type EventLogPort,
 } from '@dltech/atlas-core'
 import type {
+  SupervisedAgent,
   ThreadStorePort,
   ThreadSummary,
   TurnLedgerPort,
@@ -21,7 +22,11 @@ export const FAKE_WORKSPACE = '/work'
 
 export type FakeThreadStore = ThreadStorePort & {
   readonly created: number
-  readonly createdWith: readonly { workspace: string | null; repo: string | null }[]
+  readonly createdWith: readonly {
+    workspace: string | null
+    repo: string | null
+    agent?: SupervisedAgent
+  }[]
   readonly renames: readonly { threadId: ThreadId; title: string }[]
 }
 
@@ -45,7 +50,11 @@ export function fakeThreadStore(
   }))
 
   let created = 0
-  const createdWith: { workspace: string | null; repo: string | null }[] = []
+  const createdWith: {
+    workspace: string | null
+    repo: string | null
+    agent?: SupervisedAgent
+  }[] = []
   const renames: { threadId: ThreadId; title: string }[] = []
 
   return {
@@ -87,7 +96,7 @@ export function fakeThreadStore(
       )
     },
 
-    async fork({ from, seq, title }) {
+    async fork({ from, seq, mode, title }) {
       created += 1
       const source = rows.find((row) => row.id === from)
       const row: ThreadSummary = {
@@ -96,6 +105,7 @@ export function fakeThreadStore(
         createdAt: AT,
         updatedAt: AT,
         parent: { threadId: from, forkSeq: seq },
+        forkMode: mode,
         workspace: source?.workspace ?? workspaceOf,
         repo: source?.repo ?? null,
         ...(title === undefined ? {} : { title }),
@@ -104,9 +114,13 @@ export function fakeThreadStore(
       return row
     },
 
-    async create({ workspace, repo } = {}) {
+    async create({ workspace, repo, agent } = {}) {
       created += 1
-      createdWith.push({ workspace: workspace ?? null, repo: repo ?? null })
+      createdWith.push({
+        workspace: workspace ?? null,
+        repo: repo ?? null,
+        ...(agent === undefined ? {} : { agent }),
+      })
       const row: ThreadSummary = {
         id: toThreadId(`made-${created}`),
         head: 0,
@@ -114,6 +128,7 @@ export function fakeThreadStore(
         updatedAt: AT,
         workspace: workspace ?? workspaceOf,
         repo: repo ?? null,
+        ...(agent === undefined ? {} : { agent }),
       }
       rows.push(row)
       return row
@@ -156,6 +171,7 @@ export function fakeThreadStore(
 
 export type FakeEventLog = EventLogPort & {
   readonly branchesRead: readonly ThreadId[]
+  readonly ownReads: readonly ThreadId[]
   truncate(args: { threadId: ThreadId; toSeq: number }): void
   replaceWithSummary(args: {
     threadId: ThreadId
@@ -169,19 +185,34 @@ export type FakeEventLog = EventLogPort & {
 
 export function fakeEventLog(seeded: readonly Event[] = []): FakeEventLog {
   const byThread = new Map<ThreadId, Event[]>()
+  const headByThread = new Map<ThreadId, number>()
   const branchesRead: ThreadId[] = []
+  const ownReads: ThreadId[] = []
 
   for (const event of seeded) {
     byThread.set(event.threadId, [...(byThread.get(event.threadId) ?? []), event])
+    headByThread.set(event.threadId, Math.max(headByThread.get(event.threadId) ?? 0, event.seq))
   }
 
   let stamped = 0
 
+  const reserve = ({ threadId, count }: { threadId: ThreadId; count: number }): number => {
+    const from = (headByThread.get(threadId) ?? 0) + 1
+    headByThread.set(threadId, from + count - 1)
+    return from
+  }
+
+  const held = ({ threadId, upTo }: { threadId: ThreadId; upTo?: number }): Event[] => {
+    const rows = byThread.get(threadId) ?? []
+    return upTo === undefined ? [...rows] : rows.filter((event) => event.seq <= upTo)
+  }
+
   return {
     branchesRead,
+    ownReads,
 
     async append({ threadId, runId, drafts }) {
-      const held = byThread.get(threadId) ?? []
+      const firstSeq = reserve({ threadId, count: drafts.length })
 
       const written = drafts.map((draft, index) => {
         stamped += 1
@@ -189,7 +220,7 @@ export function fakeEventLog(seeded: readonly Event[] = []): FakeEventLog {
           draft,
           envelope: {
             id: toEventId(`event-${stamped}`),
-            seq: held.length + index + 1,
+            seq: firstSeq + index,
             threadId,
             runId,
             depth: 0,
@@ -198,20 +229,18 @@ export function fakeEventLog(seeded: readonly Event[] = []): FakeEventLog {
         })
       })
 
-      byThread.set(threadId, [...held, ...written])
+      byThread.set(threadId, [...(byThread.get(threadId) ?? []), ...written])
       return written
     },
 
     replaceWithSummary({ threadId, anchor, fromSeq, throughSeq, summary, discardRows }) {
-      const held = byThread.get(threadId) ?? []
+      const rows = byThread.get(threadId) ?? []
       const inRange = (event: Event): boolean => event.seq >= fromSeq && event.seq <= throughSeq
-      const compactable = held.filter((event) => inRange(event) && event.type !== 'context-loaded')
-      const spared = held.filter((event) => inRange(event) && event.type === 'context-loaded')
+      const compactable = rows.filter((event) => inRange(event) && event.type !== 'context-loaded')
+      const spared = rows.filter((event) => inRange(event) && event.type === 'context-loaded')
       const summarySeq = discardRows
-        ? anchor === ECompactionAnchor.Prefix
-          ? throughSeq
-          : fromSeq
-        : (held.at(-1)?.seq ?? 0) + 1
+        ? standInSeq({ anchor, fromSeq, throughSeq })
+        : reserve({ threadId, count: 1 })
       stamped += 1
 
       const watermark = stampEvent({
@@ -236,33 +265,41 @@ export function fakeEventLog(seeded: readonly Event[] = []): FakeEventLog {
       byThread.set(threadId, [
         ...spared,
         watermark,
-        ...held.filter((event) => event.seq > throughSeq),
+        ...rows.filter((event) => event.seq > throughSeq),
       ])
       return compactable.length
     },
 
     truncate({ threadId, toSeq }) {
-      const held = byThread.get(threadId) ?? []
-      byThread.set(
-        threadId,
-        held.filter((event) => event.seq <= toSeq),
-      )
+      byThread.set(threadId, held({ threadId, upTo: toSeq }))
+      headByThread.set(threadId, toSeq)
     },
 
-    async read({ threadId }) {
+    async read({ threadId, upTo }) {
       branchesRead.push(threadId)
-      return [...(byThread.get(threadId) ?? [])]
+      return held({ threadId, ...(upTo === undefined ? {} : { upTo }) })
     },
 
     async head({ threadId }) {
-      return byThread.get(threadId)?.length ?? 0
+      return headByThread.get(threadId) ?? 0
     },
 
     async readOwn({ threadId, upTo }) {
-      return this.read({ threadId, ...(upTo === undefined ? {} : { upTo }) })
+      ownReads.push(threadId)
+      return held({ threadId, ...(upTo === undefined ? {} : { upTo }) })
     },
   }
 }
+
+const standInSeq = ({
+  anchor,
+  fromSeq,
+  throughSeq,
+}: {
+  anchor: ECompactionAnchor
+  fromSeq: number
+  throughSeq: number
+}): number => (anchor === ECompactionAnchor.Prefix ? throughSeq : fromSeq)
 
 export type FakeLedger = TurnLedgerPort & { readonly rows: readonly TurnSpend[] }
 

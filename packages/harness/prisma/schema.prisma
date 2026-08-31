@@ -14,21 +14,28 @@ datasource db {
 }
 
 model Thread {
-  id             String  @id
-  title          String?
-  head           Int     @default(0)
-  createdAt      String
-  updatedAt      String
-  parentThreadId String?
-  forkSeq        Int?
-  forkMode       String?
-  workspace      String?
-  repo           String?
-  events         Event[]
-  turns          Turn[]
+  id              String   @id
+  title           String?
+  head            Int      @default(0)
+  createdAt       String
+  updatedAt       String
+  parentThreadId  String?
+  forkSeq         Int?
+  forkMode        String?
+  spawnerThreadId String?
+  agentType       String?
+  workspace       String?
+  repo            String?
+  parent          Thread?  @relation("ThreadFork", fields: [parentThreadId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  forks           Thread[] @relation("ThreadFork")
+  spawner         Thread?  @relation("ThreadSupervision", fields: [spawnerThreadId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  spawned         Thread[] @relation("ThreadSupervision")
+  events          Event[]
+  turns           Turn[]
 
   @@index([updatedAt])
   @@index([parentThreadId])
+  @@index([spawnerThreadId])
   @@index([workspace, updatedAt])
 }
 

@@ -1,4 +1,9 @@
-export { ThreadStorePort, PrismaThreadStore, type ThreadSummary } from './thread-store'
+export {
+  ThreadStorePort,
+  PrismaThreadStore,
+  type SupervisedAgent,
+  type ThreadSummary,
+} from './thread-store'
 export {
   compactThread,
   ECompactionFailure,
