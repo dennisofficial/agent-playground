@@ -1,10 +1,10 @@
-import { appearanceOf, applyAppearance } from '../ui/appearance'
 import { registerGrammars } from '../ui/markdown/grammars/index'
 import { EBootStep, type BootProgress } from './boot-progress'
 import { composeAtlas, type AtlasApp } from './compose'
 import type { AtlasConfig } from './config'
 import { diagnoseCredentialFailure, type CredentialDiagnosis } from './credential-diagnosis'
 import { openConversation, type OpenedConversation } from './open-conversation'
+import type { SettingsBinding } from './settings-binding'
 
 const REFUSED = 1
 
@@ -35,20 +35,16 @@ async function credentialRefusal(app: AtlasApp): Promise<CredentialDiagnosis | n
   }
 }
 
-/**
- * Everything the first frame depends on, resolved before anything is mounted — appearance most of
- * all, because a palette applied from an effect repaints a screen the operator has already read.
- */
 async function startSession(args: {
   config: AtlasConfig
   env: Record<string, string | undefined>
   progress: BootProgress
+  settings: SettingsBinding
 }): Promise<Session> {
   const { config, progress } = args
 
   progress.report(EBootStep.Composing)
-  const app = await composeAtlas({ config, env: args.env })
-  applyAppearance(appearanceOf({ resolution: app.settings.snapshot().resolution }))
+  const app = await composeAtlas({ config, env: args.env, settings: args.settings })
 
   /**
    * A credential Atlas cannot use is no longer a reason to refuse to start: the accounts overlay is
@@ -93,6 +89,7 @@ export function openSession(args: {
   config: AtlasConfig
   env: Record<string, string | undefined>
   progress: BootProgress
+  settings: SettingsBinding
 }): Promise<Session> {
   return startSession(args).catch((error: unknown) => ({ type: ESession.Failed, error }) as const)
 }

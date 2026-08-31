@@ -18,32 +18,44 @@ import { collapseHome } from '../ui/paths'
 
 const PROJECT_PREFIX = '.'
 
-export function bindSettings(args: {
-  container: DependencyContainer
+export type SettingsBinding = {
+  service: SettingsService
+  bindTo: (container: DependencyContainer) => void
+}
+
+/**
+ * Every layer is read from disk synchronously, which is what lets the appearance the operator chose
+ * be in force before the renderer draws its first frame rather than an effect away from it.
+ */
+export function loadSettings(args: {
   env: Record<string, string | undefined>
   cwd: string
-}): SettingsService {
+}): SettingsBinding {
   const userFile = userSettingsFile()
   const projectFile = projectSettingsFile(args.cwd)
 
-  args.container.register(UserSettingsStoreToken, {
-    useValue: new FileSettingsStore({
-      file: userFile,
-      label: collapseHome({ cwd: userFile, home: homedir() }),
-    }),
+  const user = new FileSettingsStore({
+    file: userFile,
+    label: collapseHome({ cwd: userFile, home: homedir() }),
   })
 
-  args.container.register(ProjectSettingsStoreToken, {
-    useValue: new FileSettingsStore({
-      file: projectFile,
-      label: `${PROJECT_PREFIX}/${relative(args.cwd, projectFile)}`,
-    }),
+  const project = new FileSettingsStore({
+    file: projectFile,
+    label: `${PROJECT_PREFIX}/${relative(args.cwd, projectFile)}`,
   })
 
-  return createSettingsService({
+  const service = createSettingsService({
     definitions: ATLAS_SETTINGS,
-    user: args.container.resolve(UserSettingsStoreToken),
-    project: args.container.resolve(ProjectSettingsStoreToken),
+    user,
+    project,
     environment: environmentLayer({ definitions: ATLAS_SETTINGS, env: args.env }),
   })
+
+  return {
+    service,
+    bindTo: (container) => {
+      container.register(UserSettingsStoreToken, { useValue: user })
+      container.register(ProjectSettingsStoreToken, { useValue: project })
+    },
+  }
 }

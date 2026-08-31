@@ -4,11 +4,13 @@ import React from "react";
 
 import { atlasDatabaseUrl } from "@dltech/atlas-harness";
 
+import { appearanceOf, applyAppearance } from "../ui/appearance";
 import { createBootProgress } from "./boot-progress";
 import { BootScreen } from "./boot-screen";
 import { resolveConfig } from "./config";
 import { ESession, openSession } from "./open-session";
 import { resumeHint } from "./resume-hint";
+import { loadSettings } from "./settings-binding";
 import { readTerminalSize, settleTerminalSize } from "./terminal-size";
 
 const TARGET_FPS = 120;
@@ -24,7 +26,9 @@ const takeDown = (args: { root: Root; renderer: CliRenderer }): void => {
 
 /**
  * The renderer comes up before the harness does, so the curtain is what fills the terminal while
- * the database, the credentials and the grammars are still arriving.
+ * the database, the credentials and the grammars are still arriving. Settings are read off disk
+ * ahead of it — every layer is synchronous — so the curtain is drawn in the operator's own palette
+ * from its first frame rather than repainting out of the shipped one once the harness lands.
  */
 export async function bootAtlas(args: {
   argv: readonly string[];
@@ -35,8 +39,11 @@ export async function bootAtlas(args: {
     ...args,
     defaultDatabaseUrl: atlasDatabaseUrl(),
   });
+  const settings = loadSettings({ env: args.env, cwd: config.cwd });
+  applyAppearance(appearanceOf({ resolution: settings.service.snapshot().resolution }));
+
   const progress = createBootProgress();
-  const session = openSession({ config, env: args.env, progress });
+  const session = openSession({ config, env: args.env, progress, settings });
 
   const renderer = await createCliRenderer({
     useMouse: true,

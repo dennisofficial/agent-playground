@@ -74,7 +74,7 @@ import { SUMMARISER_MODEL_ID, TITLER_MODEL_ID, type AtlasConfig } from './config
 import { launchSelection, rememberSelection } from './model-preference'
 import { selectableModel, type ModelChoice } from './model-selection'
 import { instructionPlanOf } from './instruction-plan'
-import { bindSettings } from './settings-binding'
+import type { SettingsBinding } from './settings-binding'
 
 export type SessionTitler = (args: { text: string; signal?: AbortSignal }) => Promise<string | null>
 
@@ -109,6 +109,7 @@ const SKILLS_DIRECTORY_NAME = 'skills'
 export async function composeAtlas(args: {
   config: AtlasConfig
   env: Record<string, string | undefined>
+  settings: SettingsBinding
 }): Promise<AtlasApp> {
   const { config } = args
   const container = createHarnessContainer()
@@ -145,7 +146,8 @@ export async function composeAtlas(args: {
     clients: builtinOauthClients({ clock: container.resolve(portToken(ClockPort)) }),
   })
   const usage = createAccountUsageService({ usage: new AnthropicUsageClient({ credentials }) })
-  const settings = bindSettings({ container, env: args.env, cwd: config.cwd })
+  const settings = args.settings.service
+  args.settings.bindTo(container)
 
   container.register(portToken(BeforeTurnHook), {
     useValue: new LoadInstructionsHook({
