@@ -1,0 +1,9 @@
+packages/core/src/events/__tests__/ownership.spec.ts
+  ai_agent 37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "aba12bd016184eb9374d424852daa2796beb4482",
+  "prompts": {}
+}
