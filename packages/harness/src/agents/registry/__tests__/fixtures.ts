@@ -1,0 +1,98 @@
+import {
+  EDefinitionOrigin,
+  EFinishReason,
+  toCallId,
+  toRunId,
+  type EventDraft,
+  type ModelPort,
+  type ModelStepResult,
+  type ThreadId,
+} from '@dltech/atlas-core'
+
+import { ETurnStatus, type TurnOutcome } from '../../../loop/turn-outcome'
+import type { TurnRunner } from '../../../loop/turn-runner.port'
+import type { AgentType } from '../../types'
+import type { ChildRunnerRequest, ChildRunnerSource } from '../child-runner'
+
+export const agentTypeNamed = (args: Partial<AgentType> & { name: string }): AgentType => ({
+  whenToUse: `use ${args.name}`,
+  prompt: `You are the ${args.name} sub-agent.`,
+  origin: EDefinitionOrigin.BuiltIn,
+  ...args,
+})
+
+export type StartedRun = {
+  request: ChildRunnerRequest
+  threadId: ThreadId
+  signal: AbortSignal
+  settle: (outcome: TurnOutcome) => void
+  observe: (drafts: readonly EventDraft[]) => void
+}
+
+export type FakeRunners = {
+  source: ChildRunnerSource
+  readonly started: readonly StartedRun[]
+  readonly resumed: readonly ThreadId[]
+}
+
+export function fakeRunners(): FakeRunners {
+  const started: StartedRun[] = []
+  const resumed: ThreadId[] = []
+
+  const hold = (request: ChildRunnerRequest, signal: AbortSignal): Promise<TurnOutcome> =>
+    new Promise<TurnOutcome>((resolve) => {
+      started.push({
+        request,
+        threadId: request.threadId,
+        signal,
+        settle: resolve,
+        observe: request.observe,
+      })
+    })
+
+  const source: ChildRunnerSource = (request) => ({
+    say: ({ signal }) => hold(request, signal ?? new AbortController().signal),
+    runTurn: ({ signal }) => hold(request, signal ?? new AbortController().signal),
+    resume: ({ threadId, signal }) => {
+      resumed.push(threadId)
+      return hold(request, signal ?? new AbortController().signal)
+    },
+  })
+
+  return { source, started, resumed }
+}
+
+export const finished = (): TurnOutcome => ({
+  status: ETurnStatus.Completed,
+  runId: toRunId('run_fake'),
+})
+
+export const interrupted = (): TurnOutcome => ({
+  status: ETurnStatus.Interrupted,
+  runId: toRunId('run_fake'),
+  committed: true,
+})
+
+export const said = (text: string): readonly EventDraft[] => [
+  { type: 'assistant-said', parts: [{ type: 'text', text }] },
+]
+
+export const calledTool = (name: string): readonly EventDraft[] => [
+  { type: 'tool-called', callId: toCallId(`call_${name}`), name, ordinal: 0 },
+]
+
+export function fixedModelPort(args: { modelId: string; text: string }): ModelPort {
+  return {
+    identity: { id: 'fixed', modelId: args.modelId },
+    step: (): Promise<ModelStepResult> =>
+      Promise.resolve({
+        parts: [{ type: 'text', text: args.text }],
+        toolCalls: [],
+        finishReason: EFinishReason.Stop,
+      }),
+  }
+}
+
+export const nothingRuns: ChildRunnerSource = (): TurnRunner => {
+  throw new Error('no child should have been started')
+}
